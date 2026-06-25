@@ -1,0 +1,91 @@
+# OpenSphere Console nginx — 셸이 유일한 관문(dynamic-ui §11):
+# 브라우저는 엔진(rhdh-self)이나 기능 컨테이너를 직접 호출하지 않는다.
+# ${SHELL_SERVICE_TOKEN}은 컨테이너 기동 시 envsubst로 치환(K8s Secret 주입).
+
+# WebSocket 업그레이드용(흡수앱의 exec/터미널·로그 스트리밍·watch). conf.d는 http{} 내부 →
+# map은 여기(server 밖)에 둔다. Upgrade 헤더 있을 때만 Connection: upgrade(일반 API는 영향 없음).
+map $http_upgrade $os_conn_upgrade { default upgrade; '' ''; }
+
+server {
+    listen 8080;                 # http — in-cluster readiness probe / 내부용
+    listen 8443 ssl;             # https — LoadBalancer 외부 노출(콘솔은 https://localhost:8090)
+    # 콘솔 TLS: localhost cert(Kanidm와 동일 신뢰 cert 재사용 — 보스 키체인 신뢰됨). secret shell-tls 마운트.
+    # 콘솔을 https로 올려야 Kanidm(https)와 same-site가 되어 fetch 기반 로그아웃이 동작(포털 우회 제거).
+    ssl_certificate     /etc/nginx/certs/tls.crt;
+    ssl_certificate_key /etc/nginx/certs/tls.key;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # CSP (manifest v2 보안 계약): 인라인 스크립트 금지.
+    # - script-src blob: → Extension Host가 '검증된 바이트'만 Blob URL로 import하는 경로
+    # - style-src 'unsafe-inline' → Angular 컴포넌트 스타일 주입 방식상 필요
+    # - connect-src ${OS_AUTH_ORIGIN} → OIDC discovery/token/logout + self proxy/WebSocket
+    # ⚠️ [흡수 트레이드오프] 'unsafe-eval' + worker-src(blob/data): Headlamp 같은 흡수 대형앱이
+    #   런타임 eval·web worker를 필요로 해 추가함. 보안 수위 하락 — 흡수앱 전용으로 격리하거나
+    #   nonce/CSP 분리 등 후속 강화 필요. (DUPA 흡수 PoC 단계 결정)
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob: 'unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    add_header X-Content-Type-Options nosniff always;
+
+    # 네이티브 카탈로그/API 엔진 (opensphere-catalog-api = mainShell B/E) — OpenSphere CRD를 kind=API로,
+    # 배포 워크로드를 kind=Component로 Backstage 카탈로그 엔티티에 투영. CORE 고유기능의 B/E는 네이티브여야
+    # 한다 → 구 외부 rhdh-self 엔진 의존 폐기. (location 이름은 호환 위해 유지; F/E api.service 무변경.)
+    location /api/rhdh/ {
+        proxy_pass http://opensphere-catalog-api.opensphere-system.svc.cluster.local:8080/api/;
+        proxy_set_header X-Forwarded-Host $host;
+    }
+
+    # DUPA Admin Control — control service(dupa-registry-controller) 프록시.
+    # Admin UI는 K8s를 직접 안 만지고 이 Control API로만 상태를 바꾼다(계획서 §8).
+    # 사용자 신원을 헤더로 전달(audit·권한용). 운영 전환 시 토큰 검증으로 승격.
+    location /api/admin/ {
+        proxy_pass http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080/api/admin/;
+        proxy_set_header X-OpenSphere-User $http_x_opensphere_user;
+    }
+
+    # 플러그인 레지스트리 (dynamic-ui §5.3) — controller가 생성하는 산출물(즉시 반영).
+    # ConfigMap 마운트 대신 control service 프록시 → Admin 설치/삭제가 새로고침으로 바로 보임.
+    location /registry/ {
+        proxy_pass http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080/registry/;
+    }
+
+    # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).
+    # Admin이 설치/삭제하면 ns opensphere-system에 <id> service가 생기고 사라진다.
+    # 변수+resolver로 런타임 DNS 해석 → 미설치 상태에서도 nginx가 죽지 않고 502만 반환.
+    # 한 규칙으로 모든 동적 플러그인을 받으므로 플러그인 추가 시 셸 리빌드 불필요(DUPA 정신).
+    # [PoC 한계] id는 registry에 게시된 검증된 플러그인만 셸이 로드하지만, nginx 자체는
+    # ns opensphere-system의 임의 service:8080으로 프록시 가능 — 제품화 시 controller가
+    # basePath allowlist를 nginx에 생성하도록 승격.
+    location ~ ^/api/plugins/([a-z0-9-]+)/(.*)$ {
+        resolver 10.96.0.10 valid=10s;
+        set $plugin_upstream $1.opensphere-system.svc.cluster.local;
+        proxy_pass http://$plugin_upstream:8080/$2$is_args$args;
+        # 흡수앱(k8s-console 등)의 exec/터미널·로그 스트리밍·watch = WebSocket → 업그레이드 통과
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $os_conn_upgrade;
+        proxy_set_header X-Forwarded-Proto $scheme; # 흡수앱 쿠키 Secure 판정용(운영 https→Secure)
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # 해시드 자산(main-<hash>.js 등)은 내용 불변 → 장기 immutable 캐시
+    location ~* "-[A-Za-z0-9]{8,}\.(?:js|css)$" {
+        add_header X-Content-Type-Options nosniff always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    # index.html(문서)은 캐시 금지 → 배포로 자산 해시가 바뀌어도 항상 최신 index를 받아
+    # 새 해시 자산을 참조(구 index 캐시로 인한 'Failed to load module script' 빈 화면 방지).
+    # add_header는 자식 location에서 부모를 '대체'하므로 CSP/nosniff를 여기서 다시 선언한다.
+    location = /index.html {
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob: 'unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+
+    # SPA 라우팅
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

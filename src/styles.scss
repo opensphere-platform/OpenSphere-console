@@ -1,0 +1,79 @@
+/* OpenSphere Shell — 전역 스타일
+ * 구성: ① Clarity UI(엔진, ng-clarity 의존) ② OpenSphere 디자인 토큰(정체성, 우리 소유)
+ * 원칙(DESIGN-RULES.md): 구조·컴포넌트는 전부 Clarity. 전역 커스텀은
+ * ⓐ 토큰(변수 재정의 — Clarity 공식 테마 메커니즘)과 ⓑ 등록된 예외만 허용.
+ */
+@import '@clr/ui/clr-ui.min.css';
+
+/* ──────────────────────────────────────────────
+ * OpenSphere Design Tokens v0  (Clarity CSS 변수 재정의)
+ * 미학 레퍼런스: 엔터프라이즈 콘솔(OCI/vSphere 계열) — 소유권은 우리.
+ * ────────────────────────────────────────────── */
+:root {
+  /* 브랜드 */
+  --os-brand-900: #0b1530;   /* 딥 네이비 — 헤더 */
+  --os-brand-700: #16224d;
+  --os-brand-500: #4c6fff;   /* sphere blue — 포인트 */
+  --os-brand-300: #8fa6ff;
+  --os-accent:    #00bfa5;
+  --os-surface:   #f6f7fb;
+  --os-ink:       #1b2438;
+  --os-muted:     #667193;
+
+  /* Clarity 토큰 매핑 — 정체성 주입 지점 */
+  --clr-header-bg-color: var(--os-brand-900);
+  --clr-header-default-bg-color: var(--os-brand-900);
+  --clr-vertical-nav-bg-color: #101a38;
+  --clr-vertical-nav-item-color: #c7d0e8;
+  --clr-vertical-nav-item-active-color: #ffffff;
+  --clr-vertical-nav-item-active-bg-color: rgba(76, 111, 255, 0.22);
+  --clr-vertical-nav-icon-active-color: var(--os-brand-300);
+  --clr-btn-primary-bg-color: var(--os-brand-500);
+  --clr-btn-primary-hover-bg-color: #3a5af0;
+  --clr-link-color: var(--os-brand-500);
+  --clr-link-hover-color: #3a5af0;
+  --clr-global-app-background: var(--os-surface);
+  --clr-card-border-radius: 10px;
+}
+
+html, body { height: 100%; margin: 0; background: var(--os-surface); }
+
+/* [예외 등록 #3] 밴드 라벨(운영/구축/전달) — clr-vertical-nav에 비접이식 섹션 라벨
+ * 컴포넌트 부재(clr-vertical-nav-group은 접이식 메뉴). DESIGN-RULES.md 참조. */
+.os-band-label {
+  font-size: 0.55rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: #7c89ad; padding: 0.9rem 1.2rem 0.2rem;
+}
+
+/* [예외 등록 #6] 플러그인 기여 nav 트리(os-nav-node, 재귀) 다크 테마 정합 —
+ * Clarity clr-vertical-nav-group의 children 패널은 기본 흰 배경이라 다크 셸 내비에서
+ * 흰-on-흰으로 라벨이 안 보인다. 셸 nav 토큰에 맞춰 배경/글자색을 강제한다. */
+.os-nav {
+  clr-vertical-nav-group, .nav-group, .nav-group-children, .nav-group-content {
+    background: transparent !important;
+  }
+  .nav-group .nav-trigger,
+  .nav-group-children .nav-link,
+  a[clrVerticalNavLink] {
+    color: var(--clr-vertical-nav-item-color) !important;
+  }
+  .nav-group .nav-trigger:hover,
+  .nav-group-children .nav-link:hover,
+  a[clrVerticalNavLink]:hover {
+    color: #fff !important;
+    background: rgba(76, 111, 255, 0.12) !important;
+  }
+  .nav-group-children .nav-link.active,
+  a[clrVerticalNavLink].active {
+    color: var(--clr-vertical-nav-item-active-color) !important;
+    background: var(--clr-vertical-nav-item-active-bg-color) !important;
+  }
+  .nav-trigger .nav-trigger-icon { color: var(--clr-vertical-nav-item-color) !important; }
+}
+
+/* [예외 등록 #4] 토큰 레벨 표현 유틸 — §14 디자인 시스템 계약에 따라
+ * 런타임 플러그인(light DOM)에도 전역 제공되는 공용 레이어. */
+.os-sub { color: var(--os-muted); font-size: 0.7rem; margin: 0.3rem 0 0.8rem; }
+.os-engine { font-size: 0.6rem; color: var(--os-muted); font-weight: 400; margin-left: 0.4rem; }
+.os-kv td:first-child { width: 110px; color: var(--os-muted); }
+.os-mono { font-family: monospace; font-size: 0.62rem; }
