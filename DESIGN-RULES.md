@@ -87,7 +87,7 @@ el.addEventListener('osp-nav-select', (e) => {
 
 **예외**: `deploy/perspectives/_osp-tree-nav.js` 자체는 lint 대상 제외(표준 구현이므로 Clarity 클래스 이름을 합법적으로 포함). 같은 디렉터리의 다른 `_*.js` 헬퍼도 제외하나, `_plugin-template.js`는 포함(실제 플러그인 템플릿으로서 표준 준수를 검증).
 
-계약 전체: `opensphere-shell/docs/dupa-nav-contribution-contract.md`.
+계약 전체: `opensphere-console/docs/dupa-nav-contribution-contract.md`.
 
 ## 점검 방법 (리뷰 시)
 

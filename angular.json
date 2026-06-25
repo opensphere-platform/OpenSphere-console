@@ -6,7 +6,7 @@
   },
   "newProjectRoot": "projects",
   "projects": {
-    "opensphere-shell": {
+    "opensphere-console": {
       "projectType": "application",
       "schematics": {
         "@schematics/angular:component": {
@@ -94,10 +94,10 @@
           "builder": "@angular/build:dev-server",
           "configurations": {
             "production": {
-              "buildTarget": "opensphere-shell:build:production"
+              "buildTarget": "opensphere-console:build:production"
             },
             "development": {
-              "buildTarget": "opensphere-shell:build:development"
+              "buildTarget": "opensphere-console:build:development"
             }
           },
           "defaultConfiguration": "development"

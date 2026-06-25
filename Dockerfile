@@ -12,7 +12,7 @@ RUN npx ng build --configuration production
 
 FROM docker.io/library/nginx:1.27-alpine
 # SPA 정적 파일
-COPY --from=build /app/dist/opensphere-shell/browser /usr/share/nginx/html
+COPY --from=build /app/dist/opensphere-console/browser /usr/share/nginx/html
 # 프록시 설정 — SHELL_SERVICE_TOKEN은 기동 시 envsubst로 주입(이미지에 토큰 없음)
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 EXPOSE 8080

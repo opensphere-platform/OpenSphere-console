@@ -1,5 +1,5 @@
 {
-  "name": "opensphere-shell",
+  "name": "opensphere-console",
   "version": "0.3.6",
   "scripts": {
     "ng": "ng",

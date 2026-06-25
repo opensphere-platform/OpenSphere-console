@@ -1,7 +1,7 @@
 # DUPA Nav Contribution Contract
 
-> 참조: `opensphere-shell/src/app/core/extension-host.service.ts` — `ExtensionHostService`, `NavNode`, `PluginPage`.
-> 디자인 규칙: [`opensphere-shell/DESIGN-RULES.md §14`](../DESIGN-RULES.md#14-트리-메뉴-표준-tree-nav-standard).
+> 참조: `opensphere-console/src/app/core/extension-host.service.ts` — `ExtensionHostService`, `NavNode`, `PluginPage`.
+> 디자인 규칙: [`opensphere-console/DESIGN-RULES.md §14`](../DESIGN-RULES.md#14-트리-메뉴-표준-tree-nav-standard).
 
 플러그인이 셸 내비게이션에 기여하는 두 계층을 이 문서가 정의한다.
 
@@ -137,8 +137,8 @@ CI lint(`deploy/perspectives/lint-nav.mjs`)가 자동 검출.
 
 | 파일 | 역할 |
 |---|---|
-| `opensphere-shell/DESIGN-RULES.md §14` | 디자인 규칙 원문 |
+| `opensphere-console/DESIGN-RULES.md §14` | 디자인 규칙 원문 |
 | `deploy/perspectives/_osp-tree-nav.js` | `<osp-tree-nav>` 표준 구현 (단일 소스) |
 | `deploy/perspectives/_plugin-template.js` | vanilla 플러그인 소비 예시 (전체 패턴) |
-| `opensphere-shell/src/app/core/extension-host.service.ts` | `NavNode`, `PluginPage`, `nav:contribute` 런타임 구현 |
+| `opensphere-console/src/app/core/extension-host.service.ts` | `NavNode`, `PluginPage`, `nav:contribute` 런타임 구현 |
 | `deploy/perspectives/lint-nav.mjs` | CI lint — 금지 패턴 자동 검출 |
