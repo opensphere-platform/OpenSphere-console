@@ -17,7 +17,7 @@ const BFF = 'https://localhost:8444';
  * 역할 정의·부여 (Phase 3) — 콘솔 역할 = Kanidm 그룹(opensphere-console-*).
  * 조회/부여/회수를 BFF /bff/roles로만 수행(admin id_token). grant/revoke는
  * scoped write SA(console-rolemgr-svc)가 콘솔 역할 그룹에만 적용 — 시스템 그룹 불가.
- * osph CLI(`osph role …`)와 동일 창구 소비(console==cli).
+ * os CLI(`os role …`)와 동일 창구 소비(console==cli).
  */
 @Component({
   selector: 'os-admin-roles',
@@ -26,7 +26,7 @@ const BFF = 'https://localhost:8444';
     <h1>역할 <span class="os-engine">Console Roles · 정의·부여</span></h1>
     <p class="os-sub">
       콘솔 역할 = Kanidm 그룹(opensphere-console-*) 멤버십. 부여/회수는 scoped write SA로 적용.
-      동일 동작을 <code>osph role grant/revoke</code>로도 (console==cli).
+      동일 동작을 <code>os role grant/revoke</code>로도 (console==cli).
     </p>
 
     @if (msg(); as m) {
