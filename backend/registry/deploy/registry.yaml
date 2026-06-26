@@ -1,0 +1,53 @@
+# opensphere-registry 단일창구 — SA·RBAC(라이브 UIPluginPackage list)·Deployment·Service.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-registry, namespace: opensphere-system }
+---
+# 라이브 plugin 표현 = UIPluginPackage list. (read-only)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: opensphere-registry }
+rules:
+  - apiGroups: ["plugins.opensphere.io"]
+    resources: ["uipluginpackages"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: opensphere-registry }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensphere-registry }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-registry, namespace: opensphere-system }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensphere-registry
+  namespace: opensphere-system
+  labels: { app: opensphere-registry }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: opensphere-registry } }
+  template:
+    metadata: { labels: { app: opensphere-registry } }
+    spec:
+      serviceAccountName: opensphere-registry
+      containers:
+        - name: registry
+          image: localhost:5000/opensphere-registry:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8080 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-registry, namespace: opensphere-system }
+spec:
+  selector: { app: opensphere-registry }
+  ports: [{ port: 80, targetPort: 8080 }]

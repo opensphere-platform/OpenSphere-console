@@ -1,0 +1,35 @@
+# opensphere-release — stable 채널 릴리스 매트릭스
+# arch-001: Release Authority — 버전당 단일 권위 페이로드 (불변)
+# OCI 이미지: ghcr.io/opensphere-platform/opensphere-release:<version>@sha256:<digest>
+#
+# 업그레이드 = 이 파일의 핀 1줄 교체 → opensphere-operator 가 PlatformVersion 통해 수렴
+#
+# 형식:
+#   version: <semver>
+#   releaseImage: <registry>/<repo>:<tag>@sha256:<digest>
+#   supportedHostK8s: <min>..<max>
+#   releaseNotes: <URL>
+#   channels: [stable, candidate, edge]
+
+releases:
+  - version: "0.1.0"
+    releaseImage: "ghcr.io/opensphere-platform/opensphere-release:0.1.0"
+    # digest 는 실제 빌드 후 채워진다. 현재는 placeholder.
+    # MUST: opensphere-image-build 규약 — digest 없는 핀 게시 금지
+    digest: ""
+    supportedHostK8s: "1.27..1.30"
+    channel: stable
+    releaseDate: "2026-06-08"
+    releaseNotes: ""
+    components:
+      opensphere-operator: "0.1.0"
+      opensphere-platformconfig: "0.1.0"
+      opensphere-installer: "0.1.0"
+      opensphere-crossplane: "0.1.0"
+      opensphere-foundation-identity: "0.1.0"
+      opensphere-foundation-data: "0.1.0"
+      opensphere-foundation-comm: "0.1.0"
+      opensphere-foundation-observability: "0.1.0"
+      opensphere-backup: "0.1.0"
+      opensphere-registry: "0.1.0"
+      opensphere-console: "0.1.0"

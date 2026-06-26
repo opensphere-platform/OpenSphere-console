@@ -1,0 +1,22 @@
+g, group:default/platform-admins, role:default/platform-admin
+g, group:default/platform-operators, role:default/viewer
+g, group:default/platform-builders, role:default/viewer
+g, group:default/platform-viewers, role:default/viewer
+
+p, role:default/platform-admin, catalog-entity, read, allow
+p, role:default/platform-admin, catalog.entity.create, create, allow
+p, role:default/platform-admin, catalog.entity.refresh, update, allow
+p, role:default/platform-admin, catalog.entity.delete, delete, allow
+p, role:default/platform-admin, catalog.location.read, read, allow
+p, role:default/platform-admin, catalog.location.create, create, allow
+p, role:default/platform-admin, catalog.location.delete, delete, allow
+p, role:default/platform-admin, scaffolder-template, read, allow
+p, role:default/platform-admin, scaffolder-action, use, allow
+p, role:default/platform-admin, policy-entity, read, allow
+p, role:default/platform-admin, policy-entity, create, allow
+p, role:default/platform-admin, policy-entity, update, allow
+p, role:default/platform-admin, policy-entity, delete, allow
+
+p, role:default/viewer, catalog-entity, read, allow
+p, role:default/viewer, catalog.location.read, read, allow
+p, role:default/viewer, scaffolder-template, read, allow

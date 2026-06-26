@@ -1,0 +1,16 @@
+# Dev scratch — these contain test credentials/TOTP secrets, never commit.
+spike.mjs
+cu-spike.mjs
+test-bff.mjs
+onboard-test.mjs
+denial-test.mjs
+*.html
+# Copied from a current plugin by up.sh at deploy time (don't track a point-in-time CA).
+kanidm-ca.crt
+sha1-spike.mjs
+sha1-onboard-test.mjs
+delayed-repro.mjs
+sha1-login-test.mjs
+provision-tester.mjs
+reonboard-test.mjs
+reprov-pw.mjs

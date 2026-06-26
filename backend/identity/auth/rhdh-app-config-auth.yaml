@@ -1,0 +1,36 @@
+# RHDH 인증/인가 오버레이 — extraAppConfig로 마지막에 로드되는 app-config.
+# ConfigMap: rhdh-app-config-auth (key: app-config.auth.yaml) — rhdh ns.
+# 시크릿 값은 env 치환(${...}) — rhdh-auth-secrets에서 주입, git에 없음.
+auth:
+  environment: production
+  session:
+    secret: ${AUTH_SESSION_SECRET}
+  providers:
+    # 이미지 기본 app-config의 미설정 GitHub 프로바이더 제거 (로그인 카드 정리)
+    github: null
+    oidc:
+      production:
+        # 백엔드는 클러스터 DNS로 메타데이터/token에 접근.
+        # 브라우저용 endpoint는 KC_HOSTNAME(localhost:8081) 기준으로 발급됨.
+        metadataUrl: http://keycloak.opensphere-auth.svc.cluster.local:8080/realms/opensphere-admin/.well-known/openid-configuration
+        clientId: rhdh
+        clientSecret: ${RHDH_OIDC_CLIENT_SECRET}
+        prompt: auto
+        signIn:
+          resolvers:
+            - resolver: preferredUsernameMatchingUserEntityName
+signInPage: oidc
+# 주의: backend.auth.externalAccess는 여기 두면 안 된다 — 차트가 마지막 로드 파일에
+# legacy 항목 배열을 렌더링해 통째로 덮는다. 선언 위치: rhdh-values.local.yaml appConfig.
+permission:
+  enabled: true
+  rbac:
+    policies-csv-file: /opt/app-root/src/rbac/rhdh-rbac-policy.csv
+    policyFileReload: true
+    pluginsWithPermission:
+      - catalog
+      - scaffolder
+      - permission
+    admin:
+      users:
+        - name: user:default/mars

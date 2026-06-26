@@ -1,0 +1,12 @@
+# opensphere-release — edge 채널 (최신 개발 빌드)
+# edge → candidate → stable 순서로 채널 승격
+# 채널 승격 = 동일 digest 재태그 (재빌드 금지, opensphere-image-build 규약)
+
+releases:
+  - version: "0.1.0-alpha.1"
+    releaseImage: "ghcr.io/opensphere-platform/opensphere-release:0.1.0-alpha.1"
+    digest: ""
+    supportedHostK8s: "1.27..1.30"
+    channel: edge
+    releaseDate: "2026-06-08"
+    releaseNotes: ""

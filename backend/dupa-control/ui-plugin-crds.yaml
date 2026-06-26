@@ -1,0 +1,125 @@
+# DUPA Admin Control — 등록처 CRD 2계층 (계획서 §5 + 검토 §A.1 manifest v2 정합)
+# UIPluginPackage     : 설치 가능 catalog (관리자 통제 — manifestSha256/signature/keyId가 신뢰 루트)
+# UIPluginRegistration: 설치 상태/desired state (Admin이 이걸 바꾸고 controller가 reconcile)
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: uipluginpackages.plugins.opensphere.io
+spec:
+  group: plugins.opensphere.io
+  scope: Namespaced
+  names:
+    kind: UIPluginPackage
+    plural: uipluginpackages
+    singular: uipluginpackage
+    shortNames: [uipkg]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [displayName, image, manifest, trust]
+              properties:
+                displayName: { type: string }
+                owner: { type: string }
+                version: { type: string }
+                description: { type: string }
+                image:
+                  type: object
+                  required: [repository, digest]
+                  properties:
+                    repository: { type: string }
+                    digest: { type: string }   # sha256:...
+                nav:
+                  type: object
+                  properties:
+                    band: { type: string }
+                    label: { type: string }
+                manifest:
+                  type: object
+                  required: [path, sha256]
+                  properties:
+                    path: { type: string }     # 컨테이너 내 서빙 경로 (/plugins/...)
+                    sha256: { type: string }    # 승인된 manifest digest → registry manifestSha256
+                    signaturePath: { type: string }
+                # 신뢰 루트 — 관리자 승인값 (검토 §B.5: controller는 계산해 비교만, 이 값을 전사)
+                trust:
+                  type: object
+                  required: [keyId]
+                  properties:
+                    keyId: { type: string }
+                shellCompat: { type: string }   # semver range, 예 ">=0.2.0 <0.4.0"
+                permissions:
+                  type: array
+                  items: { type: string }
+                api:
+                  type: object
+                  properties:
+                    basePath: { type: string }  # 셸 프록시가 허용할 prefix
+      additionalPrinterColumns:
+        - { name: Display, type: string, jsonPath: .spec.displayName }
+        - { name: Version, type: string, jsonPath: .spec.version }
+        - { name: Owner, type: string, jsonPath: .spec.owner }
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: uipluginregistrations.plugins.opensphere.io
+spec:
+  group: plugins.opensphere.io
+  scope: Namespaced
+  names:
+    kind: UIPluginRegistration
+    plural: uipluginregistrations
+    singular: uipluginregistration
+    shortNames: [uireg]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources: { status: {} }
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [packageRef, desiredState]
+              properties:
+                packageRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+                    version: { type: string }
+                desiredState:
+                  type: string
+                  enum: [Enabled, Disabled, Uninstalled]
+                installPolicy:
+                  type: object
+                  properties:
+                    createWorkload: { type: boolean }
+                    createProxyRoute: { type: boolean }
+                    exposeInNavigation: { type: boolean }
+                approval:
+                  type: object
+                  properties:
+                    requestedBy: { type: string }
+                    reason: { type: string }
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                phase: { type: string }       # Available/Verifying/Installing/Installed/Enabled/Disabled/Removed/Failed
+                reason: { type: string }       # DigestMismatch/IncompatibleShell/PermissionDenied/...
+                manifestUrl: { type: string }
+                lastTransitionTime: { type: string }
+      additionalPrinterColumns:
+        - { name: Desired, type: string, jsonPath: .spec.desiredState }
+        - { name: Phase, type: string, jsonPath: .status.phase }
+        - { name: Reason, type: string, jsonPath: .status.reason }

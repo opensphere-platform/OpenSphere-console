@@ -1,0 +1,22 @@
+# JIT-금지 게이트 CI (헌법 불변식 강제 · D-1). github-actions 형식 예시.
+# 정식은 opensphere-foundation-identity repo로 이관. KC_URL/ADMIN_TOKEN은 CI 시크릿.
+name: jit-gate
+on:
+  pull_request:
+    paths:
+      - 'identity/auth/**'
+  workflow_dispatch: {}
+jobs:
+  jit-no-auto-provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export realm
+        env:
+          KC_URL: ${{ secrets.KC_URL }}
+          ADMIN_TOKEN: ${{ secrets.KC_ADMIN_TOKEN }}
+        run: |
+          curl -s -X POST "$KC_URL/admin/realms/opensphere-admin/partial-export?exportClients=false&exportGroupsAndRoles=false" \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -o realm-export.json
+      - name: JIT-금지 게이트
+        run: bash identity/auth/jit-gate.sh realm-export.json

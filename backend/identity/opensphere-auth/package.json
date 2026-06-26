@@ -1,0 +1,10 @@
+{
+  "name": "opensphere-auth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Kanidm-backed OIDC issuer (BFF) that owns the OpenSphere Console login surface",
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  }
+}

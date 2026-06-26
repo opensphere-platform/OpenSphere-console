@@ -1,0 +1,117 @@
+# opensphere-auth BFF: SA + cross-ns secret read RBAC + kanidm-core (internal real
+# Kanidm) + the BFF Deployment. The service swap (kanidm/kanidm-ext -> BFF) is done by
+# up.sh after the BFF is healthy, so login never points at a not-yet-ready pod.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opensphere-auth
+  namespace: opensphere-console-auth
+---
+# the BFF needs to read the Kanidm admin token (for group lookups) from opensphere-system
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-auth-kanidm-reader
+  namespace: opensphere-system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["opensphere-identity-kanidm", "opensphere-rolemgr-kanidm"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-auth-kanidm-reader
+  namespace: opensphere-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-auth-kanidm-reader
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-auth
+    namespace: opensphere-console-auth
+---
+# PAT store: the BFF reads/writes its own PAT allowlist (jti) ConfigMap in its namespace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensphere-auth-pats
+  namespace: opensphere-console-auth
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-auth-pats
+  namespace: opensphere-console-auth
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["opensphere-auth-pats"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-auth-pats
+  namespace: opensphere-console-auth
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-auth-pats
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-auth
+    namespace: opensphere-console-auth
+---
+# internal-only handle on the REAL Kanidm pods (BFF + proxy target). Selector app=kanidm.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kanidm-core
+  namespace: opensphere-console-auth
+spec:
+  type: ClusterIP
+  selector: { app: kanidm }
+  ports:
+    - { name: https, port: 8443, targetPort: 8443 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensphere-auth
+  namespace: opensphere-console-auth
+  labels: { app: opensphere-auth }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: opensphere-auth } }
+  template:
+    metadata:
+      labels: { app: opensphere-auth }
+    spec:
+      serviceAccountName: opensphere-auth
+      containers:
+        - name: auth
+          image: localhost:5000/opensphere-auth:p1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: KANIDM_CORE_URL, value: "https://kanidm-core.opensphere-console-auth.svc:8443" }
+            - { name: KANIDM_SNI, value: "kanidm.opensphere-console-auth.svc" }
+            # kanidm-tls is self-signed; validate the Kanidm core against the very cert we
+            # also serve (mounted, always current) instead of a bakeable CA that can go stale.
+            - { name: KANIDM_CA_PATH, value: "/certs/tls.crt" }
+          ports:
+            - { containerPort: 8443 }
+          volumeMounts:
+            - { name: tls, mountPath: /certs, readOnly: true }
+            - { name: sig, mountPath: /keys, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /bff/healthz, port: 8443, scheme: HTTPS }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: tls
+          secret: { secretName: kanidm-tls }
+        - name: sig
+          secret: { secretName: opensphere-auth-sig, optional: true }

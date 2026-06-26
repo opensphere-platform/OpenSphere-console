@@ -1,0 +1,59 @@
+# opensphere-platformconfig admission webhook — SA·RBAC·Deployment·Service (정적).
+# cert Secret(platformconfig-webhook-tls) + ValidatingWebhookConfiguration 은
+# deploy/local-dev/platformconfig-webhook-up.sh 가 동적 생성(caBundle 주입).
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: platformconfig-webhook, namespace: opensphere-system }
+---
+# webhook 의 singleton 검사 = PlatformConfig list. (read-only)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: platformconfig-webhook }
+rules:
+  - apiGroups: ["config.opensphere.io"]
+    resources: ["platformconfigs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: platformconfig-webhook }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: platformconfig-webhook }
+subjects:
+  - { kind: ServiceAccount, name: platformconfig-webhook, namespace: opensphere-system }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platformconfig-webhook
+  namespace: opensphere-system
+  labels: { app: platformconfig-webhook }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: platformconfig-webhook } }
+  template:
+    metadata: { labels: { app: platformconfig-webhook } }
+    spec:
+      serviceAccountName: platformconfig-webhook
+      containers:
+        - name: webhook
+          image: localhost:5000/platformconfig-webhook:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8443 }]
+          volumeMounts:
+            - { name: certs, mountPath: /certs, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8443, scheme: HTTPS }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      volumes:
+        - { name: certs, secret: { secretName: platformconfig-webhook-tls } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: platformconfig-webhook, namespace: opensphere-system }
+spec:
+  selector: { app: platformconfig-webhook }
+  ports: [{ port: 443, targetPort: 8443 }]
