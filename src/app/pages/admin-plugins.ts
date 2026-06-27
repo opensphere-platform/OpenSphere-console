@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, ChangeDetectionStrategy } from '@angular/core';
+import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
 import { ExtensionHostService } from '../core/extension-host.service';
 import {
@@ -6,7 +6,19 @@ import {
   CatalogItem,
   Registration,
   AuditEvent,
+  Binding,
 } from '../core/plugin-control-client.service';
+
+/** 위계 트리 노드 — console(mainShell) → subShell/plugin, + Bindings 분기(§2.7 shell→plugin 귀속 시각화). */
+interface TreeNode {
+  id: string;
+  label: string;
+  meta?: string;
+  type: 'mainShell' | 'subShell' | 'plugin' | 'core' | 'binding' | 'group';
+  phase?: string | null;
+  children: TreeNode[];
+  actionable: boolean;
+}
 
 /**
  * Admin Control Page (계획서 §7) — Catalog/Installed/Audit 탭.
@@ -40,6 +52,80 @@ import {
     </div>
 
     <clr-tabs>
+      <clr-tab>
+        <button clrTabLink>구성도 Topology</button>
+        <clr-tab-content>
+          <p class="os-sub">
+            shell → plugin 귀속 위계 (§2.7) — console(mainShell)가 subShell·plugin을 호스팅,
+            Bindings는 shell 귀속 예외 범주
+          </p>
+          <div class="tree">
+            @for (root of tree(); track root.id) {
+              <div class="tn tn0" [class.host]="true">
+                <button class="caret" (click)="toggle(root.id)">{{ exp(root.id) ? '▾' : '▸' }}</button>
+                <span class="tt tt-{{ root.type }}">{{ typeLabel(root.type) }}</span>
+                <strong class="tl">{{ root.label }}</strong>
+                <span class="tm">{{ root.meta }}</span>
+                <span class="tc">{{ root.children.length }}</span>
+              </div>
+              @if (exp(root.id)) {
+                @for (c of root.children; track c.id) {
+                  <div class="tn tn1">
+                    @if (c.type === 'subShell') {
+                      <button class="caret" (click)="toggle(c.id)">{{ exp(c.id) ? '▾' : '▸' }}</button>
+                    } @else {
+                      <span class="caret-sp"></span>
+                    }
+                    <span class="tt tt-{{ c.type }}">{{ typeLabel(c.type) }}</span>
+                    <span class="tl">{{ c.label }}</span>
+                    @if (c.phase) {
+                      <span
+                        class="label"
+                        [class.label-success]="c.phase === 'Enabled'"
+                        [class.label-danger]="c.phase === 'Failed'"
+                        >{{ c.phase }}</span
+                      >
+                    }
+                    @if (c.actionable && c.phase) {
+                      @if (c.phase === 'Enabled') {
+                        <button class="btn btn-sm" (click)="run('disable', c.id)">Disable</button>
+                      } @else {
+                        <button class="btn btn-sm btn-success-outline" (click)="run('enable', c.id)">
+                          Enable
+                        </button>
+                      }
+                    }
+                    <span class="tm">{{ c.meta }}</span>
+                  </div>
+                  @if (exp(c.id) && c.type === 'subShell') {
+                    @for (g of c.children; track g.id) {
+                      <div class="tn tn2">
+                        <span class="caret-sp"></span><span class="tt tt-plugin">plugin</span>
+                        <span class="tl">{{ g.label }}</span>
+                        @if (g.phase) {
+                          <span class="label" [class.label-success]="g.phase === 'Enabled'">{{
+                            g.phase
+                          }}</span>
+                        }
+                        <span class="tm">{{ g.meta }}</span>
+                      </div>
+                    } @empty {
+                      <div class="tn tn2 empty">
+                        모듈 없음 — 이 shell에 귀속된 plugin 미배포 (Phase 2 예정)
+                      </div>
+                    }
+                  }
+                }
+              }
+            }
+          </div>
+          <p class="os-sub">
+            ⚠️ kind/hostRef가 데이터에 들어오기 전까지(§2.7 실현·§5.2) 위계는 scope·core·nav
+            신호로 도출됩니다. hostRef가 채워지면 plugin이 정확히 host 아래로 중첩됩니다.
+          </p>
+        </clr-tab-content>
+      </clr-tab>
+
       <clr-tab>
         <button clrTabLink>Installed</button>
         <clr-tab-content>
@@ -233,6 +319,90 @@ import {
       .table .left {
         text-align: left;
       }
+      .tree {
+        font-size: 0.8rem;
+        margin: 0.2rem 0 0.5rem;
+      }
+      .tn {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.25rem 0.2rem;
+        border-bottom: 1px solid var(--clr-color-neutral-200, #eee);
+      }
+      .tn1 {
+        padding-left: 1.6rem;
+      }
+      .tn2 {
+        padding-left: 3.4rem;
+      }
+      .tn.host {
+        background: var(--clr-color-neutral-100, #f6f7f9);
+        font-size: 0.85rem;
+      }
+      .tn.empty {
+        color: var(--os-muted);
+        font-style: italic;
+        border-bottom: 0;
+      }
+      .caret {
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+        width: 1rem;
+        padding: 0;
+        color: var(--os-muted);
+      }
+      .caret-sp {
+        width: 1rem;
+        display: inline-block;
+      }
+      .tt {
+        font-size: 0.56rem;
+        font-weight: 700;
+        padding: 0.05rem 0.35rem;
+        border-radius: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #fff;
+        white-space: nowrap;
+      }
+      .tt-mainShell {
+        background: #1b2a4a;
+      }
+      .tt-subShell {
+        background: #0d6e6e;
+      }
+      .tt-plugin {
+        background: #3b5bdb;
+      }
+      .tt-core {
+        background: #7048e8;
+      }
+      .tt-binding {
+        background: #e8590c;
+      }
+      .tt-group {
+        background: #868e96;
+      }
+      .tl {
+        font-weight: 600;
+      }
+      .tm {
+        color: var(--os-muted);
+        font-family: monospace;
+        font-size: 0.62rem;
+        margin-left: auto;
+      }
+      .tc {
+        color: var(--os-muted);
+        font-size: 0.62rem;
+        min-width: 1.2rem;
+        text-align: right;
+      }
+      .tree .label {
+        font-size: 0.56rem;
+      }
     `,
   ],
 })
@@ -244,6 +414,9 @@ export class AdminPlugins implements OnInit {
   readonly registrations = signal<Registration[]>([]);
   readonly events = signal<AuditEvent[]>([]);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
+  readonly bindings = signal<Binding[]>([]);
+  readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
+  readonly tree = computed<TreeNode[]>(() => this.buildTree());
 
   async ngOnInit(): Promise<void> {
     await this.refresh();
@@ -251,14 +424,16 @@ export class AdminPlugins implements OnInit {
 
   async refresh(): Promise<void> {
     try {
-      const [c, r, e] = await Promise.all([
+      const [c, r, e, b] = await Promise.all([
         this.ctl.catalog(),
         this.ctl.registrations(),
         this.ctl.events(),
+        this.ctl.bindings(),
       ]);
       this.catalog.set(c);
       this.registrations.set(r);
       this.events.set(e);
+      this.bindings.set(b);
     } catch (err) {
       this.msg.set({ type: 'danger', text: String(err) });
     }
@@ -272,6 +447,80 @@ export class AdminPlugins implements OnInit {
    *  Catalog 탭이 이걸로 상태별 액션(Install/Enable/Disable/Uninstall)을 직접 노출한다. */
   phaseOf(name: string): string | null {
     return this.registrations().find((r) => r.name === name)?.status.phase ?? null;
+  }
+
+  // ── 구성도(Topology) 트리 — §2.7 shell→plugin 귀속 위계를 가용 신호(kind/hostRef·scope·core·nav)로 도출 ──
+  /** kind/hostRef가 있으면 그대로, 없으면 scope·core·nav로 휴리스틱 분류(데이터 정확해지면 자동 정확화). */
+  private classify(c: CatalogItem): 'core' | 'subShell' | 'plugin' {
+    if (c.kind === 'subShell') return 'subShell';
+    if (c.kind === 'plugin') return 'plugin';
+    if (c.core || /admin|main-?shell|console-admin/i.test(c.scope || c.nav?.band || '')) return 'core';
+    return c.nav?.band ? 'subShell' : 'plugin'; // nav 밴드 있는 비-core = perspective/subShell host
+  }
+
+  private buildTree(): TreeNode[] {
+    const cat = this.catalog();
+    const mk = (c: CatalogItem, type: TreeNode['type']): TreeNode => ({
+      id: c.name,
+      label: c.displayName || c.name,
+      meta: c.name,
+      type,
+      phase: this.phaseOf(c.name),
+      children: [],
+      actionable: true,
+    });
+    const core = cat.filter((c) => this.classify(c) === 'core');
+    const subs = cat.filter((c) => this.classify(c) === 'subShell');
+    const plugins = cat.filter((c) => this.classify(c) === 'plugin');
+    // subShell node: hostRef로 자기 plugin을 중첩(현재 hostRef 미존재 → 빈 host). 나머지 plugin은 mainShell 직속.
+    const subNodes = subs.map((c) => {
+      const n = mk(c, 'subShell');
+      n.children = plugins.filter((p) => p.hostRef === c.name).map((p) => mk(p, 'plugin'));
+      return n;
+    });
+    const mainPlugins = plugins.filter((p) => !p.hostRef || !subs.some((s) => s.name === p.hostRef));
+    const consoleNode: TreeNode = {
+      id: 'console',
+      label: 'console',
+      meta: 'mainShell · 루트 호스트',
+      type: 'mainShell',
+      actionable: false,
+      children: [
+        ...core.map((c) => mk(c, 'core')),
+        ...subNodes,
+        ...mainPlugins.map((c) => mk(c, 'plugin')),
+      ],
+    };
+    const bindingsRoot: TreeNode = {
+      id: 'bindings',
+      label: 'Bindings',
+      meta: '비-UI 확장 · shell 귀속 예외',
+      type: 'group',
+      actionable: false,
+      children: this.bindings().map((b) => ({
+        id: b.name,
+        label: b.displayName || b.name,
+        meta: b.name,
+        type: 'binding' as const,
+        phase: b.phase ?? null,
+        children: [],
+        actionable: false,
+      })),
+    };
+    return [consoleNode, bindingsRoot];
+  }
+
+  exp(id: string): boolean {
+    return this.expandedSet().has(id);
+  }
+  toggle(id: string): void {
+    const s = new Set(this.expandedSet());
+    if (s.has(id)) s.delete(id);
+    else s.add(id);
+    this.expandedSet.set(s);
+  }
+  typeLabel(t: TreeNode['type']): string {
+    return t === 'group' ? '' : t;
   }
 
   async run(action: 'install' | 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
