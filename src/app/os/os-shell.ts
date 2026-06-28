@@ -252,6 +252,7 @@ interface NavBand {
       .content-area {
         padding: 1.5rem !important;   /* 확정값 — 2단 페이지 음수마진(-1.5rem)과 정확히 일치(오버플로 방지) */
         min-width: 0;
+        overflow-x: hidden;
       }
       /* Workspace 전환기 (헌법 §6 · D-B) */
       .os-ws-switch {
