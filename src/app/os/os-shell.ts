@@ -348,7 +348,7 @@ export class OsShell {
       items: [
         { path: '/catalog', label: 'Developer Catalog' },
         { path: '/apis', label: 'APIs' },
-        { path: '/containers/overview', label: 'Containers' },
+        // Containers는 DUPA subShell(shell-template)로 이전 — 구축 Build 밴드에 동적 등록됨.
       ],
     },
   ];

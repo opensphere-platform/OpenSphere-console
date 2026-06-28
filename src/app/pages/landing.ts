@@ -112,7 +112,6 @@ export class Landing {
     const base: Card[] = [
       { path: '/catalog', title: 'Developer Catalog', sub: '카탈로그' },
       { path: '/apis', title: 'APIs', sub: '정보 흐름' },
-      { path: '/containers/overview', title: 'Containers', sub: '컨테이너 워크로드' },
       { path: '/me', title: '내 정보', sub: 'My Info' },
     ];
     if (this.psp.isAdmin()) {

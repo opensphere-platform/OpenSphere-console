@@ -134,11 +134,15 @@ body code, body kbd, body pre, body samp, .os-mono { font-family: var(--os-font-
  * 슬롯과 svg를 20px로 고정 + 중앙 정렬 → 모든 1단 아이콘 동일 크기·상하중앙. */
 .os-nav a[clrVerticalNavLink] > os-cicon,
 .os-nav .nav-link > os-cicon,
-.os-nav .nav-trigger > os-cicon {
+.os-nav .nav-trigger > os-cicon,
+.os-nav a[clrVerticalNavLink] > os-rawicon,
+.os-nav .nav-link > os-rawicon,
+.os-nav .nav-trigger > os-rawicon {
   flex: 0 0 20px; width: 20px !important; height: 20px !important; min-width: 20px !important;
   display: inline-flex !important; align-items: center; justify-content: center;
+  margin-inline-end: 0.65rem;   /* 아이콘-텍스트 간격(os-cicon·os-rawicon 일관) */
 }
-.os-nav os-cicon svg { display: block; width: 20px !important; height: 20px !important; }
+.os-nav os-cicon svg, .os-nav os-rawicon svg { display: block; width: 20px !important; height: 20px !important; }
 
 /* 1단 메뉴 항목 간격 — Clarity 기본(32px)이 답답 → 여유 높이(IBM Cloud 사이드냅 유사). 아이콘은 계속 중앙. */
 .os-nav a[clrVerticalNavLink],

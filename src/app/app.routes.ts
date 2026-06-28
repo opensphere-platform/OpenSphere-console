@@ -7,9 +7,6 @@ import { AdminPlugins } from './pages/admin-plugins';
 import { AdminRoles } from './pages/admin-roles';
 import { MyInfo } from './pages/my-info';
 import { ConsoleAdmins } from './pages/console-admins';
-import { ContainersLayout } from './pages/containers-layout';
-import { ContainersOverview } from './pages/containers';
-import { ContainersPage } from './pages/containers-page';
 import { AdminLayout } from './pages/admin-layout';
 
 export const routes: Routes = [
@@ -17,23 +14,7 @@ export const routes: Routes = [
   { path: 'me', component: MyInfo },
   { path: 'catalog', component: Catalog },
   { path: 'apis', component: Apis },
-  // Containers 섹션 (ACC 2단 트리 내비) — 레이아웃 + 하위 더미 페이지. 진입 시 2단 active 자동 표시.
-  {
-    path: 'containers',
-    component: ContainersLayout,
-    children: [
-      { path: '', redirectTo: 'overview', pathMatch: 'full' },
-      { path: 'overview', component: ContainersOverview },
-      { path: 'serverless/get-started', component: ContainersPage, data: { title: 'Get started', group: 'Serverless' } },
-      { path: 'serverless/projects', component: ContainersPage, data: { title: 'Serverless projects', group: 'Serverless' } },
-      { path: 'serverless/cli', component: ContainersPage, data: { title: 'CLI', group: 'Serverless' } },
-      { path: 'cluster-management/get-started', component: ContainersPage, data: { title: 'Get started', group: 'Cluster management' } },
-      { path: 'cluster-management/clusters', component: ContainersPage, data: { title: 'Clusters', group: 'Cluster management' } },
-      { path: 'cluster-management/reservations', component: ContainersPage, data: { title: 'Reservations', group: 'Cluster management' } },
-      { path: 'cluster-management/helm', component: ContainersPage, data: { title: 'Helm catalog', group: 'Cluster management' } },
-      { path: 'registry', component: ContainersPage, data: { title: 'Container Registry', group: '' } },
-    ],
-  },
+  // Containers 섹션은 DUPA subShell(shell-template)로 이전됨 → 네이티브 라우트 제거. /p/shell-template 로 진입.
 
   // "콘솔 관리" 섹션 (Model A): 1단 진입 → AdminLayout이 2단 보조메뉴 + 자식 페이지를 렌더.
   // §3.2 Core≠Plugin: 셸 네이티브 컴포넌트. 백엔드는 console-identity-api(/api/identity 프록시).
