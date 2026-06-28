@@ -1,92 +1,142 @@
-import { Component, inject, computed, ChangeDetectionStrategy } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Component, OnInit, signal, ChangeDetectionStrategy } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
-import { AuthService } from '../core/auth.service';
+import { BackendUnavailable } from '../os/backend-unavailable';
+import { OsPageHeader } from '../os/os-page-header';
+import { OsDatagrid, OsCellDef, OsColumn } from '../os/os-datagrid';
+
+interface IdUser {
+  id: string;
+  username: string;
+  email?: string;
+  enabled: boolean;
+  displayName?: string;
+  groups?: string[];
+}
+interface AuditEntry {
+  time?: string;
+  actor?: string;
+  action?: string;
+  target?: string;
+  result?: string;
+}
+interface IdMeta {
+  realm?: string;
+  idp?: string;
+  writeEnabled?: boolean;
+}
 
 /**
- * 콘솔 관리자 (Kanidm) — Main Shell 운영관리자 자기관리 홈. **CORE 내장 컴포넌트**.
- *
- * 이전엔 `console-identity` DUPA 플러그인이었으나(별도 컨테이너·"미등록" 가능), 콘솔이 자기 자신
- * (접근·신원·플러그인)을 관리하는 영역은 **플러그인이 아니라 셸에 내장**한다 — 플러그인 시스템을
- * 플러그인으로 관리할 수 없다(chicken-egg). 운영자 신원은 auth.service(Kanidm id_token)에서 직접
- * 읽고, 멤버십 부여/회수·플러그인 설치는 내장 admin-roles·admin-plugins로 위임한다. perspective 아님.
+ * 콘솔 관리자 (Kanidm IGA) — **셸 네이티브** 페이지(ADR-UI-003 §3.2 Core≠Plugin).
+ * 콘솔 자체 기능(운영관리자 identity)이므로 DUPA plugin이 아니라 mainShell에 내장.
+ * 백엔드 = console-core 서비스 `console-identity-api`(셸 nginx가 /api/identity 프록시). console==cli: `os identity …`.
  */
 @Component({
   selector: 'os-console-admins',
-  imports: [ClarityModule, RouterLink],
-  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [ClarityModule, BackendUnavailable, OsPageHeader, OsDatagrid, OsCellDef],
   template: `
-    <h1>콘솔 관리자 <span class="os-engine">Console Admin · Kanidm</span></h1>
+    <div class="os-page">
+      <os-page-header title="콘솔 관리자" tag="Kanidm IGA · 내장(core-native)" />
+      @if (down(); as d) {
+      <os-backend-unavailable
+        feature="콘솔 관리자"
+        backend="console-identity-api (Kanidm IGA)"
+        hint="console-identity-api 배포 · Kanidm 시크릿(opensphere-identity-kanidm) 확인 시 자동 복구됩니다."
+        [detail]="d"
+      />
+    } @else {
     <p class="os-sub">
-      Main Shell 운영관리자 자기관리. 콘솔 접근·신원·플러그인은 <strong>셸 내장 CORE</strong>(플러그인 아님).
+      콘솔 운영관리자 = Kanidm 사용자/그룹. 셸 네이티브 — DUPA plugin 아님(ADR-UI-003 §3.2).
+      @if (meta(); as mt) {
+        · realm <code>{{ mt.realm }}</code> · idp {{ mt.idp }} · write {{ mt.writeEnabled ? 'on' : 'off' }}
+      }
     </p>
 
-    <div class="clr-row">
-      <div class="clr-col-lg-6 clr-col-12">
-        <div class="card">
-          <div class="card-header">현재 운영자</div>
-          <div class="card-block">
-            <table class="table table-compact table-vertical">
-              <tbody>
-                <tr><th>사용자</th><td>{{ user() || '—' }}</td></tr>
-                <tr><th>이메일</th><td>{{ email() || '—' }}</td></tr>
-                <tr><th>subject</th><td><code>{{ subject() || '—' }}</code></td></tr>
-                <tr>
-                  <th>그룹</th>
-                  <td>
-                    @for (g of groups(); track g) {
-                      <span class="label">{{ g }}</span>
-                    }
-                    @if (!groups().length) { — }
-                  </td>
-                </tr>
-                <tr>
-                  <th>콘솔 관리자</th>
-                  <td>
-                    @if (isAdmin()) {
-                      <span class="label label-success">예 · opensphere-console-admins</span>
-                    } @else {
-                      <span class="label label-warning">아니오</span>
-                    }
-                  </td>
-                </tr>
-                <tr><th>토큰 만료</th><td>{{ expDate() }}</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+    @if (msg(); as m) {
+      <clr-alert [clrAlertType]="m.type" [clrAlertClosable]="true" (clrAlertClosedChange)="msg.set(null)">
+        <clr-alert-item><span class="alert-text">{{ m.text }}</span></clr-alert-item>
+      </clr-alert>
+    }
 
-      <div class="clr-col-lg-6 clr-col-12">
-        <div class="card">
-          <div class="card-header">관리 작업</div>
-          <div class="card-block">
-            <p>콘솔 운영관리 영역(전부 셸 내장 CORE — DUPA 플러그인 의존 없음):</p>
-            <ul class="list">
-              <li>역할 = Kanidm 그룹(opensphere-console-*) 멤버십 부여/회수</li>
-              <li>플러그인 = DUPA 확장 설치·enable/disable</li>
-              <li>계정 self-service = 비밀번호·passkey·TOTP(Kanidm)</li>
-            </ul>
-          </div>
-          <div class="card-footer">
-            <a routerLink="/admin/roles" class="btn btn-sm btn-link">역할 정의·부여</a>
-            <a routerLink="/admin/plugins" class="btn btn-sm btn-link">플러그인 관리</a>
-            <a [href]="accountUrl" target="_blank" rel="noopener" class="btn btn-sm btn-link">계정 self-service</a>
-          </div>
-        </div>
-      </div>
+    <h2>사용자 <span class="os-engine">({{ users().length }})</span></h2>
+    <os-datagrid [columns]="userCols" [rows]="users()" empty="사용자 조회 중…">
+      <ng-template osCell="username" let-u><strong>{{ u.username }}</strong></ng-template>
+      <ng-template osCell="displayName" let-u>{{ u.displayName || '—' }}</ng-template>
+      <ng-template osCell="email" let-u>{{ u.email || '—' }}</ng-template>
+      <ng-template osCell="status" let-u>
+        @if (u.enabled) { <span class="label label-success">활성</span> } @else { <span class="label">비활성</span> }
+      </ng-template>
+      <ng-template osCell="groups" let-u>
+        @for (g of u.groups; track g) { <span class="label label-info">{{ g }}</span> } @empty { <span class="os-sub">—</span> }
+      </ng-template>
+    </os-datagrid>
+
+    <h2>감사 로그</h2>
+    <os-datagrid [columns]="auditCols" [rows]="audit()" empty="감사 항목 없음">
+      <ng-template osCell="time" let-a><span class="os-mono">{{ a.time }}</span></ng-template>
+    </os-datagrid>
+      }
     </div>
   `,
+  changeDetection: ChangeDetectionStrategy.Eager,
+  styles: [
+    `
+      .os-sub { color: var(--os-muted); font-size: 0.7rem; margin: 0.3rem 0 0.8rem; }
+      .os-engine { font-size: 0.6rem; color: var(--os-muted); font-weight: 400; margin-left: 0.4rem; }
+      .os-mono { font-family: monospace; font-size: 0.62rem; color: var(--os-muted); }
+      .table .left { text-align: left; }
+      .label { margin: 0 0.25rem 0.25rem 0; }
+    `,
+  ],
 })
-export class ConsoleAdmins {
-  private auth = inject(AuthService);
-  readonly user = this.auth.user;
-  readonly email = this.auth.email;
-  readonly groups = this.auth.groups;
-  readonly subject = this.auth.subject;
-  readonly accountUrl = this.auth.accountUrl();
-  readonly isAdmin = computed(() => this.auth.groups().includes('opensphere-console-admins'));
-  readonly expDate = computed(() =>
-    this.auth.tokenExp() ? new Date(this.auth.tokenExp() * 1000).toLocaleString() : '—',
-  );
+export class ConsoleAdmins implements OnInit {
+  readonly userCols: OsColumn[] = [
+    { key: 'username', label: '사용자명' },
+    { key: 'displayName', label: '표시이름' },
+    { key: 'email', label: '이메일' },
+    { key: 'status', label: '상태' },
+    { key: 'groups', label: '그룹' },
+  ];
+  readonly auditCols: OsColumn[] = [
+    { key: 'time', label: '시각' },
+    { key: 'actor', label: '행위자' },
+    { key: 'action', label: '동작' },
+    { key: 'target', label: '대상' },
+    { key: 'result', label: '결과' },
+  ];
+  readonly users = signal<IdUser[]>([]);
+  readonly audit = signal<AuditEntry[]>([]);
+  readonly meta = signal<IdMeta | null>(null);
+  readonly down = signal<string>(''); // 백엔드 미배포/불건전 → graceful degradation
+  readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
+
+  async ngOnInit(): Promise<void> {
+    await Promise.all([this.loadIdentity(), this.loadAudit()]);
+  }
+
+  private async loadIdentity(): Promise<void> {
+    try {
+      const r = await fetch('/api/identity', { cache: 'no-store' });
+      if (!r.ok) {
+        this.down.set(`identity HTTP ${r.status}`);
+        return;
+      }
+      const d = await r.json();
+      this.meta.set(d.meta ?? null);
+      this.users.set(d.users ?? []);
+    } catch (e) {
+      this.down.set('조회 실패: ' + e);
+    }
+  }
+
+  private async loadAudit(): Promise<void> {
+    try {
+      const r = await fetch('/api/identity/audit', { cache: 'no-store' });
+      if (r.ok) {
+        const d = await r.json();
+        this.audit.set(d.items ?? d.audit ?? (Array.isArray(d) ? d : []));
+      }
+    } catch {
+      /* audit best-effort */
+    }
+  }
 }

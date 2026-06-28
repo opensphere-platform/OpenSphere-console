@@ -93,7 +93,7 @@ spec:
       serviceAccountName: opensphere-auth
       containers:
         - name: auth
-          image: localhost:5000/opensphere-auth:p1
+          image: localhost:5000/opensphere-auth:p3
           imagePullPolicy: IfNotPresent
           env:
             - { name: KANIDM_CORE_URL, value: "https://kanidm-core.opensphere-console-auth.svc:8443" }
@@ -101,6 +101,8 @@ spec:
             # kanidm-tls is self-signed; validate the Kanidm core against the very cert we
             # also serve (mounted, always current) instead of a bakeable CA that can go stale.
             - { name: KANIDM_CA_PATH, value: "/certs/tls.crt" }
+            # console session (id_token) lifetime in seconds; 86400 = 24h (server.mjs default 3600)
+            - { name: OIDC_TOKEN_TTL, value: "86400" }
           ports:
             - { containerPort: 8443 }
           volumeMounts:
@@ -115,3 +117,16 @@ spec:
           secret: { secretName: kanidm-tls }
         - name: sig
           secret: { secretName: opensphere-auth-sig, optional: true }
+---
+# ADR-UI-003 §3.2: 셸이 same-origin(/bff)으로 BFF를 호출하기 위한 ClusterIP Service.
+# 레거시 kanidm-ext 셀렉터 swap 대신 — BFF=/bff/* 백엔드(console-core 서비스), 로그인은 Kanidm 직결 유지.
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensphere-auth
+  namespace: opensphere-console-auth
+  labels: { app: opensphere-auth }
+spec:
+  selector: { app: opensphere-auth }
+  ports:
+    - { port: 8443, targetPort: 8443 }

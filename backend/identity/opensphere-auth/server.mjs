@@ -103,8 +103,10 @@ async function kanidmAuthenticate(username, password, totp) {
   if (r.status !== 200 || !r.sid) throw { reason: 'Unknown user or auth unavailable.' };
   const H = { 'x-kanidm-auth-session-id': r.sid };
   const mechs = r.json?.state?.choose || [];
-  if (!mechs.includes('passwordmfa')) throw { reason: `Unsupported auth mechanism (${mechs.join(',') || 'none'}).` };
-  r = await kanidmReq('POST', '/v1/auth', { step: { begin: 'passwordmfa' } }, H);
+  // dev: password-only 계정(mech 'password')도 수용 — TOTP 비활성 계정 로그인 허용. TOTP 있으면 아래 cont에서 요구.
+  const mech = mechs.includes('passwordmfa') ? 'passwordmfa' : mechs.includes('password') ? 'password' : null;
+  if (!mech) throw { reason: `Unsupported auth mechanism (${mechs.join(',') || 'none'}).` };
+  r = await kanidmReq('POST', '/v1/auth', { step: { begin: mech } }, H);
   let cont = r.json?.state?.continue || [];
   if (cont.includes('totp')) {
     const code = parseInt(String(totp).replace(/\s+/g, ''), 10);
@@ -252,6 +254,7 @@ function redirect(res, location) { res.writeHead(302, { location, 'cache-control
 const PAT_CM_NS = process.env.PAT_CM_NS || 'opensphere-console-auth';
 const PAT_CM_NAME = process.env.PAT_CM_NAME || 'opensphere-auth-pats';
 const PAT_TTL_DAYS = parseInt(process.env.PAT_TTL_DAYS || '365', 10);
+const OIDC_TOKEN_TTL = parseInt(process.env.OIDC_TOKEN_TTL || '3600', 10); // console session (id_token) lifetime in seconds; default 1h, set 86400 for 24h
 const PAT_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${PAT_CM_NAME}`;
 
 function k8sApi(method, path, body, contentType) {
@@ -283,11 +286,46 @@ function verifyToken(jwt) {
   } catch { return null; }
 }
 const bearer = (req) => { const a = req.headers.authorization || ''; return a.startsWith('Bearer ') ? a.slice(7) : null; };
-// 관리자 id_token(또는 PAT)을 제시해야 발급/폐기 가능 (콘솔 admin 그룹)
-function requireAdmin(req) {
-  const pl = verifyToken(bearer(req));
-  if (!pl || !(pl.groups || []).includes(ADMIN_GROUP)) return null;
-  return pl;
+// Kanidm id_token 검증 — 콘솔 Kanidm 직결 로그인 토큰(swap-less §3.2 배포). BFF 자체 발급(PAT)과 dual-accept.
+// (swap 아키텍처에선 BFF가 발급자라 verifyToken만으로 충분했으나, 콘솔이 Kanidm 직결이면 토큰이 Kanidm 서명임.)
+let _kjwks = null, _kjwksAt = 0;
+async function kanidmJwks(force) {
+  if (!force && _kjwks && Date.now() - _kjwksAt < 300000) return _kjwks;
+  const r = await kanidmReq('GET', `/oauth2/openid/${CLIENT_ID}/public_key.jwk`);
+  if (r.status !== 200 || !r.json) throw new Error(`kanidm jwk HTTP ${r.status}`);
+  _kjwks = r.json.keys || (r.json.kty ? [r.json] : []);
+  _kjwksAt = Date.now();
+  return _kjwks;
+}
+async function verifyKanidmToken(jwt) {
+  try {
+    const [h, pl, s] = String(jwt).split('.');
+    if (!h || !pl || !s) return null;
+    const hdr = JSON.parse(Buffer.from(h, 'base64url').toString('utf8'));
+    if (hdr.alg !== 'ES256') { console.log(`[verifyKanidm] alg=${hdr.alg} (not ES256)`); return null; }
+    let jwk = (await kanidmJwks()).find((k) => k.kid === hdr.kid);          // kid 매칭(키 로테이션 대응 — console-identity와 동일)
+    if (!jwk) jwk = (await kanidmJwks(true)).find((k) => k.kid === hdr.kid); // 미스 시 강제 refresh + 재시도
+    if (!jwk) { console.log(`[verifyKanidm] no jwk for tokKid=${hdr.kid} (have ${(await kanidmJwks()).map((k) => k.kid).join(',')})`); return null; }
+    const key = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+    const ok = crypto.verify('SHA256', Buffer.from(`${h}.${pl}`), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(s, 'base64url'));
+    console.log(`[verifyKanidm] kid=${hdr.kid} verify=${ok}`);
+    if (!ok) return null;
+    const payload = JSON.parse(Buffer.from(pl, 'base64url').toString('utf8'));
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch (e) { console.log(`[verifyKanidm] error ${e.message}`); return null; }
+}
+// 관리자 id_token(또는 PAT) 제시 필요 (콘솔 admin 그룹). BFF 토큰 또는 Kanidm id_token 수용. 그룹은 SPN(name@domain) strip.
+async function requireAdmin(req) {
+  const t = bearer(req);
+  let pl = verifyToken(t);
+  const via = pl ? 'bff' : 'kanidm';
+  if (!pl) pl = await verifyKanidmToken(t);
+  if (!pl) { console.log(`[requireAdmin] DENY no-valid-token hasBearer=${!!t} len=${t ? t.length : 0}`); return null; }
+  const groups = (pl.groups || []).map((g) => String(g).split('@')[0]);
+  const ok = groups.includes(ADMIN_GROUP);
+  console.log(`[requireAdmin] ${ok ? 'ALLOW' : 'DENY-not-admin'} via=${via} user=${pl.preferred_username} groups=${JSON.stringify(groups)}`);
+  return ok ? pl : null;
 }
 const patJson = (res, code, obj) => send(res, code, 'application/json', JSON.stringify(obj));
 
@@ -424,8 +462,8 @@ async function handleToken(req, res) {
   const challenge = crypto.createHash('sha256').update(form.code_verifier || '').digest('base64url');
   if (challenge !== entry.code_challenge) return send(res, 400, 'application/json', JSON.stringify({ error: 'invalid_grant', error_description: 'PKCE failed' }));
   const now = Math.floor(Date.now() / 1000);
-  const idToken = signJWT({ ...entry.payloadBase, iat: now, nbf: now, exp: now + 3600, auth_time: now, ...(entry.nonce ? { nonce: entry.nonce } : {}) });
-  send(res, 200, 'application/json', JSON.stringify({ access_token: crypto.randomBytes(32).toString('base64url'), token_type: 'Bearer', expires_in: 3600, id_token: idToken, scope: 'openid profile email groups_name' }));
+  const idToken = signJWT({ ...entry.payloadBase, iat: now, nbf: now, exp: now + OIDC_TOKEN_TTL, auth_time: now, ...(entry.nonce ? { nonce: entry.nonce } : {}) });
+  send(res, 200, 'application/json', JSON.stringify({ access_token: crypto.randomBytes(32).toString('base64url'), token_type: 'Bearer', expires_in: OIDC_TOKEN_TTL, id_token: idToken, scope: 'openid profile email groups_name' }));
 }
 
 // ---- onboarding / credential setup (replaces Kanidm /ui/reset) ----
@@ -504,13 +542,13 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       if (p === '/bff/healthz') return send(res, 200, 'text/plain', 'ok');
       // PAT — 관리자 발급 장수 토큰(osph CLI/자동화). 발급/목록/폐기는 admin 그룹 필요, introspect는 공개.
       if (p === '/bff/pat/introspect' && req.method === 'POST') return await handlePatIntrospect(req, res);
-      if (p === '/bff/pat' && req.method === 'POST') { const a = requireAdmin(req); return a ? await handlePatMint(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
-      if (p === '/bff/pat' && req.method === 'GET') { const a = requireAdmin(req); return a ? await handlePatList(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
-      if (p.startsWith('/bff/pat/') && req.method === 'DELETE') { const a = requireAdmin(req); return a ? await handlePatRevoke(req, res, a, decodeURIComponent(p.slice('/bff/pat/'.length))) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/pat' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handlePatMint(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/pat' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handlePatList(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p.startsWith('/bff/pat/') && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handlePatRevoke(req, res, a, decodeURIComponent(p.slice('/bff/pat/'.length))) : patJson(res, 401, { error: 'unauthorized' }); }
       // 콘솔 역할 관리(admin 전용) — 역할 정의·부여 UI 백엔드
-      if (p === '/bff/roles' && req.method === 'GET') { const a = requireAdmin(req); return a ? await handleRolesList(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
-      if (p === '/bff/roles/grant' && req.method === 'POST') { const a = requireAdmin(req); return a ? await handleRoleGrant(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
-      if (p === '/bff/roles/revoke' && req.method === 'POST') { const a = requireAdmin(req); return a ? await handleRoleRevoke(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/roles' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleRolesList(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/roles/grant' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleRoleGrant(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/roles/revoke' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleRoleRevoke(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
       // our own account-onboarding surface (replaces Kanidm /ui/reset)
       if (p === '/ui/reset' && req.method === 'GET') return await handleOnboardGet(reqUrl, res);
       if (p === '/ui/reset' && req.method === 'POST') return await handleOnboardPost(req, res);

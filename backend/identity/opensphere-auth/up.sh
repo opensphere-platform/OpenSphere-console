@@ -3,14 +3,14 @@
 # The BFF becomes the OIDC issuer (owns the Carbon login UI, authenticates via Kanidm
 # /v1/auth REST). Reversible with down.sh (repoint services back to Kanidm).
 set -euo pipefail
-. "$(cd "$(dirname "$0")/../local-dev" && pwd)/lib.sh"
+. "$(cd "$(dirname "$0")/../../tools/local-dev" && pwd)/lib.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NS=opensphere-console-auth
 REG="${REG:-$(detect_reg)}"
 TAG="${1:-p1}"
 
 echo "== refresh kanidm CA into build context (use a CURRENT one) =="
-cp "$HERE/../console-identity/kanidm-ca.crt" "$HERE/kanidm-ca.crt"
+cp "$HERE/../../console/console-identity/kanidm-ca.crt" "$HERE/kanidm-ca.crt"
 
 echo "== ensure a persistent ES256 signing key (stable kid across restarts) =="
 if ! kubectl -n "$NS" get secret opensphere-auth-sig >/dev/null 2>&1; then

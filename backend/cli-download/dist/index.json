@@ -1,0 +1,11 @@
+{
+  "name": "os",
+  "displayName": "os — OpenSphere CLI",
+  "description": "oc 등가 운영자 CLI (console==cli). PAT 로그인·registry 단일창구·get·role.",
+  "version": "0.1.0",
+  "links": [
+    { "os": "linux",   "arch": "amd64", "text": "Linux (amd64)",   "href": "/api/plugins/os-cli/opensphere-cli-linux-amd64" },
+    { "os": "darwin",  "arch": "arm64", "text": "macOS (arm64)",   "href": "/api/plugins/os-cli/opensphere-cli-darwin-arm64" },
+    { "os": "windows", "arch": "amd64", "text": "Windows (amd64)", "href": "/api/plugins/os-cli/opensphere-cli-windows-amd64.exe" }
+  ]
+}

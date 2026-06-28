@@ -1,0 +1,43 @@
+# CLIDownload — headless(비-UI) 콘솔 바인딩 오브젝트. UIPluginPackage(UI 게스트)와 대(對).
+#   콘솔이 호스팅·렌더하지 않고, 다운로드 링크를 '선언'으로 바인딩. OKD ConsoleCLIDownload 어댑트(Console 접두 제거).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clidownloads.console.opensphere.io
+spec:
+  group: console.opensphere.io
+  scope: Cluster
+  names:
+    kind: CLIDownload
+    plural: clidownloads
+    singular: clidownload
+    listKind: CLIDownloadList
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [displayName, links]
+              properties:
+                displayName: { type: string }
+                description: { type: string }
+                enabled: { type: boolean, default: true, description: "콘솔 노출 여부(소프트 토글). false=콘솔에서 숨김, 선언·서빙은 유지." }
+                links:
+                  type: array
+                  items:
+                    type: object
+                    required: [href, text]
+                    properties:
+                      href: { type: string, description: "다운로드 경로(콘솔 상대). 셸이 서빙 컨테이너로 프록시." }
+                      text: { type: string }
+                      os:   { type: string, enum: [linux, darwin, windows] }
+                      arch: { type: string }
+      additionalPrinterColumns:
+        - { name: Display, type: string, jsonPath: .spec.displayName }
+        - { name: Enabled, type: boolean, jsonPath: .spec.enabled }

@@ -7,17 +7,18 @@ export interface CatalogItem {
   name: string; displayName: string; version: string; owner: string;
   description: string; nav?: { band: string; label: string };
   shellCompat: string; permissions: string[];
-  // 위계 신호 — scope·core는 controller catalog가 이미 전송. kind·hostRef는 §2.7 확정 후 추가될 필드(있으면 트리가 정확).
+  // 위계 신호 — scope·core는 controller catalog가 전송. kind·hostRef는 §2.7 확정 후 추가될 필드(있으면 트리가 정확).
   scope?: string; core?: boolean; kind?: string; hostRef?: string;
 }
-/** 비-UI 확장(binding) — shell 귀속 규칙의 예외 범주(콘솔 제네릭). 예: CLIDownload. */
-export interface Binding { name: string; displayName?: string; kind?: string; phase?: string; }
 export interface Registration {
   name: string; desiredState: string;
   status: { phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string };
   approval?: { requestedBy?: string; reason?: string };
 }
 export interface AuditEvent { time: string; actor: string; action: string; target: string; result: string; reason: string; }
+// Binding — 비-UI 콘솔 확장(CLIDownload 등). UI plugin(UIPluginPackage)과 별개 kind. 콘솔이 '선언'을 인식·노출.
+export interface BindingLink { os?: string; arch?: string; text: string; href: string; }
+export interface Binding { kind: string; name: string; displayName: string; description?: string; enabled?: boolean; links: BindingLink[]; }
 
 @Injectable({ providedIn: 'root' })
 export class PluginControlClient {
@@ -42,15 +43,16 @@ export class PluginControlClient {
     if (!r.ok) throw new Error(`events HTTP ${r.status}`);
     return (await r.json()).items;
   }
-  /** binding 목록 — best-effort(엔드포인트 없으면 빈 배열). 트리의 'Bindings' 분기에 사용. */
+  /** headless 바인딩(CLIDownload 등) — UI plugin과 별개 채널. controller /api/admin/bindings. */
   async bindings(): Promise<Binding[]> {
-    try {
-      const r = await fetch('/api/admin/bindings', { cache: 'no-store' });
-      if (!r.ok) return [];
-      return (await r.json()).items || [];
-    } catch {
-      return [];
-    }
+    const r = await fetch('/api/admin/bindings', { cache: 'no-store' });
+    if (!r.ok) throw new Error(`bindings HTTP ${r.status}`);
+    return (await r.json()).items;
+  }
+  /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
+  bindingAction(name: string, action: 'enable' | 'disable') {
+    return fetch(`/api/admin/bindings/${name}/${action}`, { method: 'POST', headers: this.headers() })
+      .then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
   }
   private act(id: string, action: 'install' | 'enable' | 'disable' | 'uninstall', reason?: string) {
     return fetch(`/api/admin/plugins/registrations/${id}/${action}`, {

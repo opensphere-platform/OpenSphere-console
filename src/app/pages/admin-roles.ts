@@ -2,6 +2,9 @@ import { Component, OnInit, inject, signal, ChangeDetectionStrategy } from '@ang
 import { FormsModule } from '@angular/forms';
 import { ClarityModule } from '@clr/angular';
 import { AuthService } from '../core/auth.service';
+import { BackendUnavailable } from '../os/backend-unavailable';
+import { OsPageHeader } from '../os/os-page-header';
+import { OsDatagrid, OsCellDef, OsColumn } from '../os/os-datagrid';
 
 interface Role {
   group: string;
@@ -10,8 +13,8 @@ interface Role {
   members: string[];
 }
 
-// 콘솔 IdP(BFF) origin — auth.service authority와 동일 호스트.
-const BFF = 'https://localhost:8444';
+// §3.2 same-origin: 셸 nginx가 /bff → opensphere-auth(BFF) 프록시. 크로스오리진(localhost:8444=Kanidm) 직격 제거 — CORS·wrong-host 해소.
+const BFF = '';
 
 /**
  * 역할 정의·부여 (Phase 3) — 콘솔 역할 = Kanidm 그룹(opensphere-console-*).
@@ -21,58 +24,47 @@ const BFF = 'https://localhost:8444';
  */
 @Component({
   selector: 'os-admin-roles',
-  imports: [ClarityModule, FormsModule],
+  imports: [ClarityModule, FormsModule, BackendUnavailable, OsPageHeader, OsDatagrid, OsCellDef],
   template: `
-    <h1>역할 <span class="os-engine">Console Roles · 정의·부여</span></h1>
-    <p class="os-sub">
-      콘솔 역할 = Kanidm 그룹(opensphere-console-*) 멤버십. 부여/회수는 scoped write SA로 적용.
-      동일 동작을 <code>os role grant/revoke</code>로도 (console==cli).
-    </p>
+    <div class="os-page">
+      <os-page-header title="역할" tag="Console Roles · 정의·부여">
+        <p>
+          콘솔 역할 = Kanidm 그룹(opensphere-console-*) 멤버십. 부여/회수는 scoped write SA로 적용.
+          동일 동작을 <code>os role grant/revoke</code>로도 (console==cli).
+        </p>
+      </os-page-header>
 
+      @if (down(); as d) {
+      <os-backend-unavailable
+        feature="역할 (Console Roles)"
+        backend="opensphere-auth BFF (/bff/roles)"
+        hint="opensphere-auth 배포 · rolemgr 시크릿(opensphere-rolemgr-kanidm) 확인 시 자동 복구됩니다."
+        [detail]="d"
+      />
+    } @else {
     @if (msg(); as m) {
       <clr-alert [clrAlertType]="m.type" [clrAlertClosable]="true" (clrAlertClosedChange)="msg.set(null)">
         <clr-alert-item><span class="alert-text">{{ m.text }}</span></clr-alert-item>
       </clr-alert>
     }
 
-    <table class="table">
-      <thead>
-        <tr>
-          <th class="left">역할 (그룹)</th>
-          <th class="left">설명</th>
-          <th class="left">멤버</th>
-          <th class="left">부여</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (r of roles(); track r.group) {
-          <tr>
-            <td class="left"><strong>{{ r.label }}</strong><br /><span class="os-mono">{{ r.group }}</span></td>
-            <td class="left">{{ r.desc }}</td>
-            <td class="left">
-              @for (m of r.members; track m) {
-                <span class="label label-info"
-                  >{{ m }} <button class="os-x" title="회수" (click)="revoke(m, r.group)">✕</button></span
-                >
-              } @empty {
-                <span class="os-sub">(없음)</span>
-              }
-            </td>
-            <td class="left">
-              <input
-                class="os-in"
-                [(ngModel)]="draft[r.group]"
-                placeholder="username"
-                (keyup.enter)="grant(r.group)"
-              />
-              <button class="btn btn-sm btn-primary" (click)="grant(r.group)">부여</button>
-            </td>
-          </tr>
+    <os-datagrid [columns]="roleCols" [rows]="roles()" empty="역할 조회 중… (관리자 PAT/세션 필요)">
+      <ng-template osCell="role" let-r><strong>{{ r.label }}</strong><br /><span class="os-mono">{{ r.group }}</span></ng-template>
+      <ng-template osCell="desc" let-r>{{ r.desc }}</ng-template>
+      <ng-template osCell="members" let-r>
+        @for (m of r.members; track m) {
+          <span class="label label-info">{{ m }} <button class="os-x" title="회수" (click)="revoke(m, r.group)">✕</button></span>
         } @empty {
-          <tr><td colspan="4" class="os-sub">역할 조회 중… (관리자 PAT/세션 필요)</td></tr>
+          <span class="os-sub">(없음)</span>
         }
-      </tbody>
-    </table>
+      </ng-template>
+      <ng-template osCell="grant" let-r>
+        <input class="os-in" [(ngModel)]="draft[r.group]" placeholder="username" (keyup.enter)="grant(r.group)" />
+        <button class="btn btn-sm btn-primary" (click)="grant(r.group)">부여</button>
+      </ng-template>
+    </os-datagrid>
+      }
+    </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
@@ -89,7 +81,15 @@ const BFF = 'https://localhost:8444';
 })
 export class AdminRoles implements OnInit {
   private auth = inject(AuthService);
+  readonly roleCols: OsColumn[] = [
+    { key: 'role', label: '역할 (그룹)' },
+    { key: 'desc', label: '설명' },
+    { key: 'members', label: '멤버' },
+    { key: 'grant', label: '부여' },
+  ];
   readonly roles = signal<Role[]>([]);
+  readonly down = signal<string>(''); // 백엔드 미배포/불건전 → graceful degradation
+
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   draft: Record<string, string> = {};
 
@@ -114,7 +114,7 @@ export class AdminRoles implements OnInit {
       const j = await r.json();
       this.roles.set(j.roles ?? []);
     } catch (e) {
-      this.msg.set({ type: 'danger', text: '역할 조회 실패: ' + e });
+      this.down.set('역할 조회 실패: ' + e);
     }
   }
 

@@ -68,16 +68,20 @@ export class NotificationService {
   async refresh(): Promise<void> {
     try {
       const events = await this.control.events();
+      // 컨트롤러 audit bus는 멀티소스: 플러그인 lifecycle + subShell 백엔드 발행(P1) + (향후 K8s/Alertmanager).
+      // action으로 분기 — lifecycle만 'dupa-audit'·"플러그인 X", 그 외는 발행 source 그대로.
+      const LIFECYCLE = new Set(['install', 'enable', 'disable', 'uninstall']);
       const items: OsNotification[] = events.map((e) => {
         const id = `${AUDIT_SOURCE}|${e.time}|${e.action}|${e.target}`;
+        const lifecycle = LIFECYCLE.has(e.action);
         return {
           id,
-          source: AUDIT_SOURCE,
-          severity: this.auditSeverity(e.result),
-          category: 'plugin-lifecycle',
+          source: lifecycle ? AUDIT_SOURCE : e.actor || 'event',
+          severity: this.severityOf(e.result),
+          category: lifecycle ? 'plugin-lifecycle' : 'event',
           persistent: true,
           time: e.time,
-          title: `플러그인 ${e.action} — ${e.target}`,
+          title: lifecycle ? `플러그인 ${e.action} — ${e.target}` : `${e.action} — ${e.target}`,
           detail: `${e.actor} · ${e.result}${e.reason ? ' · ' + e.reason : ''}`,
           read: this.seen.has(id),
         };
@@ -161,8 +165,11 @@ export class NotificationService {
     setTimeout(() => this.toasts.update((t) => t.filter((x) => x.id !== n.id)), TOAST_TTL_MS);
   }
 
-  private auditSeverity(result: string): OsSeverity {
-    return /fail|error|deny|거부|실패/i.test(result) ? 'error' : 'info';
+  private severityOf(result: string): OsSeverity {
+    if (/fail|error|deny|거부|실패/i.test(result)) return 'error';
+    if (/warn|경고/i.test(result)) return 'warning';
+    if (/success|accepted|ok|성공|완료/i.test(result)) return 'success';
+    return 'info';
   }
 
   private restoreSeen(): string[] {

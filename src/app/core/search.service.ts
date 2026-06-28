@@ -1,9 +1,19 @@
 import { Injectable, computed, inject } from '@angular/core';
 import { ExtensionHostService } from './extension-host.service';
 import { PerspectiveService } from './perspective.service';
+import { ApiService, CatalogEntity } from './api.service';
 import { SearchResult, SearchProvider } from './search.types';
 
 export type { SearchResult, SearchProvider } from './search.types';
+
+/** 섹션별 검색 결과 — 검색 팔레트(2단 모달)가 Resources/Services/Documentation/Marketplace로 분류 표시. */
+export interface SectionId { id: 'resources' | 'services' | 'documentation' | 'marketplace'; }
+export interface SearchSections {
+  resources: SearchResult[];
+  services: SearchResult[];
+  documentation: SearchResult[];
+  marketplace: SearchResult[];
+}
 
 /**
  * 셸 레벨 검색 (헌법 §6 "하나의 셸"). 두 표면을 명시적으로 분리한다:
@@ -22,8 +32,26 @@ export type { SearchResult, SearchProvider } from './search.types';
 export class SearchService {
   private ext = inject(ExtensionHostService);
   private psp = inject(PerspectiveService);
+  private api = inject(ApiService);
   /** 데이터층/셸 provider(예: OpenSearch). 런타임 플러그인 provider는 ext가 소유(search:contribute). */
   private dataProviders: SearchProvider[] = [];
+
+  /** 내장 문서 인덱스(Documentation 섹션) — 정적. 추후 docs provider로 확장 가능. */
+  private readonly DOCS: SearchResult[] = [
+    { label: 'Search Language Syntax', sublabel: 'Search', path: '/catalog', kind: 'result' },
+    { label: 'Free Text Search', sublabel: 'Search', path: '/catalog', kind: 'result' },
+    { label: 'Developer Catalog 가이드', sublabel: 'Catalog', path: '/catalog', kind: 'result' },
+    { label: 'APIs 탐색', sublabel: 'API', path: '/apis', kind: 'result' },
+    { label: 'Plugins(확장) 관리', sublabel: 'Console', path: '/admin/plugins', kind: 'result' },
+    { label: '역할/권한(RBAC)', sublabel: 'Identity', path: '/admin/roles', kind: 'result' },
+    { label: '콘솔 관리자 온보딩', sublabel: 'Identity', path: '/console-admins', kind: 'result' },
+  ];
+
+  /** 카탈로그 엔티티 캐시(검색 키 입력마다 재요청 방지) — 실패 시 빈 목록(graceful). */
+  private _catalog?: Promise<CatalogEntity[]>;
+  private catalog(): Promise<CatalogEntity[]> {
+    return (this._catalog ??= this.api.catalogEntities().catch(() => [] as CatalogEntity[]));
+  }
 
   /** 정적 셸 페이지 인덱스 */
   private readonly STATIC: SearchResult[] = [
@@ -73,6 +101,59 @@ export class SearchService {
     ];
     const settled = await Promise.all(tasks);
     return settled.flat().slice(0, 30);
+  }
+
+  /**
+   * 섹션별 검색 — 검색 팔레트(2단 모달)용. 4개 섹션으로 분류:
+   *   resources     = 셸 네비 인덱스(페이지·플러그인·워크스페이스) "이동" 대상
+   *   services      = 카탈로그 Component(실행 워크로드/서비스)
+   *   documentation = 내장 문서 인덱스 + 'documentation' source provider
+   *   marketplace   = 카탈로그 API(설치/연동 가능 표면) + 'marketplace' source provider
+   * 데이터 없으면 빈 배열(섹션 graceful empty). 한 소스 실패가 전체를 깨지 않음.
+   */
+  async querySectioned(q: string): Promise<SearchSections> {
+    const s = q.trim().toLowerCase();
+    const empty: SearchSections = { resources: [], services: [], documentation: [], marketplace: [] };
+    if (!s) return empty;
+
+    const resources = this.queryLocal(q).slice(0, 8);
+    const documentation = this.DOCS.filter(
+      (d) => d.label.toLowerCase().includes(s) || d.sublabel.toLowerCase().includes(s),
+    ).slice(0, 6);
+
+    let services: SearchResult[] = [];
+    let marketplace: SearchResult[] = [];
+    try {
+      const cat = await this.catalog();
+      const match = (e: CatalogEntity) =>
+        e.metadata.name.toLowerCase().includes(s) || (e.metadata.description || '').toLowerCase().includes(s);
+      const toResult = (e: CatalogEntity, path: string): SearchResult => ({
+        label: e.metadata.name,
+        sublabel: (e as any).spec?.system || e.metadata.namespace || e.kind,
+        path,
+        kind: 'result',
+      });
+      services = cat.filter((e) => e.kind === 'Component' && match(e)).slice(0, 6).map((e) => toResult(e, '/catalog'));
+      marketplace = cat.filter((e) => e.kind === 'API' && match(e)).slice(0, 6).map((e) => toResult(e, '/apis'));
+    } catch { /* catalog 미가용 → 빈 섹션 */ }
+
+    // provider(런타임 기여·데이터층) 결과는 source 힌트로 섹션 배분, 기본은 services.
+    try {
+      for (const r of await this.queryProviders(q)) {
+        const sec = String((r as any).section || '').toLowerCase();
+        if (sec === 'documentation') documentation.push(r);
+        else if (sec === 'marketplace') marketplace.push(r);
+        else if (sec === 'resources') resources.push(r);
+        else services.push(r);
+      }
+    } catch { /* provider 실패 무시 */ }
+
+    return {
+      resources: resources.slice(0, 8),
+      services: services.slice(0, 8),
+      documentation: documentation.slice(0, 6),
+      marketplace: marketplace.slice(0, 6),
+    };
   }
 
   /** @deprecated queryLocal()+queryProviders()로 분리됨. 동기 로컬만 반환(구 호출 호환). */

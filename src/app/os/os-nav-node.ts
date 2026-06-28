@@ -2,6 +2,8 @@ import { Component, inject, Input, ChangeDetectionStrategy } from '@angular/core
 import { Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { NavNode } from '../core/extension-host.service';
+import { CarbonIcon } from './carbon-icon';
+import Application16 from '@carbon/icons/es/application/16';
 
 /**
  * os-nav-node — 플러그인이 기여한 재귀 NavNode를 셸 내비에 네이티브로 렌더(임의 깊이).
@@ -15,12 +17,14 @@ import { NavNode } from '../core/extension-host.service';
  */
 @Component({
   selector: 'os-nav-node',
-  imports: [ClarityModule],
+  imports: [ClarityModule, CarbonIcon],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     @if (node.children?.length) {
       <clr-vertical-nav-group>
-        <a clrVerticalNavLink href="javascript:void(0)">{{ node.label }}</a>
+        <a clrVerticalNavLink href="javascript:void(0)"
+          ><os-cicon clrVerticalNavIcon [icon]="icon" [size]="20" />{{ node.label }}</a
+        >
         <clr-vertical-nav-group-children>
           @for (child of node.children; track child.id) {
             <os-nav-node [node]="child" />
@@ -28,15 +32,17 @@ import { NavNode } from '../core/extension-host.service';
         </clr-vertical-nav-group-children>
       </clr-vertical-nav-group>
     } @else {
-      <a clrVerticalNavLink [href]="node.route" (click)="go($event)" [class.active]="isActive()">{{
-        node.label
-      }}</a>
+      <a clrVerticalNavLink [href]="node.route" (click)="go($event)" [class.active]="isActive()"
+        ><os-cicon clrVerticalNavIcon [icon]="icon" [size]="20" />{{ node.label }}</a
+      >
     }
   `,
 })
 export class OsNavNode {
   @Input({ required: true }) node!: NavNode;
   private router = inject(Router);
+  /** 접힘 레일용 폴백 아이콘(플러그인 nav는 아이콘 메타가 없음). */
+  readonly icon = Application16;
 
   private parts(): [string, string] {
     const [path, hash = ''] = (this.node.route ?? '').split('#');

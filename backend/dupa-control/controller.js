@@ -45,8 +45,14 @@ async function k8s(method, path, body) {
 const crd = (plural) => `/apis/${GROUP}/${V}/namespaces/${NS}/${plural}`;
 const listPackages = () => k8s('GET', crd('uipluginpackages'));
 const listRegs = () => k8s('GET', crd('uipluginregistrations'));
+// ADR-UI-003 §3.1: scope=main-shell-* 라벨 = shell-pinned core 표면(패키징은 plugin이나 분류는 core) → 제거/비활성 불가.
+const isCorePkg = (pkg) => (pkg?.metadata?.labels?.['opensphere.io/scope'] || '').startsWith('main-shell');
 const getPackage = (n) => k8s('GET', `${crd('uipluginpackages')}/${n}`);
 const getReg = (n) => k8s('GET', `${crd('uipluginregistrations')}/${n}`);
+// CLIDownload (console.opensphere.io, cluster-scoped) — headless 비-UI 콘솔 바인딩. UIPluginPackage(UI 게스트)와 별개 kind.
+// 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
+const CONSOLE_GROUP = 'console.opensphere.io';
+const listCliDownloads = () => k8s('GET', `/apis/${CONSOLE_GROUP}/${V}/clidownloads`);
 async function setStatus(name, status) {
   return k8s('PATCH', `${crd('uipluginregistrations')}/${name}/status`,
     { status: { ...status, lastTransitionTime: new Date().toISOString() } });
@@ -216,6 +222,24 @@ async function reconcile() {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── K8s Warning 이벤트를 콘솔 알림 소스로 (ADR-UI-002 §D2 — 클러스터 event 평면, OKD 렌즈) ──
+// 플랫폼 ns(opensphere-*)의 Warning만 audit bus에 합류. dedup(uid). observability operand 불요(K8s 네이티브).
+const seenEvents = new Set();
+async function pollK8sEvents() {
+  const r = await k8s('GET', '/api/v1/events?fieldSelector=type=Warning&limit=100');
+  if (!r.ok) return;
+  for (const ev of r.json.items || []) {
+    const ns = ev.metadata?.namespace || '';
+    if (!ns.startsWith('opensphere')) continue; // 플랫폼 ns만(노이즈 억제)
+    const uid = ev.metadata?.uid;
+    if (!uid || seenEvents.has(uid)) continue;
+    seenEvents.add(uid);
+    const o = ev.involvedObject || {};
+    logAudit('k8s', ev.reason || 'Event', `${o.kind || '?'}/${o.name || '?'}`, 'warning', (ev.message || '').slice(0, 160));
+  }
+  if (seenEvents.size > 2000) seenEvents.clear(); // 메모리 가드
+}
+
 // ── Control API + registry 서빙 ───────────────────────────────
 async function readBody(req) {
   const chunks = []; for await (const c of req) chunks.push(c);
@@ -246,7 +270,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/admin/plugins/catalog') {
       const pkgs = await listPackages();
-      return json(res, 200, { items: (pkgs.json?.items || []).map((x) => ({ name: x.metadata.name, ...x.spec })) });
+      return json(res, 200, { items: (pkgs.json?.items || []).map((x) => ({ name: x.metadata.name, core: isCorePkg(x), scope: x.metadata.labels?.['opensphere.io/scope'] || null, ...x.spec })) });
     }
     if (p === '/api/admin/plugins/registrations') {
       const regs = await listRegs();
@@ -254,9 +278,43 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/admin/plugins/events') return json(res, 200, { items: audit });
 
+    // ── Bindings (headless 비-UI 확장): CLIDownload 등. UI plugins와 분리된 관리 채널(binding≠plugin) ──
+    if (p === '/api/admin/bindings') {
+      const cds = await listCliDownloads();
+      const items = (cds.json?.items || []).map((x) => ({ kind: 'CLIDownload', name: x.metadata.name, ...x.spec, enabled: x.spec.enabled !== false }));
+      return json(res, 200, { items });
+    }
+    // binding enable/disable = spec.enabled 소프트 토글(선언·서빙 유지, 콘솔 노출만). plugin Disable과 동형.
+    const bm = p.match(/^\/api\/admin\/bindings\/([a-z0-9-]+)\/(enable|disable)$/);
+    if (bm && req.method === 'POST') {
+      const [, name, action] = bm;
+      const r = await k8s('PATCH', `/apis/${CONSOLE_GROUP}/${V}/clidownloads/${name}`, { spec: { enabled: action === 'enable' } });
+      if (!r.ok) { logAudit(actor, action, 'binding/' + name, 'error', `HTTP ${r.status}`); return json(res, r.status, { error: r.json }); }
+      logAudit(actor, action, 'binding/' + name, 'accepted', '');
+      return json(res, 202, { accepted: true, name, enabled: action === 'enable' });
+    }
+
+    // ── P1 발행 백본(ADR-UI-003/UI-002 §D3): subShell 백엔드 → 콘솔 알림 소스(audit bus) 발행.
+    // 콘솔 알림 NotificationService가 /api/admin/plugins/events 폴링으로 수집. source는 attribution.
+    // ⚠️ 인증은 컨트롤 API 전체와 동급(X-OpenSphere-* 헤더) — 강화(SA TokenReview/NetworkPolicy)는 후속.
+    if (p === '/api/admin/events' && req.method === 'POST') {
+      const b = await readBody(req).catch(() => ({}));
+      const source = b.source || req.headers['x-opensphere-source'] || actor;
+      logAudit(source, b.action || 'event', b.target || b.title || '', b.result || b.severity || 'info', b.reason || b.detail || '');
+      return json(res, 202, { accepted: true, source });
+    }
+
     const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
+      // §3.1 강제: shell-pinned core 표면은 제거/비활성 불가(보안 경계 — UI 억제보다 본질).
+      if (action === 'disable' || action === 'uninstall') {
+        const pkgC = await k8s('GET', `${crd('uipluginpackages')}/${id}`);
+        if (pkgC.ok && isCorePkg(pkgC.json)) {
+          logAudit(actor, action, id, 'denied', 'core surface(shell-pinned) 제거/비활성 불가 (ADR-UI-003 §3.1)');
+          return json(res, 409, { error: 'core surface — not removable', core: true });
+        }
+      }
       const body = await readBody(req).catch(() => ({}));
       const desired = action === 'install' || action === 'enable' ? 'Enabled' : action === 'disable' ? 'Disabled' : 'Uninstalled';
       const r = await ensureRegistration(id, desired, actor, body.reason);
@@ -273,6 +331,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`dupa-registry-controller listening :${PORT} (ns=${NS})`);
-  const loop = () => reconcile().catch((e) => console.error('reconcile error', e)).finally(() => setTimeout(loop, 15000));
+  const loop = () => Promise.all([reconcile(), pollK8sEvents()]).catch((e) => console.error('loop error', e)).finally(() => setTimeout(loop, 15000));
   loop();
 });

@@ -5,29 +5,38 @@ import { Apis } from './pages/apis';
 import { PluginHost } from './pages/plugin-host';
 import { AdminPlugins } from './pages/admin-plugins';
 import { AdminRoles } from './pages/admin-roles';
-import { ConsoleAdmins } from './pages/console-admins';
 import { MyInfo } from './pages/my-info';
-import { PERSPECTIVE_SLUGS } from './core/perspectives';
+import { ConsoleAdmins } from './pages/console-admins';
+import { Containers } from './pages/containers';
+import { AdminLayout } from './pages/admin-layout';
 
 export const routes: Routes = [
   { path: '', component: Landing },
   { path: 'me', component: MyInfo },
   { path: 'catalog', component: Catalog },
   { path: 'apis', component: Apis },
-  // Main Shell 관리 영역 — 콘솔 운영관리자(Kanidm). **CORE 내장**(이전 console-identity DUPA 플러그인 → native).
-  // 콘솔 자기관리는 플러그인 시스템에 의존하면 안 됨(chicken-egg) → 셸에 내장. perspective 아님.
-  { path: 'console-admins', component: ConsoleAdmins },
-  // 10 perspective 클린 라우트(`/user` 등) — PluginHost가 data.pluginId로 슬러그=id를 수신
-  ...PERSPECTIVE_SLUGS.map((slug) => ({
-    path: slug,
-    component: PluginHost,
-    data: { pluginId: slug },
-  })),
-  // §10: 플러그인 페이지 — 정적 등록은 호스트 1개뿐, 실제 화면은 런타임 로드 모듈
+  // 더미 — ACC 2단 메뉴(보조 사이드 내비) 패턴 데모
+  { path: 'containers', redirectTo: 'containers/overview', pathMatch: 'full' },
+  { path: 'containers/overview', component: Containers },
+
+  // "콘솔 관리" 섹션 (Model A): 1단 진입 → AdminLayout이 2단 보조메뉴 + 자식 페이지를 렌더.
+  // §3.2 Core≠Plugin: 셸 네이티브 컴포넌트. 백엔드는 console-identity-api(/api/identity 프록시).
+  {
+    path: 'manage',
+    component: AdminLayout,
+    children: [
+      { path: '', redirectTo: 'console-admins', pathMatch: 'full' },
+      { path: 'console-admins', component: ConsoleAdmins },
+      { path: 'plugins', component: AdminPlugins },
+      { path: 'roles', component: AdminRoles },
+    ],
+  },
+  // 구 경로 하위호환 리다이렉트
+  { path: 'console-admins', redirectTo: 'manage/console-admins' },
+  { path: 'admin/plugins', redirectTo: 'manage/plugins' },
+  { path: 'admin/roles', redirectTo: 'manage/roles' },
+
+  // 등록된 플러그인(subShell·plugin)은 전부 `/p/<id>` 동적 호스트로 진입(§10). 실제 화면은 런타임 로드 모듈.
   { path: 'p/:id', component: PluginHost },
-  // Admin Control (검토 §B.3: 4번째 밴드 대신 헤더 진입 — 헌법 §6 3밴드 보존)
-  { path: 'admin/plugins', component: AdminPlugins },
-  // 역할 정의·부여 (Phase 3) — 콘솔 역할 그룹 멤버십 관리(admin)
-  { path: 'admin/roles', component: AdminRoles },
   { path: '**', redirectTo: '' },
 ];

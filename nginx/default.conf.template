@@ -27,11 +27,10 @@ server {
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob: 'unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     add_header X-Content-Type-Options nosniff always;
 
-    # 네이티브 카탈로그/API 엔진 (opensphere-catalog-api = mainShell B/E) — OpenSphere CRD를 kind=API로,
-    # 배포 워크로드를 kind=Component로 Backstage 카탈로그 엔티티에 투영. CORE 고유기능의 B/E는 네이티브여야
-    # 한다 → 구 외부 rhdh-self 엔진 의존 폐기. (location 이름은 호환 위해 유지; F/E api.service 무변경.)
+    # 콘솔 네이티브 카탈로그 (ADR-UI-003 §3.2 · 헌법 §4: rhdh 과도기 탈피) — console-core 서비스.
+    # /api/rhdh 프록시 경로명은 레거시(api.service 호환) 유지, 대상은 opensphere-catalog-api 네이티브.
     location /api/rhdh/ {
-        proxy_pass http://opensphere-catalog-api.opensphere-system.svc.cluster.local:8080/api/;
+        proxy_pass http://console-backend.opensphere-system.svc.cluster.local:8080/api/;
         proxy_set_header X-Forwarded-Host $host;
     }
 
@@ -41,6 +40,21 @@ server {
     location /api/admin/ {
         proxy_pass http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080/api/admin/;
         proxy_set_header X-OpenSphere-User $http_x_opensphere_user;
+    }
+
+    # 콘솔 네이티브 identity(Kanidm IGA) — /console-admins 백엔드(console-core 서비스).
+    # ADR-UI-003 §3.2 Core≠Plugin: console-identity를 DUPA plugin이 아닌 console-core 서비스로 내장.
+    location /api/identity {
+        proxy_pass http://console-backend.opensphere-system.svc.cluster.local:8080;
+        proxy_set_header X-OpenSphere-User $http_x_opensphere_user;
+    }
+
+    # 콘솔 역할/PAT — opensphere-auth BFF(console-core 서비스). §3.2: same-origin 프록시로 크로스오리진 CORS 제거.
+    # /admin/roles가 https://localhost:8444(Kanidm) 직격 → CORS 실패였음. 이제 /bff(상대) → 셸이 BFF로 프록시.
+    location /bff/ {
+        proxy_pass https://opensphere-auth.opensphere-console-auth.svc.cluster.local:8443/bff/;
+        proxy_ssl_verify off;  # 자체서명 kanidm-tls (PoC)
+        proxy_set_header Host $host;
     }
 
     # 플러그인 레지스트리 (dynamic-ui §5.3) — controller가 생성하는 산출물(즉시 반영).

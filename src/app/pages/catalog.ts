@@ -4,6 +4,7 @@ import { ClarityModule } from '@clr/angular';
 import { ApiService, CatalogEntity, RuntimeResource } from '../core/api.service';
 import { OsDatagrid, OsColumn } from '../os/os-datagrid';
 import { OsPanel } from '../os/os-panel';
+import { BackendUnavailable } from '../os/backend-unavailable';
 
 /**
  * Developer Catalog — rhdh-self를 headless 엔진으로 소비(헌법 §4),
@@ -11,17 +12,18 @@ import { OsPanel } from '../os/os-panel';
  */
 @Component({
   selector: 'os-catalog',
-  imports: [ClarityModule, OsDatagrid, OsPanel],
+  imports: [ClarityModule, OsDatagrid, OsPanel, BackendUnavailable],
   template: `
     <h1>Developer Catalog</h1>
-    <p class="os-sub">engine: opensphere-catalog-api (네이티브 B/E — OpenSphere CRD·워크로드 투영)</p>
+    <p class="os-sub">engine: rhdh-self (headless · REST 소비) — UI 임베드 0</p>
 
     @if (error()) {
-      <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false">
-        <clr-alert-item
-          ><span class="alert-text">{{ error() }}</span></clr-alert-item
-        >
-      </clr-alert>
+      <os-backend-unavailable
+        feature="Developer Catalog"
+        backend="opensphere-catalog / rhdh-self 엔진"
+        hint="카탈로그 백엔드 operand를 배포하면 자동 복구됩니다."
+        [detail]="error()"
+      />
     } @else {
       <os-datagrid
         [columns]="columns"
@@ -195,11 +197,7 @@ export class Catalog implements OnInit {
         }
       }
     } catch (e) {
-      // CORE 견고성: 네이티브 엔진(opensphere-catalog-api) 무응답 시에도 빈 상태로 graceful degrade.
-      console.warn('[catalog] 카탈로그 엔진 무응답:', e);
-      this.error.set(
-        '카탈로그 엔진(opensphere-catalog-api) 무응답 — 카탈로그가 비어 있습니다. 엔진 복구 시 자동 표시됩니다.',
-      );
+      this.error.set(String(e));
     }
   }
 
@@ -233,9 +231,9 @@ export class Catalog implements OnInit {
     return `${e.kind.toLowerCase()}:${e.metadata.namespace ?? 'default'}/${e.metadata.name}`;
   }
 
-  // 네이티브 엔진은 외부 상세 UI가 없다(구 rhdh-self localhost:7007 링크 폐기) → 외부 링크 미표시.
-  rhdhHref(_e: CatalogEntity | null): string {
-    return '';
+  rhdhHref(e: CatalogEntity | null): string {
+    if (!e) return '';
+    return `http://localhost:7007/catalog/${e.metadata.namespace ?? 'default'}/${e.kind.toLowerCase()}/${e.metadata.name}`;
   }
 
   specOf(e: CatalogEntity, key: string): string {

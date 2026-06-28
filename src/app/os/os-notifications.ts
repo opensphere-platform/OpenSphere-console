@@ -1,5 +1,7 @@
 import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { NotificationService } from '../core/notification.service';
+import { CarbonIcon } from './carbon-icon';
+import Notification16 from '@carbon/icons/es/notification/16';
 
 /**
  * 셸 단일 알림 (single control point). 헤더 벨 + 인박스 드로어(영구) + 토스트 스택(일시).
@@ -8,9 +10,10 @@ import { NotificationService } from '../core/notification.service';
  */
 @Component({
   selector: 'os-notifications',
+  imports: [CarbonIcon],
   template: `
     <button class="os-bell" (click)="toggle()" title="알림">
-      🔔
+      <os-cicon [icon]="iconBell" [size]="18" />
       @if (notif.unread() > 0) {
         <span class="os-bell-badge">{{ notif.unread() }}</span>
       }
@@ -255,6 +258,7 @@ import { NotificationService } from '../core/notification.service';
 })
 export class OsNotifications {
   readonly notif = inject(NotificationService);
+  readonly iconBell = Notification16;
   readonly open = signal(false);
 
   constructor() {

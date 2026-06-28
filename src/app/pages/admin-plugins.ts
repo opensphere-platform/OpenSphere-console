@@ -1,5 +1,6 @@
 import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
+import { OsPageHeader } from '../os/os-page-header';
 import { ExtensionHostService } from '../core/extension-host.service';
 import {
   PluginControlClient,
@@ -27,10 +28,12 @@ interface TreeNode {
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [ClarityModule],
+  imports: [ClarityModule, OsPageHeader],
   template: `
-    <h1>Plugins <span class="os-engine">Admin Control</span></h1>
-    <p class="os-sub">DUPA 플러그인 설치·비활성화·삭제 — 셸 리빌드 없이 (계획서 §7)</p>
+    <div class="os-page">
+      <os-page-header title="Console Extensions" tag="Admin Control">
+        <p>UI 플러그인(UIPluginPackage) + headless 바인딩(CLIDownload) 통합 인식·관리 — 셸 리빌드 없이</p>
+      </os-page-header>
 
     @if (msg(); as m) {
       <clr-alert
@@ -49,6 +52,7 @@ interface TreeNode {
       <span class="label label-success">Enabled {{ countPhase('Enabled') }}</span>
       <span class="label">Disabled {{ countPhase('Disabled') }}</span>
       <span class="label label-danger">Failed {{ countPhase('Failed') }}</span>
+      <span class="label label-info">Bindings {{ bindings().length }}</span>
     </div>
 
     <clr-tabs>
@@ -61,7 +65,7 @@ interface TreeNode {
           </p>
           <div class="tree">
             @for (root of tree(); track root.id) {
-              <div class="tn tn0" [class.host]="true">
+              <div class="tn tn0 host">
                 <button class="caret" (click)="toggle(root.id)">{{ exp(root.id) ? '▾' : '▸' }}</button>
                 <span class="tt tt-{{ root.type }}">{{ typeLabel(root.type) }}</span>
                 <strong class="tl">{{ root.label }}</strong>
@@ -290,7 +294,65 @@ interface TreeNode {
           </table>
         </clr-tab-content>
       </clr-tab>
+
+      <clr-tab>
+        <button clrTabLink>Bindings</button>
+        <clr-tab-content>
+          <p class="os-sub">
+            비-UI 콘솔 바인딩(CLIDownload 등) — 콘솔이 호스팅·렌더하지 않고 '선언'을 노출. UI plugin과 별개(binding≠plugin).
+          </p>
+          <table class="table">
+            <thead>
+              <tr>
+                <th class="left">Binding</th>
+                <th>Kind</th>
+                <th>State</th>
+                <th>Downloads</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (b of bindings(); track b.name) {
+                <tr>
+                  <td class="left">
+                    {{ b.displayName }} <span class="os-mono">({{ b.name }})</span>
+                    <div class="os-sub">{{ b.description }}</div>
+                  </td>
+                  <td><span class="label label-info">{{ b.kind }}</span></td>
+                  <td>
+                    <span class="label" [class.label-success]="b.enabled !== false">{{
+                      b.enabled !== false ? 'Enabled' : 'Disabled'
+                    }}</span>
+                  </td>
+                  <td>
+                    @for (l of b.links; track l.href) {
+                      <a class="btn btn-sm btn-link" [href]="l.href" target="_blank">{{ l.text }}</a>
+                    }
+                  </td>
+                  <td>
+                    @if (b.enabled !== false) {
+                      <button class="btn btn-sm" (click)="runBinding('disable', b.name)">Disable</button>
+                    } @else {
+                      <button
+                        class="btn btn-sm btn-success-outline"
+                        (click)="runBinding('enable', b.name)"
+                      >
+                        Enable
+                      </button>
+                    }
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="5" class="os-sub">바인딩 없음</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </clr-tab-content>
+      </clr-tab>
     </clr-tabs>
+    </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
@@ -413,8 +475,8 @@ export class AdminPlugins implements OnInit {
   readonly catalog = signal<CatalogItem[]>([]);
   readonly registrations = signal<Registration[]>([]);
   readonly events = signal<AuditEvent[]>([]);
-  readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   readonly bindings = signal<Binding[]>([]);
+  readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
 
@@ -502,7 +564,7 @@ export class AdminPlugins implements OnInit {
         label: b.displayName || b.name,
         meta: b.name,
         type: 'binding' as const,
-        phase: b.phase ?? null,
+        phase: b.enabled !== false ? 'Enabled' : 'Disabled',
         children: [],
         actionable: false,
       })),
@@ -539,6 +601,17 @@ export class AdminPlugins implements OnInit {
       this.msg.set({ type: 'success', text: `${action} 완료: ${id}` });
     } catch (err) {
       this.msg.set({ type: 'danger', text: `${action} 실패: ${err}` });
+    }
+  }
+
+  /** binding 소프트 토글(enable/disable) — UI plugin과 별개 채널(binding≠plugin). 토글 후 목록 갱신. */
+  async runBinding(action: 'enable' | 'disable', name: string): Promise<void> {
+    try {
+      await this.ctl.bindingAction(name, action);
+      this.msg.set({ type: 'success', text: `binding ${action}: ${name}` });
+      await this.refresh();
+    } catch (err) {
+      this.msg.set({ type: 'danger', text: `binding ${action} 실패: ${err}` });
     }
   }
 

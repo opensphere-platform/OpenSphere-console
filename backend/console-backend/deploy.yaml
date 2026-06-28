@@ -1,0 +1,63 @@
+# console-backend — 콘솔 stateless API 통합(구 console-identity-api + opensphere-catalog-api).
+# 셸 nginx: /api/identity·/api/catalog(←/api/rhdh) → 이 단일 서비스. (issuer=opensphere-auth·reconcile=dupa는 분리 유지)
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: console-backend, namespace: opensphere-system }
+---
+# catalog: CRD·deployment read (cluster)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: console-backend }
+rules:
+  - { apiGroups: ["apiextensions.k8s.io"], resources: ["customresourcedefinitions"], verbs: ["get", "list"] }
+  - { apiGroups: ["apps"], resources: ["deployments"], verbs: ["get", "list"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: console-backend }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: console-backend }
+subjects:
+  - { kind: ServiceAccount, name: console-backend, namespace: opensphere-system }
+---
+# identity: Kanidm SA 자격 Secret read (opensphere-system)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: console-backend-kanidm-reader, namespace: opensphere-system }
+rules:
+  - { apiGroups: [""], resources: ["secrets"], resourceNames: ["opensphere-identity-kanidm"], verbs: ["get"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: console-backend-kanidm-reader, namespace: opensphere-system }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: console-backend-kanidm-reader }
+subjects:
+  - { kind: ServiceAccount, name: console-backend, namespace: opensphere-system }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: console-backend, namespace: opensphere-system, labels: { app: console-backend } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: console-backend } }
+  template:
+    metadata: { labels: { app: console-backend } }
+    spec:
+      serviceAccountName: console-backend
+      containers:
+        - name: api
+          image: localhost:5000/console-backend:v1
+          env:
+            # fetch(kube API / secret read)가 kube CA 신뢰하도록
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 2 }
+          resources:
+            requests: { cpu: 20m, memory: 48Mi }
+            limits: { cpu: 300m, memory: 192Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: console-backend, namespace: opensphere-system }
+spec:
+  selector: { app: console-backend }
+  ports: [{ port: 8080, targetPort: 8080 }]

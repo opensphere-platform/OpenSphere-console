@@ -19,14 +19,15 @@
     "@angular/forms": "^22.0.1",
     "@angular/platform-browser": "^22.0.1",
     "@angular/router": "^22.0.1",
+    "@carbon/icons": "^11.82.0",
     "@cds/core": "^6.17.0",
     "@clr/angular": "^18.2.0",
     "@clr/ui": "^18.2.0",
+    "@opensphere/sdk": "file:../OpenSphere-SDK",
     "oidc-client-ts": "^3.1.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
-    "zone.js": "~0.16.0",
-    "@opensphere/sdk": "file:../OpenSphere-SDK"
+    "zone.js": "~0.16.0"
   },
   "devDependencies": {
     "@angular/build": "^22.0.1",

@@ -1,79 +1,216 @@
 /* OpenSphere Shell — 전역 스타일
- * 구성: ① Clarity UI(엔진, ng-clarity 의존) ② OpenSphere 디자인 토큰(정체성, 우리 소유)
- * 원칙(DESIGN-RULES.md): 구조·컴포넌트는 전부 Clarity. 전역 커스텀은
- * ⓐ 토큰(변수 재정의 — Clarity 공식 테마 메커니즘)과 ⓑ 등록된 예외만 허용.
+ * 구성: ① Clarity UI(엔진, ng-clarity 의존) ② OpenSphere Design Tokens(정체성, 우리 소유)
+ * 토큰 SSOT = docs/DESIGN-TOKENS.md (Carbon 규율 + OpenSphere 정체성).
+ * 원칙(DESIGN-RULES.md): 구조·컴포넌트는 Clarity. 전역 커스텀은 ⓐ 토큰(--clr-* 재정의)·ⓑ 등록 예외만.
  */
 @import '@clr/ui/clr-ui.min.css';
+/* IBM Plex — 라틴(Sans)+한글(Sans KR)+모노. 한·영 단일 IBM 폰트 통일(사용자 지정). OFL 오픈폰트. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap');
 
 /* ──────────────────────────────────────────────
- * OpenSphere Design Tokens v0  (Clarity CSS 변수 재정의)
- * 미학 레퍼런스: 엔터프라이즈 콘솔(OCI/vSphere 계열) — 소유권은 우리.
+ * OpenSphere Design Tokens v0  (docs/DESIGN-TOKENS.md)
+ * 방향: Carbon 규율(타입스케일·4px·hairline·플랫·단일액센트) + OpenSphere 정체성(sphere-blue·다크헤더).
  * ────────────────────────────────────────────── */
 :root {
-  /* 브랜드 */
-  --os-brand-900: #0b1530;   /* 딥 네이비 — 헤더 */
+  /* ── Accent (sphere-blue · 단일 액센트) ── */
+  --os-accent: #4c6fff;
+  --os-accent-hover: #3a5af0;
+  --os-accent-pressed: #2f49c8;
+  --os-accent-subtle: rgba(76, 111, 255, 0.12);
+
+  /* ── Surface (Carbon 3단) ── */
+  --os-canvas: #ffffff;
+  --os-surface-1: #f4f4f4;
+  --os-surface-2: #e0e0e0;
+  --os-hairline: #e0e0e0;
+
+  /* ── Header (ACC식: 차콜 + 하단 블루 라인) · Nav (ACC식: 화이트) ── */
+  --os-header-bg: #161616;
+  --os-header-ink: #c6c6c6;
+  --os-nav-bg: #e8e8e8;        /* 1단(레일) 그레이 — ACC apis/overview 측정값(#e8e8e8). 2단은 화이트 */
+  --os-nav-hover: #e8e8e8;     /* 2단(화이트) 항목 hover/active 옅은 회색 */
+
+  /* ── Ink (Carbon 차콜/그레이) ── */
+  --os-ink: #161616;
+  --os-ink-muted: #525252;
+  --os-ink-subtle: #8c8c8c;
+
+  /* ── Semantic ── */
+  --os-success: #24a148;
+  --os-warning: #f1c21b;
+  --os-error: #da1e28;
+  --os-info: #4c6fff;
+
+  /* ── Spacing (4px 그리드) ── */
+  --os-2: 4px; --os-3: 8px; --os-4: 12px; --os-5: 16px; --os-6: 24px; --os-7: 32px; --os-8: 48px;
+
+  /* ── Radius (플랫) · Elevation(오버레이만) · Font ── */
+  --os-radius: 4px;
+  --os-radius-sm: 2px;
+  --os-radius-pill: 9999px;
+  --os-elev-overlay: 0 12px 40px rgba(29, 39, 51, 0.25);
+  --os-font: "IBM Plex Sans", "IBM Plex Sans KR", system-ui, "Segoe UI", sans-serif;
+  --os-font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
+
+  /* ── 레거시 별칭(기존 컴포넌트 참조 호환 — 값은 새 토큰으로 정렬) ── */
+  --os-brand-900: var(--os-header-bg);   /* 헤더 딥네이비 */
   --os-brand-700: #16224d;
-  --os-brand-500: #4c6fff;   /* sphere blue — 포인트 */
+  --os-brand-500: var(--os-accent);      /* = sphere-blue */
   --os-brand-300: #8fa6ff;
-  --os-accent:    #00bfa5;
-  --os-surface:   #f6f7fb;
-  --os-ink:       #1b2438;
-  --os-muted:     #667193;
+  --os-surface: var(--os-surface-1);
+  --os-muted: var(--os-ink-muted);       /* 2차 텍스트 → Carbon gray #525252 */
 
-  /* Clarity 토큰 매핑 — 정체성 주입 지점 */
-  --clr-header-bg-color: var(--os-brand-900);
-  --clr-header-default-bg-color: var(--os-brand-900);
-  --clr-vertical-nav-bg-color: #101a38;
-  --clr-vertical-nav-item-color: #c7d0e8;
-  --clr-vertical-nav-item-active-color: #ffffff;
-  --clr-vertical-nav-item-active-bg-color: rgba(76, 111, 255, 0.22);
-  --clr-vertical-nav-icon-active-color: var(--os-brand-300);
-  --clr-btn-primary-bg-color: var(--os-brand-500);
-  --clr-btn-primary-hover-bg-color: #3a5af0;
-  --clr-link-color: var(--os-brand-500);
-  --clr-link-hover-color: #3a5af0;
-  --clr-global-app-background: var(--os-surface);
-  --clr-card-border-radius: 10px;
+  /* ── Clarity 매핑 (전 컴포넌트 일괄 반영) ── */
+  --clr-header-bg-color: var(--os-header-bg);
+  --clr-header-default-bg-color: var(--os-header-bg);
+  --clr-vertical-nav-bg-color: var(--os-nav-bg);            /* 화이트 */
+  --clr-vertical-nav-item-color: var(--os-ink-muted);       /* #525252 다크그레이 */
+  --clr-vertical-nav-item-active-color: var(--os-ink);      /* #161616 차콜 */
+  --clr-vertical-nav-item-active-bg-color: var(--os-nav-hover);
+  --clr-vertical-nav-icon-active-color: var(--os-accent);   /* 블루 */
+  --clr-btn-primary-bg-color: var(--os-accent);
+  --clr-btn-primary-hover-bg-color: var(--os-accent-hover);
+  --clr-link-color: var(--os-accent);
+  --clr-link-hover-color: var(--os-accent-hover);
+  --clr-global-app-background: var(--os-surface-1);
+  --clr-card-border-radius: var(--os-radius);   /* 10px → 4px (플랫) */
 }
 
-html, body { height: 100%; margin: 0; background: var(--os-surface); }
+/* ── 타이포 base (Carbon 규율: 중립 그로테스크 + body tracking 0.16px) ── */
+html, body { height: 100%; margin: 0; background: var(--os-surface-1); font-family: var(--os-font) !important; }
+body { letter-spacing: 0.16px; color: var(--os-ink); }
 
-/* [예외 등록 #3] 밴드 라벨(운영/구축/전달) — clr-vertical-nav에 비접이식 섹션 라벨
- * 컴포넌트 부재(clr-vertical-nav-group은 접이식 메뉴). DESIGN-RULES.md 참조. */
+/* IBM Plex 단일화 — Clarity 기본 Metropolis 전면 덮기(한·영 모두 IBM Plex). 아이콘은 SVG라 영향 없음. */
+body * { font-family: var(--os-font) !important; }
+body code, body kbd, body pre, body samp, .os-mono { font-family: var(--os-font-mono) !important; }
+
+/* [예외 등록 #3] 밴드 라벨(운영/구축/전달) ≈ ACC "Pinned" 섹션 라벨 — 라이트 nav용 그레이. */
 .os-band-label {
-  font-size: 0.55rem; letter-spacing: 0.12em; text-transform: uppercase;
-  color: #7c89ad; padding: 0.9rem 1.2rem 0.2rem;
+  font-size: 0.72rem; letter-spacing: 0.01em;
+  color: var(--os-ink-subtle); padding: 0.9rem 1.1rem 0.25rem;
 }
 
-/* [예외 등록 #6] 플러그인 기여 nav 트리(os-nav-node, 재귀) 다크 테마 정합 —
- * Clarity clr-vertical-nav-group의 children 패널은 기본 흰 배경이라 다크 셸 내비에서
- * 흰-on-흰으로 라벨이 안 보인다. 셸 nav 토큰에 맞춰 배경/글자색을 강제한다. */
+/* [예외 등록 #6] nav 라이트 테마(ACC식 화이트) — 항목=다크그레이, hover/active=옅은 회색, active=블루 좌측 바.
+ * 콘텐츠와 분리하는 우측 hairline. 플러그인 기여 트리(os-nav-node)도 동일 적용. */
 .os-nav {
+  border-right: 1px solid var(--os-hairline);
   clr-vertical-nav-group, .nav-group, .nav-group-children, .nav-group-content {
     background: transparent !important;
   }
   .nav-group .nav-trigger,
   .nav-group-children .nav-link,
   a[clrVerticalNavLink] {
-    color: var(--clr-vertical-nav-item-color) !important;
+    color: var(--os-ink-muted) !important;
   }
   .nav-group .nav-trigger:hover,
   .nav-group-children .nav-link:hover,
   a[clrVerticalNavLink]:hover {
-    color: #fff !important;
-    background: rgba(76, 111, 255, 0.12) !important;
+    color: var(--os-ink) !important;
+    background: rgba(0, 0, 0, 0.05) !important;   /* 그레이 레일 위 미세 darken */
+    box-shadow: inset 3px 0 0 var(--os-accent);  /* 호버 표시 막대 — 항목(메뉴바) 전체 높이 */
   }
   .nav-group-children .nav-link.active,
   a[clrVerticalNavLink].active {
-    color: var(--clr-vertical-nav-item-active-color) !important;
-    background: var(--clr-vertical-nav-item-active-bg-color) !important;
+    color: var(--os-ink) !important;
+    background: #ffffff !important;               /* 그레이 레일 위 화이트 active(2단/콘텐츠와 연결) */
+    box-shadow: inset 3px 0 0 var(--os-accent);   /* ACC식 블루 좌측 액센트 바 */
   }
-  .nav-trigger .nav-trigger-icon { color: var(--clr-vertical-nav-item-color) !important; }
+  /* Clarity 기본 인디케이터(::before 4px azure 바, 모든 상태) 완전 제거 — 우리 box-shadow 바와 중복 방지.
+   * 외곽(Clarity ::before) 삭제 → 안쪽(우리 sphere-blue box-shadow) 단일 막대만 남김. */
+  a[clrVerticalNavLink]::before,
+  .nav-link::before,
+  .nav-trigger::before { display: none !important; content: none !important; }
+  .nav-trigger .nav-trigger-icon { color: var(--os-ink-muted) !important; }
 }
 
-/* [예외 등록 #4] 토큰 레벨 표현 유틸 — §14 디자인 시스템 계약에 따라
- * 런타임 플러그인(light DOM)에도 전역 제공되는 공용 레이어. */
+/* nav 아이콘 균일화 — Clarity 기본 아이콘 슬롯(16px)이 20px 아이콘을 가둬 잘림·비대칭·크기 들쭉을 만든다.
+ * 슬롯과 svg를 20px로 고정 + 중앙 정렬 → 모든 1단 아이콘 동일 크기·상하중앙. */
+.os-nav a[clrVerticalNavLink] > os-cicon,
+.os-nav .nav-link > os-cicon,
+.os-nav .nav-trigger > os-cicon {
+  flex: 0 0 20px; width: 20px !important; height: 20px !important; min-width: 20px !important;
+  display: inline-flex !important; align-items: center; justify-content: center;
+}
+.os-nav os-cicon svg { display: block; width: 20px !important; height: 20px !important; }
+
+/* 1단 메뉴 항목 간격 — Clarity 기본(32px)이 답답 → 여유 높이(IBM Cloud 사이드냅 유사). 아이콘은 계속 중앙. */
+.os-nav a[clrVerticalNavLink],
+.os-nav .nav-link,
+.os-nav .nav-group .nav-trigger {
+  min-height: 2.375rem !important;       /* 패딩 -3px 반영 위해 높이도 44→38px */
+  padding-top: 0.45rem !important;       /* 0.65rem → 0.45rem (위/아래 약 -3px) */
+  padding-bottom: 0.45rem !important;
+  margin-bottom: 2px;                     /* 각 메뉴바 간 2px 간격 */
+}
+
+/* 접힘 레일(is-collapsed): 밴드 라벨 → 얇은 회색 구분선, 플러그인 배지 숨김(ACC 레일처럼). */
+.os-nav.is-collapsed {
+  .os-band-label {
+    height: 1px; padding: 0; margin: 0.55rem 0.7rem; overflow: hidden;
+    color: transparent; background: var(--os-hairline);
+  }
+  .os-plugin-badge { display: none; }
+}
+
+/* 페이지 템플릿 — 셸 네이티브 페이지 공통(섹션 제목·테이블 토큰화). os-page-header와 함께 일관성 강제. */
+.os-page > h2,
+.os-page section > h2 {
+  font-size: 1.25rem; font-weight: 400; color: var(--os-ink);
+  letter-spacing: -0.01em; margin: 1.75rem 0 0.75rem;
+}
+/* Carbon식 데이터 테이블 — 플랫(라운드 X) + hairline 아우터/행 구분선 + 그레이 헤더 + hover. */
+.os-page .table {
+  width: 100%; margin: 0 0 1.5rem; background: #fff;
+  border: 1px solid var(--os-hairline) !important; border-collapse: collapse;
+}
+.os-page .table th,
+.os-page .table td {
+  border: 0 !important; border-bottom: 1px solid var(--os-hairline) !important;
+  padding: 0.7rem 1rem !important; text-align: left; vertical-align: middle;
+}
+.os-page .table th {
+  background: var(--os-surface-2); color: var(--os-ink);   /* 페이지/행과 뚜렷이 구분되는 그레이 헤더 */
+  font-weight: 600; font-size: 0.75rem; letter-spacing: 0.02em;
+}
+.os-page .table td { color: var(--os-ink); font-size: 0.85rem; }
+.os-page .table tbody tr:last-child td { border-bottom: 0 !important; }
+.os-page .table tbody tr:hover td { background: var(--os-surface-1); }
+
+/* clr-datagrid(apis 등)도 동일 데이터그리드 룩 — 헤더를 같은 그레이로(표현 일치 + 헤더 가시성). */
+clr-datagrid .datagrid-header { background: var(--os-surface-2) !important; }
+clr-datagrid .datagrid-column {
+  background: var(--os-surface-2) !important; color: var(--os-ink) !important;
+  font-weight: 600 !important;
+}
+clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(--os-hairline) !important; }
+
+/* Carbon식 태그/상태 칩 — 단일 액센트 규율(그룹=sphere-blue, 상태=semantic). */
+.os-page .label {
+  border: 0; border-radius: 999px; padding: 0.1rem 0.6rem;
+  font-size: 0.72rem; font-weight: 500; line-height: 1.5;
+}
+.os-page .label-info { background: var(--os-accent-subtle); color: var(--os-accent); }
+.os-page .label-success { background: rgba(36, 161, 72, 0.14); color: #1c7d3a; }
+
+/* [예외 등록 #4] 토큰 레벨 표현 유틸 — 런타임 플러그인(light DOM)에도 전역 제공. */
 .os-sub { color: var(--os-muted); font-size: 0.7rem; margin: 0.3rem 0 0.8rem; }
 .os-engine { font-size: 0.6rem; color: var(--os-muted); font-weight: 400; margin-left: 0.4rem; }
 .os-kv td:first-child { width: 110px; color: var(--os-muted); }
 .os-mono { font-family: monospace; font-size: 0.62rem; }
+
+/* [예외 등록 #7] 카드 Carbon 규율 (docs/DESIGN-TOKENS §5: 계층=hairline+surface, 평면엔 그림자 X)
+ * Clarity .card는 기본적으로 box-shadow로 elevation을 준다 → 그림자 제거 + 1px hairline + 4px(플랫),
+ * clickable hover는 그림자 대신 surface-1 배경 변화로(Carbon 규율). */
+.card {
+  box-shadow: none !important;
+  border: 1px solid var(--os-hairline);
+  border-radius: var(--os-radius);
+}
+.card.clickable:hover,
+a.card:hover {
+  box-shadow: none !important;
+  background: var(--os-surface-1);
+  border-color: #b9c0cc;
+  transition: background 0.12s, border-color 0.12s;
+}
+.card .card-title { color: var(--os-ink); }

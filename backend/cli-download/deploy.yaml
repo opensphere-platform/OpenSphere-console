@@ -1,0 +1,32 @@
+# os-cli 서빙 컨테이너 — opensphere-system에 배치(셸 generic proxy /api/plugins/os-cli/가 도달).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: os-cli
+  namespace: opensphere-system
+  labels: { app: os-cli, opensphere.io/cli-download: os }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: os-cli } }
+  template:
+    metadata:
+      labels: { app: os-cli }
+    spec:
+      containers:
+        - name: serve
+          image: localhost:5000/os-cli:v3
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /index.json, port: 8080 }, initialDelaySeconds: 2 }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: os-cli
+  namespace: opensphere-system
+  labels: { app: os-cli }
+spec:
+  selector: { app: os-cli }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]

@@ -18,7 +18,7 @@ export class AuthService {
     redirect_uri: window.location.origin + '/',
     post_logout_redirect_uri: window.location.origin + '/',
     response_type: 'code', // Authorization Code + PKCE(S256, 기본 ON)
-    scope: 'openid profile email groups_name', // groups_name → groups 클레임이 깔끔한 이름
+    scope: 'openid profile email groups_name groups', // groups → Kanidm 네이티브 groups 클레임(그룹 SPN, 하이픈 보존). groups_name은 호환 유지.
     loadUserInfo: false, // groups/profile은 id_token에 포함(Kanidm), 추가 userinfo 불필요
     automaticSilentRenew: false, // Kanidm 무iframe-renew 권장 — 만료 시 재로그인
     userStore: new WebStorageStateStore({ store: window.localStorage }),

@@ -1,66 +1,94 @@
 import { Component, ChangeDetectionStrategy, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { PerspectiveService, type Workspace } from '../core/perspective.service';
+import { ExtensionHostService } from '../core/extension-host.service';
+import { PerspectiveService } from '../core/perspective.service';
+import { routeForPlugin } from '../core/perspectives';
 
-interface Perspective {
-  n: number;
-  name: string;
-  band: '운영' | '구축' | '전달';
-  engine: string;
-  link?: string;
+interface Card {
+  path: string;
+  title: string;
+  sub: string;
 }
 
-/** 랜딩 — 헌법 §6의 10-perspective 지도를 제품의 첫 화면으로.
- *  레이아웃: Clarity grid(clr-row/clr-col) · 타일: Clarity card. */
+/**
+ * 랜딩 — 콘솔 홈. 메뉴 출처는 ADR-UI-003 §3.3 규칙대로 **두 가지만**:
+ *   ① native Core Console 기능 — mainShell 본질(실제 셸 컴포넌트, §3.1).
+ *   ② 등록된 DUPA 확장 — 레지스트리(`ext.pages()`) 기반(동적).
+ * 구 하드코딩 '예정' perspective 카드 10개는 제거 — 실제 빌드+DUPA 등록되면 자동 출현한다.
+ * 레이아웃: Clarity grid(clr-row/clr-col) · 타일: Clarity card.
+ */
 @Component({
   selector: 'os-landing',
   imports: [RouterLink],
   template: `
-    <h1>OpenSphere — 10 Perspectives</h1>
-    <p class="os-sub">조직의 가치사슬 전체를 하나의 셸·하나의 신원·하나의 관문으로. (헌법 §6)</p>
-    @for (band of visibleBands(); track band) {
-      <h2 class="os-band-heading">{{ band }}</h2>
+    <h1>OpenSphere <span class="os-thin">Console</span></h1>
+    <p class="os-sub">하나의 셸 · 하나의 신원 · 하나의 관문.</p>
+
+    <h2 class="os-band-heading">Core Console</h2>
+    <div class="clr-row">
+      @for (c of coreCards(); track c.path) {
+        <div class="clr-col-12 clr-col-sm-6 clr-col-lg-3">
+          <a class="card clickable" [routerLink]="c.path">
+            <div class="card-block">
+              <h4 class="card-title">{{ c.title }}</h4>
+              <p class="card-text os-engine">{{ c.sub }}</p>
+            </div>
+          </a>
+        </div>
+      }
+    </div>
+
+    <h2 class="os-band-heading">Extensions <span class="os-count">{{ extCards().length }}</span></h2>
+    @if (extCards().length) {
       <div class="clr-row">
-        @for (p of byBand(band); track p.n) {
+        @for (c of extCards(); track c.path) {
           <div class="clr-col-12 clr-col-sm-6 clr-col-lg-3">
-            @if (p.link) {
-              <a class="card clickable" [routerLink]="p.link">
-                <div class="card-block">
-                  <span class="badge badge-info">#{{ p.n }}</span>
-                  <h4 class="card-title">{{ p.name }}</h4>
-                  <p class="card-text os-engine">{{ p.engine }}</p>
-                </div>
-              </a>
-            } @else {
-              <div class="card os-dim">
-                <div class="card-block">
-                  <span class="badge">#{{ p.n }}</span>
-                  <h4 class="card-title">{{ p.name }}</h4>
-                  <p class="card-text os-engine">{{ p.engine }} · 예정</p>
-                </div>
+            <a class="card clickable" [routerLink]="c.path">
+              <div class="card-block">
+                <h4 class="card-title">{{ c.title }}</h4>
+                <p class="card-text os-engine">{{ c.sub }}</p>
               </div>
-            }
+            </a>
           </div>
         }
       </div>
+    } @else {
+      <p class="os-empty">
+        등록된 확장이 없습니다. subShell·plugin을 DUPA로 등록하면(서명 manifest + UIPluginPackage)
+        여기와 좌측 내비에 자동으로 나타납니다.
+      </p>
     }
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
     `
       /* 토큰 레벨 글루만 — 구조·컴포넌트는 전부 Clarity */
+      .os-thin {
+        font-weight: 200;
+        opacity: 0.85;
+      }
+      .os-sub {
+        color: var(--os-muted);
+        margin-bottom: 1rem;
+      }
       .os-band-heading {
         font-size: 0.65rem;
         letter-spacing: 0.12em;
         text-transform: uppercase;
         color: var(--os-muted);
-        margin: 1rem 0 0.2rem;
+        margin: 1.4rem 0 0.4rem;
+      }
+      .os-count {
+        opacity: 0.6;
+        margin-left: 0.3rem;
       }
       .os-engine {
         color: var(--os-muted);
       }
-      .os-dim {
-        opacity: 0.55;
+      .os-empty {
+        color: var(--os-muted);
+        font-size: 0.85rem;
+        max-width: 40rem;
       }
       .card-title {
         margin-top: 0.3rem;
@@ -74,27 +102,28 @@ interface Perspective {
   ],
 })
 export class Landing {
+  private ext = inject(ExtensionHostService);
   private psp = inject(PerspectiveService);
-  /** landing 밴드(short) → 워크스페이스 매핑. 역할 게이트: 허용 워크스페이스의 밴드만 카드 노출. */
-  private static readonly BAND_WS: Record<string, Workspace['id']> = { 운영: 'A', 구축: 'B', 전달: 'C' };
-  readonly visibleBands = computed<string[]>(() =>
-    ['운영', '구축', '전달'].filter((b) => this.psp.allowed().includes(Landing.BAND_WS[b])));
 
-  /** 헌법 §6 표 그대로 — 각 perspective는 클린 라우트(/<slug>)로 진입(10개 모두 subShell 등록). */
-  readonly perspectives: Perspective[] = [
-    { n: 1, name: '기반 (Base)', band: '운영', engine: 'Cloud → Cluster·Fleet(M/C·M/C) → Node', link: '/os-level' },
-    { n: 2, name: 'K8s Cluster + Ceph', band: '운영', engine: '단일 클러스터 내부 · OKD 코어', link: '/cluster' },
-    { n: 3, name: 'User & Auth', band: '운영', engine: 'Samba AD 사원 · Keycloak 인증 · Syncope/SCIM', link: '/user' },
-    { n: 4, name: 'Developer', band: '구축', engine: '카탈로그·프로비저닝', link: '/developer' },
-    { n: 5, name: 'AI Level', band: '구축', engine: 'KServe·ODH', link: '/ai' },
-    { n: 6, name: 'API = 정보 흐름', band: '구축', engine: 'Service·NetPol 합성', link: '/api' },
-    { n: 7, name: 'Workspace', band: '전달', engine: '업무 앱 흡수', link: '/workspace' },
-    { n: 8, name: 'Customer', band: '전달', engine: 'CIAM', link: '/customer' },
-    { n: 9, name: '대외 웹서비스', band: '전달', engine: 'Ingress·TLS·프로브', link: '/edge' },
-    { n: 10, name: 'WebSite', band: '전달', engine: 'Directus 계획', link: '/website' },
-  ];
+  /** ① native Core Console 기능 — 실제 셸 컴포넌트(규칙 부합). admin 카드는 운영관리자에게만 노출. */
+  readonly coreCards = computed<Card[]>(() => {
+    const base: Card[] = [
+      { path: '/catalog', title: 'Developer Catalog', sub: '카탈로그' },
+      { path: '/apis', title: 'APIs', sub: '정보 흐름' },
+      { path: '/me', title: '내 정보', sub: 'My Info' },
+    ];
+    if (this.psp.isAdmin()) {
+      base.push(
+        { path: '/console-admins', title: '콘솔 관리자', sub: 'Kanidm IGA' },
+        { path: '/admin/plugins', title: 'Console Extensions', sub: 'subShell·plugin·binding' },
+        { path: '/admin/roles', title: '역할', sub: '역할 정의·부여' },
+      );
+    }
+    return base;
+  });
 
-  byBand(band: string): Perspective[] {
-    return this.perspectives.filter((p) => p.band === band);
-  }
+  /** ② 등록된 DUPA 확장 — 레지스트리 기반(하드코딩 없음). 등록 0개면 빈 상태 안내. */
+  readonly extCards = computed<Card[]>(() =>
+    this.ext.pages().map((p) => ({ path: routeForPlugin(p.id), title: p.title, sub: p.navBand })),
+  );
 }

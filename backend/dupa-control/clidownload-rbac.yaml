@@ -1,0 +1,27 @@
+# dupa-registry-controller가 CLIDownload(console.opensphere.io, cluster-scoped) 바인딩을 '인식'(read)하도록.
+# cluster-scoped 리소스라 ClusterRole 필요(네임스페이스 Role로는 불가). read-only — binding은 reconcile 안 함.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dupa-clidownload-reader
+rules:
+  - apiGroups: ["console.opensphere.io"]
+    resources: ["clidownloads"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # K8s Warning 이벤트를 콘솔 알림 소스로(ADR-UI-002 §D2) — 클러스터 전역 events read
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dupa-clidownload-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dupa-clidownload-reader
+subjects:
+  - kind: ServiceAccount
+    name: dupa-registry-controller
+    namespace: opensphere-system

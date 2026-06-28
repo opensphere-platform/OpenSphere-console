@@ -1,0 +1,3 @@
+# 크로스컴파일 바이너리(빌드 산출물) — git 미추적. dist/index.json(매니페스트)은 추적.
+dist/opensphere-cli-*
+dist/os-*
