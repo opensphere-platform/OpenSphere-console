@@ -1,4 +1,5 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
+import { AuthService } from './auth.service';
 
 /** rhdh-self(headless 엔진)와 기능 컨테이너 API 소비.
  *  경로는 셸 nginx가 프록시: /api/rhdh/* → RHDH, /api/status/* → platform-status.
@@ -67,15 +68,21 @@ export interface PlatformStatus {
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
+  private auth = inject(AuthService);
+  // 감사 B: catalog/kubernetes 읽기도 인증 필수(무인증 토폴로지 노출 차단) → Bearer 첨부.
+  private authHeaders(extra?: Record<string, string>): Record<string, string> {
+    return { authorization: 'Bearer ' + (this.auth.token() || ''), ...(extra ?? {}) };
+  }
+
   async catalogEntities(): Promise<CatalogEntity[]> {
-    const res = await fetch('/api/rhdh/catalog/entities?limit=200');
+    const res = await fetch('/api/rhdh/catalog/entities?limit=200', { headers: this.authHeaders() });
     if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`);
     return res.json();
   }
 
   /** kind=API만 — RHDH 'APIs'(API Explorer) 메뉴의 셸판 데이터 */
   async apiEntities(): Promise<CatalogEntity[]> {
-    const res = await fetch('/api/rhdh/catalog/entities?filter=kind=api&limit=200');
+    const res = await fetch('/api/rhdh/catalog/entities?filter=kind=api&limit=200', { headers: this.authHeaders() });
     if (!res.ok) throw new Error(`apis: HTTP ${res.status}`);
     return res.json();
   }
@@ -85,7 +92,7 @@ export class ApiService {
   async runtimeResources(entity: CatalogEntity): Promise<RuntimeResource[]> {
     const res = await fetch(`/api/rhdh/kubernetes/services/${entity.metadata.name}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ entity }),
     });
     if (!res.ok) throw new Error(`kubernetes: HTTP ${res.status}`);

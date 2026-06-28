@@ -21,7 +21,9 @@ export class AuthService {
     scope: 'openid profile email groups_name groups', // groups → Kanidm 네이티브 groups 클레임(그룹 SPN, 하이픈 보존). groups_name은 호환 유지.
     loadUserInfo: false, // groups/profile은 id_token에 포함(Kanidm), 추가 userinfo 불필요
     automaticSilentRenew: false, // Kanidm 무iframe-renew 권장 — 만료 시 재로그인
-    userStore: new WebStorageStateStore({ store: window.localStorage }),
+    // 감사 P1-2: 토큰 저장을 sessionStorage로(탭/브라우저 종료 시 소멸 → XSS 탈취 지속창 축소).
+    // 같은 탭의 OIDC 리다이렉트 왕복·새로고침은 보존(stateStore는 기본 유지). httpOnly-cookie BFF 세션은 후속.
+    userStore: new WebStorageStateStore({ store: window.sessionStorage }),
   });
 
   readonly user = signal<string>('');
@@ -93,6 +95,9 @@ export class AuthService {
     // DUPA: 흡수 플러그인(예: k8s-console, foundation-shell)이 사용자 신원을 백엔드로 전달해 사용자 단위
     // RBAC(impersonation)을 쓰도록 현재 사용자 토큰을 노출한다. **id_token**(ES256, aud/azp=opensphere-console,
     // groups 포함)이며, 신뢰 게이트(기능 컨테이너)가 Kanidm JWKS로 검증·사용자/그룹 추출에 사용한다.
+    // ⚠️ 감사 P1-2(후속): 이 전역은 현재 모든 subShell의 토큰 브리지다. 완전 제거하려면 Shell 소유
+    //   프록시(ctx.api.fetch에서 셸이 Authorization 주입 → plugin은 raw 토큰 미접근)로 subShell들을
+    //   이식해야 한다(별도 repo). 그 전까지 back-compat 유지. localStorage→sessionStorage는 위에서 적용.
     (window as Window & { __OS_AUTH__?: unknown }).__OS_AUTH__ = {
       user: () => this.user(),
       token: () => this.idToken,

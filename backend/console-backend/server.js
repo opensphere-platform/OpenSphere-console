@@ -8,7 +8,9 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { createPublicKey, verify } = require('crypto');
+const { createPublicKey, verify, randomBytes } = require('crypto');
+const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단, 감사 H)
+const newOpId = () => randomBytes(8).toString('hex');
 
 const PORT = process.env.PORT || 8080;
 const PLUGIN_DIR = process.env.PLUGIN_DIR || '/plugins';
@@ -21,7 +23,10 @@ const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-ka
 
 // ── 호출자 검증(Kanidm 콘솔 id_token, ES256) — ADR-FND-003 ──
 const KANIDM_ISS = process.env.KANIDM_ISS || 'https://localhost:8444/oauth2/openid/opensphere-console';
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://kanidm.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+// 콘솔 로그인 id_token 발급자 = kanidm-core(app=kanidm). svc/kanidm은 opensphere-auth BFF(다른 키)라
+// 거기 JWKS로 검증 시 kid 불일치 401. kanidm-core svc에서 JWKS를 받되 cert SAN(kanidm.svc)에 맞춰 servername 지정.
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://kanidm-core.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
@@ -83,7 +88,7 @@ function _kanidmGetJwks(force) {
   return new Promise((resolve, reject) => {
     if (!force && _kjwks && (Date.now() - _kjwksAt) < KJWKS_TTL) return resolve(_kjwks);
     const u = new URL(KANIDM_JWKS_URL);
-    const opts = { hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: 'GET', ca: kanidmCa() };
+    const opts = { hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: 'GET', ca: kanidmCa(), servername: KANIDM_TLS_SERVERNAME };
     const rq = https.request(opts, (resp) => {
       const ch = []; resp.on('data', (c) => ch.push(c));
       resp.on('end', () => { try { const j = JSON.parse(Buffer.concat(ch).toString('utf8')); _kjwks = j.keys || (j.kty ? [j] : []); _kjwksAt = Date.now(); resolve(_kjwks); } catch (e) { reject(e); } });
@@ -122,11 +127,14 @@ async function verifyActor(req) {
 }
 
 // ── audit (PoC: 메모리) ──
+// 감사 P1-4: operationId + 구조화 1줄 stdout(로그 수집기로 영속 — 메모리 휘발 대비).
+// (ConfigMap/PVC 영속은 별도 RBAC/볼륨 필요 → 후속. 현재는 구조화 로그가 사실상 durable audit.)
 const audit = [];
-function logAudit(actor, action, target, result, reason) {
-  audit.unshift({ time: new Date().toISOString(), actor, action, target, result, reason: reason || '' });
+function logAudit(actor, action, target, result, reason, opId) {
+  const e = { time: new Date().toISOString(), opId: opId || newOpId(), actor, action, target, result, reason: reason || '' };
+  audit.unshift(e);
   if (audit.length > 200) audit.pop();
-  console.log(`[audit] ${actor} ${action} ${target} -> ${result}${reason ? ' (' + reason + ')' : ''}`);
+  console.log('[audit] ' + JSON.stringify(e));
 }
 
 // ── 읽기 집계 (Kanidm person/group) ──
@@ -154,7 +162,7 @@ async function identityPayload() {
 async function personNameByUuid(uuid) { const ps = await kreq('GET', '/v1/person'); const e = (ps || []).find((x) => a1(x.attrs, 'uuid') === uuid); return e ? a1(e.attrs, 'name') : null; }
 async function groupNameByUuid(uuid) { const gs = await kreq('GET', '/v1/group'); const e = (gs || []).find((x) => a1(x.attrs, 'uuid') === uuid); return e ? a1(e.attrs, 'name') : null; }
 
-async function readBody(req) { const chunks = []; for await (const c of req) chunks.push(c); const s = Buffer.concat(chunks).toString(); return s ? JSON.parse(s) : {}; }
+async function readBody(req) { const chunks = []; let n = 0; for await (const c of req) { n += c.length; if (n > MAX_BODY) throw { code: 413, msg: 'payload too large' }; chunks.push(c); } const s = Buffer.concat(chunks).toString(); return s ? JSON.parse(s) : {}; }
 function json(res, code, obj) { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); }
 
 // ── 흡수: catalog 엔진 (구 opensphere-catalog-api) — nginx /api/rhdh→/api/catalog. OpenSphere CRD→kind=API, Deployment→kind=Component ──
@@ -192,13 +200,22 @@ const server = http.createServer(async (req, res) => {
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
     // ── 흡수: catalog 라우트 ──
+    // 감사 누락(B): 읽기도 인증 필수(무인증 PII/토폴로지 노출 차단). 콘솔 전 사용자는 로그인되어
+    // id_token 보유 → verifyAuthed(인증)면 충분(admin 불요). 비로그인 curl 등은 401.
     if (p === '/api/catalog/entities' && req.method === 'GET') {
+      try { await verifyAuthed(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || 'unauthorized' }); }
       const list = await catalogEntities(url.searchParams.get('filter'));
       const limit = Number(url.searchParams.get('limit') || 0);
       return json(res, 200, limit ? list.slice(0, limit) : list);
     }
-    if (p.startsWith('/api/kubernetes/services/')) return json(res, 200, { items: [] });
-    if (p === '/api/identity' && req.method === 'GET') return json(res, 200, await identityPayload());
+    if (p.startsWith('/api/kubernetes/services/')) {
+      try { await verifyAuthed(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || 'unauthorized' }); }
+      return json(res, 200, { items: [] });
+    }
+    if (p === '/api/identity' && req.method === 'GET') {
+      try { await verifyAuthed(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || 'unauthorized' }); }
+      return json(res, 200, await identityPayload());
+    }
     if (p === '/api/identity/audit' && req.method === 'GET') {
       try { await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
       return json(res, 200, { items: audit });
@@ -237,8 +254,9 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { ok: true });
         }
       } catch (e) {
+        console.error('[err] iga write:', e); // 감사 F: 상세는 서버 로그, 클라이언트엔 일반 메시지.
         logAudit(actor.username, mEnable ? 'enable-toggle' : 'group-change', (mEnable || mGroup)[1], 'error', body.reason);
-        return json(res, 500, { error: String(e) });
+        return json(res, 502, { error: 'upstream error' });
       }
     }
 
@@ -259,7 +277,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(404); return res.end('plugin not found');
     }
     res.writeHead(404); res.end('not found');
-  } catch (e) { json(res, 500, { error: String(e) }); }
+  } catch (e) { console.error('[err]', e); if (!res.headersSent) json(res, e && e.code === 413 ? 413 : 500, { error: e && e.code === 413 ? 'payload too large' : 'internal error' }); }
 });
 
 server.listen(PORT, () => console.log(`console-backend v${VERSION} listening :${PORT} (identity IGA + catalog 흡수)`));

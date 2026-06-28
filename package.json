@@ -6,7 +6,8 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "test": "node --test backend/dupa-control/security.test.js src/app/core/notification.merge.spec.ts",
+    "test:security": "node --test backend/dupa-control/security.test.js"
   },
   "private": true,
   "packageManager": "npm@11.6.2",

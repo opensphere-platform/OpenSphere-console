@@ -9,8 +9,13 @@ import { MyInfo } from './pages/my-info';
 import { ConsoleAdmins } from './pages/console-admins';
 import { AdminLayout } from './pages/admin-layout';
 
-function aiPluginRouteMatcher(segments: UrlSegment[]): UrlMatchResult | null {
-  return segments[0]?.path === 'ai' ? { consumed: segments } : null;
+// 감사 P2-3: 특정 plugin id('ai') 하드코딩 제거. 등록된 subShell/plugin의 clean deep link(/<id>/...)를
+// 일반 위임 — 첫 세그먼트를 pluginId(:id)로 노출하고 PluginHost가 처리, 실제 등록 여부는 Extension Host
+// (registry)가 판정(미등록이면 PluginHost가 '등록 안 됨' 안내). 예약 라우트 다음에 배치되므로
+// me/catalog/apis/manage/p/:id 등은 먼저 매칭되고, 그 외 첫 세그먼트만 이 매처로 온다.
+function cleanPluginRouteMatcher(segments: UrlSegment[]): UrlMatchResult | null {
+  if (!segments.length) return null;
+  return { consumed: segments, posParams: { id: new UrlSegment(segments[0].path, {}) } };
 }
 
 export const routes: Routes = [
@@ -38,7 +43,8 @@ export const routes: Routes = [
   { path: 'admin/roles', redirectTo: 'manage/roles' },
 
   // 등록된 플러그인(subShell·plugin)은 전부 `/p/<id>` 동적 호스트로 진입(§10). 실제 화면은 런타임 로드 모듈.
-  { matcher: aiPluginRouteMatcher, component: PluginHost, data: { pluginId: 'ai' } },
   { path: 'p/:id', component: PluginHost },
-  { path: '**', redirectTo: '' },
+  // clean deep link(/<id>/...) 일반 위임 — 예약 라우트 다음에 위치(그 외 첫 세그먼트만 매칭). 미등록 id는
+  // PluginHost가 '등록 안 됨' 안내. (특정 plugin 하드코딩 제거 — 감사 P2-3)
+  { matcher: cleanPluginRouteMatcher, component: PluginHost },
 ];

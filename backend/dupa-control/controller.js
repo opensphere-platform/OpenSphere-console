@@ -7,7 +7,9 @@
 // registry에는 승인값을 '전사'한다(§B.5). 이중 검증: 여기(설치 시점) + 셸(로드 시점).
 // 의존성 0 (node 내장 http/crypto/fs).
 const http = require('http');
-const { createHash, createPublicKey, verify } = require('crypto');
+const https = require('https');
+const fs = require('fs');
+const { createHash, createPublicKey, verify, randomBytes } = require('crypto');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-system';
@@ -17,16 +19,108 @@ const GROUP = 'plugins.opensphere.io';
 const V = 'v1alpha1';
 // 셸(브라우저)이 플러그인 manifest/번들에 접근하는 경로 prefix (nginx 프록시 기준)
 const SHELL_API_PREFIX = '/api/plugins';
+const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단, 감사 H)
 
-const token = () => require('fs').readFileSync(`${SA}/token`, 'utf8').trim();
+const token = () => fs.readFileSync(`${SA}/token`, 'utf8').trim();
 // NODE_EXTRA_CA_CERTS는 deployment env로 주입 (Node fetch는 시작 시점에 읽음)
 
-const audit = []; // { time, actor, action, target, result, reason }
-function logAudit(actor, action, target, result, reason) {
-  const e = { time: new Date().toISOString(), actor: actor || 'system', action, target, result, reason: reason || '' };
+// ── 호출자 검증(Kanidm 콘솔 id_token, ES256) — 감사 P0-1/P1-3 차단 ──────────
+// console-backend(opensphere-identity)의 governance gate와 동일 규칙: JWKS(ES256) 서명검증 +
+// iss/azp/aud/exp/nbf 검증 → opensphere-console-admins 그룹만 변경 허용. actor는 헤더가 아니라
+// '검증된 토큰 claim'에서 도출(X-OpenSphere-User 스푸핑 무력화).
+const KANIDM_ISS = process.env.KANIDM_ISS || 'https://localhost:8444/oauth2/openid/opensphere-console';
+// 콘솔 로그인 id_token 발급자 = kanidm-core(app=kanidm). svc/kanidm은 opensphere-auth BFF(PAT 발급자, 다른 키)라
+// 거기 JWKS로 검증하면 kid 불일치 401. → kanidm-core svc에서 JWKS를 받되, cert SAN이 kanidm.svc라
+// servername으로 SNI/검증 호스트를 맞춘다(동일 kanidm-tls 인증서).
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://kanidm-core.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
+const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
+const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
+const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
+let _kanidmCa;
+function kanidmCa() { if (_kanidmCa === undefined) { try { _kanidmCa = fs.readFileSync(KANIDM_CA_PATH); } catch (e) { console.error('[auth] kanidm CA read failed: ' + e); _kanidmCa = null; } } return _kanidmCa; }
+function b64urlToBuf(s) { return Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/'), 'base64'); }
+const shortName = (spn) => String(spn).split('@')[0];
+let _kjwks = null, _kjwksAt = 0; const KJWKS_TTL = 5 * 60 * 1000;
+function kanidmGetJwks(force) {
+  return new Promise((resolve, reject) => {
+    if (!force && _kjwks && (Date.now() - _kjwksAt) < KJWKS_TTL) return resolve(_kjwks);
+    const u = new URL(KANIDM_JWKS_URL);
+    const rq = https.request({ hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: 'GET', ca: kanidmCa(), servername: KANIDM_TLS_SERVERNAME }, (resp) => {
+      const ch = []; resp.on('data', (c) => ch.push(c));
+      resp.on('end', () => { try { const j = JSON.parse(Buffer.concat(ch).toString('utf8')); _kjwks = j.keys || (j.kty ? [j] : []); _kjwksAt = Date.now(); resolve(_kjwks); } catch (e) { reject(e); } });
+    });
+    rq.on('error', reject); rq.end();
+  });
+}
+// 순수 claim 검증(alg/iss/azp/aud/exp/nbf) — 서명 검증과 분리해 단위 테스트 가능(P2-4). now는 주입 가능.
+function assertClaims(header, claims, now = Date.now()) {
+  const aud = Array.isArray(claims.aud) ? claims.aud : (claims.aud ? [claims.aud] : []);
+  if (header.alg !== 'ES256') throw { code: 401, msg: 'unexpected alg' };
+  if (claims.iss !== KANIDM_ISS) throw { code: 401, msg: 'bad iss' };
+  if (claims.azp !== KANIDM_AZP && !aud.includes(KANIDM_AZP)) throw { code: 401, msg: 'bad azp/aud' };
+  if (claims.exp && claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
+  if (claims.nbf && claims.nbf * 1000 > now + 30000) throw { code: 401, msg: 'token not yet valid' };
+}
+const isAdminGroups = (groups) => (groups || []).includes(KANIDM_ADMIN_GROUP);
+async function verifyAuthed(req) {
+  const auth = req.headers['authorization'] || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (!m) throw { code: 401, msg: 'no bearer token' };
+  const [h, pp, s] = m[1].split('.');
+  if (!h || !pp || !s) throw { code: 401, msg: 'malformed token' };
+  const header = JSON.parse(b64urlToBuf(h).toString());
+  const claims = JSON.parse(b64urlToBuf(pp).toString());
+  if (header.alg !== 'ES256') throw { code: 401, msg: 'unexpected alg' };
+  let jwk = (await kanidmGetJwks()).find((k) => k.kid === header.kid);
+  if (!jwk) jwk = (await kanidmGetJwks(true)).find((k) => k.kid === header.kid);
+  if (!jwk) throw { code: 401, msg: 'unknown kid (kanidm)' };
+  const pub = createPublicKey({ key: jwk, format: 'jwk' });
+  if (!verify('SHA256', Buffer.from(`${h}.${pp}`), { key: pub, dsaEncoding: 'ieee-p1363' }, b64urlToBuf(s))) throw { code: 401, msg: 'bad signature' };
+  assertClaims(header, claims);
+  const groups = (claims.groups || []).map((g) => shortName(g).replace(/^\//, ''));
+  return { username: claims.preferred_username || 'unknown', groups };
+}
+async function verifyActor(req) {
+  const a = await verifyAuthed(req);
+  if (!isAdminGroups(a.groups)) throw { code: 403, msg: `not in ${KANIDM_ADMIN_GROUP}` };
+  return a;
+}
+
+// ── audit (감사 P1-4: 영속화 + operationId) ──────────────────────────────
+// 인메모리 링버퍼(빠른 /events 응답) + ConfigMap(dupa-audit-log) 영속(재시작 생존, append-only JSONL).
+// 컨트롤러 Role은 configmaps create/update/patch 보유 → 새 RBAC 불요. stdout JSON은 클러스터 로그 수집기용.
+const AUDIT_CM = 'dupa-audit-log';
+const AUDIT_CAP = 500;
+const audit = [];
+let _flushT = null;
+function logAudit(actor, action, target, result, reason, opId) {
+  const e = { time: new Date().toISOString(), opId: opId || newOpId(), actor: actor || 'system', action, target, result, reason: reason || '' };
   audit.unshift(e);
-  if (audit.length > 200) audit.pop();
-  console.log(`[audit] ${e.actor} ${action} ${target} -> ${result}${reason ? ' (' + reason + ')' : ''}`);
+  if (audit.length > AUDIT_CAP) audit.pop();
+  console.log('[audit] ' + JSON.stringify(e)); // 구조화 1줄 → 로그 수집기 영속(휘발 대비)
+  if (!_flushT) _flushT = setTimeout(flushAudit, 2000); // 디바운스 flush(이벤트당 write 폭주 방지)
+  return e;
+}
+const newOpId = () => randomBytes(8).toString('hex');
+async function flushAudit() {
+  _flushT = null;
+  const jsonl = audit.slice().reverse().map((x) => JSON.stringify(x)).join('\n');
+  const cmPath = `/api/v1/namespaces/${NS}/configmaps/${AUDIT_CM}`;
+  try {
+    const r = await k8s('PATCH', cmPath, { data: { 'audit.jsonl': jsonl } });
+    if (r.status === 404) await k8s('POST', `/api/v1/namespaces/${NS}/configmaps`, { metadata: { name: AUDIT_CM, namespace: NS }, data: { 'audit.jsonl': jsonl } });
+  } catch (e) { console.error('[audit] flush failed:', String(e).slice(0, 120)); }
+}
+async function hydrateAudit() {
+  try {
+    const r = await k8s('GET', `/api/v1/namespaces/${NS}/configmaps/${AUDIT_CM}`);
+    if (!r.ok) return;
+    const lines = String(r.json?.data?.['audit.jsonl'] || '').split('\n').filter(Boolean);
+    for (const ln of lines.slice(-AUDIT_CAP)) { try { audit.unshift(JSON.parse(ln)); } catch { /* skip */ } }
+    if (audit.length > AUDIT_CAP) audit.length = AUDIT_CAP;
+    console.log(`[audit] hydrated ${audit.length} entries from ${AUDIT_CM}`);
+  } catch (e) { console.error('[audit] hydrate failed:', String(e).slice(0, 120)); }
 }
 
 // ── K8s REST 헬퍼 ─────────────────────────────────────────────
@@ -122,8 +216,13 @@ async function workloadReady(name) {
 }
 
 // ── 검증 (controller 설치 시점 — 셸 로드 시점과 동일 규칙, 이중 검증 §B.1) ──
+// 플러그인 이름은 in-cluster svc 호스트로 조립되므로 엄격 검증(감사 누락 A: 백엔드 SSRF 가드).
+// RFC1123 라벨만 허용 — CR이 임의 호스트명을 주입해 controller가 엉뚱한 svc로 fetch하는 것 차단.
+const SAFE_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+function safeName(n) { return typeof n === 'string' && SAFE_NAME.test(n); }
 async function verifyPlugin(pkg) {
   const name = pkg.metadata.name;
+  if (!safeName(name)) return { ok: false, reason: 'InvalidPluginName' };
   const svc = `http://${name}.${NS}.svc.cluster.local:8080`;
   // manifest reachable
   const mRes = await fetch(`${svc}/plugins/ui-shell.manifest.json`);
@@ -164,10 +263,24 @@ function verifyP256(spkiB64, sigB64, text) {
 
 // ── reconcile: registration desiredState → 실제 상태 ──────────
 let runtimeRegistry = { version: 2, trustedKeys: {}, plugins: [] };
+// P0-2 allowlist: /api/plugins/<id> 프록시를 허용할 서비스 id 집합. (a) 승인된 UIPluginPackage 이름
+// + (b) CLIDownload 바인딩 link가 가리키는 서비스 id(os-cli 등). 미등록 id는 nginx auth_request에서 403.
+// reconcile에서 성공 list로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성 보존).
+let proxyAllow = new Set();
 async function reconcile() {
   const [pkgs, regs] = await Promise.all([listPackages(), listRegs()]);
   if (!pkgs.ok || !regs.ok) return;
   const pkgByName = Object.fromEntries(pkgs.json.items.map((p) => [p.metadata.name, p]));
+  // P0-2 allowlist 갱신: 승인된 패키지명 + 바인딩(CLIDownload) link 서비스 id(os-cli 등).
+  const allow = new Set(Object.keys(pkgByName));
+  try {
+    const cds = await listCliDownloads();
+    for (const cd of cds.json?.items || []) for (const l of (cd.spec?.links || [])) {
+      const mm = String(l.href || '').match(/^\/api\/plugins\/([a-z0-9-]+)\//);
+      if (mm) allow.add(mm[1]);
+    }
+  } catch { /* binding scan best-effort */ }
+  proxyAllow = allow;
   _trustedKeys = null; // 매 reconcile마다 신뢰키 재로드
   const trustedKeys = await loadTrustedKeys();
   const published = [];
@@ -244,7 +357,8 @@ async function pollK8sEvents() {
 
 // ── Control API + registry 서빙 ───────────────────────────────
 async function readBody(req) {
-  const chunks = []; for await (const c of req) chunks.push(c);
+  const chunks = []; let n = 0;
+  for await (const c of req) { n += c.length; if (n > MAX_BODY) throw { code: 413, msg: 'payload too large' }; chunks.push(c); }
   const s = Buffer.concat(chunks).toString(); return s ? JSON.parse(s) : {};
 }
 function json(res, code, obj) { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); }
@@ -265,10 +379,33 @@ async function ensureRegistration(pkgName, desiredState, actor, reason) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
-  const actor = req.headers['x-opensphere-user'] || 'anonymous';
+  const opId = newOpId();
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
     if (p === '/registry/plugins.json') return json(res, 200, runtimeRegistry);
+
+    // P0-2: nginx auth_request 대상 — /api/plugins/<id> 프록시 허용 여부(registry allowlist).
+    // 등록·검증돼 runtimeRegistry에 게시된 plugin id만 통과 → opensphere-system 내 임의 service 프록시 차단.
+    if (p === '/api/internal/proxy-authz') {
+      const id = req.headers['x-plugin-id'] || '';
+      res.writeHead(proxyAllow.has(id) ? 204 : 403); return res.end();
+    }
+
+    // ── 인증 게이트(감사 P0-1/P1-3): /api/admin/* 는 검증된 admin id_token 필수.
+    // actor는 '검증된 토큰 claim'에서만 도출 → X-OpenSphere-User 헤더 스푸핑 무력화.
+    // 예외: /api/admin/events(subShell 백엔드 server-to-server 발행)는 아래에서 별도 처리.
+    let actor = 'system';
+    if (p.startsWith('/api/admin/') && p !== '/api/admin/events') {
+      let a;
+      try { a = await verifyActor(req); }
+      catch (e) {
+        // {code:401/403} = 우리 검증 거부 / 문자열 code(예: ECONNREFUSED) = auth 백엔드(JWKS) 장애.
+        const numeric = e && typeof e.code === 'number';
+        if (!numeric) console.error(`[auth] op=${opId} verify backend error:`, e && (e.code || e.message));
+        return json(res, numeric ? e.code : 502, { error: numeric ? (e.msg || 'unauthorized') : 'auth backend error', opId });
+      }
+      actor = a.username;
+    }
 
     if (p === '/api/admin/plugins/catalog') {
       const pkgs = await listPackages();
@@ -276,7 +413,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/admin/plugins/registrations') {
       const regs = await listRegs();
-      return json(res, 200, { items: (regs.json?.items || []).map((x) => ({ name: x.metadata.name, desiredState: x.spec.desiredState, status: x.status || {}, approval: x.spec.approval })) });
+      // P2-2 증분: 활성 플러그인의 워크로드 health를 함께 노출(Admin UI lifecycle 가시성).
+      const items = await Promise.all((regs.json?.items || []).map(async (x) => {
+        const nm = x.metadata.name;
+        const health = x.spec.desiredState === 'Enabled' ? (await workloadReady(nm) ? 'Ready' : 'NotReady') : 'N/A';
+        return { name: nm, desiredState: x.spec.desiredState, status: x.status || {}, approval: x.spec.approval, health };
+      }));
+      return json(res, 200, { items });
     }
     if (p === '/api/admin/plugins/events') return json(res, 200, { items: audit });
 
@@ -291,8 +434,8 @@ const server = http.createServer(async (req, res) => {
     if (bm && req.method === 'POST') {
       const [, name, action] = bm;
       const r = await k8s('PATCH', `/apis/${CONSOLE_GROUP}/${V}/clidownloads/${name}`, { spec: { enabled: action === 'enable' } });
-      if (!r.ok) { logAudit(actor, action, 'binding/' + name, 'error', `HTTP ${r.status}`); return json(res, r.status, { error: r.json }); }
-      logAudit(actor, action, 'binding/' + name, 'accepted', '');
+      if (!r.ok) { console.error(`[err] op=${opId} binding ${action} ${name} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); logAudit(actor, action, 'binding/' + name, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
+      logAudit(actor, action, 'binding/' + name, 'accepted', '', opId);
       return json(res, 202, { accepted: true, name, enabled: action === 'enable' });
     }
 
@@ -300,9 +443,12 @@ const server = http.createServer(async (req, res) => {
     // 콘솔 알림 NotificationService가 /api/admin/plugins/events 폴링으로 수집. source는 attribution.
     // ⚠️ 인증은 컨트롤 API 전체와 동급(X-OpenSphere-* 헤더) — 강화(SA TokenReview/NetworkPolicy)는 후속.
     if (p === '/api/admin/events' && req.method === 'POST') {
+      // ⚠️ server-to-server 발행구(subShell 백엔드, 사용자 토큰 없음). actor 위조 방지:
+      // source를 'ext:'로 네임스페이스(사용자 actor로 위장 불가) + 필드 길이 bound. 서비스토큰 인증은 후속.
       const b = await readBody(req).catch(() => ({}));
-      const source = b.source || req.headers['x-opensphere-source'] || actor;
-      logAudit(source, b.action || 'event', b.target || b.title || '', b.result || b.severity || 'info', b.reason || b.detail || '');
+      const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
+      const source = 'ext:' + clip(b.source || req.headers['x-opensphere-source'] || 'subshell', 60);
+      logAudit(source, clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId);
       return json(res, 202, { accepted: true, source });
     }
 
@@ -313,15 +459,15 @@ const server = http.createServer(async (req, res) => {
       if (action === 'disable' || action === 'uninstall') {
         const pkgC = await k8s('GET', `${crd('uipluginpackages')}/${id}`);
         if (pkgC.ok && isCorePkg(pkgC.json)) {
-          logAudit(actor, action, id, 'denied', 'core surface(shell-pinned) 제거/비활성 불가 (ADR-UI-003 §3.1)');
+          logAudit(actor, action, id, 'denied', 'core surface(shell-pinned) 제거/비활성 불가 (ADR-UI-003 §3.1)', opId);
           return json(res, 409, { error: 'core surface — not removable', core: true });
         }
       }
       const body = await readBody(req).catch(() => ({}));
       const desired = action === 'install' || action === 'enable' ? 'Enabled' : action === 'disable' ? 'Disabled' : 'Uninstalled';
       const r = await ensureRegistration(id, desired, actor, body.reason);
-      if (!r.ok) { logAudit(actor, action, id, 'error', `HTTP ${r.status}`); return json(res, r.status, { error: r.json }); }
-      logAudit(actor, action, id, 'accepted', '');
+      if (!r.ok) { console.error(`[err] op=${opId} ${action} ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); logAudit(actor, action, id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
+      logAudit(actor, action, id, 'accepted', '', opId);
       reconcile().catch((e) => console.error('reconcile error', e)); // 비동기 조정
       return json(res, 202, { accepted: true, id, desiredState: desired });
     }
@@ -333,19 +479,28 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req).catch(() => ({}));
       const icon = String(body.icon || '').slice(0, 64);
       const r = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: { nav: { icon } } });
-      if (!r.ok) { logAudit(actor, 'set-icon', id, 'error', `HTTP ${r.status}`); return json(res, r.status, { error: r.json }); }
-      logAudit(actor, 'set-icon', id, 'accepted', icon);
+      if (!r.ok) { console.error(`[err] op=${opId} set-icon ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); logAudit(actor, 'set-icon', id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
+      logAudit(actor, 'set-icon', id, 'accepted', icon, opId);
       reconcile().catch((e) => console.error('reconcile error', e));
       return json(res, 202, { accepted: true, id, icon });
     }
     json(res, 404, { error: 'not found' });
   } catch (e) {
-    json(res, 500, { error: String(e) });
+    // 감사 F: raw 예외 문자열을 클라이언트로 누출하지 않는다(내부 호스트/스택 노출 차단). 상세는 서버 로그.
+    console.error(`[err] op=${opId} ${p}:`, e);
+    if (!res.headersSent) json(res, e && e.code === 413 ? 413 : 500, { error: e && e.code === 413 ? 'payload too large' : 'internal error', opId });
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`dupa-registry-controller listening :${PORT} (ns=${NS})`);
-  const loop = () => Promise.all([reconcile(), pollK8sEvents()]).catch((e) => console.error('loop error', e)).finally(() => setTimeout(loop, 15000));
-  loop();
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`dupa-registry-controller listening :${PORT} (ns=${NS})`);
+    hydrateAudit().finally(() => {
+      const loop = () => Promise.all([reconcile(), pollK8sEvents()]).catch((e) => console.error('loop error', e)).finally(() => setTimeout(loop, 15000));
+      loop();
+    });
+  });
+} else {
+  // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
+  module.exports = { assertClaims, isAdminGroups, safeName, b64urlToBuf };
+}

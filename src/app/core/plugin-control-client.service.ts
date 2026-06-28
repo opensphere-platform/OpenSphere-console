@@ -14,6 +14,7 @@ export interface Registration {
   name: string; desiredState: string;
   status: { phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string };
   approval?: { requestedBy?: string; reason?: string };
+  health?: 'Ready' | 'NotReady' | 'N/A'; // P2-2: 활성 플러그인 워크로드 health(컨트롤러 제공)
 }
 export interface AuditEvent { time: string; actor: string; action: string; target: string; result: string; reason: string; }
 // Binding — 비-UI 콘솔 확장(CLIDownload 등). UI plugin(UIPluginPackage)과 별개 kind. 콘솔이 '선언'을 인식·노출.
@@ -24,28 +25,33 @@ export interface Binding { kind: string; name: string; displayName: string; desc
 export class PluginControlClient {
   private auth = inject(AuthService);
 
+  // 감사 P0-1: 모든 Admin Control 호출에 검증된 id_token(Bearer)을 첨부. 컨트롤러가 토큰을
+  // 암호검증(JWKS ES256)하고 admin 그룹을 강제 — 클라이언트 자기보고 X-OpenSphere-User 헤더는 폐기.
   private headers(): HeadersInit {
-    return { 'content-type': 'application/json', 'X-OpenSphere-User': this.auth.user() || 'unknown' };
+    return { 'content-type': 'application/json', authorization: 'Bearer ' + (this.auth.token() || '') };
+  }
+  private authGet(): RequestInit {
+    return { cache: 'no-store', headers: { authorization: 'Bearer ' + (this.auth.token() || '') } };
   }
 
   async catalog(): Promise<CatalogItem[]> {
-    const r = await fetch('/api/admin/plugins/catalog', { cache: 'no-store' });
+    const r = await fetch('/api/admin/plugins/catalog', this.authGet());
     if (!r.ok) throw new Error(`catalog HTTP ${r.status}`);
     return (await r.json()).items;
   }
   async registrations(): Promise<Registration[]> {
-    const r = await fetch('/api/admin/plugins/registrations', { cache: 'no-store' });
+    const r = await fetch('/api/admin/plugins/registrations', this.authGet());
     if (!r.ok) throw new Error(`registrations HTTP ${r.status}`);
     return (await r.json()).items;
   }
   async events(): Promise<AuditEvent[]> {
-    const r = await fetch('/api/admin/plugins/events', { cache: 'no-store' });
+    const r = await fetch('/api/admin/plugins/events', this.authGet());
     if (!r.ok) throw new Error(`events HTTP ${r.status}`);
     return (await r.json()).items;
   }
   /** headless 바인딩(CLIDownload 등) — UI plugin과 별개 채널. controller /api/admin/bindings. */
   async bindings(): Promise<Binding[]> {
-    const r = await fetch('/api/admin/bindings', { cache: 'no-store' });
+    const r = await fetch('/api/admin/bindings', this.authGet());
     if (!r.ok) throw new Error(`bindings HTTP ${r.status}`);
     return (await r.json()).items;
   }

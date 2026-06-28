@@ -17,14 +17,17 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # CSP (manifest v2 보안 계약): 인라인 스크립트 금지.
-    # - script-src blob: → Extension Host가 '검증된 바이트'만 Blob URL로 import하는 경로
+    # 요청 본문 상한(감사 H: DoS — 무제한 업로드 차단). 백엔드 readBody도 256KB 가드.
+    client_max_body_size 1m;
+
+    # CSP (manifest v2 보안 계약): 인라인 스크립트·eval 금지.
+    # - script-src blob: → Extension Host가 '검증된 바이트'(sha256+ECDSA)만 Blob URL로 import하는 경로
     # - style-src 'unsafe-inline' → Angular 컴포넌트 스타일 주입 방식상 필요
     # - connect-src ${OS_AUTH_ORIGIN} → OIDC discovery/token/logout + self proxy/WebSocket
-    # ⚠️ [흡수 트레이드오프] 'unsafe-eval' + worker-src(blob/data): Headlamp 같은 흡수 대형앱이
-    #   런타임 eval·web worker를 필요로 해 추가함. 보안 수위 하락 — 흡수앱 전용으로 격리하거나
-    #   nonce/CSP 분리 등 후속 강화 필요. (DUPA 흡수 PoC 단계 결정)
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob: 'unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    # 감사 P1-1: 'unsafe-eval' 제거(콘솔/플러그인은 eval 미사용 — src 내 eval/new Function 0건). worker-src도
+    #   'self' blob:로 축소(data: 제거). eval이 필요한 흡수 대형앱(Headlamp 등)은 별도 격리 CSP zone으로
+    #   분리해 도입할 것(전역 약화 금지).
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     add_header X-Content-Type-Options nosniff always;
 
     # 콘솔 네이티브 카탈로그 (ADR-UI-003 §3.2 · 헌법 §4: rhdh 과도기 탈피) — console-core 서비스.
@@ -36,17 +39,19 @@ server {
 
     # DUPA Admin Control — control service(dupa-registry-controller) 프록시.
     # Admin UI는 K8s를 직접 안 만지고 이 Control API로만 상태를 바꾼다(계획서 §8).
-    # 사용자 신원을 헤더로 전달(audit·권한용). 운영 전환 시 토큰 검증으로 승격.
+    # 감사 P0-1: 인증은 controller가 Authorization: Bearer(Kanidm id_token, JWKS ES256) 검증으로 수행.
+    #   클라이언트가 보내는 X-OpenSphere-User는 스푸핑 가능하므로 빈 값으로 clear(actor=검증 토큰 claim).
     location /api/admin/ {
         proxy_pass http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080/api/admin/;
-        proxy_set_header X-OpenSphere-User $http_x_opensphere_user;
+        proxy_set_header X-OpenSphere-User "";
     }
 
     # 콘솔 네이티브 identity(Kanidm IGA) — /console-admins 백엔드(console-core 서비스).
     # ADR-UI-003 §3.2 Core≠Plugin: console-identity를 DUPA plugin이 아닌 console-core 서비스로 내장.
+    # 감사 P0-1/B: console-backend가 Authorization: Bearer로 검증(쓰기=admin, 읽기=인증). 스푸핑 헤더 clear.
     location /api/identity {
         proxy_pass http://console-backend.opensphere-system.svc.cluster.local:8080;
-        proxy_set_header X-OpenSphere-User $http_x_opensphere_user;
+        proxy_set_header X-OpenSphere-User "";
     }
 
     # 콘솔 역할/PAT — opensphere-auth BFF(console-core 서비스). §3.2: same-origin 프록시로 크로스오리진 CORS 제거.
@@ -72,11 +77,12 @@ server {
     # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).
     # Admin이 설치/삭제하면 ns opensphere-system에 <id> service가 생기고 사라진다.
     # 변수+resolver로 런타임 DNS 해석 → 미설치 상태에서도 nginx가 죽지 않고 502만 반환.
-    # 한 규칙으로 모든 동적 플러그인을 받으므로 플러그인 추가 시 셸 리빌드 불필요(DUPA 정신).
-    # [PoC 한계] id는 registry에 게시된 검증된 플러그인만 셸이 로드하지만, nginx 자체는
-    # ns opensphere-system의 임의 service:8080으로 프록시 가능 — 제품화 시 controller가
-    # basePath allowlist를 nginx에 생성하도록 승격.
+    # 감사 P0-2: auth_request로 controller가 registry/binding allowlist를 강제 → 등록·검증된 plugin id와
+    #   바인딩(CLIDownload) 서비스만 통과. 미등록 id는 403 → opensphere-system 내 임의 service 프록시 차단.
+    #   (controller 장애 시 fail-closed: 플러그인 프록시 일시 차단 — 가용성보다 경계 우선.)
     location ~ ^/api/plugins/([a-z0-9-]+)/(.*)$ {
+        set $plugin_id $1;
+        auth_request /_plugin_authz;
         resolver 10.96.0.10 valid=10s;
         set $plugin_upstream $1.opensphere-system.svc.cluster.local;
         proxy_pass http://$plugin_upstream:8080/$2$is_args$args;
@@ -89,6 +95,15 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    # P0-2 allowlist 검사 서브리퀘스트(내부 전용). controller가 plugin id 등록 여부로 204/403 반환.
+    location = /_plugin_authz {
+        internal;
+        proxy_pass http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080/api/internal/proxy-authz;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Plugin-Id $plugin_id;
+    }
+
     # 해시드 자산(main-<hash>.js 등)은 내용 불변 → 장기 immutable 캐시
     location ~* "-[A-Za-z0-9]{8,}\.(?:js|css)$" {
         add_header X-Content-Type-Options nosniff always;
@@ -99,7 +114,7 @@ server {
     # 새 해시 자산을 참조(구 index 캐시로 인한 'Failed to load module script' 빈 화면 방지).
     # add_header는 자식 location에서 부모를 '대체'하므로 CSP/nosniff를 여기서 다시 선언한다.
     location = /index.html {
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob: 'unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
         add_header X-Content-Type-Options nosniff always;
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;
     }
