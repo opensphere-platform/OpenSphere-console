@@ -1,4 +1,4 @@
-import { Routes } from '@angular/router';
+import { Routes, UrlMatchResult, UrlSegment } from '@angular/router';
 import { Landing } from './pages/landing';
 import { Catalog } from './pages/catalog';
 import { Apis } from './pages/apis';
@@ -8,6 +8,10 @@ import { AdminRoles } from './pages/admin-roles';
 import { MyInfo } from './pages/my-info';
 import { ConsoleAdmins } from './pages/console-admins';
 import { AdminLayout } from './pages/admin-layout';
+
+function aiPluginRouteMatcher(segments: UrlSegment[]): UrlMatchResult | null {
+  return segments[0]?.path === 'ai' ? { consumed: segments } : null;
+}
 
 export const routes: Routes = [
   { path: '', component: Landing },
@@ -34,6 +38,7 @@ export const routes: Routes = [
   { path: 'admin/roles', redirectTo: 'manage/roles' },
 
   // 등록된 플러그인(subShell·plugin)은 전부 `/p/<id>` 동적 호스트로 진입(§10). 실제 화면은 런타임 로드 모듈.
+  { matcher: aiPluginRouteMatcher, component: PluginHost, data: { pluginId: 'ai' } },
   { path: 'p/:id', component: PluginHost },
   { path: '**', redirectTo: '' },
 ];
