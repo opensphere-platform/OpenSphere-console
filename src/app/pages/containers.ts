@@ -1,5 +1,6 @@
 import { Component, ChangeDetectionStrategy } from '@angular/core';
 import { CarbonIcon } from '../os/carbon-icon';
+import { OsBreadcrumb, Crumb } from '../os/os-breadcrumb';
 import Launch16 from '@carbon/icons/es/launch/16';
 import Information20 from '@carbon/icons/es/information/20';
 import Code32 from '@carbon/icons/es/code/32';
@@ -14,9 +15,10 @@ interface JumpCard { title: string; sub: string; icon: any }
  */
 @Component({
   selector: 'os-containers-overview',
-  imports: [CarbonIcon],
+  imports: [CarbonIcon, OsBreadcrumb],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
+    <os-breadcrumb [items]="crumbs" />
     <section class="ibm-containers-hero">
       <div class="ibm-containers-hero__copy">
         <h1>Run and manage containerized applications</h1>
@@ -125,6 +127,11 @@ interface JumpCard { title: string; sub: string; icon: any }
   ],
 })
 export class ContainersOverview {
+  readonly crumbs: Crumb[] = [
+    { label: 'OpenSphere', route: '/' },
+    { label: 'Containers', route: '/containers/overview' },
+    { label: 'Overview' },
+  ];
   readonly iInfo = Information20;
   readonly iLaunch = Launch16;
   readonly jumpCards: JumpCard[] = [

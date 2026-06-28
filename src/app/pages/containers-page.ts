@@ -1,7 +1,8 @@
-import { Component, ChangeDetectionStrategy, inject, signal } from '@angular/core';
+import { Component, ChangeDetectionStrategy, inject, signal, computed } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsDatagrid, OsColumn } from '../os/os-datagrid';
+import { OsBreadcrumb, Crumb } from '../os/os-breadcrumb';
 
 /**
  * ContainersPage — Containers 하위 항목 공통 더미 페이지.
@@ -10,22 +11,17 @@ import { OsDatagrid, OsColumn } from '../os/os-datagrid';
  */
 @Component({
   selector: 'os-containers-page',
-  imports: [OsPageHeader, OsDatagrid],
+  imports: [OsPageHeader, OsDatagrid, OsBreadcrumb],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="os-page">
-      <div class="cc-crumb">Containers @if (group()) { · {{ group() }} } · {{ title() }}</div>
+      <os-breadcrumb [items]="crumbs()" />
       <os-page-header [title]="title()" [tag]="group()">
         <p>{{ title() }} — 더미 페이지(2단 내비·라우팅·active 표시 검증용).</p>
       </os-page-header>
       <os-datagrid [columns]="cols" [rows]="[]" empty="항목 없음 — 더미 페이지"></os-datagrid>
     </div>
   `,
-  styles: [
-    `
-      .cc-crumb { font-size: 0.75rem; color: var(--os-ink-subtle); margin: 0 0 0.6rem; }
-    `,
-  ],
 })
 export class ContainersPage {
   private route = inject(ActivatedRoute);
@@ -36,6 +32,17 @@ export class ContainersPage {
     { key: 'status', label: '상태' },
     { key: 'created', label: '생성' },
   ];
+
+  /** 페이지 경로(ACC식): OpenSphere / Containers / [그룹] / 현재. */
+  readonly crumbs = computed<Crumb[]>(() => {
+    const c: Crumb[] = [
+      { label: 'OpenSphere', route: '/' },
+      { label: 'Containers', route: '/containers/overview' },
+    ];
+    if (this.group()) c.push({ label: this.group() });
+    c.push({ label: this.title() });
+    return c;
+  });
 
   constructor() {
     this.route.data.subscribe((d) => {

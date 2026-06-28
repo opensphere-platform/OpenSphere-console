@@ -81,7 +81,7 @@ interface TreeNode {
                       <span class="caret-sp"></span>
                     }
                     <span class="tt tt-{{ c.type }}">{{ typeLabel(c.type) }}</span>
-                    <span class="tl">{{ c.label }}</span>
+                    <span class="tl cc-sel" (click)="select(c.id)">{{ c.label }}</span>
                     @if (c.phase) {
                       <span
                         class="label"
@@ -105,7 +105,7 @@ interface TreeNode {
                     @for (g of c.children; track g.id) {
                       <div class="tn tn2">
                         <span class="caret-sp"></span><span class="tt tt-plugin">plugin</span>
-                        <span class="tl">{{ g.label }}</span>
+                        <span class="tl cc-sel" (click)="select(g.id)">{{ g.label }}</span>
                         @if (g.phase) {
                           <span class="label" [class.label-success]="g.phase === 'Enabled'">{{
                             g.phase
@@ -352,6 +352,65 @@ interface TreeNode {
         </clr-tab-content>
       </clr-tab>
     </clr-tabs>
+
+    <!-- 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 설치/검증 상태 -->
+    @if (selectedReg(); as r) {
+      <div class="cc-drawer-backdrop" (click)="closePanel()"></div>
+      <aside class="cc-drawer" role="dialog" aria-label="플러그인 상태">
+        <div class="cc-drawer-head">
+          <div>
+            <div class="cc-drawer-title">{{ selectedLabel() }}</div>
+            <div class="cc-drawer-sub os-mono">{{ r.name }}</div>
+          </div>
+          <button class="btn btn-sm btn-link" (click)="closePanel()">✕</button>
+        </div>
+
+        <div class="cc-state cc-state-{{ (r.status.phase || 'Unknown').toLowerCase() }}">
+          <span class="cc-dot"></span>
+          <strong>{{ r.status.phase || 'Unknown' }}</strong>
+          <span class="cc-desired">목표: {{ r.desiredState }}</span>
+        </div>
+
+        @if (r.status.phase === 'Failed' && r.status.reason) {
+          <div class="cc-reason">
+            <strong>사유</strong>
+            <div>{{ reasonText(r.status.reason) }} <span class="os-mono">({{ r.status.reason }})</span></div>
+          </div>
+        }
+
+        <div class="cc-steps">
+          <div class="cc-steps-h">검증 진행 단계</div>
+          @for (s of steps(); track s.label) {
+            <div class="cc-step cc-step-{{ s.state }}">
+              <span class="cc-step-ic">{{ s.state === 'done' ? '✓' : s.state === 'fail' ? '✗' : s.state === 'active' ? '⋯' : '○' }}</span>
+              <span>{{ s.label }}</span>
+            </div>
+          }
+        </div>
+
+        <dl class="cc-kv">
+          <dt>상태(phase)</dt><dd>{{ r.status.phase || '—' }}</dd>
+          <dt>사유(reason)</dt><dd>{{ r.status.reason || '—' }}</dd>
+          <dt>마지막 변경</dt><dd class="os-mono">{{ r.status.lastTransitionTime || '—' }}</dd>
+          <dt>manifest</dt><dd class="os-mono cc-break">{{ r.status.manifestUrl || '—' }}</dd>
+          <dt>요청자</dt><dd>{{ r.approval?.requestedBy || '—' }}</dd>
+          <dt>승인 사유</dt><dd>{{ r.approval?.reason || '—' }}</dd>
+        </dl>
+
+        <div class="cc-actions">
+          @if (r.status.phase === 'Enabled') {
+            <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
+          } @else {
+            <button class="btn btn-sm btn-success-outline" (click)="run('enable', r.name)">Enable (재검증)</button>
+          }
+          <button class="btn btn-sm btn-danger-outline" (click)="run('uninstall', r.name)">Uninstall</button>
+        </div>
+
+        @if (r.status.phase === 'Failed') {
+          <p class="os-sub">서명 검증 실패 시 nav에 노출되지 않습니다(보안 게이트). 유효 서명으로 재배포 후 Enable(재검증)하세요.</p>
+        }
+      </aside>
+    }
     </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
@@ -465,6 +524,47 @@ interface TreeNode {
       .tree .label {
         font-size: 0.56rem;
       }
+      .cc-sel { cursor: pointer; }
+      .cc-sel:hover { text-decoration: underline; }
+
+      /* 우측 슬라이드 상세 패널 */
+      .cc-drawer-backdrop { position: fixed; inset: 0; background: rgba(22, 22, 22, 0.32); z-index: 1000; }
+      .cc-drawer {
+        position: fixed; top: 0; right: 0; bottom: 0; width: 24rem; max-width: 92vw; z-index: 1001;
+        background: #fff; border-left: 1px solid var(--os-hairline); box-shadow: var(--os-elev-overlay);
+        padding: 1.1rem 1.25rem; overflow-y: auto;
+      }
+      .cc-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+      .cc-drawer-title { font-size: 1.15rem; font-weight: 600; color: var(--os-ink); }
+      .cc-drawer-sub { color: var(--os-ink-subtle); font-size: 0.72rem; margin-top: 0.1rem; }
+      .cc-state {
+        display: flex; align-items: center; gap: 0.5rem; margin: 0.9rem 0; padding: 0.55rem 0.75rem;
+        border-radius: var(--os-radius); background: var(--os-surface-1); font-size: 0.9rem; color: var(--os-ink);
+      }
+      .cc-state .cc-desired { margin-left: auto; font-size: 0.72rem; color: var(--os-ink-muted); }
+      .cc-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--os-ink-subtle); flex: 0 0 auto; }
+      .cc-state-enabled .cc-dot { background: var(--os-success); }
+      .cc-state-failed .cc-dot { background: var(--os-error); }
+      .cc-state-disabled .cc-dot { background: var(--os-warning); }
+      .cc-state-failed { background: rgba(218, 30, 40, 0.08); }
+      .cc-reason { margin: 0 0 0.9rem; padding: 0.6rem 0.75rem; border-left: 3px solid var(--os-error); background: rgba(218, 30, 40, 0.06); font-size: 0.82rem; }
+      .cc-reason strong { display: block; color: var(--os-error); margin-bottom: 0.15rem; }
+      .cc-kv { display: grid; grid-template-columns: 6rem 1fr; gap: 0.35rem 0.6rem; margin: 0.6rem 0 1rem; font-size: 0.8rem; }
+      .cc-kv dt { color: var(--os-ink-muted); }
+      .cc-kv dd { margin: 0; color: var(--os-ink); }
+      .cc-break { word-break: break-all; }
+      .cc-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+
+      .cc-steps { margin: 0.2rem 0 1rem; }
+      .cc-steps-h { font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--os-ink-muted); margin-bottom: 0.4rem; }
+      .cc-step { display: flex; align-items: center; gap: 0.5rem; padding: 0.28rem 0; font-size: 0.82rem; color: var(--os-ink-muted); }
+      .cc-step-ic { width: 1.1rem; text-align: center; flex: 0 0 auto; font-weight: 700; }
+      .cc-step-done { color: var(--os-ink); }
+      .cc-step-done .cc-step-ic { color: var(--os-success); }
+      .cc-step-fail { color: var(--os-error); font-weight: 600; }
+      .cc-step-fail .cc-step-ic { color: var(--os-error); }
+      .cc-step-active .cc-step-ic { color: var(--os-accent); }
+      .cc-step-pending { opacity: 0.6; }
     `,
   ],
 })
@@ -479,6 +579,62 @@ export class AdminPlugins implements OnInit {
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
+
+  /** 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 상태(phase/reason 등). */
+  readonly selected = signal<string | null>(null);
+  readonly selectedReg = computed<Registration | null>(() => {
+    const n = this.selected();
+    return n ? (this.registrations().find((r) => r.name === n) ?? null) : null;
+  });
+  select(name: string): void { this.selected.set(name); }
+  closePanel(): void { this.selected.set(null); }
+  selectedLabel(): string {
+    const n = this.selected();
+    return this.catalog().find((c) => c.name === n)?.displayName || n || '';
+  }
+  /** 검증 실패 사유(reason) 한글 설명. */
+  reasonText(reason?: string): string {
+    const m: Record<string, string> = {
+      SignatureInvalid: '서명이 신뢰키로 검증되지 않음',
+      UntrustedKey: '신뢰하지 않는 서명 키(keyId)',
+      DigestMismatch: 'manifest 해시(sha256) 불일치',
+      EntryDigestMismatch: '엔트리(plugin.js) 해시 불일치',
+      ShellCompatDrift: 'shellCompat 범위 불일치',
+      ManifestUnreachable: 'manifest 접근 불가(파드/서비스)',
+      EntryUnreachable: '엔트리 파일 접근 불가',
+      SignatureUnreachable: '서명 파일 접근 불가',
+    };
+    return reason ? (m[reason] ?? reason) : '';
+  }
+
+  /** DUPA 설치/검증 파이프라인 단계(controller verifyPlugin 순서). reason으로 실패 지점 도출. */
+  private readonly VSTEPS: { label: string; fail?: string[] }[] = [
+    { label: '워크로드 기동 (Pod Running)' },
+    { label: 'manifest 도달', fail: ['ManifestUnreachable'] },
+    { label: 'manifest 해시(sha256) 검증', fail: ['DigestMismatch'] },
+    { label: '서명 키 신뢰 (keyId)', fail: ['UntrustedKey'] },
+    { label: '서명 검증 (P-256)', fail: ['SignatureInvalid'] },
+    { label: 'shellCompat 호환', fail: ['ShellCompatDrift'] },
+    { label: '엔트리(plugin.js) 해시', fail: ['EntryUnreachable', 'EntryDigestMismatch'] },
+    { label: '레지스트리 등록 · nav 노출' },
+  ];
+  steps(): { label: string; state: 'done' | 'fail' | 'pending' | 'active' }[] {
+    const r = this.selectedReg();
+    if (!r) return [];
+    const phase = r.status.phase;
+    const reason = r.status.reason;
+    if (phase === 'Enabled') return this.VSTEPS.map((s) => ({ label: s.label, state: 'done' }));
+    if (phase === 'Disabled') return this.VSTEPS.map((s, i) => ({ label: s.label, state: (i < this.VSTEPS.length - 1 ? 'done' : 'pending') as any }));
+    if (phase === 'Failed' && reason) {
+      const fi = this.VSTEPS.findIndex((s) => s.fail?.includes(reason));
+      return this.VSTEPS.map((s, i) => ({
+        label: s.label,
+        state: fi < 0 ? (i === 0 ? 'done' : 'pending') : i < fi ? 'done' : i === fi ? 'fail' : 'pending',
+      }));
+    }
+    // Installing/기타 — 1단계 진행 중
+    return this.VSTEPS.map((s, i) => ({ label: s.label, state: (i === 0 ? 'active' : 'pending') as any }));
+  }
 
   async ngOnInit(): Promise<void> {
     await this.refresh();

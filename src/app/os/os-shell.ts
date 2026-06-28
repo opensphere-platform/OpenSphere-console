@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
+import { Component, computed, effect, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from './carbon-icon';
@@ -293,8 +293,11 @@ export class OsShell {
   /** 아바타 이니셜 — 사용자명 첫 글자(대문자). */
   readonly initial = computed(() => (this.auth.user()?.trim()?.[0] ?? '?').toUpperCase());
 
-  /** 좌측 nav 접기 상태(레일↔드로어) — 헤더 햄버거가 토글. */
-  readonly navCollapsed = signal(false);
+  /** 좌측 nav 접기 상태(레일↔드로어) — 헤더 햄버거가 토글. 리로드 후에도 유지(localStorage). */
+  readonly navCollapsed = signal(localStorage.getItem('os.navCollapsed') === '1');
+  private readonly _persistNav = effect(() => {
+    localStorage.setItem('os.navCollapsed', this.navCollapsed() ? '1' : '0');
+  });
   readonly iconMenu = Menu20;
   readonly iconHome = Dashboard16;
   readonly iconSettings = Settings16;
