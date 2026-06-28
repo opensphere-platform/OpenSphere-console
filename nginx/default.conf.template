@@ -63,6 +63,12 @@ server {
         proxy_pass http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080/registry/;
     }
 
+    # Registry 단일창구 (GET /api/v1/registry → {capabilities,plugins,templates}). console==cli 동일 응답.
+    # os CLI(`os registry`)와 콘솔이 같은 권위 응답 소비. opensphere-registry 서비스(read-only).
+    location /api/v1/registry {
+        proxy_pass http://opensphere-registry.opensphere-system.svc.cluster.local:80;
+    }
+
     # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).
     # Admin이 설치/삭제하면 ns opensphere-system에 <id> service가 생기고 사라진다.
     # 변수+resolver로 런타임 DNS 해석 → 미설치 상태에서도 nginx가 죽지 않고 502만 반환.
