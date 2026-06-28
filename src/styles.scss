@@ -52,6 +52,13 @@
   --os-font: "IBM Plex Sans", "IBM Plex Sans KR", system-ui, "Segoe UI", sans-serif;
   --os-font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
 
+  /* ── Overview 공통 배경(규약: 모든 섹션 /overview 페이지가 동일 배경 사용) ──
+     containers/overview 기준 하단-우측 블루/핑크 글로우. CSS 변수는 ShadowDom도 상속하므로 subShell overview도 동일하게 var(--os-overview-bg) 사용 가능. */
+  --os-overview-bg:
+    radial-gradient(circle at 82% 82%, rgba(190, 230, 255, 0.5), transparent 26rem),
+    radial-gradient(circle at 92% 72%, rgba(255, 214, 232, 0.4), transparent 24rem),
+    var(--os-surface-1);
+
   /* ── 레거시 별칭(기존 컴포넌트 참조 호환 — 값은 새 토큰으로 정렬) ── */
   --os-brand-900: var(--os-header-bg);   /* 헤더 딥네이비 */
   --os-brand-700: #16224d;
@@ -150,6 +157,28 @@ body code, body kbd, body pre, body samp, .os-mono { font-family: var(--os-font-
     color: transparent; background: var(--os-hairline);
   }
   .os-plugin-badge { display: none; }
+}
+
+/* ── 2단(보조) 내비 표준 — OpenSphere AI Hub(/p/ai) 방식: Clarity clr-vertical-nav, 흰 배경, 왼쪽 blue bar active.
+ *  전역 정의(섹션 레이아웃이 class="cm-nav"로 공유). 네이티브(containers·manage)·subShell 모두 동일 룩. */
+.cm-nav {
+  /* 1단(레일)은 그레이(--os-nav-bg), 2단은 흰색. Clarity 내부 nav 배경 토큰을 .cm-nav 범위에서 흰색으로 오버라이드. */
+  --clr-vertical-nav-bg-color: #ffffff;
+  min-height: 100%; background: #fff; border-inline-end: 1px solid var(--os-hairline);
+}
+.cm-nav .clr-vertical-nav, .cm-nav .nav-content { background: #fff; }
+.cm-brand { display: flex; align-items: center; gap: 0.4rem; min-height: 3.05rem; padding: 0.55rem 0.9rem; border-block-end: 1px solid var(--os-hairline); }
+.cm-brand strong { font-size: 0.875rem; font-weight: 600; color: var(--os-ink); }
+.cm-nav .nav-group, .cm-nav .nav-group-content, .cm-nav .nav-group-children { background: transparent; }
+.cm-nav a[clrVerticalNavLink], .cm-nav .nav-link, .cm-nav .nav-trigger { color: var(--os-ink-muted); font-size: 0.8rem; }
+.cm-nav a[clrVerticalNavLink] os-cicon, .cm-nav .nav-trigger os-cicon { color: var(--os-ink-muted); }
+.cm-nav a[clrVerticalNavLink]:hover, .cm-nav .nav-link:hover, .cm-nav .nav-trigger:hover { color: var(--os-ink); background: rgba(0, 0, 0, 0.04); }
+/* active = 왼쪽 blue bar 하나만(중복/외곽 표시 제거) */
+.cm-nav a[clrVerticalNavLink]::before, .cm-nav .nav-link::before { display: none !important; content: none !important; }
+.cm-nav a[clrVerticalNavLink].active, .cm-nav .nav-link.active {
+  color: var(--os-ink); font-weight: 600;
+  background: rgba(76, 111, 255, 0.10);
+  box-shadow: inset 3px 0 0 var(--os-accent);
 }
 
 /* 페이지 템플릿 — 셸 네이티브 페이지 공통(섹션 제목·테이블 토큰화). os-page-header와 함께 일관성 강제. */

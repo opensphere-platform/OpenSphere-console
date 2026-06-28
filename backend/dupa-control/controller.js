@@ -212,6 +212,8 @@ async function reconcile() {
         manifestSha256: pkg.spec.manifest.sha256,
         signature: sigUrl,
         keyId: pkg.spec.trust.keyId,
+        // 관리자 지정 1단 아이콘(Carbon 토큰명). 서명 무관 오버라이드(CR spec.nav.icon) — 셸이 토큰→아이콘 매핑.
+        icon: pkg.spec.nav?.icon || '',
       });
       await setStatus(name, { phase: 'Enabled', reason: '', manifestUrl });
     } catch (e) {
@@ -322,6 +324,19 @@ const server = http.createServer(async (req, res) => {
       logAudit(actor, action, id, 'accepted', '');
       reconcile().catch((e) => console.error('reconcile error', e)); // 비동기 조정
       return json(res, 202, { accepted: true, id, desiredState: desired });
+    }
+
+    // 1단 아이콘 지정 — UIPluginPackage spec.nav.icon 패치(서명 무관 오버라이드). 패치 후 reconcile로 registry 즉시 반영.
+    const im = p.match(/^\/api\/admin\/plugins\/packages\/([a-z0-9-]+)\/icon$/);
+    if (im && req.method === 'POST') {
+      const [, id] = im;
+      const body = await readBody(req).catch(() => ({}));
+      const icon = String(body.icon || '').slice(0, 64);
+      const r = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: { nav: { icon } } });
+      if (!r.ok) { logAudit(actor, 'set-icon', id, 'error', `HTTP ${r.status}`); return json(res, r.status, { error: r.json }); }
+      logAudit(actor, 'set-icon', id, 'accepted', icon);
+      reconcile().catch((e) => console.error('reconcile error', e));
+      return json(res, 202, { accepted: true, id, icon });
     }
     json(res, 404, { error: 'not found' });
   } catch (e) {

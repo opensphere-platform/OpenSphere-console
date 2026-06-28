@@ -39,6 +39,7 @@ interface RegistryEntry {
   manifestSha256: string;
   signature: string; // 분리 서명(.sig, base64) URL
   keyId: string;
+  icon?: string; // 1단 아이콘(Carbon 토큰명) — 관리자 오버라이드(spec.nav.icon). 서명 무관.
 }
 
 @Injectable({ providedIn: 'root' })
@@ -51,6 +52,8 @@ export class ExtensionHostService {
   readonly navTrees = signal<Record<string, NavNode[]>>({});
   /** 플러그인별 기여 검색 provider(search:contribute) — pluginId → provider(동기/비동기) */
   readonly searchProviders = signal<Record<string, SearchProvider>>({});
+  /** 플러그인별 1단 아이콘(Carbon 토큰명) — registry(spec.nav.icon 전사)에서. pluginId → token */
+  readonly pluginIcons = signal<Record<string, string>>({});
 
   async load(): Promise<void> {
     let reg: RegistryV2;
@@ -65,6 +68,8 @@ export class ExtensionHostService {
       console.warn('[extension-host] 레지스트리 v2 아님 — 전체 거부(fail-closed)');
       return;
     }
+    // 1단 아이콘 맵(registry 전사값). registry에는 Enabled 플러그인만 들어오므로 그대로 사용.
+    this.pluginIcons.set(Object.fromEntries((reg.plugins ?? []).map((e) => [e.id, e.icon ?? ''])));
     await Promise.all((reg.plugins ?? []).map((e) => this.loadOne(e, reg.trustedKeys ?? {})));
   }
 
@@ -78,6 +83,7 @@ export class ExtensionHostService {
     this.failures.set([]);
     this.navTrees.set({});
     this.searchProviders.set({});
+    this.pluginIcons.set({});
     await this.load();
   }
 

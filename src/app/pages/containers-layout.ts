@@ -1,104 +1,70 @@
 import { Component, ChangeDetectionStrategy, signal } from '@angular/core';
 import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from '../os/carbon-icon';
 import Home16 from '@carbon/icons/es/home/16';
 import Code16 from '@carbon/icons/es/code/16';
 import Kubernetes16 from '@carbon/icons/es/kubernetes/16';
 import ContainerRegistry16 from '@carbon/icons/es/container-registry/16';
 import Document16 from '@carbon/icons/es/document/16';
-import Launch16 from '@carbon/icons/es/launch/16';
-import ChevronRight16 from '@carbon/icons/es/chevron--right/16';
-import ChevronDown16 from '@carbon/icons/es/chevron--down/16';
 
 interface CCChild { label: string; route: string }
 interface CCGroup { id: string; icon: any; label: string; children: CCChild[] }
 
 /**
- * ContainersLayout — Containers 섹션 레이아웃 (2단 트리 보조 내비 + router-outlet).
- * 각 항목은 실제 자식 라우트(routerLink) → 페이지 진입 시 routerLinkActive로 2단 active 자동 표시.
- * 그룹(Serverless/Cluster management)은 트리(접기/펼치기). 콘텐츠 배경/패딩은 .cc-content가 제공.
+ * ContainersLayout — Containers 섹션 레이아웃(2단 보조 내비 + router-outlet).
+ * 2단 메뉴 표준 = OpenSphere AI Hub(/p/ai) 방식: Clarity clr-vertical-nav(흰 배경, 12rem, 왼쪽 blue bar active).
+ * 네이티브 라우트라 풀블리드는 .cc-frame margin:-1.5rem 가 담당(plugin-host :host 상쇄는 /p/ 전용). active=routerLinkActive.
  */
 @Component({
   selector: 'os-containers-layout',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, CarbonIcon],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ClarityModule, CarbonIcon],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="cc-frame">
-      <nav class="cc-secondbar" aria-label="Containers 보조 내비">
-        <div class="cc-title"><strong>Containers</strong></div>
-        <div class="cc-items" role="menu">
-          <a class="cc-item" routerLink="overview" routerLinkActive="is-active">
-            <os-cicon [icon]="iHome" [size]="16" /><span class="lbl">Overview</span>
-          </a>
+      <clr-vertical-nav class="cm-nav" [clrVerticalNavCollapsible]="false" aria-label="Containers 보조 내비">
+        <div class="cm-brand"><strong>Containers</strong></div>
 
-          @for (g of groups; track g.id) {
-            <div class="cc-group" [class.is-open]="isOpen(g.id)">
-              <button type="button" class="cc-item cc-group-title" (click)="toggle(g.id)" [attr.aria-expanded]="isOpen(g.id)">
-                <os-cicon [icon]="g.icon" [size]="16" /><span class="lbl">{{ g.label }}</span>
-                <os-cicon class="cc-chev" [icon]="isOpen(g.id) ? iDown : iRight" [size]="16" />
-              </button>
-              <div class="cc-nested">
-                @for (c of g.children; track c.route) {
-                  <a class="cc-child" [routerLink]="c.route" routerLinkActive="is-active">{{ c.label }}</a>
-                }
-              </div>
-            </div>
-          }
+        <a clrVerticalNavLink routerLink="overview" routerLinkActive="active">
+          <os-cicon clrVerticalNavIcon [icon]="iHome" [size]="16" />Overview
+        </a>
 
-          <a class="cc-item" routerLink="registry" routerLinkActive="is-active">
-            <os-cicon [icon]="iRegistry" [size]="16" /><span class="lbl">Container Registry</span>
-          </a>
+        @for (g of groups; track g.id) {
+          <clr-vertical-nav-group
+            [clrVerticalNavGroupExpanded]="isOpen(g.id)"
+            (clrVerticalNavGroupExpandedChange)="setOpen(g.id, $event)"
+          >
+            <os-cicon clrVerticalNavIcon [icon]="g.icon" [size]="16" />{{ g.label }}
+            <clr-vertical-nav-group-children>
+              @for (c of g.children; track c.route) {
+                <a clrVerticalNavLink [routerLink]="c.route" routerLinkActive="active">{{ c.label }}</a>
+              }
+            </clr-vertical-nav-group-children>
+          </clr-vertical-nav-group>
+        }
 
-          <div class="cc-sep"></div>
-          <a class="cc-item" href="#docs" (click)="$event.preventDefault()">
-            <os-cicon [icon]="iDoc" [size]="16" /><span class="lbl">Docs</span>
-            <os-cicon class="cc-ext" [icon]="iLaunch" [size]="16" />
-          </a>
-        </div>
-      </nav>
+        <a clrVerticalNavLink routerLink="registry" routerLinkActive="active">
+          <os-cicon clrVerticalNavIcon [icon]="iRegistry" [size]="16" />Container Registry
+        </a>
+        <a clrVerticalNavLink href="#docs" (click)="$event.preventDefault()">
+          <os-cicon clrVerticalNavIcon [icon]="iDoc" [size]="16" />Docs
+        </a>
+      </clr-vertical-nav>
+
       <div class="cc-content"><router-outlet /></div>
     </div>
   `,
   styles: [
     `
-      /* content-area 패딩 상쇄 + 풀하이트. */
-      .cc-frame { display: flex; align-items: stretch; margin: -1.5rem; min-height: calc(100% + 3rem); overflow-x: hidden; }
+      /* 풀블리드(1단 레일·헤더 밀착): 네이티브 라우트라 페이지가 콘솔 콘텐츠 패딩 상쇄. AI 표준 그리드 12rem|1fr. */
+      .cc-frame { display: grid; grid-template-columns: 12rem minmax(0, 1fr); margin: -1.5rem; min-height: calc(100% + 3rem); overflow-x: hidden; }
 
-      /* 2단 보조 내비 (화이트) */
-      .cc-secondbar { flex: 0 0 15.75rem; width: 15.75rem; overflow-y: auto; background: #fff; border-inline-end: 1px solid var(--os-hairline); }
-      .cc-title { display: flex; align-items: center; min-height: 3.25rem; padding-inline: 1rem; border-block-end: 1px solid var(--os-hairline); }
-      .cc-title strong { font-size: 0.875rem; font-weight: 600; color: var(--os-ink); }
+      /* 2단(.cm-nav) 스타일은 전역 styles.scss에 정의(AI Hub 표준). 여기선 레이아웃만. */
 
-      .cc-item {
-        display: grid; grid-template-columns: 1rem minmax(0, 1fr) auto; column-gap: 0.5rem; align-items: center;
-        width: 100%; min-height: 2.25rem; padding: 0.5rem 1rem; border: 0; background: transparent; text-align: left;
-        color: var(--os-ink-muted); font-size: 0.875rem; font-family: inherit; text-decoration: none; cursor: pointer;
-        border-left: 3px solid transparent;
-      }
-      .cc-item os-cicon { color: var(--os-ink-muted); }
-      .cc-item:hover { background: var(--os-nav-hover); color: var(--os-ink); }
-      a.cc-item.is-active { background: var(--os-nav-hover); color: var(--os-ink); font-weight: 600; border-left-color: var(--os-accent); }
-      .cc-chev, .cc-ext { color: var(--os-ink-subtle); }
-
-      .cc-nested { display: none; }
-      .cc-group.is-open > .cc-nested { display: block; }
-      /* 활성 자식이 있는 그룹은 접혀 있어도 자동으로 펼침 */
-      .cc-group:has(.cc-child.is-active) > .cc-nested { display: block; }
-      .cc-child {
-        display: block; padding: 0.45rem 1rem 0.45rem 2.55rem; color: var(--os-ink-muted);
-        font-size: 0.84rem; text-decoration: none; cursor: pointer; border-left: 3px solid transparent;
-      }
-      .cc-child:hover { background: var(--os-nav-hover); color: var(--os-ink); }
-      .cc-child.is-active { background: var(--os-nav-hover); color: var(--os-ink); font-weight: 600; border-left-color: var(--os-accent); }
-      .cc-sep { height: 1px; background: var(--os-hairline); margin: 0.5rem 0; }
-
-      /* 콘텐츠 — Containers 공통 배경(그라데이션) + 패딩 */
+      /* 콘텐츠 — overview 공통 배경 토큰(규약: 모든 /overview 동일 배경) + 패딩 */
       .cc-content {
-        flex: 1 1 auto; min-width: 0; padding: 1.5rem 2rem; overflow-x: hidden; color: var(--os-ink);
-        background:
-          radial-gradient(circle at 82% 82%, rgba(190, 230, 255, 0.5), transparent 26rem),
-          radial-gradient(circle at 92% 72%, rgba(255, 214, 232, 0.4), transparent 24rem),
-          var(--os-surface-1);
+        min-width: 0; overflow-x: hidden; padding: 1.5rem 2rem; color: var(--os-ink);
+        background: var(--os-overview-bg);
       }
     `,
   ],
@@ -107,9 +73,6 @@ export class ContainersLayout {
   readonly iHome = Home16;
   readonly iRegistry = ContainerRegistry16;
   readonly iDoc = Document16;
-  readonly iLaunch = Launch16;
-  readonly iRight = ChevronRight16;
-  readonly iDown = ChevronDown16;
 
   readonly groups: CCGroup[] = [
     {
@@ -133,5 +96,5 @@ export class ContainersLayout {
 
   private readonly open = signal<Record<string, boolean>>({ serverless: true, clusters: true });
   isOpen(id: string): boolean { return !!this.open()[id]; }
-  toggle(id: string): void { this.open.update((m) => ({ ...m, [id]: !m[id] })); }
+  setOpen(id: string, val: boolean): void { this.open.update((m) => ({ ...m, [id]: val })); }
 }

@@ -40,6 +40,7 @@ spec:
                   properties:
                     band: { type: string }
                     label: { type: string }
+                    icon: { type: string }   # 1단 아이콘(Carbon 토큰명, 관리자 오버라이드)
                 manifest:
                   type: object
                   required: [path, sha256]

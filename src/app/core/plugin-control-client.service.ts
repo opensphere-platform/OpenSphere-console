@@ -5,7 +5,7 @@ import { AuthService } from './auth.service';
  *  사용자 신원은 X-OpenSphere-User로 전달(audit·권한). 셸 nginx가 controller로 프록시. */
 export interface CatalogItem {
   name: string; displayName: string; version: string; owner: string;
-  description: string; nav?: { band: string; label: string };
+  description: string; nav?: { band: string; label: string; icon?: string };
   shellCompat: string; permissions: string[];
   // 위계 신호 — scope·core는 controller catalog가 전송. kind·hostRef는 §2.7 확정 후 추가될 필드(있으면 트리가 정확).
   scope?: string; core?: boolean; kind?: string; hostRef?: string;
@@ -63,4 +63,10 @@ export class PluginControlClient {
   enable(id: string) { return this.act(id, 'enable'); }
   disable(id: string) { return this.act(id, 'disable'); }
   uninstall(id: string) { return this.act(id, 'uninstall'); }
+  /** 1단 아이콘 지정 — UIPluginPackage spec.nav.icon 패치(Carbon 토큰명). 빈 문자열=기본 아이콘. */
+  setIcon(id: string, icon: string) {
+    return fetch(`/api/admin/plugins/packages/${id}/icon`, {
+      method: 'POST', headers: this.headers(), body: JSON.stringify({ icon }),
+    }).then((r) => { if (!r.ok) throw new Error(`set-icon HTTP ${r.status}`); return r.json(); });
+  }
 }

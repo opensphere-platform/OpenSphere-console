@@ -75,11 +75,8 @@ interface Card {
       /* content-area 패딩(1.5rem) 상쇄 → 풀블리드 Overview. 배경 그라데이션(containers overview식). */
       .home-ov {
         margin: -1.5rem; min-height: calc(100% + 3rem); padding: 1.5rem 2rem;
-        /* containers/overview와 동일한 배경(하단-우측 블루/핑크 글로우) — 페이지 배경으로 또렷이 반영 */
-        background:
-          radial-gradient(circle at 82% 82%, rgba(190, 230, 255, 0.7), transparent 26rem),
-          radial-gradient(circle at 92% 72%, rgba(255, 214, 232, 0.55), transparent 24rem),
-          var(--os-surface-1);
+        /* overview 공통 배경 토큰(규약: 모든 /overview 동일 배경) */
+        background: var(--os-overview-bg);
       }
       .home-hero {
         display: grid; grid-template-columns: minmax(0, 1fr) 24rem; align-items: center; gap: 1rem;

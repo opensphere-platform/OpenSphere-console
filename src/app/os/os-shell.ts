@@ -2,6 +2,9 @@ import { Component, computed, effect, inject, signal, ChangeDetectionStrategy } 
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from './carbon-icon';
+import { OsRawIcon } from './os-raw-icon';
+import { iconByToken } from './carbon-icon-catalog';
+import { IconLibraryService } from './icon-library.service';
 import Menu20 from '@carbon/icons/es/menu/20';
 import Dashboard16 from '@carbon/icons/es/dashboard/16';
 import Catalog16 from '@carbon/icons/es/catalog/16';
@@ -48,6 +51,7 @@ interface NavBand {
     OsSearch,
     OsNotifications,
     CarbonIcon,
+    OsRawIcon,
   ],
   template: `
     <div class="main-container">
@@ -100,7 +104,11 @@ interface NavBand {
             <div class="os-band-label">{{ band.band }}</div>
             @for (item of band.items; track item.path) {
               <a clrVerticalNavLink [routerLink]="item.path" routerLinkActive="active">
-                <os-cicon clrVerticalNavIcon [icon]="iconFor(item)" [size]="20" />
+                @if (pluginSvg(item); as svg) {
+                  <os-rawicon clrVerticalNavIcon [svg]="svg" [size]="20" />
+                } @else {
+                  <os-cicon clrVerticalNavIcon [icon]="iconFor(item)" [size]="20" />
+                }
                 {{ item.label }}
                 @if (item.plugin) {
                   <span class="badge os-plugin-badge">plugin</span>
@@ -289,6 +297,7 @@ export class OsShell {
   readonly auth = inject(AuthService);
   readonly psp = inject(PerspectiveService);
   private ext = inject(ExtensionHostService);
+  private iconLib = inject(IconLibraryService);
 
   /** 아바타 이니셜 — 사용자명 첫 글자(대문자). */
   readonly initial = computed(() => (this.auth.user()?.trim()?.[0] ?? '?').toUpperCase());
@@ -304,15 +313,30 @@ export class OsShell {
   readonly iconChevLeft = ChevronLeft16;
   readonly iconChevRight = ChevronRight16;
   /** nav 항목 → Carbon 아이콘(접힘 레일 필수). 경로 키워드 매핑, 기본 Grid. */
+  /** 플러그인 항목의 1단 아이콘 SVG(큐레이션에 없는 토큰 → 전체 라이브러리). 큐레이션/네이티브는 null(os-cicon 사용). */
+  pluginSvg(item: NavItem): string | null {
+    const path = item.path || '';
+    if (!(item.plugin || path.startsWith('/p/'))) return null;
+    const id = path.replace(/^\/p\//, '').split(/[/?#]/)[0];
+    const tok = this.ext.pluginIcons()[id];
+    if (!tok || iconByToken(tok)) return null; // 미지정·큐레이션은 os-cicon(즉시)
+    return this.iconLib.getSvg(tok); // 미로딩이면 백그라운드 로딩 + null → 로딩 후 재렌더
+  }
+
   iconFor(item: NavItem): any {
-    const p = (item.path || '').toLowerCase();
+    const path = item.path || '';
+    const p = path.toLowerCase();
+    // 플러그인: 관리자 지정 아이콘(registry의 spec.nav.icon 토큰) — 큐레이션 디스크립터(즉시). 비큐레이션은 pluginSvg가 처리.
+    if (p.startsWith('/p/') || item.plugin) {
+      const id = path.replace(/^\/p\//, '').split(/[/?#]/)[0];
+      return iconByToken(this.ext.pluginIcons()[id]) ?? Application16;
+    }
     if (p.includes('container')) return Kubernetes16;
     if (p.includes('catalog')) return Catalog16;
     if (p.includes('/apis') || p.includes('/api')) return Api16;
     if (p.includes('console-admin')) return UserAdmin16;
     if (p.includes('role')) return UserMultiple16;
     if (p.includes('plugin')) return Application16;
-    if (p.startsWith('/p/') || item.plugin) return Application16;
     return Grid16;
   }
 

@@ -39,6 +39,17 @@ import { ExtensionHostService } from '../core/extension-host.service';
       </clr-alert>
     }
   `,
+  styles: [
+    `
+      :host {
+        display: block;
+        min-width: 0;
+        margin-top: -1.5rem;
+        margin-left: -1.5rem;
+        width: calc(100% + 1.5rem);
+      }
+    `,
+  ],
 })
 export class PluginHost {
   private ext = inject(ExtensionHostService);

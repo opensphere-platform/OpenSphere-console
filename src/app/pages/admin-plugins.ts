@@ -1,6 +1,9 @@
 import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
 import { OsPageHeader } from '../os/os-page-header';
+import { CarbonIcon } from '../os/carbon-icon';
+import { OsRawIcon } from '../os/os-raw-icon';
+import { IconLibraryService } from '../os/icon-library.service';
 import { ExtensionHostService } from '../core/extension-host.service';
 import {
   PluginControlClient,
@@ -28,7 +31,7 @@ interface TreeNode {
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [ClarityModule, OsPageHeader],
+  imports: [ClarityModule, OsPageHeader, CarbonIcon, OsRawIcon],
   template: `
     <div class="os-page">
       <os-page-header title="Console Extensions" tag="Admin Control">
@@ -397,6 +400,24 @@ interface TreeNode {
           <dt>승인 사유</dt><dd>{{ r.approval?.reason || '—' }}</dd>
         </dl>
 
+        <!-- 1단 아이콘 선택(IBM Carbon) — 기본값 + 사용자 선택. spec.nav.icon 패치. -->
+        <div class="cc-iconpick">
+          <div class="cc-iconpick-h">1단 아이콘 <span class="os-mono">{{ iconToken() || '(기본)' }}</span></div>
+          <input class="cc-iconsearch" type="search" placeholder="아이콘 검색…"
+                 [value]="iconQuery()" (input)="iconQuery.set($any($event.target).value)" />
+          <div class="cc-iconpick-note">
+            {{ iconLib.list().length ? (iconMatchCount() + '개 일치' + (iconMatchCount() > iconList().length ? (' · 상위 ' + iconList().length + '개 표시(검색으로 좁히기)') : '')) : '라이브러리 로딩 중…' }}
+          </div>
+          <div class="cc-iconpick-grid">
+            <button type="button" class="cc-iconbtn" [class.sel]="!iconToken()" title="기본(자동)" (click)="chooseIcon('')">∅</button>
+            @for (c of iconList(); track c.token) {
+              <button type="button" class="cc-iconbtn" [class.sel]="iconToken() === c.token" [title]="c.label" (click)="chooseIcon(c.token)">
+                <os-rawicon [svg]="c.svg" [size]="24" />
+              </button>
+            }
+          </div>
+        </div>
+
         <div class="cc-actions">
           @if (r.status.phase === 'Enabled') {
             <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
@@ -555,6 +576,19 @@ interface TreeNode {
       .cc-break { word-break: break-all; }
       .cc-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
 
+      .cc-iconpick { margin: 0 0 1rem; }
+      .cc-iconpick-h { font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--os-ink-muted); margin-bottom: 0.4rem; }
+      .cc-iconpick-h .os-mono { text-transform: none; color: var(--os-ink); }
+      .cc-iconsearch { width: 100%; padding: 0.4rem 0.5rem; margin-bottom: 0.35rem; border: 1px solid var(--os-hairline); border-radius: var(--os-radius); font-size: 0.8rem; }
+      .cc-iconpick-note { font-size: 0.68rem; color: var(--os-ink-subtle); margin-bottom: 0.45rem; }
+      .cc-iconpick-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.35rem; max-height: 17rem; overflow-y: auto; padding-right: 0.15rem; }
+      .cc-iconbtn {
+        display: flex; align-items: center; justify-content: center; height: 2.9rem; border: 1px solid var(--os-hairline);
+        background: #fff; border-radius: var(--os-radius); cursor: pointer; color: var(--os-ink-muted); padding: 0; font-size: 1.1rem;
+      }
+      .cc-iconbtn:hover { border-color: var(--os-accent); color: var(--os-ink); }
+      .cc-iconbtn.sel { border-color: var(--os-accent); box-shadow: inset 0 0 0 1px var(--os-accent); color: var(--os-accent); }
+
       .cc-steps { margin: 0.2rem 0 1rem; }
       .cc-steps-h { font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--os-ink-muted); margin-bottom: 0.4rem; }
       .cc-step { display: flex; align-items: center; gap: 0.5rem; padding: 0.28rem 0; font-size: 0.82rem; color: var(--os-ink-muted); }
@@ -571,6 +605,7 @@ interface TreeNode {
 export class AdminPlugins implements OnInit {
   private ctl = inject(PluginControlClient);
   private ext = inject(ExtensionHostService);
+  readonly iconLib = inject(IconLibraryService);
 
   readonly catalog = signal<CatalogItem[]>([]);
   readonly registrations = signal<Registration[]>([]);
@@ -586,8 +621,36 @@ export class AdminPlugins implements OnInit {
     const n = this.selected();
     return n ? (this.registrations().find((r) => r.name === n) ?? null) : null;
   });
-  select(name: string): void { this.selected.set(name); }
+  select(name: string): void { this.selected.set(name); this.iconLib.ensure(); }
   closePanel(): void { this.selected.set(null); }
+
+  // ── 1단 아이콘 선택(IBM Carbon **전체 라이브러리**) — 기본값 + 사용자 선택. spec.nav.icon 패치 → registry → 셸 반영. ──
+  readonly iconQuery = signal('');
+  private readonly ICON_CAP = 300; // 한 번에 렌더할 최대 개수(2600+ 전체 DOM 방지) — 검색으로 좁힘.
+  /** 검색어 일치 전체 개수(표시용). */
+  readonly iconMatchCount = computed(() => this.iconFiltered().length);
+  private iconFiltered() {
+    const q = this.iconQuery().trim().toLowerCase();
+    const src = this.iconLib.list(); // 전체 라이브러리(metadata)
+    return q ? src.filter((c) => c.search.includes(q)) : src;
+  }
+  readonly iconList = computed(() => this.iconFiltered().slice(0, this.ICON_CAP));
+  iconToken(): string {
+    const n = this.selected();
+    return this.catalog().find((c) => c.name === n)?.nav?.icon || '';
+  }
+  async chooseIcon(token: string): Promise<void> {
+    const n = this.selected();
+    if (!n) return;
+    try {
+      await this.ctl.setIcon(n, token);
+      await this.refresh();    // catalog 갱신(현재 선택 표시)
+      await this.ext.reload(); // registry 재로딩 → 1단 아이콘 즉시 갱신
+      this.msg.set({ type: 'success', text: `아이콘 변경: ${token || '(기본)'}` });
+    } catch (e) {
+      this.msg.set({ type: 'danger', text: String(e) });
+    }
+  }
   selectedLabel(): string {
     const n = this.selected();
     return this.catalog().find((c) => c.name === n)?.displayName || n || '';

@@ -5,3 +5,5 @@ declare module '@carbon/icons/es/*' {
   const icon: any;
   export default icon;
 }
+// 집계 entry(전체 라이브러리) — IconLibraryService의 동적 import 용. 명명 export 다수(<Name><size>)라 any 모듈로 둔다.
+declare module '@carbon/icons';
