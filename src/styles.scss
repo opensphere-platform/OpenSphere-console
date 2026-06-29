@@ -3,6 +3,8 @@
  * 토큰 SSOT = docs/DESIGN-TOKENS.md (Carbon 규율 + OpenSphere 정체성).
  * 원칙(DESIGN-RULES.md): 구조·컴포넌트는 Clarity. 전역 커스텀은 ⓐ 토큰(--clr-* 재정의)·ⓑ 등록 예외만.
  */
+/* Foblex Flow 테마 — 연결선(SVG path) 스트로크·커넥터 스타일 제공(없으면 엣지가 투명). @use는 최상단 필수(Sass 규칙). */
+@use '@foblex/flow/styles/default' as *;
 @import '@clr/ui/clr-ui.min.css';
 /* IBM Plex — 라틴(Sans)+한글(Sans KR)+모노. 한·영 단일 IBM 폰트 통일(사용자 지정). OFL 오픈폰트. */
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap');
@@ -247,3 +249,24 @@ a.card:hover {
   transition: background 0.12s, border-color 0.12s;
 }
 .card .card-title { color: var(--os-ink); }
+
+/* ── cluster-manager 이식 컴포넌트 지원 CSS (shared/code-editor 등) — 같은 L/F 위해 동일 클래스 제공, 색은 콘솔 토큰 매핑 ── */
+.os-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; align-items: center; }
+.os-card { background: #fff; border: 1px solid #e6e8ec; border-radius: 4px; margin: 12px 0; }
+.os-card-h { padding: 8px 14px; border-bottom: 1px solid #e6e8ec; font-weight: 500; color: var(--os-ink-muted, #525252); font-size: 0.8rem; display: flex; align-items: center; justify-content: space-between; }
+.os-iconbtn { border: 0; background: transparent; cursor: pointer; padding: 5px; border-radius: 3px; display: inline-flex; color: var(--os-accent, #4c6fff); }
+.os-iconbtn:hover { background: rgba(76, 111, 255, 0.10); }
+.os-iconbtn-danger { color: #c21d00; }
+.os-iconbtn-danger:hover { background: rgba(194, 29, 0, 0.10); }
+.os-iconbtn[disabled] { opacity: 0.35; cursor: default; }
+.os-ic { width: 18px; height: 18px; fill: currentColor; display: block; }
+.os-wrap-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; color: var(--os-ink-muted, #525252); cursor: pointer; }
+.cm-shell { border-top: 1px solid #e6e8ec; }
+.cm-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: #f7f8fa; border-bottom: 1px solid #e6e8ec; }
+.cm-shell.cm-dark .cm-toolbar { background: #21252b; border-bottom-color: #181a1f; }
+.cm-shell.cm-dark .cm-toolbar .os-iconbtn { color: #61afef; }
+.cm-shell.cm-dark .cm-toolbar .os-wrap-toggle { color: #9aa0aa; }
+.cm-spacer { flex: 1 1 auto; }
+.cm-host { overflow: hidden; resize: vertical; min-height: 120px; }
+.cm-host .cm-editor { height: 100%; }
+.cm-host .cm-editor.cm-focused { outline: none; }
