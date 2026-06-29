@@ -1,0 +1,14 @@
+[
+ {"op":"replace","path":"/spec/template/spec/volumes","value":[
+   {"name":"data","persistentVolumeClaim":{"claimName":"kanidm-data"}},
+   {"name":"config","configMap":{"name":"kanidm-config"}},
+   {"name":"certs","secret":{"secretName":"kanidm-tls"}},
+   {"name":"login-css","configMap":{"name":"kanidm-login-css"}}
+ ]},
+ {"op":"replace","path":"/spec/template/spec/containers/0/volumeMounts","value":[
+   {"name":"data","mountPath":"/data"},
+   {"name":"config","mountPath":"/data/server.toml","subPath":"server.toml"},
+   {"name":"certs","mountPath":"/certs","readOnly":true},
+   {"name":"login-css","mountPath":"/hpkg/style.css","subPath":"style.css","readOnly":true}
+ ]}
+]
