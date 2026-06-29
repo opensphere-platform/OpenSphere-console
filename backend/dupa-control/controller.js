@@ -10,6 +10,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const { createHash, createPublicKey, verify, randomBytes } = require('crypto');
+const db = require('./db'); // Backbone PostgreSQL(감사로그 영속). 미연결 시 ConfigMap 폴백.
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-system';
@@ -23,6 +24,16 @@ const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단,
 // 재감사 P1-1: /api/admin/events(subShell server-to-server 발행)는 사용자 토큰이 없으므로 서비스 토큰으로 보호.
 // 미설정이면 events 발행은 fail-closed(401). subShell 백엔드는 X-Shell-Token 헤더로 이 값을 전송해야 한다.
 const SHELL_SERVICE_TOKEN = process.env.SHELL_SERVICE_TOKEN || '';
+// Backbone PostgreSQL(감사로그 영속) — 기본값=이 클러스터 service DNS. 비번은 env 아닌 Secret에서 런타임 로드.
+const BACKBONE_PG = {
+  host: process.env.BACKBONE_PG_HOST || 'backbone-postgres.opensphere-backbone.svc.cluster.local',
+  port: process.env.BACKBONE_PG_PORT || '5432',
+  database: process.env.BACKBONE_PG_DB || 'console',
+  user: process.env.BACKBONE_PG_USER || 'console',
+  secretNs: process.env.BACKBONE_PG_SECRET_NS || 'opensphere-backbone',
+  secretName: process.env.BACKBONE_PG_SECRET || 'backbone-postgres',
+  secretKey: process.env.BACKBONE_PG_SECRET_KEY || 'password',
+};
 
 const token = () => fs.readFileSync(`${SA}/token`, 'utf8').trim();
 // NODE_EXTRA_CA_CERTS는 deployment env로 주입 (Node fetch는 시작 시점에 읽음)
@@ -113,7 +124,12 @@ function logAudit(actor, action, target, result, reason, opId) {
   audit.unshift(e);
   if (audit.length > AUDIT_CAP) audit.pop();
   console.log('[audit] ' + JSON.stringify(e)); // 구조화 1줄 → 로그 수집기 영속(휘발 대비)
-  if (!_flushT) _flushT = setTimeout(flushAudit, 2000); // 디바운스 flush(이벤트당 write 폭주 방지)
+  if (db.isEnabled()) {
+    // ④ PostgreSQL(audit_log) append-only INSERT. 비동기 — 실패해도 인메모리 링/stdout은 보존.
+    db.insertAudit(e).catch((err) => console.error('[audit] pg insert 실패:', String(err).slice(0, 120)));
+  } else if (!_flushT) {
+    _flushT = setTimeout(flushAudit, 2000); // PG 미연결(Backbone 미설치 등) 시 ConfigMap 폴백
+  }
   return e;
 }
 const newOpId = () => randomBytes(8).toString('hex');
@@ -127,6 +143,15 @@ async function flushAudit() {
   } catch (e) { console.error('[audit] flush failed:', String(e).slice(0, 120)); }
 }
 async function hydrateAudit() {
+  if (db.isEnabled()) {
+    // PG 우선 — recentAudit는 newest-first → ring(unshift 규약상 [0]=최신)에 그대로 push.
+    try {
+      const rows = await db.recentAudit(AUDIT_CAP);
+      rows.forEach((e) => audit.push(e));
+      console.log(`[audit] hydrated ${audit.length} entries from PostgreSQL`);
+      return;
+    } catch (e) { console.error('[audit] pg hydrate 실패, ConfigMap 시도:', String(e).slice(0, 120)); }
+  }
   try {
     const r = await k8s('GET', `/api/v1/namespaces/${NS}/configmaps/${AUDIT_CM}`);
     if (!r.ok) return;
@@ -135,6 +160,20 @@ async function hydrateAudit() {
     if (audit.length > AUDIT_CAP) audit.length = AUDIT_CAP;
     console.log(`[audit] hydrated ${audit.length} entries from ${AUDIT_CM}`);
   } catch (e) { console.error('[audit] hydrate failed:', String(e).slice(0, 120)); }
+}
+// Backbone PostgreSQL 연결 초기화 — Secret(opensphere-backbone/backbone-postgres)에서 비번 로드 후 pool 기동.
+// 실패(미설치·연결불가)해도 throw 안 함 → 감사로그는 ConfigMap 폴백으로 계속 동작(graceful degradation, §3.5).
+async function initBackboneDb() {
+  try {
+    const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_PG.secretNs}/secrets/${BACKBONE_PG.secretName}`);
+    if (!r.ok) { console.warn(`[db] secret ${BACKBONE_PG.secretNs}/${BACKBONE_PG.secretName} 없음(HTTP ${r.status}) → 감사로그 ConfigMap 폴백`); return; }
+    const enc = r.json?.data?.[BACKBONE_PG.secretKey];
+    if (!enc) { console.warn('[db] secret에 password 키 없음 → ConfigMap 폴백'); return; }
+    const password = Buffer.from(enc, 'base64').toString('utf8');
+    await db.init({ host: BACKBONE_PG.host, port: BACKBONE_PG.port, database: BACKBONE_PG.database, user: BACKBONE_PG.user, password });
+  } catch (e) {
+    console.warn('[db] init 실패 → 감사로그 ConfigMap 폴백:', String(e).slice(0, 160));
+  }
 }
 
 // ── K8s REST 헬퍼 ─────────────────────────────────────────────
@@ -149,6 +188,12 @@ async function k8s(method, path, body) {
   });
   const text = await res.text();
   return { ok: res.ok, status: res.status, json: text ? JSON.parse(text) : null };
+}
+// 비-JSON(파드 로그 등 text/plain) 응답용 — k8s()는 항상 JSON.parse라 로그에 못 씀.
+async function k8sText(path) {
+  const res = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${token()}` } });
+  const text = await res.text();
+  return { ok: res.ok, status: res.status, text };
 }
 const crd = (plural) => `/apis/${GROUP}/${V}/namespaces/${NS}/${plural}`;
 const listPackages = () => k8s('GET', crd('uipluginpackages'));
@@ -404,11 +449,19 @@ async function ensureRegistration(pkgName, desiredState, actor, reason) {
 // 워크로드는 검증된 선례 미러(PostgreSQL=keycloak-db, RustFS=foundation rustfs-dev). admin 게이트 뒤에서만 호출.
 const BACKBONE_NS = process.env.BACKBONE_NS || 'opensphere-backbone';
 const BB_LABELS = { 'opensphere.io/part-of': 'opensphere-backbone' };
+// Gitea Git 코드 뷰 — in-cluster HTTP. 공개 레포는 익명 read 가능(토큰 불요). 쓰기/비공개는 토큰 필요(다음 차수).
+const GITEA_URL = process.env.GITEA_URL || `http://backbone-gitea.${BACKBONE_NS}.svc.cluster.local:3000`;
 const BB_COMPONENTS = [
   { key: 'postgres', name: 'PostgreSQL', role: '앱 DB(감사로그·설정) + Gitea DB', kind: 'Deployment', workload: 'backbone-postgres' },
   { key: 'rustfs', name: 'RustFS', role: 'S3 오브젝트 스토리지', kind: 'StatefulSet', workload: 'backbone-rustfs' },
   { key: 'gitea', name: 'Gitea', role: '설정 GitOps(config-as-code)', kind: 'Deployment', workload: 'backbone-gitea' },
 ];
+// 컴포넌트별 접근(접근 탭) 메타 — 자격 Secret명·프로토콜·연결 힌트. Secret '값'은 절대 노출 안 함(키 이름만 마스킹 반환).
+const BB_ACCESS = {
+  postgres: { secret: 'backbone-postgres', proto: 'TCP(libpq) · 5432', connect: 'psql -h backbone-postgres.opensphere-backbone.svc.cluster.local -U console -d console', note: 'console DB(감사로그·설정) + gitea DB. 비번 = Secret backbone-postgres/password.' },
+  rustfs: { secret: 'backbone-rustfs', proto: 'HTTP(S3) · 9000 / 콘솔 9001', connect: 'S3 endpoint: backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 (forcePathStyle=true, region=us-east-1)', note: 'access_key/secret_key = Secret backbone-rustfs.' },
+  gitea: { secret: 'backbone-postgres', proto: 'HTTP · 3000', connect: 'http://backbone-gitea.opensphere-backbone.svc.cluster.local:3000/', note: 'DB는 backbone-postgres 공유. Gitea 관리자 토큰 Secret은 아직 미프로비저닝(reconciler 단계).' },
+};
 function bbSecret(name, data) { return { apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: BACKBONE_NS, labels: BB_LABELS }, type: 'Opaque', stringData: data }; }
 function bbPath(o) {
   if (o.kind === 'Deployment') return `/apis/apps/v1/namespaces/${BACKBONE_NS}/deployments`;
@@ -502,6 +555,209 @@ async function backboneInstall() {
   for (const o of bbWorkloads()) await bbApply(o);
   return backboneStatus();
 }
+// 단일 구성요소 드릴다운 — workload/service/pvc/pods/events/log tail. admin 게이트 뒤(읽기 전용).
+async function backboneDetail(key) {
+  const c = BB_COMPONENTS.find((x) => x.key === key);
+  if (!c) return null;
+  const plural = c.kind === 'StatefulSet' ? 'statefulsets' : 'deployments';
+  const sel = encodeURIComponent(`app=${c.workload}`);
+  const [wl, svc, pvcAll, podAll, evAll] = await Promise.all([
+    k8s('GET', `/apis/apps/v1/namespaces/${BACKBONE_NS}/${plural}/${c.workload}`),
+    k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/services/${c.workload}`),
+    k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/persistentvolumeclaims`),
+    k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/pods?labelSelector=${sel}`),
+    k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/events?limit=200`),
+  ]);
+  const w = wl.ok ? wl.json : null;
+  const container = w?.spec?.template?.spec?.containers?.[0] || null;
+  const want = (w?.spec?.replicas) || 0;
+  const have = c.kind === 'StatefulSet' ? (w?.status?.readyReplicas || 0) : (w?.status?.availableReplicas || 0);
+  const workload = w ? {
+    name: w.metadata.name, kind: c.kind, image: container?.image || '', replicas: want, ready: have,
+    strategy: w.spec?.strategy?.type || w.spec?.updateStrategy?.type || '',
+    conditions: (w.status?.conditions || []).map((x) => ({ type: x.type, status: x.status, reason: x.reason || '', message: (x.message || '').slice(0, 200) })),
+  } : null;
+  const s = svc.ok ? svc.json : null;
+  const service = s ? {
+    name: s.metadata.name, type: s.spec?.type || 'ClusterIP', clusterIP: s.spec?.clusterIP || '',
+    ports: (s.spec?.ports || []).map((x) => ({ name: x.name || '', port: x.port, targetPort: x.targetPort })),
+    dns: `${s.metadata.name}.${BACKBONE_NS}.svc.cluster.local`,
+  } : null;
+  const pvcs = (pvcAll.json?.items || []).filter((x) => (x.metadata.name || '').includes(c.workload)).map((x) => ({
+    name: x.metadata.name, status: x.status?.phase || '', capacity: x.status?.capacity?.storage || x.spec?.resources?.requests?.storage || '',
+    storageClass: x.spec?.storageClassName || '', volumeName: x.spec?.volumeName || '',
+  }));
+  const pods = (podAll.json?.items || []).map((x) => {
+    const cs = x.status?.containerStatuses || [];
+    return {
+      name: x.metadata.name, phase: x.status?.phase || '', node: x.spec?.nodeName || '', startTime: x.status?.startTime || '',
+      ready: cs.length > 0 && cs.every((y) => y.ready), restarts: cs.reduce((n, y) => n + (y.restartCount || 0), 0),
+      containers: cs.map((y) => ({ name: y.name, image: y.image, ready: y.ready, restarts: y.restartCount || 0, state: Object.keys(y.state || {})[0] || '' })),
+    };
+  });
+  const events = (evAll.json?.items || [])
+    .filter((x) => (x.involvedObject?.name || '').startsWith(c.workload))
+    .map((x) => ({ type: x.type || '', reason: x.reason || '', message: (x.message || '').slice(0, 240), count: x.count || 1, time: x.lastTimestamp || x.eventTime || x.firstTimestamp || '', object: `${x.involvedObject?.kind}/${x.involvedObject?.name}` }))
+    .sort((a, b) => String(b.time).localeCompare(String(a.time))).slice(0, 25);
+  let log = null;
+  const podName = pods[0]?.name;
+  const cont = pods[0]?.containers?.[0]?.name || container?.name;
+  if (podName && cont) {
+    try {
+      const lr = await k8sText(`/api/v1/namespaces/${BACKBONE_NS}/pods/${podName}/log?container=${encodeURIComponent(cont)}&tailLines=80`);
+      if (lr.ok) log = { pod: podName, container: cont, tail: lr.text.slice(-8000) };
+    } catch { /* 로그 조회 실패는 무시(상세 패널은 나머지로 충분) */ }
+  }
+  // 일반정보 메타(labels/annotations/created) + 접근(접근 탭): Secret 키 이름만 마스킹(값 미노출).
+  const meta = w ? {
+    created: w.metadata?.creationTimestamp || '',
+    labels: w.metadata?.labels || {},
+    annotations: Object.keys(w.metadata?.annotations || {}),
+  } : null;
+  const acc = BB_ACCESS[c.key] || {};
+  let secretKeys = [], secretReadable = false;
+  if (acc.secret) {
+    const sr = await k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/secrets/${acc.secret}`);
+    if (sr.ok && sr.json?.data) { secretKeys = Object.keys(sr.json.data); secretReadable = true; }
+  }
+  const access = { secret: acc.secret || '', secretKeys, secretReadable, proto: acc.proto || '', connect: acc.connect || '', note: acc.note || '' };
+  return { component: { key: c.key, name: c.name, role: c.role, kind: c.kind }, namespace: BACKBONE_NS, meta, workload, service, pvcs, pods, events, log, access };
+}
+// K8s 설정(데이터 탭의 'K8s YAML') — raw 워크로드/서비스/PVC 객체(managedFields 제거). 프런트가 js-yaml로 렌더. 읽기 전용.
+async function backboneYaml(key) {
+  const c = BB_COMPONENTS.find((x) => x.key === key);
+  if (!c) return null;
+  const plural = c.kind === 'StatefulSet' ? 'statefulsets' : 'deployments';
+  const [wl, svc, pvcAll] = await Promise.all([
+    k8s('GET', `/apis/apps/v1/namespaces/${BACKBONE_NS}/${plural}/${c.workload}`),
+    k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/services/${c.workload}`),
+    k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/persistentvolumeclaims`),
+  ]);
+  const strip = (o) => { if (o && o.metadata) delete o.metadata.managedFields; return o; };
+  const pvcs = (pvcAll.json?.items || []).filter((x) => (x.metadata.name || '').includes(c.workload)).map(strip);
+  return { workload: wl.ok ? strip(wl.json) : null, service: svc.ok ? strip(svc.json) : null, pvcs };
+}
+
+// ── Gitea Git 코드 뷰(읽기) — 익명 public 레포 조회. 토큰 미사용(쓰기/private는 다음 차수). ──
+async function giteaApi(path) {
+  const r = await fetch(GITEA_URL + path, { headers: { accept: 'application/json' } });
+  const text = await r.text();
+  return { ok: r.ok, status: r.status, json: text ? JSON.parse(text) : null };
+}
+async function giteaRepos() {
+  try {
+    const r = await giteaApi('/api/v1/repos/search?limit=50');
+    if (!r.ok) return { reachable: false, repos: [], hint: `Gitea HTTP ${r.status}` };
+    const repos = (r.json?.data || []).map((x) => ({
+      owner: x.owner?.login || x.owner?.username || '', name: x.name, fullName: x.full_name,
+      branch: x.default_branch || 'main', private: !!x.private, empty: !!x.empty, updated: x.updated_at || '',
+    }));
+    return { reachable: true, repos };
+  } catch (e) { return { reachable: false, repos: [], hint: String(e).slice(0, 120) }; }
+}
+// 레포 파일 트리(재귀) — 브랜치→commit sha→git/trees recursive. flat path 목록(프런트가 중첩 구성).
+async function giteaTree(owner, repo, ref) {
+  try {
+    const o = encodeURIComponent(owner), r = encodeURIComponent(repo);
+    let branch = ref;
+    if (!branch) { const meta = await giteaApi(`/api/v1/repos/${o}/${r}`); branch = meta.json?.default_branch || 'main'; }
+    const br = await giteaApi(`/api/v1/repos/${o}/${r}/branches/${encodeURIComponent(branch)}`);
+    const sha = br.json?.commit?.id;
+    if (!sha) return { tree: [], hint: '브랜치/커밋 없음(빈 레포)' };
+    const tr = await giteaApi(`/api/v1/repos/${o}/${r}/git/trees/${sha}?recursive=true&per_page=1000`);
+    if (!tr.ok) return { tree: [], hint: `tree HTTP ${tr.status}` };
+    const tree = (tr.json?.tree || []).map((x) => ({ path: x.path, type: x.type === 'tree' ? 'dir' : 'file', size: x.size || 0 }));
+    return { tree, branch };
+  } catch (e) { return { tree: [], hint: String(e).slice(0, 120) }; }
+}
+async function giteaFile(owner, repo, ref, path) {
+  try {
+    const o = encodeURIComponent(owner), r = encodeURIComponent(repo);
+    const ep = path.split('/').map(encodeURIComponent).join('/');
+    const refQ = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+    const f = await giteaApi(`/api/v1/repos/${o}/${r}/contents/${ep}${refQ}`);
+    if (!f.ok) return { content: '', hint: `file HTTP ${f.status}` };
+    const c = f.json || {};
+    let content = '';
+    if (c.encoding === 'base64' && c.content) content = Buffer.from(c.content, 'base64').toString('utf8');
+    return { name: c.name || '', path: c.path || path, size: c.size || 0, content: content.slice(0, 200000) };
+  } catch (e) { return { content: '', hint: String(e).slice(0, 120) }; }
+}
+
+// ── BackboneClaim 할당 컨트롤러(reconciler) — 소비자의 선언적 자원 요청을 프로비저닝. docs/BACKBONE-ARCHITECTURE.md §1. ──
+// claim watch → PG db/role 생성 + claim NS에 Secret 발급 + status 바인딩 + finalizer GC. objectStore(S3)는 다음 차수(storage.js).
+const CLAIM_GROUP = 'backbone.opensphere.io';
+const CLAIM_V = 'v1alpha1';
+const CLAIM_FINALIZER = 'backbone.opensphere.io/finalizer';
+const PG_DNS = `backbone-postgres.${BACKBONE_NS}.svc.cluster.local`;
+// 컨트롤러 상태(콘솔 '컨트롤러' 탭 노출용) — 인메모리.
+const claimController = { crdReady: false, lastRun: '', lastError: '', runs: 0, total: 0, bound: 0 };
+
+async function upsertSecret(ns, name, stringData) {
+  const body = { apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: ns, labels: BB_LABELS }, type: 'Opaque', stringData };
+  const r = await k8s('POST', `/api/v1/namespaces/${ns}/secrets`, body);
+  if (r.status === 409) await k8s('PATCH', `/api/v1/namespaces/${ns}/secrets/${name}`, { stringData });
+  else if (!r.ok) throw new Error(`secret upsert HTTP ${r.status}`);
+}
+async function gcClaim(cr) {
+  const ns = cr.metadata.namespace, name = cr.metadata.name;
+  if (cr.spec?.postgres?.enabled && db.isEnabled()) {
+    const dbName = cr.spec.postgres.database || name.replace(/-/g, '_');
+    await db.dropTenant(dbName);
+  }
+  await k8s('DELETE', `/api/v1/namespaces/${ns}/secrets/${name}-backbone-postgres`);
+}
+async function reconcileOneClaim(cr) {
+  const ns = cr.metadata.namespace, name = cr.metadata.name;
+  const base = `/apis/${CLAIM_GROUP}/${CLAIM_V}/namespaces/${ns}/backboneclaims/${name}`;
+  const fins = cr.metadata.finalizers || [];
+  // 삭제 중 → GC 후 finalizer 제거
+  if (cr.metadata.deletionTimestamp) {
+    try { await gcClaim(cr); } catch (e) { console.error('[claim] gc', name, String(e).slice(0, 100)); }
+    await k8s('PATCH', base, { metadata: { finalizers: fins.filter((f) => f !== CLAIM_FINALIZER) } });
+    return false;
+  }
+  // finalizer 보장
+  if (!fins.includes(CLAIM_FINALIZER)) {
+    await k8s('PATCH', base, { metadata: { finalizers: [...fins, CLAIM_FINALIZER] } });
+  }
+  const status = { phase: 'Bound', observedGeneration: cr.metadata.generation || 0, message: '', postgres: null, objectStore: null };
+  // PostgreSQL — 전용 db/role + Secret(claim NS). 기존 Secret 비번 재사용(드리프트 방지).
+  if (cr.spec?.postgres?.enabled) {
+    const dbName = cr.spec.postgres.database || name.replace(/-/g, '_');
+    const secretName = `${name}-backbone-postgres`;
+    if (!db.isEnabled()) { status.phase = 'Pending'; status.message = 'PostgreSQL 미연결'; }
+    else {
+      const sec = await k8s('GET', `/api/v1/namespaces/${ns}/secrets/${secretName}`);
+      let pw = sec.ok ? Buffer.from(sec.json?.data?.password || '', 'base64').toString('utf8') : '';
+      if (!pw) pw = randomBytes(24).toString('hex');
+      await db.provisionTenant(dbName, pw);
+      await upsertSecret(ns, secretName, { host: PG_DNS, port: '5432', database: dbName, username: dbName, password: pw });
+      status.postgres = { secretRef: secretName, host: PG_DNS, database: dbName };
+    }
+  }
+  // objectStore — 컨트롤러측 S3 할당은 다음 차수(storage.js/SigV4). 지금은 미충족 표기.
+  if (cr.spec?.objectStore?.enabled) {
+    status.objectStore = { bucket: cr.spec.objectStore.bucket || name, state: 'Pending', message: 'S3 컨트롤러 미구현 — provision-backbone-tenant.sh 사용' };
+    if (status.phase === 'Bound') status.phase = 'PartiallyBound';
+  }
+  await k8s('PATCH', `${base}/status`, { status });
+  return status.phase === 'Bound';
+}
+async function reconcileBackboneClaims() {
+  const r = await k8s('GET', `/apis/${CLAIM_GROUP}/${CLAIM_V}/backboneclaims`);
+  if (!r.ok) { claimController.crdReady = false; claimController.lastError = `list HTTP ${r.status}(CRD 미설치?)`; return; }
+  claimController.crdReady = true;
+  const items = r.json?.items || [];
+  let bound = 0;
+  for (const cr of items) {
+    try { if (await reconcileOneClaim(cr)) bound++; }
+    catch (e) { console.error('[claim] reconcile', cr.metadata?.name, String(e).slice(0, 120)); claimController.lastError = String(e).slice(0, 120); }
+  }
+  claimController.total = items.length; claimController.bound = bound;
+  claimController.runs++; claimController.lastRun = new Date().toISOString();
+  if (claimController.total === claimController.bound) claimController.lastError = '';
+}
 
 // ── /metrics (Prometheus exposition, 의존성 0; 클러스터 내부 전용 — nginx 미라우팅) ──
 // 공유 관측 계층(k8s basic stack / prometheus-stack)이 ServiceMonitor로 scrape. docs/OBSERVABILITY-ARCHITECTURE.md.
@@ -569,6 +825,51 @@ const server = http.createServer(async (req, res) => {
 
     // Backbone(콘솔 데이터 티어) 설치/상태 — admin 게이트 뒤. docs/BACKBONE-ARCHITECTURE.md
     if (p === '/api/admin/backbone/status' && req.method === 'GET') return json(res, 200, await backboneStatus());
+    if (p === '/api/admin/backbone/detail' && req.method === 'GET') {
+      const d = await backboneDetail(url.searchParams.get('component') || '');
+      return d ? json(res, 200, d) : json(res, 404, { error: 'unknown component', opId });
+    }
+    if (p === '/api/admin/backbone/yaml' && req.method === 'GET') {
+      const y = await backboneYaml(url.searchParams.get('component') || '');
+      return y ? json(res, 200, y) : json(res, 404, { error: 'unknown component', opId });
+    }
+    if (p === '/api/admin/backbone/pg' && req.method === 'GET') {
+      // 데이터 탭 — PostgreSQL DATABASE→TABLE→COLUMN 트리 + 최근 audit_log. 미연결이면 enabled=false.
+      if (!db.isEnabled()) return json(res, 200, { enabled: false, databases: [], audit: [] });
+      try { return json(res, 200, { enabled: true, databases: await db.listTree(), audit: await db.recentAudit(20) }); }
+      catch (e) { console.error(`[err] op=${opId} pg tree:`, e); return json(res, 200, { enabled: false, databases: [], audit: [], error: String(e).slice(0, 120) }); }
+    }
+    if (p === '/api/admin/backbone/pg/rows' && req.method === 'GET') {
+      // 테이블 행 미리보기(읽기) — SELECT * LIMIT n. 식별자 검증/인용으로 인젝션 차단.
+      if (!db.isEnabled()) return json(res, 200, { columns: [], rows: [] });
+      try {
+        const out = await db.previewRows(url.searchParams.get('database'), url.searchParams.get('schema'), url.searchParams.get('table'), url.searchParams.get('limit'));
+        return out ? json(res, 200, out) : json(res, 404, { error: 'not found', opId });
+      } catch (e) { return json(res, 400, { error: String((e && e.message) || e).slice(0, 120), opId }); }
+    }
+    if (p === '/api/admin/backbone/controller' && req.method === 'GET') {
+      // 할당 컨트롤러(BackboneClaim reconciler) 상태 — 콘솔 '컨트롤러' 탭.
+      return json(res, 200, { ...claimController, dbConnected: db.isEnabled(), intervalSec: 15, finalizer: CLAIM_FINALIZER });
+    }
+    if (p === '/api/admin/backbone/claims' && req.method === 'GET') {
+      const r = await k8s('GET', `/apis/${CLAIM_GROUP}/${CLAIM_V}/backboneclaims`);
+      if (!r.ok) return json(res, 200, { crdReady: false, items: [], hint: `HTTP ${r.status}` });
+      const items = (r.json?.items || []).map((x) => ({
+        namespace: x.metadata.namespace, name: x.metadata.name, created: x.metadata.creationTimestamp,
+        deleting: !!x.metadata.deletionTimestamp,
+        spec: { postgres: !!x.spec?.postgres?.enabled, objectStore: !!x.spec?.objectStore?.enabled, gitOps: !!x.spec?.gitOps?.enabled },
+        phase: x.status?.phase || 'Pending', message: x.status?.message || '',
+        postgres: x.status?.postgres || null, objectStore: x.status?.objectStore || null,
+      }));
+      return json(res, 200, { crdReady: true, items });
+    }
+    if (p === '/api/admin/backbone/gitea' && req.method === 'GET') return json(res, 200, await giteaRepos());
+    if (p === '/api/admin/backbone/gitea/tree' && req.method === 'GET') {
+      return json(res, 200, await giteaTree(url.searchParams.get('owner') || '', url.searchParams.get('repo') || '', url.searchParams.get('ref') || ''));
+    }
+    if (p === '/api/admin/backbone/gitea/file' && req.method === 'GET') {
+      return json(res, 200, await giteaFile(url.searchParams.get('owner') || '', url.searchParams.get('repo') || '', url.searchParams.get('ref') || '', url.searchParams.get('path') || ''));
+    }
     if (p === '/api/admin/backbone/install' && req.method === 'POST') {
       try { const out = await backboneInstall(); logAudit(actor, 'backbone-install', BACKBONE_NS, 'accepted', '', opId); return json(res, 202, out); }
       catch (e) { console.error(`[err] op=${opId} backbone install:`, e); logAudit(actor, 'backbone-install', BACKBONE_NS, 'error', String(e).slice(0, 120), opId); return json(res, 502, { error: 'install failed', opId }); }
@@ -666,10 +967,11 @@ const server = http.createServer(async (req, res) => {
 if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`dupa-registry-controller listening :${PORT} (ns=${NS})`);
-    hydrateAudit().finally(() => {
-      const loop = () => Promise.all([reconcile(), pollK8sEvents()]).catch((e) => console.error('loop error', e)).finally(() => setTimeout(loop, 15000));
+    // Backbone PG 연결 시도 → 감사로그 hydrate(PG 우선, 실패 시 ConfigMap) → reconcile/event 루프.
+    initBackboneDb().finally(() => hydrateAudit().finally(() => {
+      const loop = () => Promise.all([reconcile(), pollK8sEvents(), reconcileBackboneClaims()]).catch((e) => console.error('loop error', e)).finally(() => setTimeout(loop, 15000));
       loop();
-    });
+    }));
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).

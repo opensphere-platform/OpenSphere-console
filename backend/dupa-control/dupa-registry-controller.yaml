@@ -63,8 +63,11 @@ kind: ClusterRole
 metadata: { name: dupa-backbone-installer }
 rules:
   - { apiGroups: [""], resources: [namespaces], verbs: [get, create] }
-  - { apiGroups: [""], resources: [secrets, services, persistentvolumeclaims, configmaps, pods], verbs: [get, list, create, patch] }
+  # secrets delete: BackboneClaim finalizer GC(테넌트 Secret 회수)에 필요
+  - { apiGroups: [""], resources: [secrets, services, persistentvolumeclaims, configmaps, pods], verbs: [get, list, create, patch, delete] }
   - { apiGroups: ["apps"], resources: [deployments, statefulsets], verbs: [get, list, create, patch] }
+  # BackboneClaim 할당 컨트롤러 — claim watch/reconcile + status + finalizer
+  - { apiGroups: ["backbone.opensphere.io"], resources: [backboneclaims, backboneclaims/status, backboneclaims/finalizers], verbs: [get, list, watch, update, patch] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -96,6 +99,15 @@ spec:
             - { name: NAMESPACE, value: opensphere-system }
             # K8s API TLS 검증 — Node fetch(undici)는 시작 시점에 읽으므로 env로 줘야 함
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            # Backbone PostgreSQL(감사로그 영속, ④). 비번은 cross-ns secretKeyRef 불가 →
+            #   컨트롤러가 opensphere-backbone/backbone-postgres Secret을 K8s API로 읽어 주입(dupa-backbone-installer RBAC).
+            #   값은 코드 기본값과 동일(오버라이드/문서화용). 미설치 시 감사로그는 ConfigMap 폴백.
+            - { name: BACKBONE_PG_HOST, value: backbone-postgres.opensphere-backbone.svc.cluster.local }
+            - { name: BACKBONE_PG_PORT, value: "5432" }
+            - { name: BACKBONE_PG_DB, value: console }
+            - { name: BACKBONE_PG_USER, value: console }
+            - { name: BACKBONE_PG_SECRET_NS, value: opensphere-backbone }
+            - { name: BACKBONE_PG_SECRET, value: backbone-postgres }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 2 }
           resources:
