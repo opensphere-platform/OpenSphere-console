@@ -1,23 +1,11 @@
-# dupa-registry-controller — 배포 + RBAC + 신뢰키 (DUPA Admin Control PoC)
+# dupa-registry-controller — 배포 + RBAC (DUPA Admin Control PoC)
+# ⚠️ 신뢰키(dupa-trusted-keys ConfigMap)는 이 파일에서 분리됨 → dupa-trusted-keys.yaml.
+#    이유: 이 yaml을 RBAC/배포 갱신 목적으로 apply할 때 트러스트 키가 같이 덮어써지면
+#    플러그인 서명검증이 깨져 subShell이 전부 안 보이는 사고가 발생함(2026-06-29). 트러스트는 서명/정렬 도구로만 관리.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: opensphere-system
----
-# 신뢰키 — controller가 서명 검증에 쓰는 trustedKeys (관리자/keyadmin 통제, 검토 §B.2)
-# 셸 registry의 trustedKeys와 동일 출처. PoC는 ConfigMap, 제품은 별도 권한(keyadmin)으로 분리.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: dupa-trusted-keys
-  namespace: opensphere-system
-data:
-  trusted-keys.json: |
-    {
-      "trustedKeys": {
-        "opensphere-plugins-v1": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6i+zGiw43N4nbPkWxcGbrIuaR+1GyBmfBiAoFR3sznS3MmhXSMxldwecUcpr4YnaOsW6UfTBUa0o52cb2dSdcA=="
-      }
-    }
 ---
 apiVersion: v1
 kind: ServiceAccount

@@ -1,0 +1,30 @@
+# ════════════════════════════════════════════════════════════════════════════
+# dupa-trusted-keys — 플러그인(subShell) 서명 검증용 신뢰 공개키.  ⚠️⚠️ 트러스트 자료 ⚠️⚠️
+# ════════════════════════════════════════════════════════════════════════════
+# 이 ConfigMap을 잘못 apply하면 라이브의 정렬된 트러스트 키가 덮어써져
+# 전 플러그인이 SignatureInvalid → subShell이 모두 안 보이는 사고가 난다(2026-06-29 실제 발생).
+#
+# 규칙:
+#   1) 이 파일은 dupa-registry-controller.yaml(배포/RBAC)에서 의도적으로 분리됨.
+#      배포/RBAC 갱신은 dupa-registry-controller.yaml만 apply할 것 — 이 파일은 건드리지 말 것.
+#   2) 트러스트 키는 '플러그인을 서명한 개인키에 대응하는 공개키(SPKI base64)'여야 한다.
+#      값은 서명/정렬 도구(예: install-cluster-manager.sh 등 publish-sign 플로우)가 관리.
+#   3) 아래 값을 채워 apply하는 것은 '트러스트 변경'이다 — 정확한 현재 서명키임을 확인하고
+#      명시적으로만 적용할 것. (에이전트는 트러스트 변경 차단.)
+#
+# 참고(폐기): 과거 키 "opensphere-plugins-v1"의 값
+#   MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6i+zGiw43N4nbPkWxcGbrIuaR+1GyBmfBiAoFR3sznS3MmhXSMxldwecUcpr4YnaOsW6UfTBUa0o52cb2dSdcA==
+#   → ⚠️ 이 값은 개인키가 분실되어 폐기됨. 현재 플러그인은 새 키로 재서명됨 → 이 옛 값을 쓰면 검증 실패.
+#   → 아래 placeholder를 '현재 서명키의 공개키'로 채울 것.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dupa-trusted-keys
+  namespace: opensphere-system
+data:
+  trusted-keys.json: |
+    {
+      "trustedKeys": {
+        "opensphere-plugins-v1": "REPLACE_WITH_CURRENT_SIGNING_PUBLIC_KEY_SPKI_BASE64"
+      }
+    }
