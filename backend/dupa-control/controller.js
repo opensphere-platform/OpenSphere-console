@@ -20,6 +20,9 @@ const V = 'v1alpha1';
 // 셸(브라우저)이 플러그인 manifest/번들에 접근하는 경로 prefix (nginx 프록시 기준)
 const SHELL_API_PREFIX = '/api/plugins';
 const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단, 감사 H)
+// 재감사 P1-1: /api/admin/events(subShell server-to-server 발행)는 사용자 토큰이 없으므로 서비스 토큰으로 보호.
+// 미설정이면 events 발행은 fail-closed(401). subShell 백엔드는 X-Shell-Token 헤더로 이 값을 전송해야 한다.
+const SHELL_SERVICE_TOKEN = process.env.SHELL_SERVICE_TOKEN || '';
 
 const token = () => fs.readFileSync(`${SA}/token`, 'utf8').trim();
 // NODE_EXTRA_CA_CERTS는 deployment env로 주입 (Node fetch는 시작 시점에 읽음)
@@ -54,12 +57,16 @@ function kanidmGetJwks(force) {
   });
 }
 // 순수 claim 검증(alg/iss/azp/aud/exp/nbf) — 서명 검증과 분리해 단위 테스트 가능(P2-4). now는 주입 가능.
+// 재감사 P2-2: 필수 claim(exp·sub·iat) 부재를 거부 — exp 없는 토큰이 통과하던 갭 차단.
 function assertClaims(header, claims, now = Date.now()) {
   const aud = Array.isArray(claims.aud) ? claims.aud : (claims.aud ? [claims.aud] : []);
   if (header.alg !== 'ES256') throw { code: 401, msg: 'unexpected alg' };
   if (claims.iss !== KANIDM_ISS) throw { code: 401, msg: 'bad iss' };
   if (claims.azp !== KANIDM_AZP && !aud.includes(KANIDM_AZP)) throw { code: 401, msg: 'bad azp/aud' };
-  if (claims.exp && claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
+  if (!claims.exp) throw { code: 401, msg: 'missing exp' };
+  if (!claims.sub) throw { code: 401, msg: 'missing sub' };
+  if (!claims.iat) throw { code: 401, msg: 'missing iat' };
+  if (claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
   if (claims.nbf && claims.nbf * 1000 > now + 30000) throw { code: 401, msg: 'token not yet valid' };
 }
 const isAdminGroups = (groups) => (groups || []).includes(KANIDM_ADMIN_GROUP);
@@ -263,24 +270,14 @@ function verifyP256(spkiB64, sigB64, text) {
 
 // ── reconcile: registration desiredState → 실제 상태 ──────────
 let runtimeRegistry = { version: 2, trustedKeys: {}, plugins: [] };
-// P0-2 allowlist: /api/plugins/<id> 프록시를 허용할 서비스 id 집합. (a) 승인된 UIPluginPackage 이름
-// + (b) CLIDownload 바인딩 link가 가리키는 서비스 id(os-cli 등). 미등록 id는 nginx auth_request에서 403.
-// reconcile에서 성공 list로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성 보존).
+// P0-2/재감사 P1-2 allowlist: /api/plugins/<id> 프록시 허용 id 집합 = (a) 검증 성공+활성(published) plugin id
+// + (b) enabled CLIDownload 바인딩 서비스 id(os-cli 등). 미등록 id는 nginx auth_request에서 403.
+// reconcile 끝에서 published로 계산(루프 뒤). 전이 실패 시 직전 allowlist 유지(가용성).
 let proxyAllow = new Set();
 async function reconcile() {
   const [pkgs, regs] = await Promise.all([listPackages(), listRegs()]);
   if (!pkgs.ok || !regs.ok) return;
   const pkgByName = Object.fromEntries(pkgs.json.items.map((p) => [p.metadata.name, p]));
-  // P0-2 allowlist 갱신: 승인된 패키지명 + 바인딩(CLIDownload) link 서비스 id(os-cli 등).
-  const allow = new Set(Object.keys(pkgByName));
-  try {
-    const cds = await listCliDownloads();
-    for (const cd of cds.json?.items || []) for (const l of (cd.spec?.links || [])) {
-      const mm = String(l.href || '').match(/^\/api\/plugins\/([a-z0-9-]+)\//);
-      if (mm) allow.add(mm[1]);
-    }
-  } catch { /* binding scan best-effort */ }
-  proxyAllow = allow;
   _trustedKeys = null; // 매 reconcile마다 신뢰키 재로드
   const trustedKeys = await loadTrustedKeys();
   const published = [];
@@ -334,6 +331,21 @@ async function reconcile() {
     }
   }
   runtimeRegistry = { version: 2, trustedKeys, plugins: published };
+  // 재감사 P1-2: proxy allowlist = '검증 성공 + 활성(published)' id + enabled CLIDownload 서비스 id만.
+  //   (모든 UIPluginPackage 이름이 아니라) → Failed/Disabled/미검증 package는 자동 제외(403).
+  //   reconcile 성공분으로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성).
+  const allow = new Set(published.map((p) => p.id));
+  try {
+    const cds = await listCliDownloads();
+    for (const cd of cds.json?.items || []) {
+      if (cd.spec?.enabled === false) continue; // enabled 바인딩만 허용
+      for (const l of (cd.spec?.links || [])) {
+        const mm = String(l.href || '').match(/^\/api\/plugins\/([a-z0-9-]+)\//);
+        if (mm) allow.add(mm[1]);
+      }
+    }
+  } catch { /* binding scan best-effort */ }
+  proxyAllow = allow;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -443,8 +455,12 @@ const server = http.createServer(async (req, res) => {
     // 콘솔 알림 NotificationService가 /api/admin/plugins/events 폴링으로 수집. source는 attribution.
     // ⚠️ 인증은 컨트롤 API 전체와 동급(X-OpenSphere-* 헤더) — 강화(SA TokenReview/NetworkPolicy)는 후속.
     if (p === '/api/admin/events' && req.method === 'POST') {
-      // ⚠️ server-to-server 발행구(subShell 백엔드, 사용자 토큰 없음). actor 위조 방지:
-      // source를 'ext:'로 네임스페이스(사용자 actor로 위장 불가) + 필드 길이 bound. 서비스토큰 인증은 후속.
+      // 재감사 P1-1: 무인증 쓰기 차단 — 서비스 토큰(X-Shell-Token == SHELL_SERVICE_TOKEN) 필수(fail-closed).
+      // 사용자 토큰이 없는 subShell server-to-server 발행구라 사용자 Bearer 대신 서비스 토큰으로 보호.
+      if (!SHELL_SERVICE_TOKEN || req.headers['x-shell-token'] !== SHELL_SERVICE_TOKEN) {
+        return json(res, 401, { error: 'service token required', opId });
+      }
+      // source는 'ext:'로 네임스페이스(사용자 actor 위장 불가) + 필드 길이 bound.
       const b = await readBody(req).catch(() => ({}));
       const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
       const source = 'ext:' + clip(b.source || req.headers['x-opensphere-source'] || 'subshell', 60);

@@ -114,8 +114,12 @@ async function verifyAuthed(req) {
   if (!ok) throw { code: 401, msg: 'bad signature' };
   if (claims.iss !== KANIDM_ISS) throw { code: 401, msg: 'bad iss' };
   if (claims.azp !== KANIDM_AZP && !aud.includes(KANIDM_AZP)) throw { code: 401, msg: 'bad azp/aud' };
+  // 재감사 P2-2: 필수 claim(exp·sub·iat) 부재 거부.
+  if (!claims.exp) throw { code: 401, msg: 'missing exp' };
+  if (!claims.sub) throw { code: 401, msg: 'missing sub' };
+  if (!claims.iat) throw { code: 401, msg: 'missing iat' };
   const now = Date.now();
-  if (claims.exp && claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
+  if (claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
   if (claims.nbf && claims.nbf * 1000 > now + 30000) throw { code: 401, msg: 'token not yet valid' };
   const groups = (claims.groups || []).map((g) => shortName(g).replace(/^\//, ''));
   return { username: claims.preferred_username || 'unknown', groups };

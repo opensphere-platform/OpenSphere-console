@@ -11,7 +11,7 @@ import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts';
 export class AuthService {
   // Kanidm OIDC discovery authority(= 브라우저 발급 issuer). discovery: <authority>/.well-known/openid-configuration.
   // localhost는 secure context라 http 셸에서도 PKCE(crypto.subtle) 동작.
-  private readonly authority = 'https://localhost:8444/oauth2/openid/opensphere-console';
+  private readonly authority = 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console';
   private mgr = new UserManager({
     authority: this.authority,
     client_id: 'opensphere-console',
@@ -47,7 +47,7 @@ export class AuthService {
 
   /** Kanidm 셀프서비스(비밀번호·passkey·TOTP 관리) UI */
   accountUrl(): string {
-    return 'https://localhost:8444/ui';
+    return 'https://auth.console.opensphere.dev/ui';
   }
 
   /** 앱 부트스트랩 전 로그인 강제 (Authorization Code + PKCE S256) */

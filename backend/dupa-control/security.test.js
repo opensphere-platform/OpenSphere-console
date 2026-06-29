@@ -7,8 +7,9 @@ const { assertClaims, isAdminGroups, safeName } = require('./controller.js');
 const ISS = 'https://localhost:8444/oauth2/openid/opensphere-console';
 const AZP = 'opensphere-console';
 const future = Math.floor(Date.now() / 1000) + 3600;
+const nowS = Math.floor(Date.now() / 1000);
 const goodHeader = { alg: 'ES256', kid: 'k1' };
-const goodClaims = { iss: ISS, azp: AZP, exp: future, preferred_username: 'mars' };
+const goodClaims = { iss: ISS, azp: AZP, exp: future, iat: nowS, sub: 'uuid-mars', preferred_username: 'mars' };
 
 // assertClaims는 Error가 아니라 {code,msg} 객체를 throw → msg를 검사하는 predicate로 단언.
 const rejects = (fn, re) => assert.throws(fn, (e) => e && e.code === 401 && re.test(e.msg || ''));
@@ -32,7 +33,7 @@ test('assertClaims: azp/aud 불일치 거부', () => {
 });
 
 test('assertClaims: aud 배열에 azp 포함 시 통과', () => {
-  assert.doesNotThrow(() => assertClaims(goodHeader, { iss: ISS, azp: 'x', aud: [AZP], exp: future }));
+  assert.doesNotThrow(() => assertClaims(goodHeader, { iss: ISS, azp: 'x', aud: [AZP], exp: future, iat: nowS, sub: 'uuid' }));
 });
 
 test('assertClaims: 만료 토큰 거부', () => {
@@ -41,6 +42,22 @@ test('assertClaims: 만료 토큰 거부', () => {
 
 test('assertClaims: nbf 미래 토큰 거부', () => {
   rejects(() => assertClaims(goodHeader, { ...goodClaims, nbf: Math.floor(Date.now() / 1000) + 600 }), /not yet valid/);
+});
+
+// 재감사 P2-2: 필수 claim 부재 거부
+test('assertClaims: exp 부재 거부', () => {
+  const c = { ...goodClaims }; delete c.exp;
+  rejects(() => assertClaims(goodHeader, c), /missing exp/);
+});
+
+test('assertClaims: sub 부재 거부', () => {
+  const c = { ...goodClaims }; delete c.sub;
+  rejects(() => assertClaims(goodHeader, c), /missing sub/);
+});
+
+test('assertClaims: iat 부재 거부', () => {
+  const c = { ...goodClaims }; delete c.iat;
+  rejects(() => assertClaims(goodHeader, c), /missing iat/);
 });
 
 test('isAdminGroups: admin 그룹만 true', () => {
