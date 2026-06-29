@@ -31,7 +31,14 @@ const token = () => fs.readFileSync(`${SA}/token`, 'utf8').trim();
 // console-backend(opensphere-identity)의 governance gate와 동일 규칙: JWKS(ES256) 서명검증 +
 // iss/azp/aud/exp/nbf 검증 → opensphere-console-admins 그룹만 변경 허용. actor는 헤더가 아니라
 // '검증된 토큰 claim'에서 도출(X-OpenSphere-User 스푸핑 무력화).
-const KANIDM_ISS = process.env.KANIDM_ISS || 'https://localhost:8444/oauth2/openid/opensphere-console';
+const DEFAULT_KANIDM_ISSUERS = [
+  'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console',
+  'https://localhost:8444/oauth2/openid/opensphere-console',
+];
+const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || DEFAULT_KANIDM_ISSUERS.join(','))
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 // 콘솔 로그인 id_token 발급자 = kanidm-core(app=kanidm). svc/kanidm은 opensphere-auth BFF(PAT 발급자, 다른 키)라
 // 거기 JWKS로 검증하면 kid 불일치 401. → kanidm-core svc에서 JWKS를 받되, cert SAN이 kanidm.svc라
 // servername으로 SNI/검증 호스트를 맞춘다(동일 kanidm-tls 인증서).
@@ -61,7 +68,7 @@ function kanidmGetJwks(force) {
 function assertClaims(header, claims, now = Date.now()) {
   const aud = Array.isArray(claims.aud) ? claims.aud : (claims.aud ? [claims.aud] : []);
   if (header.alg !== 'ES256') throw { code: 401, msg: 'unexpected alg' };
-  if (claims.iss !== KANIDM_ISS) throw { code: 401, msg: 'bad iss' };
+  if (!KANIDM_ISSUERS.includes(claims.iss)) throw { code: 401, msg: 'bad iss' };
   if (claims.azp !== KANIDM_AZP && !aud.includes(KANIDM_AZP)) throw { code: 401, msg: 'bad azp/aud' };
   if (!claims.exp) throw { code: 401, msg: 'missing exp' };
   if (!claims.sub) throw { code: 401, msg: 'missing sub' };
@@ -174,6 +181,9 @@ function deploymentManifest(pkg) {
   const name = pkg.metadata.name;
   const _d = pkg.spec.image.digest || '';
   const img = _d.startsWith('sha256:') ? `${pkg.spec.image.repository}@${_d}` : `${pkg.spec.image.repository}:${_d || 'latest'}`;
+  const serviceAccountName = typeof pkg.spec.serviceAccountName === 'string' && /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(pkg.spec.serviceAccountName)
+    ? pkg.spec.serviceAccountName
+    : undefined;
   return {
     apiVersion: 'apps/v1', kind: 'Deployment',
     metadata: { name, namespace: NS, labels: { app: name, 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
@@ -182,6 +192,7 @@ function deploymentManifest(pkg) {
       template: {
         metadata: { labels: { app: name } },
         spec: {
+          ...(serviceAccountName ? { serviceAccountName } : {}),
           imagePullSecrets: [{ name: 'ghcr-pull' }],
           containers: [{
             name: 'plugin', image: img, ports: [{ containerPort: 8080 }],
