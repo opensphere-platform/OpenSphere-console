@@ -1,0 +1,31 @@
+# OpenSphere 콘솔 백엔드 계측 — 공유 관측 계층(k8s basic stack / prometheus-stack)이 이 ServiceMonitor로 scrape.
+# docs/OBSERVABILITY-ARCHITECTURE.md: 컴포넌트는 /metrics + ServiceMonitor만 노출(특정 prometheus 인스턴스 비의존).
+# 전제: 클러스터에 Prometheus Operator CRD(monitoring.coreos.com) 존재(= install-monitoring.sh). 없으면 apply가 실패하므로
+#       basic stack 설치 후 적용. /metrics는 Service:8080(port name=http)에서 서빙(브라우저엔 nginx가 미라우팅 → 내부 전용).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: console-backend
+  namespace: opensphere-system
+  labels: { app.kubernetes.io/part-of: opensphere-console }
+spec:
+  selector:
+    matchLabels: { app: console-backend }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dupa-registry-controller
+  namespace: opensphere-system
+  labels: { app.kubernetes.io/part-of: opensphere-console }
+spec:
+  selector:
+    matchLabels: { app: dupa-registry-controller }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

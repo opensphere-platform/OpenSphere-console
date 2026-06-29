@@ -198,11 +198,40 @@ async function catalogEntities(filter) {
   const [a, c] = await Promise.all([apiEntities(), componentEntities()]); return [...a, ...c];
 }
 
+// ── /metrics (Prometheus exposition, 의존성 0; 클러스터 내부 전용 — nginx 미라우팅) ──
+// 공유 관측 계층(k8s basic stack / prometheus-stack)이 ServiceMonitor로 scrape. docs/OBSERVABILITY-ARCHITECTURE.md.
+let _httpReqs = 0;
+function metricsText() {
+  const mu = process.memoryUsage();
+  return [
+    '# HELP os_build_info Build info (constant 1).',
+    '# TYPE os_build_info gauge',
+    `os_build_info{service="console-backend",version="${VERSION}"} 1`,
+    '# HELP os_http_requests_total HTTP requests handled.',
+    '# TYPE os_http_requests_total counter',
+    `os_http_requests_total ${_httpReqs}`,
+    '# HELP os_audit_events Current in-memory audit ring size.',
+    '# TYPE os_audit_events gauge',
+    `os_audit_events ${audit.length}`,
+    '# HELP process_resident_memory_bytes Resident memory size in bytes.',
+    '# TYPE process_resident_memory_bytes gauge',
+    `process_resident_memory_bytes ${mu.rss}`,
+    '# HELP nodejs_heap_used_bytes Node.js heap used in bytes.',
+    '# TYPE nodejs_heap_used_bytes gauge',
+    `nodejs_heap_used_bytes ${mu.heapUsed}`,
+    '# HELP process_uptime_seconds Process uptime in seconds.',
+    '# TYPE process_uptime_seconds gauge',
+    `process_uptime_seconds ${Math.round(process.uptime())}`,
+  ].join('\n') + '\n';
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
+  _httpReqs++;
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
+    if (p === '/metrics') { res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }); return res.end(metricsText()); }
     // ── 흡수: catalog 라우트 ──
     // 감사 누락(B): 읽기도 인증 필수(무인증 PII/토폴로지 노출 차단). 콘솔 전 사용자는 로그인되어
     // id_token 보유 → verifyAuthed(인증)면 충분(admin 불요). 비로그인 curl 등은 401.

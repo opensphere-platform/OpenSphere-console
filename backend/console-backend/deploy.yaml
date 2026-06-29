@@ -57,7 +57,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: console-backend, namespace: opensphere-system }
+metadata: { name: console-backend, namespace: opensphere-system, labels: { app: console-backend } }
 spec:
   selector: { app: console-backend }
-  ports: [{ port: 8080, targetPort: 8080 }]
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]

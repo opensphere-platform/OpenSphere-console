@@ -399,12 +399,45 @@ async function ensureRegistration(pkgName, desiredState, actor, reason) {
   return k8s('POST', crd('uipluginregistrations'), body);
 }
 
+// ── /metrics (Prometheus exposition, 의존성 0; 클러스터 내부 전용 — nginx 미라우팅) ──
+// 공유 관측 계층(k8s basic stack / prometheus-stack)이 ServiceMonitor로 scrape. docs/OBSERVABILITY-ARCHITECTURE.md.
+let _httpReqs = 0;
+function metricsText() {
+  const mu = process.memoryUsage();
+  const plugins = runtimeRegistry && Array.isArray(runtimeRegistry.plugins) ? runtimeRegistry.plugins.length : 0;
+  return [
+    '# HELP os_build_info Build info (constant 1).',
+    '# TYPE os_build_info gauge',
+    `os_build_info{service="dupa-registry-controller",version="${process.env.APP_VERSION || 'dev'}"} 1`,
+    '# HELP os_http_requests_total HTTP requests handled.',
+    '# TYPE os_http_requests_total counter',
+    `os_http_requests_total ${_httpReqs}`,
+    '# HELP dupa_registry_plugins Published plugins in runtime registry.',
+    '# TYPE dupa_registry_plugins gauge',
+    `dupa_registry_plugins ${plugins}`,
+    '# HELP dupa_proxy_allow Allowlisted plugin ids for /api/plugins proxy.',
+    '# TYPE dupa_proxy_allow gauge',
+    `dupa_proxy_allow ${proxyAllow ? proxyAllow.size : 0}`,
+    '# HELP dupa_audit_events Current in-memory audit ring size.',
+    '# TYPE dupa_audit_events gauge',
+    `dupa_audit_events ${audit.length}`,
+    '# HELP process_resident_memory_bytes Resident memory size in bytes.',
+    '# TYPE process_resident_memory_bytes gauge',
+    `process_resident_memory_bytes ${mu.rss}`,
+    '# HELP process_uptime_seconds Process uptime in seconds.',
+    '# TYPE process_uptime_seconds gauge',
+    `process_uptime_seconds ${Math.round(process.uptime())}`,
+  ].join('\n') + '\n';
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   const opId = newOpId();
+  _httpReqs++;
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
+    if (p === '/metrics') { res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }); return res.end(metricsText()); }
     if (p === '/registry/plugins.json') return json(res, 200, runtimeRegistry);
 
     // P0-2: nginx auth_request 대상 — /api/plugins/<id> 프록시 허용 여부(registry allowlist).
