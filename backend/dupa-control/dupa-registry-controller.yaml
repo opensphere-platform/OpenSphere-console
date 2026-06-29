@@ -56,6 +56,23 @@ subjects:
     name: dupa-registry-controller
     namespace: opensphere-system
 ---
+# Backbone 설치 권한(opensphere-backbone) — namespace 생성 + 데이터 티어 워크로드. admin 게이트(verifyActor) 뒤에서만 사용.
+# 별도 ClusterRole로 분리(위 least-privilege Role 보존, 권한 명시·감사 용이).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: dupa-backbone-installer }
+rules:
+  - { apiGroups: [""], resources: [namespaces], verbs: [get, create] }
+  - { apiGroups: [""], resources: [secrets, services, persistentvolumeclaims, configmaps, pods], verbs: [get, list, create, patch] }
+  - { apiGroups: ["apps"], resources: [deployments, statefulsets], verbs: [get, list, create, patch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: dupa-backbone-installer }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-backbone-installer }
+subjects:
+  - { kind: ServiceAccount, name: dupa-registry-controller, namespace: opensphere-system }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
