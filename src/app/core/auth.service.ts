@@ -9,6 +9,7 @@ import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts';
  */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
+  private readonly returnUrlKey = 'opensphere.auth.returnUrl';
   // Kanidm OIDC discovery authority(= 브라우저 발급 issuer). discovery: <authority>/.well-known/openid-configuration.
   // localhost는 secure context라 http 셸에서도 PKCE(crypto.subtle) 동작.
   private readonly authority = 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console';
@@ -57,7 +58,7 @@ export class AuthService {
     if (/[?&](code|error)=/.test(qs) && /[?&]state=/.test(qs)) {
       try {
         const u = await this.mgr.signinRedirectCallback();
-        window.history.replaceState({}, document.title, window.location.origin + '/');
+        window.history.replaceState({}, document.title, this.callbackReturnUrl(u));
         this.apply(u);
         return;
       } catch {
@@ -72,8 +73,37 @@ export class AuthService {
       return;
     }
     // ③ 미인증 → 로그인 리다이렉트(여기서 페이지 이탈; 아래 Promise는 미해결로 유지)
-    await this.mgr.signinRedirect();
+    const returnUrl = this.currentReturnUrl();
+    try {
+      window.sessionStorage.setItem(this.returnUrlKey, returnUrl);
+    } catch {
+      /* ignore */
+    }
+    await this.mgr.signinRedirect({ state: { returnUrl } });
     await new Promise<void>(() => {});
+  }
+
+  private currentReturnUrl(): string {
+    const path = `${window.location.pathname || '/'}${window.location.search || ''}${window.location.hash || ''}`;
+    return this.safeReturnUrl(path);
+  }
+
+  private callbackReturnUrl(u: User): string {
+    const state = u.state as { returnUrl?: unknown } | string | undefined;
+    const fromState = typeof state === 'string' ? state : typeof state?.returnUrl === 'string' ? state.returnUrl : '';
+    let fromStorage = '';
+    try {
+      fromStorage = window.sessionStorage.getItem(this.returnUrlKey) || '';
+      window.sessionStorage.removeItem(this.returnUrlKey);
+    } catch {
+      /* ignore */
+    }
+    return window.location.origin + this.safeReturnUrl(fromState || fromStorage || '/');
+  }
+
+  private safeReturnUrl(value: string): string {
+    if (!value || value.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(value)) return '/';
+    return value.startsWith('/') ? value : `/${value}`;
   }
 
   private apply(u: User): void {
@@ -105,11 +135,10 @@ export class AuthService {
   }
 
   async logout(): Promise<void> {
-    // 검증(2026-06-21): /v1/logout·/ui/logout 모두 no-cors fetch로는 Kanidm SSO 세션쿠키를 못 끊는다
-    // (opaque 응답의 Set-Cookie 미적용) → signinRedirect가 살아있는 세션으로 무프롬프트 재로그인 →
-    // 로그아웃 무력화. 또 oidc 토큰이 localStorage에 캐시돼 세션만 끊어도 콘솔이 캐시로 재로그인한다.
-    // 세션을 확실히 끊는 유일한 방법은 /ui/logout로의 top-level 이동이다.
-    //  ① 로컬 토큰·캐시 삭제 ② /ui/logout로 이동(세션 종료 → Kanidm 로그인). 콘솔 재이용은 8090 재방문.
+    // OIDC RP-initiated logout(end_session_endpoint + post_logout_redirect_uri).
+    // Kanidm SSO 세션쿠키를 끊고 console.opensphere.dev/ 로 복귀 → 콘솔이 세션 없음을 감지해
+    // 정상 OIDC 로그인 플로우를 재시작한다(Kanidm /ui/apps로 빠지는 문제 차단).
+    // no-cors fetch로 /ui/logout을 직접 호출하면 opaque 응답이라 Set-Cookie 미적용 → 무력화됨.
     try {
       await this.mgr.removeUser();
     } catch {
@@ -121,6 +150,12 @@ export class AuthService {
     } catch {
       /* ignore */
     }
-    window.location.assign(new URL(this.authority).origin + '/ui/logout');
+    // signoutRedirect: discovery의 end_session_endpoint + post_logout_redirect_uri 사용.
+    // Kanidm 1.4.6이 end_session_endpoint를 미지원하면 폴백으로 /ui/logout으로 이동.
+    try {
+      await this.mgr.signoutRedirect({ post_logout_redirect_uri: window.location.origin + '/' });
+    } catch {
+      window.location.assign(new URL(this.authority).origin + '/ui/logout');
+    }
   }
 }
