@@ -4,6 +4,10 @@ import { dump } from 'js-yaml';
 import { OsPanel } from '../os/os-panel';
 import { CodeEditorComponent } from '../shared/code-editor.component';
 import { AuthService } from '../core/auth.service';
+import { CarbonIcon } from '../os/carbon-icon';
+import Db2Database16 from '@carbon/icons/es/db2--database/16';
+import Code16 from '@carbon/icons/es/code/16';
+import Cube16 from '@carbon/icons/es/cube/16';
 
 /**
  * os-backbone-slice — Backbone 구성요소 우측 슬라이스 상세관리.
@@ -24,7 +28,9 @@ interface BbDetail {
 interface RawObjs { workload: { metadata?: Record<string, any> } | null; service?: unknown; pvcs?: unknown[]; }
 interface PgCol { name: string; type: string; }
 interface PgTable { schema: string; name: string; columns: PgCol[]; }
-interface PgDb { database: string; size: number; tables: PgTable[]; error?: string; }
+interface PgFunc { schema: string; name: string; args: string; rettype: string; lang: string; kind: string; }
+interface PgExt { name: string; version: string; }
+interface PgDb { database: string; size: number; tables: PgTable[]; functions?: PgFunc[]; extensions?: PgExt[]; error?: string; }
 interface PgData { enabled: boolean; databases: PgDb[]; audit: { time: string; actor: string; action: string; target: string; result: string }[]; error?: string; }
 interface RowData { columns: string[]; rows: (string | null)[][]; }
 type ObjRow = Record<string, string | null>;
@@ -50,7 +56,7 @@ const IC = {
 
 @Component({
   selector: 'os-backbone-slice',
-  imports: [ClarityModule, OsPanel, CodeEditorComponent],
+  imports: [ClarityModule, OsPanel, CodeEditorComponent, CarbonIcon],
   template: `
     <os-panel [open]="true" [title]="row.name" [subtitle]="row.kind + ' · ' + row.role + ' · ns ' + namespace()" (closed)="close()">
       @if (err(); as e) {
@@ -116,17 +122,43 @@ const IC = {
             <div class="os-card-h">데이터 · PostgreSQL (읽기 전용)</div>
             @if (pg(); as g) {
               @if (g.enabled) {
+                <!-- 벡터(pgvector) 지원 상태 — 설치 확장(pg_extension)에서 'vector' 자동 도출. -->
+                @if (vectorVersion(); as vv) {
+                  <div class="pg-cap pg-cap-ok">🧮 벡터(pgvector) 지원 · v{{ vv }} — vector/halfvec/sparsevec 타입 · HNSW·IVFFlat 인덱스 · L2/Cosine/IP 거리연산</div>
+                } @else {
+                  <div class="pg-cap pg-cap-no">벡터 미지원 — pgvector 확장 없음 (CREATE EXTENSION vector 필요)</div>
+                }
                 <!-- DATABASE → TABLE → COLUMN 트리(pgAdmin 형태). 테이블 클릭 → 행 미리보기(Data Output). -->
                 <div class="pg-tree">
                   <clr-tree>
                     @for (d of g.databases; track d.database) {
                       <clr-tree-node>
-                        <span class="t-db">🛢 {{ d.database }}</span> <span class="t-meta">{{ fmtSize(d.size) }} · {{ d.tables.length }} tables{{ d.error ? ' · ' + d.error : '' }}</span>
+                        <span class="t-db"><os-cicon [icon]="dbIcon" [size]="16"/> {{ d.database }}</span> <span class="t-meta">{{ fmtSize(d.size) }} · {{ d.tables.length }} tables{{ d.error ? ' · ' + d.error : '' }}</span>
                         @for (t of d.tables; track t.schema + t.name) {
                           <clr-tree-node>
                             <button class="t-tbl" type="button" (click)="preview(d.database, t.schema, t.name)" [class.t-active]="rowsTitle() === d.database + '.' + t.schema + '.' + t.name">▦ {{ t.schema }}.{{ t.name }} <span class="t-meta">({{ t.columns.length }} cols)</span></button>
                             @for (c of t.columns; track c.name) {
                               <clr-tree-node><span class="t-col">{{ c.name }}</span> <span class="t-type">{{ c.type }}</span></clr-tree-node>
+                            }
+                          </clr-tree-node>
+                        }
+                        @if (d.functions?.length) {
+                          <clr-tree-node>
+                            <span class="t-grp"><os-cicon [icon]="fnIcon" [size]="16"/> Functions <span class="t-meta">({{ d.functions.length }})</span></span>
+                            @for (fn of d.functions; track fn.schema + fn.name + fn.args) {
+                              <clr-tree-node>
+                                <span class="t-fn">{{ fn.kind === 'proc' ? '⚙' : 'ƒ' }} {{ fn.schema }}.{{ fn.name }}({{ fn.args }})</span> <span class="t-type">→ {{ fn.rettype }} · {{ fn.lang }}</span>
+                                <button class="t-act" type="button" (click)="editFunction(d.database, fn)">편집</button>
+                                <button class="t-act t-del" type="button" (click)="deleteFunction(d.database, fn)">삭제</button>
+                              </clr-tree-node>
+                            }
+                          </clr-tree-node>
+                        }
+                        @if (d.extensions?.length) {
+                          <clr-tree-node>
+                            <span class="t-grp"><os-cicon [icon]="extIcon" [size]="16"/> Extensions <span class="t-meta">({{ d.extensions.length }})</span></span>
+                            @for (ex of d.extensions; track ex.name) {
+                              <clr-tree-node><span class="t-ext">{{ ex.name }}</span> <span class="t-type">{{ ex.version }}</span></clr-tree-node>
                             }
                           </clr-tree-node>
                         }
@@ -161,24 +193,40 @@ const IC = {
                       </clr-datagrid>
                     </div>
                   } @else { <p class="os-sub" style="padding:8px 14px">{{ rowsErr() || '불러오는 중…' }}</p> }
+                } @else {
+                  <!-- 테이블 미선택 시 — 동일 위치에 빈 Data Output 그리드 배치(레이아웃 안정·일관 L/F). -->
+                  <div class="os-card-h" style="border-top:1px solid #e6e8ec">Data Output</div>
+                  <div class="pg-out">
+                    <clr-datagrid>
+                      <clr-dg-placeholder>왼쪽 트리에서 테이블을 선택하면 행이 표시됩니다 (SELECT * LIMIT 50).</clr-dg-placeholder>
+                    </clr-datagrid>
+                  </div>
                 }
-
-                @if (g.audit.length) {
-                  <div class="os-card-h" style="border-top:1px solid #e6e8ec">audit_log · console DB (최근 {{ g.audit.length }})</div>
-                  <clr-datagrid>
-                    <clr-dg-column>Time</clr-dg-column>
-                    <clr-dg-column>Actor</clr-dg-column>
-                    <clr-dg-column>Action</clr-dg-column>
-                    <clr-dg-column>Result</clr-dg-column>
-                    @for (a of g.audit; track $index) {
-                      <clr-dg-row>
-                        <clr-dg-cell>{{ a.time }}</clr-dg-cell><clr-dg-cell>{{ a.actor }}</clr-dg-cell>
-                        <clr-dg-cell>{{ a.action }} {{ a.target }}</clr-dg-cell>
-                        <clr-dg-cell><span class="label" [class.label-success]="a.result === 'accepted'" [class.label-warning]="a.result === 'warning'">{{ a.result }}</span></clr-dg-cell>
-                      </clr-dg-row>
-                    }
-                  </clr-datagrid>
+                <!-- 함수 추가(가이드 폼) — admin 게이트, backbone PG 첫 DDL 쓰기. 생성 후 트리 갱신. -->
+                <div class="os-card-h" style="border-top:1px solid #e6e8ec"><button class="t-tbl" type="button" (click)="fnOpen.set(!fnOpen())">{{ fnOpen() ? '−' : '+' }} 함수 추가</button></div>
+                @if (fnOpen()) {
+                  <div class="fn-form">
+                    @if (fnMsg(); as m) { <clr-alert [clrAlertType]="m.type" [clrAlertClosable]="true" (clrAlertClosedChange)="fnMsg.set(null)"><clr-alert-item><span class="alert-text">{{ m.text }}</span></clr-alert-item></clr-alert> }
+                    <div class="fn-row">
+                      <label>Database<select [value]="fnDb()" (change)="fnDb.set($any($event.target).value)">@for (d of g.databases; track d.database) { <option [value]="d.database">{{ d.database }}</option> }</select></label>
+                      <label>Schema<input [value]="fnSchema()" (input)="fnSchema.set($any($event.target).value)" placeholder="public"></label>
+                      <label>Name<input [value]="fnName()" (input)="fnName.set($any($event.target).value)" placeholder="my_func"></label>
+                    </div>
+                    <div class="fn-row">
+                      <label>Args<input [value]="fnArgs()" (input)="fnArgs.set($any($event.target).value)" placeholder="a integer, b text"></label>
+                      <label>Returns<input [value]="fnReturns()" (input)="fnReturns.set($any($event.target).value)" placeholder="integer"></label>
+                      <label>Language<select [value]="fnLang()" (change)="fnLang.set($any($event.target).value)"><option value="plpgsql">plpgsql</option><option value="sql">sql</option></select></label>
+                    </div>
+                    <label class="fn-body">Body<textarea [value]="fnBody()" (input)="fnBody.set($any($event.target).value)" rows="6" placeholder="BEGIN RETURN a + length(b); END;"></textarea></label>
+                    <div class="fn-actions">
+                      <label class="fn-chk"><input type="checkbox" [checked]="fnReplace()" (change)="fnReplace.set($any($event.target).checked)"> OR REPLACE</label>
+                      <button class="btn btn-sm btn-primary" [disabled]="fnBusy()" (click)="addFunction()">함수 생성</button>
+                      @if (fnBusy()) { <span class="spinner spinner-inline"></span> }
+                    </div>
+                    <p class="os-sub">⚠️ admin 전용·감사 기록. Body는 PL/pgSQL·SQL 코드(달러 인용). 생성 후 Functions 트리에 반영됩니다.</p>
+                  </div>
                 }
+                <!-- audit_log는 우측 '감사로그' 별도 탭으로 분리(아래 탭3). -->
               } @else { <p class="os-sub" style="padding:8px 14px">PostgreSQL 미연결(Backbone 미설치 또는 폴백). {{ g.error || '' }}</p> }
             } @else { <p class="os-sub" style="padding:8px 14px">불러오는 중…</p> }
           </div>
@@ -222,7 +270,38 @@ const IC = {
             </clr-tab-content>
           </clr-tab>
 
-          <!-- 탭3: YAML -->
+          <!-- 탭3: 감사로그 (console DB audit_log) — Contents 우측 별도 탭, postgres 전용. 진입 시 로드. -->
+          @if (row.key === 'postgres') {
+          <clr-tab>
+            <button clrTabLink (click)="loadContents()">감사로그</button>
+            <clr-tab-content>
+              <div class="os-card">
+                <div class="os-card-h">audit_log · console DB (최근 {{ pg()?.audit?.length || 0 }})</div>
+                @if (pg(); as g) {
+                  @if (g.enabled) {
+                    @if (g.audit.length) {
+                      <clr-datagrid>
+                        <clr-dg-column>Time</clr-dg-column>
+                        <clr-dg-column>Actor</clr-dg-column>
+                        <clr-dg-column>Action</clr-dg-column>
+                        <clr-dg-column>Result</clr-dg-column>
+                        @for (a of g.audit; track $index) {
+                          <clr-dg-row>
+                            <clr-dg-cell>{{ a.time }}</clr-dg-cell><clr-dg-cell>{{ a.actor }}</clr-dg-cell>
+                            <clr-dg-cell>{{ a.action }} {{ a.target }}</clr-dg-cell>
+                            <clr-dg-cell><span class="label" [class.label-success]="a.result === 'accepted'" [class.label-warning]="a.result === 'warning'">{{ a.result }}</span></clr-dg-cell>
+                          </clr-dg-row>
+                        }
+                      </clr-datagrid>
+                    } @else { <p class="os-sub" style="padding:8px 14px">감사 레코드 없음.</p> }
+                  } @else { <p class="os-sub" style="padding:8px 14px">PostgreSQL 미연결(Backbone 미설치 또는 폴백). {{ g.error || '' }}</p> }
+                } @else { <p class="os-sub" style="padding:8px 14px">불러오는 중…</p> }
+              </div>
+            </clr-tab-content>
+          </clr-tab>
+          }
+
+          <!-- 탭4: YAML -->
           <clr-tab>
             <button clrTabLink>YAML</button>
             <clr-tab-content>
@@ -230,7 +309,7 @@ const IC = {
             </clr-tab-content>
           </clr-tab>
 
-          <!-- 탭4: 이벤트 (+ 로그) -->
+          <!-- 탭5: 이벤트 (+ 로그) -->
           <clr-tab>
             <button clrTabLink>이벤트</button>
             <clr-tab-content>
@@ -267,13 +346,30 @@ const IC = {
       .os-sub { color: var(--os-ink-muted, #525252); font-size: 0.72rem; margin: 0.2rem 0; }
       .mono { font-family: var(--os-font-mono, monospace); font-size: 0.7rem; }
       .pg-tree { max-height: 22rem; overflow: auto; padding: 0.3rem 0.6rem; }
-      .pg-tree .t-db { font-weight: 600; color: var(--os-ink, #161616); font-size: 0.74rem; }
+      .pg-tree .t-db { display: inline-flex; align-items: center; gap: 0.3rem; font-weight: 600; color: var(--os-ink, #161616); font-size: 0.74rem; }
       .pg-tree .t-meta { color: var(--os-ink-muted, #525252); font-size: 0.62rem; }
       .pg-tree .t-tbl { border: 0; background: none; padding: 0; cursor: pointer; color: var(--os-ink, #161616); font-size: 0.72rem; font-family: var(--os-font-mono, monospace); }
       .pg-tree .t-tbl:hover { color: var(--os-accent, #4c6fff); text-decoration: underline; }
       .pg-tree .t-tbl.t-active { color: var(--os-accent, #4c6fff); font-weight: 700; }
       .pg-tree .t-col { font-family: var(--os-font-mono, monospace); font-size: 0.7rem; color: var(--os-ink, #161616); }
       .pg-tree .t-type { font-size: 0.62rem; color: #0b7285; margin-left: 0.4rem; }
+      .pg-tree .t-grp { display: inline-flex; align-items: center; gap: 0.3rem; font-weight: 600; font-size: 0.7rem; color: var(--os-ink-muted, #525252); }
+      .pg-tree .t-fn { font-family: var(--os-font-mono, monospace); font-size: 0.7rem; color: var(--os-ink, #161616); }
+      .pg-tree .t-act { border: 1px solid #d9dde3; background: #fff; border-radius: 3px; margin-left: 0.4rem; padding: 0 0.3rem; cursor: pointer; font-size: 0.58rem; color: var(--os-ink-muted, #525252); }
+      .pg-tree .t-act:hover { border-color: var(--os-accent, #4c6fff); color: var(--os-accent, #4c6fff); }
+      .pg-tree .t-del:hover { border-color: #c21d2c; color: #c21d2c; }
+      .pg-tree .t-ext { font-family: var(--os-font-mono, monospace); font-size: 0.7rem; color: var(--os-ink, #161616); }
+      .pg-cap { margin: 0.4rem 0.6rem; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.68rem; }
+      .pg-cap-ok { background: rgba(36, 161, 72, 0.12); color: #0e6027; border: 1px solid rgba(36, 161, 72, 0.3); }
+      .pg-cap-no { background: rgba(0, 0, 0, 0.04); color: var(--os-ink-muted, #525252); border: 1px solid #e6e8ec; }
+      .fn-form { padding: 0.5rem 0.7rem; display: flex; flex-direction: column; gap: 0.5rem; }
+      .fn-row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+      .fn-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.64rem; color: var(--os-ink-muted, #525252); flex: 1 1 8rem; }
+      .fn-form input, .fn-form select, .fn-form textarea { font-size: 0.7rem; padding: 0.25rem 0.4rem; border: 1px solid #d9dde3; border-radius: 3px; font-family: var(--os-font-mono, monospace); }
+      .fn-body { width: 100%; }
+      .fn-body textarea { width: 100%; resize: vertical; }
+      .fn-actions { display: flex; align-items: center; gap: 0.7rem; }
+      .fn-chk { flex-direction: row !important; align-items: center; gap: 0.3rem; }
       .pg-out { max-height: 24rem; overflow: auto; }
       .pg-out clr-dg-cell { font-family: var(--os-font-mono, monospace); font-size: 0.64rem; }
       .g-repos { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.5rem 0.6rem; border-bottom: 1px solid #e6e8ec; }
@@ -296,12 +392,27 @@ export class BackboneSlice implements OnChanges {
 
   private auth = inject(AuthService);
   readonly ic = IC;
+  readonly dbIcon = Db2Database16;
+  readonly fnIcon = Code16;
+  readonly extIcon = Cube16;
   readonly detail = signal<BbDetail | null>(null);
   readonly raw = signal<RawObjs | null>(null);
   readonly pg = signal<PgData | null>(null);
   readonly rows = signal<RowData | null>(null);
   readonly rowsTitle = signal<string>('');
   readonly rowsErr = signal<string>('');
+  // 함수 추가(가이드 폼) 상태
+  readonly fnOpen = signal(false);
+  readonly fnDb = signal('');
+  readonly fnSchema = signal('public');
+  readonly fnName = signal('');
+  readonly fnArgs = signal('');
+  readonly fnReturns = signal('integer');
+  readonly fnLang = signal('plpgsql');
+  readonly fnBody = signal('');
+  readonly fnReplace = signal(false);
+  readonly fnBusy = signal(false);
+  readonly fnMsg = signal<{ type: 'success' | 'danger'; text: string } | null>(null);
   // Gitea Git 코드 뷰
   readonly giteaResp = signal<GiteaResp | null>(null);
   readonly giteaRepo = signal<GiteaRepo | null>(null);
@@ -349,7 +460,7 @@ export class BackboneSlice implements OnChanges {
     if (this.loadedContents) return;
     this.loadedContents = true;
     if (this.row.key === 'postgres') {
-      try { const r = await fetch('/api/admin/backbone/pg', this.authGet()); if (r.ok) this.pg.set(await r.json()); } catch { /* pg 실패 무시 */ }
+      try { const r = await fetch('/api/admin/backbone/pg', this.authGet()); if (r.ok) { this.pg.set(await r.json()); if (!this.fnDb()) this.fnDb.set(this.pg()?.databases?.[0]?.database || ''); } } catch { /* pg 실패 무시 */ }
     } else if (this.row.key === 'gitea') {
       await this.loadGitea();
     }
@@ -410,12 +521,15 @@ export class BackboneSlice implements OnChanges {
     return root.children;
   }
 
-  /** Field/Value — raw 워크로드 metadata(resource-detail info()와 동일 항목). */
+  /** Field/Value — raw 워크로드 metadata + 컨테이너 이미지(버전). */
   info(): { k: string; v: string }[] {
-    const m = this.raw()?.workload?.metadata || {};
+    const wl = this.raw()?.workload as { metadata?: Record<string, any>; spec?: any } | null;
+    const m = wl?.metadata || {};
+    const image = wl?.spec?.template?.spec?.containers?.[0]?.image || '';
     const rows = [
       { k: 'Name', v: m['name'] },
       { k: 'Namespace', v: m['namespace'] },
+      { k: 'Image · 버전', v: image },
       { k: 'Created', v: m['creationTimestamp'] },
       { k: 'UID', v: m['uid'] },
       { k: 'Resource Version', v: m['resourceVersion'] },
@@ -456,6 +570,72 @@ export class BackboneSlice implements OnChanges {
     a.download = `${this.row.name}.yaml`;
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+
+  /** 함수 생성(가이드 폼) — POST /pg/function. admin 게이트·감사. 성공 시 트리 갱신. */
+  async addFunction(): Promise<void> {
+    if (this.fnBusy()) return;
+    const database = this.fnDb() || this.pg()?.databases?.[0]?.database || '';
+    if (!database || !this.fnName().trim()) { this.fnMsg.set({ type: 'danger', text: 'Database와 Name은 필수입니다.' }); return; }
+    this.fnBusy.set(true); this.fnMsg.set(null);
+    try {
+      const r = await fetch('/api/admin/backbone/pg/function', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
+        body: JSON.stringify({ database, schema: this.fnSchema() || 'public', name: this.fnName(), args: this.fnArgs(), returns: this.fnReturns(), language: this.fnLang(), body: this.fnBody(), replace: this.fnReplace() }),
+      });
+      if (r.status === 401 || r.status === 403) { this.fnMsg.set({ type: 'danger', text: '관리자 권한이 필요합니다.' }); return; }
+      const j = await r.json().catch(() => ({} as { error?: string }));
+      if (!r.ok) { this.fnMsg.set({ type: 'danger', text: j.error || `생성 실패 (HTTP ${r.status})` }); return; }
+      this.fnMsg.set({ type: 'success', text: `함수 ${this.fnSchema() || 'public'}.${this.fnName()} 생성됨.` });
+      this.fnName.set(''); this.fnArgs.set(''); this.fnBody.set('');
+      this.loadedContents = false; await this.loadContents(); // Functions 트리 갱신
+    } catch (e) { this.fnMsg.set({ type: 'danger', text: '요청 실패: ' + e }); }
+    finally { this.fnBusy.set(false); }
+  }
+
+  /** 함수 편집 — 소스 로드 후 폼에 채우고 OR REPLACE 모드로 전환(수정=CREATE OR REPLACE). */
+  async editFunction(database: string, fn: PgFunc): Promise<void> {
+    this.fnMsg.set(null); this.fnOpen.set(true);
+    const enc = encodeURIComponent;
+    try {
+      const q = `database=${enc(database)}&schema=${enc(fn.schema)}&name=${enc(fn.name)}&args=${enc(fn.args)}`;
+      const r = await fetch('/api/admin/backbone/pg/function/source?' + q, this.authGet());
+      if (r.status === 401 || r.status === 403) { this.fnMsg.set({ type: 'danger', text: '관리자 권한이 필요합니다.' }); return; }
+      const s = await r.json().catch(() => ({} as { args?: string; returns?: string; language?: string; body?: string; error?: string }));
+      if (!r.ok) { this.fnMsg.set({ type: 'danger', text: s.error || `소스 조회 실패 (HTTP ${r.status})` }); return; }
+      this.fnDb.set(database); this.fnSchema.set(fn.schema); this.fnName.set(fn.name);
+      this.fnArgs.set(s.args || fn.args); this.fnReturns.set(s.returns || fn.rettype); this.fnLang.set(s.language || fn.lang);
+      this.fnBody.set(s.body || ''); this.fnReplace.set(true);
+      this.fnMsg.set({ type: 'success', text: `${fn.schema}.${fn.name} 로드됨 — 수정 후 '함수 생성'(OR REPLACE)을 누르세요.` });
+    } catch (e) { this.fnMsg.set({ type: 'danger', text: '소스 조회 실패: ' + e }); }
+  }
+
+  /** 함수 삭제(DROP) — 확인 후 identity args로 특정 오버로드 제거. 감사 기록. */
+  async deleteFunction(database: string, fn: PgFunc): Promise<void> {
+    if (!confirm(`함수 ${fn.schema}.${fn.name}(${fn.args}) 를 삭제할까요?`)) return;
+    this.fnMsg.set(null); this.fnOpen.set(true);
+    try {
+      const r = await fetch('/api/admin/backbone/pg/function/drop', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
+        body: JSON.stringify({ database, schema: fn.schema, name: fn.name, args: fn.args }),
+      });
+      if (r.status === 401 || r.status === 403) { this.fnMsg.set({ type: 'danger', text: '관리자 권한이 필요합니다.' }); return; }
+      const j = await r.json().catch(() => ({} as { error?: string }));
+      if (!r.ok) { this.fnMsg.set({ type: 'danger', text: j.error || `삭제 실패 (HTTP ${r.status})` }); return; }
+      this.fnMsg.set({ type: 'success', text: `함수 ${fn.schema}.${fn.name} 삭제됨.` });
+      this.loadedContents = false; await this.loadContents(); // 트리 갱신
+    } catch (e) { this.fnMsg.set({ type: 'danger', text: '삭제 실패: ' + e }); }
+  }
+
+  /** 설치된 'vector' 확장 버전(아무 DB에서나) — 없으면 ''. 벡터 지원 배너용. */
+  vectorVersion(): string {
+    for (const d of this.pg()?.databases || []) {
+      const v = (d.extensions || []).find((e) => e.name === 'vector');
+      if (v) return v.version;
+    }
+    return '';
   }
 
   fmtSize(bytes: number): string {
