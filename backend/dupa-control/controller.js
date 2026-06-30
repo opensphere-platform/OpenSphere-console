@@ -834,10 +834,13 @@ function obsTargets() {
     { key: 'backbone-gitea', name: 'Backbone Gitea', app: 'backbone-gitea', ns: BACKBONE_NS },
   ];
 }
-// monitoring ns에서 app.kubernetes.io/name 라벨로 Service 탐색 → DNS:port(딥링크). 없으면 ''.
-async function findMonSvc(nameLabel, port) {
-  const r = await k8s('GET', `/api/v1/namespaces/${MON_NS}/services?labelSelector=${encodeURIComponent('app.kubernetes.io/name=' + nameLabel)}`);
-  const svc = (r.json?.items || [])[0];
+// monitoring ns에서 이름 정규식 + 포트로 Service 탐색 → DNS:port. kps prometheus svc는 app.kubernetes.io/name 라벨이
+// 없어(app=kube-prometheus-stack-prometheus) 라벨 셀렉터로는 못 찾음 → 이름+포트 매칭이 견고. headless(clusterIP None) 후순위.
+async function findMonSvc(nameRe, port) {
+  const r = await k8s('GET', `/api/v1/namespaces/${MON_NS}/services`);
+  const cands = (r.json?.items || []).filter((s) => nameRe.test(s.metadata?.name || '') && (s.spec?.ports || []).some((p) => p.port === port));
+  cands.sort((a, b) => (a.spec?.clusterIP === 'None' ? 1 : 0) - (b.spec?.clusterIP === 'None' ? 1 : 0));
+  const svc = cands[0];
   return svc ? `${svc.metadata.name}.${MON_NS}.svc.cluster.local:${port}` : '';
 }
 async function observabilityStatus() {
@@ -857,12 +860,12 @@ async function observabilityStatus() {
     const sm = sms.some((s) => s.namespace === t.ns && (s.app === t.app || s.name === t.app));
     return { key: t.key, name: t.name, namespace: t.ns, serviceMonitor: sm, metrics: sm, note: sm ? 'scrape 대상' : (t.gap || '계측 없음(노출/ServiceMonitor 부재)') };
   });
-  const [grafana, prometheus] = await Promise.all([findMonSvc('grafana', 80), findMonSvc('prometheus', 9090)]);
+  const [grafana, prometheus] = await Promise.all([findMonSvc(/grafana/i, 80), findMonSvc(/prometheus/i, 9090)]);
   return { namespace: MON_NS, nsExists, installed: components.some((c) => c.installed), ready: components.every((c) => c.ready), components, crdReady, serviceMonitors: sms, coverage, links: { grafana, prometheus } };
 }
 // Prometheus active targets 프록시(up/down) — best-effort. in-cluster svc 직결.
 async function observabilityTargets() {
-  const prom = await findMonSvc('prometheus', 9090);
+  const prom = await findMonSvc(/prometheus/i, 9090);
   if (!prom) return { reachable: false, hint: 'prometheus svc 미발견' };
   try {
     const r = await fetch(`http://${prom}/api/v1/targets?state=active`, { signal: AbortSignal.timeout(5000) });
@@ -871,6 +874,27 @@ async function observabilityTargets() {
     const active = (j.data?.activeTargets || []).map((t) => ({ job: t.labels?.job || '', instance: t.labels?.instance || t.discoveredLabels?.__address__ || '', health: t.health || '', lastError: (t.lastError || '').slice(0, 140), scrapeUrl: t.scrapeUrl || '' }));
     return { reachable: true, active };
   } catch (e) { return { reachable: false, hint: String((e && e.message) || e).slice(0, 120) }; }
+}
+// Prometheus 쿼리 프록시(instant/range) — 콘솔이 직접 값/그래프 렌더(외부 Grafana 비의존). admin 게이트 뒤·읽기 전용.
+// PromQL은 임의(admin은 Prometheus 직접 조회 가능한 신뢰 주체) — 쓰기 불가, 길이 bound + 타임아웃으로 보호.
+async function promQuery(expr, range) {
+  const prom = await findMonSvc(/prometheus/i, 9090);
+  if (!prom) return { ok: false, hint: 'prometheus svc 미발견' };
+  try {
+    let url;
+    if (range) {
+      const end = Math.floor(Date.now() / 1000);
+      const start = end - Math.max(1, Math.min(range.minutes || 60, 1440)) * 60;
+      const step = Math.max(15, Math.min(range.step || 60, 3600));
+      url = `http://${prom}/api/v1/query_range?query=${encodeURIComponent(expr)}&start=${start}&end=${end}&step=${step}`;
+    } else {
+      url = `http://${prom}/api/v1/query?query=${encodeURIComponent(expr)}`;
+    }
+    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return { ok: false, hint: `HTTP ${r.status}` };
+    const j = await r.json();
+    return { ok: true, resultType: j.data?.resultType || '', result: j.data?.result || [] };
+  } catch (e) { return { ok: false, hint: String((e && e.message) || e).slice(0, 120) }; }
 }
 
 // ── /metrics (Prometheus exposition, 의존성 0; 클러스터 내부 전용 — nginx 미라우팅) ──
@@ -1018,6 +1042,16 @@ const server = http.createServer(async (req, res) => {
     // Observability(공유 관측 스택) 정보 뷰 — 읽기 전용. 콘솔은 소유 아닌 대상/소비자.
     if (p === '/api/admin/observability/status' && req.method === 'GET') return json(res, 200, await observabilityStatus());
     if (p === '/api/admin/observability/targets' && req.method === 'GET') return json(res, 200, await observabilityTargets());
+    if (p === '/api/admin/observability/query' && req.method === 'GET') {
+      const expr = url.searchParams.get('expr') || '';
+      if (!expr || expr.length > 2000) return json(res, 400, { error: 'expr required (≤2000)', opId });
+      return json(res, 200, await promQuery(expr, null));
+    }
+    if (p === '/api/admin/observability/query_range' && req.method === 'GET') {
+      const expr = url.searchParams.get('expr') || '';
+      if (!expr || expr.length > 2000) return json(res, 400, { error: 'expr required (≤2000)', opId });
+      return json(res, 200, await promQuery(expr, { minutes: Number(url.searchParams.get('minutes')) || 60, step: Number(url.searchParams.get('step')) || 60 }));
+    }
     if (p === '/api/admin/backbone/gitea' && req.method === 'GET') return json(res, 200, await giteaRepos());
     if (p === '/api/admin/backbone/gitea/tree' && req.method === 'GET') {
       return json(res, 200, await giteaTree(url.searchParams.get('owner') || '', url.searchParams.get('repo') || '', url.searchParams.get('ref') || ''));
