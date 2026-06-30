@@ -1,0 +1,134 @@
+apiVersion: v1
+data:
+  opensphere-backbone.json: |
+    {
+      "uid": "opensphere-backbone",
+      "title": "OpenSphere Backbone",
+      "tags": ["opensphere", "backbone"],
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          { "name": "datasource", "type": "datasource", "query": "prometheus", "label": "Datasource", "hide": 0, "refresh": 1, "current": {} }
+        ]
+      },
+      "panels": [
+        { "type": "row", "title": "PostgreSQL (backbone-postgres)", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 1 },
+        {
+          "type": "stat", "title": "PostgreSQL up", "id": 2,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+          "fieldConfig": { "defaults": { "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }], "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(pg_up)" }]
+        },
+        {
+          "type": "timeseries", "title": "Connections by database", "id": 3,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 10, "x": 4, "y": 1 },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(pg_stat_activity_count) by (datname)", "legendFormat": "{{datname}}" }]
+        },
+        {
+          "type": "timeseries", "title": "Commits / Rollbacks (rate 5m)", "id": 4,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 10, "x": 14, "y": 1 },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(pg_stat_database_xact_commit[5m])) by (datname)", "legendFormat": "commit {{datname}}" },
+            { "refId": "B", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(pg_stat_database_xact_rollback[5m])) by (datname)", "legendFormat": "rollback {{datname}}" }
+          ]
+        },
+        {
+          "type": "timeseries", "title": "Database size", "id": 5,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 9 },
+          "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "pg_database_size_bytes", "legendFormat": "{{datname}}" }]
+        },
+        { "type": "row", "title": "Gitea (backbone-gitea)", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "id": 6 },
+        {
+          "type": "stat", "title": "Gitea up", "id": 7,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 16 },
+          "fieldConfig": { "defaults": { "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }], "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(up{job=\"backbone-gitea\"})" }]
+        },
+        {
+          "type": "stat", "title": "Repositories", "id": 8,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 5, "x": 4, "y": 16 },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(gitea_repositories)" }]
+        },
+        {
+          "type": "stat", "title": "Users", "id": 9,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 5, "x": 9, "y": 16 },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(gitea_users)" }]
+        },
+        {
+          "type": "stat", "title": "Organizations", "id": 10,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 5, "x": 14, "y": 16 },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(gitea_organizations)" }]
+        },
+        {
+          "type": "timeseries", "title": "Gitea accesses (rate 5m)", "id": 11,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "rate(gitea_accesses[5m])", "legendFormat": "accesses/s" }]
+        },
+        { "type": "row", "title": "RustFS (backbone-rustfs · S3 usage exporter)", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }, "id": 12 },
+        {
+          "type": "stat", "title": "RustFS up", "id": 13,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 27 },
+          "fieldConfig": { "defaults": { "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }], "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(rustfs_up)" }]
+        },
+        {
+          "type": "stat", "title": "총 사용량", "id": 14,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 5, "x": 4, "y": 27 },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(rustfs_bytes_total)" }]
+        },
+        {
+          "type": "stat", "title": "총 오브젝트", "id": 15,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 5, "x": 9, "y": 27 },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(rustfs_objects_total)" }]
+        },
+        {
+          "type": "stat", "title": "Buckets", "id": 16,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 4, "w": 4, "x": 14, "y": 27 },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(rustfs_buckets)" }]
+        },
+        {
+          "type": "timeseries", "title": "총 사용량 추이", "id": 17,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 31 },
+          "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 15 } }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "max(rustfs_bytes_total)", "legendFormat": "total" }]
+        },
+        {
+          "type": "timeseries", "title": "버킷별 사용량", "id": 18,
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 31 },
+          "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 15 } }, "overrides": [] },
+          "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "rustfs_bucket_bytes", "legendFormat": "{{bucket}}" }]
+        }
+      ]
+    }
+kind: ConfigMap
+metadata:
+  name: backbone-grafana-dashboard
+  labels:
+    grafana_dashboard: "1"
+    opensphere.io/part-of: opensphere-backbone
+  annotations:
+    grafana_folder: OpenSphere
+  namespace: opensphere-backbone

@@ -3,7 +3,7 @@
 # 구성:
 #   - PostgreSQL: 자체 /metrics 없음 → postgres_exporter 사이드 Deployment(svc 직결, console 자격) → :9187/metrics
 #   - Gitea: 내장 /metrics(GITEA__metrics__ENABLED) → 기존 :3000 http 포트
-#   - RustFS: rustfs:1.0.0-beta.8은 Prometheus 엔드포인트 미제공(모든 경로 S3 AccessDenied) → 계측 보류(upstream 대기).
+#   - RustFS: rustfs:1.0.0-beta.8은 Prometheus 엔드포인트 미제공 → backbone-rustfs-exporter(S3 SigV4 폴링)로 사용량 메트릭(총량·버킷별) 노출.
 # ServiceMonitor 이름 = 콘솔 Observability 커버리지 매트릭스 매칭 키(backbone-postgres/backbone-gitea).
 ---
 apiVersion: apps/v1
@@ -64,3 +64,51 @@ spec:
   selector: { matchLabels: { app: backbone-gitea } }
   endpoints:
     - { port: http, path: /metrics, interval: 30s }
+---
+# RustFS 사용량 exporter — S3 API(SigV4) 폴링으로 총량·버킷별·오브젝트수 노출. 네이티브 미지원 우회.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backbone-rustfs-exporter
+  namespace: opensphere-backbone
+  labels: { app: backbone-rustfs-exporter, opensphere.io/part-of: opensphere-backbone }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: backbone-rustfs-exporter } }
+  template:
+    metadata:
+      labels: { app: backbone-rustfs-exporter }
+    spec:
+      containers:
+        - name: exporter
+          image: localhost:5000/backbone-rustfs-exporter:1
+          env:
+            - { name: S3_ENDPOINT, value: "http://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000" }
+            - { name: S3_REGION, value: us-east-1 }
+            - { name: S3_ACCESS_KEY, valueFrom: { secretKeyRef: { name: backbone-rustfs, key: access_key } } }
+            - { name: S3_SECRET_KEY, valueFrom: { secretKeyRef: { name: backbone-rustfs, key: secret_key } } }
+          ports: [{ name: metrics, containerPort: 9209 }]
+          readinessProbe: { httpGet: { path: /healthz, port: metrics }, initialDelaySeconds: 3, periodSeconds: 10 }
+          resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { cpu: 100m, memory: 128Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backbone-rustfs-exporter
+  namespace: opensphere-backbone
+  labels: { app: backbone-rustfs-exporter, opensphere.io/part-of: opensphere-backbone }
+spec:
+  selector: { app: backbone-rustfs-exporter }
+  ports: [{ name: metrics, port: 9209, targetPort: metrics }]
+---
+# ServiceMonitor(name=backbone-rustfs) — exporter scrape. 콘솔 커버리지 매트릭스 키=backbone-rustfs.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backbone-rustfs
+  namespace: opensphere-backbone
+  labels: { app.kubernetes.io/part-of: opensphere-backbone }
+spec:
+  selector: { matchLabels: { app: backbone-rustfs-exporter } }
+  endpoints:
+    - { port: metrics, path: /metrics, interval: 30s }
