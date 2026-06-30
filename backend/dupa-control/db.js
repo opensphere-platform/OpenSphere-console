@@ -9,6 +9,9 @@ let enabled = false;
 let cfg = null; // 다른 데이터베이스로 transient Client 연결할 때 재사용(PG는 cross-DB 쿼리 불가).
 
 async function init({ host, port, database, user, password }) {
+  // 재시도 호출(이전 init 실패)일 때 끊긴 pool 정리 → 누수 방지. 성공 후엔 호출자 isEnabled 가드로 재호출 안 됨.
+  if (pool) { try { await pool.end(); } catch { /* noop */ } pool = null; }
+  enabled = false;
   cfg = { host, port: Number(port) || 5432, user, password };
   pool = new Pool({
     host, port: Number(port) || 5432, database, user, password,
@@ -70,8 +73,8 @@ async function listDatabases() {
   );
   return r.rows.map((x) => ({ name: x.name, size: Number(x.size) || 0 }));
 }
-// DATABASE → TABLE → COLUMN 트리 — 각 DB로 transient Client 연결(PG는 cross-DB 쿼리 불가).
-// information_schema.columns 한 방으로 테이블+컬럼(타입)을 묶는다. 연결 실패한 DB는 error로 표기.
+// DATABASE → {TABLE→COLUMN, FUNCTION, EXTENSION} 트리 — 각 DB로 transient Client 연결(PG는 cross-DB 쿼리 불가).
+// information_schema.columns(테이블+컬럼) + pg_proc(함수) + pg_extension(확장). 연결 실패한 DB는 error로 표기.
 async function listTree() {
   if (!enabled) return [];
   const dbs = await listDatabases();
@@ -93,10 +96,26 @@ async function listTree() {
         if (!tmap.has(key)) tmap.set(key, { schema: row.schema, name: row.name, columns: [] });
         tmap.get(key).columns.push({ name: row.col, type: row.type });
       }
-      out.push({ database: d.name, size: d.size, tables: [...tmap.values()] });
+      // 함수/프로시저(pg_proc) — 시스템 스키마 제외. kind: func/proc/agg/window.
+      const fr = await client.query(
+        `SELECT n.nspname AS schema, p.proname AS name,
+                pg_get_function_identity_arguments(p.oid) AS args,
+                pg_get_function_result(p.oid) AS rettype, l.lanname AS lang,
+                CASE p.prokind WHEN 'p' THEN 'proc' WHEN 'a' THEN 'agg' WHEN 'w' THEN 'window' ELSE 'func' END AS kind
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         JOIN pg_language l ON l.oid = p.prolang
+         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+         ORDER BY n.nspname, p.proname`,
+      );
+      const functions = fr.rows.map((x) => ({ schema: x.schema, name: x.name, args: x.args || '', rettype: x.rettype || '', lang: x.lang || '', kind: x.kind || 'func' }));
+      // 설치된 확장(pg_extension) — pgvector('vector') 등 가용 여부 가시화.
+      const er = await client.query('SELECT extname AS name, extversion AS version FROM pg_extension ORDER BY extname');
+      const extensions = er.rows.map((x) => ({ name: x.name, version: x.version || '' }));
+      out.push({ database: d.name, size: d.size, tables: [...tmap.values()], functions, extensions });
     } catch (e) {
       console.error(`[db] listTree(${d.name}) 실패:`, String(e).slice(0, 80));
-      out.push({ database: d.name, size: d.size, tables: [], error: String(e).slice(0, 80) });
+      out.push({ database: d.name, size: d.size, tables: [], functions: [], extensions: [], error: String(e).slice(0, 80) });
     } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
   }
   return out;
@@ -147,4 +166,68 @@ async function dropTenant(database) {
   try { await pool.query(`DROP ROLE IF EXISTS ${qIdent(database)}`); } catch (e) { console.error('[db] dropTenant role:', String(e).slice(0, 80)); }
 }
 
-module.exports = { init, insertAudit, recentAudit, listDatabases, listTree, previewRows, provisionTenant, dropTenant, isEnabled: () => enabled };
+// ── 함수 생성(가이드 폼) — admin 게이트 뒤 첫 DDL 쓰기. 식별자 검증 + body 달러 인용. ──
+// schema/name은 VALID_IDENT, args/returns는 시그니처라 raw(세미콜론 차단·길이 bound), body는 달러 인용으로 분리.
+// (admin은 이미 신뢰 주체 — body는 임의 PL/pgSQL이라 본질적으로 코드 실행. 게이트+감사로 통제.)
+async function createFunction({ database, schema, name, args, returns, language, body, replace }) {
+  if (!enabled) throw new Error('pg not connected');
+  schema = schema || 'public';
+  if (![database, schema, name].every((s) => VALID_IDENT.test(s || ''))) throw new Error('invalid identifier (database/schema/name)');
+  const lang = String(language || 'plpgsql').toLowerCase();
+  if (!['sql', 'plpgsql'].includes(lang)) throw new Error('language must be sql or plpgsql');
+  args = String(args || '');
+  returns = String(returns || 'void');
+  if (/;/.test(args) || /;/.test(returns)) throw new Error('semicolon not allowed in args/returns');
+  if (args.length > 2000 || returns.length > 200) throw new Error('args/returns too long');
+  body = String(body || '');
+  if (!body.trim()) throw new Error('function body required');
+  if (body.length > 100000) throw new Error('body too long');
+  let tag = 'osfn'; // 달러 인용 태그 — body와 충돌 회피.
+  while (body.includes('$' + tag + '$')) tag += 'x';
+  const ddl = `CREATE ${replace ? 'OR REPLACE ' : ''}FUNCTION ${qIdent(schema)}.${qIdent(name)}(${args}) RETURNS ${returns} LANGUAGE ${lang} AS $${tag}$${body}$${tag}$`;
+  let client = null;
+  try {
+    client = new Client({ ...cfg, database, connectionTimeoutMillis: 5000 });
+    await client.connect();
+    await client.query(ddl);
+  } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
+}
+
+// 함수 소스 로드(편집용) — identity args(타입만)로 오버로드 식별 → 전체 args(이름 포함)·반환·언어·body 반환.
+async function functionSource({ database, schema, name, args }) {
+  if (!enabled) throw new Error('pg not connected');
+  schema = schema || 'public';
+  if (![database, schema, name].every((s) => VALID_IDENT.test(s || ''))) throw new Error('invalid identifier');
+  args = String(args || '');
+  if (/;/.test(args)) throw new Error('semicolon not allowed in args');
+  let client = null;
+  try {
+    client = new Client({ ...cfg, database, connectionTimeoutMillis: 5000 });
+    await client.connect();
+    const sig = `${schema}.${name}(${args})`; // VALID_IDENT 보장 → regprocedure 입력 안전.
+    const r = await client.query(
+      `SELECT pg_get_function_arguments(p.oid) AS full_args, pg_get_function_result(p.oid) AS ret, l.lanname AS lang, p.prosrc AS body
+       FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+       WHERE p.oid = to_regprocedure($1)`, [sig]);
+    if (!r.rowCount) throw new Error('function not found');
+    const x = r.rows[0];
+    return { args: x.full_args || '', returns: x.ret || '', language: x.lang || 'plpgsql', body: x.body || '' };
+  } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
+}
+
+// 함수 삭제(DROP) — identity args로 특정 오버로드 지정. admin 게이트 뒤·감사.
+async function dropFunction({ database, schema, name, args }) {
+  if (!enabled) throw new Error('pg not connected');
+  schema = schema || 'public';
+  if (![database, schema, name].every((s) => VALID_IDENT.test(s || ''))) throw new Error('invalid identifier');
+  args = String(args || '');
+  if (/;/.test(args)) throw new Error('semicolon not allowed in args');
+  let client = null;
+  try {
+    client = new Client({ ...cfg, database, connectionTimeoutMillis: 5000 });
+    await client.connect();
+    await client.query(`DROP FUNCTION ${qIdent(schema)}.${qIdent(name)}(${args})`);
+  } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
+}
+
+module.exports = { init, insertAudit, recentAudit, listDatabases, listTree, previewRows, provisionTenant, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };

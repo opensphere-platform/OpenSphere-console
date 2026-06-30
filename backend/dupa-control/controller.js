@@ -11,6 +11,7 @@ const https = require('https');
 const fs = require('fs');
 const { createHash, createPublicKey, verify, randomBytes } = require('crypto');
 const db = require('./db'); // Backbone PostgreSQL(감사로그 영속). 미연결 시 ConfigMap 폴백.
+const storage = require('./storage'); // Backbone RustFS(S3). BackboneClaim objectStore 할당. 미연결 시 objectStore Pending.
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-system';
@@ -163,16 +164,16 @@ async function hydrateAudit() {
 }
 // Backbone PostgreSQL 연결 초기화 — Secret(opensphere-backbone/backbone-postgres)에서 비번 로드 후 pool 기동.
 // 실패(미설치·연결불가)해도 throw 안 함 → 감사로그는 ConfigMap 폴백으로 계속 동작(graceful degradation, §3.5).
-async function initBackboneDb() {
+async function initBackboneDb(quiet = false) {
   try {
     const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_PG.secretNs}/secrets/${BACKBONE_PG.secretName}`);
-    if (!r.ok) { console.warn(`[db] secret ${BACKBONE_PG.secretNs}/${BACKBONE_PG.secretName} 없음(HTTP ${r.status}) → 감사로그 ConfigMap 폴백`); return; }
+    if (!r.ok) { if (!quiet) console.warn(`[db] secret ${BACKBONE_PG.secretNs}/${BACKBONE_PG.secretName} 없음(HTTP ${r.status}) → 감사로그 ConfigMap 폴백`); return; }
     const enc = r.json?.data?.[BACKBONE_PG.secretKey];
-    if (!enc) { console.warn('[db] secret에 password 키 없음 → ConfigMap 폴백'); return; }
+    if (!enc) { if (!quiet) console.warn('[db] secret에 password 키 없음 → ConfigMap 폴백'); return; }
     const password = Buffer.from(enc, 'base64').toString('utf8');
     await db.init({ host: BACKBONE_PG.host, port: BACKBONE_PG.port, database: BACKBONE_PG.database, user: BACKBONE_PG.user, password });
   } catch (e) {
-    console.warn('[db] init 실패 → 감사로그 ConfigMap 폴백:', String(e).slice(0, 160));
+    if (!quiet) console.warn('[db] init 실패 → 감사로그 ConfigMap 폴백:', String(e).slice(0, 160));
   }
 }
 
@@ -473,12 +474,16 @@ async function bbApply(o) { const r = await k8s('POST', bbPath(o), o); if (r.ok 
 function bbWorkloads() {
   const lab = (app) => Object.assign({ app }, BB_LABELS);
   return [
-    { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'backbone-postgres-init', namespace: BACKBONE_NS, labels: BB_LABELS }, data: { 'init-gitea-db.sql': 'CREATE DATABASE gitea OWNER console;' } },
+    // init-00-pgvector.sh가 먼저(알파벳순) template1+console에 vector 확장 생성 → 이후 생성되는 gitea/ai_hub(템플릿 상속)도 vector 보유.
+    { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'backbone-postgres-init', namespace: BACKBONE_NS, labels: BB_LABELS }, data: {
+      'init-00-pgvector.sh': '#!/bin/bash\nset -e\nfor d in template1 "$POSTGRES_DB"; do\n  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$d" -c "CREATE EXTENSION IF NOT EXISTS vector;"\ndone\n',
+      'init-gitea-db.sql': 'CREATE DATABASE gitea OWNER console;',
+    } },
     { apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: 'backbone-postgres-data', namespace: BACKBONE_NS, labels: BB_LABELS }, spec: { accessModes: ['ReadWriteOnce'], storageClassName: 'standard', resources: { requests: { storage: '8Gi' } } } },
     { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'backbone-postgres', namespace: BACKBONE_NS, labels: lab('backbone-postgres') }, spec: {
       replicas: 1, strategy: { type: 'Recreate' }, selector: { matchLabels: { app: 'backbone-postgres' } },
       template: { metadata: { labels: { app: 'backbone-postgres' } }, spec: { containers: [{
-        name: 'postgresql', image: 'postgres:16-alpine',
+        name: 'postgresql', image: 'pgvector/pgvector:pg18',
         env: [
           { name: 'POSTGRES_DB', value: 'console' }, { name: 'POSTGRES_USER', value: 'console' },
           { name: 'POSTGRES_PASSWORD', valueFrom: { secretKeyRef: { name: 'backbone-postgres', key: 'password' } } },
@@ -685,13 +690,42 @@ async function giteaFile(owner, repo, ref, path) {
 }
 
 // ── BackboneClaim 할당 컨트롤러(reconciler) — 소비자의 선언적 자원 요청을 프로비저닝. docs/BACKBONE-ARCHITECTURE.md §1. ──
-// claim watch → PG db/role 생성 + claim NS에 Secret 발급 + status 바인딩 + finalizer GC. objectStore(S3)는 다음 차수(storage.js).
+// claim watch → PG db/role + objectStore(S3) 버킷 생성 + claim NS에 Secret 발급 + status 바인딩 + finalizer GC.
 const CLAIM_GROUP = 'backbone.opensphere.io';
 const CLAIM_V = 'v1alpha1';
 const CLAIM_FINALIZER = 'backbone.opensphere.io/finalizer';
 const PG_DNS = `backbone-postgres.${BACKBONE_NS}.svc.cluster.local`;
+const S3_DNS = `backbone-rustfs.${BACKBONE_NS}.svc.cluster.local`;
+const S3_ENDPOINT = process.env.BACKBONE_S3_ENDPOINT || `http://${S3_DNS}:9000`;
+const S3_REGION = process.env.BACKBONE_S3_REGION || 'us-east-1';
 // 컨트롤러 상태(콘솔 '컨트롤러' 탭 노출용) — 인메모리.
 const claimController = { crdReady: false, lastRun: '', lastError: '', runs: 0, total: 0, bound: 0 };
+
+// RustFS(S3) 접근 초기화 — backbone-rustfs Secret(access_key/secret_key)에서 인스턴스 키 로드.
+// 실패(미설치·키 없음)해도 throw 안 함 → objectStore 할당만 비활성(Pending), PG/감사로그는 무관(§3.5).
+async function initBackboneStorage(quiet = false) {
+  try {
+    const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/secrets/backbone-rustfs`);
+    if (!r.ok) { if (!quiet) console.warn(`[s3] secret ${BACKBONE_NS}/backbone-rustfs 없음(HTTP ${r.status}) → objectStore 할당 비활성`); return; }
+    const dec = (k) => Buffer.from(r.json?.data?.[k] || '', 'base64').toString('utf8');
+    const ak = dec('access_key'), sk = dec('secret_key');
+    if (!ak || !sk) { if (!quiet) console.warn('[s3] backbone-rustfs Secret에 access_key/secret_key 없음 → 비활성'); return; }
+    storage.init({ endpoint: S3_ENDPOINT, region: S3_REGION, accessKey: ak, secretKey: sk });
+    console.log(`[s3] connected ${S3_ENDPOINT} (objectStore 할당 활성)`);
+  } catch (e) {
+    if (!quiet) console.warn('[s3] init 실패 → objectStore 할당 비활성:', String(e).slice(0, 160));
+  }
+}
+
+// 재연결 게이트 — db/storage가 disabled면 reconcile 루프마다 재시도(startup 1회 실패·의존성 늦은 준비·순간 끊김 자동 복구).
+// 연결되면 isEnabled 가드로 더 시도 안 함. 로그 스팸 방지: 첫 시도 + 매 20회(≈5분)만 경고 출력.
+let _bbReconnectTry = 0;
+async function ensureBackboneConnections() {
+  if (db.isEnabled() && storage.isEnabled()) return;
+  const quiet = _bbReconnectTry++ % 20 !== 0;
+  if (!db.isEnabled()) await initBackboneDb(quiet);
+  if (!storage.isEnabled()) await initBackboneStorage(quiet);
+}
 
 async function upsertSecret(ns, name, stringData) {
   const body = { apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: ns, labels: BB_LABELS }, type: 'Opaque', stringData };
@@ -706,6 +740,11 @@ async function gcClaim(cr) {
     await db.dropTenant(dbName);
   }
   await k8s('DELETE', `/api/v1/namespaces/${ns}/secrets/${name}-backbone-postgres`);
+  // objectStore — 버킷 비우고 삭제(PG dropTenant 대칭) + 테넌트 자격 Secret 회수.
+  if (cr.spec?.objectStore?.enabled && storage.isEnabled()) {
+    await storage.emptyAndDeleteBucket(cr.spec.objectStore.bucket || name);
+  }
+  await k8s('DELETE', `/api/v1/namespaces/${ns}/secrets/${name}-backbone-rustfs`);
 }
 async function reconcileOneClaim(cr) {
   const ns = cr.metadata.namespace, name = cr.metadata.name;
@@ -736,10 +775,24 @@ async function reconcileOneClaim(cr) {
       status.postgres = { secretRef: secretName, host: PG_DNS, database: dbName };
     }
   }
-  // objectStore — 컨트롤러측 S3 할당은 다음 차수(storage.js/SigV4). 지금은 미충족 표기.
+  // objectStore — 전용 버킷 + Secret(claim NS). dev는 인스턴스 키 재사용 + 버킷 격리(provision-backbone-tenant.sh 모델).
   if (cr.spec?.objectStore?.enabled) {
-    status.objectStore = { bucket: cr.spec.objectStore.bucket || name, state: 'Pending', message: 'S3 컨트롤러 미구현 — provision-backbone-tenant.sh 사용' };
-    if (status.phase === 'Bound') status.phase = 'PartiallyBound';
+    const bucket = cr.spec.objectStore.bucket || name;
+    const s3secret = `${name}-backbone-rustfs`;
+    if (!storage.isEnabled()) {
+      status.objectStore = { bucket, state: 'Pending', message: 'RustFS 미연결 — backbone-rustfs Secret/Service 확인' };
+      if (status.phase === 'Bound') status.phase = 'PartiallyBound';
+    } else {
+      try {
+        await storage.ensureBucket(bucket);
+        await upsertSecret(ns, s3secret, { endpoint: S3_ENDPOINT, region: S3_REGION, bucket, access_key: storage.accessKey(), secret_key: storage.secretKey() });
+        // message: '' 명시 — merge-patch는 키를 지우지 않으므로 이전 stub의 message를 덮어써 stale 표기 제거.
+        status.objectStore = { secretRef: s3secret, endpoint: S3_ENDPOINT, bucket, state: 'Bound', message: '' };
+      } catch (e) {
+        status.objectStore = { bucket, state: 'Error', message: String(e).slice(0, 160) };
+        if (status.phase === 'Bound') status.phase = 'PartiallyBound';
+      }
+    }
   }
   await k8s('PATCH', `${base}/status`, { status });
   return status.phase === 'Bound';
@@ -846,6 +899,44 @@ const server = http.createServer(async (req, res) => {
         const out = await db.previewRows(url.searchParams.get('database'), url.searchParams.get('schema'), url.searchParams.get('table'), url.searchParams.get('limit'));
         return out ? json(res, 200, out) : json(res, 404, { error: 'not found', opId });
       } catch (e) { return json(res, 400, { error: String((e && e.message) || e).slice(0, 120), opId }); }
+    }
+    if (p === '/api/admin/backbone/pg/function' && req.method === 'POST') {
+      // 함수 생성(가이드 폼) — admin 게이트 뒤 첫 DDL 쓰기. 식별자 검증은 db.createFunction. 모든 시도 감사.
+      if (!db.isEnabled()) return json(res, 503, { error: 'PostgreSQL 미연결', opId });
+      const b = await readBody(req).catch(() => ({}));
+      const tgt = `${b.database}.${b.schema || 'public'}.${b.name}`;
+      try {
+        await db.createFunction(b);
+        logAudit(actor, 'pg-create-function', tgt, 'accepted', `lang=${b.language || 'plpgsql'}${b.replace ? ' replace' : ''}`, opId);
+        return json(res, 201, { created: true, target: tgt });
+      } catch (e) {
+        const msg = String((e && e.message) || e).slice(0, 200);
+        logAudit(actor, 'pg-create-function', tgt, 'error', msg, opId);
+        return json(res, 400, { error: msg, opId });
+      }
+    }
+    if (p === '/api/admin/backbone/pg/function/source' && req.method === 'GET') {
+      // 편집용 함수 소스 로드(읽기) — identity args로 오버로드 식별.
+      if (!db.isEnabled()) return json(res, 503, { error: 'PostgreSQL 미연결', opId });
+      try {
+        const out = await db.functionSource({ database: url.searchParams.get('database'), schema: url.searchParams.get('schema'), name: url.searchParams.get('name'), args: url.searchParams.get('args') || '' });
+        return json(res, 200, out);
+      } catch (e) { return json(res, 400, { error: String((e && e.message) || e).slice(0, 200), opId }); }
+    }
+    if (p === '/api/admin/backbone/pg/function/drop' && req.method === 'POST') {
+      // 함수 삭제(DROP) — admin 게이트·감사.
+      if (!db.isEnabled()) return json(res, 503, { error: 'PostgreSQL 미연결', opId });
+      const b = await readBody(req).catch(() => ({}));
+      const tgt = `${b.database}.${b.schema || 'public'}.${b.name}(${b.args || ''})`;
+      try {
+        await db.dropFunction(b);
+        logAudit(actor, 'pg-drop-function', tgt, 'accepted', '', opId);
+        return json(res, 200, { dropped: true, target: tgt });
+      } catch (e) {
+        const msg = String((e && e.message) || e).slice(0, 200);
+        logAudit(actor, 'pg-drop-function', tgt, 'error', msg, opId);
+        return json(res, 400, { error: msg, opId });
+      }
     }
     if (p === '/api/admin/backbone/controller' && req.method === 'GET') {
       // 할당 컨트롤러(BackboneClaim reconciler) 상태 — 콘솔 '컨트롤러' 탭.
@@ -967,9 +1058,13 @@ const server = http.createServer(async (req, res) => {
 if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`dupa-registry-controller listening :${PORT} (ns=${NS})`);
-    // Backbone PG 연결 시도 → 감사로그 hydrate(PG 우선, 실패 시 ConfigMap) → reconcile/event 루프.
-    initBackboneDb().finally(() => hydrateAudit().finally(() => {
-      const loop = () => Promise.all([reconcile(), pollK8sEvents(), reconcileBackboneClaims()]).catch((e) => console.error('loop error', e)).finally(() => setTimeout(loop, 15000));
+    // Backbone PG·S3 연결 시도 → 감사로그 hydrate(PG 우선, 실패 시 ConfigMap) → reconcile/event 루프.
+    // 연결은 루프의 ensureBackboneConnections가 disabled인 동안 계속 재시도 → startup 1회 실패해도 자동 복구.
+    Promise.allSettled([initBackboneDb(), initBackboneStorage()]).finally(() => hydrateAudit().finally(() => {
+      const loop = () => ensureBackboneConnections()
+        .then(() => Promise.all([reconcile(), pollK8sEvents(), reconcileBackboneClaims()]))
+        .catch((e) => console.error('loop error', e))
+        .finally(() => setTimeout(loop, 15000));
       loop();
     }));
   });

@@ -96,6 +96,11 @@ spec:
             - { name: BACKBONE_PG_USER, value: console }
             - { name: BACKBONE_PG_SECRET_NS, value: opensphere-backbone }
             - { name: BACKBONE_PG_SECRET, value: backbone-postgres }
+            # Backbone RustFS(S3) — BackboneClaim objectStore 할당(버킷 생성 + 테넌트 Secret).
+            #   인스턴스 키는 컨트롤러가 opensphere-backbone/backbone-rustfs Secret을 K8s API로 읽음(dupa-backbone-installer RBAC).
+            #   값은 코드 기본값과 동일(오버라이드/문서화용). 미설치 시 objectStore는 Pending.
+            - { name: BACKBONE_S3_ENDPOINT, value: http://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 }
+            - { name: BACKBONE_S3_REGION, value: us-east-1 }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 2 }
           resources:

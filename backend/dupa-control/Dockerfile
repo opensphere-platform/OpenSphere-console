@@ -11,6 +11,7 @@ COPY package.json /app/package.json
 RUN npm install --omit=dev --no-audit --no-fund
 COPY controller.js /app/controller.js
 COPY db.js /app/db.js
+COPY storage.js /app/storage.js
 COPY kanidm-ca.crt /app/kanidm-ca.crt
 USER node
 EXPOSE 8080
