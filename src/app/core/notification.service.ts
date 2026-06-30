@@ -24,6 +24,7 @@ export interface OsNotification {
   time: string;
   read: boolean;
   actions?: { label: string; route?: string }[];
+  meta?: Record<string, string>; // 원본 구조화 필드(audit: actor·action·target·result·reason) — 상세 뷰용
 }
 
 /** 발행 입력 — id·source·read는 셸이 채운다(time은 생략 시 now) */
@@ -84,6 +85,7 @@ export class NotificationService {
           title: lifecycle ? `플러그인 ${e.action} — ${e.target}` : `${e.action} — ${e.target}`,
           detail: `${e.actor} · ${e.result}${e.reason ? ' · ' + e.reason : ''}`,
           read: this.seen.has(id),
+          meta: { actor: e.actor || '', action: e.action || '', target: e.target || '', result: e.result || '', reason: e.reason || '' },
         };
       });
       this.mergeSource(AUDIT_SOURCE, items);
@@ -142,6 +144,14 @@ export class NotificationService {
 
   markAllRead(): void {
     for (const n of this.items()) this.seen.add(n.id);
+    this.persistSeen();
+    this.recompute();
+  }
+
+  /** 단건 읽음 처리 — 헤더 인박스(미읽음 작업셋)에서 제거. 전체 이력은 /manage/notifications에 남는다. */
+  markRead(id: string): void {
+    if (this.seen.has(id)) return;
+    this.seen.add(id);
     this.persistSeen();
     this.recompute();
   }

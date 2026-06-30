@@ -1,5 +1,6 @@
-import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
-import { NotificationService } from '../core/notification.service';
+import { Component, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
+import { Router } from '@angular/router';
+import { NotificationService, OsNotification } from '../core/notification.service';
 import { CarbonIcon } from './carbon-icon';
 import Notification16 from '@carbon/icons/es/notification/16';
 
@@ -24,13 +25,13 @@ import Notification16 from '@carbon/icons/es/notification/16';
       <div class="os-notif-panel" role="dialog" aria-label="알림 인박스">
         <div class="os-notif-head">
           <span
-            >알림 <span class="os-notif-sub">({{ notif.items().length }})</span></span
+            >미읽음 <span class="os-notif-sub">({{ unreadItems().length }})</span></span
           >
           <button class="os-notif-readall" (click)="notif.markAllRead()">모두 읽음</button>
         </div>
         <div class="os-notif-list">
-          @for (n of notif.items(); track n.id) {
-            <div class="os-notif-item" [class.unread]="!n.read">
+          @for (n of unreadItems(); track n.id) {
+            <div class="os-notif-item unread" (click)="read(n)" title="읽음 처리(헤더에서 제거 · 전체는 관리에 보존)">
               <div class="os-notif-row">
                 <span class="os-sev os-sev-{{ n.severity }}" [title]="n.severity"></span>
                 <div class="os-notif-title">{{ n.title }}</div>
@@ -43,10 +44,12 @@ import Notification16 from '@carbon/icons/es/notification/16';
               </div>
             </div>
           } @empty {
-            <div class="os-notif-empty">알림이 없습니다</div>
+            <div class="os-notif-empty">새 알림이 없습니다</div>
           }
         </div>
-        <div class="os-notif-foot">소스: 콘솔 audit bus(DUPA) · in-page 발행(ctx.notify) — ADR-UI-002</div>
+        <div class="os-notif-foot">
+          <a class="os-notif-all" (click)="goAll()">전체 알림 보기 (관리) →</a>
+        </div>
       </div>
     }
 
@@ -137,9 +140,13 @@ import Notification16 from '@carbon/icons/es/notification/16';
       .os-notif-item {
         padding: 0.55rem 0.9rem;
         border-bottom: 1px solid #f3f4f7;
+        cursor: pointer;
       }
       .os-notif-item.unread {
         background: #eef3ff;
+      }
+      .os-notif-item:hover {
+        background: #e2ebff;
       }
       .os-notif-row {
         display: flex;
@@ -192,8 +199,16 @@ import Notification16 from '@carbon/icons/es/notification/16';
       .os-notif-foot {
         padding: 0.4rem 0.9rem;
         border-top: 1px solid #eef0f4;
-        font-size: 0.58rem;
+        font-size: 0.62rem;
         color: #aab;
+        text-align: center;
+      }
+      .os-notif-all {
+        color: #2563eb;
+        cursor: pointer;
+      }
+      .os-notif-all:hover {
+        text-decoration: underline;
       }
       /* 토스트 스택 — 우상단 고정, 자동 소멸(서비스 TTL) */
       .os-toast-stack {
@@ -258,8 +273,11 @@ import Notification16 from '@carbon/icons/es/notification/16';
 })
 export class OsNotifications {
   readonly notif = inject(NotificationService);
+  private router = inject(Router);
   readonly iconBell = Notification16;
   readonly open = signal(false);
+  /** 헤더 인박스 = 미읽음(활성) 작업셋만. 읽으면 사라짐. 전체 이력은 /manage/notifications. */
+  readonly unreadItems = computed<OsNotification[]>(() => this.notif.items().filter((n) => !n.read));
 
   constructor() {
     this.notif.start();
@@ -268,5 +286,19 @@ export class OsNotifications {
   toggle(): void {
     this.open.update((v) => !v);
     if (this.open()) this.notif.refresh();
+  }
+
+  /** 단건 클릭 = 읽음 처리(헤더에서 제거). route 있으면 이동 + 드로어 닫기. */
+  read(n: OsNotification): void {
+    this.notif.markRead(n.id);
+    if (n.route) {
+      this.open.set(false);
+      this.router.navigateByUrl(n.route);
+    }
+  }
+
+  goAll(): void {
+    this.open.set(false);
+    this.router.navigateByUrl('/manage/notifications');
   }
 }

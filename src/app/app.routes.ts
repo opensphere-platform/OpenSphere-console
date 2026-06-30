@@ -9,6 +9,7 @@ import { MyInfo } from './pages/my-info';
 import { ConsoleAdmins } from './pages/console-admins';
 import { AdminBackbone } from './pages/admin-backbone';
 import { AdminObservability } from './pages/admin-observability';
+import { AdminNotifications } from './pages/admin-notifications';
 import { AdminLayout } from './pages/admin-layout';
 
 // 감사 P2-3: 특정 plugin id('ai') 하드코딩 제거. 등록된 subShell/plugin의 clean deep link(/<id>/...)를
@@ -39,6 +40,7 @@ export const routes: Routes = [
       { path: 'roles', component: AdminRoles },
       { path: 'backbone', component: AdminBackbone },
       { path: 'observability', component: AdminObservability },
+      { path: 'notifications', component: AdminNotifications },
     ],
   },
   // 구 경로 하위호환 리다이렉트
