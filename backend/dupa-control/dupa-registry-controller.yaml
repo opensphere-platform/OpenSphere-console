@@ -56,6 +56,8 @@ rules:
   - { apiGroups: ["apps"], resources: [deployments, statefulsets], verbs: [get, list, create, patch] }
   # BackboneClaim 할당 컨트롤러 — claim watch/reconcile + status + finalizer
   - { apiGroups: ["backbone.opensphere.io"], resources: [backboneclaims, backboneclaims/status, backboneclaims/finalizers], verbs: [get, list, watch, update, patch] }
+  # Observability 정보 뷰 — ServiceMonitor 인벤토리 읽기(monitoring ns 파드/서비스는 위 core 규칙으로 커버).
+  - { apiGroups: ["monitoring.coreos.com"], resources: [servicemonitors], verbs: [get, list] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

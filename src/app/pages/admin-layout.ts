@@ -6,6 +6,7 @@ import UserAdmin16 from '@carbon/icons/es/user--admin/16';
 import Application16 from '@carbon/icons/es/application/16';
 import UserMultiple16 from '@carbon/icons/es/user--multiple/16';
 import Layers16 from '@carbon/icons/es/layers/16';
+import Activity16 from '@carbon/icons/es/activity/16';
 
 interface AdminItem { label: string; route: string; icon: any }
 
@@ -46,5 +47,6 @@ export class AdminLayout {
     { label: 'Plugins', route: '/manage/plugins', icon: Application16 },
     { label: '역할', route: '/manage/roles', icon: UserMultiple16 },
     { label: 'Backbone', route: '/manage/backbone', icon: Layers16 },
+    { label: 'Observability', route: '/manage/observability', icon: Activity16 },
   ];
 }

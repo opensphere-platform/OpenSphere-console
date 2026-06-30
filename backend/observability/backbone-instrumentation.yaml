@@ -1,0 +1,66 @@
+# Backbone 계측층(노출/exposition) — 공유 prometheus가 scrape할 대상. docs/OBSERVABILITY-ARCHITECTURE.md §3(계측층=컴포넌트 소유).
+# 적용: kubectl apply -f backend/observability/backbone-instrumentation.yaml  (+ Gitea는 GITEA__metrics__ENABLED=true)
+# 구성:
+#   - PostgreSQL: 자체 /metrics 없음 → postgres_exporter 사이드 Deployment(svc 직결, console 자격) → :9187/metrics
+#   - Gitea: 내장 /metrics(GITEA__metrics__ENABLED) → 기존 :3000 http 포트
+#   - RustFS: rustfs:1.0.0-beta.8은 Prometheus 엔드포인트 미제공(모든 경로 S3 AccessDenied) → 계측 보류(upstream 대기).
+# ServiceMonitor 이름 = 콘솔 Observability 커버리지 매트릭스 매칭 키(backbone-postgres/backbone-gitea).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backbone-postgres-exporter
+  namespace: opensphere-backbone
+  labels: { app: backbone-postgres-exporter, opensphere.io/part-of: opensphere-backbone }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: backbone-postgres-exporter } }
+  template:
+    metadata:
+      labels: { app: backbone-postgres-exporter }
+    spec:
+      containers:
+        - name: exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.17.0
+          env:
+            # DATA_SOURCE_URI(자격 제외) + USER + PASS(secretKeyRef). console DB로 접속.
+            - { name: DATA_SOURCE_URI, value: "backbone-postgres.opensphere-backbone.svc.cluster.local:5432/console?sslmode=disable" }
+            - { name: DATA_SOURCE_USER, value: console }
+            - { name: DATA_SOURCE_PASS, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
+          ports: [{ name: metrics, containerPort: 9187 }]
+          readinessProbe: { httpGet: { path: /metrics, port: metrics }, initialDelaySeconds: 5, periodSeconds: 10 }
+          resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { cpu: 100m, memory: 128Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backbone-postgres-exporter
+  namespace: opensphere-backbone
+  labels: { app: backbone-postgres-exporter, opensphere.io/part-of: opensphere-backbone }
+spec:
+  selector: { app: backbone-postgres-exporter }
+  ports: [{ name: metrics, port: 9187, targetPort: metrics }]
+---
+# ServiceMonitor(name=backbone-postgres) — exporter Service를 scrape. 커버리지 매트릭스 키=backbone-postgres.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backbone-postgres
+  namespace: opensphere-backbone
+  labels: { app.kubernetes.io/part-of: opensphere-backbone }
+spec:
+  selector: { matchLabels: { app: backbone-postgres-exporter } }
+  endpoints:
+    - { port: metrics, path: /metrics, interval: 30s }
+---
+# ServiceMonitor(name=backbone-gitea) — Gitea 내장 /metrics(:3000 http). GITEA__metrics__ENABLED=true 전제.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backbone-gitea
+  namespace: opensphere-backbone
+  labels: { app.kubernetes.io/part-of: opensphere-backbone }
+spec:
+  selector: { matchLabels: { app: backbone-gitea } }
+  endpoints:
+    - { port: http, path: /metrics, interval: 30s }

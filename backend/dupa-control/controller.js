@@ -525,6 +525,7 @@ function bbWorkloads() {
           { name: 'GITEA__database__NAME', value: 'gitea' }, { name: 'GITEA__database__USER', value: 'console' },
           { name: 'GITEA__database__PASSWD', valueFrom: { secretKeyRef: { name: 'backbone-postgres', key: 'password' } } },
           { name: 'GITEA__security__INSTALL_LOCK', value: 'true' }, { name: 'GITEA__server__OFFLINE_MODE', value: 'true' },
+          { name: 'GITEA__metrics__ENABLED', value: 'true' }, // 내장 /metrics(:3000) — backbone-instrumentation.yaml ServiceMonitor가 scrape.
           { name: 'GITEA__server__ROOT_URL', value: `http://backbone-gitea.${BACKBONE_NS}.svc.cluster.local:3000/` },
         ],
         ports: [{ containerPort: 3000 }],
@@ -812,6 +813,66 @@ async function reconcileBackboneClaims() {
   if (claimController.total === claimController.bound) claimController.lastError = '';
 }
 
+// ── Observability(공유 관측 스택) 정보 뷰 — 콘솔은 소유 아닌 '대상/소비자'. read-only. docs/OBSERVABILITY-ARCHITECTURE.md ──
+const MON_NS = process.env.MONITORING_NS || 'monitoring';
+const SM_GROUP = 'monitoring.coreos.com';
+// kps 컴포넌트 — app.kubernetes.io/name 라벨로 식별(릴리스명 무관).
+const MON_COMPONENTS = [
+  { key: 'prometheus', name: 'Prometheus', role: '메트릭 수집/저장', label: 'prometheus' },
+  { key: 'grafana', name: 'Grafana', role: '대시보드/뷰', label: 'grafana' },
+  { key: 'alertmanager', name: 'Alertmanager', role: '알림 라우팅', label: 'alertmanager' },
+  { key: 'kube-state-metrics', name: 'kube-state-metrics', role: 'K8s 오브젝트 메트릭', label: 'kube-state-metrics' },
+  { key: 'node-exporter', name: 'Node Exporter', role: '노드 메트릭', label: 'prometheus-node-exporter' },
+];
+// 콘솔/Backbone 계측 대상 — coverage 매트릭스(노출/계측층은 각 컴포넌트 소유).
+function obsTargets() {
+  return [
+    { key: 'console-backend', name: 'console-backend', app: 'console-backend', ns: NS },
+    { key: 'dupa', name: 'dupa-registry-controller', app: 'dupa-registry-controller', ns: NS },
+    { key: 'backbone-postgres', name: 'Backbone PostgreSQL', app: 'backbone-postgres', ns: BACKBONE_NS },
+    { key: 'backbone-rustfs', name: 'Backbone RustFS', app: 'backbone-rustfs', ns: BACKBONE_NS, gap: 'rustfs beta — Prometheus endpoint 미제공(upstream 대기)' },
+    { key: 'backbone-gitea', name: 'Backbone Gitea', app: 'backbone-gitea', ns: BACKBONE_NS },
+  ];
+}
+// monitoring ns에서 app.kubernetes.io/name 라벨로 Service 탐색 → DNS:port(딥링크). 없으면 ''.
+async function findMonSvc(nameLabel, port) {
+  const r = await k8s('GET', `/api/v1/namespaces/${MON_NS}/services?labelSelector=${encodeURIComponent('app.kubernetes.io/name=' + nameLabel)}`);
+  const svc = (r.json?.items || [])[0];
+  return svc ? `${svc.metadata.name}.${MON_NS}.svc.cluster.local:${port}` : '';
+}
+async function observabilityStatus() {
+  const nsr = await k8s('GET', `/api/v1/namespaces/${MON_NS}`);
+  const nsExists = nsr.ok;
+  const pods = nsExists ? await k8s('GET', `/api/v1/namespaces/${MON_NS}/pods`) : { json: { items: [] } };
+  const items = pods.json?.items || [];
+  const components = MON_COMPONENTS.map((c) => {
+    const mine = items.filter((p) => (p.metadata?.labels?.['app.kubernetes.io/name'] || '') === c.label);
+    const ready = mine.filter((p) => { const cs = p.status?.containerStatuses || []; return cs.length > 0 && cs.every((x) => x.ready); }).length;
+    return { key: c.key, name: c.name, role: c.role, installed: mine.length > 0, ready: mine.length > 0 && ready === mine.length, detail: mine.length ? `${ready}/${mine.length} ready` : '미설치' };
+  });
+  const smr = await k8s('GET', `/apis/${SM_GROUP}/v1/servicemonitors`);
+  const crdReady = smr.ok;
+  const sms = (smr.json?.items || []).map((x) => ({ namespace: x.metadata?.namespace || '', name: x.metadata?.name || '', app: x.spec?.selector?.matchLabels?.app || '' }));
+  const coverage = obsTargets().map((t) => {
+    const sm = sms.some((s) => s.namespace === t.ns && (s.app === t.app || s.name === t.app));
+    return { key: t.key, name: t.name, namespace: t.ns, serviceMonitor: sm, metrics: sm, note: sm ? 'scrape 대상' : (t.gap || '계측 없음(노출/ServiceMonitor 부재)') };
+  });
+  const [grafana, prometheus] = await Promise.all([findMonSvc('grafana', 80), findMonSvc('prometheus', 9090)]);
+  return { namespace: MON_NS, nsExists, installed: components.some((c) => c.installed), ready: components.every((c) => c.ready), components, crdReady, serviceMonitors: sms, coverage, links: { grafana, prometheus } };
+}
+// Prometheus active targets 프록시(up/down) — best-effort. in-cluster svc 직결.
+async function observabilityTargets() {
+  const prom = await findMonSvc('prometheus', 9090);
+  if (!prom) return { reachable: false, hint: 'prometheus svc 미발견' };
+  try {
+    const r = await fetch(`http://${prom}/api/v1/targets?state=active`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return { reachable: false, hint: `HTTP ${r.status}` };
+    const j = await r.json();
+    const active = (j.data?.activeTargets || []).map((t) => ({ job: t.labels?.job || '', instance: t.labels?.instance || t.discoveredLabels?.__address__ || '', health: t.health || '', lastError: (t.lastError || '').slice(0, 140), scrapeUrl: t.scrapeUrl || '' }));
+    return { reachable: true, active };
+  } catch (e) { return { reachable: false, hint: String((e && e.message) || e).slice(0, 120) }; }
+}
+
 // ── /metrics (Prometheus exposition, 의존성 0; 클러스터 내부 전용 — nginx 미라우팅) ──
 // 공유 관측 계층(k8s basic stack / prometheus-stack)이 ServiceMonitor로 scrape. docs/OBSERVABILITY-ARCHITECTURE.md.
 let _httpReqs = 0;
@@ -954,6 +1015,9 @@ const server = http.createServer(async (req, res) => {
       }));
       return json(res, 200, { crdReady: true, items });
     }
+    // Observability(공유 관측 스택) 정보 뷰 — 읽기 전용. 콘솔은 소유 아닌 대상/소비자.
+    if (p === '/api/admin/observability/status' && req.method === 'GET') return json(res, 200, await observabilityStatus());
+    if (p === '/api/admin/observability/targets' && req.method === 'GET') return json(res, 200, await observabilityTargets());
     if (p === '/api/admin/backbone/gitea' && req.method === 'GET') return json(res, 200, await giteaRepos());
     if (p === '/api/admin/backbone/gitea/tree' && req.method === 'GET') {
       return json(res, 200, await giteaTree(url.searchParams.get('owner') || '', url.searchParams.get('repo') || '', url.searchParams.get('ref') || ''));
