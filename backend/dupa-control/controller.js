@@ -223,6 +223,28 @@ function ownerRef(pkg) {
     controller: true, blockOwnerDeletion: true,
   };
 }
+function validLabelKey(key) {
+  const s = String(key || '');
+  if (!s || s.length > 253) return false;
+  const parts = s.split('/');
+  const name = parts.length === 2 ? parts[1] : parts[0];
+  const prefix = parts.length === 2 ? parts[0] : '';
+  if (!name || name.length > 63 || !/^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$/.test(name)) return false;
+  if (!prefix) return true;
+  if (prefix.length > 253) return false;
+  return prefix.split('.').every((part) => part && part.length <= 63 && /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/.test(part));
+}
+function validLabelValue(value) {
+  const s = String(value || '');
+  return s.length <= 63 && (!s || /^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$/.test(s));
+}
+function podLabels(pkg) {
+  const labels = {};
+  for (const [key, value] of Object.entries(pkg.spec?.podLabels || {})) {
+    if (validLabelKey(key) && validLabelValue(value)) labels[key] = String(value);
+  }
+  return labels;
+}
 function deploymentManifest(pkg) {
   const name = pkg.metadata.name;
   const _d = pkg.spec.image.digest || '';
@@ -236,7 +258,7 @@ function deploymentManifest(pkg) {
     spec: {
       replicas: 1, selector: { matchLabels: { app: name } },
       template: {
-        metadata: { labels: { app: name } },
+        metadata: { labels: { ...podLabels(pkg), app: name } },
         spec: {
           ...(serviceAccountName ? { serviceAccountName } : {}),
           imagePullSecrets: [{ name: 'ghcr-pull' }],
