@@ -118,6 +118,7 @@ export class PluginHost {
       this.id(); // 라우트 변경 시 에러 상태 초기화 트리거
       this.runtimeError.set('');
       if (h && p) {
+        this.assertApiBase(p.id);
         try {
           h.nativeElement.replaceChildren(document.createElement(p.elementTag));
         } catch (err) {
@@ -128,11 +129,22 @@ export class PluginHost {
     });
   }
 
+  /**
+   * 마운트 직전 window.__OSP_NG_API_BASE__를 셸이 아는 진실값으로 재설정.
+   * subShell(ui-shell.plugin.js)이 이 전역에 1회만 쓰는 구조라, 다른 플러그인을 거쳐 돌아오면
+   * stale base를 읽어 엉뚱한 플러그인으로 API 요청이 새는 문제(크로스 플러그인 오염)가 있었다.
+   */
+  private assertApiBase(pluginId: string): void {
+    const base = this.ext.apiBaseByPlugin()[pluginId];
+    if (base) (window as unknown as Record<string, string>)['__OSP_NG_API_BASE__'] = base;
+  }
+
   reload(): void {
     this.runtimeError.set('');
     const h = this.host();
     const p = this.page();
     if (h && p) {
+      this.assertApiBase(p.id);
       try {
         h.nativeElement.replaceChildren(document.createElement(p.elementTag));
       } catch (err) {

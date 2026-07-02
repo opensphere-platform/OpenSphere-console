@@ -54,6 +54,13 @@ export class ExtensionHostService {
   readonly searchProviders = signal<Record<string, SearchProvider>>({});
   /** 플러그인별 1단 아이콘(Carbon 토큰명) — registry(spec.nav.icon 전사)에서. pluginId → token */
   readonly pluginIcons = signal<Record<string, string>>({});
+  /**
+   * 플러그인별 API base(manifest.apiBase, 셸이 검증 파이프라인에서 이미 아는 값) — pluginId → base.
+   * PluginHost가 마운트 직전 window.__OSP_NG_API_BASE__를 여기서 재설정해 크로스 플러그인 오염을 차단한다
+   * (subShell의 ui-shell.plugin.js가 공유 전역에 1회만 쓰는 구조라, 다른 플러그인을 거쳐온 뒤 돌아오면
+   *  stale 값을 읽는 문제가 있었다 — 셸이 진실원(authoritative source)으로 매번 덮어써 해결).
+   */
+  readonly apiBaseByPlugin = signal<Record<string, string>>({});
 
   async load(): Promise<void> {
     let reg: RegistryV2;
@@ -84,6 +91,7 @@ export class ExtensionHostService {
     this.navTrees.set({});
     this.searchProviders.set({});
     this.pluginIcons.set({});
+    this.apiBaseByPlugin.set({});
     await this.load();
   }
 
@@ -138,6 +146,11 @@ export class ExtensionHostService {
         URL.revokeObjectURL(blobUrl);
       }
       if (typeof mod.activate !== 'function') throw new Error('activate() export 없음 (§9 계약 위반)');
+
+      if (manifest.apiBase) {
+        const base = manifest.apiBase.replace(/\/$/, '');
+        this.apiBaseByPlugin.update((m) => ({ ...m, [e.id]: base }));
+      }
 
       // ⑦ 최소 권한 ctx
       await mod.activate(this.contextFor(e.id, manifest, perms));

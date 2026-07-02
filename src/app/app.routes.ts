@@ -12,13 +12,22 @@ import { AdminObservability } from './pages/admin-observability';
 import { AdminNotifications } from './pages/admin-notifications';
 import { AdminLayout } from './pages/admin-layout';
 
-// 감사 P2-3: 특정 plugin id('ai') 하드코딩 제거. 등록된 subShell/plugin의 clean deep link(/<id>/...)를
-// 일반 위임 — 첫 세그먼트를 pluginId(:id)로 노출하고 PluginHost가 처리, 실제 등록 여부는 Extension Host
-// (registry)가 판정(미등록이면 PluginHost가 '등록 안 됨' 안내). 예약 라우트 다음에 배치되므로
-// me/catalog/apis/manage/p/:id 등은 먼저 매칭되고, 그 외 첫 세그먼트만 이 매처로 온다.
-function cleanPluginRouteMatcher(segments: UrlSegment[]): UrlMatchResult | null {
-  if (!segments.length) return null;
-  return { consumed: segments, posParams: { id: new UrlSegment(segments[0].path, {}) } };
+/**
+ * 플러그인 호스트 매처 — `/p/<id>` 그리고 그 아래 임의 깊이의 서브패스(`/p/<id>/a/b/...`)까지 전부
+ * PluginHost(id)로 위임한다. subShell은 자체 Angular Router가 없으므로(§plugin-host.ts) 내부 탭/뷰 상태를
+ * 이 서브패스에 실경로 세그먼트로 직접 쓴다(cluster-manager/os-level/shell-template/ai 공통 표준 —
+ * pushState + popstate, PluginHost는 `id`만 보고 마운트하므로 서브패스가 바뀌어도 재마운트되지 않는다).
+ * `path: 'p/:id'`(세그먼트 정확히 2개)만으로는 서브패스가 있는 URL에 안 걸리므로 매처로 직접 구현.
+ *
+ * ⚠️ 예전에 있던 "clean deep link"(`/<id>/...`, `/p/` 접두사 없이 첫 세그먼트를 그대로 plugin id로 위임)는
+ * 제거했다 — 콘솔 네이티브 라우트와 플러그인 id가 같은 네임스페이스를 다투는 충돌 위험이 있었고
+ * (예: 콘솔이 나중에 `/apps`라는 네이티브 페이지를 만들면 plugin id `apps`와 충돌), `/p/` 접두사가 있는
+ * 라우트가 이미 그 문제를 구조적으로 막아준다. 모든 plugin 링크는 `routeForPlugin()`(perspectives.ts)이
+ * `/p/<id>` 형태로만 생성하므로 콘솔 내부에서 bare 딥링크에 의존하는 곳은 없었다.
+ */
+function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
+  if (segments.length < 2 || segments[0].path !== 'p') return null;
+  return { consumed: segments, posParams: { id: segments[1] } };
 }
 
 export const routes: Routes = [
@@ -48,9 +57,7 @@ export const routes: Routes = [
   { path: 'admin/plugins', redirectTo: 'manage/plugins' },
   { path: 'admin/roles', redirectTo: 'manage/roles' },
 
-  // 등록된 플러그인(subShell·plugin)은 전부 `/p/<id>` 동적 호스트로 진입(§10). 실제 화면은 런타임 로드 모듈.
-  { path: 'p/:id', component: PluginHost },
-  // clean deep link(/<id>/...) 일반 위임 — 예약 라우트 다음에 위치(그 외 첫 세그먼트만 매칭). 미등록 id는
-  // PluginHost가 '등록 안 됨' 안내. (특정 plugin 하드코딩 제거 — 감사 P2-3)
-  { matcher: cleanPluginRouteMatcher, component: PluginHost },
+  // 등록된 플러그인(subShell·plugin)은 전부 `/p/<id>[/서브패스]` 동적 호스트로 진입(§10). 실제 화면은
+  // 런타임 로드 모듈. 미등록 id는 PluginHost가 '등록 안 됨' 안내.
+  { matcher: pluginHostMatcher, component: PluginHost },
 ];
