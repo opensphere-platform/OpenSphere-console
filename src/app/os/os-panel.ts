@@ -38,10 +38,17 @@ import { ClarityModule } from '@clr/angular';
       [style.--os-panel-w]="width() + 'px'"
     >
       <div class="side-panel-title">
-        {{ title }}
-        @if (subtitle) {
-          <div class="os-panel-sub">{{ subtitle }}</div>
-        }
+        <div class="os-panel-title-row">
+          @if (logoSrc) {
+            <span class="os-panel-logo-chip"><img class="os-panel-logo" [src]="logoSrc" alt="" /></span>
+          }
+          <div class="os-panel-title-text">
+            {{ title }}
+            @if (subtitle) {
+              <div class="os-panel-sub">{{ subtitle }}</div>
+            }
+          </div>
+        </div>
         @if (fullHref) {
           <a class="os-panel-full" [href]="fullHref" target="_blank" rel="noopener"
             >전체 페이지로 열기 ↗</a
@@ -74,6 +81,24 @@ import { ClarityModule } from '@clr/angular';
       .os-panel-grip:hover {
         background: rgba(76, 111, 255, 0.35);
       }
+      .os-panel-title-row {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+      }
+      .os-panel-logo-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+      }
+      .os-panel-logo {
+        width: 56px;
+        height: 56px;
+      }
+      .os-panel-title-text {
+        min-width: 0;
+      }
       .os-panel-sub {
         font-size: 0.65rem;
         color: var(--os-muted, #667193);
@@ -91,6 +116,7 @@ export class OsPanel {
   @Input() open = false;
   @Input() title = '';
   @Input() subtitle = '';
+  @Input() logoSrc = '';
   @Input() fullHref = '';
   @Output() closed = new EventEmitter<void>();
 

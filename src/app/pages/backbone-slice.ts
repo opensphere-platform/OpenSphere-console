@@ -54,11 +54,19 @@ const IC = {
   refresh: 'M17.65 6.35A8 8 0 1019 13h-2a6 6 0 11-1.76-4.24L13 11h7V4l-2.35 2.35z',
 };
 
+/** 구성요소별 상품 로고(images.opl.io.kr 갤러리, Statically CDN). */
+const LOGO_CDN = 'https://cdn.statically.io/gh/openplatform-labs/images@main/logos/';
+const LOGOS: Record<string, string> = {
+  postgres: LOGO_CDN + 'postgresql-icon.svg',
+  rustfs: LOGO_CDN + 'rustfs.svg',
+  gitea: LOGO_CDN + 'gitea.svg',
+};
+
 @Component({
   selector: 'os-backbone-slice',
   imports: [ClarityModule, OsPanel, CodeEditorComponent, CarbonIcon],
   template: `
-    <os-panel [open]="true" [title]="row.name" [subtitle]="row.kind + ' · ' + row.role + ' · ns ' + namespace()" (closed)="close()">
+    <os-panel [open]="true" [title]="row.name" [subtitle]="row.kind + ' · ' + row.role + ' · ns ' + namespace()" [logoSrc]="logoSrc()" (closed)="close()">
       @if (err(); as e) {
         <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">{{ e }}</span></clr-alert-item></clr-alert>
       }
@@ -393,6 +401,10 @@ export class BackboneSlice implements OnChanges {
   private auth = inject(AuthService);
   readonly ic = IC;
   readonly dbIcon = Db2Database16;
+
+  logoSrc(): string {
+    return LOGOS[this.row.key] || '';
+  }
   readonly fnIcon = Code16;
   readonly extIcon = Cube16;
   readonly detail = signal<BbDetail | null>(null);
