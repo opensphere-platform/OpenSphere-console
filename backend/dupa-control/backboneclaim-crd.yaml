@@ -38,6 +38,13 @@ spec:
                     enabled: { type: boolean, default: false }
                     # DB/role 이름 — PG 식별자 규칙(소문자/숫자/언더스코어). 미지정 시 claim 이름(하이픈→언더스코어).
                     database: { type: string, pattern: '^[a-z_][a-z0-9_]{0,62}$' }
+                    # 선택 사항. 기본 true 의미로 provider가 <claim>-backbone-postgres-app Secret을 함께 발급한다.
+                    # username 생략 시 기존 app Secret username을 재사용하고, 없으면 <database>_app.
+                    appRole:
+                      type: object
+                      properties:
+                        enabled: { type: boolean, default: true }
+                        username: { type: string, pattern: '^[a-z_][a-z0-9_]{0,62}$' }
                 objectStore:
                   type: object
                   properties:

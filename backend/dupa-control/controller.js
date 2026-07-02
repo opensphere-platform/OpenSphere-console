@@ -767,13 +767,21 @@ async function upsertSecret(ns, name, stringData) {
   if (r.status === 409) await k8s('PATCH', `/api/v1/namespaces/${ns}/secrets/${name}`, { stringData });
   else if (!r.ok) throw new Error(`secret upsert HTTP ${r.status}`);
 }
+function postgresAppRoleName(dbName, cr, existingSecret) {
+  const fromSecret = existingSecret?.ok ? Buffer.from(existingSecret.json?.data?.username || '', 'base64').toString('utf8') : '';
+  return cr.spec?.postgres?.appRole?.username || fromSecret || `${dbName}_app`;
+}
 async function gcClaim(cr) {
   const ns = cr.metadata.namespace, name = cr.metadata.name;
   if (cr.spec?.postgres?.enabled && db.isEnabled()) {
     const dbName = cr.spec.postgres.database || name.replace(/-/g, '_');
-    await db.dropTenant(dbName);
+    const appSecretName = `${name}-backbone-postgres-app`;
+    const appSec = await k8s('GET', `/api/v1/namespaces/${ns}/secrets/${appSecretName}`);
+    const appRole = appSec.ok ? Buffer.from(appSec.json?.data?.username || '', 'base64').toString('utf8') : `${dbName}_app`;
+    await db.dropTenant(dbName, appRole);
   }
   await k8s('DELETE', `/api/v1/namespaces/${ns}/secrets/${name}-backbone-postgres`);
+  await k8s('DELETE', `/api/v1/namespaces/${ns}/secrets/${name}-backbone-postgres-app`);
   // objectStore — 버킷 비우고 삭제(PG dropTenant 대칭) + 테넌트 자격 Secret 회수.
   if (cr.spec?.objectStore?.enabled && storage.isEnabled()) {
     await storage.emptyAndDeleteBucket(cr.spec.objectStore.bucket || name);
@@ -806,7 +814,20 @@ async function reconcileOneClaim(cr) {
       if (!pw) pw = randomBytes(24).toString('hex');
       await db.provisionTenant(dbName, pw);
       await upsertSecret(ns, secretName, { host: PG_DNS, port: '5432', database: dbName, username: dbName, password: pw });
+      const appSecretName = `${name}-backbone-postgres-app`;
       status.postgres = { secretRef: secretName, host: PG_DNS, database: dbName };
+      if (cr.spec?.postgres?.appRole?.enabled === false) {
+        await k8s('DELETE', `/api/v1/namespaces/${ns}/secrets/${appSecretName}`);
+      } else {
+        const appSec = await k8s('GET', `/api/v1/namespaces/${ns}/secrets/${appSecretName}`);
+        let appPw = appSec.ok ? Buffer.from(appSec.json?.data?.password || '', 'base64').toString('utf8') : '';
+        if (!appPw) appPw = randomBytes(24).toString('hex');
+        const appUser = postgresAppRoleName(dbName, cr, appSec);
+        await db.provisionTenantAppRole(dbName, appUser, appPw);
+        await upsertSecret(ns, appSecretName, { host: PG_DNS, port: '5432', database: dbName, username: appUser, password: appPw, role: 'app' });
+        status.postgres.appSecretRef = appSecretName;
+        status.postgres.appUsername = appUser;
+      }
     }
   }
   // objectStore — 전용 버킷 + Secret(claim NS). dev는 인스턴스 키 재사용 + 버킷 격리(provision-backbone-tenant.sh 모델).

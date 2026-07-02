@@ -5,7 +5,8 @@
   "description": "DUPA Admin Control + Backbone(audit→PostgreSQL) — 단일 Node 서비스",
   "main": "controller.js",
   "scripts": {
-    "start": "node controller.js"
+    "start": "node controller.js",
+    "test": "node --test"
   },
   "dependencies": {
     "pg": "8.13.1"

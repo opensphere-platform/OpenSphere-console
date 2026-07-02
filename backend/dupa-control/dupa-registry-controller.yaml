@@ -84,7 +84,7 @@ spec:
       containers:
         - name: controller
           # Local development registry image. Replace with a signed remote digest for production promotion.
-          image: ghcr.io/opensphere-platform/dupa-registry-controller@sha256:87051330b445e79966f74ba96764d2af9b91fad5adda8f7a477ff2c698c836b2
+          image: ghcr.io/opensphere-platform/dupa-registry-controller@sha256:10b09d8e8246039fb547f33fd5ce12983b7a669b3f7834c72b89176b141f260c
           env:
             - { name: NAMESPACE, value: opensphere-system }
             # K8s API TLS 寃利???Node fetch(undici)???쒖옉 ?쒖젏???쎌쑝誘濡?env濡?以섏빞 ??

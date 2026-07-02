@@ -124,6 +124,7 @@ async function listTree() {
 // 식별자 검증/인용(SQL 인젝션 차단). PG 식별자 규칙 + 길이 63 제한.
 const VALID_IDENT = /^[A-Za-z_][A-Za-z0-9_$]{0,62}$/;
 const qIdent = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+const qLiteral = (s) => "'" + String(s ?? '').replace(/'/g, "''") + "'";
 function fmtCell(v) {
   if (v == null) return null;
   if (v instanceof Date) return v.toISOString();
@@ -159,10 +160,33 @@ async function provisionTenant(database, password) {
   const dbx = await pool.query('SELECT 1 FROM pg_database WHERE datname=$1', [database]);
   if (!dbx.rowCount) await pool.query(`CREATE DATABASE ${qIdent(database)} OWNER ${qIdent(database)}`);
 }
-async function dropTenant(database) {
+
+async function provisionTenantAppRole(database, username, password) {
+  if (!enabled) throw new Error('pg not connected');
+  if (!VALID_IDENT.test(database || '')) throw new Error('invalid database name');
+  if (!VALID_IDENT.test(username || '')) throw new Error('invalid app role name');
+  if (!password) throw new Error('password is required');
+  const role = await pool.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [username]);
+  if (role.rowCount) await pool.query(`ALTER ROLE ${qIdent(username)} LOGIN PASSWORD ${qLiteral(password)}`);
+  else await pool.query(`CREATE ROLE ${qIdent(username)} LOGIN PASSWORD ${qLiteral(password)}`);
+  const dbx = await pool.query('SELECT 1 FROM pg_database WHERE datname=$1', [database]);
+  if (!dbx.rowCount) throw new Error(`database ${database} is not provisioned`);
+  await pool.query(`GRANT CONNECT ON DATABASE ${qIdent(database)} TO ${qIdent(username)}`);
+  let client = null;
+  try {
+    client = new Client({ ...cfg, database, connectionTimeoutMillis: 4000 });
+    await client.connect();
+    await client.query(`GRANT USAGE ON SCHEMA public TO ${qIdent(username)}`);
+  } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
+}
+
+async function dropTenant(database, appRole) {
   if (!enabled || !VALID_IDENT.test(database || '')) return;
   try { await pool.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1', [database]); } catch { /* noop */ }
   try { await pool.query(`DROP DATABASE IF EXISTS ${qIdent(database)}`); } catch (e) { console.error('[db] dropTenant db:', String(e).slice(0, 80)); }
+  if (appRole && VALID_IDENT.test(appRole)) {
+    try { await pool.query(`DROP ROLE IF EXISTS ${qIdent(appRole)}`); } catch (e) { console.error('[db] dropTenant app role:', String(e).slice(0, 80)); }
+  }
   try { await pool.query(`DROP ROLE IF EXISTS ${qIdent(database)}`); } catch (e) { console.error('[db] dropTenant role:', String(e).slice(0, 80)); }
 }
 
@@ -230,4 +254,4 @@ async function dropFunction({ database, schema, name, args }) {
   } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
 }
 
-module.exports = { init, insertAudit, recentAudit, listDatabases, listTree, previewRows, provisionTenant, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };
+module.exports = { init, insertAudit, recentAudit, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };
