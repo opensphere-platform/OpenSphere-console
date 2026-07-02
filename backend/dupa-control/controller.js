@@ -245,6 +245,17 @@ function podLabels(pkg) {
   }
   return labels;
 }
+function podEnv(pkg) {
+  const env = [{ name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' }];
+  const seen = new Set(env.map((item) => item.name));
+  for (const item of pkg.spec?.env || []) {
+    const name = String(item?.name || '');
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || seen.has(name)) continue;
+    env.push({ name, value: String(item?.value ?? '') });
+    seen.add(name);
+  }
+  return env;
+}
 function deploymentManifest(pkg) {
   const name = pkg.metadata.name;
   const _d = pkg.spec.image.digest || '';
@@ -265,7 +276,7 @@ function deploymentManifest(pkg) {
           containers: [{
             name: 'plugin', image: img, ports: [{ containerPort: 8080 }],
             // K8s API를 호출하는 기능 컨테이너(예: platform-status)의 TLS 검증용 — 기본 제공
-            env: [{ name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' }],
+            env: podEnv(pkg),
             readinessProbe: { httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 1 },
             resources: { requests: { cpu: '20m', memory: '32Mi' }, limits: { cpu: '200m', memory: '128Mi' } },
           }],

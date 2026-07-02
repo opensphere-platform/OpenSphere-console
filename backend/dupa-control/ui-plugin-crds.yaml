@@ -36,6 +36,16 @@ spec:
                   type: object
                   additionalProperties:
                     type: string
+                env:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, value]
+                    properties:
+                      name:
+                        type: string
+                        pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+                      value: { type: string }
                 image:
                   type: object
                   required: [repository, digest]
