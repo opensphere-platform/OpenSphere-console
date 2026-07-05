@@ -11,7 +11,6 @@ import { AdminBackbone } from './pages/admin-backbone';
 import { AdminObservability } from './pages/admin-observability';
 import { AdminNotifications } from './pages/admin-notifications';
 import { AdminLayout } from './pages/admin-layout';
-import { ManualShell } from './pages/manual-shell';
 
 /**
  * 플러그인 호스트 매처 — `/p/<id>` 그리고 그 아래 임의 깊이의 서브패스(`/p/<id>/a/b/...`)까지 전부
@@ -34,7 +33,7 @@ function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
 export const routes: Routes = [
   { path: '', component: Landing },
   { path: 'me', component: MyInfo },
-  { path: 'manual', component: ManualShell },
+  { path: 'manual', redirectTo: 'p/manual', pathMatch: 'full' },
   { path: 'catalog', component: Catalog },
   { path: 'apis', component: Apis },
   // Containers 섹션은 DUPA subShell(shell-template)로 이전됨 → 네이티브 라우트 제거. /p/shell-template 로 진입.

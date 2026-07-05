@@ -7,7 +7,7 @@ Scope: OpenSphere AI Agent(OAA), OpenSphere manuals, Backbone PostgreSQL + pgvec
 Implementation note: the Console-facing Manual Registry MVP is documented in
 `docs/OAA-CONSOLE-MANUAL-SUBSHELL.md`. It exposes the OAA manual knowledge store
 through `/api/manual/*`, the top header Documentation search section, and the
-native `/manual` subShell.
+registered `/p/manual` subShell.
 
 ## 1. Goal
 
@@ -91,7 +91,7 @@ Authority tier:
 |---:|---|---|
 | 0 | Constitution / invariant authority | `_DOCS_/01-CONSTITUTION/*` |
 | 1 | Architecture / ADR authority | `_DOCS_/20-*`, `_DOCS_/10-*` |
-| 2 | Product/manual authority | `OpenSphere-shell-menual`, Help Center articles |
+| 2 | Product/manual authority | `OpenSphere-shell-menual`, Help Center articles, registered `manual` subShell |
 | 3 | Implementation notes / audit / runbook | `OpenSphere-console/docs/*`, audit docs |
 | 4 | Temporary imported notes | admin pasted documents |
 
@@ -697,7 +697,7 @@ Backbone > OAA Gateway > Knowledge Store should evolve from a free text form int
 
 1. Manual paste: current MVP form.
 2. Manual seed: upload or trigger a `manual-seed` manifest.
-3. Repository sync: ingest selected paths from `_DOCS_`, `OpenSphere-console/docs`, and `OpenSphere-shell-menual`.
+3. Repository sync: ingest selected paths from `_DOCS_`, `OpenSphere-console/docs`, `OpenSphere-shell-menual`, and signed subShell manual contributions.
 
 The UI must display:
 
@@ -723,4 +723,4 @@ Recommended ingestion order:
 5. `OpenSphere-console/docs/OAA-BACKBONE-IMPLEMENTATION-PLAN.md`: tier 3
 6. `OpenSphere-shell-menual/src/app/docs.ts`: tier 2 Help Center source
 
-`OpenSphere-shell-menual/src/app/docs.ts` should eventually be converted from UI-local TypeScript data into a shared manual seed or API source so the Help Center and OAA use the same canonical content.
+`OpenSphere-shell-menual/src/app/docs.ts` should eventually be converted from UI-local TypeScript data into a shared manual seed or API source so the Help Center, the registered `/p/manual` subShell, and OAA use the same canonical content.

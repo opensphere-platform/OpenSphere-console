@@ -165,7 +165,7 @@ export class SearchService {
       documentation.push(...manualHits.map((hit) => ({
         label: hit.title,
         sublabel: [hit.sourceName || 'Manual', hit.documentType, hit.sourcePath].filter(Boolean).join(' · '),
-        path: `/manual?doc=${encodeURIComponent(hit.sourceId)}&q=${encodeURIComponent(q)}`,
+        path: `/p/manual?doc=${encodeURIComponent(hit.sourceId)}&q=${encodeURIComponent(q)}`,
         kind: 'result' as const,
         source: 'manual-registry',
       })));

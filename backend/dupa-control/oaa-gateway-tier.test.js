@@ -10,12 +10,14 @@ const nginx = fs.readFileSync(path.join(root, 'nginx', 'default.conf.template'),
 const gateway = fs.readFileSync(path.join(root, 'backend', 'oaa-gateway', 'server.js'), 'utf8');
 const adminBackbone = fs.readFileSync(path.join(root, 'src', 'app', 'pages', 'admin-backbone.ts'), 'utf8');
 const oaaAgent = fs.readFileSync(path.join(root, 'src', 'app', 'os', 'os-oaa-agent.ts'), 'utf8');
-const manualShell = fs.readFileSync(path.join(root, 'src', 'app', 'pages', 'manual-shell.ts'), 'utf8');
 const manualService = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'manual.service.ts'), 'utf8');
 const searchService = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'search.service.ts'), 'utf8');
 const extensionHost = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'extension-host.service.ts'), 'utf8');
 const routes = fs.readFileSync(path.join(root, 'src', 'app', 'app.routes.ts'), 'utf8');
 const osShell = fs.readFileSync(path.join(root, 'src', 'app', 'os', 'os-shell.ts'), 'utf8');
+const manualPackage = fs.readFileSync(path.join(root, 'backend', 'manual-subShell', 'uipluginpackage.yaml'), 'utf8');
+const manualPlugin = fs.readFileSync(path.join(root, 'backend', 'manual-subShell', 'ui-shell', 'ui-shell.plugin.js'), 'utf8');
+const manualManifest = fs.readFileSync(path.join(root, 'backend', 'manual-subShell', 'ui-shell', 'ui-shell.manifest.json'), 'utf8');
 const manualSeed = JSON.parse(fs.readFileSync(path.join(root, 'backend', 'oaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'), 'utf8'));
 
 test('CBSS declares OAA-Gateway as a Backbone component', () => {
@@ -135,7 +137,7 @@ test('OAA bundled manual seed carries core OpenSphere manuals', () => {
   }
 });
 
-test('Console Manual is exposed as a registry API, header search source, and native subShell', () => {
+test('Console Manual is exposed as a registry API, header search source, and registered subShell', () => {
   assert.match(gateway, /async function listManualSources/);
   assert.match(gateway, /async function listManualDocuments/);
   assert.match(gateway, /async function getManualDocument/);
@@ -159,18 +161,31 @@ test('Console Manual is exposed as a registry API, header search source, and nat
   assert.match(searchService, /queryManualContributions/);
   assert.match(searchService, /manualContributions/);
   assert.match(searchService, /manual-registry/);
-  assert.match(searchService, /\/manual\?doc=/);
+  assert.match(searchService, /\/p\/manual\?doc=/);
   assert.match(extensionHost, /manual:contribute/);
   assert.match(extensionHost, /manualContributions/);
   assert.match(extensionHost, /syncManualContribution/);
   assert.match(extensionHost, /\/api\/oaa\/admin\/knowledge\/manual-seed/);
   assert.match(routes, /path: 'manual'/);
-  assert.match(routes, /component: ManualShell/);
-  assert.match(osShell, /path: '\/manual', label: 'Manual'/);
-  assert.match(manualShell, /selector: 'os-manual-shell'/);
-  assert.match(manualShell, /Manual Registry is available to the console, top search, and OAA/);
-  assert.match(manualShell, /Manual-backed actions/);
-  assert.match(manualShell, /Search Results/);
+  assert.match(routes, /redirectTo: 'p\/manual'/);
+  assert.doesNotMatch(routes, /ManualShell/);
+  assert.doesNotMatch(osShell, /path: '\/manual', label: 'Manual'/);
+  assert.match(manualPackage, /kind: UIPluginPackage/);
+  assert.match(manualPackage, /name: manual/);
+  assert.match(manualPackage, /repository: ghcr\.io\/opensphere-platform\/manual/);
+  assert.match(manualPackage, /keyId: opensphere-plugins-v1/);
+  assert.match(manualPackage, /manual:contribute/);
+  assert.match(manualManifest, /"kind": "subShell"/);
+  assert.match(manualManifest, /"id": "manual"/);
+  assert.match(manualManifest, /"manual:contribute"/);
+  assert.match(manualPlugin, /customElements\.define\(TAG, ManualShellElement\)/);
+  assert.match(manualPlugin, /\/api\/manual\/sources/);
+  assert.match(manualPlugin, /\/api\/manual\/documents/);
+  assert.match(manualPlugin, /\/api\/manual\/document/);
+  assert.match(manualPlugin, /\/api\/manual\/search/);
+  assert.match(manualPlugin, /Manual Registry is available to the console, top search, and OAA/);
+  assert.match(manualPlugin, /Manual-backed actions/);
+  assert.match(manualPlugin, /Search Results/);
 });
 
 test('OAA-Gateway exposes read-only live environment tools', () => {

@@ -1,0 +1,49 @@
+apiVersion: plugins.opensphere.io/v1alpha1
+kind: UIPluginPackage
+metadata:
+  name: manual
+  namespace: opensphere-system
+  labels:
+    opensphere.io/scope: main-shell-manual
+spec:
+  displayName: "Manual"
+  owner: platform-experience
+  version: 0.1.0
+  description: "OpenSphere Manual — OAA-backed documentation subShell."
+  image:
+    repository: ghcr.io/opensphere-platform/manual
+    digest: sha256:1ef42baf1fd28324f8c6cbd2df71e62dc9a33767a998fd9b95489c4d03923be0
+  nav:
+    band: "구축 Build"
+    label: "Manual"
+    icon: "document"
+  manifest:
+    path: /plugins/ui-shell.manifest.json
+    sha256: "d81854512bec6a243d992473a90dbf15138773129bfea197dc9bfcb3468ed845"
+    signaturePath: /plugins/ui-shell.manifest.json.sig
+  trust:
+    keyId: opensphere-plugins-v1
+  shellCompat: ">=0.2.0 <0.9.0"
+  permissions:
+    - page:register
+    - api:proxy
+    - manual:contribute
+  api:
+    basePath: /api/plugins/manual
+---
+apiVersion: plugins.opensphere.io/v1alpha1
+kind: UIPluginRegistration
+metadata:
+  name: manual
+  namespace: opensphere-system
+spec:
+  packageRef:
+    name: manual
+  desiredState: Enabled
+  installPolicy:
+    createWorkload: true
+    createProxyRoute: true
+    exposeInNavigation: true
+  approval:
+    requestedBy: cmars
+    reason: "Manual promoted to OpenSphere subShell standard and GHCR delivery."
