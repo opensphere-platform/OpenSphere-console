@@ -703,6 +703,201 @@ async function searchKnowledge(query, limit = OAA_RAG_TOP_K) {
   });
 }
 
+function manualDocFromRow(row) {
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  return {
+    id: row.id,
+    namespace: row.namespace,
+    sourceType: row.sourceType || row.source_type || 'manual',
+    sourceId: row.sourceId || row.source_id || '',
+    title: row.title || '',
+    version: row.version || '',
+    updatedAt: row.updatedAt || row.updated_at || '',
+    chunkCount: Number(row.chunkCount || row.chunk_count || 0),
+    summary: trimText(row.summary || ''),
+    metadata,
+    documentType: metadata.documentType || '',
+    authorityTier: Number.isInteger(Number(metadata.authorityTier)) ? Number(metadata.authorityTier) : null,
+    status: metadata.status || '',
+    language: metadata.language || '',
+    route: metadata.route || '',
+    sourcePath: metadata.sourcePath || '',
+    sourceUrl: metadata.sourceUrl || '',
+    sourceName: metadata.source?.name || metadata.source?.id || '',
+    source: metadata.source || null,
+    tags: Array.isArray(metadata.tags) ? metadata.tags : [],
+    perspective: Array.isArray(metadata.perspective) ? metadata.perspective : [],
+    component: Array.isArray(metadata.component) ? metadata.component : [],
+  };
+}
+
+async function ensureManualRegistryReady() {
+  await ensureKnowledgeSchema();
+  const pool = getPgPool();
+  if (!pool) throw { code: 503, msg: 'Backbone PostgreSQL is not configured for Manual Registry' };
+  await seedBundledManualKnowledgeIfEmpty();
+  return pool;
+}
+
+async function listManualSources() {
+  const pool = await ensureManualRegistryReady();
+  const r = await pool.query(`
+    SELECT
+      COALESCE(metadata->'source'->>'id', source_id) AS id,
+      COALESCE(metadata->'source'->>'type', 'manual') AS type,
+      COALESCE(metadata->'source'->>'name', metadata->'source'->>'id', source_id) AS name,
+      MIN(COALESCE((metadata->>'authorityTier')::int, 4)) AS "authorityTier",
+      count(*)::int AS documents,
+      max(updated_at) AS "updatedAt"
+    FROM oaa_knowledge_documents
+    WHERE source_type = 'manual'
+    GROUP BY 1, 2, 3
+    ORDER BY "authorityTier" ASC, name
+  `);
+  return {
+    schema: 'manual-sources.opensphere.io/v1alpha1',
+    generatedAt: new Date().toISOString(),
+    items: r.rows,
+  };
+}
+
+async function listManualDocuments(options = {}) {
+  const pool = await ensureManualRegistryReady();
+  const q = String(options.q || '').trim();
+  const source = String(options.source || '').trim();
+  const limit = Math.max(1, Math.min(100, Number(options.limit || 40) || 40));
+  const params = [limit];
+  const where = ["d.source_type = 'manual'"];
+  if (q) {
+    params.push(`%${q}%`);
+    where.push(`(
+      d.title ILIKE $${params.length}
+      OR d.source_id ILIKE $${params.length}
+      OR d.metadata::text ILIKE $${params.length}
+      OR EXISTS (
+        SELECT 1 FROM oaa_knowledge_chunks cx
+        WHERE cx.document_id = d.id AND cx.content ILIKE $${params.length}
+      )
+    )`);
+  }
+  if (source) {
+    params.push(source);
+    where.push(`COALESCE(d.metadata->'source'->>'id', d.source_id) = $${params.length}`);
+  }
+  const r = await pool.query(`
+    SELECT d.id, d.namespace, d.source_type AS "sourceType", d.source_id AS "sourceId",
+           d.title, d.version, d.metadata, d.updated_at AS "updatedAt",
+           count(c.id)::int AS "chunkCount",
+           left(string_agg(c.content, ' ' ORDER BY c.chunk_index), 360) AS summary
+    FROM oaa_knowledge_documents d
+    LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id
+    WHERE ${where.join(' AND ')}
+    GROUP BY d.id
+    ORDER BY COALESCE((d.metadata->>'authorityTier')::int, 4), d.title
+    LIMIT $1
+  `, params);
+  return {
+    schema: 'manual-documents.opensphere.io/v1alpha1',
+    generatedAt: new Date().toISOString(),
+    query: q,
+    source,
+    items: r.rows.map(manualDocFromRow),
+  };
+}
+
+async function getManualDocument(sourceId) {
+  const pool = await ensureManualRegistryReady();
+  const sid = String(sourceId || '').trim();
+  if (!sid) throw { code: 400, msg: 'sourceId required' };
+  const doc = await pool.query(`
+    SELECT d.id, d.namespace, d.source_type AS "sourceType", d.source_id AS "sourceId",
+           d.title, d.version, d.metadata, d.updated_at AS "updatedAt",
+           count(c.id)::int AS "chunkCount",
+           left(string_agg(c.content, ' ' ORDER BY c.chunk_index), 360) AS summary
+    FROM oaa_knowledge_documents d
+    LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id
+    WHERE d.source_type = 'manual' AND d.source_id = $1
+    GROUP BY d.id
+    LIMIT 1
+  `, [sid]);
+  if (!doc.rows.length) throw { code: 404, msg: 'manual document not found' };
+  const chunks = await pool.query(`
+    SELECT chunk_index AS "chunkIndex", content, metadata
+    FROM oaa_knowledge_chunks
+    WHERE document_id = $1
+    ORDER BY chunk_index
+  `, [doc.rows[0].id]);
+  const bindings = await pool.query(`
+    SELECT id, source_id AS "sourceId", section_id AS "sectionId", tool_id AS "toolId",
+           intent, risk_level AS "riskLevel", confirmation, spec
+    FROM oaa_manual_action_bindings
+    WHERE source_id = $1 OR section_id ILIKE $2
+    ORDER BY risk_level, id
+    LIMIT 24
+  `, [sid, `%${sid}%`]);
+  return {
+    schema: 'manual-document.opensphere.io/v1alpha1',
+    generatedAt: new Date().toISOString(),
+    item: manualDocFromRow(doc.rows[0]),
+    chunks: chunks.rows,
+    actionBindings: bindings.rows,
+  };
+}
+
+async function searchManualRegistry(query, limit = 8) {
+  const q = String(query || '').trim();
+  if (!q) return { schema: 'manual-search.opensphere.io/v1alpha1', query: q, items: [] };
+  const pool = await ensureManualRegistryReady();
+  const embedding = await embeddingVector(q);
+  const emb = vectorLiteral(embedding.vector);
+  const n = Math.max(1, Math.min(25, Number(limit || 8) || 8));
+  const r = await pool.query(`
+    SELECT
+      d.id AS "documentId",
+      d.title,
+      d.namespace,
+      d.source_id AS "sourceId",
+      d.version,
+      d.metadata,
+      c.chunk_index AS "chunkIndex",
+      c.content,
+      c.metadata AS "chunkMetadata",
+      1 - (c.embedding <=> $1::vector) AS score
+    FROM oaa_knowledge_chunks c
+    JOIN oaa_knowledge_documents d ON d.id = c.document_id
+    WHERE d.source_type = 'manual'
+    ORDER BY c.embedding <=> $1::vector
+    LIMIT $2
+  `, [emb, n]);
+  return {
+    schema: 'manual-search.opensphere.io/v1alpha1',
+    generatedAt: new Date().toISOString(),
+    query: q,
+    embedding: embedding.source,
+    items: r.rows.map((x) => {
+      const metadata = x.metadata && typeof x.metadata === 'object' ? x.metadata : {};
+      const chunkMetadata = x.chunkMetadata && typeof x.chunkMetadata === 'object' ? x.chunkMetadata : {};
+      return {
+        documentId: x.documentId,
+        sourceId: x.sourceId,
+        title: x.title,
+        version: x.version || '',
+        score: Number(x.score || 0),
+        chunkIndex: x.chunkIndex,
+        excerpt: trimText(x.content, 420),
+        metadata,
+        chunkMetadata,
+        documentType: metadata.documentType || '',
+        authorityTier: Number.isInteger(Number(metadata.authorityTier)) ? Number(metadata.authorityTier) : null,
+        route: metadata.route || '',
+        sourcePath: metadata.sourcePath || '',
+        sourceUrl: metadata.sourceUrl || '',
+        sourceName: metadata.source?.name || metadata.source?.id || '',
+      };
+    }),
+  };
+}
+
 async function listManualConceptGraph(query = '', limit = 64) {
   await ensureKnowledgeSchema();
   const pool = getPgPool();
@@ -2790,6 +2985,26 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/oaa/knowledge/concepts' && req.method === 'GET') {
       await verifyAuthed(req);
       return json(res, 200, await listManualConceptGraph(url.searchParams.get('q') || '', Number(url.searchParams.get('limit') || 64)));
+    }
+    if (url.pathname === '/api/manual/sources' && req.method === 'GET') {
+      await verifyAuthed(req);
+      return json(res, 200, await listManualSources());
+    }
+    if (url.pathname === '/api/manual/documents' && req.method === 'GET') {
+      await verifyAuthed(req);
+      return json(res, 200, await listManualDocuments({
+        q: url.searchParams.get('q') || '',
+        source: url.searchParams.get('source') || '',
+        limit: url.searchParams.get('limit') || 40,
+      }));
+    }
+    if (url.pathname === '/api/manual/document' && req.method === 'GET') {
+      await verifyAuthed(req);
+      return json(res, 200, await getManualDocument(url.searchParams.get('sourceId') || ''));
+    }
+    if (url.pathname === '/api/manual/search' && req.method === 'GET') {
+      await verifyAuthed(req);
+      return json(res, 200, await searchManualRegistry(url.searchParams.get('q') || '', Number(url.searchParams.get('limit') || 8)));
     }
     if (url.pathname === '/api/oaa/tools/manifest' && req.method === 'GET') {
       await verifyAuthed(req);

@@ -10,6 +10,7 @@ import Dashboard16 from '@carbon/icons/es/dashboard/16';
 import Catalog16 from '@carbon/icons/es/catalog/16';
 import Api16 from '@carbon/icons/es/api/16';
 import Application16 from '@carbon/icons/es/application/16';
+import Document16 from '@carbon/icons/es/document/16';
 import UserMultiple16 from '@carbon/icons/es/user--multiple/16';
 import UserAdmin16 from '@carbon/icons/es/user--admin/16';
 import Grid16 from '@carbon/icons/es/grid/16';
@@ -336,6 +337,7 @@ export class OsShell {
       return iconByToken(this.ext.pluginIcons()[id]) ?? Application16;
     }
     if (p.includes('container')) return Kubernetes16;
+    if (p.includes('manual')) return Document16;
     if (p.includes('catalog')) return Catalog16;
     if (p.includes('/apis') || p.includes('/api')) return Api16;
     if (p.includes('console-admin')) return UserAdmin16;
@@ -352,6 +354,7 @@ export class OsShell {
       items: [
         { path: '/catalog', label: 'Developer Catalog' },
         { path: '/apis', label: 'APIs' },
+        { path: '/manual', label: 'Manual' },
         // Containers는 DUPA subShell(shell-template)로 이전 — 구축 Build 밴드에 동적 등록됨.
       ],
     },

@@ -2,6 +2,7 @@ import { Injectable, computed, inject } from '@angular/core';
 import { ExtensionHostService } from './extension-host.service';
 import { PerspectiveService } from './perspective.service';
 import { ApiService, CatalogEntity } from './api.service';
+import { ManualService } from './manual.service';
 import { SearchResult, SearchProvider } from './search.types';
 
 export type { SearchResult, SearchProvider } from './search.types';
@@ -33,6 +34,7 @@ export class SearchService {
   private ext = inject(ExtensionHostService);
   private psp = inject(PerspectiveService);
   private api = inject(ApiService);
+  private manual = inject(ManualService);
   /** 데이터층/셸 provider(예: OpenSearch). 런타임 플러그인 provider는 ext가 소유(search:contribute). */
   private dataProviders: SearchProvider[] = [];
 
@@ -136,6 +138,17 @@ export class SearchService {
       services = cat.filter((e) => e.kind === 'Component' && match(e)).slice(0, 6).map((e) => toResult(e, '/catalog'));
       marketplace = cat.filter((e) => e.kind === 'API' && match(e)).slice(0, 6).map((e) => toResult(e, '/apis'));
     } catch { /* catalog 미가용 → 빈 섹션 */ }
+
+    try {
+      const manualHits = await this.manual.search(q, 6);
+      documentation.push(...manualHits.map((hit) => ({
+        label: hit.title,
+        sublabel: [hit.sourceName || 'Manual', hit.documentType, hit.sourcePath].filter(Boolean).join(' · '),
+        path: `/manual?doc=${encodeURIComponent(hit.sourceId)}&q=${encodeURIComponent(q)}`,
+        kind: 'result' as const,
+        source: 'manual-registry',
+      })));
+    } catch { /* manual registry unavailable */ }
 
     // provider(런타임 기여·데이터층) 결과는 source 힌트로 섹션 배분, 기본은 services.
     try {

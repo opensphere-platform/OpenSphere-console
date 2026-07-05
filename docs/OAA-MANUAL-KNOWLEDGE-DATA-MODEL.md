@@ -4,6 +4,11 @@ Status: draft v0.2
 Date: 2026-07-04
 Scope: OpenSphere AI Agent(OAA), OpenSphere manuals, Backbone PostgreSQL + pgvector
 
+Implementation note: the Console-facing Manual Registry MVP is documented in
+`docs/OAA-CONSOLE-MANUAL-SUBSHELL.md`. It exposes the OAA manual knowledge store
+through `/api/manual/*`, the top header Documentation search section, and the
+native `/manual` subShell.
+
 ## 1. Goal
 
 OAA must not treat OpenSphere manuals as loose text. A manual is operational knowledge with authority, version, navigation context, product scope, and source evidence.
