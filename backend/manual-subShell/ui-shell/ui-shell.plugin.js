@@ -169,16 +169,12 @@ class ManualShellElement extends HTMLElement {
       ${TAG} *{box-sizing:border-box}
       ${TAG} svg{width:1.2rem;height:1.2rem;fill:currentColor;flex:0 0 auto}
       .manual-page{height:calc(100vh - 3rem);overflow:auto;background:#f5f4f2}
-      .manual-top{background:#312d2a;color:#fff;border-bottom:1px solid rgba(255,255,255,.08)}
-      .manual-top-inner{max-width:92rem;margin:0 auto;height:3.25rem;display:flex;align-items:center;gap:1rem;padding:0 1.4rem}
-      .manual-mark{display:inline-flex;align-items:center;justify-content:center;width:2rem;height:2rem;border:2px solid #c74634;border-radius:999px;color:#f8d5a3;font-weight:800}
-      .manual-brand{font-weight:700;font-size:1rem}.manual-spacer{flex:1}.manual-status{font-size:.76rem;color:#d4ccc3}
       .manual-hero{position:relative;min-height:17rem;background:#1f2740;color:#fff;overflow:hidden}
       .manual-hero::before{content:"";position:absolute;right:18%;top:-3.5rem;width:34rem;height:24rem;background:#407e7d;clip-path:polygon(18% 0,100% 8%,82% 100%,0 82%);opacity:.9;z-index:0}
       .manual-hero::after{content:"";position:absolute;right:-3.5rem;top:1rem;width:13rem;height:13rem;background:#c9914b;border-radius:999px;opacity:.95;z-index:0}
       .manual-hero-inner{position:relative;z-index:1;max-width:74rem;margin:0 auto;padding:3.2rem 1.4rem 5.4rem;text-align:center}
-      .manual-hero h1{margin:0;color:#fff;font-size:2.05rem;line-height:1.1;font-weight:700;letter-spacing:0;text-shadow:0 1px 2px rgba(0,0,0,.25)}
-      .manual-hero .manual-hero-inner>p{margin:.75rem auto 0;max-width:42rem;color:#fff!important;font-size:.92rem;font-weight:600;line-height:1.55;text-shadow:0 2px 5px rgba(0,0,0,.42)}
+      .manual-hero-title{margin:0!important;color:#fff!important;font-size:2.05rem;line-height:1.1;font-weight:700;letter-spacing:0;text-shadow:0 2px 5px rgba(0,0,0,.46)}
+      .manual-hero-copy{margin:.75rem auto 0!important;max-width:42rem;color:#fff!important;font-size:.92rem;font-weight:700;line-height:1.55;text-shadow:0 2px 6px rgba(0,0,0,.5)}
       .manual-searchbar{margin:1.65rem auto 0;max-width:54rem;height:3.1rem;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.75rem;padding:0 .75rem 0 1rem;background:#fff;border-radius:3px;box-shadow:0 .25rem .8rem rgba(0,0,0,.22);color:#1d252d}
       .manual-searchbar input{width:100%;border:0;outline:0;font:inherit;font-size:.95rem;background:transparent;color:#1d252d}.manual-searchbar input::placeholder{color:#6d7378}
       .manual-searchbar button,.manual-button{border:0;border-radius:3px;background:#312d2a;color:#fff;padding:.55rem .85rem;font-weight:700;font-size:.72rem;letter-spacing:.02em;cursor:pointer}.manual-searchbar button:disabled,.manual-button:disabled{opacity:.55;cursor:not-allowed}
@@ -204,11 +200,10 @@ class ManualShellElement extends HTMLElement {
       @media(max-width:1100px){.manual-grid,.manual-content{grid-template-columns:1fr}.manual-card-grid{grid-template-columns:1fr}.manual-main{margin-top:-2.5rem}.manual-hero-inner{padding-bottom:4rem}}
     </style>
     <div class="manual-page">
-      <div class="manual-top"><div class="manual-top-inner"><span class="manual-mark">O</span><span class="manual-brand">OpenSphere Help Center</span><span class="manual-spacer"></span><span class="manual-status">Manual Registry</span></div></div>
       <section class="manual-hero">
         <div class="manual-hero-inner">
-          <h1>What can we help you find?</h1>
-          <p>Search OpenSphere manuals, architecture decisions, OAA knowledge, action bindings, and implementation runbooks from one place.</p>
+          <h1 class="manual-hero-title">What can we help you find?</h1>
+          <p class="manual-hero-copy">Search OpenSphere manuals, architecture decisions, OAA knowledge, action bindings, and implementation runbooks from one place.</p>
           <div class="manual-searchbar">
             ${ICONS.search}
             <input name="manual-q" value="${esc(s.q)}" placeholder="Search manuals, 10 Perspective, OAA Gateway, Backbone..." />
