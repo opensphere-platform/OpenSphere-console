@@ -8,6 +8,14 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({
   "'": '&#39;',
 }[c]));
 
+const ICONS = {
+  search: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.7 5a5.7 5.7 0 0 1 4.55 9.14l3.3 3.3-1.42 1.42-3.3-3.3A5.7 5.7 0 1 1 10.7 5Zm0 2a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4Z"/></svg>',
+  docs: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm8 1.8V8h3.2L14 4.8ZM7 12h9v1.6H7V12Zm0 4h7v1.6H7V16Z"/></svg>',
+  graph: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5a3 3 0 0 1 5.83 1h2.34A3 3 0 1 1 18 10.83v2.34A3 3 0 1 1 13.17 16h-2.34A3 3 0 1 1 6 13.17v-2.34A3 3 0 0 1 7 5Zm3 3a1 1 0 1 0-2 0 1 1 0 0 0 2 0Zm9 0a1 1 0 1 0-2 0 1 1 0 0 0 2 0ZM8 17a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm9 1a1 1 0 1 0 2 0 1 1 0 0 0-2 0Zm-6.17-10A3 3 0 0 1 8 10.83v2.34A3 3 0 0 1 10.83 16h2.34A3 3 0 0 1 16 13.17v-2.34A3 3 0 0 1 15.17 8h-4.34Z"/></svg>',
+  action: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 7 4v6c0 4.7-3 8.9-7 10-4-1.1-7-5.3-7-10V6l7-4Zm0 2.3L7 7.1V12c0 3.5 2 6.6 5 7.7 3-1.1 5-4.2 5-7.7V7.1l-5-2.8Zm1 3.7v4h3l-5 5v-4H8l5-5Z"/></svg>',
+  source: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Zm9 0v4h4l-4-4ZM7 12h10v1.6H7V12Zm0 3h10v1.6H7V15Zm0 3h6v1.6H7V18Z"/></svg>',
+};
+
 function authToken() {
   try {
     return (window.__OS_AUTH__ && window.__OS_AUTH__.token && window.__OS_AUTH__.token()) || '';
@@ -33,7 +41,7 @@ async function manualJson(path) {
   const token = authToken();
   const headers = token ? { authorization: `Bearer ${token}` } : {};
   const res = await fetch(path, { headers, cache: 'no-store' });
-  if (!res.ok) throw new Error(`manual HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`Manual Registry HTTP ${res.status}`);
   return res.json();
 }
 
@@ -81,18 +89,14 @@ class ManualShellElement extends HTMLElement {
       if (target) await this.selectDocument(target, false);
       else this.setState({ selected: null });
     } catch (err) {
-      this.setState({ error: err instanceof Error ? err.message : String(err) });
+      this.setState({ error: err instanceof Error ? err.message : String(err), selected: null });
     } finally {
       this.setState({ loading: false });
     }
   }
 
   async search() {
-    updateQuery({
-      q: this.state.q.trim(),
-      source: this.state.source,
-      doc: '',
-    });
+    updateQuery({ q: this.state.q.trim(), source: this.state.source, doc: '' });
     this.setState({ doc: '' });
     await this.load();
   }
@@ -122,68 +126,131 @@ class ManualShellElement extends HTMLElement {
     return Number(value || 0).toFixed(2);
   }
 
+  cards() {
+    const documents = this.state.documents || [];
+    const sources = this.state.sources || [];
+    const selected = this.state.selected;
+    return [
+      {
+        icon: ICONS.docs,
+        title: 'Manual Documents',
+        meta: `${documents.length} documents`,
+        body: 'Authoritative guides, architecture notes, policies, and runbooks.',
+        accent: 'teal',
+      },
+      {
+        icon: ICONS.source,
+        title: 'Manual Sources',
+        meta: `${sources.length} sources`,
+        body: 'Constitution, architecture, product manual, implementation notes, and imported references.',
+        accent: 'ochre',
+      },
+      {
+        icon: ICONS.graph,
+        title: 'Concept Graph',
+        meta: selected ? (selected.item && selected.item.documentType) || 'reference' : 'OAA context',
+        body: 'OpenSphere-specific terms such as the 10 Perspectives are linked for OAA retrieval.',
+        accent: 'blue',
+      },
+      {
+        icon: ICONS.action,
+        title: 'Manual-backed Actions',
+        meta: selected ? `${(selected.actionBindings || []).length} actions` : 'guarded',
+        body: 'Executable operations stay tied to manual evidence, permission, confirmation, and audit.',
+        accent: 'plum',
+      },
+    ];
+  }
+
   render() {
     const s = this.state || {};
     this.innerHTML = `<style>
-      ${TAG}{display:block;height:100%;min-height:calc(100vh - 3rem);background:#f5f7fb;color:#182236}
+      ${TAG}{display:block;height:100%;min-height:calc(100vh - 3rem);background:#f5f4f2;color:#1d252d;font-family:var(--clr-font, "Oracle Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)}
       ${TAG} *{box-sizing:border-box}
-      .manual-shell{display:grid;grid-template-columns:18rem minmax(0,1fr);gap:1rem;height:calc(100vh - 3rem);min-height:38rem;padding:1rem;overflow:hidden}
-      .manual-side,.manual-main{min-width:0;border:1px solid #d8dee8;border-radius:8px;background:#fff;overflow:hidden}
-      .manual-side{padding:1rem;display:flex;flex-direction:column}
-      .manual-side-head,.manual-toolbar,.manual-doc-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
-      h1,h2,h3,h4,p{margin:0} h1{font-size:1.2rem} h2{margin-top:.15rem;font-size:1.45rem} h3{font-size:1rem} h4{font-size:.85rem}
-      button,input,select{font:inherit}.btn{border:1px solid #9bb6e6;background:#fff;color:#0f5ea8;border-radius:4px;padding:.28rem .55rem;cursor:pointer}.btn-primary{background:#4169e1;color:#fff;border-color:#4169e1}.btn:disabled{opacity:.55;cursor:not-allowed}
-      .manual-eyebrow{color:#63708a;font-size:.72rem;font-weight:700;text-transform:uppercase}.manual-search{display:grid;gap:.35rem;margin-top:1rem;font-size:.75rem;color:#4b5873}.manual-search input,.manual-search select{width:100%;border:1px solid #b9c4d6;border-radius:4px;padding:.45rem .5rem;background:#fff}
-      .manual-source-list{display:grid;gap:.45rem;margin-top:1rem;min-height:0;overflow:auto}.manual-source,.manual-doc,.manual-result{display:grid;gap:.25rem;width:100%;padding:.65rem .7rem;border:1px solid #e2e7f0;border-radius:6px;background:#fff;text-align:left;cursor:pointer}
-      .manual-source:hover,.manual-doc:hover,.manual-result:hover{border-color:#4c6fff;background:#f7f9ff}.manual-source.active,.manual-doc.active{border-color:#4c6fff;box-shadow:inset 3px 0 0 #4c6fff}
-      .manual-source span,.manual-doc strong,.manual-result strong{color:#172033;font-size:.78rem}.manual-source small,.manual-doc span,.manual-doc small,.manual-result span,.manual-result small{color:#69758f;font-size:.7rem;line-height:1.35}
-      .manual-main{padding:1rem;display:flex;flex-direction:column}.manual-alert{margin-top:1rem;border:1px solid #f0b4b4;background:#fff1f1;color:#8a1f1f;border-radius:6px;padding:.65rem .8rem;font-size:.78rem}.manual-results{margin-top:1rem}.manual-result-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem;margin-top:.6rem}
-      .manual-layout{display:grid;grid-template-columns:minmax(16rem,24rem) minmax(0,1fr);gap:1rem;margin-top:1rem;min-height:0;flex:1 1 auto}.manual-docs{min-width:0;overflow:auto;padding-right:.2rem}.manual-docs h3{display:flex;justify-content:space-between;margin-bottom:.55rem}.manual-docs h3 span{color:#63708a;font-weight:500}
-      .manual-doc-view{min-width:0;overflow:auto;border:1px solid #e2e7f0;border-radius:8px;background:#fbfcff}.manual-doc-head{padding:1rem;border-bottom:1px solid #e2e7f0;background:#fff}.manual-doc-head p{margin-top:.45rem;color:#596782;font-size:.78rem;line-height:1.5}
-      .manual-meta{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.35rem}.manual-meta span,.manual-tags span{border:1px solid #d8dee8;border-radius:999px;padding:.12rem .45rem;background:#fff;color:#4b5873;font-size:.65rem;white-space:nowrap}.manual-tags{display:flex;flex-wrap:wrap;gap:.35rem;padding:.75rem 1rem 0}
-      .manual-actions{margin:1rem;padding:.8rem;border:1px solid #c8d8ff;border-radius:6px;background:#f4f7ff}.manual-action{display:grid;gap:.2rem;margin-top:.55rem}.manual-action span{color:#596782;font-size:.72rem}.manual-body{display:grid;gap:.8rem;padding:1rem}.manual-chunk{display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.75rem;padding:.8rem;border:1px solid #e2e7f0;border-radius:6px;background:#fff}.manual-chunk-index{color:#63708a;font-size:.72rem;font-weight:700}.manual-chunk p{color:#243047;font-size:.82rem;line-height:1.55;white-space:pre-wrap}.manual-empty,.manual-placeholder{padding:1rem;color:#69758f;font-size:.78rem}
-      @media(max-width:1100px){.manual-shell,.manual-layout{grid-template-columns:1fr}.manual-result-grid{grid-template-columns:1fr}.manual-shell{height:auto;overflow:auto}}
+      ${TAG} svg{width:1.2rem;height:1.2rem;fill:currentColor;flex:0 0 auto}
+      .manual-page{height:calc(100vh - 3rem);overflow:auto;background:#f5f4f2}
+      .manual-top{background:#312d2a;color:#fff;border-bottom:1px solid rgba(255,255,255,.08)}
+      .manual-top-inner{max-width:92rem;margin:0 auto;height:3.25rem;display:flex;align-items:center;gap:1rem;padding:0 1.4rem}
+      .manual-mark{display:inline-flex;align-items:center;justify-content:center;width:2rem;height:2rem;border:2px solid #c74634;border-radius:999px;color:#f8d5a3;font-weight:800}
+      .manual-brand{font-weight:700;font-size:1rem}.manual-spacer{flex:1}.manual-status{font-size:.76rem;color:#d4ccc3}
+      .manual-hero{position:relative;min-height:17rem;background:#1f2740;color:#fff;overflow:hidden}
+      .manual-hero::before{content:"";position:absolute;right:18%;top:-3.5rem;width:34rem;height:24rem;background:#407e7d;clip-path:polygon(18% 0,100% 8%,82% 100%,0 82%);opacity:.9;z-index:0}
+      .manual-hero::after{content:"";position:absolute;right:-3.5rem;top:1rem;width:13rem;height:13rem;background:#c9914b;border-radius:999px;opacity:.95;z-index:0}
+      .manual-hero-inner{position:relative;z-index:1;max-width:74rem;margin:0 auto;padding:3.2rem 1.4rem 5.4rem;text-align:center}
+      .manual-hero h1{margin:0;color:#fff;font-size:2.05rem;line-height:1.1;font-weight:700;letter-spacing:0;text-shadow:0 1px 2px rgba(0,0,0,.25)}
+      .manual-hero .manual-hero-inner>p{margin:.75rem auto 0;max-width:42rem;color:#fff!important;font-size:.92rem;font-weight:600;line-height:1.55;text-shadow:0 2px 5px rgba(0,0,0,.42)}
+      .manual-searchbar{margin:1.65rem auto 0;max-width:54rem;height:3.1rem;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.75rem;padding:0 .75rem 0 1rem;background:#fff;border-radius:3px;box-shadow:0 .25rem .8rem rgba(0,0,0,.22);color:#1d252d}
+      .manual-searchbar input{width:100%;border:0;outline:0;font:inherit;font-size:.95rem;background:transparent;color:#1d252d}.manual-searchbar input::placeholder{color:#6d7378}
+      .manual-searchbar button,.manual-button{border:0;border-radius:3px;background:#312d2a;color:#fff;padding:.55rem .85rem;font-weight:700;font-size:.72rem;letter-spacing:.02em;cursor:pointer}.manual-searchbar button:disabled,.manual-button:disabled{opacity:.55;cursor:not-allowed}
+      .manual-main{max-width:92rem;margin:-3.8rem auto 0;padding:0 1.4rem 2rem;position:relative}
+      .manual-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(21rem,28rem);gap:1.2rem;align-items:start}
+      .manual-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
+      .manual-card,.manual-panel,.manual-doc-view,.manual-banner{background:#fff;border:1px solid #dedbd5;border-radius:4px;box-shadow:0 .12rem .45rem rgba(28,25,23,.1)}
+      .manual-card{min-height:10.2rem;padding:1.35rem 1.45rem;display:grid;grid-template-columns:auto minmax(0,1fr);gap:1rem;position:relative;overflow:hidden}
+      .manual-card::after{content:"";position:absolute;right:-2rem;top:-2rem;width:8rem;height:8rem;border-radius:999px;opacity:.12;background:#507a7b}
+      .manual-card.ochre::after{background:#c9914b}.manual-card.blue::after{background:#3a6ea5}.manual-card.plum::after{background:#7a4055}
+      .manual-card-icon{color:#312d2a;margin-top:.15rem}.manual-card h2{margin:0;font-size:1.08rem;line-height:1.25}.manual-card p{margin:.7rem 0 0;color:#424a50;font-size:.84rem;line-height:1.45}.manual-card small{display:block;margin-top:.4rem;color:#77706a;font-size:.72rem}
+      .manual-panel{padding:1.2rem}.manual-panel-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:.9rem}.manual-panel h2{margin:0;font-size:1.05rem}.manual-panel-count{color:#716b64;font-size:.85rem}
+      .manual-source-list,.manual-doc-list,.manual-result-list{display:grid;gap:.55rem;max-height:20rem;overflow:auto}
+      .manual-source,.manual-doc,.manual-result{width:100%;border:1px solid #e4e0da;background:#fff;border-radius:4px;padding:.72rem .82rem;text-align:left;cursor:pointer;display:grid;gap:.25rem}
+      .manual-source:hover,.manual-doc:hover,.manual-result:hover{border-color:#8c7b65;background:#fbfaf8}.manual-source.active,.manual-doc.active{border-color:#312d2a;box-shadow:inset .2rem 0 0 #c74634}
+      .manual-source strong,.manual-doc strong,.manual-result strong{font-size:.82rem;color:#1d252d}.manual-source span,.manual-doc span,.manual-result span{font-size:.74rem;line-height:1.35;color:#5f676e}.manual-source small,.manual-doc small,.manual-result small{font-size:.68rem;color:#7d756e}
+      .manual-content{margin-top:1.2rem;display:grid;grid-template-columns:minmax(18rem,24rem) minmax(0,1fr);gap:1.2rem;align-items:start}
+      .manual-doc-view{min-height:28rem;overflow:hidden}.manual-doc-head{padding:1.35rem 1.5rem;border-bottom:1px solid #e4e0da;background:#fff}.manual-eyebrow{color:#746b61;font-size:.72rem;font-weight:800;text-transform:uppercase}.manual-doc-head h2{margin:.25rem 0 0;font-size:1.45rem;line-height:1.18}.manual-doc-head p{margin:.6rem 0 0;color:#4d555c;font-size:.86rem;line-height:1.5}
+      .manual-meta{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.9rem}.manual-meta span,.manual-tags span{border:1px solid #dad5cd;border-radius:999px;padding:.16rem .5rem;background:#fff;color:#4c555c;font-size:.68rem;white-space:nowrap}
+      .manual-tags{display:flex;flex-wrap:wrap;gap:.35rem;padding:1rem 1.5rem 0}.manual-actions{margin:1rem 1.5rem;padding:.9rem;border-left:.22rem solid #c74634;background:#fff8f5}.manual-actions h3{margin:0;font-size:.92rem}.manual-action{display:grid;gap:.18rem;margin-top:.6rem}.manual-action strong{font-size:.8rem}.manual-action span{font-size:.72rem;color:#60686f}
+      .manual-body{display:grid;gap:.8rem;padding:1rem 1.5rem 1.5rem}.manual-chunk{display:grid;grid-template-columns:2.2rem minmax(0,1fr);gap:.75rem;padding:.85rem;border:1px solid #e4e0da;border-radius:4px;background:#fff}.manual-chunk-index{color:#746b61;font-size:.72rem;font-weight:800}.manual-chunk p{margin:0;color:#263038;font-size:.84rem;line-height:1.6;white-space:pre-wrap}
+      .manual-empty{padding:1rem;color:#6d7378;font-size:.82rem}.manual-banner{margin-top:1rem;padding:1rem 1.15rem;border-color:#f1d7ad;background:#fff3dc;color:#4f3b1e}.manual-banner strong{display:block;font-size:.9rem}.manual-banner span{display:block;margin-top:.35rem;font-size:.78rem;line-height:1.45}
+      @media(max-width:1100px){.manual-grid,.manual-content{grid-template-columns:1fr}.manual-card-grid{grid-template-columns:1fr}.manual-main{margin-top:-2.5rem}.manual-hero-inner{padding-bottom:4rem}}
     </style>
-    <section class="manual-shell">
-      <aside class="manual-side" aria-label="Manual navigation">
-        <div class="manual-side-head">
-          <h1>Manual</h1>
-          <button class="btn" data-action="reload" ${s.loading ? 'disabled' : ''}>Refresh</button>
+    <div class="manual-page">
+      <div class="manual-top"><div class="manual-top-inner"><span class="manual-mark">O</span><span class="manual-brand">OpenSphere Help Center</span><span class="manual-spacer"></span><span class="manual-status">Manual Registry</span></div></div>
+      <section class="manual-hero">
+        <div class="manual-hero-inner">
+          <h1>What can we help you find?</h1>
+          <p>Search OpenSphere manuals, architecture decisions, OAA knowledge, action bindings, and implementation runbooks from one place.</p>
+          <div class="manual-searchbar">
+            ${ICONS.search}
+            <input name="manual-q" value="${esc(s.q)}" placeholder="Search manuals, 10 Perspective, OAA Gateway, Backbone..." />
+            <button data-action="search" ${s.loading ? 'disabled' : ''}>Search</button>
+          </div>
         </div>
-        <label class="manual-search"><span>Search manuals</span><input name="manual-q" value="${esc(s.q)}" placeholder="10 perspective, OAA, Backbone..." /></label>
-        <label class="manual-search"><span>Source</span><select name="manual-source">
-          <option value="">All sources</option>
-          ${(s.sources || []).map((source) => `<option value="${esc(source.id)}" ${s.source === source.id ? 'selected' : ''}>${esc(source.name)} (${esc(source.documents)})</option>`).join('')}
-        </select></label>
-        <div class="manual-source-list">
-          ${(s.sources || []).map((source) => `<button class="manual-source ${s.source === source.id ? 'active' : ''}" data-source="${esc(source.id)}"><span>${esc(source.name)}</span><small>tier ${esc(source.authorityTier)} / ${esc(source.documents)} docs</small></button>`).join('') || '<div class="manual-empty">No manual sources.</div>'}
-        </div>
-      </aside>
+      </section>
       <main class="manual-main">
-        <div class="manual-toolbar"><div><div class="manual-eyebrow">OpenSphere Console Manual</div><h2>${esc((s.selected && s.selected.item && s.selected.item.title) || 'Manual Registry')}</h2></div><button class="btn btn-primary" data-action="search" ${s.loading ? 'disabled' : ''}>Search</button></div>
-        ${s.error ? `<div class="manual-alert" role="alert">${esc(s.error)}</div>` : ''}
-        ${(s.hits || []).length ? `<section class="manual-results" aria-label="Manual search results"><h3>Search Results</h3><div class="manual-result-grid">${s.hits.map((hit) => `<button class="manual-result" data-doc="${esc(hit.sourceId)}"><strong>${esc(hit.title)}</strong><span>${esc(hit.excerpt)}</span><small>${esc(hit.sourcePath || hit.sourceName || hit.sourceId)} / score ${this.score(hit.score)}</small></button>`).join('')}</div></section>` : ''}
-        <section class="manual-layout">
-          <nav class="manual-docs" aria-label="Manual documents"><h3>Documents <span>${esc((s.documents || []).length)}</span></h3>
-            ${(s.documents || []).map((doc) => `<button class="manual-doc ${(s.selected && s.selected.item && s.selected.item.sourceId === doc.sourceId) ? 'active' : ''}" data-doc="${esc(doc.sourceId)}"><strong>${esc(doc.title)}</strong><span>${esc(doc.sourcePath || doc.sourceId)}</span><small>tier ${this.tier(doc)} / ${esc(doc.chunkCount)} chunks</small></button>`).join('') || '<div class="manual-empty">No manual documents.</div>'}
+        <section class="manual-grid">
+          <div>
+            <div class="manual-card-grid">
+              ${this.cards().map((card) => `<article class="manual-card ${esc(card.accent)}"><div class="manual-card-icon">${card.icon}</div><div><h2>${esc(card.title)}</h2><small>${esc(card.meta)}</small><p>${esc(card.body)}</p></div></article>`).join('')}
+            </div>
+            ${s.error ? `<div class="manual-banner"><strong>Manual Registry is temporarily unavailable.</strong><span>${esc(s.error)}. The portal shell is ready; retry after the OAA manual API recovers.</span></div>` : ''}
+          </div>
+          <aside class="manual-panel">
+            <div class="manual-panel-head"><h2>Sources</h2><button class="manual-button" data-action="reload" ${s.loading ? 'disabled' : ''}>Refresh</button></div>
+            <div class="manual-source-list">
+              ${(s.sources || []).map((source) => `<button class="manual-source ${s.source === source.id ? 'active' : ''}" data-source="${esc(source.id)}"><strong>${esc(source.name)}</strong><span>${esc(source.type || 'manual source')}</span><small>tier ${esc(source.authorityTier)} / ${esc(source.documents)} docs</small></button>`).join('') || '<div class="manual-empty">No manual sources.</div>'}
+            </div>
+          </aside>
+        </section>
+        ${(s.hits || []).length ? `<section class="manual-panel" style="margin-top:1.2rem"><div class="manual-panel-head"><h2>Search Results</h2><span class="manual-panel-count">${esc(s.hits.length)}</span></div><div class="manual-result-list">${s.hits.map((hit) => `<button class="manual-result" data-doc="${esc(hit.sourceId)}"><strong>${esc(hit.title)}</strong><span>${esc(hit.excerpt)}</span><small>${esc(hit.sourcePath || hit.sourceName || hit.sourceId)} / score ${this.score(hit.score)}</small></button>`).join('')}</div></section>` : ''}
+        <section class="manual-content">
+          <nav class="manual-panel" aria-label="Manual documents">
+            <div class="manual-panel-head"><h2>Documents</h2><span class="manual-panel-count">${esc((s.documents || []).length)}</span></div>
+            <div class="manual-doc-list">
+              ${(s.documents || []).map((doc) => `<button class="manual-doc ${(s.selected && s.selected.item && s.selected.item.sourceId === doc.sourceId) ? 'active' : ''}" data-doc="${esc(doc.sourceId)}"><strong>${esc(doc.title)}</strong><span>${esc(doc.sourcePath || doc.sourceId)}</span><small>tier ${this.tier(doc)} / ${esc(doc.chunkCount)} chunks</small></button>`).join('') || '<div class="manual-empty">No manual documents.</div>'}
+            </div>
           </nav>
           ${this.renderDocument()}
         </section>
       </main>
-    </section>`;
+    </div>`;
 
     const input = this.querySelector('input[name="manual-q"]');
-    const select = this.querySelector('select[name="manual-source"]');
     if (input) {
       input.addEventListener('input', () => this.setState({ q: input.value }));
       input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') this.search();
       });
     }
-    if (select) select.addEventListener('change', () => {
-      this.setState({ source: select.value });
-      this.search();
-    });
     this.querySelectorAll('[data-action="reload"]').forEach((el) => el.addEventListener('click', () => this.load()));
     this.querySelectorAll('[data-action="search"]').forEach((el) => el.addEventListener('click', () => this.search()));
     this.querySelectorAll('[data-source]').forEach((el) => el.addEventListener('click', () => this.selectSource(el.getAttribute('data-source'))));
@@ -193,16 +260,18 @@ class ManualShellElement extends HTMLElement {
   renderDocument() {
     const detail = this.state && this.state.selected;
     if (!detail) {
-      return '<article class="manual-doc-view"><div class="manual-placeholder"><h3>Select a manual document</h3><p>Manual Registry is available to the console, top search, and OAA.</p></div></article>';
+      return '<article class="manual-doc-view"><div class="manual-doc-head"><div class="manual-eyebrow">OpenSphere Console Manual</div><h2>Select a manual document</h2><p>Manual Registry is available to the console, top search, and OAA. Use the search box above or choose a source when the registry is available.</p></div></article>';
     }
     const item = detail.item || {};
     return `<article class="manual-doc-view">
       <header class="manual-doc-head">
-        <div><div class="manual-eyebrow">${esc(item.sourceName || item.sourceId)}</div><h3>${esc(item.title)}</h3><p>${esc(item.summary)}</p></div>
+        <div class="manual-eyebrow">${esc(item.sourceName || item.sourceId)}</div>
+        <h2>${esc(item.title)}</h2>
+        <p>${esc(item.summary)}</p>
         <div class="manual-meta"><span>tier ${this.tier(item)}</span><span>${esc(item.documentType || 'reference')}</span><span>${esc(item.status || 'active')}</span></div>
       </header>
       <div class="manual-tags">${[...(item.tags || []), ...(item.perspective || [])].map((tag) => `<span>${esc(tag)}</span>`).join('')}</div>
-      ${(detail.actionBindings || []).length ? `<section class="manual-actions"><h4>Manual-backed actions</h4>${detail.actionBindings.map((a) => `<div class="manual-action"><strong>${esc(a.intent || a.id)}</strong><span>${esc(a.toolId)} / ${esc(a.riskLevel)} / ${esc(a.confirmation)}</span></div>`).join('')}</section>` : ''}
+      ${(detail.actionBindings || []).length ? `<section class="manual-actions"><h3>Manual-backed actions</h3>${detail.actionBindings.map((a) => `<div class="manual-action"><strong>${esc(a.intent || a.id)}</strong><span>${esc(a.toolId)} / ${esc(a.riskLevel)} / ${esc(a.confirmation)}</span></div>`).join('')}</section>` : ''}
       <section class="manual-body">${(detail.chunks || []).map((chunk) => `<div class="manual-chunk"><div class="manual-chunk-index">#${Number(chunk.chunkIndex || 0) + 1}</div><p>${esc(chunk.content)}</p></div>`).join('')}</section>
     </article>`;
   }

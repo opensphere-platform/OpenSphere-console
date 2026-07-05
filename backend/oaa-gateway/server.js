@@ -585,6 +585,8 @@ async function upsertKnowledgeDocument(doc, actor = null) {
     await pool.query(`
       INSERT INTO oaa_knowledge_chunks (id, document_id, chunk_index, content, embedding, metadata)
       VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb)
+      ON CONFLICT (document_id, chunk_index)
+      DO UPDATE SET content = EXCLUDED.content, embedding = EXCLUDED.embedding, metadata = EXCLUDED.metadata
     `, [randomUUID(), docId, i, chunk, emb, JSON.stringify({ title, namespace, sourceType, sourceId, embedding: embedding.source, ...metadata })]);
   }
   audit(actor, 'knowledge-upsert', `${namespace}/${sourceType}/${sourceId}`, 'ok', `${chunks.length} chunks / ${embeddingMode}`);
@@ -731,11 +733,24 @@ function manualDocFromRow(row) {
   };
 }
 
+let manualSeedReady = false;
+let manualSeedInflight = null;
+
 async function ensureManualRegistryReady() {
   await ensureKnowledgeSchema();
   const pool = getPgPool();
   if (!pool) throw { code: 503, msg: 'Backbone PostgreSQL is not configured for Manual Registry' };
-  await seedBundledManualKnowledgeIfEmpty();
+  if (!manualSeedReady) {
+    manualSeedInflight ||= seedBundledManualKnowledgeIfEmpty()
+      .then((out) => {
+        manualSeedReady = true;
+        return out;
+      })
+      .finally(() => {
+        manualSeedInflight = null;
+      });
+    await manualSeedInflight;
+  }
   return pool;
 }
 

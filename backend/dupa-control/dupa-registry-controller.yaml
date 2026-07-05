@@ -113,7 +113,7 @@ spec:
             # Kanidm id_token 발급자(iss) 검증값 — 도메인 운영 전환(auth.console.opensphere.dev) 반영.
             - { name: KANIDM_ISS, value: "https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
             # oaa-gateway 설치 이미지 ref(콘솔 backbone 설치 흐름) — 라이브 현행값.
-            - { name: OAA_GATEWAY_IMAGE, value: "localhost:5000/oaa-gateway:oaa-20260704-03" }
+            - { name: OAA_GATEWAY_IMAGE, value: "localhost:5000/oaa-gateway:oaa-manual-20260706-02" }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 2 }
           resources:

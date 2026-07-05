@@ -106,6 +106,8 @@ test('OAA-Gateway stores project knowledge in Backbone PostgreSQL pgvector', () 
   assert.match(gateway, /manualRelations/);
   assert.match(gateway, /seedBundledManualKnowledge/);
   assert.match(gateway, /seedBundledManualKnowledgeIfEmpty/);
+  assert.match(gateway, /manualSeedInflight/);
+  assert.match(gateway, /ON CONFLICT \(document_id, chunk_index\)/);
   assert.match(gateway, /bundled manuals up to date/);
   assert.match(gateway, /metadata->>'checksum'/);
   assert.match(gateway, /authorityTier/);
