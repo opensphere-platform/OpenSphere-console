@@ -247,6 +247,11 @@ function podLabels(pkg) {
 }
 function podEnv(pkg) {
   const env = [{ name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' }];
+  // 감사 시정 S2(2026-07-06): 콘솔 알림 발행(X-Shell-Token) 공급 라인 — 모든 plugin 워크로드에
+  // dupa-events-token Secret(controller 자신이 쓰는 것과 동일)을 주입. optional=true: Secret 미배포
+  // 환경에서도 pod는 뜨고, 발행측은 env 부재 시 헤더 생략 → controller가 401(fail-closed 유지).
+  // seen에 포함되므로 CR spec.env가 이 이름을 덮어쓸 수 없다(토큰 위장 차단).
+  env.push({ name: 'SHELL_SERVICE_TOKEN', valueFrom: { secretKeyRef: { name: 'dupa-events-token', key: 'SHELL_SERVICE_TOKEN', optional: true } } });
   const seen = new Set(env.map((item) => item.name));
   for (const item of pkg.spec?.env || []) {
     const name = String(item?.name || '');

@@ -137,8 +137,16 @@ spec:
               type: object
               x-kubernetes-preserve-unknown-fields: true
               properties:
-                phase: { type: string }       # Available/Verifying/Installing/Installed/Enabled/Disabled/Removed/Failed
-                reason: { type: string }       # DigestMismatch/IncompatibleShell/PermissionDenied/...
+                # 감사 시정 S5(2026-07-06): 스키마를 컨트롤러 실사용으로 축소(문서·스키마·코드 3자 일치).
+                # 구 주석의 Available/Verifying/Installed/Removed는 미사용 데드값이라 제거 —
+                # Uninstalled는 Registration CR 자체가 삭제되므로 상태로 남지 않는다.
+                phase:
+                  type: string
+                  enum: [Installing, Enabled, Disabled, Failed]
+                # reason: InvalidDigest(S1)/DigestMismatch/UntrustedKey/SignatureInvalid/SignatureUnreachable/
+                #   ManifestUnreachable/ShellCompatDrift/EntryDigestMismatch/EntryUnreachable/
+                #   WorkloadNotReady/PackageNotFound/InvalidPluginName (실패 시에만; 성공 상태는 빈 문자열)
+                reason: { type: string }
                 manifestUrl: { type: string }
                 lastTransitionTime: { type: string }
       additionalPrinterColumns:
