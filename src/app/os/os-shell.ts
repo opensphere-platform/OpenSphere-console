@@ -24,6 +24,7 @@ import { routeForPlugin } from '../core/perspectives';
 import { OsNavNode } from './os-nav-node';
 import { OsSearch } from './os-search';
 import { OsNotifications } from './os-notifications';
+import { OsOaaAgent } from './os-oaa-agent';
 
 interface NavItem {
   path: string;
@@ -50,6 +51,7 @@ interface NavBand {
     OsNavNode,
     OsSearch,
     OsNotifications,
+    OsOaaAgent,
     CarbonIcon,
     OsRawIcon,
   ],
@@ -68,6 +70,7 @@ interface NavBand {
         </div>
         <os-search />
         <div class="header-actions">
+          <os-oaa-agent />
           <os-notifications />
           <!-- 콘솔 관리는 1단 nav 하단 항목으로 이동(Model A). 헤더는 프로필 전용. -->
           <!-- ACC식 계정 영역: 아바타 → Account profile / Log out (프로필 전용) -->

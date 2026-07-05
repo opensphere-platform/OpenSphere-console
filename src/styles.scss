@@ -89,6 +89,72 @@
 html, body { height: 100%; margin: 0; background: var(--os-surface-1); font-family: var(--os-font) !important; }
 body { letter-spacing: 0.16px; color: var(--os-ink); }
 
+/* OAA Agent dock: Databricks-style right workspace, not an overlay. */
+body {
+  --oaa-dock-width: clamp(360px, 19vw, 430px);
+  --oaa-dock-gap: 8px;
+  --oaa-full-left: 0px;
+}
+html.oaa-agent-open,
+body.oaa-agent-open {
+  height: 100%;
+  overflow: hidden;
+}
+body.oaa-agent-resizing,
+body.oaa-agent-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+body.oaa-agent-open .main-container {
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden !important;
+}
+body .content-container {
+  transition: margin-right 0.16s ease;
+}
+body.oaa-agent-open .content-container {
+  margin-right: calc(var(--oaa-dock-width) + var(--oaa-dock-gap));
+  height: calc(100vh - 3rem);
+  max-height: calc(100vh - 3rem);
+  box-sizing: border-box;
+  border-top: 1px solid #d9dde7;
+  border-right: 1px solid #d9dde7;
+  border-top-right-radius: 8px;
+  overflow: hidden !important;
+  scrollbar-width: none;
+  overscroll-behavior: none;
+}
+body.oaa-agent-open .main-container::-webkit-scrollbar,
+body.oaa-agent-open .content-container::-webkit-scrollbar,
+body.oaa-agent-open .content-area::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+body.oaa-agent-open .content-area {
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden !important;
+  scrollbar-width: none;
+  overscroll-behavior: none;
+}
+body.oaa-agent-full .content-container {
+  margin-right: 0;
+  border-top: 0;
+  border-right: 0;
+  border-top-right-radius: 0;
+}
+@media (max-width: 900px) {
+  body {
+    --oaa-dock-width: min(360px, 72vw);
+    --oaa-dock-gap: 4px;
+  }
+  body.oaa-agent-open .content-container {
+    margin-right: calc(var(--oaa-dock-width) + var(--oaa-dock-gap));
+  }
+}
+
 /* IBM Plex 단일화 — Clarity 기본 Metropolis 전면 덮기(한·영 모두 IBM Plex). 아이콘은 SVG라 영향 없음. */
 body * { font-family: var(--os-font) !important; }
 body code, body kbd, body pre, body samp, .os-mono { font-family: var(--os-font-mono) !important; }

@@ -67,7 +67,11 @@ const LOGOS: Record<string, string> = {
   imports: [ClarityModule, OsPanel, CodeEditorComponent, CarbonIcon],
   template: `
     <os-panel [open]="true" [title]="row.name" [subtitle]="row.kind + ' · ' + row.role + ' · ns ' + namespace()" [logoSrc]="logoSrc()" (closed)="close()">
-      @if (err(); as e) {
+      @if (authExpired()) {
+        <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+          <clr-alert-item><span class="alert-text">세션이 만료됐습니다(15분) — 다시 로그인해주세요. <a (click)="reAuth()">다시 로그인 →</a></span></clr-alert-item>
+        </clr-alert>
+      } @else if (err(); as e) {
         <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">{{ e }}</span></clr-alert-item></clr-alert>
       }
       @if (loading()) { <p class="os-sub">불러오는 중…</p> }
@@ -449,7 +453,7 @@ export class BackboneSlice implements OnChanges {
   ngOnChanges(): void { this.reload(); }
 
   async reload(): Promise<void> {
-    this.loading.set(true); this.err.set(''); this.loadedContents = false;
+    this.loading.set(true); this.err.set(''); this.authExpired.set(false); this.loadedContents = false;
     this.detail.set(null); this.raw.set(null); this.pg.set(null);
     this.rows.set(null); this.rowsTitle.set(''); this.rowsErr.set('');
     this.giteaResp.set(null); this.giteaRepo.set(null); this.giteaTreeRoots.set([]); this.giteaFile.set(null); this.giteaTreeHint.set('');
@@ -459,6 +463,7 @@ export class BackboneSlice implements OnChanges {
         fetch('/api/admin/backbone/detail?component=' + k, this.authGet()),
         fetch('/api/admin/backbone/yaml?component=' + k, this.authGet()),
       ]);
+      if (this.checkExpired(dr.status)) return;
       if (dr.status === 401 || dr.status === 403) { this.err.set('관리자 권한이 필요합니다 (opensphere-console-admins).'); return; }
       if (!dr.ok) { this.err.set(`상세 조회 실패 (HTTP ${dr.status})`); return; }
       this.detail.set(await dr.json());
@@ -467,12 +472,25 @@ export class BackboneSlice implements OnChanges {
 
   }
 
+  /** id_token 만료(15분, refresh_token/iframe 갱신 모두 불가 — Kanidm 제약) 감지 → 재로그인 안내.
+   *  실제 권한 부족(403) 케이스와 구분해, 만료일 때만 이 배너를 띄운다. */
+  readonly authExpired = signal(false);
+  private checkExpired(status: number): boolean {
+    if (status === 401 && this.auth.isTokenExpired()) { this.authExpired.set(true); return true; }
+    return false;
+  }
+  reAuth(): void { void this.auth.reAuthenticate(); }
+
   /** Contents 탭 진입 시 지연 로드(PostgreSQL pg / Gitea repos). 1회만. */
   async loadContents(): Promise<void> {
     if (this.loadedContents) return;
     this.loadedContents = true;
     if (this.row.key === 'postgres') {
-      try { const r = await fetch('/api/admin/backbone/pg', this.authGet()); if (r.ok) { this.pg.set(await r.json()); if (!this.fnDb()) this.fnDb.set(this.pg()?.databases?.[0]?.database || ''); } } catch { /* pg 실패 무시 */ }
+      try {
+        const r = await fetch('/api/admin/backbone/pg', this.authGet());
+        if (this.checkExpired(r.status)) return;
+        if (r.ok) { this.pg.set(await r.json()); if (!this.fnDb()) this.fnDb.set(this.pg()?.databases?.[0]?.database || ''); }
+      } catch { /* pg 실패 무시 */ }
     } else if (this.row.key === 'gitea') {
       await this.loadGitea();
     }
@@ -482,6 +500,7 @@ export class BackboneSlice implements OnChanges {
   private async loadGitea(): Promise<void> {
     try {
       const r = await fetch('/api/admin/backbone/gitea', this.authGet());
+      if (this.checkExpired(r.status)) return;
       if (!r.ok) return;
       const g: GiteaResp = await r.json();
       this.giteaResp.set(g);
@@ -493,6 +512,7 @@ export class BackboneSlice implements OnChanges {
     const q = `owner=${encodeURIComponent(repo.owner)}&repo=${encodeURIComponent(repo.name)}&ref=${encodeURIComponent(repo.branch)}`;
     try {
       const r = await fetch('/api/admin/backbone/gitea/tree?' + q, this.authGet());
+      if (this.checkExpired(r.status)) return;
       if (!r.ok) return;
       const t = await r.json();
       this.giteaTreeRoots.set(this.buildTree(t.tree || []));
@@ -505,6 +525,7 @@ export class BackboneSlice implements OnChanges {
     const q = `owner=${encodeURIComponent(repo.owner)}&repo=${encodeURIComponent(repo.name)}&ref=${encodeURIComponent(repo.branch)}&path=${encodeURIComponent(path)}`;
     try {
       const r = await fetch('/api/admin/backbone/gitea/file?' + q, this.authGet());
+      if (this.checkExpired(r.status)) { this.giteaFile.set(null); return; }
       if (!r.ok) { this.giteaFile.set({ name: path, path, content: `조회 실패 (HTTP ${r.status})`, lang: 'text' }); return; }
       const f = await r.json();
       this.giteaFile.set({ name: f.name || path, path, content: f.content || '', lang: this.fileLang(path) });
@@ -596,6 +617,7 @@ export class BackboneSlice implements OnChanges {
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: JSON.stringify({ database, schema: this.fnSchema() || 'public', name: this.fnName(), args: this.fnArgs(), returns: this.fnReturns(), language: this.fnLang(), body: this.fnBody(), replace: this.fnReplace() }),
       });
+      if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) { this.fnMsg.set({ type: 'danger', text: '관리자 권한이 필요합니다.' }); return; }
       const j = await r.json().catch(() => ({} as { error?: string }));
       if (!r.ok) { this.fnMsg.set({ type: 'danger', text: j.error || `생성 실패 (HTTP ${r.status})` }); return; }
@@ -613,6 +635,7 @@ export class BackboneSlice implements OnChanges {
     try {
       const q = `database=${enc(database)}&schema=${enc(fn.schema)}&name=${enc(fn.name)}&args=${enc(fn.args)}`;
       const r = await fetch('/api/admin/backbone/pg/function/source?' + q, this.authGet());
+      if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) { this.fnMsg.set({ type: 'danger', text: '관리자 권한이 필요합니다.' }); return; }
       const s = await r.json().catch(() => ({} as { args?: string; returns?: string; language?: string; body?: string; error?: string }));
       if (!r.ok) { this.fnMsg.set({ type: 'danger', text: s.error || `소스 조회 실패 (HTTP ${r.status})` }); return; }
@@ -633,6 +656,7 @@ export class BackboneSlice implements OnChanges {
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: JSON.stringify({ database, schema: fn.schema, name: fn.name, args: fn.args }),
       });
+      if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) { this.fnMsg.set({ type: 'danger', text: '관리자 권한이 필요합니다.' }); return; }
       const j = await r.json().catch(() => ({} as { error?: string }));
       if (!r.ok) { this.fnMsg.set({ type: 'danger', text: j.error || `삭제 실패 (HTTP ${r.status})` }); return; }
@@ -663,6 +687,7 @@ export class BackboneSlice implements OnChanges {
     const q = `database=${encodeURIComponent(database)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}`;
     try {
       const r = await fetch('/api/admin/backbone/pg/rows?' + q, this.authGet());
+      if (this.checkExpired(r.status)) return;
       if (!r.ok) { this.rowsErr.set(`조회 실패 (HTTP ${r.status})`); return; }
       this.rows.set(await r.json());
     } catch (e) { this.rowsErr.set('조회 실패: ' + e); }

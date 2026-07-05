@@ -259,7 +259,9 @@ function podEnv(pkg) {
 function deploymentManifest(pkg) {
   const name = pkg.metadata.name;
   const _d = pkg.spec.image.digest || '';
-  const img = _d.startsWith('sha256:') ? `${pkg.spec.image.repository}@${_d}` : `${pkg.spec.image.repository}:${_d || 'latest'}`;
+  // 감사 시정 S1(2026-07-06): 태그 fallback 제거 — digest는 reconcile에서 sha256: 강제 검증됨(InvalidDigest).
+  // 불변 이미지 보증: 항상 repo@sha256 형태로만 조립(태그·latest 금지, CRD pattern과 이중 방어).
+  const img = `${pkg.spec.image.repository}@${_d}`;
   const serviceAccountName = typeof pkg.spec.serviceAccountName === 'string' && /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(pkg.spec.serviceAccountName)
     ? pkg.spec.serviceAccountName
     : undefined;
@@ -393,6 +395,13 @@ async function reconcile() {
         continue;
       }
       // Enabled
+      // 감사 시정 S1(2026-07-06): 이미지 불변성 강제 — spec.image.digest는 sha256: 필수.
+      // 태그/빈 값이면 워크로드 생성 전에 Failed/InvalidDigest로 거부(fail-closed). CRD pattern과 이중 방어
+      // (pattern은 신규 write만 막고, 기존 저장된 CR은 여기서 걸러진다).
+      if (!String(pkg.spec.image?.digest || '').startsWith('sha256:')) {
+        await setStatus(name, { phase: 'Failed', reason: 'InvalidDigest' });
+        continue;
+      }
       await setStatus(name, { phase: 'Installing', reason: '' });
       await applyWorkload(pkg);
       // ready 대기 (짧게)
@@ -485,23 +494,31 @@ const BACKBONE_NS = process.env.BACKBONE_NS || 'opensphere-backbone';
 const BB_LABELS = { 'opensphere.io/part-of': 'opensphere-backbone' };
 // Gitea Git 코드 뷰 — in-cluster HTTP. 공개 레포는 익명 read 가능(토큰 불요). 쓰기/비공개는 토큰 필요(다음 차수).
 const GITEA_URL = process.env.GITEA_URL || `http://backbone-gitea.${BACKBONE_NS}.svc.cluster.local:3000`;
+const OAA_GATEWAY_IMAGE = process.env.OAA_GATEWAY_IMAGE || 'ghcr.io/opensphere-platform/oaa-gateway:0.1.0';
 const BB_COMPONENTS = [
   { key: 'postgres', name: 'PostgreSQL', role: '앱 DB(감사로그·설정) + Gitea DB', kind: 'Deployment', workload: 'backbone-postgres' },
   { key: 'rustfs', name: 'RustFS', role: 'S3 오브젝트 스토리지', kind: 'StatefulSet', workload: 'backbone-rustfs' },
   { key: 'gitea', name: 'Gitea', role: '설정 GitOps(config-as-code)', kind: 'Deployment', workload: 'backbone-gitea' },
+  { key: 'oaa-gateway', name: 'OAA-Gateway', role: 'LLM key custody + OpenSphere AI Agent gateway', kind: 'Deployment', workload: 'oaa-gateway' },
 ];
 // 컴포넌트별 접근(접근 탭) 메타 — 자격 Secret명·프로토콜·연결 힌트. Secret '값'은 절대 노출 안 함(키 이름만 마스킹 반환).
 const BB_ACCESS = {
   postgres: { secret: 'backbone-postgres', proto: 'TCP(libpq) · 5432', connect: 'psql -h backbone-postgres.opensphere-backbone.svc.cluster.local -U console -d console', note: 'console DB(감사로그·설정) + gitea DB. 비번 = Secret backbone-postgres/password.' },
   rustfs: { secret: 'backbone-rustfs', proto: 'HTTP(S3) · 9000 / 콘솔 9001', connect: 'S3 endpoint: backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 (forcePathStyle=true, region=us-east-1)', note: 'access_key/secret_key = Secret backbone-rustfs.' },
   gitea: { secret: 'backbone-postgres', proto: 'HTTP · 3000', connect: 'http://backbone-gitea.opensphere-backbone.svc.cluster.local:3000/', note: 'DB는 backbone-postgres 공유. Gitea 관리자 토큰 Secret은 아직 미프로비저닝(reconciler 단계).' },
+  'oaa-gateway': { secret: '', proto: 'HTTP · 8080', connect: 'http://oaa-gateway.opensphere-backbone.svc.cluster.local:8080/api/oaa/health', note: 'Stateless OAA tier. LLM API keys are stored as labeled Kubernetes Secrets and never returned to the browser.' },
 };
 function bbSecret(name, data) { return { apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: BACKBONE_NS, labels: BB_LABELS }, type: 'Opaque', stringData: data }; }
 function bbPath(o) {
+  const ns = (o.metadata && o.metadata.namespace) || BACKBONE_NS;
   if (o.kind === 'Deployment') return `/apis/apps/v1/namespaces/${BACKBONE_NS}/deployments`;
   if (o.kind === 'StatefulSet') return `/apis/apps/v1/namespaces/${BACKBONE_NS}/statefulsets`;
-  const core = { Service: 'services', PersistentVolumeClaim: 'persistentvolumeclaims', ConfigMap: 'configmaps', Secret: 'secrets' }[o.kind];
-  return `/api/v1/namespaces/${BACKBONE_NS}/${core}`;
+  if (o.kind === 'Role') return `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/roles`;
+  if (o.kind === 'RoleBinding') return `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings`;
+  if (o.kind === 'ClusterRole') return '/apis/rbac.authorization.k8s.io/v1/clusterroles';
+  if (o.kind === 'ClusterRoleBinding') return '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings';
+  const core = { Service: 'services', ServiceAccount: 'serviceaccounts', PersistentVolumeClaim: 'persistentvolumeclaims', ConfigMap: 'configmaps', Secret: 'secrets' }[o.kind];
+  return `/api/v1/namespaces/${ns}/${core}`;
 }
 async function bbApply(o) { const r = await k8s('POST', bbPath(o), o); if (r.ok || r.status === 409) return; throw new Error(`apply ${o.kind}/${o.metadata && o.metadata.name} HTTP ${r.status}`); }
 function bbWorkloads() {
@@ -567,6 +584,55 @@ function bbWorkloads() {
         volumeMounts: [{ name: 'data', mountPath: '/data' }] }], volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'backbone-gitea-data' } }] } },
     } },
     { apiVersion: 'v1', kind: 'Service', metadata: { name: 'backbone-gitea', namespace: BACKBONE_NS, labels: lab('backbone-gitea') }, spec: { selector: { app: 'backbone-gitea' }, ports: [{ name: 'http', port: 3000, targetPort: 3000 }] } },
+    { apiVersion: 'v1', kind: 'ServiceAccount', metadata: { name: 'oaa-gateway', namespace: BACKBONE_NS, labels: lab('oaa-gateway') } },
+    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', metadata: { name: 'oaa-gateway-llm-key-manager', namespace: BACKBONE_NS, labels: lab('oaa-gateway') }, rules: [
+      { apiGroups: [''], resources: ['secrets'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
+      { apiGroups: [''], resources: ['pods', 'pods/log', 'services', 'events'], verbs: ['get', 'list'] },
+      { apiGroups: ['apps'], resources: ['deployments', 'statefulsets', 'daemonsets', 'replicasets'], verbs: ['get', 'list'] },
+    ] },
+    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding', metadata: { name: 'oaa-gateway-llm-key-manager', namespace: BACKBONE_NS, labels: lab('oaa-gateway') }, roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'Role', name: 'oaa-gateway-llm-key-manager' }, subjects: [
+      { kind: 'ServiceAccount', name: 'oaa-gateway', namespace: BACKBONE_NS },
+    ] },
+    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', metadata: { name: 'oaa-gateway-environment-reader', labels: lab('oaa-gateway') }, rules: [
+      { apiGroups: [''], resources: ['pods', 'pods/log', 'services', 'events'], verbs: ['get', 'list'] },
+      { apiGroups: ['apps'], resources: ['deployments', 'statefulsets', 'daemonsets', 'replicasets'], verbs: ['get', 'list'] },
+    ] },
+    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding', metadata: { name: 'oaa-gateway-environment-reader', labels: lab('oaa-gateway') }, roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'oaa-gateway-environment-reader' }, subjects: [
+      { kind: 'ServiceAccount', name: 'oaa-gateway', namespace: BACKBONE_NS },
+    ] },
+    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', metadata: { name: 'oaa-gateway-controlled-operator', labels: lab('oaa-gateway') }, rules: [
+      { apiGroups: ['apps'], resources: ['deployments'], verbs: ['get', 'list', 'patch'] },
+    ] },
+    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding', metadata: { name: 'oaa-gateway-controlled-operator', labels: lab('oaa-gateway') }, roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'oaa-gateway-controlled-operator' }, subjects: [
+      { kind: 'ServiceAccount', name: 'oaa-gateway', namespace: BACKBONE_NS },
+    ] },
+    { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'oaa-gateway', namespace: BACKBONE_NS, labels: lab('oaa-gateway') }, spec: {
+      replicas: 1, selector: { matchLabels: { app: 'oaa-gateway' } },
+      template: { metadata: { labels: { app: 'oaa-gateway' } }, spec: { serviceAccountName: 'oaa-gateway', containers: [{
+        name: 'gateway', image: OAA_GATEWAY_IMAGE, imagePullPolicy: 'IfNotPresent',
+        env: [
+          { name: 'BACKBONE_NS', value: BACKBONE_NS },
+          { name: 'KANIDM_ISSUERS', value: process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console,https://localhost:8444/oauth2/openid/opensphere-console' },
+          { name: 'KANIDM_JWKS_URL', value: process.env.KANIDM_JWKS_URL || 'https://kanidm-core.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk' },
+          { name: 'KANIDM_TLS_SERVERNAME', value: process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc' },
+          { name: 'KANIDM_CA_PATH', value: process.env.KANIDM_CA_PATH || '/app/kanidm-ca.crt' },
+          { name: 'KANIDM_AZP', value: process.env.KANIDM_AZP || 'opensphere-console' },
+          { name: 'KANIDM_ADMIN_GROUP', value: process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins' },
+          { name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' },
+          { name: 'BACKBONE_PG_HOST', value: `backbone-postgres.${BACKBONE_NS}.svc.cluster.local` },
+          { name: 'BACKBONE_PG_PORT', value: '5432' },
+          { name: 'BACKBONE_PG_DB', value: 'console' },
+          { name: 'BACKBONE_PG_USER', value: 'console' },
+          { name: 'BACKBONE_PG_PASSWORD', valueFrom: { secretKeyRef: { name: 'backbone-postgres', key: 'password' } } },
+          { name: 'OAA_EMBED_DIM', value: '384' },
+          { name: 'OAA_RAG_TOP_K', value: '5' },
+        ],
+        ports: [{ name: 'http', containerPort: 8080 }],
+        readinessProbe: { httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 },
+        resources: { requests: { cpu: '25m', memory: '48Mi' }, limits: { cpu: '300m', memory: '192Mi' } },
+      }] } },
+    } },
+    { apiVersion: 'v1', kind: 'Service', metadata: { name: 'oaa-gateway', namespace: BACKBONE_NS, labels: lab('oaa-gateway') }, spec: { selector: { app: 'oaa-gateway' }, ports: [{ name: 'http', port: 8080, targetPort: 8080 }] } },
   ];
 }
 async function backboneStatus() {
@@ -661,6 +727,21 @@ async function backboneDetail(key) {
   }
   const access = { secret: acc.secret || '', secretKeys, secretReadable, proto: acc.proto || '', connect: acc.connect || '', note: acc.note || '' };
   return { component: { key: c.key, name: c.name, role: c.role, kind: c.kind }, namespace: BACKBONE_NS, meta, workload, service, pvcs, pods, events, log, access };
+}
+// 네임스페이스 전체 이벤트(설치 진행 로그 피드용) — backboneDetail보다 가벼움(pod/PVC/시크릿 조회 없음).
+async function backboneEvents() {
+  const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/events?limit=50`);
+  const items = (r.json && r.json.items) || [];
+  return {
+    items: items
+      .map((x) => ({
+        uid: x.metadata && x.metadata.uid, type: x.type || '', reason: x.reason || '',
+        message: (x.message || '').slice(0, 240),
+        object: x.involvedObject ? `${x.involvedObject.kind}/${x.involvedObject.name}` : '',
+        time: x.lastTimestamp || x.eventTime || x.firstTimestamp || '',
+      }))
+      .sort((a, b) => String(a.time).localeCompare(String(b.time))),
+  };
 }
 // K8s 설정(데이터 탭의 'K8s YAML') — raw 워크로드/서비스/PVC 객체(managedFields 제거). 프런트가 js-yaml로 렌더. 읽기 전용.
 async function backboneYaml(key) {
@@ -886,6 +967,7 @@ function obsTargets() {
     { key: 'backbone-postgres', name: 'Backbone PostgreSQL', app: 'backbone-postgres', ns: BACKBONE_NS },
     { key: 'backbone-rustfs', name: 'Backbone RustFS', app: 'backbone-rustfs', ns: BACKBONE_NS, gap: 'rustfs beta — Prometheus endpoint 미제공(upstream 대기)' },
     { key: 'backbone-gitea', name: 'Backbone Gitea', app: 'backbone-gitea', ns: BACKBONE_NS },
+    { key: 'oaa-gateway', name: 'OAA-Gateway', app: 'oaa-gateway', ns: BACKBONE_NS },
   ];
 }
 // monitoring ns에서 이름 정규식 + 포트로 Service 탐색 → DNS:port. kps prometheus svc는 app.kubernetes.io/name 라벨이
@@ -1025,6 +1107,7 @@ const server = http.createServer(async (req, res) => {
       const y = await backboneYaml(url.searchParams.get('component') || '');
       return y ? json(res, 200, y) : json(res, 404, { error: 'unknown component', opId });
     }
+    if (p === '/api/admin/backbone/events' && req.method === 'GET') return json(res, 200, await backboneEvents());
     if (p === '/api/admin/backbone/pg' && req.method === 'GET') {
       // 데이터 탭 — PostgreSQL DATABASE→TABLE→COLUMN 트리 + 최근 audit_log. 미연결이면 enabled=false.
       if (!db.isEnabled()) return json(res, 200, { enabled: false, databases: [], audit: [] });

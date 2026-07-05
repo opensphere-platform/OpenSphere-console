@@ -39,6 +39,12 @@ export class AuthService {
   /** 토큰 만료(epoch sec) */
   readonly tokenExp = signal<number>(0);
 
+  /** id_token이 만료됐는가 — Kanidm은 refresh_token 미지원(grant_types_supported=authorization_code만) +
+   *  iframe 무음 갱신도 CSP(frame-ancestors 'none')로 차단돼 있어, 남는 방법은 감지 후 재로그인 유도뿐이다. */
+  isTokenExpired(): boolean {
+    return this.tokenExp() > 0 && Math.floor(Date.now() / 1000) >= this.tokenExp();
+  }
+
   /** 플러그인 백엔드에 넘기는 토큰(=id_token, groups 포함; Kanidm access_token엔 groups 없음) */
   private idToken = '';
   /** 콘솔 컴포넌트가 BFF(/bff/roles 등) 호출 시 쓰는 현재 id_token */
@@ -73,6 +79,16 @@ export class AuthService {
       return;
     }
     // ③ 미인증 → 로그인 리다이렉트(여기서 페이지 이탈; 아래 Promise는 미해결로 유지)
+    await this.redirectToLogin();
+  }
+
+  /** id_token 만료 후 재로그인 유도 — Kanidm SSO 세션 쿠키가 살아있으면 자격 재입력 없이 빠르게 통과한다.
+   *  현재 화면으로 돌아오도록 returnUrl을 실어 보낸다(전체 리다이렉트라 페이지 이탈이 발생한다). */
+  async reAuthenticate(): Promise<void> {
+    await this.redirectToLogin();
+  }
+
+  private async redirectToLogin(): Promise<void> {
     const returnUrl = this.currentReturnUrl();
     try {
       window.sessionStorage.setItem(this.returnUrlKey, returnUrl);

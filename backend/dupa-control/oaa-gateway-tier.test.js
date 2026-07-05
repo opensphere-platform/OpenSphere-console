@@ -1,0 +1,261 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const root = path.resolve(__dirname, '..', '..');
+const controller = fs.readFileSync(path.join(root, 'backend', 'dupa-control', 'controller.js'), 'utf8');
+const rbac = fs.readFileSync(path.join(root, 'backend', 'dupa-control', 'dupa-registry-controller.yaml'), 'utf8');
+const nginx = fs.readFileSync(path.join(root, 'nginx', 'default.conf.template'), 'utf8');
+const gateway = fs.readFileSync(path.join(root, 'backend', 'oaa-gateway', 'server.js'), 'utf8');
+const adminBackbone = fs.readFileSync(path.join(root, 'src', 'app', 'pages', 'admin-backbone.ts'), 'utf8');
+const oaaAgent = fs.readFileSync(path.join(root, 'src', 'app', 'os', 'os-oaa-agent.ts'), 'utf8');
+const manualSeed = JSON.parse(fs.readFileSync(path.join(root, 'backend', 'oaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'), 'utf8'));
+
+test('CBSS declares OAA-Gateway as a Backbone component', () => {
+  assert.match(controller, /key:\s*'oaa-gateway'/);
+  assert.match(controller, /const OAA_GATEWAY_IMAGE = process\.env\.OAA_GATEWAY_IMAGE/);
+  assert.match(controller, /metadata:\s*\{\s*name:\s*'oaa-gateway'/);
+  assert.match(controller, /serviceAccountName:\s*'oaa-gateway'/);
+  assert.match(controller, /http:\/\/oaa-gateway\.opensphere-backbone\.svc\.cluster\.local:8080\/api\/oaa\/health/);
+  assert.match(controller, /kanidm-core\.opensphere-console-auth\.svc:8443/);
+  assert.match(controller, /KANIDM_TLS_SERVERNAME/);
+  assert.match(controller, /BACKBONE_PG_HOST/);
+  assert.match(controller, /BACKBONE_PG_PASSWORD/);
+  assert.match(controller, /OAA_EMBED_DIM/);
+  assert.match(controller, /oaa-gateway-environment-reader/);
+  assert.match(controller, /oaa-gateway-controlled-operator/);
+  assert.match(controller, /kind:\s*'ClusterRole'/);
+});
+
+test('OAA-Gateway has least-scope Secret management RBAC', () => {
+  assert.match(controller, /kind:\s*'Role'/);
+  assert.match(controller, /name:\s*'oaa-gateway-llm-key-manager'/);
+  assert.match(controller, /resources:\s*\['secrets'\]/);
+  assert.match(rbac, /resources:\s*\[secrets, services, serviceaccounts/);
+  assert.match(rbac, /apiGroups:\s*\["rbac\.authorization\.k8s\.io"\], resources:\s*\[roles, rolebindings\]/);
+});
+
+test('nginx exposes OAA-Gateway through same-origin /api/oaa', () => {
+  assert.match(nginx, /location \/api\/oaa\//);
+  assert.match(nginx, /set \$oaa_gateway_upstream oaa-gateway\.opensphere-backbone\.svc\.cluster\.local/);
+  assert.match(nginx, /proxy_pass http:\/\/\$oaa_gateway_upstream:8080\$request_uri/);
+});
+
+test('OAA-Gateway never returns raw LLM key material in list metadata', () => {
+  assert.match(gateway, /function keyMetaFromSecret/);
+  assert.match(gateway, /stringData:\s*\{\s*api_key:\s*b\.apiKey\s*\}/);
+  assert.doesNotMatch(gateway, /apiKey:\s*b\.apiKey/);
+  assert.doesNotMatch(gateway, /api_key:\s*b64d/);
+});
+
+test('OAA-Gateway exposes authenticated chat without exposing key material', () => {
+  assert.match(gateway, /url\.pathname === '\/api\/oaa\/chat'/);
+  assert.match(gateway, /await verifyAuthed\(req\)/);
+  assert.match(gateway, /chatCompletion\(body, actor\)/);
+  assert.match(gateway, /thinking = \{ type: 'disabled' \}/);
+  assert.match(gateway, /sources:\s*sources\.map/);
+  assert.match(gateway, /knowledgeSystemMessage\(sources\)/);
+  assert.match(gateway, /conceptGraphSystemMessage\(conceptGraph\)/);
+  assert.match(gateway, /concepts:\s*conceptGraph/);
+  assert.match(gateway, /OpenSphere Concept Graph Context/);
+  assert.match(gateway, /suggestActionBindings/);
+  assert.match(gateway, /actionSuggestionsSystemMessage\(suggestedActions\)/);
+  assert.match(gateway, /suggestedActions/);
+  assert.match(gateway, /OAA Suggested Action Bindings/);
+});
+
+test('OAA-Gateway stores project knowledge in Backbone PostgreSQL pgvector', () => {
+  assert.match(gateway, /require\('pg'\)/);
+  assert.match(gateway, /CREATE EXTENSION IF NOT EXISTS vector/);
+  assert.match(gateway, /oaa_knowledge_documents/);
+  assert.match(gateway, /oaa_knowledge_chunks/);
+  assert.match(gateway, /oaa_manual_concepts/);
+  assert.match(gateway, /oaa_manual_relations/);
+  assert.match(gateway, /oaa_tool_capabilities/);
+  assert.match(gateway, /oaa_manual_action_bindings/);
+  assert.match(gateway, /manual-concept\.opensphere\.io\/v1alpha1/);
+  assert.match(gateway, /manual-relation\.opensphere\.io\/v1alpha1/);
+  assert.match(gateway, /manual-concept-graph\.opensphere\.io\/v1alpha1/);
+  assert.match(gateway, /upsertManualConcepts/);
+  assert.match(gateway, /upsertManualRelations/);
+  assert.match(gateway, /listManualConceptGraph/);
+  assert.match(gateway, /embedding vector\(\$\{OAA_EMBED_DIM\}\)/);
+  assert.match(gateway, /\/api\/oaa\/admin\/knowledge\/seed/);
+  assert.match(gateway, /\/api\/oaa\/admin\/knowledge\/manual-seed/);
+  assert.match(gateway, /\/api\/oaa\/admin\/knowledge\/manual-seed\/bundled/);
+  assert.match(gateway, /\/api\/oaa\/admin\/knowledge\/reembed/);
+  assert.match(gateway, /\/api\/oaa\/knowledge\/concepts/);
+  assert.match(gateway, /providerEmbedding\(text, key\)/);
+  assert.match(gateway, /OpenSphere 10 Perspective/);
+  assert.match(gateway, /manual\.opensphere\.io\/v1alpha1/);
+  assert.match(gateway, /manual-seed\.opensphere\.io\/v1alpha1/);
+  assert.match(gateway, /OAA_MANUAL_SEED_PATH/);
+  assert.match(gateway, /manualSources/);
+  assert.match(gateway, /manualDocuments/);
+  assert.match(gateway, /manualChunks/);
+  assert.match(gateway, /manualConcepts/);
+  assert.match(gateway, /manualRelations/);
+  assert.match(gateway, /seedBundledManualKnowledge/);
+  assert.match(gateway, /seedBundledManualKnowledgeIfEmpty/);
+  assert.match(gateway, /bundled manuals up to date/);
+  assert.match(gateway, /metadata->>'checksum'/);
+  assert.match(gateway, /authorityTier/);
+  assert.match(gateway, /sourcePath/);
+  assert.match(gateway, /sectionHeading/);
+});
+
+test('OAA bundled manual seed carries core OpenSphere manuals', () => {
+  assert.equal(manualSeed.schema, 'manual-seed.opensphere.io/v1alpha1');
+  assert.equal(manualSeed.source.id, 'opensphere-core-manuals');
+  assert.ok(manualSeed.documents.length >= 12);
+  const ids = manualSeed.documents.map((d) => d.sourceId);
+  assert.ok(ids.includes('opensphere-docs/constitution-0000'));
+  assert.ok(ids.includes('opensphere-docs/p4-intelligence'));
+  assert.ok(ids.includes('console-docs/backbone-architecture'));
+  assert.ok(ids.includes('console-docs/oaa-manual-knowledge-data-model'));
+  assert.ok(ids.includes('help-center/docs-ts'));
+  assert.ok(manualSeed.concepts.length >= 10);
+  assert.ok(manualSeed.relations.length >= 10);
+  assert.ok(manualSeed.concepts.some((c) => c.id === 'concept:opensphere:perspective:ai-level'));
+  assert.ok(manualSeed.concepts.some((c) => c.id === 'concept:opensphere:service:oaa-gateway'));
+  assert.ok(manualSeed.relations.some((r) => r.fromId === 'concept:opensphere:service:oaa-gateway' && r.relation === 'belongs-to'));
+  for (const doc of manualSeed.documents) {
+    assert.equal(typeof doc.content, 'string');
+    assert.ok(doc.content.length > 100);
+    assert.equal(typeof doc.checksum, 'string');
+    assert.equal(doc.checksum.length, 64);
+    assert.ok(Number.isInteger(doc.authorityTier));
+  }
+});
+
+test('OAA-Gateway exposes read-only live environment tools', () => {
+  assert.match(gateway, /OAA_ENV_NAMESPACES/);
+  assert.match(gateway, /function oaaToolManifest/);
+  assert.match(gateway, /function oaaActionBindings/);
+  assert.match(gateway, /async function seedToolRegistry/);
+  assert.match(gateway, /async function toolManifestFromStore/);
+  assert.match(gateway, /async function actionBindingsFromStore/);
+  assert.match(gateway, /async function executeActionBinding/);
+  assert.match(gateway, /function requireBindingConfirmation/);
+  assert.match(gateway, /oaa-tool-manifest\.opensphere\.io\/v1alpha1/);
+  assert.match(gateway, /oaa-action-bindings\.opensphere\.io\/v1alpha1/);
+  assert.match(gateway, /tool-registry-seed/);
+  assert.match(gateway, /seeded tool registry/);
+  assert.match(gateway, /\/api\/oaa\/tools\/manifest/);
+  assert.match(gateway, /\/api\/oaa\/tools\/action-bindings/);
+  assert.match(gateway, /oaa\.environment\.read/);
+  assert.match(gateway, /oaa\.k8s\.pods\.list/);
+  assert.match(gateway, /oaa\.k8s\.cluster\.pods\.summary/);
+  assert.match(gateway, /clusterPodSummary/);
+  assert.match(gateway, /Cluster pod summary/);
+  assert.match(gateway, /oaa\.knowledge\.search/);
+  assert.match(gateway, /manual-action:opensphere:cluster-pod-count/);
+  assert.match(gateway, /manual-action:opensphere:oaa-gateway-restart/);
+  assert.match(gateway, /async function environmentSnapshot/);
+  assert.match(gateway, /namespaceSnapshot\(ns\)/);
+  assert.match(gateway, /\/api\/oaa\/tools\/environment/);
+  assert.match(gateway, /environmentSystemMessage\(environment\)/);
+  assert.match(controller, /resources:\s*\['pods', 'pods\/log', 'services', 'events'\]/);
+  assert.match(controller, /resources:\s*\['deployments', 'statefulsets', 'daemonsets', 'replicasets'\]/);
+});
+
+test('OAA-Gateway exposes controlled admin action tools', () => {
+  assert.match(gateway, /async function handleSlashCommand/);
+  assert.match(gateway, /cmd === '\/env'/);
+  assert.match(gateway, /cmd === '\/pod-count'/);
+  assert.match(gateway, /cmd === '\/pods'/);
+  assert.match(gateway, /cmd === '\/services'/);
+  assert.match(gateway, /cmd === '\/events'/);
+  assert.match(gateway, /cmd === '\/deployments'/);
+  assert.match(gateway, /cmd === '\/describe'/);
+  assert.match(gateway, /cmd === '\/rollout'/);
+  assert.match(gateway, /cmd === '\/logs'/);
+  assert.match(gateway, /cmd === '\/restart'/);
+  assert.match(gateway, /cmd === '\/scale'/);
+  assert.match(gateway, /cmd === '\/bindings'/);
+  assert.match(gateway, /cmd === '\/action'/);
+  assert.match(gateway, /\/api\/oaa\/actions\/bindings\/execute/);
+  assert.match(gateway, /binding-execute/);
+  assert.match(gateway, /summarizeToolManifest/);
+  assert.match(gateway, /summarizeActionBindings/);
+  assert.match(gateway, /summarizeStoredToolManifest/);
+  assert.match(gateway, /summarizeStoredActionBindings/);
+  assert.match(gateway, /oaa\.k8s\.deployment\.restart/);
+  assert.match(gateway, /oaa\.k8s\.deployment\.scale/);
+  assert.match(gateway, /\/api\/oaa\/actions\/k8s\/restart-deployment/);
+  assert.match(gateway, /\/api\/oaa\/actions\/k8s\/scale-deployment/);
+  assert.match(gateway, /\/api\/oaa\/tools\/k8s\/pod-logs/);
+  assert.match(gateway, /\/api\/oaa\/tools\/k8s\/pods-summary/);
+  assert.match(gateway, /\/api\/oaa\/tools\/k8s\/services/);
+  assert.match(gateway, /\/api\/oaa\/tools\/k8s\/events/);
+  assert.match(gateway, /\/api\/oaa\/tools\/k8s\/describe/);
+  assert.match(gateway, /\/api\/oaa\/tools\/k8s\/rollout/);
+  assert.match(gateway, /async function describePod/);
+  assert.match(gateway, /async function describeDeployment/);
+  assert.match(gateway, /async function rolloutStatus/);
+  assert.match(gateway, /await verifyAdmin\(req\)/);
+  assert.match(gateway, /assertActorAdmin\(actor\)/);
+  assert.match(gateway, /confirmation required/);
+  assert.match(gateway, /k8s-restart-deployment/);
+  assert.match(gateway, /k8s-scale-deployment/);
+  assert.match(controller, /resources:\s*\['deployments'\], verbs:\s*\['get', 'list', 'patch'\]/);
+});
+
+test('Backbone admin exposes OAA LLM key management UI', () => {
+  assert.match(adminBackbone, /OAA Gateway/);
+  assert.match(adminBackbone, /\/api\/oaa\/admin\/llm-keys/);
+  assert.match(adminBackbone, /type="password" name="oaa-api-key"/);
+  assert.match(adminBackbone, /value="deepseek"/);
+  assert.match(adminBackbone, /https:\/\/api\.deepseek\.com/);
+  assert.match(adminBackbone, /deepseek-v4-flash/);
+  assert.match(adminBackbone, /keyFingerprint/);
+  assert.match(adminBackbone, /Knowledge Store/);
+  assert.match(adminBackbone, /\/api\/oaa\/admin\/knowledge\/stats/);
+  assert.match(adminBackbone, /Concept Graph/);
+  assert.match(adminBackbone, /ManualConcept \/ ManualRelation/);
+  assert.match(adminBackbone, /\/api\/oaa\/knowledge\/concepts/);
+  assert.match(adminBackbone, /loadConceptGraph/);
+  assert.match(adminBackbone, /manualConcepts/);
+  assert.match(adminBackbone, /manualRelations/);
+  assert.match(adminBackbone, /Seed manuals/);
+  assert.match(adminBackbone, /\/api\/oaa\/admin\/knowledge\/manual-seed\/bundled/);
+  assert.match(adminBackbone, /Manual sources/);
+  assert.match(adminBackbone, /\/api\/oaa\/admin\/knowledge\/reembed/);
+  assert.match(adminBackbone, /Tool Registry/);
+  assert.match(adminBackbone, /\/api\/oaa\/tools\/manifest/);
+  assert.match(adminBackbone, /Action Bindings/);
+  assert.match(adminBackbone, /\/api\/oaa\/tools\/action-bindings/);
+  assert.match(adminBackbone, /Execute Binding/);
+  assert.match(adminBackbone, /\/api\/oaa\/actions\/bindings\/execute/);
+  assert.match(adminBackbone, /selectActionBinding/);
+  assert.match(adminBackbone, /executeActionBinding/);
+  assert.match(adminBackbone, /readToolCount/);
+  assert.match(adminBackbone, /writeToolCount/);
+  assert.match(adminBackbone, /confirmationTemplate/);
+});
+
+test('OAA chat UI renders answer citations from Gateway sources', () => {
+  assert.match(oaaAgent, /interface OaaSource/);
+  assert.match(oaaAgent, /interface OaaConcept/);
+  assert.match(oaaAgent, /interface OaaSuggestedAction/);
+  assert.match(oaaAgent, /sources\?: OaaSource\[\]/);
+  assert.match(oaaAgent, /concepts\?: OaaConcept\[\]/);
+  assert.match(oaaAgent, /actions\?: OaaSuggestedAction\[\]/);
+  assert.match(oaaAgent, /normalizeSources\(body\.sources\)/);
+  assert.match(oaaAgent, /normalizeConcepts\(body\.concepts\?\.concepts\)/);
+  assert.match(oaaAgent, /normalizeSuggestedActions\(body\.suggestedActions\)/);
+  assert.match(oaaAgent, /oaa-sources/);
+  assert.match(oaaAgent, /Sources/);
+  assert.match(oaaAgent, /Concepts/);
+  assert.match(oaaAgent, /Suggested Actions/);
+  assert.match(oaaAgent, /useSuggestedAction/);
+  assert.match(oaaAgent, /resetDockWidth/);
+  assert.match(oaaAgent, /Drag to resize chat/);
+  assert.match(oaaAgent, /oaa-agent-resizing/);
+  assert.match(oaaAgent, /concepts \$\{conceptCount\}/);
+  assert.match(oaaAgent, /actions \$\{actionCount\}/);
+  assert.match(oaaAgent, /sourceLabel\(s\)/);
+  assert.match(oaaAgent, /authorityTier/);
+  assert.match(oaaAgent, /sourcePath/);
+});

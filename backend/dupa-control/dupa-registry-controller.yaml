@@ -52,8 +52,9 @@ metadata: { name: dupa-backbone-installer }
 rules:
   - { apiGroups: [""], resources: [namespaces], verbs: [get, create] }
   # secrets delete: BackboneClaim finalizer GC(?뚮꼳??Secret ?뚯닔)???꾩슂
-  - { apiGroups: [""], resources: [secrets, services, persistentvolumeclaims, configmaps, pods], verbs: [get, list, create, patch, delete] }
+  - { apiGroups: [""], resources: [secrets, services, serviceaccounts, persistentvolumeclaims, configmaps, pods], verbs: [get, list, create, patch, delete] }
   - { apiGroups: ["apps"], resources: [deployments, statefulsets], verbs: [get, list, create, patch] }
+  - { apiGroups: ["rbac.authorization.k8s.io"], resources: [roles, rolebindings], verbs: [get, list, create, patch, delete] }
   # BackboneClaim ?좊떦 而⑦듃濡ㅻ윭 ??claim watch/reconcile + status + finalizer
   - { apiGroups: ["backbone.opensphere.io"], resources: [backboneclaims, backboneclaims/status, backboneclaims/finalizers], verbs: [get, list, watch, update, patch] }
   # Observability ?뺣낫 酉???ServiceMonitor ?몃깽?좊━ ?쎄린(monitoring ns ?뚮뱶/?쒕퉬?ㅻ뒗 ??core 洹쒖튃?쇰줈 而ㅻ쾭).

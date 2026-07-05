@@ -56,6 +56,15 @@ server {
 
     # 콘솔 역할/PAT — opensphere-auth BFF(console-core 서비스). §3.2: same-origin 프록시로 크로스오리진 CORS 제거.
     # /admin/roles가 https://localhost:8444(Kanidm) 직격 → CORS 실패였음. 이제 /bff(상대) → 셸이 BFF로 프록시.
+    # OpenSphere AI Agent gateway: stateless CBSS tier in opensphere-backbone.
+    # OAA-Gateway verifies Bearer tokens and owns LLM key custody.
+    location /api/oaa/ {
+        resolver 10.96.0.10 valid=10s;
+        set $oaa_gateway_upstream oaa-gateway.opensphere-backbone.svc.cluster.local;
+        proxy_pass http://$oaa_gateway_upstream:8080$request_uri;
+        proxy_set_header X-OpenSphere-User "";
+    }
+
     location /bff/ {
         proxy_pass https://opensphere-auth.opensphere-console-auth.svc.cluster.local:8443/bff/;
         proxy_ssl_verify off;  # 자체서명 kanidm-tls (PoC)

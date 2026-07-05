@@ -1,0 +1,14 @@
+{
+  "name": "oaa-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenSphere AI Agent gateway for LLM key custody and agent traffic",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --check server.js"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

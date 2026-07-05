@@ -51,7 +51,11 @@ spec:
                   required: [repository, digest]
                   properties:
                     repository: { type: string }
-                    digest: { type: string }   # sha256:...
+                    # 감사 시정 S1(2026-07-06): 불변 digest 필수 — 태그 금지(공급망 보증).
+                    # controller reconcile도 sha256: 미접두를 Failed/InvalidDigest로 거부(이중 방어).
+                    digest:
+                      type: string
+                      pattern: '^sha256:[a-f0-9]{64}$'
                 nav:
                   type: object
                   properties:
