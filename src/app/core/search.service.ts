@@ -105,6 +105,26 @@ export class SearchService {
     return settled.flat().slice(0, 30);
   }
 
+  private queryManualContributions(q: string): SearchResult[] {
+    const s = q.trim().toLowerCase();
+    if (!s) return [];
+    const out: SearchResult[] = [];
+    for (const [pluginId, source] of Object.entries(this.ext.manualContributions())) {
+      for (const doc of source.documents || []) {
+        const hay = `${doc.title || ''} ${doc.content || ''} ${(doc.tags || []).join(' ')}`.toLowerCase();
+        if (!hay.includes(s)) continue;
+        out.push({
+          label: doc.title || doc.id,
+          sublabel: [source.name || pluginId, doc.documentType || 'manual', doc.sourcePath || 'runtime contribution'].filter(Boolean).join(' · '),
+          path: doc.route || `/p/${pluginId}`,
+          kind: 'result',
+          source: `manual:${pluginId}`,
+        });
+      }
+    }
+    return out.slice(0, 6);
+  }
+
   /**
    * 섹션별 검색 — 검색 팔레트(2단 모달)용. 4개 섹션으로 분류:
    *   resources     = 셸 네비 인덱스(페이지·플러그인·워크스페이스) "이동" 대상
@@ -122,6 +142,7 @@ export class SearchService {
     const documentation = this.DOCS.filter(
       (d) => d.label.toLowerCase().includes(s) || d.sublabel.toLowerCase().includes(s),
     ).slice(0, 6);
+    documentation.push(...this.queryManualContributions(q));
 
     let services: SearchResult[] = [];
     let marketplace: SearchResult[] = [];

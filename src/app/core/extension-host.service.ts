@@ -1,4 +1,5 @@
 import { Injectable, inject, signal } from '@angular/core';
+import { AuthService } from './auth.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, NormalizedManifest } from '@opensphere/sdk';
@@ -42,8 +43,29 @@ interface RegistryEntry {
   icon?: string; // 1단 아이콘(Carbon 토큰명) — 관리자 오버라이드(spec.nav.icon). 서명 무관.
 }
 
+const MANUAL_CONTRIBUTE = 'manual:contribute';
+
+export interface ManualContributionDocument {
+  id: string;
+  title: string;
+  content: string;
+  route?: string;
+  sourcePath?: string;
+  documentType?: string;
+  tags?: string[];
+}
+
+export interface ManualContribution {
+  sourceId?: string;
+  name?: string;
+  authorityTier?: number;
+  language?: 'ko' | 'en' | 'mixed';
+  documents: ManualContributionDocument[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class ExtensionHostService {
+  private auth = inject(AuthService);
   private notif = inject(NotificationService);
 
   readonly pages = signal<PluginPage[]>([]);
@@ -52,6 +74,8 @@ export class ExtensionHostService {
   readonly navTrees = signal<Record<string, NavNode[]>>({});
   /** 플러그인별 기여 검색 provider(search:contribute) — pluginId → provider(동기/비동기) */
   readonly searchProviders = signal<Record<string, SearchProvider>>({});
+  /** Plugin/subShell manual sources contributed at runtime. */
+  readonly manualContributions = signal<Record<string, ManualContribution>>({});
   /** 플러그인별 1단 아이콘(Carbon 토큰명) — registry(spec.nav.icon 전사)에서. pluginId → token */
   readonly pluginIcons = signal<Record<string, string>>({});
   /**
@@ -90,6 +114,7 @@ export class ExtensionHostService {
     this.failures.set([]);
     this.navTrees.set({});
     this.searchProviders.set({});
+    this.manualContributions.set({});
     this.pluginIcons.set({});
     this.apiBaseByPlugin.set({});
     await this.load();
@@ -124,9 +149,9 @@ export class ExtensionHostService {
       }
 
       // ④ 권한 — 미지 scope 거부
-      const perms = manifest.permissions;
+      const perms = manifest.permissions as readonly string[];
       for (const p of perms) {
-        if (!isKnownCapability(p)) throw new Error(`알 수 없는 권한 scope '${p}'`);
+        if (!isKnownCapability(p) && p !== MANUAL_CONTRIBUTE) throw new Error(`알 수 없는 권한 scope '${p}'`);
       }
       if (!perms.includes('page:register')) throw new Error("'page:register' 권한 미선언 — UI 플러그인 자격 없음");
 
@@ -162,10 +187,11 @@ export class ExtensionHostService {
   }
 
   /** §9 OpenSpherePluginContext 부분집합 — 승인된 권한의 능력만 노출 */
-  private contextFor(pluginId: string, manifest: NormalizedManifest, perms: string[]) {
+  private contextFor(pluginId: string, manifest: NormalizedManifest, perms: readonly string[]) {
     return {
       pluginId,
       shellVersion: SHELL_VERSION,
+      grants: perms,
       ...(perms.includes('api:proxy') ? { api: { baseUrl: manifest.apiBase ?? '' } } : {}),
       // notify:publish 권한 시에만 노출 — subShell이 셸 단일 인박스에 발행(집계·표시는 셸 소유).
       // source는 여기서 pluginId로 강제 태깅(클로저 캡처 = 위조 불가). 상세: dupa-notification-contribution-contract.
@@ -221,8 +247,88 @@ export class ExtensionHostService {
               },
             }
           : {}),
+        ...(perms.includes(MANUAL_CONTRIBUTE)
+          ? {
+              manual: {
+                contribute: (source: ManualContribution) => {
+                  const normalized = this.normalizeManualContribution(pluginId, source);
+                  this.manualContributions.update((m) => ({ ...m, [pluginId]: normalized }));
+                  void this.syncManualContribution(pluginId, normalized);
+                },
+                clear: () =>
+                  this.manualContributions.update((m) => {
+                    const { [pluginId]: _omit, ...rest } = m;
+                    return rest;
+                  }),
+              },
+            }
+          : {}),
       },
     };
+  }
+
+  private normalizeManualContribution(pluginId: string, input: ManualContribution): ManualContribution {
+    const rawDocs = Array.isArray(input?.documents) ? input.documents : [];
+    return {
+      sourceId: String(input?.sourceId || `plugin:${pluginId}`).trim() || `plugin:${pluginId}`,
+      name: String(input?.name || pluginId).trim() || pluginId,
+      authorityTier: Math.max(2, Math.min(4, Number(input?.authorityTier ?? 3) || 3)),
+      language: input?.language || 'mixed',
+      documents: rawDocs
+        .filter((doc) => doc && String(doc.id || '').trim() && String(doc.content || '').trim())
+        .slice(0, 32)
+        .map((doc) => ({
+          id: String(doc.id).trim(),
+          title: String(doc.title || doc.id).trim(),
+          content: String(doc.content).slice(0, 120000),
+          route: String(doc.route || '').trim(),
+          sourcePath: String(doc.sourcePath || '').trim(),
+          documentType: String(doc.documentType || 'reference').trim(),
+          tags: Array.isArray(doc.tags) ? doc.tags.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 16) : [],
+        })),
+    };
+  }
+
+  private async syncManualContribution(pluginId: string, source: ManualContribution): Promise<void> {
+    if (!source.documents.length) return;
+    const token = this.auth.token();
+    if (!token) return;
+    const sourceId = source.sourceId || `plugin:${pluginId}`;
+    try {
+      const res = await fetch('/api/oaa/admin/knowledge/manual-seed', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          schema: 'manual-seed.opensphere.io/v1alpha1',
+          source: {
+            id: sourceId,
+            type: 'plugin',
+            name: source.name || pluginId,
+            authorityTier: source.authorityTier ?? 3,
+            defaultNamespace: 'opensphere',
+            defaultLanguage: source.language || 'mixed',
+            refreshMode: 'release-bound',
+          },
+          documents: source.documents.map((doc) => ({
+            sourceId: `${sourceId}/${doc.id}`,
+            title: doc.title,
+            route: doc.route || `/p/${pluginId}`,
+            sourcePath: doc.sourcePath || `${pluginId}/${doc.id}`,
+            documentType: doc.documentType || 'reference',
+            authorityTier: source.authorityTier ?? 3,
+            component: [pluginId],
+            tags: doc.tags || [],
+            content: doc.content,
+          })),
+        }),
+      });
+      if (!res.ok) console.warn(`[extension-host] manual contribution sync skipped for '${pluginId}': HTTP ${res.status}`);
+    } catch (e) {
+      console.warn(`[extension-host] manual contribution sync skipped for '${pluginId}':`, e);
+    }
   }
 }
 

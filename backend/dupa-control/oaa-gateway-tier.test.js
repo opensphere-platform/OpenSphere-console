@@ -13,6 +13,7 @@ const oaaAgent = fs.readFileSync(path.join(root, 'src', 'app', 'os', 'os-oaa-age
 const manualShell = fs.readFileSync(path.join(root, 'src', 'app', 'pages', 'manual-shell.ts'), 'utf8');
 const manualService = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'manual.service.ts'), 'utf8');
 const searchService = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'search.service.ts'), 'utf8');
+const extensionHost = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'extension-host.service.ts'), 'utf8');
 const routes = fs.readFileSync(path.join(root, 'src', 'app', 'app.routes.ts'), 'utf8');
 const osShell = fs.readFileSync(path.join(root, 'src', 'app', 'os', 'os-shell.ts'), 'utf8');
 const manualSeed = JSON.parse(fs.readFileSync(path.join(root, 'backend', 'oaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'), 'utf8'));
@@ -155,8 +156,14 @@ test('Console Manual is exposed as a registry API, header search source, and nat
   assert.match(manualService, /\/api\/manual\/search/);
   assert.match(searchService, /ManualService/);
   assert.match(searchService, /this\.manual\.search\(q, 6\)/);
+  assert.match(searchService, /queryManualContributions/);
+  assert.match(searchService, /manualContributions/);
   assert.match(searchService, /manual-registry/);
   assert.match(searchService, /\/manual\?doc=/);
+  assert.match(extensionHost, /manual:contribute/);
+  assert.match(extensionHost, /manualContributions/);
+  assert.match(extensionHost, /syncManualContribution/);
+  assert.match(extensionHost, /\/api\/oaa\/admin\/knowledge\/manual-seed/);
   assert.match(routes, /path: 'manual'/);
   assert.match(routes, /component: ManualShell/);
   assert.match(osShell, /path: '\/manual', label: 'Manual'/);

@@ -32,6 +32,7 @@ The Console exposes these through:
 | Native route | `/manual` in `src/app/app.routes.ts` |
 | Native nav item | `Manual` under the Build band in `src/app/os/os-shell.ts` |
 | Manual screen | `src/app/pages/manual-shell.ts` |
+| Plugin manual runtime contribution | `src/app/core/extension-host.service.ts` exposes `extensions.manual.contribute()` when a plugin has `manual:contribute`. |
 
 ## Data Model
 
@@ -57,21 +58,61 @@ Concept graph and action metadata are stored in:
 
 ## Shell And Plugin Expansion
 
-The MVP does not yet add a full plugin manifest field such as `manual.contributes`.
+The MVP adds a runtime extension capability named `manual:contribute`.
 
-The intended next contract is:
+When a verified plugin declares this permission, the host exposes:
 
 ```ts
-interface ManualContribution {
-  sourceId: string;
-  sourceType: 'plugin' | 'subshell' | 'repo' | 'api';
+ctx.extensions.manual?.contribute({
+  sourceId: 'plugin:<plugin-id>',
+  name: '<Plugin Name>',
+  authorityTier: 3,
+  language: 'mixed',
+  documents: [
+    {
+      id: 'overview',
+      title: 'Plugin Manual Overview',
+      content: '...',
+      route: '/p/<plugin-id>',
+      sourcePath: '<plugin-id>/overview',
+      documentType: 'reference',
+      tags: ['plugin']
+    }
+  ]
+});
+```
+
+The host then:
+
+1. Stores the contribution in `ExtensionHostService.manualContributions`.
+2. Adds those documents to top header Documentation search through `SearchService.queryManualContributions()`.
+3. Attempts to sync the contribution into OAA Gateway through `POST /api/oaa/admin/knowledge/manual-seed`.
+
+The sync call intentionally uses the current user's token. If the current user is not an admin, the client-side contribution remains searchable in the session, but it is not written into the canonical OAA Manual Registry.
+
+The payload shape is:
+
+```ts
+interface ManualContributionDocument {
+  id: string;
   title: string;
+  content: string;
   route?: string;
-  documents: ManualDocumentSeed[];
+  sourcePath?: string;
+  documentType?: string;
+  tags?: string[];
+}
+
+interface ManualContribution {
+  sourceId?: string;
+  name?: string;
+  authorityTier?: number;
+  language?: 'ko' | 'en' | 'mixed';
+  documents: ManualContributionDocument[];
 }
 ```
 
-Plugins and subShells should eventually register manual sources through a controlled API. The Manual Registry will ingest those sources into the same tables, making them available to:
+Plugins and subShells should eventually also register manual sources through a server-side installation-time API. The Manual Registry will ingest those sources into the same tables, making them available to:
 
 - `/manual`
 - top header search
@@ -99,7 +140,8 @@ The result opens the Manual subShell and selects the source document.
 The MVP completes the Console Manual surface, but the following items remain for the next hardening phase:
 
 1. Add first-class `oaa_manual_sources` and `oaa_manual_sections` tables.
-2. Add plugin/subShell manifest support for `manual.contributes`.
-3. Add write UI for manual source registration beyond bundled seed and Admin Backbone paste/seed tools.
-4. Add source-level ACL checks to the Manual Registry queries.
-5. Add richer section anchors so search results can open an exact section, not only the document.
+2. Promote `manual:contribute` into the published `@opensphere/sdk` capability set after SDK release coordination.
+3. Add server-side plugin installation-time manual ingestion so plugin manuals are canonical before first runtime activation.
+4. Add write UI for manual source registration beyond bundled seed and Admin Backbone paste/seed tools.
+5. Add source-level ACL checks to the Manual Registry queries.
+6. Add richer section anchors so search results can open an exact section, not only the document.
