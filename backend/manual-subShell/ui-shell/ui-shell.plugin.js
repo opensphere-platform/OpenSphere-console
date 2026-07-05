@@ -165,20 +165,14 @@ class ManualShellElement extends HTMLElement {
   render() {
     const s = this.state || {};
     this.innerHTML = `<style>
-      ${TAG}{display:block;height:100%;min-height:calc(100vh - 3rem);background:#f5f4f2;color:#1d252d;font-family:var(--clr-font, "Oracle Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)}
+      ${TAG}{display:block;height:100%;min-height:calc(100vh - 3rem);background:#f3f4f6;color:#1d252d;font-family:var(--clr-font, "Oracle Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)}
       ${TAG} *{box-sizing:border-box}
       ${TAG} svg{width:1.2rem;height:1.2rem;fill:currentColor;flex:0 0 auto}
-      .manual-page{height:calc(100vh - 3rem);overflow:auto;background:#f5f4f2}
-      .manual-hero{position:relative;min-height:17rem;background:#1f2740;color:#fff;overflow:hidden}
-      .manual-hero::before{content:"";position:absolute;right:18%;top:-3.5rem;width:34rem;height:24rem;background:#407e7d;clip-path:polygon(18% 0,100% 8%,82% 100%,0 82%);opacity:.9;z-index:0}
-      .manual-hero::after{content:"";position:absolute;right:-3.5rem;top:1rem;width:13rem;height:13rem;background:#c9914b;border-radius:999px;opacity:.95;z-index:0}
-      .manual-hero-inner{position:relative;z-index:1;max-width:74rem;margin:0 auto;padding:3.2rem 1.4rem 5.4rem;text-align:center}
-      .manual-hero-title{margin:0!important;color:#fff!important;font-size:2.05rem;line-height:1.1;font-weight:700;letter-spacing:0;text-shadow:0 2px 5px rgba(0,0,0,.46)}
-      .manual-hero-copy{margin:.75rem auto 0!important;max-width:42rem;color:#fff!important;font-size:.92rem;font-weight:700;line-height:1.55;text-shadow:0 2px 6px rgba(0,0,0,.5)}
-      .manual-searchbar{margin:1.65rem auto 0;max-width:54rem;height:3.1rem;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.75rem;padding:0 .75rem 0 1rem;background:#fff;border-radius:3px;box-shadow:0 .25rem .8rem rgba(0,0,0,.22);color:#1d252d}
+      .manual-page{height:calc(100vh - 3rem);overflow:auto;background:#f3f4f6}
+      .manual-searchbar{margin:0 0 1.2rem;height:3rem;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.75rem;padding:0 .75rem 0 1rem;background:#fff;border:1px solid #d9dee5;border-radius:4px;box-shadow:0 .0625rem .18rem rgba(15,23,42,.08);color:#1d252d}
       .manual-searchbar input{width:100%;border:0;outline:0;font:inherit;font-size:.95rem;background:transparent;color:#1d252d}.manual-searchbar input::placeholder{color:#6d7378}
       .manual-searchbar button,.manual-button{border:0;border-radius:3px;background:#312d2a;color:#fff;padding:.55rem .85rem;font-weight:700;font-size:.72rem;letter-spacing:.02em;cursor:pointer}.manual-searchbar button:disabled,.manual-button:disabled{opacity:.55;cursor:not-allowed}
-      .manual-main{max-width:92rem;margin:-3.8rem auto 0;padding:0 1.4rem 2rem;position:relative}
+      .manual-main{max-width:92rem;margin:0 auto;padding:1.25rem 1.4rem 3rem;position:relative}
       .manual-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(21rem,28rem);gap:1.2rem;align-items:start}
       .manual-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
       .manual-card,.manual-panel,.manual-doc-view,.manual-banner{background:#fff;border:1px solid #dedbd5;border-radius:4px;box-shadow:0 .12rem .45rem rgba(28,25,23,.1)}
@@ -197,21 +191,15 @@ class ManualShellElement extends HTMLElement {
       .manual-tags{display:flex;flex-wrap:wrap;gap:.35rem;padding:1rem 1.5rem 0}.manual-actions{margin:1rem 1.5rem;padding:.9rem;border-left:.22rem solid #c74634;background:#fff8f5}.manual-actions h3{margin:0;font-size:.92rem}.manual-action{display:grid;gap:.18rem;margin-top:.6rem}.manual-action strong{font-size:.8rem}.manual-action span{font-size:.72rem;color:#60686f}
       .manual-body{display:grid;gap:.8rem;padding:1rem 1.5rem 1.5rem}.manual-chunk{display:grid;grid-template-columns:2.2rem minmax(0,1fr);gap:.75rem;padding:.85rem;border:1px solid #e4e0da;border-radius:4px;background:#fff}.manual-chunk-index{color:#746b61;font-size:.72rem;font-weight:800}.manual-chunk p{margin:0;color:#263038;font-size:.84rem;line-height:1.6;white-space:pre-wrap}
       .manual-empty{padding:1rem;color:#6d7378;font-size:.82rem}.manual-banner{margin-top:1rem;padding:1rem 1.15rem;border-color:#f1d7ad;background:#fff3dc;color:#4f3b1e}.manual-banner strong{display:block;font-size:.9rem}.manual-banner span{display:block;margin-top:.35rem;font-size:.78rem;line-height:1.45}
-      @media(max-width:1100px){.manual-grid,.manual-content{grid-template-columns:1fr}.manual-card-grid{grid-template-columns:1fr}.manual-main{margin-top:-2.5rem}.manual-hero-inner{padding-bottom:4rem}}
+      @media(max-width:1100px){.manual-grid,.manual-content{grid-template-columns:1fr}.manual-card-grid{grid-template-columns:1fr}}
     </style>
     <div class="manual-page">
-      <section class="manual-hero">
-        <div class="manual-hero-inner">
-          <h1 class="manual-hero-title">What can we help you find?</h1>
-          <p class="manual-hero-copy">Search OpenSphere manuals, architecture decisions, OAA knowledge, action bindings, and implementation runbooks from one place.</p>
-          <div class="manual-searchbar">
-            ${ICONS.search}
-            <input name="manual-q" value="${esc(s.q)}" placeholder="Search manuals, 10 Perspective, OAA Gateway, Backbone..." />
-            <button data-action="search" ${s.loading ? 'disabled' : ''}>Search</button>
-          </div>
-        </div>
-      </section>
       <main class="manual-main">
+        <div class="manual-searchbar">
+          ${ICONS.search}
+          <input name="manual-q" value="${esc(s.q)}" placeholder="Search manuals, 10 Perspective, OAA Gateway, Backbone..." />
+          <button data-action="search" ${s.loading ? 'disabled' : ''}>Search</button>
+        </div>
         <section class="manual-grid">
           <div>
             <div class="manual-card-grid">

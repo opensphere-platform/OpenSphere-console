@@ -12,14 +12,14 @@ spec:
   description: "OpenSphere Manual — OAA-backed documentation subShell."
   image:
     repository: ghcr.io/opensphere-platform/manual
-    digest: sha256:61fea4f4f765834ceb804d014b213dd607a52e2f9198281d9aa2c41c253c58fc
+    digest: sha256:66a1e5cce91a7aa90ebfdda486ea1b8bf0bccd3c89669fec573b96ad65e1c529
   nav:
     band: "구축 Build"
     label: "Manual"
     icon: "document"
   manifest:
     path: /plugins/ui-shell.manifest.json
-    sha256: "8ea444c415fb8d73a0d4449dfb9648d6aeb6fa350eeb31e0067743c7698d24af"
+    sha256: "826b75f9c26f50e706e90bcfcbf7497475152ccd28ee3fbc4a11ed823cc707fe"
     signaturePath: /plugins/ui-shell.manifest.json.sig
   trust:
     keyId: opensphere-plugins-v1

@@ -6,7 +6,7 @@
   "title": "Manual",
   "description": "OpenSphere Manual subShell backed by the OAA Manual Registry.",
   "entry": "ui-shell.plugin.js",
-  "entrySha256": "8cf2dcb5e03f7432ed9ec75b8bda749d05f7061b2cebeba6ad377047e80d7e68",
+  "entrySha256": "bb1a851b88c33b330d3c12f77f2c7ae506444cb3a82e2ed8aaec4c39d0fca232",
   "shellCompat": ">=0.2.0 <0.9.0",
   "sdkVersion": "0.3.6",
   "permissions": [
