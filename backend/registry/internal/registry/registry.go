@@ -48,10 +48,21 @@ func pluginFromUnstructured(u unstructured.Unstructured) catalog.Item {
 	if display == "" {
 		display = name
 	}
-	return catalog.Item{
+	it := catalog.Item{
 		Kind: catalog.KindPlugin, Name: name, DisplayName: display, Version: version,
 		Image: repo, ImageDigest: digest, Description: desc, Source: "live",
 	}
+	// cli:contribute 광고 — spec.cli 선언 시 os CLI가 소비할 좌표 투영(console==cli, 2026-07-06).
+	// apiBase는 spec.api.basePath(프록시 prefix)에서 도출 — os가 <console><apiBase><manifestPath>로 디스패치.
+	if ns, ok, _ := unstructured.NestedString(u.Object, "spec", "cli", "namespace"); ok && ns != "" {
+		mp, _, _ := unstructured.NestedString(u.Object, "spec", "cli", "manifestPath")
+		apiBase, _, _ := unstructured.NestedString(u.Object, "spec", "api", "basePath")
+		if mp == "" {
+			mp = "/cli/manifest"
+		}
+		it.CLI = &catalog.CLIContribution{Namespace: ns, ManifestPath: mp, APIBase: apiBase}
+	}
+	return it
 }
 
 // Build 은 단일 데이터셋(items)을 게이트→정렬→3 표현으로 투영한다.

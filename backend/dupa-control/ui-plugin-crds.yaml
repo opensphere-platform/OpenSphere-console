@@ -83,6 +83,14 @@ spec:
                   type: object
                   properties:
                     basePath: { type: string }  # 셸 프록시가 허용할 prefix
+                # cli:contribute(2026-07-06) — headless binding: os CLI가 registry에서 이 namespace를
+                #   발견해 <apiBase><manifestPath>의 command manifest로 동적 디스패치(os <namespace> <verb>).
+                #   signed manifest가 아닌 CR 선언(CLIDownload 동류) — registry가 광고(console==cli).
+                cli:
+                  type: object
+                  properties:
+                    namespace: { type: string, pattern: '^[a-z][a-z0-9-]{0,30}$' }  # os <namespace> ...
+                    manifestPath: { type: string }  # apiBase 상대 경로(예: /cli/manifest)
       additionalPrinterColumns:
         - { name: Display, type: string, jsonPath: .spec.displayName }
         - { name: Version, type: string, jsonPath: .spec.version }

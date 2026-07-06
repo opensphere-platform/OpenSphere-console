@@ -18,18 +18,27 @@ const (
 	KindTemplate   Kind = "template"   // 스캐폴딩 템플릿
 )
 
+// CLIContribution 은 plugin이 os CLI에 기여하는 명령 네임스페이스(cli:contribute, 2026-07-06).
+// os 바이너리가 이 값으로 os <namespace> <verb>를 <apiBase><manifestPath> command manifest로 디스패치.
+type CLIContribution struct {
+	Namespace    string `json:"namespace"`
+	ManifestPath string `json:"manifestPath"`
+	APIBase      string `json:"apiBase"` // 프록시 prefix(예: /api/plugins/samba-ad) — os가 디스패치 base로 사용
+}
+
 // Item 은 단일 카탈로그 데이터셋의 한 항목이다(read-only 권위).
 type Item struct {
-	Kind        Kind     `json:"kind"`
-	Name        string   `json:"name"`
-	DisplayName string   `json:"displayName"`
-	Version     string   `json:"version"`
-	Channel     string   `json:"channel,omitempty"`
-	Image       string   `json:"image"`       // repository
-	ImageDigest string   `json:"imageDigest"` // 핀(sha256 또는 태그) — ⚠️빈값이면 게시거부
-	Requires    []string `json:"requires,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Source      string   `json:"source"` // "seed" | "live"
+	Kind        Kind             `json:"kind"`
+	Name        string           `json:"name"`
+	DisplayName string           `json:"displayName"`
+	Version     string           `json:"version"`
+	Channel     string           `json:"channel,omitempty"`
+	Image       string           `json:"image"`       // repository
+	ImageDigest string           `json:"imageDigest"` // 핀(sha256 또는 태그) — ⚠️빈값이면 게시거부
+	Requires    []string         `json:"requires,omitempty"`
+	Description string           `json:"description,omitempty"`
+	Source      string           `json:"source"`        // "seed" | "live"
+	CLI         *CLIContribution `json:"cli,omitempty"` // cli:contribute 광고(plugin만) — os가 소비
 }
 
 // Gate 는 ImageDigest 빈값 항목을 게시거부한다(ADR-0001, #4 digest-pin 공유).
