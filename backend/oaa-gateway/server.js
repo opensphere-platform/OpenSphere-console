@@ -1720,6 +1720,23 @@ function environmentSystemMessage(snapshot) {
   return { role: 'system', content: lines.join('\n').slice(0, 14000) };
 }
 
+function operationalAnswerPolicySystemMessage() {
+  return {
+    role: 'system',
+    content: [
+      'OpenSphere Operational Answer Contract:',
+      'For OpenSphere operations, installation, preflight, Kubernetes, plugin, Backbone, Foundation, or OAA troubleshooting questions, separate the answer into: 확인한 현재 클러스터 사실, 문서 기반 판단, 필요한 조치, 승인 필요한 작업.',
+      'Use the attached live environment snapshot as the primary source for current runtime facts. If the live snapshot is unavailable or incomplete, explicitly say which live fact could not be verified.',
+      'Do not infer namespaces, pods, services, deployments, CRDs, readiness, install state, or action results from manuals alone. Manuals describe intended design; live snapshot/tool results describe current reality.',
+      'Before recommending a write/apply/install/delete/restart/scale action, state the read-only evidence first and mark the action as a proposal unless an explicit OAA action endpoint result is present.',
+      'Never claim that kubectl, apply, install, delete, restart, scale, or secret rotation was executed unless an explicit tool/action result is present in this conversation.',
+      'Samba-AD Preflight identity-claim-binding BLOCK means the typed IdentityDirectoryClaim/IdentityDirectoryBinding contract is not ready. Existing generic FoundationClaim/FoundationBinding CRDs alone do not satisfy that typed identity directory contract.',
+      'For Samba-AD and identity-directory answers, distinguish: generic foundationclaims/foundationbindings, typed identitydirectoryclaims/identitydirectorybindings, Crossplane core/provider readiness, Foundation reconciler readiness, Keycloak live namespace, and Samba-AD operand lifecycle.',
+      'OAA may draft Claim/Binding proposals and commands, but applying them requires admin approval and the Foundation write-path authority.',
+    ].join('\n'),
+  };
+}
+
 function controlToolsSystemMessage() {
   const manifest = oaaToolManifest();
   const bindings = oaaActionBindings();
@@ -2773,7 +2790,7 @@ async function chatCompletion(body, actor) {
   let suggestedActions = [];
   let messages = baseMessages;
   let environment = null;
-  const systemMessages = [controlToolsSystemMessage()];
+  const systemMessages = [operationalAnswerPolicySystemMessage(), controlToolsSystemMessage()];
   const userContent = latestUserContent(baseMessages);
   try {
     sources = await searchKnowledge(userContent);

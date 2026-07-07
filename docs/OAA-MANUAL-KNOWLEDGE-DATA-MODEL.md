@@ -363,6 +363,31 @@ OAA should answer using this rule:
 2. If live environment contradicts manual text, say the manual says one thing but live state currently differs.
 3. If no manual chunk is found, say what manual/source is missing instead of inventing OpenSphere-specific facts.
 
+### Operational Answer Contract
+
+For operational questions, OAA must treat manuals and live cluster inspection as different evidence classes.
+
+Operational questions include installation, preflight, plugin lifecycle, Kubernetes runtime state, Backbone, Foundation, Samba-AD, OpenSearch, and OAA Gateway troubleshooting.
+
+OAA must answer in four parts when the question asks what is happening now or what an admin should do:
+
+1. `확인한 현재 클러스터 사실`: values confirmed from the live environment snapshot or read-only tool results.
+2. `문서 기반 판단`: design/runbook interpretation from manual chunks and concept relations.
+3. `필요한 조치`: recommended next steps, with read-only checks first.
+4. `승인 필요한 작업`: any write/apply/install/delete/restart/scale action that requires admin approval and the owning control-plane authority.
+
+OAA must not infer current namespaces, pods, services, deployments, CRDs, readiness, install state, or action results from manuals alone. If live inspection is unavailable or incomplete, OAA must say exactly which fact was not verified.
+
+OAA may draft a Claim, Binding, manifest, command, or action proposal, but must not say it was applied unless an explicit action endpoint result is present in the conversation. Manual evidence gives permission to propose an action; it does not prove the action already happened.
+
+Samba-AD identity-directory preflight is the reference case:
+
+- Generic `FoundationClaim`/`FoundationBinding` CRDs may exist, but they do not by themselves satisfy the typed identity directory contract.
+- Samba-AD consumer access requires the typed `IdentityDirectoryClaim`/`IdentityDirectoryBinding` contract and its reconciler to be ready.
+- Crossplane core/provider readiness is a separate prerequisite. It can be `PASS` while the typed identity directory contract is still `BLOCK`.
+- Keycloak namespace, service name, and current readiness must be read from the live cluster before OAA mentions them as current facts.
+- Applying the typed contract or installing Samba-AD remains a Foundation write-path operation requiring admin approval.
+
 ## 8. Control Binding Model
 
 Manual knowledge must not stop at explanation. Some manual sections describe actions that OAA can perform through OpenSphere APIs, CLI commands, Kubernetes APIs, SQL, or UI automation. Those sections need an explicit binding between the manual text and the allowed control surface.
