@@ -15,8 +15,20 @@ export class AuthService {
   private readonly authority = ['localhost', '127.0.0.1'].includes(window.location.hostname)
     ? `https://${window.location.hostname}:8444/oauth2/openid/opensphere-console`
     : 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console';
+  // 브라우저는 Console TLS origin 하나만 신뢰하면 된다. OIDC issuer(토큰 iss)는
+  // authority로 유지하되 discovery/authorize/token/JWKS 전송은 nginx의 검증된
+  // same-origin 프록시를 사용해 별도 :8444 인증서 오류를 제거한다.
+  private readonly browserOidcBase = `${window.location.origin}/oauth2/openid/opensphere-console`;
   private mgr = new UserManager({
     authority: this.authority,
+    metadataUrl: `${this.browserOidcBase}/.well-known/openid-configuration`,
+    metadataSeed: {
+      issuer: this.authority,
+      authorization_endpoint: `${this.browserOidcBase}/authorize`,
+      token_endpoint: `${this.browserOidcBase}/token`,
+      jwks_uri: `${this.browserOidcBase}/public_key.jwk`,
+      end_session_endpoint: `${window.location.origin}/ui/logout`,
+    },
     client_id: 'opensphere-console',
     redirect_uri: window.location.origin + '/',
     post_logout_redirect_uri: window.location.origin + '/',

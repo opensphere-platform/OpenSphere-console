@@ -123,6 +123,31 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    # 브라우저 OIDC는 Console과 동일한 TLS origin으로 통합한다. BFF가 발급하는
+    # 토큰 issuer는 그대로 유지하면서 discovery/authorize/token/JWKS와 로그인 UI를
+    # 내부 opensphere-auth로 전달해 localhost:8444 인증서의 별도 신뢰를 요구하지 않는다.
+    location ^~ /oauth2/openid/opensphere-console/ {
+        set $auth_upstream opensphere-auth.opensphere-console-auth.svc.cluster.local;
+        proxy_pass https://$auth_upstream:8443$request_uri;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/tls.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name kanidm.opensphere-console-auth.svc;
+        proxy_set_header Host $host;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    location ^~ /ui/ {
+        set $auth_upstream opensphere-auth.opensphere-console-auth.svc.cluster.local;
+        proxy_pass https://$auth_upstream:8443$request_uri;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/tls.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name kanidm.opensphere-console-auth.svc;
+        proxy_set_header Host $host;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
     location /bff/ {
         set $auth_upstream opensphere-auth.opensphere-console-auth.svc.cluster.local;
         proxy_pass https://$auth_upstream:8443$request_uri;
