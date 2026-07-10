@@ -4,6 +4,7 @@ import { dump } from 'js-yaml';
 import { OsPanel } from '../os/os-panel';
 import { CodeEditorComponent } from '../shared/code-editor.component';
 import { AuthService } from '../core/auth.service';
+import { HttpService } from '../core/http.service';
 import { CarbonIcon } from '../os/carbon-icon';
 import Db2Database16 from '@carbon/icons/es/db2--database/16';
 import Code16 from '@carbon/icons/es/code/16';
@@ -403,6 +404,7 @@ export class BackboneSlice implements OnChanges {
   @Output() closed = new EventEmitter<void>();
 
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   readonly ic = IC;
   readonly dbIcon = Db2Database16;
 
@@ -460,8 +462,8 @@ export class BackboneSlice implements OnChanges {
     const k = encodeURIComponent(this.row.key);
     try {
       const [dr, yr] = await Promise.all([
-        fetch('/api/admin/backbone/detail?component=' + k, this.authGet()),
-        fetch('/api/admin/backbone/yaml?component=' + k, this.authGet()),
+        this.http.request('/api/admin/backbone/detail?component=' + k, this.authGet()),
+        this.http.request('/api/admin/backbone/yaml?component=' + k, this.authGet()),
       ]);
       if (this.checkExpired(dr.status)) return;
       if (dr.status === 401 || dr.status === 403) { this.err.set('관리자 권한이 필요합니다 (opensphere-console-admins).'); return; }
@@ -487,7 +489,7 @@ export class BackboneSlice implements OnChanges {
     this.loadedContents = true;
     if (this.row.key === 'postgres') {
       try {
-        const r = await fetch('/api/admin/backbone/pg', this.authGet());
+        const r = await this.http.request('/api/admin/backbone/pg', this.authGet());
         if (this.checkExpired(r.status)) return;
         if (r.ok) { this.pg.set(await r.json()); if (!this.fnDb()) this.fnDb.set(this.pg()?.databases?.[0]?.database || ''); }
       } catch { /* pg 실패 무시 */ }
@@ -499,7 +501,7 @@ export class BackboneSlice implements OnChanges {
   // ── Gitea Git 코드 뷰 ──
   private async loadGitea(): Promise<void> {
     try {
-      const r = await fetch('/api/admin/backbone/gitea', this.authGet());
+      const r = await this.http.request('/api/admin/backbone/gitea', this.authGet());
       if (this.checkExpired(r.status)) return;
       if (!r.ok) return;
       const g: GiteaResp = await r.json();
@@ -511,7 +513,7 @@ export class BackboneSlice implements OnChanges {
     this.giteaRepo.set(repo); this.giteaTreeRoots.set([]); this.giteaFile.set(null); this.giteaTreeHint.set('');
     const q = `owner=${encodeURIComponent(repo.owner)}&repo=${encodeURIComponent(repo.name)}&ref=${encodeURIComponent(repo.branch)}`;
     try {
-      const r = await fetch('/api/admin/backbone/gitea/tree?' + q, this.authGet());
+      const r = await this.http.request('/api/admin/backbone/gitea/tree?' + q, this.authGet());
       if (this.checkExpired(r.status)) return;
       if (!r.ok) return;
       const t = await r.json();
@@ -524,7 +526,7 @@ export class BackboneSlice implements OnChanges {
     this.giteaFile.set({ name: path.split('/').pop() || path, path, content: '불러오는 중…', lang: 'text' });
     const q = `owner=${encodeURIComponent(repo.owner)}&repo=${encodeURIComponent(repo.name)}&ref=${encodeURIComponent(repo.branch)}&path=${encodeURIComponent(path)}`;
     try {
-      const r = await fetch('/api/admin/backbone/gitea/file?' + q, this.authGet());
+      const r = await this.http.request('/api/admin/backbone/gitea/file?' + q, this.authGet());
       if (this.checkExpired(r.status)) { this.giteaFile.set(null); return; }
       if (!r.ok) { this.giteaFile.set({ name: path, path, content: `조회 실패 (HTTP ${r.status})`, lang: 'text' }); return; }
       const f = await r.json();
@@ -612,7 +614,7 @@ export class BackboneSlice implements OnChanges {
     if (!database || !this.fnName().trim()) { this.fnMsg.set({ type: 'danger', text: 'Database와 Name은 필수입니다.' }); return; }
     this.fnBusy.set(true); this.fnMsg.set(null);
     try {
-      const r = await fetch('/api/admin/backbone/pg/function', {
+      const r = await this.http.request('/api/admin/backbone/pg/function', {
         method: 'POST',
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: JSON.stringify({ database, schema: this.fnSchema() || 'public', name: this.fnName(), args: this.fnArgs(), returns: this.fnReturns(), language: this.fnLang(), body: this.fnBody(), replace: this.fnReplace() }),
@@ -634,7 +636,7 @@ export class BackboneSlice implements OnChanges {
     const enc = encodeURIComponent;
     try {
       const q = `database=${enc(database)}&schema=${enc(fn.schema)}&name=${enc(fn.name)}&args=${enc(fn.args)}`;
-      const r = await fetch('/api/admin/backbone/pg/function/source?' + q, this.authGet());
+      const r = await this.http.request('/api/admin/backbone/pg/function/source?' + q, this.authGet());
       if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) { this.fnMsg.set({ type: 'danger', text: '관리자 권한이 필요합니다.' }); return; }
       const s = await r.json().catch(() => ({} as { args?: string; returns?: string; language?: string; body?: string; error?: string }));
@@ -651,7 +653,7 @@ export class BackboneSlice implements OnChanges {
     if (!confirm(`함수 ${fn.schema}.${fn.name}(${fn.args}) 를 삭제할까요?`)) return;
     this.fnMsg.set(null); this.fnOpen.set(true);
     try {
-      const r = await fetch('/api/admin/backbone/pg/function/drop', {
+      const r = await this.http.request('/api/admin/backbone/pg/function/drop', {
         method: 'POST',
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: JSON.stringify({ database, schema: fn.schema, name: fn.name, args: fn.args }),
@@ -686,7 +688,7 @@ export class BackboneSlice implements OnChanges {
     this.rows.set(null); this.rowsErr.set('');
     const q = `database=${encodeURIComponent(database)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}`;
     try {
-      const r = await fetch('/api/admin/backbone/pg/rows?' + q, this.authGet());
+      const r = await this.http.request('/api/admin/backbone/pg/rows?' + q, this.authGet());
       if (this.checkExpired(r.status)) return;
       if (!r.ok) { this.rowsErr.set(`조회 실패 (HTTP ${r.status})`); return; }
       this.rows.set(await r.json());

@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { AuthService } from './auth.service';
+import { HttpService } from './http.service';
 
 /** rhdh-self(headless 엔진)와 기능 컨테이너 API 소비.
  *  경로는 셸 nginx가 프록시: /api/rhdh/* → RHDH, /api/status/* → platform-status.
@@ -68,21 +68,17 @@ export interface PlatformStatus {
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
-  private auth = inject(AuthService);
-  // 감사 B: catalog/kubernetes 읽기도 인증 필수(무인증 토폴로지 노출 차단) → Bearer 첨부.
-  private authHeaders(extra?: Record<string, string>): Record<string, string> {
-    return { authorization: 'Bearer ' + (this.auth.token() || ''), ...(extra ?? {}) };
-  }
+  private http = inject(HttpService);
 
   async catalogEntities(): Promise<CatalogEntity[]> {
-    const res = await fetch('/api/rhdh/catalog/entities?limit=200', { headers: this.authHeaders() });
+    const res = await this.http.request('/api/rhdh/catalog/entities?limit=200');
     if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`);
     return res.json();
   }
 
   /** kind=API만 — RHDH 'APIs'(API Explorer) 메뉴의 셸판 데이터 */
   async apiEntities(): Promise<CatalogEntity[]> {
-    const res = await fetch('/api/rhdh/catalog/entities?filter=kind=api&limit=200', { headers: this.authHeaders() });
+    const res = await this.http.request('/api/rhdh/catalog/entities?filter=kind=api&limit=200');
     if (!res.ok) throw new Error(`apis: HTTP ${res.status}`);
     return res.json();
   }
@@ -90,9 +86,9 @@ export class ApiService {
   /** 엔티티의 살아있는 K8s 리소스 — rhdh-self kubernetes backend 플러그인 소비
    *  (TAP 'Runtime Resources' 대응 — 헌법 §10: 흡수, 재구현 아님) */
   async runtimeResources(entity: CatalogEntity): Promise<RuntimeResource[]> {
-    const res = await fetch(`/api/rhdh/kubernetes/services/${entity.metadata.name}`, {
+    const res = await this.http.request(`/api/rhdh/kubernetes/services/${entity.metadata.name}`, {
       method: 'POST',
-      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entity }),
     });
     if (!res.ok) throw new Error(`kubernetes: HTTP ${res.status}`);
@@ -116,7 +112,7 @@ export class ApiService {
   }
 
   async platformStatus(): Promise<PlatformStatus> {
-    const res = await fetch('/api/status/api/status');
+    const res = await this.http.request('/api/status/api/status');
     if (!res.ok) throw new Error(`status: HTTP ${res.status}`);
     return res.json();
   }

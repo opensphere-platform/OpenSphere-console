@@ -217,6 +217,7 @@
 
 const TAG = 'osp-console-identity';
 let API_BASE = '';
+let apiFetch = (input, init) => fetch(input, init);
 
 // 레이아웃 전용 — 트리 메뉴 시각은 <osp-tree-nav>가 Clarity로 처리. 색/hex 없음.
 const LAYOUT_STYLE = `<style>
@@ -241,10 +242,6 @@ function esc(v) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
 }
-function authToken() {
-  try { return (window.__OS_AUTH__ && window.__OS_AUTH__.token && window.__OS_AUTH__.token()) || ''; } catch { return ''; }
-}
-
 class IdentityElement extends HTMLElement {
   connectedCallback() {
     this._activeView = 'users';
@@ -287,12 +284,11 @@ class IdentityElement extends HTMLElement {
   }
 
   async load() {
-    const authHdr = { 'Authorization': `Bearer ${authToken()}` };
     try {
       const [d, a] = await Promise.all([
-        fetch(`${API_BASE}/api/identity`).then((r) => { if (!r.ok) throw new Error(`identity HTTP ${r.status}`); return r.json(); }),
+        apiFetch(`${API_BASE}/api/identity`).then((r) => { if (!r.ok) throw new Error(`identity HTTP ${r.status}`); return r.json(); }),
         // 감사 로그는 거버넌스 게이트로 보호됨 → 호출자 토큰 첨부
-        fetch(`${API_BASE}/api/identity/audit`, { headers: authHdr }).then((r) => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
+        apiFetch(`${API_BASE}/api/identity/audit`).then((r) => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
       ]);
       this.data = d; this.auditItems = a.items || [];
       this.render();
@@ -309,9 +305,9 @@ class IdentityElement extends HTMLElement {
     if (reason === null) return;
     if (!reason.trim()) { alert('사유는 필수입니다(IGA).'); return; }
     try {
-      const res = await fetch(`${API_BASE}${url}`, {
+      const res = await apiFetch(`${API_BASE}${url}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'Authorization': `Bearer ${authToken()}` },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...payload, reason }),
       });
       const body = await res.json().catch(() => ({}));
@@ -401,6 +397,7 @@ class IdentityElement extends HTMLElement {
 
 export function activate(ctx) {
   API_BASE = ctx.api?.baseUrl ?? '';
+  apiFetch = ctx.api?.fetch ?? apiFetch;
   if (!customElements.get(TAG)) customElements.define(TAG, IdentityElement);
   ctx.extensions.registerPage({ id: ctx.pluginId, title: '콘솔 관리자 (Kanidm)', navBand: 'Console Admin', elementTag: TAG });
 }

@@ -1,13 +1,16 @@
 # opensphere-auth BFF — Kanidm-backed OIDC issuer that owns the console login UI.
-FROM docker.io/library/node:22-alpine
+FROM docker.io/library/node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
 ENV PORT=8443
 WORKDIR /app
 # server-side QR generation for authenticator enrollment (no third-party calls)
 COPY package.json /app/package.json
-RUN npm install --omit=dev --no-audit --no-fund
+RUN apk upgrade --no-cache \
+    && npm install --omit=dev --no-audit --no-fund \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # CA that signed kanidm-tls (used to validate the internal Kanidm core over TLS)
 COPY kanidm-ca.crt /etc/kanidm-ca/ca.crt
 COPY --chmod=0644 server.mjs /app/server.mjs
+COPY --chmod=0644 token-verifier.mjs /app/token-verifier.mjs
 USER node
 EXPOSE 8443
 CMD ["node", "/app/server.mjs"]

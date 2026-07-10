@@ -1,0 +1,120 @@
+# Console services that consume the required Backbone. These are above the three
+# data pillars and therefore are not included in Backbone readiness itself.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: oaa-gateway, namespace: opensphere-backbone }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: oaa-gateway, namespace: opensphere-backbone }
+rules:
+  - { apiGroups: [""], resources: [secrets], verbs: [get, list, create, patch, delete] }
+  - { apiGroups: [""], resources: [pods, pods/log, services, events], verbs: [get, list] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: oaa-gateway, namespace: opensphere-backbone }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: oaa-gateway }
+subjects: [{ kind: ServiceAccount, name: oaa-gateway, namespace: opensphere-backbone }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: oaa-gateway-environment-reader }
+rules:
+  - { apiGroups: [""], resources: [pods, pods/log, services, events], verbs: [get, list] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: oaa-gateway-environment-reader }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: oaa-gateway-environment-reader }
+subjects: [{ kind: ServiceAccount, name: oaa-gateway, namespace: opensphere-backbone }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: oaa-gateway-controlled-operator }
+rules:
+  - { apiGroups: [apps], resources: [deployments], verbs: [get, list, patch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: oaa-gateway-controlled-operator }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: oaa-gateway-controlled-operator }
+subjects: [{ kind: ServiceAccount, name: oaa-gateway, namespace: opensphere-backbone }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oaa-gateway
+  namespace: opensphere-backbone
+  labels: { app: oaa-gateway, opensphere.io/layer: console-service }
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector: { matchLabels: { app: oaa-gateway } }
+  template:
+    metadata: { labels: { app: oaa-gateway, opensphere.io/layer: console-service } }
+    spec:
+      serviceAccountName: oaa-gateway
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: gateway
+          image: oaa-gateway@sha256:de25fdc4a1a16c318f5b0bf192a249f998e5df0f2c0cbe95b946d69be0748953
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: BACKBONE_NS, value: opensphere-backbone }
+            - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
+            - { name: KANIDM_JWKS_URL, value: https://kanidm-core.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk }
+            - { name: KANIDM_TLS_SERVERNAME, value: kanidm.opensphere-console-auth.svc }
+            - { name: KANIDM_CA_PATH, value: /app/kanidm-ca.crt }
+            - { name: KANIDM_AZP, value: opensphere-console }
+            - { name: KANIDM_ADMIN_GROUP, value: opensphere-console-admins }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - { name: BACKBONE_PG_HOST, value: backbone-postgres.opensphere-backbone.svc.cluster.local }
+            - { name: BACKBONE_PG_PORT, value: "5432" }
+            - { name: BACKBONE_PG_DB, value: console }
+            - { name: BACKBONE_PG_USER, value: console }
+            - { name: BACKBONE_PG_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
+            - { name: OAA_EMBED_DIM, value: "384" }
+            - { name: OAA_RAG_TOP_K, value: "5" }
+          ports: [{ name: http, containerPort: 8080 }]
+          startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 3, failureThreshold: 40 }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10, failureThreshold: 6 }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: oaa-gateway, namespace: opensphere-backbone, labels: { app: oaa-gateway } }
+spec:
+  selector: { app: oaa-gateway }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: oaa-gateway, namespace: opensphere-backbone }
+spec: { minAvailable: 1, selector: { matchLabels: { app: oaa-gateway } } }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: oaa-gateway-ingress, namespace: opensphere-backbone }
+spec:
+  podSelector: { matchLabels: { app: oaa-gateway } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } } }
+        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-system } } }
+        - { podSelector: {} }
+      ports: [{ protocol: TCP, port: 8080 }]

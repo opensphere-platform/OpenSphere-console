@@ -84,7 +84,7 @@ metadata:
   namespace: opensphere-console-auth
   labels: { app: opensphere-auth }
 spec:
-  replicas: 1
+  replicas: 2
   selector: { matchLabels: { app: opensphere-auth } }
   template:
     metadata:
@@ -93,7 +93,7 @@ spec:
       serviceAccountName: opensphere-auth
       containers:
         - name: auth
-          image: localhost:5000/opensphere-auth:p3
+          image: opensphere-auth@sha256:4b911964cdea93342522c6b7e0db321a5beae5bc247e0084ec018a6856d9ea5d
           imagePullPolicy: IfNotPresent
           env:
             - { name: KANIDM_CORE_URL, value: "https://kanidm-core.opensphere-console-auth.svc:8443" }
@@ -112,14 +112,24 @@ spec:
             httpGet: { path: /bff/healthz, port: 8443, scheme: HTTPS }
             initialDelaySeconds: 2
             periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /bff/healthz, port: 8443, scheme: HTTPS }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
       volumes:
         - name: tls
           secret: { secretName: kanidm-tls }
         - name: sig
-          secret: { secretName: opensphere-auth-sig, optional: true }
+          secret: { secretName: opensphere-auth-sig }
 ---
-# ADR-UI-003 §3.2: 셸이 same-origin(/bff)으로 BFF를 호출하기 위한 ClusterIP Service.
-# 레거시 kanidm-ext 셀렉터 swap 대신 — BFF=/bff/* 백엔드(console-core 서비스), 로그인은 Kanidm 직결 유지.
+# ADR-UI-003 §3.2: 셸의 same-origin /bff 프록시가 사용하는 내부 Service.
 apiVersion: v1
 kind: Service
 metadata:
@@ -130,3 +140,17 @@ spec:
   selector: { app: opensphere-auth }
   ports:
     - { port: 8443, targetPort: 8443 }
+---
+# Browser-facing OIDC/login endpoint. Local Docker Desktop binds this LoadBalancer
+# to https://localhost:8444; production can replace it with the platform ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensphere-auth-ext
+  namespace: opensphere-console-auth
+  labels: { app: opensphere-auth }
+spec:
+  type: LoadBalancer
+  selector: { app: opensphere-auth }
+  ports:
+    - { name: https, port: 8444, targetPort: 8443 }

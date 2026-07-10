@@ -1,7 +1,9 @@
-FROM docker.io/library/node:22-alpine
+FROM docker.io/library/node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
 WORKDIR /app
 COPY package.json /app/package.json
-RUN npm install --omit=dev --no-audit --no-fund
+RUN apk upgrade --no-cache \
+    && npm install --omit=dev --no-audit --no-fund \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY server.js /app/server.js
 COPY manual-seeds /app/manual-seeds
 COPY kanidm-ca.crt /app/kanidm-ca.crt

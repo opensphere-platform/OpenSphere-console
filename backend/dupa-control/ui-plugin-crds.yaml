@@ -1,4 +1,4 @@
-# DUPA Admin Control — 등록처 CRD 2계층 (계획서 §5 + 검토 §A.1 manifest v2 정합)
+# DUPA Admin Control — 등록처 CRD (CONSTITUTION-0003 Host Contract + 통합 선언)
 # UIPluginPackage     : 설치 가능 catalog (관리자 통제 — manifestSha256/signature/keyId가 신뢰 루트)
 # UIPluginRegistration: 설치 상태/desired state (Admin이 이걸 바꾸고 controller가 reconcile)
 apiVersion: apiextensions.k8s.io/v1
@@ -23,12 +23,21 @@ spec:
           properties:
             spec:
               type: object
-              required: [displayName, image, manifest, trust]
+              required: [displayName, image, manifest, trust, kind, hostRef, hostCompat, contributions]
               properties:
                 displayName: { type: string }
                 owner: { type: string }
                 version: { type: string }
                 description: { type: string }
+                # 공식 위계 계약 — Registry·signed manifest·runtime Host가 동일하게 보존한다.
+                kind:
+                  type: string
+                  enum: [subShell, plugin]
+                hostRef:
+                  type: string
+                  pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+                hostApiVersion: { type: string }
+                hostCompat: { type: string }
                 serviceAccountName:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
@@ -91,6 +100,70 @@ spec:
                   properties:
                     namespace: { type: string, pattern: '^[a-z][a-z0-9-]{0,30}$' }  # os <namespace> ...
                     manifestPath: { type: string }  # apiBase 상대 경로(예: /cli/manifest)
+                contributions:
+                  type: object
+                  required: [page, navigation, api, cli, manual, search, notification, observability]
+                  properties:
+                    page:
+                      type: object
+                      required: [enabled]
+                      properties:
+                        enabled: { type: boolean }
+                        reason: { type: string }
+                    navigation:
+                      type: object
+                      required: [enabled, mode]
+                      properties:
+                        enabled: { type: boolean }
+                        mode: { type: string, enum: [runtime, install-time, none] }
+                        reason: { type: string }
+                    api:
+                      type: object
+                      required: [enabled]
+                      properties:
+                        enabled: { type: boolean }
+                        basePath: { type: string }
+                        reason: { type: string }
+                    cli:
+                      type: object
+                      required: [enabled]
+                      properties:
+                        enabled: { type: boolean }
+                        namespace: { type: string }
+                        manifestPath: { type: string }
+                        reason: { type: string }
+                    manual:
+                      type: object
+                      required: [enabled]
+                      properties:
+                        enabled: { type: boolean }
+                        sourceId: { type: string }
+                        mode: { type: string, enum: [install-time, runtime, none] }
+                        reason: { type: string }
+                    search:
+                      type: object
+                      required: [enabled, mode]
+                      properties:
+                        enabled: { type: boolean }
+                        mode: { type: string, enum: [runtime, index, none] }
+                        reason: { type: string }
+                    notification:
+                      type: object
+                      required: [enabled, frontend, backend]
+                      properties:
+                        enabled: { type: boolean }
+                        frontend: { type: boolean }
+                        backend: { type: boolean }
+                        reason: { type: string }
+                    observability:
+                      type: object
+                      required: [enabled, logs, metrics, traces]
+                      properties:
+                        enabled: { type: boolean }
+                        logs: { type: boolean }
+                        metrics: { type: boolean }
+                        traces: { type: boolean }
+                        reason: { type: string }
       additionalPrinterColumns:
         - { name: Display, type: string, jsonPath: .spec.displayName }
         - { name: Version, type: string, jsonPath: .spec.version }
@@ -150,7 +223,48 @@ spec:
                 # Uninstalled는 Registration CR 자체가 삭제되므로 상태로 남지 않는다.
                 phase:
                   type: string
-                  enum: [Installing, Enabled, Disabled, Failed]
+                  enum: [Declared, DependencyPending, Installing, Verifying, Ready, Activated, Degraded, Disabled, Uninstalling, Removed, Failed]
+                observedGeneration: { type: integer, format: int64 }
+                retryable: { type: boolean }
+                nextRetryAt: { type: string }
+                observedVersion: { type: string }
+                # Controller가 마지막 두 개의 검증된 release 좌표를 보존한다.
+                # /rollback은 이 값으로 Package를 원자적으로 이전 digest/manifest/version에 되돌린다.
+                currentDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
+                currentManifestSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
+                currentVersion: { type: string }
+                previousDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
+                previousManifestSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
+                previousVersion: { type: string }
+                host:
+                  type: object
+                  properties:
+                    ref: { type: string }
+                    observedApiVersion: { type: string }
+                    phase: { type: string, enum: [Compatible, DependencyPending, Incompatible] }
+                workload:
+                  type: object
+                  properties:
+                    phase: { type: string, enum: [Pending, Ready, Degraded, Removed] }
+                verification:
+                  type: object
+                  properties:
+                    manifest: { type: string, enum: [Pending, Verified, Failed] }
+                    signature: { type: string, enum: [Pending, Verified, Failed] }
+                    entryDigest: { type: string, enum: [Pending, Verified, Failed] }
+                    permissions: { type: string, enum: [Pending, Approved, Failed] }
+                integrations:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      phase: { type: string, enum: [DependencyPending, Ready, Degraded, Disabled, Failed] }
+                      reason: { type: string }
+                      message: { type: string }
+                      retryable: { type: boolean }
+                      lastTransitionTime: { type: string }
+                      nextRetryAt: { type: string }
+                      observedVersion: { type: string }
                 # reason: InvalidDigest(S1)/DigestMismatch/UntrustedKey/SignatureInvalid/SignatureUnreachable/
                 #   ManifestUnreachable/ShellCompatDrift/EntryDigestMismatch/EntryUnreachable/
                 #   WorkloadNotReady/PackageNotFound/InvalidPluginName (실패 시에만; 성공 상태는 빈 문자열)

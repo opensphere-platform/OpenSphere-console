@@ -5,6 +5,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsDatagrid, OsCellDef, OsColumn } from '../os/os-datagrid';
 import { AuthService } from '../core/auth.service';
+import { HttpService } from '../core/http.service';
 import { BackboneGraph } from './backbone-graph';
 import { BackboneSlice } from './backbone-slice';
 
@@ -704,6 +705,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
   private seenEvents = new Set<string>();
 
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   private authGet(): RequestInit {
     return { cache: 'no-store', headers: { authorization: 'Bearer ' + (this.auth.token() || '') } };
   }
@@ -727,7 +729,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
 
   async refresh(silent = false): Promise<void> {
     try {
-      const r = await fetch('/api/admin/backbone/status', this.authGet());
+      const r = await this.http.request('/api/admin/backbone/status', this.authGet());
       if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) {
         if (!silent) this.msg.set({ type: 'danger', text: '관리자 권한이 필요합니다 (opensphere-console-admins).' });
@@ -752,8 +754,8 @@ export class AdminBackbone implements OnInit, OnDestroy {
   async loadController(): Promise<void> {
     try {
       const [cr, cl] = await Promise.all([
-        fetch('/api/admin/backbone/controller', this.authGet()),
-        fetch('/api/admin/backbone/claims', this.authGet()),
+        this.http.request('/api/admin/backbone/controller', this.authGet()),
+        this.http.request('/api/admin/backbone/claims', this.authGet()),
       ]);
       if (this.checkExpired(cr.status) || this.checkExpired(cl.status)) return;
       if (cr.ok) this.ctrl.set(await cr.json());
@@ -857,7 +859,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
   async loadLlmKeys(): Promise<void> {
     this.llmBusy.set(true);
     try {
-      const r = await fetch('/api/oaa/admin/llm-keys', this.authGet());
+      const r = await this.http.request('/api/oaa/admin/llm-keys', this.authGet());
       if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) {
         this.msg.set({ type: 'danger', text: 'OAA Gateway admin permission is required.' });
@@ -881,7 +883,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
     }
     this.llmSaving.set(true);
     try {
-      const r = await fetch('/api/oaa/admin/llm-keys', {
+      const r = await this.http.request('/api/oaa/admin/llm-keys', {
         method: 'POST',
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: JSON.stringify(this.llmForm),
@@ -911,7 +913,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
     if (reason == null) return;
     this.llmBusy.set(true);
     try {
-      const r = await fetch(`/api/oaa/admin/llm-keys/${encodeURIComponent(k.id)}?reason=${encodeURIComponent(reason)}`, {
+      const r = await this.http.request(`/api/oaa/admin/llm-keys/${encodeURIComponent(k.id)}?reason=${encodeURIComponent(reason)}`, {
         method: 'DELETE',
         headers: { authorization: 'Bearer ' + (this.auth.token() || '') },
       });
@@ -936,7 +938,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
   async loadKnowledgeStats(): Promise<void> {
     this.knowledgeBusy.set(true);
     try {
-      const r = await fetch('/api/oaa/admin/knowledge/stats', this.authGet());
+      const r = await this.http.request('/api/oaa/admin/knowledge/stats', this.authGet());
       if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) {
         this.msg.set({ type: 'danger', text: 'OAA Gateway admin permission is required.' });
@@ -973,7 +975,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
   private async knowledgePost(url: string, body: unknown, success: string, okStatus = 200): Promise<void> {
     this.knowledgeBusy.set(true);
     try {
-      const r = await fetch(url, {
+      const r = await this.http.request(url, {
         method: 'POST',
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -1002,7 +1004,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
     if (!q) return;
     this.knowledgeBusy.set(true);
     try {
-      const r = await fetch(`/api/oaa/knowledge/search?q=${encodeURIComponent(q)}`, this.authGet());
+      const r = await this.http.request(`/api/oaa/knowledge/search?q=${encodeURIComponent(q)}`, this.authGet());
       if (this.checkExpired(r.status)) return;
       if (!r.ok) {
         this.msg.set({ type: 'danger', text: `Knowledge search failed (HTTP ${r.status})` });
@@ -1020,7 +1022,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
     try {
       const q = this.conceptQuery.trim();
       const qs = q ? `?q=${encodeURIComponent(q)}&limit=64` : '?limit=64';
-      const r = await fetch(`/api/oaa/knowledge/concepts${qs}`, this.authGet());
+      const r = await this.http.request(`/api/oaa/knowledge/concepts${qs}`, this.authGet());
       if (this.checkExpired(r.status)) return;
       if (!r.ok) {
         this.msg.set({ type: 'danger', text: `Concept graph load failed (HTTP ${r.status})` });
@@ -1037,7 +1039,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
   async loadToolManifest(): Promise<void> {
     this.toolBusy.set(true);
     try {
-      const r = await fetch('/api/oaa/tools/manifest', this.authGet());
+      const r = await this.http.request('/api/oaa/tools/manifest', this.authGet());
       if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) {
         this.msg.set({ type: 'danger', text: 'OAA Gateway permission is required.' });
@@ -1058,7 +1060,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
   async loadActionBindings(): Promise<void> {
     this.toolBusy.set(true);
     try {
-      const r = await fetch('/api/oaa/tools/action-bindings', this.authGet());
+      const r = await this.http.request('/api/oaa/tools/action-bindings', this.authGet());
       if (this.checkExpired(r.status)) return;
       if (r.status === 401 || r.status === 403) {
         this.msg.set({ type: 'danger', text: 'OAA Gateway permission is required.' });
@@ -1091,7 +1093,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
     this.actionBusy.set(true);
     this.actionResult.set('');
     try {
-      const r = await fetch('/api/oaa/actions/bindings/execute', {
+      const r = await this.http.request('/api/oaa/actions/bindings/execute', {
         method: 'POST',
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -1126,7 +1128,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
     this.seenEvents.clear();
     this.log('Backbone 설치 요청 — 네임스페이스/시크릿/워크로드 적용 시작');
     try {
-      const r = await fetch('/api/admin/backbone/install', {
+      const r = await this.http.request('/api/admin/backbone/install', {
         method: 'POST',
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: '{}',
@@ -1171,7 +1173,7 @@ export class AdminBackbone implements OnInit, OnDestroy {
   private async pollInstall(): Promise<void> {
     await this.refresh(true);
     try {
-      const r = await fetch('/api/admin/backbone/events', this.authGet());
+      const r = await this.http.request('/api/admin/backbone/events', this.authGet());
       if (r.ok) {
         const items = (await r.json()).items || [];
         for (const e of items) {

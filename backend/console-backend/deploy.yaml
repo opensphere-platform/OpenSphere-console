@@ -37,7 +37,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata: { name: console-backend, namespace: opensphere-system, labels: { app: console-backend } }
 spec:
-  replicas: 1
+  replicas: 2
   selector: { matchLabels: { app: console-backend } }
   template:
     metadata: { labels: { app: console-backend } }
@@ -45,15 +45,22 @@ spec:
       serviceAccountName: console-backend
       containers:
         - name: api
-          image: localhost:5000/console-backend:v1
+          image: console-backend@sha256:61fd4e90d619f0615ae0d6f7d00adc3e005b6ecc40799c3182c0edd109187cf3
+          imagePullPolicy: IfNotPresent
           env:
             # fetch(kube API / secret read)가 kube CA 신뢰하도록
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
+            - { name: DUPA_URL, value: http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080 }
           ports: [{ containerPort: 8080 }]
-          readinessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 2 }
+          readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
           resources:
             requests: { cpu: 20m, memory: 48Mi }
             limits: { cpu: 300m, memory: 192Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
 ---
 apiVersion: v1
 kind: Service

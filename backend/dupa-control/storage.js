@@ -84,6 +84,19 @@ async function ensureBucket(bucket) {
   throw new Error(`ensureBucket HTTP ${r.status}: ${r.body.slice(0, 160)}`);
 }
 
+async function healthCheck() {
+  if (!enabled) return false;
+  try {
+    for (const bucket of ['opensphere-console-system', 'plugin-bundles', 'gitea-lfs', 'console-uploads', 'backups']) {
+      await ensureBucket(bucket);
+    }
+    return true;
+  } catch {
+    enabled = false;
+    return false;
+  }
+}
+
 // 버킷 내 키 열거(ListObjectsV2, 페이지네이션) — GC용. XML에서 <Key> 추출.
 async function listKeys(bucket) {
   const keys = [];
@@ -115,4 +128,4 @@ async function emptyAndDeleteBucket(bucket) {
   }
 }
 
-module.exports = { init, isEnabled, accessKey, secretKey, endpoint, ensureBucket, listKeys, emptyAndDeleteBucket };
+module.exports = { init, isEnabled, healthCheck, accessKey, secretKey, endpoint, ensureBucket, listKeys, emptyAndDeleteBucket };

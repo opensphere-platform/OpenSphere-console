@@ -1,0 +1,77 @@
+# Production availability and ingress boundaries for the Main Shell control plane.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: opensphere-console, namespace: opensphere-console }
+spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-console } } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: opensphere-auth, namespace: opensphere-console-auth }
+spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-auth } } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: console-backend, namespace: opensphere-system }
+spec: { minAvailable: 1, selector: { matchLabels: { app: console-backend } } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: dupa-registry-controller, namespace: opensphere-system }
+spec: { minAvailable: 1, selector: { matchLabels: { app: dupa-registry-controller } } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: opensphere-registry, namespace: opensphere-system }
+spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-registry } } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: os-cli, namespace: opensphere-system }
+spec: { minAvailable: 1, selector: { matchLabels: { app: os-cli } } }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-console-ingress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-console } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-auth-ingress, namespace: opensphere-console-auth }
+spec:
+  podSelector: { matchLabels: { app: opensphere-auth } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console-auth } }
+      ports: [{ protocol: TCP, port: 8443 }]
+    # Public OIDC/login surface. Authentication, PKCE, issuer/audience and rate
+    # limits remain enforced by opensphere-auth; Kanidm itself stays ClusterIP-only.
+    - from:
+        - ipBlock: { cidr: 0.0.0.0/0 }
+      ports: [{ protocol: TCP, port: 8443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-system-control-plane-ingress, namespace: opensphere-system }
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [console-backend, dupa-registry-controller, opensphere-registry, os-cli]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-system } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 80 }

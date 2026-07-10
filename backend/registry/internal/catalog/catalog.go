@@ -28,17 +28,32 @@ type CLIContribution struct {
 
 // Item 은 단일 카탈로그 데이터셋의 한 항목이다(read-only 권위).
 type Item struct {
-	Kind        Kind             `json:"kind"`
-	Name        string           `json:"name"`
-	DisplayName string           `json:"displayName"`
-	Version     string           `json:"version"`
-	Channel     string           `json:"channel,omitempty"`
-	Image       string           `json:"image"`       // repository
-	ImageDigest string           `json:"imageDigest"` // 핀(sha256 또는 태그) — ⚠️빈값이면 게시거부
-	Requires    []string         `json:"requires,omitempty"`
-	Description string           `json:"description,omitempty"`
-	Source      string           `json:"source"`        // "seed" | "live"
-	CLI         *CLIContribution `json:"cli,omitempty"` // cli:contribute 광고(plugin만) — os가 소비
+	Kind               Kind                   `json:"kind"`
+	ID                 string                 `json:"id,omitempty"`
+	Name               string                 `json:"name"`
+	DisplayName        string                 `json:"displayName"`
+	Version            string                 `json:"version"`
+	Channel            string                 `json:"channel,omitempty"`
+	Image              string                 `json:"image"`       // repository
+	ImageDigest        string                 `json:"imageDigest"` // 핀(sha256 또는 태그) — ⚠️빈값이면 게시거부
+	ComponentKind      string                 `json:"componentKind,omitempty"`
+	HostRef            string                 `json:"hostRef,omitempty"`
+	HostApiVersion     string                 `json:"hostApiVersion,omitempty"`
+	HostCompat         string                 `json:"hostCompat,omitempty"`
+	Contributions      map[string]interface{} `json:"contributions,omitempty"`
+	Manifest           string                 `json:"manifest,omitempty"`
+	ManifestSHA256     string                 `json:"manifestSha256,omitempty"`
+	Signature          string                 `json:"signature,omitempty"`
+	KeyID              string                 `json:"keyId,omitempty"`
+	Icon               string                 `json:"icon,omitempty"`
+	Available          bool                   `json:"available"`
+	Phase              string                 `json:"phase,omitempty"`
+	ObservedGeneration int64                  `json:"observedGeneration,omitempty"`
+	Integrations       map[string]interface{} `json:"integrations,omitempty"`
+	Requires           []string               `json:"requires,omitempty"`
+	Description        string                 `json:"description,omitempty"`
+	Source             string                 `json:"source"`        // "seed" | "live"
+	CLI                *CLIContribution       `json:"cli,omitempty"` // cli:contribute 광고(plugin만) — os가 소비
 }
 
 // Gate 는 ImageDigest 빈값 항목을 게시거부한다(ADR-0001, #4 digest-pin 공유).

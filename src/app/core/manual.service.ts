@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { AuthService } from './auth.service';
+import { HttpService } from './http.service';
 
 export interface ManualSource {
   id: string;
@@ -79,13 +80,14 @@ export interface ManualDocumentDetail {
 @Injectable({ providedIn: 'root' })
 export class ManualService {
   private auth = inject(AuthService);
+  private http = inject(HttpService);
 
   private authHeaders(): Record<string, string> {
     return { authorization: 'Bearer ' + (this.auth.token() || '') };
   }
 
   private async getJson<T>(url: string): Promise<T> {
-    const res = await fetch(url, { headers: this.authHeaders() });
+    const res = await this.http.request(url, { headers: this.authHeaders() });
     if (!res.ok) throw new Error(`manual: HTTP ${res.status}`);
     return res.json() as Promise<T>;
   }

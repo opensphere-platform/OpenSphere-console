@@ -174,7 +174,8 @@ test('Console Manual is exposed as a registry API, header search source, and reg
   assert.doesNotMatch(osShell, /path: '\/manual', label: 'Manual'/);
   assert.match(manualPackage, /kind: UIPluginPackage/);
   assert.match(manualPackage, /name: manual/);
-  assert.match(manualPackage, /repository: ghcr\.io\/opensphere-platform\/manual/);
+  assert.match(manualPackage, /repository: manual/);
+  assert.match(manualPackage, /digest: sha256:[a-f0-9]{64}/);
   assert.match(manualPackage, /keyId: opensphere-plugins-v1/);
   assert.match(manualPackage, /manual:contribute/);
   assert.match(manualManifest, /"kind": "subShell"/);

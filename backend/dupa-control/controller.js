@@ -2,7 +2,7 @@
 // 한 Node.js 서비스가 3역할:
 //   ① reconcile : UIPluginRegistration desiredState → workload apply/delete + 검증 + registry 생성
 //   ② Control API: /api/admin/plugins/* (Admin UI가 호출, kubectl 없이 상태 전이)
-//   ③ registry  : /registry/plugins.json (셸 Extension Host가 읽는 산출물, 즉시 반영)
+//   ③ proxy authorization projection (public Registry는 opensphere-registry 단일 권위)
 // 신뢰 루트는 UIPluginPackage(관리자 승인값). controller는 digest를 '계산해 비교'만 하고
 // registry에는 승인값을 '전사'한다(§B.5). 이중 검증: 여기(설치 시점) + 셸(로드 시점).
 // 의존성 0 (node 내장 http/crypto/fs).
@@ -10,8 +10,8 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const { createHash, createPublicKey, verify, randomBytes } = require('crypto');
-const db = require('./db'); // Backbone PostgreSQL(감사로그 영속). 미연결 시 ConfigMap 폴백.
-const storage = require('./storage'); // Backbone RustFS(S3). BackboneClaim objectStore 할당. 미연결 시 objectStore Pending.
+const db = require('./db'); // Backbone PostgreSQL(감사로그 영속). 미연결 시 관리 쓰기 fail-closed.
+const storage = require('./storage'); // Backbone RustFS(S3). BackboneClaim objectStore 할당. 미연결 시 관리 쓰기 fail-closed.
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-system';
@@ -22,9 +22,8 @@ const V = 'v1alpha1';
 // 셸(브라우저)이 플러그인 manifest/번들에 접근하는 경로 prefix (nginx 프록시 기준)
 const SHELL_API_PREFIX = '/api/plugins';
 const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단, 감사 H)
-// 재감사 P1-1: /api/admin/events(subShell server-to-server 발행)는 사용자 토큰이 없으므로 서비스 토큰으로 보호.
-// 미설정이면 events 발행은 fail-closed(401). subShell 백엔드는 X-Shell-Token 헤더로 이 값을 전송해야 한다.
-const SHELL_SERVICE_TOKEN = process.env.SHELL_SERVICE_TOKEN || '';
+// /api/admin/events는 workload의 projected ServiceAccount token을 TokenReview로 검증한다.
+// 모든 plugin에 같은 공유 secret을 배포하지 않아 한 workload 침해가 다른 source 위장으로 번지지 않는다.
 // Backbone PostgreSQL(감사로그 영속) — 기본값=이 클러스터 service DNS. 비번은 env 아닌 Secret에서 런타임 로드.
 const BACKBONE_PG = {
   host: process.env.BACKBONE_PG_HOST || 'backbone-postgres.opensphere-backbone.svc.cluster.local',
@@ -114,35 +113,36 @@ async function verifyActor(req) {
 }
 
 // ── audit (감사 P1-4: 영속화 + operationId) ──────────────────────────────
-// 인메모리 링버퍼(빠른 /events 응답) + ConfigMap(dupa-audit-log) 영속(재시작 생존, append-only JSONL).
-// 컨트롤러 Role은 configmaps create/update/patch 보유 → 새 RBAC 불요. stdout JSON은 클러스터 로그 수집기용.
-const AUDIT_CM = 'dupa-audit-log';
+// 인메모리 링버퍼는 조회 캐시일 뿐이다. 영구 정본은 Backbone PostgreSQL append-only audit_log이며,
+// Backbone 부재 시 관리 쓰기를 503으로 막는다(ConfigMap/메모리 폴백은 보안 게이트가 될 수 없음).
 const AUDIT_CAP = 500;
 const audit = [];
-let _flushT = null;
-function logAudit(actor, action, target, result, reason, opId) {
+function logAudit(actor, action, target, result, reason, opId, options = {}) {
   const e = { time: new Date().toISOString(), opId: opId || newOpId(), actor: actor || 'system', action, target, result, reason: reason || '' };
   audit.unshift(e);
   if (audit.length > AUDIT_CAP) audit.pop();
   console.log('[audit] ' + JSON.stringify(e)); // 구조화 1줄 → 로그 수집기 영속(휘발 대비)
+  if (options.deferPersistence) {
+    return e;
+  }
   if (db.isEnabled()) {
-    // ④ PostgreSQL(audit_log) append-only INSERT. 비동기 — 실패해도 인메모리 링/stdout은 보존.
+    // 읽기성/비동기 이벤트용 best-effort. 관리 쓰기 경로는 durableAudit()로 완료를 기다린다.
     db.insertAudit(e).catch((err) => console.error('[audit] pg insert 실패:', String(err).slice(0, 120)));
-  } else if (!_flushT) {
-    _flushT = setTimeout(flushAudit, 2000); // PG 미연결(Backbone 미설치 등) 시 ConfigMap 폴백
+  } else {
+    console.error('[audit] Backbone PostgreSQL unavailable; event is not durable');
   }
   return e;
 }
-const newOpId = () => randomBytes(8).toString('hex');
-async function flushAudit() {
-  _flushT = null;
-  const jsonl = audit.slice().reverse().map((x) => JSON.stringify(x)).join('\n');
-  const cmPath = `/api/v1/namespaces/${NS}/configmaps/${AUDIT_CM}`;
-  try {
-    const r = await k8s('PATCH', cmPath, { data: { 'audit.jsonl': jsonl } });
-    if (r.status === 404) await k8s('POST', `/api/v1/namespaces/${NS}/configmaps`, { metadata: { name: AUDIT_CM, namespace: NS }, data: { 'audit.jsonl': jsonl } });
-  } catch (e) { console.error('[audit] flush failed:', String(e).slice(0, 120)); }
+async function persistAuditNow(event) {
+  if (!db.isEnabled()) throw new Error('Backbone PostgreSQL unavailable');
+  await db.insertAudit(event);
 }
+async function durableAudit(actor, action, target, result, reason, opId) {
+  const event = logAudit(actor, action, target, result, reason, opId, { deferPersistence: true });
+  await persistAuditNow(event);
+  return event;
+}
+const newOpId = () => randomBytes(8).toString('hex');
 async function hydrateAudit() {
   if (db.isEnabled()) {
     // PG 우선 — recentAudit는 newest-first → ring(unshift 규약상 [0]=최신)에 그대로 push.
@@ -151,29 +151,22 @@ async function hydrateAudit() {
       rows.forEach((e) => audit.push(e));
       console.log(`[audit] hydrated ${audit.length} entries from PostgreSQL`);
       return;
-    } catch (e) { console.error('[audit] pg hydrate 실패, ConfigMap 시도:', String(e).slice(0, 120)); }
+    } catch (e) { console.error('[audit] pg hydrate 실패:', String(e).slice(0, 120)); }
   }
-  try {
-    const r = await k8s('GET', `/api/v1/namespaces/${NS}/configmaps/${AUDIT_CM}`);
-    if (!r.ok) return;
-    const lines = String(r.json?.data?.['audit.jsonl'] || '').split('\n').filter(Boolean);
-    for (const ln of lines.slice(-AUDIT_CAP)) { try { audit.unshift(JSON.parse(ln)); } catch { /* skip */ } }
-    if (audit.length > AUDIT_CAP) audit.length = AUDIT_CAP;
-    console.log(`[audit] hydrated ${audit.length} entries from ${AUDIT_CM}`);
-  } catch (e) { console.error('[audit] hydrate failed:', String(e).slice(0, 120)); }
+  console.warn('[audit] Backbone PostgreSQL unavailable; no non-durable fallback loaded');
 }
 // Backbone PostgreSQL 연결 초기화 — Secret(opensphere-backbone/backbone-postgres)에서 비번 로드 후 pool 기동.
-// 실패(미설치·연결불가)해도 throw 안 함 → 감사로그는 ConfigMap 폴백으로 계속 동작(graceful degradation, §3.5).
+// 실패(미설치·연결불가) 시 읽기 전용 표면만 유지하고 관리 쓰기는 fail-closed 한다.
 async function initBackboneDb(quiet = false) {
   try {
     const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_PG.secretNs}/secrets/${BACKBONE_PG.secretName}`);
-    if (!r.ok) { if (!quiet) console.warn(`[db] secret ${BACKBONE_PG.secretNs}/${BACKBONE_PG.secretName} 없음(HTTP ${r.status}) → 감사로그 ConfigMap 폴백`); return; }
+    if (!r.ok) { if (!quiet) console.warn(`[db] secret ${BACKBONE_PG.secretNs}/${BACKBONE_PG.secretName} 없음(HTTP ${r.status})`); return; }
     const enc = r.json?.data?.[BACKBONE_PG.secretKey];
-    if (!enc) { if (!quiet) console.warn('[db] secret에 password 키 없음 → ConfigMap 폴백'); return; }
+    if (!enc) { if (!quiet) console.warn('[db] secret에 password 키 없음'); return; }
     const password = Buffer.from(enc, 'base64').toString('utf8');
     await db.init({ host: BACKBONE_PG.host, port: BACKBONE_PG.port, database: BACKBONE_PG.database, user: BACKBONE_PG.user, password });
   } catch (e) {
-    if (!quiet) console.warn('[db] init 실패 → 감사로그 ConfigMap 폴백:', String(e).slice(0, 160));
+    if (!quiet) console.warn('[db] init 실패:', String(e).slice(0, 160));
   }
 }
 
@@ -207,9 +200,103 @@ const getReg = (n) => k8s('GET', `${crd('uipluginregistrations')}/${n}`);
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
 const CONSOLE_GROUP = 'console.opensphere.io';
 const listCliDownloads = () => k8s('GET', `/apis/${CONSOLE_GROUP}/${V}/clidownloads`);
-async function setStatus(name, status) {
-  return k8s('PATCH', `${crd('uipluginregistrations')}/${name}/status`,
-    { status: { ...status, lastTransitionTime: new Date().toISOString() } });
+function integrationStatuses(pkg, phase, retryable, now) {
+  if (!pkg?.spec?.contributions) return {};
+  const c = pkg.spec.contributions;
+  const declarations = {
+    page: c.page,
+    navigation: c.navigation,
+    api: c.api,
+    cli: c.cli,
+    manual: c.manual,
+    search: c.search,
+    notification: c.notification,
+    logs: { enabled: c.observability?.enabled && c.observability?.logs, reason: c.observability?.reason },
+    metrics: { enabled: c.observability?.enabled && c.observability?.metrics, reason: c.observability?.reason },
+    traces: { enabled: c.observability?.enabled && c.observability?.traces, reason: c.observability?.reason },
+  };
+  return Object.fromEntries(Object.entries(declarations).map(([name, declaration]) => {
+    const enabled = declaration?.enabled === true;
+    const integrationPhase = !enabled ? 'Disabled'
+      : ['Ready', 'Activated'].includes(phase) ? 'Ready'
+        : phase === 'Failed' ? 'Failed'
+          : phase === 'Degraded' ? 'Degraded' : 'DependencyPending';
+    return [name, {
+      phase: integrationPhase,
+      reason: enabled ? '' : String(declaration?.reason || 'not supported'),
+      message: enabled ? `integration ${integrationPhase.toLowerCase()}` : 'integration disabled by contract',
+      retryable: enabled && Boolean(retryable),
+      nextRetryAt: enabled && retryable ? new Date(Date.now() + 15000).toISOString() : '',
+      lastTransitionTime: now,
+      observedVersion: String(pkg.spec.version || ''),
+    }];
+  }));
+}
+async function setStatus(name, status, reg, pkg) {
+  const now = new Date().toISOString();
+  const phase = status.phase || 'Declared';
+  const retryable = Boolean(status.retryable);
+  const verified = ['Ready', 'Activated', 'Degraded'].includes(phase);
+  const failed = phase === 'Failed';
+  const hostPending = phase === 'DependencyPending' && status.reason === 'HostPending';
+  const currentDigest = String(pkg?.spec?.image?.digest || '');
+  const currentManifestSha256 = String(pkg?.spec?.manifest?.sha256 || '');
+  const currentVersion = String(pkg?.spec?.version || '');
+  const releaseChanged = Boolean(reg?.status?.currentDigest && reg.status.currentDigest !== currentDigest);
+  return k8s('PATCH', `${crd('uipluginregistrations')}/${name}/status`, { status: {
+    ...status,
+    observedGeneration: Number(reg?.metadata?.generation || 0),
+    observedVersion: currentVersion,
+    currentDigest,
+    currentManifestSha256,
+    currentVersion,
+    previousDigest: releaseChanged ? String(reg.status.currentDigest) : String(reg?.status?.previousDigest || ''),
+    previousManifestSha256: releaseChanged ? String(reg.status.currentManifestSha256 || '') : String(reg?.status?.previousManifestSha256 || ''),
+    previousVersion: releaseChanged ? String(reg.status.currentVersion || reg.status.observedVersion || '') : String(reg?.status?.previousVersion || ''),
+    retryable,
+    nextRetryAt: retryable ? new Date(Date.now() + 15000).toISOString() : '',
+    host: {
+      ref: String(pkg?.spec?.hostRef || 'main'),
+      observedApiVersion: String(pkg?.spec?.hostApiVersion || ''),
+      phase: hostPending ? 'DependencyPending' : failed && /Host/.test(String(status.reason || '')) ? 'Incompatible' : 'Compatible',
+    },
+    workload: { phase: ['Ready', 'Activated', 'Degraded', 'Disabled'].includes(phase) ? 'Ready' : phase === 'Uninstalling' ? 'Removed' : failed ? 'Degraded' : 'Pending' },
+    verification: {
+      manifest: verified ? 'Verified' : failed ? 'Failed' : 'Pending',
+      signature: verified ? 'Verified' : failed ? 'Failed' : 'Pending',
+      entryDigest: verified ? 'Verified' : failed ? 'Failed' : 'Pending',
+      permissions: verified ? 'Approved' : failed ? 'Failed' : 'Pending',
+    },
+    integrations: integrationStatuses(pkg, phase, retryable, now),
+    lastTransitionTime: now,
+  } });
+}
+const retryableReason = (reason) => new Set([
+  'PackageNotFound', 'HostPending', 'ManifestUnreachable', 'SignatureUnreachable',
+  'EntryUnreachable', 'WorkloadNotReady', 'ServiceAccountNotFound',
+]).has(reason);
+
+async function verifyWorkloadToken(req, pluginId) {
+  const firstParty = new Map([
+    ['console-backend', `system:serviceaccount:${NS}:console-backend`],
+  ]);
+  if (!safeName(pluginId) || (!firstParty.has(pluginId) && !proxyAllow.has(pluginId))) throw { code: 403, msg: 'source is not active' };
+  const match = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  if (!match) throw { code: 401, msg: 'workload bearer token required' };
+  const review = await k8s('POST', '/apis/authentication.k8s.io/v1/tokenreviews', {
+    apiVersion: 'authentication.k8s.io/v1',
+    kind: 'TokenReview',
+    spec: { token: match[1] },
+  });
+  if (!review.ok || review.json?.status?.authenticated !== true) throw { code: 401, msg: 'workload token rejected' };
+  let expected = firstParty.get(pluginId);
+  if (!expected) {
+    const pkg = await getPackage(pluginId);
+    if (!pkg.ok) throw { code: 403, msg: 'package not found' };
+    expected = `system:serviceaccount:${NS}:${pluginServiceAccount(pkg.json).name}`;
+  }
+  if (review.json?.status?.user?.username !== expected) throw { code: 403, msg: 'workload identity mismatch' };
+  return pluginId;
 }
 
 // ── 워크로드(기능 컨테이너) apply/delete ──────────────────────
@@ -247,11 +334,6 @@ function podLabels(pkg) {
 }
 function podEnv(pkg) {
   const env = [{ name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' }];
-  // 감사 시정 S2(2026-07-06): 콘솔 알림 발행(X-Shell-Token) 공급 라인 — 모든 plugin 워크로드에
-  // dupa-events-token Secret(controller 자신이 쓰는 것과 동일)을 주입. optional=true: Secret 미배포
-  // 환경에서도 pod는 뜨고, 발행측은 env 부재 시 헤더 생략 → controller가 401(fail-closed 유지).
-  // seen에 포함되므로 CR spec.env가 이 이름을 덮어쓸 수 없다(토큰 위장 차단).
-  env.push({ name: 'SHELL_SERVICE_TOKEN', valueFrom: { secretKeyRef: { name: 'dupa-events-token', key: 'SHELL_SERVICE_TOKEN', optional: true } } });
   const seen = new Set(env.map((item) => item.name));
   for (const item of pkg.spec?.env || []) {
     const name = String(item?.name || '');
@@ -261,35 +343,65 @@ function podEnv(pkg) {
   }
   return env;
 }
+function pluginServiceAccount(pkg) {
+  const declared = pkg.spec?.serviceAccountName;
+  if (declared !== undefined && declared !== null && declared !== '') {
+    if (typeof declared !== 'string' || declared === 'default' || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(declared)) {
+      throw Object.assign(new Error('invalid or shared serviceAccountName'), { reason: 'InvalidServiceAccount' });
+    }
+    return { name: declared, managed: false };
+  }
+  const name = pkg.metadata.name;
+  const candidate = `uip-${name}`;
+  const generated = candidate.length <= 63 ? candidate : `uip-${name.slice(0, 50).replace(/-+$/, '')}-${sha256(name).slice(0, 8)}`;
+  return { name: generated, managed: true };
+}
+function serviceAccountManifest(pkg, name) {
+  return {
+    apiVersion: 'v1', kind: 'ServiceAccount',
+    metadata: { name, namespace: NS, labels: { 'opensphere.io/dupa-plugin': pkg.metadata.name }, ownerReferences: [ownerRef(pkg)] },
+    automountServiceAccountToken: true,
+  };
+}
 function deploymentManifest(pkg) {
   const name = pkg.metadata.name;
   const _d = pkg.spec.image.digest || '';
   // 감사 시정 S1(2026-07-06): 태그 fallback 제거 — digest는 reconcile에서 sha256: 강제 검증됨(InvalidDigest).
   // 불변 이미지 보증: 항상 repo@sha256 형태로만 조립(태그·latest 금지, CRD pattern과 이중 방어).
   const img = `${pkg.spec.image.repository}@${_d}`;
-  const serviceAccountName = typeof pkg.spec.serviceAccountName === 'string' && /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(pkg.spec.serviceAccountName)
-    ? pkg.spec.serviceAccountName
-    : undefined;
+  const serviceAccountName = pluginServiceAccount(pkg).name;
   return {
     apiVersion: 'apps/v1', kind: 'Deployment',
     metadata: { name, namespace: NS, labels: { app: name, 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
     spec: {
-      replicas: 1, selector: { matchLabels: { app: name } },
+      replicas: 2,
+      strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
+      selector: { matchLabels: { app: name } },
       template: {
         metadata: { labels: { ...podLabels(pkg), app: name } },
         spec: {
-          ...(serviceAccountName ? { serviceAccountName } : {}),
+          serviceAccountName,
           imagePullSecrets: [{ name: 'ghcr-pull' }],
           containers: [{
             name: 'plugin', image: img, ports: [{ containerPort: 8080 }],
             // K8s API를 호출하는 기능 컨테이너(예: platform-status)의 TLS 검증용 — 기본 제공
             env: podEnv(pkg),
             readinessProbe: { httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 1 },
+            livenessProbe: { httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 },
+            securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } },
             resources: { requests: { cpu: '20m', memory: '32Mi' }, limits: { cpu: '200m', memory: '128Mi' } },
           }],
         },
       },
     },
+  };
+}
+function pdbManifest(pkg) {
+  const name = pkg.metadata.name;
+  return {
+    apiVersion: 'policy/v1', kind: 'PodDisruptionBudget',
+    metadata: { name, namespace: NS, labels: { 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
+    spec: { minAvailable: 1, selector: { matchLabels: { app: name } } },
   };
 }
 function serviceManifest(pkg) {
@@ -302,6 +414,16 @@ function serviceManifest(pkg) {
 }
 async function applyWorkload(pkg) {
   const name = pkg.metadata.name;
+  const sa = pluginServiceAccount(pkg);
+  const saPath = `/api/v1/namespaces/${NS}/serviceaccounts`;
+  const existingSa = await k8s('GET', `${saPath}/${sa.name}`);
+  if (sa.managed) {
+    const manifest = serviceAccountManifest(pkg, sa.name);
+    if (existingSa.ok) await k8s('PATCH', `${saPath}/${sa.name}`, manifest);
+    else await k8s('POST', saPath, manifest);
+  } else if (!existingSa.ok) {
+    throw Object.assign(new Error(`declared ServiceAccount '${sa.name}' does not exist`), { reason: 'ServiceAccountNotFound' });
+  }
   for (const [plural, man] of [['deployments', deploymentManifest(pkg)], ['services', serviceManifest(pkg)]]) {
     const base = `/apis/apps/v1/namespaces/${NS}/deployments`;
     const path = plural === 'deployments' ? base : `/api/v1/namespaces/${NS}/services`;
@@ -309,10 +431,19 @@ async function applyWorkload(pkg) {
     if (exists.ok) await k8s('PATCH', `${path}/${name}`, man);
     else await k8s('POST', path, man);
   }
+  const pdbPath = `/apis/policy/v1/namespaces/${NS}/poddisruptionbudgets`;
+  const pdb = pdbManifest(pkg);
+  const existingPdb = await k8s('GET', `${pdbPath}/${name}`);
+  if (existingPdb.ok) await k8s('PATCH', `${pdbPath}/${name}`, pdb);
+  else await k8s('POST', pdbPath, pdb);
 }
-async function deleteWorkload(name) {
+async function deleteWorkload(pkg) {
+  const name = pkg.metadata.name;
   await k8s('DELETE', `/apis/apps/v1/namespaces/${NS}/deployments/${name}`);
   await k8s('DELETE', `/api/v1/namespaces/${NS}/services/${name}`);
+  await k8s('DELETE', `/apis/policy/v1/namespaces/${NS}/poddisruptionbudgets/${name}`);
+  const sa = pluginServiceAccount(pkg);
+  if (sa.managed) await k8s('DELETE', `/api/v1/namespaces/${NS}/serviceaccounts/${sa.name}`);
 }
 async function workloadReady(name) {
   const d = await k8s('GET', `/apis/apps/v1/namespaces/${NS}/deployments/${name}`);
@@ -329,7 +460,10 @@ async function verifyPlugin(pkg) {
   if (!safeName(name)) return { ok: false, reason: 'InvalidPluginName' };
   const svc = `http://${name}.${NS}.svc.cluster.local:8080`;
   // manifest reachable
-  const mRes = await fetch(`${svc}/plugins/ui-shell.manifest.json`);
+  const manifestPath = String(pkg.spec.manifest.path || '/plugins/ui-shell.manifest.json');
+  let mRes;
+  try { mRes = await fetch(`${svc}${manifestPath}`, { signal: AbortSignal.timeout(10000) }); }
+  catch { return { ok: false, reason: 'ManifestUnreachable' }; }
   if (!mRes.ok) return { ok: false, reason: 'ManifestUnreachable' };
   const mText = await mRes.text();
   // ① manifest digest: 계산해서 승인값(CR)과 '비교' (§B.5)
@@ -338,13 +472,32 @@ async function verifyPlugin(pkg) {
   // ② 서명: trustedKeys[keyId]로 검증 (TrustedKeys CM에서 SPKI 조회)
   const spki = (await loadTrustedKeys())[pkg.spec.trust.keyId];
   if (!spki) return { ok: false, reason: 'UntrustedKey' };
-  const sRes = await fetch(`${svc}${'/plugins/' + (pkg.spec.manifest.signaturePath || '/plugins/ui-shell.manifest.json.sig').split('/').pop()}`);
+  let sRes;
+  try {
+    sRes = await fetch(`${svc}${'/plugins/' + (pkg.spec.manifest.signaturePath || '/plugins/ui-shell.manifest.json.sig').split('/').pop()}`, { signal: AbortSignal.timeout(10000) });
+  } catch { return { ok: false, reason: 'SignatureUnreachable' }; }
   if (!sRes.ok) return { ok: false, reason: 'SignatureUnreachable' };
   if (!verifyP256(spki, (await sRes.text()).trim(), mText)) return { ok: false, reason: 'SignatureInvalid' };
-  // ③ shellCompat / ④ permissions (정적 검사)
+  // ③ 공식 Host Contract — CR 승인값과 signed manifest를 동일하게 유지한다.
+  if (manifest.manifestVersion !== 3 || !manifest.id || !manifest.sdkVersion || !manifest.kind || !manifest.hostRef || !manifest.hostCompat || !manifest.contributions) return { ok: false, reason: 'HostContractMissing' };
+  if (!validContributions(manifest.contributions) || !validContributions(pkg.spec.contributions)) return { ok: false, reason: 'ContributionContractInvalid' };
+  if (!validCapabilities(manifest)) return { ok: false, reason: 'CapabilityContractInvalid' };
+  if (manifest.id !== pkg.metadata.name) return { ok: false, reason: 'IdDrift' };
+  if (manifest.kind !== pkg.spec.kind) return { ok: false, reason: 'KindDrift' };
+  if (manifest.hostRef !== pkg.spec.hostRef) return { ok: false, reason: 'HostRefDrift' };
+  if (manifest.hostCompat !== pkg.spec.hostCompat) return { ok: false, reason: 'HostCompatDrift' };
+  if ((manifest.hostApiVersion || '') !== (pkg.spec.hostApiVersion || '')) return { ok: false, reason: 'HostApiVersionDrift' };
+  if (JSON.stringify(canonical(manifest.contributions)) !== JSON.stringify(canonical(pkg.spec.contributions))) return { ok: false, reason: 'ContributionDrift' };
+  if (manifest.kind === 'subShell' && !manifest.hostApiVersion) return { ok: false, reason: 'HostApiVersionMissing' };
+  // ④ shellCompat / permissions (정적 검사)
   if (manifest.shellCompat !== pkg.spec.shellCompat) return { ok: false, reason: 'ShellCompatDrift' };
+  if (JSON.stringify([...(manifest.permissions || [])].sort()) !== JSON.stringify([...(pkg.spec.permissions || [])].sort())) return { ok: false, reason: 'PermissionDrift' };
+  if ((manifest.apiBase || '') !== (pkg.spec.api?.basePath || '')) return { ok: false, reason: 'ApiBaseDrift' };
+  if (!/^[A-Za-z0-9._-]+\.js$/.test(String(manifest.entry || ''))) return { ok: false, reason: 'InvalidEntryPath' };
   // ⑤ entry digest
-  const eRes = await fetch(`${svc}/plugins/${manifest.entry}`);
+  let eRes;
+  try { eRes = await fetch(`${svc}/plugins/${manifest.entry}`, { signal: AbortSignal.timeout(10000) }); }
+  catch { return { ok: false, reason: 'EntryUnreachable' }; }
   if (!eRes.ok) return { ok: false, reason: 'EntryUnreachable' };
   if (sha256(await eRes.text()) !== manifest.entrySha256) return { ok: false, reason: 'EntryDigestMismatch' };
   return { ok: true, manifest };
@@ -364,9 +517,40 @@ function verifyP256(spkiB64, sigB64, text) {
     return verify('sha256', Buffer.from(text), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(sigB64, 'base64'));
   } catch { return false; }
 }
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
+function validContributions(contributions) {
+  const required = ['page', 'navigation', 'api', 'cli', 'manual', 'search', 'notification', 'observability'];
+  if (!contributions || required.some((key) => !contributions[key] || typeof contributions[key].enabled !== 'boolean')) return false;
+  if (required.some((key) => contributions[key].enabled === false && !String(contributions[key].reason || '').trim())) return false;
+  if (contributions.api.enabled && !String(contributions.api.basePath || '').startsWith('/api/')) return false;
+  if (contributions.cli.enabled && (!contributions.cli.namespace || !contributions.cli.manifestPath)) return false;
+  if (contributions.manual.enabled && (!contributions.manual.sourceId || contributions.manual.mode === 'none')) return false;
+  if (contributions.search.enabled && contributions.search.mode === 'none') return false;
+  return true;
+}
+const KNOWN_CAPABILITIES = new Set([
+  'page:register', 'api:proxy', 'nav:contribute', 'search:contribute', 'manual:contribute',
+  'notify:publish', 'identity:read', 'theme:read', 'storage:read', 'storage:write',
+]);
+function validCapabilities(manifest) {
+  const permissions = Array.isArray(manifest.permissions) ? manifest.permissions : [];
+  if (permissions.some((permission) => !KNOWN_CAPABILITIES.has(permission))) return false;
+  const c = manifest.contributions || {};
+  if (c.page?.enabled && !permissions.includes('page:register')) return false;
+  if (c.api?.enabled && !permissions.includes('api:proxy')) return false;
+  if (c.navigation?.enabled && c.navigation?.mode === 'runtime' && !permissions.includes('nav:contribute')) return false;
+  if (c.search?.enabled && c.search?.mode === 'runtime' && !permissions.includes('search:contribute')) return false;
+  if (c.manual?.enabled && c.manual?.mode === 'runtime' && !permissions.includes('manual:contribute')) return false;
+  if (c.notification?.frontend && !permissions.includes('notify:publish')) return false;
+  return true;
+}
 
 // ── reconcile: registration desiredState → 실제 상태 ──────────
-let runtimeRegistry = { version: 2, trustedKeys: {}, plugins: [] };
+let publishedPluginCount = 0;
 // P0-2/재감사 P1-2 allowlist: /api/plugins/<id> 프록시 허용 id 집합 = (a) 검증 성공+활성(published) plugin id
 // + (b) enabled CLIDownload 바인딩 서비스 id(os-cli 등). 미등록 id는 nginx auth_request에서 403.
 // reconcile 끝에서 published로 계산(루프 뒤). 전이 실패 시 직전 allowlist 유지(가용성).
@@ -376,27 +560,33 @@ async function reconcile() {
   if (!pkgs.ok || !regs.ok) return;
   const pkgByName = Object.fromEntries(pkgs.json.items.map((p) => [p.metadata.name, p]));
   _trustedKeys = null; // 매 reconcile마다 신뢰키 재로드
-  const trustedKeys = await loadTrustedKeys();
+  await loadTrustedKeys();
   const published = [];
+  const regByName = Object.fromEntries(regs.json.items.map((reg) => [reg.metadata.name, reg]));
 
   for (const reg of regs.json.items) {
     const name = reg.metadata.name;
     const pkg = pkgByName[reg.spec.packageRef.name];
     const desired = reg.spec.desiredState;
-    if (!pkg) { await setStatus(name, { phase: 'Failed', reason: 'PackageNotFound' }); continue; }
+    const updateStatus = (status) => setStatus(name, status, reg, pkg);
+    if (!pkg) { await updateStatus({ phase: 'DependencyPending', reason: 'PackageNotFound', retryable: true }); continue; }
+    const stableRelease = ['Ready', 'Activated'].includes(reg.status?.phase)
+      && reg.status?.currentDigest === pkg.spec.image?.digest
+      && reg.status?.currentManifestSha256 === pkg.spec.manifest?.sha256;
 
     try {
       if (desired === 'Uninstalled') {
         // 워크로드 회수 + registration CR도 삭제 → Installed 탭에서 사라짐(계획서 §10.4).
         // 이력은 audit에 남으므로 정보 손실 없음. (CR을 Removed로 남기면 목록에 잔류해
         // "uninstall이 안 된 것처럼" 보이는 UX 문제가 있었음)
-        await deleteWorkload(pkg.metadata.name);
+        await updateStatus({ phase: 'Uninstalling', reason: '', retryable: false });
+        await deleteWorkload(pkg);
         await k8s('DELETE', `${crd('uipluginregistrations')}/${name}`);
         continue;
       }
       if (desired === 'Disabled') {
         // workload 유지, registry에서만 제외 (메뉴/route 소멸)
-        await setStatus(name, { phase: 'Disabled', reason: '' });
+        await updateStatus({ phase: 'Disabled', reason: '' });
         continue;
       }
       // Enabled
@@ -404,18 +594,30 @@ async function reconcile() {
       // 태그/빈 값이면 워크로드 생성 전에 Failed/InvalidDigest로 거부(fail-closed). CRD pattern과 이중 방어
       // (pattern은 신규 write만 막고, 기존 저장된 CR은 여기서 걸러진다).
       if (!String(pkg.spec.image?.digest || '').startsWith('sha256:')) {
-        await setStatus(name, { phase: 'Failed', reason: 'InvalidDigest' });
+        await updateStatus({ phase: 'Failed', reason: 'InvalidDigest', retryable: false });
         continue;
       }
-      await setStatus(name, { phase: 'Installing', reason: '' });
+      const hostRef = pkg.spec.hostRef || 'main';
+      if (hostRef !== 'main') {
+        const hostPkg = pkgByName[hostRef];
+        const hostReg = regByName[hostRef];
+        const hostReady = hostPkg?.spec.kind === 'subShell' && hostReg?.spec.desiredState === 'Enabled'
+          && ['Ready', 'Activated', 'Enabled'].includes(hostReg.status?.phase);
+        if (!hostReady) {
+          await updateStatus({ phase: 'DependencyPending', reason: 'HostPending', retryable: true });
+          continue;
+        }
+      }
+      if (!stableRelease) await updateStatus({ phase: 'Installing', reason: '' });
       await applyWorkload(pkg);
       // ready 대기 (짧게)
       let ready = false;
       for (let i = 0; i < 30 && !ready; i++) { ready = await workloadReady(pkg.metadata.name); if (!ready) await sleep(2000); }
-      if (!ready) { await setStatus(name, { phase: 'Failed', reason: 'WorkloadNotReady' }); continue; }
+      if (!ready) { await updateStatus({ phase: 'Failed', reason: 'WorkloadNotReady', retryable: true }); continue; }
 
+      if (!stableRelease) await updateStatus({ phase: 'Verifying', reason: '', retryable: false });
       const v = await verifyPlugin(pkg);
-      if (!v.ok) { await setStatus(name, { phase: 'Failed', reason: v.reason }); continue; }
+      if (!v.ok) { await updateStatus({ phase: 'Failed', reason: v.reason, retryable: retryableReason(v.reason) }); continue; }
 
       // 통과 — registry에 '승인값 전사'(§B.5): manifestSha256/keyId는 controller 계산값이 아니라 CR값
       const manifestUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/ui-shell.manifest.json`;
@@ -426,15 +628,22 @@ async function reconcile() {
         manifestSha256: pkg.spec.manifest.sha256,
         signature: sigUrl,
         keyId: pkg.spec.trust.keyId,
+        kind: pkg.spec.kind,
+        hostRef: pkg.spec.hostRef,
+        hostApiVersion: pkg.spec.hostApiVersion || '',
+        hostCompat: pkg.spec.hostCompat,
+        contributions: pkg.spec.contributions,
         // 관리자 지정 1단 아이콘(Carbon 토큰명). 서명 무관 오버라이드(CR spec.nav.icon) — 셸이 토큰→아이콘 매핑.
         icon: pkg.spec.nav?.icon || '',
       });
-      await setStatus(name, { phase: 'Enabled', reason: '', manifestUrl });
+      if (!stableRelease) await updateStatus({ phase: 'Ready', reason: '', manifestUrl, retryable: false });
+      await updateStatus({ phase: 'Activated', reason: '', manifestUrl, retryable: false });
     } catch (e) {
-      await setStatus(name, { phase: 'Failed', reason: String(e).slice(0, 120) });
+      const reason = e?.reason || String(e).slice(0, 120);
+      await updateStatus({ phase: 'Failed', reason, retryable: retryableReason(reason) });
     }
   }
-  runtimeRegistry = { version: 2, trustedKeys, plugins: published };
+  publishedPluginCount = published.length;
   // 재감사 P1-2: proxy allowlist = '검증 성공 + 활성(published)' id + enabled CLIDownload 서비스 id만.
   //   (모든 UIPluginPackage 이름이 아니라) → Failed/Disabled/미검증 package는 자동 제외(403).
   //   reconcile 성공분으로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성).
@@ -499,18 +708,17 @@ const BACKBONE_NS = process.env.BACKBONE_NS || 'opensphere-backbone';
 const BB_LABELS = { 'opensphere.io/part-of': 'opensphere-backbone' };
 // Gitea Git 코드 뷰 — in-cluster HTTP. 공개 레포는 익명 read 가능(토큰 불요). 쓰기/비공개는 토큰 필요(다음 차수).
 const GITEA_URL = process.env.GITEA_URL || `http://backbone-gitea.${BACKBONE_NS}.svc.cluster.local:3000`;
-const OAA_GATEWAY_IMAGE = process.env.OAA_GATEWAY_IMAGE || 'ghcr.io/opensphere-platform/oaa-gateway:0.1.0';
+const OAA_GATEWAY_IMAGE = process.env.OAA_GATEWAY_IMAGE || 'oaa-gateway@sha256:de25fdc4a1a16c318f5b0bf192a249f998e5df0f2c0cbe95b946d69be0748953';
 const BB_COMPONENTS = [
   { key: 'postgres', name: 'PostgreSQL', role: '앱 DB(감사로그·설정) + Gitea DB', kind: 'Deployment', workload: 'backbone-postgres' },
   { key: 'rustfs', name: 'RustFS', role: 'S3 오브젝트 스토리지', kind: 'StatefulSet', workload: 'backbone-rustfs' },
   { key: 'gitea', name: 'Gitea', role: '설정 GitOps(config-as-code)', kind: 'Deployment', workload: 'backbone-gitea' },
-  { key: 'oaa-gateway', name: 'OAA-Gateway', role: 'LLM key custody + OpenSphere AI Agent gateway', kind: 'Deployment', workload: 'oaa-gateway' },
 ];
 // 컴포넌트별 접근(접근 탭) 메타 — 자격 Secret명·프로토콜·연결 힌트. Secret '값'은 절대 노출 안 함(키 이름만 마스킹 반환).
 const BB_ACCESS = {
   postgres: { secret: 'backbone-postgres', proto: 'TCP(libpq) · 5432', connect: 'psql -h backbone-postgres.opensphere-backbone.svc.cluster.local -U console -d console', note: 'console DB(감사로그·설정) + gitea DB. 비번 = Secret backbone-postgres/password.' },
   rustfs: { secret: 'backbone-rustfs', proto: 'HTTP(S3) · 9000 / 콘솔 9001', connect: 'S3 endpoint: backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 (forcePathStyle=true, region=us-east-1)', note: 'access_key/secret_key = Secret backbone-rustfs.' },
-  gitea: { secret: 'backbone-postgres', proto: 'HTTP · 3000', connect: 'http://backbone-gitea.opensphere-backbone.svc.cluster.local:3000/', note: 'DB는 backbone-postgres 공유. Gitea 관리자 토큰 Secret은 아직 미프로비저닝(reconciler 단계).' },
+  gitea: { secret: 'backbone-gitea', proto: 'HTTP · 3000', connect: 'http://backbone-gitea.opensphere-backbone.svc.cluster.local:3000/', note: '전용 DB role과 관리자 자격은 Secret backbone-gitea에 있으며 값은 API에 노출하지 않는다.' },
   'oaa-gateway': { secret: '', proto: 'HTTP · 8080', connect: 'http://oaa-gateway.opensphere-backbone.svc.cluster.local:8080/api/oaa/health', note: 'Stateless OAA tier. LLM API keys are stored as labeled Kubernetes Secrets and never returned to the browser.' },
 };
 function bbSecret(name, data) { return { apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: BACKBONE_NS, labels: BB_LABELS }, type: 'Opaque', stringData: data }; }
@@ -538,7 +746,7 @@ function bbWorkloads() {
     { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'backbone-postgres', namespace: BACKBONE_NS, labels: lab('backbone-postgres') }, spec: {
       replicas: 1, strategy: { type: 'Recreate' }, selector: { matchLabels: { app: 'backbone-postgres' } },
       template: { metadata: { labels: { app: 'backbone-postgres' } }, spec: { containers: [{
-        name: 'postgresql', image: 'pgvector/pgvector:pg18',
+        name: 'postgresql', image: 'opensphere-backbone-postgres@sha256:76470c513c7ca2b52c6720295f09babc3b97171d13e68730eb1775688c164ab9',
         env: [
           { name: 'POSTGRES_DB', value: 'console' }, { name: 'POSTGRES_USER', value: 'console' },
           { name: 'POSTGRES_PASSWORD', valueFrom: { secretKeyRef: { name: 'backbone-postgres', key: 'password' } } },
@@ -555,7 +763,7 @@ function bbWorkloads() {
       serviceName: 'backbone-rustfs', replicas: 1, selector: { matchLabels: { app: 'backbone-rustfs' } },
       template: { metadata: { labels: { app: 'backbone-rustfs' } }, spec: {
         securityContext: { runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, runAsNonRoot: true },
-        containers: [{ name: 'rustfs', image: 'rustfs/rustfs:1.0.0-beta.8', imagePullPolicy: 'IfNotPresent',
+        containers: [{ name: 'rustfs', image: 'opensphere-backbone-rustfs@sha256:ae16738e96b981b958808dd4b84ada2ef60fc1947475aebae1d128a0eb1a7bd3', imagePullPolicy: 'IfNotPresent',
           env: [
             { name: 'RUSTFS_VOLUMES', value: '/data' }, { name: 'RUSTFS_ADDRESS', value: '0.0.0.0:9000' },
             { name: 'RUSTFS_CONSOLE_ADDRESS', value: '0.0.0.0:9001' }, { name: 'RUSTFS_CONSOLE_ENABLE', value: 'true' },
@@ -573,7 +781,7 @@ function bbWorkloads() {
     { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'backbone-gitea', namespace: BACKBONE_NS, labels: lab('backbone-gitea') }, spec: {
       replicas: 1, strategy: { type: 'Recreate' }, selector: { matchLabels: { app: 'backbone-gitea' } },
       template: { metadata: { labels: { app: 'backbone-gitea' } }, spec: { containers: [{
-        name: 'gitea', image: 'docker.io/gitea/gitea:1.22',
+        name: 'gitea', image: 'opensphere-backbone-gitea@sha256:a01aa34bb2516cb5c56ae423352dbc20091f94a12a15ee5e8187fc159e3c4e23',
         env: [
           { name: 'GITEA__database__DB_TYPE', value: 'postgres' },
           { name: 'GITEA__database__HOST', value: `backbone-postgres.${BACKBONE_NS}.svc.cluster.local:5432` },
@@ -658,12 +866,7 @@ async function backboneStatus() {
   return { namespace: BACKBONE_NS, nsExists: nsr.ok, installed: components.every((c) => c.installed), ready: components.every((c) => c.ready), components };
 }
 async function backboneInstall() {
-  const ns = await k8s('POST', '/api/v1/namespaces', { apiVersion: 'v1', kind: 'Namespace', metadata: { name: BACKBONE_NS, labels: BB_LABELS } });
-  if (!ns.ok && ns.status !== 409) throw new Error(`namespace HTTP ${ns.status}`);
-  await bbApply(bbSecret('backbone-postgres', { password: randomBytes(24).toString('hex') }));
-  await bbApply(bbSecret('backbone-rustfs', { access_key: 'rustfsadmin', secret_key: 'rustfsadmin', endpoint: `backbone-rustfs.${BACKBONE_NS}.svc:9000` }));
-  for (const o of bbWorkloads()) await bbApply(o);
-  return backboneStatus();
+  throw Object.assign(new Error('Backbone is a required bootstrap layer; use install-backbone before Console'), { code: 409 });
 }
 // 단일 구성요소 드릴다운 — workload/service/pvc/pods/events/log tail. admin 게이트 뒤(읽기 전용).
 async function backboneDetail(key) {
@@ -831,6 +1034,7 @@ async function initBackboneStorage(quiet = false) {
     const ak = dec('access_key'), sk = dec('secret_key');
     if (!ak || !sk) { if (!quiet) console.warn('[s3] backbone-rustfs Secret에 access_key/secret_key 없음 → 비활성'); return; }
     storage.init({ endpoint: S3_ENDPOINT, region: S3_REGION, accessKey: ak, secretKey: sk });
+    if (!await storage.healthCheck()) throw new Error('RustFS S3 health check failed');
     console.log(`[s3] connected ${S3_ENDPOINT} (objectStore 할당 활성)`);
   } catch (e) {
     if (!quiet) console.warn('[s3] init 실패 → objectStore 할당 비활성:', String(e).slice(0, 160));
@@ -845,6 +1049,24 @@ async function ensureBackboneConnections() {
   const quiet = _bbReconnectTry++ % 20 !== 0;
   if (!db.isEnabled()) await initBackboneDb(quiet);
   if (!storage.isEnabled()) await initBackboneStorage(quiet);
+}
+
+async function giteaHealth() {
+  try {
+    const r = await fetch(`${GITEA_URL}/api/healthz`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(3000) });
+    return r.ok;
+  } catch { return false; }
+}
+async function backboneReadiness() {
+  await ensureBackboneConnections();
+  const [postgres, rustfs, gitea, workloads] = await Promise.all([
+    db.healthCheck(),
+    storage.isEnabled() ? storage.healthCheck() : Promise.resolve(false),
+    giteaHealth(),
+    backboneStatus(),
+  ]);
+  const ready = postgres && rustfs && gitea && workloads.ready;
+  return { ready, required: true, postgres, rustfs, gitea, workloads };
 }
 
 async function upsertSecret(ns, name, stringData) {
@@ -1043,7 +1265,7 @@ async function promQuery(expr, range) {
 let _httpReqs = 0;
 function metricsText() {
   const mu = process.memoryUsage();
-  const plugins = runtimeRegistry && Array.isArray(runtimeRegistry.plugins) ? runtimeRegistry.plugins.length : 0;
+  const plugins = publishedPluginCount;
   return [
     '# HELP os_build_info Build info (constant 1).',
     '# TYPE os_build_info gauge',
@@ -1072,15 +1294,19 @@ function metricsText() {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
-  const opId = newOpId();
+  const opId = typeof req.headers['x-os-correlation-id'] === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(req.headers['x-os-correlation-id'])
+    ? req.headers['x-os-correlation-id']
+    : newOpId();
   _httpReqs++;
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
+    if (p === '/readyz') {
+      const state = await backboneReadiness();
+      return json(res, state.ready ? 200 : 503, state);
+    }
     if (p === '/metrics') { res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }); return res.end(metricsText()); }
-    if (p === '/registry/plugins.json') return json(res, 200, runtimeRegistry);
-
     // P0-2: nginx auth_request 대상 — /api/plugins/<id> 프록시 허용 여부(registry allowlist).
-    // 등록·검증돼 runtimeRegistry에 게시된 plugin id만 통과 → opensphere-system 내 임의 service 프록시 차단.
+    // 등록·검증돼 단일 Registry에 투영 가능한 plugin id만 통과 → opensphere-system 내 임의 service 프록시 차단.
     if (p === '/api/internal/proxy-authz') {
       const id = req.headers['x-plugin-id'] || '';
       res.writeHead(proxyAllow.has(id) ? 204 : 403); return res.end();
@@ -1100,6 +1326,14 @@ const server = http.createServer(async (req, res) => {
         return json(res, numeric ? e.code : 502, { error: numeric ? (e.msg || 'unauthorized') : 'auth backend error', opId });
       }
       actor = a.username;
+    }
+
+    // Console 관리 변경은 세 Backbone 기둥(PostgreSQL/RustFS/Gitea)이 모두 준비된 경우에만 허용한다.
+    // 읽기 전용 표면은 유지하되, 내구 감사/오브젝트/Git 이력이 빠진 상태에서 성공으로 보이지 않게 한다.
+    if (p.startsWith('/api/admin/') && p !== '/api/admin/events' && req.method !== 'GET') {
+      const state = await backboneReadiness();
+      if (!state.ready) return json(res, 503, { error: 'Backbone required capabilities unavailable', backbone: state, opId });
+      await durableAudit(actor, 'mutation-request', p, 'attempt', req.method, opId);
     }
 
     // Backbone(콘솔 데이터 티어) 설치/상태 — admin 게이트 뒤. docs/BACKBONE-ARCHITECTURE.md
@@ -1134,11 +1368,11 @@ const server = http.createServer(async (req, res) => {
       const tgt = `${b.database}.${b.schema || 'public'}.${b.name}`;
       try {
         await db.createFunction(b);
-        logAudit(actor, 'pg-create-function', tgt, 'accepted', `lang=${b.language || 'plpgsql'}${b.replace ? ' replace' : ''}`, opId);
+        await durableAudit(actor, 'pg-create-function', tgt, 'accepted', `lang=${b.language || 'plpgsql'}${b.replace ? ' replace' : ''}`, opId);
         return json(res, 201, { created: true, target: tgt });
       } catch (e) {
         const msg = String((e && e.message) || e).slice(0, 200);
-        logAudit(actor, 'pg-create-function', tgt, 'error', msg, opId);
+        await durableAudit(actor, 'pg-create-function', tgt, 'error', msg, opId);
         return json(res, 400, { error: msg, opId });
       }
     }
@@ -1157,11 +1391,11 @@ const server = http.createServer(async (req, res) => {
       const tgt = `${b.database}.${b.schema || 'public'}.${b.name}(${b.args || ''})`;
       try {
         await db.dropFunction(b);
-        logAudit(actor, 'pg-drop-function', tgt, 'accepted', '', opId);
+        await durableAudit(actor, 'pg-drop-function', tgt, 'accepted', '', opId);
         return json(res, 200, { dropped: true, target: tgt });
       } catch (e) {
         const msg = String((e && e.message) || e).slice(0, 200);
-        logAudit(actor, 'pg-drop-function', tgt, 'error', msg, opId);
+        await durableAudit(actor, 'pg-drop-function', tgt, 'error', msg, opId);
         return json(res, 400, { error: msg, opId });
       }
     }
@@ -1202,8 +1436,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await giteaFile(url.searchParams.get('owner') || '', url.searchParams.get('repo') || '', url.searchParams.get('ref') || '', url.searchParams.get('path') || ''));
     }
     if (p === '/api/admin/backbone/install' && req.method === 'POST') {
-      try { const out = await backboneInstall(); logAudit(actor, 'backbone-install', BACKBONE_NS, 'accepted', '', opId); return json(res, 202, out); }
-      catch (e) { console.error(`[err] op=${opId} backbone install:`, e); logAudit(actor, 'backbone-install', BACKBONE_NS, 'error', String(e).slice(0, 120), opId); return json(res, 502, { error: 'install failed', opId }); }
+      try { const out = await backboneInstall(); await durableAudit(actor, 'backbone-install', BACKBONE_NS, 'accepted', '', opId); return json(res, 202, out); }
+      catch (e) { console.error(`[err] op=${opId} backbone install:`, e); await durableAudit(actor, 'backbone-install', BACKBONE_NS, 'error', String(e).slice(0, 120), opId); return json(res, 502, { error: 'install failed', opId }); }
     }
 
     if (p === '/api/admin/plugins/catalog') {
@@ -1233,8 +1467,8 @@ const server = http.createServer(async (req, res) => {
     if (bm && req.method === 'POST') {
       const [, name, action] = bm;
       const r = await k8s('PATCH', `/apis/${CONSOLE_GROUP}/${V}/clidownloads/${name}`, { spec: { enabled: action === 'enable' } });
-      if (!r.ok) { console.error(`[err] op=${opId} binding ${action} ${name} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); logAudit(actor, action, 'binding/' + name, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
-      logAudit(actor, action, 'binding/' + name, 'accepted', '', opId);
+      if (!r.ok) { console.error(`[err] op=${opId} binding ${action} ${name} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, action, 'binding/' + name, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
+      await durableAudit(actor, action, 'binding/' + name, 'accepted', '', opId);
       return json(res, 202, { accepted: true, name, enabled: action === 'enable' });
     }
 
@@ -1242,35 +1476,60 @@ const server = http.createServer(async (req, res) => {
     // 콘솔 알림 NotificationService가 /api/admin/plugins/events 폴링으로 수집. source는 attribution.
     // ⚠️ 인증은 컨트롤 API 전체와 동급(X-OpenSphere-* 헤더) — 강화(SA TokenReview/NetworkPolicy)는 후속.
     if (p === '/api/admin/events' && req.method === 'POST') {
-      // 재감사 P1-1: 무인증 쓰기 차단 — 서비스 토큰(X-Shell-Token == SHELL_SERVICE_TOKEN) 필수(fail-closed).
-      // 사용자 토큰이 없는 subShell server-to-server 발행구라 사용자 Bearer 대신 서비스 토큰으로 보호.
-      if (!SHELL_SERVICE_TOKEN || req.headers['x-shell-token'] !== SHELL_SERVICE_TOKEN) {
-        return json(res, 401, { error: 'service token required', opId });
-      }
-      // source는 'ext:'로 네임스페이스(사용자 actor 위장 불가) + 필드 길이 bound.
       const b = await readBody(req).catch(() => ({}));
       const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
-      const source = 'ext:' + clip(b.source || req.headers['x-opensphere-source'] || 'subshell', 60);
-      logAudit(source, clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId);
+      const pluginId = clip(b.source || req.headers['x-opensphere-source'] || '', 60);
+      try { await verifyWorkloadToken(req, pluginId); }
+      catch (e) { return json(res, typeof e?.code === 'number' ? e.code : 502, { error: e?.msg || 'workload authentication failed', opId }); }
+      const source = pluginId === 'console-backend'
+        ? `core:console-backend/${clip(b.userActor || 'system', 60)}`
+        : 'ext:' + pluginId;
+      const event = logAudit(source, clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId, { deferPersistence: true });
+      try { await persistAuditNow(event); }
+      catch (e) { console.error(`[audit] durable event persist failed op=${opId}:`, e); return json(res, 503, { error: 'event persistence unavailable', opId }); }
       return json(res, 202, { accepted: true, source });
     }
 
-    const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall)$/);
+    const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall|rollback)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
       // §3.1 강제: shell-pinned core 표면은 제거/비활성 불가(보안 경계 — UI 억제보다 본질).
       if (action === 'disable' || action === 'uninstall') {
         const pkgC = await k8s('GET', `${crd('uipluginpackages')}/${id}`);
         if (pkgC.ok && isCorePkg(pkgC.json)) {
-          logAudit(actor, action, id, 'denied', 'core surface(shell-pinned) 제거/비활성 불가 (ADR-UI-003 §3.1)', opId);
+          await durableAudit(actor, action, id, 'denied', 'core surface(shell-pinned) 제거/비활성 불가 (ADR-UI-003 §3.1)', opId);
           return json(res, 409, { error: 'core surface — not removable', core: true });
         }
+      }
+      if (action === 'rollback') {
+        const rr = await k8s('GET', `${crd('uipluginregistrations')}/${id}`);
+        if (!rr.ok) return json(res, rr.status === 404 ? 404 : 502, { error: 'registration not found', opId });
+        const previousDigest = String(rr.json?.status?.previousDigest || '');
+        const previousManifestSha256 = String(rr.json?.status?.previousManifestSha256 || '');
+        const previousVersion = String(rr.json?.status?.previousVersion || '');
+        if (!/^sha256:[a-f0-9]{64}$/.test(previousDigest) || !/^[a-f0-9]{64}$/.test(previousManifestSha256) || !previousVersion) {
+          await durableAudit(actor, action, id, 'denied', 'verified previous release is unavailable', opId);
+          return json(res, 409, { error: 'verified previous release is unavailable', opId });
+        }
+        const pr = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: {
+          version: previousVersion,
+          image: { digest: previousDigest },
+          manifest: { sha256: previousManifestSha256 },
+        } });
+        if (!pr.ok) {
+          await durableAudit(actor, action, id, 'error', `HTTP ${pr.status}`, opId);
+          return json(res, pr.status >= 500 ? 502 : pr.status, { error: 'rollback patch failed', status: pr.status, opId });
+        }
+        await ensureRegistration(id, 'Enabled', actor, 'rollback to previous verified release');
+        await durableAudit(actor, action, id, 'accepted', previousDigest, opId);
+        reconcile().catch((e) => console.error('reconcile error', e));
+        return json(res, 202, { accepted: true, id, desiredState: 'Enabled', digest: previousDigest, version: previousVersion });
       }
       const body = await readBody(req).catch(() => ({}));
       const desired = action === 'install' || action === 'enable' ? 'Enabled' : action === 'disable' ? 'Disabled' : 'Uninstalled';
       const r = await ensureRegistration(id, desired, actor, body.reason);
-      if (!r.ok) { console.error(`[err] op=${opId} ${action} ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); logAudit(actor, action, id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
-      logAudit(actor, action, id, 'accepted', '', opId);
+      if (!r.ok) { console.error(`[err] op=${opId} ${action} ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, action, id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
+      await durableAudit(actor, action, id, 'accepted', '', opId);
       reconcile().catch((e) => console.error('reconcile error', e)); // 비동기 조정
       return json(res, 202, { accepted: true, id, desiredState: desired });
     }
@@ -1282,8 +1541,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req).catch(() => ({}));
       const icon = String(body.icon || '').slice(0, 64);
       const r = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: { nav: { icon } } });
-      if (!r.ok) { console.error(`[err] op=${opId} set-icon ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); logAudit(actor, 'set-icon', id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
-      logAudit(actor, 'set-icon', id, 'accepted', icon, opId);
+      if (!r.ok) { console.error(`[err] op=${opId} set-icon ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, 'set-icon', id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
+      await durableAudit(actor, 'set-icon', id, 'accepted', icon, opId);
       reconcile().catch((e) => console.error('reconcile error', e));
       return json(res, 202, { accepted: true, id, icon });
     }
@@ -1310,5 +1569,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, isAdminGroups, safeName, b64urlToBuf };
+  module.exports = { assertClaims, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses };
 }

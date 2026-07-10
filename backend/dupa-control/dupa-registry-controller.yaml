@@ -29,8 +29,11 @@ rules:
   - apiGroups: ["apps"]
     resources: [deployments]
     verbs: [get, list, create, update, patch, delete]
+  - apiGroups: ["policy"]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, create, update, patch, delete]
   - apiGroups: [""]
-    resources: [services, configmaps]
+    resources: [services, serviceaccounts, configmaps]
     verbs: [get, list, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -59,6 +62,8 @@ rules:
   - { apiGroups: ["backbone.opensphere.io"], resources: [backboneclaims, backboneclaims/status, backboneclaims/finalizers], verbs: [get, list, watch, update, patch] }
   # Observability ?뺣낫 酉???ServiceMonitor ?몃깽?좊━ ?쎄린(monitoring ns ?뚮뱶/?쒕퉬?ㅻ뒗 ??core 洹쒖튃?쇰줈 而ㅻ쾭).
   - { apiGroups: ["monitoring.coreos.com"], resources: [servicemonitors], verbs: [get, list] }
+  # Workload event identity: projected ServiceAccount token validation (shared service secret 금지).
+  - { apiGroups: ["authentication.k8s.io"], resources: [tokenreviews], verbs: [create] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -74,7 +79,7 @@ metadata:
   namespace: opensphere-system
   labels: { app: dupa-registry-controller }
 spec:
-  replicas: 1
+  replicas: 2
   selector: { matchLabels: { app: dupa-registry-controller } }
   template:
     metadata:
@@ -85,7 +90,8 @@ spec:
       containers:
         - name: controller
           # Local development registry image. Replace with a signed remote digest for production promotion.
-          image: ghcr.io/opensphere-platform/dupa-registry-controller@sha256:10b09d8e8246039fb547f33fd5ce12983b7a669b3f7834c72b89176b141f260c
+          image: dupa-registry-controller@sha256:832928483957f819a7cbb6254b05e1b5a194a245627bf47a7eb19e6eb42fd1a9
+          imagePullPolicy: IfNotPresent
           env:
             - { name: NAMESPACE, value: opensphere-system }
             # K8s API TLS 寃利???Node fetch(undici)???쒖옉 ?쒖젏???쎌쑝誘濡?env濡?以섏빞 ??
@@ -104,21 +110,19 @@ spec:
             #   媛믪? 肄붾뱶 湲곕낯媛믨낵 ?숈씪(?ㅻ쾭?쇱씠??臾몄꽌?붿슜). 誘몄꽕移???objectStore??Pending.
             - { name: BACKBONE_S3_ENDPOINT, value: http://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 }
             - { name: BACKBONE_S3_REGION, value: us-east-1 }
-            # ── 감사 시정 S2(2026-07-06): 리포-라이브 drift 해소 — 라이브에만 있던 env 3종 정본화 ──
-            # SHELL_SERVICE_TOKEN: subShell server-to-server 이벤트 발행(/api/admin/events, X-Shell-Token) 검증 토큰.
-            #   값은 Secret(dupa-events-token)에만 존재 — 리포에 평문 금지. 미설정 시 발행 401(fail-closed).
-            #   plugin 워크로드에도 controller podEnv가 같은 Secret을 optional로 주입(발행측 공급 라인).
-            - name: SHELL_SERVICE_TOKEN
-              valueFrom: { secretKeyRef: { name: dupa-events-token, key: SHELL_SERVICE_TOKEN } }
             # Kanidm id_token 발급자(iss) 검증값 — 도메인 운영 전환(auth.console.opensphere.dev) 반영.
-            - { name: KANIDM_ISS, value: "https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
+            - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
             # oaa-gateway 설치 이미지 ref(콘솔 backbone 설치 흐름) — 라이브 현행값.
-            - { name: OAA_GATEWAY_IMAGE, value: "localhost:5000/oaa-gateway:oaa-policy-20260707-01" }
+            - { name: OAA_GATEWAY_IMAGE, value: "oaa-gateway@sha256:de25fdc4a1a16c318f5b0bf192a249f998e5df0f2c0cbe95b946d69be0748953" }
           ports: [{ containerPort: 8080 }]
-          readinessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 2 }
+          readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
 ---
 apiVersion: v1
 kind: Service
@@ -127,5 +131,8 @@ metadata:
   namespace: opensphere-system
   labels: { app: dupa-registry-controller }
 spec:
+  # Backbone 장애 시에도 소비자가 Controller의 명시적 503 응답을 받아
+  # 연결 타임아웃/모호한 5xx로 상태를 오인하지 않도록 한다.
+  publishNotReadyAddresses: true
   selector: { app: dupa-registry-controller }
   ports: [{ name: http, port: 8080, targetPort: 8080 }]

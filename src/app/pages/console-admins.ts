@@ -4,6 +4,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsDatagrid, OsCellDef, OsColumn } from '../os/os-datagrid';
 import { AuthService } from '../core/auth.service';
+import { HttpService } from '../core/http.service';
 
 interface IdUser {
   id: string;
@@ -111,6 +112,7 @@ export class ConsoleAdmins implements OnInit {
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
 
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   // 감사 B: /api/identity 읽기도 인증 필수 → 검증된 id_token(Bearer) 첨부.
   private authGet(): RequestInit {
     return { cache: 'no-store', headers: { authorization: 'Bearer ' + (this.auth.token() || '') } };
@@ -122,7 +124,7 @@ export class ConsoleAdmins implements OnInit {
 
   private async loadIdentity(): Promise<void> {
     try {
-      const r = await fetch('/api/identity', this.authGet());
+      const r = await this.http.request('/api/identity', this.authGet());
       if (!r.ok) {
         this.down.set(`identity HTTP ${r.status}`);
         return;
@@ -137,7 +139,7 @@ export class ConsoleAdmins implements OnInit {
 
   private async loadAudit(): Promise<void> {
     try {
-      const r = await fetch('/api/identity/audit', this.authGet());
+      const r = await this.http.request('/api/identity/audit', this.authGet());
       if (r.ok) {
         const d = await r.json();
         this.audit.set(d.items ?? d.audit ?? (Array.isArray(d) ? d : []));

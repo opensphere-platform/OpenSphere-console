@@ -12,7 +12,9 @@ export class AuthService {
   private readonly returnUrlKey = 'opensphere.auth.returnUrl';
   // Kanidm OIDC discovery authority(= 브라우저 발급 issuer). discovery: <authority>/.well-known/openid-configuration.
   // localhost는 secure context라 http 셸에서도 PKCE(crypto.subtle) 동작.
-  private readonly authority = 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console';
+  private readonly authority = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    ? `https://${window.location.hostname}:8444/oauth2/openid/opensphere-console`
+    : 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console';
   private mgr = new UserManager({
     authority: this.authority,
     client_id: 'opensphere-console',
@@ -38,6 +40,11 @@ export class AuthService {
   readonly subject = signal<string>('');
   /** 토큰 만료(epoch sec) */
   readonly tokenExp = signal<number>(0);
+  readonly initError = signal<string>('');
+
+  setInitError(error: unknown): void {
+    this.initError.set(String(error instanceof Error ? error.message : error || '인증 초기화 실패'));
+  }
 
   /** id_token이 만료됐는가 — Kanidm은 refresh_token 미지원(grant_types_supported=authorization_code만) +
    *  iframe 무음 갱신도 CSP(frame-ancestors 'none')로 차단돼 있어, 남는 방법은 감지 후 재로그인 유도뿐이다. */
@@ -138,16 +145,8 @@ export class AuthService {
     this.subject.set(String(p['sub'] ?? ''));
     this.tokenExp.set(Number(p['exp'] ?? 0));
 
-    // DUPA: 흡수 플러그인(예: k8s-console, foundation-shell)이 사용자 신원을 백엔드로 전달해 사용자 단위
-    // RBAC(impersonation)을 쓰도록 현재 사용자 토큰을 노출한다. **id_token**(ES256, aud/azp=opensphere-console,
-    // groups 포함)이며, 신뢰 게이트(기능 컨테이너)가 Kanidm JWKS로 검증·사용자/그룹 추출에 사용한다.
-    // ⚠️ 감사 P1-2(후속): 이 전역은 현재 모든 subShell의 토큰 브리지다. 완전 제거하려면 Shell 소유
-    //   프록시(ctx.api.fetch에서 셸이 Authorization 주입 → plugin은 raw 토큰 미접근)로 subShell들을
-    //   이식해야 한다(별도 repo). 그 전까지 back-compat 유지. localStorage→sessionStorage는 위에서 적용.
-    (window as Window & { __OS_AUTH__?: unknown }).__OS_AUTH__ = {
-      user: () => this.user(),
-      token: () => this.idToken,
-    };
+    // Consumer에는 raw token을 노출하지 않는다. Extension Host의 ctx.api.fetch가
+    // 검증된 same-origin API 요청에만 Authorization을 주입한다.
   }
 
   async logout(): Promise<void> {

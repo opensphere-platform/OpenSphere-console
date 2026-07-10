@@ -2,16 +2,20 @@
   "manifestVersion": 3,
   "kind": "subShell",
   "id": "manual",
+  "hostRef": "main",
+  "hostApiVersion": "1.0.0",
+  "hostCompat": ">=1.0.0 <2.0.0",
   "version": "0.1.0",
   "title": "Manual",
   "description": "OpenSphere Manual subShell backed by the OAA Manual Registry.",
   "entry": "ui-shell.plugin.js",
-  "entrySha256": "03b5647b79442610525ee438ba496703f3e18ccd7618b5fac7f024a094801f5a",
+  "entrySha256": "7136d6eb75f98582584304c28dc61417cc38d9b39198bb3b4750f7fe6d11f11a",
   "shellCompat": ">=0.2.0 <0.9.0",
   "sdkVersion": "0.3.6",
   "permissions": [
     "page:register",
     "api:proxy",
+    "nav:contribute",
     "manual:contribute"
   ],
   "nav": {
@@ -20,5 +24,47 @@
   },
   "designSystem": "clarity",
   "apiBase": "/api/plugins/manual",
-  "renderMode": "esm"
+  "renderMode": "esm",
+  "contributions": {
+    "page": {
+      "enabled": true
+    },
+    "navigation": {
+      "enabled": true,
+      "mode": "runtime"
+    },
+    "api": {
+      "enabled": true,
+      "basePath": "/api/manual"
+    },
+    "cli": {
+      "enabled": false,
+      "namespace": "manual",
+      "manifestPath": "/cli/manifest",
+      "reason": "Manual CLI is not published yet"
+    },
+    "manual": {
+      "enabled": true,
+      "sourceId": "opensphere-manual",
+      "mode": "install-time"
+    },
+    "search": {
+      "enabled": false,
+      "mode": "none",
+      "reason": "Main Shell indexes the canonical Manual Registry"
+    },
+    "notification": {
+      "enabled": false,
+      "frontend": false,
+      "backend": false,
+      "reason": "Manual is read-only"
+    },
+    "observability": {
+      "enabled": false,
+      "logs": false,
+      "metrics": false,
+      "traces": false,
+      "reason": "Served by the shared OAA observability plane"
+    }
+  }
 }

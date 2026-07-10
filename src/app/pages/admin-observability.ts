@@ -3,6 +3,7 @@ import { ClarityModule } from '@clr/angular';
 import { BackendUnavailable } from '../os/backend-unavailable';
 import { OsPageHeader } from '../os/os-page-header';
 import { AuthService } from '../core/auth.service';
+import { HttpService } from '../core/http.service';
 
 interface MonComponent { key: string; name: string; role: string; installed: boolean; ready: boolean; detail: string; }
 interface Coverage { key: string; name: string; namespace: string; serviceMonitor: boolean; metrics: boolean; note: string; }
@@ -272,6 +273,7 @@ export class AdminObservability implements OnInit, OnDestroy {
   private metricsLoaded = false;
 
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   private authGet(): RequestInit {
     return { cache: 'no-store', headers: { authorization: 'Bearer ' + (this.auth.token() || '') } };
   }
@@ -285,7 +287,7 @@ export class AdminObservability implements OnInit, OnDestroy {
   async refresh(silent = false): Promise<void> {
     if (!silent) this.busy.set(true);
     try {
-      const r = await fetch('/api/admin/observability/status', this.authGet());
+      const r = await this.http.request('/api/admin/observability/status', this.authGet());
       if (r.status === 401 || r.status === 403) { if (!silent) this.down.set('관리자 권한이 필요합니다 (opensphere-console-admins).'); return; }
       if (!r.ok) { this.down.set(`status HTTP ${r.status}`); return; }
       this.down.set('');
@@ -297,7 +299,7 @@ export class AdminObservability implements OnInit, OnDestroy {
   async loadTargets(): Promise<void> {
     if (this.targets()) return;
     try {
-      const r = await fetch('/api/admin/observability/targets', this.authGet());
+      const r = await this.http.request('/api/admin/observability/targets', this.authGet());
       if (r.ok) this.targets.set(await r.json());
       else this.targets.set({ reachable: false, hint: `HTTP ${r.status}` });
     } catch (e) { this.targets.set({ reachable: false, hint: String(e) }); }
@@ -315,7 +317,7 @@ export class AdminObservability implements OnInit, OnDestroy {
     const sv: Record<string, number | null> = {};
     await Promise.all(this.allStats().map(async (p) => {
       try {
-        const r = await fetch('/api/admin/observability/query?expr=' + encodeURIComponent(p.expr), this.authGet());
+        const r = await this.http.request('/api/admin/observability/query?expr=' + encodeURIComponent(p.expr), this.authGet());
         const j = await r.json();
         const raw = j.ok ? j.result?.[0]?.value?.[1] : null;
         sv[p.key] = raw != null ? Number(raw) : null;
@@ -328,7 +330,7 @@ export class AdminObservability implements OnInit, OnDestroy {
     await Promise.all(this.allCharts().map(async (p) => {
       try {
         const sets = await Promise.all(p.exprs.map(async (e) => {
-          const r = await fetch('/api/admin/observability/query_range?expr=' + encodeURIComponent(e.expr) + '&minutes=60&step=60', this.authGet());
+          const r = await this.http.request('/api/admin/observability/query_range?expr=' + encodeURIComponent(e.expr) + '&minutes=60&step=60', this.authGet());
           const j = await r.json();
           const result: PromRange[] = j.ok ? j.result : [];
           return result.map((s) => ({ label: this.seriesLabel(e.label, s.metric), values: s.values }));

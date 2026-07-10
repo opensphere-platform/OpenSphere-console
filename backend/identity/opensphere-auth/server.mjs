@@ -13,14 +13,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { URL, URLSearchParams } from 'node:url';
 import QRCode from 'qrcode';
+import { isActivePat, verifyEs256Jwt } from './token-verifier.mjs';
 
 // ---- config ----
 const PORT = parseInt(process.env.PORT || '8443', 10);
 const ISSUER = process.env.OIDC_ISSUER || 'https://localhost:8444/oauth2/openid/opensphere-console';
-const ORIGIN = 'https://localhost:8444';
+const ORIGIN = new URL(ISSUER).origin;
 const CLIENT_ID = process.env.OIDC_CLIENT_ID || 'opensphere-console';
-const CONSOLE_URL = process.env.CONSOLE_URL || 'http://localhost:8090/';
-const REDIRECT_ALLOW = (process.env.OIDC_REDIRECT_URIS || 'http://localhost:8090/').split(',');
+const CONSOLE_URL = process.env.CONSOLE_URL || 'https://localhost:8090/';
+const REDIRECT_ALLOW = (process.env.OIDC_REDIRECT_URIS || 'https://localhost:8090/').split(',').map((value) => value.trim()).filter(Boolean);
+const CORS_ORIGINS = new Set(REDIRECT_ALLOW.map((value) => new URL(value).origin));
 const ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
 // 콘솔 접근 = 어떤 콘솔 역할이든(admins/operators/viewers…). 역할별 가시성은 셸이 그룹으로 판단(Phase 3b).
 const CONSOLE_GROUP_PREFIX = process.env.CONSOLE_GROUP_PREFIX || 'opensphere-console-';
@@ -48,15 +50,14 @@ function kanidmCa() {
   return _kanidmCa;
 }
 
-// ---- ES256 signing key: load from a mounted Secret (stable across restarts) or generate ----
+// ---- ES256 signing key: a persisted Secret is mandatory. Never mint sessions with an ephemeral key. ----
 let privateKey, publicKey;
 try {
   privateKey = crypto.createPrivateKey(fs.readFileSync(SIG_KEY_PATH));
   publicKey = crypto.createPublicKey(privateKey);
   console.log('[bff] loaded persisted signing key from', SIG_KEY_PATH);
-} catch {
-  ({ publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }));
-  console.warn('[bff] no persisted key at', SIG_KEY_PATH, '- generated EPHEMERAL key (restart invalidates sessions)');
+} catch (error) {
+  throw new Error(`[bff] persisted signing key is required at ${SIG_KEY_PATH}`, { cause: error });
 }
 const jwkPub = publicKey.export({ format: 'jwk' });
 const KID = crypto.createHash('sha256').update(jwkPub.x + jwkPub.y).digest('hex').slice(0, 12);
@@ -210,7 +211,7 @@ ${hidden}<button class="btn" type="submit">Log in</button>
 function deniedPage(user) {
   return shell('Access Denied', `<div class="logo"></div><h1>Access Denied</h1><p class="create">This account can't access the console.</p>
 <div class="note">The account <strong>${escapeHtml(user)}</strong> has no console role — it needs an <code>${escapeHtml(CONSOLE_GROUP_PREFIX)}*</code> group.</div>
-<a class="btn" href="${EP.authorize}">Try a different account</a>`);
+<a class="btn" href="${CONSOLE_URL}">Try a different account</a>`);
 }
 function onboardTokenPage(error) {
   return shell('Set up your account', `<div class="logo"></div><h1>Set up your account</h1>
@@ -273,17 +274,9 @@ const readPats = async () => { const r = await k8sApi('GET', PAT_CM_PATH); retur
 // merge-patch: data[jti]=string(추가) 또는 null(폐기)
 const patchPat = (jti, valueOrNull) => k8sApi('PATCH', PAT_CM_PATH, { data: { [jti]: valueOrNull } }, 'application/merge-patch+json');
 
-// 우리가 발급한 ES256 토큰 검증 → payload 또는 null (서명+만료)
+// 우리가 발급한 ES256 토큰 검증 → payload 또는 null (서명+OIDC 표준 claim)
 function verifyToken(jwt) {
-  try {
-    const [h, pl, s] = String(jwt).split('.');
-    if (!h || !pl || !s) return null;
-    const ok = crypto.verify('SHA256', Buffer.from(`${h}.${pl}`), { key: publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(s, 'base64url'));
-    if (!ok) return null;
-    const payload = JSON.parse(Buffer.from(pl, 'base64url').toString('utf8'));
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
-    return payload;
-  } catch { return null; }
+  return verifyEs256Jwt(jwt, { key: publicKey, issuer: ISSUER, audience: CLIENT_ID, expectedKid: KID });
 }
 const bearer = (req) => { const a = req.headers.authorization || ''; return a.startsWith('Bearer ') ? a.slice(7) : null; };
 // Kanidm id_token 검증 — 콘솔 Kanidm 직결 로그인 토큰(swap-less §3.2 배포). BFF 자체 발급(PAT)과 dual-accept.
@@ -307,12 +300,7 @@ async function verifyKanidmToken(jwt) {
     if (!jwk) jwk = (await kanidmJwks(true)).find((k) => k.kid === hdr.kid); // 미스 시 강제 refresh + 재시도
     if (!jwk) { console.log(`[verifyKanidm] no jwk for tokKid=${hdr.kid} (have ${(await kanidmJwks()).map((k) => k.kid).join(',')})`); return null; }
     const key = crypto.createPublicKey({ key: jwk, format: 'jwk' });
-    const ok = crypto.verify('SHA256', Buffer.from(`${h}.${pl}`), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(s, 'base64url'));
-    console.log(`[verifyKanidm] kid=${hdr.kid} verify=${ok}`);
-    if (!ok) return null;
-    const payload = JSON.parse(Buffer.from(pl, 'base64url').toString('utf8'));
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
-    return payload;
+    return verifyEs256Jwt(jwt, { key, issuer: ISSUER, audience: CLIENT_ID, expectedKid: hdr.kid });
   } catch (e) { console.log(`[verifyKanidm] error ${e.message}`); return null; }
 }
 // 관리자 id_token(또는 PAT) 제시 필요 (콘솔 admin 그룹). BFF 토큰 또는 Kanidm id_token 수용. 그룹은 SPN(name@domain) strip.
@@ -320,6 +308,11 @@ async function requireAdmin(req) {
   const t = bearer(req);
   let pl = verifyToken(t);
   const via = pl ? 'bff' : 'kanidm';
+  if (pl?.typ === 'pat') {
+    if (!isActivePat(pl, await readPats())) pl = null;
+  } else if (pl?.typ !== undefined) {
+    pl = null;
+  }
   if (!pl) pl = await verifyKanidmToken(t);
   if (!pl) { console.log(`[requireAdmin] DENY no-valid-token hasBearer=${!!t} len=${t ? t.length : 0}`); return null; }
   const groups = (pl.groups || []).map((g) => String(g).split('@')[0]);
@@ -527,11 +520,12 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
   const p = reqUrl.pathname;
   const isOidcEp = [EP.discovery, EP.jwks, EP.token, EP.authorize].includes(p);
   const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/roles');
-  if ((isOidcEp || isPatEp) && req.headers.origin) {
+  const corsAllowed = Boolean(req.headers.origin && CORS_ORIGINS.has(req.headers.origin));
+  if ((isOidcEp || isPatEp) && corsAllowed) {
     res.setHeader('access-control-allow-origin', req.headers.origin); res.setHeader('vary', 'origin');
     res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS'); res.setHeader('access-control-allow-headers', 'content-type, authorization');
   }
-  if (req.method === 'OPTIONS' && (isOidcEp || isPatEp)) { res.writeHead(204); return res.end(); }
+  if (req.method === 'OPTIONS' && (isOidcEp || isPatEp)) { res.writeHead(corsAllowed ? 204 : 403); return res.end(); }
   (async () => {
     try {
       if (req.method === 'GET' && p === EP.discovery) return send(res, 200, 'application/json', JSON.stringify(discoveryDoc));

@@ -20,9 +20,15 @@ const APISERVER = 'https://kubernetes.default.svc';
 // Kanidm admin(service-account API token) 자격 Secret
 const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-system';
 const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-kanidm';
+const DUPA_URL = process.env.DUPA_URL || 'http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080';
 
 // ── 호출자 검증(Kanidm 콘솔 id_token, ES256) — ADR-FND-003 ──
-const KANIDM_ISS = process.env.KANIDM_ISS || 'https://localhost:8444/oauth2/openid/opensphere-console';
+const DEFAULT_KANIDM_ISSUERS = [
+  'https://localhost:8444/oauth2/openid/opensphere-console',
+  'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console',
+];
+const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || DEFAULT_KANIDM_ISSUERS.join(','))
+  .split(',').map((value) => value.trim()).filter(Boolean);
 // 콘솔 로그인 id_token 발급자 = kanidm-core(app=kanidm). svc/kanidm은 opensphere-auth BFF(다른 키)라
 // 거기 JWKS로 검증 시 kid 불일치 401. kanidm-core svc에서 JWKS를 받되 cert SAN(kanidm.svc)에 맞춰 servername 지정.
 const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://kanidm-core.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
@@ -112,7 +118,7 @@ async function verifyAuthed(req) {
   const pub = createPublicKey({ key: jwk, format: 'jwk' });
   const ok = verify('SHA256', Buffer.from(`${h}.${p}`), { key: pub, dsaEncoding: 'ieee-p1363' }, b64urlToBuf(s));
   if (!ok) throw { code: 401, msg: 'bad signature' };
-  if (claims.iss !== KANIDM_ISS) throw { code: 401, msg: 'bad iss' };
+  if (!KANIDM_ISSUERS.includes(claims.iss)) throw { code: 401, msg: 'bad iss' };
   if (claims.azp !== KANIDM_AZP && !aud.includes(KANIDM_AZP)) throw { code: 401, msg: 'bad azp/aud' };
   // 재감사 P2-2: 필수 claim(exp·sub·iat) 부재 거부.
   if (!claims.exp) throw { code: 401, msg: 'missing exp' };
@@ -130,15 +136,37 @@ async function verifyActor(req) {
   return a;
 }
 
-// ── audit (PoC: 메모리) ──
-// 감사 P1-4: operationId + 구조화 1줄 stdout(로그 수집기로 영속 — 메모리 휘발 대비).
-// (ConfigMap/PVC 영속은 별도 RBAC/볼륨 필요 → 후속. 현재는 구조화 로그가 사실상 durable audit.)
+// ── audit (Backbone PostgreSQL 정본) ──
+// 로컬 링은 화면 캐시일 뿐이다. 모든 IGA 쓰기는 DUPA의 TokenReview 게이트를 거쳐
+// Backbone PostgreSQL append-only audit_log에 먼저 attempt를 기록한 뒤 실행한다.
 const audit = [];
-function logAudit(actor, action, target, result, reason, opId) {
+async function dupaRequest(pathname, options = {}) {
+  const r = await fetch(DUPA_URL + pathname, { ...options, signal: AbortSignal.timeout(5000) });
+  const text = await r.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  return { ok: r.ok, status: r.status, body };
+}
+async function requireBackbone() {
+  const r = await dupaRequest('/readyz');
+  if (!r.ok || r.body?.ready !== true) throw Object.assign(new Error('Backbone unavailable'), { code: 503 });
+  return r.body;
+}
+async function publishAudit(e) {
+  const r = await dupaRequest('/api/admin/events', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${saToken()}`, 'content-type': 'application/json', 'x-os-correlation-id': e.opId },
+    body: JSON.stringify({ source: 'console-backend', userActor: e.actor, action: e.action, target: e.target, result: e.result, reason: e.reason }),
+  });
+  if (!r.ok) throw Object.assign(new Error('durable audit unavailable'), { code: r.status === 503 ? 503 : 502 });
+}
+async function logAudit(actor, action, target, result, reason, opId) {
   const e = { time: new Date().toISOString(), opId: opId || newOpId(), actor, action, target, result, reason: reason || '' };
+  await publishAudit(e);
   audit.unshift(e);
   if (audit.length > 200) audit.pop();
   console.log('[audit] ' + JSON.stringify(e));
+  return e;
 }
 
 // ── 읽기 집계 (Kanidm person/group) ──
@@ -231,6 +259,10 @@ const server = http.createServer(async (req, res) => {
   _httpReqs++;
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
+    if (p === '/readyz') {
+      try { return json(res, 200, await requireBackbone()); }
+      catch { return json(res, 503, { ready: false, required: true, error: 'Backbone unavailable' }); }
+    }
     if (p === '/metrics') { res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }); return res.end(metricsText()); }
     // ── 흡수: catalog 라우트 ──
     // 감사 누락(B): 읽기도 인증 필수(무인증 PII/토폴로지 노출 차단). 콘솔 전 사용자는 로그인되어
@@ -251,13 +283,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/identity/audit' && req.method === 'GET') {
       try { await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
-      return json(res, 200, { items: audit });
+      const r = await dupaRequest('/api/admin/plugins/events', { headers: { Authorization: req.headers.authorization || '' } });
+      return r.ok ? json(res, 200, r.body) : json(res, r.status || 502, { error: 'durable audit unavailable' });
     }
 
     // 본인 비밀번호: Kanidm은 셀프서비스 UI(credential update session)에서 변경 — 관리 API 단순 reset 없음.
     if (p === '/api/identity/me/password' && req.method === 'POST') {
       let me; try { me = await verifyAuthed(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
-      logAudit(me.username, 'self-password-change', me.username, 'redirected', 'kanidm self-service');
+      try { await requireBackbone(); await logAudit(me.username, 'self-password-change', me.username, 'redirected', 'kanidm self-service'); }
+      catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
       return json(res, 200, { ok: false, selfServiceUrl: KANIDM_SELFSERVICE_URL, note: `Kanidm 셀프서비스(${KANIDM_SELFSERVICE_URL})에서 비밀번호/패스키를 변경하세요.` });
     }
 
@@ -269,13 +303,17 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req).catch(() => ({}));
       if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
       try {
+        await requireBackbone();
+        await logAudit(actor.username, 'iga-mutation', p, 'attempt', body.reason);
+      } catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
+      try {
         if (mEnable) {
           const uname = await personNameByUuid(mEnable[1]);
           if (!uname) return json(res, 404, { error: 'person not found' });
           const enabled = !!body.enabled;
           if (enabled) await kreq('DELETE', `/v1/person/${uname}/_attr/account_expire`);
           else await kreq('PUT', `/v1/person/${uname}/_attr/account_expire`, ['1970-01-01T00:00:00+00:00']);
-          logAudit(actor.username, enabled ? 'enable-user' : 'disable-user', uname, 'ok', body.reason);
+          await logAudit(actor.username, enabled ? 'enable-user' : 'disable-user', uname, 'ok', body.reason);
           return json(res, 200, { ok: true });
         } else {
           const uname = await personNameByUuid(mGroup[1]);
@@ -283,12 +321,12 @@ const server = http.createServer(async (req, res) => {
           const op = body.op;
           if (!uname || !gname || !['add', 'remove'].includes(op)) return json(res, 400, { error: 'groupId/op 또는 대상 해석 실패' });
           await kreq(op === 'add' ? 'POST' : 'DELETE', `/v1/group/${gname}/_attr/member`, [uname]);
-          logAudit(actor.username, `group-${op}`, `${uname}:${gname}`, 'ok', body.reason);
+          await logAudit(actor.username, `group-${op}`, `${uname}:${gname}`, 'ok', body.reason);
           return json(res, 200, { ok: true });
         }
       } catch (e) {
         console.error('[err] iga write:', e); // 감사 F: 상세는 서버 로그, 클라이언트엔 일반 메시지.
-        logAudit(actor.username, mEnable ? 'enable-toggle' : 'group-change', (mEnable || mGroup)[1], 'error', body.reason);
+        try { await logAudit(actor.username, mEnable ? 'enable-toggle' : 'group-change', (mEnable || mGroup)[1], 'error', body.reason); } catch { /* attempt는 이미 내구 기록됨 */ }
         return json(res, 502, { error: 'upstream error' });
       }
     }

@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { AuthService } from './auth.service';
+import { HttpService } from './http.service';
 
 /** Control API 클라이언트 — Admin UI는 K8s를 직접 안 만지고 이것만 호출(계획서 §8).
  *  사용자 신원은 X-OpenSphere-User로 전달(audit·권한). 셸 nginx가 controller로 프록시. */
@@ -7,12 +7,13 @@ export interface CatalogItem {
   name: string; displayName: string; version: string; owner: string;
   description: string; nav?: { band: string; label: string; icon?: string };
   shellCompat: string; permissions: string[];
-  // 위계 신호 — scope·core는 controller catalog가 전송. kind·hostRef는 §2.7 확정 후 추가될 필드(있으면 트리가 정확).
-  scope?: string; core?: boolean; kind?: string; hostRef?: string;
+  kind: 'subShell' | 'plugin'; hostRef: string; hostApiVersion?: string; hostCompat: string;
+  contributions: Record<string, unknown>;
+  scope?: string; core?: boolean;
 }
 export interface Registration {
   name: string; desiredState: string;
-  status: { phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string };
+  status: { phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string; retryable?: boolean; nextRetryAt?: string; observedGeneration?: number };
   approval?: { requestedBy?: string; reason?: string };
   health?: 'Ready' | 'NotReady' | 'N/A'; // P2-2: 활성 플러그인 워크로드 health(컨트롤러 제공)
 }
@@ -23,46 +24,37 @@ export interface Binding { kind: string; name: string; displayName: string; desc
 
 @Injectable({ providedIn: 'root' })
 export class PluginControlClient {
-  private auth = inject(AuthService);
-
-  // 감사 P0-1: 모든 Admin Control 호출에 검증된 id_token(Bearer)을 첨부. 컨트롤러가 토큰을
-  // 암호검증(JWKS ES256)하고 admin 그룹을 강제 — 클라이언트 자기보고 X-OpenSphere-User 헤더는 폐기.
-  private headers(): HeadersInit {
-    return { 'content-type': 'application/json', authorization: 'Bearer ' + (this.auth.token() || '') };
-  }
-  private authGet(): RequestInit {
-    return { cache: 'no-store', headers: { authorization: 'Bearer ' + (this.auth.token() || '') } };
-  }
+  private http = inject(HttpService);
 
   async catalog(): Promise<CatalogItem[]> {
-    const r = await fetch('/api/admin/plugins/catalog', this.authGet());
+    const r = await this.http.request('/api/admin/plugins/catalog', { cache: 'no-store' });
     if (!r.ok) throw new Error(`catalog HTTP ${r.status}`);
     return (await r.json()).items;
   }
   async registrations(): Promise<Registration[]> {
-    const r = await fetch('/api/admin/plugins/registrations', this.authGet());
+    const r = await this.http.request('/api/admin/plugins/registrations', { cache: 'no-store' });
     if (!r.ok) throw new Error(`registrations HTTP ${r.status}`);
     return (await r.json()).items;
   }
   async events(): Promise<AuditEvent[]> {
-    const r = await fetch('/api/admin/plugins/events', this.authGet());
+    const r = await this.http.request('/api/admin/plugins/events', { cache: 'no-store' });
     if (!r.ok) throw new Error(`events HTTP ${r.status}`);
     return (await r.json()).items;
   }
   /** headless 바인딩(CLIDownload 등) — UI plugin과 별개 채널. controller /api/admin/bindings. */
   async bindings(): Promise<Binding[]> {
-    const r = await fetch('/api/admin/bindings', this.authGet());
+    const r = await this.http.request('/api/admin/bindings', { cache: 'no-store' });
     if (!r.ok) throw new Error(`bindings HTTP ${r.status}`);
     return (await r.json()).items;
   }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
   bindingAction(name: string, action: 'enable' | 'disable') {
-    return fetch(`/api/admin/bindings/${name}/${action}`, { method: 'POST', headers: this.headers() })
+    return this.http.request(`/api/admin/bindings/${name}/${action}`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
   }
   private act(id: string, action: 'install' | 'enable' | 'disable' | 'uninstall', reason?: string) {
-    return fetch(`/api/admin/plugins/registrations/${id}/${action}`, {
-      method: 'POST', headers: this.headers(), body: JSON.stringify({ reason: reason ?? '' }),
+    return this.http.request(`/api/admin/plugins/registrations/${id}/${action}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason ?? '' }),
     }).then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
   }
   install(id: string, reason?: string) { return this.act(id, 'install', reason); }
@@ -71,8 +63,8 @@ export class PluginControlClient {
   uninstall(id: string) { return this.act(id, 'uninstall'); }
   /** 1단 아이콘 지정 — UIPluginPackage spec.nav.icon 패치(Carbon 토큰명). 빈 문자열=기본 아이콘. */
   setIcon(id: string, icon: string) {
-    return fetch(`/api/admin/plugins/packages/${id}/icon`, {
-      method: 'POST', headers: this.headers(), body: JSON.stringify({ icon }),
+    return this.http.request(`/api/admin/plugins/packages/${id}/icon`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ icon }),
     }).then((r) => { if (!r.ok) throw new Error(`set-icon HTTP ${r.status}`); return r.json(); });
   }
 }

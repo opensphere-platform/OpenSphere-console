@@ -22,7 +22,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/registry", func(w http.ResponseWriter, r *http.Request) {
+	handleRegistry := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "registry 는 read-only(GET 전용) — ADR-0001", http.StatusMethodNotAllowed)
 			return
@@ -37,6 +37,13 @@ func main() {
 			}
 		}
 		resp, rejected := registry.Build(items)
+		if dyn != nil {
+			if keys, err := registry.LoadTrustedKeys(r.Context(), dyn); err == nil {
+				resp.TrustedKeys = keys
+			} else {
+				log.Printf("trusted key 로드 실패: %v", err)
+			}
+		}
 		if len(rejected) > 0 {
 			log.Printf("게시거부(ImageDigest 빈값): %v", rejected)
 		}
@@ -48,7 +55,10 @@ func main() {
 		if err := enc.Encode(resp); err != nil {
 			log.Printf("인코딩 실패: %v", err)
 		}
-	})
+	}
+	mux.HandleFunc("/api/v1/registry", handleRegistry)
+	// Legacy browser path is an alias only; the Registry service remains the sole authority.
+	mux.HandleFunc("/registry/plugins.json", handleRegistry)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	const addr = ":8080"

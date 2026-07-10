@@ -2,6 +2,7 @@ import { Component, OnInit, inject, signal, ChangeDetectionStrategy } from '@ang
 import { FormsModule } from '@angular/forms';
 import { ClarityModule } from '@clr/angular';
 import { AuthService } from '../core/auth.service';
+import { HttpService } from '../core/http.service';
 import { BackendUnavailable } from '../os/backend-unavailable';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsDatagrid, OsCellDef, OsColumn } from '../os/os-datagrid';
@@ -81,6 +82,7 @@ const BFF = '';
 })
 export class AdminRoles implements OnInit {
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   readonly roleCols: OsColumn[] = [
     { key: 'role', label: '역할 (그룹)' },
     { key: 'desc', label: '설명' },
@@ -98,7 +100,7 @@ export class AdminRoles implements OnInit {
   }
 
   private api(path: string, init?: RequestInit): Promise<Response> {
-    return fetch(BFF + path, {
+    return this.http.request(BFF + path, {
       ...init,
       headers: { authorization: 'Bearer ' + this.auth.token(), ...(init?.headers ?? {}) },
     });

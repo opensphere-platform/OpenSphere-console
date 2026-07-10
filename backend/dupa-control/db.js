@@ -39,16 +39,43 @@ async function ensureSchema() {
   await pool.query('CREATE INDEX IF NOT EXISTS audit_log_ts_idx ON audit_log (ts DESC)');
   await pool.query('CREATE INDEX IF NOT EXISTS audit_log_actor_idx ON audit_log (actor)');
   await pool.query('CREATE INDEX IF NOT EXISTS audit_log_action_idx ON audit_log (action)');
+  await pool.query(`CREATE OR REPLACE FUNCTION opensphere_reject_audit_mutation()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'audit_log is append-only';
+    END;
+    $$`);
+  await pool.query('DROP TRIGGER IF EXISTS audit_log_append_only ON audit_log');
+  await pool.query(`CREATE TRIGGER audit_log_append_only
+    BEFORE UPDATE OR DELETE ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION opensphere_reject_audit_mutation()`);
+  await pool.query('REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM PUBLIC');
 }
 
 // 감사 이벤트 INSERT(append-only). e = {time, opId, actor, action, target, result, reason}.
 async function insertAudit(e) {
-  if (!enabled) return false;
-  await pool.query(
-    'INSERT INTO audit_log (ts, op_id, actor, action, target, result, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-    [e.time || new Date().toISOString(), e.opId || '', e.actor || 'system', e.action || '', e.target || '', e.result || '', e.reason || ''],
-  );
-  return true;
+  if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
+  try {
+    await pool.query(
+      'INSERT INTO audit_log (ts, op_id, actor, action, target, result, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [e.time || new Date().toISOString(), e.opId || '', e.actor || 'system', e.action || '', e.target || '', e.result || '', e.reason || ''],
+    );
+    return true;
+  } catch (e2) {
+    enabled = false;
+    throw e2;
+  }
+}
+
+async function healthCheck() {
+  if (!enabled || !pool) return false;
+  try {
+    await pool.query('SELECT 1');
+    return true;
+  } catch {
+    enabled = false;
+    return false;
+  }
 }
 
 // 최근 N건(newest-first) — 기동 시 인메모리 링 hydrate용. 컨트롤러 이벤트 형상으로 매핑.
@@ -254,4 +281,4 @@ async function dropFunction({ database, schema, name, args }) {
   } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
 }
 
-module.exports = { init, insertAudit, recentAudit, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };
+module.exports = { init, insertAudit, recentAudit, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };

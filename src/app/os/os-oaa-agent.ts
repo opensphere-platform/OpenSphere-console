@@ -2,6 +2,7 @@ import { Component, ChangeDetectionStrategy, OnDestroy, computed, effect, inject
 import { FormsModule } from '@angular/forms';
 import { CarbonIcon } from './carbon-icon';
 import { AuthService } from '../core/auth.service';
+import { HttpService } from '../core/http.service';
 import Send16 from '@carbon/icons/es/send/16';
 import Close16 from '@carbon/icons/es/close/16';
 import Restart16 from '@carbon/icons/es/restart/16';
@@ -369,6 +370,7 @@ interface OaaSession {
 })
 export class OsOaaAgent implements OnDestroy {
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   private readonly storageKey = 'opensphere.oaa.sessions';
   readonly iconSend = Send16;
   readonly iconClose = Close16;
@@ -542,7 +544,7 @@ export class OsOaaAgent implements OnDestroy {
         .filter((m) => m.role !== 'system')
         .slice(-12)
         .map((m) => ({ role: m.role, content: m.content }));
-      const r = await fetch('/api/oaa/chat', {
+      const r = await this.http.request('/api/oaa/chat', {
         method: 'POST',
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
         body: JSON.stringify({ keyId: 'deepseek', messages: payloadMessages, context: this.pageContext() }),

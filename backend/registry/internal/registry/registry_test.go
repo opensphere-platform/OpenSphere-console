@@ -31,3 +31,21 @@ func TestBuildPartitions(t *testing.T) {
 		t.Fatal("plugins/templates 가 nil — 빈 배열이어야 함")
 	}
 }
+
+func TestBuildPreservesBrowserTrustContract(t *testing.T) {
+	item := catalog.Item{
+		Kind: catalog.KindPlugin, ID: "manual", Name: "manual", ImageDigest: "sha256:abc",
+		Manifest:       "/api/plugins/manual/plugins/ui-shell.manifest.json",
+		ManifestSHA256: "012345", Signature: "/api/plugins/manual/plugins/ui-shell.manifest.json.sig",
+		KeyID: "opensphere-plugins-v1", ComponentKind: "subShell", HostRef: "main",
+		HostApiVersion: "1.0.0", HostCompat: ">=1.0.0 <2.0.0", Available: true,
+	}
+	resp, rejected := Build([]catalog.Item{item})
+	if len(rejected) != 0 || len(resp.Plugins) != 1 {
+		t.Fatalf("plugin projection failed: rejected=%v plugins=%d", rejected, len(resp.Plugins))
+	}
+	got := resp.Plugins[0]
+	if got.ID != item.ID || got.ManifestSHA256 != item.ManifestSHA256 || got.ComponentKind != item.ComponentKind || !got.Available {
+		t.Fatalf("browser trust contract was not preserved: %#v", got)
+	}
+}

@@ -1,37 +1,11 @@
 # OpenSphere Console (Angular + ng-clarity 셸 PoC) — ADR-UI-001 T2 스파이크
 # 소스: https://dev.azure.com/OpenSphere-Platform/OpenSphere-Platform/_git/opensphere-console
 # 이미지: 자체 빌드 → GHCR digest 핀 (이미지 규약)
-# 선행: Secret shell-proxy-token(SHELL_SERVICE_TOKEN), Secret ghcr-pull — git에 값 없음
+# 선행: Secret ghcr-pull, Secret shell-tls, Secret opensphere-auth-ca — git에 값 없음
 apiVersion: v1
 kind: Namespace
 metadata:
   name: opensphere-console
----
-# 플러그인 레지스트리 v2 (dynamic-ui §5.3 + §15) — allowlist이자 신뢰 루트.
-# 관리자 통제 ConfigMap: 여기 핀된 digest·신뢰키와 다르면 셸이 로드를 거부한다(fail-closed).
-# 핀 갱신 = sign-and-pin.mjs 출력(manifestSha256)을 여기 반영 + 기능 컨테이너 배포.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: shell-plugin-registry
-  namespace: opensphere-console
-data:
-  plugins.json: |
-    {
-      "version": 2,
-      "trustedKeys": {
-        "opensphere-plugins-v1": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6i+zGiw43N4nbPkWxcGbrIuaR+1GyBmfBiAoFR3sznS3MmhXSMxldwecUcpr4YnaOsW6UfTBUa0o52cb2dSdcA=="
-      },
-      "plugins": [
-        {
-          "id": "platform-status",
-          "manifest": "/api/status/plugins/ui-shell.manifest.json",
-          "manifestSha256": "30ed5d0d0fae604c6066a13e06d4429ce2e1e59bccfcc7b697e12de18a9ffff7",
-          "signature": "/api/status/plugins/ui-shell.manifest.json.sig",
-          "keyId": "opensphere-plugins-v1"
-        }
-      ]
-    }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -40,7 +14,7 @@ metadata:
   namespace: opensphere-console
   labels: { app: opensphere-console }
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels: { app: opensphere-console }
   template:
@@ -53,42 +27,43 @@ spec:
         - name: shell
           # ⚠️TODO: opensphere-console 이미지 빌드·push 필요 — 아래 digest는 구 opensphere-shell 아티팩트(opensphere-console repo엔 미존재).
           # 사람용 태그: ghcr.io/opensphere-platform/opensphere-console:0.8.1-reauth (비번변경 재인증)
-          image: ghcr.io/opensphere-platform/opensphere-console@sha256:6e09d6190252b3c148a3c155779516a411eb1be44280b051cdadc03bed8a0f1d
+          image: opensphere-console@sha256:b94b0b734cc633f02526f3b3ddb4f8f4d7575e41e2a1b036f78f1c73ed4836d0
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:
-            # nginx 기동 시 envsubst — rhdh-self 프록시의 service-to-service 토큰
-            - name: SHELL_SERVICE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: shell-proxy-token
-                  key: SHELL_SERVICE_TOKEN
             # CSP connect-src/frame-src에 허용할 콘솔 OIDC origin (브라우저 기준 주소)
             - name: OS_AUTH_ORIGIN
               value: "https://localhost:8444"
           volumeMounts:
-            # subPath 금지 — ConfigMap 갱신이 파일로 전파되어야 함(리빌드 없는 증감)
-            - name: plugin-registry
-              mountPath: /etc/opensphere/registry
-              readOnly: true
             # nginx ssl_certificate 로드용 self-signed TLS (로컬-only; HTTPS 셸이 기동 시 인증서 필수)
             - name: nginx-certs
               mountPath: /etc/nginx/certs
               readOnly: true
+            - name: upstream-auth-ca
+              mountPath: /etc/nginx/upstream-ca
+              readOnly: true
           readinessProbe:
-            httpGet: { path: /index.html, port: 8080 }
+            httpGet: { path: /readyz, port: 8080 }
             initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /index.html, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
       volumes:
-        - name: plugin-registry
-          configMap:
-            name: shell-plugin-registry
-            optional: true
         - name: nginx-certs
           secret:
             secretName: shell-tls
+        - name: upstream-auth-ca
+          secret:
+            secretName: opensphere-auth-ca
 ---
 apiVersion: v1
 kind: Service
@@ -100,6 +75,6 @@ spec:
   type: LoadBalancer
   selector: { app: opensphere-console }
   ports:
-    - name: http
+    - name: https
       port: 8090
-      targetPort: 8080
+      targetPort: 8443

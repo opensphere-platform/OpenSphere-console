@@ -16,13 +16,7 @@ const ICONS = {
   source: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Zm9 0v4h4l-4-4ZM7 12h10v1.6H7V12Zm0 3h10v1.6H7V15Zm0 3h6v1.6H7V18Z"/></svg>',
 };
 
-function authToken() {
-  try {
-    return (window.__OS_AUTH__ && window.__OS_AUTH__.token && window.__OS_AUTH__.token()) || '';
-  } catch {
-    return '';
-  }
-}
+let apiFetch = (input, init) => fetch(input, init);
 
 function queryParams() {
   return new URLSearchParams(window.location.search || '');
@@ -38,9 +32,7 @@ function updateQuery(params) {
 }
 
 async function manualJson(path) {
-  const token = authToken();
-  const headers = token ? { authorization: `Bearer ${token}` } : {};
-  const res = await fetch(path, { headers, cache: 'no-store' });
+  const res = await apiFetch(path, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Manual Registry HTTP ${res.status}`);
   return res.json();
 }
@@ -275,6 +267,7 @@ class ManualShellElement extends HTMLElement {
 }
 
 export function activate(ctx) {
+  apiFetch = ctx.api?.fetch ?? apiFetch;
   if (!customElements.get(TAG)) customElements.define(TAG, ManualShellElement);
   ctx.extensions.registerPage({ id: 'manual', title: 'Manual', navBand: '구축 Build', elementTag: TAG });
   ctx.extensions.manual?.contribute?.({

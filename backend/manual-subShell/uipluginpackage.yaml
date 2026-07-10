@@ -6,20 +6,24 @@ metadata:
   labels:
     opensphere.io/scope: main-shell-manual
 spec:
+  kind: subShell
+  hostRef: main
+  hostApiVersion: "1.0.0"
+  hostCompat: ">=1.0.0 <2.0.0"
   displayName: "Manual"
   owner: platform-experience
   version: 0.1.0
   description: "OpenSphere Manual — OAA-backed documentation subShell."
   image:
-    repository: ghcr.io/opensphere-platform/manual
-    digest: sha256:9e318d1f8daa52d88e93c3a7eac23e55bf1069540af3e7c628d1b4f8c4cbfc0c
+    repository: manual
+    digest: sha256:23d3b948165ce380e5b5a16840fca2fb3d82f8f2ba0f807bed0686f5976bb585
   nav:
     band: "구축 Build"
     label: "Manual"
     icon: "document"
   manifest:
     path: /plugins/ui-shell.manifest.json
-    sha256: "1a7ece6dd94709d5e5c80bd76628f4439dcbc25cf355334ad8b6094b54b02ca6"
+    sha256: "bbd3766b4e02736b96c5b9701e27969802ce6ce2417a7454e3bc65ef1e3465b1"
     signaturePath: /plugins/ui-shell.manifest.json.sig
   trust:
     keyId: opensphere-plugins-v1
@@ -27,9 +31,19 @@ spec:
   permissions:
     - page:register
     - api:proxy
+    - nav:contribute
     - manual:contribute
   api:
     basePath: /api/plugins/manual
+  contributions:
+    page: { enabled: true }
+    navigation: { enabled: true, mode: runtime }
+    api: { enabled: true, basePath: /api/manual }
+    cli: { enabled: false, namespace: manual, manifestPath: /cli/manifest, reason: "Manual CLI is not published yet" }
+    manual: { enabled: true, sourceId: opensphere-manual, mode: install-time }
+    search: { enabled: false, mode: none, reason: "Main Shell indexes the canonical Manual Registry" }
+    notification: { enabled: false, frontend: false, backend: false, reason: "Manual is read-only" }
+    observability: { enabled: false, logs: false, metrics: false, traces: false, reason: "Served by the shared OAA observability plane" }
 ---
 apiVersion: plugins.opensphere.io/v1alpha1
 kind: UIPluginRegistration

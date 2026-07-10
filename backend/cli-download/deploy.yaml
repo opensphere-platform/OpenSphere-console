@@ -6,7 +6,7 @@ metadata:
   namespace: opensphere-system
   labels: { app: os-cli, opensphere.io/cli-download: os }
 spec:
-  replicas: 1
+  replicas: 2
   selector: { matchLabels: { app: os-cli } }
   template:
     metadata:
@@ -14,12 +14,17 @@ spec:
     spec:
       containers:
         - name: serve
-          image: localhost:5000/os-cli:v3
+          image: os-cli@sha256:d661faaa535042b38e61104e8a7906c8b4602c0f4571b71bf69dd8ebb05f85d9
+          imagePullPolicy: IfNotPresent
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /index.json, port: 8080 }, initialDelaySeconds: 2 }
+          livenessProbe: { httpGet: { path: /index.json, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
           resources:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
 ---
 apiVersion: v1
 kind: Service
