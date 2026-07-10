@@ -1,4 +1,5 @@
 import { Injectable, inject, signal } from '@angular/core';
+import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
@@ -90,6 +91,7 @@ export class ExtensionHostService {
   private auth = inject(AuthService);
   private http = inject(HttpService);
   private notif = inject(NotificationService);
+  private router = inject(Router);
   private activeModules = new Map<string, PluginModule>();
   private pageOwners = new Map<string, string>();
   private loadingIds = new Set<string>();
@@ -320,6 +322,16 @@ export class ExtensionHostService {
   /** §9 OpenSpherePluginContext 부분집합 — 승인된 권한의 능력만 노출 */
   private contextFor(pluginId: string, manifest: NormalizedManifest, perms: readonly Capability[], hostApiVersion: string, trustedKeys: Record<string, string>) {
     const apiFetch = (input: RequestInfo | URL, init?: RequestInit) => this.fetchForPlugin(manifest, input, init);
+    const routeBase = `/p/${pluginId}`;
+    const currentRoute = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const navigate = (path: string, options?: { replace?: boolean }) => {
+      const target = new URL(path, window.location.origin);
+      if (target.origin !== window.location.origin || (target.pathname !== routeBase && !target.pathname.startsWith(`${routeBase}/`))) {
+        throw new Error(`guest route must remain under ${routeBase}`);
+      }
+      const next = `${target.pathname}${target.search}${target.hash}`;
+      void this.router.navigateByUrl(next, { replaceUrl: options?.replace === true });
+    };
     const childHost = async (manifestUrl: string): Promise<void> => {
       if (manifest.kind !== 'subShell') throw new Error('plugin은 child를 host할 수 없음');
       const child = this.registryEntries.find((entry) => entry.manifest === manifestUrl && (entry.hostRef ?? 'main') === pluginId);
@@ -331,6 +343,17 @@ export class ExtensionHostService {
       shellVersion: SHELL_VERSION,
       hostApiVersion,
       grants: perms,
+      routing: {
+        basePath: routeBase,
+        currentPath: currentRoute,
+        navigate,
+        subscribe: (listener: (path: string) => void) => {
+          const subscription = this.router.events.subscribe((event) => {
+            if (event instanceof NavigationEnd) listener(currentRoute());
+          });
+          return () => subscription.unsubscribe();
+        },
+      },
       ...(perms.includes('api:proxy') ? { api: { baseUrl: manifest.apiBase ?? '', fetch: apiFetch } } : {}),
 			...(perms.includes('identity:read') ? { identity: {
 				username: this.auth.user(),

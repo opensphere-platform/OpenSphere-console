@@ -11,6 +11,7 @@ import { AdminBackbone } from './pages/admin-backbone';
 import { AdminObservability } from './pages/admin-observability';
 import { AdminNotifications } from './pages/admin-notifications';
 import { AdminLayout } from './pages/admin-layout';
+import { authenticatedGuard } from './core/authenticated.guard';
 
 /**
  * 플러그인 호스트 매처 — `/p/<id>` 그리고 그 아래 임의 깊이의 서브패스(`/p/<id>/a/b/...`)까지 전부
@@ -43,6 +44,7 @@ export const routes: Routes = [
   {
     path: 'manage',
     component: AdminLayout,
+    canActivate: [authenticatedGuard],
     children: [
       { path: '', redirectTo: 'console-admins', pathMatch: 'full' },
       { path: 'console-admins', component: ConsoleAdmins },

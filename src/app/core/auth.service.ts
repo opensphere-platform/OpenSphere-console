@@ -53,6 +53,7 @@ export class AuthService {
   /** 토큰 만료(epoch sec) */
   readonly tokenExp = signal<number>(0);
   readonly initError = signal<string>('');
+  private reauthenticationStarted = false;
 
   setInitError(error: unknown): void {
     this.initError.set(String(error instanceof Error ? error.message : error || '인증 초기화 실패'));
@@ -61,7 +62,15 @@ export class AuthService {
   /** id_token이 만료됐는가 — Kanidm은 refresh_token 미지원(grant_types_supported=authorization_code만) +
    *  iframe 무음 갱신도 CSP(frame-ancestors 'none')로 차단돼 있어, 남는 방법은 감지 후 재로그인 유도뿐이다. */
   isTokenExpired(): boolean {
-    return this.tokenExp() > 0 && Math.floor(Date.now() / 1000) >= this.tokenExp();
+    return !this.hasValidToken();
+  }
+
+  /** 관리/플러그인 API에 실제로 전송하는 id_token 자체의 유효성.
+   * oidc-client의 User.expired는 access_token expires_at 기준일 수 있으므로
+   * 그것만으로 관리 평면 세션을 판단하면 안 된다. */
+  hasValidToken(clockSkewSeconds = 5): boolean {
+    const exp = this.tokenExp();
+    return Boolean(this.idToken) && exp > Math.floor(Date.now() / 1000) + clockSkewSeconds;
   }
 
   /** 플러그인 백엔드에 넘기는 토큰(=id_token, groups 포함; Kanidm access_token엔 groups 없음) */
@@ -93,10 +102,11 @@ export class AuthService {
     }
     // ② 기존 세션
     const existing = await this.mgr.getUser();
-    if (existing && !existing.expired) {
+    if (existing && this.userHasValidIdToken(existing)) {
       this.apply(existing);
       return;
     }
+    if (existing) await this.mgr.removeUser();
     // ③ 미인증 → 로그인 리다이렉트(여기서 페이지 이탈; 아래 Promise는 미해결로 유지)
     await this.redirectToLogin();
   }
@@ -104,7 +114,14 @@ export class AuthService {
   /** id_token 만료 후 재로그인 유도 — Kanidm SSO 세션 쿠키가 살아있으면 자격 재입력 없이 빠르게 통과한다.
    *  현재 화면으로 돌아오도록 returnUrl을 실어 보낸다(전체 리다이렉트라 페이지 이탈이 발생한다). */
   async reAuthenticate(): Promise<void> {
-    await this.redirectToLogin();
+    if (this.reauthenticationStarted) return;
+    this.reauthenticationStarted = true;
+    try {
+      await this.redirectToLogin();
+    } catch (error) {
+      this.reauthenticationStarted = false;
+      this.setInitError(error);
+    }
   }
 
   private async redirectToLogin(): Promise<void> {
@@ -159,6 +176,19 @@ export class AuthService {
 
     // Consumer에는 raw token을 노출하지 않는다. Extension Host의 ctx.api.fetch가
     // 검증된 same-origin API 요청에만 Authorization을 주입한다.
+  }
+
+  private userHasValidIdToken(u: User): boolean {
+    const token = u.id_token ?? '';
+    if (!token) return false;
+    try {
+      const encoded = token.split('.')[1]?.replace(/-/g, '+').replace(/_/g, '/') ?? '';
+      const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=');
+      const payload = JSON.parse(atob(padded)) as Record<string, unknown>;
+      return Number(payload['exp'] ?? 0) > Math.floor(Date.now() / 1000) + 5;
+    } catch {
+      return false;
+    }
   }
 
   async logout(): Promise<void> {

@@ -33,7 +33,10 @@ export class HttpService {
     }
     try {
       const response = await fetch(target, { ...init, headers, signal: controller.signal });
-      if (response.status === 401 && this.auth.isTokenExpired()) this.reauthRequired.set(true);
+      if (response.status === 401 && !this.auth.hasValidToken()) {
+        this.reauthRequired.set(true);
+        void this.auth.reAuthenticate();
+      }
       return response;
     } finally {
       window.clearTimeout(timeout);

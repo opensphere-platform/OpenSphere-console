@@ -45,12 +45,13 @@ spec:
       serviceAccountName: console-backend
       containers:
         - name: api
-          image: console-backend@sha256:61fd4e90d619f0615ae0d6f7d00adc3e005b6ecc40799c3182c0edd109187cf3
+          image: console-backend@sha256:00c117da6b5840c0d50eb1ec35cf0ef4e4eb3712c9a0c70b21a33f6c86230f10
           imagePullPolicy: IfNotPresent
           env:
             # fetch(kube API / secret read)가 kube CA 신뢰하도록
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
             - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
+            - { name: KANIDM_JWKS_URL, value: "https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
             - { name: DUPA_URL, value: http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080 }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }

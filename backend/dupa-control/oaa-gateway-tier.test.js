@@ -26,7 +26,7 @@ test('CBSS declares OAA-Gateway as a Backbone component', () => {
   assert.match(controller, /metadata:\s*\{\s*name:\s*'oaa-gateway'/);
   assert.match(controller, /serviceAccountName:\s*'oaa-gateway'/);
   assert.match(controller, /http:\/\/oaa-gateway\.opensphere-backbone\.svc\.cluster\.local:8080\/api\/oaa\/health/);
-  assert.match(controller, /kanidm-core\.opensphere-console-auth\.svc:8443/);
+  assert.match(controller, /opensphere-auth\.opensphere-console-auth\.svc:8443/);
   assert.match(controller, /KANIDM_TLS_SERVERNAME/);
   assert.match(controller, /BACKBONE_PG_HOST/);
   assert.match(controller, /BACKBONE_PG_PASSWORD/);

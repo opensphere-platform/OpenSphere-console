@@ -29,9 +29,8 @@ const DEFAULT_KANIDM_ISSUERS = [
 ];
 const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || DEFAULT_KANIDM_ISSUERS.join(','))
   .split(',').map((value) => value.trim()).filter(Boolean);
-// 콘솔 로그인 id_token 발급자 = kanidm-core(app=kanidm). svc/kanidm은 opensphere-auth BFF(다른 키)라
-// 거기 JWKS로 검증 시 kid 불일치 401. kanidm-core svc에서 JWKS를 받되 cert SAN(kanidm.svc)에 맞춰 servername 지정.
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://kanidm-core.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+// Console id_token은 opensphere-auth BFF가 발급·서명한다. Kanidm core는 upstream identity만 제공한다.
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
 const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';

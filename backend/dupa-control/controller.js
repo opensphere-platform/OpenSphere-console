@@ -50,10 +50,9 @@ const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || 
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-// 콘솔 로그인 id_token 발급자 = kanidm-core(app=kanidm). svc/kanidm은 opensphere-auth BFF(PAT 발급자, 다른 키)라
-// 거기 JWKS로 검증하면 kid 불일치 401. → kanidm-core svc에서 JWKS를 받되, cert SAN이 kanidm.svc라
-// servername으로 SNI/검증 호스트를 맞춘다(동일 kanidm-tls 인증서).
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://kanidm-core.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+// Console 브라우저 id_token의 최종 발급자는 opensphere-auth BFF다. Kanidm core는
+// upstream identity만 제공하므로 core JWKS로 검증하면 BFF kid가 없어 관리 API가 401이 된다.
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
 const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
@@ -181,7 +180,18 @@ async function k8s(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  return { ok: res.ok, status: res.status, json: text ? JSON.parse(text) : null };
+  let parsed = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Optional API groups (for example ServiceMonitor before its CRD is
+      // installed) can return a text/plain 404. Treat that as an ordinary
+      // capability absence instead of crashing the entire admin surface.
+      parsed = { message: text.trim() };
+    }
+  }
+  return { ok: res.ok, status: res.status, json: parsed };
 }
 // 비-JSON(파드 로그 등 text/plain) 응답용 — k8s()는 항상 JSON.parse라 로그에 못 씀.
 async function k8sText(path) {
@@ -826,7 +836,7 @@ function bbWorkloads() {
         env: [
           { name: 'BACKBONE_NS', value: BACKBONE_NS },
           { name: 'KANIDM_ISSUERS', value: process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console,https://localhost:8444/oauth2/openid/opensphere-console' },
-          { name: 'KANIDM_JWKS_URL', value: process.env.KANIDM_JWKS_URL || 'https://kanidm-core.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk' },
+          { name: 'KANIDM_JWKS_URL', value: process.env.KANIDM_JWKS_URL || 'https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk' },
           { name: 'KANIDM_TLS_SERVERNAME', value: process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc' },
           { name: 'KANIDM_CA_PATH', value: process.env.KANIDM_CA_PATH || '/app/kanidm-ca.crt' },
           { name: 'KANIDM_AZP', value: process.env.KANIDM_AZP || 'opensphere-console' },
