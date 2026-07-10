@@ -31,7 +31,7 @@
 - design system, shared components
 - plugin failure isolation
 
-특히 `dynamic-ui-plugin-architecture.md`는 Shell proxy가 plugin route policy를 강제해야 하고, mutating call은 audit event를 남겨야 하며, 권한은 Shell, backend, K8s/OKD RBAC 세 곳에서 확인되어야 한다고 정의한다.
+특히 `../../_DOCS_/01-CONSTITUTION/CONSTITUTION-0003-SHELL-HOSTING-INTEGRATION.md`는 Shell proxy가 plugin route policy를 강제해야 하고, mutating call은 audit event를 남겨야 하며, 권한은 Shell, backend, K8s/OKD RBAC 세 곳에서 확인되어야 한다고 정의한다.
 
 ## 3. 주요 Findings
 
