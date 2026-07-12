@@ -98,6 +98,20 @@
 | G4 관찰 | 컷오버 후 ≥24h 오류 0·정합 유지 |
 | G5 폐기 | 구 PVC 삭제 전 백업 보존·복구 재현 확인 |
 
+## 10.5 리허설 결과 (합성 데이터, 라이브 무접촉)
+
+방식 C — 격리 ns `opensphere-cbs-rehearsal`에서 정본 이름 매니페스트로 절차·툴링 검증.
+
+| 엔진 | 상태 | 검증 내용 |
+|---|---:|---|
+| PostgreSQL | **PASS** | 정본 매니페스트(`opensphere-cbs-postgresql`) 배포·기동, pgvector init 동작, 합성 audit_log 10,000행(vector(3) 컬럼) 시드 → `pg_dump`(custom, 97KB, <1s) → 신규 DB `pg_restore`(<1s) → **복원 행수 10000=10000 일치, vector 확장 보존**. dump/restore가 vector 타입·데이터를 온전히 보존함을 확인. |
+| RustFS(S3) | 대기 | `mc mirror` 왕복·오브젝트 체크섬 리허설 예정 |
+| Gitea | 대기 | `gitea dump`→복원·repo 무결성 리허설 예정 |
+| Kanidm | 대기 | `kanidmd database backup/restore`→로그인 검증 리허설(라이브 백업 exec 승인 필요) |
+
+- 확인된 사실: **정본 이름 매니페스트가 유효(client dry-run + 실배포)**, postgres 백업/복원 절차가 pgvector 포함 데이터를 손실 없이 보존. 실데이터 RPO/RTO는 라이브 백업 exec 승인(§방식 A) 후 측정.
+- 리허설 리소스는 검증 후 삭제(격리 ns drop).
+
 ## 10. 이번 문서의 산출
 
 - 계획 확정(승인 대기). **실행(백업·컷오버·삭제)은 승인 후.**
