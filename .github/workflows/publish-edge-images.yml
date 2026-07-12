@@ -1,0 +1,154 @@
+name: Publish Console Edge Images
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - package.json
+      - package-lock.json
+      - angular.json
+      - tsconfig*.json
+      - public/**
+      - src/**
+      - nginx/**
+      - backend/identity/opensphere-console-auth/**
+      - backend/identity/kanidm-image/**
+      - backend/opensphere-console-backend/**
+      - backend/dupa-control/**
+      - backend/opensphere-console-oaa-gateway/**
+      - backend/backbone/images/**
+      - .github/workflows/publish-edge-images.yml
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: console-edge-images
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Console
+        uses: actions/checkout@v4
+        with:
+          path: OpenSphere-console
+      - name: Checkout SDK
+        uses: actions/checkout@v4
+        with:
+          repository: opensphere-platform/OpenSphere-SDK
+          path: OpenSphere-SDK
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: OpenSphere-console/package-lock.json
+      - name: Install SDK
+        working-directory: OpenSphere-SDK
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: Install Console
+        working-directory: OpenSphere-console
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+      - name: Console contract tests
+        working-directory: OpenSphere-console
+        run: npm test
+      - name: Production build
+        working-directory: OpenSphere-console
+        run: npm run build -- --configuration production
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: opensphere-console
+            context: .
+            file: OpenSphere-console/Dockerfile
+          - image: opensphere-console-auth
+            context: OpenSphere-console/backend/identity/opensphere-console-auth
+            file: OpenSphere-console/backend/identity/opensphere-console-auth/Dockerfile
+          - image: opensphere-console-backend
+            context: OpenSphere-console/backend/opensphere-console-backend
+            file: OpenSphere-console/backend/opensphere-console-backend/Dockerfile
+          - image: opensphere-console-dupa-controller
+            context: OpenSphere-console/backend/dupa-control
+            file: OpenSphere-console/backend/dupa-control/Dockerfile
+          - image: opensphere-console-oaa-gateway
+            context: OpenSphere-console/backend/opensphere-console-oaa-gateway
+            file: OpenSphere-console/backend/opensphere-console-oaa-gateway/Dockerfile
+          - image: opensphere-console-kanidm
+            context: OpenSphere-console/backend/identity/kanidm-image
+            file: OpenSphere-console/backend/identity/kanidm-image/Dockerfile
+          - image: opensphere-cbs-postgresql
+            context: OpenSphere-console/backend/backbone/images/postgres
+            file: OpenSphere-console/backend/backbone/images/postgres/Dockerfile
+          - image: opensphere-cbs-rustfs
+            context: OpenSphere-console/backend/backbone/images/rustfs
+            file: OpenSphere-console/backend/backbone/images/rustfs/Dockerfile
+          - image: opensphere-cbs-gitea
+            context: OpenSphere-console/backend/backbone/images/gitea
+            file: OpenSphere-console/backend/backbone/images/gitea/Dockerfile
+    steps:
+      - name: Checkout Console
+        uses: actions/checkout@v4
+        with:
+          path: OpenSphere-console
+      - name: Checkout SDK
+        if: matrix.image == 'opensphere-console'
+        uses: actions/checkout@v4
+        with:
+          repository: opensphere-platform/OpenSphere-SDK
+          path: OpenSphere-SDK
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/opensphere-platform/${{ matrix.image }}
+          tags: |
+            type=raw,value=edge
+            type=sha,prefix=sha-
+          labels: |
+            io.opensphere.channel=edge
+            io.opensphere.source-revision=${{ github.sha }}
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - name: Attest published digest
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/opensphere-platform/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Publish summary
+        run: echo '`${{ matrix.image }}:edge` → `${{ steps.build.outputs.digest }}`' >> "$GITHUB_STEP_SUMMARY"
