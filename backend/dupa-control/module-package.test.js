@@ -21,6 +21,10 @@ test('accepts SDK module package and materializes digest-pinned package', () => 
 test('rejects unapproved permission profile and observer role is read-only', () => {
   const bad = structuredClone(descriptor); bad.permissionProfile = 'cluster-admin';
   assert.ok(moduleDescriptorIssues(bad).some((issue) => issue.code === 'UnknownPermissionProfile'));
-  const verbs = observerClusterRoleManifest().rules.flatMap((rule) => rule.verbs);
+  const rules = observerClusterRoleManifest().rules;
+  const verbs = rules.flatMap((rule) => rule.verbs);
   assert.deepEqual([...new Set(verbs)].sort(), ['get', 'list', 'watch']);
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('networking.k8s.io') && rule.resources.includes('ingressclasses')));
+  assert.ok(!rules.some((rule) => rule.resources.includes('secrets')));
+  assert.ok(!rules.some((rule) => rule.resources.includes('users') || rule.verbs.includes('impersonate')));
 });
