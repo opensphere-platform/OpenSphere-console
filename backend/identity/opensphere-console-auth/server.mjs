@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import { URL, URLSearchParams } from 'node:url';
 import QRCode from 'qrcode';
 import { DEFAULT_TOTP_ENABLED, authPolicyFromConfigMap, authPolicyPatch } from './auth-policy.mjs';
+import { credentialCommitError, shouldResetExistingTotp } from './credential-onboarding.mjs';
 import { isActivePat, verifyEs256Jwt } from './token-verifier.mjs';
 
 // ---- config ----
@@ -593,9 +594,15 @@ async function handleOnboardGet(reqUrl, res) {
     const ex = await cuExchange(token.trim());
     if (ex.status !== 200 || !Array.isArray(ex.json)) throw new Error('That reset token is invalid or has expired.');
     session = ex.json[0];
+    const status = ex.json[1];
     // re-onboarding: drop any existing TOTP named "app" first, otherwise totpverify returns
     // TotpNameTryAgain and the freshly scanned secret is silently NOT stored (old one kept).
-    await cuUpdate({ totpremove: 'app' }, session);
+    // A new account has no primary credential yet. Asking Kanidm to remove TOTP in that
+    // state is InvalidState (HTTP 500), so only reset an existing primary credential.
+    if (shouldResetExistingTotp(status)) {
+      const removed = await cuUpdate({ totpremove: 'app' }, session);
+      if (removed.status !== 200) throw new Error('Could not reset the existing authenticator credential.');
+    }
     if (policy.totpEnabled) {
       const g = await cuUpdate('totpgenerate', session);
       totp = g.json?.mfaregstate?.TotpCheck;
@@ -626,7 +633,7 @@ async function handleOnboardPost(req, res) {
       if (r.json?.mfaregstate === 'TotpInvalidSha1') r = await cuUpdate('totpacceptsha1', session);
       if (r.json?.can_commit !== true) return reshow('That authenticator code did not match. Enter the current 6-digit code and try again.');
     } else if (r.json?.can_commit !== true) {
-      return reshow('The password is not ready to commit. Try a stronger password or request a new reset token.');
+      return reshow(credentialCommitError(r.json));
     }
     r = await cuCommit(session);
     if (r.status !== 200) return reshow('Could not finalize setup. Please retry.');
