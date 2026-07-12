@@ -7,8 +7,8 @@ COPY package.json /app/package.json
 RUN apk upgrade --no-cache \
     && npm install --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-# CA that signed kanidm-tls (used to validate the internal Kanidm core over TLS)
-COPY kanidm-ca.crt /etc/kanidm-ca/ca.crt
+# The live Kanidm CA is mounted from the kanidm-tls Secret at /certs/tls.crt.
+# Never bake an environment-specific bootstrap certificate into this image.
 COPY --chmod=0644 server.mjs /app/server.mjs
 COPY --chmod=0644 token-verifier.mjs /app/token-verifier.mjs
 COPY --chmod=0644 auth-policy.mjs /app/auth-policy.mjs
