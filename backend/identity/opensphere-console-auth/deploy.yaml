@@ -118,8 +118,9 @@ spec:
       serviceAccountName: opensphere-console-auth
       containers:
         - name: auth
-          # 로컬 kind: 노드 로드 태그 참조(IfNotPresent). CI/레지스트리 배포는 @sha256 digest 고정.
-          image: opensphere-console-auth:totp-enforce-20260712
+          # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
+          # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console-auth@sha256:<digest>로 고정.
+          image: ghcr.io/opensphere-platform/opensphere-console-auth:2.0.0-rc.1
           imagePullPolicy: IfNotPresent
           env:
             - { name: KANIDM_CORE_URL, value: "https://kanidm-core.opensphere-console-auth.svc:8443" }

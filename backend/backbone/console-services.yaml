@@ -63,7 +63,8 @@ spec:
       securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: gateway
-          image: opensphere-console-oaa-gateway@sha256:de25fdc4a1a16c318f5b0bf192a249f998e5df0f2c0cbe95b946d69be0748953
+          # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(§5). push 후 §6 BOM에서 @sha256 digest 고정.
+          image: ghcr.io/opensphere-platform/opensphere-console-oaa-gateway:2.0.0-rc.1
           imagePullPolicy: IfNotPresent
           env:
             - { name: BACKBONE_NS, value: opensphere-backbone }
