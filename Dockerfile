@@ -12,6 +12,7 @@ COPY OpenSphere-console/src ./src
 RUN npx ng build --configuration production
 
 FROM docker.io/nginxinc/nginx-unprivileged@sha256:592b23aa79a6e6c08ba4b20f1fff700e1328895705966722608e115d62e52d39
+ENV OS_PLUGIN_NAMESPACE=opensphere-console
 USER root
 RUN apk del --no-cache curl
 USER 101

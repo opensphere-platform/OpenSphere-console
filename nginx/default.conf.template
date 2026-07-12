@@ -162,7 +162,7 @@ server {
     }
 
     # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).
-    # Admin이 설치/삭제하면 ns opensphere-console에 <id> service가 생기고 사라진다.
+    # Admin이 설치/삭제하면 OS_PLUGIN_NAMESPACE에 <id> service가 생기고 사라진다.
     # 변수+resolver로 런타임 DNS 해석 → 미설치 상태에서도 nginx가 죽지 않고 502만 반환.
     # 감사 P0-2: auth_request로 controller가 registry/binding allowlist를 강제 → 등록·검증된 Consumer와
     #   승인된 workforce Binding 서비스만 통과. Main Shell native os CLI는 이 경로를 사용하지 않는다.
@@ -171,7 +171,7 @@ server {
         set $plugin_id $1;
         auth_request /_plugin_authz;
         resolver 10.96.0.10 valid=10s;
-        set $plugin_upstream $1.opensphere-console.svc.cluster.local;
+        set $plugin_upstream $1.${OS_PLUGIN_NAMESPACE}.svc.cluster.local;
         proxy_pass http://$plugin_upstream:8080/$2$is_args$args;
         # 흡수앱(k8s-console 등)의 exec/터미널·로그 스트리밍·watch = WebSocket → 업그레이드 통과
         proxy_http_version 1.1;
