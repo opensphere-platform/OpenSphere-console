@@ -12,6 +12,7 @@ RUN apk upgrade --no-cache \
 COPY --chmod=0644 server.mjs /app/server.mjs
 COPY --chmod=0644 token-verifier.mjs /app/token-verifier.mjs
 COPY --chmod=0644 auth-policy.mjs /app/auth-policy.mjs
+COPY --chmod=0644 credential-onboarding.mjs /app/credential-onboarding.mjs
 USER node
 EXPOSE 8443
 CMD ["node", "/app/server.mjs"]
