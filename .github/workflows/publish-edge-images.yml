@@ -57,6 +57,9 @@ jobs:
       - name: Install Console
         working-directory: OpenSphere-console
         run: npm ci --no-audit --no-fund --legacy-peer-deps
+      - name: Install controller test dependencies
+        working-directory: OpenSphere-console/backend/dupa-control
+        run: npm ci --no-audit --no-fund
       - name: Console contract tests
         working-directory: OpenSphere-console
         run: npm test
