@@ -5,7 +5,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: opensphere-console-auth
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
 ---
 # the BFF needs to read the Kanidm admin token (for group lookups) from opensphere-console
 apiVersion: rbac.authorization.k8s.io/v1
@@ -31,14 +31,14 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: opensphere-console-auth
-    namespace: opensphere-console-auth
+    namespace: opensphere-console
 ---
 # PAT store: the BFF reads/writes its own PAT allowlist (jti) ConfigMap in its namespace.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: opensphere-console-auth-pats
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
 ---
 # Development defaults to password-only console login. Administrators can enable
 # TOTP from /manage/console-admins; the BFF reads this shared policy at request time.
@@ -46,7 +46,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: opensphere-console-auth-policy
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
   annotations:
     opensphere.io/default-totp-enabled: "false"
 data:
@@ -58,14 +58,14 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: opensphere-console-auth-codes
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
 type: Opaque
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: opensphere-console-auth-pats
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
@@ -80,7 +80,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: opensphere-console-auth-pats
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -88,7 +88,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: opensphere-console-auth
-    namespace: opensphere-console-auth
+    namespace: opensphere-console
 ---
 # internal-only handle on the REAL Kanidm pods (BFF + proxy target). Selector app=kanidm.
 apiVersion: v1
@@ -106,7 +106,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: opensphere-console-auth
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
   labels: { app: opensphere-console-auth }
 spec:
   replicas: 2
@@ -163,7 +163,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: opensphere-console-auth
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
   labels: { app: opensphere-console-auth }
 spec:
   selector: { app: opensphere-console-auth }
@@ -176,7 +176,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: opensphere-console-auth-ext
-  namespace: opensphere-console-auth
+  namespace: opensphere-console
   labels: { app: opensphere-console-auth }
 spec:
   type: LoadBalancer

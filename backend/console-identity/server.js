@@ -21,7 +21,7 @@ const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-ka
 
 // ── 호출자 검증(Kanidm 콘솔 id_token, ES256) — ADR-FND-003 ──
 const KANIDM_ISS = process.env.KANIDM_ISS || 'https://localhost:8444/oauth2/openid/opensphere-console';
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';

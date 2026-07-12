@@ -52,7 +52,7 @@ spec:
             # fetch(kube API / secret read)가 kube CA 신뢰하도록
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
             - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
-            - { name: KANIDM_JWKS_URL, value: "https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
+            - { name: KANIDM_JWKS_URL, value: "https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
             - { name: DUPA_URL, value: http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080 }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }

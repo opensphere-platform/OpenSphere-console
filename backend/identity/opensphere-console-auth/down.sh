@@ -3,7 +3,7 @@
 # pods. Login reverts to the stock Kanidm OIDC immediately. Pass --purge to also delete
 # the BFF Deployment/SA/RBAC/kanidm-core (the kanidm-login-theme Carbon reskin stays).
 set -euo pipefail
-NS=opensphere-console-auth
+NS=opensphere-console
 
 echo "== repoint services back to real Kanidm =="
 kubectl -n "$NS" patch svc kanidm     -p '{"spec":{"selector":{"app":"kanidm"}}}'

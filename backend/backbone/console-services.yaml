@@ -68,7 +68,7 @@ spec:
           env:
             - { name: BACKBONE_NS, value: opensphere-backbone }
             - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
-            - { name: KANIDM_JWKS_URL, value: https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk }
+            - { name: KANIDM_JWKS_URL, value: https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk }
             - { name: KANIDM_TLS_SERVERNAME, value: kanidm.opensphere-console-auth.svc }
             - { name: KANIDM_CA_PATH, value: /app/kanidm-ca.crt }
             - { name: KANIDM_AZP, value: opensphere-console }

@@ -5,7 +5,7 @@
 set -euo pipefail
 . "$(cd "$(dirname "$0")/../../tools/local-dev" && pwd)/lib.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-NS=opensphere-console-auth
+NS=opensphere-console
 REG="${REG:-$(detect_reg)}"
 TAG="${1:-p1}"
 

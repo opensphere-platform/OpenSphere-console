@@ -52,7 +52,7 @@ const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || 
   .filter(Boolean);
 // Console 브라우저 id_token의 최종 발급자는 opensphere-console-auth BFF다. Kanidm core는
 // upstream identity만 제공하므로 core JWKS로 검증하면 BFF kid가 없어 관리 API가 401이 된다.
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
 const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';

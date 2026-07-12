@@ -260,7 +260,7 @@ function redirect(res, location) { res.writeHead(302, { location, 'cache-control
 // ---- PAT (Personal Access Token): 관리자 발급 장수 토큰(osph CLI/자동화 인증) ----
 // 발급/폐기 권위 = BFF. allowlist(jti)는 ConfigMap에 영속 → 재시작·폐기에도 정확.
 // (안정 서명키 /keys/sig.key 전제 — ephemeral이면 재시작 시 PAT 무효.)
-const PAT_CM_NS = process.env.PAT_CM_NS || 'opensphere-console-auth';
+const PAT_CM_NS = process.env.PAT_CM_NS || 'opensphere-console';
 const PAT_CM_NAME = process.env.PAT_CM_NAME || 'opensphere-console-auth-pats';
 const AUTH_POLICY_CM_NAME = process.env.AUTH_POLICY_CM_NAME || 'opensphere-console-auth-policy';
 // AG-5: 배포에서 권위 있게 설정하는 운영 환경 지시자. production이면 TOTP를 강제하고 비활성화를 거부한다.
