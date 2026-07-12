@@ -724,6 +724,7 @@ function validCapabilities(manifest) {
 
 // ── reconcile: registration desiredState → 실제 상태 ──────────
 let publishedPluginCount = 0;
+let publishedPlugins = [];
 // P0-2/재감사 P1-2 allowlist: /api/plugins/<id> 프록시 허용 id 집합 = (a) 검증 성공+활성(published) plugin id
 // + (b) enabled workforce CLIDownload 바인딩 서비스 id. Main Shell native os-cli는 고정 /api/cli 경로를 사용한다.
 // reconcile 끝에서 published로 계산(루프 뒤). 전이 실패 시 직전 allowlist 유지(가용성).
@@ -821,7 +822,8 @@ async function reconcile() {
       await updateStatus({ phase: 'Failed', reason, retryable: retryableReason(reason) });
     }
   }
-  publishedPluginCount = published.length;
+  publishedPlugins = published.map((plugin) => ({ ...plugin, available: true }));
+  publishedPluginCount = publishedPlugins.length;
   // 재감사 P1-2: proxy allowlist = '검증 성공 + 활성(published)' id + enabled CLIDownload 서비스 id만.
   //   (모든 UIPluginPackage 이름이 아니라) → Failed/Disabled/미검증 package는 자동 제외(403).
   //   reconcile 성공분으로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성).
@@ -1440,6 +1442,17 @@ const server = http.createServer(async (req, res) => {
       return json(res, state.ready ? 200 : 503, state);
     }
     if (p === '/metrics') { res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }); return res.end(metricsText()); }
+    // Main Shell native Registry. The controller already owns the verified, activated
+    // projection, so a separate registry workload would duplicate authority.
+    if (p === '/api/v1/registry' && req.method === 'GET') {
+      return json(res, 200, {
+        version: 3,
+        trustedKeys: await loadTrustedKeys(),
+        capabilities: [],
+        plugins: publishedPlugins,
+        templates: []
+      });
+    }
     // P0-2: nginx auth_request 대상 — /api/plugins/<id> 프록시 허용 여부(registry allowlist).
     // 등록·검증돼 단일 Registry에 투영 가능한 plugin id만 통과 → opensphere-console 내 임의 service 프록시 차단.
     if (p === '/api/internal/proxy-authz') {

@@ -92,6 +92,7 @@ function kreq(method, p, body) {
 const a1 = (at, k) => (at && at[k] && at[k][0]) || '';
 const aN = (at, k) => (at && at[k]) || [];
 const shortName = (spn) => String(spn).split('@')[0]; // name@domain -> name
+const authErrorStatus = (error) => typeof error?.code === 'number' ? error.code : 502;
 
 // ── governance gate: 호출자 토큰을 Kanidm JWKS(ES256)로 검증 (변경 없음) ──
 let _kjwks = null, _kjwksAt = 0;
@@ -282,28 +283,28 @@ const server = http.createServer(async (req, res) => {
     // 감사 누락(B): 읽기도 인증 필수(무인증 PII/토폴로지 노출 차단). 콘솔 전 사용자는 로그인되어
     // id_token 보유 → verifyAuthed(인증)면 충분(admin 불요). 비로그인 curl 등은 401.
     if (p === '/api/catalog/entities' && req.method === 'GET') {
-      try { await verifyAuthed(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || 'unauthorized' }); }
+      try { await verifyAuthed(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const list = await catalogEntities(url.searchParams.get('filter'));
       const limit = Number(url.searchParams.get('limit') || 0);
       return json(res, 200, limit ? list.slice(0, limit) : list);
     }
     if (p.startsWith('/api/kubernetes/services/')) {
-      try { await verifyAuthed(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || 'unauthorized' }); }
+      try { await verifyAuthed(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       return json(res, 200, { items: [] });
     }
     if (p === '/api/identity' && req.method === 'GET') {
-      try { await verifyAuthed(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || 'unauthorized' }); }
+      try { await verifyAuthed(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       return json(res, 200, await identityPayload());
     }
     if (p === '/api/identity/audit' && req.method === 'GET') {
-      try { await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      try { await verifyActor(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const r = await dupaRequest('/api/admin/plugins/events', { headers: { Authorization: req.headers.authorization || '' } });
       return r.ok ? json(res, 200, r.body) : json(res, r.status || 502, { error: 'durable audit unavailable' });
     }
 
     // 본인 비밀번호: Kanidm은 셀프서비스 UI(credential update session)에서 변경 — 관리 API 단순 reset 없음.
     if (p === '/api/identity/me/password' && req.method === 'POST') {
-      let me; try { me = await verifyAuthed(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      let me; try { me = await verifyAuthed(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       try { await requireBackbone(); await logAudit(me.username, 'self-password-change', me.username, 'redirected', 'kanidm self-service'); }
       catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
       return json(res, 200, { ok: false, selfServiceUrl: KANIDM_SELFSERVICE_URL, note: `Kanidm 셀프서비스(${KANIDM_SELFSERVICE_URL})에서 비밀번호/패스키를 변경하세요.` });
@@ -312,7 +313,7 @@ const server = http.createServer(async (req, res) => {
     // ── 계정 생성(IGA): governance gate + reason + audit. 신규 계정은 어떤 그룹에도 속하지 않는다(권한 상승 없음). ──
     // 온보딩 = Kanidm credential update intent 토큰 → 콘솔 same-origin /ui/reset 링크로 사용자가 직접 비번/패스키 설정.
     if (p === '/api/identity/users' && req.method === 'POST') {
-      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const body = await readBody(req).catch(() => ({}));
       const username = String(body.username || '').trim().toLowerCase();
       const displayName = String(body.displayName || '').trim();
@@ -359,7 +360,7 @@ const server = http.createServer(async (req, res) => {
     // 온보딩 링크 재발급 — 기존 사용자에게 새 credential update intent를 발급(비번 분실·재온보딩).
     const mOnboard = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/onboarding$/);
     if (mOnboard && req.method === 'POST') {
-      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const body = await readBody(req).catch(() => ({}));
       if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
       try { await requireBackbone(); await logAudit(actor.username, 'iga-onboarding-link', p, 'attempt', body.reason); }
@@ -380,7 +381,7 @@ const server = http.createServer(async (req, res) => {
     // 속성 편집(IGA) — 표시이름/이메일 갱신. displayname은 비울 수 없고, email은 비우면 제거.
     const mAttrs = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/attrs$/);
     if (mAttrs && req.method === 'POST') {
-      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const body = await readBody(req).catch(() => ({}));
       if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
       const displayName = body.displayName !== undefined ? String(body.displayName).trim() : undefined;
@@ -411,7 +412,7 @@ const server = http.createServer(async (req, res) => {
     const mEnable = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/enabled$/);
     const mGroup = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/group$/);
     if ((mEnable || mGroup) && req.method === 'POST') {
-      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const body = await readBody(req).catch(() => ({}));
       if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
       try {

@@ -101,12 +101,17 @@ test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   const manifest = JSON.parse(read('backend', 'os-cli', 'index.json'));
   const deploy = read('backend', 'os-cli', 'deploy.yaml');
+  const dockerfile = read('Dockerfile');
 
   assert.match(routes, /path:\s*'cli',\s*component:\s*AdminCli/);
   assert.match(layout, /route:\s*'\/manage\/cli'/);
   assert.match(page, /<clr-datagrid>/);
   assert.match(page, /<clr-alert/);
   assert.match(nginx, /location \/api\/cli\//);
+  assert.match(nginx, /location \/api\/cli\/[\s\S]*try_files \$uri =404/);
+  assert.doesNotMatch(nginx, /os-cli\.opensphere-console\.svc/);
+  assert.match(dockerfile, /AS cli-build/);
+  assert.match(dockerfile, /COPY --from=cli-build \/out\/ \/usr\/share\/nginx\/html\/api\/cli\//);
   assert.doesNotMatch(nginx, /location .*\/api\/plugins\/os-cli/);
   assert.match(controller, /NATIVE_BINDING_NAMES = new Set\(\['os'\]\)/);
   assert.equal(manifest.ownership, 'console-native');
@@ -116,6 +121,23 @@ test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
   assert.ok(manifest.links.every((link) => /^[a-f0-9]{64}$/.test(link.sha256) && link.size > 0));
   assert.match(deploy, /opensphere\.io\/scope:\s*main-shell-core/);
   assert.equal(fs.existsSync(path.join(root, 'backend', 'cli-download', 'clidownload-os.yaml')), false);
+});
+
+test('Registry is a Console core projection and Kanidm trust uses the installation CA', () => {
+  const nginx = read('nginx', 'default.conf.template');
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controllerDeploy = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const backendDeploy = read('backend', 'opensphere-console-backend', 'deploy.yaml');
+
+  assert.match(controller, /p === '\/api\/v1\/registry'/);
+  assert.match(controller, /publishedPlugins = published\.map\(\(plugin\) => \(\{ \.\.\.plugin, available: true \}\)\)/);
+  assert.match(nginx, /opensphere-console-dupa-controller\.opensphere-console\.svc\.cluster\.local/);
+  assert.doesNotMatch(nginx, /opensphere-registry\.opensphere-console\.svc/);
+  for (const deploy of [controllerDeploy, backendDeploy]) {
+    assert.match(deploy, /KANIDM_CA_PATH/);
+    assert.match(deploy, /secretName:\s*opensphere-console-auth-ca/);
+    assert.match(deploy, /mountPath:\s*\/etc\/kanidm-ca/);
+  }
 });
 
 // F-3: native 서비스 id(os-cli)는 어떤 Binding 이름을 써도 /api/plugins 프록시 allowlist에 진입 못 한다.

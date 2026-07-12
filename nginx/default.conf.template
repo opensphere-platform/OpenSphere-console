@@ -135,30 +135,25 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # 브라우저 Registry alias — 권위는 opensphere-registry /api/v1/registry 하나다.
-    # Controller runtime projection은 proxy allowlist 내부 상태로만 사용한다.
+    # 브라우저 Registry alias — 권위는 검증·활성 projection을 소유한 DUPA controller다.
     location /registry/ {
-        set $registry_upstream opensphere-registry.opensphere-console.svc.cluster.local;
-        proxy_pass http://$registry_upstream:80$request_uri;
+        set $registry_upstream opensphere-console-dupa-controller.opensphere-console.svc.cluster.local;
+        proxy_pass http://$registry_upstream:8080/api/v1/registry;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
     # Registry 단일창구 (GET /api/v1/registry → {capabilities,plugins,templates}). console==cli 동일 응답.
-    # os CLI(`os registry`)와 콘솔이 같은 권위 응답 소비. opensphere-registry 서비스(read-only).
+    # os CLI(`os registry`)와 콘솔이 같은 controller projection을 소비한다.
     location /api/v1/registry {
-        set $registry_api_upstream opensphere-registry.opensphere-console.svc.cluster.local;
-        proxy_pass http://$registry_api_upstream:80;
+        set $registry_api_upstream opensphere-console-dupa-controller.opensphere-console.svc.cluster.local;
+        proxy_pass http://$registry_api_upstream:8080;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # Main Shell native os CLI — fixed core route, never admitted through plugin/Binding allowlists.
-    # index and binaries are public product artifacts; only read methods are accepted.
+    # Main Shell native os CLI — artifacts are packaged in the Console image itself.
     location /api/cli/ {
         limit_except GET { deny all; }
-        set $cli_upstream os-cli.opensphere-console.svc.cluster.local;
-        rewrite ^/api/cli/(.*)$ /$1 break;
-        proxy_pass http://$cli_upstream:8080;
-        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+        try_files $uri =404;
     }
 
     # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).
