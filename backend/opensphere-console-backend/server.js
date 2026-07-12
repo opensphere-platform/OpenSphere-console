@@ -20,7 +20,7 @@ const APISERVER = 'https://kubernetes.default.svc';
 // Kanidm admin(service-account API token) 자격 Secret
 const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-system';
 const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-kanidm';
-const DUPA_URL = process.env.DUPA_URL || 'http://dupa-registry-controller.opensphere-system.svc.cluster.local:8080';
+const DUPA_URL = process.env.DUPA_URL || 'http://opensphere-console-dupa-controller.opensphere-system.svc.cluster.local:8080';
 
 // ── 호출자 검증(Kanidm 콘솔 id_token, ES256) — ADR-FND-003 ──
 const DEFAULT_KANIDM_ISSUERS = [
@@ -29,13 +29,20 @@ const DEFAULT_KANIDM_ISSUERS = [
 ];
 const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || DEFAULT_KANIDM_ISSUERS.join(','))
   .split(',').map((value) => value.trim()).filter(Boolean);
-// Console id_token은 opensphere-auth BFF가 발급·서명한다. Kanidm core는 upstream identity만 제공한다.
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+// Console id_token은 opensphere-console-auth BFF가 발급·서명한다. Kanidm core는 upstream identity만 제공한다.
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
 const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
 const KANIDM_SELFSERVICE_URL = process.env.KANIDM_SELFSERVICE_URL || 'https://localhost:8444/ui';
+// AG-1(감사 시정): group 매핑은 '콘솔 역할 그룹'으로만 제한한다. 이 allowlist가 없으면 임의 그룹(UUID)에
+// 멤버를 넣을 수 있어, 콘솔 관리자가 Kanidm 시스템 그룹(idm_admins 등)에 자신/타인을 추가해 IdP 슈퍼관리자로
+// 상승할 수 있었다. BFF /bff/roles의 isConsoleRole()과 동일 경계를 이 경로에도 강제한다.
+const CONSOLE_ROLE_GROUPS = new Set(
+  (process.env.CONSOLE_ROLE_GROUPS || 'opensphere-console-admins,opensphere-console-operators,opensphere-console-viewers')
+    .split(',').map((s) => s.trim()).filter(Boolean),
+);
 
 function saToken() { return fs.readFileSync(`${SA}/token`, 'utf8').trim(); }
 function b64d(s) { return Buffer.from(s, 'base64').toString('utf8'); }
@@ -155,7 +162,7 @@ async function publishAudit(e) {
   const r = await dupaRequest('/api/admin/events', {
     method: 'POST',
     headers: { Authorization: `Bearer ${saToken()}`, 'content-type': 'application/json', 'x-os-correlation-id': e.opId },
-    body: JSON.stringify({ source: 'console-backend', userActor: e.actor, action: e.action, target: e.target, result: e.result, reason: e.reason }),
+    body: JSON.stringify({ source: 'opensphere-console-backend', userActor: e.actor, action: e.action, target: e.target, result: e.result, reason: e.reason }),
   });
   if (!r.ok) throw Object.assign(new Error('durable audit unavailable'), { code: r.status === 503 ? 503 : 502 });
 }
@@ -192,6 +199,14 @@ async function identityPayload() {
 // 쓰기용 uuid→name 해석(프론트는 uuid를 보냄; Kanidm _attr API는 name 사용)
 async function personNameByUuid(uuid) { const ps = await kreq('GET', '/v1/person'); const e = (ps || []).find((x) => a1(x.attrs, 'uuid') === uuid); return e ? a1(e.attrs, 'name') : null; }
 async function groupNameByUuid(uuid) { const gs = await kreq('GET', '/v1/group'); const e = (gs || []).find((x) => a1(x.attrs, 'uuid') === uuid); return e ? a1(e.attrs, 'name') : null; }
+// Kanidm credential update intent → 콘솔 same-origin 온보딩 경로(/ui/reset?token=…). 실패 시 빈 문자열(생성 성공은 유지).
+async function onboardingLink(uname, ttl = 86400) {
+  try {
+    const intent = await kreq('GET', `/v1/person/${uname}/_credential/_update_intent/${ttl}`);
+    const token = (typeof intent === 'string' ? intent : (intent && (intent.token || intent.intent_token)) || (Array.isArray(intent) ? intent[0] : '')) || '';
+    return token ? `/ui/reset?token=${encodeURIComponent(token)}` : '';
+  } catch (e) { console.error('[onboarding intent]', String(e).slice(0, 160)); return ''; }
+}
 
 async function readBody(req) { const chunks = []; let n = 0; for await (const c of req) { n += c.length; if (n > MAX_BODY) throw { code: 413, msg: 'payload too large' }; chunks.push(c); } const s = Buffer.concat(chunks).toString(); return s ? JSON.parse(s) : {}; }
 function json(res, code, obj) { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); }
@@ -233,7 +248,7 @@ function metricsText() {
   return [
     '# HELP os_build_info Build info (constant 1).',
     '# TYPE os_build_info gauge',
-    `os_build_info{service="console-backend",version="${VERSION}"} 1`,
+    `os_build_info{service="opensphere-console-backend",version="${VERSION}"} 1`,
     '# HELP os_http_requests_total HTTP requests handled.',
     '# TYPE os_http_requests_total counter',
     `os_http_requests_total ${_httpReqs}`,
@@ -294,6 +309,104 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: false, selfServiceUrl: KANIDM_SELFSERVICE_URL, note: `Kanidm 셀프서비스(${KANIDM_SELFSERVICE_URL})에서 비밀번호/패스키를 변경하세요.` });
     }
 
+    // ── 계정 생성(IGA): governance gate + reason + audit. 신규 계정은 어떤 그룹에도 속하지 않는다(권한 상승 없음). ──
+    // 온보딩 = Kanidm credential update intent 토큰 → 콘솔 same-origin /ui/reset 링크로 사용자가 직접 비번/패스키 설정.
+    if (p === '/api/identity/users' && req.method === 'POST') {
+      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      const body = await readBody(req).catch(() => ({}));
+      const username = String(body.username || '').trim().toLowerCase();
+      const displayName = String(body.displayName || '').trim();
+      const email = String(body.email || '').trim();
+      const reason = String(body.reason || '').trim();
+      if (!reason) return json(res, 400, { error: 'reason 필수 (IGA)' });
+      // AG-6: 입력 검증 — Kanidm name 규칙(소문자 시작), displayName 필수, email 형식.
+      if (!/^[a-z][a-z0-9._-]{1,62}$/.test(username)) return json(res, 400, { error: 'username 형식 오류 (소문자로 시작, a-z0-9._- 2~63자)' });
+      if (!displayName) return json(res, 400, { error: 'displayName 필수' });
+      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: 'email 형식 오류' });
+      // AG-1: 생성 시 역할 부여는 콘솔 역할 그룹으로만 제한(임의/시스템 그룹 차단).
+      const roles = Array.isArray(body.roles) ? [...new Set(body.roles.map((r) => String(r).trim()).filter(Boolean))] : [];
+      for (const g of roles) { if (!CONSOLE_ROLE_GROUPS.has(g)) return json(res, 400, { error: `허용되지 않은 역할 그룹: ${g}` }); }
+      try { await requireBackbone(); await logAudit(actor.username, 'iga-create-user', username, 'attempt', `${reason}${roles.length ? ' · roles=' + roles.join(',') : ''}`); }
+      catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
+      try {
+        const existing = await kreq('GET', `/v1/person/${username}`).catch(() => null);
+        if (existing) { await logAudit(actor.username, 'create-user', username, 'denied', 'already exists'); return json(res, 409, { error: '이미 존재하는 사용자명입니다' }); }
+        const attrs = { name: [username], displayname: [displayName] };
+        if (email) attrs.mail = [email];
+        await kreq('POST', '/v1/person', { attrs });
+        // AG-1/AG-2: 선택 역할을 allowlist·감사 경유로 부여. admin 역할은 강조 감사(ok-admin-change).
+        const assigned = [];
+        for (const g of roles) {
+          try {
+            await kreq('POST', `/v1/group/${g}/_attr/member`, [username]);
+            await logAudit(actor.username, 'group-add', `${username}:${g}`, g === KANIDM_ADMIN_GROUP ? 'ok-admin-change' : 'ok', reason);
+            assigned.push(g);
+          } catch (e) { console.error('[role assign]', g, String(e).slice(0, 160)); await logAudit(actor.username, 'group-add', `${username}:${g}`, 'error', reason); }
+        }
+        const onboardingPath = await onboardingLink(username);
+        await logAudit(actor.username, 'create-user', username, 'ok', `${reason}${assigned.length ? ' · roles=' + assigned.join(',') : ''}`);
+        const note = assigned.length
+          ? `계정을 생성하고 역할(${assigned.join(', ')})을 부여했습니다. 온보딩 링크를 전달해 비밀번호/패스키를 설정하게 하세요.`
+          : '신규 계정은 어떤 그룹에도 속하지 않습니다. 온보딩 링크를 전달하고, 필요한 역할은 역할 화면에서 부여하세요.';
+        return json(res, 201, { ok: true, username, roles: assigned, onboardingPath, note });
+      } catch (e) {
+        console.error('[err] create user:', e);
+        try { await logAudit(actor.username, 'create-user', username, 'error', reason); } catch { /* attempt는 이미 기록됨 */ }
+        return json(res, 502, { error: 'upstream error (Kanidm 쓰기 권한/연결 확인)' });
+      }
+    }
+
+    // 온보딩 링크 재발급 — 기존 사용자에게 새 credential update intent를 발급(비번 분실·재온보딩).
+    const mOnboard = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/onboarding$/);
+    if (mOnboard && req.method === 'POST') {
+      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      const body = await readBody(req).catch(() => ({}));
+      if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
+      try { await requireBackbone(); await logAudit(actor.username, 'iga-onboarding-link', p, 'attempt', body.reason); }
+      catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
+      try {
+        const uname = await personNameByUuid(mOnboard[1]);
+        if (!uname) return json(res, 404, { error: 'person not found' });
+        const onboardingPath = await onboardingLink(uname);
+        await logAudit(actor.username, 'onboarding-link', uname, onboardingPath ? 'ok' : 'error', body.reason);
+        return json(res, 200, { ok: true, username: uname, onboardingPath });
+      } catch (e) {
+        console.error('[err] onboarding link:', e);
+        try { await logAudit(actor.username, 'onboarding-link', mOnboard[1], 'error', body.reason); } catch { /* attempt 기록됨 */ }
+        return json(res, 502, { error: 'upstream error' });
+      }
+    }
+
+    // 속성 편집(IGA) — 표시이름/이메일 갱신. displayname은 비울 수 없고, email은 비우면 제거.
+    const mAttrs = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/attrs$/);
+    if (mAttrs && req.method === 'POST') {
+      let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, e.code || 401, { error: e.msg || String(e) }); }
+      const body = await readBody(req).catch(() => ({}));
+      if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
+      const displayName = body.displayName !== undefined ? String(body.displayName).trim() : undefined;
+      const email = body.email !== undefined ? String(body.email).trim() : undefined;
+      if (displayName === undefined && email === undefined) return json(res, 400, { error: '변경할 속성이 없습니다' });
+      if (displayName !== undefined && !displayName) return json(res, 400, { error: 'displayName은 비울 수 없습니다' });
+      if (email) { if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: 'email 형식 오류' }); }
+      try { await requireBackbone(); await logAudit(actor.username, 'iga-update-attrs', p, 'attempt', body.reason); }
+      catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
+      try {
+        const uname = await personNameByUuid(mAttrs[1]);
+        if (!uname) return json(res, 404, { error: 'person not found' });
+        if (displayName !== undefined) await kreq('PUT', `/v1/person/${uname}/_attr/displayname`, [displayName]);
+        if (email !== undefined) {
+          if (email) await kreq('PUT', `/v1/person/${uname}/_attr/mail`, [email]);
+          else await kreq('DELETE', `/v1/person/${uname}/_attr/mail`);
+        }
+        await logAudit(actor.username, 'update-attrs', uname, 'ok', body.reason);
+        return json(res, 200, { ok: true, username: uname });
+      } catch (e) {
+        console.error('[err] update attrs:', e);
+        try { await logAudit(actor.username, 'update-attrs', mAttrs[1], 'error', body.reason); } catch { /* attempt 기록됨 */ }
+        return json(res, 502, { error: 'upstream error' });
+      }
+    }
+
     // ── 쓰기(IGA): governance gate + reason + audit ──
     const mEnable = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/enabled$/);
     const mGroup = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/group$/);
@@ -316,11 +429,22 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { ok: true });
         } else {
           const uname = await personNameByUuid(mGroup[1]);
-          const gname = await groupNameByUuid(body.groupId);
+          // 콘솔 역할은 이름(body.group)으로 직접 지정 가능 — 아래 allowlist가 검증하므로 안전. 그 외는 groupId(uuid) 해석.
+          const gname = body.group ? String(body.group).trim() : await groupNameByUuid(body.groupId);
           const op = body.op;
-          if (!uname || !gname || !['add', 'remove'].includes(op)) return json(res, 400, { error: 'groupId/op 또는 대상 해석 실패' });
+          if (!uname || !gname || !['add', 'remove'].includes(op)) return json(res, 400, { error: 'group/op 또는 대상 해석 실패' });
+          // AG-1: 콘솔 역할 그룹만 매핑 허용 — 임의/시스템 그룹(idm_admins 등)으로의 escalation 차단.
+          if (!CONSOLE_ROLE_GROUPS.has(gname)) {
+            await logAudit(actor.username, `group-${op}`, `${uname}:${gname}`, 'denied', 'not a console role group (AG-1)');
+            return json(res, 403, { error: '콘솔 역할 그룹만 매핑할 수 있습니다', group: gname });
+          }
+          // AG-2: admin 그룹은 본인이 본인에게 직접 부여/회수할 수 없다(자가 상승·자가 잠금 방지, 직무분리 최소통제).
+          if (gname === KANIDM_ADMIN_GROUP && uname === actor.username) {
+            await logAudit(actor.username, `group-${op}`, `${uname}:${gname}`, 'denied', 'self admin change blocked (AG-2)');
+            return json(res, 403, { error: 'admin 권한은 본인에게 직접 변경할 수 없습니다(직무분리)' });
+          }
           await kreq(op === 'add' ? 'POST' : 'DELETE', `/v1/group/${gname}/_attr/member`, [uname]);
-          await logAudit(actor.username, `group-${op}`, `${uname}:${gname}`, 'ok', body.reason);
+          await logAudit(actor.username, `group-${op}`, `${uname}:${gname}`, gname === KANIDM_ADMIN_GROUP ? 'ok-admin-change' : 'ok', body.reason);
           return json(res, 200, { ok: true });
         }
       } catch (e) {
@@ -350,4 +474,4 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error('[err]', e); if (!res.headersSent) json(res, e && e.code === 413 ? 413 : 500, { error: e && e.code === 413 ? 'payload too large' : 'internal error' }); }
 });
 
-server.listen(PORT, () => console.log(`console-backend v${VERSION} listening :${PORT} (identity IGA + catalog 흡수)`));
+server.listen(PORT, () => console.log(`opensphere-console-backend v${VERSION} listening :${PORT} (identity IGA + catalog 흡수)`));

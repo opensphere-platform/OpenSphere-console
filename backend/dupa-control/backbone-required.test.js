@@ -6,7 +6,7 @@ const path = require('node:path');
 const consoleRoot = path.resolve(__dirname, '..', '..');
 const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
 const db = fs.readFileSync(path.join(__dirname, 'db.js'), 'utf8');
-const identity = fs.readFileSync(path.join(consoleRoot, 'backend', 'console-backend', 'server.js'), 'utf8');
+const identity = fs.readFileSync(path.join(consoleRoot, 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
 const nginx = fs.readFileSync(path.join(consoleRoot, 'nginx', 'default.conf.template'), 'utf8');
 const consoleDeploy = fs.readFileSync(path.join(consoleRoot, 'deploy', 'opensphere-console.yaml'), 'utf8');
 const backbone = fs.readFileSync(path.join(consoleRoot, 'backend', 'backbone', 'bootstrap', 'backbone.yaml'), 'utf8');
@@ -28,7 +28,7 @@ test('durable audit is fail-closed with no ConfigMap fallback', () => {
   assert.match(db, /CREATE TRIGGER audit_log_append_only/);
   assert.match(db, /BEFORE UPDATE OR DELETE ON audit_log/);
   assert.match(identity, /await requireBackbone\(\)/);
-  assert.match(identity, /source: 'console-backend'/);
+  assert.match(identity, /source: 'opensphere-console-backend'/);
 });
 
 test('Backbone bootstrap pins and isolates all three pillars', () => {

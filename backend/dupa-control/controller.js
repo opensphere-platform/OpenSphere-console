@@ -1,4 +1,4 @@
-// dupa-registry-controller (DUPA Admin Control PoC, 계획서 §9 + 검토 §B.1/§B.5)
+// opensphere-console-dupa-controller (DUPA Admin Control PoC, 계획서 §9 + 검토 §B.1/§B.5)
 // 한 Node.js 서비스가 3역할:
 //   ① reconcile : UIPluginRegistration desiredState → workload apply/delete + 검증 + registry 생성
 //   ② Control API: /api/admin/plugins/* (Admin UI가 호출, kubectl 없이 상태 전이)
@@ -39,7 +39,7 @@ const token = () => fs.readFileSync(`${SA}/token`, 'utf8').trim();
 // NODE_EXTRA_CA_CERTS는 deployment env로 주입 (Node fetch는 시작 시점에 읽음)
 
 // ── 호출자 검증(Kanidm 콘솔 id_token, ES256) — 감사 P0-1/P1-3 차단 ──────────
-// console-backend(opensphere-identity)의 governance gate와 동일 규칙: JWKS(ES256) 서명검증 +
+// opensphere-console-backend(opensphere-identity)의 governance gate와 동일 규칙: JWKS(ES256) 서명검증 +
 // iss/azp/aud/exp/nbf 검증 → opensphere-console-admins 그룹만 변경 허용. actor는 헤더가 아니라
 // '검증된 토큰 claim'에서 도출(X-OpenSphere-User 스푸핑 무력화).
 const DEFAULT_KANIDM_ISSUERS = [
@@ -50,9 +50,9 @@ const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || 
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-// Console 브라우저 id_token의 최종 발급자는 opensphere-auth BFF다. Kanidm core는
+// Console 브라우저 id_token의 최종 발급자는 opensphere-console-auth BFF다. Kanidm core는
 // upstream identity만 제공하므로 core JWKS로 검증하면 BFF kid가 없어 관리 API가 401이 된다.
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
 const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
@@ -210,7 +210,12 @@ const getReg = (n) => k8s('GET', `${crd('uipluginregistrations')}/${n}`);
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
 const CONSOLE_GROUP = 'console.opensphere.io';
 const listCliDownloads = () => k8s('GET', `/apis/${CONSOLE_GROUP}/${V}/clidownloads`);
-const NATIVE_BINDING_NAMES = new Set(['os']); // Main Shell core: Binding으로 재등록 금지.
+const NATIVE_BINDING_NAMES = new Set(['os']); // Main Shell core: Binding 이름으로 재등록 금지.
+// F-3(감사 시정): 재도입 가드가 Binding '이름'(os)만 막으면, 임의 이름의 CLIDownload가
+// href=/api/plugins/os-cli/... 를 선언해 native 서비스 id(os-cli)를 proxy allowlist에 태울 수 있다.
+// 그래서 native 워크로드의 '서비스 id'를 별도 예약집합으로 둔다. 이 id는 어떤 Binding·plugin으로도
+// /api/plugins/<id> allowlist에 진입할 수 없다(고정 /api/cli 경로만 native CLI를 제공).
+const RESERVED_PROXY_SERVICE_IDS = new Set(['os-cli']);
 function integrationStatuses(pkg, phase, retryable, now) {
   if (!pkg?.spec?.contributions) return {};
   const c = pkg.spec.contributions;
@@ -289,7 +294,7 @@ const retryableReason = (reason) => new Set([
 
 async function verifyWorkloadToken(req, pluginId) {
   const firstParty = new Map([
-    ['console-backend', `system:serviceaccount:${NS}:console-backend`],
+    ['opensphere-console-backend', `system:serviceaccount:${NS}:opensphere-console-backend`],
   ]);
   if (!safeName(pluginId) || (!firstParty.has(pluginId) && !proxyAllow.has(pluginId))) throw { code: 403, msg: 'source is not active' };
   const match = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
@@ -658,7 +663,8 @@ async function reconcile() {
   // 재감사 P1-2: proxy allowlist = '검증 성공 + 활성(published)' id + enabled CLIDownload 서비스 id만.
   //   (모든 UIPluginPackage 이름이 아니라) → Failed/Disabled/미검증 package는 자동 제외(403).
   //   reconcile 성공분으로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성).
-  const allow = new Set(published.map((p) => p.id));
+  // F-3: published plugin id 중 예약된 native 서비스 id(os-cli)와 충돌하는 것도 방어적으로 제외.
+  const allow = new Set(published.map((p) => p.id).filter((id) => !RESERVED_PROXY_SERVICE_IDS.has(id)));
   try {
     const cds = await listCliDownloads();
     for (const cd of cds.json?.items || []) {
@@ -666,7 +672,12 @@ async function reconcile() {
       if (cd.spec?.enabled === false) continue; // enabled 바인딩만 허용
       for (const l of (cd.spec?.links || [])) {
         const mm = String(l.href || '').match(/^\/api\/plugins\/([a-z0-9-]+)\//);
-        if (mm) allow.add(mm[1]);
+        if (!mm) continue;
+        if (RESERVED_PROXY_SERVICE_IDS.has(mm[1])) { // native 서비스 재도입 시도 — allowlist 진입 거부.
+          console.warn(`[proxy-authz] reserved native service id '${mm[1]}' rejected from binding '${cd.metadata?.name}'`);
+          continue;
+        }
+        allow.add(mm[1]);
       }
     }
   } catch { /* binding scan best-effort */ }
@@ -1150,12 +1161,12 @@ const MON_COMPONENTS = [
 // 콘솔/Backbone 계측 대상 — coverage 매트릭스(노출/계측층은 각 컴포넌트 소유).
 function obsTargets() {
   return [
-    { key: 'console-backend', name: 'console-backend', app: 'console-backend', ns: NS },
-    { key: 'dupa', name: 'dupa-registry-controller', app: 'dupa-registry-controller', ns: NS },
+    { key: 'opensphere-console-backend', name: 'opensphere-console-backend', app: 'opensphere-console-backend', ns: NS },
+    { key: 'dupa', name: 'opensphere-console-dupa-controller', app: 'opensphere-console-dupa-controller', ns: NS },
     { key: 'backbone-postgres', name: 'Backbone PostgreSQL', app: 'backbone-postgres', ns: BACKBONE_NS },
     { key: 'backbone-rustfs', name: 'Backbone RustFS', app: 'backbone-rustfs', ns: BACKBONE_NS, gap: 'rustfs beta — Prometheus endpoint 미제공(upstream 대기)' },
     { key: 'backbone-gitea', name: 'Backbone Gitea', app: 'backbone-gitea', ns: BACKBONE_NS },
-    { key: 'oaa-gateway', name: 'OAA-Gateway', app: 'oaa-gateway', ns: BACKBONE_NS },
+    { key: 'opensphere-console-oaa-gateway', name: 'OAA-Gateway', app: 'opensphere-console-oaa-gateway', ns: BACKBONE_NS },
   ];
 }
 // monitoring ns에서 이름 정규식 + 포트로 Service 탐색 → DNS:port. kps prometheus svc는 app.kubernetes.io/name 라벨이
@@ -1230,7 +1241,7 @@ function metricsText() {
   return [
     '# HELP os_build_info Build info (constant 1).',
     '# TYPE os_build_info gauge',
-    `os_build_info{service="dupa-registry-controller",version="${process.env.APP_VERSION || 'dev'}"} 1`,
+    `os_build_info{service="opensphere-console-dupa-controller",version="${process.env.APP_VERSION || 'dev'}"} 1`,
     '# HELP os_http_requests_total HTTP requests handled.',
     '# TYPE os_http_requests_total counter',
     `os_http_requests_total ${_httpReqs}`,
@@ -1270,7 +1281,9 @@ const server = http.createServer(async (req, res) => {
     // 등록·검증돼 단일 Registry에 투영 가능한 plugin id만 통과 → opensphere-system 내 임의 service 프록시 차단.
     if (p === '/api/internal/proxy-authz') {
       const id = req.headers['x-plugin-id'] || '';
-      res.writeHead(proxyAllow.has(id) ? 204 : 403); return res.end();
+      // F-3: 예약된 native 서비스 id는 allowlist 상태와 무관하게 항상 403(이중 방어).
+      const permitted = proxyAllow.has(id) && !RESERVED_PROXY_SERVICE_IDS.has(id);
+      res.writeHead(permitted ? 204 : 403); return res.end();
     }
 
     // ── 인증 게이트(감사 P0-1/P1-3): /api/admin/* 는 검증된 admin id_token 필수.
@@ -1445,8 +1458,8 @@ const server = http.createServer(async (req, res) => {
       const pluginId = clip(b.source || req.headers['x-opensphere-source'] || '', 60);
       try { await verifyWorkloadToken(req, pluginId); }
       catch (e) { return json(res, typeof e?.code === 'number' ? e.code : 502, { error: e?.msg || 'workload authentication failed', opId }); }
-      const source = pluginId === 'console-backend'
-        ? `core:console-backend/${clip(b.userActor || 'system', 60)}`
+      const source = pluginId === 'opensphere-console-backend'
+        ? `core:opensphere-console-backend/${clip(b.userActor || 'system', 60)}`
         : 'ext:' + pluginId;
       const event = logAudit(source, clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId, { deferPersistence: true });
       try { await persistAuditNow(event); }
@@ -1520,7 +1533,7 @@ const server = http.createServer(async (req, res) => {
 
 if (require.main === module) {
   server.listen(PORT, () => {
-    console.log(`dupa-registry-controller listening :${PORT} (ns=${NS})`);
+    console.log(`opensphere-console-dupa-controller listening :${PORT} (ns=${NS})`);
     // Backbone PG·S3 연결 시도 → 감사로그 hydrate(PG 우선, 실패 시 ConfigMap) → reconcile/event 루프.
     // 연결은 루프의 ensureBackboneConnections가 disabled인 동안 계속 재시도 → startup 1회 실패해도 자동 복구.
     Promise.allSettled([initBackboneDb(), initBackboneStorage()]).finally(() => hydrateAudit().finally(() => {

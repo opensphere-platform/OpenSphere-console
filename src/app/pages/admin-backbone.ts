@@ -64,7 +64,7 @@ interface Claim {
       @if (down(); as detail) {
         <os-backend-unavailable
           feature="Backbone"
-          backend="dupa-registry-controller (/api/admin/backbone)"
+          backend="opensphere-console-dupa-controller (/api/admin/backbone)"
           hint="Backbone 세 기둥과 DUPA controller를 Console보다 먼저 복구해야 합니다."
           [detail]="detail"
         />

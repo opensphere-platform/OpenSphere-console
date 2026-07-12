@@ -5,12 +5,12 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: console-backend
+  name: opensphere-console-backend
   namespace: opensphere-system
   labels: { app.kubernetes.io/part-of: opensphere-console }
 spec:
   selector:
-    matchLabels: { app: console-backend }
+    matchLabels: { app: opensphere-console-backend }
   endpoints:
     - port: http
       path: /metrics
@@ -19,12 +19,12 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: dupa-registry-controller
+  name: opensphere-console-dupa-controller
   namespace: opensphere-system
   labels: { app.kubernetes.io/part-of: opensphere-console }
 spec:
   selector:
-    matchLabels: { app: dupa-registry-controller }
+    matchLabels: { app: opensphere-console-dupa-controller }
   endpoints:
     - port: http
       path: /metrics

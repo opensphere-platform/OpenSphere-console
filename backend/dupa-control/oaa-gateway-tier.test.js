@@ -5,9 +5,9 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..', '..');
 const controller = fs.readFileSync(path.join(root, 'backend', 'dupa-control', 'controller.js'), 'utf8');
-const rbac = fs.readFileSync(path.join(root, 'backend', 'dupa-control', 'dupa-registry-controller.yaml'), 'utf8');
+const rbac = fs.readFileSync(path.join(root, 'backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml'), 'utf8');
 const nginx = fs.readFileSync(path.join(root, 'nginx', 'default.conf.template'), 'utf8');
-const gateway = fs.readFileSync(path.join(root, 'backend', 'oaa-gateway', 'server.js'), 'utf8');
+const gateway = fs.readFileSync(path.join(root, 'backend', 'opensphere-console-oaa-gateway', 'server.js'), 'utf8');
 const adminBackbone = fs.readFileSync(path.join(root, 'src', 'app', 'pages', 'admin-backbone.ts'), 'utf8');
 const oaaAgent = fs.readFileSync(path.join(root, 'src', 'app', 'os', 'os-oaa-agent.ts'), 'utf8');
 const manualService = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'manual.service.ts'), 'utf8');
@@ -18,27 +18,27 @@ const osShell = fs.readFileSync(path.join(root, 'src', 'app', 'os', 'os-shell.ts
 const manualPackage = fs.readFileSync(path.join(root, 'backend', 'manual-subShell', 'uipluginpackage.yaml'), 'utf8');
 const manualPlugin = fs.readFileSync(path.join(root, 'backend', 'manual-subShell', 'ui-shell', 'ui-shell.plugin.js'), 'utf8');
 const manualManifest = fs.readFileSync(path.join(root, 'backend', 'manual-subShell', 'ui-shell', 'ui-shell.manifest.json'), 'utf8');
-const manualSeed = JSON.parse(fs.readFileSync(path.join(root, 'backend', 'oaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'), 'utf8'));
+const manualSeed = JSON.parse(fs.readFileSync(path.join(root, 'backend', 'opensphere-console-oaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'), 'utf8'));
 
 test('CBSS declares OAA-Gateway as a Backbone component', () => {
-  assert.match(controller, /key:\s*'oaa-gateway'/);
+  assert.match(controller, /key:\s*'opensphere-console-oaa-gateway'/);
   assert.match(controller, /const OAA_GATEWAY_IMAGE = process\.env\.OAA_GATEWAY_IMAGE/);
-  assert.match(controller, /metadata:\s*\{\s*name:\s*'oaa-gateway'/);
-  assert.match(controller, /serviceAccountName:\s*'oaa-gateway'/);
-  assert.match(controller, /http:\/\/oaa-gateway\.opensphere-backbone\.svc\.cluster\.local:8080\/api\/oaa\/health/);
-  assert.match(controller, /opensphere-auth\.opensphere-console-auth\.svc:8443/);
+  assert.match(controller, /metadata:\s*\{\s*name:\s*'opensphere-console-oaa-gateway'/);
+  assert.match(controller, /serviceAccountName:\s*'opensphere-console-oaa-gateway'/);
+  assert.match(controller, /http:\/\/opensphere-console-oaa-gateway\.opensphere-backbone\.svc\.cluster\.local:8080\/api\/oaa\/health/);
+  assert.match(controller, /opensphere-console-auth\.opensphere-console-auth\.svc:8443/);
   assert.match(controller, /KANIDM_TLS_SERVERNAME/);
   assert.match(controller, /BACKBONE_PG_HOST/);
   assert.match(controller, /BACKBONE_PG_PASSWORD/);
   assert.match(controller, /OAA_EMBED_DIM/);
-  assert.match(controller, /oaa-gateway-environment-reader/);
-  assert.match(controller, /oaa-gateway-controlled-operator/);
+  assert.match(controller, /opensphere-console-oaa-gateway-environment-reader/);
+  assert.match(controller, /opensphere-console-oaa-gateway-controlled-operator/);
   assert.match(controller, /kind:\s*'ClusterRole'/);
 });
 
 test('OAA-Gateway has least-scope Secret management RBAC', () => {
   assert.match(controller, /kind:\s*'Role'/);
-  assert.match(controller, /name:\s*'oaa-gateway-llm-key-manager'/);
+  assert.match(controller, /name:\s*'opensphere-console-oaa-gateway-llm-key-manager'/);
   assert.match(controller, /resources:\s*\['secrets'\]/);
   assert.match(rbac, /resources:\s*\[secrets, services, serviceaccounts/);
   assert.match(rbac, /apiGroups:\s*\["rbac\.authorization\.k8s\.io"\], resources:\s*\[roles, rolebindings\]/);
@@ -46,7 +46,7 @@ test('OAA-Gateway has least-scope Secret management RBAC', () => {
 
 test('nginx exposes OAA-Gateway through same-origin /api/oaa', () => {
   assert.match(nginx, /location \/api\/oaa\//);
-  assert.match(nginx, /set \$oaa_gateway_upstream oaa-gateway\.opensphere-backbone\.svc\.cluster\.local/);
+  assert.match(nginx, /set \$oaa_gateway_upstream opensphere-console-oaa-gateway\.opensphere-backbone\.svc\.cluster\.local/);
   assert.match(nginx, /proxy_pass http:\/\/\$oaa_gateway_upstream:8080\$request_uri/);
 });
 
@@ -128,8 +128,8 @@ test('OAA bundled manual seed carries core OpenSphere manuals', () => {
   assert.ok(manualSeed.concepts.length >= 10);
   assert.ok(manualSeed.relations.length >= 10);
   assert.ok(manualSeed.concepts.some((c) => c.id === 'concept:opensphere:perspective:ai-level'));
-  assert.ok(manualSeed.concepts.some((c) => c.id === 'concept:opensphere:service:oaa-gateway'));
-  assert.ok(manualSeed.relations.some((r) => r.fromId === 'concept:opensphere:service:oaa-gateway' && r.relation === 'belongs-to'));
+  assert.ok(manualSeed.concepts.some((c) => c.id === 'concept:opensphere:service:opensphere-console-oaa-gateway'));
+  assert.ok(manualSeed.relations.some((r) => r.fromId === 'concept:opensphere:service:opensphere-console-oaa-gateway' && r.relation === 'belongs-to'));
   for (const doc of manualSeed.documents) {
     assert.equal(typeof doc.content, 'string');
     assert.ok(doc.content.length > 100);
@@ -213,7 +213,7 @@ test('OAA-Gateway exposes read-only live environment tools', () => {
   assert.match(gateway, /Cluster pod summary/);
   assert.match(gateway, /oaa\.knowledge\.search/);
   assert.match(gateway, /manual-action:opensphere:cluster-pod-count/);
-  assert.match(gateway, /manual-action:opensphere:oaa-gateway-restart/);
+  assert.match(gateway, /manual-action:opensphere:opensphere-console-oaa-gateway-restart/);
   assert.match(gateway, /async function environmentSnapshot/);
   assert.match(gateway, /namespaceSnapshot\(ns\)/);
   assert.match(gateway, /\/api\/oaa\/tools\/environment/);

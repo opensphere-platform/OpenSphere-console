@@ -1,4 +1,4 @@
-# dupa-registry-controller 이미지. 빌드 컨텍스트 = 이 디렉터리(backend/dupa-control).
+# opensphere-console-dupa-controller 이미지. 빌드 컨텍스트 = 이 디렉터리(backend/dupa-control).
 # 의존성: pg(node-postgres) — 감사로그 PostgreSQL 영속(④, docs/BACKBONE-ARCHITECTURE.md). 그 외는 node 내장.
 FROM docker.io/library/node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
 # Kanidm self-signed CA — 호출자 id_token JWKS(ES256) https 검증용. 감사 P0-1.

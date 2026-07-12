@@ -1,4 +1,4 @@
-# dupa-registry-controller ??諛고룷 + RBAC (DUPA Admin Control PoC)
+# opensphere-console-dupa-controller ??諛고룷 + RBAC (DUPA Admin Control PoC)
 # ?좑툘 ?좊ː??dupa-trusted-keys ConfigMap)?????뚯씪?먯꽌 遺꾨━????dupa-trusted-keys.yaml.
 #    ?댁쑀: ??yaml??RBAC/諛고룷 媛깆떊 紐⑹쟻?쇰줈 apply?????몃윭?ㅽ듃 ?ㅺ? 媛숈씠 ??뼱?⑥?硫?
 #    ?뚮윭洹몄씤 ?쒕챸寃利앹씠 源⑥졇 subShell???꾨? ??蹂댁씠???ш퀬媛 諛쒖깮??2026-06-29). ?몃윭?ㅽ듃???쒕챸/?뺣젹 ?꾧뎄濡쒕쭔 愿由?
@@ -10,14 +10,14 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: dupa-registry-controller
+  name: opensphere-console-dupa-controller
   namespace: opensphere-system
 ---
 # controller??opensphere-system ?덉뿉?쒕쭔 ?뚰겕濡쒕뱶/CRD瑜?議곗젙 (理쒖냼沅뚰븳)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: dupa-registry-controller
+  name: opensphere-console-dupa-controller
   namespace: opensphere-system
 rules:
   - apiGroups: ["plugins.opensphere.io"]
@@ -39,12 +39,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: dupa-registry-controller
+  name: opensphere-console-dupa-controller
   namespace: opensphere-system
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: dupa-registry-controller }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-dupa-controller }
 subjects:
   - kind: ServiceAccount
-    name: dupa-registry-controller
+    name: opensphere-console-dupa-controller
     namespace: opensphere-system
 ---
 # Backbone ?ㅼ튂 沅뚰븳(opensphere-backbone) ??namespace ?앹꽦 + ?곗씠???곗뼱 ?뚰겕濡쒕뱶. admin 寃뚯씠??verifyActor) ?ㅼ뿉?쒕쭔 ?ъ슜.
@@ -70,26 +70,27 @@ kind: ClusterRoleBinding
 metadata: { name: dupa-backbone-installer }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-backbone-installer }
 subjects:
-  - { kind: ServiceAccount, name: dupa-registry-controller, namespace: opensphere-system }
+  - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-system }
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dupa-registry-controller
+  name: opensphere-console-dupa-controller
   namespace: opensphere-system
-  labels: { app: dupa-registry-controller }
+  labels: { app: opensphere-console-dupa-controller }
 spec:
   replicas: 2
-  selector: { matchLabels: { app: dupa-registry-controller } }
+  selector: { matchLabels: { app: opensphere-console-dupa-controller } }
   template:
     metadata:
-      labels: { app: dupa-registry-controller }
+      labels: { app: opensphere-console-dupa-controller }
     spec:
-      serviceAccountName: dupa-registry-controller
+      serviceAccountName: opensphere-console-dupa-controller
       containers:
         - name: controller
           # Local development registry image. Replace with a signed remote digest for production promotion.
-          image: dupa-registry-controller@sha256:d1247ab8087fefd4097f1ea88e006cbb897c22cb2249b90c24fb8b78eba17632
+          # 로컬 kind: 노드 로드 태그 참조(IfNotPresent). CI/레지스트리 배포는 @sha256 digest 고정.
+          image: opensphere-console-dupa-controller:cli-hardening-20260712
           imagePullPolicy: IfNotPresent
           env:
             - { name: NAMESPACE, value: opensphere-system }
@@ -111,7 +112,7 @@ spec:
             - { name: BACKBONE_S3_REGION, value: us-east-1 }
             # Kanidm id_token 발급자(iss) 검증값 — 도메인 운영 전환(auth.console.opensphere.dev) 반영.
             - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
-            - { name: KANIDM_JWKS_URL, value: "https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
+            - { name: KANIDM_JWKS_URL, value: "https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
@@ -125,12 +126,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: dupa-registry-controller
+  name: opensphere-console-dupa-controller
   namespace: opensphere-system
-  labels: { app: dupa-registry-controller }
+  labels: { app: opensphere-console-dupa-controller }
 spec:
   # Backbone 장애 시에도 소비자가 Controller의 명시적 503 응답을 받아
   # 연결 타임아웃/모호한 5xx로 상태를 오인하지 않도록 한다.
   publishNotReadyAddresses: true
-  selector: { app: dupa-registry-controller }
+  selector: { app: opensphere-console-dupa-controller }
   ports: [{ name: http, port: 8080, targetPort: 8080 }]

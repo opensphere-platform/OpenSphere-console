@@ -1,4 +1,4 @@
-// opensphere-auth — a Kanidm-backed OIDC issuer (BFF) that makes the console and Kanidm
+// opensphere-console-auth — a Kanidm-backed OIDC issuer (BFF) that makes the console and Kanidm
 // look and behave as one product. It owns the browser-facing OIDC endpoints AND the whole
 // human surface (login, logout, account onboarding / credential setup) in the console's own
 // Carbon design, authenticating against the internal Kanidm via REST. Kanidm's native /ui
@@ -36,7 +36,7 @@ const SIG_KEY_PATH = process.env.SIG_KEY_PATH || '/keys/sig.key';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-system';
 const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-kanidm';
-const AUTH_CODE_SECRET_NAME = process.env.AUTH_CODE_SECRET_NAME || 'opensphere-auth-codes';
+const AUTH_CODE_SECRET_NAME = process.env.AUTH_CODE_SECRET_NAME || 'opensphere-console-auth-codes';
 
 const PATH_BASE = '/oauth2/openid/opensphere-console';
 const EP = {
@@ -261,8 +261,11 @@ function redirect(res, location) { res.writeHead(302, { location, 'cache-control
 // 발급/폐기 권위 = BFF. allowlist(jti)는 ConfigMap에 영속 → 재시작·폐기에도 정확.
 // (안정 서명키 /keys/sig.key 전제 — ephemeral이면 재시작 시 PAT 무효.)
 const PAT_CM_NS = process.env.PAT_CM_NS || 'opensphere-console-auth';
-const PAT_CM_NAME = process.env.PAT_CM_NAME || 'opensphere-auth-pats';
-const AUTH_POLICY_CM_NAME = process.env.AUTH_POLICY_CM_NAME || 'opensphere-auth-policy';
+const PAT_CM_NAME = process.env.PAT_CM_NAME || 'opensphere-console-auth-pats';
+const AUTH_POLICY_CM_NAME = process.env.AUTH_POLICY_CM_NAME || 'opensphere-console-auth-policy';
+// AG-5: 배포에서 권위 있게 설정하는 운영 환경 지시자. production이면 TOTP를 강제하고 비활성화를 거부한다.
+// 비워두면 ConfigMap의 environment를 사용(로컬/개발 기본 development → 기존 동작 유지).
+const AUTH_ENVIRONMENT = process.env.AUTH_ENVIRONMENT || '';
 const PAT_TTL_DAYS = parseInt(process.env.PAT_TTL_DAYS || '365', 10);
 const OIDC_TOKEN_TTL = parseInt(process.env.OIDC_TOKEN_TTL || '3600', 10); // console session (id_token) lifetime in seconds; default 1h, set 86400 for 24h
 const PAT_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${PAT_CM_NAME}`;
@@ -339,9 +342,9 @@ setInterval(() => cleanupAuthorizationCodes().catch((e) => console.error('[auth-
 
 async function readAuthPolicy() {
   const r = await k8sApi('GET', AUTH_POLICY_CM_PATH);
-  if (r.status === 200) return authPolicyFromConfigMap(r.json, DEFAULT_TOTP_ENABLED);
-  console.error(`[auth-policy] ConfigMap read HTTP ${r.status}; using development default`);
-  return authPolicyFromConfigMap(null, DEFAULT_TOTP_ENABLED);
+  if (r.status === 200) return authPolicyFromConfigMap(r.json, DEFAULT_TOTP_ENABLED, AUTH_ENVIRONMENT);
+  console.error(`[auth-policy] ConfigMap read HTTP ${r.status}; using default`);
+  return authPolicyFromConfigMap(null, DEFAULT_TOTP_ENABLED, AUTH_ENVIRONMENT);
 }
 
 async function handleAuthPolicyGet(res) {
@@ -354,10 +357,16 @@ async function handleAuthPolicyPatch(req, res, admin) {
   catch { return patJson(res, 400, { error: 'invalid_json' }); }
   if (typeof body.totpEnabled !== 'boolean') return patJson(res, 400, { error: 'totpEnabled_boolean_required' });
   const actor = admin.preferred_username || admin.sub || 'unknown';
+  // AG-5: 운영 환경에서는 TOTP 비활성화를 거부(강제 유지). 감사 남김.
+  const current = await readAuthPolicy();
+  if (current.enforced && body.totpEnabled === false) {
+    console.log(JSON.stringify({ event: 'auth_policy_change_denied', actor, reason: 'totp_enforced_in_production', environment: current.environment }));
+    return patJson(res, 403, { error: 'totp_enforced_in_production', environment: current.environment });
+  }
   const patch = authPolicyPatch(body.totpEnabled, actor);
   const result = await k8sApi('PATCH', AUTH_POLICY_CM_PATH, patch, 'application/merge-patch+json');
   if (result.status >= 300) return patJson(res, 500, { error: 'policy_store_failed', status: result.status });
-  const policy = authPolicyFromConfigMap(result.json, DEFAULT_TOTP_ENABLED);
+  const policy = authPolicyFromConfigMap(result.json, DEFAULT_TOTP_ENABLED, AUTH_ENVIRONMENT);
   console.log(JSON.stringify({ event: 'auth_policy_changed', actor, totpEnabled: policy.totpEnabled, time: patch.data.updatedAt }));
   patJson(res, 200, policy);
 }
@@ -483,23 +492,48 @@ async function handleRolesList(req, res) {
   }
   patJson(res, 200, { roles });
 }
-async function handleRoleGrant(req, res) {
+// F-5(감사 시정): 권한 상승 작업(role grant/revoke)은 이전에 어떤 감사 기록도 남기지 않았다.
+// 콘솔 UI와 CLI(os role grant/revoke)가 공유하는 이 경로에 구조화 감사를 추가한다.
+// intent(변경 시도)를 Kanidm 쓰기 '전'에, result(성공/실패)를 '후'에 남겨 append 형태의
+// before/after 추적을 확보한다. 이 로그는 플랫폼 로그 스택(Loki)으로 수집된다.
+// 후속(WP-3): controller /api/admin/events 로 전달해 PostgreSQL append-only durable audit +
+// DB 미연결 시 fail-closed(503)까지 강화한다.
+function auditRole(action, phase, actor, user, role, result, reason) {
+  console.log(JSON.stringify({
+    event: 'console_role_change', action, phase, actor: actor || 'unknown',
+    subject: user || '', role: role || '', result: result || '', reason: reason || '',
+    time: new Date().toISOString(),
+  }));
+}
+const ADMIN_ROLE_GROUP = 'opensphere-console-admins';
+async function handleRoleGrant(req, res, admin) {
+  const actor = admin?.preferred_username || admin?.sub || 'unknown';
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   const user = (form.user || '').trim().split('@')[0];
-  if (!isConsoleRole(form.role)) return patJson(res, 400, { error: 'unknown_role' });
-  if (!user) return patJson(res, 400, { error: 'user_required' });
+  if (!isConsoleRole(form.role)) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'unknown_role'); return patJson(res, 400, { error: 'unknown_role' }); }
+  if (!user) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'user_required'); return patJson(res, 400, { error: 'user_required' }); }
+  // AG-2: admin 그룹은 본인이 본인에게 직접 부여할 수 없다(자가 상승 방지, 직무분리 최소통제).
+  // 완전한 2인 승인/step-up은 후속 워크플로. 여기서는 자가변경 차단 + admin 변경 강조 감사.
+  if (form.role === ADMIN_ROLE_GROUP && user === actor) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'self_admin_change_blocked'); return patJson(res, 403, { error: 'self_admin_change_forbidden' }); }
+  auditRole('grant', 'intent', actor, user, form.role, 'attempt', form.role === ADMIN_ROLE_GROUP ? 'admin-role-change' : '');
   const r = await rmReq('POST', `/v1/group/${encodeURIComponent(form.role)}/_attr/member`, [user]);
-  if (r.status >= 300) return patJson(res, 502, { error: 'grant_failed', status: r.status, detail: (r.txt || '').slice(0, 160) });
+  if (r.status >= 300) { auditRole('grant', 'result', actor, user, form.role, 'error', `HTTP ${r.status}`); return patJson(res, 502, { error: 'grant_failed', status: r.status, detail: (r.txt || '').slice(0, 160) }); }
+  auditRole('grant', 'result', actor, user, form.role, 'accepted', '');
   patJson(res, 200, { granted: { user, role: form.role } });
 }
-async function handleRoleRevoke(req, res) {
+async function handleRoleRevoke(req, res, admin) {
+  const actor = admin?.preferred_username || admin?.sub || 'unknown';
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   const user = (form.user || '').trim().split('@')[0];
-  if (!isConsoleRole(form.role)) return patJson(res, 400, { error: 'unknown_role' });
+  if (!isConsoleRole(form.role)) { auditRole('revoke', 'reject', actor, user, form.role, 'rejected', 'unknown_role'); return patJson(res, 400, { error: 'unknown_role' }); }
+  // AG-2: admin 그룹은 본인이 본인에게서 직접 회수할 수 없다(자가 잠금 방지).
+  if (form.role === ADMIN_ROLE_GROUP && user === actor) { auditRole('revoke', 'reject', actor, user, form.role, 'rejected', 'self_admin_change_blocked'); return patJson(res, 403, { error: 'self_admin_change_forbidden' }); }
+  auditRole('revoke', 'intent', actor, user, form.role, 'attempt', form.role === ADMIN_ROLE_GROUP ? 'admin-role-change' : '');
   const g = await rmReq('GET', `/v1/group/${encodeURIComponent(form.role)}`);
   const kept = (g.json?.attrs?.member || []).filter((m) => String(m).split('@')[0] !== user);
   const r = await rmReq('PUT', `/v1/group/${encodeURIComponent(form.role)}/_attr/member`, kept);
-  if (r.status >= 300) return patJson(res, 502, { error: 'revoke_failed', status: r.status, detail: (r.txt || '').slice(0, 160) });
+  if (r.status >= 300) { auditRole('revoke', 'result', actor, user, form.role, 'error', `HTTP ${r.status}`); return patJson(res, 502, { error: 'revoke_failed', status: r.status, detail: (r.txt || '').slice(0, 160) }); }
+  auditRole('revoke', 'result', actor, user, form.role, 'accepted', '');
   patJson(res, 200, { revoked: { user, role: form.role } });
 }
 
@@ -642,8 +676,8 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       if (p === '/bff/auth-policy' && req.method === 'PATCH') { const a = await requireAdmin(req); return a ? await handleAuthPolicyPatch(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       // 콘솔 역할 관리(admin 전용) — 역할 정의·부여 UI 백엔드
       if (p === '/bff/roles' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleRolesList(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
-      if (p === '/bff/roles/grant' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleRoleGrant(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
-      if (p === '/bff/roles/revoke' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleRoleRevoke(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/roles/grant' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleRoleGrant(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/roles/revoke' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleRoleRevoke(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       // our own account-onboarding surface (replaces Kanidm /ui/reset)
       if (p === '/ui/reset' && req.method === 'GET') return await handleOnboardGet(reqUrl, res);
       if (p === '/ui/reset' && req.method === 'POST') return await handleOnboardPost(req, res);
@@ -655,4 +689,4 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
     } catch (e) { console.error('[bff] handler error:', e); if (!res.headersSent) send(res, 500, 'text/plain', 'internal error'); }
   })();
 });
-server.listen(PORT, () => console.log(`[bff] opensphere-auth listening :${PORT} (kid=${KID}, core=${KANIDM_CORE_URL})`));
+server.listen(PORT, () => console.log(`[bff] opensphere-console-auth listening :${PORT} (kid=${KID}, core=${KANIDM_CORE_URL})`));

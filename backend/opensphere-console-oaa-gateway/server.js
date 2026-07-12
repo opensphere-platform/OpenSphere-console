@@ -11,7 +11,7 @@ const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console,https://localhost:8444/oauth2/openid/opensphere-console')
   .split(',').map((x) => x.trim()).filter(Boolean);
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
+const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
 const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
@@ -513,7 +513,7 @@ function builtInKnowledgeDocs() {
       version: '2026-07-04',
       metadata: { kind: 'architecture' },
       content: [
-        'OAA means OpenSphere AI Agent. In the MVP, OAA is implemented as a right-side console chat panel plus the oaa-gateway Backbone tier.',
+        'OAA means OpenSphere AI Agent. In the MVP, OAA is implemented as a right-side console chat panel plus the opensphere-console-oaa-gateway Backbone tier.',
         'The gateway owns LLM key custody through Kubernetes Secrets, reads project knowledge from Backbone PostgreSQL, searches pgvector chunks, and injects selected context into the model request.',
         'The MVP does not require a separate vector database. Backbone PostgreSQL with pgvector is enough for initial project knowledge, policy, and console documentation RAG.'
       ].join('\n\n'),
@@ -1773,11 +1773,11 @@ function oaaActionBindings() {
       id: 'manual-action:opensphere:environment-read',
       namespace: 'opensphere',
       sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#oaa-gateway',
+      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
       title: 'Inspect live OpenSphere environment before operational answers',
       intent: 'inspect',
       toolId: 'oaa.environment.read',
-      controlPlane: 'oaa-gateway',
+      controlPlane: 'opensphere-console-oaa-gateway',
       riskLevel: 'read',
       confirmation: 'none',
       requiredInputs: bindingInput({ context: 'optional current console route/title/selection' }),
@@ -1793,7 +1793,7 @@ function oaaActionBindings() {
       title: 'Search manuals before answering OpenSphere-specific questions',
       intent: 'diagnose',
       toolId: 'oaa.knowledge.search',
-      controlPlane: 'oaa-gateway',
+      controlPlane: 'opensphere-console-oaa-gateway',
       riskLevel: 'read',
       confirmation: 'none',
       requiredInputs: bindingInput({ q: 'question or search query', limit: 'optional result count' }),
@@ -1809,7 +1809,7 @@ function oaaActionBindings() {
       title: 'Ingest OpenSphere manuals into Backbone PostgreSQL pgvector',
       intent: 'ingest-knowledge',
       toolId: 'oaa.knowledge.ingest-manual',
-      controlPlane: 'oaa-gateway',
+      controlPlane: 'opensphere-console-oaa-gateway',
       riskLevel: 'medium',
       confirmation: 'required',
       preflightToolIds: ['oaa.knowledge.search'],
@@ -1822,7 +1822,7 @@ function oaaActionBindings() {
       id: 'manual-action:opensphere:k8s-describe',
       namespace: 'opensphere',
       sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#oaa-gateway',
+      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
       title: 'Describe pods or deployments when diagnosing OAA and Backbone services',
       intent: 'diagnose',
       toolId: 'oaa.k8s.resource.describe',
@@ -1838,7 +1838,7 @@ function oaaActionBindings() {
       id: 'manual-action:opensphere:cluster-pod-count',
       namespace: 'opensphere',
       sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#oaa-gateway',
+      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
       title: 'Count current Kubernetes pods across all namespaces',
       intent: 'inspect',
       toolId: 'oaa.k8s.cluster.pods.summary',
@@ -1851,64 +1851,64 @@ function oaaActionBindings() {
       citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
     }),
     mk({
-      id: 'manual-action:opensphere:oaa-gateway-rollout',
+      id: 'manual-action:opensphere:opensphere-console-oaa-gateway-rollout',
       namespace: 'opensphere',
       sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#oaa-gateway',
+      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
       title: 'Check OAA Gateway rollout status',
       intent: 'diagnose',
       toolId: 'oaa.k8s.deployment.rollout',
       controlPlane: 'kubernetes-api',
       riskLevel: 'read',
       confirmation: 'none',
-      targetHints: { namespace: BACKBONE_NS, deployment: 'oaa-gateway' },
-      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'oaa-gateway' }),
+      targetHints: { namespace: BACKBONE_NS, deployment: 'opensphere-console-oaa-gateway' },
+      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'opensphere-console-oaa-gateway' }),
       permission: { roles: ['authenticated'], scopes: ['oaa:k8s:read'], namespaceScope: [BACKBONE_NS] },
-      audit: { eventType: 'k8s-rollout-status', targetTemplate: `${BACKBONE_NS}/oaa-gateway` },
+      audit: { eventType: 'k8s-rollout-status', targetTemplate: `${BACKBONE_NS}/opensphere-console-oaa-gateway` },
       citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
     }),
     mk({
-      id: 'manual-action:opensphere:oaa-gateway-restart',
+      id: 'manual-action:opensphere:opensphere-console-oaa-gateway-restart',
       namespace: 'opensphere',
       sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#oaa-gateway',
+      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
       title: 'Restart OAA Gateway after configuration or manual seed changes',
       intent: 'restart',
       toolId: 'oaa.k8s.deployment.restart',
       controlPlane: 'kubernetes-api',
       riskLevel: 'medium',
       confirmation: 'required',
-      confirmationTemplate: `restart deployment ${BACKBONE_NS}/oaa-gateway`,
+      confirmationTemplate: `restart deployment ${BACKBONE_NS}/opensphere-console-oaa-gateway`,
       preflightToolIds: ['oaa.k8s.deployment.rollout'],
-      targetHints: { namespace: BACKBONE_NS, deployment: 'oaa-gateway' },
-      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'oaa-gateway', confirm: `restart deployment ${BACKBONE_NS}/oaa-gateway` }),
+      targetHints: { namespace: BACKBONE_NS, deployment: 'opensphere-console-oaa-gateway' },
+      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'opensphere-console-oaa-gateway', confirm: `restart deployment ${BACKBONE_NS}/opensphere-console-oaa-gateway` }),
       permission: { roles: [KANIDM_ADMIN_GROUP], scopes: ['oaa:k8s:write'], namespaceScope: [BACKBONE_NS] },
-      audit: { eventType: 'k8s-restart-deployment', targetTemplate: `${BACKBONE_NS}/oaa-gateway` },
+      audit: { eventType: 'k8s-restart-deployment', targetTemplate: `${BACKBONE_NS}/opensphere-console-oaa-gateway` },
       citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
     }),
     mk({
-      id: 'manual-action:opensphere:oaa-gateway-scale',
+      id: 'manual-action:opensphere:opensphere-console-oaa-gateway-scale',
       namespace: 'opensphere',
       sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#oaa-gateway',
+      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
       title: 'Scale OAA Gateway deployment within configured replica limits',
       intent: 'scale',
       toolId: 'oaa.k8s.deployment.scale',
       controlPlane: 'kubernetes-api',
       riskLevel: 'medium',
       confirmation: 'required',
-      confirmationTemplate: `scale deployment ${BACKBONE_NS}/oaa-gateway to <replicas>`,
+      confirmationTemplate: `scale deployment ${BACKBONE_NS}/opensphere-console-oaa-gateway to <replicas>`,
       preflightToolIds: ['oaa.k8s.deployment.rollout'],
-      targetHints: { namespace: BACKBONE_NS, deployment: 'oaa-gateway', maxReplicas: OAA_SCALE_MAX },
-      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'oaa-gateway', replicas: `0..${OAA_SCALE_MAX}`, confirm: `scale deployment ${BACKBONE_NS}/oaa-gateway to <replicas>` }),
+      targetHints: { namespace: BACKBONE_NS, deployment: 'opensphere-console-oaa-gateway', maxReplicas: OAA_SCALE_MAX },
+      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'opensphere-console-oaa-gateway', replicas: `0..${OAA_SCALE_MAX}`, confirm: `scale deployment ${BACKBONE_NS}/opensphere-console-oaa-gateway to <replicas>` }),
       permission: { roles: [KANIDM_ADMIN_GROUP], scopes: ['oaa:k8s:write'], namespaceScope: [BACKBONE_NS] },
-      audit: { eventType: 'k8s-scale-deployment', targetTemplate: `${BACKBONE_NS}/oaa-gateway` },
+      audit: { eventType: 'k8s-scale-deployment', targetTemplate: `${BACKBONE_NS}/opensphere-console-oaa-gateway` },
       citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
     }),
   ];
   return {
     schema: 'oaa-action-bindings.opensphere.io/v1alpha1',
-    service: 'oaa-gateway',
+    service: 'opensphere-console-oaa-gateway',
     version: VERSION,
     generatedAt: new Date().toISOString(),
     bindings,
@@ -1937,7 +1937,7 @@ function oaaToolManifest() {
   const confirmField = { type: 'string', description: 'Exact confirmation phrase required by the action' };
   return {
     schema: 'oaa-tool-manifest.opensphere.io/v1alpha1',
-    service: 'oaa-gateway',
+    service: 'opensphere-console-oaa-gateway',
     version: VERSION,
     generatedAt: new Date().toISOString(),
     allowedNamespaces: nsEnum,
@@ -2250,7 +2250,7 @@ async function actionBindingsFromStore() {
   }));
   return {
     schema: 'oaa-action-bindings.opensphere.io/v1alpha1',
-    service: 'oaa-gateway',
+    service: 'opensphere-console-oaa-gateway',
     version: VERSION,
     generatedAt: new Date().toISOString(),
     storage: 'postgres',
@@ -2291,11 +2291,11 @@ function actionCommandForBinding(binding, query = '') {
   if (binding.toolId === 'oaa.k8s.resource.describe') {
     inputs.kind = 'deployment';
     inputs.namespace = binding.targetHints?.namespace || BACKBONE_NS;
-    inputs.name = binding.targetHints?.deployment || 'oaa-gateway';
+    inputs.name = binding.targetHints?.deployment || 'opensphere-console-oaa-gateway';
   }
   if (binding.toolId === 'oaa.k8s.deployment.rollout' || binding.toolId === 'oaa.k8s.deployment.restart' || binding.toolId === 'oaa.k8s.deployment.scale') {
     inputs.namespace = binding.targetHints?.namespace || BACKBONE_NS;
-    inputs.name = binding.targetHints?.deployment || 'oaa-gateway';
+    inputs.name = binding.targetHints?.deployment || 'opensphere-console-oaa-gateway';
   }
   if (binding.toolId === 'oaa.k8s.deployment.scale') inputs.replicas = 1;
   const jsonText = Object.keys(inputs).length ? ` ${JSON.stringify(inputs)}` : '';
@@ -2980,7 +2980,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === '/healthz') return json(res, 200, { ok: true });
     if (url.pathname === '/api/oaa/health') {
-      return json(res, 200, { service: 'oaa-gateway', version: VERSION, namespace: BACKBONE_NS });
+      return json(res, 200, { service: 'opensphere-console-oaa-gateway', version: VERSION, namespace: BACKBONE_NS });
     }
     if (url.pathname === '/api/oaa/admin/knowledge/stats' && req.method === 'GET') {
       await verifyAdmin(req);
@@ -3138,7 +3138,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`oaa-gateway v${VERSION} listening :${PORT} (ns=${BACKBONE_NS})`);
+  console.log(`opensphere-console-oaa-gateway v${VERSION} listening :${PORT} (ns=${BACKBONE_NS})`);
   seedBuiltinKnowledge().then((out) => {
     if (out.seeded) console.log(`[oaa-db] seeded ${out.documents} docs / ${out.chunks} chunks (dim=${OAA_EMBED_DIM})`);
     else console.log(`[oaa-db] ready (${out.reason || 'ok'}, dim=${OAA_EMBED_DIM})`);

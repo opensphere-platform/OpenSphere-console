@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/tls"
@@ -13,7 +14,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -223,7 +226,7 @@ func requireOK(b []byte, status int) error {
 	return fmt.Errorf("HTTP %d: %s", status, msg)
 }
 
-func run(args []string, out, errOut io.Writer) error {
+func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printHelp(out)
 		return nil
@@ -233,7 +236,7 @@ func run(args []string, out, errOut io.Writer) error {
 		return nil
 	}
 	if args[0] == "login" {
-		return login(args[1:], out)
+		return login(args[1:], in, out, errOut)
 	}
 	cfg, err := loadConfig()
 	if err != nil {
@@ -253,11 +256,13 @@ func run(args []string, out, errOut io.Writer) error {
 	}
 }
 
-func login(args []string, out io.Writer) error {
+func login(args []string, in io.Reader, out, errOut io.Writer) error {
 	cfg, _ := loadConfig()
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	pat := fs.String("pat", cfg.PAT, "admin PAT")
+	pat := fs.String("pat", cfg.PAT, "admin PAT (deprecated — argv/셸 히스토리 노출; --pat-stdin 사용 권장)")
+	patStdin := fs.Bool("pat-stdin", false, "PAT를 표준 입력(stdin)에서 읽어 argv 노출을 방지합니다")
+	web := fs.Bool("web", false, "브라우저로 콘솔 CLI 토큰 발급 페이지(/manage/cli)를 열고 발급된 토큰을 붙여넣어 로그인")
 	idToken := fs.String("id-token", cfg.IDToken, "Kanidm/OIDC id_token")
 	registryURL := fs.String("registry", cfg.RegistryURL, "Registry URL")
 	apiURL := fs.String("api", cfg.APIURL, "API proxy URL")
@@ -266,8 +271,40 @@ func login(args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// F-9: 콘솔 assisted 브라우저 로그인. Kanidm은 authorization_code grant만 지원하고
+	// device-code가 없으므로(완전 자동 loopback PKCE는 native redirect_uri 등록이 필요한 IdP 변경),
+	// 현재 인프라에서 IdP 변경 없이 동작하는 경로로 콘솔 발급 페이지를 열고 토큰을 stdin으로 받는다.
+	// F-2: 장기 admin PAT를 argv로 전달하면 프로세스 목록·셸 히스토리에 남는다. --pat-stdin/--web은
+	// argv 노출이 없다. --pat는 하위호환을 위해 유지하되 경고를 출력한다. OS_PAT env는 CI용으로 허용.
+	switch {
+	case *web:
+		if err := validateURL(*consoleURL); err != nil {
+			return err
+		}
+		target := join(*consoleURL, "/manage/cli")
+		fmt.Fprintf(out, "콘솔 CLI 토큰 발급 페이지를 엽니다: %s\n", target)
+		if err := browserOpener(target); err != nil {
+			fmt.Fprintf(errOut, "브라우저 자동 실행 실패(%v) — 위 URL을 직접 여세요.\n", err)
+		}
+		fmt.Fprint(out, "발급된 토큰을 붙여넣고 Enter를 누르세요: ")
+		line, err := bufio.NewReader(in).ReadString('\n')
+		if err != nil && strings.TrimSpace(line) == "" {
+			return fmt.Errorf("토큰 입력을 읽지 못했습니다: %w", err)
+		}
+		*pat = strings.TrimSpace(line)
+	case *patStdin:
+		data, err := io.ReadAll(io.LimitReader(in, 1<<20))
+		if err != nil {
+			return fmt.Errorf("stdin에서 PAT 읽기 실패: %w", err)
+		}
+		*pat = strings.TrimSpace(string(data))
+	default:
+		if hasArg(args, "--pat") {
+			fmt.Fprintln(errOut, "경고: --pat는 프로세스 목록·셸 히스토리에 노출됩니다. 다음 릴리스에서 제거되며 --pat-stdin/--web 사용을 권장합니다.")
+		}
+	}
 	if strings.TrimSpace(*pat) == "" {
-		return errors.New("--pat 또는 OS_PAT가 필요합니다")
+		return errors.New("PAT가 필요합니다: --web(브라우저 발급), --pat-stdin, --pat 또는 OS_PAT")
 	}
 	cfg = Config{Profile: "admin", PAT: *pat, IDToken: *idToken, RegistryURL: *registryURL, APIURL: *apiURL, BFFURL: *bffURL, ConsoleURL: *consoleURL}
 	if err := whoami(cfg, io.Discard); err != nil {
@@ -278,6 +315,20 @@ func login(args []string, out io.Writer) error {
 	}
 	fmt.Fprintln(out, "admin 프로파일이 저장되고 검증되었습니다")
 	return nil
+}
+
+// browserOpener는 테스트에서 대체 가능하도록 변수로 둔다(실제 브라우저 실행 회피).
+var browserOpener = openBrowser
+
+func openBrowser(target string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", target).Start()
+	case "darwin":
+		return exec.Command("open", target).Start()
+	default:
+		return exec.Command("xdg-open", target).Start()
+	}
 }
 
 func whoami(cfg Config, out io.Writer) error {
@@ -319,9 +370,10 @@ func registry(cfg Config, args []string, out io.Writer) error {
 	if err := requireOK(b, status); err != nil {
 		return err
 	}
-	if *kind == "" || *output == "json" && *kind == "" {
+	if *kind == "" {
 		return pretty(out, b)
 	}
+	_ = output // -o는 하위호환을 위해 수용하되 현재 출력은 항상 JSON이다.
 	var reg map[string]json.RawMessage
 	if err := json.Unmarshal(b, &reg); err != nil {
 		return err
@@ -529,7 +581,9 @@ func parseLongFlags(args []string) map[string]string {
 func printHelp(out io.Writer) {
 	fmt.Fprintln(out, `os — OpenSphere Console native 관리자 CLI. console==cli: 동일 Registry·API·Kanidm PAT 소비.
 
-  os login --pat <TOKEN> [--id-token <JWT>] [--registry URL] [--api URL] [--bff URL] [--console URL]
+  os login --web [--console URL]   (브라우저로 /manage/cli 토큰 발급 페이지를 열고 붙여넣어 로그인)
+  os login --pat-stdin [--id-token <JWT>] [--registry URL] [--api URL] [--bff URL] [--console URL]
+    (echo "$TOKEN" | os login --pat-stdin — argv 노출 없이 PAT 입력; --pat는 deprecated)
   os whoami
   os registry [--kind capability|plugin|template] [-o json]
   os get <resource> [name] [-o json]
@@ -543,7 +597,7 @@ func printHelp(out io.Writer) {
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "오류:", err)
 		os.Exit(1)
 	}

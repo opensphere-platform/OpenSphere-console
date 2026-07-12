@@ -28,7 +28,7 @@ test('Backbone bootstrap contains exactly the three required pillars', () => {
     assert.match(workloads, new RegExp(pillar));
   }
   assert.doesNotMatch(components, /oaa|manual/i);
-  assert.doesNotMatch(workloads, /oaa-gateway|OAA_GATEWAY_IMAGE/);
+  assert.doesNotMatch(workloads, /opensphere-console-oaa-gateway|OAA_GATEWAY_IMAGE/);
 });
 
 test('base deployment does not declare or pre-install any Consumer', () => {
@@ -116,4 +116,35 @@ test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
   assert.ok(manifest.links.every((link) => /^[a-f0-9]{64}$/.test(link.sha256) && link.size > 0));
   assert.match(deploy, /opensphere\.io\/scope:\s*main-shell-core/);
   assert.equal(fs.existsSync(path.join(root, 'backend', 'cli-download', 'clidownload-os.yaml')), false);
+});
+
+// F-3: native 서비스 id(os-cli)는 어떤 Binding 이름을 써도 /api/plugins 프록시 allowlist에 진입 못 한다.
+test('os-cli native service id is a reserved proxy id and hard-denied in proxy-authz', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /RESERVED_PROXY_SERVICE_IDS = new Set\(\['os-cli'\]\)/);
+  // allowlist 조립 시 예약 id는 published/binding 양쪽에서 제외된다.
+  assert.match(controller, /published\.map\(\(p\) => p\.id\)\.filter\(\(id\) => !RESERVED_PROXY_SERVICE_IDS\.has\(id\)\)/);
+  assert.match(controller, /RESERVED_PROXY_SERVICE_IDS\.has\(mm\[1\]\)/);
+  // proxy-authz는 allowlist 상태와 무관하게 예약 id를 항상 403 처리(이중 방어).
+  assert.match(controller, /proxyAllow\.has\(id\) && !RESERVED_PROXY_SERVICE_IDS\.has\(id\)/);
+});
+
+// F-6: os-cli Deployment 하드닝 — seccomp/고정 UID/SA 토큰 미마운트/PDB.
+test('os-cli deployment applies seccomp, fixed uid, no SA token, and a PDB', () => {
+  const deploy = read('backend', 'os-cli', 'deploy.yaml');
+  assert.match(deploy, /automountServiceAccountToken:\s*false/);
+  assert.match(deploy, /seccompProfile:\s*\{\s*type:\s*RuntimeDefault\s*\}/);
+  assert.match(deploy, /runAsUser:\s*101/);
+  assert.match(deploy, /topologySpreadConstraints/);
+  assert.match(deploy, /kind:\s*PodDisruptionBudget/);
+  assert.match(deploy, /minAvailable:\s*1/);
+});
+
+// F-2: CLI login은 argv 노출 없는 --pat-stdin 입력을 제공하고 --pat는 deprecated 경고를 낸다.
+test('os CLI login supports --pat-stdin and deprecates argv --pat', () => {
+  const main = read('backend', 'os-cli', 'cmd', 'os', 'main.go');
+  assert.match(main, /--pat-stdin/);
+  assert.match(main, /patStdin := fs\.Bool\("pat-stdin"/);
+  assert.match(main, /io\.ReadAll\(io\.LimitReader\(in,/);
+  assert.match(main, /프로세스 목록·셸 히스토리에 노출/);
 });

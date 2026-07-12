@@ -26,7 +26,7 @@ interface MetricSection { title: string; stats: StatDef[]; charts: ChartDef[]; }
 /**
  * Observability — 공유 관측 스택(prometheus-stack) 정보 뷰. **셸 네이티브** 페이지(Backbone과 형제).
  * 콘솔은 관측 스택의 소유자가 아니라 **대상/소비자**(수평 cross-cutting). 읽기 전용 — 설치/변경 없음.
- * 백엔드 = dupa-registry-controller(/api/admin/observability/{status,targets}, admin 게이트). docs/OBSERVABILITY-ARCHITECTURE.md.
+ * 백엔드 = opensphere-console-dupa-controller(/api/admin/observability/{status,targets}, admin 게이트). docs/OBSERVABILITY-ARCHITECTURE.md.
  */
 @Component({
   selector: 'os-admin-observability',
@@ -37,8 +37,8 @@ interface MetricSection { title: string; stats: StatDef[]; charts: ChartDef[]; }
       @if (down(); as d) {
       <os-backend-unavailable
         feature="Observability"
-        backend="dupa-registry-controller (/api/admin/observability)"
-        hint="dupa-registry-controller 배포 · ClusterRole(servicemonitors get/list) 적용 시 복구됩니다."
+        backend="opensphere-console-dupa-controller (/api/admin/observability)"
+        hint="opensphere-console-dupa-controller 배포 · ClusterRole(servicemonitors get/list) 적용 시 복구됩니다."
         [detail]="d"
       />
     } @else {

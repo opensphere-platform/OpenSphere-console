@@ -1,4 +1,4 @@
-# dupa-registry-controller가 CLIDownload(console.opensphere.io, cluster-scoped) 바인딩을 '인식'(read)하도록.
+# opensphere-console-dupa-controller가 CLIDownload(console.opensphere.io, cluster-scoped) 바인딩을 '인식'(read)하도록.
 # cluster-scoped 리소스라 ClusterRole 필요(네임스페이스 Role로는 불가). read-only — binding은 reconcile 안 함.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -23,5 +23,5 @@ roleRef:
   name: dupa-clidownload-reader
 subjects:
   - kind: ServiceAccount
-    name: dupa-registry-controller
+    name: opensphere-console-dupa-controller
     namespace: opensphere-system

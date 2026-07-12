@@ -63,7 +63,7 @@ spec:
       securityContext: { runAsNonRoot: true, runAsUser: 70, runAsGroup: 70, fsGroup: 70, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: postgres
-          image: opensphere-backbone-postgres@sha256:76470c513c7ca2b52c6720295f09babc3b97171d13e68730eb1775688c164ab9
+          image: opensphere-backbone-postgres@sha256:562d7d862b5379141e0658cf90c3b1fb3b126e4fe3c120c9ef05fb81a801f647
           imagePullPolicy: IfNotPresent
           env:
             - { name: POSTGRES_DB, value: console }
@@ -205,7 +205,7 @@ spec:
       securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
       initContainers:
         - name: database-init
-          image: opensphere-backbone-postgres@sha256:76470c513c7ca2b52c6720295f09babc3b97171d13e68730eb1775688c164ab9
+          image: opensphere-backbone-postgres@sha256:562d7d862b5379141e0658cf90c3b1fb3b126e4fe3c120c9ef05fb81a801f647
           imagePullPolicy: IfNotPresent
           env:
             - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }

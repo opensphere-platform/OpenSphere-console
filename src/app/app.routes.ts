@@ -10,6 +10,7 @@ import { ConsoleAdmins } from './pages/console-admins';
 import { AdminBackbone } from './pages/admin-backbone';
 import { AdminObservability } from './pages/admin-observability';
 import { AdminNotifications } from './pages/admin-notifications';
+import { AdminAudit } from './pages/admin-audit';
 import { AdminCli } from './pages/admin-cli';
 import { AdminLayout } from './pages/admin-layout';
 import { authenticatedGuard } from './core/authenticated.guard';
@@ -54,6 +55,7 @@ export const routes: Routes = [
       { path: 'backbone', component: AdminBackbone },
       { path: 'observability', component: AdminObservability },
       { path: 'notifications', component: AdminNotifications },
+      { path: 'audit', component: AdminAudit },
     ],
   },
   // 등록된 플러그인(subShell·plugin)은 전부 `/p/<id>[/서브패스]` 동적 호스트로 진입(§10). 실제 화면은

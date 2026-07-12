@@ -1,5 +1,5 @@
 # BackboneClaim — 소비자(OAH 등)가 Backbone 논리자원을 '선언적으로 요청'하는 CRD.
-# 할당 책임 = dupa-registry-controller의 reconciler(claim watch → 프로비저닝 + Secret 발급 + status 바인딩 + finalizer GC).
+# 할당 책임 = opensphere-console-dupa-controller의 reconciler(claim watch → 프로비저닝 + Secret 발급 + status 바인딩 + finalizer GC).
 # claim은 소비자 NS에 생성 → 결과 Secret이 같은 NS에 생겨 secretKeyRef로 소비 가능. docs/BACKBONE-ARCHITECTURE.md §1.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition

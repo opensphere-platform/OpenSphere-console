@@ -107,8 +107,8 @@ export class BackboneGraph {
   readonly side = EFConnectableSide;
 
   readonly nodes: GNode[] = [
-    { id: 'dupa', label: 'dupa-registry-controller', sub: '감사로그 write/query', x: 24, y: 26, kind: 'service' },
-    { id: 'cbk', label: 'console-backend', sub: '사용자 설정·에셋', x: 24, y: 150, kind: 'service' },
+    { id: 'dupa', label: 'opensphere-console-dupa-controller', sub: '감사로그 write/query', x: 24, y: 26, kind: 'service' },
+    { id: 'cbk', label: 'opensphere-console-backend', sub: '사용자 설정·에셋', x: 24, y: 150, kind: 'service' },
     { id: 'recon', label: 'reconciler', sub: 'GitOps drift', x: 24, y: 274, kind: 'planned' },
     { id: 'gitea', label: 'Gitea', sub: '설정 SoT(GitOps)', x: 340, y: 200, kind: 'data', statusKey: 'gitea' },
     { id: 'pg', label: 'PostgreSQL', sub: '앱 DB(감사·설정)', x: 660, y: 56, kind: 'data', statusKey: 'postgres' },

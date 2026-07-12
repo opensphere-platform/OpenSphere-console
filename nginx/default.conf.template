@@ -52,7 +52,7 @@ server {
     # Main Shell readiness is the Backbone readiness contract. Static assets may exist while
     # PostgreSQL/RustFS/Gitea are absent, but that state is not a complete Console.
     location = /readyz {
-        set $dupa_ready_upstream dupa-registry-controller.opensphere-system.svc.cluster.local;
+        set $dupa_ready_upstream opensphere-console-dupa-controller.opensphere-system.svc.cluster.local;
         proxy_pass http://$dupa_ready_upstream:8080/readyz;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
@@ -60,9 +60,9 @@ server {
     }
 
     # 콘솔 네이티브 카탈로그 (ADR-UI-003 §3.2 · 헌법 §4: rhdh 과도기 탈피) — console-core 서비스.
-    # /api/rhdh 프록시 경로명은 레거시(api.service 호환) 유지, 대상은 통합 console-backend.
+    # /api/rhdh 프록시 경로명은 레거시(api.service 호환) 유지, 대상은 통합 opensphere-console-backend.
     location /api/rhdh/ {
-        set $console_backend_upstream console-backend.opensphere-system.svc.cluster.local;
+        set $console_backend_upstream opensphere-console-backend.opensphere-system.svc.cluster.local;
         rewrite ^/api/rhdh/(.*)$ /api/$1 break;
         proxy_pass http://$console_backend_upstream:8080;
         proxy_set_header X-Forwarded-Host $host;
@@ -72,12 +72,12 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # DUPA Admin Control — control service(dupa-registry-controller) 프록시.
+    # DUPA Admin Control — control service(opensphere-console-dupa-controller) 프록시.
     # Admin UI는 K8s를 직접 안 만지고 이 Control API로만 상태를 바꾼다(계획서 §8).
     # 감사 P0-1: 인증은 controller가 Authorization: Bearer(Kanidm id_token, JWKS ES256) 검증으로 수행.
     #   클라이언트가 보내는 X-OpenSphere-User는 스푸핑 가능하므로 빈 값으로 clear(actor=검증 토큰 claim).
     location /api/admin/ {
-        set $dupa_controller_upstream dupa-registry-controller.opensphere-system.svc.cluster.local;
+        set $dupa_controller_upstream opensphere-console-dupa-controller.opensphere-system.svc.cluster.local;
         proxy_pass http://$dupa_controller_upstream:8080$request_uri;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
@@ -87,9 +87,9 @@ server {
 
     # 콘솔 네이티브 identity(Kanidm IGA) — /console-admins 백엔드(console-core 서비스).
     # ADR-UI-003 §3.2 Core≠Plugin: console-identity를 DUPA plugin이 아닌 console-core 서비스로 내장.
-    # 감사 P0-1/B: console-backend가 Authorization: Bearer로 검증(쓰기=admin, 읽기=인증). 스푸핑 헤더 clear.
+    # 감사 P0-1/B: opensphere-console-backend가 Authorization: Bearer로 검증(쓰기=admin, 읽기=인증). 스푸핑 헤더 clear.
     location /api/identity {
-        set $console_identity_upstream console-backend.opensphere-system.svc.cluster.local;
+        set $console_identity_upstream opensphere-console-backend.opensphere-system.svc.cluster.local;
         proxy_pass http://$console_identity_upstream:8080;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
@@ -97,13 +97,13 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # 콘솔 역할/PAT — opensphere-auth BFF(console-core 서비스). §3.2: same-origin 프록시로 크로스오리진 CORS 제거.
+    # 콘솔 역할/PAT — opensphere-console-auth BFF(console-core 서비스). §3.2: same-origin 프록시로 크로스오리진 CORS 제거.
     # /admin/roles가 https://localhost:8444(Kanidm) 직격 → CORS 실패였음. 이제 /bff(상대) → 셸이 BFF로 프록시.
     # 브라우저 OIDC는 Console과 동일한 TLS origin으로 통합한다. BFF가 발급하는
     # 토큰 issuer는 그대로 유지하면서 discovery/authorize/token/JWKS와 로그인 UI를
-    # 내부 opensphere-auth로 전달해 localhost:8444 인증서의 별도 신뢰를 요구하지 않는다.
+    # 내부 opensphere-console-auth로 전달해 localhost:8444 인증서의 별도 신뢰를 요구하지 않는다.
     location ^~ /oauth2/openid/opensphere-console/ {
-        set $auth_upstream opensphere-auth.opensphere-console-auth.svc.cluster.local;
+        set $auth_upstream opensphere-console-auth.opensphere-console-auth.svc.cluster.local;
         proxy_pass https://$auth_upstream:8443$request_uri;
         proxy_ssl_verify on;
         proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/tls.crt;
@@ -114,7 +114,7 @@ server {
     }
 
     location ^~ /ui/ {
-        set $auth_upstream opensphere-auth.opensphere-console-auth.svc.cluster.local;
+        set $auth_upstream opensphere-console-auth.opensphere-console-auth.svc.cluster.local;
         proxy_pass https://$auth_upstream:8443$request_uri;
         proxy_ssl_verify on;
         proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/tls.crt;
@@ -125,7 +125,7 @@ server {
     }
 
     location /bff/ {
-        set $auth_upstream opensphere-auth.opensphere-console-auth.svc.cluster.local;
+        set $auth_upstream opensphere-console-auth.opensphere-console-auth.svc.cluster.local;
         proxy_pass https://$auth_upstream:8443$request_uri;
         proxy_ssl_verify on;
         proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/tls.crt;
@@ -190,7 +190,7 @@ server {
     # P0-2 allowlist 검사 서브리퀘스트(내부 전용). controller가 plugin id 등록 여부로 204/403 반환.
     location = /_plugin_authz {
         internal;
-        set $dupa_authz_upstream dupa-registry-controller.opensphere-system.svc.cluster.local;
+        set $dupa_authz_upstream opensphere-console-dupa-controller.opensphere-system.svc.cluster.local;
         proxy_pass http://$dupa_authz_upstream:8080/api/internal/proxy-authz;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";

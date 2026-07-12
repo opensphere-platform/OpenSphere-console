@@ -11,10 +11,10 @@ kubectl -n "$NS" patch svc kanidm-ext -p '{"spec":{"selector":{"app":"kanidm"}}}
 
 if [[ "${1:-}" == "--purge" ]]; then
   echo "== purge BFF resources =="
-  kubectl -n "$NS" delete deploy opensphere-auth --ignore-not-found
+  kubectl -n "$NS" delete deploy opensphere-console-auth --ignore-not-found
   kubectl -n "$NS" delete svc kanidm-core --ignore-not-found
-  kubectl -n "$NS" delete sa opensphere-auth --ignore-not-found
-  kubectl -n opensphere-system delete rolebinding opensphere-auth-kanidm-reader --ignore-not-found
-  kubectl -n opensphere-system delete role opensphere-auth-kanidm-reader --ignore-not-found
+  kubectl -n "$NS" delete sa opensphere-console-auth --ignore-not-found
+  kubectl -n opensphere-system delete rolebinding opensphere-console-auth-kanidm-reader --ignore-not-found
+  kubectl -n opensphere-system delete role opensphere-console-auth-kanidm-reader --ignore-not-found
 fi
 echo "done -> https://localhost:8444 served by Kanidm again"

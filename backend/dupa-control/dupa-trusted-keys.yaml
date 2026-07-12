@@ -20,8 +20,8 @@
 #   · 현행: v1(ai·cluster-manager·os·shell-template 서명), v2(foundation 서명) 공존.
 #
 # 규칙(기존 유지):
-#   1) 이 파일은 dupa-registry-controller.yaml(배포/RBAC)에서 의도적으로 분리됨.
-#      배포/RBAC 갱신은 dupa-registry-controller.yaml만 apply할 것.
+#   1) 이 파일은 opensphere-console-dupa-controller.yaml(배포/RBAC)에서 의도적으로 분리됨.
+#      배포/RBAC 갱신은 opensphere-console-dupa-controller.yaml만 apply할 것.
 #   2) 트러스트 키는 '플러그인을 서명한 개인키에 대응하는 공개키(SPKI base64)'.
 #      서명/정렬 도구(install-cluster-manager.sh 등 publish-sign 플로우)와 함께 관리.
 #   3) 값 변경은 '트러스트 변경' — 명시적 승인 하에만. (에이전트는 트러스트 변경 차단.)

@@ -1,17 +1,17 @@
-# opensphere-auth BFF: SA + cross-ns secret read RBAC + kanidm-core (internal real
+# opensphere-console-auth BFF: SA + cross-ns secret read RBAC + kanidm-core (internal real
 # Kanidm) + the BFF Deployment. The service swap (kanidm/kanidm-ext -> BFF) is done by
 # up.sh after the BFF is healthy, so login never points at a not-yet-ready pod.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: opensphere-auth
+  name: opensphere-console-auth
   namespace: opensphere-console-auth
 ---
 # the BFF needs to read the Kanidm admin token (for group lookups) from opensphere-system
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: opensphere-auth-kanidm-reader
+  name: opensphere-console-auth-kanidm-reader
   namespace: opensphere-system
 rules:
   - apiGroups: [""]
@@ -22,22 +22,22 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: opensphere-auth-kanidm-reader
+  name: opensphere-console-auth-kanidm-reader
   namespace: opensphere-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: opensphere-auth-kanidm-reader
+  name: opensphere-console-auth-kanidm-reader
 subjects:
   - kind: ServiceAccount
-    name: opensphere-auth
+    name: opensphere-console-auth
     namespace: opensphere-console-auth
 ---
 # PAT store: the BFF reads/writes its own PAT allowlist (jti) ConfigMap in its namespace.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: opensphere-auth-pats
+  name: opensphere-console-auth-pats
   namespace: opensphere-console-auth
 ---
 # Development defaults to password-only console login. Administrators can enable
@@ -45,7 +45,7 @@ metadata:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: opensphere-auth-policy
+  name: opensphere-console-auth-policy
   namespace: opensphere-console-auth
   annotations:
     opensphere.io/default-totp-enabled: "false"
@@ -57,37 +57,37 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: opensphere-auth-codes
+  name: opensphere-console-auth-codes
   namespace: opensphere-console-auth
 type: Opaque
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: opensphere-auth-pats
+  name: opensphere-console-auth-pats
   namespace: opensphere-console-auth
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["opensphere-auth-pats", "opensphere-auth-policy"]
+    resourceNames: ["opensphere-console-auth-pats", "opensphere-console-auth-policy"]
     verbs: ["get", "patch", "update"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["opensphere-auth-codes"]
+    resourceNames: ["opensphere-console-auth-codes"]
     verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: opensphere-auth-pats
+  name: opensphere-console-auth-pats
   namespace: opensphere-console-auth
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: opensphere-auth-pats
+  name: opensphere-console-auth-pats
 subjects:
   - kind: ServiceAccount
-    name: opensphere-auth
+    name: opensphere-console-auth
     namespace: opensphere-console-auth
 ---
 # internal-only handle on the REAL Kanidm pods (BFF + proxy target). Selector app=kanidm.
@@ -105,20 +105,21 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: opensphere-auth
+  name: opensphere-console-auth
   namespace: opensphere-console-auth
-  labels: { app: opensphere-auth }
+  labels: { app: opensphere-console-auth }
 spec:
   replicas: 2
-  selector: { matchLabels: { app: opensphere-auth } }
+  selector: { matchLabels: { app: opensphere-console-auth } }
   template:
     metadata:
-      labels: { app: opensphere-auth }
+      labels: { app: opensphere-console-auth }
     spec:
-      serviceAccountName: opensphere-auth
+      serviceAccountName: opensphere-console-auth
       containers:
         - name: auth
-          image: opensphere-auth@sha256:d263557e4b6ca472cdc304cb1a2e1eaeb8aa35e10ec49f30079bda8de9e46032
+          # 로컬 kind: 노드 로드 태그 참조(IfNotPresent). CI/레지스트리 배포는 @sha256 digest 고정.
+          image: opensphere-console-auth:totp-enforce-20260712
           imagePullPolicy: IfNotPresent
           env:
             - { name: KANIDM_CORE_URL, value: "https://kanidm-core.opensphere-console-auth.svc:8443" }
@@ -128,6 +129,9 @@ spec:
             - { name: KANIDM_CA_PATH, value: "/certs/tls.crt" }
             # console session (id_token) lifetime in seconds; 86400 = 24h (server.mjs default 3600)
             - { name: OIDC_TOKEN_TTL, value: "86400" }
+            # AG-5: 운영 환경 지시자. "production"이면 TOTP를 강제하고 관리자의 비활성화를 403으로 거부한다.
+            # 로컬/개발 클러스터는 development(비번 로그인 유지). 운영 배포에서 production으로 바꾼다.
+            - { name: AUTH_ENVIRONMENT, value: "development" }
           ports:
             - { containerPort: 8443 }
           volumeMounts:
@@ -152,17 +156,17 @@ spec:
         - name: tls
           secret: { secretName: kanidm-tls }
         - name: sig
-          secret: { secretName: opensphere-auth-sig }
+          secret: { secretName: opensphere-console-auth-sig }
 ---
 # ADR-UI-003 §3.2: 셸의 same-origin /bff 프록시가 사용하는 내부 Service.
 apiVersion: v1
 kind: Service
 metadata:
-  name: opensphere-auth
+  name: opensphere-console-auth
   namespace: opensphere-console-auth
-  labels: { app: opensphere-auth }
+  labels: { app: opensphere-console-auth }
 spec:
-  selector: { app: opensphere-auth }
+  selector: { app: opensphere-console-auth }
   ports:
     - { port: 8443, targetPort: 8443 }
 ---
@@ -171,11 +175,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: opensphere-auth-ext
+  name: opensphere-console-auth-ext
   namespace: opensphere-console-auth
-  labels: { app: opensphere-auth }
+  labels: { app: opensphere-console-auth }
 spec:
   type: LoadBalancer
-  selector: { app: opensphere-auth }
+  selector: { app: opensphere-console-auth }
   ports:
     - { name: https, port: 8444, targetPort: 8443 }
