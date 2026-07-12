@@ -11,6 +11,7 @@ RUN apk upgrade --no-cache \
 COPY kanidm-ca.crt /etc/kanidm-ca/ca.crt
 COPY --chmod=0644 server.mjs /app/server.mjs
 COPY --chmod=0644 token-verifier.mjs /app/token-verifier.mjs
+COPY --chmod=0644 auth-policy.mjs /app/auth-policy.mjs
 USER node
 EXPOSE 8443
 CMD ["node", "/app/server.mjs"]

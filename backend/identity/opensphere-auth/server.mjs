@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { URL, URLSearchParams } from 'node:url';
 import QRCode from 'qrcode';
+import { DEFAULT_TOTP_ENABLED, authPolicyFromConfigMap, authPolicyPatch } from './auth-policy.mjs';
 import { isActivePat, verifyEs256Jwt } from './token-verifier.mjs';
 
 // ---- config ----
@@ -35,6 +36,7 @@ const SIG_KEY_PATH = process.env.SIG_KEY_PATH || '/keys/sig.key';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-system';
 const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-kanidm';
+const AUTH_CODE_SECRET_NAME = process.env.AUTH_CODE_SECRET_NAME || 'opensphere-auth-codes';
 
 const PATH_BASE = '/oauth2/openid/opensphere-console';
 const EP = {
@@ -98,8 +100,9 @@ const cuExchange = (token) => kanidmReq('POST', '/v1/credential/_exchange_intent
 const cuUpdate = (request, session) => kanidmReq('POST', '/v1/credential/_update', [request, session]);
 const cuCommit = (session) => kanidmReq('POST', '/v1/credential/_commit', session);
 
-// password+TOTP login ceremony -> success token payload, or throw {reason}
-async function kanidmAuthenticate(username, password, totp) {
+// Password login is the development default. When the managed policy is enabled,
+// password-only accounts must enroll TOTP before they can enter the Console.
+async function kanidmAuthenticate(username, password, totp, totpPolicyEnabled) {
   let r = await kanidmReq('POST', '/v1/auth', { step: { init: username } });
   if (r.status !== 200 || !r.sid) throw { reason: 'Unknown user or auth unavailable.' };
   const H = { 'x-kanidm-auth-session-id': r.sid };
@@ -107,13 +110,16 @@ async function kanidmAuthenticate(username, password, totp) {
   // dev: password-only 계정(mech 'password')도 수용 — TOTP 비활성 계정 로그인 허용. TOTP 있으면 아래 cont에서 요구.
   const mech = mechs.includes('passwordmfa') ? 'passwordmfa' : mechs.includes('password') ? 'password' : null;
   if (!mech) throw { reason: `Unsupported auth mechanism (${mechs.join(',') || 'none'}).` };
+  if (totpPolicyEnabled && mech !== 'passwordmfa') {
+    throw { reason: 'TOTP is enabled for Console login. Re-enroll this account from a credential-reset token.' };
+  }
   r = await kanidmReq('POST', '/v1/auth', { step: { begin: mech } }, H);
   let cont = r.json?.state?.continue || [];
   if (cont.includes('totp')) {
     const code = parseInt(String(totp).replace(/\s+/g, ''), 10);
-    if (!Number.isInteger(code)) throw { reason: 'Enter your 6-digit authenticator code.' };
+    if (!Number.isInteger(code)) throw { reason: 'Enter your 6-digit authenticator code.', requiresTotp: true };
     r = await kanidmReq('POST', '/v1/auth', { step: { cred: { totp: code } } }, H);
-    if (r.json?.state?.denied) throw { reason: 'Invalid authenticator code.' };
+    if (r.json?.state?.denied) throw { reason: 'Invalid authenticator code.', requiresTotp: true };
   }
   r = await kanidmReq('POST', '/v1/auth', { step: { cred: { password } } }, H);
   if (!r.json?.state?.success) throw { reason: 'Invalid credentials.' };
@@ -142,9 +148,8 @@ async function lookupGroups(username) {
   return (r.json?.attrs?.memberof || []).map((g) => String(g).split('@')[0]).filter((g) => !g.startsWith('idm_'));
 }
 
-// ---- authorization-code store (PKCE) ----
-const codes = new Map();
-setInterval(() => { const now = Date.now(); for (const [k, v] of codes) if (v.exp < now) codes.delete(k); }, 30000).unref?.();
+// Authorization codes are stored in a shared Secret below. A pod-local Map breaks
+// whenever authorize and token requests are balanced to different BFF replicas.
 
 // ---- login surface: self-contained 2-panel composition (DESIGN-console-template layout,
 // OpenSphere palette, zero design-system dependency — a branded standalone page). ----
@@ -193,7 +198,7 @@ function shell(title, area) {
 <div class="app"><main class="col"><div class="area">${area}</div><div class="copyright"><span>© OpenSphere Platform 2026</span><a href="#privacy">Privacy</a><a href="#terms">Terms of use</a></div></main>
 <aside class="splash"><div class="panel"><p class="pre">Welcome to</p><h2 class="big">OpenSphere</h2><p class="sub">Sign in with an OpenSphere account after your Kanidm credentials have been enrolled.</p></div><div class="foot"><span>Learn more:</span><a href="#catalog">Catalog</a><a href="#docs">Docs</a><a href="#status">Status</a></div></aside></div></body></html>`;
 }
-function loginPage(params, error) {
+function loginPage(params, error, showTotp = false, totpPolicyEnabled = false) {
   const hidden = ['client_id', 'redirect_uri', 'state', 'scope', 'code_challenge', 'code_challenge_method', 'nonce', 'response_type']
     .map((k) => `<input type="hidden" name="${k}" value="${escapeHtml(params[k] || '')}">`).join('');
   return shell('Log in to OpenSphere', `<div class="logo"></div><h1>Log in to OpenSphere</h1>
@@ -203,7 +208,8 @@ ${error ? `<div class="note">${escapeHtml(error)}</div>` : ''}
 <div class="pill"><span class="lbl">Sign in with</span><b>Kanidm</b></div>
 <label for="u">Username</label><input class="f" id="u" name="username" autocomplete="username" autofocus value="${escapeHtml(params.username || '')}">
 <label for="p">Password</label><input class="f" id="p" name="password" type="password" autocomplete="current-password">
-<label for="t">Authenticator code</label><input class="f" id="t" name="totp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+${showTotp ? '<label for="t">Authenticator code</label><input class="f" id="t" name="totp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">' : '<input type="hidden" name="totp" value="">'}
+<p class="hint">TOTP policy: <strong>${totpPolicyEnabled ? 'enabled' : 'disabled for development'}</strong>${!totpPolicyEnabled && showTotp ? ' · this account still has an existing authenticator enrollment.' : ''}</p>
 ${hidden}<button class="btn" type="submit">Log in</button>
 <div class="or">or</div><a class="btn sec" href="/ui/reset">Set up account with a reset token</a>
 </form>`);
@@ -221,17 +227,19 @@ function onboardTokenPage(error) {
 <button class="btn" type="submit">Continue</button></form>
 <a class="btn link" href="${CONSOLE_URL}">Back to sign in</a>`);
 }
-function onboardSetupPage({ session, secretB32, otpauth, account, error, qr }) {
+function onboardSetupPage({ session, secretB32, otpauth, account, error, qr, totpEnabled }) {
   const grouped = secretB32.replace(/(.{4})/g, '$1 ').trim();
   return shell('Set your credentials', `<div class="logo"></div><h1>Set your credentials</h1>
 <p class="create">Account <strong>${escapeHtml(account)}</strong></p>
 <form method="POST" action="/ui/reset">${error ? `<div class="note">${escapeHtml(error)}</div>` : ''}
 <label for="p">New password</label><input class="f" id="p" name="password" type="password" autocomplete="new-password" autofocus>
+${totpEnabled ? `
 <label>Authenticator</label>
 <p class="hint">Scan this QR with your authenticator app (Google Authenticator, Aegis, 1Password…), then enter the 6-digit code it shows.</p>
 ${qr ? `<div class="qr">${qr}</div>` : ''}
 <details class="man"><summary>Can't scan? Enter the key manually</summary><div class="key">${grouped}</div><p class="hint">Algorithm SHA-256 · 6 digits · 30s.${otpauth ? ` On a phone? <a href="${escapeHtml(otpauth)}">open in app</a>.` : ''}</p></details>
 <label for="t">Authenticator code</label><input class="f" id="t" name="totp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+` : '<div class="ok">Development policy: password-only enrollment. TOTP can be enabled later by a Console administrator.</div><input type="hidden" name="totp" value="">'}
 <input type="hidden" name="session" value="${escapeHtml(JSON.stringify(session))}"><input type="hidden" name="secret" value="${escapeHtml(secretB32)}"><input type="hidden" name="account" value="${escapeHtml(account)}"><input type="hidden" name="otpauth" value="${escapeHtml(otpauth)}">
 <button class="btn" type="submit">Finish setup</button></form>`);
 }
@@ -241,8 +249,8 @@ async function sendSetup(res, fields) {
   catch (e) { console.error('[bff] QR generation failed:', e.message); }
   send(res, 200, 'text/html', onboardSetupPage({ ...fields, qr }));
 }
-function onboardDonePage() {
-  return shell('Account ready', `<div class="logo"></div><h1>You're all set</h1><div class="ok">Your password and authenticator are enrolled.</div><a class="btn" href="${CONSOLE_URL}">Continue to the OpenSphere Console</a>`);
+function onboardDonePage(totpEnabled) {
+  return shell('Account ready', `<div class="logo"></div><h1>You're all set</h1><div class="ok">${totpEnabled ? 'Your password and authenticator are enrolled.' : 'Your password is enrolled. TOTP is disabled by the development policy.'}</div><a class="btn" href="${CONSOLE_URL}">Continue to the OpenSphere Console</a>`);
 }
 
 const readBody = (req) => new Promise((resolve, reject) => { const ch = []; req.on('data', (c) => ch.push(c)); req.on('end', () => resolve(Buffer.concat(ch))); req.on('error', reject); });
@@ -254,9 +262,12 @@ function redirect(res, location) { res.writeHead(302, { location, 'cache-control
 // (안정 서명키 /keys/sig.key 전제 — ephemeral이면 재시작 시 PAT 무효.)
 const PAT_CM_NS = process.env.PAT_CM_NS || 'opensphere-console-auth';
 const PAT_CM_NAME = process.env.PAT_CM_NAME || 'opensphere-auth-pats';
+const AUTH_POLICY_CM_NAME = process.env.AUTH_POLICY_CM_NAME || 'opensphere-auth-policy';
 const PAT_TTL_DAYS = parseInt(process.env.PAT_TTL_DAYS || '365', 10);
 const OIDC_TOKEN_TTL = parseInt(process.env.OIDC_TOKEN_TTL || '3600', 10); // console session (id_token) lifetime in seconds; default 1h, set 86400 for 24h
 const PAT_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${PAT_CM_NAME}`;
+const AUTH_POLICY_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${AUTH_POLICY_CM_NAME}`;
+const AUTH_CODE_SECRET_PATH = `/api/v1/namespaces/${PAT_CM_NS}/secrets/${AUTH_CODE_SECRET_NAME}`;
 
 function k8sApi(method, path, body, contentType) {
   return new Promise((resolve, reject) => {
@@ -273,6 +284,83 @@ function k8sApi(method, path, body, contentType) {
 const readPats = async () => { const r = await k8sApi('GET', PAT_CM_PATH); return (r.status === 200 && r.json?.data) ? r.json.data : {}; };
 // merge-patch: data[jti]=string(추가) 또는 null(폐기)
 const patchPat = (jti, valueOrNull) => k8sApi('PATCH', PAT_CM_PATH, { data: { [jti]: valueOrNull } }, 'application/merge-patch+json');
+
+async function storeAuthorizationCode(code, entry) {
+  const encoded = Buffer.from(JSON.stringify(entry)).toString('base64');
+  const r = await k8sApi('PATCH', AUTH_CODE_SECRET_PATH, { data: { [code]: encoded } }, 'application/merge-patch+json');
+  if (r.status >= 300) throw new Error(`authorization code store HTTP ${r.status}`);
+}
+
+// GET + resourceVersion PUT makes consumption one-time across both replicas.
+// A concurrent exchange or code issuance produces 409 and is retried with fresh state.
+async function takeAuthorizationCode(code) {
+  if (!code) return null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const r = await k8sApi('GET', AUTH_CODE_SECRET_PATH);
+    if (r.status !== 200) throw new Error(`authorization code read HTTP ${r.status}`);
+    const encoded = r.json?.data?.[code];
+    if (!encoded) return null;
+    const data = { ...(r.json.data || {}) };
+    delete data[code];
+    const consumed = await k8sApi('PUT', AUTH_CODE_SECRET_PATH, {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      metadata: { name: AUTH_CODE_SECRET_NAME, namespace: PAT_CM_NS, resourceVersion: r.json.metadata?.resourceVersion },
+      type: 'Opaque',
+      data,
+    });
+    if (consumed.status === 409) continue;
+    if (consumed.status >= 300) throw new Error(`authorization code consume HTTP ${consumed.status}`);
+    try { return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')); }
+    catch { return null; }
+  }
+  throw new Error('authorization code consume conflict');
+}
+
+async function cleanupAuthorizationCodes() {
+  const r = await k8sApi('GET', AUTH_CODE_SECRET_PATH);
+  if (r.status !== 200) return;
+  const data = { ...(r.json?.data || {}) };
+  let changed = false;
+  for (const [code, encoded] of Object.entries(data)) {
+    try {
+      const entry = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+      if (!entry.exp || entry.exp < Date.now()) { delete data[code]; changed = true; }
+    } catch { delete data[code]; changed = true; }
+  }
+  if (!changed) return;
+  await k8sApi('PUT', AUTH_CODE_SECRET_PATH, {
+    apiVersion: 'v1', kind: 'Secret',
+    metadata: { name: AUTH_CODE_SECRET_NAME, namespace: PAT_CM_NS, resourceVersion: r.json.metadata?.resourceVersion },
+    type: 'Opaque', data,
+  });
+}
+setInterval(() => cleanupAuthorizationCodes().catch((e) => console.error('[auth-code] cleanup:', e.message)), 30000).unref?.();
+
+async function readAuthPolicy() {
+  const r = await k8sApi('GET', AUTH_POLICY_CM_PATH);
+  if (r.status === 200) return authPolicyFromConfigMap(r.json, DEFAULT_TOTP_ENABLED);
+  console.error(`[auth-policy] ConfigMap read HTTP ${r.status}; using development default`);
+  return authPolicyFromConfigMap(null, DEFAULT_TOTP_ENABLED);
+}
+
+async function handleAuthPolicyGet(res) {
+  patJson(res, 200, await readAuthPolicy());
+}
+
+async function handleAuthPolicyPatch(req, res, admin) {
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  if (typeof body.totpEnabled !== 'boolean') return patJson(res, 400, { error: 'totpEnabled_boolean_required' });
+  const actor = admin.preferred_username || admin.sub || 'unknown';
+  const patch = authPolicyPatch(body.totpEnabled, actor);
+  const result = await k8sApi('PATCH', AUTH_POLICY_CM_PATH, patch, 'application/merge-patch+json');
+  if (result.status >= 300) return patJson(res, 500, { error: 'policy_store_failed', status: result.status });
+  const policy = authPolicyFromConfigMap(result.json, DEFAULT_TOTP_ENABLED);
+  console.log(JSON.stringify({ event: 'auth_policy_changed', actor, totpEnabled: policy.totpEnabled, time: patch.data.updatedAt }));
+  patJson(res, 200, policy);
+}
 
 // 우리가 발급한 ES256 토큰 검증 → payload 또는 null (서명+OIDC 표준 claim)
 function verifyToken(jwt) {
@@ -428,28 +516,30 @@ async function handleAuthorizeGet(reqUrl, res) {
   const q = Object.fromEntries(reqUrl.searchParams);
   if (q.client_id !== CLIENT_ID) return send(res, 400, 'text/plain', 'unknown client_id');
   if (!REDIRECT_ALLOW.includes(q.redirect_uri)) return send(res, 400, 'text/plain', 'redirect_uri not allowed');
-  send(res, 200, 'text/html', loginPage(q, null));
+  const policy = await readAuthPolicy();
+  send(res, 200, 'text/html', loginPage(q, null, policy.totpEnabled, policy.totpEnabled));
 }
 async function handleAuthorizePost(req, res) {
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   const params = { client_id: form.client_id, redirect_uri: form.redirect_uri, state: form.state, scope: form.scope, code_challenge: form.code_challenge, code_challenge_method: form.code_challenge_method, nonce: form.nonce, response_type: form.response_type, username: form.username };
   if (params.client_id !== CLIENT_ID || !REDIRECT_ALLOW.includes(params.redirect_uri)) return send(res, 400, 'text/plain', 'bad client/redirect');
+  const policy = await readAuthPolicy();
   let user;
-  try { user = await kanidmAuthenticate(form.username?.trim(), form.password || '', form.totp || ''); }
-  catch (e) { return send(res, 200, 'text/html', loginPage(params, e.reason || 'Sign-in failed.')); }
+  try { user = await kanidmAuthenticate(form.username?.trim(), form.password || '', form.totp || '', policy.totpEnabled); }
+  catch (e) { return send(res, 200, 'text/html', loginPage(params, e.reason || 'Sign-in failed.', policy.totpEnabled || e.requiresTotp, policy.totpEnabled)); }
   const username = String(user.spn || form.username).split('@')[0];
   let groups = [];
   try { groups = await lookupGroups(username); } catch (e) { console.error('[bff] group lookup failed:', e.message); }
   if (!groups.some((g) => g.startsWith(CONSOLE_GROUP_PREFIX))) return send(res, 403, 'text/html', deniedPage(username));
   const code = crypto.randomBytes(24).toString('base64url');
   const payloadBase = { iss: ISSUER, sub: user.uuid, aud: CLIENT_ID, azp: CLIENT_ID, preferred_username: username, name: user.displayname || username, ...(user.mail_primary ? { email: user.mail_primary } : {}), groups };
-  codes.set(code, { payloadBase, code_challenge: params.code_challenge, redirect_uri: params.redirect_uri, nonce: params.nonce, exp: Date.now() + 60000 });
+  await storeAuthorizationCode(code, { payloadBase, code_challenge: params.code_challenge, redirect_uri: params.redirect_uri, nonce: params.nonce, exp: Date.now() + 60000 });
   redirect(res, `${params.redirect_uri}?code=${encodeURIComponent(code)}&state=${encodeURIComponent(params.state || '')}`);
 }
 async function handleToken(req, res) {
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   if (form.grant_type !== 'authorization_code') return send(res, 400, 'application/json', JSON.stringify({ error: 'unsupported_grant_type' }));
-  const entry = codes.get(form.code); codes.delete(form.code);
+  const entry = await takeAuthorizationCode(form.code);
   if (!entry) return send(res, 400, 'application/json', JSON.stringify({ error: 'invalid_grant' }));
   if (entry.redirect_uri !== form.redirect_uri) return send(res, 400, 'application/json', JSON.stringify({ error: 'invalid_grant', error_description: 'redirect mismatch' }));
   const challenge = crypto.createHash('sha256').update(form.code_verifier || '').digest('base64url');
@@ -464,6 +554,7 @@ async function handleOnboardGet(reqUrl, res) {
   const token = reqUrl.searchParams.get('token');
   if (!token) return send(res, 200, 'text/html', onboardTokenPage(null));
   let session, totp;
+  const policy = await readAuthPolicy();
   try {
     const ex = await cuExchange(token.trim());
     if (ex.status !== 200 || !Array.isArray(ex.json)) throw new Error('That reset token is invalid or has expired.');
@@ -471,35 +562,42 @@ async function handleOnboardGet(reqUrl, res) {
     // re-onboarding: drop any existing TOTP named "app" first, otherwise totpverify returns
     // TotpNameTryAgain and the freshly scanned secret is silently NOT stored (old one kept).
     await cuUpdate({ totpremove: 'app' }, session);
-    const g = await cuUpdate('totpgenerate', session);
-    totp = g.json?.mfaregstate?.TotpCheck;
-    if (!totp || !Array.isArray(totp.secret)) throw new Error('Could not start authenticator setup.');
+    if (policy.totpEnabled) {
+      const g = await cuUpdate('totpgenerate', session);
+      totp = g.json?.mfaregstate?.TotpCheck;
+      if (!totp || !Array.isArray(totp.secret)) throw new Error('Could not start authenticator setup.');
+    }
   } catch (e) { return send(res, 200, 'text/html', onboardTokenPage(String(e.message || e))); }
-  const secretB32 = base32(totp.secret);
-  const account = String(totp.accountname || '').split('@')[0] || 'account';
-  const otpauth = `otpauth://totp/OpenSphere:${encodeURIComponent(account)}?secret=${secretB32}&issuer=OpenSphere&algorithm=SHA256&digits=${totp.digits || 6}&period=${totp.step || 30}`;
-  await sendSetup(res, { session, secretB32, otpauth, account });
+  const secretB32 = totp ? base32(totp.secret) : '';
+  const account = String(totp?.accountname || '').split('@')[0] || 'account';
+  const otpauth = totp ? `otpauth://totp/OpenSphere:${encodeURIComponent(account)}?secret=${secretB32}&issuer=OpenSphere&algorithm=SHA256&digits=${totp.digits || 6}&period=${totp.step || 30}` : '';
+  await sendSetup(res, { session, secretB32, otpauth, account, totpEnabled: policy.totpEnabled });
 }
 async function handleOnboardPost(req, res) {
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
+  const policy = await readAuthPolicy();
   let session; try { session = JSON.parse(form.session); } catch { return send(res, 200, 'text/html', onboardTokenPage('Your setup session expired. Re-enter your reset token.')); }
-  const reshow = (msg) => sendSetup(res, { session, secretB32: form.secret || '', otpauth: form.otpauth || '', account: form.account || 'account', error: msg });
+  const reshow = (msg) => sendSetup(res, { session, secretB32: form.secret || '', otpauth: form.otpauth || '', account: form.account || 'account', error: msg, totpEnabled: policy.totpEnabled });
   try {
     if (!form.password || form.password.length < 8) return reshow('Choose a password of at least 8 characters.');
     let r = await cuUpdate({ password: form.password }, session);
     if (r.status !== 200) return reshow('Password was rejected by policy. Try a stronger one.');
-    const code = parseInt(String(form.totp || '').replace(/\s+/g, ''), 10);
-    if (!Number.isInteger(code)) return reshow('Enter the 6-digit code from your authenticator.');
-    r = await cuUpdate({ totpverify: [code, 'app'] }, session);
-    // Some apps (Okta Verify, older Google Authenticator) ignore the SHA-256 algorithm and
-    // compute the code with SHA-1. Kanidm flags that as TotpInvalidSha1 — accept the SHA-1
-    // variant so those apps enroll cleanly instead of looping on "code did not match".
-    if (r.json?.mfaregstate === 'TotpInvalidSha1') r = await cuUpdate('totpacceptsha1', session);
-    if (r.json?.can_commit !== true) return reshow('That authenticator code did not match. Enter the current 6-digit code and try again.');
+    if (policy.totpEnabled) {
+      const code = parseInt(String(form.totp || '').replace(/\s+/g, ''), 10);
+      if (!Number.isInteger(code)) return reshow('Enter the 6-digit code from your authenticator.');
+      r = await cuUpdate({ totpverify: [code, 'app'] }, session);
+      // Some apps (Okta Verify, older Google Authenticator) ignore the SHA-256 algorithm and
+      // compute the code with SHA-1. Kanidm flags that as TotpInvalidSha1 — accept the SHA-1
+      // variant so those apps enroll cleanly instead of looping on "code did not match".
+      if (r.json?.mfaregstate === 'TotpInvalidSha1') r = await cuUpdate('totpacceptsha1', session);
+      if (r.json?.can_commit !== true) return reshow('That authenticator code did not match. Enter the current 6-digit code and try again.');
+    } else if (r.json?.can_commit !== true) {
+      return reshow('The password is not ready to commit. Try a stronger password or request a new reset token.');
+    }
     r = await cuCommit(session);
     if (r.status !== 200) return reshow('Could not finalize setup. Please retry.');
   } catch (e) { return reshow('Setup failed: ' + (e.message || e)); }
-  send(res, 200, 'text/html', onboardDonePage());
+  send(res, 200, 'text/html', onboardDonePage(policy.totpEnabled));
 }
 
 // ---- discovery ----
@@ -519,11 +617,11 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
   const reqUrl = new URL(req.url, ORIGIN);
   const p = reqUrl.pathname;
   const isOidcEp = [EP.discovery, EP.jwks, EP.token, EP.authorize].includes(p);
-  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/roles');
+  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/roles') || p === '/bff/auth-policy';
   const corsAllowed = Boolean(req.headers.origin && CORS_ORIGINS.has(req.headers.origin));
   if ((isOidcEp || isPatEp) && corsAllowed) {
     res.setHeader('access-control-allow-origin', req.headers.origin); res.setHeader('vary', 'origin');
-    res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS'); res.setHeader('access-control-allow-headers', 'content-type, authorization');
+    res.setHeader('access-control-allow-methods', 'GET, POST, PATCH, DELETE, OPTIONS'); res.setHeader('access-control-allow-headers', 'content-type, authorization');
   }
   if (req.method === 'OPTIONS' && (isOidcEp || isPatEp)) { res.writeHead(corsAllowed ? 204 : 403); return res.end(); }
   (async () => {
@@ -539,6 +637,9 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       if (p === '/bff/pat' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handlePatMint(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p === '/bff/pat' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handlePatList(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p.startsWith('/bff/pat/') && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handlePatRevoke(req, res, a, decodeURIComponent(p.slice('/bff/pat/'.length))) : patJson(res, 401, { error: 'unauthorized' }); }
+      // Console authentication policy — shared ConfigMap, admin-only read/write.
+      if (p === '/bff/auth-policy' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleAuthPolicyGet(res) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/auth-policy' && req.method === 'PATCH') { const a = await requireAdmin(req); return a ? await handleAuthPolicyPatch(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       // 콘솔 역할 관리(admin 전용) — 역할 정의·부여 UI 백엔드
       if (p === '/bff/roles' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleRolesList(req, res) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p === '/bff/roles/grant' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleRoleGrant(req, res) : patJson(res, 401, { error: 'unauthorized' }); }

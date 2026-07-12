@@ -40,6 +40,27 @@ metadata:
   name: opensphere-auth-pats
   namespace: opensphere-console-auth
 ---
+# Development defaults to password-only console login. Administrators can enable
+# TOTP from /manage/console-admins; the BFF reads this shared policy at request time.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensphere-auth-policy
+  namespace: opensphere-console-auth
+  annotations:
+    opensphere.io/default-totp-enabled: "false"
+data:
+  environment: development
+---
+# Short-lived PKCE authorization codes must be shared by both BFF replicas.
+# Values are removed with resourceVersion-guarded updates during token exchange.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensphere-auth-codes
+  namespace: opensphere-console-auth
+type: Opaque
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -48,7 +69,11 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["opensphere-auth-pats"]
+    resourceNames: ["opensphere-auth-pats", "opensphere-auth-policy"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["opensphere-auth-codes"]
     verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -93,7 +118,7 @@ spec:
       serviceAccountName: opensphere-auth
       containers:
         - name: auth
-          image: opensphere-auth@sha256:4b911964cdea93342522c6b7e0db321a5beae5bc247e0084ec018a6856d9ea5d
+          image: opensphere-auth@sha256:d263557e4b6ca472cdc304cb1a2e1eaeb8aa35e10ec49f30079bda8de9e46032
           imagePullPolicy: IfNotPresent
           env:
             - { name: KANIDM_CORE_URL, value: "https://kanidm-core.opensphere-console-auth.svc:8443" }

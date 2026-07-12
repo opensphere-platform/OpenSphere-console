@@ -6,7 +6,7 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "node --test backend/dupa-control/security.test.js backend/dupa-control/host-contract.test.js backend/dupa-control/backboneclaim.test.js backend/dupa-control/oaa-gateway-tier.test.js backend/identity/opensphere-auth/token-verifier.test.mjs src/app/core/notification.merge.spec.ts",
+    "test": "node --test backend/dupa-control/security.test.js backend/dupa-control/host-contract.test.js backend/dupa-control/backboneclaim.test.js backend/dupa-control/oaa-gateway-tier.test.js backend/identity/opensphere-auth/token-verifier.test.mjs backend/identity/opensphere-auth/auth-policy.test.mjs src/app/core/notification.merge.spec.ts",
     "test:security": "node --test backend/dupa-control/security.test.js"
   },
   "private": true,
