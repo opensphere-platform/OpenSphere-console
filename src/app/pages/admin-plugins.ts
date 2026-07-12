@@ -301,7 +301,8 @@ interface TreeNode {
         <button clrTabLink>Bindings</button>
         <clr-tab-content>
           <p class="os-sub">
-            비-UI 콘솔 바인딩(CLIDownload 등) — 콘솔이 호스팅·렌더하지 않고 '선언'을 노출. UI plugin과 별개(binding≠plugin).
+            향후 workforce 인증·권한·명령처럼 Main Shell core 밖의 CLI 확장을 선언하는 채널입니다.
+            native <code>os</code>는 이 목록에 포함되지 않습니다.
           </p>
           <table class="table">
             <thead>
@@ -774,7 +775,7 @@ export class AdminPlugins implements OnInit {
     const bindingsRoot: TreeNode = {
       id: 'bindings',
       label: 'Bindings',
-      meta: '비-UI 확장 · shell 귀속 예외',
+      meta: 'workforce·외부 CLI 확장 · native os 제외',
       type: 'group',
       actionable: false,
       children: this.bindings().map((b) => ({

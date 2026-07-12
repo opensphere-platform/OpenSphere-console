@@ -1,5 +1,4 @@
-# CLIDownload — headless(비-UI) 콘솔 바인딩 오브젝트. UIPluginPackage(UI 게스트)와 대(對).
-#   콘솔이 호스팅·렌더하지 않고, 다운로드 링크를 '선언'으로 바인딩. OKD ConsoleCLIDownload 어댑트(Console 접두 제거).
+# CLIDownload — future external/workforce CLI artifact Binding. Native os is explicitly excluded.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -27,17 +26,19 @@ spec:
               properties:
                 displayName: { type: string }
                 description: { type: string }
-                enabled: { type: boolean, default: true, description: "콘솔 노출 여부(소프트 토글). false=콘솔에서 숨김, 선언·서빙은 유지." }
+                enabled: { type: boolean, default: true }
+                audience: { type: string, enum: [workforce, external], description: "admin is reserved for the native os CLI" }
                 links:
                   type: array
                   items:
                     type: object
                     required: [href, text]
                     properties:
-                      href: { type: string, description: "다운로드 경로(콘솔 상대). 셸이 서빙 컨테이너로 프록시." }
+                      href: { type: string }
                       text: { type: string }
-                      os:   { type: string, enum: [linux, darwin, windows] }
+                      os: { type: string, enum: [linux, darwin, windows] }
                       arch: { type: string }
       additionalPrinterColumns:
         - { name: Display, type: string, jsonPath: .spec.displayName }
+        - { name: Audience, type: string, jsonPath: .spec.audience }
         - { name: Enabled, type: boolean, jsonPath: .spec.enabled }

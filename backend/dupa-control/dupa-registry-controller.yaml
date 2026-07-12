@@ -89,7 +89,7 @@ spec:
       containers:
         - name: controller
           # Local development registry image. Replace with a signed remote digest for production promotion.
-          image: dupa-registry-controller@sha256:17f99eca8a24964c723b210937425c79fd46278a139184dba76ca85230ec3c44
+          image: dupa-registry-controller@sha256:d1247ab8087fefd4097f1ea88e006cbb897c22cb2249b90c24fb8b78eba17632
           imagePullPolicy: IfNotPresent
           env:
             - { name: NAMESPACE, value: opensphere-system }

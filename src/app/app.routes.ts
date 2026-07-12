@@ -10,6 +10,7 @@ import { ConsoleAdmins } from './pages/console-admins';
 import { AdminBackbone } from './pages/admin-backbone';
 import { AdminObservability } from './pages/admin-observability';
 import { AdminNotifications } from './pages/admin-notifications';
+import { AdminCli } from './pages/admin-cli';
 import { AdminLayout } from './pages/admin-layout';
 import { authenticatedGuard } from './core/authenticated.guard';
 
@@ -46,6 +47,7 @@ export const routes: Routes = [
       { path: '', redirectTo: 'catalog', pathMatch: 'full' },
       { path: 'catalog', component: Catalog },
       { path: 'apis', component: Apis },
+      { path: 'cli', component: AdminCli },
       { path: 'console-admins', component: ConsoleAdmins },
       { path: 'plugins', component: AdminPlugins },
       { path: 'roles', component: AdminRoles },

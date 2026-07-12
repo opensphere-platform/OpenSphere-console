@@ -40,6 +40,7 @@ part of the base runtime and must never be applied by the base Console deploymen
 ## Native base functions
 
 - OIDC/PKCE login, logout, profile, and role-aware administration.
+- Console-native `os` administrator CLI source, downloads, and `console==cli` contract. It is not a Binding.
 - Backbone readiness and read-only component diagnostics.
 - Durable, fail-closed administrative audit.
 - Developer Catalog and API discovery backed by Console core services.

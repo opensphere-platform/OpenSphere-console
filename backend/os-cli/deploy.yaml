@@ -1,0 +1,57 @@
+# os CLI is a Console-native core workload. It is not a UIPlugin or CLIDownload Binding.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: os-cli
+  namespace: opensphere-system
+  labels:
+    app: os-cli
+    app.kubernetes.io/name: os-cli
+    app.kubernetes.io/component: console-cli
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/scope: main-shell-core
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: os-cli } }
+  template:
+    metadata:
+      labels:
+        app: os-cli
+        app.kubernetes.io/name: os-cli
+        app.kubernetes.io/component: console-cli
+        app.kubernetes.io/part-of: opensphere-console
+        opensphere.io/scope: main-shell-core
+    spec:
+      containers:
+        - name: serve
+          image: os-cli@sha256:a2edd2ee25c8e0b676d7d7f9a1d1612f3646df9b216539cd6bd58fdc1101a1df
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /index.json, port: http }, initialDelaySeconds: 2 }
+          livenessProbe: { httpGet: { path: /index.json, port: http }, initialDelaySeconds: 10, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          volumeMounts:
+            - { name: nginx-tmp, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: nginx-tmp
+          emptyDir: { sizeLimit: 16Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: os-cli
+  namespace: opensphere-system
+  labels:
+    app: os-cli
+    app.kubernetes.io/component: console-cli
+    app.kubernetes.io/part-of: opensphere-console
+spec:
+  selector: { app: os-cli }
+  ports: [{ name: http, port: 8080, targetPort: http }]

@@ -210,6 +210,7 @@ const getReg = (n) => k8s('GET', `${crd('uipluginregistrations')}/${n}`);
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
 const CONSOLE_GROUP = 'console.opensphere.io';
 const listCliDownloads = () => k8s('GET', `/apis/${CONSOLE_GROUP}/${V}/clidownloads`);
+const NATIVE_BINDING_NAMES = new Set(['os']); // Main Shell core: Binding으로 재등록 금지.
 function integrationStatuses(pkg, phase, retryable, now) {
   if (!pkg?.spec?.contributions) return {};
   const c = pkg.spec.contributions;
@@ -562,7 +563,7 @@ function validCapabilities(manifest) {
 // ── reconcile: registration desiredState → 실제 상태 ──────────
 let publishedPluginCount = 0;
 // P0-2/재감사 P1-2 allowlist: /api/plugins/<id> 프록시 허용 id 집합 = (a) 검증 성공+활성(published) plugin id
-// + (b) enabled CLIDownload 바인딩 서비스 id(os-cli 등). 미등록 id는 nginx auth_request에서 403.
+// + (b) enabled workforce CLIDownload 바인딩 서비스 id. Main Shell native os-cli는 고정 /api/cli 경로를 사용한다.
 // reconcile 끝에서 published로 계산(루프 뒤). 전이 실패 시 직전 allowlist 유지(가용성).
 let proxyAllow = new Set();
 async function reconcile() {
@@ -661,6 +662,7 @@ async function reconcile() {
   try {
     const cds = await listCliDownloads();
     for (const cd of cds.json?.items || []) {
+      if (NATIVE_BINDING_NAMES.has(cd.metadata?.name)) continue;
       if (cd.spec?.enabled === false) continue; // enabled 바인딩만 허용
       for (const l of (cd.spec?.links || [])) {
         const mm = String(l.href || '').match(/^\/api\/plugins\/([a-z0-9-]+)\//);
@@ -1418,13 +1420,16 @@ const server = http.createServer(async (req, res) => {
     // ── Bindings (headless 비-UI 확장): CLIDownload 등. UI plugins와 분리된 관리 채널(binding≠plugin) ──
     if (p === '/api/admin/bindings') {
       const cds = await listCliDownloads();
-      const items = (cds.json?.items || []).map((x) => ({ kind: 'CLIDownload', name: x.metadata.name, ...x.spec, enabled: x.spec.enabled !== false }));
+      const items = (cds.json?.items || [])
+        .filter((x) => !NATIVE_BINDING_NAMES.has(x.metadata?.name))
+        .map((x) => ({ kind: 'CLIDownload', name: x.metadata.name, ...x.spec, enabled: x.spec.enabled !== false }));
       return json(res, 200, { items });
     }
     // binding enable/disable = spec.enabled 소프트 토글(선언·서빙 유지, 콘솔 노출만). plugin Disable과 동형.
     const bm = p.match(/^\/api\/admin\/bindings\/([a-z0-9-]+)\/(enable|disable)$/);
     if (bm && req.method === 'POST') {
       const [, name, action] = bm;
+      if (NATIVE_BINDING_NAMES.has(name)) return json(res, 409, { error: 'native_console_capability', name, opId });
       const r = await k8s('PATCH', `/apis/${CONSOLE_GROUP}/${V}/clidownloads/${name}`, { spec: { enabled: action === 'enable' } });
       if (!r.ok) { console.error(`[err] op=${opId} binding ${action} ${name} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, action, 'binding/' + name, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
       await durableAudit(actor, action, 'binding/' + name, 'accepted', '', opId);

@@ -151,11 +151,21 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    # Main Shell native os CLI — fixed core route, never admitted through plugin/Binding allowlists.
+    # index and binaries are public product artifacts; only read methods are accepted.
+    location /api/cli/ {
+        limit_except GET { deny all; }
+        set $cli_upstream os-cli.opensphere-system.svc.cluster.local;
+        rewrite ^/api/cli/(.*)$ /$1 break;
+        proxy_pass http://$cli_upstream:8080;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
     # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).
     # Admin이 설치/삭제하면 ns opensphere-system에 <id> service가 생기고 사라진다.
     # 변수+resolver로 런타임 DNS 해석 → 미설치 상태에서도 nginx가 죽지 않고 502만 반환.
-    # 감사 P0-2: auth_request로 controller가 registry/binding allowlist를 강제 → 등록·검증된 plugin id와
-    #   바인딩(CLIDownload) 서비스만 통과. 미등록 id는 403 → opensphere-system 내 임의 service 프록시 차단.
+    # 감사 P0-2: auth_request로 controller가 registry/binding allowlist를 강제 → 등록·검증된 Consumer와
+    #   승인된 workforce Binding 서비스만 통과. Main Shell native os CLI는 이 경로를 사용하지 않는다.
     #   (controller 장애 시 fail-closed: 플러그인 프록시 일시 차단 — 가용성보다 경계 우선.)
     location ~ ^/api/plugins/([a-z0-9-]+)/(.*)$ {
         set $plugin_id $1;

@@ -10,6 +10,7 @@ import Api16 from '@carbon/icons/es/api/16';
 import Layers16 from '@carbon/icons/es/layers/16';
 import Activity16 from '@carbon/icons/es/activity/16';
 import Notification16 from '@carbon/icons/es/notification/16';
+import Terminal16 from '@carbon/icons/es/terminal/16';
 
 interface AdminItem { label: string; route: string; icon: any }
 interface AdminGroup { label: string; items: AdminItem[] }
@@ -60,6 +61,7 @@ export class AdminLayout {
       items: [
         { label: 'Developer Catalog', route: '/manage/catalog', icon: Catalog16 },
         { label: 'APIs', route: '/manage/apis', icon: Api16 },
+        { label: 'Console CLI', route: '/manage/cli', icon: Terminal16 },
         { label: 'Extensions', route: '/manage/plugins', icon: Application16 },
       ],
     },

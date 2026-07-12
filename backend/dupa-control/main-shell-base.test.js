@@ -92,3 +92,28 @@ test('one top-level design guide is the only design policy SSOT', () => {
     assert.equal(fs.existsSync(path.join(root, ...legacy)), false, `${legacy.join('/')} must be absorbed and deleted`);
   }
 });
+
+test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
+  const routes = read('src', 'app', 'app.routes.ts');
+  const layout = read('src', 'app', 'pages', 'admin-layout.ts');
+  const page = read('src', 'app', 'pages', 'admin-cli.ts');
+  const nginx = read('nginx', 'default.conf.template');
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const manifest = JSON.parse(read('backend', 'os-cli', 'index.json'));
+  const deploy = read('backend', 'os-cli', 'deploy.yaml');
+
+  assert.match(routes, /path:\s*'cli',\s*component:\s*AdminCli/);
+  assert.match(layout, /route:\s*'\/manage\/cli'/);
+  assert.match(page, /<clr-datagrid>/);
+  assert.match(page, /<clr-alert/);
+  assert.match(nginx, /location \/api\/cli\//);
+  assert.doesNotMatch(nginx, /location .*\/api\/plugins\/os-cli/);
+  assert.match(controller, /NATIVE_BINDING_NAMES = new Set\(\['os'\]\)/);
+  assert.equal(manifest.ownership, 'console-native');
+  assert.equal(manifest.profile, 'admin');
+  assert.equal(manifest.extensionBoundary.adminTokenReuse, false);
+  assert.ok(manifest.links.every((link) => link.href.startsWith('/api/cli/')));
+  assert.ok(manifest.links.every((link) => /^[a-f0-9]{64}$/.test(link.sha256) && link.size > 0));
+  assert.match(deploy, /opensphere\.io\/scope:\s*main-shell-core/);
+  assert.equal(fs.existsSync(path.join(root, 'backend', 'cli-download', 'clidownload-os.yaml')), false);
+});

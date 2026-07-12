@@ -1,0 +1,17 @@
+{
+  "name": "os",
+  "displayName": "os — OpenSphere CLI",
+  "description": "OpenSphere Console native 관리자 CLI. Kanidm PAT·Registry·API·role 계약을 Console과 공유합니다.",
+  "ownership": "console-native",
+  "profile": "admin",
+  "version": "0.2.0",
+  "links": [
+    { "os": "linux",   "arch": "amd64", "text": "Linux (amd64)",   "href": "/api/cli/opensphere-cli-linux-amd64",       "size": 5996728, "sha256": "98f139dac16cb00d9f322a186906f3e56fb97f1d4f9bd7293311b4e25d5d40d7" },
+    { "os": "darwin",  "arch": "arm64", "text": "macOS (arm64)",   "href": "/api/cli/opensphere-cli-darwin-arm64",        "size": 5694578, "sha256": "fcc4cd02173c6cfb195e6d7900ead2d10a57c5743bf1f3ad2c47e39542c58a24" },
+    { "os": "windows", "arch": "amd64", "text": "Windows (amd64)", "href": "/api/cli/opensphere-cli-windows-amd64.exe", "size": 6155776, "sha256": "86b9c901f23c64adbd8ddc52b8a4ca74566a8ae96de7cad5cf33be865a114797" }
+  ],
+  "extensionBoundary": {
+    "workforce": "future-binding",
+    "adminTokenReuse": false
+  }
+}

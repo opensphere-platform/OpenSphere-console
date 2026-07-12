@@ -25,7 +25,7 @@ spec:
         - name: shell
           # ⚠️TODO: opensphere-console 이미지 빌드·push 필요 — 아래 digest는 구 opensphere-shell 아티팩트(opensphere-console repo엔 미존재).
           # 사람용 태그: ghcr.io/opensphere-platform/opensphere-console:0.8.1-reauth (비번변경 재인증)
-          image: opensphere-console@sha256:826b497ff7d7acb800cd1afca6a57df09f2207a08d34ae67dea453966e676794
+          image: opensphere-console@sha256:11e877b63a5b79c83f7b75dc4812ffc5c047e1c4c7e2d11067051c8ce238ba3e
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

@@ -32,6 +32,9 @@ Authority: 이 문서는 OpenSphere UI 시스템의 단일 디자인 정본(SSOT
 | 도메인 페이지 | Angular 조합 컴포넌트 | 도메인 데이터·레이아웃만 소유하고 UI primitive는 Clarity에 위임 |
 | 공통 퍼사드 | `os-*` | Clarity API 절연·공통 정책 적용만 담당; 자작 대체물 금지 |
 
+Console-native `os` CLI는 Main Shell의 비시각 제어 표면이며 Binding으로 등록하지 않는다. 향후 workforce
+CLI는 별도 Binding과 별도 인증 프로파일을 사용하고 admin PAT를 공유하지 않는다.
+
 동적 plugin은 Angular 런타임 결합을 피하므로 “모든 element가 Angular Clarity 컴포넌트”라는 문장을
 그대로 적용하지 않는다. 대신 Clarity가 정의한 구조·클래스·토큰·접근성 규칙을 준수해야 한다.
 
@@ -338,4 +341,3 @@ rg -n 'DESIGN-RULES\.md|DESIGN-TOKENS\.md|dupa-nav-contribution-contract\.md' .
 - OpenSphere Logos OpenAPI: https://logos.opl.io.kr/openapi.json
 - Shell hosting integration constitution:
   `../_DOCS_/01-CONSTITUTION/CONSTITUTION-0003-SHELL-HOSTING-INTEGRATION.md`
-
