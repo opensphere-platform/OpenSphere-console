@@ -1,0 +1,100 @@
+name: Promote Console Image Channel
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_channel:
+        description: Existing verified channel
+        required: true
+        type: choice
+        options: [edge, candidate]
+      target_channel:
+        description: Channel to promote without rebuilding
+        required: true
+        type: choice
+        options: [candidate, stable]
+      expected_source_revision:
+        description: Exact 40-character source revision approved for promotion
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: console-channel-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate promotion path
+        env:
+          SOURCE_CHANNEL: ${{ inputs.source_channel }}
+          TARGET_CHANNEL: ${{ inputs.target_channel }}
+          EXPECTED_REVISION: ${{ inputs.expected_source_revision }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_CHANNEL:$TARGET_CHANNEL" != "edge:candidate" && "$SOURCE_CHANNEL:$TARGET_CHANNEL" != "candidate:stable" ]]; then
+            echo "Only edge→candidate and candidate→stable are governed promotion paths" >&2
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_source_revision must be a full Git commit" >&2
+            exit 1
+          fi
+      - uses: imjasonh/setup-crane@v0.4
+      - name: Login to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: crane auth login ghcr.io -u "${{ github.actor }}" -p "$GH_TOKEN"
+      - name: Verify source, promote exact digests, and verify target
+        env:
+          SOURCE_CHANNEL: ${{ inputs.source_channel }}
+          TARGET_CHANNEL: ${{ inputs.target_channel }}
+          EXPECTED_REVISION: ${{ inputs.expected_source_revision }}
+        run: |
+          set -euo pipefail
+          images=(
+            opensphere-console
+            opensphere-console-auth
+            opensphere-console-backend
+            opensphere-console-dupa-controller
+            opensphere-console-oaa-gateway
+            opensphere-console-kanidm
+            opensphere-cbs-postgresql
+            opensphere-cbs-rustfs
+            opensphere-cbs-gitea
+          )
+          declare -A digests
+          for image in "${images[@]}"; do
+            ref="ghcr.io/opensphere-platform/$image:$SOURCE_CHANNEL"
+            digest="$(crane digest "$ref")"
+            revision="$(crane config "$ref" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "$ref has an invalid digest: $digest" >&2
+              exit 1
+            fi
+            if [[ "$revision" != "$EXPECTED_REVISION" ]]; then
+              echo "$ref revision $revision differs from approved $EXPECTED_REVISION" >&2
+              exit 1
+            fi
+            digests[$image]="$digest"
+          done
+
+          for image in "${images[@]}"; do
+            repository="ghcr.io/opensphere-platform/$image"
+            crane tag "$repository@${digests[$image]}" "$TARGET_CHANNEL"
+          done
+
+          for image in "${images[@]}"; do
+            target="ghcr.io/opensphere-platform/$image:$TARGET_CHANNEL"
+            actual="$(crane digest "$target")"
+            if [[ "$actual" != "${digests[$image]}" ]]; then
+              echo "$target resolved to $actual, expected ${digests[$image]}" >&2
+              exit 1
+            fi
+            echo "- \`$image:$TARGET_CHANNEL\` → \`${digests[$image]}\`" >> "$GITHUB_STEP_SUMMARY"
+          done
