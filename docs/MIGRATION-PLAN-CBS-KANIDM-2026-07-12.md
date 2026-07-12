@@ -104,13 +104,14 @@
 
 | 엔진 | 상태 | 검증 내용 |
 |---|---:|---|
-| PostgreSQL | **PASS** | 정본 매니페스트(`opensphere-cbs-postgresql`) 배포·기동, pgvector init 동작, 합성 audit_log 10,000행(vector(3) 컬럼) 시드 → `pg_dump`(custom, 97KB, <1s) → 신규 DB `pg_restore`(<1s) → **복원 행수 10000=10000 일치, vector 확장 보존**. dump/restore가 vector 타입·데이터를 온전히 보존함을 확인. |
-| RustFS(S3) | 대기 | `mc mirror` 왕복·오브젝트 체크섬 리허설 예정 |
-| Gitea | 대기 | `gitea dump`→복원·repo 무결성 리허설 예정 |
-| Kanidm | 대기 | `kanidmd database backup/restore`→로그인 검증 리허설(라이브 백업 exec 승인 필요) |
+| PostgreSQL | **PASS** | 정본 매니페스트(`opensphere-cbs-postgresql`) 배포·pgvector init, 합성 audit_log 10,000행(vector(3)) → `pg_dump`(custom, 97KB) → 신규 DB `pg_restore` → **복원 10000=10000 일치, vector 확장·데이터 보존**. |
+| RustFS(S3) | **PASS** | 정본 StatefulSet 배포, **PVC `data-opensphere-cbs-rustfs-0` Bound**(STS 이름변경 시 PVC 템플릿 재바인딩=orphan 지점 확인). 30오브젝트 → `mc mirror` 신규 버킷 → **오브젝트 수·obj md5 일치**. |
+| Gitea | **PASS** | 정본 Deployment 배포 + postgres 연결(rollout 성공). /data(repos) **tar 백업→복원 md5 일치**. DB는 postgres 검증분 재사용(gitea DB=postgres). |
+| Kanidm | **PASS** | 정본 StatefulSet + **2-tier 자체서명 인증서**로 실기동("ready to rock"), **PVC `data-opensphere-console-kanidm-0` Bound**. `kanidmd database backup`→**564 신원 항목(idm_admin 포함)** export → 신규 DB `restore`→ 재export **564=564 일치, 신원 보존**. |
 
-- 확인된 사실: **정본 이름 매니페스트가 유효(client dry-run + 실배포)**, postgres 백업/복원 절차가 pgvector 포함 데이터를 손실 없이 보존. 실데이터 RPO/RTO는 라이브 백업 exec 승인(§방식 A) 후 측정.
-- 리허설 리소스는 검증 후 삭제(격리 ns drop).
+- 확인된 사실: **정본 이름 매니페스트 4종 모두 유효(dry-run + 실배포·기동)**. 백업/복원 툴이 데이터를 손실 없이 보존 — postgres(pgvector 포함), S3(체크섬), gitea 볼륨(md5), **kanidm 신원 DB(564 항목)**. StatefulSet 이름변경→PVC 템플릿 재바인딩(orphan) 지점을 rustfs·kanidm에서 실증.
+- 미측정: **실데이터 RPO/RTO**(라이브 백업 exec 승인=§방식 A 필요). 합성 규모에선 각 백업/복원 모두 초 단위.
+- 리허설 리소스는 검증 후 삭제(격리 ns drop, 라이브 무접촉).
 
 ## 10. 이번 문서의 산출
 
