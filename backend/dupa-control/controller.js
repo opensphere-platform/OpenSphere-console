@@ -464,15 +464,17 @@ async function applyPermissionProfile(pkg, saName) {
   if (!APPROVED_PERMISSION_PROFILES.has(profile)) throw Object.assign(new Error('unapproved permission profile'), { reason: 'UnknownPermissionProfile' });
   if (profile === 'none') return;
   const rolePath = '/apis/rbac.authorization.k8s.io/v1/clusterroles';
-  const role = observerClusterRoleManifest();
-  const existingRole = await k8s('GET', `${rolePath}/${role.metadata.name}`);
-  const roleResult = existingRole.ok ? await k8s('PATCH', `${rolePath}/${role.metadata.name}`, role) : await k8s('POST', rolePath, role);
-  if (!roleResult.ok) throw Object.assign(new Error('permission profile role apply failed'), { reason: 'PermissionProfileApplyFailed' });
+  const expectedRole = observerClusterRoleManifest();
+  const existingRole = await k8s('GET', `${rolePath}/${expectedRole.metadata.name}`);
+  if (!existingRole.ok) throw Object.assign(new Error('pre-provisioned permission profile is missing'), { reason: 'PermissionProfileMissing' });
+  if (JSON.stringify(canonical(existingRole.json?.rules || [])) !== JSON.stringify(canonical(expectedRole.rules))) {
+    throw Object.assign(new Error('pre-provisioned permission profile drifted'), { reason: 'PermissionProfileDrift' });
+  }
   const binding = observerBindingManifest(pkg, saName);
   const bindingPath = '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings';
   const existingBinding = await k8s('GET', `${bindingPath}/${binding.metadata.name}`);
   const bindingResult = existingBinding.ok ? await k8s('PATCH', `${bindingPath}/${binding.metadata.name}`, binding) : await k8s('POST', bindingPath, binding);
-  if (!bindingResult.ok) throw Object.assign(new Error('permission profile binding apply failed'), { reason: 'PermissionProfileApplyFailed' });
+  if (!bindingResult.ok) throw Object.assign(new Error(`permission profile binding apply failed (HTTP ${bindingResult.status})`), { reason: 'PermissionProfileApplyFailed' });
 }
 async function applyWorkload(pkg) {
   const name = pkg.metadata.name;
@@ -861,12 +863,13 @@ function json(res, code, obj) { res.writeHead(code, { 'content-type': 'applicati
 
 async function ensureRegistration(pkgName, desiredState, actor, reason) {
   const existing = await getReg(pkgName);
+  const approvalReason = String(reason || existing.json?.spec?.approval?.reason || '');
   const body = {
     apiVersion: `${GROUP}/${V}`, kind: 'UIPluginRegistration',
     metadata: { name: pkgName, namespace: NS },
     spec: { packageRef: { name: pkgName }, desiredState,
       installPolicy: { createWorkload: true, createProxyRoute: true, exposeInNavigation: true },
-      approval: { requestedBy: actor || 'unknown', reason: reason || '' } },
+      approval: { requestedBy: actor || 'unknown', reason: approvalReason } },
   };
   if (existing.ok) return k8s('PATCH', `${crd('uipluginregistrations')}/${pkgName}`, { spec: { desiredState, approval: body.spec.approval } });
   return k8s('POST', crd('uipluginregistrations'), body);

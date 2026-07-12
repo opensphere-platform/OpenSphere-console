@@ -58,8 +58,6 @@ rules:
   - { apiGroups: [""], resources: [secrets, services, serviceaccounts, persistentvolumeclaims, configmaps, pods], verbs: [get, list, create, patch, delete] }
   - { apiGroups: ["apps"], resources: [deployments, statefulsets], verbs: [get, list, create, patch] }
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [roles, rolebindings], verbs: [get, list, create, patch, delete] }
-  # 검증된 Module Package의 사전 승인 permissionProfile만 물질화한다.
-  - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterroles, clusterrolebindings], verbs: [get, list, create, patch, delete] }
   # BackboneClaim ?좊떦 而⑦듃濡ㅻ윭 ??claim watch/reconcile + status + finalizer
   - { apiGroups: ["backbone.opensphere.io"], resources: [backboneclaims, backboneclaims/status, backboneclaims/finalizers], verbs: [get, list, watch, update, patch] }
   # Observability ?뺣낫 酉???ServiceMonitor ?몃깽?좊━ ?쎄린(monitoring ns ?뚮뱶/?쒕퉬?ㅻ뒗 ??core 洹쒖튃?쇰줈 而ㅻ쾭).
@@ -71,6 +69,37 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: { name: dupa-backbone-installer }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-backbone-installer }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
+---
+# 승인된 module permission profile은 설치 시 고정 생성한다. Controller가 ClusterRole을 생성하지 않아
+# Kubernetes privilege-escalation admission 경계를 우회하지 않는다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opensphere-module-cluster-observer-v1
+  labels: { opensphere.io/managed-by: dupa }
+rules:
+  - { apiGroups: [""], resources: [namespaces, nodes, pods, services, endpoints, persistentvolumeclaims, persistentvolumes, events, configmaps], verbs: [get, list, watch] }
+  - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets], verbs: [get, list, watch] }
+  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
+  - { apiGroups: [storage.k8s.io], resources: [storageclasses, csidrivers, csinodes, volumeattachments], verbs: [get, list, watch] }
+  - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: dupa-module-profile-installer }
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [opensphere-module-cluster-observer-v1]
+    verbs: [get, bind]
+  - { apiGroups: [rbac.authorization.k8s.io], resources: [clusterrolebindings], verbs: [get, list, create, patch, delete] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: dupa-module-profile-installer }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-module-profile-installer }
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
 ---
