@@ -16,7 +16,7 @@ const VERSION = process.env.APP_VERSION || '0.3.0-kanidm';
 const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
 const APISERVER = 'https://kubernetes.default.svc';
 // Kanidm admin(service-account API token) 자격 Secret
-const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-system';
+const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-console';
 const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-kanidm';
 
 // ── 호출자 검증(Kanidm 콘솔 id_token, ES256) — ADR-FND-003 ──

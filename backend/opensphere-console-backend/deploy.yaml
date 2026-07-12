@@ -2,7 +2,7 @@
 # 셸 nginx: /api/identity·/api/catalog(←/api/rhdh) → 이 단일 서비스. (issuer=opensphere-console-auth·reconcile=dupa는 분리 유지)
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: opensphere-console-backend, namespace: opensphere-system }
+metadata: { name: opensphere-console-backend, namespace: opensphere-console }
 ---
 # catalog: CRD·deployment read (cluster)
 apiVersion: rbac.authorization.k8s.io/v1
@@ -17,25 +17,25 @@ kind: ClusterRoleBinding
 metadata: { name: opensphere-console-backend }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensphere-console-backend }
 subjects:
-  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-system }
+  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
-# identity: Kanidm SA 자격 Secret read (opensphere-system)
+# identity: Kanidm SA 자격 Secret read (opensphere-console)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: opensphere-console-backend-kanidm-reader, namespace: opensphere-system }
+metadata: { name: opensphere-console-backend-kanidm-reader, namespace: opensphere-console }
 rules:
   - { apiGroups: [""], resources: ["secrets"], resourceNames: ["opensphere-identity-kanidm"], verbs: ["get"] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: { name: opensphere-console-backend-kanidm-reader, namespace: opensphere-system }
+metadata: { name: opensphere-console-backend-kanidm-reader, namespace: opensphere-console }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-kanidm-reader }
 subjects:
-  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-system }
+  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: opensphere-console-backend, namespace: opensphere-system, labels: { app: opensphere-console-backend } }
+metadata: { name: opensphere-console-backend, namespace: opensphere-console, labels: { app: opensphere-console-backend } }
 spec:
   replicas: 2
   selector: { matchLabels: { app: opensphere-console-backend } }
@@ -53,7 +53,7 @@ spec:
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
             - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
             - { name: KANIDM_JWKS_URL, value: "https://opensphere-console-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
-            - { name: DUPA_URL, value: http://opensphere-console-dupa-controller.opensphere-system.svc.cluster.local:8080 }
+            - { name: DUPA_URL, value: http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080 }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
@@ -66,7 +66,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: opensphere-console-backend, namespace: opensphere-system, labels: { app: opensphere-console-backend } }
+metadata: { name: opensphere-console-backend, namespace: opensphere-console, labels: { app: opensphere-console-backend } }
 spec:
   selector: { app: opensphere-console-backend }
   ports: [{ name: http, port: 8080, targetPort: 8080 }]

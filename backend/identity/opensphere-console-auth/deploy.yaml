@@ -7,12 +7,12 @@ metadata:
   name: opensphere-console-auth
   namespace: opensphere-console-auth
 ---
-# the BFF needs to read the Kanidm admin token (for group lookups) from opensphere-system
+# the BFF needs to read the Kanidm admin token (for group lookups) from opensphere-console
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: opensphere-console-auth-kanidm-reader
-  namespace: opensphere-system
+  namespace: opensphere-console
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -23,7 +23,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: opensphere-console-auth-kanidm-reader
-  namespace: opensphere-system
+  namespace: opensphere-console
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

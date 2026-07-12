@@ -2,7 +2,7 @@ apiVersion: plugins.opensphere.io/v1alpha1
 kind: UIPluginPackage
 metadata:
   name: manual
-  namespace: opensphere-system
+  namespace: opensphere-console
   labels:
     opensphere.io/scope: main-shell-manual
 spec:
@@ -49,7 +49,7 @@ apiVersion: plugins.opensphere.io/v1alpha1
 kind: UIPluginRegistration
 metadata:
   name: manual
-  namespace: opensphere-system
+  namespace: opensphere-console
 spec:
   packageRef:
     name: manual

@@ -3,7 +3,7 @@
 # deploy/local-dev/platformconfig-webhook-up.sh 가 동적 생성(caBundle 주입).
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: platformconfig-webhook, namespace: opensphere-system }
+metadata: { name: platformconfig-webhook, namespace: opensphere-console }
 ---
 # webhook 의 singleton 검사 = PlatformConfig list. (read-only)
 apiVersion: rbac.authorization.k8s.io/v1
@@ -19,13 +19,13 @@ kind: ClusterRoleBinding
 metadata: { name: platformconfig-webhook }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: platformconfig-webhook }
 subjects:
-  - { kind: ServiceAccount, name: platformconfig-webhook, namespace: opensphere-system }
+  - { kind: ServiceAccount, name: platformconfig-webhook, namespace: opensphere-console }
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: platformconfig-webhook
-  namespace: opensphere-system
+  namespace: opensphere-console
   labels: { app: platformconfig-webhook }
 spec:
   replicas: 1
@@ -53,7 +53,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: platformconfig-webhook, namespace: opensphere-system }
+metadata: { name: platformconfig-webhook, namespace: opensphere-console }
 spec:
   selector: { app: platformconfig-webhook }
   ports: [{ port: 443, targetPort: 8443 }]

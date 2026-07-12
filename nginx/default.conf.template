@@ -52,7 +52,7 @@ server {
     # Main Shell readiness is the Backbone readiness contract. Static assets may exist while
     # PostgreSQL/RustFS/Gitea are absent, but that state is not a complete Console.
     location = /readyz {
-        set $dupa_ready_upstream opensphere-console-dupa-controller.opensphere-system.svc.cluster.local;
+        set $dupa_ready_upstream opensphere-console-dupa-controller.opensphere-console.svc.cluster.local;
         proxy_pass http://$dupa_ready_upstream:8080/readyz;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
@@ -62,7 +62,7 @@ server {
     # 콘솔 네이티브 카탈로그 (ADR-UI-003 §3.2 · 헌법 §4: rhdh 과도기 탈피) — console-core 서비스.
     # /api/rhdh 프록시 경로명은 레거시(api.service 호환) 유지, 대상은 통합 opensphere-console-backend.
     location /api/rhdh/ {
-        set $console_backend_upstream opensphere-console-backend.opensphere-system.svc.cluster.local;
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         rewrite ^/api/rhdh/(.*)$ /api/$1 break;
         proxy_pass http://$console_backend_upstream:8080;
         proxy_set_header X-Forwarded-Host $host;
@@ -77,7 +77,7 @@ server {
     # 감사 P0-1: 인증은 controller가 Authorization: Bearer(Kanidm id_token, JWKS ES256) 검증으로 수행.
     #   클라이언트가 보내는 X-OpenSphere-User는 스푸핑 가능하므로 빈 값으로 clear(actor=검증 토큰 claim).
     location /api/admin/ {
-        set $dupa_controller_upstream opensphere-console-dupa-controller.opensphere-system.svc.cluster.local;
+        set $dupa_controller_upstream opensphere-console-dupa-controller.opensphere-console.svc.cluster.local;
         proxy_pass http://$dupa_controller_upstream:8080$request_uri;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
@@ -89,7 +89,7 @@ server {
     # ADR-UI-003 §3.2 Core≠Plugin: console-identity를 DUPA plugin이 아닌 console-core 서비스로 내장.
     # 감사 P0-1/B: opensphere-console-backend가 Authorization: Bearer로 검증(쓰기=admin, 읽기=인증). 스푸핑 헤더 clear.
     location /api/identity {
-        set $console_identity_upstream opensphere-console-backend.opensphere-system.svc.cluster.local;
+        set $console_identity_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_identity_upstream:8080;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
@@ -138,7 +138,7 @@ server {
     # 브라우저 Registry alias — 권위는 opensphere-registry /api/v1/registry 하나다.
     # Controller runtime projection은 proxy allowlist 내부 상태로만 사용한다.
     location /registry/ {
-        set $registry_upstream opensphere-registry.opensphere-system.svc.cluster.local;
+        set $registry_upstream opensphere-registry.opensphere-console.svc.cluster.local;
         proxy_pass http://$registry_upstream:80$request_uri;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
@@ -146,7 +146,7 @@ server {
     # Registry 단일창구 (GET /api/v1/registry → {capabilities,plugins,templates}). console==cli 동일 응답.
     # os CLI(`os registry`)와 콘솔이 같은 권위 응답 소비. opensphere-registry 서비스(read-only).
     location /api/v1/registry {
-        set $registry_api_upstream opensphere-registry.opensphere-system.svc.cluster.local;
+        set $registry_api_upstream opensphere-registry.opensphere-console.svc.cluster.local;
         proxy_pass http://$registry_api_upstream:80;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
@@ -155,14 +155,14 @@ server {
     # index and binaries are public product artifacts; only read methods are accepted.
     location /api/cli/ {
         limit_except GET { deny all; }
-        set $cli_upstream os-cli.opensphere-system.svc.cluster.local;
+        set $cli_upstream os-cli.opensphere-console.svc.cluster.local;
         rewrite ^/api/cli/(.*)$ /$1 break;
         proxy_pass http://$cli_upstream:8080;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
     # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).
-    # Admin이 설치/삭제하면 ns opensphere-system에 <id> service가 생기고 사라진다.
+    # Admin이 설치/삭제하면 ns opensphere-console에 <id> service가 생기고 사라진다.
     # 변수+resolver로 런타임 DNS 해석 → 미설치 상태에서도 nginx가 죽지 않고 502만 반환.
     # 감사 P0-2: auth_request로 controller가 registry/binding allowlist를 강제 → 등록·검증된 Consumer와
     #   승인된 workforce Binding 서비스만 통과. Main Shell native os CLI는 이 경로를 사용하지 않는다.
@@ -171,7 +171,7 @@ server {
         set $plugin_id $1;
         auth_request /_plugin_authz;
         resolver 10.96.0.10 valid=10s;
-        set $plugin_upstream $1.opensphere-system.svc.cluster.local;
+        set $plugin_upstream $1.opensphere-console.svc.cluster.local;
         proxy_pass http://$plugin_upstream:8080/$2$is_args$args;
         # 흡수앱(k8s-console 등)의 exec/터미널·로그 스트리밍·watch = WebSocket → 업그레이드 통과
         proxy_http_version 1.1;
@@ -190,7 +190,7 @@ server {
     # P0-2 allowlist 검사 서브리퀘스트(내부 전용). controller가 plugin id 등록 여부로 204/403 반환.
     location = /_plugin_authz {
         internal;
-        set $dupa_authz_upstream opensphere-console-dupa-controller.opensphere-system.svc.cluster.local;
+        set $dupa_authz_upstream opensphere-console-dupa-controller.opensphere-console.svc.cluster.local;
         proxy_pass http://$dupa_authz_upstream:8080/api/internal/proxy-authz;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";

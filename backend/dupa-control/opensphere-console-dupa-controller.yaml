@@ -5,20 +5,20 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: opensphere-system
+  name: opensphere-console
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: opensphere-console-dupa-controller
-  namespace: opensphere-system
+  namespace: opensphere-console
 ---
-# controller??opensphere-system ?덉뿉?쒕쭔 ?뚰겕濡쒕뱶/CRD瑜?議곗젙 (理쒖냼沅뚰븳)
+# controller??opensphere-console ?덉뿉?쒕쭔 ?뚰겕濡쒕뱶/CRD瑜?議곗젙 (理쒖냼沅뚰븳)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: opensphere-console-dupa-controller
-  namespace: opensphere-system
+  namespace: opensphere-console
 rules:
   - apiGroups: ["plugins.opensphere.io"]
     # uipluginpackages/finalizers: workload ownerReference??blockOwnerDeletion=true ?ㅼ젙???꾩슂
@@ -40,12 +40,12 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: opensphere-console-dupa-controller
-  namespace: opensphere-system
+  namespace: opensphere-console
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-dupa-controller }
 subjects:
   - kind: ServiceAccount
     name: opensphere-console-dupa-controller
-    namespace: opensphere-system
+    namespace: opensphere-console
 ---
 # Backbone ?ㅼ튂 沅뚰븳(opensphere-backbone) ??namespace ?앹꽦 + ?곗씠???곗뼱 ?뚰겕濡쒕뱶. admin 寃뚯씠??verifyActor) ?ㅼ뿉?쒕쭔 ?ъ슜.
 # 蹂꾨룄 ClusterRole濡?遺꾨━(??least-privilege Role 蹂댁〈, 沅뚰븳 紐낆떆쨌媛먯궗 ?⑹씠).
@@ -70,13 +70,13 @@ kind: ClusterRoleBinding
 metadata: { name: dupa-backbone-installer }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-backbone-installer }
 subjects:
-  - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-system }
+  - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: opensphere-console-dupa-controller
-  namespace: opensphere-system
+  namespace: opensphere-console
   labels: { app: opensphere-console-dupa-controller }
 spec:
   replicas: 2
@@ -93,7 +93,7 @@ spec:
           image: opensphere-console-dupa-controller:cli-hardening-20260712
           imagePullPolicy: IfNotPresent
           env:
-            - { name: NAMESPACE, value: opensphere-system }
+            - { name: NAMESPACE, value: opensphere-console }
             # K8s API TLS 寃利???Node fetch(undici)???쒖옉 ?쒖젏???쎌쑝誘濡?env濡?以섏빞 ??
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
             # Backbone PostgreSQL(媛먯궗濡쒓렇 ?곸냽, ??. 鍮꾨쾲? cross-ns secretKeyRef 遺덇? ??
@@ -127,7 +127,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: opensphere-console-dupa-controller
-  namespace: opensphere-system
+  namespace: opensphere-console
   labels: { app: opensphere-console-dupa-controller }
 spec:
   # Backbone 장애 시에도 소비자가 Controller의 명시적 503 응답을 받아

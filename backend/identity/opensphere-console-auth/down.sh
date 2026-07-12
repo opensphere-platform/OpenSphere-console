@@ -14,7 +14,7 @@ if [[ "${1:-}" == "--purge" ]]; then
   kubectl -n "$NS" delete deploy opensphere-console-auth --ignore-not-found
   kubectl -n "$NS" delete svc kanidm-core --ignore-not-found
   kubectl -n "$NS" delete sa opensphere-console-auth --ignore-not-found
-  kubectl -n opensphere-system delete rolebinding opensphere-console-auth-kanidm-reader --ignore-not-found
-  kubectl -n opensphere-system delete role opensphere-console-auth-kanidm-reader --ignore-not-found
+  kubectl -n opensphere-console delete rolebinding opensphere-console-auth-kanidm-reader --ignore-not-found
+  kubectl -n opensphere-console delete role opensphere-console-auth-kanidm-reader --ignore-not-found
 fi
 echo "done -> https://localhost:8444 served by Kanidm again"

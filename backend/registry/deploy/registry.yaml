@@ -1,7 +1,7 @@
 # opensphere-registry 단일창구 — SA·RBAC(라이브 UIPluginPackage list)·Deployment·Service.
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: opensphere-registry, namespace: opensphere-system }
+metadata: { name: opensphere-registry, namespace: opensphere-console }
 ---
 # 라이브 plugin 표현 = UIPluginPackage list. (read-only)
 apiVersion: rbac.authorization.k8s.io/v1
@@ -21,13 +21,13 @@ kind: ClusterRoleBinding
 metadata: { name: opensphere-registry }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensphere-registry }
 subjects:
-  - { kind: ServiceAccount, name: opensphere-registry, namespace: opensphere-system }
+  - { kind: ServiceAccount, name: opensphere-registry, namespace: opensphere-console }
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: opensphere-registry
-  namespace: opensphere-system
+  namespace: opensphere-console
   labels: { app: opensphere-registry }
 spec:
   replicas: 2
@@ -58,7 +58,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: opensphere-registry, namespace: opensphere-system }
+metadata: { name: opensphere-registry, namespace: opensphere-console }
 spec:
   selector: { app: opensphere-registry }
   ports: [{ port: 80, targetPort: 8080 }]

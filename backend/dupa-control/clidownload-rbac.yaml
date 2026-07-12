@@ -24,4 +24,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: opensphere-console-dupa-controller
-    namespace: opensphere-system
+    namespace: opensphere-console

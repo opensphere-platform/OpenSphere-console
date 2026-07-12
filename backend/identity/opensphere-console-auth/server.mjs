@@ -34,7 +34,7 @@ const TLS_CERT = process.env.TLS_CERT_PATH || '/certs/tls.crt';
 const TLS_KEY = process.env.TLS_KEY_PATH || '/certs/tls.key';
 const SIG_KEY_PATH = process.env.SIG_KEY_PATH || '/keys/sig.key';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
-const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-system';
+const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-console';
 const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-kanidm';
 const AUTH_CODE_SECRET_NAME = process.env.AUTH_CODE_SECRET_NAME || 'opensphere-console-auth-codes';
 

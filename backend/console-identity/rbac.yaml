@@ -1,7 +1,7 @@
 # Legacy console-identity — 전용 SA에만 Kanidm Secret read를 허용한다.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: console-identity-kanidm-reader, namespace: opensphere-system }
+metadata: { name: console-identity-kanidm-reader, namespace: opensphere-console }
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -10,7 +10,7 @@ rules:
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: { name: console-identity-kanidm-reader, namespace: opensphere-system }
+metadata: { name: console-identity-kanidm-reader, namespace: opensphere-console }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: console-identity-kanidm-reader }
 subjects:
-  - { kind: ServiceAccount, name: console-identity, namespace: opensphere-system }
+  - { kind: ServiceAccount, name: console-identity, namespace: opensphere-console }

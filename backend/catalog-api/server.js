@@ -13,7 +13,7 @@ const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
 const CA = fs.readFileSync(`${SA}/ca.crt`);
 const KHOST = process.env.KUBERNETES_SERVICE_HOST || 'kubernetes.default.svc';
 const KPORT = process.env.KUBERNETES_SERVICE_PORT || 443;
-const COMP_NS = (process.env.COMPONENT_NAMESPACES || 'opensphere-system,opensphere-console,opensphere-console-auth').split(',');
+const COMP_NS = (process.env.COMPONENT_NAMESPACES || 'opensphere-console,opensphere-console,opensphere-console-auth').split(',');
 
 function k8s(path) {
   return new Promise((resolve, reject) => {

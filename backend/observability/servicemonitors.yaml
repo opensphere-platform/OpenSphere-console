@@ -6,7 +6,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: opensphere-console-backend
-  namespace: opensphere-system
+  namespace: opensphere-console
   labels: { app.kubernetes.io/part-of: opensphere-console }
 spec:
   selector:
@@ -20,7 +20,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: opensphere-console-dupa-controller
-  namespace: opensphere-system
+  namespace: opensphere-console
   labels: { app.kubernetes.io/part-of: opensphere-console }
 spec:
   selector:

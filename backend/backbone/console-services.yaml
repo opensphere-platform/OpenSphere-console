@@ -116,6 +116,6 @@ spec:
   ingress:
     - from:
         - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } } }
-        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-system } } }
+        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } } }
         - { podSelector: {} }
       ports: [{ protocol: TCP, port: 8080 }]

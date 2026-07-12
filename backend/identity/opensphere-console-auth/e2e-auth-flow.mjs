@@ -10,7 +10,7 @@ const REDIRECT_URI = process.env.CONSOLE_URL || 'https://localhost:8090/';
 const USER = `os-e2e-${crypto.randomBytes(5).toString('hex')}`;
 const PASSWORD = `${crypto.randomBytes(18).toString('base64url')}Aa9!`;
 const adminB64 = execFileSync('kubectl', [
-  '-n', 'opensphere-system', 'get', 'secret', 'opensphere-identity-kanidm',
+  '-n', 'opensphere-console', 'get', 'secret', 'opensphere-identity-kanidm',
   '-o', 'jsonpath={.data.token}',
 ], { encoding: 'utf8' }).trim();
 const adminToken = Buffer.from(adminB64, 'base64').toString('utf8').trim();

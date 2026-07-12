@@ -297,7 +297,7 @@ spec:
   ingress:
     - from:
         - { podSelector: {} }
-        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-system } } }
+        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } } }
       ports: [{ protocol: TCP, port: 5432 }]
 ---
 apiVersion: networking.k8s.io/v1
@@ -309,7 +309,7 @@ spec:
   ingress:
     - from:
         - { podSelector: {} }
-        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-system } } }
+        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } } }
       ports:
         - { protocol: TCP, port: 9000 }
         - { protocol: TCP, port: 9001 }
@@ -323,5 +323,5 @@ spec:
   ingress:
     - from:
         - { podSelector: {} }
-        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-system } } }
+        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } } }
       ports: [{ protocol: TCP, port: 3000 }]

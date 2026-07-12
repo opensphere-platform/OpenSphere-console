@@ -11,22 +11,22 @@ spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-console-auth
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: opensphere-console-backend, namespace: opensphere-system }
+metadata: { name: opensphere-console-backend, namespace: opensphere-console }
 spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-console-backend } } }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: opensphere-console-dupa-controller, namespace: opensphere-system }
+metadata: { name: opensphere-console-dupa-controller, namespace: opensphere-console }
 spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-console-dupa-controller } } }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: opensphere-registry, namespace: opensphere-system }
+metadata: { name: opensphere-registry, namespace: opensphere-console }
 spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-registry } } }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: os-cli, namespace: opensphere-system }
+metadata: { name: os-cli, namespace: opensphere-console }
 spec: { minAvailable: 1, selector: { matchLabels: { app: os-cli } } }
 ---
 apiVersion: networking.k8s.io/v1
@@ -59,7 +59,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: opensphere-system-control-plane-ingress, namespace: opensphere-system }
+metadata: { name: opensphere-console-control-plane-ingress, namespace: opensphere-console }
 spec:
   podSelector:
     matchExpressions:
@@ -70,7 +70,7 @@ spec:
   ingress:
     - from:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-system } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
       ports:
         - { protocol: TCP, port: 8080 }
