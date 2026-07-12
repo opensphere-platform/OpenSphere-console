@@ -52,7 +52,8 @@ jobs:
           cache-dependency-path: OpenSphere-console/package-lock.json
       - name: Install SDK
         working-directory: OpenSphere-SDK
-        run: npm ci --no-audit --no-fund && npm run build
+        # The SDK repository does not yet publish a package-lock.json.
+        run: npm install --no-audit --no-fund && npm run build
       - name: Install Console
         working-directory: OpenSphere-console
         run: npm ci --no-audit --no-fund --legacy-peer-deps
