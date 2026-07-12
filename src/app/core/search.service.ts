@@ -43,7 +43,7 @@ export class SearchService {
     { label: 'Developer Catalog 가이드', sublabel: 'Catalog', path: '/manage/catalog', kind: 'result' },
     { label: 'APIs 탐색', sublabel: 'API', path: '/manage/apis', kind: 'result' },
     { label: 'os CLI 다운로드', sublabel: 'Console', path: '/manage/cli', kind: 'result' },
-    { label: 'Extensions 관리', sublabel: 'Console', path: '/manage/plugins', kind: 'result' },
+    { label: 'Extensions 관리', sublabel: 'Console', path: '/manage/extensions', kind: 'result' },
     { label: '역할/권한(RBAC)', sublabel: 'Identity', path: '/manage/roles', kind: 'result' },
     { label: '콘솔 관리자 온보딩', sublabel: 'Identity', path: '/manage/console-admins', kind: 'result' },
   ];
@@ -60,7 +60,7 @@ export class SearchService {
     { label: 'Developer Catalog', sublabel: '관리 · 자산 및 확장', path: '/manage/catalog', kind: 'page' },
     { label: 'APIs', sublabel: '관리 · 자산 및 확장', path: '/manage/apis', kind: 'page' },
     { label: 'Console CLI', sublabel: '관리 · 자산 및 확장', path: '/manage/cli', kind: 'page' },
-    { label: 'Extensions', sublabel: '관리 · 자산 및 확장', path: '/manage/plugins', kind: 'page' },
+    { label: 'Extensions', sublabel: '관리 · 자산 및 확장', path: '/manage/extensions', kind: 'page' },
   ];
 
   /** 즉시 로컬 인덱스(정적 + 동적 플러그인 페이지 + 워크스페이스) — "이동" 표면 */

@@ -52,7 +52,7 @@ test('native management assets have one canonical tree under /manage', () => {
   assert.doesNotMatch(routes, /path:\s*'(?:catalog|apis|console-admins)',\s*redirectTo/);
   assert.doesNotMatch(routes, /path:\s*'admin\/(?:plugins|roles)'/);
   for (const group of ['자산 및 확장', '신원 및 접근', '플랫폼 기반', '운영']) assert.match(layout, new RegExp(group));
-  for (const route of ['/manage/catalog', '/manage/apis', '/manage/plugins']) assert.match(layout, new RegExp(route));
+  for (const route of ['/manage/catalog', '/manage/apis', '/manage/extensions']) assert.match(layout, new RegExp(route));
   assert.match(shell, /private static readonly NATIVE: NavBand\[\] = \[\]/);
   assert.doesNotMatch(search, /path:\s*'\/(?:catalog|apis|admin\/plugins|admin\/roles|console-admins)'/);
 });

@@ -63,7 +63,7 @@ export class AdminLayout {
         { label: 'Developer Catalog', route: '/manage/catalog', icon: Catalog16 },
         { label: 'APIs', route: '/manage/apis', icon: Api16 },
         { label: 'Console CLI', route: '/manage/cli', icon: Terminal16 },
-        { label: 'Extensions', route: '/manage/plugins', icon: Application16 },
+        { label: 'Extensions', route: '/manage/extensions', icon: Application16 },
       ],
     },
     {
