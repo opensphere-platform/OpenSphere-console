@@ -10,6 +10,7 @@ import {
   Registration,
   AuditEvent,
   Binding,
+  ExtensionInspection,
 } from '../core/plugin-control-client.service';
 
 /** 위계 트리 노드 — console(mainShell) → subShell/plugin, + Bindings 분기(§2.7 shell→plugin 귀속 시각화). */
@@ -51,11 +52,40 @@ interface TreeNode {
 
     <div class="os-summary">
       <span class="label label-info">Catalog {{ catalog().length }}</span>
-      <span class="label label-success">Enabled {{ countPhase('Enabled') }}</span>
+      <span class="label label-success">Active {{ countPhase('Activated') }}</span>
+      <span class="label label-info">Ready {{ countPhase('Ready') }}</span>
       <span class="label">Disabled {{ countPhase('Disabled') }}</span>
       <span class="label label-danger">Failed {{ countPhase('Failed') }}</span>
       <span class="label label-info">Bindings {{ bindings().length }}</span>
     </div>
+
+    <section class="oci-install" aria-labelledby="oci-install-title">
+      <h2 id="oci-install-title">OCI 이미지로 설치</h2>
+      <p class="os-sub">GHCR digest 고정 이미지의 SDK 계약·서명·권한 프로필을 먼저 검증합니다. 검증 후 설치해도 메뉴 활성화는 별도 승인입니다.</p>
+      <div class="clr-form-control">
+        <label for="extension-image" class="clr-control-label">Image digest</label>
+        <div class="clr-control-container"><div class="clr-input-wrapper">
+          <input id="extension-image" #imageRef class="clr-input" size="90" placeholder="ghcr.io/opensphere-platform/opensphere-...@sha256:..." />
+        </div></div>
+      </div>
+      <div class="clr-form-control">
+        <label for="extension-reason" class="clr-control-label">Approval reason</label>
+        <div class="clr-control-container"><div class="clr-input-wrapper">
+          <input id="extension-reason" #reasonRef class="clr-input" size="60" placeholder="설치 목적과 승인 근거(8자 이상)" />
+        </div></div>
+      </div>
+      <button class="btn btn-outline" (click)="inspectImage(imageRef.value)">검증</button>
+      <button class="btn btn-primary" [disabled]="!inspection() || inspection()?.image !== imageRef.value.trim()" (click)="installImage(imageRef.value, reasonRef.value)">설치</button>
+      @if (inspection(); as plan) {
+        <div class="inspection-plan" role="status">
+          <strong>{{ plan.descriptor.displayName }} {{ plan.descriptor.version }}</strong>
+          <span class="label label-success">Descriptor {{ plan.verification.descriptor }}</span>
+          <span class="label label-success">Signature {{ plan.verification.signature }}</span>
+          <span class="label">{{ plan.descriptor.permissionProfile }}</span>
+          <span class="os-mono">{{ plan.descriptor.permissions.join(', ') }}</span>
+        </div>
+      }
+    </section>
 
     <clr-tabs>
       <clr-tab>
@@ -87,13 +117,13 @@ interface TreeNode {
                     @if (c.phase) {
                       <span
                         class="label"
-                        [class.label-success]="c.phase === 'Enabled'"
+                        [class.label-success]="c.phase === 'Activated' || c.phase === 'Ready'"
                         [class.label-danger]="c.phase === 'Failed'"
                         >{{ c.phase }}</span
                       >
                     }
                     @if (c.actionable && c.phase) {
-                      @if (c.phase === 'Enabled') {
+                      @if (c.phase === 'Activated') {
                         <button class="btn btn-sm" (click)="run('disable', c.id)">Disable</button>
                       } @else {
                         <button class="btn btn-sm btn-success-outline" (click)="run('enable', c.id)">
@@ -109,7 +139,7 @@ interface TreeNode {
                         <span class="caret-sp"></span><span class="tt tt-plugin">plugin</span>
                         <span class="tl cc-sel" (click)="select(g.id)">{{ g.label }}</span>
                         @if (g.phase) {
-                          <span class="label" [class.label-success]="g.phase === 'Enabled'">{{
+                          <span class="label" [class.label-success]="g.phase === 'Activated' || g.phase === 'Ready'">{{
                             g.phase
                           }}</span>
                         }
@@ -155,7 +185,7 @@ interface TreeNode {
                   <td>
                     <span
                       class="label"
-                      [class.label-success]="r.status.phase === 'Enabled'"
+                      [class.label-success]="r.status.phase === 'Activated' || r.status.phase === 'Ready'"
                       [class.label-danger]="r.status.phase === 'Failed'"
                       >{{ r.status.phase ?? '—' }}</span
                     >
@@ -163,7 +193,7 @@ interface TreeNode {
                   <td>{{ r.status.reason || '—' }}</td>
                   <td>{{ r.approval?.requestedBy ?? '—' }}</td>
                   <td>
-                    @if (r.status.phase === 'Enabled') {
+                    @if (r.status.phase === 'Activated') {
                       <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
                     } @else {
                       <button
@@ -211,7 +241,7 @@ interface TreeNode {
                     @if (phaseOf(c.name); as ph) {
                       <span
                         class="label"
-                        [class.label-success]="ph === 'Enabled'"
+                        [class.label-success]="ph === 'Activated' || ph === 'Ready'"
                         [class.label-danger]="ph === 'Failed'"
                         >{{ ph }}</span
                       >
@@ -224,6 +254,12 @@ interface TreeNode {
                     @switch (phaseOf(c.name)) {
                       @case ('Enabled') {
                         <button class="btn btn-sm" (click)="run('disable', c.name)">Disable</button>
+                      }
+                      @case ('Activated') {
+                        <button class="btn btn-sm" (click)="run('disable', c.name)">Disable</button>
+                      }
+                      @case ('Ready') {
+                        <button class="btn btn-sm btn-success-outline" (click)="run('enable', c.name)">Activate</button>
                       }
                       @case ('Disabled') {
                         <button
@@ -419,7 +455,7 @@ interface TreeNode {
         </div>
 
         <div class="cc-actions">
-          @if (r.status.phase === 'Enabled') {
+          @if (r.status.phase === 'Activated') {
             <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
           } @else {
             <button class="btn btn-sm btn-success-outline" (click)="run('enable', r.name)">Enable (재검증)</button>
@@ -458,6 +494,16 @@ interface TreeNode {
       .os-summary .label {
         margin-right: 0.3rem;
       }
+      .oci-install {
+        padding: 0.8rem 1rem;
+        margin-bottom: 1rem;
+        border: 1px solid var(--os-hairline);
+        border-radius: var(--os-radius);
+        background: var(--os-surface-1);
+      }
+      .oci-install h2 { margin: 0; font-size: 1rem; }
+      .oci-install .clr-form-control { margin-top: 0.45rem; }
+      .inspection-plan { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.65rem; flex-wrap: wrap; }
       .table .left {
         text-align: left;
       }
@@ -611,6 +657,7 @@ export class AdminPlugins implements OnInit {
   readonly registrations = signal<Registration[]>([]);
   readonly events = signal<AuditEvent[]>([]);
   readonly bindings = signal<Binding[]>([]);
+  readonly inspection = signal<ExtensionInspection | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
@@ -686,7 +733,8 @@ export class AdminPlugins implements OnInit {
     if (!r) return [];
     const phase = r.status.phase;
     const reason = r.status.reason;
-    if (phase === 'Enabled') return this.VSTEPS.map((s) => ({ label: s.label, state: 'done' }));
+    if (phase === 'Activated') return this.VSTEPS.map((s) => ({ label: s.label, state: 'done' }));
+    if (phase === 'Ready') return this.VSTEPS.map((s, i) => ({ label: s.label, state: (i < this.VSTEPS.length - 1 ? 'done' : 'pending') as any }));
     if (phase === 'Disabled') return this.VSTEPS.map((s, i) => ({ label: s.label, state: (i < this.VSTEPS.length - 1 ? 'done' : 'pending') as any }));
     if (phase === 'Failed' && reason) {
       const fi = this.VSTEPS.findIndex((s) => s.fail?.includes(reason));
@@ -718,6 +766,25 @@ export class AdminPlugins implements OnInit {
     } catch (err) {
       this.msg.set({ type: 'danger', text: String(err) });
     }
+  }
+
+  async inspectImage(image: string): Promise<void> {
+    this.inspection.set(null);
+    try {
+      const plan = await this.ctl.inspectImage(image.trim());
+      this.inspection.set(plan);
+      this.msg.set({ type: 'success', text: `검증 통과: ${plan.descriptor.id}` });
+    } catch (err) { this.msg.set({ type: 'danger', text: `검증 실패: ${err}` }); }
+  }
+
+  async installImage(image: string, reason: string): Promise<void> {
+    if (!this.inspection() || this.inspection()?.image !== image.trim()) return;
+    try {
+      const result = await this.ctl.installImage(image.trim(), reason.trim());
+      this.msg.set({ type: 'info', text: `설치 요청됨: ${result.id} — 검증 완료 후 Ready 상태가 됩니다.` });
+      await this.poll(result.id, 'install');
+      await this.refresh();
+    } catch (err) { this.msg.set({ type: 'danger', text: `설치 실패: ${err}` }); }
   }
 
   countPhase(p: string): number {
@@ -836,7 +903,7 @@ export class AdminPlugins implements OnInit {
 
   /** desired 상태에 도달할 때까지 짧게 폴링 (설치는 workload ready+검증까지 시간 필요) */
   private async poll(id: string, action: string): Promise<void> {
-    const want = action === 'disable' ? 'Disabled' : 'Enabled';
+    const want = action === 'disable' ? 'Disabled' : action === 'install' ? 'Ready' : 'Activated';
     for (let i = 0; i < 40; i++) {
       const regs = await this.ctl.registrations();
       const r = regs.find((x) => x.name === id);

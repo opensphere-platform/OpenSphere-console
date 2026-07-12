@@ -85,6 +85,22 @@ spec:
                   properties:
                     keyId: { type: string }
                 shellCompat: { type: string }   # semver range, 예 ">=0.2.0 <0.4.0"
+                permissionProfile:
+                  type: string
+                  enum: [none, cluster-observer-v1]
+                runtime:
+                  type: object
+                  properties:
+                    port: { type: integer, minimum: 1024, maximum: 65535 }
+                    healthPath: { type: string, pattern: '^/' }
+                    serviceAccountName: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+                    resources:
+                      type: object
+                      properties:
+                        cpuRequest: { type: string }
+                        memoryRequest: { type: string }
+                        cpuLimit: { type: string }
+                        memoryLimit: { type: string }
                 permissions:
                   type: array
                   items: { type: string }
@@ -202,7 +218,7 @@ spec:
                     version: { type: string }
                 desiredState:
                   type: string
-                  enum: [Enabled, Disabled, Uninstalled]
+                  enum: [Installed, Enabled, Disabled, Uninstalled]
                 installPolicy:
                   type: object
                   properties:

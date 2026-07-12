@@ -14,7 +14,7 @@ func TestHelpDeclaresNativeAdminBoundary(t *testing.T) {
 	if err := run([]string{"help"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Console native 관리자 CLI", "admin(Kanidm/BFF PAT)", "workforce", "CLI Binding", "--pat-stdin"} {
+	for _, expected := range []string{"Console native 관리자 CLI", "admin(Kanidm/BFF PAT)", "workforce", "CLI Binding", "--pat-stdin", "extensions install"} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("help missing %q", expected)
 		}
@@ -123,5 +123,17 @@ func TestLongFlagParsing(t *testing.T) {
 	got := parseLongFlags([]string{"status", "--namespace", "demo", "--apply"})
 	if got["namespace"] != "demo" || got["apply"] != "true" {
 		t.Fatalf("unexpected flags: %#v", got)
+	}
+}
+
+func TestExtensionInstallRequiresApprovalReasonBeforeNetwork(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OS_CONFIG", filepath.Join(dir, "config.json"))
+	err := run([]string{"extensions", "install", "ghcr.io/opensphere-platform/opensphere-shell-cluster-manager@sha256:" + strings.Repeat("a", 64)}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "--reason") {
+		t.Fatalf("missing approval reason must fail locally, got %v", err)
+	}
+	if !validResourceName("cluster-manager") || validResourceName("Cluster Manager") || validResourceName("cluster-manager-") {
+		t.Fatal("module id validation mismatch")
 	}
 }

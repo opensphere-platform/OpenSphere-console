@@ -18,6 +18,11 @@ export interface Registration {
   health?: 'Ready' | 'NotReady' | 'N/A'; // P2-2: 활성 플러그인 워크로드 health(컨트롤러 제공)
 }
 export interface AuditEvent { time: string; actor: string; action: string; target: string; result: string; reason: string; }
+export interface ExtensionInspection {
+  image: string;
+  descriptor: { id: string; kind: 'subShell' | 'plugin'; displayName: string; version: string; owner: string; permissionProfile: string; permissions: string[] };
+  verification: { registry: string; digest: string; descriptor: string; signature: string; permissionProfile: string };
+}
 // Binding — 비-UI 콘솔 확장(CLIDownload 등). UI plugin(UIPluginPackage)과 별개 kind. 콘솔이 '선언'을 인식·노출.
 export interface BindingLink { os?: string; arch?: string; text: string; href: string; }
 export interface Binding { kind: string; name: string; displayName: string; description?: string; enabled?: boolean; links: BindingLink[]; }
@@ -46,6 +51,16 @@ export class PluginControlClient {
     const r = await this.http.request('/api/admin/bindings', { cache: 'no-store' });
     if (!r.ok) throw new Error(`bindings HTTP ${r.status}`);
     return (await r.json()).items;
+  }
+  inspectImage(image: string): Promise<ExtensionInspection> {
+    return this.http.request('/api/admin/extensions/inspect', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image }),
+    }).then(async (r) => { if (!r.ok) throw new Error(`inspect HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+  }
+  installImage(image: string, reason: string) {
+    return this.http.request('/api/admin/extensions/install', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, reason }),
+    }).then(async (r) => { if (!r.ok) throw new Error(`install HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
   bindingAction(name: string, action: 'enable' | 'disable') {

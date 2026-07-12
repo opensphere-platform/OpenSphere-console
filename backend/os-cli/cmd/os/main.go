@@ -251,6 +251,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return getResource(cfg, args[1:], out)
 	case "role":
 		return role(cfg, args[1:], out)
+	case "extensions":
+		return extensions(cfg, args[1:], out)
 	default:
 		return dynamic(cfg, args, out, errOut)
 	}
@@ -448,6 +450,70 @@ func role(cfg Config, args []string, out io.Writer) error {
 	return pretty(out, b)
 }
 
+func extensions(cfg Config, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("사용법: os extensions inspect|install|activate|list")
+	}
+	action := strings.ToLower(args[0])
+	var method, path string
+	var payload map[string]string
+	switch action {
+	case "inspect":
+		if len(args) != 2 {
+			return errors.New("사용법: os extensions inspect <ghcr-image@sha256:digest>")
+		}
+		method, path, payload = http.MethodPost, "/api/admin/extensions/inspect", map[string]string{"image": args[1]}
+	case "install":
+		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
+			return errors.New("사용법: os extensions install <ghcr-image@sha256:digest> --reason <승인 사유>")
+		}
+		flags := parseLongFlags(args[2:])
+		reason := strings.TrimSpace(flags["reason"])
+		if len(reason) < 8 {
+			return errors.New("--reason은 8자 이상의 설치 승인 사유여야 합니다")
+		}
+		method, path, payload = http.MethodPost, "/api/admin/extensions/install", map[string]string{"image": args[1], "reason": reason}
+	case "activate":
+		if len(args) != 2 || !validResourceName(args[1]) {
+			return errors.New("사용법: os extensions activate <module-id>")
+		}
+		method, path, payload = http.MethodPost, "/api/admin/plugins/registrations/"+url.PathEscape(args[1])+"/enable", map[string]string{}
+	case "list":
+		if len(args) != 1 {
+			return errors.New("사용법: os extensions list")
+		}
+		method, path = http.MethodGet, "/api/admin/plugins/registrations"
+	default:
+		return fmt.Errorf("알 수 없는 extensions 동작: %s", action)
+	}
+	var body io.Reader
+	contentType := ""
+	if payload != nil {
+		encoded, _ := json.Marshal(payload)
+		body, contentType = bytes.NewReader(encoded), "application/json"
+	}
+	b, status, err := request(cfg, method, join(cfg.ConsoleURL, path), body, contentType)
+	if err != nil {
+		return err
+	}
+	if err := requireOK(b, status); err != nil {
+		return err
+	}
+	return pretty(out, b)
+}
+
+func validResourceName(value string) bool {
+	if len(value) < 1 || len(value) > 63 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, r := range value {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return value[len(value)-1] != '-'
+}
+
 func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	ns := args[0]
 	b, status, err := request(cfg, http.MethodGet, cfg.RegistryURL, nil, "")
@@ -586,6 +652,9 @@ func printHelp(out io.Writer) {
     (echo "$TOKEN" | os login --pat-stdin — argv 노출 없이 PAT 입력; --pat는 deprecated)
   os whoami
   os registry [--kind capability|plugin|template] [-o json]
+  os extensions inspect <ghcr-image@sha256:digest>
+  os extensions install <ghcr-image@sha256:digest> --reason <승인 사유>
+  os extensions activate <module-id> | list
   os get <resource> [name] [-o json]
   os role list | grant <user> <role> | revoke <user> <role>
   os <namespace> [명령...] [-o json]

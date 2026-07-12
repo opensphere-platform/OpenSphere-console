@@ -22,6 +22,11 @@ const V = 'v1alpha1';
 // 셸(브라우저)이 플러그인 manifest/번들에 접근하는 경로 prefix (nginx 프록시 기준)
 const SHELL_API_PREFIX = '/api/plugins';
 const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단, 감사 H)
+const MODULE_DESCRIPTOR_LABEL = 'io.opensphere.module.descriptor';
+const MODULE_SIGNATURE_LABEL = 'io.opensphere.module.descriptor.signature';
+const MODULE_KEY_ID_LABEL = 'io.opensphere.module.descriptor.key-id';
+const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1']);
+const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)@sha256:([a-f0-9]{64})$/;
 // /api/admin/events는 workload의 projected ServiceAccount token을 TokenReview로 검증한다.
 // 모든 plugin에 같은 공유 secret을 배포하지 않아 한 workload 침해가 다른 source 위장으로 번지지 않는다.
 // Backbone PostgreSQL(감사로그 영속) — 기본값=이 클러스터 service DNS. 비번은 env 아닌 Secret에서 런타임 로드.
@@ -365,7 +370,7 @@ function pluginServiceAccount(pkg) {
     if (typeof declared !== 'string' || declared === 'default' || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(declared)) {
       throw Object.assign(new Error('invalid or shared serviceAccountName'), { reason: 'InvalidServiceAccount' });
     }
-    return { name: declared, managed: false };
+    return { name: declared, managed: Boolean(pkg.spec?.permissionProfile) };
   }
   const name = pkg.metadata.name;
   const candidate = `uip-${name}`;
@@ -386,6 +391,10 @@ function deploymentManifest(pkg) {
   // 불변 이미지 보증: 항상 repo@sha256 형태로만 조립(태그·latest 금지, CRD pattern과 이중 방어).
   const img = `${pkg.spec.image.repository}@${_d}`;
   const serviceAccountName = pluginServiceAccount(pkg).name;
+  const runtime = pkg.spec.runtime || {};
+  const port = Number(runtime.port) || 8080;
+  const healthPath = String(runtime.healthPath || '/healthz');
+  const r = runtime.resources || {};
   return {
     apiVersion: 'apps/v1', kind: 'Deployment',
     metadata: { name, namespace: NS, labels: { app: name, 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
@@ -397,15 +406,14 @@ function deploymentManifest(pkg) {
         metadata: { labels: { ...podLabels(pkg), app: name } },
         spec: {
           serviceAccountName,
-          imagePullSecrets: [{ name: 'ghcr-pull' }],
           containers: [{
-            name: 'plugin', image: img, ports: [{ containerPort: 8080 }],
+            name: 'plugin', image: img, ports: [{ containerPort: port }],
             // K8s API를 호출하는 기능 컨테이너(예: platform-status)의 TLS 검증용 — 기본 제공
             env: podEnv(pkg),
-            readinessProbe: { httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 1 },
-            livenessProbe: { httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 },
+            readinessProbe: { httpGet: { path: healthPath, port }, initialDelaySeconds: 1 },
+            livenessProbe: { httpGet: { path: healthPath, port }, initialDelaySeconds: 10, periodSeconds: 10 },
             securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } },
-            resources: { requests: { cpu: '20m', memory: '32Mi' }, limits: { cpu: '200m', memory: '128Mi' } },
+            resources: { requests: { cpu: r.cpuRequest || '20m', memory: r.memoryRequest || '32Mi' }, limits: { cpu: r.cpuLimit || '200m', memory: r.memoryLimit || '128Mi' } },
           }],
         },
       },
@@ -422,11 +430,49 @@ function pdbManifest(pkg) {
 }
 function serviceManifest(pkg) {
   const name = pkg.metadata.name;
+  const port = Number(pkg.spec.runtime?.port) || 8080;
   return {
     apiVersion: 'v1', kind: 'Service',
     metadata: { name, namespace: NS, labels: { 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
-    spec: { selector: { app: name }, ports: [{ port: 8080, targetPort: 8080 }] },
+    spec: { selector: { app: name }, ports: [{ port, targetPort: port }] },
   };
+}
+
+function observerClusterRoleManifest() {
+  return {
+    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole',
+    metadata: { name: 'opensphere-module-cluster-observer-v1', labels: { 'opensphere.io/managed-by': 'dupa' } },
+    rules: [
+      { apiGroups: [''], resources: ['namespaces', 'nodes', 'pods', 'services', 'endpoints', 'persistentvolumeclaims', 'persistentvolumes', 'events', 'configmaps'], verbs: ['get', 'list', 'watch'] },
+      { apiGroups: ['apps'], resources: ['deployments', 'daemonsets', 'statefulsets', 'replicasets'], verbs: ['get', 'list', 'watch'] },
+      { apiGroups: ['batch'], resources: ['jobs', 'cronjobs'], verbs: ['get', 'list', 'watch'] },
+      { apiGroups: ['storage.k8s.io'], resources: ['storageclasses', 'csidrivers', 'csinodes', 'volumeattachments'], verbs: ['get', 'list', 'watch'] },
+      { apiGroups: ['apiextensions.k8s.io'], resources: ['customresourcedefinitions'], verbs: ['get', 'list', 'watch'] },
+    ],
+  };
+}
+function observerBindingManifest(pkg, saName) {
+  return {
+    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding',
+    metadata: { name: `opensphere-module-${pkg.metadata.name}-observer-v1`, labels: { 'opensphere.io/dupa-plugin': pkg.metadata.name, 'opensphere.io/managed-by': 'dupa' } },
+    roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'opensphere-module-cluster-observer-v1' },
+    subjects: [{ kind: 'ServiceAccount', name: saName, namespace: NS }],
+  };
+}
+async function applyPermissionProfile(pkg, saName) {
+  const profile = pkg.spec.permissionProfile || 'none';
+  if (!APPROVED_PERMISSION_PROFILES.has(profile)) throw Object.assign(new Error('unapproved permission profile'), { reason: 'UnknownPermissionProfile' });
+  if (profile === 'none') return;
+  const rolePath = '/apis/rbac.authorization.k8s.io/v1/clusterroles';
+  const role = observerClusterRoleManifest();
+  const existingRole = await k8s('GET', `${rolePath}/${role.metadata.name}`);
+  const roleResult = existingRole.ok ? await k8s('PATCH', `${rolePath}/${role.metadata.name}`, role) : await k8s('POST', rolePath, role);
+  if (!roleResult.ok) throw Object.assign(new Error('permission profile role apply failed'), { reason: 'PermissionProfileApplyFailed' });
+  const binding = observerBindingManifest(pkg, saName);
+  const bindingPath = '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings';
+  const existingBinding = await k8s('GET', `${bindingPath}/${binding.metadata.name}`);
+  const bindingResult = existingBinding.ok ? await k8s('PATCH', `${bindingPath}/${binding.metadata.name}`, binding) : await k8s('POST', bindingPath, binding);
+  if (!bindingResult.ok) throw Object.assign(new Error('permission profile binding apply failed'), { reason: 'PermissionProfileApplyFailed' });
 }
 async function applyWorkload(pkg) {
   const name = pkg.metadata.name;
@@ -440,6 +486,7 @@ async function applyWorkload(pkg) {
   } else if (!existingSa.ok) {
     throw Object.assign(new Error(`declared ServiceAccount '${sa.name}' does not exist`), { reason: 'ServiceAccountNotFound' });
   }
+  await applyPermissionProfile(pkg, sa.name);
   for (const [plural, man] of [['deployments', deploymentManifest(pkg)], ['services', serviceManifest(pkg)]]) {
     const base = `/apis/apps/v1/namespaces/${NS}/deployments`;
     const path = plural === 'deployments' ? base : `/api/v1/namespaces/${NS}/services`;
@@ -459,6 +506,7 @@ async function deleteWorkload(pkg) {
   await k8s('DELETE', `/api/v1/namespaces/${NS}/services/${name}`);
   await k8s('DELETE', `/apis/policy/v1/namespaces/${NS}/poddisruptionbudgets/${name}`);
   const sa = pluginServiceAccount(pkg);
+  await k8s('DELETE', `/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/opensphere-module-${pkg.metadata.name}-observer-v1`);
   if (sa.managed) await k8s('DELETE', `/api/v1/namespaces/${NS}/serviceaccounts/${sa.name}`);
 }
 async function workloadReady(name) {
@@ -538,6 +586,101 @@ function canonical(value) {
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
   return value;
 }
+function moduleDescriptorIssues(value) {
+  const issues = [];
+  const add = (code, path, message) => issues.push({ code, path, message });
+  if (!value || typeof value !== 'object' || Array.isArray(value)) { add('InvalidDescriptor', '$', 'descriptor must be an object'); return issues; }
+  if (value.schemaVersion !== 1) add('UnsupportedSchema', 'schemaVersion', 'schemaVersion must be 1');
+  if (!safeName(value.id)) add('InvalidId', 'id', 'id must be an RFC1123 DNS label');
+  if (!['subShell', 'plugin'].includes(value.kind)) add('InvalidKind', 'kind', 'kind must be subShell or plugin');
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(String(value.version || ''))) add('InvalidVersion', 'version', 'semantic version required');
+  for (const key of ['displayName', 'owner', 'description', 'hostRef', 'hostCompat', 'shellCompat', 'sdkVersion']) if (!String(value[key] || '').trim()) add('Required', key, `${key} is required`);
+  if (!safeName(value.hostRef)) add('InvalidHostRef', 'hostRef', 'hostRef must be an RFC1123 DNS label');
+  if (!Array.isArray(value.permissions) || value.permissions.some((p) => !KNOWN_CAPABILITIES.has(p))) add('UnknownCapability', 'permissions', 'permissions must use the closed host capability set');
+  if (!APPROVED_PERMISSION_PROFILES.has(value.permissionProfile)) add('UnknownPermissionProfile', 'permissionProfile', 'permission profile is not approved by the host');
+  if (!value.runtime || !Number.isInteger(value.runtime.port) || value.runtime.port < 1024 || value.runtime.port > 65535) add('InvalidRuntime', 'runtime.port', 'port must be 1024..65535');
+  if (!/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/.test(String(value.runtime?.healthPath || ''))) add('InvalidRuntime', 'runtime.healthPath', 'absolute health path required');
+  if (value.runtime?.serviceAccountName && !safeName(value.runtime.serviceAccountName)) add('InvalidRuntime', 'runtime.serviceAccountName', 'invalid service account');
+  for (const key of ['cpuRequest', 'memoryRequest', 'cpuLimit', 'memoryLimit']) if (!/^\d+(?:m|Mi|Gi)$/.test(String(value.runtime?.resources?.[key] || ''))) add('InvalidRuntime', `runtime.resources.${key}`, 'invalid resource quantity');
+  if (!String(value.manifest?.path || '').startsWith('/plugins/')) add('InvalidManifest', 'manifest.path', 'manifest must be below /plugins/');
+  if (!/^[a-f0-9]{64}$/.test(String(value.manifest?.sha256 || ''))) add('InvalidManifest', 'manifest.sha256', 'lowercase sha256 required');
+  if (!String(value.manifest?.signaturePath || '').startsWith('/plugins/')) add('InvalidManifest', 'manifest.signaturePath', 'signature must be below /plugins/');
+  if (!String(value.trust?.keyId || '').trim()) add('Required', 'trust.keyId', 'trusted key id required');
+  if (value.api?.basePath && value.api.basePath !== `/api/plugins/${value.id}`) add('InvalidApiBase', 'api.basePath', 'api base must match module id');
+  if (!validContributions(value.contributions)) add('InvalidContribution', 'contributions', 'closed contribution declaration is invalid');
+  return issues;
+}
+async function ghcrFetch(path, accept) {
+  const headers = { Accept: accept || 'application/json' };
+  let response = await fetch(`https://ghcr.io${path}`, { headers, signal: AbortSignal.timeout(15000) });
+  if (response.status === 401) {
+    const challenge = response.headers.get('www-authenticate') || '';
+    const service = /service="([^"]+)"/.exec(challenge)?.[1];
+    const scope = /scope="([^"]+)"/.exec(challenge)?.[1];
+    if (service !== 'ghcr.io' || !scope?.startsWith('repository:opensphere-platform/')) throw Object.assign(new Error('registry challenge rejected'), { reason: 'RegistryAuthRejected' });
+    const tokenResponse = await fetch(`https://ghcr.io/token?service=${encodeURIComponent(service)}&scope=${encodeURIComponent(scope)}`, { signal: AbortSignal.timeout(15000) });
+    if (!tokenResponse.ok) throw Object.assign(new Error('registry token unavailable'), { reason: 'RegistryAuthFailed' });
+    const registryToken = (await tokenResponse.json()).token;
+    response = await fetch(`https://ghcr.io${path}`, { headers: { ...headers, Authorization: `Bearer ${registryToken}` }, signal: AbortSignal.timeout(15000) });
+  }
+  return response;
+}
+async function inspectModuleImage(image) {
+  const match = ALLOWED_IMAGE.exec(String(image || '').trim());
+  if (!match) throw Object.assign(new Error('image must be an opensphere-platform GHCR digest reference'), { code: 400, reason: 'InvalidImageReference' });
+  const repositoryPath = `opensphere-platform/${match[1]}`;
+  const expectedDigest = `sha256:${match[2]}`;
+  const manifestResponse = await ghcrFetch(`/v2/${repositoryPath}/manifests/${expectedDigest}`, 'application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json');
+  if (!manifestResponse.ok) throw Object.assign(new Error(`registry manifest HTTP ${manifestResponse.status}`), { code: 422, reason: 'ImageManifestUnreachable' });
+  const manifestText = await manifestResponse.text();
+  const actualDigest = manifestResponse.headers.get('docker-content-digest') || `sha256:${sha256(manifestText)}`;
+  if (actualDigest !== expectedDigest) throw Object.assign(new Error('registry digest mismatch'), { code: 422, reason: 'ImageDigestMismatch' });
+  let manifest;
+  try { manifest = JSON.parse(manifestText); } catch { throw Object.assign(new Error('invalid registry manifest'), { code: 422, reason: 'InvalidImageManifest' }); }
+  if (!/^sha256:[a-f0-9]{64}$/.test(String(manifest.config?.digest || ''))) throw Object.assign(new Error('image config digest missing'), { code: 422, reason: 'InvalidImageManifest' });
+  const configResponse = await ghcrFetch(`/v2/${repositoryPath}/blobs/${manifest.config.digest}`, 'application/vnd.oci.image.config.v1+json');
+  if (!configResponse.ok) throw Object.assign(new Error(`image config HTTP ${configResponse.status}`), { code: 422, reason: 'ImageConfigUnreachable' });
+  const config = await configResponse.json();
+  const labels = config?.config?.Labels || {};
+  const descriptorText = labels[MODULE_DESCRIPTOR_LABEL];
+  const signature = labels[MODULE_SIGNATURE_LABEL];
+  const keyId = labels[MODULE_KEY_ID_LABEL];
+  if (!descriptorText || !signature || !keyId) throw Object.assign(new Error('required OpenSphere OCI labels are missing'), { code: 422, reason: 'ModuleLabelsMissing' });
+  let descriptor;
+  try { descriptor = JSON.parse(descriptorText); } catch { throw Object.assign(new Error('module descriptor is not JSON'), { code: 422, reason: 'InvalidDescriptor' }); }
+  const issues = moduleDescriptorIssues(descriptor);
+  if (issues.length) throw Object.assign(new Error('module descriptor validation failed'), { code: 422, reason: 'DescriptorRejected', issues });
+  if (keyId !== descriptor.trust.keyId) throw Object.assign(new Error('descriptor key id drift'), { code: 422, reason: 'KeyIdDrift' });
+  const trustedKey = (await loadTrustedKeys())[keyId];
+  if (!trustedKey) throw Object.assign(new Error('module signing key is not trusted'), { code: 422, reason: 'UntrustedKey' });
+  if (!verifyP256(trustedKey, signature, descriptorText)) throw Object.assign(new Error('module descriptor signature invalid'), { code: 422, reason: 'DescriptorSignatureInvalid' });
+  return {
+    image: `ghcr.io/${repositoryPath}@${expectedDigest}`,
+    repository: `ghcr.io/${repositoryPath}`,
+    digest: expectedDigest,
+    descriptor,
+    verification: { registry: 'ghcr.io', digest: 'Verified', descriptor: 'Verified', signature: 'Verified', permissionProfile: descriptor.permissionProfile },
+  };
+}
+function packageFromInspection(inspection) {
+  const d = inspection.descriptor;
+  return {
+    apiVersion: `${GROUP}/${V}`, kind: 'UIPluginPackage',
+    metadata: { name: d.id, namespace: NS, labels: { 'opensphere.io/source': 'oci', 'opensphere.io/sdk-version': d.sdkVersion } },
+    spec: {
+      kind: d.kind, hostRef: d.hostRef, hostApiVersion: d.hostApiVersion || '', hostCompat: d.hostCompat,
+      serviceAccountName: d.runtime.serviceAccountName || `uip-${d.id}`, displayName: d.displayName, owner: d.owner,
+      version: d.version, description: d.description, image: { repository: inspection.repository, digest: inspection.digest },
+      nav: { band: d.kind === 'subShell' ? 'Operate' : 'Extensions', label: d.displayName },
+      manifest: d.manifest, trust: d.trust, shellCompat: d.shellCompat, permissions: d.permissions,
+      permissionProfile: d.permissionProfile, runtime: d.runtime, api: d.api, contributions: d.contributions,
+    },
+  };
+}
+async function upsertPackage(pkg) {
+  const existing = await getPackage(pkg.metadata.name);
+  return existing.ok ? k8s('PATCH', `${crd('uipluginpackages')}/${pkg.metadata.name}`, { metadata: { labels: pkg.metadata.labels }, spec: pkg.spec }) : k8s('POST', crd('uipluginpackages'), pkg);
+}
 function validContributions(contributions) {
   const required = ['page', 'navigation', 'api', 'cli', 'manual', 'search', 'notification', 'observability'];
   if (!contributions || required.some((key) => !contributions[key] || typeof contributions[key].enabled !== 'boolean')) return false;
@@ -605,7 +748,7 @@ async function reconcile() {
         await updateStatus({ phase: 'Disabled', reason: '' });
         continue;
       }
-      // Enabled
+      // Installed/Enabled: 설치는 워크로드 검증까지만, Enabled는 검증된 릴리스를 Registry에 활성화한다.
       // 감사 시정 S1(2026-07-06): 이미지 불변성 강제 — spec.image.digest는 sha256: 필수.
       // 태그/빈 값이면 워크로드 생성 전에 Failed/InvalidDigest로 거부(fail-closed). CRD pattern과 이중 방어
       // (pattern은 신규 write만 막고, 기존 저장된 CR은 여기서 걸러진다).
@@ -634,6 +777,11 @@ async function reconcile() {
       if (!stableRelease) await updateStatus({ phase: 'Verifying', reason: '', retryable: false });
       const v = await verifyPlugin(pkg);
       if (!v.ok) { await updateStatus({ phase: 'Failed', reason: v.reason, retryable: retryableReason(v.reason) }); continue; }
+
+      if (desired === 'Installed') {
+        await updateStatus({ phase: 'Ready', reason: '', retryable: false });
+        continue;
+      }
 
       // 통과 — registry에 '승인값 전사'(§B.5): manifestSha256/keyId는 controller 계산값이 아니라 CR값
       const manifestUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/ui-shell.manifest.json`;
@@ -1304,7 +1452,7 @@ const server = http.createServer(async (req, res) => {
 
     // Console 관리 변경은 세 Backbone 기둥(PostgreSQL/RustFS/Gitea)이 모두 준비된 경우에만 허용한다.
     // 읽기 전용 표면은 유지하되, 내구 감사/오브젝트/Git 이력이 빠진 상태에서 성공으로 보이지 않게 한다.
-    if (p.startsWith('/api/admin/') && p !== '/api/admin/events' && req.method !== 'GET') {
+    if (p.startsWith('/api/admin/') && p !== '/api/admin/events' && p !== '/api/admin/extensions/inspect' && req.method !== 'GET') {
       const state = await backboneReadiness();
       if (!state.ready) return json(res, 503, { error: 'Backbone required capabilities unavailable', backbone: state, opId });
       await durableAudit(actor, 'mutation-request', p, 'attempt', req.method, opId);
@@ -1414,6 +1562,31 @@ const server = http.createServer(async (req, res) => {
       catch (e) { console.error(`[err] op=${opId} backbone install:`, e); await durableAudit(actor, 'backbone-install', BACKBONE_NS, 'error', String(e).slice(0, 120), opId); return json(res, 502, { error: 'install failed', opId }); }
     }
 
+    if (p === '/api/admin/extensions/inspect' && req.method === 'POST') {
+      const body = await readBody(req).catch(() => ({}));
+      try { return json(res, 200, await inspectModuleImage(body.image)); }
+      catch (e) { return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], opId }); }
+    }
+    if (p === '/api/admin/extensions/install' && req.method === 'POST') {
+      const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || '').trim();
+      if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'installation reason must be at least 8 characters', opId });
+      try {
+        const inspection = await inspectModuleImage(body.image);
+        const pkg = packageFromInspection(inspection);
+        const stored = await upsertPackage(pkg);
+        if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, { error: 'PackageStoreFailed', status: stored.status, opId });
+        const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason);
+        if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
+        await durableAudit(actor, 'extension-install', pkg.metadata.name, 'accepted', inspection.image, opId);
+        reconcile().catch((e) => console.error('reconcile error', e));
+        return json(res, 202, { accepted: true, id: pkg.metadata.name, desiredState: 'Installed', image: inspection.image, verification: inspection.verification });
+      } catch (e) {
+        await durableAudit(actor, 'extension-install', String(body.image || '').slice(0, 160), 'denied', e?.reason || 'InspectionFailed', opId);
+        return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], opId });
+      }
+    }
+
     if (p === '/api/admin/plugins/catalog') {
       const pkgs = await listPackages();
       return json(res, 200, { items: (pkgs.json?.items || []).map((x) => ({ name: x.metadata.name, core: isCorePkg(x), scope: x.metadata.labels?.['opensphere.io/scope'] || null, ...x.spec })) });
@@ -1423,7 +1596,7 @@ const server = http.createServer(async (req, res) => {
       // P2-2 증분: 활성 플러그인의 워크로드 health를 함께 노출(Admin UI lifecycle 가시성).
       const items = await Promise.all((regs.json?.items || []).map(async (x) => {
         const nm = x.metadata.name;
-        const health = x.spec.desiredState === 'Enabled' ? (await workloadReady(nm) ? 'Ready' : 'NotReady') : 'N/A';
+        const health = ['Installed', 'Enabled'].includes(x.spec.desiredState) ? (await workloadReady(nm) ? 'Ready' : 'NotReady') : 'N/A';
         return { name: nm, desiredState: x.spec.desiredState, status: x.status || {}, approval: x.spec.approval, health };
       }));
       return json(res, 200, { items });
@@ -1503,7 +1676,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 202, { accepted: true, id, desiredState: 'Enabled', digest: previousDigest, version: previousVersion });
       }
       const body = await readBody(req).catch(() => ({}));
-      const desired = action === 'install' || action === 'enable' ? 'Enabled' : action === 'disable' ? 'Disabled' : 'Uninstalled';
+      const desired = action === 'install' ? 'Installed' : action === 'enable' ? 'Enabled' : action === 'disable' ? 'Disabled' : 'Uninstalled';
       const r = await ensureRegistration(id, desired, actor, body.reason);
       if (!r.ok) { console.error(`[err] op=${opId} ${action} ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, action, id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
       await durableAudit(actor, action, id, 'accepted', '', opId);
@@ -1546,5 +1719,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses };
+  module.exports = { assertClaims, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest };
 }

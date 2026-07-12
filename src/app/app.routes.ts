@@ -51,7 +51,6 @@ export const routes: Routes = [
       { path: 'cli', component: AdminCli },
       { path: 'console-admins', component: ConsoleAdmins },
       { path: 'extensions', component: AdminPlugins },
-      { path: 'plugins', redirectTo: 'extensions', pathMatch: 'full' },
       { path: 'roles', component: AdminRoles },
       { path: 'backbone', component: AdminBackbone },
       { path: 'observability', component: AdminObservability },
