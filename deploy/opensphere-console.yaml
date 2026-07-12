@@ -1,7 +1,7 @@
 # OpenSphere Console (Angular + ng-clarity 셸 PoC) — ADR-UI-001 T2 스파이크
 # 소스: https://dev.azure.com/OpenSphere-Platform/OpenSphere-Platform/_git/opensphere-console
-# 이미지: 자체 빌드 → GHCR digest 핀 (이미지 규약)
-# 선행: Secret ghcr-pull, Secret shell-tls, Secret opensphere-auth-ca — git에 값 없음
+# 이미지: 자체 빌드 → 클러스터 노드 반입 후 digest 핀 (이미지 규약)
+# 선행: Secret shell-tls, Secret opensphere-auth-ca — git에 값 없음
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -21,13 +21,11 @@ spec:
     metadata:
       labels: { app: opensphere-console }
     spec:
-      imagePullSecrets:
-        - name: ghcr-pull
       containers:
         - name: shell
           # ⚠️TODO: opensphere-console 이미지 빌드·push 필요 — 아래 digest는 구 opensphere-shell 아티팩트(opensphere-console repo엔 미존재).
           # 사람용 태그: ghcr.io/opensphere-platform/opensphere-console:0.8.1-reauth (비번변경 재인증)
-          image: opensphere-console@sha256:d1df26f674c97e41164614fd3b3d6d94f9db183d8bdd896cca99194bdf87d6f6
+          image: opensphere-console@sha256:826b497ff7d7acb800cd1afca6a57df09f2207a08d34ae67dea453966e676794
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

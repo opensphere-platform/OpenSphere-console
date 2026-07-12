@@ -172,7 +172,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
         margin: 0.25rem 0;
         font-size: 0.7rem;
       }
-      /* [예외 등록] Clarity에 코드 블록 컴포넌트 부재 — DESIGN-RULES.md #예외 2 */
+      /* [예외 등록 #2] Clarity에 코드 블록 컴포넌트 부재 — DESIGN-GUIDE.md §8 */
       .os-code {
         background: var(--os-brand-900, #0b1530);
         color: #d7e0f5;

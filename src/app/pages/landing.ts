@@ -192,8 +192,8 @@ export class Landing {
   /** ① native Core Console 기능 — admin 카드는 운영관리자에게만 노출. */
   readonly coreCards = computed<Card[]>(() => {
     const base: Card[] = [
-      { path: '/catalog', title: 'Developer Catalog', sub: '카탈로그' },
-      { path: '/apis', title: 'APIs', sub: '정보 흐름' },
+      { path: '/manage/catalog', title: 'Developer Catalog', sub: '관리 · 자산 및 확장' },
+      { path: '/manage/apis', title: 'APIs', sub: '관리 · 자산 및 확장' },
       { path: '/me', title: '내 정보', sub: 'My Info' },
     ];
     if (this.psp.isAdmin()) {

@@ -34,9 +34,6 @@ function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
 export const routes: Routes = [
   { path: '', component: Landing },
   { path: 'me', component: MyInfo },
-  { path: 'manual', redirectTo: 'p/manual', pathMatch: 'full' },
-  { path: 'catalog', component: Catalog },
-  { path: 'apis', component: Apis },
   // Containers 섹션은 DUPA subShell(shell-template)로 이전됨 → 네이티브 라우트 제거. /p/shell-template 로 진입.
 
   // "콘솔 관리" 섹션 (Model A): 1단 진입 → AdminLayout이 2단 보조메뉴 + 자식 페이지를 렌더.
@@ -46,7 +43,9 @@ export const routes: Routes = [
     component: AdminLayout,
     canActivate: [authenticatedGuard],
     children: [
-      { path: '', redirectTo: 'console-admins', pathMatch: 'full' },
+      { path: '', redirectTo: 'catalog', pathMatch: 'full' },
+      { path: 'catalog', component: Catalog },
+      { path: 'apis', component: Apis },
       { path: 'console-admins', component: ConsoleAdmins },
       { path: 'plugins', component: AdminPlugins },
       { path: 'roles', component: AdminRoles },
@@ -55,11 +54,6 @@ export const routes: Routes = [
       { path: 'notifications', component: AdminNotifications },
     ],
   },
-  // 구 경로 하위호환 리다이렉트
-  { path: 'console-admins', redirectTo: 'manage/console-admins' },
-  { path: 'admin/plugins', redirectTo: 'manage/plugins' },
-  { path: 'admin/roles', redirectTo: 'manage/roles' },
-
   // 등록된 플러그인(subShell·plugin)은 전부 `/p/<id>[/서브패스]` 동적 호스트로 진입(§10). 실제 화면은
   // 런타임 로드 모듈. 미등록 id는 PluginHost가 '등록 안 됨' 안내.
   { matcher: pluginHostMatcher, component: PluginHost },

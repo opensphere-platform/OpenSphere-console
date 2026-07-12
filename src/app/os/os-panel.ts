@@ -15,7 +15,7 @@ import { ClarityModule } from '@clr/angular';
  *
  * [예외 등록] Clarity 부재로 자작 유지하는 단 한 가지: R2 마우스 드래그 폭 조절 + 폭 기억.
  * clr-side-panel의 size는 sm~full-screen 프리셋뿐이라 연속 폭 조절이 불가능하다.
- * → 그립 오버레이 + .modal-dialog 폭의 CSS 변수 오버라이드로 확장 (DESIGN-RULES.md #예외 1)
+ * → 그립 오버레이 + .modal-dialog 폭의 CSS 변수 오버라이드로 확장 (DESIGN-GUIDE.md §8 예외 1)
  *
  * 공개 API는 v0.1.2와 동일 — 화면(pages/*)은 한 줄도 바뀌지 않는다(퍼사드 절연).
  */

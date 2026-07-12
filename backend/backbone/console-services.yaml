@@ -1,5 +1,6 @@
-# Console services that consume the required Backbone. These are above the three
-# data pillars and therefore are not included in Backbone readiness itself.
+# OPTIONAL AI STAGING MANIFEST — never apply as part of the base Main Shell.
+# OAA must be installed later through an explicitly approved AI subShell package.
+# These services consume Backbone but are not one of its three required pillars.
 apiVersion: v1
 kind: ServiceAccount
 metadata: { name: oaa-gateway, namespace: opensphere-backbone }

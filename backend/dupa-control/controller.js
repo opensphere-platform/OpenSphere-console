@@ -718,7 +718,6 @@ const BACKBONE_NS = process.env.BACKBONE_NS || 'opensphere-backbone';
 const BB_LABELS = { 'opensphere.io/part-of': 'opensphere-backbone' };
 // Gitea Git 코드 뷰 — in-cluster HTTP. 공개 레포는 익명 read 가능(토큰 불요). 쓰기/비공개는 토큰 필요(다음 차수).
 const GITEA_URL = process.env.GITEA_URL || `http://backbone-gitea.${BACKBONE_NS}.svc.cluster.local:3000`;
-const OAA_GATEWAY_IMAGE = process.env.OAA_GATEWAY_IMAGE || 'oaa-gateway@sha256:de25fdc4a1a16c318f5b0bf192a249f998e5df0f2c0cbe95b946d69be0748953';
 const BB_COMPONENTS = [
   { key: 'postgres', name: 'PostgreSQL', role: '앱 DB(감사로그·설정) + Gitea DB', kind: 'Deployment', workload: 'backbone-postgres' },
   { key: 'rustfs', name: 'RustFS', role: 'S3 오브젝트 스토리지', kind: 'StatefulSet', workload: 'backbone-rustfs' },
@@ -729,7 +728,6 @@ const BB_ACCESS = {
   postgres: { secret: 'backbone-postgres', proto: 'TCP(libpq) · 5432', connect: 'psql -h backbone-postgres.opensphere-backbone.svc.cluster.local -U console -d console', note: 'console DB(감사로그·설정) + gitea DB. 비번 = Secret backbone-postgres/password.' },
   rustfs: { secret: 'backbone-rustfs', proto: 'HTTP(S3) · 9000 / 콘솔 9001', connect: 'S3 endpoint: backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 (forcePathStyle=true, region=us-east-1)', note: 'access_key/secret_key = Secret backbone-rustfs.' },
   gitea: { secret: 'backbone-gitea', proto: 'HTTP · 3000', connect: 'http://backbone-gitea.opensphere-backbone.svc.cluster.local:3000/', note: '전용 DB role과 관리자 자격은 Secret backbone-gitea에 있으며 값은 API에 노출하지 않는다.' },
-  'oaa-gateway': { secret: '', proto: 'HTTP · 8080', connect: 'http://oaa-gateway.opensphere-backbone.svc.cluster.local:8080/api/oaa/health', note: 'Stateless OAA tier. LLM API keys are stored as labeled Kubernetes Secrets and never returned to the browser.' },
 };
 function bbSecret(name, data) { return { apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: BACKBONE_NS, labels: BB_LABELS }, type: 'Opaque', stringData: data }; }
 function bbPath(o) {
@@ -807,55 +805,6 @@ function bbWorkloads() {
         volumeMounts: [{ name: 'data', mountPath: '/data' }] }], volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'backbone-gitea-data' } }] } },
     } },
     { apiVersion: 'v1', kind: 'Service', metadata: { name: 'backbone-gitea', namespace: BACKBONE_NS, labels: lab('backbone-gitea') }, spec: { selector: { app: 'backbone-gitea' }, ports: [{ name: 'http', port: 3000, targetPort: 3000 }] } },
-    { apiVersion: 'v1', kind: 'ServiceAccount', metadata: { name: 'oaa-gateway', namespace: BACKBONE_NS, labels: lab('oaa-gateway') } },
-    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', metadata: { name: 'oaa-gateway-llm-key-manager', namespace: BACKBONE_NS, labels: lab('oaa-gateway') }, rules: [
-      { apiGroups: [''], resources: ['secrets'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
-      { apiGroups: [''], resources: ['pods', 'pods/log', 'services', 'events'], verbs: ['get', 'list'] },
-      { apiGroups: ['apps'], resources: ['deployments', 'statefulsets', 'daemonsets', 'replicasets'], verbs: ['get', 'list'] },
-    ] },
-    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding', metadata: { name: 'oaa-gateway-llm-key-manager', namespace: BACKBONE_NS, labels: lab('oaa-gateway') }, roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'Role', name: 'oaa-gateway-llm-key-manager' }, subjects: [
-      { kind: 'ServiceAccount', name: 'oaa-gateway', namespace: BACKBONE_NS },
-    ] },
-    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', metadata: { name: 'oaa-gateway-environment-reader', labels: lab('oaa-gateway') }, rules: [
-      { apiGroups: [''], resources: ['pods', 'pods/log', 'services', 'events'], verbs: ['get', 'list'] },
-      { apiGroups: ['apps'], resources: ['deployments', 'statefulsets', 'daemonsets', 'replicasets'], verbs: ['get', 'list'] },
-    ] },
-    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding', metadata: { name: 'oaa-gateway-environment-reader', labels: lab('oaa-gateway') }, roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'oaa-gateway-environment-reader' }, subjects: [
-      { kind: 'ServiceAccount', name: 'oaa-gateway', namespace: BACKBONE_NS },
-    ] },
-    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', metadata: { name: 'oaa-gateway-controlled-operator', labels: lab('oaa-gateway') }, rules: [
-      { apiGroups: ['apps'], resources: ['deployments'], verbs: ['get', 'list', 'patch'] },
-    ] },
-    { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding', metadata: { name: 'oaa-gateway-controlled-operator', labels: lab('oaa-gateway') }, roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'oaa-gateway-controlled-operator' }, subjects: [
-      { kind: 'ServiceAccount', name: 'oaa-gateway', namespace: BACKBONE_NS },
-    ] },
-    { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'oaa-gateway', namespace: BACKBONE_NS, labels: lab('oaa-gateway') }, spec: {
-      replicas: 1, selector: { matchLabels: { app: 'oaa-gateway' } },
-      template: { metadata: { labels: { app: 'oaa-gateway' } }, spec: { serviceAccountName: 'oaa-gateway', containers: [{
-        name: 'gateway', image: OAA_GATEWAY_IMAGE, imagePullPolicy: 'IfNotPresent',
-        env: [
-          { name: 'BACKBONE_NS', value: BACKBONE_NS },
-          { name: 'KANIDM_ISSUERS', value: process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console,https://localhost:8444/oauth2/openid/opensphere-console' },
-          { name: 'KANIDM_JWKS_URL', value: process.env.KANIDM_JWKS_URL || 'https://opensphere-auth.opensphere-console-auth.svc:8443/oauth2/openid/opensphere-console/public_key.jwk' },
-          { name: 'KANIDM_TLS_SERVERNAME', value: process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc' },
-          { name: 'KANIDM_CA_PATH', value: process.env.KANIDM_CA_PATH || '/app/kanidm-ca.crt' },
-          { name: 'KANIDM_AZP', value: process.env.KANIDM_AZP || 'opensphere-console' },
-          { name: 'KANIDM_ADMIN_GROUP', value: process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins' },
-          { name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' },
-          { name: 'BACKBONE_PG_HOST', value: `backbone-postgres.${BACKBONE_NS}.svc.cluster.local` },
-          { name: 'BACKBONE_PG_PORT', value: '5432' },
-          { name: 'BACKBONE_PG_DB', value: 'console' },
-          { name: 'BACKBONE_PG_USER', value: 'console' },
-          { name: 'BACKBONE_PG_PASSWORD', valueFrom: { secretKeyRef: { name: 'backbone-postgres', key: 'password' } } },
-          { name: 'OAA_EMBED_DIM', value: '384' },
-          { name: 'OAA_RAG_TOP_K', value: '5' },
-        ],
-        ports: [{ name: 'http', containerPort: 8080 }],
-        readinessProbe: { httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 },
-        resources: { requests: { cpu: '25m', memory: '48Mi' }, limits: { cpu: '300m', memory: '192Mi' } },
-      }] } },
-    } },
-    { apiVersion: 'v1', kind: 'Service', metadata: { name: 'oaa-gateway', namespace: BACKBONE_NS, labels: lab('oaa-gateway') }, spec: { selector: { app: 'oaa-gateway' }, ports: [{ name: 'http', port: 8080, targetPort: 8080 }] } },
   ];
 }
 async function backboneStatus() {

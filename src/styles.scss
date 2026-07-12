@@ -1,7 +1,7 @@
 /* OpenSphere Shell — 전역 스타일
  * 구성: ① Clarity UI(엔진, ng-clarity 의존) ② OpenSphere Design Tokens(정체성, 우리 소유)
- * 토큰 SSOT = docs/DESIGN-TOKENS.md (Carbon 규율 + OpenSphere 정체성).
- * 원칙(DESIGN-RULES.md): 구조·컴포넌트는 Clarity. 전역 커스텀은 ⓐ 토큰(--clr-* 재정의)·ⓑ 등록 예외만.
+ * 디자인 SSOT = DESIGN-GUIDE.md (Clarity v18 + Carbon 아이콘 + OpenSphere 정체성).
+ * 원칙: 구조·컴포넌트는 Clarity. 전역 커스텀은 ⓐ 토큰(--clr-* 재정의)·ⓑ 등록 예외만.
  */
 /* Foblex Flow 테마 — 연결선(SVG path) 스트로크·커넥터 스타일 제공(없으면 엣지가 투명). @use는 최상단 필수(Sass 규칙). */
 @use '@foblex/flow/styles/default' as *;
@@ -10,7 +10,7 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap');
 
 /* ──────────────────────────────────────────────
- * OpenSphere Design Tokens v0  (docs/DESIGN-TOKENS.md)
+ * OpenSphere Design Tokens (DESIGN-GUIDE.md §6)
  * 방향: Carbon 규율(타입스케일·4px·hairline·플랫·단일액센트) + OpenSphere 정체성(sphere-blue·다크헤더).
  * ────────────────────────────────────────────── */
 :root {
@@ -88,72 +88,6 @@
 /* ── 타이포 base (Carbon 규율: 중립 그로테스크 + body tracking 0.16px) ── */
 html, body { height: 100%; margin: 0; background: var(--os-surface-1); font-family: var(--os-font) !important; }
 body { letter-spacing: 0.16px; color: var(--os-ink); }
-
-/* OAA Agent dock: Databricks-style right workspace, not an overlay. */
-body {
-  --oaa-dock-width: clamp(360px, 19vw, 430px);
-  --oaa-dock-gap: 8px;
-  --oaa-full-left: 0px;
-}
-html.oaa-agent-open,
-body.oaa-agent-open {
-  height: 100%;
-  overflow: hidden;
-}
-body.oaa-agent-resizing,
-body.oaa-agent-resizing * {
-  cursor: col-resize !important;
-  user-select: none !important;
-}
-body.oaa-agent-open .main-container {
-  height: 100vh;
-  max-height: 100vh;
-  overflow: hidden !important;
-}
-body .content-container {
-  transition: margin-right 0.16s ease;
-}
-body.oaa-agent-open .content-container {
-  margin-right: calc(var(--oaa-dock-width) + var(--oaa-dock-gap));
-  height: calc(100vh - 3rem);
-  max-height: calc(100vh - 3rem);
-  box-sizing: border-box;
-  border-top: 1px solid #d9dde7;
-  border-right: 1px solid #d9dde7;
-  border-top-right-radius: 8px;
-  overflow: hidden !important;
-  scrollbar-width: none;
-  overscroll-behavior: none;
-}
-body.oaa-agent-open .main-container::-webkit-scrollbar,
-body.oaa-agent-open .content-container::-webkit-scrollbar,
-body.oaa-agent-open .content-area::-webkit-scrollbar {
-  width: 0 !important;
-  height: 0 !important;
-  display: none !important;
-}
-body.oaa-agent-open .content-area {
-  height: 100%;
-  max-height: 100%;
-  overflow: hidden !important;
-  scrollbar-width: none;
-  overscroll-behavior: none;
-}
-body.oaa-agent-full .content-container {
-  margin-right: 0;
-  border-top: 0;
-  border-right: 0;
-  border-top-right-radius: 0;
-}
-@media (max-width: 900px) {
-  body {
-    --oaa-dock-width: min(360px, 72vw);
-    --oaa-dock-gap: 4px;
-  }
-  body.oaa-agent-open .content-container {
-    margin-right: calc(var(--oaa-dock-width) + var(--oaa-dock-gap));
-  }
-}
 
 /* IBM Plex 단일화 — Clarity 기본 Metropolis 전면 덮기(한·영 모두 IBM Plex). 아이콘은 SVG라 영향 없음. */
 body * { font-family: var(--os-font) !important; }

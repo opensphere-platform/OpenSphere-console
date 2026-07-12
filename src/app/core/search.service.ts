@@ -2,7 +2,6 @@ import { Injectable, computed, inject } from '@angular/core';
 import { ExtensionHostService } from './extension-host.service';
 import { PerspectiveService } from './perspective.service';
 import { ApiService, CatalogEntity } from './api.service';
-import { ManualService } from './manual.service';
 import { SearchResult, SearchProvider } from './search.types';
 
 export type { SearchResult, SearchProvider } from './search.types';
@@ -34,19 +33,18 @@ export class SearchService {
   private ext = inject(ExtensionHostService);
   private psp = inject(PerspectiveService);
   private api = inject(ApiService);
-  private manual = inject(ManualService);
   /** 데이터층/셸 provider(예: OpenSearch). 런타임 플러그인 provider는 ext가 소유(search:contribute). */
   private dataProviders: SearchProvider[] = [];
 
   /** 내장 문서 인덱스(Documentation 섹션) — 정적. 추후 docs provider로 확장 가능. */
   private readonly DOCS: SearchResult[] = [
-    { label: 'Search Language Syntax', sublabel: 'Search', path: '/catalog', kind: 'result' },
-    { label: 'Free Text Search', sublabel: 'Search', path: '/catalog', kind: 'result' },
-    { label: 'Developer Catalog 가이드', sublabel: 'Catalog', path: '/catalog', kind: 'result' },
-    { label: 'APIs 탐색', sublabel: 'API', path: '/apis', kind: 'result' },
-    { label: 'Plugins(확장) 관리', sublabel: 'Console', path: '/admin/plugins', kind: 'result' },
-    { label: '역할/권한(RBAC)', sublabel: 'Identity', path: '/admin/roles', kind: 'result' },
-    { label: '콘솔 관리자 온보딩', sublabel: 'Identity', path: '/console-admins', kind: 'result' },
+    { label: 'Search Language Syntax', sublabel: 'Search', path: '/manage/catalog', kind: 'result' },
+    { label: 'Free Text Search', sublabel: 'Search', path: '/manage/catalog', kind: 'result' },
+    { label: 'Developer Catalog 가이드', sublabel: 'Catalog', path: '/manage/catalog', kind: 'result' },
+    { label: 'APIs 탐색', sublabel: 'API', path: '/manage/apis', kind: 'result' },
+    { label: 'Extensions 관리', sublabel: 'Console', path: '/manage/plugins', kind: 'result' },
+    { label: '역할/권한(RBAC)', sublabel: 'Identity', path: '/manage/roles', kind: 'result' },
+    { label: '콘솔 관리자 온보딩', sublabel: 'Identity', path: '/manage/console-admins', kind: 'result' },
   ];
 
   /** 카탈로그 엔티티 캐시(검색 키 입력마다 재요청 방지) — 실패 시 빈 목록(graceful). */
@@ -58,9 +56,9 @@ export class SearchService {
   /** 정적 셸 페이지 인덱스 */
   private readonly STATIC: SearchResult[] = [
     { label: '홈 · Perspectives', sublabel: '셸 홈', path: '/', kind: 'page' },
-    { label: 'Developer Catalog', sublabel: 'RHDH 카탈로그', path: '/catalog', kind: 'page' },
-    { label: 'APIs', sublabel: 'API 목록', path: '/apis', kind: 'page' },
-    { label: 'Plugins', sublabel: '플러그인 관리(Admin)', path: '/admin/plugins', kind: 'page' },
+    { label: 'Developer Catalog', sublabel: '관리 · 자산 및 확장', path: '/manage/catalog', kind: 'page' },
+    { label: 'APIs', sublabel: '관리 · 자산 및 확장', path: '/manage/apis', kind: 'page' },
+    { label: 'Extensions', sublabel: '관리 · 자산 및 확장', path: '/manage/plugins', kind: 'page' },
   ];
 
   /** 즉시 로컬 인덱스(정적 + 동적 플러그인 페이지 + 워크스페이스) — "이동" 표면 */
@@ -156,20 +154,9 @@ export class SearchService {
         path,
         kind: 'result',
       });
-      services = cat.filter((e) => e.kind === 'Component' && match(e)).slice(0, 6).map((e) => toResult(e, '/catalog'));
-      marketplace = cat.filter((e) => e.kind === 'API' && match(e)).slice(0, 6).map((e) => toResult(e, '/apis'));
+      services = cat.filter((e) => e.kind === 'Component' && match(e)).slice(0, 6).map((e) => toResult(e, '/manage/catalog'));
+      marketplace = cat.filter((e) => e.kind === 'API' && match(e)).slice(0, 6).map((e) => toResult(e, '/manage/apis'));
     } catch { /* catalog 미가용 → 빈 섹션 */ }
-
-    try {
-      const manualHits = await this.manual.search(q, 6);
-      documentation.push(...manualHits.map((hit) => ({
-        label: hit.title,
-        sublabel: [hit.sourceName || 'Manual', hit.documentType, hit.sourcePath].filter(Boolean).join(' · '),
-        path: `/p/manual?doc=${encodeURIComponent(hit.sourceId)}&q=${encodeURIComponent(q)}`,
-        kind: 'result' as const,
-        source: 'manual-registry',
-      })));
-    } catch { /* manual registry unavailable */ }
 
     // provider(런타임 기여·데이터층) 결과는 source 힌트로 섹션 배분, 기본은 services.
     try {

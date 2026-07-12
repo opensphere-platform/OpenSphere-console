@@ -1,7 +1,6 @@
 import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
 import { OsPageHeader } from '../os/os-page-header';
-import { CarbonIcon } from '../os/carbon-icon';
 import { OsRawIcon } from '../os/os-raw-icon';
 import { IconLibraryService } from '../os/icon-library.service';
 import { ExtensionHostService } from '../core/extension-host.service';
@@ -31,7 +30,7 @@ interface TreeNode {
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [ClarityModule, OsPageHeader, CarbonIcon, OsRawIcon],
+  imports: [ClarityModule, OsPageHeader, OsRawIcon],
   template: `
     <div class="os-page">
       <os-page-header title="Console Extensions" tag="Admin Control">

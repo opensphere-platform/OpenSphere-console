@@ -7,8 +7,6 @@ import { iconByToken } from './carbon-icon-catalog';
 import { IconLibraryService } from './icon-library.service';
 import Menu20 from '@carbon/icons/es/menu/20';
 import Dashboard16 from '@carbon/icons/es/dashboard/16';
-import Catalog16 from '@carbon/icons/es/catalog/16';
-import Api16 from '@carbon/icons/es/api/16';
 import Application16 from '@carbon/icons/es/application/16';
 import Document16 from '@carbon/icons/es/document/16';
 import UserMultiple16 from '@carbon/icons/es/user--multiple/16';
@@ -25,7 +23,6 @@ import { routeForPlugin } from '../core/perspectives';
 import { OsNavNode } from './os-nav-node';
 import { OsSearch } from './os-search';
 import { OsNotifications } from './os-notifications';
-import { OsOaaAgent } from './os-oaa-agent';
 
 interface NavItem {
   path: string;
@@ -52,7 +49,6 @@ interface NavBand {
     OsNavNode,
     OsSearch,
     OsNotifications,
-    OsOaaAgent,
     CarbonIcon,
     OsRawIcon,
   ],
@@ -71,7 +67,6 @@ interface NavBand {
         </div>
         <os-search />
         <div class="header-actions">
-          <os-oaa-agent />
           <os-notifications />
           <!-- 콘솔 관리는 1단 nav 하단 항목으로 이동(Model A). 헤더는 프로필 전용. -->
           <!-- ACC식 계정 영역: 아바타 → Account profile / Log out (프로필 전용) -->
@@ -338,8 +333,6 @@ export class OsShell {
     }
     if (p.includes('container')) return Kubernetes16;
     if (p.includes('manual')) return Document16;
-    if (p.includes('catalog')) return Catalog16;
-    if (p.includes('/apis') || p.includes('/api')) return Api16;
     if (p.includes('console-admin')) return UserAdmin16;
     if (p.includes('role')) return UserMultiple16;
     if (p.includes('plugin')) return Application16;
@@ -348,16 +341,7 @@ export class OsShell {
 
   /** native Core 항목 — 실제 셸 컴포넌트(규칙 부합, 밴드 고정). 그 외 밴드/항목은 전부 등록(DUPA) 기반.
    *  ADR-UI-003 §3.3: 빈 '예정' 밴드(운영/전달/지능 placeholder)는 더 이상 하드코딩하지 않는다. */
-  private static readonly NATIVE: NavBand[] = [
-    {
-      band: '구축 Build',
-      items: [
-        { path: '/catalog', label: 'Developer Catalog' },
-        { path: '/apis', label: 'APIs' },
-        // Containers는 DUPA subShell(shell-template)로 이전 — 구축 Build 밴드에 동적 등록됨.
-      ],
-    },
-  ];
+  private static readonly NATIVE: NavBand[] = [];
 
   /** 알려진 밴드 정렬 순서 — 콘텐츠가 있는 밴드만 이 순서로 노출. 미지 밴드는 뒤에 append. */
   private static readonly BAND_ORDER = ['운영 Operate', '구축 Build', '전달 Deliver', '지능 Intelligence'];

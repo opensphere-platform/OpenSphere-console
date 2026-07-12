@@ -96,7 +96,7 @@ interface SecView {
             </div>
           </div>
           <div class="os-search-foot">
-            <a class="os-adv" (click)="go('/catalog')">Advanced resource query</a>
+            <a class="os-adv" (click)="go('/manage/catalog')">Advanced resource query</a>
             @if (loading()) { <span class="os-foot-loading">검색 중…</span> }
           </div>
         </div>
@@ -179,9 +179,9 @@ export class OsSearch {
     { title: 'Resources', items: this.sections().resources, viewAll: null },
   ]);
   readonly rightSecs = computed<SecView[]>(() => [
-    { title: 'Services', items: this.sections().services, viewAll: '/catalog' },
+    { title: 'Services', items: this.sections().services, viewAll: '/manage/catalog' },
     { title: 'Documentation', items: this.sections().documentation, viewAll: null },
-    { title: 'Marketplace', items: this.sections().marketplace, viewAll: '/apis' },
+    { title: 'Marketplace', items: this.sections().marketplace, viewAll: '/manage/apis' },
   ]);
 
   constructor() {
