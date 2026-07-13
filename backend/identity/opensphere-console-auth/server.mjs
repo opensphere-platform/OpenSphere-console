@@ -334,10 +334,13 @@ async function publishAuthAudit(actor, action, target, result, reason) {
   if (r.status !== 202) throw Object.assign(new Error(`durable auth audit HTTP ${r.status}`), { statusCode: 503 });
 }
 
-async function readCredentialKind(kind) {
+async function readCredentialItems(kind) {
   const r = await credentialStoreRequest('GET', `/api/internal/credential-state/${kind}`);
   if (r.status !== 200) throw Object.assign(new Error(`credential store ${kind} read HTTP ${r.status}`), { statusCode: 503 });
-  return Object.fromEntries((r.json?.items || []).map((item) => [item.id, JSON.stringify(item.record || {})]));
+  return Array.isArray(r.json?.items) ? r.json.items : [];
+}
+async function readCredentialKind(kind) {
+  return Object.fromEntries((await readCredentialItems(kind)).map((item) => [item.id, JSON.stringify(item.record || {})]));
 }
 async function mutateCredentialKind(kind, id, valueOrNull, context = {}) {
   let record = null;
@@ -350,6 +353,10 @@ async function mutateCredentialKind(kind, id, valueOrNull, context = {}) {
     record, owner: context.owner || record?.user || '', actor: context.actor || record?.user || '',
     action: context.action || `${kind}-${record === null ? 'revoke' : 'upsert'}`, reason: context.reason || '',
   });
+}
+async function touchCredentialKind(kind, id) {
+  const r = await credentialStoreRequest('POST', `/api/internal/credential-state/${kind}/${encodeURIComponent(id)}/touch`);
+  if (r.status !== 204) throw Object.assign(new Error(`credential store ${kind} touch HTTP ${r.status}`), { statusCode: 503 });
 }
 
 // 0.2 및 초기 0.3 배포가 남긴 ConfigMap 상태를 최초 접근 시 한 번만 CBS로 흡수한다.
@@ -587,9 +594,7 @@ async function handlePatMint(req, res, admin) {
   patJson(res, 200, { token, jti, label, expiresAt: new Date(exp * 1000).toISOString() });
 }
 async function handlePatList(req, res, admin) {
-  const all = await readPats();
-  const pats = Object.entries(all).map(([jti, v]) => { let r = {}; try { r = JSON.parse(v); } catch {} return { jti, label: r.label, createdAt: r.iat ? new Date(r.iat * 1000).toISOString() : null, expiresAt: r.exp ? new Date(r.exp * 1000).toISOString() : null, user: r.user }; })
-    .filter((x) => x.user === admin.preferred_username);
+  const pats = (await listPatCredentials()).filter((x) => x.user === admin.preferred_username);
   patJson(res, 200, { pats });
 }
 async function handlePatRevoke(req, res, admin, jti) {
@@ -606,6 +611,42 @@ async function handlePatRevoke(req, res, admin, jti) {
   if (pr.status >= 300) return patJson(res, 500, { error: 'store_failed' });
   patJson(res, 200, { revoked: jti });
 }
+function patCredentialView(item) {
+  const r = item?.record && typeof item.record === 'object' ? item.record : {};
+  const expiresAt = r.exp ? new Date(r.exp * 1000).toISOString() : null;
+  return {
+    jti: item.id,
+    user: r.user || item.owner || 'unknown',
+    label: r.label || 'automation-token',
+    scope: r.scope || 'admin:automation',
+    status: r.exp && r.exp <= Math.floor(Date.now() / 1000) ? 'expired' : 'active',
+    createdAt: r.iat ? new Date(r.iat * 1000).toISOString() : (item.createdAt || null),
+    expiresAt,
+    lastUsedAt: item.lastUsedAt || null,
+  };
+}
+async function listPatCredentials() {
+  await migrateLegacyCredentialState();
+  return (await readCredentialItems('pat')).map(patCredentialView);
+}
+async function handleAdminPatList(res) {
+  patJson(res, 200, { pats: await listPatCredentials() });
+}
+async function handleAdminPatRevoke(req, res, admin, jti) {
+  let body = {};
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); } catch {}
+  const reason = mutationReason(body.reason);
+  if (!reason) return patJson(res, 400, { error: 'reason_required', minimumLength: 8 });
+  const all = await readPats();
+  if (!all[jti]) return patJson(res, 404, { error: 'not_found' });
+  let rec = {}; try { rec = JSON.parse(all[jti]); } catch {}
+  const deleted = await patchPat(jti, null, {
+    owner: rec.user || 'unknown', actor: admin.preferred_username,
+    action: 'api-token-admin-revoke', reason: `${rec.user || 'unknown'}: ${reason}`,
+  });
+  if (deleted.status >= 300) return patJson(res, 503, { error: 'store_failed' });
+  patJson(res, 200, { revoked: jti, user: rec.user || 'unknown' });
+}
 function parseDevice(raw) {
   try { return JSON.parse(raw); } catch { return null; }
 }
@@ -614,6 +655,8 @@ async function managedTokenState(pl) {
   let deviceId = null;
   if (pl.typ === 'pat') {
     if (!isActivePat(pl, await readPats())) return { active: false };
+    try { await touchCredentialKind('pat', pl.jti); }
+    catch (error) { console.error('[managed-token] last-used update failed:', error.message); }
   } else if (pl.typ === 'cli_session') {
     deviceId = pl.device_id;
     const rec = parseDevice((await readDevices())[deviceId]);
@@ -1021,7 +1064,7 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
   const reqUrl = new URL(req.url, ORIGIN);
   const p = reqUrl.pathname;
   const isOidcEp = [EP.discovery, EP.jwks, EP.token, EP.authorize].includes(p);
-  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/token') || p.startsWith('/bff/cli') || p.startsWith('/bff/roles') || p === '/bff/auth-policy';
+  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/admin/tokens') || p.startsWith('/bff/token') || p.startsWith('/bff/cli') || p.startsWith('/bff/roles') || p === '/bff/auth-policy';
   const corsAllowed = Boolean(req.headers.origin && CORS_ORIGINS.has(req.headers.origin));
   if ((isOidcEp || isPatEp) && corsAllowed) {
     res.setHeader('access-control-allow-origin', req.headers.origin); res.setHeader('vary', 'origin');
@@ -1057,6 +1100,11 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       if (p === '/bff/pat' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handlePatMint(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p === '/bff/pat' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handlePatList(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p.startsWith('/bff/pat/') && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handlePatRevoke(req, res, a, decodeURIComponent(p.slice('/bff/pat/'.length))) : patJson(res, 401, { error: 'unauthorized' }); }
+      // 사용자별 자동화 토큰 통제 — 관리자는 메타데이터만 보고 강제 폐기할 수 있다.
+      // 다른 사용자를 대신해 토큰을 발급하거나 토큰 원문을 읽는 API는 제공하지 않는다.
+      if (p === '/bff/admin/tokens' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleAdminPatList(res) : patJson(res, 401, { error: 'unauthorized' }); }
+      match = p.match(/^\/bff\/admin\/tokens\/([a-f0-9]{32})$/);
+      if (match && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handleAdminPatRevoke(req, res, a, match[1]) : patJson(res, 401, { error: 'unauthorized' }); }
       // Console authentication policy — shared ConfigMap, admin-only read/write.
       if (p === '/bff/auth-policy' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleAuthPolicyGet(res) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p === '/bff/auth-policy' && req.method === 'PATCH') { const a = await requireAdmin(req); return a ? await handleAuthPolicyPatch(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }

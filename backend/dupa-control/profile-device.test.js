@@ -53,6 +53,28 @@ test('auth deployment sends durable credentials to CBS and keeps one-time flows 
   assert.match(controller, /managed_credential|listManagedCredentials/);
 });
 
+test('administrators can inspect per-user token metadata and revoke without token disclosure or proxy minting', () => {
+  const server = read('backend/identity/opensphere-console-auth/server.mjs');
+  const controller = read('backend/dupa-control/controller.js');
+  const db = read('backend/dupa-control/db.js');
+  const page = read('src/app/pages/console-admins.ts');
+
+  assert.match(server, /p === '\/bff\/admin\/tokens' && req\.method === 'GET'.*requireAdmin/s);
+  assert.match(server, /handleAdminPatRevoke\(req, res, a, match\[1\]\)/);
+  assert.match(server, /api-token-admin-revoke/);
+  assert.doesNotMatch(server, /p === '\/bff\/admin\/tokens' && req\.method === 'POST'/);
+  assert.match(server, /lastUsedAt: item\.lastUsedAt \|\| null/);
+  assert.doesNotMatch(server, /function patCredentialView[\s\S]{0,700}\btoken\s*:/);
+
+  assert.match(db, /ADD COLUMN IF NOT EXISTS last_used_at/);
+  assert.match(db, /async function touchManagedCredential/);
+  assert.match(controller, /operation === 'touch'/);
+  assert.match(page, /자동화 API 토큰/);
+  assert.match(page, /관리자는 토큰 원문을 보거나 대리 발급할 수 없으며 강제 폐기만/);
+  assert.match(page, /사용자 토큰 강제 폐기/);
+  assert.match(page, /\/bff\/admin\/tokens\/\$\{encodeURIComponent\(token\.jti\)\}/);
+});
+
 test('runAsNonRoot Node workloads use numeric image and pod identities', () => {
   for (const [dockerfilePath, deploymentPath] of [
     ['backend/identity/opensphere-console-auth/Dockerfile', 'backend/identity/opensphere-console-auth/deploy.yaml'],

@@ -60,6 +60,7 @@ async function ensureSchema() {
     PRIMARY KEY (kind, credential_id),
     CHECK (kind IN ('pat', 'device'))
   )`);
+  await pool.query('ALTER TABLE managed_credential ADD COLUMN IF NOT EXISTS last_used_at timestamptz');
   await pool.query('CREATE INDEX IF NOT EXISTS managed_credential_owner_idx ON managed_credential (owner_name, kind)');
 }
 
@@ -108,10 +109,32 @@ async function recentAudit(limit) {
 async function listManagedCredentials(kind) {
   if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
   const r = await pool.query(
-    'SELECT credential_id, owner_name, record FROM managed_credential WHERE kind=$1 ORDER BY created_at DESC',
+    `SELECT credential_id, owner_name, record, created_at, updated_at, last_used_at
+     FROM managed_credential WHERE kind=$1 ORDER BY created_at DESC`,
     [kind],
   );
-  return r.rows.map((row) => ({ id: row.credential_id, owner: row.owner_name, record: row.record }));
+  return r.rows.map((row) => ({
+    id: row.credential_id,
+    owner: row.owner_name,
+    record: row.record,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+    lastUsedAt: row.last_used_at instanceof Date ? row.last_used_at.toISOString() : (row.last_used_at ? String(row.last_used_at) : null),
+  }));
+}
+
+// 자격 증명 사용 시각은 비밀이나 권한 상태가 아닌 운영 메타데이터다. 고빈도 PAT가
+// PostgreSQL 쓰기를 증폭하지 않도록 5분 단위로만 갱신한다.
+async function touchManagedCredential(kind, id) {
+  if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
+  const r = await pool.query(
+    `UPDATE managed_credential SET last_used_at=now()
+     WHERE kind=$1 AND credential_id=$2
+       AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes')
+     RETURNING last_used_at`,
+    [kind, id],
+  );
+  return r.rowCount > 0;
 }
 
 // 자격 상태 변경과 append-only 감사를 하나의 트랜잭션으로 확정한다. 감사 INSERT가
@@ -336,4 +359,4 @@ async function dropFunction({ database, schema, name, args }) {
   } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
 }
 
-module.exports = { init, insertAudit, recentAudit, listManagedCredentials, mutateManagedCredential, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };
+module.exports = { init, insertAudit, recentAudit, listManagedCredentials, touchManagedCredential, mutateManagedCredential, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };

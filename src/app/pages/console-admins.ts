@@ -37,6 +37,16 @@ interface AuthPolicy {
   updatedBy?: string | null;
   source?: string;
 }
+interface AdminApiToken {
+  jti: string;
+  user: string;
+  label: string;
+  scope: string;
+  status: 'active' | 'expired';
+  createdAt: string | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+}
 
 /**
  * 콘솔 관리자 (Kanidm IGA) — **셸 네이티브** 페이지(ADR-UI-003 §3.2 Core≠Plugin).
@@ -127,6 +137,9 @@ interface AuthPolicy {
       </ng-template>
       <ng-template osCell="groups" let-u>
         @for (g of u.groups; track g) { <span class="label label-info">{{ g }}</span> } @empty { <span class="os-sub">—</span> }
+      </ng-template>
+      <ng-template osCell="tokens" let-u>
+        <span class="label" [class.label-info]="tokenCount(u.username) > 0">{{ tokenCount(u.username) }}개</span>
       </ng-template>
       <ng-template osCell="actions" let-u>
         <button class="btn btn-sm btn-outline" (click)="openDetail(u)" [disabled]="busy()">관리</button>
@@ -225,6 +238,35 @@ interface AuthPolicy {
             <button class="btn btn-sm btn-link" (click)="regenOnboarding(u)" [disabled]="busy()">온보딩 링크</button>
           </div>
 
+          <div class="detail-section-head">
+            <h4 class="detail-h">자동화 API 토큰 <span class="os-engine">({{ tokensForUser(u.username).length }})</span></h4>
+            <button class="btn btn-sm btn-outline" (click)="loadAdminTokens()" [disabled]="tokenBusy()">새로고침</button>
+          </div>
+          <p class="os-sub">사용자가 My Profile에서 직접 발급한 토큰의 메타데이터입니다. 관리자는 토큰 원문을 보거나 대리 발급할 수 없으며 강제 폐기만 할 수 있습니다.</p>
+          <clr-datagrid [clrDgLoading]="tokenBusy()">
+            <clr-dg-column>설명</clr-dg-column>
+            <clr-dg-column>상태</clr-dg-column>
+            <clr-dg-column>생성</clr-dg-column>
+            <clr-dg-column>만료</clr-dg-column>
+            <clr-dg-column>마지막 사용</clr-dg-column>
+            <clr-dg-column>동작</clr-dg-column>
+            @for (token of tokensForUser(u.username); track token.jti) {
+              <clr-dg-row>
+                <clr-dg-cell><strong>{{ token.label }}</strong><div class="os-mono">{{ token.jti }}</div></clr-dg-cell>
+                <clr-dg-cell>
+                  @if (token.status === 'active') { <span class="label label-success">활성</span> }
+                  @else { <span class="label label-warning">만료</span> }
+                </clr-dg-cell>
+                <clr-dg-cell>{{ fmt(token.createdAt) }}</clr-dg-cell>
+                <clr-dg-cell>{{ fmt(token.expiresAt) }}</clr-dg-cell>
+                <clr-dg-cell>{{ fmt(token.lastUsedAt) }}</clr-dg-cell>
+                <clr-dg-cell><button class="btn btn-sm btn-danger-outline" (click)="openAdminTokenRevoke(token)" [disabled]="busy()">강제 폐기</button></clr-dg-cell>
+              </clr-dg-row>
+            }
+            <clr-dg-placeholder>이 사용자가 발급한 자동화 API 토큰이 없습니다</clr-dg-placeholder>
+            <clr-dg-footer>{{ tokensForUser(u.username).length }}개 토큰</clr-dg-footer>
+          </clr-datagrid>
+
           <h4 class="detail-h">최근 이력 <span class="os-engine">(이 사용자)</span></h4>
           <clr-datagrid [clrDgLoading]="auditBusy()">
             <clr-dg-column>시각</clr-dg-column>
@@ -263,6 +305,23 @@ interface AuthPolicy {
           </div>
         }
       </os-panel>
+
+      <os-panel [open]="tokenRevokeOpen()" title="사용자 토큰 강제 폐기" subtitle="즉시 효력 상실 · CBS 영구 감사" (closed)="closeAdminTokenRevoke()">
+        @if (pendingAdminToken(); as token) {
+          <p><strong>{{ token.user }}</strong> 사용자의 <strong>{{ token.label }}</strong> 토큰을 폐기합니다. 토큰 원문은 관리자에게 노출되지 않습니다.</p>
+          <form clrForm clrLayout="vertical">
+            <clr-textarea-container>
+              <label>강제 폐기 사유</label>
+              <textarea clrTextarea [(ngModel)]="tokenRevokeReason" name="admin-token-revoke-reason" maxlength="240" required></textarea>
+              <clr-control-helper>행위자·대상 사용자와 함께 영구 감사에 기록됩니다(8자 이상).</clr-control-helper>
+            </clr-textarea-container>
+          </form>
+          <div class="panel-actions">
+            <button class="btn btn-danger" (click)="confirmAdminTokenRevoke()" [disabled]="busy() || tokenRevokeReason.trim().length < 8">강제 폐기</button>
+            <button class="btn btn-outline" (click)="closeAdminTokenRevoke()" [disabled]="busy()">취소</button>
+          </div>
+        }
+      </os-panel>
     </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
@@ -286,6 +345,8 @@ interface AuthPolicy {
       .role-admin-tag { color:var(--os-ink-subtle); font-size:.62rem; }
       .detail-info { margin-bottom:.6rem; }
       .detail-h { font-size:.8rem; margin:1.1rem 0 .3rem; color:var(--os-ink); }
+      .detail-section-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; margin-top:1.1rem; }
+      .detail-section-head .detail-h { margin:0; }
       .onboard-box { margin-top:.8rem; padding:.7rem .8rem; border:1px dashed var(--os-hairline); border-radius:.25rem; display:flex; flex-direction:column; gap:.4rem; }
       .onboard-box .link { background:var(--os-surface-1); color:var(--os-ink); font-family:var(--os-font-mono, monospace); padding:.5rem .6rem; border-radius:3px; font-size:.7rem; white-space:pre-wrap; word-break:break-all; margin:0; }
       .onboard-actions { display:flex; gap:.4rem; align-items:center; }
@@ -302,6 +363,7 @@ export class ConsoleAdmins implements OnInit {
     { key: 'email', label: '이메일' },
     { key: 'status', label: '상태' },
     { key: 'groups', label: '그룹' },
+    { key: 'tokens', label: '자동화 토큰' },
     { key: 'actions', label: '동작' },
   ];
   readonly users = signal<IdUser[]>([]);
@@ -316,6 +378,10 @@ export class ConsoleAdmins implements OnInit {
   readonly selectedUser = signal<IdUser | null>(null);
   readonly userAudit = signal<AuditEvent[]>([]);
   readonly auditBusy = signal(false);
+  readonly adminTokens = signal<AdminApiToken[]>([]);
+  readonly tokenBusy = signal(false);
+  readonly tokenRevokeOpen = signal(false);
+  readonly pendingAdminToken = signal<AdminApiToken | null>(null);
   detailRoleSel: Record<string, boolean> = {};
   detailAttrs = { displayName: '', email: '' };
   readonly down = signal<string>(''); // 백엔드 미배포/불건전 → graceful degradation
@@ -328,6 +394,7 @@ export class ConsoleAdmins implements OnInit {
   ];
   roleSel: Record<string, boolean> = {};
   policyReason = '';
+  tokenRevokeReason = '';
   draft = { username: '', displayName: '', email: '', reason: '' };
 
   private auth = inject(AuthService);
@@ -338,7 +405,7 @@ export class ConsoleAdmins implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
-    await Promise.all([this.loadIdentity(), this.loadAuthPolicy()]);
+    await Promise.all([this.loadIdentity(), this.loadAuthPolicy(), this.loadAdminTokens()]);
   }
 
   private originLink(path: string): string {
@@ -358,6 +425,7 @@ export class ConsoleAdmins implements OnInit {
     this.onboarding.set(null);
     this.selectedUser.set(null);
     this.userAudit.set([]);
+    this.closeAdminTokenRevoke();
   }
 
   // 사용자 행 "관리" → 상세 패널(역할 편집 + 활성/온보딩 + 이 사용자 문맥 감사).
@@ -371,6 +439,63 @@ export class ConsoleAdmins implements OnInit {
     this.panelMode.set('detail');
     this.panelOpen.set(true);
     void this.loadUserAudit(u.username);
+    void this.loadAdminTokens();
+  }
+
+  tokenCount(username: string): number {
+    return this.tokensForUser(username).length;
+  }
+
+  tokensForUser(username: string): AdminApiToken[] {
+    return this.adminTokens().filter((token) => token.user === username);
+  }
+
+  async loadAdminTokens(): Promise<void> {
+    this.tokenBusy.set(true);
+    try {
+      const r = await this.http.request('/bff/admin/tokens');
+      const body = (await r.json().catch(() => ({}))) as { pats?: AdminApiToken[]; error?: string };
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      this.adminTokens.set(Array.isArray(body.pats) ? body.pats : []);
+    } catch (error) {
+      this.adminTokens.set([]);
+      this.msg.set({ type: 'danger', text: `사용자별 토큰 조회 실패: ${String(error)}` });
+    } finally {
+      this.tokenBusy.set(false);
+    }
+  }
+
+  openAdminTokenRevoke(token: AdminApiToken): void {
+    this.pendingAdminToken.set(token);
+    this.tokenRevokeReason = '';
+    this.tokenRevokeOpen.set(true);
+  }
+
+  closeAdminTokenRevoke(): void {
+    this.tokenRevokeOpen.set(false);
+    this.pendingAdminToken.set(null);
+    this.tokenRevokeReason = '';
+  }
+
+  async confirmAdminTokenRevoke(): Promise<void> {
+    const token = this.pendingAdminToken();
+    const reason = this.tokenRevokeReason.trim();
+    if (!token || reason.length < 8 || this.busy()) return;
+    this.busy.set(true);
+    try {
+      const r = await this.http.request(`/bff/admin/tokens/${encodeURIComponent(token.jti)}`, {
+        method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }),
+      });
+      const body = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok && r.status !== 404) throw new Error(body.error || `HTTP ${r.status}`);
+      await Promise.all([this.loadAdminTokens(), this.loadUserAudit(token.user)]);
+      this.msg.set({ type: 'success', text: `${token.user} 사용자의 ${token.label} 토큰을 강제 폐기하고 영구 감사에 기록했습니다.` });
+      this.closeAdminTokenRevoke();
+    } catch (error) {
+      this.msg.set({ type: 'danger', text: `사용자 토큰 강제 폐기 실패: ${String(error)}` });
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   private syncDetailRoleSel(u: IdUser): void {
@@ -544,6 +669,12 @@ export class ConsoleAdmins implements OnInit {
     } catch {
       this.msg.set({ type: 'danger', text: '클립보드 복사 실패 — 수동으로 선택해 복사하세요.' });
     }
+  }
+
+  fmt(iso: string | null): string {
+    if (!iso) return '—';
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
   }
 
   async setTotpEnabled(enabled: boolean): Promise<void> {
