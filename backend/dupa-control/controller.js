@@ -1756,7 +1756,20 @@ const server = http.createServer(async (req, res) => {
       }));
       return json(res, 200, { items });
     }
-    if (p === '/api/admin/plugins/events') return json(res, 200, { items: audit });
+    if (p === '/api/admin/plugins/events') {
+      // PostgreSQL audit_log가 유일한 정본이다. 기동 시 hydrate한 메모리 링은
+      // 알림 보조 캐시일 뿐 조회 권위로 사용하지 않는다. 영구 저장소가 없을 때
+      // 빈 목록으로 정상처럼 보이면 보안 이벤트 유실을 은폐하므로 fail-closed 한다.
+      if (!db.isEnabled()) {
+        return json(res, 503, { error: 'Backbone PostgreSQL audit unavailable', opId });
+      }
+      try {
+        return json(res, 200, { items: await db.recentAudit(AUDIT_CAP) });
+      } catch (e) {
+        console.error('[audit] authoritative query failed:', String(e).slice(0, 160));
+        return json(res, 503, { error: 'Backbone PostgreSQL audit unavailable', opId });
+      }
+    }
 
     // ── Bindings (headless 비-UI 확장): CLIDownload 등. UI plugins와 분리된 관리 채널(binding≠plugin) ──
     if (p === '/api/admin/bindings') {

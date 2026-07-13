@@ -38,6 +38,13 @@ test('durable audit is fail-closed with no ConfigMap fallback', () => {
   assert.match(identity, /source: 'opensphere-console-backend'/);
 });
 
+test('audit reads use PostgreSQL as the authority and fail closed', () => {
+  assert.match(controller, /p === '\/api\/admin\/plugins\/events'/);
+  assert.match(controller, /items: await db\.recentAudit\(AUDIT_CAP\)/);
+  assert.match(controller, /Backbone PostgreSQL audit unavailable/);
+  assert.doesNotMatch(controller, /plugins\/events'\) return json\(res, 200, \{ items: audit \}\)/);
+});
+
 test('Backbone bootstrap pins and isolates all three pillars', () => {
   for (const name of ['opensphere-backbone-postgres', 'opensphere-backbone-rustfs', 'opensphere-backbone-gitea']) {
     assert.match(backbone, new RegExp(`${name}@sha256:[a-f0-9]{64}`));
