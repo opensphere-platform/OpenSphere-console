@@ -466,7 +466,7 @@ interface AuditEvent {
     `
       :host { display: block; }
       .profile-page { background: var(--os-canvas); min-height: calc(100vh - 2.2rem); }
-      .profile-hero { background: var(--os-surface-1); border-bottom: 1px solid var(--os-hairline); padding: 0.8rem 1.4rem 0.9rem; }
+      .profile-hero { display: block; background: var(--os-surface-1); border-bottom: 1px solid var(--os-hairline); padding: 0.8rem 1.4rem 0.9rem; }
       .profile-back { color: var(--os-ink); font-size: 0.68rem; text-decoration: none; }
       .profile-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-top: 0.55rem; }
       .profile-title-row h1 { font-size: 1.35rem; line-height: 1.2; margin: 0; }
