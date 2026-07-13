@@ -150,6 +150,17 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    # Console-native os CLI resource API. DUPA controller verifies the admin PAT
+    # and enforces GET-only access to the closed product-CRD allowlist.
+    location /api/proxy/ {
+        set $cli_api_upstream opensphere-console-dupa-controller.opensphere-console.svc.cluster.local;
+        proxy_pass http://$cli_api_upstream:8080$request_uri;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
     # Main Shell native os CLI — artifacts are packaged in the Console image itself.
     location /api/cli/ {
         limit_except GET { deny all; }

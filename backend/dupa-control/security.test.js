@@ -2,7 +2,7 @@
 // 실행: node --test  (또는 npm test). require.main!==module 가드로 서버는 기동되지 않는다.
 const test = require('node:test');
 const assert = require('node:assert');
-const { assertClaims, isAdminGroups, safeName } = require('./controller.js');
+const { assertClaims, isAdminGroups, safeName, allowedCLIResourcePath } = require('./controller.js');
 
 const ISS = 'https://localhost:8444/oauth2/openid/opensphere-console';
 const AZP = 'opensphere-console';
@@ -76,5 +76,28 @@ test('safeName: RFC1123 라벨만 허용 (SSRF 가드)', () => {
   // 거부(SSRF/인젝션 시도)
   for (const bad of ['UPPER', 'has_underscore', '-leadingdash', 'trailingdash-', 'has.dot', 'a/b', 'a b', '', '..', 'svc:8080', null, undefined, 123]) {
     assert.equal(safeName(bad), false, `expected invalid: ${bad}`);
+  }
+});
+
+test('allowedCLIResourcePath: Console 제품 CRD의 읽기 경로만 허용', () => {
+  for (const ok of [
+    '/apis/config.opensphere.io/v1alpha1/platformconfigs',
+    '/apis/platform.opensphere.io/v1alpha1/platformversions/release-edge',
+    '/apis/backbone.opensphere.io/v1alpha1/backboneclaims',
+    '/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginpackages/cluster-manager',
+    '/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginregistrations',
+  ]) {
+    assert.equal(allowedCLIResourcePath(ok), true, `expected allowlisted: ${ok}`);
+  }
+
+  for (const denied of [
+    '/api/v1/secrets',
+    '/apis/apps/v1/deployments',
+    '/apis/plugins.opensphere.io/v1alpha1/namespaces/default/uipluginpackages',
+    '/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginpackages/name/status',
+    '/apis/backbone.opensphere.io/v1alpha1/backboneclaims/../../secrets',
+    '/apis/backbone.opensphere.io/v1alpha1/backboneclaims/name%2Fstatus',
+  ]) {
+    assert.equal(allowedCLIResourcePath(denied), false, `expected denied: ${denied}`);
   }
 });

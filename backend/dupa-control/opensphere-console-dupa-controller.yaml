@@ -60,6 +60,10 @@ rules:
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [roles, rolebindings], verbs: [get, list, create, patch, delete] }
   # BackboneClaim ?좊떦 而⑦듃濡ㅻ윭 ??claim watch/reconcile + status + finalizer
   - { apiGroups: ["backbone.opensphere.io"], resources: [backboneclaims, backboneclaims/status, backboneclaims/finalizers], verbs: [get, list, watch, update, patch] }
+  # Console-native os CLI read-only resource plane. Controller code applies an
+  # additional exact path allowlist and accepts GET only.
+  - { apiGroups: ["config.opensphere.io"], resources: [platformconfigs], verbs: [get, list] }
+  - { apiGroups: ["platform.opensphere.io"], resources: [platformversions], verbs: [get, list] }
   # Observability ?뺣낫 酉???ServiceMonitor ?몃깽?좊━ ?쎄린(monitoring ns ?뚮뱶/?쒕퉬?ㅻ뒗 ??core 洹쒖튃?쇰줈 而ㅻ쾭).
   - { apiGroups: ["monitoring.coreos.com"], resources: [servicemonitors], verbs: [get, list] }
   # Workload event identity: projected ServiceAccount token validation (shared service secret 금지).

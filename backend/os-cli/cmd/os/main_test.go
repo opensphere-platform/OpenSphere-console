@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,5 +137,26 @@ func TestExtensionInstallRequiresApprovalReasonBeforeNetwork(t *testing.T) {
 	}
 	if !validResourceName("cluster-manager") || validResourceName("Cluster Manager") || validResourceName("cluster-manager-") {
 		t.Fatal("module id validation mismatch")
+	}
+}
+
+func TestGetResourceRejectsSPAHTMLAndUsesConsoleNamespace(t *testing.T) {
+	t.Setenv("OS_INSECURE_SKIP_TLS_VERIFY", "0")
+	var requested string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = r.URL.Path
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<!doctype html><title>Console</title>"))
+	}))
+	defer server.Close()
+	cfg := defaults()
+	cfg.APIURL = server.URL + "/api/proxy"
+	err := getResource(cfg, []string{"uipluginpackage"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "instead of JSON") {
+		t.Fatalf("SPA fallback must be rejected, got %v", err)
+	}
+	if !strings.Contains(requested, "/namespaces/opensphere-console/uipluginpackages") {
+		t.Fatalf("resource request used the wrong namespace: %s", requested)
 	}
 }

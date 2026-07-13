@@ -221,6 +221,13 @@ const NATIVE_BINDING_NAMES = new Set(['os']); // Main Shell core: Binding 이름
 // 그래서 native 워크로드의 '서비스 id'를 별도 예약집합으로 둔다. 이 id는 어떤 Binding·plugin으로도
 // /api/plugins/<id> allowlist에 진입할 수 없다(고정 /api/cli 경로만 native CLI를 제공).
 const RESERVED_PROXY_SERVICE_IDS = new Set(['os-cli']);
+const CLI_RESOURCE_PATHS = [
+  /^\/apis\/config\.opensphere\.io\/v1alpha1\/platformconfigs(?:\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)?$/,
+  /^\/apis\/platform\.opensphere\.io\/v1alpha1\/platformversions(?:\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)?$/,
+  /^\/apis\/backbone\.opensphere\.io\/v1alpha1\/backboneclaims(?:\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)?$/,
+  /^\/apis\/plugins\.opensphere\.io\/v1alpha1\/namespaces\/opensphere-console\/uiplugin(?:packages|registrations)(?:\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)?$/,
+];
+const allowedCLIResourcePath = (path) => CLI_RESOURCE_PATHS.some((pattern) => pattern.test(path));
 function integrationStatuses(pkg, phase, retryable, now) {
   if (!pkg?.spec?.contributions) return {};
   const c = pkg.spec.contributions;
@@ -1453,6 +1460,25 @@ const server = http.createServer(async (req, res) => {
         templates: []
       });
     }
+    // Console-native os CLI resource plane. It is deliberately read-only and
+    // closed to four product CRD families; this is not a general Kubernetes proxy.
+    if (p.startsWith('/api/proxy/')) {
+      if (req.method !== 'GET') return json(res, 405, { error: 'read_only_resource_proxy', opId });
+      let authenticated;
+      try { authenticated = await verifyActor(req); }
+      catch (e) {
+        const numeric = e && typeof e.code === 'number';
+        return json(res, numeric ? e.code : 502, { error: numeric ? (e.msg || 'unauthorized') : 'auth backend error', opId });
+      }
+      const upstreamPath = '/' + p.slice('/api/proxy/'.length);
+      if (!allowedCLIResourcePath(upstreamPath)) {
+        return json(res, 403, { error: 'resource_not_allowlisted', actor: authenticated.username, opId });
+      }
+      // The current CLI performs point/list reads only. Do not forward arbitrary
+      // Kubernetes query options such as watch=true through this bounded plane.
+      const upstream = await k8s('GET', upstreamPath);
+      return json(res, upstream.status, upstream.json);
+    }
     // P0-2: nginx auth_request 대상 — /api/plugins/<id> 프록시 허용 여부(registry allowlist).
     // 등록·검증돼 단일 Registry에 투영 가능한 plugin id만 통과 → opensphere-console 내 임의 service 프록시 차단.
     if (p === '/api/internal/proxy-authz') {
@@ -1747,5 +1773,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest };
+  module.exports = { assertClaims, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest, allowedCLIResourcePath };
 }

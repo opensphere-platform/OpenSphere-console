@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -166,12 +167,17 @@ func client() *http.Client {
 }
 
 func request(cfg Config, method, rawURL string, body io.Reader, contentType string) ([]byte, int, error) {
+	b, status, _, err := requestWithContentType(cfg, method, rawURL, body, contentType)
+	return b, status, err
+}
+
+func requestWithContentType(cfg Config, method, rawURL string, body io.Reader, contentType string) ([]byte, int, string, error) {
 	if err := validateURL(rawURL); err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	req, err := http.NewRequest(method, rawURL, body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	if cfg.PAT != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.PAT)
@@ -186,11 +192,11 @@ func request(cfg Config, method, rawURL string, body io.Reader, contentType stri
 	req.Header.Set("X-OS-Correlation-ID", operationID())
 	resp, err := client().Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	return b, resp.StatusCode, err
+	return b, resp.StatusCode, resp.Header.Get("Content-Type"), err
 }
 
 func operationID() string {
@@ -394,10 +400,10 @@ var resourcePaths = map[string]string{
 	"platformversions":      "/apis/platform.opensphere.io/v1alpha1/platformversions",
 	"backboneclaim":         "/apis/backbone.opensphere.io/v1alpha1/backboneclaims",
 	"backboneclaims":        "/apis/backbone.opensphere.io/v1alpha1/backboneclaims",
-	"uipluginpackage":       "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-system/uipluginpackages",
-	"uipluginpackages":      "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-system/uipluginpackages",
-	"uipluginregistration":  "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-system/uipluginregistrations",
-	"uipluginregistrations": "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-system/uipluginregistrations",
+	"uipluginpackage":       "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginpackages",
+	"uipluginpackages":      "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginpackages",
+	"uipluginregistration":  "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginregistrations",
+	"uipluginregistrations": "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginregistrations",
 }
 
 func getResource(cfg Config, args []string, out io.Writer) error {
@@ -411,12 +417,20 @@ func getResource(cfg Config, args []string, out io.Writer) error {
 	if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		path += "/" + url.PathEscape(args[1])
 	}
-	b, status, err := request(cfg, http.MethodGet, join(cfg.APIURL, path), nil, "")
+	b, status, contentType, err := requestWithContentType(cfg, http.MethodGet, join(cfg.APIURL, path), nil, "")
 	if err != nil {
 		return err
 	}
 	if err := requireOK(b, status); err != nil {
 		return err
+	}
+	mediaType, _, parseErr := mime.ParseMediaType(contentType)
+	if parseErr != nil || (mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json")) {
+		return fmt.Errorf("resource API returned %q instead of JSON", contentType)
+	}
+	var document json.RawMessage
+	if err := json.Unmarshal(b, &document); err != nil {
+		return fmt.Errorf("resource API returned invalid JSON: %w", err)
 	}
 	return pretty(out, b)
 }

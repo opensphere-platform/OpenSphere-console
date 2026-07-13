@@ -6,9 +6,9 @@
   "profile": "admin",
   "version": "0.2.0",
   "links": [
-    { "os": "linux",   "arch": "amd64", "text": "Linux (amd64)",   "href": "/api/cli/opensphere-cli-linux-amd64",       "size": 6095032, "sha256": "3ccb928e3c9a36d24fa722f3afb1a27a066d2dc6065e37411b37dec0e6bdc422" },
-    { "os": "darwin",  "arch": "arm64", "text": "macOS (arm64)",   "href": "/api/cli/opensphere-cli-darwin-arm64",        "size": 5763362, "sha256": "9dac00d36563014eabee19b8ede45df9db3847aa3af912e42ced5005487b96dc" },
-    { "os": "windows", "arch": "amd64", "text": "Windows (amd64)", "href": "/api/cli/opensphere-cli-windows-amd64.exe", "size": 6255616, "sha256": "5ca986933d5193c44b98a0e74030d68009c1072a9e7f7d9d87247237208a4229" }
+    { "os": "linux",   "arch": "amd64", "text": "Linux (amd64)",   "href": "/api/cli/opensphere-cli-linux-amd64",       "size": 6095032, "sha256": "e7f09c93d1ba22763c193690bdda6acddbc998b9e1a270232c4e56bf1ffc5456" },
+    { "os": "darwin",  "arch": "arm64", "text": "macOS (arm64)",   "href": "/api/cli/opensphere-cli-darwin-arm64",        "size": 5763362, "sha256": "dae27a31c1ba961db8007165fe070c83fe2e326a5f1709158e9b1bbb496e6b7c" },
+    { "os": "windows", "arch": "amd64", "text": "Windows (amd64)", "href": "/api/cli/opensphere-cli-windows-amd64.exe", "size": 6256640, "sha256": "242aae825f703f0bbf99914c92263b9f2d1a83729423bfd37610fe93369e898b" }
   ],
   "extensionBoundary": {
     "workforce": "future-binding",
