@@ -35,6 +35,11 @@ Authority: 이 문서는 OpenSphere UI 시스템의 단일 디자인 정본(SSOT
 Console-native `os` CLI는 Main Shell의 비시각 제어 표면이며 Binding으로 등록하지 않는다. 향후 workforce
 CLI는 별도 Binding과 별도 인증 프로파일을 사용하고 admin PAT를 공유하지 않는다.
 
+관리자 CLI의 사람 인증은 **장치 신뢰(device authorization)** 를 기본으로 한다. 최초 `os login`에서
+브라우저 OIDC 세션으로 P-256 공개키를 승인하고, 개인키는 Windows DPAPI, macOS Keychain 또는 Linux
+Secret Service에만 저장한다. 이후 명령은 장치 서명으로 짧은 세션을 교환한다. 장기 API 토큰은 CI·무인
+자동화 전용이며 사람의 반복 로그인 수단으로 안내하거나 평문 설정 파일에 저장해서는 안 된다.
+
 동적 plugin은 Angular 런타임 결합을 피하므로 “모든 element가 Angular Clarity 컴포넌트”라는 문장을
 그대로 적용하지 않는다. 대신 Clarity가 정의한 구조·클래스·토큰·접근성 규칙을 준수해야 한다.
 
@@ -93,6 +98,27 @@ Clarity가 제공하는 기능에 자작 backdrop, focus trap, ESC 처리, popup
 - 퍼사드 내부의 골격은 Clarity여야 한다.
 - Clarity component DOM을 `::ng-deep`로 재배치하거나 접근성 속성을 약화하지 않는다.
 - 동적 값 바인딩(`[style.*]`)은 기능상 불가피하고 등록된 예외일 때만 허용한다.
+
+### 4.3 사용자 프로필과 자격 증명
+
+사람 중심의 신원·접근·자격 증명은 Main Shell의 `/me`를 단일 제어 표면으로 사용한다. 기본 정보만 표시하는
+요약 카드는 충분하지 않으며 다음 탭을 Clarity Tabs로 제공한다.
+
+| 탭 | 책임 |
+|---|---|
+| 상세 | 사용자 ID, 표시 이름, 이메일, 상태, 인증 방식, 기본 설정, 기능 |
+| 그룹·역할 | 현재 Kanidm 그룹과 평가된 역할 |
+| 내 요청 | 접근 승인 요청의 상태 |
+| 내 리소스 | 허용된 Workspace와 소유 리소스 |
+| 자격 증명 | CLI 장치 키, 비대화형 자동화 API 토큰의 생성·조회·폐기 |
+| 보안 | 현재 세션, TOTP 정책, 자격 갱신 경로 |
+| 활동 | Backbone 영구 감사 중 현재 사용자 관련 항목 |
+
+- 프로필 편집은 `os-panel`과 Clarity Form을 사용하고 변경 사유를 영구 감사에 남긴다.
+- CLI 메뉴(`/manage/cli`)는 아티팩트 다운로드와 사용 안내만 담당한다. 사용자 장치·토큰 관리를 복제하지 않는다.
+- 장치 목록에는 라벨, 공개키 지문, 등록 시각, 마지막 사용 시각과 신뢰 해제 동작을 제공한다.
+- 자동화 API 토큰은 장치 로그인과 시각·문구로 분리하고, 생성 직후 한 번만 원문을 표시한다.
+- 비밀 개인키, 비밀번호, TOTP seed는 프로필 API나 화면에 반환하지 않는다.
 
 ## 5. Brand, Logo, Icon 정책
 

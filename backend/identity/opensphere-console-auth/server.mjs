@@ -15,6 +15,7 @@ import { URL, URLSearchParams } from 'node:url';
 import QRCode from 'qrcode';
 import { DEFAULT_TOTP_ENABLED, authPolicyFromConfigMap, authPolicyPatch } from './auth-policy.mjs';
 import { credentialCommitError, shouldResetExistingTotp } from './credential-onboarding.mjs';
+import { deviceFingerprint, safeEqualToken, validateDevicePublicJwk, verifyDeviceChallenge } from './cli-device.mjs';
 import { isActivePat, verifyEs256Jwt } from './token-verifier.mjs';
 
 // ---- config ----
@@ -38,6 +39,8 @@ const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-console';
 const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-kanidm';
 const AUTH_CODE_SECRET_NAME = process.env.AUTH_CODE_SECRET_NAME || 'opensphere-console-auth-codes';
+const CLI_DEVICE_CM_NAME = process.env.CLI_DEVICE_CM_NAME || 'opensphere-console-auth-cli-devices';
+const CLI_FLOW_SECRET_NAME = process.env.CLI_FLOW_SECRET_NAME || 'opensphere-console-auth-cli-flows';
 
 const PATH_BASE = '/oauth2/openid/opensphere-console';
 const EP = {
@@ -258,7 +261,9 @@ const readBody = (req) => new Promise((resolve, reject) => { const ch = []; req.
 function send(res, code, type, body) { res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' }); res.end(body); }
 function redirect(res, location) { res.writeHead(302, { location, 'cache-control': 'no-store' }); res.end(); }
 
-// ---- PAT (Personal Access Token): 관리자 발급 장수 토큰(osph CLI/자동화 인증) ----
+// ---- API token + CLI device trust --------------------------------------------------
+// PAT는 비대화형 자동화용 API token이다. 사람의 os CLI는 P-256 디바이스 키를 한 번
+// 등록한 뒤 15분 세션을 발급받으며, 개인키는 서버로 전송하거나 config.json에 저장하지 않는다.
 // 발급/폐기 권위 = BFF. allowlist(jti)는 ConfigMap에 영속 → 재시작·폐기에도 정확.
 // (안정 서명키 /keys/sig.key 전제 — ephemeral이면 재시작 시 PAT 무효.)
 const PAT_CM_NS = process.env.PAT_CM_NS || 'opensphere-console';
@@ -267,11 +272,16 @@ const AUTH_POLICY_CM_NAME = process.env.AUTH_POLICY_CM_NAME || 'opensphere-conso
 // AG-5: 배포에서 권위 있게 설정하는 운영 환경 지시자. production이면 TOTP를 강제하고 비활성화를 거부한다.
 // 비워두면 ConfigMap의 environment를 사용(로컬/개발 기본 development → 기존 동작 유지).
 const AUTH_ENVIRONMENT = process.env.AUTH_ENVIRONMENT || '';
-const PAT_TTL_DAYS = parseInt(process.env.PAT_TTL_DAYS || '365', 10);
+const PAT_TTL_DAYS = parseInt(process.env.PAT_TTL_DAYS || '30', 10);
+const CLI_SESSION_TTL = parseInt(process.env.CLI_SESSION_TTL || '900', 10);
+const CLI_ENROLLMENT_TTL = parseInt(process.env.CLI_ENROLLMENT_TTL || '300', 10);
+const CLI_CHALLENGE_TTL = parseInt(process.env.CLI_CHALLENGE_TTL || '60', 10);
 const OIDC_TOKEN_TTL = parseInt(process.env.OIDC_TOKEN_TTL || '3600', 10); // console session (id_token) lifetime in seconds; default 1h, set 86400 for 24h
 const PAT_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${PAT_CM_NAME}`;
 const AUTH_POLICY_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${AUTH_POLICY_CM_NAME}`;
 const AUTH_CODE_SECRET_PATH = `/api/v1/namespaces/${PAT_CM_NS}/secrets/${AUTH_CODE_SECRET_NAME}`;
+const CLI_DEVICE_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${CLI_DEVICE_CM_NAME}`;
+const CLI_FLOW_SECRET_PATH = `/api/v1/namespaces/${PAT_CM_NS}/secrets/${CLI_FLOW_SECRET_NAME}`;
 
 function k8sApi(method, path, body, contentType) {
   return new Promise((resolve, reject) => {
@@ -288,6 +298,43 @@ function k8sApi(method, path, body, contentType) {
 const readPats = async () => { const r = await k8sApi('GET', PAT_CM_PATH); return (r.status === 200 && r.json?.data) ? r.json.data : {}; };
 // merge-patch: data[jti]=string(추가) 또는 null(폐기)
 const patchPat = (jti, valueOrNull) => k8sApi('PATCH', PAT_CM_PATH, { data: { [jti]: valueOrNull } }, 'application/merge-patch+json');
+const readDevices = async () => { const r = await k8sApi('GET', CLI_DEVICE_CM_PATH); return (r.status === 200 && r.json?.data) ? r.json.data : {}; };
+const patchDevice = (id, valueOrNull) => k8sApi('PATCH', CLI_DEVICE_CM_PATH, { data: { [id]: valueOrNull } }, 'application/merge-patch+json');
+const flowKey = (kind, id) => `${kind}.${id}`;
+async function patchFlow(kind, id, valueOrNull) {
+  const value = valueOrNull === null ? null : Buffer.from(JSON.stringify(valueOrNull)).toString('base64');
+  return k8sApi('PATCH', CLI_FLOW_SECRET_PATH, { data: { [flowKey(kind, id)]: value } }, 'application/merge-patch+json');
+}
+async function readFlow(kind, id) {
+  const r = await k8sApi('GET', CLI_FLOW_SECRET_PATH);
+  if (r.status !== 200) throw new Error(`CLI flow read HTTP ${r.status}`);
+  const encoded = r.json?.data?.[flowKey(kind, id)];
+  if (!encoded) return null;
+  try { return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')); }
+  catch { return null; }
+}
+// Challenge는 두 BFF replica 사이에서도 한 번만 소비되어야 한다.
+async function takeFlow(kind, id) {
+  const key = flowKey(kind, id);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const r = await k8sApi('GET', CLI_FLOW_SECRET_PATH);
+    if (r.status !== 200) throw new Error(`CLI flow read HTTP ${r.status}`);
+    const encoded = r.json?.data?.[key];
+    if (!encoded) return null;
+    const data = { ...(r.json.data || {}) };
+    delete data[key];
+    const consumed = await k8sApi('PUT', CLI_FLOW_SECRET_PATH, {
+      apiVersion: 'v1', kind: 'Secret',
+      metadata: { name: CLI_FLOW_SECRET_NAME, namespace: PAT_CM_NS, resourceVersion: r.json.metadata?.resourceVersion },
+      type: 'Opaque', data,
+    });
+    if (consumed.status === 409) continue;
+    if (consumed.status >= 300) throw new Error(`CLI flow consume HTTP ${consumed.status}`);
+    try { return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')); }
+    catch { return null; }
+  }
+  throw new Error('CLI flow consume conflict');
+}
 
 async function storeAuthorizationCode(code, entry) {
   const encoded = Buffer.from(JSON.stringify(entry)).toString('base64');
@@ -340,6 +387,21 @@ async function cleanupAuthorizationCodes() {
   });
 }
 setInterval(() => cleanupAuthorizationCodes().catch((e) => console.error('[auth-code] cleanup:', e.message)), 30000).unref?.();
+
+async function cleanupCliFlows() {
+  const r = await k8sApi('GET', CLI_FLOW_SECRET_PATH);
+  if (r.status !== 200) return;
+  const now = Math.floor(Date.now() / 1000);
+  for (const [key, encoded] of Object.entries(r.json?.data || {})) {
+    try {
+      const entry = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+      if (entry.exp && entry.exp >= now) continue;
+    } catch {}
+    const split = key.indexOf('.');
+    if (split > 0) await patchFlow(key.slice(0, split), key.slice(split + 1), null);
+  }
+}
+setInterval(() => cleanupCliFlows().catch((e) => console.error('[cli-flow] cleanup:', e.message)), 30000).unref?.();
 
 async function readAuthPolicy() {
   const r = await k8sApi('GET', AUTH_POLICY_CM_PATH);
@@ -406,10 +468,10 @@ async function requireAdmin(req) {
   const t = bearer(req);
   let pl = verifyToken(t);
   const via = pl ? 'bff' : 'kanidm';
-  if (pl?.typ === 'pat') {
-    if (!isActivePat(pl, await readPats())) pl = null;
-  } else if (pl?.typ !== undefined) {
-    pl = null;
+  if (pl?.typ !== undefined) {
+    const state = await managedTokenState(pl);
+    if (!state.active) pl = null;
+    else pl.groups = state.groups;
   }
   if (!pl) pl = await verifyKanidmToken(t);
   if (!pl) { console.log(`[requireAdmin] DENY no-valid-token hasBearer=${!!t} len=${t ? t.length : 0}`); return null; }
@@ -427,8 +489,8 @@ async function handlePatMint(req, res, admin) {
   const now = Math.floor(Date.now() / 1000), exp = now + PAT_TTL_DAYS * 86400;
   const token = signJWT({ iss: ISSUER, sub: admin.sub, aud: CLIENT_ID, azp: CLIENT_ID,
     preferred_username: admin.preferred_username, name: admin.name, ...(admin.email ? { email: admin.email } : {}),
-    groups: admin.groups, typ: 'pat', jti, iat: now, nbf: now, exp });
-  const pr = await patchPat(jti, JSON.stringify({ user: admin.preferred_username, label, iat: now, exp }));
+    groups: admin.groups, typ: 'pat', scope: 'admin:automation', jti, iat: now, nbf: now, exp });
+  const pr = await patchPat(jti, JSON.stringify({ user: admin.preferred_username, label, scope: 'admin:automation', iat: now, exp }));
   if (pr.status >= 300) return patJson(res, 500, { error: 'store_failed', status: pr.status });
   patJson(res, 200, { token, jti, label, expiresAt: new Date(exp * 1000).toISOString() });
 }
@@ -447,14 +509,203 @@ async function handlePatRevoke(req, res, admin, jti) {
   if (pr.status >= 300) return patJson(res, 500, { error: 'store_failed' });
   patJson(res, 200, { revoked: jti });
 }
-// resource-server가 PAT 유효성 확인(폐기 반영). RFC7662 풍 introspection.
-async function handlePatIntrospect(req, res) {
+function parseDevice(raw) {
+  try { return JSON.parse(raw); } catch { return null; }
+}
+async function managedTokenState(pl) {
+  if (!pl || !pl.typ) return { active: false };
+  let deviceId = null;
+  if (pl.typ === 'pat') {
+    if (!isActivePat(pl, await readPats())) return { active: false };
+  } else if (pl.typ === 'cli_session') {
+    deviceId = pl.device_id;
+    const rec = parseDevice((await readDevices())[deviceId]);
+    if (!rec || rec.user !== pl.preferred_username || rec.sub !== pl.sub) return { active: false };
+  } else {
+    return { active: false };
+  }
+  let groups;
+  try { groups = await lookupGroups(pl.preferred_username); }
+  catch (error) { console.error('[managed-token] live group lookup failed:', error.message); return { active: false }; }
+  if (!groups.some((group) => group.startsWith(CONSOLE_GROUP_PREFIX))) return { active: false };
+  return {
+    active: true,
+    type: pl.typ,
+    sub: pl.sub,
+    username: pl.preferred_username,
+    groups,
+    exp: pl.exp,
+    jti: pl.jti,
+    ...(deviceId ? { deviceId } : {}),
+  };
+}
+
+// resource-server가 관리 자격의 유효성·현재 역할·폐기를 확인한다. RFC7662 풍 introspection.
+async function handleTokenIntrospect(req, res) {
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   const pl = verifyToken(form.token || '');
-  if (!pl || pl.typ !== 'pat' || !pl.jti) return patJson(res, 200, { active: false });
-  const all = await readPats();
-  if (!all[pl.jti]) return patJson(res, 200, { active: false }); // 폐기됨
-  patJson(res, 200, { active: true, sub: pl.sub, username: pl.preferred_username, groups: pl.groups, exp: pl.exp, jti: pl.jti });
+  if (!pl || !pl.jti) return patJson(res, 200, { active: false });
+  patJson(res, 200, await managedTokenState(pl));
+}
+
+const hashToken = (value) => crypto.createHash('sha256').update(String(value)).digest('base64url');
+const normalizeDeviceLabel = (value) => String(value || 'OpenSphere CLI device').trim().slice(0, 64) || 'OpenSphere CLI device';
+const expiresIso = (seconds) => new Date(seconds * 1000).toISOString();
+function deviceView(id, rec) {
+  return {
+    id,
+    label: rec.label,
+    fingerprint: rec.fingerprint,
+    createdAt: rec.createdAt,
+    lastUsedAt: rec.lastUsedAt || null,
+    lastSessionExpiresAt: rec.lastSessionExpiresAt || null,
+    user: rec.user,
+  };
+}
+async function createDevice(owner, label, publicJwk) {
+  if (!validateDevicePublicJwk(publicJwk)) throw { code: 400, msg: 'invalid_public_key' };
+  const id = crypto.randomBytes(16).toString('hex');
+  const rec = {
+    user: owner.preferred_username,
+    sub: owner.sub,
+    name: owner.name || owner.preferred_username,
+    ...(owner.email ? { email: owner.email } : {}),
+    label: normalizeDeviceLabel(label),
+    fingerprint: deviceFingerprint(publicJwk),
+    publicJwk: { kty: 'EC', crv: 'P-256', x: publicJwk.x, y: publicJwk.y },
+    createdAt: new Date().toISOString(),
+    lastUsedAt: null,
+  };
+  const stored = await patchDevice(id, JSON.stringify(rec));
+  if (stored.status >= 300) throw new Error(`device store HTTP ${stored.status}`);
+  console.log(JSON.stringify({ event: 'cli_device_registered', actor: rec.user, deviceId: id, fingerprint: rec.fingerprint, time: rec.createdAt }));
+  return deviceView(id, rec);
+}
+
+async function handleCliEnrollmentCreate(req, res) {
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  if (!validateDevicePublicJwk(body.publicJwk)) return patJson(res, 400, { error: 'invalid_public_key' });
+  const enrollmentId = crypto.randomBytes(16).toString('hex');
+  const pollToken = crypto.randomBytes(32).toString('base64url');
+  const userCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+  const exp = Math.floor(Date.now() / 1000) + CLI_ENROLLMENT_TTL;
+  const rec = {
+    label: normalizeDeviceLabel(body.label),
+    publicJwk: { kty: 'EC', crv: 'P-256', x: body.publicJwk.x, y: body.publicJwk.y },
+    fingerprint: deviceFingerprint(body.publicJwk),
+    pollTokenHash: hashToken(pollToken),
+    userCodeHash: hashToken(userCode),
+    exp,
+    status: 'pending',
+  };
+  const stored = await patchFlow('enrollment', enrollmentId, rec);
+  if (stored.status >= 300) return patJson(res, 500, { error: 'enrollment_store_failed' });
+  const verificationUriComplete = new URL(`/me?tab=credentials&enrollment=${encodeURIComponent(enrollmentId)}&code=${encodeURIComponent(userCode)}`, CONSOLE_URL).toString();
+  patJson(res, 201, { enrollmentId, pollToken, userCode, verificationUriComplete, expiresAt: expiresIso(exp), pollInterval: 2 });
+}
+
+async function handleCliEnrollmentGet(reqUrl, res, admin, enrollmentId) {
+  const rec = await readFlow('enrollment', enrollmentId);
+  const code = reqUrl.searchParams.get('code') || '';
+  if (!rec || rec.exp < Math.floor(Date.now() / 1000) || !safeEqualToken(hashToken(code), rec.userCodeHash)) {
+    return patJson(res, 404, { error: 'enrollment_not_found' });
+  }
+  patJson(res, 200, { enrollmentId, label: rec.label, fingerprint: rec.fingerprint, expiresAt: expiresIso(rec.exp), status: rec.status, approvingUser: admin.preferred_username });
+}
+
+async function handleCliEnrollmentApprove(req, res, admin, enrollmentId) {
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  const rec = await readFlow('enrollment', enrollmentId);
+  if (!rec || rec.status !== 'pending' || rec.exp < Math.floor(Date.now() / 1000)
+      || !safeEqualToken(hashToken(body.userCode || ''), rec.userCodeHash)) {
+    return patJson(res, 404, { error: 'enrollment_not_found' });
+  }
+  const device = await createDevice(admin, rec.label, rec.publicJwk);
+  const updated = await patchFlow('enrollment', enrollmentId, { ...rec, status: 'approved', deviceId: device.id, approvedBy: admin.preferred_username });
+  if (updated.status >= 300) return patJson(res, 500, { error: 'enrollment_update_failed' });
+  patJson(res, 200, { approved: true, device });
+}
+
+async function handleCliEnrollmentPoll(req, res, enrollmentId) {
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  const rec = await readFlow('enrollment', enrollmentId);
+  if (!rec || !safeEqualToken(hashToken(body.pollToken || ''), rec.pollTokenHash)) return patJson(res, 404, { error: 'enrollment_not_found' });
+  if (rec.exp < Math.floor(Date.now() / 1000)) { await patchFlow('enrollment', enrollmentId, null); return patJson(res, 410, { error: 'enrollment_expired' }); }
+  if (rec.status !== 'approved') return patJson(res, 202, { status: 'authorization_pending' });
+  await patchFlow('enrollment', enrollmentId, null);
+  patJson(res, 200, { status: 'approved', deviceId: rec.deviceId, label: rec.label, fingerprint: rec.fingerprint });
+}
+
+async function handleCliDeviceCreate(req, res, admin) {
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  try { patJson(res, 201, { device: await createDevice(admin, body.label, body.publicJwk) }); }
+  catch (error) { patJson(res, error?.code || 500, { error: error?.msg || 'device_store_failed' }); }
+}
+async function handleCliDeviceList(res, admin) {
+  const devices = Object.entries(await readDevices())
+    .map(([id, raw]) => [id, parseDevice(raw)])
+    .filter(([, rec]) => rec?.user === admin.preferred_username)
+    .map(([id, rec]) => deviceView(id, rec))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  patJson(res, 200, { devices });
+}
+async function handleCliDeviceRevoke(res, admin, deviceId) {
+  const rec = parseDevice((await readDevices())[deviceId]);
+  if (!rec) return patJson(res, 404, { error: 'not_found' });
+  if (rec.user !== admin.preferred_username) return patJson(res, 403, { error: 'not_owner' });
+  const deleted = await patchDevice(deviceId, null);
+  if (deleted.status >= 300) return patJson(res, 500, { error: 'device_revoke_failed' });
+  console.log(JSON.stringify({ event: 'cli_device_revoked', actor: admin.preferred_username, deviceId, time: new Date().toISOString() }));
+  patJson(res, 200, { revoked: deviceId });
+}
+
+async function handleCliChallenge(req, res) {
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  const deviceId = String(body.deviceId || '');
+  if (!parseDevice((await readDevices())[deviceId])) return patJson(res, 404, { error: 'device_not_found' });
+  const challengeId = crypto.randomBytes(16).toString('hex');
+  const nonce = crypto.randomBytes(32).toString('base64url');
+  const exp = Math.floor(Date.now() / 1000) + CLI_CHALLENGE_TTL;
+  const stored = await patchFlow('challenge', challengeId, { deviceId, nonce, exp });
+  if (stored.status >= 300) return patJson(res, 500, { error: 'challenge_store_failed' });
+  patJson(res, 201, { challengeId, nonce, expiresAt: expiresIso(exp) });
+}
+
+async function handleCliSession(req, res) {
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  const challenge = await takeFlow('challenge', String(body.challengeId || ''));
+  const now = Math.floor(Date.now() / 1000);
+  if (!challenge || challenge.exp < now || challenge.deviceId !== body.deviceId) return patJson(res, 401, { error: 'invalid_challenge' });
+  const all = await readDevices();
+  const rec = parseDevice(all[body.deviceId]);
+  if (!rec || !verifyDeviceChallenge(rec.publicJwk, body.deviceId, body.challengeId, challenge.nonce, body.signature)) {
+    return patJson(res, 401, { error: 'invalid_device_signature' });
+  }
+  let groups;
+  try { groups = await lookupGroups(rec.user); }
+  catch { return patJson(res, 503, { error: 'identity_unavailable' }); }
+  if (!groups.some((group) => group.startsWith(CONSOLE_GROUP_PREFIX))) return patJson(res, 403, { error: 'console_access_revoked' });
+  const exp = now + CLI_SESSION_TTL;
+  const jti = crypto.randomBytes(16).toString('hex');
+  const token = signJWT({
+    iss: ISSUER, sub: rec.sub, aud: CLIENT_ID, azp: CLIENT_ID,
+    preferred_username: rec.user, name: rec.name, ...(rec.email ? { email: rec.email } : {}),
+    groups, typ: 'cli_session', device_id: body.deviceId, jti, iat: now, nbf: now, exp,
+  });
+  await patchDevice(body.deviceId, JSON.stringify({ ...rec, lastUsedAt: new Date().toISOString(), lastSessionExpiresAt: expiresIso(exp) }));
+  patJson(res, 200, { accessToken: token, tokenType: 'Bearer', expiresAt: expiresIso(exp), expiresIn: CLI_SESSION_TTL });
 }
 
 // ---- 콘솔 역할(Console Role) 관리 — 역할 정의·부여 UI 백엔드(Phase 3) ----
@@ -658,7 +909,7 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
   const reqUrl = new URL(req.url, ORIGIN);
   const p = reqUrl.pathname;
   const isOidcEp = [EP.discovery, EP.jwks, EP.token, EP.authorize].includes(p);
-  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/roles') || p === '/bff/auth-policy';
+  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/token') || p.startsWith('/bff/cli') || p.startsWith('/bff/roles') || p === '/bff/auth-policy';
   const corsAllowed = Boolean(req.headers.origin && CORS_ORIGINS.has(req.headers.origin));
   if ((isOidcEp || isPatEp) && corsAllowed) {
     res.setHeader('access-control-allow-origin', req.headers.origin); res.setHeader('vary', 'origin');
@@ -673,8 +924,24 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       if (req.method === 'POST' && p === EP.authorize) return await handleAuthorizePost(req, res);
       if (req.method === 'POST' && p === EP.token) return await handleToken(req, res);
       if (p === '/bff/healthz') return send(res, 200, 'text/plain', 'ok');
-      // PAT — 관리자 발급 장수 토큰(osph CLI/자동화). 발급/목록/폐기는 admin 그룹 필요, introspect는 공개.
-      if (p === '/bff/pat/introspect' && req.method === 'POST') return await handlePatIntrospect(req, res);
+      // 관리 자격 introspection — 폐기·현재 Kanidm 역할을 매 요청 확인한다. 구 PAT 경로는 호환 alias.
+      if ((p === '/bff/token/introspect' || p === '/bff/pat/introspect') && req.method === 'POST') return await handleTokenIntrospect(req, res);
+      // Human CLI device authorization: 등록 시작/대기는 unauthenticated one-time flow,
+      // 승인은 브라우저의 admin OIDC 세션, 이후 명령은 P-256 proof → 15분 세션이다.
+      if (p === '/bff/cli/enrollments' && req.method === 'POST') return await handleCliEnrollmentCreate(req, res);
+      let match = p.match(/^\/bff\/cli\/enrollments\/([a-f0-9]{32})$/);
+      if (match && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleCliEnrollmentGet(reqUrl, res, a, match[1]) : patJson(res, 401, { error: 'unauthorized' }); }
+      match = p.match(/^\/bff\/cli\/enrollments\/([a-f0-9]{32})\/approve$/);
+      if (match && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleCliEnrollmentApprove(req, res, a, match[1]) : patJson(res, 401, { error: 'unauthorized' }); }
+      match = p.match(/^\/bff\/cli\/enrollments\/([a-f0-9]{32})\/poll$/);
+      if (match && req.method === 'POST') return await handleCliEnrollmentPoll(req, res, match[1]);
+      if (p === '/bff/cli/challenge' && req.method === 'POST') return await handleCliChallenge(req, res);
+      if (p === '/bff/cli/session' && req.method === 'POST') return await handleCliSession(req, res);
+      if (p === '/bff/cli/devices' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleCliDeviceCreate(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (p === '/bff/cli/devices' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleCliDeviceList(res, a) : patJson(res, 401, { error: 'unauthorized' }); }
+      match = p.match(/^\/bff\/cli\/devices\/([a-f0-9]{32})$/);
+      if (match && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handleCliDeviceRevoke(res, a, match[1]) : patJson(res, 401, { error: 'unauthorized' }); }
+      // API token — 비대화형 자동화용. 발급/목록/폐기는 admin 그룹 필요.
       if (p === '/bff/pat' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handlePatMint(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p === '/bff/pat' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handlePatList(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p.startsWith('/bff/pat/') && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handlePatRevoke(req, res, a, decodeURIComponent(p.slice('/bff/pat/'.length))) : patJson(res, 401, { error: 'unauthorized' }); }

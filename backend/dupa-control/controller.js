@@ -62,6 +62,12 @@ const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opens
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
 const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
+// BFF가 발급한 장기 자격(PAT)은 서명만으로 충분하지 않다. 발급 후 폐기 여부의
+// 단일 권위는 auth BFF의 서버측 allowlist이므로 모든 DUPA 관리/CLI 요청마다 확인한다.
+// 이 검사는 캐시하지 않는다. 사용자가 자격을 폐기하면 다음 요청부터 즉시 거부돼야 한다.
+const TOKEN_INTROSPECTION_URL = process.env.TOKEN_INTROSPECTION_URL
+  || 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/pat/introspect';
+const TOKEN_INTROSPECTION_SERVERNAME = process.env.TOKEN_INTROSPECTION_SERVERNAME || KANIDM_TLS_SERVERNAME;
 let _kanidmCa;
 function kanidmCa() { if (_kanidmCa === undefined) { try { _kanidmCa = fs.readFileSync(KANIDM_CA_PATH); } catch (e) { console.error('[auth] kanidm CA read failed: ' + e); _kanidmCa = null; } } return _kanidmCa; }
 function b64urlToBuf(s) { return Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/'), 'base64'); }
@@ -91,6 +97,54 @@ function assertClaims(header, claims, now = Date.now()) {
   if (claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
   if (claims.nbf && claims.nbf * 1000 > now + 30000) throw { code: 401, msg: 'token not yet valid' };
 }
+function assertManagedTokenActive(claims, state) {
+  if (claims.typ === undefined) return; // 브라우저 OIDC id_token은 서명/표준 claim으로 검증한다.
+  if (claims.typ !== 'pat' && claims.typ !== 'cli_session') throw { code: 401, msg: 'unsupported token type' };
+  if (!state || state.active !== true) throw { code: 401, msg: 'credential inactive or revoked' };
+  if (!claims.jti || state.jti !== claims.jti || state.sub !== claims.sub
+      || state.username !== claims.preferred_username || state.exp !== claims.exp) {
+    throw { code: 401, msg: 'credential state mismatch' };
+  }
+  if (claims.typ === 'cli_session' && (!claims.device_id || state.deviceId !== claims.device_id)) {
+    throw { code: 401, msg: 'device state mismatch' };
+  }
+}
+function introspectManagedToken(jwt) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(TOKEN_INTROSPECTION_URL);
+    const body = Buffer.from(new URLSearchParams({ token: jwt }).toString());
+    const rq = https.request({
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + u.search,
+      method: 'POST',
+      ca: kanidmCa(),
+      servername: TOKEN_INTROSPECTION_SERVERNAME,
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'content-length': body.length,
+        accept: 'application/json',
+      },
+    }, (resp) => {
+      const chunks = [];
+      let size = 0;
+      resp.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 64 * 1024) chunks.push(chunk);
+      });
+      resp.on('end', () => {
+        if (size > 64 * 1024) return reject(new Error('token introspection response too large'));
+        if (resp.statusCode !== 200) return reject(new Error(`token introspection HTTP ${resp.statusCode}`));
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+        catch { reject(new Error('token introspection returned invalid JSON')); }
+      });
+    });
+    rq.setTimeout(3000, () => rq.destroy(new Error('token introspection timeout')));
+    rq.on('error', reject);
+    rq.write(body);
+    rq.end();
+  });
+}
 const isAdminGroups = (groups) => (groups || []).includes(KANIDM_ADMIN_GROUP);
 async function verifyAuthed(req) {
   const auth = req.headers['authorization'] || '';
@@ -107,7 +161,13 @@ async function verifyAuthed(req) {
   const pub = createPublicKey({ key: jwk, format: 'jwk' });
   if (!verify('SHA256', Buffer.from(`${h}.${pp}`), { key: pub, dsaEncoding: 'ieee-p1363' }, b64urlToBuf(s))) throw { code: 401, msg: 'bad signature' };
   assertClaims(header, claims);
-  const groups = (claims.groups || []).map((g) => shortName(g).replace(/^\//, ''));
+  let managedState = null;
+  if (claims.typ !== undefined) {
+    managedState = await introspectManagedToken(m[1]);
+    assertManagedTokenActive(claims, managedState);
+  }
+  // 관리 자격은 서명 당시 group claim이 아니라 introspection이 조회한 현재 Kanidm 역할을 사용한다.
+  const groups = (managedState?.groups || claims.groups || []).map((g) => shortName(g).replace(/^\//, ''));
   return { username: claims.preferred_username || 'unknown', groups };
 }
 async function verifyActor(req) {
@@ -1773,5 +1833,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest, allowedCLIResourcePath };
+  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest, allowedCLIResourcePath };
 }

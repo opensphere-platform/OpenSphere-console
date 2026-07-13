@@ -2,7 +2,7 @@
 // 실행: node --test  (또는 npm test). require.main!==module 가드로 서버는 기동되지 않는다.
 const test = require('node:test');
 const assert = require('node:assert');
-const { assertClaims, isAdminGroups, safeName, allowedCLIResourcePath } = require('./controller.js');
+const { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, allowedCLIResourcePath } = require('./controller.js');
 
 const ISS = 'https://localhost:8444/oauth2/openid/opensphere-console';
 const AZP = 'opensphere-console';
@@ -66,6 +66,30 @@ test('isAdminGroups: admin 그룹만 true', () => {
   assert.equal(isAdminGroups(['viewers']), false);
   assert.equal(isAdminGroups([]), false);
   assert.equal(isAdminGroups(undefined), false);
+});
+
+test('assertManagedTokenActive: 브라우저 OIDC 토큰은 서버 상태 검사가 필요 없다', () => {
+  assert.doesNotThrow(() => assertManagedTokenActive(goodClaims, null));
+});
+
+test('assertManagedTokenActive: 활성 PAT의 서명 claim과 서버 상태가 모두 일치해야 한다', () => {
+  const claims = { ...goodClaims, typ: 'pat', jti: 'pat-1' };
+  const active = { active: true, jti: 'pat-1', sub: claims.sub, username: claims.preferred_username, exp: claims.exp };
+  assert.doesNotThrow(() => assertManagedTokenActive(claims, active));
+  rejects(() => assertManagedTokenActive(claims, { active: false }), /inactive|revoked/);
+  rejects(() => assertManagedTokenActive(claims, { ...active, jti: 'other' }), /state mismatch/);
+  rejects(() => assertManagedTokenActive(claims, { ...active, exp: claims.exp + 1 }), /state mismatch/);
+});
+
+test('assertManagedTokenActive: CLI 단기 세션은 등록 디바이스와 결속된다', () => {
+  const claims = { ...goodClaims, typ: 'cli_session', jti: 'session-1', device_id: 'device-1' };
+  const active = { active: true, jti: 'session-1', deviceId: 'device-1', sub: claims.sub, username: claims.preferred_username, exp: claims.exp };
+  assert.doesNotThrow(() => assertManagedTokenActive(claims, active));
+  rejects(() => assertManagedTokenActive(claims, { ...active, deviceId: 'device-2' }), /device state mismatch/);
+});
+
+test('assertManagedTokenActive: 알 수 없는 관리 토큰 형식은 fail-closed', () => {
+  rejects(() => assertManagedTokenActive({ ...goodClaims, typ: 'unknown' }, { active: true }), /unsupported token type/);
 });
 
 test('safeName: RFC1123 라벨만 허용 (SSRF 가드)', () => {

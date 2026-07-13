@@ -163,6 +163,9 @@ spec:
             - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
             - { name: KANIDM_JWKS_URL, value: "https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
             - { name: KANIDM_CA_PATH, value: /etc/kanidm-ca/ca.crt }
+            # BFF 발급 PAT는 매 요청 서버측 상태 검사. 폐기 후 서명 만료까지 살아남는 우회를 금지한다.
+            - { name: TOKEN_INTROSPECTION_URL, value: https://opensphere-console-auth.opensphere-console.svc:8443/bff/pat/introspect }
+            - { name: TOKEN_INTROSPECTION_SERVERNAME, value: kanidm.opensphere-console-auth.svc }
           volumeMounts:
             - { name: kanidm-ca, mountPath: /etc/kanidm-ca, readOnly: true }
           ports: [{ containerPort: 8080 }]

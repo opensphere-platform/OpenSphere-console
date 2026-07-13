@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHelpDeclaresNativeAdminBoundary(t *testing.T) {
@@ -16,7 +17,7 @@ func TestHelpDeclaresNativeAdminBoundary(t *testing.T) {
 	if err := run([]string{"help"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Console native 관리자 CLI", "admin(Kanidm/BFF PAT)", "workforce", "CLI Binding", "--pat-stdin", "extensions install"} {
+	for _, expected := range []string{"Console native 관리자 CLI", "admin 디바이스 신뢰", "workforce", "CLI Binding", "--pat-stdin", "extensions install", "15분 서명 세션"} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("help missing %q", expected)
 		}
@@ -32,39 +33,78 @@ func TestLoginReadsPatFromStdin(t *testing.T) {
 	// 존재하지 않는 로컬 포트로 향하게 해 whoami가 실패하도록 만든다. stdin이 비어 있으면
 	// "PAT가 필요합니다"로, 채워져 있으면 whoami 검증 단계까지 진행됨을 구분한다.
 	emptyErr := run([]string{"login", "--pat-stdin", "--console", "http://127.0.0.1:1"}, strings.NewReader("  \n"), &out, &errOut)
-	if emptyErr == nil || !strings.Contains(emptyErr.Error(), "PAT가 필요합니다") {
-		t.Fatalf("empty stdin should require a PAT, got: %v", emptyErr)
+	if emptyErr == nil || !strings.Contains(emptyErr.Error(), "bootstrap API token") {
+		t.Fatalf("empty stdin should require a bootstrap API token, got: %v", emptyErr)
 	}
 	filledErr := run([]string{"login", "--pat-stdin", "--console", "http://127.0.0.1:1"}, strings.NewReader("stdin-token\n"), &out, &errOut)
-	if filledErr == nil || strings.Contains(filledErr.Error(), "PAT가 필요합니다") {
-		t.Fatalf("non-empty stdin must be accepted as the PAT then fail at whoami, got: %v", filledErr)
+	if filledErr == nil || strings.Contains(filledErr.Error(), "bootstrap API token이 필요") {
+		t.Fatalf("non-empty stdin must be accepted then fail at registration, got: %v", filledErr)
 	}
 	if strings.Contains(errOut.String(), "--pat는 프로세스 목록") {
 		t.Fatal("--pat-stdin path must not emit the --pat deprecation warning")
 	}
 }
 
-// F-9: --web은 콘솔 발급 페이지를 브라우저로 열고 붙여넣은 토큰을 stdin에서 읽는다.
-// 실제 브라우저 실행은 browserOpener를 no-op으로 대체해 회피하고, 열린 URL만 검증한다.
-func TestLoginWebOpensConsoleAndReadsPastedToken(t *testing.T) {
+// 브라우저 login은 PAT를 복사하지 않는다. one-time enrollment 승인 후 P-256 device가
+// OS 보안 저장소에 들어가고, 서버 challenge/session으로 최종 검증된다.
+func TestLoginWebRegistersDeviceWithoutPersistingBearer(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OS_CONFIG", filepath.Join(dir, "config.json"))
+	var privateKey []byte
+	origStore, origLoad, origDelete := deviceKeyStore, deviceKeyLoad, deviceKeyDelete
+	deviceKeyStore = func(id string, value []byte) error { privateKey = append([]byte(nil), value...); return nil }
+	deviceKeyLoad = func(id string) ([]byte, error) { return append([]byte(nil), privateKey...), nil }
+	deviceKeyDelete = func(id string) error { privateKey = nil; return nil }
+	defer func() { deviceKeyStore, deviceKeyLoad, deviceKeyDelete = origStore, origLoad, origDelete }()
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/bff/cli/enrollments":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"enrollmentId": strings.Repeat("a", 32), "pollToken": "poll-secret", "userCode": "A1B2C3D4",
+				"verificationUriComplete": server.URL + "/me?tab=credentials", "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339), "pollInterval": 1,
+			})
+		case "/bff/cli/enrollments/" + strings.Repeat("a", 32) + "/poll":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "approved", "deviceId": strings.Repeat("d", 32), "label": "test-device", "fingerprint": "aa:bb"})
+		case "/bff/cli/challenge":
+			_ = json.NewEncoder(w).Encode(map[string]string{"challengeId": strings.Repeat("c", 32), "nonce": "nonce"})
+		case "/bff/cli/session":
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "short-session", "expiresIn": 900})
+		case "/bff/token/introspect":
+			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "type": "cli_session"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
 	var opened string
 	orig := browserOpener
 	browserOpener = func(target string) error { opened = target; return nil }
 	defer func() { browserOpener = orig }()
 
 	var out, errOut bytes.Buffer
-	err := run([]string{"login", "--web", "--console", "http://127.0.0.1:1"}, strings.NewReader("pasted-token\n"), &out, &errOut)
-	if opened != "http://127.0.0.1:1/manage/cli" {
-		t.Fatalf("browser should open the console /manage/cli page, opened=%q", opened)
+	err := run([]string{"login", "--web", "--console", server.URL}, strings.NewReader(""), &out, &errOut)
+	if opened != server.URL+"/me?tab=credentials" {
+		t.Fatalf("browser should open the profile enrollment page, opened=%q", opened)
 	}
-	// 붙여넣은 토큰으로 진행하므로 "PAT가 필요합니다"가 아니라 whoami 검증 실패로 끝나야 한다.
-	if err == nil || strings.Contains(err.Error(), "PAT가 필요합니다") {
-		t.Fatalf("pasted token must be accepted then fail at whoami, got: %v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "/manage/cli") {
-		t.Fatalf("stdout should print the issuance URL, got: %q", out.String())
+	if !strings.Contains(out.String(), "확인 코드") || !strings.Contains(out.String(), "등록되고 검증") {
+		t.Fatalf("stdout should explain and confirm device enrollment, got: %q", out.String())
+	}
+	b, readErr := os.ReadFile(filepath.Join(dir, "config.json"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(b), "short-session") || strings.Contains(string(b), "poll-secret") || strings.Contains(string(b), "pat") {
+		t.Fatalf("config must not persist bearer credentials: %s", b)
+	}
+	var saved Config
+	if json.Unmarshal(b, &saved) != nil || saved.DeviceID != strings.Repeat("d", 32) {
+		t.Fatalf("device identity was not saved: %s", b)
 	}
 }
 
@@ -95,6 +135,9 @@ func TestConfigIsAdminOnlyAndPrivate(t *testing.T) {
 		t.Fatalf("config mode=%o want 600", info.Mode().Perm())
 	}
 	b, _ := os.ReadFile(p)
+	if strings.Contains(string(b), "not-a-real-secret") || strings.Contains(string(b), "\"pat\"") {
+		t.Fatalf("config must not persist PAT: %s", b)
+	}
 	var saved Config
 	if err := json.Unmarshal(b, &saved); err != nil {
 		t.Fatal(err)
@@ -151,6 +194,7 @@ func TestGetResourceRejectsSPAHTMLAndUsesConsoleNamespace(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := defaults()
+	cfg.PAT = "test-only-token"
 	cfg.APIURL = server.URL + "/api/proxy"
 	err := getResource(cfg, []string{"uipluginpackage"}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "instead of JSON") {

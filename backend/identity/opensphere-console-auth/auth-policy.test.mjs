@@ -57,9 +57,10 @@ test('deployment declares shared development policy and scoped RBAC', () => {
   assert.match(deploy, /environment:\s*development/);
   assert.match(deploy, /opensphere\.io\/default-totp-enabled:\s*"false"/);
   assert.doesNotMatch(deploy, /\n\s+totpEnabled:\s*"false"/);
-  assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-pats",\s*"opensphere-console-auth-policy"\]/);
+  assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-pats",\s*"opensphere-console-auth-policy",\s*"opensphere-console-auth-cli-devices"\]/);
   assert.match(deploy, /name:\s*opensphere-console-auth-codes/);
-  assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-codes"\]/);
+  assert.match(deploy, /name:\s*opensphere-console-auth-cli-flows/);
+  assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-codes",\s*"opensphere-console-auth-cli-flows"\]/);
 });
 
 // AG-5: BFF는 운영 강제 환경에서 TOTP 비활성화 요청을 403으로 거부하고, environment를 배포 env로 결정한다.

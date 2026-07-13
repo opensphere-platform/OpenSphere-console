@@ -33,11 +33,17 @@ subjects:
     name: opensphere-console-auth
     namespace: opensphere-console
 ---
-# PAT store: the BFF reads/writes its own PAT allowlist (jti) ConfigMap in its namespace.
+# API token allowlist and CLI public-key trust registry. No private device key is stored server-side.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: opensphere-console-auth-pats
+  namespace: opensphere-console
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensphere-console-auth-cli-devices
   namespace: opensphere-console
 ---
 # Development defaults to password-only console login. Administrators can enable
@@ -61,6 +67,15 @@ metadata:
   namespace: opensphere-console
 type: Opaque
 ---
+# Enrollment and challenge records are short-lived, shared across both BFF replicas,
+# and consumed with resourceVersion guarded updates.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensphere-console-auth-cli-flows
+  namespace: opensphere-console
+type: Opaque
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -69,11 +84,11 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["opensphere-console-auth-pats", "opensphere-console-auth-policy"]
+    resourceNames: ["opensphere-console-auth-pats", "opensphere-console-auth-policy", "opensphere-console-auth-cli-devices"]
     verbs: ["get", "patch", "update"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["opensphere-console-auth-codes"]
+    resourceNames: ["opensphere-console-auth-codes", "opensphere-console-auth-cli-flows"]
     verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

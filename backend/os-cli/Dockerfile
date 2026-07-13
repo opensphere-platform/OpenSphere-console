@@ -3,9 +3,9 @@ WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.2.0" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=0.2.0" -o /out/opensphere-cli-darwin-arm64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.2.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.3.0" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
+    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=0.3.0" -o /out/opensphere-cli-darwin-arm64 ./cmd/os && \
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.3.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 
 FROM docker.io/nginxinc/nginx-unprivileged@sha256:592b23aa79a6e6c08ba4b20f1fff700e1328895705966722608e115d62e52d39
 USER root
