@@ -39,3 +39,18 @@ test('auth deployment persists public devices and one-time flows separately', ()
   assert.match(deploy, /resourceNames:\s*\[[^\]]*opensphere-console-auth-cli-devices[^\]]*\]/s);
   assert.match(deploy, /resourceNames:\s*\[[^\]]*opensphere-console-auth-cli-flows[^\]]*\]/s);
 });
+
+test('auth image contains every local runtime module imported by server', () => {
+  const server = read('backend/identity/opensphere-console-auth/server.mjs');
+  const dockerfile = read('backend/identity/opensphere-console-auth/Dockerfile');
+  const imports = [...server.matchAll(/from\s+['"]\.\/(.+?\.mjs)['"]/g)].map((match) => match[1]);
+
+  assert.ok(imports.length > 0, 'server must declare local runtime modules');
+  for (const moduleName of imports) {
+    assert.match(
+      dockerfile,
+      new RegExp(`COPY(?:\\s+--\\S+)*\\s+${moduleName.replaceAll('.', '[.]')}\\s+`),
+      `${moduleName} must be copied into the auth runtime image`,
+    );
+  }
+});
