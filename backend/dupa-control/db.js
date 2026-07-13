@@ -50,6 +50,17 @@ async function ensureSchema() {
     BEFORE UPDATE OR DELETE ON audit_log
     FOR EACH ROW EXECUTE FUNCTION opensphere_reject_audit_mutation()`);
   await pool.query('REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM PUBLIC');
+  await pool.query(`CREATE TABLE IF NOT EXISTS managed_credential (
+    kind          text NOT NULL,
+    credential_id text NOT NULL,
+    owner_name    text NOT NULL,
+    record        jsonb NOT NULL,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (kind, credential_id),
+    CHECK (kind IN ('pat', 'device'))
+  )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS managed_credential_owner_idx ON managed_credential (owner_name, kind)');
 }
 
 // 감사 이벤트 INSERT(append-only). e = {time, opId, actor, action, target, result, reason}.
@@ -90,6 +101,50 @@ async function recentAudit(limit) {
     opId: x.op_id || '', actor: x.actor || 'system', action: x.action || '',
     target: x.target || '', result: x.result || '', reason: x.reason || '',
   }));
+}
+
+// Console 관리 자격(PAT allowlist, CLI device 공개키)은 Kubernetes ConfigMap이 아니라
+// Backbone PostgreSQL에 둔다. 비밀 토큰/개인키는 이 테이블에 절대 저장하지 않는다.
+async function listManagedCredentials(kind) {
+  if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
+  const r = await pool.query(
+    'SELECT credential_id, owner_name, record FROM managed_credential WHERE kind=$1 ORDER BY created_at DESC',
+    [kind],
+  );
+  return r.rows.map((row) => ({ id: row.credential_id, owner: row.owner_name, record: row.record }));
+}
+
+// 자격 상태 변경과 append-only 감사를 하나의 트랜잭션으로 확정한다. 감사 INSERT가
+// 실패하면 상태 변경도 롤백되어 "발급됐지만 감사 없음" 상태가 생기지 않는다.
+async function mutateManagedCredential({ kind, id, owner, record, audit }) {
+  if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (record === null) {
+      await client.query('DELETE FROM managed_credential WHERE kind=$1 AND credential_id=$2', [kind, id]);
+    } else {
+      await client.query(
+        `INSERT INTO managed_credential (kind, credential_id, owner_name, record)
+         VALUES ($1,$2,$3,$4::jsonb)
+         ON CONFLICT (kind, credential_id) DO UPDATE
+         SET owner_name=EXCLUDED.owner_name, record=EXCLUDED.record, updated_at=now()`,
+        [kind, id, owner, JSON.stringify(record)],
+      );
+    }
+    await client.query(
+      'INSERT INTO audit_log (ts, op_id, actor, action, target, result, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [audit?.time || new Date().toISOString(), audit?.opId || '', audit?.actor || owner || 'system',
+        audit?.action || `${kind}-${record === null ? 'revoke' : 'upsert'}`, `${kind}/${id}`,
+        audit?.result || 'accepted', audit?.reason || ''],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch { /* noop */ }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // 데이터 탭(읽기) — DATABASE 목록(크기 포함). template/접속불가 제외.
@@ -281,4 +336,4 @@ async function dropFunction({ database, schema, name, args }) {
   } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
 }
 
-module.exports = { init, insertAudit, recentAudit, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };
+module.exports = { init, insertAudit, recentAudit, listManagedCredentials, mutateManagedCredential, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };

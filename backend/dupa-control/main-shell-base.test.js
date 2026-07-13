@@ -101,6 +101,7 @@ test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   const manifest = JSON.parse(read('backend', 'os-cli', 'index.json'));
   const deploy = read('backend', 'os-cli', 'deploy.yaml');
+  const cliDockerfile = read('backend', 'os-cli', 'Dockerfile');
   const dockerfile = read('Dockerfile');
 
   assert.match(routes, /path:\s*'cli',\s*component:\s*AdminCli/);
@@ -120,7 +121,11 @@ test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
   assert.equal(manifest.profile, 'admin');
   assert.equal(manifest.extensionBoundary.adminTokenReuse, false);
   assert.ok(manifest.links.every((link) => link.href.startsWith('/api/cli/')));
-  assert.ok(manifest.links.every((link) => /^[a-f0-9]{64}$/.test(link.sha256) && link.size > 0));
+  // The source manifest is only a schema template. Both Console image variants
+  // must hydrate it from the exact artifacts compiled in that build.
+  assert.ok(manifest.links.every((link) => link.sha256 === '0'.repeat(64) && link.size === 0));
+  assert.match(cliDockerfile, /RUN node generate-manifest\.mjs/);
+  assert.match(cliDockerfile, /index\.generated\.json/);
   assert.match(deploy, /opensphere\.io\/scope:\s*main-shell-core/);
   assert.equal(fs.existsSync(path.join(root, 'backend', 'cli-download', 'clidownload-os.yaml')), false);
 });

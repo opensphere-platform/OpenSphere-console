@@ -9,6 +9,7 @@
 // iss=https://localhost:8444/oauth2/openid/opensphere-console, aud/azp=opensphere-console,
 // groups) so neither the shell nor the plugins need changes.
 import https from 'node:https';
+import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { URL, URLSearchParams } from 'node:url';
@@ -41,6 +42,7 @@ const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-ka
 const AUTH_CODE_SECRET_NAME = process.env.AUTH_CODE_SECRET_NAME || 'opensphere-console-auth-codes';
 const CLI_DEVICE_CM_NAME = process.env.CLI_DEVICE_CM_NAME || 'opensphere-console-auth-cli-devices';
 const CLI_FLOW_SECRET_NAME = process.env.CLI_FLOW_SECRET_NAME || 'opensphere-console-auth-cli-flows';
+const CREDENTIAL_STORE_URL = (process.env.CREDENTIAL_STORE_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 
 const PATH_BASE = '/oauth2/openid/opensphere-console';
 const EP = {
@@ -295,11 +297,86 @@ function k8sApi(method, path, body, contentType) {
     rq.on('error', reject); if (data) rq.write(data); rq.end();
   });
 }
-const readPats = async () => { const r = await k8sApi('GET', PAT_CM_PATH); return (r.status === 200 && r.json?.data) ? r.json.data : {}; };
-// merge-patch: data[jti]=string(추가) 또는 null(폐기)
-const patchPat = (jti, valueOrNull) => k8sApi('PATCH', PAT_CM_PATH, { data: { [jti]: valueOrNull } }, 'application/merge-patch+json');
-const readDevices = async () => { const r = await k8sApi('GET', CLI_DEVICE_CM_PATH); return (r.status === 200 && r.json?.data) ? r.json.data : {}; };
-const patchDevice = (id, valueOrNull) => k8sApi('PATCH', CLI_DEVICE_CM_PATH, { data: { [id]: valueOrNull } }, 'application/merge-patch+json');
+function credentialStoreRequest(method, pathname, body) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(CREDENTIAL_STORE_URL + pathname);
+    const data = body === undefined ? null : Buffer.from(JSON.stringify(body));
+    const transport = u.protocol === 'https:' ? https : http;
+    const rq = transport.request({
+      method, hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: u.pathname + u.search,
+      headers: {
+        authorization: `Bearer ${saToken()}`,
+        'x-opensphere-source': 'opensphere-console-auth',
+        accept: 'application/json',
+        ...(data ? { 'content-type': 'application/json', 'content-length': data.length } : {}),
+      },
+    }, (resp) => {
+      const chunks = []; let size = 0;
+      resp.on('data', (chunk) => { size += chunk.length; if (size <= 1024 * 1024) chunks.push(chunk); });
+      resp.on('end', () => {
+        if (size > 1024 * 1024) return reject(Object.assign(new Error('credential store response too large'), { statusCode: 503 }));
+        const txt = Buffer.concat(chunks).toString('utf8'); let json = null;
+        try { json = txt ? JSON.parse(txt) : null; } catch {}
+        resolve({ status: resp.statusCode, json, txt });
+      });
+    });
+    rq.setTimeout(5000, () => rq.destroy(Object.assign(new Error('credential store timeout'), { statusCode: 503 })));
+    rq.on('error', (error) => reject(Object.assign(error, { statusCode: 503 })));
+    if (data) rq.write(data);
+    rq.end();
+  });
+}
+
+async function publishAuthAudit(actor, action, target, result, reason) {
+  const r = await credentialStoreRequest('POST', '/api/admin/events', {
+    source: 'opensphere-console-auth', userActor: actor || 'unknown', action, target, result, reason,
+  });
+  if (r.status !== 202) throw Object.assign(new Error(`durable auth audit HTTP ${r.status}`), { statusCode: 503 });
+}
+
+async function readCredentialKind(kind) {
+  const r = await credentialStoreRequest('GET', `/api/internal/credential-state/${kind}`);
+  if (r.status !== 200) throw Object.assign(new Error(`credential store ${kind} read HTTP ${r.status}`), { statusCode: 503 });
+  return Object.fromEntries((r.json?.items || []).map((item) => [item.id, JSON.stringify(item.record || {})]));
+}
+async function mutateCredentialKind(kind, id, valueOrNull, context = {}) {
+  let record = null;
+  if (valueOrNull !== null) {
+    try { record = typeof valueOrNull === 'string' ? JSON.parse(valueOrNull) : valueOrNull; }
+    catch { return { status: 400, json: { error: 'invalid credential record' } }; }
+  }
+  const method = record === null ? 'DELETE' : 'PUT';
+  return credentialStoreRequest(method, `/api/internal/credential-state/${kind}/${encodeURIComponent(id)}`, {
+    record, owner: context.owner || record?.user || '', actor: context.actor || record?.user || '',
+    action: context.action || `${kind}-${record === null ? 'revoke' : 'upsert'}`, reason: context.reason || '',
+  });
+}
+
+// 0.2 및 초기 0.3 배포가 남긴 ConfigMap 상태를 최초 접근 시 한 번만 CBS로 흡수한다.
+// 이후 권위는 PostgreSQL뿐이며, Controller 장애 시 빈 목록으로 폴백하지 않고 fail-closed 한다.
+let credentialMigration;
+async function migrateLegacyCredentialState() {
+  if (credentialMigration) return credentialMigration;
+  credentialMigration = (async () => {
+    for (const [kind, path] of [['pat', PAT_CM_PATH], ['device', CLI_DEVICE_CM_PATH]]) {
+      const current = await readCredentialKind(kind);
+      if (Object.keys(current).length) continue;
+      const legacy = await k8sApi('GET', path);
+      for (const [id, value] of Object.entries(legacy.status === 200 ? (legacy.json?.data || {}) : {})) {
+        let rec; try { rec = JSON.parse(value); } catch { continue; }
+        const stored = await mutateCredentialKind(kind, id, rec, {
+          owner: rec.user || 'unknown', actor: 'opensphere-console-auth', action: `${kind}-legacy-migrate`, reason: 'ConfigMap to CBS migration',
+        });
+        if (stored.status >= 300) throw Object.assign(new Error(`credential migration HTTP ${stored.status}`), { statusCode: 503 });
+      }
+    }
+  })().catch((error) => { credentialMigration = null; throw error; });
+  return credentialMigration;
+}
+const readPats = async () => { await migrateLegacyCredentialState(); return readCredentialKind('pat'); };
+const patchPat = (jti, valueOrNull, context) => mutateCredentialKind('pat', jti, valueOrNull, context);
+const readDevices = async () => { await migrateLegacyCredentialState(); return readCredentialKind('device'); };
+const patchDevice = (id, valueOrNull, context) => mutateCredentialKind('device', id, valueOrNull, context);
 const flowKey = (kind, id) => `${kind}.${id}`;
 async function patchFlow(kind, id, valueOrNull) {
   const value = valueOrNull === null ? null : Buffer.from(JSON.stringify(valueOrNull)).toString('base64');
@@ -420,16 +497,24 @@ async function handleAuthPolicyPatch(req, res, admin) {
   catch { return patJson(res, 400, { error: 'invalid_json' }); }
   if (typeof body.totpEnabled !== 'boolean') return patJson(res, 400, { error: 'totpEnabled_boolean_required' });
   const actor = admin.preferred_username || admin.sub || 'unknown';
+  const reason = mutationReason(body.reason);
+  if (!reason) return patJson(res, 400, { error: 'reason_required', minimumLength: 8 });
   // AG-5: 운영 환경에서는 TOTP 비활성화를 거부(강제 유지). 감사 남김.
   const current = await readAuthPolicy();
   if (current.enforced && body.totpEnabled === false) {
+    await publishAuthAudit(actor, 'auth-policy-totp', 'console-login', 'denied', 'totp_enforced_in_production');
     console.log(JSON.stringify({ event: 'auth_policy_change_denied', actor, reason: 'totp_enforced_in_production', environment: current.environment }));
     return patJson(res, 403, { error: 'totp_enforced_in_production', environment: current.environment });
   }
+  await publishAuthAudit(actor, 'auth-policy-totp', 'console-login', 'attempt', reason);
   const patch = authPolicyPatch(body.totpEnabled, actor);
   const result = await k8sApi('PATCH', AUTH_POLICY_CM_PATH, patch, 'application/merge-patch+json');
-  if (result.status >= 300) return patJson(res, 500, { error: 'policy_store_failed', status: result.status });
+  if (result.status >= 300) {
+    await publishAuthAudit(actor, 'auth-policy-totp', 'console-login', 'error', `HTTP ${result.status}`);
+    return patJson(res, 500, { error: 'policy_store_failed', status: result.status });
+  }
   const policy = authPolicyFromConfigMap(result.json, DEFAULT_TOTP_ENABLED, AUTH_ENVIRONMENT);
+  await publishAuthAudit(actor, 'auth-policy-totp', 'console-login', 'accepted', `${reason}; enabled=${policy.totpEnabled}`);
   console.log(JSON.stringify({ event: 'auth_policy_changed', actor, totpEnabled: policy.totpEnabled, time: patch.data.updatedAt }));
   patJson(res, 200, policy);
 }
@@ -481,16 +566,23 @@ async function requireAdmin(req) {
   return ok ? pl : null;
 }
 const patJson = (res, code, obj) => send(res, code, 'application/json', JSON.stringify(obj));
+const mutationReason = (value) => {
+  const reason = String(value || '').trim().slice(0, 240);
+  return reason.length >= 8 ? reason : null;
+};
 
 async function handlePatMint(req, res, admin) {
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   const label = (form.label || 'osph-cli').slice(0, 64);
+  const reason = mutationReason(form.reason);
+  if (!reason) return patJson(res, 400, { error: 'reason_required', minimumLength: 8 });
   const jti = crypto.randomBytes(16).toString('hex');
   const now = Math.floor(Date.now() / 1000), exp = now + PAT_TTL_DAYS * 86400;
   const token = signJWT({ iss: ISSUER, sub: admin.sub, aud: CLIENT_ID, azp: CLIENT_ID,
     preferred_username: admin.preferred_username, name: admin.name, ...(admin.email ? { email: admin.email } : {}),
     groups: admin.groups, typ: 'pat', scope: 'admin:automation', jti, iat: now, nbf: now, exp });
-  const pr = await patchPat(jti, JSON.stringify({ user: admin.preferred_username, label, scope: 'admin:automation', iat: now, exp }));
+  const pr = await patchPat(jti, JSON.stringify({ user: admin.preferred_username, label, scope: 'admin:automation', iat: now, exp }),
+    { owner: admin.preferred_username, actor: admin.preferred_username, action: 'api-token-mint', reason: `${label}: ${reason}` });
   if (pr.status >= 300) return patJson(res, 500, { error: 'store_failed', status: pr.status });
   patJson(res, 200, { token, jti, label, expiresAt: new Date(exp * 1000).toISOString() });
 }
@@ -501,11 +593,16 @@ async function handlePatList(req, res, admin) {
   patJson(res, 200, { pats });
 }
 async function handlePatRevoke(req, res, admin, jti) {
+  let body = {};
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); } catch {}
+  const reason = mutationReason(body.reason);
+  if (!reason) return patJson(res, 400, { error: 'reason_required', minimumLength: 8 });
   const all = await readPats();
   if (!all[jti]) return patJson(res, 404, { error: 'not_found' });
   let rec = {}; try { rec = JSON.parse(all[jti]); } catch {}
   if (rec.user !== admin.preferred_username) return patJson(res, 403, { error: 'not_owner' });
-  const pr = await patchPat(jti, null);
+  const pr = await patchPat(jti, null,
+    { owner: rec.user, actor: admin.preferred_username, action: 'api-token-revoke', reason });
   if (pr.status >= 300) return patJson(res, 500, { error: 'store_failed' });
   patJson(res, 200, { revoked: jti });
 }
@@ -576,7 +673,8 @@ async function createDevice(owner, label, publicJwk) {
     createdAt: new Date().toISOString(),
     lastUsedAt: null,
   };
-  const stored = await patchDevice(id, JSON.stringify(rec));
+  const stored = await patchDevice(id, JSON.stringify(rec),
+    { owner: rec.user, actor: rec.user, action: 'cli-device-register', reason: rec.label });
   if (stored.status >= 300) throw new Error(`device store HTTP ${stored.status}`);
   console.log(JSON.stringify({ event: 'cli_device_registered', actor: rec.user, deviceId: id, fingerprint: rec.fingerprint, time: rec.createdAt }));
   return deviceView(id, rec);
@@ -657,11 +755,16 @@ async function handleCliDeviceList(res, admin) {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   patJson(res, 200, { devices });
 }
-async function handleCliDeviceRevoke(res, admin, deviceId) {
+async function handleCliDeviceRevoke(req, res, admin, deviceId) {
+  let body = {};
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); } catch {}
+  const reason = mutationReason(body.reason);
+  if (!reason) return patJson(res, 400, { error: 'reason_required', minimumLength: 8 });
   const rec = parseDevice((await readDevices())[deviceId]);
   if (!rec) return patJson(res, 404, { error: 'not_found' });
   if (rec.user !== admin.preferred_username) return patJson(res, 403, { error: 'not_owner' });
-  const deleted = await patchDevice(deviceId, null);
+  const deleted = await patchDevice(deviceId, null,
+    { owner: rec.user, actor: admin.preferred_username, action: 'cli-device-revoke', reason });
   if (deleted.status >= 300) return patJson(res, 500, { error: 'device_revoke_failed' });
   console.log(JSON.stringify({ event: 'cli_device_revoked', actor: admin.preferred_username, deviceId, time: new Date().toISOString() }));
   patJson(res, 200, { revoked: deviceId });
@@ -704,7 +807,9 @@ async function handleCliSession(req, res) {
     preferred_username: rec.user, name: rec.name, ...(rec.email ? { email: rec.email } : {}),
     groups, typ: 'cli_session', device_id: body.deviceId, jti, iat: now, nbf: now, exp,
   });
-  await patchDevice(body.deviceId, JSON.stringify({ ...rec, lastUsedAt: new Date().toISOString(), lastSessionExpiresAt: expiresIso(exp) }));
+  const touched = await patchDevice(body.deviceId, JSON.stringify({ ...rec, lastUsedAt: new Date().toISOString(), lastSessionExpiresAt: expiresIso(exp) }),
+    { owner: rec.user, actor: rec.user, action: 'cli-device-session', reason: `session ${jti}` });
+  if (touched.status >= 300) return patJson(res, 503, { error: 'device_state_unavailable' });
   patJson(res, 200, { accessToken: token, tokenType: 'Bearer', expiresAt: expiresIso(exp), expiresIn: CLI_SESSION_TTL });
 }
 
@@ -747,9 +852,8 @@ async function handleRolesList(req, res) {
 // F-5(감사 시정): 권한 상승 작업(role grant/revoke)은 이전에 어떤 감사 기록도 남기지 않았다.
 // 콘솔 UI와 CLI(os role grant/revoke)가 공유하는 이 경로에 구조화 감사를 추가한다.
 // intent(변경 시도)를 Kanidm 쓰기 '전'에, result(성공/실패)를 '후'에 남겨 append 형태의
-// before/after 추적을 확보한다. 이 로그는 플랫폼 로그 스택(Loki)으로 수집된다.
-// 후속(WP-3): controller /api/admin/events 로 전달해 PostgreSQL append-only durable audit +
-// DB 미연결 시 fail-closed(503)까지 강화한다.
+// before/after 추적을 확보한다. 정본은 controller를 거친 CBS PostgreSQL append-only audit이며,
+// 내구 감사 불가 시 Kanidm 쓰기 전에 503으로 fail-closed 한다.
 function auditRole(action, phase, actor, user, role, result, reason) {
   console.log(JSON.stringify({
     event: 'console_role_change', action, phase, actor: actor || 'unknown',
@@ -762,30 +866,38 @@ async function handleRoleGrant(req, res, admin) {
   const actor = admin?.preferred_username || admin?.sub || 'unknown';
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   const user = (form.user || '').trim().split('@')[0];
-  if (!isConsoleRole(form.role)) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'unknown_role'); return patJson(res, 400, { error: 'unknown_role' }); }
-  if (!user) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'user_required'); return patJson(res, 400, { error: 'user_required' }); }
+  const reason = mutationReason(form.reason);
+  if (!reason) return patJson(res, 400, { error: 'reason_required', minimumLength: 8 });
+  if (!isConsoleRole(form.role)) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'unknown_role'); await publishAuthAudit(actor, 'role-grant', `${user}:${form.role}`, 'denied', 'unknown_role'); return patJson(res, 400, { error: 'unknown_role' }); }
+  if (!user) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'user_required'); await publishAuthAudit(actor, 'role-grant', form.role, 'denied', 'user_required'); return patJson(res, 400, { error: 'user_required' }); }
   // AG-2: admin 그룹은 본인이 본인에게 직접 부여할 수 없다(자가 상승 방지, 직무분리 최소통제).
   // 완전한 2인 승인/step-up은 후속 워크플로. 여기서는 자가변경 차단 + admin 변경 강조 감사.
-  if (form.role === ADMIN_ROLE_GROUP && user === actor) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'self_admin_change_blocked'); return patJson(res, 403, { error: 'self_admin_change_forbidden' }); }
+  if (form.role === ADMIN_ROLE_GROUP && user === actor) { auditRole('grant', 'reject', actor, user, form.role, 'rejected', 'self_admin_change_blocked'); await publishAuthAudit(actor, 'role-grant', `${user}:${form.role}`, 'denied', 'self_admin_change_blocked'); return patJson(res, 403, { error: 'self_admin_change_forbidden' }); }
   auditRole('grant', 'intent', actor, user, form.role, 'attempt', form.role === ADMIN_ROLE_GROUP ? 'admin-role-change' : '');
+  await publishAuthAudit(actor, 'role-grant', `${user}:${form.role}`, 'attempt', reason);
   const r = await rmReq('POST', `/v1/group/${encodeURIComponent(form.role)}/_attr/member`, [user]);
-  if (r.status >= 300) { auditRole('grant', 'result', actor, user, form.role, 'error', `HTTP ${r.status}`); return patJson(res, 502, { error: 'grant_failed', status: r.status, detail: (r.txt || '').slice(0, 160) }); }
+  if (r.status >= 300) { auditRole('grant', 'result', actor, user, form.role, 'error', `HTTP ${r.status}`); await publishAuthAudit(actor, 'role-grant', `${user}:${form.role}`, 'error', `HTTP ${r.status}`); return patJson(res, 502, { error: 'grant_failed', status: r.status, detail: (r.txt || '').slice(0, 160) }); }
   auditRole('grant', 'result', actor, user, form.role, 'accepted', '');
+  await publishAuthAudit(actor, 'role-grant', `${user}:${form.role}`, 'accepted', reason);
   patJson(res, 200, { granted: { user, role: form.role } });
 }
 async function handleRoleRevoke(req, res, admin) {
   const actor = admin?.preferred_username || admin?.sub || 'unknown';
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   const user = (form.user || '').trim().split('@')[0];
-  if (!isConsoleRole(form.role)) { auditRole('revoke', 'reject', actor, user, form.role, 'rejected', 'unknown_role'); return patJson(res, 400, { error: 'unknown_role' }); }
+  const reason = mutationReason(form.reason);
+  if (!reason) return patJson(res, 400, { error: 'reason_required', minimumLength: 8 });
+  if (!isConsoleRole(form.role)) { auditRole('revoke', 'reject', actor, user, form.role, 'rejected', 'unknown_role'); await publishAuthAudit(actor, 'role-revoke', `${user}:${form.role}`, 'denied', 'unknown_role'); return patJson(res, 400, { error: 'unknown_role' }); }
   // AG-2: admin 그룹은 본인이 본인에게서 직접 회수할 수 없다(자가 잠금 방지).
-  if (form.role === ADMIN_ROLE_GROUP && user === actor) { auditRole('revoke', 'reject', actor, user, form.role, 'rejected', 'self_admin_change_blocked'); return patJson(res, 403, { error: 'self_admin_change_forbidden' }); }
+  if (form.role === ADMIN_ROLE_GROUP && user === actor) { auditRole('revoke', 'reject', actor, user, form.role, 'rejected', 'self_admin_change_blocked'); await publishAuthAudit(actor, 'role-revoke', `${user}:${form.role}`, 'denied', 'self_admin_change_blocked'); return patJson(res, 403, { error: 'self_admin_change_forbidden' }); }
   auditRole('revoke', 'intent', actor, user, form.role, 'attempt', form.role === ADMIN_ROLE_GROUP ? 'admin-role-change' : '');
+  await publishAuthAudit(actor, 'role-revoke', `${user}:${form.role}`, 'attempt', reason);
   const g = await rmReq('GET', `/v1/group/${encodeURIComponent(form.role)}`);
   const kept = (g.json?.attrs?.member || []).filter((m) => String(m).split('@')[0] !== user);
   const r = await rmReq('PUT', `/v1/group/${encodeURIComponent(form.role)}/_attr/member`, kept);
-  if (r.status >= 300) { auditRole('revoke', 'result', actor, user, form.role, 'error', `HTTP ${r.status}`); return patJson(res, 502, { error: 'revoke_failed', status: r.status, detail: (r.txt || '').slice(0, 160) }); }
+  if (r.status >= 300) { auditRole('revoke', 'result', actor, user, form.role, 'error', `HTTP ${r.status}`); await publishAuthAudit(actor, 'role-revoke', `${user}:${form.role}`, 'error', `HTTP ${r.status}`); return patJson(res, 502, { error: 'revoke_failed', status: r.status, detail: (r.txt || '').slice(0, 160) }); }
   auditRole('revoke', 'result', actor, user, form.role, 'accepted', '');
+  await publishAuthAudit(actor, 'role-revoke', `${user}:${form.role}`, 'accepted', reason);
   patJson(res, 200, { revoked: { user, role: form.role } });
 }
 
@@ -940,7 +1052,7 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       if (p === '/bff/cli/devices' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handleCliDeviceCreate(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p === '/bff/cli/devices' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleCliDeviceList(res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       match = p.match(/^\/bff\/cli\/devices\/([a-f0-9]{32})$/);
-      if (match && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handleCliDeviceRevoke(res, a, match[1]) : patJson(res, 401, { error: 'unauthorized' }); }
+      if (match && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handleCliDeviceRevoke(req, res, a, match[1]) : patJson(res, 401, { error: 'unauthorized' }); }
       // API token — 비대화형 자동화용. 발급/목록/폐기는 admin 그룹 필요.
       if (p === '/bff/pat' && req.method === 'POST') { const a = await requireAdmin(req); return a ? await handlePatMint(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p === '/bff/pat' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handlePatList(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }
@@ -960,7 +1072,13 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       // hide every other Kanidm /ui/* (apps portal, native login, oauth2, profile) behind the console
       if (p === '/ui' || p.startsWith('/ui/')) return redirect(res, CONSOLE_URL);
       return proxyToKanidm(req, res); // /v1/*, /status, … -> internal Kanidm
-    } catch (e) { console.error('[bff] handler error:', e); if (!res.headersSent) send(res, 500, 'text/plain', 'internal error'); }
+    } catch (e) {
+      console.error('[bff] handler error:', e);
+      if (!res.headersSent) {
+        const status = Number(e?.statusCode) === 503 ? 503 : 500;
+        send(res, status, 'application/json', JSON.stringify({ error: status === 503 ? 'credential_store_unavailable' : 'internal_error' }));
+      }
+    }
   })();
 });
 server.listen(PORT, () => console.log(`[bff] opensphere-console-auth listening :${PORT} (kid=${KID}, core=${KANIDM_CORE_URL})`));

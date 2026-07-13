@@ -18,6 +18,7 @@ on:
       - backend/opensphere-console-backend/**
       - backend/dupa-control/**
       - backend/opensphere-console-oaa-gateway/**
+      - backend/os-cli/**
       - backend/backbone/images/**
       - .github/workflows/publish-edge-images.yml
 

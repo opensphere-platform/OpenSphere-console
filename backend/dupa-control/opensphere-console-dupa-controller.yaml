@@ -135,6 +135,9 @@ spec:
       labels: { app: opensphere-console-dupa-controller }
     spec:
       serviceAccountName: opensphere-console-dupa-controller
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: controller
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
@@ -176,6 +179,7 @@ spec:
             limits: { cpu: 500m, memory: 256Mi }
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
       volumes:
         - name: kanidm-ca

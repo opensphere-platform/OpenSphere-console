@@ -16,9 +16,9 @@ WORKDIR /src
 COPY OpenSphere-console/backend/os-cli/go.mod ./
 COPY OpenSphere-console/backend/os-cli/cmd ./cmd
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.3.0" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=0.3.0" -o /out/opensphere-cli-darwin-arm64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.3.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
+    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-darwin-arm64 ./cmd/os && \
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 
 FROM docker.io/library/node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS cli-manifest
 WORKDIR /manifest

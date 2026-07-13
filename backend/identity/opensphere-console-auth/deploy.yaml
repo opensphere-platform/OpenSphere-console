@@ -84,8 +84,13 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["opensphere-console-auth-pats", "opensphere-console-auth-policy", "opensphere-console-auth-cli-devices"]
+    resourceNames: ["opensphere-console-auth-policy"]
     verbs: ["get", "patch", "update"]
+  # 0.2/초기 0.3 상태를 CBS로 한 번 흡수하기 위한 read-only migration 권한.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["opensphere-console-auth-pats", "opensphere-console-auth-cli-devices"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["opensphere-console-auth-codes", "opensphere-console-auth-cli-flows"]
@@ -131,6 +136,9 @@ spec:
       labels: { app: opensphere-console-auth }
     spec:
       serviceAccountName: opensphere-console-auth
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: auth
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
@@ -148,6 +156,7 @@ spec:
             # AG-5: 운영 환경 지시자. "production"이면 TOTP를 강제하고 관리자의 비활성화를 403으로 거부한다.
             # 로컬/개발 클러스터는 development(비번 로그인 유지). 운영 배포에서 production으로 바꾼다.
             - { name: AUTH_ENVIRONMENT, value: "development" }
+            - { name: CREDENTIAL_STORE_URL, value: "http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080" }
           ports:
             - { containerPort: 8443 }
           volumeMounts:
@@ -167,6 +176,7 @@ spec:
             limits: { cpu: 250m, memory: 256Mi }
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
       volumes:
         - name: tls

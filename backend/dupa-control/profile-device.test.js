@@ -14,7 +14,11 @@ test('My Profile is the single human credential control surface', () => {
   assert.match(profile, /\/bff\/cli\/devices/);
   assert.match(profile, /\/bff\/cli\/enrollments/);
   assert.match(profile, /자동화 API 토큰/);
+  assert.match(profile, /발급 사유/);
+  assert.match(profile, /폐기 사유/);
   assert.match(profile, /개인 키는 이 서버가 아닌 운영체제 보안 저장소/);
+  assert.match(profile, /<clr-tab-content \*clrIfActive="tab\(\) === 'credentials'">/);
+  assert.doesNotMatch(profile, /\[clrIfActive\]/);
 
   const adminCli = read('src/app/pages/admin-cli.ts');
   assert.match(adminCli, /지속되는 장치 신뢰로 로그인/);
@@ -32,12 +36,21 @@ test('CLI configuration never serializes bearer credentials', () => {
   assert.match(cli, /\/bff\/cli\/session/);
 });
 
-test('auth deployment persists public devices and one-time flows separately', () => {
+test('auth deployment sends durable credentials to CBS and keeps one-time flows separate', () => {
   const deploy = read('backend/identity/opensphere-console-auth/deploy.yaml');
-  assert.match(deploy, /name: opensphere-console-auth-cli-devices/);
+  const server = read('backend/identity/opensphere-console-auth/server.mjs');
+  const controller = read('backend/dupa-control/controller.js');
+  assert.match(deploy, /name: CREDENTIAL_STORE_URL/);
   assert.match(deploy, /name: opensphere-console-auth-cli-flows/);
-  assert.match(deploy, /resourceNames:\s*\[[^\]]*opensphere-console-auth-cli-devices[^\]]*\]/s);
   assert.match(deploy, /resourceNames:\s*\[[^\]]*opensphere-console-auth-cli-flows[^\]]*\]/s);
+  assert.match(server, /\/api\/internal\/credential-state\/\$\{kind\}/);
+  assert.match(server, /ConfigMap to CBS migration/);
+  assert.match(server, /reason_required/);
+  assert.match(server, /mutationReason/);
+  assert.doesNotMatch(server, /const patchDevice = \(id, valueOrNull\) => k8sApi/);
+  assert.match(controller, /opensphere-console-auth.*system:serviceaccount:\$\{NS\}:opensphere-console-auth/s);
+  assert.match(controller, /credential-state/);
+  assert.match(controller, /managed_credential|listManagedCredentials/);
 });
 
 test('auth image contains every local runtime module imported by server', () => {

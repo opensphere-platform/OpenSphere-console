@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-var version = "0.3.0"
+var version = "0.4.0"
 
 type Config struct {
 	Profile     string `json:"profile"`
@@ -126,6 +126,17 @@ func loadConfig() (Config, error) {
 	}
 	// Legacy config could contain year-long PAT/idToken fields. They are deliberately
 	// ignored rather than loaded back into memory; `os login` performs one-time device pairing.
+	// 읽기만 해도 오래된 bearer 필드는 즉시 제거해 디스크에 비밀이 남지 않게 한다.
+	var legacy map[string]json.RawMessage
+	if json.Unmarshal(b, &legacy) == nil {
+		_, hasPAT := legacy["pat"]
+		_, hasIDToken := legacy["idToken"]
+		if hasPAT || hasIDToken {
+			if err := saveConfig(cfg); err != nil {
+				return cfg, fmt.Errorf("레거시 bearer 설정 제거 실패: %w", err)
+			}
+		}
+	}
 	return cfg, nil
 }
 
@@ -368,6 +379,20 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return getResource(cfg, args[1:], out)
 	case "role":
 		return role(cfg, args[1:], out)
+	case "token":
+		return tokens(cfg, args[1:], out)
+	case "auth-policy":
+		return authPolicy(cfg, args[1:], out)
+	case "admin":
+		return admins(cfg, args[1:], out)
+	case "backbone":
+		return backbone(cfg, args[1:], out)
+	case "observability":
+		return observability(cfg, args[1:], out)
+	case "audit":
+		return auditLog(cfg, args[1:], out)
+	case "catalog":
+		return catalog(cfg, args[1:], out)
 	case "extensions":
 		return extensions(cfg, args[1:], out)
 	default:
@@ -379,7 +404,8 @@ func logout(cfg Config, out io.Writer) error {
 	if cfg.DeviceID == "" {
 		return errors.New("등록된 CLI 디바이스가 없습니다")
 	}
-	b, status, err := request(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/cli/devices/"+url.PathEscape(cfg.DeviceID)), nil, "")
+	body, _ := json.Marshal(map[string]string{"reason": "Interactive CLI logout"})
+	b, status, err := request(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/cli/devices/"+url.PathEscape(cfg.DeviceID)), bytes.NewReader(body), "application/json")
 	if err != nil {
 		return err
 	}
@@ -412,10 +438,16 @@ func devices(cfg Config, args []string, out io.Writer) error {
 	}
 	if args[0] == "revoke" {
 		if len(args) < 2 {
-			return errors.New("사용법: os device revoke <device-id>")
+			return errors.New("사용법: os device revoke <device-id> --reason <사유>")
 		}
 		id := strings.TrimSpace(args[1])
-		b, status, err := request(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/cli/devices/"+url.PathEscape(id)), nil, "")
+		flags := parseLongFlags(args[2:])
+		reason := strings.TrimSpace(flags["reason"])
+		if len(reason) < 8 {
+			return errors.New("--reason은 8자 이상의 장치 폐기 사유여야 합니다")
+		}
+		body, _ := json.Marshal(map[string]string{"reason": reason})
+		b, status, err := request(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/cli/devices/"+url.PathEscape(id)), bytes.NewReader(body), "application/json")
 		if err != nil {
 			return err
 		}
@@ -716,7 +748,7 @@ func getResource(cfg Config, args []string, out io.Writer) error {
 
 func role(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("사용법: os role list | grant <user> <role> | revoke <user> <role>")
+		return errors.New("사용법: os role list | grant <user> <role> --reason <사유> | revoke <user> <role> --reason <사유>")
 	}
 	method, path := http.MethodGet, "/bff/roles"
 	var body io.Reader
@@ -724,11 +756,16 @@ func role(cfg Config, args []string, out io.Writer) error {
 	switch args[0] {
 	case "list":
 	case "grant", "revoke":
-		if len(args) != 3 {
-			return fmt.Errorf("사용법: os role %s <user> <role>", args[0])
+		if len(args) < 3 {
+			return fmt.Errorf("사용법: os role %s <user> <role> --reason <사유>", args[0])
+		}
+		flags := parseLongFlags(args[3:])
+		reason := strings.TrimSpace(flags["reason"])
+		if len(reason) < 8 {
+			return errors.New("--reason은 8자 이상의 권한 변경 사유여야 합니다")
 		}
 		method, path = http.MethodPost, "/bff/roles/"+args[0]
-		body = strings.NewReader(url.Values{"user": {args[1]}, "role": {args[2]}}.Encode())
+		body = strings.NewReader(url.Values{"user": {args[1]}, "role": {args[2]}, "reason": {reason}}.Encode())
 		contentType = "application/x-www-form-urlencoded"
 	default:
 		return fmt.Errorf("알 수 없는 role 동작: %s", args[0])
@@ -743,9 +780,172 @@ func role(cfg Config, args []string, out io.Writer) error {
 	return pretty(out, b)
 }
 
+func jsonCall(cfg Config, method, rawURL string, payload any, out io.Writer) error {
+	var body io.Reader
+	contentType := ""
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body, contentType = bytes.NewReader(encoded), "application/json"
+	}
+	b, status, err := request(cfg, method, rawURL, body, contentType)
+	if err != nil {
+		return err
+	}
+	if err := requireOK(b, status); err != nil {
+		return err
+	}
+	if status == http.StatusNoContent || len(bytes.TrimSpace(b)) == 0 {
+		fmt.Fprintln(out, "{}")
+		return nil
+	}
+	return pretty(out, b)
+}
+
+func tokens(cfg Config, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("사용법: os token list | create --label <이름> --reason <사유> | revoke <jti> --reason <사유>")
+	}
+	switch args[0] {
+	case "list":
+		return jsonCall(cfg, http.MethodGet, join(cfg.BFFURL, "/bff/pat"), nil, out)
+	case "create":
+		flags := parseLongFlags(args[1:])
+		label, reason := strings.TrimSpace(flags["label"]), strings.TrimSpace(flags["reason"])
+		if label == "" || len(reason) < 8 {
+			return errors.New("token create에는 --label과 8자 이상의 --reason이 필요합니다")
+		}
+		form := url.Values{"label": {label}, "reason": {reason}}.Encode()
+		b, status, err := request(cfg, http.MethodPost, join(cfg.BFFURL, "/bff/pat"), strings.NewReader(form), "application/x-www-form-urlencoded")
+		if err != nil {
+			return err
+		}
+		if err := requireOK(b, status); err != nil {
+			return err
+		}
+		return pretty(out, b)
+	case "revoke":
+		reason := strings.TrimSpace(parseLongFlags(args[2:])["reason"])
+		if len(args) < 2 || len(reason) < 8 {
+			return errors.New("사용법: os token revoke <jti> --reason <8자 이상 사유>")
+		}
+		return jsonCall(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/pat/"+url.PathEscape(args[1])), map[string]string{"reason": reason}, out)
+	default:
+		return fmt.Errorf("알 수 없는 token 동작: %s", args[0])
+	}
+}
+
+func authPolicy(cfg Config, args []string, out io.Writer) error {
+	if len(args) == 0 || args[0] == "get" {
+		return jsonCall(cfg, http.MethodGet, join(cfg.BFFURL, "/bff/auth-policy"), nil, out)
+	}
+	if args[0] != "set" || len(args) < 2 || (args[1] != "enabled" && args[1] != "disabled") {
+		return errors.New("사용법: os auth-policy get | set enabled|disabled --reason <사유>")
+	}
+	reason := strings.TrimSpace(parseLongFlags(args[2:])["reason"])
+	if len(reason) < 8 {
+		return errors.New("--reason은 8자 이상의 정책 변경 사유여야 합니다")
+	}
+	return jsonCall(cfg, http.MethodPatch, join(cfg.BFFURL, "/bff/auth-policy"), map[string]any{
+		"totpEnabled": args[1] == "enabled", "reason": reason,
+	}, out)
+}
+
+func admins(cfg Config, args []string, out io.Writer) error {
+	if len(args) == 0 || args[0] == "list" {
+		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/identity"), nil, out)
+	}
+	flags := parseLongFlags(args[1:])
+	reason := strings.TrimSpace(flags["reason"])
+	if len(reason) < 8 {
+		return errors.New("관리 쓰기에는 8자 이상의 --reason이 필요합니다")
+	}
+	switch args[0] {
+	case "create":
+		username := strings.TrimSpace(flags["username"])
+		displayName := strings.TrimSpace(flags["display-name"])
+		if username == "" || displayName == "" {
+			return errors.New("사용법: os admin create --username <id> --display-name <이름> [--email <주소>] [--roles a,b] --reason <사유>")
+		}
+		roles := []string{}
+		for _, value := range strings.Split(flags["roles"], ",") {
+			if value = strings.TrimSpace(value); value != "" {
+				roles = append(roles, value)
+			}
+		}
+		return jsonCall(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/identity/users"), map[string]any{
+			"username": username, "displayName": displayName, "email": strings.TrimSpace(flags["email"]), "roles": roles, "reason": reason,
+		}, out)
+	case "enable", "disable":
+		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
+			return fmt.Errorf("사용법: os admin %s <user-uuid> --reason <사유>", args[0])
+		}
+		return jsonCall(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/identity/users/"+url.PathEscape(args[1])+"/enabled"), map[string]any{"enabled": args[0] == "enable", "reason": reason}, out)
+	case "onboard":
+		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
+			return errors.New("사용법: os admin onboard <user-uuid> --reason <사유>")
+		}
+		return jsonCall(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/identity/users/"+url.PathEscape(args[1])+"/onboarding"), map[string]any{"reason": reason}, out)
+	default:
+		return fmt.Errorf("알 수 없는 admin 동작: %s", args[0])
+	}
+}
+
+func backbone(cfg Config, args []string, out io.Writer) error {
+	path := "/api/admin/backbone/status"
+	if len(args) > 0 && args[0] == "detail" {
+		flags := parseLongFlags(args[1:])
+		component := strings.TrimSpace(flags["component"])
+		if component == "" {
+			return errors.New("사용법: os backbone detail --component postgres|rustfs|gitea")
+		}
+		path = "/api/admin/backbone/detail?component=" + url.QueryEscape(component)
+	} else if len(args) > 0 && args[0] != "status" {
+		return errors.New("사용법: os backbone status | detail --component <이름>")
+	}
+	return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, path), nil, out)
+}
+
+func observability(cfg Config, args []string, out io.Writer) error {
+	if len(args) == 0 || args[0] == "status" {
+		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/observability/status"), nil, out)
+	}
+	if args[0] == "targets" {
+		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/observability/targets"), nil, out)
+	}
+	if args[0] == "query" {
+		expr := strings.TrimSpace(parseLongFlags(args[1:])["expr"])
+		if expr == "" {
+			return errors.New("사용법: os observability query --expr <PromQL>")
+		}
+		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/observability/query?expr="+url.QueryEscape(expr)), nil, out)
+	}
+	return errors.New("사용법: os observability status|targets|query")
+}
+
+func auditLog(cfg Config, args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] != "list" {
+		return errors.New("사용법: os audit list")
+	}
+	return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/plugins/events"), nil, out)
+}
+
+func catalog(cfg Config, args []string, out io.Writer) error {
+	path := "/api/catalog/entities"
+	if len(args) > 0 && args[0] == "apis" {
+		path += "?filter=kind=API"
+	}
+	if len(args) > 0 && args[0] != "list" && args[0] != "apis" {
+		return errors.New("사용법: os catalog list|apis")
+	}
+	return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, path), nil, out)
+}
+
 func extensions(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("사용법: os extensions inspect|install|activate|list")
+		return errors.New("사용법: os extensions inspect|install|activate|disable|uninstall|rollback|list|bindings")
 	}
 	action := strings.ToLower(args[0])
 	var method, path string
@@ -766,16 +966,25 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 			return errors.New("--reason은 8자 이상의 설치 승인 사유여야 합니다")
 		}
 		method, path, payload = http.MethodPost, "/api/admin/extensions/install", map[string]string{"image": args[1], "reason": reason}
-	case "activate":
+	case "activate", "disable", "uninstall", "rollback":
 		if len(args) != 2 || !validResourceName(args[1]) {
-			return errors.New("사용법: os extensions activate <module-id>")
+			return fmt.Errorf("사용법: os extensions %s <module-id>", action)
 		}
-		method, path, payload = http.MethodPost, "/api/admin/plugins/registrations/"+url.PathEscape(args[1])+"/enable", map[string]string{}
+		serverAction := map[string]string{"activate": "enable", "disable": "disable", "uninstall": "uninstall", "rollback": "rollback"}[action]
+		method, path, payload = http.MethodPost, "/api/admin/plugins/registrations/"+url.PathEscape(args[1])+"/"+serverAction, map[string]string{}
 	case "list":
 		if len(args) != 1 {
 			return errors.New("사용법: os extensions list")
 		}
 		method, path = http.MethodGet, "/api/admin/plugins/registrations"
+	case "bindings":
+		if len(args) == 1 || args[1] == "list" {
+			method, path = http.MethodGet, "/api/admin/bindings"
+		} else if len(args) == 3 && (args[1] == "enable" || args[1] == "disable") && validResourceName(args[2]) {
+			method, path, payload = http.MethodPost, "/api/admin/bindings/"+url.PathEscape(args[2])+"/"+args[1], map[string]string{}
+		} else {
+			return errors.New("사용법: os extensions bindings list | enable|disable <binding-id>")
+		}
 	default:
 		return fmt.Errorf("알 수 없는 extensions 동작: %s", action)
 	}
@@ -944,13 +1153,21 @@ func printHelp(out io.Writer) {
   os login --pat-stdin [...]                   (기존 API token을 1회 bootstrap으로 사용; token은 저장하지 않음)
   os whoami
   os logout                                    (서버 디바이스 신뢰 + 로컬 키 동시 폐기)
-  os device list | revoke <device-id>
+  os device list | revoke <device-id> --reason <사유>
+  os token list | create --label <이름> --reason <사유> | revoke <jti> --reason <사유>
+  os auth-policy get | set enabled|disabled --reason <사유>
+  os admin list | create|enable|disable|onboard ... --reason <사유>
   os registry [--kind capability|plugin|template] [-o json]
+  os catalog list | apis
+  os backbone status | detail --component <이름>
+  os observability status | targets | query --expr <PromQL>
+  os audit list
   os extensions inspect <ghcr-image@sha256:digest>
   os extensions install <ghcr-image@sha256:digest> --reason <승인 사유>
-  os extensions activate <module-id> | list
+  os extensions activate|disable|uninstall|rollback <module-id> | list
+  os extensions bindings list | enable|disable <binding-id>
   os get <resource> [name] [-o json]
-  os role list | grant <user> <role> | revoke <user> <role>
+  os role list | grant|revoke <user> <role> --reason <사유>
   os <namespace> [명령...] [-o json]
   os version | help
 

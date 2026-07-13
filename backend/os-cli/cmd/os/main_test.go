@@ -151,6 +151,31 @@ func TestConfigIsAdminOnlyAndPrivate(t *testing.T) {
 	}
 }
 
+func TestLoadConfigScrubsLegacyBearerFields(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("OS_CONFIG", p)
+	t.Setenv("OS_PAT", "")
+	t.Setenv("OS_ID_TOKEN", "")
+	legacy := `{"profile":"admin","pat":"legacy-secret","idToken":"legacy-id","registryUrl":"http://localhost:8090/api/v1/registry","apiUrl":"http://localhost:8090/api/proxy","bffUrl":"http://localhost:8090","consoleUrl":"http://localhost:8090"}`
+	if err := os.WriteFile(p, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PAT != "" || cfg.IDToken != "" {
+		t.Fatal("legacy bearer values must never be loaded")
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "legacy-secret") || strings.Contains(string(b), "idToken") || strings.Contains(string(b), "\"pat\"") {
+		t.Fatalf("legacy bearer fields were not scrubbed: %s", b)
+	}
+}
+
 func TestRejectsCredentialBearingNonHTTPAndRemotePlaintextURLs(t *testing.T) {
 	for _, raw := range []string{"file:///tmp/a", "https://user:pass@example.test", "javascript:alert(1)", "http://console.example.test"} {
 		if validateURL(raw) == nil {
@@ -180,6 +205,22 @@ func TestExtensionInstallRequiresApprovalReasonBeforeNetwork(t *testing.T) {
 	}
 	if !validResourceName("cluster-manager") || validResourceName("Cluster Manager") || validResourceName("cluster-manager-") {
 		t.Fatal("module id validation mismatch")
+	}
+}
+
+func TestSensitiveNativeMutationsRequireReasonBeforeNetwork(t *testing.T) {
+	t.Setenv("OS_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	for _, args := range [][]string{
+		{"role", "grant", "alice", "opensphere-console-admins"},
+		{"token", "create", "--label", "automation"},
+		{"auth-policy", "set", "enabled"},
+		{"admin", "disable", "00000000-0000-0000-0000-000000000000"},
+		{"device", "revoke", "00000000000000000000000000000000"},
+	} {
+		err := run(args, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "reason") {
+			t.Fatalf("%v must fail locally without reason, got %v", args, err)
+		}
 	}
 }
 

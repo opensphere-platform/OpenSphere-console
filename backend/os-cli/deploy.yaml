@@ -37,8 +37,8 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: serve
-          # 로컬 kind 클러스터: 노드에 로드된 태그 이미지를 참조(IfNotPresent=로컬 존재 시 pull 안 함).
-          # CI/레지스트리 배포에서는 @sha256:<digest> 고정으로 되돌린다(공급망 provenance).
+          # 개발 진단 전용 독립 배포. 제품 Setup은 별도 Pod를 만들지 않고
+          # opensphere-console 이미지에 내장된 동일 바이너리를 직접 제공한다.
           image: os-cli:cli-hardening-20260712
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]

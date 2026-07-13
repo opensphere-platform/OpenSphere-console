@@ -367,6 +367,7 @@ const retryableReason = (reason) => new Set([
 async function verifyWorkloadToken(req, pluginId) {
   const firstParty = new Map([
     ['opensphere-console-backend', `system:serviceaccount:${NS}:opensphere-console-backend`],
+    ['opensphere-console-auth', `system:serviceaccount:${NS}:opensphere-console-auth`],
   ]);
   if (!safeName(pluginId) || (!firstParty.has(pluginId) && !proxyAllow.has(pluginId))) throw { code: 403, msg: 'source is not active' };
   const match = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
@@ -1548,6 +1549,46 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(permitted ? 204 : 403); return res.end();
     }
 
+    // Auth BFF 전용 내구 자격 저장소. PAT allowlist와 CLI device 공개키를 Backbone
+    // PostgreSQL에 보관하며, 상태 변경과 감사 INSERT는 db의 단일 트랜잭션이다.
+    // 브라우저/관리자 bearer가 아니라 정확한 opensphere-console-auth SA만 허용한다.
+    const credentialState = p.match(/^\/api\/internal\/credential-state\/(pat|device)(?:\/([a-f0-9]{32}))?$/);
+    if (credentialState) {
+      try { await verifyWorkloadToken(req, 'opensphere-console-auth'); }
+      catch (e) { return json(res, typeof e?.code === 'number' ? e.code : 502, { error: e?.msg || 'workload authentication failed', opId }); }
+      if (!db.isEnabled()) return json(res, 503, { error: 'Backbone PostgreSQL unavailable', opId });
+      const [, kind, id] = credentialState;
+      if (req.method === 'GET' && !id) {
+        try { return json(res, 200, { items: await db.listManagedCredentials(kind) }); }
+        catch (e) { return json(res, 503, { error: 'credential state unavailable', opId }); }
+      }
+      if ((req.method === 'PUT' || req.method === 'DELETE') && id) {
+        const body = await readBody(req).catch(() => req.method === 'DELETE' ? {} : null);
+        if (req.method === 'PUT' && (!body || typeof body.record !== 'object' || Array.isArray(body.record))) {
+          return json(res, 400, { error: 'record object required', opId });
+        }
+        const record = req.method === 'DELETE' ? null : body.record;
+        const owner = String(body?.owner || record?.user || '').trim().slice(0, 128);
+        if (req.method === 'PUT' && !owner) return json(res, 400, { error: 'owner required', opId });
+        try {
+          await db.mutateManagedCredential({
+            kind, id, owner: owner || 'unknown', record,
+            audit: {
+              time: new Date().toISOString(), opId,
+              actor: String(body?.actor || owner || 'opensphere-console-auth').slice(0, 128),
+              action: String(body?.action || `${kind}-${req.method === 'DELETE' ? 'revoke' : 'upsert'}`).slice(0, 80),
+              result: 'accepted', reason: String(body?.reason || '').slice(0, 240),
+            },
+          });
+          return json(res, req.method === 'PUT' ? 200 : 204, req.method === 'PUT' ? { stored: id } : null);
+        } catch (e) {
+          console.error(`[credential-state] op=${opId}:`, String(e).slice(0, 160));
+          return json(res, 503, { error: 'credential state unavailable', opId });
+        }
+      }
+      return json(res, 405, { error: 'method not allowed', opId });
+    }
+
     // ── 인증 게이트(감사 P0-1/P1-3): /api/admin/* 는 검증된 admin id_token 필수.
     // actor는 '검증된 토큰 claim'에서만 도출 → X-OpenSphere-User 헤더 스푸핑 무력화.
     // 예외: /api/admin/events(subShell 백엔드 server-to-server 발행)는 아래에서 별도 처리.
@@ -1745,8 +1786,8 @@ const server = http.createServer(async (req, res) => {
       const pluginId = clip(b.source || req.headers['x-opensphere-source'] || '', 60);
       try { await verifyWorkloadToken(req, pluginId); }
       catch (e) { return json(res, typeof e?.code === 'number' ? e.code : 502, { error: e?.msg || 'workload authentication failed', opId }); }
-      const source = pluginId === 'opensphere-console-backend'
-        ? `core:opensphere-console-backend/${clip(b.userActor || 'system', 60)}`
+      const source = pluginId === 'opensphere-console-backend' || pluginId === 'opensphere-console-auth'
+        ? `core:${pluginId}/${clip(b.userActor || 'system', 60)}`
         : 'ext:' + pluginId;
       const event = logAudit(source, clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId, { deferPersistence: true });
       try { await persistAuditNow(event); }

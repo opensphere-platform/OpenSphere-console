@@ -86,22 +86,29 @@ interface AuthPolicy {
           </p>
         }
       </div>
-      <label class="policy-toggle">
-        <input
-          type="checkbox"
+      <div class="policy-controls">
+        <clr-input-container>
+          <label>정책 변경 사유</label>
+          <input clrInput [(ngModel)]="policyReason" name="policy-reason" maxlength="240" />
+          <clr-control-helper>영구 감사에 기록됩니다(8자 이상).</clr-control-helper>
+        </clr-input-container>
+        <clr-toggle-wrapper>
+          <input
+          type="checkbox" clrToggle
           [checked]="authPolicy()?.totpEnabled === true"
-          [disabled]="policyBusy() || !authPolicy() || authPolicy()?.enforced === true"
+          [disabled]="policyBusy() || !authPolicy() || authPolicy()?.enforced === true || policyReason.trim().length < 8"
           (change)="setTotpEnabled($any($event.target).checked)"
-        />
-        <span>
+          />
+          <label>
           <strong>TOTP 로그인 활성화</strong>
           @if (authPolicy()?.enforced) {
             <small>운영 환경 — 강제 활성(관리자가 끌 수 없음)</small>
           } @else {
             <small>{{ authPolicy()?.totpEnabled ? '활성 — 인증 앱 코드 필수' : '비활성 — 개발용 비밀번호 로그인' }}</small>
           }
-        </span>
-      </label>
+          </label>
+        </clr-toggle-wrapper>
+      </div>
       <p class="policy-warning">
         기존에 TOTP가 등록된 계정은 잠금 방지를 위해 등록된 코드를 계속 요구할 수 있습니다. 비밀번호 전용으로 바꾸려면 비활성 상태에서 해당 계정을 재온보딩하세요.
       </p>
@@ -320,6 +327,7 @@ export class ConsoleAdmins implements OnInit {
     { group: 'opensphere-console-viewers', label: '뷰어 (Viewer)', admin: false },
   ];
   roleSel: Record<string, boolean> = {};
+  policyReason = '';
   draft = { username: '', displayName: '', email: '', reason: '' };
 
   private auth = inject(AuthService);
@@ -540,6 +548,12 @@ export class ConsoleAdmins implements OnInit {
 
   async setTotpEnabled(enabled: boolean): Promise<void> {
     const previous = this.authPolicy();
+    const reason = this.policyReason.trim();
+    if (reason.length < 8) {
+      this.authPolicy.set(previous);
+      this.msg.set({ type: 'danger', text: '정책 변경 사유를 8자 이상 입력하세요.' });
+      return;
+    }
     this.policyBusy.set(true);
     try {
       const r = await this.http.request('/bff/auth-policy', {
@@ -548,7 +562,7 @@ export class ConsoleAdmins implements OnInit {
           authorization: 'Bearer ' + (this.auth.token() || ''),
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ totpEnabled: enabled }),
+        body: JSON.stringify({ totpEnabled: enabled, reason }),
       });
       if (r.status === 403) {
         this.authPolicy.set(previous);
@@ -557,6 +571,7 @@ export class ConsoleAdmins implements OnInit {
       }
       if (!r.ok) throw new Error(`auth policy HTTP ${r.status}`);
       this.authPolicy.set(await r.json());
+      this.policyReason = '';
       this.msg.set({
         type: 'success',
         text: enabled ? 'TOTP 로그인을 활성화했습니다. TOTP 미등록 계정은 재온보딩이 필요합니다.' : '개발용 비밀번호 로그인을 활성화했습니다.',

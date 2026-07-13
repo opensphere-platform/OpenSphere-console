@@ -81,9 +81,14 @@ const ADMIN_GROUP = 'opensphere-console-admins';
                   @for (u of availableUsers(); track u) { <option [value]="u">{{ u }}</option> }
                 </select>
               </clr-select-container>
+              <clr-textarea-container>
+                <label>변경 사유</label>
+                <textarea clrTextarea name="role-reason" [(ngModel)]="changeReason" maxlength="240" required></textarea>
+                <clr-control-helper>영구 감사에 기록됩니다(8자 이상).</clr-control-helper>
+              </clr-textarea-container>
             </form>
             <div class="panel-actions">
-              <button class="btn btn-primary" (click)="grant()" [disabled]="busy() || !addUser">부여</button>
+              <button class="btn btn-primary" (click)="grant()" [disabled]="busy() || !addUser || changeReason.trim().length < 8">부여</button>
               @if (r.group === adminGroup && addUser) { <span class="warn-tag">관리자 부여 — 강조 감사</span> }
             </div>
             @if (!availableUsers().length) {
@@ -96,7 +101,7 @@ const ADMIN_GROUP = 'opensphere-console-admins';
                 @for (m of r.members; track m) {
                   <li>
                     <span>{{ m }}</span>
-                    <button class="btn btn-sm btn-danger-outline" (click)="revoke(m)" [disabled]="busy()">회수</button>
+                    <button class="btn btn-sm btn-danger-outline" (click)="revoke(m)" [disabled]="busy() || changeReason.trim().length < 8">회수</button>
                   </li>
                 }
               </ul>
@@ -144,6 +149,7 @@ export class AdminRoles implements OnInit {
   readonly selectedRole = signal<Role | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   addUser = '';
+  changeReason = '';
 
   async ngOnInit(): Promise<void> {
     await Promise.all([this.refresh(), this.loadUsers()]);
@@ -164,6 +170,7 @@ export class AdminRoles implements OnInit {
   openManage(role: Role): void {
     this.selectedRole.set(role);
     this.addUser = '';
+    this.changeReason = '';
     this.msg.set(null);
     this.panelOpen.set(true);
   }
@@ -172,6 +179,7 @@ export class AdminRoles implements OnInit {
     this.panelOpen.set(false);
     this.selectedRole.set(null);
     this.addUser = '';
+    this.changeReason = '';
   }
 
   async refresh(): Promise<void> {
@@ -208,14 +216,14 @@ export class AdminRoles implements OnInit {
   async grant(): Promise<void> {
     const role = this.selectedRole();
     const user = this.addUser.trim();
-    if (!role || !user) return;
+    if (!role || !user || this.changeReason.trim().length < 8) return;
     await this.mutate('grant', user, role.group);
     this.addUser = '';
   }
 
   async revoke(user: string): Promise<void> {
     const role = this.selectedRole();
-    if (!role) return;
+    if (!role || this.changeReason.trim().length < 8) return;
     if (!confirm(`${user} 의 ${role.label} 역할을 회수할까요?`)) return;
     await this.mutate('revoke', user, role.group);
   }
@@ -226,7 +234,7 @@ export class AdminRoles implements OnInit {
       const r = await this.api('/bff/roles/' + action, {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: `user=${encodeURIComponent(user)}&role=${encodeURIComponent(group)}`,
+        body: new URLSearchParams({ user, role: group, reason: this.changeReason.trim() }).toString(),
       });
       if (r.status === 403) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };

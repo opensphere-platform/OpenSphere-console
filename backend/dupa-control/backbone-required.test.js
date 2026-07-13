@@ -17,7 +17,7 @@ test('Backbone is the mandatory readiness base for the Main Shell', () => {
   assert.match(controller, /postgres && rustfs && gitea && workloads\.ready/);
   assert.match(nginx, /location = \/readyz/);
   assert.match(consoleDeploy, /httpGet: \{ path: \/readyz, port: 8080 \}/);
-  assert.match(architecture, /Backbone → Main Shell\/Console 기능 → subShell → plugin/);
+  assert.match(architecture, /CBS → Main Shell\/Console 기능 → subShell → plugin/);
 });
 
 test('durable audit is fail-closed with no ConfigMap fallback', () => {
@@ -27,6 +27,10 @@ test('durable audit is fail-closed with no ConfigMap fallback', () => {
   assert.match(db, /throw new Error\('Backbone PostgreSQL unavailable'\)/);
   assert.match(db, /CREATE TRIGGER audit_log_append_only/);
   assert.match(db, /BEFORE UPDATE OR DELETE ON audit_log/);
+  assert.match(db, /CREATE TABLE IF NOT EXISTS managed_credential/);
+  assert.match(db, /async function mutateManagedCredential/);
+  assert.match(db, /BEGIN/);
+  assert.match(db, /INSERT INTO audit_log/);
   assert.match(identity, /await requireBackbone\(\)/);
   assert.match(identity, /source: 'opensphere-console-backend'/);
 });

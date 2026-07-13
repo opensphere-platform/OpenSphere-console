@@ -15,7 +15,7 @@ test('release manifest is hydrated from the exact compiled CLI artifacts', async
     await writeFile(join(artifacts, 'os-test'), bytes);
     const input = join(dir, 'index.json');
     const output = join(artifacts, 'index.json');
-    await writeFile(input, JSON.stringify({ version: '0.3.0', links: [{ href: '/api/cli/os-test', size: 1, sha256: '0'.repeat(64) }] }));
+    await writeFile(input, JSON.stringify({ version: '0.4.0', links: [{ href: '/api/cli/os-test', size: 1, sha256: '0'.repeat(64) }] }));
 
     const manifest = await generateManifest(input, artifacts, output);
     assert.equal(manifest.links[0].size, bytes.byteLength);
@@ -24,6 +24,13 @@ test('release manifest is hydrated from the exact compiled CLI artifacts', async
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('Console and diagnostic CLI images compile the manifest version', async () => {
+  const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
+  const diagnosticDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
+  assert.match(rootDockerfile, /main\.version=0\.4\.0/g);
+  assert.match(diagnosticDockerfile, /main\.version=0\.4\.0/g);
 });
 
 test('release manifest generation fails when a declared artifact is missing', async () => {
