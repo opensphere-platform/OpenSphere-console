@@ -1,5 +1,5 @@
 # opensphere-console-backend — 콘솔 stateless API 통합(구 console-identity-api + opensphere-catalog-api).
-# 셸 nginx: /api/identity·/api/catalog(←/api/rhdh) → 이 단일 서비스. (issuer=opensphere-console-auth·reconcile=dupa는 분리 유지)
+# 셸 nginx: /api/identity·/api/catalog·/api/kubernetes → 이 단일 서비스. (issuer=opensphere-console-auth·reconcile=dupa는 분리 유지)
 apiVersion: v1
 kind: ServiceAccount
 metadata: { name: opensphere-console-backend, namespace: opensphere-console }

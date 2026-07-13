@@ -57,6 +57,16 @@ test('native management assets have one canonical tree under /manage', () => {
   assert.doesNotMatch(search, /path:\s*'\/(?:catalog|apis|admin\/plugins|admin\/roles|console-admins)'/);
 });
 
+test('Console UI and native CLI share the canonical catalog API without an rhdh alias', () => {
+  const nginx = read('nginx', 'default.conf.template');
+  const api = read('src', 'app', 'core', 'api.service.ts');
+  const cli = read('backend', 'os-cli', 'cmd', 'os', 'main.go');
+  assert.match(nginx, /location \/api\/catalog\//);
+  assert.match(api, /\/api\/catalog\/entities/);
+  assert.match(cli, /path := "\/api\/catalog\/entities"/);
+  assert.doesNotMatch(`${nginx}\n${api}`, /\/api\/rhdh/);
+});
+
 test('notification detail uses the shared right sliding panel', () => {
   const notifications = read('src', 'app', 'pages', 'admin-notifications.ts');
 

@@ -790,7 +790,7 @@ func jsonCall(cfg Config, method, rawURL string, payload any, out io.Writer) err
 		}
 		body, contentType = bytes.NewReader(encoded), "application/json"
 	}
-	b, status, err := request(cfg, method, rawURL, body, contentType)
+	b, status, responseContentType, err := requestWithContentType(cfg, method, rawURL, body, contentType)
 	if err != nil {
 		return err
 	}
@@ -800,6 +800,10 @@ func jsonCall(cfg Config, method, rawURL string, payload any, out io.Writer) err
 	if status == http.StatusNoContent || len(bytes.TrimSpace(b)) == 0 {
 		fmt.Fprintln(out, "{}")
 		return nil
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(responseContentType, ";")[0]))
+	if mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json") {
+		return fmt.Errorf("서버가 JSON 대신 %s 응답을 반환했습니다: %s", responseContentType, rawURL)
 	}
 	return pretty(out, b)
 }

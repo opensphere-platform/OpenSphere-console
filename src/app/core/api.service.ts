@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpService } from './http.service';
 
 /** rhdh-self(headless 엔진)와 기능 컨테이너 API 소비.
- *  경로는 셸 nginx가 프록시: /api/rhdh/* → RHDH, /api/status/* → platform-status.
+ *  경로는 셸 nginx가 프록시: /api/catalog/*·/api/kubernetes/* → Console backend.
  *  헌법 §4: 엔진은 흡수하되 UI는 임베드하지 않는다 — 그 실행형.
  */
 export interface CatalogEntity {
@@ -71,14 +71,14 @@ export class ApiService {
   private http = inject(HttpService);
 
   async catalogEntities(): Promise<CatalogEntity[]> {
-    const res = await this.http.request('/api/rhdh/catalog/entities?limit=200');
+    const res = await this.http.request('/api/catalog/entities?limit=200');
     if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`);
     return res.json();
   }
 
   /** kind=API만 — RHDH 'APIs'(API Explorer) 메뉴의 셸판 데이터 */
   async apiEntities(): Promise<CatalogEntity[]> {
-    const res = await this.http.request('/api/rhdh/catalog/entities?filter=kind=api&limit=200');
+    const res = await this.http.request('/api/catalog/entities?filter=kind=api&limit=200');
     if (!res.ok) throw new Error(`apis: HTTP ${res.status}`);
     return res.json();
   }
@@ -86,7 +86,7 @@ export class ApiService {
   /** 엔티티의 살아있는 K8s 리소스 — rhdh-self kubernetes backend 플러그인 소비
    *  (TAP 'Runtime Resources' 대응 — 헌법 §10: 흡수, 재구현 아님) */
   async runtimeResources(entity: CatalogEntity): Promise<RuntimeResource[]> {
-    const res = await this.http.request(`/api/rhdh/kubernetes/services/${entity.metadata.name}`, {
+    const res = await this.http.request(`/api/kubernetes/services/${entity.metadata.name}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entity }),

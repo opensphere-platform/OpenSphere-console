@@ -24,6 +24,22 @@ func TestHelpDeclaresNativeAdminBoundary(t *testing.T) {
 	}
 }
 
+func TestJSONCallRejectsSuccessfulHTMLFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<!doctype html><title>SPA fallback</title>"))
+	}))
+	defer server.Close()
+	cfg := defaults()
+	cfg.PAT = "test-token"
+	var out bytes.Buffer
+	err := jsonCall(cfg, http.MethodGet, server.URL+"/api/catalog/entities", nil, &out)
+	if err == nil || !strings.Contains(err.Error(), "JSON 대신 text/html") {
+		t.Fatalf("HTML fallback must fail closed, got err=%v out=%q", err, out.String())
+	}
+}
+
 // F-2: --pat-stdin은 stdin에서 PAT를 읽어 argv 노출을 없앤다. 원격 endpoint를 지정하면
 // whoami 검증이 네트워크로 나가기 전에 stdin 파싱이 선행되므로, 여기서는 파싱 경계만 검증한다.
 func TestLoginReadsPatFromStdin(t *testing.T) {

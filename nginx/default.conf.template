@@ -59,12 +59,21 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # 콘솔 네이티브 카탈로그 (ADR-UI-003 §3.2 · 헌법 §4: rhdh 과도기 탈피) — console-core 서비스.
-    # /api/rhdh 프록시 경로명은 레거시(api.service 호환) 유지, 대상은 통합 opensphere-console-backend.
-    location /api/rhdh/ {
+    # 콘솔 네이티브 카탈로그 (ADR-UI-003 §3.2 · 헌법 §4) — console-core 서비스.
+    # 과도기 엔진 alias는 유지하지 않는다. Console UI와 os CLI가 동일한 정본 API를 소비한다.
+    location /api/catalog/ {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
-        rewrite ^/api/rhdh/(.*)$ /api/$1 break;
-        proxy_pass http://$console_backend_upstream:8080;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    location /api/kubernetes/ {
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
