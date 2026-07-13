@@ -53,6 +53,19 @@ test('auth deployment sends durable credentials to CBS and keeps one-time flows 
   assert.match(controller, /managed_credential|listManagedCredentials/);
 });
 
+test('runAsNonRoot Node workloads use numeric image and pod identities', () => {
+  for (const [dockerfilePath, deploymentPath] of [
+    ['backend/identity/opensphere-console-auth/Dockerfile', 'backend/identity/opensphere-console-auth/deploy.yaml'],
+    ['backend/dupa-control/Dockerfile', 'backend/dupa-control/opensphere-console-dupa-controller.yaml'],
+  ]) {
+    const dockerfile = read(dockerfilePath);
+    const deployment = read(deploymentPath);
+    assert.match(dockerfile, /^USER 1000:1000$/m);
+    assert.doesNotMatch(dockerfile, /^USER node$/m);
+    assert.match(deployment, /runAsNonRoot: true\s+runAsUser: 1000\s+runAsGroup: 1000/);
+  }
+});
+
 test('auth image contains every local runtime module imported by server', () => {
   const server = read('backend/identity/opensphere-console-auth/server.mjs');
   const dockerfile = read('backend/identity/opensphere-console-auth/Dockerfile');

@@ -14,6 +14,6 @@ COPY --chmod=0644 token-verifier.mjs /app/token-verifier.mjs
 COPY --chmod=0644 auth-policy.mjs /app/auth-policy.mjs
 COPY --chmod=0644 credential-onboarding.mjs /app/credential-onboarding.mjs
 COPY --chmod=0644 cli-device.mjs /app/cli-device.mjs
-USER node
+USER 1000:1000
 EXPOSE 8443
 CMD ["node", "/app/server.mjs"]

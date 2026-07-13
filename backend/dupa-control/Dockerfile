@@ -15,6 +15,6 @@ COPY controller.js /app/controller.js
 COPY db.js /app/db.js
 COPY storage.js /app/storage.js
 COPY kanidm-ca.crt /app/kanidm-ca.crt
-USER node
+USER 1000:1000
 EXPOSE 8080
 CMD ["node", "/app/controller.js"]
