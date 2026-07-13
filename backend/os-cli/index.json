@@ -1,7 +1,7 @@
 {
   "name": "os",
   "displayName": "os — OpenSphere CLI",
-  "description": "OpenSphere Console native 관리자 CLI. Kanidm PAT·Registry·API·role 계약을 Console과 공유합니다.",
+  "description": "OpenSphere Console native 관리자 CLI. Kanidm 장치 신뢰·Registry·API·role 계약을 Console과 공유합니다.",
   "ownership": "console-native",
   "profile": "admin",
   "version": "0.3.0",

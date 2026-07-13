@@ -20,13 +20,19 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... && \
     CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=0.3.0" -o /out/opensphere-cli-darwin-arm64 ./cmd/os && \
     CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.3.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 
+FROM docker.io/library/node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS cli-manifest
+WORKDIR /manifest
+COPY OpenSphere-console/backend/os-cli/index.json ./index.json
+COPY OpenSphere-console/backend/os-cli/generate-manifest.mjs ./generate-manifest.mjs
+COPY --from=cli-build /out/ ./artifacts/
+RUN node ./generate-manifest.mjs ./index.json ./artifacts ./artifacts/index.json
+
 FROM docker.io/nginxinc/nginx-unprivileged@sha256:592b23aa79a6e6c08ba4b20f1fff700e1328895705966722608e115d62e52d39
 ENV OS_PLUGIN_NAMESPACE=opensphere-console
 USER root
 RUN apk del --no-cache curl
 USER 101
 COPY --from=build /app/OpenSphere-console/dist/opensphere-console/browser /usr/share/nginx/html
-COPY OpenSphere-console/backend/os-cli/index.json /usr/share/nginx/html/api/cli/index.json
-COPY --from=cli-build /out/ /usr/share/nginx/html/api/cli/
+COPY --from=cli-manifest /manifest/artifacts/ /usr/share/nginx/html/api/cli/
 COPY OpenSphere-console/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 EXPOSE 8080

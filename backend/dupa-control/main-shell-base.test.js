@@ -111,7 +111,9 @@ test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
   assert.match(nginx, /location \/api\/cli\/[\s\S]*try_files \$uri =404/);
   assert.doesNotMatch(nginx, /os-cli\.opensphere-console\.svc/);
   assert.match(dockerfile, /AS cli-build/);
-  assert.match(dockerfile, /COPY --from=cli-build \/out\/ \/usr\/share\/nginx\/html\/api\/cli\//);
+  assert.match(dockerfile, /AS cli-manifest/);
+  assert.match(dockerfile, /RUN node \.\/generate-manifest\.mjs/);
+  assert.match(dockerfile, /COPY --from=cli-manifest \/manifest\/artifacts\/ \/usr\/share\/nginx\/html\/api\/cli\//);
   assert.doesNotMatch(nginx, /location .*\/api\/plugins\/os-cli/);
   assert.match(controller, /NATIVE_BINDING_NAMES = new Set\(\['os'\]\)/);
   assert.equal(manifest.ownership, 'console-native');
