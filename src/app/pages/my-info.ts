@@ -268,6 +268,7 @@ interface AuditEvent {
                   <button class="btn btn-sm btn-outline" type="submit">검색</button>
                   <button class="btn btn-sm btn-link" type="button" (click)="clearDeviceSearch()" [disabled]="!deviceFilter() && !deviceSearchText">초기화</button>
                 </form>
+              <div class="credential-grid-scroll" tabindex="0" aria-label="CLI 신뢰 장치 표">
               <clr-datagrid [clrDgLoading]="credentialsLoading()">
                 <clr-dg-column>장치</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>지문</clr-dg-column><clr-dg-column>등록</clr-dg-column><clr-dg-column>마지막 사용</clr-dg-column><clr-dg-column>세션 만료</clr-dg-column><clr-dg-column>동작</clr-dg-column>
                 @for (device of filteredDevices(); track device.id) {
@@ -284,6 +285,7 @@ interface AuditEvent {
                 <clr-dg-placeholder>{{ deviceFilter() ? '검색 조건과 일치하는 장치가 없습니다' : '등록된 CLI 장치가 없습니다. 터미널에서 os login을 실행하세요.' }}</clr-dg-placeholder>
                 <clr-dg-footer>{{ filteredDevices().length }}개 표시 · 전체 {{ devices().length }}개</clr-dg-footer>
               </clr-datagrid>
+              </div>
               </article>
 
               <article class="credential-section" aria-labelledby="api-token-title">
@@ -302,6 +304,7 @@ interface AuditEvent {
                   <button class="btn btn-sm btn-outline" type="submit">검색</button>
                   <button class="btn btn-sm btn-link" type="button" (click)="clearTokenSearch()" [disabled]="!tokenFilter() && !tokenSearchText">초기화</button>
                 </form>
+              <div class="credential-grid-scroll" tabindex="0" aria-label="자동화 API 토큰 표">
               <clr-datagrid [clrDgLoading]="credentialsLoading()">
                 <clr-dg-column>설명</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>범위</clr-dg-column><clr-dg-column>토큰 ID</clr-dg-column><clr-dg-column>생성</clr-dg-column><clr-dg-column>만료</clr-dg-column><clr-dg-column>마지막 사용</clr-dg-column><clr-dg-column>동작</clr-dg-column>
                 @for (token of filteredApiTokens(); track token.jti) {
@@ -322,6 +325,7 @@ interface AuditEvent {
                 <clr-dg-placeholder>{{ tokenFilter() ? '검색 조건과 일치하는 토큰이 없습니다' : '발급된 자동화 API 토큰이 없습니다' }}</clr-dg-placeholder>
                 <clr-dg-footer>{{ filteredApiTokens().length }}개 표시 · 전체 {{ apiTokens().length }}개 · 기본 만료 30일</clr-dg-footer>
               </clr-datagrid>
+              </div>
               </article>
 
               <article class="credential-section" aria-labelledby="session-credential-title">
@@ -331,6 +335,7 @@ interface AuditEvent {
                     <p class="section-lead">브라우저 로그인 자격은 내보내거나 다운로드할 수 없습니다. Console이 현재 탭에서만 안전하게 사용합니다.</p>
                   </div>
                 </div>
+                <div class="credential-grid-scroll" tabindex="0" aria-label="현재 Console 세션 표">
                 <clr-datagrid>
                   <clr-dg-column>자격</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>인증 방식</clr-dg-column><clr-dg-column>만료</clr-dg-column><clr-dg-column>보관</clr-dg-column><clr-dg-column>내보내기</clr-dg-column>
                   <clr-dg-row>
@@ -343,6 +348,7 @@ interface AuditEvent {
                   </clr-dg-row>
                   <clr-dg-footer>1개 브라우저 세션</clr-dg-footer>
                 </clr-datagrid>
+                </div>
               </article>
 
               <article class="credential-section" aria-labelledby="extension-credential-title">
@@ -487,6 +493,9 @@ interface AuditEvent {
       .credential-search { margin: 0; width: 100%; }
       .credential-search input { width: 100%; min-width: 0; }
       .credential-toolbar .btn { margin-bottom: .05rem; }
+      .credential-grid-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+      .credential-grid-scroll clr-datagrid { min-width: 58rem; }
+      .credential-grid-scroll:focus-visible { outline: 2px solid var(--os-accent); outline-offset: 2px; }
       .credential-empty { display: flex; min-height: 6rem; flex-direction: column; align-items: center; justify-content: center; gap: .25rem; padding: 1rem; border: 1px solid var(--os-hairline); background: var(--os-surface-1); color: var(--os-muted); text-align: center; }
       .credential-empty strong { color: var(--os-ink); font-size: .76rem; }
       .credential-empty span { max-width: 46rem; font-size: .68rem; }
@@ -506,6 +515,15 @@ interface AuditEvent {
         .credential-summary { justify-content: flex-start; }
         .credential-toolbar { grid-template-columns: 1fr auto; }
         .credential-toolbar .btn-link { grid-column: 1 / -1; justify-self: start; }
+      }
+      @media (max-width: 600px) {
+        .profile-hero { padding: .7rem .8rem .8rem; }
+        .profile-actions { flex-wrap: wrap; }
+        .tab-section { padding: .8rem .8rem 1.5rem; }
+        .credential-toolbar { grid-template-columns: 1fr; align-items: stretch; }
+        .credential-toolbar .btn, .credential-toolbar .btn-link { grid-column: auto; justify-self: start; }
+        ::ng-deep .profile-page clr-tabs > .nav { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; }
+        ::ng-deep .profile-page clr-tabs > .nav .nav-item { flex: 0 0 auto; }
       }
     `,
   ],

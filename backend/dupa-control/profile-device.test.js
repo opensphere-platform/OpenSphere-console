@@ -24,8 +24,14 @@ test('My Profile is the single human credential control surface', () => {
   assert.match(profile, /현재 Console 세션/);
   assert.match(profile, /내보내기 금지/);
   assert.match(profile, /사용 가능한 자격 제공자가 없습니다/);
+  assert.match(profile, /credential-grid-scroll/);
+  assert.match(profile, /clr-tabs > \.nav \{ overflow-x: auto/);
   assert.match(profile, /<clr-tab-content \*clrIfActive="tab\(\) === 'credentials'">/);
   assert.doesNotMatch(profile, /\[clrIfActive\]/);
+
+  const shell = read('src/app/os/os-shell.ts');
+  assert.match(shell, /window\.matchMedia\('\(max-width: 600px\)'\)\.matches/);
+  assert.match(shell, /\.os-nav-col\.mobile-collapsed \{ width: 2\.5rem/);
 
   const adminCli = read('src/app/pages/admin-cli.ts');
   assert.match(adminCli, /지속되는 장치 신뢰로 로그인/);

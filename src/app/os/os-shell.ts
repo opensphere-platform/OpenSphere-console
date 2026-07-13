@@ -85,7 +85,7 @@ interface NavBand {
         </div>
       </header>
       <div class="content-container">
-        <div class="os-nav-col">
+        <div class="os-nav-col" [class.mobile-collapsed]="navCollapsed()">
           <clr-vertical-nav
             class="os-nav"
             [clrVerticalNavCollapsible]="true"
@@ -253,6 +253,19 @@ interface NavBand {
         min-width: 0;
         overflow-x: hidden;
       }
+      @media (max-width: 600px) {
+        .header { min-width: 0; }
+        .branding { display: none; }
+        .header-actions { padding-right: .15rem; }
+        .os-avatar { width: 32px; }
+        .content-container { position: relative; }
+        .os-nav-col {
+          position: absolute; inset: 0 auto 0 0; z-index: 10; width: 12rem;
+          background: var(--os-nav-bg); box-shadow: 4px 0 12px rgba(0, 0, 0, .14);
+        }
+        .os-nav-col.mobile-collapsed { width: 2.5rem; box-shadow: none; }
+        .content-area { width: 100%; padding: 1rem 1rem 1.5rem 3.5rem !important; }
+      }
       /* Workspace 전환기 (헌법 §6 · D-B) */
       .os-ws-switch {
         display: flex;
@@ -303,7 +316,9 @@ export class OsShell {
   readonly initial = computed(() => (this.auth.user()?.trim()?.[0] ?? '?').toUpperCase());
 
   /** 좌측 nav 접기 상태(레일↔드로어) — 헤더 햄버거가 토글. 리로드 후에도 유지(localStorage). */
-  readonly navCollapsed = signal(localStorage.getItem('os.navCollapsed') === '1');
+  readonly navCollapsed = signal(
+    localStorage.getItem('os.navCollapsed') === '1' || window.matchMedia('(max-width: 600px)').matches,
+  );
   private readonly _persistNav = effect(() => {
     localStorage.setItem('os.navCollapsed', this.navCollapsed() ? '1' : '0');
   });
