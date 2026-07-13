@@ -466,9 +466,10 @@ interface AuditEvent {
     `
       :host { display: block; }
       .profile-page { background: var(--os-canvas); min-height: calc(100vh - 2.2rem); }
-      .profile-hero { display: block; background: var(--os-surface-1); border-bottom: 1px solid var(--os-hairline); padding: 0.8rem 1.4rem 0.9rem; }
+      .profile-hero { display: block; height: auto; background: var(--os-surface-1); border-bottom: 1px solid var(--os-hairline); padding: 0.8rem 1.4rem 0.9rem; }
       .profile-back { color: var(--os-ink); font-size: 0.68rem; text-decoration: none; }
       .profile-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-top: 0.55rem; }
+      .profile-title-row > div:first-child { min-width: 0; max-width: 100%; }
       .profile-title-row h1 { font-size: 1.35rem; line-height: 1.2; margin: 0; }
       .profile-title-row p { color: var(--os-muted); font-size: 0.7rem; margin: 0.12rem 0 0; }
       .profile-actions { display: flex; align-items: center; gap: 0.35rem; }
@@ -518,6 +519,7 @@ interface AuditEvent {
       }
       @media (max-width: 600px) {
         .profile-hero { padding: .7rem .8rem .8rem; }
+        .profile-title-row h1 { overflow-wrap: anywhere; }
         .profile-actions { flex-wrap: wrap; }
         .tab-section { padding: .8rem .8rem 1.5rem; }
         .credential-toolbar { grid-template-columns: 1fr; align-items: stretch; }
