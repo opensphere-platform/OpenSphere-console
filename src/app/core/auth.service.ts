@@ -117,6 +117,11 @@ export class AuthService {
     if (this.reauthenticationStarted) return;
     this.reauthenticationStarted = true;
     try {
+      // Remove the server-rejected user first. This is required after a full
+      // cluster reset where the old token may have a future exp but is signed
+      // by a Kanidm key that no longer exists.
+      await this.mgr.removeUser();
+      this.clearAppliedUser();
       await this.redirectToLogin();
     } catch (error) {
       this.reauthenticationStarted = false;
@@ -189,6 +194,17 @@ export class AuthService {
     } catch {
       return false;
     }
+  }
+
+  private clearAppliedUser(): void {
+    this.idToken = '';
+    this.user.set('');
+    this.groups.set([]);
+    this.roles.set([]);
+    this.email.set('');
+    this.name.set('');
+    this.subject.set('');
+    this.tokenExp.set(0);
   }
 
   async logout(): Promise<void> {

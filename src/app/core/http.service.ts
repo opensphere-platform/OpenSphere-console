@@ -33,7 +33,11 @@ export class HttpService {
     }
     try {
       const response = await fetch(target, { ...init, headers, signal: controller.signal });
-      if (response.status === 401 && !this.auth.hasValidToken()) {
+      // A freshly reinstalled Console has a new Kanidm signing key. A token from
+      // the previous installation can still be locally unexpired while every
+      // server correctly rejects it. HTTP 401 is therefore authoritative: do
+      // not gate reauthentication on the client-side exp claim.
+      if (response.status === 401 && token) {
         this.reauthRequired.set(true);
         void this.auth.reAuthenticate();
       }

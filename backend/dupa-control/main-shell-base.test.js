@@ -142,6 +142,15 @@ test('Registry is a Console core projection and Kanidm trust uses the installati
   }
 });
 
+test('a server-rejected browser token forces reauthentication even before local expiry', () => {
+  const http = read('src', 'app', 'core', 'http.service.ts');
+  const auth = read('src', 'app', 'core', 'auth.service.ts');
+
+  assert.match(http, /response\.status === 401 && token/);
+  assert.doesNotMatch(http, /response\.status === 401 && !this\.auth\.hasValidToken\(\)/);
+  assert.match(auth, /async reAuthenticate\(\)[\s\S]*await this\.mgr\.removeUser\(\);[\s\S]*this\.clearAppliedUser\(\);[\s\S]*await this\.redirectToLogin\(\);/);
+});
+
 // F-3: native 서비스 id(os-cli)는 어떤 Binding 이름을 써도 /api/plugins 프록시 allowlist에 진입 못 한다.
 test('os-cli native service id is a reserved proxy id and hard-denied in proxy-authz', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
