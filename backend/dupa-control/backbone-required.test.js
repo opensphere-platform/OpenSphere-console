@@ -17,7 +17,10 @@ test('Backbone is the mandatory readiness base for the Main Shell', () => {
   assert.match(controller, /postgres && rustfs && gitea && workloads\.ready/);
   assert.match(nginx, /location = \/readyz/);
   assert.match(consoleDeploy, /httpGet: \{ path: \/readyz, port: 8080 \}/);
-  assert.match(architecture, /CBS → Main Shell\/Console 기능 → subShell → plugin/);
+  // The user-owned architecture edit may already use the formal CBS acronym,
+  // while the published baseline still spells out Backbone. Both express the
+  // same mandatory ordering and the runtime contract below is authoritative.
+  assert.match(architecture, /(?:CBS|Backbone) → Main Shell\/Console 기능 → subShell → plugin/);
 });
 
 test('durable audit is fail-closed with no ConfigMap fallback', () => {
