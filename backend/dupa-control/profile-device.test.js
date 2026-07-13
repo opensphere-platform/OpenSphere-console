@@ -17,6 +17,13 @@ test('My Profile is the single human credential control surface', () => {
   assert.match(profile, /발급 사유/);
   assert.match(profile, /폐기 사유/);
   assert.match(profile, /개인 키는 이 서버가 아닌 운영체제 보안 저장소/);
+  assert.match(profile, /장치 이름, ID 또는 지문/);
+  assert.match(profile, /설명, 토큰 ID 또는 범위/);
+  assert.match(profile, /token\.lastUsedAt/);
+  assert.match(profile, /token\.status === 'active'/);
+  assert.match(profile, /현재 Console 세션/);
+  assert.match(profile, /내보내기 금지/);
+  assert.match(profile, /사용 가능한 자격 제공자가 없습니다/);
   assert.match(profile, /<clr-tab-content \*clrIfActive="tab\(\) === 'credentials'">/);
   assert.doesNotMatch(profile, /\[clrIfActive\]/);
 

@@ -31,8 +31,11 @@ interface CliDevice {
 interface ApiToken {
   jti: string;
   label: string;
+  scope: string;
+  status: 'active' | 'expired';
   createdAt: string | null;
   expiresAt: string | null;
+  lastUsedAt: string | null;
   user: string;
 }
 
@@ -227,50 +230,133 @@ interface AuditEvent {
         <clr-tab>
           <button clrTabLink (click)="selectTab('credentials')">자격 증명</button>
           <clr-tab-content *clrIfActive="tab() === 'credentials'">
-            <section class="tab-section">
-              <div class="section-heading">
+            <section class="tab-section credential-page" aria-labelledby="credential-page-title">
+              <div class="credential-intro">
                 <div>
-                  <h2>CLI 장치 키</h2>
-                  <p class="section-lead"><code>os login</code>으로 등록한 신뢰 장치입니다. 개인 키는 이 서버가 아닌 운영체제 보안 저장소에만 보관됩니다.</p>
+                  <h2 id="credential-page-title">내 자격 증명</h2>
+                  <p class="section-lead">대화형 CLI 장치와 비대화형 자동화 토큰을 한곳에서 확인합니다. 비밀 원문은 서버에서 다시 조회할 수 없습니다.</p>
                 </div>
-                <button class="btn btn-sm btn-outline" (click)="loadCredentials()" [disabled]="busy()">새로고침</button>
+                <div class="credential-summary" aria-label="자격 증명 요약">
+                  <span class="label label-info">장치 {{ devices().length }}</span>
+                  <span class="label label-success">활성 토큰 {{ activeTokenCount() }}</span>
+                  @if (expiredTokenCount()) { <span class="label label-warning">만료 {{ expiredTokenCount() }}</span> }
+                </div>
               </div>
+
+              @if (credentialError()) {
+                <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="false">
+                  <clr-alert-item>
+                    <span class="alert-text">{{ credentialError() }}</span>
+                    <div class="alert-actions"><button class="btn btn-sm btn-outline" (click)="loadCredentials()" [disabled]="credentialsLoading()">다시 시도</button></div>
+                  </clr-alert-item>
+                </clr-alert>
+              }
+
+              <article class="credential-section" aria-labelledby="device-credentials-title">
+                <div class="section-heading">
+                  <div>
+                    <h2 id="device-credentials-title">CLI 신뢰 장치</h2>
+                    <p class="section-lead"><code>os login</code>으로 등록한 대화형 장치입니다. 개인 키는 이 서버가 아닌 운영체제 보안 저장소에만 보관됩니다.</p>
+                  </div>
+                  <button class="btn btn-sm btn-outline" (click)="loadCredentials()" [disabled]="credentialsLoading()">새로고침</button>
+                </div>
+                <form class="credential-toolbar" (ngSubmit)="searchDevices()">
+                  <clr-input-container class="credential-search">
+                    <label>장치 검색</label>
+                    <input clrInput [(ngModel)]="deviceSearchText" name="device-search" placeholder="장치 이름, ID 또는 지문" />
+                  </clr-input-container>
+                  <button class="btn btn-sm btn-outline" type="submit">검색</button>
+                  <button class="btn btn-sm btn-link" type="button" (click)="clearDeviceSearch()" [disabled]="!deviceFilter() && !deviceSearchText">초기화</button>
+                </form>
               <clr-datagrid [clrDgLoading]="credentialsLoading()">
-                <clr-dg-column>장치</clr-dg-column><clr-dg-column>지문</clr-dg-column><clr-dg-column>등록</clr-dg-column><clr-dg-column>마지막 사용</clr-dg-column><clr-dg-column>동작</clr-dg-column>
-                @for (device of devices(); track device.id) {
+                <clr-dg-column>장치</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>지문</clr-dg-column><clr-dg-column>등록</clr-dg-column><clr-dg-column>마지막 사용</clr-dg-column><clr-dg-column>세션 만료</clr-dg-column><clr-dg-column>동작</clr-dg-column>
+                @for (device of filteredDevices(); track device.id) {
                   <clr-dg-row>
                     <clr-dg-cell><strong>{{ device.label }}</strong><div class="os-mono">{{ device.id }}</div></clr-dg-cell>
+                    <clr-dg-cell><span class="label label-success">신뢰됨</span></clr-dg-cell>
                     <clr-dg-cell class="os-mono">{{ device.fingerprint }}</clr-dg-cell>
                     <clr-dg-cell>{{ fmt(device.createdAt) }}</clr-dg-cell>
                     <clr-dg-cell>{{ fmt(device.lastUsedAt) }}</clr-dg-cell>
+                    <clr-dg-cell>{{ fmt(device.lastSessionExpiresAt) }}</clr-dg-cell>
                     <clr-dg-cell><button class="btn btn-sm btn-danger-outline" (click)="openCredentialRevoke('device', device.id, device.label)" [disabled]="busy()">신뢰 해제</button></clr-dg-cell>
                   </clr-dg-row>
                 }
-                <clr-dg-placeholder>등록된 CLI 장치가 없습니다. 터미널에서 os login을 실행하세요.</clr-dg-placeholder>
-                <clr-dg-footer>{{ devices().length }}개 장치</clr-dg-footer>
+                <clr-dg-placeholder>{{ deviceFilter() ? '검색 조건과 일치하는 장치가 없습니다' : '등록된 CLI 장치가 없습니다. 터미널에서 os login을 실행하세요.' }}</clr-dg-placeholder>
+                <clr-dg-footer>{{ filteredDevices().length }}개 표시 · 전체 {{ devices().length }}개</clr-dg-footer>
               </clr-datagrid>
+              </article>
 
-              <div class="section-heading separated">
-                <div>
-                  <h2>자동화 API 토큰</h2>
-                  <p class="section-lead">CI·무인 자동화 전용 장기 자격입니다. 사람의 <code>os</code> 로그인에는 사용하지 않습니다.</p>
+              <article class="credential-section" aria-labelledby="api-token-title">
+                <div class="section-heading">
+                  <div>
+                    <h2 id="api-token-title">자동화 API 토큰</h2>
+                    <p class="section-lead">CI·무인 자동화 전용 장기 자격입니다. 사람의 <code>os</code> 로그인에는 사용하지 않습니다.</p>
+                  </div>
+                  <button class="btn btn-sm btn-primary" (click)="openTokenPanel()">API 토큰 생성</button>
                 </div>
-                <button class="btn btn-sm btn-primary" (click)="openTokenPanel()">API 토큰 생성</button>
-              </div>
+                <form class="credential-toolbar" (ngSubmit)="searchTokens()">
+                  <clr-input-container class="credential-search">
+                    <label>토큰 검색</label>
+                    <input clrInput [(ngModel)]="tokenSearchText" name="token-search" placeholder="설명, 토큰 ID 또는 범위" />
+                  </clr-input-container>
+                  <button class="btn btn-sm btn-outline" type="submit">검색</button>
+                  <button class="btn btn-sm btn-link" type="button" (click)="clearTokenSearch()" [disabled]="!tokenFilter() && !tokenSearchText">초기화</button>
+                </form>
               <clr-datagrid [clrDgLoading]="credentialsLoading()">
-                <clr-dg-column>설명</clr-dg-column><clr-dg-column>토큰 ID</clr-dg-column><clr-dg-column>생성</clr-dg-column><clr-dg-column>만료</clr-dg-column><clr-dg-column>동작</clr-dg-column>
-                @for (token of apiTokens(); track token.jti) {
+                <clr-dg-column>설명</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>범위</clr-dg-column><clr-dg-column>토큰 ID</clr-dg-column><clr-dg-column>생성</clr-dg-column><clr-dg-column>만료</clr-dg-column><clr-dg-column>마지막 사용</clr-dg-column><clr-dg-column>동작</clr-dg-column>
+                @for (token of filteredApiTokens(); track token.jti) {
                   <clr-dg-row>
                     <clr-dg-cell><strong>{{ token.label || '(설명 없음)' }}</strong></clr-dg-cell>
+                    <clr-dg-cell>
+                      @if (token.status === 'active') { <span class="label label-success">활성</span> }
+                      @else { <span class="label label-warning">만료</span> }
+                    </clr-dg-cell>
+                    <clr-dg-cell><code>{{ token.scope || 'admin:automation' }}</code></clr-dg-cell>
                     <clr-dg-cell class="os-mono">{{ token.jti }}</clr-dg-cell>
                     <clr-dg-cell>{{ fmt(token.createdAt) }}</clr-dg-cell>
                     <clr-dg-cell>{{ fmt(token.expiresAt) }}</clr-dg-cell>
-                    <clr-dg-cell><button class="btn btn-sm btn-danger-outline" (click)="openCredentialRevoke('token', token.jti, token.label || token.jti)" [disabled]="busy()">폐기</button></clr-dg-cell>
+                    <clr-dg-cell>{{ fmt(token.lastUsedAt) }}</clr-dg-cell>
+                    <clr-dg-cell><button class="btn btn-sm btn-danger-outline" (click)="openCredentialRevoke('token', token.jti, token.label || token.jti)" [disabled]="busy() || token.status !== 'active'">폐기</button></clr-dg-cell>
                   </clr-dg-row>
                 }
-                <clr-dg-placeholder>활성 자동화 API 토큰이 없습니다</clr-dg-placeholder>
-                <clr-dg-footer>{{ apiTokens().length }}개 토큰 · 기본 만료 30일</clr-dg-footer>
+                <clr-dg-placeholder>{{ tokenFilter() ? '검색 조건과 일치하는 토큰이 없습니다' : '발급된 자동화 API 토큰이 없습니다' }}</clr-dg-placeholder>
+                <clr-dg-footer>{{ filteredApiTokens().length }}개 표시 · 전체 {{ apiTokens().length }}개 · 기본 만료 30일</clr-dg-footer>
               </clr-datagrid>
+              </article>
+
+              <article class="credential-section" aria-labelledby="session-credential-title">
+                <div class="section-heading">
+                  <div>
+                    <h2 id="session-credential-title">현재 Console 세션</h2>
+                    <p class="section-lead">브라우저 로그인 자격은 내보내거나 다운로드할 수 없습니다. Console이 현재 탭에서만 안전하게 사용합니다.</p>
+                  </div>
+                </div>
+                <clr-datagrid>
+                  <clr-dg-column>자격</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>인증 방식</clr-dg-column><clr-dg-column>만료</clr-dg-column><clr-dg-column>보관</clr-dg-column><clr-dg-column>내보내기</clr-dg-column>
+                  <clr-dg-row>
+                    <clr-dg-cell><strong>OpenSphere Console 세션</strong><div class="os-mono">{{ auth.subject() || auth.user() }}</div></clr-dg-cell>
+                    <clr-dg-cell><span class="label" [class.label-success]="!auth.isTokenExpired()">{{ auth.isTokenExpired() ? '만료' : '활성' }}</span></clr-dg-cell>
+                    <clr-dg-cell>Kanidm · OIDC PKCE</clr-dg-cell>
+                    <clr-dg-cell>{{ expText() }}</clr-dg-cell>
+                    <clr-dg-cell>sessionStorage · 현재 탭</clr-dg-cell>
+                    <clr-dg-cell><span class="label">내보내기 금지</span></clr-dg-cell>
+                  </clr-dg-row>
+                  <clr-dg-footer>1개 브라우저 세션</clr-dg-footer>
+                </clr-datagrid>
+              </article>
+
+              <article class="credential-section" aria-labelledby="extension-credential-title">
+                <div class="section-heading">
+                  <div>
+                    <h2 id="extension-credential-title">서비스 자격 증명과 OAuth 클라이언트</h2>
+                    <p class="section-lead">기본 Console은 개인 사용자에게 서비스 비밀을 직접 발급하지 않습니다. 해당 자격 유형은 검증된 Extension 제공자가 설치된 경우에만 이곳에 추가됩니다.</p>
+                  </div>
+                </div>
+                <div class="credential-empty" role="status">
+                  <strong>사용 가능한 자격 제공자가 없습니다</strong>
+                  <span>현재 기본 Main Shell에는 추가 서비스 자격 증명 또는 OAuth 클라이언트 제공자가 설치되지 않았습니다.</span>
+                </div>
+              </article>
             </section>
           </clr-tab-content>
         </clr-tab>
@@ -347,7 +433,14 @@ interface AuditEvent {
         </form>
         <div class="panel-actions"><button class="btn btn-primary" (click)="mintToken()" [disabled]="busy() || !tokenLabel.trim() || tokenReason.trim().length < 8">생성</button><button class="btn btn-outline" (click)="closeTokenPanel()">취소</button></div>
       } @else {
-        <p><strong>토큰이 생성되었습니다.</strong> 이 값은 지금 한 번만 표시됩니다.</p>
+        <clr-alert [clrAlertType]="'success'" [clrAlertClosable]="false">
+          <clr-alert-item><span class="alert-text"><strong>토큰이 생성되었습니다.</strong> 이 값은 지금 한 번만 표시됩니다. 닫기 전에 운영체제 보안 저장소나 CI 비밀 저장소에 보관하세요.</span></clr-alert-item>
+        </clr-alert>
+        <dl class="token-metadata">
+          <div><dt>설명</dt><dd>{{ mintedToken()?.label }}</dd></div>
+          <div><dt>토큰 ID</dt><dd class="os-mono">{{ mintedToken()?.jti }}</dd></div>
+          <div><dt>만료</dt><dd>{{ fmt(mintedToken()?.expiresAt || null) }}</dd></div>
+        </dl>
         <textarea class="token-output" readonly [value]="mintedToken()?.token"></textarea>
         <div class="panel-actions"><button class="btn btn-primary" (click)="copy(mintedToken()?.token || '')">복사</button><button class="btn btn-outline" (click)="closeTokenPanel()">닫기</button></div>
       }
@@ -385,13 +478,34 @@ interface AuditEvent {
       .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
       .section-heading.separated { border-top: 1px solid var(--os-hairline); margin-top: 1.4rem; padding-top: 1rem; }
       .section-lead { color: var(--os-muted); font-size: 0.7rem; margin: -0.25rem 0 0.75rem; }
+      .credential-page { display: flex; flex-direction: column; gap: 1.35rem; }
+      .credential-intro { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; padding-bottom: .2rem; }
+      .credential-intro h2 { font-size: 1.15rem; }
+      .credential-summary { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .25rem; padding-top: .15rem; }
+      .credential-section { border-top: 1px solid var(--os-hairline); padding-top: 1rem; }
+      .credential-toolbar { display: grid; grid-template-columns: minmax(16rem, 1fr) auto auto; align-items: end; gap: .35rem; margin: .2rem 0 .65rem; }
+      .credential-search { margin: 0; width: 100%; }
+      .credential-search input { width: 100%; min-width: 0; }
+      .credential-toolbar .btn { margin-bottom: .05rem; }
+      .credential-empty { display: flex; min-height: 6rem; flex-direction: column; align-items: center; justify-content: center; gap: .25rem; padding: 1rem; border: 1px solid var(--os-hairline); background: var(--os-surface-1); color: var(--os-muted); text-align: center; }
+      .credential-empty strong { color: var(--os-ink); font-size: .76rem; }
+      .credential-empty span { max-width: 46rem; font-size: .68rem; }
+      .alert-actions { margin-top: .35rem; }
       .os-mono { font-family: var(--os-font-mono, monospace); font-size: 0.65rem; word-break: break-all; }
       .panel-actions { display: flex; gap: 0.45rem; margin-top: 0.8rem; }
+      .token-metadata { display: grid; gap: .3rem; margin: .8rem 0; }
+      .token-metadata div { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: .5rem; padding-bottom: .3rem; border-bottom: 1px solid var(--os-hairline); }
+      .token-metadata dt { color: var(--os-muted); font-size: .65rem; font-weight: 600; }
+      .token-metadata dd { margin: 0; font-size: .68rem; }
       .token-output { width: 100%; min-height: 8rem; font-family: var(--os-font-mono, monospace); font-size: 0.65rem; overflow-wrap: anywhere; }
       .enrollment-action { margin-left: 0.7rem; }
       @media (max-width: 900px) {
         .details-grid { grid-template-columns: 1fr; gap: 0.5rem; }
         .profile-title-row { align-items: flex-start; flex-direction: column; }
+        .credential-intro { flex-direction: column; }
+        .credential-summary { justify-content: flex-start; }
+        .credential-toolbar { grid-template-columns: 1fr auto; }
+        .credential-toolbar .btn-link { grid-column: 1 / -1; justify-self: start; }
       }
     `,
   ],
@@ -411,6 +525,9 @@ export class MyInfo {
   readonly authPolicy = signal<AuthPolicy | null>(null);
   readonly activities = signal<AuditEvent[]>([]);
   readonly credentialsLoading = signal(false);
+  readonly credentialError = signal('');
+  readonly deviceFilter = signal('');
+  readonly tokenFilter = signal('');
   readonly activityLoading = signal(false);
   readonly busy = signal(false);
   readonly editOpen = signal(false);
@@ -424,6 +541,8 @@ export class MyInfo {
   tokenLabel = '';
   tokenReason = '';
   revokeReason = '';
+  deviceSearchText = '';
+  tokenSearchText = '';
   readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '—';
   readonly language = navigator.language || '—';
 
@@ -432,6 +551,21 @@ export class MyInfo {
     if (!exp) return '—';
     const minutes = Math.round((exp * 1000 - Date.now()) / 60000);
     return `${new Date(exp * 1000).toLocaleString()} (${minutes > 0 ? `${minutes}분 후` : '만료됨'})`;
+  });
+
+  readonly activeTokenCount = computed(() => this.apiTokens().filter((token) => token.status === 'active').length);
+  readonly expiredTokenCount = computed(() => this.apiTokens().filter((token) => token.status === 'expired').length);
+  readonly filteredDevices = computed(() => {
+    const query = this.deviceFilter();
+    if (!query) return this.devices();
+    return this.devices().filter((device) => [device.label, device.id, device.fingerprint]
+      .some((value) => String(value || '').toLocaleLowerCase().includes(query)));
+  });
+  readonly filteredApiTokens = computed(() => {
+    const query = this.tokenFilter();
+    if (!query) return this.apiTokens();
+    return this.apiTokens().filter((token) => [token.label, token.jti, token.scope, token.status]
+      .some((value) => String(value || '').toLocaleLowerCase().includes(query)));
   });
 
   constructor() {
@@ -473,6 +607,7 @@ export class MyInfo {
 
   async loadCredentials(): Promise<void> {
     this.credentialsLoading.set(true);
+    this.credentialError.set('');
     try {
       const [deviceResponse, tokenResponse] = await Promise.all([
         this.http.request('/bff/cli/devices'),
@@ -485,10 +620,30 @@ export class MyInfo {
       this.devices.set(deviceBody.devices ?? []);
       this.apiTokens.set(tokenBody.pats ?? []);
     } catch (error) {
-      this.message.set({ type: 'warning', text: `자격 증명 상태를 불러오지 못했습니다: ${String(error)}` });
+      this.devices.set([]);
+      this.apiTokens.set([]);
+      this.credentialError.set(`자격 증명 상태를 불러오지 못했습니다: ${String(error)}`);
     } finally {
       this.credentialsLoading.set(false);
     }
+  }
+
+  searchDevices(): void {
+    this.deviceFilter.set(this.deviceSearchText.trim().toLocaleLowerCase());
+  }
+
+  clearDeviceSearch(): void {
+    this.deviceSearchText = '';
+    this.deviceFilter.set('');
+  }
+
+  searchTokens(): void {
+    this.tokenFilter.set(this.tokenSearchText.trim().toLocaleLowerCase());
+  }
+
+  clearTokenSearch(): void {
+    this.tokenSearchText = '';
+    this.tokenFilter.set('');
   }
 
   private async loadAuthPolicy(): Promise<void> {
