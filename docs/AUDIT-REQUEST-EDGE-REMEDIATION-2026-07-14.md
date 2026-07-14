@@ -4,10 +4,10 @@
 - 대상 채널: `edge` — `candidate` 및 `stable` 승격 요청이 아님
 - 이전 감사: [통합 기술감사 보고서](../../_DOCS_/30-기술감사/AUDIT-REPORT-INTEGRATED-CONSOLE-EDGE-2026-07-14.md)
 - Console 기준선: `dc272f4c4b5eb69fbc924048611f0dbe38689062`
-- Setup 기준선: `97b271f5540ef60f2e3a275e21f0832d22b6c2b6`
+- Setup 기준선: `ff58d6c1916e708fc11dd62250a485b2bc422c04`
 - release lock: `sha256:503352a00eb927785a92ec7b54918c0d511f17266997f58d3e3dfb6c3086a333`
 - 발행 증거: [GitHub Actions run 29317030360](https://github.com/opensphere-platform/OpenSphere-console/actions/runs/29317030360)
-- Setup clean-cluster 증거: [GitHub Actions run 29319863597](https://github.com/opensphere-platform/OpenSphere-Setup-CLI/actions/runs/29319863597)
+- Setup clean-cluster 증거: [GitHub Actions run 29321079094](https://github.com/opensphere-platform/OpenSphere-Setup-CLI/actions/runs/29321079094)
 - 요청 상태: 시정 코드 배포·재현 증거 제출 완료, 독립 재감사 대기
 
 ## 1. 목적과 판정 원칙
@@ -21,7 +21,7 @@
 | 구분 | 고정 값 | 독립 확인 조건 |
 |---|---|---|
 | Console source | `dc272f4c4b5eb69fbc924048611f0dbe38689062` | `git rev-parse HEAD`와 모든 lock component `sourceRevision` 일치 |
-| Setup source | `97b271f5540ef60f2e3a275e21f0832d22b6c2b6` | release resolve / bootstrap / upgrade / verify 동작 대조 |
+| Setup source | `ff58d6c1916e708fc11dd62250a485b2bc422c04` | release resolve / bootstrap / upgrade / verify 동작 대조 |
 | release lock | `sha256:503352a00eb927785a92ec7b54918c0d511f17266997f58d3e3dfb6c3086a333` | 9개 component digest·revision·attestation·SBOM 대조 |
 | CI | run `29317030360` | test, native macOS CLI, 9 image publish, provenance, SPDX SBOM 모두 성공 |
 | 설치 검증 | Setup `verify` | `14 pods / 12 services / runtime images locked`를 새 환경에서 재현 |
@@ -51,6 +51,7 @@
 4. `os --version`은 `os 0.4.0`을 반환했다.
 5. GitHub Actions run `29317030360`은 native macOS arm64 Keychain test·artifact build, 9개 다중 아키텍처 image publish, provenance 및 SPDX SBOM attestation을 성공으로 기록했다.
 6. GitHub Actions run `29319863597`은 Docker Desktop과 분리된 Linux kind cluster에서 local-path StorageClass를 준비한 뒤 public Ingress/DNS 없이 edge resolve·bootstrap·backup/restore drill·Service port-forward CLI download·verify를 성공했다.
+7. GitHub Actions run `29321079094`는 같은 clean Linux kind 설치를 `development`와 명시적 `production` 인증 프로파일에서 각각 실행했다. 두 환경 모두 `opensphere-console-auth` Deployment의 `AUTH_ENVIRONMENT`를 요청값과 대조한 뒤 bootstrap·CLI 설치·verify를 성공했다. GitHub Attestation API의 일시적 5xx/429 장애는 제한 재시도하지만, 서명·SBOM·발행 workflow·repository·branch 검증 실패는 즉시 fail-closed 한다.
 
 감사자는 위 각 결과를 새 workspace와 새 cluster에서 다시 생성해 원본 출력을 보존해야 한다.
 
@@ -62,7 +63,7 @@
 |---|---|---|
 | 일반 Kubernetes 독립 설치 | Linux kind clean bootstrap/CLI install/verify CI 증거는 있음. 독립 운영 cluster에서의 upgrade·rollback과 장기 운영 증거는 없음 | `candidate` HOLD |
 | 외부/off-cluster backup 및 노드·볼륨 손실 복구 | in-cluster RustFS backup/restore drill은 있으나 외부 복제·HA 검증 없음 | `candidate` 조건부, `stable` Block |
-| 운영 CA 및 TOTP 강제 | 현재 edge는 development 인증 프로파일 | 운영 사용 REJECT |
+| 운영 CA 및 TOTP 강제 | edge 기본은 development이며, 명시적 production 프로파일 전달은 clean CI로 확인됨. 운영 CA와 실제 운영 로그인 E2E는 별도 증거 필요 | 운영 사용 REJECT |
 | UI/접근성 정본 준수 | Clarity v18 전환·상태·접근성 시정은 사용자 구성요소 승인 후 별도 범위로 수행해야 함 | `candidate` P2 위험수용 또는 시정 필요 |
 | 정본 문서 거버넌스 | 상위 헌법 문서의 기존 미커밋/중복 정리는 이 기준선에 포함하지 않음 | `candidate` 조건부 |
 | 운영 runbook·비밀/인증서 회전 훈련 | 코드 경로와 실제 운영 훈련은 별도 검증 필요 | `stable` Block |
@@ -71,9 +72,9 @@
 
 ## 6. 필수 독립 재감사 절차
 
-1. `dc272f4…` Console 및 `bde32cb…` Setup을 새 clone으로 checkout한다.
+1. `dc272f4…` Console 및 `ff58d6c…` Setup을 새 clone으로 checkout한다.
 2. `edge`를 resolve하여 lock의 9개 digest/revision/provenance/SBOM을 확인한다. tag만으로 이미지를 설치해서는 안 된다.
-3. Docker Desktop 이외의 지원 Kubernetes에서 `bootstrap -r edge`, `verify`, `upgrade`, rollback을 수행한다. 모든 manifest 직접 수정은 실패로 간주한다.
+3. Docker Desktop 이외의 지원 Kubernetes에서 `bootstrap -r edge`, `bootstrap -r edge --auth-environment production`, `verify`, `upgrade`, rollback을 수행한다. 모든 manifest 직접 수정은 실패로 간주한다.
 4. runtime role/ownership/privilege 질의와 audit write/failure path를 실행한다.
 5. browser 및 `os`에서 강등·비활성·device revoke·PAT revoke·registry HTML fallback을 포함한 실패 경로를 확인한다.
 6. PostgreSQL backup을 새 환경에 restore하고 감사 연속성·권한 경계를 확인한다.
