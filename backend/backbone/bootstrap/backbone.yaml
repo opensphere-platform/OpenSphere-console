@@ -644,7 +644,10 @@ spec:
           image: opensphere-backbone-postgres@sha256:562d7d862b5379141e0658cf90c3b1fb3b126e4fe3c120c9ef05fb81a801f647
           imagePullPolicy: IfNotPresent
           env:
-            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
+            # Database bootstrap is a short-lived provisioning task. The
+            # long-running Console role is deliberately unable to create roles
+            # or databases, so it must never be used here.
+            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: bootstrap_password } } }
             - { name: GITEA_DB_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-gitea, key: db_password } } }
             - { name: PGSSLMODE, value: verify-full }
             - { name: PGSSLROOTCERT, value: /tls/ca.crt }
@@ -652,8 +655,8 @@ spec:
           args:
             - |
               set -eu
-              until pg_isready -h backbone-postgres -U console -d postgres; do sleep 2; done
-              psql -v ON_ERROR_STOP=1 -h backbone-postgres -U console -d postgres -v gpass="$GITEA_DB_PASSWORD" <<'SQL'
+              until pg_isready -h backbone-postgres -U opensphere_db_bootstrap -d postgres; do sleep 2; done
+              psql -v ON_ERROR_STOP=1 -h backbone-postgres -U opensphere_db_bootstrap -d postgres -v gpass="$GITEA_DB_PASSWORD" <<'SQL'
               SELECT format('CREATE ROLE gitea LOGIN PASSWORD %L', :'gpass') WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname='gitea') \gexec
               SELECT format('ALTER ROLE gitea LOGIN PASSWORD %L', :'gpass') WHERE EXISTS (SELECT FROM pg_roles WHERE rolname='gitea') \gexec
               SELECT 'CREATE DATABASE gitea OWNER gitea' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='gitea') \gexec

@@ -81,6 +81,8 @@ test('Backbone bootstrap pins and isolates all three pillars', () => {
   assert.match(backbone, /ttlSecondsAfterFinished: 1800/);
   assert.ok('bb-audit-boundary-'.length + 40 <= 63, 'revision Job name must fit Kubernetes controller-label limit');
   assert.match(backbone, /ALTER ROLE console NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB/);
+  assert.match(backbone, /name: PGPASSWORD, valueFrom: \{ secretKeyRef: \{ name: backbone-postgres, key: bootstrap_password \} \}/);
+  assert.match(backbone, /pg_isready -h backbone-postgres -U opensphere_db_bootstrap -d postgres/);
   assert.match(backbone, /ALTER TABLE public\.audit_log ADD COLUMN IF NOT EXISTS source text/);
   assert.doesNotMatch(backbone, /:latest\b/);
 });
