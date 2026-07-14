@@ -281,6 +281,10 @@ async function isConsoleAdministrator(uname) {
 
 async function readBody(req) { const chunks = []; let n = 0; for await (const c of req) { n += c.length; if (n > MAX_BODY) throw { code: 413, msg: 'payload too large' }; chunks.push(c); } const s = Buffer.concat(chunks).toString(); return s ? JSON.parse(s) : {}; }
 function json(res, code, obj) { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); }
+function managementReason(value) {
+  const reason = String(value || '').trim();
+  return reason.length >= 8 ? reason : null;
+}
 
 // ── 흡수: catalog 엔진 (구 opensphere-catalog-api) — nginx /api/rhdh→/api/catalog. OpenSphere CRD→kind=API, Deployment→kind=Component ──
 const COMP_NS = (process.env.COMPONENT_NAMESPACES || 'opensphere-console,opensphere-console,opensphere-console-auth').split(',');
@@ -388,8 +392,8 @@ const server = http.createServer(async (req, res) => {
       const username = String(body.username || '').trim().toLowerCase();
       const displayName = String(body.displayName || '').trim();
       const email = String(body.email || '').trim();
-      const reason = String(body.reason || '').trim();
-      if (!reason) return json(res, 400, { error: 'reason 필수 (IGA)' });
+      const reason = managementReason(body.reason);
+      if (!reason) return json(res, 400, { error: 'reason은 8자 이상 필수 (IGA)', minimumLength: 8 });
       // AG-6: 입력 검증 — Kanidm name 규칙(소문자 시작), displayName 필수, email 형식.
       if (!/^[a-z][a-z0-9._-]{1,62}$/.test(username)) return json(res, 400, { error: 'username 형식 오류 (소문자로 시작, a-z0-9._- 2~63자)' });
       if (!displayName) return json(res, 400, { error: 'displayName 필수' });
@@ -438,8 +442,9 @@ const server = http.createServer(async (req, res) => {
     if (mOnboard && req.method === 'POST') {
       let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const body = await readBody(req).catch(() => ({}));
-      if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
-      try { await requireBackbone(); await logAudit(actor.username, 'iga-onboarding-link', p, 'attempt', body.reason); }
+      const reason = managementReason(body.reason);
+      if (!reason) return json(res, 400, { error: 'reason은 8자 이상 필수 (IGA)', minimumLength: 8 });
+      try { await requireBackbone(); await logAudit(actor.username, 'iga-onboarding-link', p, 'attempt', reason); }
       catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
       try {
         const uname = await personNameByUuid(mOnboard[1]);
@@ -449,11 +454,11 @@ const server = http.createServer(async (req, res) => {
           return json(res, 403, { error: '관리자 계정의 credential reset은 별도 복구 승인 절차를 사용해야 합니다' });
         }
         const onboardingPath = await onboardingLink(uname);
-        await logAudit(actor.username, 'onboarding-link', uname, onboardingPath ? 'ok' : 'error', body.reason);
+        await logAudit(actor.username, 'onboarding-link', uname, onboardingPath ? 'ok' : 'error', reason);
         return json(res, 200, { ok: true, username: uname, onboardingPath });
       } catch (e) {
         console.error('[err] onboarding link:', e);
-        try { await logAudit(actor.username, 'onboarding-link', mOnboard[1], 'error', body.reason); } catch { /* attempt 기록됨 */ }
+        try { await logAudit(actor.username, 'onboarding-link', mOnboard[1], 'error', reason); } catch { /* attempt 기록됨 */ }
         return json(res, 502, { error: 'upstream error' });
       }
     }
@@ -463,13 +468,14 @@ const server = http.createServer(async (req, res) => {
     if (mAttrs && req.method === 'POST') {
       let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const body = await readBody(req).catch(() => ({}));
-      if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
+      const reason = managementReason(body.reason);
+      if (!reason) return json(res, 400, { error: 'reason은 8자 이상 필수 (IGA)', minimumLength: 8 });
       const displayName = body.displayName !== undefined ? String(body.displayName).trim() : undefined;
       const email = body.email !== undefined ? String(body.email).trim() : undefined;
       if (displayName === undefined && email === undefined) return json(res, 400, { error: '변경할 속성이 없습니다' });
       if (displayName !== undefined && !displayName) return json(res, 400, { error: 'displayName은 비울 수 없습니다' });
       if (email) { if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: 'email 형식 오류' }); }
-      try { await requireBackbone(); await logAudit(actor.username, 'iga-update-attrs', p, 'attempt', body.reason); }
+      try { await requireBackbone(); await logAudit(actor.username, 'iga-update-attrs', p, 'attempt', reason); }
       catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
       try {
         const uname = await personNameByUuid(mAttrs[1]);
@@ -479,11 +485,11 @@ const server = http.createServer(async (req, res) => {
           if (email) await kreq('PUT', `/v1/person/${uname}/_attr/mail`, [email]);
           else await kreq('DELETE', `/v1/person/${uname}/_attr/mail`);
         }
-        await logAudit(actor.username, 'update-attrs', uname, 'ok', body.reason);
+        await logAudit(actor.username, 'update-attrs', uname, 'ok', reason);
         return json(res, 200, { ok: true, username: uname });
       } catch (e) {
         console.error('[err] update attrs:', e);
-        try { await logAudit(actor.username, 'update-attrs', mAttrs[1], 'error', body.reason); } catch { /* attempt 기록됨 */ }
+        try { await logAudit(actor.username, 'update-attrs', mAttrs[1], 'error', reason); } catch { /* attempt 기록됨 */ }
         return json(res, 502, { error: 'upstream error' });
       }
     }
@@ -494,10 +500,11 @@ const server = http.createServer(async (req, res) => {
     if ((mEnable || mGroup) && req.method === 'POST') {
       let actor; try { actor = await verifyActor(req); } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' }); }
       const body = await readBody(req).catch(() => ({}));
-      if (!body.reason || !String(body.reason).trim()) return json(res, 400, { error: 'reason 필수 (IGA)' });
+      const reason = managementReason(body.reason);
+      if (!reason) return json(res, 400, { error: 'reason은 8자 이상 필수 (IGA)', minimumLength: 8 });
       try {
         await requireBackbone();
-        await logAudit(actor.username, 'iga-mutation', p, 'attempt', body.reason);
+        await logAudit(actor.username, 'iga-mutation', p, 'attempt', reason);
       } catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
       try {
         if (mEnable) {
@@ -506,7 +513,7 @@ const server = http.createServer(async (req, res) => {
           const enabled = !!body.enabled;
           if (enabled) await kreq('DELETE', `/v1/person/${uname}/_attr/account_expire`);
           else await kreq('PUT', `/v1/person/${uname}/_attr/account_expire`, ['1970-01-01T00:00:00+00:00']);
-          await logAudit(actor.username, enabled ? 'enable-user' : 'disable-user', uname, 'ok', body.reason);
+          await logAudit(actor.username, enabled ? 'enable-user' : 'disable-user', uname, 'ok', reason);
           return json(res, 200, { ok: true });
         } else {
           const uname = await personNameByUuid(mGroup[1]);
@@ -525,12 +532,12 @@ const server = http.createServer(async (req, res) => {
             return json(res, 403, { error: 'admin 권한은 본인에게 직접 변경할 수 없습니다(직무분리)' });
           }
           await kreq(op === 'add' ? 'POST' : 'DELETE', `/v1/group/${gname}/_attr/member`, [uname]);
-          await logAudit(actor.username, `group-${op}`, `${uname}:${gname}`, gname === KANIDM_ADMIN_GROUP ? 'ok-admin-change' : 'ok', body.reason);
+          await logAudit(actor.username, `group-${op}`, `${uname}:${gname}`, gname === KANIDM_ADMIN_GROUP ? 'ok-admin-change' : 'ok', reason);
           return json(res, 200, { ok: true });
         }
       } catch (e) {
         console.error('[err] iga write:', e); // 감사 F: 상세는 서버 로그, 클라이언트엔 일반 메시지.
-        try { await logAudit(actor.username, mEnable ? 'enable-toggle' : 'group-change', (mEnable || mGroup)[1], 'error', body.reason); } catch { /* attempt는 이미 내구 기록됨 */ }
+        try { await logAudit(actor.username, mEnable ? 'enable-toggle' : 'group-change', (mEnable || mGroup)[1], 'error', reason); } catch { /* attempt는 이미 내구 기록됨 */ }
         return json(res, 502, { error: 'upstream error' });
       }
     }

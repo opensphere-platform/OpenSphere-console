@@ -37,6 +37,14 @@ test('AG-6: user creation validates input and rejects duplicates', () => {
   assert.match(s, /이미 존재하는 사용자명입니다/); // 중복 409
 });
 
+test('IGA writes require an audit-quality reason across every identity mutation path', () => {
+  const s = read('backend', 'opensphere-console-backend', 'server.js');
+  assert.match(s, /function managementReason\(value\)/);
+  assert.match(s, /return reason\.length >= 8 \? reason : null/);
+  assert.match(s, /minimumLength: 8/);
+  assert.equal((s.match(/managementReason\(body\.reason\)/g) || []).length, 4);
+});
+
 // AG-1(회귀): 생성 시 역할 부여도 콘솔 역할 그룹 allowlist로만 허용하고, admin은 강조 감사.
 test('AG-1: create-time role assignment is allowlisted and admin is elevated-audited', () => {
   const s = read('backend', 'opensphere-console-backend', 'server.js');
