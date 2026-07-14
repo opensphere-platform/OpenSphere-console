@@ -4,9 +4,10 @@
 - 대상 채널: `edge` — `candidate` 및 `stable` 승격 요청이 아님
 - 이전 감사: [통합 기술감사 보고서](../../_DOCS_/30-기술감사/AUDIT-REPORT-INTEGRATED-CONSOLE-EDGE-2026-07-14.md)
 - Console 기준선: `dc272f4c4b5eb69fbc924048611f0dbe38689062`
-- Setup 기준선: `bde32cb7082a202c070387cb948e2237beab089d`
+- Setup 기준선: `97b271f5540ef60f2e3a275e21f0832d22b6c2b6`
 - release lock: `sha256:503352a00eb927785a92ec7b54918c0d511f17266997f58d3e3dfb6c3086a333`
 - 발행 증거: [GitHub Actions run 29317030360](https://github.com/opensphere-platform/OpenSphere-console/actions/runs/29317030360)
+- Setup clean-cluster 증거: [GitHub Actions run 29319863597](https://github.com/opensphere-platform/OpenSphere-Setup-CLI/actions/runs/29319863597)
 - 요청 상태: 시정 코드 배포·재현 증거 제출 완료, 독립 재감사 대기
 
 ## 1. 목적과 판정 원칙
@@ -20,7 +21,7 @@
 | 구분 | 고정 값 | 독립 확인 조건 |
 |---|---|---|
 | Console source | `dc272f4c4b5eb69fbc924048611f0dbe38689062` | `git rev-parse HEAD`와 모든 lock component `sourceRevision` 일치 |
-| Setup source | `bde32cb7082a202c070387cb948e2237beab089d` | release resolve / bootstrap / upgrade / verify 동작 대조 |
+| Setup source | `97b271f5540ef60f2e3a275e21f0832d22b6c2b6` | release resolve / bootstrap / upgrade / verify 동작 대조 |
 | release lock | `sha256:503352a00eb927785a92ec7b54918c0d511f17266997f58d3e3dfb6c3086a333` | 9개 component digest·revision·attestation·SBOM 대조 |
 | CI | run `29317030360` | test, native macOS CLI, 9 image publish, provenance, SPDX SBOM 모두 성공 |
 | 설치 검증 | Setup `verify` | `14 pods / 12 services / runtime images locked`를 새 환경에서 재현 |
@@ -49,6 +50,7 @@
 3. 실행 PostgreSQL의 읽기 전용 검증은 앱 role에 대해 `console:false:false`, audit table owner `opensphere_audit_owner`, UPDATE/DELETE/TRUNCATE `false:false:false`를 반환했다.
 4. `os --version`은 `os 0.4.0`을 반환했다.
 5. GitHub Actions run `29317030360`은 native macOS arm64 Keychain test·artifact build, 9개 다중 아키텍처 image publish, provenance 및 SPDX SBOM attestation을 성공으로 기록했다.
+6. GitHub Actions run `29319863597`은 Docker Desktop과 분리된 Linux kind cluster에서 local-path StorageClass를 준비한 뒤 public Ingress/DNS 없이 edge resolve·bootstrap·backup/restore drill·Service port-forward CLI download·verify를 성공했다.
 
 감사자는 위 각 결과를 새 workspace와 새 cluster에서 다시 생성해 원본 출력을 보존해야 한다.
 
@@ -58,7 +60,7 @@
 
 | 조건 | 현재 상태 | 승격 영향 |
 |---|---|---|
-| 일반 Kubernetes 독립 설치 | Docker Desktop 이외의 지원 cluster에서 bootstrap/verify/upgrade/rollback 증거 없음 | `candidate` HOLD |
+| 일반 Kubernetes 독립 설치 | Linux kind clean bootstrap/CLI install/verify CI 증거는 있음. 독립 운영 cluster에서의 upgrade·rollback과 장기 운영 증거는 없음 | `candidate` HOLD |
 | 외부/off-cluster backup 및 노드·볼륨 손실 복구 | in-cluster RustFS backup/restore drill은 있으나 외부 복제·HA 검증 없음 | `candidate` 조건부, `stable` Block |
 | 운영 CA 및 TOTP 강제 | 현재 edge는 development 인증 프로파일 | 운영 사용 REJECT |
 | UI/접근성 정본 준수 | Clarity v18 전환·상태·접근성 시정은 사용자 구성요소 승인 후 별도 범위로 수행해야 함 | `candidate` P2 위험수용 또는 시정 필요 |
