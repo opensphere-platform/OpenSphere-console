@@ -74,6 +74,29 @@ type ToolManifest struct {
 	Tools []Tool `json:"tools"`
 }
 
+const (
+	exitSuccess = 0
+	exitUsage   = 2
+	exitAuth    = 3
+	exitNetwork = 4
+	exitServer  = 5
+)
+
+// exitError carries a stable process status while preserving command messages.
+type exitError struct {
+	code          int
+	message       string
+	correlationID string
+	cause         error
+}
+
+func (e *exitError) Error() string { return e.message }
+func (e *exitError) Unwrap() error { return e.cause }
+
+func cliError(code int, message string, cause error) error {
+	return &exitError{code: code, message: message, cause: cause}
+}
+
 func defaults() Config {
 	console := env("OS_CONSOLE", "http://localhost:8090")
 	return Config{
@@ -203,7 +226,11 @@ func request(cfg Config, method, rawURL string, body io.Reader, contentType stri
 func requestWithContentType(cfg Config, method, rawURL string, body io.Reader, contentType string) ([]byte, int, string, error) {
 	accessToken, err := credentialToken(cfg)
 	if err != nil {
-		return nil, 0, "", err
+		var typed *exitError
+		if errors.As(err, &typed) {
+			return nil, 0, "", err
+		}
+		return nil, 0, "", cliError(exitAuth, err.Error(), err)
 	}
 	return rawRequestCA(method, rawURL, body, contentType, accessToken, cfg.IDToken, cfg.CABundle)
 }
@@ -233,7 +260,7 @@ func rawRequestCA(method, rawURL string, body io.Reader, contentType, accessToke
 	req.Header.Set("X-OS-Correlation-ID", operationID())
 	httpClient, err := client(caBundle)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", cliError(exitNetwork, err.Error(), err)
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -241,12 +268,18 @@ func rawRequestCA(method, rawURL string, body io.Reader, contentType, accessToke
 		var certificateInvalid x509.CertificateInvalidError
 		var hostnameError x509.HostnameError
 		if errors.As(err, &unknownAuthority) || errors.As(err, &certificateInvalid) || errors.As(err, &hostnameError) || strings.Contains(strings.ToLower(err.Error()), "certificate signed by unknown authority") {
-			return nil, 0, "", fmt.Errorf("TLS 인증서를 신뢰할 수 없습니다; --ca-bundle <file> 또는 os setup ca <file>로 CA를 설정하세요: %w", err)
+			message := fmt.Sprintf("TLS 인증서를 신뢰할 수 없습니다; --ca-bundle <file> 또는 os setup ca <file>로 CA를 설정하세요: %v", err)
+			return nil, 0, "", cliError(exitNetwork, message, err)
 		}
-		return nil, 0, "", fmt.Errorf("서버에 연결할 수 없습니다: %w", err)
+		message := fmt.Sprintf("서버에 연결할 수 없습니다: %v", err)
+		return nil, 0, "", cliError(exitNetwork, message, err)
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		message := fmt.Sprintf("서버 응답을 읽을 수 없습니다: %v", err)
+		return b, resp.StatusCode, resp.Header.Get("Content-Type"), cliError(exitNetwork, message, err)
+	}
 	if err == nil && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
 		err = statusError(b, resp.StatusCode, resp.Header.Get("X-OS-Correlation-Id"))
 	}
@@ -270,7 +303,11 @@ func statusError(b []byte, status int, correlationID string) error {
 	if correlationID != "" {
 		msg += " (correlation ID: " + correlationID + ")"
 	}
-	return fmt.Errorf("HTTP %d: %s", status, msg)
+	code := exitServer
+	if status == http.StatusUnauthorized || invalidSession {
+		code = exitAuth
+	}
+	return &exitError{code: code, message: fmt.Sprintf("HTTP %d: %s", status, msg), correlationID: correlationID}
 }
 
 type devicePublicJWK struct {
@@ -390,16 +427,25 @@ func requireOK(b []byte, status int) error {
 	if status >= 200 && status < 300 {
 		return nil
 	}
-	msg := strings.TrimSpace(string(b))
-	if len(msg) > 500 {
-		msg = msg[:500]
-	}
-	return fmt.Errorf("HTTP %d: %s", status, msg)
+	return statusError(b, status, "")
 }
 
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		printHelp(out)
+		return nil
+	}
+	if args[0] == "help" {
+		if len(args) == 1 {
+			printHelp(out)
+			return nil
+		}
+		if len(args) != 2 || !printCommandHelp(out, args[1]) {
+			return cliError(exitUsage, fmt.Sprintf("unknown command %q; run os help", strings.Join(args[1:], " ")), nil)
+		}
+		return nil
+	}
+	if len(args) >= 2 && (hasArg(args[1:], "--help") || hasArg(args[1:], "-h")) && printCommandHelp(out, args[0]) {
 		return nil
 	}
 	if args[0] == "version" || args[0] == "--version" {
@@ -414,7 +460,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	caBundle, cleanedArgs, err := globalCABundle(args)
 	if err != nil {
-		return err
+		return cliError(exitUsage, err.Error(), err)
 	}
 	args = cleanedArgs
 	cfg, err := loadConfig()
@@ -938,7 +984,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		}
 	}
 	if contribution == nil {
-		return fmt.Errorf("unknown command %q; run os help", ns)
+		return cliError(exitUsage, fmt.Sprintf("unknown command %q; run os help", ns), nil)
 	}
 	base := join(cfg.ConsoleURL, contribution.APIBase)
 	manifestURL := join(base, contribution.ManifestPath)
@@ -969,7 +1015,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		}
 	}
 	if selected == nil {
-		return fmt.Errorf("unknown command %q; run os help", strings.Join(args, " "))
+		return cliError(exitUsage, fmt.Sprintf("unknown command %q; run os help", strings.Join(args, " ")), nil)
 	}
 	method := strings.ToUpper(selected.Method)
 	if method == "" {
@@ -1059,14 +1105,20 @@ func printHelp(out io.Writer) {
   os setup ca <file>                           (검증에 사용할 사설 CA를 설정에 저장)
   os version | help
 
+종료 코드:
+  0  성공
+  2  사용법 오류 또는 알 수 없는 명령
+  3  인증 또는 세션 실패
+  4  네트워크 또는 TLS 실패
+  5  API 서버 HTTP 오류(4xx/5xx)
+
 현재 native 프로파일은 admin 디바이스 신뢰 + 15분 서명 세션을 사용한다. 개인키는 config.json에 저장하지 않는다.
 비대화형 자동화는 별도 API token(OS_PAT), 향후 workforce는 승인된 CLI Binding으로 분리한다.
 설정 ~/.os/config.json(비밀 없음) · 보안키 Windows DPAPI/macOS Keychain/Linux Secret Service.`)
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "오류:", err)
-		os.Exit(1)
+	if code := execute(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); code != exitSuccess {
+		os.Exit(code)
 	}
 }

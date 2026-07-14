@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,10 +19,72 @@ func TestHelpDeclaresNativeAdminBoundary(t *testing.T) {
 	if err := run([]string{"help"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Console native 관리자 CLI", "admin 디바이스 신뢰", "workforce", "CLI Binding", "--pat-stdin", "extensions install", "15분 서명 세션"} {
+	for _, expected := range []string{"Console native 관리자 CLI", "admin 디바이스 신뢰", "workforce", "CLI Binding", "--pat-stdin", "extensions install", "15분 서명 세션", "종료 코드:", "네트워크 또는 TLS 실패"} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("help missing %q", expected)
 		}
+	}
+}
+
+func TestCommandHelpIsDetailedAndLocal(t *testing.T) {
+	commands := []string{"login", "logout", "whoami", "device", "token", "auth-policy", "admin", "registry", "catalog", "backbone", "observability", "audit", "get", "role", "extensions", "setup"}
+	dir := t.TempDir()
+	brokenConfig := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(brokenConfig, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OS_CONFIG", brokenConfig)
+	for _, command := range commands {
+		for _, args := range [][]string{{command, "--help"}, {command, "-h"}, {"help", command}} {
+			var out bytes.Buffer
+			if err := run(args, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
+				t.Fatalf("%v should succeed without config or network: %v", args, err)
+			}
+			for _, section := range []string{"사용법:", "하위명령:", "플래그:", "예:"} {
+				if !strings.Contains(out.String(), section) {
+					t.Fatalf("%v help missing %q: %s", args, section, out.String())
+				}
+			}
+		}
+	}
+}
+
+func TestStableExitCodeMapping(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"usage", cliError(exitUsage, "bad usage", nil), exitUsage},
+		{"auth", statusError([]byte("denied"), http.StatusUnauthorized, ""), exitAuth},
+		{"network", cliError(exitNetwork, "offline", errors.New("dial failed")), exitNetwork},
+		{"server", statusError([]byte("failed"), http.StatusInternalServerError, ""), exitServer},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := exitDetails(tc.err)
+			if got != tc.want {
+				t.Fatalf("exit code=%d want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestJSONErrorShape(t *testing.T) {
+	var errOut bytes.Buffer
+	code := execute([]string{"help", "not-a-command", "--output", "json"}, strings.NewReader(""), &bytes.Buffer{}, &errOut)
+	if code != exitUsage {
+		t.Fatalf("exit code=%d want %d", code, exitUsage)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(errOut.Bytes(), &payload); err != nil {
+		t.Fatalf("stderr is not JSON: %v: %s", err, errOut.String())
+	}
+	if payload["code"] != float64(exitUsage) || payload["error"] == "" {
+		t.Fatalf("unexpected JSON error: %#v", payload)
+	}
+	if _, ok := payload["correlationId"]; !ok {
+		t.Fatalf("JSON error missing correlationId: %#v", payload)
 	}
 }
 
