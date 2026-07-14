@@ -15,9 +15,17 @@ FROM docker.io/library/golang@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7
 WORKDIR /src
 COPY OpenSphere-console/backend/os-cli/go.mod ./
 COPY OpenSphere-console/backend/os-cli/cmd ./cmd
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... && \
+# A native macOS runner provides this named build context. Keeping it outside
+# the source context prevents a generated binary from entering version control.
+COPY --from=macos-cli /opensphere-cli-darwin-arm64 /prebuilt/opensphere-cli-darwin-arm64
+# Execute tests for the build stage's native Linux architecture. Forcing an
+# amd64 test binary while Buildx is building the arm64 image makes `go test`
+# attempt to execute the wrong architecture. The downloadable artifacts below
+# remain explicitly cross-built and are architecture-independent payloads.
+RUN test -s /prebuilt/opensphere-cli-darwin-arm64 || { echo >&2 'native macOS CLI artifact is missing or empty'; exit 1; }
+RUN mkdir -p /out && go test ./... && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-darwin-arm64 ./cmd/os && \
+    install -m 0755 /prebuilt/opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64 && \
     CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 
 FROM docker.io/library/node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS cli-manifest

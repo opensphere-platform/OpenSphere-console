@@ -147,11 +147,10 @@ jobs:
           repository: opensphere-platform/OpenSphere-SDK
           path: OpenSphere-SDK
       - name: Download native macOS CLI artifact
-        if: matrix.image == 'opensphere-console'
         uses: actions/download-artifact@v4
         with:
           name: opensphere-cli-darwin-arm64
-          path: OpenSphere-console/backend/os-cli/prebuilt
+          path: ${{ runner.temp }}/opensphere-cli-macos
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
       - name: Setup Buildx
@@ -179,6 +178,8 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
+          build-contexts: |
+            macos-cli=${{ runner.temp }}/opensphere-cli-macos
           # Setup supports Linux amd64 and arm64 nodes.  The release digest is
           # a multi-platform index, so each cluster pulls its native manifest.
           platforms: linux/amd64,linux/arm64

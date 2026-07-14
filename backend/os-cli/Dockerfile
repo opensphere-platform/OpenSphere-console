@@ -5,11 +5,13 @@ COPY cmd ./cmd
 # Security.framework cannot be cross-compiled safely from Linux. The release
 # workflow supplies an attested, macOS-runner-built artifact; fail closed when
 # it is absent rather than silently restoring the argv-leaking security CLI.
-# The artifact remains outside source control (prebuilt/.gitignore).
-COPY prebuilt ./prebuilt
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... && \
+# The named build context keeps the generated artifact outside source control.
+COPY --from=macos-cli /opensphere-cli-darwin-arm64 /prebuilt/opensphere-cli-darwin-arm64
+# Test natively for each Buildx target; only the downloadable binaries are
+# cross-compiled. This keeps the arm64 image build from executing an amd64 test.
+RUN test -s /prebuilt/opensphere-cli-darwin-arm64 || { echo >&2 'native macOS CLI artifact is missing or empty'; exit 1; }
+RUN mkdir -p /out && go test ./... && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    test -s /prebuilt/opensphere-cli-darwin-arm64 && \
     install -m 0755 /prebuilt/opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64 && \
     CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 
