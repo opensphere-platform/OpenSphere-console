@@ -519,7 +519,7 @@ interface AuditEvent {
       }
       @media (max-width: 600px) {
         .profile-hero { padding: .7rem .8rem .8rem; }
-        .profile-title-row h1 { overflow-wrap: anywhere; }
+        .profile-title-row h1 { white-space: normal; overflow-wrap: anywhere; }
         .profile-actions { flex-wrap: wrap; }
         .tab-section { padding: .8rem .8rem 1.5rem; }
         .credential-toolbar { grid-template-columns: 1fr; align-items: stretch; }
