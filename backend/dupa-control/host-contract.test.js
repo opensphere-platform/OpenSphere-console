@@ -48,3 +48,12 @@ test('release lifecycle retains a verified previous release and exposes rollback
   assert.match(crd, /previousDigest:/);
   assert.match(crd, /previousManifestSha256:/);
 });
+
+test('extension uninstall retains its registration after a non-idempotent workload deletion failure', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  assert.match(controller, /async function deleteManagedResource\(path, label\)/);
+  assert.match(controller, /if \(result\.ok \|\| result\.status === 404\) return/);
+  assert.match(controller, /reason: 'UninstallDeleteFailed'/);
+  assert.match(controller, /await deleteManagedResource\(`\/apis\/apps\/v1\/namespaces\/\$\{NS\}\/deployments\/\$\{name\}`/);
+  assert.match(controller, /await deleteWorkload\(pkg\);\s+await k8s\('DELETE', `\$\{crd\('uipluginregistrations'\)\}\/\$\{name\}`\);/);
+});

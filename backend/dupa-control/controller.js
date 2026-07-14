@@ -590,14 +590,25 @@ async function applyWorkload(pkg) {
   if (existingPdb.ok) await k8s('PATCH', `${pdbPath}/${name}`, pdb);
   else await k8s('POST', pdbPath, pdb);
 }
+async function deleteManagedResource(path, label) {
+  const result = await k8s('DELETE', path);
+  // DELETE is idempotent for the reconciliation state machine: a previously
+  // removed resource is already converged, but an authorization/API failure
+  // must retain the registration so a later reconcile can safely retry.
+  if (result.ok || result.status === 404) return;
+  throw Object.assign(new Error(`${label} delete failed (HTTP ${result.status})`), {
+    reason: 'UninstallDeleteFailed'
+  });
+}
+
 async function deleteWorkload(pkg) {
   const name = pkg.metadata.name;
-  await k8s('DELETE', `/apis/apps/v1/namespaces/${NS}/deployments/${name}`);
-  await k8s('DELETE', `/api/v1/namespaces/${NS}/services/${name}`);
-  await k8s('DELETE', `/apis/policy/v1/namespaces/${NS}/poddisruptionbudgets/${name}`);
+  await deleteManagedResource(`/apis/apps/v1/namespaces/${NS}/deployments/${name}`, `Deployment/${name}`);
+  await deleteManagedResource(`/api/v1/namespaces/${NS}/services/${name}`, `Service/${name}`);
+  await deleteManagedResource(`/apis/policy/v1/namespaces/${NS}/poddisruptionbudgets/${name}`, `PodDisruptionBudget/${name}`);
   const sa = pluginServiceAccount(pkg);
-  await k8s('DELETE', `/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/opensphere-module-${pkg.metadata.name}-observer-v1`);
-  if (sa.managed) await k8s('DELETE', `/api/v1/namespaces/${NS}/serviceaccounts/${sa.name}`);
+  await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/opensphere-module-${pkg.metadata.name}-observer-v1`, `ClusterRoleBinding/${name}`);
+  if (sa.managed) await deleteManagedResource(`/api/v1/namespaces/${NS}/serviceaccounts/${sa.name}`, `ServiceAccount/${sa.name}`);
 }
 async function workloadReady(name) {
   const d = await k8s('GET', `/apis/apps/v1/namespaces/${NS}/deployments/${name}`);
