@@ -58,8 +58,11 @@ test('deployment declares shared development policy and scoped RBAC', () => {
   assert.match(deploy, /opensphere\.io\/default-totp-enabled:\s*"false"/);
   assert.doesNotMatch(deploy, /\n\s+totpEnabled:\s*"false"/);
   assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-policy"\][\s\S]*verbs:\s*\["get",\s*"patch",\s*"update"\]/);
-  assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-pats",\s*"opensphere-console-auth-cli-devices"\][\s\S]*verbs:\s*\["get"\]/);
-  assert.doesNotMatch(deploy, /resourceNames:\s*\["opensphere-console-auth-pats",\s*"opensphere-console-auth-cli-devices"\][\s\S]{0,100}verbs:\s*\[[^\]]*(?:patch|update)/);
+  // Legacy credential ConfigMaps may be patched only to delete successfully
+  // migrated records.  `update` remains forbidden: it could replace an entire
+  // ConfigMap and reintroduce revoked credential material.
+  assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-pats",\s*"opensphere-console-auth-cli-devices"\][\s\S]*verbs:\s*\["get",\s*"patch"\]/);
+  assert.doesNotMatch(deploy, /resourceNames:\s*\["opensphere-console-auth-pats",\s*"opensphere-console-auth-cli-devices"\][\s\S]{0,100}verbs:\s*\[[^\]]*"update"/);
   assert.match(deploy, /name:\s*opensphere-console-auth-codes/);
   assert.match(deploy, /name:\s*opensphere-console-auth-cli-flows/);
   assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-codes",\s*"opensphere-console-auth-cli-flows"\]/);

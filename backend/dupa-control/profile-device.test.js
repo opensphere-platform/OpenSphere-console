@@ -58,6 +58,9 @@ test('auth deployment sends durable credentials to CBS and keeps one-time flows 
   assert.match(deploy, /resourceNames:\s*\[[^\]]*opensphere-console-auth-cli-flows[^\]]*\]/s);
   assert.match(server, /\/api\/internal\/credential-state\/\$\{kind\}/);
   assert.match(server, /ConfigMap to CBS migration/);
+  assert.match(server, /legacy \$\{kind\} cleanup HTTP/);
+  assert.match(server, /credential values never reappear/);
+  assert.match(deploy, /resourceNames:\s*\[[^\]]*opensphere-console-auth-pats[^\]]*opensphere-console-auth-cli-devices[^\]]*\][\s\S]*verbs:\s*\["get", "patch"\]/);
   assert.match(server, /reason_required/);
   assert.match(server, /mutationReason/);
   assert.doesNotMatch(server, /const patchDevice = \(id, valueOrNull\) => k8sApi/);

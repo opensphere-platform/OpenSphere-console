@@ -86,11 +86,12 @@ rules:
     resources: ["configmaps"]
     resourceNames: ["opensphere-console-auth-policy"]
     verbs: ["get", "patch", "update"]
-  # 0.2/초기 0.3 상태를 CBS로 한 번 흡수하기 위한 read-only migration 권한.
+  # 0.2/초기 0.3 상태를 CBS로 한 번 흡수한 뒤, 성공한 원본 항목을 제거해
+  # 폐기된 자격이 CBS empty 시 되살아나지 않게 한다.
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: ["opensphere-console-auth-pats", "opensphere-console-auth-cli-devices"]
-    verbs: ["get"]
+    verbs: ["get", "patch"]
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["opensphere-console-auth-codes", "opensphere-console-auth-cli-flows"]

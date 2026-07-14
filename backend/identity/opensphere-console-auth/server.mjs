@@ -388,7 +388,9 @@ async function touchCredentialKind(kind, id) {
 }
 
 // 0.2 및 초기 0.3 배포가 남긴 ConfigMap 상태를 최초 접근 시 한 번만 CBS로 흡수한다.
-// 이후 권위는 PostgreSQL뿐이며, Controller 장애 시 빈 목록으로 폴백하지 않고 fail-closed 한다.
+// 성공한 항목은 ConfigMap에서 제거한다. 그렇지 않으면 CBS가 정상적으로 비어진
+// 뒤에도 과거 폐기 자격이 되살아날 수 있다. 이후 권위는 PostgreSQL뿐이며,
+// Controller 장애 시 빈 목록으로 폴백하지 않고 fail-closed 한다.
 let credentialMigration;
 async function migrateLegacyCredentialState() {
   if (credentialMigration) return credentialMigration;
@@ -397,13 +399,24 @@ async function migrateLegacyCredentialState() {
       const current = await readCredentialKind(kind);
       if (Object.keys(current).length) continue;
       const legacy = await k8sApi('GET', path);
-      for (const [id, value] of Object.entries(legacy.status === 200 ? (legacy.json?.data || {}) : {})) {
-        let rec; try { rec = JSON.parse(value); } catch { continue; }
+      const entries = Object.entries(legacy.status === 200 ? (legacy.json?.data || {}) : {});
+      if (entries.length === 0) continue;
+      const records = entries.map(([id, value]) => {
+        try { return [id, JSON.parse(value)]; }
+        catch { throw Object.assign(new Error(`legacy ${kind} ConfigMap has an invalid record: ${id}`), { statusCode: 503 }); }
+      });
+      for (const [id, rec] of records) {
         const stored = await mutateCredentialKind(kind, id, rec, {
           owner: rec.user || 'unknown', actor: 'opensphere-console-auth', action: `${kind}-legacy-migrate`, reason: 'ConfigMap to CBS migration',
         });
         if (stored.status >= 300) throw Object.assign(new Error(`credential migration HTTP ${stored.status}`), { statusCode: 503 });
       }
+      // JSON merge patch deletes named ConfigMap entries with null values. The
+      // patch contains identifiers only; credential values never reappear in a
+      // process argument, log or audit payload.
+      const clear = Object.fromEntries(records.map(([id]) => [id, null]));
+      const cleared = await k8sApi('PATCH', path, { data: clear }, 'application/merge-patch+json');
+      if (cleared.status >= 300) throw Object.assign(new Error(`legacy ${kind} cleanup HTTP ${cleared.status}`), { statusCode: 503 });
     }
   })().catch((error) => { credentialMigration = null; throw error; });
   return credentialMigration;
