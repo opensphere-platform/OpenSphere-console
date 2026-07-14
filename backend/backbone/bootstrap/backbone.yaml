@@ -315,7 +315,9 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 600
-  ttlSecondsAfterFinished: 300
+  # Retain the outcome long enough for the serial Kanidm rollout and Setup
+  # verifier to consume it; recovery evidence is still cleaned up afterwards.
+  ttlSecondsAfterFinished: 1800
   template:
     metadata:
       labels:
