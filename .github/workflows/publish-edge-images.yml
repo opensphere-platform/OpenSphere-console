@@ -167,7 +167,6 @@ jobs:
         with:
           images: ghcr.io/opensphere-platform/${{ matrix.image }}
           tags: |
-            type=raw,value=edge
             type=sha,prefix=sha-
           labels: |
             io.opensphere.channel=edge
@@ -216,4 +215,68 @@ jobs:
           sbom-path: ${{ runner.temp }}/${{ matrix.image }}.spdx.json
           push-to-registry: true
       - name: Publish summary
-        run: echo '`${{ matrix.image }}:edge` → `${{ steps.build.outputs.digest }}`' >> "$GITHUB_STEP_SUMMARY"
+        run: echo '`${{ matrix.image }}:sha-*` → `${{ steps.build.outputs.digest }}`' >> "$GITHUB_STEP_SUMMARY"
+
+  # A channel must represent a complete console release, not whichever matrix
+  # member happened to finish first. The matrix publishes only an immutable
+  # source tag; this job advances mutable edge tags after all attestations.
+  # Readers reject any short GHCR tag-propagation window rather than installing
+  # a mixed revision.
+  publish-edge:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: imjasonh/setup-crane@v0.4
+      - name: Login to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: crane auth login ghcr.io -u "${{ github.actor }}" -p "$GH_TOKEN"
+      - name: Verify immutable release and advance edge
+        run: |
+          set -euo pipefail
+          source_tag="sha-${GITHUB_SHA:0:7}"
+          images=(
+            opensphere-console
+            opensphere-console-auth
+            opensphere-console-backend
+            opensphere-console-dupa-controller
+            opensphere-console-oaa-gateway
+            opensphere-console-kanidm
+            opensphere-cbs-postgresql
+            opensphere-cbs-rustfs
+            opensphere-cbs-gitea
+          )
+          declare -A digests
+
+          # Do not move any channel tag until every immutable component was
+          # built from this exact source revision.
+          for image in "${images[@]}"; do
+            repository="ghcr.io/opensphere-platform/$image"
+            source="$repository:$source_tag"
+            digest="$(crane digest "$source")"
+            revision="$(crane config "$source" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "$source has an invalid digest: $digest" >&2
+              exit 1
+            fi
+            if [[ "$revision" != "$GITHUB_SHA" ]]; then
+              echo "$source revision $revision differs from workflow $GITHUB_SHA" >&2
+              exit 1
+            fi
+            digests[$image]="$digest"
+          done
+
+          for image in "${images[@]}"; do
+            repository="ghcr.io/opensphere-platform/$image"
+            crane tag "$repository@${digests[$image]}" edge
+          done
+
+          for image in "${images[@]}"; do
+            repository="ghcr.io/opensphere-platform/$image"
+            actual="$(crane digest "$repository:edge")"
+            if [[ "$actual" != "${digests[$image]}" ]]; then
+              echo "$repository:edge resolved to $actual, expected ${digests[$image]}" >&2
+              exit 1
+            fi
+            echo "- \`$image:edge\` → \`${digests[$image]}\`" >> "$GITHUB_STEP_SUMMARY"
+          done
