@@ -414,6 +414,9 @@ func join(base, path string) string {
 }
 
 func pretty(out io.Writer, b []byte) error {
+	if formatted, ok := out.(*formattedOutput); ok {
+		return renderOutput(formatted.Writer, b, formatted.options)
+	}
 	var dst bytes.Buffer
 	if json.Indent(&dst, b, "", "  ") == nil {
 		_, err := fmt.Fprintln(out, dst.String())
@@ -458,11 +461,26 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if args[0] == "setup" {
 		return setup(args[1:], out)
 	}
+	if args[0] == "config" {
+		return configCommand(args[1:], out)
+	}
+	if args[0] == "completion" {
+		return completion(args[1:], out)
+	}
 	caBundle, cleanedArgs, err := globalCABundle(args)
 	if err != nil {
 		return cliError(exitUsage, err.Error(), err)
 	}
 	args = cleanedArgs
+	output, cleanedArgs, err := parseOutputOptions(args)
+	if err != nil {
+		return cliError(exitUsage, err.Error(), err)
+	}
+	args = cleanedArgs
+	out = &formattedOutput{Writer: out, options: output}
+	if len(args) == 0 {
+		return cliError(exitUsage, "명령이 필요합니다; os help를 실행하세요", nil)
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -1032,6 +1050,9 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		u, _ := url.Parse(target)
 		q := u.Query()
 		for k, v := range flags {
+			if k == "output" || k == "query" || k == "limit" || k == "all" {
+				continue
+			}
 			q.Set(k, v)
 		}
 		u.RawQuery = q.Encode()
@@ -1103,7 +1124,11 @@ func printHelp(out io.Writer) {
   os get <resource> [name] [-o json]
   os role list | grant <user> <role> | revoke <user> <role>
   os setup ca <file>                           (검증에 사용할 사설 CA를 설정에 저장)
+  os config get [key] | set <key> <value> | list
+  os completion bash|zsh|powershell
   os version | help
+
+공통 출력 플래그: -o, --output json|table|yaml · --query JMESPATH · --limit N · --all
 
 종료 코드:
   0  성공
