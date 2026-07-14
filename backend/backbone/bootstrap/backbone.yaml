@@ -64,7 +64,7 @@ data:
     curl --fail --silent --show-error --cacert /tls/ca.crt --connect-timeout 5 --max-time 60 \
       --aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
       "${endpoint}/backups?list-type=2&prefix=postgres/" \
-      | sed -n 's#.*<Key>\\(postgres/console-[0-9TZ]*\\.dump\\)</Key>.*#\\1#p' \
+      | sed -n 's#.*<Key>\(postgres/console-[0-9TZ]*\.dump\)</Key>.*#\1#p' \
       | while IFS= read -r old_key; do
           old_stamp="${old_key#postgres/console-}"; old_stamp="${old_stamp%.dump}"
           if [ "$old_stamp" \< "$cutoff" ]; then
@@ -87,7 +87,7 @@ data:
     key="$(curl --fail --silent --show-error --cacert /tls/ca.crt --connect-timeout 5 --max-time 60 \
       --aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
       "${endpoint}/backups?list-type=2&prefix=postgres/" \
-      | sed -n 's#.*<Key>\\(postgres/console-[0-9TZ]*\\.dump\\)</Key>.*#\\1#p' | tail -n 1)"
+      | sed -n 's#.*<Key>\(postgres/console-[0-9TZ]*\.dump\)</Key>.*#\1#p' | tail -n 1)"
     test -n "$key"
     dump=/tmp/restore.dump
     drill_db="console_restore_drill_$(date -u +%Y%m%d%H%M%S)"

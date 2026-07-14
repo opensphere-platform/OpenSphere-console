@@ -97,6 +97,8 @@ test('audit evidence has a retained RustFS backup and a non-destructive restore 
   assert.ok(backbone.includes('cutoff_epoch="$(( $(date -u +%s) - retention_days * 86400 ))"'));
   assert.ok(backbone.includes('date -u -d "@${cutoff_epoch}"'));
   assert.doesNotMatch(backbone, /date -u -d "\$\{retention_days\} days ago"/);
+  assert.ok(backbone.includes("sed -n 's#.*<Key>\\(postgres/console-[0-9TZ]*\\.dump\\)</Key>.*#\\1#p'"));
+  assert.doesNotMatch(backbone, /<Key>\\\\\(postgres\/console-\[0-9TZ\]\*\\\\\.dump\\\\\)<\/Key>/);
   assert.match(backbone, /kind: CronJob\nmetadata:\n  name: backbone-postgres-restore-drill/);
   assert.match(backbone, /suspend: true/);
   assert.match(backbone, /pg_restore -h backbone-postgres/);
