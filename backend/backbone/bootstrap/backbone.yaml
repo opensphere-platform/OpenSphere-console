@@ -38,10 +38,12 @@ data:
     # Audit is evidence: a failed upload is a failed backup, never a best-effort success.
     set -eu
     : "${PGPASSWORD:?PGPASSWORD is required}"
-    : "${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY is required}"
-    : "${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY is required}"
+    : "${BACKUP_S3_ACCESS_KEY:?BACKUP_S3_ACCESS_KEY is required}"
+    : "${BACKUP_S3_SECRET_KEY:?BACKUP_S3_SECRET_KEY is required}"
+    : "${BACKUP_S3_BUCKET:?BACKUP_S3_BUCKET is required}"
     export PGPASSWORD
-    endpoint="${RUSTFS_ENDPOINT:-https://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000}"
+    endpoint="${BACKUP_S3_ENDPOINT:?BACKUP_S3_ENDPOINT is required}"
+    bucket="$BACKUP_S3_BUCKET"
     key="postgres/console-$(date -u +%Y%m%dT%H%M%SZ).dump"
     dump="/tmp/console.dump"
     cleanup() { rm -f "$dump"; }
@@ -49,9 +51,9 @@ data:
     pg_dump -h backbone-postgres.opensphere-backbone.svc.cluster.local -U console -d console \
       --format=custom --no-owner --no-privileges --file="$dump"
     test -s "$dump"
-    curl --fail --silent --show-error --cacert /tls/ca.crt --connect-timeout 5 --max-time 900 \
-      --aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
-      --upload-file "$dump" "${endpoint}/backups/${key}"
+    curl --fail --silent --show-error --cacert /backup-tls/ca.crt --connect-timeout 5 --max-time 900 \
+      --aws-sigv4 "aws:amz:${BACKUP_S3_REGION:-us-east-1}:s3" --user "${BACKUP_S3_ACCESS_KEY}:${BACKUP_S3_SECRET_KEY}" \
+      --upload-file "$dump" "${endpoint}/${bucket}/${key}"
     # Objects are lexicographically time-ordered. Enforce retention server-side from the
     # writer; a failed cleanup does not invalidate the just-written recovery point.
     retention_days="${BACKUP_RETENTION_DAYS:-30}"
@@ -61,16 +63,16 @@ data:
     # failed cleanup (and falsely mark the recovery point as failed).
     cutoff_epoch="$(( $(date -u +%s) - retention_days * 86400 ))"
     cutoff="$(date -u -d "@${cutoff_epoch}" +%Y%m%dT%H%M%SZ)"
-    curl --fail --silent --show-error --cacert /tls/ca.crt --connect-timeout 5 --max-time 60 \
-      --aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
-      "${endpoint}/backups?list-type=2&prefix=postgres/" \
+    curl --fail --silent --show-error --cacert /backup-tls/ca.crt --connect-timeout 5 --max-time 60 \
+      --aws-sigv4 "aws:amz:${BACKUP_S3_REGION:-us-east-1}:s3" --user "${BACKUP_S3_ACCESS_KEY}:${BACKUP_S3_SECRET_KEY}" \
+      "${endpoint}/${bucket}?list-type=2&prefix=postgres/" \
       | sed -n 's#.*<Key>\(postgres/console-[0-9TZ]*\.dump\)</Key>.*#\1#p' \
       | while IFS= read -r old_key; do
           old_stamp="${old_key#postgres/console-}"; old_stamp="${old_stamp%.dump}"
           if [ "$old_stamp" \< "$cutoff" ]; then
-            curl --fail --silent --show-error --cacert /tls/ca.crt --connect-timeout 5 --max-time 60 \
-              --aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
-              -X DELETE "${endpoint}/backups/${old_key}"
+            curl --fail --silent --show-error --cacert /backup-tls/ca.crt --connect-timeout 5 --max-time 60 \
+              --aws-sigv4 "aws:amz:${BACKUP_S3_REGION:-us-east-1}:s3" --user "${BACKUP_S3_ACCESS_KEY}:${BACKUP_S3_SECRET_KEY}" \
+              -X DELETE "${endpoint}/${bucket}/${old_key}"
           fi
         done
     printf '%s\n' "backup_key=${key}"
@@ -81,12 +83,14 @@ data:
     set -eu
     : "${PGPASSWORD:?PGPASSWORD is required}"
     : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
-    : "${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY is required}"
-    : "${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY is required}"
-    endpoint="${RUSTFS_ENDPOINT:-https://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000}"
-    key="$(curl --fail --silent --show-error --cacert /tls/ca.crt --connect-timeout 5 --max-time 60 \
-      --aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
-      "${endpoint}/backups?list-type=2&prefix=postgres/" \
+    : "${BACKUP_S3_ACCESS_KEY:?BACKUP_S3_ACCESS_KEY is required}"
+    : "${BACKUP_S3_SECRET_KEY:?BACKUP_S3_SECRET_KEY is required}"
+    : "${BACKUP_S3_BUCKET:?BACKUP_S3_BUCKET is required}"
+    endpoint="${BACKUP_S3_ENDPOINT:?BACKUP_S3_ENDPOINT is required}"
+    bucket="$BACKUP_S3_BUCKET"
+    key="$(curl --fail --silent --show-error --cacert /backup-tls/ca.crt --connect-timeout 5 --max-time 60 \
+      --aws-sigv4 "aws:amz:${BACKUP_S3_REGION:-us-east-1}:s3" --user "${BACKUP_S3_ACCESS_KEY}:${BACKUP_S3_SECRET_KEY}" \
+      "${endpoint}/${bucket}?list-type=2&prefix=postgres/" \
       | sed -n 's#.*<Key>\(postgres/console-[0-9TZ]*\.dump\)</Key>.*#\1#p' | tail -n 1)"
     test -n "$key"
     dump=/tmp/restore.dump
@@ -97,9 +101,9 @@ data:
         -U opensphere_db_bootstrap --if-exists "$drill_db" || true
     }
     trap cleanup EXIT
-    curl --fail --silent --show-error --cacert /tls/ca.crt --connect-timeout 5 --max-time 900 \
-      --aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
-      "${endpoint}/backups/${key}" --output "$dump"
+    curl --fail --silent --show-error --cacert /backup-tls/ca.crt --connect-timeout 5 --max-time 900 \
+      --aws-sigv4 "aws:amz:${BACKUP_S3_REGION:-us-east-1}:s3" --user "${BACKUP_S3_ACCESS_KEY}:${BACKUP_S3_SECRET_KEY}" \
+      "${endpoint}/${bucket}/${key}" --output "$dump"
     PGPASSWORD="$POSTGRES_PASSWORD" createdb -h backbone-postgres.opensphere-backbone.svc.cluster.local \
       -U opensphere_db_bootstrap "$drill_db"
     PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -h backbone-postgres.opensphere-backbone.svc.cluster.local \
@@ -466,9 +470,11 @@ spec:
                 - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
                 - { name: PGSSLMODE, value: verify-full }
                 - { name: PGSSLROOTCERT, value: /tls/ca.crt }
-                - { name: RUSTFS_ACCESS_KEY, valueFrom: { secretKeyRef: { name: backbone-rustfs, key: access_key } } }
-                - { name: RUSTFS_SECRET_KEY, valueFrom: { secretKeyRef: { name: backbone-rustfs, key: secret_key } } }
-                - { name: RUSTFS_ENDPOINT, value: https://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 }
+                - { name: BACKUP_S3_ACCESS_KEY, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: access_key } } }
+                - { name: BACKUP_S3_SECRET_KEY, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: secret_key } } }
+                - { name: BACKUP_S3_ENDPOINT, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: endpoint } } }
+                - { name: BACKUP_S3_BUCKET, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: bucket } } }
+                - { name: BACKUP_S3_REGION, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: region } } }
                 - { name: BACKUP_RETENTION_DAYS, value: "30" }
               resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 1, memory: 1Gi } }
               securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
@@ -476,10 +482,12 @@ spec:
                 - { name: scripts, mountPath: /scripts, readOnly: true }
                 - { name: tmp, mountPath: /tmp }
                 - { name: tls, mountPath: /tls, readOnly: true }
+                - { name: backup-tls, mountPath: /backup-tls, readOnly: true }
           volumes:
             - { name: scripts, configMap: { name: backbone-postgres-backup-scripts, defaultMode: 365 } }
             - { name: tmp, emptyDir: {} }
             - { name: tls, secret: { secretName: backbone-postgres, items: [{ key: ca.crt, path: ca.crt }] } }
+            - { name: backup-tls, secret: { secretName: backbone-postgres-backup-target, items: [{ key: ca.crt, path: ca.crt }] } }
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -515,19 +523,23 @@ spec:
                 - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: bootstrap_password } } }
                 - { name: PGSSLMODE, value: verify-full }
                 - { name: PGSSLROOTCERT, value: /tls/ca.crt }
-                - { name: RUSTFS_ACCESS_KEY, valueFrom: { secretKeyRef: { name: backbone-rustfs, key: access_key } } }
-                - { name: RUSTFS_SECRET_KEY, valueFrom: { secretKeyRef: { name: backbone-rustfs, key: secret_key } } }
-                - { name: RUSTFS_ENDPOINT, value: https://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 }
+                - { name: BACKUP_S3_ACCESS_KEY, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: access_key } } }
+                - { name: BACKUP_S3_SECRET_KEY, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: secret_key } } }
+                - { name: BACKUP_S3_ENDPOINT, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: endpoint } } }
+                - { name: BACKUP_S3_BUCKET, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: bucket } } }
+                - { name: BACKUP_S3_REGION, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: region } } }
               resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 1, memory: 1Gi } }
               securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
               volumeMounts:
                 - { name: scripts, mountPath: /scripts, readOnly: true }
                 - { name: tmp, mountPath: /tmp }
                 - { name: tls, mountPath: /tls, readOnly: true }
+                - { name: backup-tls, mountPath: /backup-tls, readOnly: true }
           volumes:
             - { name: scripts, configMap: { name: backbone-postgres-backup-scripts, defaultMode: 365 } }
             - { name: tmp, emptyDir: {} }
             - { name: tls, secret: { secretName: backbone-postgres, items: [{ key: ca.crt, path: ca.crt }] } }
+            - { name: backup-tls, secret: { secretName: backbone-postgres-backup-target, items: [{ key: ca.crt, path: ca.crt }] } }
 ---
 apiVersion: apps/v1
 kind: StatefulSet

@@ -81,7 +81,7 @@ test('Backbone bootstrap pins and isolates all three pillars', () => {
   assert.match(backbone, /GITEA__database__SSL_MODE, value: require/);
   assert.match(backbone, /RUSTFS_TLS_PATH, value: \/var\/run\/rustfs-tls/);
   assert.match(backbone, /rustfs_cert\.pem/);
-  assert.match(backbone, /RUSTFS_ENDPOINT, value: https:\/\/backbone-rustfs/);
+  assert.match(backbone, /BACKUP_S3_ENDPOINT, valueFrom: \{ secretKeyRef: \{ name: backbone-postgres-backup-target, key: endpoint \} \}/);
   assert.match(backbone, /GITEA__lfs__MINIO_USE_SSL, value: "true"/);
   assert.match(backbone, /backbone-postgres-boundary-reconcile/);
   assert.match(backbone, /name: bb-audit-boundary-__OPENSPHERE_RELEASE_REVISION__/);
@@ -95,12 +95,15 @@ test('Backbone bootstrap pins and isolates all three pillars', () => {
   assert.doesNotMatch(backbone, /:latest\b/);
 });
 
-test('audit evidence has a retained RustFS backup and a non-destructive restore drill', () => {
+test('audit evidence has a retained S3-compatible backup target and a non-destructive restore drill', () => {
   assert.match(backbone, /kind: CronJob\nmetadata:\n  name: backbone-postgres-backup/);
   assert.match(backbone, /pg_dump -h backbone-postgres/);
   assert.match(backbone, /--format=custom --no-owner --no-privileges/);
-  assert.match(backbone, /--aws-sigv4 "aws:amz:us-east-1:s3"/);
-  assert.match(backbone, /--cacert \/tls\/ca\.crt/);
+  assert.match(backbone, /BACKUP_S3_ENDPOINT/);
+  assert.match(backbone, /BACKUP_S3_BUCKET/);
+  assert.match(backbone, /--aws-sigv4 "aws:amz:\$\{BACKUP_S3_REGION:-us-east-1\}:s3"/);
+  assert.match(backbone, /--cacert \/backup-tls\/ca\.crt/);
+  assert.match(backbone, /secretName: backbone-postgres-backup-target/);
   assert.match(backbone, /BACKUP_RETENTION_DAYS/);
   assert.ok(backbone.includes('cutoff_epoch="$(( $(date -u +%s) - retention_days * 86400 ))"'));
   assert.ok(backbone.includes('date -u -d "@${cutoff_epoch}"'));
