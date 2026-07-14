@@ -69,8 +69,35 @@ jobs:
         working-directory: OpenSphere-console
         run: npm run build -- --configuration production
 
+  build-macos-cli:
+    # This is intentionally a native macOS build. The CLI invokes
+    # Security.framework through cgo so the Keychain receives private material
+    # in memory, never as a `security ... -w <secret>` process argument.
+    runs-on: macos-14
+    steps:
+      - name: Checkout Console
+        uses: actions/checkout@v4
+        with:
+          path: OpenSphere-console
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: OpenSphere-console/backend/os-cli/go.mod
+      - name: Keychain round-trip and macOS CLI build
+        working-directory: OpenSphere-console/backend/os-cli
+        run: |
+          go test ./...
+          go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o opensphere-cli-darwin-arm64 ./cmd/os
+      - name: Upload macOS CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opensphere-cli-darwin-arm64
+          path: OpenSphere-console/backend/os-cli/opensphere-cli-darwin-arm64
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
-    needs: test
+    needs: [test, build-macos-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -115,6 +142,12 @@ jobs:
         with:
           repository: opensphere-platform/OpenSphere-SDK
           path: OpenSphere-SDK
+      - name: Download native macOS CLI artifact
+        if: matrix.image == 'opensphere-console'
+        uses: actions/download-artifact@v4
+        with:
+          name: opensphere-cli-darwin-arm64
+          path: OpenSphere-console/backend/os-cli/prebuilt
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
       - name: Setup Buildx

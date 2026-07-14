@@ -1,0 +1,4 @@
+# The macOS runner in publish-edge-images.yml supplies this Security.framework
+# artifact to the Console image build. Never commit private local build output.
+*
+!.gitignore

@@ -2,9 +2,15 @@ FROM docker.io/library/golang@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
+# Security.framework cannot be cross-compiled safely from Linux. The release
+# workflow supplies an attested, macOS-runner-built artifact; fail closed when
+# it is absent rather than silently restoring the argv-leaking security CLI.
+# The artifact remains outside source control (prebuilt/.gitignore).
+COPY prebuilt ./prebuilt
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-darwin-arm64 ./cmd/os && \
+    test -s /prebuilt/opensphere-cli-darwin-arm64 && \
+    install -m 0755 /prebuilt/opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64 && \
     CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 
 # index.json의 크기·SHA-256은 소스에 적힌 과거 값이 아니라 이 빌드에서 나온 정확한
