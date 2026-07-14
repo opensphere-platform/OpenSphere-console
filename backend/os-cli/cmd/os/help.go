@@ -21,6 +21,7 @@ var commandHelp = map[string]string{
 	"login":         "os login — 브라우저 승인 또는 일회성 토큰으로 CLI 디바이스를 등록합니다.\n사용법: os login [--web] [--label DEVICE] [--console URL] [--ca-bundle PEM]\n        os login --pat-stdin [--console URL]\n하위명령: 없음\n플래그: --web, --pat-stdin, --id-token TOKEN, --label NAME, --console URL, --registry URL, --api URL, --bff URL, --ca-bundle PEM\n예: os login --web --label build-laptop\n    os login --pat-stdin\n",
 	"logout":        "os logout — 서버 디바이스 신뢰와 로컬 보안 키를 함께 폐기합니다.\n사용법: os logout\n하위명령: 없음\n플래그: --ca-bundle PEM\n예: os logout\n",
 	"whoami":        "os whoami — 현재 CLI 세션과 주체 정보를 확인합니다.\n사용법: os whoami [-o json]\n하위명령: 없음\n플래그: -o json, --output json, --ca-bundle PEM\n예: os whoami\n    os whoami -o json\n",
+	"session":       "os session — 활성 프로필의 서명 세션 상태를 확인하거나 갱신합니다.\n사용법: os session status | refresh [-o json]\n하위명령: status, refresh\n플래그: -o json, --output json, --ca-bundle PEM, --profile NAME\n예: os session status\n    os session refresh -o json\n",
 	"device":        "os device — 신뢰된 CLI 디바이스를 조회하거나 폐기합니다.\n사용법: os device list | revoke <device-id>\n하위명령: list, revoke\n플래그: -o json, --output json, --ca-bundle PEM\n예: os device list\n    os device revoke 0123456789abcdef\n",
 	"token":         dynamicHelp("token", "토큰 관련"),
 	"auth-policy":   dynamicHelp("auth-policy", "인증 정책"),

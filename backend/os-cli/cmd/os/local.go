@@ -184,7 +184,7 @@ func unknownConfigKey(key string) error {
 	return fmt.Errorf("알 수 없거나 비밀인 config key %q", key)
 }
 
-var topLevelCommands = []string{"login", "logout", "whoami", "device", "registry", "get", "role", "extensions", "setup", "config", "completion", "token", "auth-policy", "admin", "catalog", "backbone", "observability", "audit", "version", "help"}
+var topLevelCommands = []string{"login", "logout", "whoami", "session", "device", "registry", "get", "role", "extensions", "setup", "config", "completion", "token", "auth-policy", "admin", "catalog", "backbone", "observability", "audit", "version", "help"}
 var commonFlags = []string{"--help", "--output", "-o", "--query", "--limit", "--all", "--ca-bundle", "--profile"}
 
 func completion(args []string, out io.Writer) error {

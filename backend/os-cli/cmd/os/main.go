@@ -195,6 +195,11 @@ func loadConfigFor(selected string) (Config, error) {
 	if ca := strings.TrimSpace(os.Getenv("OS_CACERT")); ca != "" {
 		cfg.CABundle = ca
 	}
+	// OS_PAT is a process-env override (like OS_CACERT) and must win for the
+	// active profile; the profiles map never carries PAT (json:"-").
+	if pat := strings.TrimSpace(os.Getenv("OS_PAT")); pat != "" {
+		cfg.PAT = pat
+	}
 	if cfg.Profile == "" {
 		cfg.Profile = "admin"
 	}
@@ -616,6 +621,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	switch args[0] {
 	case "whoami":
 		return whoami(cfg, out)
+	case "session":
+		return sessionCommand(cfg, args[1:], out)
 	case "logout":
 		return logout(cfg, out)
 	case "device":
@@ -947,28 +954,7 @@ func openBrowser(target string) error {
 }
 
 func whoami(cfg Config, out io.Writer) error {
-	token, err := credentialToken(cfg)
-	if err != nil {
-		return err
-	}
-	form := url.Values{"token": {token}}.Encode()
-	b, status, _, err := rawRequestCA(http.MethodPost, join(cfg.BFFURL, "/bff/token/introspect"), strings.NewReader(form), "application/x-www-form-urlencoded", token, "", cfg.CABundle)
-	if err != nil {
-		return err
-	}
-	if err := requireOK(b, status); err != nil {
-		return err
-	}
-	var result struct {
-		Active bool `json:"active"`
-	}
-	if json.Unmarshal(b, &result) != nil || !result.Active {
-		return errors.New("CLI 디바이스 또는 API token이 비활성·폐기 상태입니다")
-	}
-	if out != io.Discard {
-		return pretty(out, b)
-	}
-	return nil
+	return whoamiVisibility(cfg, out)
 }
 
 func registry(cfg Config, args []string, out io.Writer) error {

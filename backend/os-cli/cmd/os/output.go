@@ -16,6 +16,7 @@ type outputOptions struct {
 	Format, Query string
 	Limit         int
 	All           bool
+	Explicit      bool
 }
 type formattedOutput struct {
 	io.Writer
@@ -48,6 +49,7 @@ func parseOutputOptions(args []string) (outputOptions, []string, error) {
 		switch name {
 		case "-o", "--output":
 			opts.Format = strings.ToLower(value)
+			opts.Explicit = true
 		case "--query":
 			opts.Query = value
 		case "--limit":
