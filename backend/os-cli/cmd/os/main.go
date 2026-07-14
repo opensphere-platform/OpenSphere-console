@@ -22,7 +22,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 )
@@ -39,6 +38,7 @@ type Config struct {
 	APIURL      string `json:"apiUrl"`
 	BFFURL      string `json:"bffUrl"`
 	ConsoleURL  string `json:"consoleUrl"`
+	CABundle    string `json:"caBundle,omitempty"`
 }
 
 type CLIContribution struct {
@@ -84,6 +84,7 @@ func defaults() Config {
 		APIURL:      env("OS_API", console+"/api/proxy"),
 		BFFURL:      env("OS_BFF", console),
 		ConsoleURL:  console,
+		CABundle:    strings.TrimSpace(os.Getenv("OS_CACERT")),
 	}
 }
 
@@ -120,6 +121,9 @@ func loadConfig() (Config, error) {
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, fmt.Errorf("설정 파싱 실패: %w", err)
+	}
+	if ca := strings.TrimSpace(os.Getenv("OS_CACERT")); ca != "" {
+		cfg.CABundle = ca
 	}
 	if cfg.Profile == "" {
 		cfg.Profile = "admin"
@@ -166,12 +170,29 @@ func validateURL(raw string) error {
 	return nil
 }
 
-func client() *http.Client {
+func client(caBundle string) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if os.Getenv("OS_INSECURE_SKIP_TLS_VERIFY") == "1" {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402: explicit local-development opt-in only.
+	if caBundle != "" {
+		pem, err := os.ReadFile(caBundle)
+		if err != nil {
+			return nil, fmt.Errorf("CA bundle 읽기 실패 %q: %w", caBundle, err)
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("CA bundle %q에 유효한 PEM 인증서가 없습니다", caBundle)
+		}
+		transport.TLSClientConfig = &tls.Config{RootCAs: roots}
 	}
-	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
+	if os.Getenv("OS_INSECURE_SKIP_TLS_VERIFY") == "1" {
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{}
+		}
+		transport.TLSClientConfig.InsecureSkipVerify = true // #nosec G402: explicit local-development opt-in only.
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}, nil
 }
 
 func request(cfg Config, method, rawURL string, body io.Reader, contentType string) ([]byte, int, error) {
@@ -184,10 +205,14 @@ func requestWithContentType(cfg Config, method, rawURL string, body io.Reader, c
 	if err != nil {
 		return nil, 0, "", err
 	}
-	return rawRequest(method, rawURL, body, contentType, accessToken, cfg.IDToken)
+	return rawRequestCA(method, rawURL, body, contentType, accessToken, cfg.IDToken, cfg.CABundle)
 }
 
 func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken, idToken string) ([]byte, int, string, error) {
+	return rawRequestCA(method, rawURL, body, contentType, accessToken, idToken, strings.TrimSpace(os.Getenv("OS_CACERT")))
+}
+
+func rawRequestCA(method, rawURL string, body io.Reader, contentType, accessToken, idToken, caBundle string) ([]byte, int, string, error) {
 	if err := validateURL(rawURL); err != nil {
 		return nil, 0, "", err
 	}
@@ -206,13 +231,46 @@ func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken,
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-OS-Correlation-ID", operationID())
-	resp, err := client().Do(req)
+	httpClient, err := client(caBundle)
 	if err != nil {
 		return nil, 0, "", err
 	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		var unknownAuthority x509.UnknownAuthorityError
+		var certificateInvalid x509.CertificateInvalidError
+		var hostnameError x509.HostnameError
+		if errors.As(err, &unknownAuthority) || errors.As(err, &certificateInvalid) || errors.As(err, &hostnameError) || strings.Contains(strings.ToLower(err.Error()), "certificate signed by unknown authority") {
+			return nil, 0, "", fmt.Errorf("TLS 인증서를 신뢰할 수 없습니다; --ca-bundle <file> 또는 os setup ca <file>로 CA를 설정하세요: %w", err)
+		}
+		return nil, 0, "", fmt.Errorf("서버에 연결할 수 없습니다: %w", err)
+	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err == nil && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		err = statusError(b, resp.StatusCode, resp.Header.Get("X-OS-Correlation-Id"))
+	}
 	return b, resp.StatusCode, resp.Header.Get("Content-Type"), err
+}
+
+func statusError(b []byte, status int, correlationID string) error {
+	msg := strings.TrimSpace(string(b))
+	if len(msg) > 500 {
+		msg = msg[:500]
+	}
+	invalidSession := strings.Contains(strings.ToLower(msg), "invalid-session") || strings.Contains(strings.ToLower(msg), "invalid session")
+	switch {
+	case status == http.StatusUnauthorized || invalidSession:
+		msg = "인증 또는 세션이 유효하지 않습니다; os login을 실행하세요"
+	case status == http.StatusForbidden:
+		msg = "요청을 수행할 권한이 부족합니다"
+	case status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout:
+		msg = "OpenSphere 백엔드를 사용할 수 없습니다; 잠시 후 다시 시도하세요"
+	}
+	if correlationID != "" {
+		msg += " (correlation ID: " + correlationID + ")"
+	}
+	return fmt.Errorf("HTTP %d: %s", status, msg)
 }
 
 type devicePublicJWK struct {
@@ -269,7 +327,7 @@ func credentialToken(cfg Config) (string, error) {
 		return "", fmt.Errorf("OS 보안 저장소에서 디바이스 키를 읽지 못했습니다: %w", err)
 	}
 	challengeBody, _ := json.Marshal(map[string]string{"deviceId": cfg.DeviceID})
-	b, status, _, err := rawRequest(http.MethodPost, join(cfg.BFFURL, "/bff/cli/challenge"), bytes.NewReader(challengeBody), "application/json", "", "")
+	b, status, _, err := rawRequestCA(http.MethodPost, join(cfg.BFFURL, "/bff/cli/challenge"), bytes.NewReader(challengeBody), "application/json", "", "", cfg.CABundle)
 	if err != nil {
 		return "", err
 	}
@@ -290,7 +348,7 @@ func credentialToken(cfg Config) (string, error) {
 	sessionBody, _ := json.Marshal(map[string]string{
 		"deviceId": cfg.DeviceID, "challengeId": challenge.ChallengeID, "signature": signature,
 	})
-	b, status, _, err = rawRequest(http.MethodPost, join(cfg.BFFURL, "/bff/cli/session"), bytes.NewReader(sessionBody), "application/json", "", "")
+	b, status, _, err = rawRequestCA(http.MethodPost, join(cfg.BFFURL, "/bff/cli/session"), bytes.NewReader(sessionBody), "application/json", "", "", cfg.CABundle)
 	if err != nil {
 		return "", err
 	}
@@ -351,9 +409,20 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if args[0] == "login" {
 		return login(args[1:], in, out, errOut)
 	}
+	if args[0] == "setup" {
+		return setup(args[1:], out)
+	}
+	caBundle, cleanedArgs, err := globalCABundle(args)
+	if err != nil {
+		return err
+	}
+	args = cleanedArgs
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
+	}
+	if caBundle != "" {
+		cfg.CABundle = caBundle
 	}
 	switch args[0] {
 	case "whoami":
@@ -375,12 +444,52 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 }
 
+func globalCABundle(args []string) (string, []string, error) {
+	cleaned := make([]string, 0, len(args))
+	var ca string
+	for i := 0; i < len(args); i++ {
+		if args[i] != "--ca-bundle" {
+			cleaned = append(cleaned, args[i])
+			continue
+		}
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+			return "", nil, errors.New("--ca-bundle에는 PEM 파일 경로가 필요합니다")
+		}
+		ca = strings.TrimSpace(args[i+1])
+		i++
+	}
+	return ca, cleaned, nil
+}
+
+func setup(args []string, out io.Writer) error {
+	if len(args) != 2 || args[0] != "ca" {
+		return errors.New("사용법: os setup ca <file>")
+	}
+	if _, err := client(args[1]); err != nil {
+		return err
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(args[1])
+	if err != nil {
+		return err
+	}
+	cfg.CABundle = abs
+	if err := saveConfig(cfg); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "CA bundle을 설정에 저장했습니다: %s\n", abs)
+	return nil
+}
+
 func logout(cfg Config, out io.Writer) error {
 	if cfg.DeviceID == "" {
 		return errors.New("등록된 CLI 디바이스가 없습니다")
 	}
 	b, status, err := request(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/cli/devices/"+url.PathEscape(cfg.DeviceID)), nil, "")
-	if err != nil {
+	if err != nil && status != http.StatusNotFound {
 		return err
 	}
 	if status != http.StatusNotFound {
@@ -450,6 +559,7 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 	apiURL := fs.String("api", cfg.APIURL, "API proxy URL")
 	bffURL := fs.String("bff", cfg.BFFURL, "BFF URL")
 	consoleURL := fs.String("console", cfg.ConsoleURL, "Console URL")
+	caBundle := fs.String("ca-bundle", cfg.CABundle, "신뢰할 PEM CA bundle")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -496,7 +606,7 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	if bootstrapToken != "" {
 		requestBody, _ := json.Marshal(map[string]any{"label": *label, "publicJwk": publicJwk})
-		b, status, _, reqErr := rawRequest(http.MethodPost, join(*bffURL, "/bff/cli/devices"), bytes.NewReader(requestBody), "application/json", bootstrapToken, "")
+		b, status, _, reqErr := rawRequestCA(http.MethodPost, join(*bffURL, "/bff/cli/devices"), bytes.NewReader(requestBody), "application/json", bootstrapToken, "", *caBundle)
 		if reqErr != nil {
 			return reqErr
 		}
@@ -510,7 +620,7 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 			return errors.New("디바이스 등록 응답이 올바르지 않습니다")
 		}
 	} else {
-		registered, enrollErr := browserDeviceEnrollment(*bffURL, *label, publicJwk, out, errOut)
+		registered, enrollErr := browserDeviceEnrollment(*bffURL, *label, publicJwk, *caBundle, out, errOut)
 		if enrollErr != nil {
 			return enrollErr
 		}
@@ -519,7 +629,7 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 	if err := deviceKeyStore(device.ID, privateDER); err != nil {
 		return fmt.Errorf("OS 보안 저장소에 디바이스 키 저장 실패: %w", err)
 	}
-	cfg = Config{Profile: "admin", DeviceID: device.ID, DeviceLabel: device.Label, RegistryURL: *registryURL, APIURL: *apiURL, BFFURL: *bffURL, ConsoleURL: *consoleURL}
+	cfg = Config{Profile: "admin", DeviceID: device.ID, DeviceLabel: device.Label, RegistryURL: *registryURL, APIURL: *apiURL, BFFURL: *bffURL, ConsoleURL: *consoleURL, CABundle: *caBundle}
 	if err := whoami(cfg, io.Discard); err != nil {
 		_ = deviceKeyDelete(device.ID)
 		return fmt.Errorf("등록 디바이스 세션 검증 실패(설정은 저장하지 않음): %w", err)
@@ -534,7 +644,7 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 
 var sleepFn = time.Sleep
 
-func browserDeviceEnrollment(bffURL, label string, publicJwk devicePublicJWK, out, errOut io.Writer) (struct {
+func browserDeviceEnrollment(bffURL, label string, publicJwk devicePublicJWK, caBundle string, out, errOut io.Writer) (struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
 	Fingerprint string `json:"fingerprint"`
@@ -545,7 +655,7 @@ func browserDeviceEnrollment(bffURL, label string, publicJwk devicePublicJWK, ou
 		Fingerprint string `json:"fingerprint"`
 	}
 	requestBody, _ := json.Marshal(map[string]any{"label": label, "publicJwk": publicJwk})
-	b, status, _, err := rawRequest(http.MethodPost, join(bffURL, "/bff/cli/enrollments"), bytes.NewReader(requestBody), "application/json", "", "")
+	b, status, _, err := rawRequestCA(http.MethodPost, join(bffURL, "/bff/cli/enrollments"), bytes.NewReader(requestBody), "application/json", "", "", caBundle)
 	if err != nil {
 		return device, err
 	}
@@ -578,7 +688,7 @@ func browserDeviceEnrollment(bffURL, label string, publicJwk devicePublicJWK, ou
 	}
 	for time.Now().Before(deadline) {
 		pollBody, _ := json.Marshal(map[string]string{"pollToken": enrollment.PollToken})
-		b, status, _, err = rawRequest(http.MethodPost, join(bffURL, "/bff/cli/enrollments/"+enrollment.EnrollmentID+"/poll"), bytes.NewReader(pollBody), "application/json", "", "")
+		b, status, _, err = rawRequestCA(http.MethodPost, join(bffURL, "/bff/cli/enrollments/"+enrollment.EnrollmentID+"/poll"), bytes.NewReader(pollBody), "application/json", "", "", caBundle)
 		if err != nil {
 			return device, err
 		}
@@ -623,7 +733,7 @@ func whoami(cfg Config, out io.Writer) error {
 		return err
 	}
 	form := url.Values{"token": {token}}.Encode()
-	b, status, _, err := rawRequest(http.MethodPost, join(cfg.BFFURL, "/bff/token/introspect"), strings.NewReader(form), "application/x-www-form-urlencoded", token, "")
+	b, status, _, err := rawRequestCA(http.MethodPost, join(cfg.BFFURL, "/bff/token/introspect"), strings.NewReader(form), "application/x-www-form-urlencoded", token, "", cfg.CABundle)
 	if err != nil {
 		return err
 	}
@@ -828,7 +938,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		}
 	}
 	if contribution == nil {
-		return fmt.Errorf("등록되고 활성화된 CLI Binding namespace가 아닙니다: %s", ns)
+		return fmt.Errorf("unknown command %q; run os help", ns)
 	}
 	base := join(cfg.ConsoleURL, contribution.APIBase)
 	manifestURL := join(base, contribution.ManifestPath)
@@ -859,12 +969,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		}
 	}
 	if selected == nil {
-		available := make([]string, 0, len(manifest.Tools))
-		for _, tool := range manifest.Tools {
-			available = append(available, tool.Command)
-		}
-		sort.Strings(available)
-		return fmt.Errorf("명령을 찾을 수 없습니다; 사용 가능: %s", strings.Join(available, ", "))
+		return fmt.Errorf("unknown command %q; run os help", strings.Join(args, " "))
 	}
 	method := strings.ToUpper(selected.Method)
 	if method == "" {
@@ -940,7 +1045,7 @@ func parseLongFlags(args []string) map[string]string {
 func printHelp(out io.Writer) {
 	fmt.Fprintln(out, `os — OpenSphere Console native 관리자 CLI. console==cli: 동일 Registry·API·Kanidm·RBAC 소비.
 
-  os login [--console URL] [--label DEVICE]   (브라우저에서 한 번 승인 → OS 보안 저장소에 디바이스 키 등록)
+  os login [--console URL] [--label DEVICE] [--ca-bundle PEM]
   os login --pat-stdin [...]                   (기존 API token을 1회 bootstrap으로 사용; token은 저장하지 않음)
   os whoami
   os logout                                    (서버 디바이스 신뢰 + 로컬 키 동시 폐기)
@@ -951,7 +1056,7 @@ func printHelp(out io.Writer) {
   os extensions activate <module-id> | list
   os get <resource> [name] [-o json]
   os role list | grant <user> <role> | revoke <user> <role>
-  os <namespace> [명령...] [-o json]
+  os setup ca <file>                           (검증에 사용할 사설 CA를 설정에 저장)
   os version | help
 
 현재 native 프로파일은 admin 디바이스 신뢰 + 15분 서명 세션을 사용한다. 개인키는 config.json에 저장하지 않는다.

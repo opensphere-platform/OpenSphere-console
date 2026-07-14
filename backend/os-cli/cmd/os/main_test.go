@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -202,5 +203,73 @@ func TestGetResourceRejectsSPAHTMLAndUsesConsoleNamespace(t *testing.T) {
 	}
 	if !strings.Contains(requested, "/namespaces/opensphere-console/uipluginpackages") {
 		t.Fatalf("resource request used the wrong namespace: %s", requested)
+	}
+}
+
+func TestCABundleTrustsPrivateCAWithoutDisablingVerification(t *testing.T) {
+	t.Setenv("OS_INSECURE_SKIP_TLS_VERIFY", "0")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	cert := server.Certificate()
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, status, _, err := rawRequestCA(http.MethodGet, server.URL, nil, "", "", "", caPath)
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("private CA request failed: status=%d err=%v", status, err)
+	}
+	if _, _, _, err := rawRequestCA(http.MethodGet, server.URL, nil, "", "", "", ""); err == nil || !strings.Contains(err.Error(), "--ca-bundle") {
+		t.Fatalf("untrusted certificate should provide CA guidance, got %v", err)
+	}
+}
+
+func TestUnknownCommandUsesDynamicRegistryLookupAndReturnsActionableError(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/registry":
+			_, _ = w.Write([]byte(`{"plugins":[{"available":true,"cli":{"namespace":"catalog","apiBase":"/catalog-api","manifestPath":"manifest"}}]}`))
+		case "/catalog-api/manifest":
+			_, _ = w.Write([]byte(`{"tools":[{"command":"os catalog list","method":"GET","path":"/items"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	config := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("OS_CONFIG", config)
+	cfg := defaults()
+	cfg.RegistryURL = server.URL + "/registry"
+	cfg.ConsoleURL = server.URL
+	// PAT is json:"-" (process-memory only), so it must come from OS_PAT, not saveConfig.
+	t.Setenv("OS_PAT", "test-only")
+	if err := saveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"catalog", "bogus"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || err.Error() != `unknown command "catalog bogus"; run os help` {
+		t.Fatalf("unknown command should return actionable error, got %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("unknown command should perform registry and manifest lookups, got %d calls", calls)
+	}
+}
+
+func TestStatusErrorMappingIncludesCorrelationID(t *testing.T) {
+	tests := []struct{ status int; want string }{
+		{http.StatusUnauthorized, "os login"},
+		{http.StatusForbidden, "권한이 부족"},
+		{http.StatusBadGateway, "백엔드를 사용할 수 없"},
+	}
+	for _, tc := range tests {
+		err := statusError([]byte("server detail"), tc.status, "corr-123")
+		if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "corr-123") {
+			t.Fatalf("status %d mapping mismatch: %v", tc.status, err)
+		}
 	}
 }
