@@ -17,7 +17,11 @@ import { BackendUnavailable } from '../os/backend-unavailable';
     <h1>Developer Catalog</h1>
     <p class="os-sub">engine: rhdh-self (headless · REST 소비) — UI 임베드 0</p>
 
-    @if (error()) {
+    @if (forbidden()) {
+      <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+        <clr-alert-item><span class="alert-text">Developer Catalog를 조회할 권한이 없습니다.</span></clr-alert-item>
+      </clr-alert>
+    } @else if (error()) {
       <os-backend-unavailable
         feature="Developer Catalog"
         backend="opensphere-catalog / rhdh-self 엔진"
@@ -28,6 +32,8 @@ import { BackendUnavailable } from '../os/backend-unavailable';
       <os-datagrid
         [columns]="columns"
         [rows]="rows()"
+        [loading]="loading()"
+        empty="등록된 카탈로그 엔티티가 없습니다"
         [selected]="selected()"
         (rowClick)="openQuickview($event)"
       />
@@ -37,7 +43,6 @@ import { BackendUnavailable } from '../os/backend-unavailable';
       [open]="!!selected()"
       [title]="selected()?.metadata?.name ?? ''"
       [subtitle]="ref(selected())"
-      [fullHref]="rhdhHref(selected())"
       (closed)="closeQuickview()"
     >
       @if (selected(); as e) {
@@ -181,6 +186,8 @@ export class Catalog implements OnInit {
   readonly rows = signal<CatalogEntity[]>([]);
   readonly selected = signal<CatalogEntity | null>(null);
   readonly error = signal<string>('');
+  readonly loading = signal(true);
+  readonly forbidden = signal(false);
   readonly runtime = signal<RuntimeResource[] | null>(null);
   readonly runtimeError = signal<string>('');
 
@@ -197,7 +204,11 @@ export class Catalog implements OnInit {
         }
       }
     } catch (e) {
-      this.error.set(String(e));
+      const message = String(e);
+      if (/HTTP (401|403)\b/.test(message)) this.forbidden.set(true);
+      else this.error.set(message);
+    } finally {
+      this.loading.set(false);
     }
   }
 
@@ -229,11 +240,6 @@ export class Catalog implements OnInit {
   ref(e: CatalogEntity | null): string {
     if (!e) return '';
     return `${e.kind.toLowerCase()}:${e.metadata.namespace ?? 'default'}/${e.metadata.name}`;
-  }
-
-  rhdhHref(e: CatalogEntity | null): string {
-    if (!e) return '';
-    return `http://localhost:7007/catalog/${e.metadata.namespace ?? 'default'}/${e.kind.toLowerCase()}/${e.metadata.name}`;
   }
 
   specOf(e: CatalogEntity, key: string): string {

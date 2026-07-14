@@ -2,6 +2,7 @@ import { Component, Input, Output, EventEmitter, OnChanges, signal, computed, in
 import { ClarityModule, ClrDatagridStringFilterInterface } from '@clr/angular';
 import { dump } from 'js-yaml';
 import { OsPanel } from '../os/os-panel';
+import { OsActionDialog } from '../os/os-action-dialog';
 import { CodeEditorComponent } from '../shared/code-editor.component';
 import { AuthService } from '../core/auth.service';
 import { HttpService } from '../core/http.service';
@@ -55,17 +56,17 @@ const IC = {
   refresh: 'M17.65 6.35A8 8 0 1019 13h-2a6 6 0 11-1.76-4.24L13 11h7V4l-2.35 2.35z',
 };
 
-/** 구성요소별 상품 로고(images.opl.io.kr 갤러리, Statically CDN). */
-const LOGO_CDN = 'https://cdn.statically.io/gh/openplatform-labs/images@main/logos/';
+/** 구성요소별 상품 로고 — 승인된 OpenSphere Logos shortcut만 사용한다. */
+const LOGO_CDN = 'https://logos.opl.io.kr/i/';
 const LOGOS: Record<string, string> = {
-  postgres: LOGO_CDN + 'postgresql-icon.svg',
-  rustfs: LOGO_CDN + 'rustfs.svg',
-  gitea: LOGO_CDN + 'gitea.svg',
+  postgres: LOGO_CDN + 'postgresql',
+  rustfs: LOGO_CDN + 'rustfs',
+  gitea: LOGO_CDN + 'gitea',
 };
 
 @Component({
   selector: 'os-backbone-slice',
-  imports: [ClarityModule, OsPanel, CodeEditorComponent, CarbonIcon],
+  imports: [ClarityModule, OsPanel, OsActionDialog, CodeEditorComponent, CarbonIcon],
   template: `
     <os-panel [open]="true" [title]="row.name" [subtitle]="row.kind + ' · ' + row.role + ' · ns ' + namespace()" [logoSrc]="logoSrc()" (closed)="close()">
       @if (authExpired()) {
@@ -352,6 +353,15 @@ const LOGOS: Record<string, string> = {
         </clr-tabs>
       }
     </os-panel>
+    <os-action-dialog
+      [open]="!!pendingFunctionDelete()"
+      title="PostgreSQL 함수 삭제"
+      [message]="functionDeleteMessage()"
+      confirmLabel="삭제"
+      [danger]="true"
+      (confirmed)="confirmFunctionDelete()"
+      (cancelled)="pendingFunctionDelete.set(null)"
+    />
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
@@ -431,6 +441,7 @@ export class BackboneSlice implements OnChanges {
   readonly fnReplace = signal(false);
   readonly fnBusy = signal(false);
   readonly fnMsg = signal<{ type: 'success' | 'danger'; text: string } | null>(null);
+  readonly pendingFunctionDelete = signal<{ database: string; fn: PgFunc } | null>(null);
   // Gitea Git 코드 뷰
   readonly giteaResp = signal<GiteaResp | null>(null);
   readonly giteaRepo = signal<GiteaRepo | null>(null);
@@ -650,7 +661,20 @@ export class BackboneSlice implements OnChanges {
 
   /** 함수 삭제(DROP) — 확인 후 identity args로 특정 오버로드 제거. 감사 기록. */
   async deleteFunction(database: string, fn: PgFunc): Promise<void> {
-    if (!confirm(`함수 ${fn.schema}.${fn.name}(${fn.args}) 를 삭제할까요?`)) return;
+    this.pendingFunctionDelete.set({ database, fn });
+  }
+
+  functionDeleteMessage(): string {
+    const pending = this.pendingFunctionDelete();
+    if (!pending) return '';
+    return `함수 ${pending.fn.schema}.${pending.fn.name}(${pending.fn.args})를 삭제합니다.`;
+  }
+
+  async confirmFunctionDelete(): Promise<void> {
+    const pending = this.pendingFunctionDelete();
+    if (!pending) return;
+    this.pendingFunctionDelete.set(null);
+    const { database, fn } = pending;
     this.fnMsg.set(null); this.fnOpen.set(true);
     try {
       const r = await this.http.request('/api/admin/backbone/pg/function/drop', {

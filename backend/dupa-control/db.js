@@ -118,6 +118,25 @@ async function listManagedCredentials(kind) {
   }));
 }
 
+async function getManagedCredential(kind, id) {
+  if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
+  const r = await pool.query(
+    `SELECT credential_id, owner_name, record, created_at, updated_at, last_used_at
+     FROM managed_credential WHERE kind=$1 AND credential_id=$2`,
+    [kind, id],
+  );
+  if (!r.rowCount) return null;
+  const row = r.rows[0];
+  return {
+    id: row.credential_id,
+    owner: row.owner_name,
+    record: row.record,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+    lastUsedAt: row.last_used_at instanceof Date ? row.last_used_at.toISOString() : (row.last_used_at ? String(row.last_used_at) : null),
+  };
+}
+
 // 자격 증명 사용 시각은 비밀이나 권한 상태가 아닌 운영 메타데이터다. 고빈도 PAT가
 // PostgreSQL 쓰기를 증폭하지 않도록 5분 단위로만 갱신한다.
 async function touchManagedCredential(kind, id) {
@@ -367,4 +386,4 @@ async function dropFunction({ database, schema, name, args }) {
   } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
 }
 
-module.exports = { init, insertAudit, recentAudit, listManagedCredentials, touchManagedCredential, mutateManagedCredential, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };
+module.exports = { init, insertAudit, recentAudit, listManagedCredentials, getManagedCredential, touchManagedCredential, mutateManagedCredential, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };

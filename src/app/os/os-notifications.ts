@@ -1,72 +1,61 @@
-import { Component, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { Router } from '@angular/router';
+import { ClarityModule } from '@clr/angular';
 import { NotificationService, OsNotification } from '../core/notification.service';
 import { CarbonIcon } from './carbon-icon';
 import Notification16 from '@carbon/icons/es/notification/16';
 
 /**
- * 셸 단일 알림 (single control point). 헤더 벨 + 인박스 드로어(영구) + 토스트 스택(일시).
- * 소스(멀티): 콘솔 audit bus(DUPA, 실데이터) + in-page 발행(ctx.notify). Novu 아님(워크스페이스 전용).
- * 규범: P6-experience §1 + 헌법 §6.0(audit bus). 설계: ADR-UI-002 / dupa-notification-contribution-contract.
+ * 셸 단일 알림 제어점.
+ * 인박스는 Clarity dropdown, 일시 알림은 Clarity alert를 사용해 키보드·포커스·ARIA 동작을 위임한다.
  */
 @Component({
   selector: 'os-notifications',
-  imports: [CarbonIcon],
+  imports: [ClarityModule, CarbonIcon],
   template: `
-    <button class="os-bell" (click)="toggle()" title="알림">
-      <os-cicon [icon]="iconBell" [size]="18" />
-      @if (notif.unread() > 0) {
-        <span class="os-bell-badge">{{ notif.unread() }}</span>
-      }
-    </button>
-
-    @if (open()) {
-      <div class="os-notif-backdrop" (click)="open.set(false)"></div>
-      <div class="os-notif-panel" role="dialog" aria-label="알림 인박스">
+    <clr-dropdown class="os-notifications">
+      <button class="os-bell" clrDropdownTrigger title="알림" aria-label="알림 인박스">
+        <os-cicon [icon]="iconBell" [size]="18" />
+        @if (notif.unread() > 0) {
+          <span class="os-bell-badge" aria-label="읽지 않은 알림 {{ notif.unread() }}개">{{ notif.unread() }}</span>
+        }
+      </button>
+      <clr-dropdown-menu *clrIfOpen clrPosition="bottom-right" class="os-notif-menu">
         <div class="os-notif-head">
-          <span
-            >미읽음 <span class="os-notif-sub">({{ unreadItems().length }})</span></span
-          >
-          <button class="os-notif-readall" (click)="notif.markAllRead()">모두 읽음</button>
+          <strong>알림</strong>
+          <button type="button" class="btn btn-sm btn-link" (click)="notif.markAllRead()">모두 읽음</button>
         </div>
-        <div class="os-notif-list">
-          @for (n of unreadItems(); track n.id) {
-            <div class="os-notif-item unread" (click)="read(n)" title="읽음 처리(헤더에서 제거 · 전체는 관리에 보존)">
-              <div class="os-notif-row">
-                <span class="os-sev os-sev-{{ n.severity }}" [title]="n.severity"></span>
-                <div class="os-notif-title">{{ n.title }}</div>
-              </div>
-              @if (n.detail) {
-                <div class="os-notif-detail">{{ n.detail }}</div>
-              }
-              <div class="os-notif-meta">
-                <span class="os-notif-src">{{ n.source }}</span> · {{ n.time }}
-              </div>
-            </div>
-          } @empty {
-            <div class="os-notif-empty">새 알림이 없습니다</div>
-          }
-        </div>
-        <div class="os-notif-foot">
-          <a class="os-notif-all" (click)="goAll()">전체 알림 보기 (관리) →</a>
-        </div>
-      </div>
-    }
+        @for (n of unreadItems(); track n.id) {
+          <button type="button" clrDropdownItem class="os-notif-item" (click)="read(n)">
+            <span class="label" [class.label-info]="n.severity === 'info'" [class.label-success]="n.severity === 'success'" [class.label-warning]="n.severity === 'warning'" [class.label-danger]="n.severity === 'error'">
+              {{ severityLabel(n.severity) }}
+            </span>
+            <span class="os-notif-copy">
+              <strong>{{ n.title }}</strong>
+              @if (n.detail) { <span>{{ n.detail }}</span> }
+              <small>{{ n.source }} · {{ n.time }}</small>
+            </span>
+          </button>
+        } @empty {
+          <div class="os-notif-empty">새 알림이 없습니다</div>
+        }
+        <div class="dropdown-divider"></div>
+        <button type="button" clrDropdownItem (click)="goAll()">전체 알림 보기</button>
+      </clr-dropdown-menu>
+    </clr-dropdown>
 
-    <!-- 토스트 스택(일시) — persistent:false 발행분. 채널 3분할 중 토스트(D5). -->
     @if (notif.toasts().length) {
-      <div class="os-toast-stack" role="status" aria-live="polite">
+      <div class="os-toast-stack" role="region" aria-label="일시 알림" aria-live="polite">
         @for (t of notif.toasts(); track t.id) {
-          <div class="os-toast os-toast-{{ t.severity }}">
-            <span class="os-sev os-sev-{{ t.severity }}"></span>
-            <div class="os-toast-body">
-              <div class="os-toast-title">{{ t.title }}</div>
-              @if (t.detail) {
-                <div class="os-toast-detail">{{ t.detail }}</div>
-              }
-            </div>
-            <button class="os-toast-x" (click)="notif.dismissToast(t.id)" aria-label="닫기">×</button>
-          </div>
+          <clr-alert
+            [clrAlertType]="clarityType(t.severity)"
+            [clrAlertClosable]="true"
+            (clrAlertClosedChange)="notif.dismissToast(t.id)"
+          >
+            <clr-alert-item>
+              <span class="alert-text"><strong>{{ t.title }}</strong>@if (t.detail) { — {{ t.detail }} }</span>
+            </clr-alert-item>
+          </clr-alert>
         }
       </div>
     }
@@ -76,197 +65,62 @@ import Notification16 from '@carbon/icons/es/notification/16';
     `
       .os-bell {
         position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 2.25rem;
+        min-height: 2.25rem;
         background: transparent;
         border: 0;
         color: #c7d0e8;
         cursor: pointer;
-        font-size: 0.95rem;
-        margin-right: 0.7rem;
       }
       .os-bell-badge {
         position: absolute;
-        top: -4px;
-        right: -6px;
-        background: #e1483a;
+        inset-block-start: 0;
+        inset-inline-end: 0;
+        min-width: 1rem;
+        min-height: 1rem;
+        padding: 0 0.2rem;
+        border-radius: 999px;
+        background: var(--os-error, #da1e28);
         color: #fff;
-        font-size: 0.5rem;
-        min-width: 13px;
-        height: 13px;
-        line-height: 13px;
-        border-radius: 7px;
-        padding: 0 3px;
+        font-size: 0.75rem;
+        line-height: 1rem;
         text-align: center;
       }
-      .os-notif-backdrop {
-        position: fixed;
-        inset: 0;
-        z-index: 1000;
-      }
-      .os-notif-panel {
-        position: absolute;
-        top: 38px;
-        right: 6px;
-        width: min(380px, 92vw);
-        background: #fff;
-        border-radius: 8px;
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
-        z-index: 1001;
-        overflow: hidden;
+      :host ::ng-deep .os-notif-menu.dropdown-menu {
+        width: min(28rem, 92vw);
+        max-height: 70vh;
+        overflow-y: auto;
       }
       .os-notif-head {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        padding: 0.6rem 0.9rem;
-        border-bottom: 1px solid #eef0f4;
-        font-size: 0.8rem;
-        color: #1f2733;
-      }
-      .os-notif-sub {
-        color: #8a93ab;
-        font-weight: 400;
-      }
-      .os-notif-readall {
-        border: 0;
-        background: transparent;
-        color: #2563eb;
-        font-size: 0.65rem;
-        cursor: pointer;
-      }
-      .os-notif-list {
-        max-height: 60vh;
-        overflow: auto;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.5rem 0.75rem;
       }
       .os-notif-item {
-        padding: 0.55rem 0.9rem;
-        border-bottom: 1px solid #f3f4f7;
-        cursor: pointer;
+        display: flex !important;
+        align-items: flex-start !important;
+        gap: 0.5rem;
+        white-space: normal !important;
       }
-      .os-notif-item.unread {
-        background: #eef3ff;
-      }
-      .os-notif-item:hover {
-        background: #e2ebff;
-      }
-      .os-notif-row {
+      .os-notif-copy {
         display: flex;
-        align-items: center;
-        gap: 0.4rem;
+        min-width: 0;
+        flex-direction: column;
+        gap: 0.15rem;
       }
-      /* severity 인디케이터(점) — Carbon 어휘(info/success/warning/error) */
-      .os-sev {
-        flex: 0 0 auto;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #8a93ab;
-      }
-      .os-sev-info {
-        background: #2563eb;
-      }
-      .os-sev-success {
-        background: #1f9d57;
-      }
-      .os-sev-warning {
-        background: #d9822b;
-      }
-      .os-sev-error {
-        background: #e1483a;
-      }
-      .os-notif-title {
-        font-size: 0.76rem;
-        color: #1f2733;
-      }
-      .os-notif-detail {
-        font-size: 0.65rem;
-        color: #6b7280;
-        margin-top: 0.1rem;
-      }
-      .os-notif-meta {
-        font-size: 0.58rem;
-        color: #aab;
-        margin-top: 0.15rem;
-      }
-      .os-notif-src {
-        color: #8a93ab;
-        font-weight: 600;
-      }
-      .os-notif-empty {
-        padding: 1.2rem 0.9rem;
-        color: #8a93ab;
-        font-size: 0.78rem;
-      }
-      .os-notif-foot {
-        padding: 0.4rem 0.9rem;
-        border-top: 1px solid #eef0f4;
-        font-size: 0.62rem;
-        color: #aab;
-        text-align: center;
-      }
-      .os-notif-all {
-        color: #2563eb;
-        cursor: pointer;
-      }
-      .os-notif-all:hover {
-        text-decoration: underline;
-      }
-      /* 토스트 스택 — 우상단 고정, 자동 소멸(서비스 TTL) */
+      .os-notif-copy small { color: var(--os-ink-muted, #525252); }
+      .os-notif-empty { padding: 0.75rem; color: var(--os-ink-muted, #525252); }
       .os-toast-stack {
         position: fixed;
-        top: 52px;
-        right: 14px;
+        inset-block-start: 3.5rem;
+        inset-inline-end: 1rem;
         z-index: 1100;
-        display: flex;
-        flex-direction: column;
-        gap: 0.4rem;
-        width: min(340px, 90vw);
-      }
-      .os-toast {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.45rem;
-        background: #fff;
-        border-left: 3px solid #8a93ab;
-        border-radius: 6px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-        padding: 0.55rem 0.7rem;
-      }
-      .os-toast .os-sev {
-        margin-top: 0.28rem;
-      }
-      .os-toast-info {
-        border-left-color: #2563eb;
-      }
-      .os-toast-success {
-        border-left-color: #1f9d57;
-      }
-      .os-toast-warning {
-        border-left-color: #d9822b;
-      }
-      .os-toast-error {
-        border-left-color: #e1483a;
-      }
-      .os-toast-body {
-        flex: 1 1 auto;
-        min-width: 0;
-      }
-      .os-toast-title {
-        font-size: 0.74rem;
-        color: #1f2733;
-      }
-      .os-toast-detail {
-        font-size: 0.63rem;
-        color: #6b7280;
-        margin-top: 0.1rem;
-      }
-      .os-toast-x {
-        flex: 0 0 auto;
-        border: 0;
-        background: transparent;
-        color: #8a93ab;
-        font-size: 0.95rem;
-        line-height: 1;
-        cursor: pointer;
+        width: min(30rem, 92vw);
       }
     `,
   ],
@@ -275,30 +129,26 @@ export class OsNotifications {
   readonly notif = inject(NotificationService);
   private router = inject(Router);
   readonly iconBell = Notification16;
-  readonly open = signal(false);
-  /** 헤더 인박스 = 미읽음(활성) 작업셋만. 읽으면 사라짐. 전체 이력은 /manage/notifications. */
   readonly unreadItems = computed<OsNotification[]>(() => this.notif.items().filter((n) => !n.read));
 
   constructor() {
     this.notif.start();
   }
 
-  toggle(): void {
-    this.open.update((v) => !v);
-    if (this.open()) this.notif.refresh();
-  }
-
-  /** 단건 클릭 = 읽음 처리(헤더에서 제거). route 있으면 이동 + 드로어 닫기. */
   read(n: OsNotification): void {
     this.notif.markRead(n.id);
-    if (n.route) {
-      this.open.set(false);
-      this.router.navigateByUrl(n.route);
-    }
+    if (n.route) void this.router.navigateByUrl(n.route);
   }
 
   goAll(): void {
-    this.open.set(false);
-    this.router.navigateByUrl('/manage/notifications');
+    void this.router.navigateByUrl('/manage/notifications');
+  }
+
+  severityLabel(severity: OsNotification['severity']): string {
+    return severity === 'error' ? '오류' : severity === 'warning' ? '경고' : severity === 'success' ? '성공' : '정보';
+  }
+
+  clarityType(severity: OsNotification['severity']): 'info' | 'success' | 'warning' | 'danger' {
+    return severity === 'error' ? 'danger' : severity;
   }
 }

@@ -6,6 +6,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsDatagrid, OsCellDef, OsColumn } from '../os/os-datagrid';
 import { OsPanel } from '../os/os-panel';
+import { OsActionDialog } from '../os/os-action-dialog';
 import { AuthService } from '../core/auth.service';
 import { HttpService } from '../core/http.service';
 
@@ -58,7 +59,7 @@ interface AdminApiToken {
  */
 @Component({
   selector: 'os-console-admins',
-  imports: [ClarityModule, FormsModule, RouterLink, BackendUnavailable, OsPageHeader, OsDatagrid, OsCellDef, OsPanel],
+  imports: [ClarityModule, FormsModule, RouterLink, BackendUnavailable, OsPageHeader, OsDatagrid, OsCellDef, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
       <os-page-header title="콘솔 관리자" tag="Kanidm IGA · 내장(core-native)" />
@@ -128,7 +129,7 @@ interface AdminApiToken {
       <h2>사용자 <span class="os-engine">({{ users().length }})</span></h2>
       <button class="btn btn-sm btn-primary" (click)="openCreate()">사용자 생성</button>
     </div>
-    <os-datagrid [columns]="userCols" [rows]="users()" empty="사용자 조회 중…">
+    <os-datagrid [columns]="userCols" [rows]="users()" [loading]="identityLoading()" empty="등록된 사용자가 없습니다">
       <ng-template osCell="username" let-u><strong>{{ u.username }}</strong></ng-template>
       <ng-template osCell="displayName" let-u>{{ u.displayName || '—' }}</ng-template>
       <ng-template osCell="email" let-u>{{ u.email || '—' }}</ng-template>
@@ -322,6 +323,18 @@ interface AdminApiToken {
           </div>
         }
       </os-panel>
+
+      <os-action-dialog
+        [open]="reasonDialogOpen()"
+        [title]="reasonDialogTitle()"
+        [message]="reasonDialogMessage()"
+        [confirmLabel]="reasonDialogConfirmLabel()"
+        [danger]="reasonDialogDanger()"
+        [busy]="busy()"
+        [reasonRequired]="true"
+        (confirmed)="confirmReasonAction($event)"
+        (cancelled)="closeReasonDialog()"
+      />
     </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
@@ -385,6 +398,13 @@ export class ConsoleAdmins implements OnInit {
   detailRoleSel: Record<string, boolean> = {};
   detailAttrs = { displayName: '', email: '' };
   readonly down = signal<string>(''); // 백엔드 미배포/불건전 → graceful degradation
+  readonly identityLoading = signal(true);
+  readonly reasonDialogOpen = signal(false);
+  readonly reasonDialogTitle = signal('변경 확인');
+  readonly reasonDialogMessage = signal('');
+  readonly reasonDialogConfirmLabel = signal('적용');
+  readonly reasonDialogDanger = signal(false);
+  private pendingReasonAction: ((reason: string) => Promise<void>) | null = null;
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   // 생성 시 선택 가능한 콘솔 역할(백엔드 CONSOLE_ROLE_GROUPS allowlist와 일치). admin은 강조 감사.
   readonly consoleRoles: { group: string; label: string; admin: boolean }[] = [
@@ -525,15 +545,23 @@ export class ConsoleAdmins implements OnInit {
     const email = this.detailAttrs.email.trim();
     if (!displayName) return;
     if (displayName === (u.displayName ?? '') && email === (u.email ?? '')) { this.msg.set({ type: 'info', text: '속성 변경 사항이 없습니다.' }); return; }
-    const reason = prompt(`${u.username} 속성 변경 사유 (IGA 필수):`);
-    if (!reason || !reason.trim()) return;
+    this.openReasonDialog(
+      '사용자 속성 변경',
+      `${u.username} 사용자의 표시이름 또는 이메일을 변경합니다.`,
+      '속성 저장',
+      false,
+      (reason) => this.saveAttrsWithReason(u, displayName, email, reason),
+    );
+  }
+
+  private async saveAttrsWithReason(u: IdUser, displayName: string, email: string, reason: string): Promise<void> {
     this.busy.set(true);
     this.msg.set(null);
     try {
       const r = await this.http.request(`/api/identity/users/${u.id}/attrs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ displayName, email, reason: reason.trim() }),
+        body: JSON.stringify({ displayName, email, reason }),
       });
       const body = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) { this.msg.set({ type: 'danger', text: `속성 저장 실패: ${body.error || 'HTTP ' + r.status}` }); return; }
@@ -554,13 +582,21 @@ export class ConsoleAdmins implements OnInit {
     const toAdd = desired.filter((g) => !current.includes(g));
     const toRemove = current.filter((g) => !desired.includes(g));
     if (!toAdd.length && !toRemove.length) { this.msg.set({ type: 'info', text: '역할 변경 사항이 없습니다.' }); return; }
-    const reason = prompt(`${u.username} 역할 변경 사유 (IGA 필수):`);
-    if (!reason || !reason.trim()) return;
+    this.openReasonDialog(
+      '사용자 역할 변경',
+      `${u.username} 사용자의 콘솔 역할을 변경합니다.`,
+      '역할 저장',
+      true,
+      (reason) => this.saveRolesWithReason(u, toAdd, toRemove, reason),
+    );
+  }
+
+  private async saveRolesWithReason(u: IdUser, toAdd: string[], toRemove: string[], reason: string): Promise<void> {
     this.busy.set(true);
     this.msg.set(null);
     try {
-      for (const g of toAdd) await this.groupChange(u.id, g, 'add', reason.trim());
-      for (const g of toRemove) await this.groupChange(u.id, g, 'remove', reason.trim());
+      for (const g of toAdd) await this.groupChange(u.id, g, 'add', reason);
+      for (const g of toRemove) await this.groupChange(u.id, g, 'remove', reason);
       this.msg.set({ type: 'success', text: `${u.username} 역할을 갱신했습니다.` });
       await this.loadIdentity();
       const fresh = this.selectedUser();
@@ -611,21 +647,34 @@ export class ConsoleAdmins implements OnInit {
   }
 
   async setEnabled(u: IdUser, enabled: boolean): Promise<void> {
-    const reason = prompt(`${u.username} 계정을 ${enabled ? '활성' : '비활성'}화하는 사유 (IGA 필수):`);
-    if (!reason || !reason.trim()) return;
-    await this.userWrite(`/api/identity/users/${u.id}/enabled`, { enabled, reason: reason.trim() }, `${u.username} ${enabled ? '활성' : '비활성'}화`);
+    const action = enabled ? '활성화' : '비활성화';
+    this.openReasonDialog(
+      `계정 ${action}`,
+      `${u.username} 계정을 ${action}합니다.`,
+      action,
+      !enabled,
+      (reason) => this.userWrite(`/api/identity/users/${u.id}/enabled`, { enabled, reason }, `${u.username} ${action}`),
+    );
   }
 
   async regenOnboarding(u: IdUser): Promise<void> {
-    const reason = prompt(`${u.username} 온보딩 링크를 재발급하는 사유 (IGA 필수):`);
-    if (!reason || !reason.trim()) return;
+    this.openReasonDialog(
+      '온보딩 링크 재발급',
+      `${u.username} 사용자의 기존 온보딩 의도를 폐기하고 새 링크를 발급합니다.`,
+      '재발급',
+      true,
+      (reason) => this.regenOnboardingWithReason(u, reason),
+    );
+  }
+
+  private async regenOnboardingWithReason(u: IdUser, reason: string): Promise<void> {
     this.busy.set(true);
     this.msg.set(null);
     try {
       const r = await this.http.request(`/api/identity/users/${u.id}/onboarding`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ reason: reason.trim() }),
+        body: JSON.stringify({ reason }),
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) { this.msg.set({ type: 'danger', text: `링크 재발급 실패: ${body.error || 'HTTP ' + r.status}` }); return; }
@@ -659,6 +708,35 @@ export class ConsoleAdmins implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  private openReasonDialog(
+    title: string,
+    message: string,
+    confirmLabel: string,
+    danger: boolean,
+    action: (reason: string) => Promise<void>,
+  ): void {
+    this.reasonDialogTitle.set(title);
+    this.reasonDialogMessage.set(message);
+    this.reasonDialogConfirmLabel.set(confirmLabel);
+    this.reasonDialogDanger.set(danger);
+    this.pendingReasonAction = action;
+    this.reasonDialogOpen.set(true);
+  }
+
+  closeReasonDialog(): void {
+    if (this.busy()) return;
+    this.reasonDialogOpen.set(false);
+    this.pendingReasonAction = null;
+  }
+
+  async confirmReasonAction(reason: string): Promise<void> {
+    const action = this.pendingReasonAction;
+    if (!action || this.busy()) return;
+    this.reasonDialogOpen.set(false);
+    this.pendingReasonAction = null;
+    await action(reason);
   }
 
   async copy(text: string): Promise<void> {
@@ -716,10 +794,16 @@ export class ConsoleAdmins implements OnInit {
   }
 
   private async loadIdentity(): Promise<void> {
+    this.identityLoading.set(true);
+    this.down.set('');
     try {
       const r = await this.http.request('/api/identity', this.authGet());
       if (!r.ok) {
-        this.down.set(`identity HTTP ${r.status}`);
+        if (r.status === 401 || r.status === 403) {
+          this.msg.set({ type: 'danger', text: '콘솔 관리자 목록을 조회할 권한이 없습니다.' });
+        } else {
+          this.down.set(`identity HTTP ${r.status}`);
+        }
         return;
       }
       const d = await r.json();
@@ -733,6 +817,8 @@ export class ConsoleAdmins implements OnInit {
       }
     } catch (e) {
       this.down.set('조회 실패: ' + e);
+    } finally {
+      this.identityLoading.set(false);
     }
   }
 

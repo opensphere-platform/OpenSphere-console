@@ -2,6 +2,8 @@ import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } 
 import { ClarityModule } from '@clr/angular';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsRawIcon } from '../os/os-raw-icon';
+import { OsPanel } from '../os/os-panel';
+import { OsActionDialog } from '../os/os-action-dialog';
 import { IconLibraryService } from '../os/icon-library.service';
 import { ExtensionHostService } from '../core/extension-host.service';
 import {
@@ -31,7 +33,7 @@ interface TreeNode {
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [ClarityModule, OsPageHeader, OsRawIcon],
+  imports: [ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
       <os-page-header title="Console Extensions" tag="Admin Control">
@@ -394,15 +396,12 @@ interface TreeNode {
 
     <!-- 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 설치/검증 상태 -->
     @if (selectedReg(); as r) {
-      <div class="cc-drawer-backdrop" (click)="closePanel()"></div>
-      <aside class="cc-drawer" role="dialog" aria-label="플러그인 상태">
-        <div class="cc-drawer-head">
-          <div>
-            <div class="cc-drawer-title">{{ selectedLabel() }}</div>
-            <div class="cc-drawer-sub os-mono">{{ r.name }}</div>
-          </div>
-          <button class="btn btn-sm btn-link" (click)="closePanel()">✕</button>
-        </div>
+      <os-panel
+        [open]="true"
+        [title]="selectedLabel()"
+        [subtitle]="r.name"
+        (closed)="closePanel()"
+      >
 
         <div class="cc-state cc-state-{{ (r.status.phase || 'Unknown').toLowerCase() }}">
           <span class="cc-dot"></span>
@@ -466,8 +465,18 @@ interface TreeNode {
         @if (r.status.phase === 'Failed') {
           <p class="os-sub">서명 검증 실패 시 nav에 노출되지 않습니다(보안 게이트). 유효 서명으로 재배포 후 Enable(재검증)하세요.</p>
         }
-      </aside>
+      </os-panel>
     }
+
+    <os-action-dialog
+      [open]="!!pendingUninstall()"
+      title="Extension 제거"
+      [message]="pendingUninstall() ? pendingUninstall() + '의 메뉴와 워크로드를 제거합니다.' : ''"
+      confirmLabel="제거"
+      [danger]="true"
+      (confirmed)="confirmUninstall()"
+      (cancelled)="pendingUninstall.set(null)"
+    />
     </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
@@ -594,16 +603,6 @@ interface TreeNode {
       .cc-sel { cursor: pointer; }
       .cc-sel:hover { text-decoration: underline; }
 
-      /* 우측 슬라이드 상세 패널 */
-      .cc-drawer-backdrop { position: fixed; inset: 0; background: rgba(22, 22, 22, 0.32); z-index: 1000; }
-      .cc-drawer {
-        position: fixed; top: 0; right: 0; bottom: 0; width: 24rem; max-width: 92vw; z-index: 1001;
-        background: #fff; border-left: 1px solid var(--os-hairline); box-shadow: var(--os-elev-overlay);
-        padding: 1.1rem 1.25rem; overflow-y: auto;
-      }
-      .cc-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
-      .cc-drawer-title { font-size: 1.15rem; font-weight: 600; color: var(--os-ink); }
-      .cc-drawer-sub { color: var(--os-ink-subtle); font-size: 0.72rem; margin-top: 0.1rem; }
       .cc-state {
         display: flex; align-items: center; gap: 0.5rem; margin: 0.9rem 0; padding: 0.55rem 0.75rem;
         border-radius: var(--os-radius); background: var(--os-surface-1); font-size: 0.9rem; color: var(--os-ink);
@@ -659,6 +658,7 @@ export class AdminPlugins implements OnInit {
   readonly bindings = signal<Binding[]>([]);
   readonly inspection = signal<ExtensionInspection | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
+  readonly pendingUninstall = signal<string | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
 
@@ -872,11 +872,21 @@ export class AdminPlugins implements OnInit {
   }
 
   async run(action: 'install' | 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
-    if (
-      action === 'uninstall' &&
-      !confirm(`'${id}' 삭제 — 메뉴와 워크로드가 제거됩니다. 진행할까요?`)
-    )
+    if (action === 'uninstall') {
+      this.pendingUninstall.set(id);
       return;
+    }
+    await this.execute(action, id);
+  }
+
+  async confirmUninstall(): Promise<void> {
+    const id = this.pendingUninstall();
+    if (!id) return;
+    this.pendingUninstall.set(null);
+    await this.execute('uninstall', id);
+  }
+
+  private async execute(action: 'install' | 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
     try {
       await this.ctl[action](id);
       this.msg.set({ type: 'info', text: `${action} 요청됨: ${id} — controller가 조정 중…` });

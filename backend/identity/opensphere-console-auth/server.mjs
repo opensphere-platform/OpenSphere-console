@@ -16,6 +16,7 @@ import { URL, URLSearchParams } from 'node:url';
 import QRCode from 'qrcode';
 import { DEFAULT_TOTP_ENABLED, authPolicyFromConfigMap, authPolicyPatch } from './auth-policy.mjs';
 import { credentialCommitError, shouldResetExistingTotp } from './credential-onboarding.mjs';
+import { credentialUpdateBeginRequest, passwordCredentialRequest, passwordUpdateOutcome, privilegedInitStep, validateSelfPasswordChange } from './self-service-password.mjs';
 import { deviceFingerprint, safeEqualToken, validateDevicePublicJwk, verifyDeviceChallenge } from './cli-device.mjs';
 import { isActivePat, verifyEs256Jwt } from './token-verifier.mjs';
 
@@ -32,7 +33,7 @@ const ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins
 const CONSOLE_GROUP_PREFIX = process.env.CONSOLE_GROUP_PREFIX || 'opensphere-console-';
 const KANIDM_CORE_URL = (process.env.KANIDM_CORE_URL || 'https://kanidm-core.opensphere-console-auth.svc:8443').replace(/\/$/, '');
 const KANIDM_SNI = process.env.KANIDM_SNI || 'kanidm.opensphere-console-auth.svc';
-const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/certs/tls.crt';
+const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
 const TLS_CERT = process.env.TLS_CERT_PATH || '/certs/tls.crt';
 const TLS_KEY = process.env.TLS_KEY_PATH || '/certs/tls.key';
 const SIG_KEY_PATH = process.env.SIG_KEY_PATH || '/keys/sig.key';
@@ -108,8 +109,13 @@ const cuCommit = (session) => kanidmReq('POST', '/v1/credential/_commit', sessio
 
 // Password login is the development default. When the managed policy is enabled,
 // password-only accounts must enroll TOTP before they can enter the Console.
-async function kanidmAuthenticate(username, password, totp, totpPolicyEnabled) {
-  let r = await kanidmReq('POST', '/v1/auth', { step: { init: username } });
+// `initStep` is the AuthStep::* that opens the flow: interactive login uses the legacy
+// `Init` (privilege-capable read-only session); the self-service password change uses
+// `Init2 { privileged: true }` so the resulting session can drive a credential update.
+// Returns { token, payload }: `token` is the raw Kanidm user auth token, `payload` its
+// decoded claims. Never log or persist `token`.
+async function runKanidmAuth(initStep, username, password, totp, totpPolicyEnabled) {
+  let r = await kanidmReq('POST', '/v1/auth', { step: initStep });
   if (r.status !== 200 || !r.sid) throw { reason: 'Unknown user or auth unavailable.' };
   const H = { 'x-kanidm-auth-session-id': r.sid };
   const mechs = r.json?.state?.choose || [];
@@ -129,7 +135,20 @@ async function kanidmAuthenticate(username, password, totp, totpPolicyEnabled) {
   }
   r = await kanidmReq('POST', '/v1/auth', { step: { cred: { password } } }, H);
   if (!r.json?.state?.success) throw { reason: 'Invalid credentials.' };
-  return JSON.parse(Buffer.from(r.json.state.success.split('.')[1], 'base64url').toString('utf8'));
+  const token = r.json.state.success;
+  return { token, payload: JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) };
+}
+// Interactive Console login — non-privileged (legacy Init). Do NOT elevate this path.
+async function kanidmAuthSession(username, password, totp, totpPolicyEnabled) {
+  return runKanidmAuth({ init: username }, username, password, totp, totpPolicyEnabled);
+}
+async function kanidmAuthenticate(username, password, totp, totpPolicyEnabled) {
+  return (await kanidmAuthSession(username, password, totp, totpPolicyEnabled)).payload;
+}
+// Self-service password change re-authentication — privileged session (Init2 privileged=true)
+// so the resulting rw token can begin a credential update on the caller's own account.
+async function kanidmPrivilegedAuthSession(username, password, totp, totpPolicyEnabled) {
+  return runKanidmAuth(privilegedInitStep(username), username, password, totp, totpPolicyEnabled);
 }
 
 // ---- admin SA token + group lookup ----
@@ -387,6 +406,42 @@ async function touchCredentialKind(kind, id) {
   if (r.status !== 204) throw Object.assign(new Error(`credential store ${kind} touch HTTP ${r.status}`), { statusCode: 503 });
 }
 
+// Browser OIDC tokens are stateless, but password changes must invalidate every token
+// issued with the old credential. A per-subject epoch in Backbone gives those tokens a
+// durable server-side revocation boundary without storing bearer values. The id is a
+// non-reversible fixed-width lookup key accepted by the internal credential-state API.
+const browserSessionStateId = (subject) => crypto.createHash('sha256')
+  .update(`browser-session:${String(subject || '')}`)
+  .digest('hex')
+  .slice(0, 32);
+
+const validSessionEpoch = (value) => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+
+async function readBrowserSessionEpoch(subject) {
+  if (!subject) throw Object.assign(new Error('browser session subject missing'), { statusCode: 401 });
+  const id = browserSessionStateId(subject);
+  const r = await credentialStoreRequest('GET', `/api/internal/credential-state/session/${id}`);
+  if (r.status === 404) return 0;
+  if (r.status !== 200 || !r.json?.item?.record) {
+    throw Object.assign(new Error(`credential store session read HTTP ${r.status}`), { statusCode: 503 });
+  }
+  return validSessionEpoch(r.json.item.record.epoch);
+}
+
+async function rotateBrowserSessionEpoch(subject, username) {
+  const id = browserSessionStateId(subject);
+  const epoch = (await readBrowserSessionEpoch(subject)) + 1;
+  const changedAt = new Date().toISOString();
+  const r = await mutateCredentialKind('session', id, { user: username, subject, epoch, changedAt }, {
+    owner: username,
+    actor: username,
+    action: 'browser-session-revoke',
+    reason: 'password changed; prior browser sessions revoked',
+  });
+  if (r.status !== 200) throw Object.assign(new Error(`credential store session rotate HTTP ${r.status}`), { statusCode: 503 });
+  return epoch;
+}
+
 // 0.2 및 초기 0.3 배포가 남긴 ConfigMap 상태를 최초 접근 시 한 번만 CBS로 흡수한다.
 // 성공한 항목은 ConfigMap에서 제거한다. 그렇지 않으면 CBS가 정상적으로 비어진
 // 뒤에도 과거 폐기 자격이 되살아날 수 있다. 이후 권위는 PostgreSQL뿐이며,
@@ -613,6 +668,15 @@ async function requireAdmin(req) {
   console.log(`[requireAdmin] ${ok ? 'ALLOW' : 'DENY-not-admin'} via=${via} user=${pl.preferred_username} groups=${JSON.stringify(groups)}`);
   return ok ? pl : null;
 }
+// 현재 로그인한 콘솔 세션 확인 → 라이브 Kanidm 상태로 검증된 subject/username 반환(관리자 아님도 허용).
+// 대상 사용자는 오직 이 검증된 세션에서만 온다 — 요청 본문의 username은 절대 신뢰하지 않는다.
+async function requireConsoleSession(req) {
+  const t = bearer(req);
+  let pl = verifyToken(t) || (await verifyKanidmToken(t));
+  if (!pl) return null;
+  const state = await managedTokenState(pl);
+  return state.active ? state : null;
+}
 const patJson = (res, code, obj) => send(res, code, 'application/json', JSON.stringify(obj));
 const mutationReason = (value) => {
   const reason = String(value || '').trim().slice(0, 240);
@@ -694,10 +758,14 @@ function parseDevice(raw) {
 async function managedTokenState(pl) {
   if (!pl) return { active: false };
   let deviceId = null;
+  let sessionEpoch = null;
   if (pl.typ === undefined) {
     // Browser OIDC sessions have no server-side jti allowlist, but they must
-    // still be bound to a live Kanidm person and its current Console roles.
-    // This makes disablement and role demotion effective on the next request.
+    // still be bound to a live Kanidm person, its current Console roles and the
+    // durable per-subject session epoch. Password changes advance that epoch,
+    // making every previously-issued token fail on its next request.
+    sessionEpoch = await readBrowserSessionEpoch(pl.sub);
+    if (validSessionEpoch(pl.session_epoch) !== sessionEpoch) return { active: false };
   } else if (pl.typ === 'pat') {
     if (!isActivePat(pl, await readPats())) return { active: false };
     try { await touchCredentialKind('pat', pl.jti); }
@@ -721,6 +789,7 @@ async function managedTokenState(pl) {
     groups: identity.groups,
     exp: pl.exp,
     jti: pl.jti,
+    ...(sessionEpoch !== null ? { sessionEpoch } : {}),
     ...(deviceId ? { deviceId } : {}),
   };
 }
@@ -1018,7 +1087,8 @@ async function handleAuthorizePost(req, res) {
   try { groups = await lookupGroups(username); } catch (e) { console.error('[bff] group lookup failed:', e.message); }
   if (!groups.some((g) => g.startsWith(CONSOLE_GROUP_PREFIX))) return send(res, 403, 'text/html', deniedPage(username));
   const code = crypto.randomBytes(24).toString('base64url');
-  const payloadBase = { iss: ISSUER, sub: user.uuid, aud: CLIENT_ID, azp: CLIENT_ID, preferred_username: username, name: user.displayname || username, ...(user.mail_primary ? { email: user.mail_primary } : {}), groups };
+  const sessionEpoch = await readBrowserSessionEpoch(user.uuid);
+  const payloadBase = { iss: ISSUER, sub: user.uuid, aud: CLIENT_ID, azp: CLIENT_ID, preferred_username: username, name: user.displayname || username, ...(user.mail_primary ? { email: user.mail_primary } : {}), groups, session_epoch: sessionEpoch };
   await storeAuthorizationCode(code, { payloadBase, code_challenge: params.code_challenge, redirect_uri: params.redirect_uri, nonce: params.nonce, exp: Date.now() + 60000 });
   redirect(res, `${params.redirect_uri}?code=${encodeURIComponent(code)}&state=${encodeURIComponent(params.state || '')}`);
 }
@@ -1092,6 +1162,85 @@ async function handleOnboardPost(req, res) {
   send(res, 200, 'text/html', onboardDonePage(policy.totpEnabled));
 }
 
+// ---- self-service password change (logged-in user, /me?tab=security) ----
+// Security model:
+//  * Target = the authenticated Console session subject (server.session.username).
+//    The client cannot address another account; any body `username` is ignored.
+//  * Current-password re-authentication is mandatory. We drive Kanidm's own auth
+//    flow with the current password (and current TOTP when the policy requires it);
+//    the resulting short-lived rw user session is what authorizes the change — no
+//    admin/service-account privilege is used to mutate the credential.
+//  * We set ONLY the password via the credential-update session; existing TOTP and
+//    passkeys are never generated, verified or removed (criterion: preserve MFA).
+//  * Kanidm is the final policy authority (`can_commit`).
+//  * Durable audit is fail-closed: an 'attempt' is written before any mutation, so a
+//    down audit store (503) blocks the change entirely.
+//  * No password/token/session value is ever logged, audited or returned.
+async function handleAccountPasswordChange(req, res, session) {
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  const check = validateSelfPasswordChange(body);
+  if (!check.ok) return patJson(res, 400, check);
+
+  const username = session.username; // authoritative — never from the request body
+  if (!username) return patJson(res, 401, { error: 'unauthorized' });
+  const policy = await readAuthPolicy();
+
+  // Fail-closed audit gate: if the durable store is unavailable this throws 503 and
+  // nothing is changed. `attempt` carries no secret.
+  await publishAuthAudit(username, 'self-password-change', 'kanidm-credential', 'attempt', 'self-service password change requested');
+
+  // 1) Re-authenticate with the CURRENT password (+ current TOTP if enforced), requesting a
+  //    PRIVILEGED session (Init2 privileged=true) — a plain login session is read-only and
+  //    cannot begin a credential update.
+  let userToken;
+  try {
+    ({ token: userToken } = await kanidmPrivilegedAuthSession(username, body.currentPassword, body.totp || '', policy.totpEnabled));
+  } catch (e) {
+    await publishAuthAudit(username, 'self-password-change', 'kanidm-credential', 'denied', 'reauthentication_failed');
+    return patJson(res, 401, { error: 'reauth_failed', ...(e?.requiresTotp ? { requiresTotp: true } : {}) });
+  }
+
+  // 2) Begin a self-driven credential-update session with the user's own privileged token.
+  //    Kanidm 1.4.6: this is a GET on /v1/person/{id}/_credential/_update returning
+  //    [CUSessionToken, CUStatus].
+  const beginReq = credentialUpdateBeginRequest(username);
+  const begin = await kanidmReq(beginReq.method, beginReq.path, undefined, { authorization: `Bearer ${userToken}` });
+  if (begin.status !== 200 || !Array.isArray(begin.json)) {
+    await publishAuthAudit(username, 'self-password-change', 'kanidm-credential', 'error', `credential_update_begin HTTP ${begin.status}`);
+    return patJson(res, 502, { error: 'credential_update_unavailable' });
+  }
+  const cuSession = begin.json[0];
+
+  // 3) Set ONLY the password. Do not touch TOTP or passkeys.
+  const applied = await cuUpdate(passwordCredentialRequest(body.newPassword), cuSession);
+  const outcome = passwordUpdateOutcome(applied.json);
+  if (!outcome.ok) {
+    await publishAuthAudit(username, 'self-password-change', 'kanidm-credential', 'denied', `policy_rejected:${outcome.error}`);
+    return patJson(res, 422, { error: outcome.error });
+  }
+
+  // 4) Advance the durable browser-session epoch before committing. If the
+  // credential store is unavailable, fail closed before the password mutation.
+  // If Kanidm commit subsequently fails, the conservative outcome is only that
+  // the user must sign in again with the unchanged password.
+  await rotateBrowserSessionEpoch(session.sub, username);
+
+  // 5) Commit.
+  const committed = await cuCommit(cuSession);
+  if (committed.status !== 200) {
+    await publishAuthAudit(username, 'self-password-change', 'kanidm-credential', 'error', `commit HTTP ${committed.status}`);
+    return patJson(res, 500, { error: 'credential_commit_failed' });
+  }
+
+  await publishAuthAudit(username, 'self-password-change', 'kanidm-credential', 'accepted', 'password changed; other credentials preserved');
+  console.log(JSON.stringify({ event: 'self_password_changed', actor: username, time: new Date().toISOString() }));
+  // The durable epoch was advanced before commit, so this token and every other
+  // browser token issued before the change is rejected server-side immediately.
+  patJson(res, 200, { ok: true, reloginRequired: true });
+}
+
 // ---- discovery ----
 const discoveryDoc = {
   issuer: ISSUER,
@@ -1109,7 +1258,7 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
   const reqUrl = new URL(req.url, ORIGIN);
   const p = reqUrl.pathname;
   const isOidcEp = [EP.discovery, EP.jwks, EP.token, EP.authorize].includes(p);
-  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/admin/tokens') || p.startsWith('/bff/token') || p.startsWith('/bff/cli') || p.startsWith('/bff/roles') || p === '/bff/auth-policy';
+  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/admin/tokens') || p.startsWith('/bff/token') || p.startsWith('/bff/cli') || p.startsWith('/bff/roles') || p.startsWith('/bff/account') || p === '/bff/auth-policy';
   const corsAllowed = Boolean(req.headers.origin && CORS_ORIGINS.has(req.headers.origin));
   if ((isOidcEp || isPatEp) && corsAllowed) {
     res.setHeader('access-control-allow-origin', req.headers.origin); res.setHeader('vary', 'origin');
@@ -1154,6 +1303,8 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       if (p === '/bff/admin/tokens' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleAdminPatList(res) : patJson(res, 401, { error: 'unauthorized' }); }
       match = p.match(/^\/bff\/admin\/tokens\/([a-f0-9]{32})$/);
       if (match && req.method === 'DELETE') { const a = await requireAdmin(req); return a ? await handleAdminPatRevoke(req, res, a, match[1]) : patJson(res, 401, { error: 'unauthorized' }); }
+      // Self-service password change — any logged-in Console user, current-password reauth required.
+      if (p === '/bff/account/password' && req.method === 'POST') { const s = await requireConsoleSession(req); return s ? await handleAccountPasswordChange(req, res, s) : patJson(res, 401, { error: 'unauthorized' }); }
       // Console authentication policy — shared ConfigMap, admin-only read/write.
       if (p === '/bff/auth-policy' && req.method === 'GET') { const a = await requireAdmin(req); return a ? await handleAuthPolicyGet(res) : patJson(res, 401, { error: 'unauthorized' }); }
       if (p === '/bff/auth-policy' && req.method === 'PATCH') { const a = await requireAdmin(req); return a ? await handleAuthPolicyPatch(req, res, a) : patJson(res, 401, { error: 'unauthorized' }); }

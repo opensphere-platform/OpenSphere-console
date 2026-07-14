@@ -1495,10 +1495,11 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(permitted ? 204 : 403); return res.end();
     }
 
-    // Auth BFF 전용 내구 자격 저장소. PAT allowlist와 CLI device 공개키를 Backbone
-    // PostgreSQL에 보관하며, 상태 변경과 감사 INSERT는 db의 단일 트랜잭션이다.
+    // Auth BFF 전용 내구 자격 저장소. PAT allowlist, CLI device 공개키와 브라우저
+    // session epoch를 Backbone PostgreSQL에 보관하며, 상태 변경과 감사 INSERT는
+    // db의 단일 트랜잭션이다.
     // 브라우저/관리자 bearer가 아니라 정확한 opensphere-console-auth SA만 허용한다.
-    const credentialState = p.match(/^\/api\/internal\/credential-state\/(pat|device)(?:\/([a-f0-9]{32})(?:\/(touch))?)?$/);
+    const credentialState = p.match(/^\/api\/internal\/credential-state\/(pat|device|session)(?:\/([a-f0-9]{32})(?:\/(touch))?)?$/);
     if (credentialState) {
       try { await verifyWorkloadToken(req, 'opensphere-console-auth'); }
       catch (e) { return json(res, typeof e?.code === 'number' ? e.code : 502, { error: e?.msg || 'workload authentication failed', opId }); }
@@ -1507,6 +1508,14 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && !id) {
         try { return json(res, 200, { items: await db.listManagedCredentials(kind) }); }
         catch (e) { return json(res, 503, { error: 'credential state unavailable', opId }); }
+      }
+      if (req.method === 'GET' && id && !operation) {
+        try {
+          const item = await db.getManagedCredential(kind, id);
+          return item ? json(res, 200, { item }) : json(res, 404, { error: 'not_found', opId });
+        } catch (e) {
+          return json(res, 503, { error: 'credential state unavailable', opId });
+        }
       }
       if (req.method === 'POST' && id && operation === 'touch') {
         try {

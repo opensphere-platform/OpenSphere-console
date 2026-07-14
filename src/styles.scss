@@ -89,6 +89,21 @@
 html, body { height: 100%; margin: 0; background: var(--os-surface-1); font-family: var(--os-font) !important; }
 body { letter-spacing: 0.16px; color: var(--os-ink); }
 
+/* 접근성 기본선: 사용자 동작/대비 설정을 존중한다. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :focus-visible { outline: 2px solid CanvasText !important; outline-offset: 2px; }
+  .label { border: 1px solid CanvasText !important; }
+}
+
 /* IBM Plex 단일화 — Clarity 기본 Metropolis 전면 덮기(한·영 모두 IBM Plex). 아이콘은 SVG라 영향 없음. */
 body * { font-family: var(--os-font) !important; }
 body code, body kbd, body pre, body samp, .os-mono { font-family: var(--os-font-mono) !important; }
@@ -232,6 +247,17 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
 .os-engine { font-size: 0.6rem; color: var(--os-muted); font-weight: 400; margin-left: 0.4rem; }
 .os-kv td:first-child { width: 110px; color: var(--os-muted); }
 .os-mono { font-family: monospace; font-size: 0.62rem; }
+
+/* 감사 접근성 기준: 보조·메타 텍스트도 12px 미만으로 축소하지 않는다. */
+.os-page .os-sub,
+.os-page .os-engine,
+.os-page .os-mono,
+.os-page .t-meta,
+.os-page .cc-iconpick-note,
+.os-page .cc-steps-h,
+.os-page .cc-iconpick-h {
+  font-size: 0.75rem !important;
+}
 
 /* [예외 등록 #7] 카드 Carbon 규율 (docs/DESIGN-TOKENS §5: 계층=hairline+surface, 평면엔 그림자 X)
  * Clarity .card는 기본적으로 box-shadow로 elevation을 준다 → 그림자 제거 + 1px hairline + 4px(플랫),

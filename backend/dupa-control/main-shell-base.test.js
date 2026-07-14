@@ -78,6 +78,35 @@ test('notification detail uses the shared right sliding panel', () => {
   assert.doesNotMatch(notifications, /clr-dg-row-detail|clrIfExpanded/);
 });
 
+test('audited management UI uses Clarity controls and explicit accessibility states', () => {
+  const plugins = read('src', 'app', 'pages', 'admin-plugins.ts');
+  const roles = read('src', 'app', 'pages', 'admin-roles.ts');
+  const admins = read('src', 'app', 'pages', 'console-admins.ts');
+  const backbone = read('src', 'app', 'pages', 'backbone-slice.ts');
+  const notifications = read('src', 'app', 'os', 'os-notifications.ts');
+  const catalog = read('src', 'app', 'pages', 'catalog.ts');
+  const apis = read('src', 'app', 'pages', 'apis.ts');
+  const shell = read('src', 'app', 'os', 'os-shell.ts');
+  const styles = read('src', 'styles.scss');
+  const index = read('src', 'index.html');
+  const audited = [plugins, roles, admins, backbone, notifications, catalog, apis].join('\n');
+
+  assert.match(plugins, /<os-panel/);
+  assert.doesNotMatch(plugins, /cc-drawer-backdrop|<aside class="cc-drawer"/);
+  assert.match(notifications, /<clr-dropdown/);
+  assert.match(notifications, /<clr-alert/);
+  assert.doesNotMatch(audited, /\b(?:window\.)?(?:prompt|confirm)\s*\(/);
+  assert.doesNotMatch(audited, /http:\/\/localhost:7007|cdn\.statically\.io/);
+  assert.match(backbone, /https:\/\/logos\.opl\.io\.kr\/i\//);
+  assert.match(catalog, /\[loading\]="loading\(\)"/);
+  assert.match(admins, /\[loading\]="identityLoading\(\)"/);
+  assert.match(catalog, /HTTP \(401\|403\)/);
+  assert.match(shell, /본문으로 건너뛰기/);
+  assert.match(index, /<html lang="ko">/);
+  assert.match(styles, /prefers-reduced-motion/);
+  assert.match(styles, /forced-colors/);
+});
+
 test('one top-level design guide is the only design policy SSOT', () => {
   const guide = read('DESIGN-GUIDE.md');
   const pkg = JSON.parse(read('package.json'));

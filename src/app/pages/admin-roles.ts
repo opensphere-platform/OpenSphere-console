@@ -7,6 +7,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsDatagrid, OsCellDef, OsColumn } from '../os/os-datagrid';
 import { OsPanel } from '../os/os-panel';
+import { OsActionDialog } from '../os/os-action-dialog';
 
 interface Role {
   group: string;
@@ -27,7 +28,7 @@ const ADMIN_GROUP = 'opensphere-console-admins';
  */
 @Component({
   selector: 'os-admin-roles',
-  imports: [ClarityModule, FormsModule, BackendUnavailable, OsPageHeader, OsDatagrid, OsCellDef, OsPanel],
+  imports: [ClarityModule, FormsModule, BackendUnavailable, OsPageHeader, OsDatagrid, OsCellDef, OsPanel, OsActionDialog],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="os-page">
@@ -114,6 +115,17 @@ const ADMIN_GROUP = 'opensphere-console-admins';
             </div>
           }
         </os-panel>
+
+        <os-action-dialog
+          [open]="!!pendingRevoke()"
+          title="역할 회수"
+          [message]="pendingRevoke() && selectedRole() ? pendingRevoke() + ' 사용자의 ' + selectedRole()!.label + ' 역할을 회수합니다.' : ''"
+          confirmLabel="회수"
+          [danger]="true"
+          [busy]="busy()"
+          (confirmed)="confirmRevoke()"
+          (cancelled)="pendingRevoke.set(null)"
+        />
       }
     </div>
   `,
@@ -147,6 +159,7 @@ export class AdminRoles implements OnInit {
   readonly busy = signal(false);
   readonly panelOpen = signal(false);
   readonly selectedRole = signal<Role | null>(null);
+  readonly pendingRevoke = signal<string | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   addUser = '';
   changeReason = '';
@@ -224,7 +237,14 @@ export class AdminRoles implements OnInit {
   async revoke(user: string): Promise<void> {
     const role = this.selectedRole();
     if (!role || this.changeReason.trim().length < 8) return;
-    if (!confirm(`${user} 의 ${role.label} 역할을 회수할까요?`)) return;
+    this.pendingRevoke.set(user);
+  }
+
+  async confirmRevoke(): Promise<void> {
+    const role = this.selectedRole();
+    const user = this.pendingRevoke();
+    if (!role || !user) return;
+    this.pendingRevoke.set(null);
     await this.mutate('revoke', user, role.group);
   }
 

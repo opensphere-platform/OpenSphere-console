@@ -25,7 +25,11 @@ import { BackendUnavailable } from '../os/backend-unavailable';
     <h1>APIs</h1>
     <p class="os-sub">조직의 API 인벤토리 — engine: rhdh-self catalog (kind=API)</p>
 
-    @if (error()) {
+    @if (forbidden()) {
+      <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+        <clr-alert-item><span class="alert-text">API 인벤토리를 조회할 권한이 없습니다.</span></clr-alert-item>
+      </clr-alert>
+    } @else if (error()) {
       <os-backend-unavailable
         feature="APIs"
         backend="opensphere-catalog / rhdh-self 엔진 (kind=API)"
@@ -82,6 +86,8 @@ import { BackendUnavailable } from '../os/backend-unavailable';
       <os-datagrid
         [columns]="columns"
         [rows]="filtered()"
+        [loading]="loading()"
+        empty="등록된 API가 없습니다"
         [selected]="selected()"
         (rowClick)="openQuickview($event)"
       />
@@ -91,7 +97,6 @@ import { BackendUnavailable } from '../os/backend-unavailable';
       [open]="!!selected()"
       [title]="titleOf(selected())"
       [subtitle]="ref(selected())"
-      [fullHref]="rhdhHref(selected())"
       (closed)="closeQuickview()"
     >
       @if (selected(); as e) {
@@ -203,6 +208,8 @@ export class Apis implements OnInit {
   readonly rows = signal<CatalogEntity[]>([]);
   readonly selected = signal<CatalogEntity | null>(null);
   readonly error = signal<string>('');
+  readonly loading = signal(true);
+  readonly forbidden = signal(false);
   readonly fType = signal<string>('');
   readonly fOwner = signal<string>('');
   readonly fLifecycle = signal<string>('');
@@ -225,7 +232,11 @@ export class Apis implements OnInit {
         if (hit) this.selected.set(hit);
       }
     } catch (e) {
-      this.error.set(String(e));
+      const message = String(e);
+      if (/HTTP (401|403)\b/.test(message)) this.forbidden.set(true);
+      else this.error.set(message);
+    } finally {
+      this.loading.set(false);
     }
   }
 
@@ -260,11 +271,6 @@ export class Apis implements OnInit {
   titleOf(e: CatalogEntity | null): string {
     if (!e) return '';
     return String((e.metadata as Record<string, unknown>)['title'] ?? e.metadata.name);
-  }
-
-  rhdhHref(e: CatalogEntity | null): string {
-    if (!e) return '';
-    return `http://localhost:7007/catalog/${e.metadata.namespace ?? 'default'}/api/${e.metadata.name}`;
   }
 
   specOf(e: CatalogEntity, key: string): string {

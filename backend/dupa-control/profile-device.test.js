@@ -66,7 +66,11 @@ test('auth deployment sends durable credentials to CBS and keeps one-time flows 
   assert.doesNotMatch(server, /const patchDevice = \(id, valueOrNull\) => k8sApi/);
   assert.match(controller, /opensphere-console-auth.*system:serviceaccount:\$\{NS\}:opensphere-console-auth/s);
   assert.match(controller, /credential-state/);
+  assert.match(controller, /\(pat\|device\|session\)/);
   assert.match(controller, /managed_credential|listManagedCredentials/);
+  assert.match(controller, /getManagedCredential/);
+  assert.match(server, /browser-session-revoke/);
+  assert.match(server, /session_epoch/);
 });
 
 test('administrators can inspect per-user token metadata and revoke without token disclosure or proxy minting', () => {

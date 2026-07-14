@@ -157,9 +157,9 @@ spec:
             - { name: OIDC_REDIRECT_URIS, value: "__OPENSPHERE_CONSOLE_URL__/" }
             - { name: KANIDM_CORE_URL, value: "https://kanidm-core.opensphere-console-auth.svc:8443" }
             - { name: KANIDM_SNI, value: "kanidm.opensphere-console-auth.svc" }
-            # kanidm-tls is self-signed; validate the Kanidm core against the very cert we
-            # also serve (mounted, always current) instead of a bakeable CA that can go stale.
-            - { name: KANIDM_CA_PATH, value: "/certs/tls.crt" }
+            # Setup provisions the installation CA separately from the TLS leaf certificate.
+            # Trust that CA so browser login survives leaf rotation and validates the full chain.
+            - { name: KANIDM_CA_PATH, value: "/etc/kanidm-ca/ca.crt" }
             # console session (id_token) lifetime in seconds; 86400 = 24h (server.mjs default 3600)
             - { name: OIDC_TOKEN_TTL, value: "86400" }
             # AG-5: 운영 환경 지시자. "production"이면 TOTP를 강제하고 관리자의 비활성화를 403으로 거부한다.
@@ -170,6 +170,7 @@ spec:
             - { containerPort: 8443 }
           volumeMounts:
             - { name: tls, mountPath: /certs, readOnly: true }
+            - { name: kanidm-ca, mountPath: /etc/kanidm-ca, readOnly: true }
             - { name: sig, mountPath: /keys, readOnly: true }
           readinessProbe:
             httpGet: { path: /bff/healthz, port: 8443, scheme: HTTPS }
@@ -190,6 +191,8 @@ spec:
       volumes:
         - name: tls
           secret: { secretName: kanidm-tls }
+        - name: kanidm-ca
+          secret: { secretName: opensphere-console-auth-ca }
         - name: sig
           secret: { secretName: opensphere-console-auth-sig }
 ---

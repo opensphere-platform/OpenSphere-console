@@ -53,6 +53,7 @@ interface NavBand {
     OsRawIcon,
   ],
   template: `
+    <a class="os-skip-link" href="#main-content">본문으로 건너뛰기</a>
     <div class="main-container">
       <header class="header">
         <button class="os-hamburger" (click)="navCollapsed.set(!navCollapsed())" title="메뉴 접기/펼치기" aria-label="메뉴 토글">
@@ -142,9 +143,9 @@ interface NavBand {
             </button>
           </div>
         </div>
-        <div class="content-area">
+        <main id="main-content" class="content-area" tabindex="-1">
           <router-outlet />
-        </div>
+        </main>
       </div>
     </div>
   `,
@@ -253,6 +254,18 @@ interface NavBand {
         min-width: 0;
         overflow-x: hidden;
       }
+      .os-skip-link {
+        position: fixed;
+        inset-block-start: 0.25rem;
+        inset-inline-start: 0.25rem;
+        z-index: 2000;
+        transform: translateY(-150%);
+        padding: 0.5rem 0.75rem;
+        background: #fff;
+        color: #161616;
+        border: 2px solid var(--os-accent);
+      }
+      .os-skip-link:focus { transform: translateY(0); }
       @media (max-width: 600px) {
         .header { min-width: 0; }
         .branding { display: none; }

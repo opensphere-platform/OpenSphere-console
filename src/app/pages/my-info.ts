@@ -378,8 +378,12 @@ interface AuditEvent {
                 <div><dt>TOTP 정책</dt><dd>{{ authPolicy()?.totpEnabled ? '활성' : '개발 중 비활성' }} <span class="label">{{ authPolicy()?.environment || 'unknown' }}</span></dd></div>
                 <div><dt>브라우저 토큰 보관</dt><dd>sessionStorage · 브라우저 종료 시 삭제</dd></div>
               </dl>
+              <h2>비밀번호</h2>
+              <p class="section-lead">현재 비밀번호로 재인증한 뒤 새 비밀번호를 설정합니다. TOTP·passkey 등 다른 자격 증명은 그대로 유지되며, 최종 비밀번호 정책은 Kanidm이 판정합니다.</p>
+              <button class="btn btn-sm btn-primary" (click)="openPasswordPanel()" [disabled]="busy()">비밀번호 변경</button>
+
               <h2>복구와 보호</h2>
-              <p class="section-lead">비밀번호·passkey·TOTP 변경은 관리자 대리설정이 아닌 새 온보딩/자격 갱신 흐름으로 수행합니다.</p>
+              <p class="section-lead">passkey·TOTP 등록·재설정은 관리자 대리설정이 아닌 새 온보딩/자격 갱신 흐름으로 수행합니다.</p>
               <a class="btn btn-sm btn-outline" routerLink="/manage/console-admins">콘솔 관리자 보안 정책</a>
             </section>
           </clr-tab-content>
@@ -459,6 +463,55 @@ interface AuditEvent {
           <clr-textarea-container><label>폐기 사유</label><textarea clrTextarea [(ngModel)]="revokeReason" name="revoke-reason" maxlength="240" required></textarea><clr-control-helper>영구 감사에 기록됩니다(8자 이상).</clr-control-helper></clr-textarea-container>
         </form>
         <div class="panel-actions"><button class="btn btn-danger" (click)="confirmCredentialRevoke()" [disabled]="busy() || revokeReason.trim().length < 8">폐기</button><button class="btn btn-outline" (click)="closeCredentialRevoke()" [disabled]="busy()">취소</button></div>
+      }
+    </os-panel>
+
+    <os-panel [open]="passwordPanelOpen()" title="비밀번호 변경" subtitle="현재 비밀번호 재인증 필요 · Kanidm 정책 판정" (closed)="closePasswordPanel()">
+      @if (!passwordChanged()) {
+        <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false">
+          <clr-alert-item><span class="alert-text">현재 로그인한 계정(<strong>{{ auth.user() }}</strong>)의 비밀번호만 변경됩니다. TOTP·passkey 등 다른 자격 증명은 삭제하거나 재설정하지 않습니다.</span></clr-alert-item>
+        </clr-alert>
+        @if (passwordError()) {
+          <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="false">
+            <clr-alert-item><span class="alert-text">{{ passwordError() }}</span></clr-alert-item>
+          </clr-alert>
+        }
+        <form clrForm clrLayout="vertical" autocomplete="off" (ngSubmit)="changePassword()">
+          <clr-password-container>
+            <label>현재 비밀번호</label>
+            <input clrPassword [(ngModel)]="passwordForm.current" name="current-password" autocomplete="current-password" required />
+          </clr-password-container>
+          @if (passwordNeedsTotp()) {
+            <clr-input-container>
+              <label>인증 앱 코드</label>
+              <input clrInput [(ngModel)]="passwordForm.totp" name="current-totp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6자리" />
+              <clr-control-helper>TOTP가 활성화된 계정은 현재 인증 앱 코드로 재인증합니다.</clr-control-helper>
+            </clr-input-container>
+          }
+          <clr-password-container>
+            <label>새 비밀번호</label>
+            <input clrPassword [(ngModel)]="passwordForm.next" name="new-password" autocomplete="new-password" minlength="8" required />
+            <clr-control-helper>8자 이상. 최종 강도 정책은 Kanidm이 판정합니다.</clr-control-helper>
+          </clr-password-container>
+          <clr-password-container>
+            <label>새 비밀번호 확인</label>
+            <input clrPassword [(ngModel)]="passwordForm.confirm" name="confirm-password" autocomplete="new-password" required />
+          </clr-password-container>
+          @if (passwordClientHint(); as hint) {
+            <p class="section-lead">{{ hint }}</p>
+          }
+        </form>
+        <div class="panel-actions">
+          <button class="btn btn-primary" (click)="changePassword()" [disabled]="busy() || !passwordFormValid()">비밀번호 변경</button>
+          <button class="btn btn-outline" (click)="closePasswordPanel()" [disabled]="busy()">취소</button>
+        </div>
+      } @else {
+        <clr-alert [clrAlertType]="'success'" [clrAlertClosable]="false">
+          <clr-alert-item><span class="alert-text"><strong>비밀번호를 변경했습니다.</strong> TOTP·passkey 등 다른 자격 증명은 그대로 유지됩니다. 보안을 위해 현재 세션을 종료합니다 — 잠시 후 자동으로 로그아웃되며, 새 비밀번호로 다시 로그인하세요.</span></clr-alert-item>
+        </clr-alert>
+        <div class="panel-actions">
+          <button class="btn btn-primary" (click)="logoutNow()">지금 로그아웃</button>
+        </div>
       }
     </os-panel>
   `,
@@ -556,6 +609,10 @@ export class MyInfo {
   readonly credentialRevokeOpen = signal(false);
   readonly pendingRevoke = signal<{ kind: 'device' | 'token'; id: string; label: string } | null>(null);
   readonly message = signal<{ type: 'success' | 'danger' | 'info' | 'warning'; text: string } | null>(null);
+  readonly passwordPanelOpen = signal(false);
+  readonly passwordChanged = signal(false);
+  readonly passwordError = signal('');
+  readonly passwordTotpRequired = signal(false);
 
   edit = { displayName: '', email: '', reason: '' };
   tokenLabel = '';
@@ -563,6 +620,7 @@ export class MyInfo {
   revokeReason = '';
   deviceSearchText = '';
   tokenSearchText = '';
+  passwordForm = { current: '', next: '', confirm: '', totp: '' };
   readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '—';
   readonly language = navigator.language || '—';
 
@@ -823,6 +881,115 @@ export class MyInfo {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  openPasswordPanel(): void {
+    this.clearPasswordForm();
+    this.passwordChanged.set(false);
+    this.passwordError.set('');
+    this.passwordTotpRequired.set(false);
+    this.passwordPanelOpen.set(true);
+  }
+
+  closePasswordPanel(): void {
+    this.passwordPanelOpen.set(false);
+    this.clearPasswordForm();
+    this.passwordChanged.set(false);
+    this.passwordError.set('');
+    this.passwordTotpRequired.set(false);
+  }
+
+  private clearPasswordForm(): void {
+    this.passwordForm = { current: '', next: '', confirm: '', totp: '' };
+  }
+
+  /** TOTP 필드는 정책이 TOTP를 강제하거나 서버가 재인증에 코드를 요구할 때만 노출한다. */
+  passwordNeedsTotp(): boolean {
+    return Boolean(this.authPolicy()?.totpEnabled) || this.passwordTotpRequired();
+  }
+
+  /** 전송 전 클라이언트 검증(최종 정책 판정은 Kanidm). */
+  passwordFormValid(): boolean {
+    const f = this.passwordForm;
+    if (!f.current || f.next.length < 8 || f.next !== f.confirm || f.next === f.current) return false;
+    if (this.passwordNeedsTotp() && !/^\d{6}$/.test(f.totp.trim())) return false;
+    return true;
+  }
+
+  passwordClientHint(): string {
+    const f = this.passwordForm;
+    if (f.next && f.next.length < 8) return '새 비밀번호는 8자 이상이어야 합니다.';
+    if (f.next && f.confirm && f.next !== f.confirm) return '새 비밀번호와 확인 값이 일치하지 않습니다.';
+    if (f.next && f.current && f.next === f.current) return '현재 비밀번호와 다른 새 비밀번호를 사용하세요.';
+    return '';
+  }
+
+  async changePassword(): Promise<void> {
+    if (this.busy() || !this.passwordFormValid()) return;
+    this.busy.set(true);
+    this.passwordError.set('');
+    // 요청 본문에 username을 넣지 않는다 — 서버가 현재 인증 세션의 subject만 대상으로 삼는다.
+    const payload: Record<string, string> = {
+      currentPassword: this.passwordForm.current,
+      newPassword: this.passwordForm.next,
+      confirmPassword: this.passwordForm.confirm,
+    };
+    if (this.passwordNeedsTotp()) payload['totp'] = this.passwordForm.totp.trim();
+    try {
+      const response = await this.http.request('/bff/account/password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string; requiresTotp?: boolean; ok?: boolean };
+      // 성공·실패와 무관하게 민감 입력을 즉시 UI에서 지운다.
+      this.clearPasswordForm();
+      if (!response.ok || !body.ok) {
+        if (body.requiresTotp) this.passwordTotpRequired.set(true);
+        this.passwordError.set(this.passwordErrorText(body.error, response.status));
+        return;
+      }
+      this.passwordChanged.set(true);
+      this.message.set({ type: 'success', text: '비밀번호를 변경했습니다. 보안을 위해 로그아웃합니다. 새 비밀번호로 다시 로그인하세요.' });
+      this.scheduleForcedLogout();
+    } catch {
+      this.clearPasswordForm();
+      this.passwordError.set('비밀번호 변경 요청을 보내지 못했습니다. 네트워크를 확인하고 다시 시도하세요.');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  private passwordErrorText(code: string | undefined, status: number): string {
+    switch (code) {
+      case 'current_password_required': return '현재 비밀번호를 입력하세요.';
+      case 'new_password_required': return '새 비밀번호를 입력하세요.';
+      case 'new_password_too_short': return '새 비밀번호는 8자 이상이어야 합니다.';
+      case 'password_confirmation_mismatch': return '새 비밀번호와 확인 값이 일치하지 않습니다.';
+      case 'password_unchanged': return '현재 비밀번호와 다른 새 비밀번호를 사용하세요.';
+      case 'reauth_failed': return '현재 비밀번호 재인증에 실패했습니다. 값을 다시 확인하세요.';
+      case 'mfa_required': return '이 계정 정책은 MFA를 요구합니다. 인증 앱 코드를 확인하세요.';
+      case 'password_policy_rejected': return '새 비밀번호가 정책에 의해 거부되었습니다. 더 강력한 비밀번호를 사용하세요.';
+      case 'credential_update_unavailable':
+      case 'credential_commit_failed': return '비밀번호 변경 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도하세요.';
+      case 'credential_store_unavailable': return '감사 저장소를 사용할 수 없어 변경이 차단되었습니다. 잠시 후 다시 시도하세요.';
+      case 'unauthorized': return '세션이 만료되었습니다. 다시 로그인한 뒤 시도하세요.';
+      case 'invalid_json': return '요청 형식이 올바르지 않습니다.';
+      default: return status === 503 ? '서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도하세요.' : '비밀번호를 변경하지 못했습니다.';
+    }
+  }
+
+  /**
+   * 서버가 비밀번호 commit 전에 CBS의 browser session epoch를 회전해 기존 id_token을 즉시
+   * 무효화한다. 클라이언트도 로컬 OIDC 상태를 지워 새 자격으로 재로그인하게 한다
+   * (서버 응답 reloginRequired=true와 일치). 확인 문구를 잠깐 보여준 뒤 자동 로그아웃한다.
+   */
+  private scheduleForcedLogout(): void {
+    window.setTimeout(() => { void this.auth.logout(); }, 3000);
+  }
+
+  async logoutNow(): Promise<void> {
+    await this.auth.logout();
   }
 
   async copy(value: string): Promise<void> {

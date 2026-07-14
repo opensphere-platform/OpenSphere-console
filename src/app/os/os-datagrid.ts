@@ -37,7 +37,7 @@ export class OsCellDef {
   selector: 'os-datagrid',
   imports: [ClarityModule, NgTemplateOutlet],
   template: `
-    <clr-datagrid>
+    <clr-datagrid [clrDgLoading]="loading">
       @for (c of columns; track c.key) {
         <clr-dg-column>{{ c.label }}</clr-dg-column>
       }
@@ -80,6 +80,7 @@ export class OsDatagrid {
   @Input() rows: any[] = [];
   @Input() selected: any = null;
   @Input() empty = '항목 없음';
+  @Input() loading = false;
   @Output() rowClick = new EventEmitter<any>();
   @ContentChildren(OsCellDef) cellDefs!: QueryList<OsCellDef>;
 
