@@ -975,84 +975,9 @@ const BB_ACCESS = {
   rustfs: { secret: 'backbone-rustfs', proto: 'HTTP(S3) · 9000 / 콘솔 9001', connect: 'S3 endpoint: backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 (forcePathStyle=true, region=us-east-1)', note: 'access_key/secret_key = Secret backbone-rustfs.' },
   gitea: { secret: 'backbone-gitea', proto: 'HTTP · 3000', connect: 'http://backbone-gitea.opensphere-backbone.svc.cluster.local:3000/', note: '전용 DB role과 관리자 자격은 Secret backbone-gitea에 있으며 값은 API에 노출하지 않는다.' },
 };
-function bbSecret(name, data) { return { apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: BACKBONE_NS, labels: BB_LABELS }, type: 'Opaque', stringData: data }; }
-function bbPath(o) {
-  const ns = (o.metadata && o.metadata.namespace) || BACKBONE_NS;
-  if (o.kind === 'Deployment') return `/apis/apps/v1/namespaces/${BACKBONE_NS}/deployments`;
-  if (o.kind === 'StatefulSet') return `/apis/apps/v1/namespaces/${BACKBONE_NS}/statefulsets`;
-  if (o.kind === 'Role') return `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/roles`;
-  if (o.kind === 'RoleBinding') return `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings`;
-  if (o.kind === 'ClusterRole') return '/apis/rbac.authorization.k8s.io/v1/clusterroles';
-  if (o.kind === 'ClusterRoleBinding') return '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings';
-  const core = { Service: 'services', ServiceAccount: 'serviceaccounts', PersistentVolumeClaim: 'persistentvolumeclaims', ConfigMap: 'configmaps', Secret: 'secrets' }[o.kind];
-  return `/api/v1/namespaces/${ns}/${core}`;
-}
-async function bbApply(o) { const r = await k8s('POST', bbPath(o), o); if (r.ok || r.status === 409) return; throw new Error(`apply ${o.kind}/${o.metadata && o.metadata.name} HTTP ${r.status}`); }
-function bbWorkloads() {
-  const lab = (app) => Object.assign({ app }, BB_LABELS);
-  return [
-    // init-00-pgvector.sh가 먼저(알파벳순) template1+console에 vector 확장 생성 → 이후 생성되는 gitea/ai_hub(템플릿 상속)도 vector 보유.
-    { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'backbone-postgres-init', namespace: BACKBONE_NS, labels: BB_LABELS }, data: {
-      'init-00-pgvector.sh': '#!/bin/bash\nset -e\nfor d in template1 "$POSTGRES_DB"; do\n  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$d" -c "CREATE EXTENSION IF NOT EXISTS vector;"\ndone\n',
-      'init-gitea-db.sql': 'CREATE DATABASE gitea OWNER console;',
-    } },
-    { apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: 'backbone-postgres-data', namespace: BACKBONE_NS, labels: BB_LABELS }, spec: { accessModes: ['ReadWriteOnce'], storageClassName: 'standard', resources: { requests: { storage: '8Gi' } } } },
-    { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'backbone-postgres', namespace: BACKBONE_NS, labels: lab('backbone-postgres') }, spec: {
-      replicas: 1, strategy: { type: 'Recreate' }, selector: { matchLabels: { app: 'backbone-postgres' } },
-      template: { metadata: { labels: { app: 'backbone-postgres' } }, spec: { containers: [{
-        name: 'postgresql', image: 'opensphere-backbone-postgres@sha256:76470c513c7ca2b52c6720295f09babc3b97171d13e68730eb1775688c164ab9',
-        env: [
-          { name: 'POSTGRES_DB', value: 'console' }, { name: 'POSTGRES_USER', value: 'console' },
-          { name: 'POSTGRES_PASSWORD', valueFrom: { secretKeyRef: { name: 'backbone-postgres', key: 'password' } } },
-          { name: 'PGDATA', value: '/var/lib/postgresql/data/pgdata' },
-        ],
-        ports: [{ containerPort: 5432 }],
-        readinessProbe: { exec: { command: ['/bin/sh', '-c', 'pg_isready -U console -d console'] }, initialDelaySeconds: 10, periodSeconds: 5 },
-        resources: { requests: { cpu: '100m', memory: '256Mi' }, limits: { cpu: '500m', memory: '512Mi' } },
-        volumeMounts: [{ name: 'data', mountPath: '/var/lib/postgresql/data' }, { name: 'init', mountPath: '/docker-entrypoint-initdb.d' }],
-      }], volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'backbone-postgres-data' } }, { name: 'init', configMap: { name: 'backbone-postgres-init' } }] } },
-    } },
-    { apiVersion: 'v1', kind: 'Service', metadata: { name: 'backbone-postgres', namespace: BACKBONE_NS, labels: lab('backbone-postgres') }, spec: { selector: { app: 'backbone-postgres' }, ports: [{ name: 'pg', port: 5432, targetPort: 5432 }] } },
-    { apiVersion: 'apps/v1', kind: 'StatefulSet', metadata: { name: 'backbone-rustfs', namespace: BACKBONE_NS, labels: lab('backbone-rustfs') }, spec: {
-      serviceName: 'backbone-rustfs', replicas: 1, selector: { matchLabels: { app: 'backbone-rustfs' } },
-      template: { metadata: { labels: { app: 'backbone-rustfs' } }, spec: {
-        securityContext: { runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, runAsNonRoot: true },
-        containers: [{ name: 'rustfs', image: 'opensphere-backbone-rustfs@sha256:ae16738e96b981b958808dd4b84ada2ef60fc1947475aebae1d128a0eb1a7bd3', imagePullPolicy: 'IfNotPresent',
-          env: [
-            { name: 'RUSTFS_VOLUMES', value: '/data' }, { name: 'RUSTFS_ADDRESS', value: '0.0.0.0:9000' },
-            { name: 'RUSTFS_CONSOLE_ADDRESS', value: '0.0.0.0:9001' }, { name: 'RUSTFS_CONSOLE_ENABLE', value: 'true' },
-            { name: 'RUSTFS_ACCESS_KEY', valueFrom: { secretKeyRef: { name: 'backbone-rustfs', key: 'access_key' } } },
-            { name: 'RUSTFS_SECRET_KEY', valueFrom: { secretKeyRef: { name: 'backbone-rustfs', key: 'secret_key' } } },
-          ],
-          ports: [{ name: 's3', containerPort: 9000 }, { name: 'console', containerPort: 9001 }],
-          resources: { requests: { cpu: '100m', memory: '256Mi' }, limits: { memory: '1Gi' } },
-          readinessProbe: { tcpSocket: { port: 's3' }, initialDelaySeconds: 8, periodSeconds: 8, failureThreshold: 12 },
-          volumeMounts: [{ name: 'data', mountPath: '/data' }] }] } },
-      volumeClaimTemplates: [{ metadata: { name: 'data' }, spec: { accessModes: ['ReadWriteOnce'], storageClassName: 'standard', resources: { requests: { storage: '20Gi' } } } }],
-    } },
-    { apiVersion: 'v1', kind: 'Service', metadata: { name: 'backbone-rustfs', namespace: BACKBONE_NS, labels: lab('backbone-rustfs') }, spec: { selector: { app: 'backbone-rustfs' }, ports: [{ name: 's3', port: 9000, targetPort: 9000 }, { name: 'console', port: 9001, targetPort: 9001 }] } },
-    { apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: 'backbone-gitea-data', namespace: BACKBONE_NS, labels: BB_LABELS }, spec: { accessModes: ['ReadWriteOnce'], storageClassName: 'standard', resources: { requests: { storage: '10Gi' } } } },
-    { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'backbone-gitea', namespace: BACKBONE_NS, labels: lab('backbone-gitea') }, spec: {
-      replicas: 1, strategy: { type: 'Recreate' }, selector: { matchLabels: { app: 'backbone-gitea' } },
-      template: { metadata: { labels: { app: 'backbone-gitea' } }, spec: { containers: [{
-        name: 'gitea', image: 'opensphere-backbone-gitea@sha256:a01aa34bb2516cb5c56ae423352dbc20091f94a12a15ee5e8187fc159e3c4e23',
-        env: [
-          { name: 'GITEA__database__DB_TYPE', value: 'postgres' },
-          { name: 'GITEA__database__HOST', value: `backbone-postgres.${BACKBONE_NS}.svc.cluster.local:5432` },
-          { name: 'GITEA__database__NAME', value: 'gitea' }, { name: 'GITEA__database__USER', value: 'console' },
-          { name: 'GITEA__database__PASSWD', valueFrom: { secretKeyRef: { name: 'backbone-postgres', key: 'password' } } },
-          { name: 'GITEA__security__INSTALL_LOCK', value: 'true' }, { name: 'GITEA__server__OFFLINE_MODE', value: 'true' },
-          { name: 'GITEA__metrics__ENABLED', value: 'true' }, // 내장 /metrics(:3000) — backbone-instrumentation.yaml ServiceMonitor가 scrape.
-          { name: 'GITEA__server__ROOT_URL', value: `http://backbone-gitea.${BACKBONE_NS}.svc.cluster.local:3000/` },
-        ],
-        ports: [{ containerPort: 3000 }],
-        readinessProbe: { tcpSocket: { port: 3000 }, initialDelaySeconds: 15, periodSeconds: 10, failureThreshold: 18 },
-        resources: { requests: { cpu: '50m', memory: '192Mi' }, limits: { cpu: '500m', memory: '512Mi' } },
-        volumeMounts: [{ name: 'data', mountPath: '/data' }] }], volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'backbone-gitea-data' } }] } },
-    } },
-    { apiVersion: 'v1', kind: 'Service', metadata: { name: 'backbone-gitea', namespace: BACKBONE_NS, labels: lab('backbone-gitea') }, spec: { selector: { app: 'backbone-gitea' }, ports: [{ name: 'http', port: 3000, targetPort: 3000 }] } },
-  ];
-}
+// Backbone resources are installed only from the governed Setup release manifest.
+// Keeping a second in-controller manifest caused deployment drift and, critically,
+// could recreate the historic console-as-PostgreSQL-superuser topology.
 async function backboneStatus() {
   const nsr = await k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}`);
   const components = [];

@@ -20,15 +20,16 @@ test('base Main Shell has no built-in AI or Manual consumer surface', () => {
 
 test('Backbone bootstrap contains exactly the three required pillars', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
+  const manifest = read('backend', 'backbone', 'bootstrap', 'backbone.yaml');
   const components = controller.slice(controller.indexOf('const BB_COMPONENTS'), controller.indexOf('const BB_ACCESS'));
-  const workloads = controller.slice(controller.indexOf('function bbWorkloads'), controller.indexOf('async function backboneStatus'));
 
   for (const pillar of ['backbone-postgres', 'backbone-rustfs', 'backbone-gitea']) {
     assert.match(components, new RegExp(pillar));
-    assert.match(workloads, new RegExp(pillar));
+    assert.match(manifest, new RegExp(pillar));
   }
   assert.doesNotMatch(components, /oaa|manual/i);
-  assert.doesNotMatch(workloads, /opensphere-console-oaa-gateway|OAA_GATEWAY_IMAGE/);
+  assert.doesNotMatch(manifest, /opensphere-console-oaa-gateway|OAA_GATEWAY_IMAGE/);
+  assert.doesNotMatch(controller, /function bbWorkloads/);
 });
 
 test('base deployment does not declare or pre-install any Consumer', () => {

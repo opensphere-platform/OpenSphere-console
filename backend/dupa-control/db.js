@@ -2,6 +2,11 @@
 // 감사로그 영속을 ConfigMap → PostgreSQL로 이전(④, 첫 실수요). audit_log는 append-only(INSERT만).
 // 비밀번호는 env가 아니라 K8s Secret(opensphere-backbone/backbone-postgres)에서 컨트롤러가 읽어 init에 전달
 // (cross-ns secretKeyRef 불가 우회; dupa-backbone-installer ClusterRole이 secrets get 보유).
+//
+// 중요한 권한 경계: 이 런타임 모듈은 스키마를 만들거나 바꾸지 않는다. 빈 데이터 디렉터리의
+// PostgreSQL 초기화 단계만 audit_log/trigger/소유권을 만들며, console 앱 역할에는
+// SELECT+INSERT만 부여된다. 따라서 controller RCE나 일반 앱 DB 자격 유출만으로는
+// append-only 증거를 수정·삭제·truncate·trigger 비활성화할 수 없다.
 const { Pool, Client } = require('pg');
 
 let pool = null;
@@ -24,44 +29,30 @@ async function init({ host, port, database, user, password }) {
   console.log(`[db] connected ${user}@${host}:${port}/${database} (audit_log ready)`);
 }
 
-// 마이그레이션 멱등 — audit_log + 인덱스. INSERT만 쓰므로 증거 무결성(UPDATE/DELETE 미사용).
+// audit schema는 PostgreSQL bootstrap 단계가 봉인한다. 런타임은 권한·소유권·ALWAYS
+// trigger를 검증만 하며, 누락/약화 시 기동을 실패시킨다.
 async function ensureSchema() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS audit_log (
-    id      bigserial PRIMARY KEY,
-    ts      timestamptz NOT NULL DEFAULT now(),
-    op_id   text,
-    actor   text,
-    action  text,
-    target  text,
-    result  text,
-    reason  text
-  )`);
-  await pool.query('CREATE INDEX IF NOT EXISTS audit_log_ts_idx ON audit_log (ts DESC)');
-  await pool.query('CREATE INDEX IF NOT EXISTS audit_log_actor_idx ON audit_log (actor)');
-  await pool.query('CREATE INDEX IF NOT EXISTS audit_log_action_idx ON audit_log (action)');
-  await pool.query(`CREATE OR REPLACE FUNCTION opensphere_reject_audit_mutation()
-    RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      RAISE EXCEPTION 'audit_log is append-only';
-    END;
-    $$`);
-  await pool.query('DROP TRIGGER IF EXISTS audit_log_append_only ON audit_log');
-  await pool.query(`CREATE TRIGGER audit_log_append_only
-    BEFORE UPDATE OR DELETE ON audit_log
-    FOR EACH ROW EXECUTE FUNCTION opensphere_reject_audit_mutation()`);
-  await pool.query('REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM PUBLIC');
-  await pool.query(`CREATE TABLE IF NOT EXISTS managed_credential (
-    kind          text NOT NULL,
-    credential_id text NOT NULL,
-    owner_name    text NOT NULL,
-    record        jsonb NOT NULL,
-    created_at    timestamptz NOT NULL DEFAULT now(),
-    updated_at    timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (kind, credential_id),
-    CHECK (kind IN ('pat', 'device'))
-  )`);
-  await pool.query('ALTER TABLE managed_credential ADD COLUMN IF NOT EXISTS last_used_at timestamptz');
-  await pool.query('CREATE INDEX IF NOT EXISTS managed_credential_owner_idx ON managed_credential (owner_name, kind)');
+  const check = await pool.query(`
+    SELECT
+      (SELECT rolsuper = false AND rolbypassrls = false AND rolcanlogin = true
+       FROM pg_roles WHERE rolname = current_user) AS runtime_is_unprivileged,
+      (SELECT rolsuper = true AND rolcanlogin = false
+       FROM pg_roles WHERE rolname = 'opensphere_audit_owner') AS audit_owner_is_sealed,
+      (SELECT pg_get_userbyid(c.relowner) = 'opensphere_audit_owner'
+       FROM pg_class c WHERE c.oid = 'public.audit_log'::regclass) AS audit_owner_isolated,
+      (SELECT tgenabled = 'A' FROM pg_trigger
+       WHERE tgrelid = 'public.audit_log'::regclass AND tgname = 'audit_log_append_only') AS audit_trigger_always,
+      has_table_privilege(current_user, 'public.audit_log', 'SELECT') AS audit_read,
+      has_table_privilege(current_user, 'public.audit_log', 'INSERT') AS audit_append,
+      NOT has_table_privilege(current_user, 'public.audit_log', 'UPDATE') AS audit_no_update,
+      NOT has_table_privilege(current_user, 'public.audit_log', 'DELETE') AS audit_no_delete,
+      NOT has_table_privilege(current_user, 'public.audit_log', 'TRUNCATE') AS audit_no_truncate,
+      to_regclass('public.managed_credential') IS NOT NULL AS credentials_ready
+  `);
+  const row = check.rows[0] || {};
+  if (!Object.values(row).every((value) => value === true)) {
+    throw new Error('Backbone PostgreSQL audit security schema is not ready');
+  }
 }
 
 // 감사 이벤트 INSERT(append-only). e = {time, opId, actor, action, target, result, reason}.

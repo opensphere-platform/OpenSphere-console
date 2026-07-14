@@ -28,11 +28,87 @@ metadata:
   namespace: opensphere-backbone
   labels: { opensphere.io/backbone-module: postgres }
 data:
-  00-pgvector.sh: |
+  00-console-runtime-boundary.sh: |
     #!/bin/sh
+    # This executes only while PostgreSQL initialises an empty data directory.
+    # POSTGRES_USER is a sealed bootstrap operator; console is created separately
+    # as the constrained runtime account used by Console services.
     set -eu
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c 'CREATE EXTENSION IF NOT EXISTS vector'
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname template1 -c 'CREATE EXTENSION IF NOT EXISTS vector'
+    : "${OPENSPHERE_CONSOLE_PASSWORD:?OPENSPHERE_CONSOLE_PASSWORD is required}"
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set=console_password="$OPENSPHERE_CONSOLE_PASSWORD" <<'SQL'
+    CREATE EXTENSION IF NOT EXISTS vector;
+    \connect template1
+    CREATE EXTENSION IF NOT EXISTS vector;
+    \connect console
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_audit_owner') THEN
+        CREATE ROLE opensphere_audit_owner NOLOGIN SUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+      END IF;
+    END
+    $$;
+
+    SELECT format('CREATE ROLE console LOGIN PASSWORD %L NOSUPERUSER INHERIT CREATEROLE CREATEDB NOREPLICATION NOBYPASSRLS', :'console_password')
+      WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'console') \gexec
+    SELECT format('ALTER ROLE console LOGIN PASSWORD %L NOSUPERUSER INHERIT CREATEROLE CREATEDB NOREPLICATION NOBYPASSRLS', :'console_password')
+      WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'console') \gexec
+
+    CREATE TABLE public.audit_log (
+      id      bigserial PRIMARY KEY,
+      ts      timestamptz NOT NULL DEFAULT now(),
+      op_id   text,
+      actor   text,
+      action  text,
+      target  text,
+      result  text,
+      reason  text
+    );
+    CREATE INDEX audit_log_ts_idx ON public.audit_log (ts DESC);
+    CREATE INDEX audit_log_actor_idx ON public.audit_log (actor);
+    CREATE INDEX audit_log_action_idx ON public.audit_log (action);
+    CREATE FUNCTION public.opensphere_reject_audit_mutation()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'audit_log is append-only';
+      END;
+      $$;
+    CREATE TRIGGER audit_log_append_only
+      BEFORE UPDATE OR DELETE ON public.audit_log
+      FOR EACH ROW EXECUTE FUNCTION public.opensphere_reject_audit_mutation();
+
+    CREATE TABLE public.managed_credential (
+      kind          text NOT NULL,
+      credential_id text NOT NULL,
+      owner_name    text NOT NULL,
+      record        jsonb NOT NULL,
+      created_at    timestamptz NOT NULL DEFAULT now(),
+      updated_at    timestamptz NOT NULL DEFAULT now(),
+      last_used_at  timestamptz,
+      PRIMARY KEY (kind, credential_id),
+      CHECK (kind IN ('pat', 'device'))
+    );
+    CREATE INDEX managed_credential_owner_idx ON public.managed_credential (owner_name, kind);
+
+    ALTER DATABASE console OWNER TO opensphere_audit_owner;
+    ALTER TABLE public.audit_log OWNER TO opensphere_audit_owner;
+    ALTER SEQUENCE public.audit_log_id_seq OWNER TO opensphere_audit_owner;
+    ALTER FUNCTION public.opensphere_reject_audit_mutation() OWNER TO opensphere_audit_owner;
+    ALTER TABLE public.managed_credential OWNER TO opensphere_audit_owner;
+    ALTER TABLE public.audit_log ENABLE ALWAYS TRIGGER audit_log_append_only;
+
+    REVOKE ALL ON DATABASE console FROM PUBLIC;
+    GRANT CONNECT ON DATABASE console TO console;
+    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+    REVOKE ALL ON SCHEMA public FROM console;
+    GRANT USAGE ON SCHEMA public TO console;
+    REVOKE ALL ON TABLE public.audit_log FROM PUBLIC;
+    REVOKE ALL ON TABLE public.managed_credential FROM PUBLIC;
+    REVOKE ALL ON SEQUENCE public.audit_log_id_seq FROM PUBLIC;
+    GRANT SELECT, INSERT ON TABLE public.audit_log TO console;
+    GRANT USAGE, SELECT ON SEQUENCE public.audit_log_id_seq TO console;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.managed_credential TO console;
+    SQL
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -67,13 +143,14 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - { name: POSTGRES_DB, value: console }
-            - { name: POSTGRES_USER, value: console }
-            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
+            - { name: POSTGRES_USER, value: opensphere_db_bootstrap }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: bootstrap_password } } }
+            - { name: OPENSPHERE_CONSOLE_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
             - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
           ports: [{ name: postgres, containerPort: 5432 }]
-          startupProbe: { exec: { command: [sh, -c, pg_isready -U console -d console] }, periodSeconds: 3, failureThreshold: 40 }
-          readinessProbe: { exec: { command: [sh, -c, pg_isready -U console -d console] }, periodSeconds: 5 }
-          livenessProbe: { exec: { command: [sh, -c, pg_isready -U console -d console] }, periodSeconds: 10, failureThreshold: 6 }
+          startupProbe: { exec: { command: [sh, -c, pg_isready -U opensphere_db_bootstrap -d console] }, periodSeconds: 3, failureThreshold: 40 }
+          readinessProbe: { exec: { command: [sh, -c, pg_isready -U opensphere_db_bootstrap -d console] }, periodSeconds: 5 }
+          livenessProbe: { exec: { command: [sh, -c, pg_isready -U opensphere_db_bootstrap -d console] }, periodSeconds: 10, failureThreshold: 6 }
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: 1, memory: 1Gi }

@@ -70,6 +70,7 @@ test('administrators can inspect per-user token metadata and revoke without toke
   const server = read('backend/identity/opensphere-console-auth/server.mjs');
   const controller = read('backend/dupa-control/controller.js');
   const db = read('backend/dupa-control/db.js');
+  const backbone = read('backend/backbone/bootstrap/backbone.yaml');
   const page = read('src/app/pages/console-admins.ts');
 
   assert.match(server, /p === '\/bff\/admin\/tokens' && req\.method === 'GET'.*requireAdmin/s);
@@ -79,7 +80,10 @@ test('administrators can inspect per-user token metadata and revoke without toke
   assert.match(server, /lastUsedAt: item\.lastUsedAt \|\| null/);
   assert.doesNotMatch(server, /function patCredentialView[\s\S]{0,700}\btoken\s*:/);
 
-  assert.match(db, /ADD COLUMN IF NOT EXISTS last_used_at/);
+  // DDL belongs to the sealed PostgreSQL bootstrap path, never the runtime
+  // controller account that reads and changes credential state.
+  assert.match(backbone, /last_used_at\s+timestamptz/);
+  assert.match(backbone, /00-console-runtime-boundary\.sh/);
   assert.match(db, /async function touchManagedCredential/);
   assert.match(controller, /operation === 'touch'/);
   assert.match(page, /자동화 API 토큰/);
