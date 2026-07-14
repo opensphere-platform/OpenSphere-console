@@ -5,8 +5,18 @@ import crypto from 'node:crypto';
 
 const STATE = process.argv[2];
 const CHALLENGE = process.argv[3];
-const SECRET = 'CPBOZXXJSAJZGKG7MS3LK4VEPSMDNJ6RIILVWP62QLHJPBQJSM6A'; // tester SHA-1 (provision-tester 최신)
-const USER = 'tester', PW = 'Sphere9-Vt7q-Live-Pw';
+function requiredEnvironment(name) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required for this local-only OIDC check`);
+  return value;
+}
+
+if (!STATE || !CHALLENGE) throw new Error('usage: node _oidc-login.mjs <state> <pkce-challenge>');
+// Test credentials are intentionally never embedded in source, Docker images,
+// command arguments, or output. Inject them only in the local test process.
+const SECRET = requiredEnvironment('OPENSPHERE_TEST_TOTP_SECRET');
+const USER = requiredEnvironment('OPENSPHERE_TEST_USERNAME');
+const PW = requiredEnvironment('OPENSPHERE_TEST_PASSWORD');
 
 const b32d = (s) => { const AL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = 0, val = 0, out = []; for (const c of s.replace(/[^A-Z2-7]/gi, '').toUpperCase()) { val = (val << 5) | AL.indexOf(c); bits += 5; if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; } } return Buffer.from(out); };
 const sec = b32d(SECRET);

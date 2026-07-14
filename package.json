@@ -6,8 +6,8 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "node --test backend/dupa-control/security.test.js backend/dupa-control/profile-device.test.js backend/dupa-control/host-contract.test.js backend/dupa-control/backboneclaim.test.js backend/dupa-control/backbone-required.test.js backend/dupa-control/main-shell-base.test.js backend/identity/opensphere-console-auth/token-verifier.test.mjs backend/identity/opensphere-console-auth/auth-policy.test.mjs backend/identity/opensphere-console-auth/credential-onboarding.test.mjs backend/identity/opensphere-console-auth/cli-device.test.mjs backend/os-cli/manifest.test.mjs src/app/core/notification.merge.spec.ts",
-    "test:security": "node --test backend/dupa-control/security.test.js backend/dupa-control/profile-device.test.js backend/identity/opensphere-console-auth/token-verifier.test.mjs backend/identity/opensphere-console-auth/auth-policy.test.mjs backend/identity/opensphere-console-auth/cli-device.test.mjs"
+    "test": "node --test backend/dupa-control/security.test.js backend/dupa-control/profile-device.test.js backend/dupa-control/host-contract.test.js backend/dupa-control/backboneclaim.test.js backend/dupa-control/backbone-required.test.js backend/dupa-control/main-shell-base.test.js backend/identity/opensphere-console-auth/token-verifier.test.mjs backend/identity/opensphere-console-auth/auth-policy.test.mjs backend/identity/opensphere-console-auth/credential-onboarding.test.mjs backend/identity/opensphere-console-auth/cli-device.test.mjs backend/identity/opensphere-console-auth/dev-auth-helper.test.mjs backend/os-cli/manifest.test.mjs src/app/core/notification.merge.spec.ts",
+    "test:security": "node --test backend/dupa-control/security.test.js backend/dupa-control/profile-device.test.js backend/identity/opensphere-console-auth/token-verifier.test.mjs backend/identity/opensphere-console-auth/auth-policy.test.mjs backend/identity/opensphere-console-auth/cli-device.test.mjs backend/identity/opensphere-console-auth/dev-auth-helper.test.mjs"
   },
   "private": true,
   "packageManager": "npm@11.6.2",
