@@ -115,7 +115,8 @@ server {
         set $auth_upstream opensphere-console-auth.opensphere-console.svc.cluster.local;
         proxy_pass https://$auth_upstream:8443$request_uri;
         proxy_ssl_verify on;
-        proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/tls.crt;
+        # Trust the installation CA, never the rotating Kanidm leaf certificate.
+        proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/ca.crt;
         proxy_ssl_server_name on;
         proxy_ssl_name kanidm.opensphere-console-auth.svc;
         proxy_set_header Host $host;
@@ -126,7 +127,8 @@ server {
         set $auth_upstream opensphere-console-auth.opensphere-console.svc.cluster.local;
         proxy_pass https://$auth_upstream:8443$request_uri;
         proxy_ssl_verify on;
-        proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/tls.crt;
+        # Trust the installation CA, never the rotating Kanidm leaf certificate.
+        proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/ca.crt;
         proxy_ssl_server_name on;
         proxy_ssl_name kanidm.opensphere-console-auth.svc;
         proxy_set_header Host $host;
@@ -137,7 +139,8 @@ server {
         set $auth_upstream opensphere-console-auth.opensphere-console.svc.cluster.local;
         proxy_pass https://$auth_upstream:8443$request_uri;
         proxy_ssl_verify on;
-        proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/tls.crt;
+        # Trust the installation CA, never the rotating Kanidm leaf certificate.
+        proxy_ssl_trusted_certificate /etc/nginx/upstream-ca/ca.crt;
         proxy_ssl_server_name on;
         proxy_ssl_name kanidm.opensphere-console-auth.svc;
         proxy_set_header Host $host;

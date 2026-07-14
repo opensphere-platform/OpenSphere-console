@@ -23,6 +23,14 @@ test('Backbone is the mandatory readiness base for the Main Shell', () => {
   assert.match(architecture, /(?:CBS|Backbone) → Main Shell\/Console 기능 → subShell → plugin/);
 });
 
+test('Console reverse proxy verifies Kanidm against the installation CA', () => {
+  const authLocations = nginx.match(/location \^~ \/(?:oauth2\/openid\/opensphere-console|ui)\/|location \/bff\//g) ?? [];
+  assert.equal(authLocations.length, 3);
+  const installationCaReferences = nginx.match(/proxy_ssl_trusted_certificate \/etc\/nginx\/upstream-ca\/ca\.crt/g) ?? [];
+  assert.equal(installationCaReferences.length, 3);
+  assert.doesNotMatch(nginx, /proxy_ssl_trusted_certificate \/etc\/nginx\/upstream-ca\/tls\.crt/);
+});
+
 test('durable audit is fail-closed with no ConfigMap fallback', () => {
   assert.doesNotMatch(controller, /dupa-audit-log|AUDIT_CM|flushAudit/);
   assert.match(controller, /Backbone PostgreSQL unavailable/);
