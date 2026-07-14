@@ -86,8 +86,12 @@ jobs:
       - name: Keychain round-trip and macOS CLI build
         working-directory: OpenSphere-console/backend/os-cli
         run: |
+          test "$(go env GOOS)" = darwin
+          test "$(go env GOARCH)" = arm64
+          test "$(go env CGO_ENABLED)" = 1
           go test ./...
           go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o opensphere-cli-darwin-arm64 ./cmd/os
+          file opensphere-cli-darwin-arm64 | grep -q 'arm64'
       - name: Upload macOS CLI artifact
         uses: actions/upload-artifact@v4
         with:
