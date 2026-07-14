@@ -709,7 +709,11 @@ func registry(cfg Config, args []string, out io.Writer) error {
 	if key == "" {
 		return fmt.Errorf("알 수 없는 kind: %s", *kind)
 	}
-	return pretty(out, map[string]any{"capabilities": reg.Capabilities, "plugins": reg.Plugins, "templates": reg.Templates}[key])
+	selected, err := json.Marshal(map[string]any{"capabilities": reg.Capabilities, "plugins": reg.Plugins, "templates": reg.Templates}[key])
+	if err != nil {
+		return fmt.Errorf("Registry subset could not be encoded: %w", err)
+	}
+	return pretty(out, selected)
 }
 
 func requireJSONResponse(contentType, subject string) error {
@@ -1132,7 +1136,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	flags := parseLongFlags(args[1:])
 	target := join(base, selected.Path)
 	var body io.Reader
-	contentType := ""
+	contentType = ""
 	if method == http.MethodGet {
 		u, _ := url.Parse(target)
 		q := u.Query()
