@@ -148,6 +148,12 @@ spec:
           image: ghcr.io/opensphere-platform/opensphere-console-auth:2.0.0-rc.1
           imagePullPolicy: IfNotPresent
           env:
+            # Setup replaces this single origin with --console and uses it for the
+            # token issuer, browser redirect and the Console-hosted login surface.
+            # The BFF is always reached through the Console's same-origin proxy.
+            - { name: OIDC_ISSUER, value: "__OPENSPHERE_CONSOLE_URL__/oauth2/openid/opensphere-console" }
+            - { name: CONSOLE_URL, value: "__OPENSPHERE_CONSOLE_URL__/" }
+            - { name: OIDC_REDIRECT_URIS, value: "__OPENSPHERE_CONSOLE_URL__/" }
             - { name: KANIDM_CORE_URL, value: "https://kanidm-core.opensphere-console-auth.svc:8443" }
             - { name: KANIDM_SNI, value: "kanidm.opensphere-console-auth.svc" }
             # kanidm-tls is self-signed; validate the Kanidm core against the very cert we
@@ -169,7 +175,7 @@ spec:
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
-            httpGet: { path: /bff/healthz, port: 8443, scheme: HTTPS }
+            httpGet: { path: /healthz, port: 8443, scheme: HTTPS }
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 3

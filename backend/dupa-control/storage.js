@@ -5,6 +5,7 @@
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const fs = require('fs');
 const { URL } = require('url');
 
 let cfg = null; // { url:URL, region, accessKey, secretKey }
@@ -13,10 +14,16 @@ let enabled = false;
 // S3 버킷 명명 규칙(BackboneClaim CRD pattern과 동일) — SSRF/경로 주입 차단.
 const BUCKET_RE = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 
-function init({ endpoint, region, accessKey, secretKey }) {
+function init({ endpoint, region, accessKey, secretKey, caPath }) {
   let ep = String(endpoint || '').trim();
   if (!/^https?:\/\//.test(ep)) ep = 'http://' + ep; // 인스턴스 Secret endpoint는 scheme 없을 수 있음
-  cfg = { url: new URL(ep), region: region || 'us-east-1', accessKey, secretKey };
+  const url = new URL(ep);
+  let ca;
+  if (url.protocol === 'https:') {
+    if (!caPath) throw new Error('RustFS HTTPS CA is required');
+    ca = fs.readFileSync(caPath);
+  }
+  cfg = { url, region: region || 'us-east-1', accessKey, secretKey, ca };
   enabled = !!(accessKey && secretKey);
   return enabled;
 }
@@ -64,7 +71,8 @@ async function s3req(method, bucket, key, query, body) {
   const lib = cfg.url.protocol === 'https:' ? https : http;
   const path = canonicalUri + (canonicalQuery ? '?' + canonicalQuery : '');
   return new Promise((resolve, reject) => {
-    const r = lib.request({ method, hostname: cfg.url.hostname, port: cfg.url.port, path, headers, timeout: 8000 }, (res) => {
+    const r = lib.request({ method, hostname: cfg.url.hostname, port: cfg.url.port, path, headers, timeout: 8000,
+      ...(cfg.url.protocol === 'https:' ? { ca: cfg.ca, servername: cfg.url.hostname, rejectUnauthorized: true } : {}) }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));

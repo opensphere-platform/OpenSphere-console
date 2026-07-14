@@ -32,7 +32,7 @@ spec:
           env:
             # CSP connect-src/frame-src에 허용할 콘솔 OIDC origin (브라우저 기준 주소)
             - name: OS_AUTH_ORIGIN
-              value: "https://localhost:8444"
+              value: "__OPENSPHERE_CONSOLE_URL__"
           volumeMounts:
             # nginx ssl_certificate 로드용 self-signed TLS (로컬-only; HTTPS 셸이 기동 시 인증서 필수)
             - name: nginx-certs

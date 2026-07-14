@@ -10,14 +10,12 @@ import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts';
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly returnUrlKey = 'opensphere.auth.returnUrl';
-  // Kanidm OIDC discovery authority(= 브라우저 발급 issuer). discovery: <authority>/.well-known/openid-configuration.
-  // localhost는 secure context라 http 셸에서도 PKCE(crypto.subtle) 동작.
-  private readonly authority = ['localhost', '127.0.0.1'].includes(window.location.hostname)
-    ? `https://${window.location.hostname}:8444/oauth2/openid/opensphere-console`
-    : 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console';
-  // 브라우저는 Console TLS origin 하나만 신뢰하면 된다. OIDC issuer(토큰 iss)는
-  // authority로 유지하되 discovery/authorize/token/JWKS 전송은 nginx의 검증된
-  // same-origin 프록시를 사용해 별도 :8444 인증서 오류를 제거한다.
+  // Setup injects the Console's one public HTTPS origin into the issuer. The
+  // browser uses that same origin for discovery, PKCE and logout; there is no
+  // separate auth hostname or localhost-only exception to configure.
+  private readonly authority = `${window.location.origin}/oauth2/openid/opensphere-console`;
+  // nginx proxies the BFF internally, so a browser needs to trust one Console
+  // certificate even when Kanidm itself remains private to the cluster.
   private readonly browserOidcBase = `${window.location.origin}/oauth2/openid/opensphere-console`;
   private mgr = new UserManager({
     authority: this.authority,
@@ -80,9 +78,9 @@ export class AuthService {
     return this.idToken;
   }
 
-  /** Kanidm 셀프서비스(비밀번호·passkey·TOTP 관리) UI */
+  /** Console-native profile surface (password, passkey and TOTP management). */
   accountUrl(): string {
-    return 'https://auth.console.opensphere.dev/ui';
+    return window.location.origin + '/me?tab=security';
   }
 
   /** 앱 부트스트랩 전 로그인 강제 (Authorization Code + PKCE S256) */

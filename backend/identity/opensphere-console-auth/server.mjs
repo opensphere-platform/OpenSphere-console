@@ -6,7 +6,7 @@
 // All other paths (/v1/*, /status …) are reverse-proxied to Kanidm so existing flows keep working.
 //
 // The id_token it mints is byte-compatible with what the console plugins verify (ES256,
-// iss=https://localhost:8444/oauth2/openid/opensphere-console, aud/azp=opensphere-console,
+// iss=Console public origin + /oauth2/openid/opensphere-console, aud/azp=opensphere-console,
 // groups) so neither the shell nor the plugins need changes.
 import https from 'node:https';
 import http from 'node:http';
@@ -21,7 +21,7 @@ import { isActivePat, verifyEs256Jwt } from './token-verifier.mjs';
 
 // ---- config ----
 const PORT = parseInt(process.env.PORT || '8443', 10);
-const ISSUER = process.env.OIDC_ISSUER || 'https://localhost:8444/oauth2/openid/opensphere-console';
+const ISSUER = process.env.OIDC_ISSUER || 'https://localhost:8090/oauth2/openid/opensphere-console';
 const ORIGIN = new URL(ISSUER).origin;
 const CLIENT_ID = process.env.OIDC_CLIENT_ID || 'opensphere-console';
 const CONSOLE_URL = process.env.CONSOLE_URL || 'https://localhost:8090/';
@@ -148,10 +148,18 @@ async function adminToken() {
   _adminTok = Buffer.from(JSON.parse(out.txt).data.token, 'base64').toString('utf8');
   return _adminTok;
 }
-async function lookupGroups(username) {
+async function lookupConsoleIdentity(username) {
   const tok = await adminToken();
   const r = await kanidmReq('GET', `/v1/person/${encodeURIComponent(username)}`, undefined, { authorization: `Bearer ${tok}` });
-  return (r.json?.attrs?.memberof || []).map((g) => String(g).split('@')[0]).filter((g) => !g.startsWith('idm_'));
+  const attrs = r.json?.attrs || {};
+  const accountExpiresAt = attrs.account_expire?.[0] ? Date.parse(attrs.account_expire[0]) : NaN;
+  return {
+    active: !Number.isFinite(accountExpiresAt) || accountExpiresAt > Date.now(),
+    groups: (attrs.memberof || []).map((g) => String(g).split('@')[0]).filter((g) => !g.startsWith('idm_'))
+  };
+}
+async function lookupGroups(username) {
+  return (await lookupConsoleIdentity(username)).groups;
 }
 
 // Authorization codes are stored in a shared Secret below. A pod-local Map breaks
@@ -325,6 +333,26 @@ function credentialStoreRequest(method, pathname, body) {
     if (data) rq.write(data);
     rq.end();
   });
+}
+
+// Liveness must answer only whether this BFF process can serve requests. Readiness,
+// on the other hand, is deliberately coupled to the two authorities it needs for
+// every privileged operation: the durable credential/audit store and the shared
+// authentication policy. Do not report Ready merely because Node is listening.
+async function bffReadiness() {
+  const state = { ready: false, credentialStore: false, authPolicy: false };
+  try {
+    const [credentialStore, authPolicy] = await Promise.all([
+      credentialStoreRequest('GET', '/readyz'),
+      k8sApi('GET', AUTH_POLICY_CM_PATH),
+    ]);
+    state.credentialStore = credentialStore.status === 200 && credentialStore.json?.ready === true;
+    state.authPolicy = authPolicy.status === 200 && typeof authPolicy.json?.data?.environment === 'string';
+    state.ready = state.credentialStore && state.authPolicy;
+  } catch (error) {
+    state.error = String(error?.message || error).slice(0, 160);
+  }
+  return state;
 }
 
 async function publishAuthAudit(actor, action, target, result, reason) {
@@ -560,7 +588,7 @@ async function requireAdmin(req) {
   const t = bearer(req);
   let pl = verifyToken(t);
   const via = pl ? 'bff' : 'kanidm';
-  if (pl?.typ !== undefined) {
+  if (pl) {
     const state = await managedTokenState(pl);
     if (!state.active) pl = null;
     else pl.groups = state.groups;
@@ -651,9 +679,13 @@ function parseDevice(raw) {
   try { return JSON.parse(raw); } catch { return null; }
 }
 async function managedTokenState(pl) {
-  if (!pl || !pl.typ) return { active: false };
+  if (!pl) return { active: false };
   let deviceId = null;
-  if (pl.typ === 'pat') {
+  if (pl.typ === undefined) {
+    // Browser OIDC sessions have no server-side jti allowlist, but they must
+    // still be bound to a live Kanidm person and its current Console roles.
+    // This makes disablement and role demotion effective on the next request.
+  } else if (pl.typ === 'pat') {
     if (!isActivePat(pl, await readPats())) return { active: false };
     try { await touchCredentialKind('pat', pl.jti); }
     catch (error) { console.error('[managed-token] last-used update failed:', error.message); }
@@ -664,16 +696,16 @@ async function managedTokenState(pl) {
   } else {
     return { active: false };
   }
-  let groups;
-  try { groups = await lookupGroups(pl.preferred_username); }
+  let identity;
+  try { identity = await lookupConsoleIdentity(pl.preferred_username); }
   catch (error) { console.error('[managed-token] live group lookup failed:', error.message); return { active: false }; }
-  if (!groups.some((group) => group.startsWith(CONSOLE_GROUP_PREFIX))) return { active: false };
+  if (!identity.active || !identity.groups.some((group) => group.startsWith(CONSOLE_GROUP_PREFIX))) return { active: false };
   return {
     active: true,
-    type: pl.typ,
+    type: pl.typ || 'browser_session',
     sub: pl.sub,
     username: pl.preferred_username,
-    groups,
+    groups: identity.groups,
     exp: pl.exp,
     jti: pl.jti,
     ...(deviceId ? { deviceId } : {}),
@@ -684,7 +716,7 @@ async function managedTokenState(pl) {
 async function handleTokenIntrospect(req, res) {
   const form = Object.fromEntries(new URLSearchParams((await readBody(req)).toString('utf8')));
   const pl = verifyToken(form.token || '');
-  if (!pl || !pl.jti) return patJson(res, 200, { active: false });
+  if (!pl) return patJson(res, 200, { active: false });
   patJson(res, 200, await managedTokenState(pl));
 }
 
@@ -1078,7 +1110,11 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
       if (req.method === 'GET' && p === EP.authorize) return await handleAuthorizeGet(reqUrl, res);
       if (req.method === 'POST' && p === EP.authorize) return await handleAuthorizePost(req, res);
       if (req.method === 'POST' && p === EP.token) return await handleToken(req, res);
-      if (p === '/bff/healthz') return send(res, 200, 'text/plain', 'ok');
+      if (p === '/healthz') return send(res, 200, 'text/plain', 'ok');
+      if (p === '/bff/healthz') {
+        const state = await bffReadiness();
+        return patJson(res, state.ready ? 200 : 503, state);
+      }
       // 관리 자격 introspection — 폐기·현재 Kanidm 역할을 매 요청 확인한다. 구 PAT 경로는 호환 alias.
       if ((p === '/bff/token/introspect' || p === '/bff/pat/introspect') && req.method === 'POST') return await handleTokenIntrospect(req, res);
       // Human CLI device authorization: 등록 시작/대기는 unauthenticated one-time flow,

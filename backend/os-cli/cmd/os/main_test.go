@@ -40,6 +40,28 @@ func TestJSONCallRejectsSuccessfulHTMLFallback(t *testing.T) {
 	}
 }
 
+func TestRegistryDiscoveryRejectsHTMLAndInvalidSchema(t *testing.T) {
+	for _, response := range []struct {
+		contentType string
+		body        string
+	}{
+		{"text/html", "<!doctype html>"},
+		{"application/json", `{"version":2,"plugins":[]}`},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", response.contentType)
+			_, _ = w.Write([]byte(response.body))
+		}))
+		cfg := defaults()
+		cfg.PAT, cfg.RegistryURL = "test-token", server.URL
+		var out bytes.Buffer
+		if err := registry(cfg, nil, &out); err == nil {
+			t.Fatalf("registry discovery must fail closed for %s", response.contentType)
+		}
+		server.Close()
+	}
+}
+
 // F-2: --pat-stdin은 stdin에서 PAT를 읽어 argv 노출을 없앤다. 원격 endpoint를 지정하면
 // whoami 검증이 네트워크로 나가기 전에 stdin 파싱이 선행되므로, 여기서는 파싱 경계만 검증한다.
 func TestLoginReadsPatFromStdin(t *testing.T) {

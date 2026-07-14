@@ -162,14 +162,15 @@ spec:
             # Backbone RustFS(S3) ??BackboneClaim objectStore ?좊떦(踰꾪궥 ?앹꽦 + ?뚮꼳??Secret).
             #   ?몄뒪?댁뒪 ?ㅻ뒗 而⑦듃濡ㅻ윭媛 opensphere-backbone/backbone-rustfs Secret??K8s API濡??쎌쓬(dupa-backbone-installer RBAC).
             #   媛믪? 肄붾뱶 湲곕낯媛믨낵 ?숈씪(?ㅻ쾭?쇱씠??臾몄꽌?붿슜). 誘몄꽕移???objectStore??Pending.
-            - { name: BACKBONE_S3_ENDPOINT, value: http://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 }
+            - { name: BACKBONE_S3_ENDPOINT, value: https://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 }
             - { name: BACKBONE_S3_REGION, value: us-east-1 }
+            - { name: BACKBONE_S3_CA_PATH, value: /etc/kanidm-ca/ca.crt }
             # Kanidm id_token 발급자(iss) 검증값 — 도메인 운영 전환(auth.console.opensphere.dev) 반영.
-            - { name: KANIDM_ISSUERS, value: "https://localhost:8444/oauth2/openid/opensphere-console,https://auth.console.opensphere.dev/oauth2/openid/opensphere-console" }
+            - { name: KANIDM_ISSUERS, value: "__OPENSPHERE_CONSOLE_URL__/oauth2/openid/opensphere-console" }
             - { name: KANIDM_JWKS_URL, value: "https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
             - { name: KANIDM_CA_PATH, value: /etc/kanidm-ca/ca.crt }
             # BFF 발급 PAT는 매 요청 서버측 상태 검사. 폐기 후 서명 만료까지 살아남는 우회를 금지한다.
-            - { name: TOKEN_INTROSPECTION_URL, value: https://opensphere-console-auth.opensphere-console.svc:8443/bff/pat/introspect }
+            - { name: TOKEN_INTROSPECTION_URL, value: https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect }
             - { name: TOKEN_INTROSPECTION_SERVERNAME, value: kanidm.opensphere-console-auth.svc }
           volumeMounts:
             - { name: kanidm-ca, mountPath: /etc/kanidm-ca, readOnly: true }

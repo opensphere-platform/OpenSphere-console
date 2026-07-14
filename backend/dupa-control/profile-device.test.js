@@ -92,6 +92,51 @@ test('administrators can inspect per-user token metadata and revoke without toke
   assert.match(page, /\/bff\/admin\/tokens\/\$\{encodeURIComponent\(token\.jti\)\}/);
 });
 
+test('every management surface uses live identity introspection after signature verification', () => {
+  const auth = read('backend/identity/opensphere-console-auth/server.mjs');
+  const backend = read('backend/opensphere-console-backend/server.js');
+  const backendDeploy = read('backend/opensphere-console-backend/deploy.yaml');
+  const dupa = read('backend/dupa-control/controller.js');
+
+  assert.match(auth, /async function lookupConsoleIdentity\(username\)/);
+  assert.match(auth, /active: !Number\.isFinite\(accountExpiresAt\) \|\| accountExpiresAt > Date\.now\(\)/);
+  assert.match(auth, /if \(!identity\.active \|\| !identity\.groups\.some/);
+  assert.match(auth, /if \(!pl\) return patJson\(res, 200, \{ active: false \}\);/);
+  assert.match(backend, /function introspectConsoleToken\(jwt\)/);
+  assert.match(backend, /assertLiveTokenState\(claims, state\)/);
+  assert.match(backend, /const groups = \(state\.groups \|\| \[\]\)/);
+  assert.match(backendDeploy, /TOKEN_INTROSPECTION_URL/);
+  assert.match(dupa, /function introspectManagedToken\(jwt\)/);
+  assert.match(dupa, /managedState = await introspectManagedToken\(m\[1\]\)/);
+  assert.doesNotMatch(dupa, /if \(claims\.typ === undefined\) return;/);
+});
+
+test('ordinary IGA onboarding cannot mint a reset secret for an administrator', () => {
+  const identity = read('backend/opensphere-console-backend/server.js');
+  assert.match(identity, /const ONBOARDING_TTL_SECONDS = 3600/);
+  assert.match(identity, /if \(roles\.includes\(KANIDM_ADMIN_GROUP\)\)/);
+  assert.match(identity, /if \(await isConsoleAdministrator\(uname\)\)/);
+  assert.match(identity, /administrator target requires a separate recovery approval/);
+});
+
+test('release manifests receive one Setup-managed Console origin', () => {
+  const authDeploy = read('backend/identity/opensphere-console-auth/deploy.yaml');
+  const shellDeploy = read('deploy/opensphere-console.yaml');
+  const backendDeploy = read('backend/opensphere-console-backend/deploy.yaml');
+  const dupaDeploy = read('backend/dupa-control/opensphere-console-dupa-controller.yaml');
+  const auth = read('backend/identity/opensphere-console-auth/server.mjs');
+  const browser = read('src/app/core/auth.service.ts');
+
+  for (const manifest of [authDeploy, shellDeploy, backendDeploy, dupaDeploy]) {
+    assert.match(manifest, /__OPENSPHERE_CONSOLE_URL__/);
+  }
+  assert.match(authDeploy, /OIDC_ISSUER/);
+  assert.match(authDeploy, /OIDC_REDIRECT_URIS/);
+  assert.match(auth, /process\.env\.OIDC_ISSUER \|\| 'https:\/\/localhost:8090\/oauth2/);
+  assert.match(browser, /private readonly authority = `\$\{window\.location\.origin\}\/oauth2\/openid\/opensphere-console`/);
+  assert.doesNotMatch(browser, /auth\.console\.opensphere\.dev/);
+});
+
 test('runAsNonRoot Node workloads use numeric image and pod identities', () => {
   for (const [dockerfilePath, deploymentPath] of [
     ['backend/identity/opensphere-console-auth/Dockerfile', 'backend/identity/opensphere-console-auth/deploy.yaml'],

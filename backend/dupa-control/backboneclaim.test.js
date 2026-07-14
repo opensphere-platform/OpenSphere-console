@@ -15,13 +15,16 @@ test('BackboneClaim CRD exposes postgres appRole contract', () => {
   assert.match(crd, /username:\s*\{\s*type:\s*string,\s*pattern:\s*'\^\[a-z_\]/);
 });
 
-test('BackboneClaim reconciler issues runtime app-role Secret', () => {
+test('BackboneClaim reconciler issues only a runtime app-role Secret', () => {
   assert.match(controller, /const appSecretName = `\$\{name\}-backbone-postgres-app`/);
   assert.match(controller, /cr\.spec\?\.postgres\?\.appRole\?\.enabled === false/);
+  assert.match(controller, /owner credential을 발급하지 않으며 appRole을 비활성화할 수 없습니다/);
   assert.match(controller, /postgresAppRoleName\(dbName, cr, appSec\)/);
   assert.match(controller, /db\.provisionTenantAppRole\(dbName, appUser, appPw\)/);
   assert.match(controller, /role:\s*'app'/);
-  assert.match(controller, /status\.postgres\.appSecretRef = appSecretName/);
+  assert.match(controller, /secretRef: appSecretName/);
+  assert.match(controller, /ownerCredential: 'sealed-nologin'/);
+  assert.match(controller, /secrets\/\$\{legacySecretName\}`\)/);
 });
 
 test('BackboneClaim GC removes app role and app Secret', () => {
@@ -33,8 +36,10 @@ test('Backbone PostgreSQL helper creates least-privilege app role', () => {
   assert.match(db, /async function provisionTenantAppRole\(database, username, password\)/);
   assert.match(db, /const qLiteral = \(s\) =>/);
   assert.match(db, /CREATE ROLE \$\{qIdent\(username\)\} LOGIN PASSWORD \$\{qLiteral\(password\)\}/);
-  assert.doesNotMatch(db, /function provisionTenantAppRole[\s\S]*password must be alnum \(hex\)/);
+  assert.match(db, /NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
   assert.match(db, /GRANT CONNECT ON DATABASE/);
-  assert.match(db, /GRANT USAGE ON SCHEMA public/);
+  assert.match(db, /GRANT USAGE, CREATE ON SCHEMA public/);
+  assert.match(db, /const tenantOwnerName/);
+  assert.match(db, /NOLOGIN NOSUPERUSER/);
   assert.match(db, /module\.exports = \{[\s\S]*provisionTenantAppRole/);
 });

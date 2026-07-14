@@ -55,9 +55,11 @@ type RegistryItem struct {
 }
 
 type Registry struct {
+	Version      int              `json:"version"`
 	Capabilities []map[string]any `json:"capabilities"`
 	Plugins      []RegistryItem   `json:"plugins"`
 	Templates    []map[string]any `json:"templates"`
+	TrustedKeys  map[string]any   `json:"trustedKeys"`
 }
 
 type Tool struct {
@@ -682,26 +684,55 @@ func registry(cfg Config, args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	b, status, err := request(cfg, http.MethodGet, cfg.RegistryURL, nil, "")
+	b, status, contentType, err := requestWithContentType(cfg, http.MethodGet, cfg.RegistryURL, nil, "")
 	if err != nil {
 		return err
 	}
 	if err := requireOK(b, status); err != nil {
 		return err
 	}
+	if err := requireJSONResponse(contentType, "Console Registry"); err != nil {
+		return err
+	}
+	var reg Registry
+	if err := json.Unmarshal(b, &reg); err != nil {
+		return fmt.Errorf("Console Registry JSON is invalid: %w", err)
+	}
+	if err := validateRegistry(reg); err != nil {
+		return err
+	}
 	if *kind == "" {
 		return pretty(out, b)
 	}
 	_ = output // -o는 하위호환을 위해 수용하되 현재 출력은 항상 JSON이다.
-	var reg map[string]json.RawMessage
-	if err := json.Unmarshal(b, &reg); err != nil {
-		return err
-	}
 	key := map[string]string{"capability": "capabilities", "plugin": "plugins", "template": "templates"}[*kind]
 	if key == "" {
 		return fmt.Errorf("알 수 없는 kind: %s", *kind)
 	}
-	return pretty(out, reg[key])
+	return pretty(out, map[string]any{"capabilities": reg.Capabilities, "plugins": reg.Plugins, "templates": reg.Templates}[key])
+}
+
+func requireJSONResponse(contentType, subject string) error {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || (mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json")) {
+		return fmt.Errorf("%s returned %q instead of JSON", subject, contentType)
+	}
+	return nil
+}
+
+func validateRegistry(reg Registry) error {
+	if reg.Version != 3 || reg.Capabilities == nil || reg.Plugins == nil || reg.Templates == nil || reg.TrustedKeys == nil {
+		return errors.New("Console Registry schema is invalid or unsupported")
+	}
+	for _, plugin := range reg.Plugins {
+		if plugin.ID == "" || plugin.Name == "" {
+			return errors.New("Console Registry contains an invalid plugin entry")
+		}
+		if plugin.CLI != nil && (plugin.CLI.Namespace == "" || plugin.CLI.ManifestPath == "" || plugin.CLI.APIBase == "") {
+			return errors.New("Console Registry contains an invalid CLI contribution")
+		}
+	}
+	return nil
 }
 
 var resourcePaths = map[string]string{
@@ -1022,15 +1053,21 @@ func validResourceName(value string) bool {
 
 func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	ns := args[0]
-	b, status, err := request(cfg, http.MethodGet, cfg.RegistryURL, nil, "")
+	b, status, contentType, err := requestWithContentType(cfg, http.MethodGet, cfg.RegistryURL, nil, "")
 	if err != nil {
 		return err
 	}
 	if err := requireOK(b, status); err != nil {
 		return err
 	}
+	if err := requireJSONResponse(contentType, "Console Registry"); err != nil {
+		return err
+	}
 	var reg Registry
 	if err := json.Unmarshal(b, &reg); err != nil {
+		return err
+	}
+	if err := validateRegistry(reg); err != nil {
 		return err
 	}
 	var contribution *CLIContribution
@@ -1045,11 +1082,14 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	}
 	base := join(cfg.ConsoleURL, contribution.APIBase)
 	manifestURL := join(base, contribution.ManifestPath)
-	manifestBytes, status, err := request(cfg, http.MethodGet, manifestURL, nil, "")
+	manifestBytes, status, manifestContentType, err := requestWithContentType(cfg, http.MethodGet, manifestURL, nil, "")
 	if err != nil {
 		return err
 	}
 	if err := requireOK(manifestBytes, status); err != nil {
+		return err
+	}
+	if err := requireJSONResponse(manifestContentType, "CLI contribution manifest"); err != nil {
 		return err
 	}
 	if len(args) == 1 || args[1] == "manifest" {
@@ -1058,6 +1098,9 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	var manifest ToolManifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return err
+	}
+	if manifest.Kind == "" || len(manifest.Tools) == 0 {
+		return errors.New("CLI contribution manifest schema is invalid")
 	}
 	commandWords := nonFlagArgs(args[1:])
 	var selected *Tool

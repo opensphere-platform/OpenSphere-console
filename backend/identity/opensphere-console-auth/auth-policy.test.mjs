@@ -81,3 +81,14 @@ test('authorization codes use the shared one-time Secret store', () => {
   assert.match(server, /takeAuthorizationCode/);
   assert.match(server, /resourceVersion/);
 });
+
+test('BFF readiness verifies durable credential storage and the authentication policy', () => {
+  const server = fs.readFileSync(new URL('./server.mjs', import.meta.url), 'utf8');
+  const deploy = fs.readFileSync(new URL('./deploy.yaml', import.meta.url), 'utf8');
+  assert.match(server, /async function bffReadiness\(\)/);
+  assert.match(server, /credentialStoreRequest\('GET', '\/readyz'\)/);
+  assert.match(server, /k8sApi\('GET', AUTH_POLICY_CM_PATH\)/);
+  assert.match(server, /p === '\/bff\/healthz'[\s\S]{0,180}state\.ready \? 200 : 503/);
+  assert.match(deploy, /readinessProbe:[\s\S]{0,120}path: \/bff\/healthz/);
+  assert.match(deploy, /livenessProbe:[\s\S]{0,120}path: \/healthz/);
+});

@@ -33,6 +33,9 @@ test('durable audit is fail-closed with no ConfigMap fallback', () => {
   assert.match(db, /audit_no_update/);
   assert.match(db, /audit_no_delete/);
   assert.match(db, /audit_no_truncate/);
+  assert.match(db, /source, actor, action, target, result, reason/);
+  assert.match(db, /Backbone PostgreSQL CA is required/);
+  assert.match(db, /rejectUnauthorized: true/);
   assert.doesNotMatch(db, /CREATE TRIGGER audit_log_append_only/);
   assert.doesNotMatch(db, /CREATE TABLE IF NOT EXISTS audit_log/);
   assert.match(db, /async function mutateManagedCredential/);
@@ -62,6 +65,28 @@ test('Backbone bootstrap pins and isolates all three pillars', () => {
   assert.match(backbone, /opensphere_audit_owner/);
   assert.match(backbone, /CREATE ROLE console LOGIN PASSWORD/);
   assert.match(backbone, /ENABLE ALWAYS TRIGGER audit_log_append_only/);
+  assert.match(backbone, /source\s+text NOT NULL DEFAULT 'dupa-controller'/);
+  assert.match(backbone, /ssl=on/);
+  assert.match(backbone, /ssl_cert_file=\/var\/run\/postgres-tls\/tls\.crt/);
+  assert.match(backbone, /PGSSLMODE, value: verify-full/);
+  assert.match(backbone, /GITEA__database__SSL_MODE, value: require/);
+  assert.match(backbone, /RUSTFS_TLS_PATH, value: \/var\/run\/rustfs-tls/);
+  assert.match(backbone, /rustfs_cert\.pem/);
+  assert.match(backbone, /RUSTFS_ENDPOINT, value: https:\/\/backbone-rustfs/);
+  assert.match(backbone, /GITEA__lfs__MINIO_USE_SSL, value: "true"/);
   assert.doesNotMatch(backbone, /audit-migration/);
   assert.doesNotMatch(backbone, /:latest\b/);
+});
+
+test('audit evidence has a retained RustFS backup and a non-destructive restore drill', () => {
+  assert.match(backbone, /kind: CronJob\nmetadata:\n  name: backbone-postgres-backup/);
+  assert.match(backbone, /pg_dump -h backbone-postgres/);
+  assert.match(backbone, /--format=custom --no-owner --no-privileges/);
+  assert.match(backbone, /--aws-sigv4 "aws:amz:us-east-1:s3"/);
+  assert.match(backbone, /--cacert \/tls\/ca\.crt/);
+  assert.match(backbone, /BACKUP_RETENTION_DAYS/);
+  assert.match(backbone, /kind: CronJob\nmetadata:\n  name: backbone-postgres-restore-drill/);
+  assert.match(backbone, /suspend: true/);
+  assert.match(backbone, /pg_restore -h backbone-postgres/);
+  assert.match(backbone, /console_restore_drill_/);
 });

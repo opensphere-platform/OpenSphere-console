@@ -13,13 +13,16 @@ let pool = null;
 let enabled = false;
 let cfg = null; // 다른 데이터베이스로 transient Client 연결할 때 재사용(PG는 cross-DB 쿼리 불가).
 
-async function init({ host, port, database, user, password }) {
+async function init({ host, port, database, user, password, sslCa }) {
   // 재시도 호출(이전 init 실패)일 때 끊긴 pool 정리 → 누수 방지. 성공 후엔 호출자 isEnabled 가드로 재호출 안 됨.
   if (pool) { try { await pool.end(); } catch { /* noop */ } pool = null; }
   enabled = false;
-  cfg = { host, port: Number(port) || 5432, user, password };
+  if (!sslCa) throw new Error('Backbone PostgreSQL CA is required');
+  const ssl = { ca: sslCa, rejectUnauthorized: true, servername: host };
+  cfg = { host, port: Number(port) || 5432, user, password, ssl };
   pool = new Pool({
     host, port: Number(port) || 5432, database, user, password,
+    ssl,
     max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000,
   });
   pool.on('error', (e) => console.error('[db] pool error:', (e && e.message) || e));
@@ -55,13 +58,14 @@ async function ensureSchema() {
   }
 }
 
-// 감사 이벤트 INSERT(append-only). e = {time, opId, actor, action, target, result, reason}.
+// 감사 이벤트 INSERT(append-only). source는 GUI/CLI/BFF/extension을 추적하는 신뢰된 발행 경로다.
+// e = {time, opId, source, actor, action, target, result, reason}.
 async function insertAudit(e) {
   if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
   try {
     await pool.query(
-      'INSERT INTO audit_log (ts, op_id, actor, action, target, result, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [e.time || new Date().toISOString(), e.opId || '', e.actor || 'system', e.action || '', e.target || '', e.result || '', e.reason || ''],
+      'INSERT INTO audit_log (ts, op_id, source, actor, action, target, result, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [e.time || new Date().toISOString(), e.opId || '', e.source || 'dupa-controller', e.actor || 'system', e.action || '', e.target || '', e.result || '', e.reason || ''],
     );
     return true;
   } catch (e2) {
@@ -85,11 +89,11 @@ async function healthCheck() {
 async function recentAudit(limit) {
   if (!enabled) return [];
   const r = await pool.query(
-    'SELECT ts, op_id, actor, action, target, result, reason FROM audit_log ORDER BY ts DESC LIMIT $1',
+    'SELECT ts, op_id, source, actor, action, target, result, reason FROM audit_log ORDER BY ts DESC LIMIT $1',
     [Number(limit) || 500],
   );
   return r.rows.map((x) => ({
-    time: x.ts instanceof Date ? x.ts.toISOString() : String(x.ts),
+    time: x.ts instanceof Date ? x.ts.toISOString() : String(x.ts), source: x.source || 'dupa-controller',
     opId: x.op_id || '', actor: x.actor || 'system', action: x.action || '',
     target: x.target || '', result: x.result || '', reason: x.reason || '',
   }));
@@ -147,8 +151,8 @@ async function mutateManagedCredential({ kind, id, owner, record, audit }) {
       );
     }
     await client.query(
-      'INSERT INTO audit_log (ts, op_id, actor, action, target, result, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [audit?.time || new Date().toISOString(), audit?.opId || '', audit?.actor || owner || 'system',
+      'INSERT INTO audit_log (ts, op_id, source, actor, action, target, result, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [audit?.time || new Date().toISOString(), audit?.opId || '', audit?.source || 'dupa-controller', audit?.actor || owner || 'system',
         audit?.action || `${kind}-${record === null ? 'revoke' : 'upsert'}`, `${kind}/${id}`,
         audit?.result || 'accepted', audit?.reason || ''],
     );
@@ -244,17 +248,29 @@ async function previewRows(database, schema, table, limit) {
   } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
 }
 
-// ── 테넌트 프로비저닝(BackboneClaim reconciler용) — 전용 role+database 생성/해제. ──
-// password는 호출자가 hex로 생성(특수문자 없음 → DDL 인라인 안전). role=database 동명.
-async function provisionTenant(database, password) {
+// ── 테넌트 프로비저닝(BackboneClaim reconciler용) ───────────────────────────
+// DB 소유자는 결코 소비자 Secret에 발급하지 않는 NOLOGIN 역할이다. 소비자는 별도의
+// app role 하나만 받아 자기 전용 DB의 public schema에서 일반 DDL/DML을 수행한다.
+const { createHash } = require('crypto');
+const tenantOwnerName = (database) => `os_owner_${createHash('sha256').update(database).digest('hex').slice(0, 16)}`;
+
+async function provisionTenant(database) {
   if (!enabled) throw new Error('pg not connected');
   if (!VALID_IDENT.test(database || '')) throw new Error('invalid database name');
-  if (!/^[A-Za-z0-9]+$/.test(password || '')) throw new Error('password must be alnum (hex)');
-  const role = await pool.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [database]);
-  if (role.rowCount) await pool.query(`ALTER ROLE ${qIdent(database)} LOGIN PASSWORD '${password}'`);
-  else await pool.query(`CREATE ROLE ${qIdent(database)} LOGIN PASSWORD '${password}'`);
+  const owner = tenantOwnerName(database);
+  const ownerRole = await pool.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [owner]);
+  if (!ownerRole.rowCount) await pool.query(`CREATE ROLE ${qIdent(owner)} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+  // Legacy claims used the database-named LOGIN owner. Make it immediately
+  // non-login before the former owner Secret is removed; fresh claims never
+  // create this role at all.
+  const legacyRole = await pool.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [database]);
+  if (legacyRole.rowCount && database !== owner) {
+    await pool.query(`ALTER ROLE ${qIdent(database)} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+  }
   const dbx = await pool.query('SELECT 1 FROM pg_database WHERE datname=$1', [database]);
-  if (!dbx.rowCount) await pool.query(`CREATE DATABASE ${qIdent(database)} OWNER ${qIdent(database)}`);
+  if (!dbx.rowCount) await pool.query(`CREATE DATABASE ${qIdent(database)} OWNER ${qIdent(owner)}`);
+  else await pool.query(`ALTER DATABASE ${qIdent(database)} OWNER TO ${qIdent(owner)}`);
+  return owner;
 }
 
 async function provisionTenantAppRole(database, username, password) {
@@ -263,8 +279,8 @@ async function provisionTenantAppRole(database, username, password) {
   if (!VALID_IDENT.test(username || '')) throw new Error('invalid app role name');
   if (!password) throw new Error('password is required');
   const role = await pool.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [username]);
-  if (role.rowCount) await pool.query(`ALTER ROLE ${qIdent(username)} LOGIN PASSWORD ${qLiteral(password)}`);
-  else await pool.query(`CREATE ROLE ${qIdent(username)} LOGIN PASSWORD ${qLiteral(password)}`);
+  if (role.rowCount) await pool.query(`ALTER ROLE ${qIdent(username)} LOGIN PASSWORD ${qLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+  else await pool.query(`CREATE ROLE ${qIdent(username)} LOGIN PASSWORD ${qLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
   const dbx = await pool.query('SELECT 1 FROM pg_database WHERE datname=$1', [database]);
   if (!dbx.rowCount) throw new Error(`database ${database} is not provisioned`);
   await pool.query(`GRANT CONNECT ON DATABASE ${qIdent(database)} TO ${qIdent(username)}`);
@@ -272,7 +288,7 @@ async function provisionTenantAppRole(database, username, password) {
   try {
     client = new Client({ ...cfg, database, connectionTimeoutMillis: 4000 });
     await client.connect();
-    await client.query(`GRANT USAGE ON SCHEMA public TO ${qIdent(username)}`);
+    await client.query(`GRANT USAGE, CREATE ON SCHEMA public TO ${qIdent(username)}`);
   } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
 }
 
@@ -284,6 +300,7 @@ async function dropTenant(database, appRole) {
     try { await pool.query(`DROP ROLE IF EXISTS ${qIdent(appRole)}`); } catch (e) { console.error('[db] dropTenant app role:', String(e).slice(0, 80)); }
   }
   try { await pool.query(`DROP ROLE IF EXISTS ${qIdent(database)}`); } catch (e) { console.error('[db] dropTenant role:', String(e).slice(0, 80)); }
+  try { await pool.query(`DROP ROLE IF EXISTS ${qIdent(tenantOwnerName(database))}`); } catch (e) { console.error('[db] dropTenant owner:', String(e).slice(0, 80)); }
 }
 
 // ── 함수 생성(가이드 폼) — admin 게이트 뒤 첫 DDL 쓰기. 식별자 검증 + body 달러 인용. ──

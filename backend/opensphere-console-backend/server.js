@@ -36,6 +36,12 @@ const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
 const KANIDM_SELFSERVICE_URL = process.env.KANIDM_SELFSERVICE_URL || 'https://localhost:8444/ui';
+// Every Console management surface asks the BFF for the live identity state.
+// Signature verification is still local, but group claims alone may be stale
+// after a user is disabled or demoted.
+const TOKEN_INTROSPECTION_URL = process.env.TOKEN_INTROSPECTION_URL
+  || 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect';
+const TOKEN_INTROSPECTION_SERVERNAME = process.env.TOKEN_INTROSPECTION_SERVERNAME || KANIDM_TLS_SERVERNAME;
 // AG-1(감사 시정): group 매핑은 '콘솔 역할 그룹'으로만 제한한다. 이 allowlist가 없으면 임의 그룹(UUID)에
 // 멤버를 넣을 수 있어, 콘솔 관리자가 Kanidm 시스템 그룹(idm_admins 등)에 자신/타인을 추가해 IdP 슈퍼관리자로
 // 상승할 수 있었다. BFF /bff/roles의 isConsoleRole()과 동일 경계를 이 경로에도 강제한다.
@@ -109,6 +115,58 @@ function _kanidmGetJwks(force) {
     rq.on('error', reject); rq.end();
   });
 }
+
+function introspectConsoleToken(jwt) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(TOKEN_INTROSPECTION_URL);
+    const body = Buffer.from(new URLSearchParams({ token: jwt }).toString());
+    const request = https.request({
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + u.search,
+      method: 'POST',
+      ca: kanidmCa(),
+      servername: TOKEN_INTROSPECTION_SERVERNAME,
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'content-length': body.length,
+        accept: 'application/json'
+      }
+    }, (response) => {
+      const chunks = [];
+      let size = 0;
+      response.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 64 * 1024) chunks.push(chunk);
+      });
+      response.on('end', () => {
+        if (size > 64 * 1024) return reject(new Error('token introspection response too large'));
+        if (response.statusCode !== 200) return reject(new Error(`token introspection HTTP ${response.statusCode}`));
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+        catch { reject(new Error('token introspection returned invalid JSON')); }
+      });
+    });
+    request.setTimeout(3000, () => request.destroy(new Error('token introspection timeout')));
+    request.on('error', reject);
+    request.write(body);
+    request.end();
+  });
+}
+
+function assertLiveTokenState(claims, state) {
+  if (!state || state.active !== true) throw { code: 401, msg: 'credential inactive or revoked' };
+  if (state.sub !== claims.sub || state.username !== claims.preferred_username || state.exp !== claims.exp) {
+    throw { code: 401, msg: 'credential state mismatch' };
+  }
+  if (claims.typ !== undefined) {
+    if (!claims.jti || state.jti !== claims.jti || state.type !== claims.typ) {
+      throw { code: 401, msg: 'managed credential state mismatch' };
+    }
+    if (claims.typ === 'cli_session' && state.deviceId !== claims.device_id) {
+      throw { code: 401, msg: 'device state mismatch' };
+    }
+  }
+}
 async function verifyAuthed(req) {
   const auth = req.headers['authorization'] || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
@@ -134,7 +192,11 @@ async function verifyAuthed(req) {
   const now = Date.now();
   if (claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
   if (claims.nbf && claims.nbf * 1000 > now + 30000) throw { code: 401, msg: 'token not yet valid' };
-  const groups = (claims.groups || []).map((g) => shortName(g).replace(/^\//, ''));
+  let state;
+  try { state = await introspectConsoleToken(m[1]); }
+  catch (error) { throw { code: 503, msg: `token introspection unavailable: ${error.message}` }; }
+  assertLiveTokenState(claims, state);
+  const groups = (state.groups || []).map((g) => shortName(g).replace(/^\//, ''));
   return { username: claims.preferred_username || 'unknown', groups };
 }
 async function verifyActor(req) {
@@ -200,13 +262,21 @@ async function identityPayload() {
 // 쓰기용 uuid→name 해석(프론트는 uuid를 보냄; Kanidm _attr API는 name 사용)
 async function personNameByUuid(uuid) { const ps = await kreq('GET', '/v1/person'); const e = (ps || []).find((x) => a1(x.attrs, 'uuid') === uuid); return e ? a1(e.attrs, 'name') : null; }
 async function groupNameByUuid(uuid) { const gs = await kreq('GET', '/v1/group'); const e = (gs || []).find((x) => a1(x.attrs, 'uuid') === uuid); return e ? a1(e.attrs, 'name') : null; }
-// Kanidm credential update intent → 콘솔 same-origin 온보딩 경로(/ui/reset?token=…). 실패 시 빈 문자열(생성 성공은 유지).
-async function onboardingLink(uname, ttl = 86400) {
+// Credential-reset links are high-impact secrets. They are short-lived and are
+// never issued for a current Console administrator from the ordinary IGA flow.
+const ONBOARDING_TTL_SECONDS = 3600;
+async function onboardingLink(uname, ttl = ONBOARDING_TTL_SECONDS) {
   try {
     const intent = await kreq('GET', `/v1/person/${uname}/_credential/_update_intent/${ttl}`);
     const token = (typeof intent === 'string' ? intent : (intent && (intent.token || intent.intent_token)) || (Array.isArray(intent) ? intent[0] : '')) || '';
     return token ? `/ui/reset?token=${encodeURIComponent(token)}` : '';
   } catch (e) { console.error('[onboarding intent]', String(e).slice(0, 160)); return ''; }
+}
+async function isConsoleAdministrator(uname) {
+  const person = await kreq('GET', `/v1/person/${uname}`);
+  if (!person?.attrs) throw new Error('live administrator membership lookup failed');
+  return aN(person?.attrs, 'memberof').map((group) => shortName(group).replace(/^\//, ''))
+    .includes(KANIDM_ADMIN_GROUP);
 }
 
 async function readBody(req) { const chunks = []; let n = 0; for await (const c of req) { n += c.length; if (n > MAX_BODY) throw { code: 413, msg: 'payload too large' }; chunks.push(c); } const s = Buffer.concat(chunks).toString(); return s ? JSON.parse(s) : {}; }
@@ -327,6 +397,12 @@ const server = http.createServer(async (req, res) => {
       // AG-1: 생성 시 역할 부여는 콘솔 역할 그룹으로만 제한(임의/시스템 그룹 차단).
       const roles = Array.isArray(body.roles) ? [...new Set(body.roles.map((r) => String(r).trim()).filter(Boolean))] : [];
       for (const g of roles) { if (!CONSOLE_ROLE_GROUPS.has(g)) return json(res, 400, { error: `허용되지 않은 역할 그룹: ${g}` }); }
+      // An administrator must first finish an ordinary user enrollment and then
+      // be promoted by another administrator. An admin reset link is an account
+      // takeover primitive and cannot be produced by this self-service path.
+      if (roles.includes(KANIDM_ADMIN_GROUP)) {
+        return json(res, 409, { error: '관리자 역할은 일반 사용자 온보딩 완료 후 별도 권한 부여로 처리하세요' });
+      }
       try { await requireBackbone(); await logAudit(actor.username, 'iga-create-user', username, 'attempt', `${reason}${roles.length ? ' · roles=' + roles.join(',') : ''}`); }
       catch { return json(res, 503, { error: 'Backbone audit unavailable' }); }
       try {
@@ -368,6 +444,10 @@ const server = http.createServer(async (req, res) => {
       try {
         const uname = await personNameByUuid(mOnboard[1]);
         if (!uname) return json(res, 404, { error: 'person not found' });
+        if (await isConsoleAdministrator(uname)) {
+          await logAudit(actor.username, 'onboarding-link', uname, 'denied', 'administrator target requires a separate recovery approval');
+          return json(res, 403, { error: '관리자 계정의 credential reset은 별도 복구 승인 절차를 사용해야 합니다' });
+        }
         const onboardingPath = await onboardingLink(uname);
         await logAudit(actor.username, 'onboarding-link', uname, onboardingPath ? 'ok' : 'error', body.reason);
         return json(res, 200, { ok: true, username: uname, onboardingPath });

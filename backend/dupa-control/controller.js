@@ -62,11 +62,11 @@ const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opens
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
 const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
-// BFF가 발급한 장기 자격(PAT)은 서명만으로 충분하지 않다. 발급 후 폐기 여부의
-// 단일 권위는 auth BFF의 서버측 allowlist이므로 모든 DUPA 관리/CLI 요청마다 확인한다.
-// 이 검사는 캐시하지 않는다. 사용자가 자격을 폐기하면 다음 요청부터 즉시 거부돼야 한다.
+// BFF가 발급한 모든 콘솔 자격(브라우저 OIDC 세션·PAT·CLI 세션)은 서명만으로 충분하지 않다.
+// 단일 권위는 auth BFF의 서버측 상태와 현재 Kanidm 역할이므로 모든 DUPA 요청마다 확인한다.
+// 이 검사는 캐시하지 않는다. 계정 비활성화·역할 회수·자격 폐기는 다음 요청부터 즉시 거부돼야 한다.
 const TOKEN_INTROSPECTION_URL = process.env.TOKEN_INTROSPECTION_URL
-  || 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/pat/introspect';
+  || 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect';
 const TOKEN_INTROSPECTION_SERVERNAME = process.env.TOKEN_INTROSPECTION_SERVERNAME || KANIDM_TLS_SERVERNAME;
 let _kanidmCa;
 function kanidmCa() { if (_kanidmCa === undefined) { try { _kanidmCa = fs.readFileSync(KANIDM_CA_PATH); } catch (e) { console.error('[auth] kanidm CA read failed: ' + e); _kanidmCa = null; } } return _kanidmCa; }
@@ -98,13 +98,19 @@ function assertClaims(header, claims, now = Date.now()) {
   if (claims.nbf && claims.nbf * 1000 > now + 30000) throw { code: 401, msg: 'token not yet valid' };
 }
 function assertManagedTokenActive(claims, state) {
-  if (claims.typ === undefined) return; // 브라우저 OIDC id_token은 서명/표준 claim으로 검증한다.
-  if (claims.typ !== 'pat' && claims.typ !== 'cli_session') throw { code: 401, msg: 'unsupported token type' };
+  if (claims.typ !== undefined && claims.typ !== 'pat' && claims.typ !== 'cli_session') {
+    throw { code: 401, msg: 'unsupported token type' };
+  }
   if (!state || state.active !== true) throw { code: 401, msg: 'credential inactive or revoked' };
-  if (!claims.jti || state.jti !== claims.jti || state.sub !== claims.sub
-      || state.username !== claims.preferred_username || state.exp !== claims.exp) {
+  if (state.sub !== claims.sub || state.username !== claims.preferred_username || state.exp !== claims.exp) {
     throw { code: 401, msg: 'credential state mismatch' };
   }
+  // Browser id_token도 live Kanidm 계정/역할에 bind된다. 서명 당시 claim만 믿지 않는다.
+  if (claims.typ === undefined) {
+    if (state.type !== 'browser_session') throw { code: 401, msg: 'browser session state mismatch' };
+    return;
+  }
+  if (!claims.jti || state.jti !== claims.jti) throw { code: 401, msg: 'credential state mismatch' };
   if (claims.typ === 'cli_session' && (!claims.device_id || state.deviceId !== claims.device_id)) {
     throw { code: 401, msg: 'device state mismatch' };
   }
@@ -161,13 +167,12 @@ async function verifyAuthed(req) {
   const pub = createPublicKey({ key: jwk, format: 'jwk' });
   if (!verify('SHA256', Buffer.from(`${h}.${pp}`), { key: pub, dsaEncoding: 'ieee-p1363' }, b64urlToBuf(s))) throw { code: 401, msg: 'bad signature' };
   assertClaims(header, claims);
-  let managedState = null;
-  if (claims.typ !== undefined) {
-    managedState = await introspectManagedToken(m[1]);
-    assertManagedTokenActive(claims, managedState);
-  }
+  // 브라우저 세션까지 포함한 모든 token은 BFF의 live identity state로 검증한다.
+  // BFF/identity 경로가 불능이면 fail-closed로 관리 API를 열지 않는다.
+  const managedState = await introspectManagedToken(m[1]);
+  assertManagedTokenActive(claims, managedState);
   // 관리 자격은 서명 당시 group claim이 아니라 introspection이 조회한 현재 Kanidm 역할을 사용한다.
-  const groups = (managedState?.groups || claims.groups || []).map((g) => shortName(g).replace(/^\//, ''));
+  const groups = (managedState.groups || []).map((g) => shortName(g).replace(/^\//, ''));
   return { username: claims.preferred_username || 'unknown', groups };
 }
 async function verifyActor(req) {
@@ -182,7 +187,7 @@ async function verifyActor(req) {
 const AUDIT_CAP = 500;
 const audit = [];
 function logAudit(actor, action, target, result, reason, opId, options = {}) {
-  const e = { time: new Date().toISOString(), opId: opId || newOpId(), actor: actor || 'system', action, target, result, reason: reason || '' };
+  const e = { time: new Date().toISOString(), opId: opId || newOpId(), source: options.source || 'dupa-controller', actor: actor || 'system', action, target, result, reason: reason || '' };
   audit.unshift(e);
   if (audit.length > AUDIT_CAP) audit.pop();
   console.log('[audit] ' + JSON.stringify(e)); // 구조화 1줄 → 로그 수집기 영속(휘발 대비)
@@ -201,8 +206,8 @@ async function persistAuditNow(event) {
   if (!db.isEnabled()) throw new Error('Backbone PostgreSQL unavailable');
   await db.insertAudit(event);
 }
-async function durableAudit(actor, action, target, result, reason, opId) {
-  const event = logAudit(actor, action, target, result, reason, opId, { deferPersistence: true });
+async function durableAudit(actor, action, target, result, reason, opId, source = 'dupa-controller') {
+  const event = logAudit(actor, action, target, result, reason, opId, { deferPersistence: true, source });
   await persistAuditNow(event);
   return event;
 }
@@ -228,7 +233,10 @@ async function initBackboneDb(quiet = false) {
     const enc = r.json?.data?.[BACKBONE_PG.secretKey];
     if (!enc) { if (!quiet) console.warn('[db] secret에 password 키 없음'); return; }
     const password = Buffer.from(enc, 'base64').toString('utf8');
-    await db.init({ host: BACKBONE_PG.host, port: BACKBONE_PG.port, database: BACKBONE_PG.database, user: BACKBONE_PG.user, password });
+    const ca = r.json?.data?.['ca.crt'];
+    if (!ca) { if (!quiet) console.warn('[db] secret에 ca.crt 키 없음'); return; }
+    const sslCa = Buffer.from(ca, 'base64').toString('utf8');
+    await db.init({ host: BACKBONE_PG.host, port: BACKBONE_PG.port, database: BACKBONE_PG.database, user: BACKBONE_PG.user, password, sslCa });
   } catch (e) {
     if (!quiet) console.warn('[db] init 실패:', String(e).slice(0, 160));
   }
@@ -972,7 +980,7 @@ const BB_COMPONENTS = [
 // 컴포넌트별 접근(접근 탭) 메타 — 자격 Secret명·프로토콜·연결 힌트. Secret '값'은 절대 노출 안 함(키 이름만 마스킹 반환).
 const BB_ACCESS = {
   postgres: { secret: 'backbone-postgres', proto: 'TCP(libpq) · 5432', connect: 'psql -h backbone-postgres.opensphere-backbone.svc.cluster.local -U console -d console', note: 'console DB(감사로그·설정) + gitea DB. 비번 = Secret backbone-postgres/password.' },
-  rustfs: { secret: 'backbone-rustfs', proto: 'HTTP(S3) · 9000 / 콘솔 9001', connect: 'S3 endpoint: backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 (forcePathStyle=true, region=us-east-1)', note: 'access_key/secret_key = Secret backbone-rustfs.' },
+  rustfs: { secret: 'backbone-rustfs', proto: 'HTTPS(S3) · 9000 / 콘솔 9001', connect: 'S3 endpoint: https://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 (CA 검증, forcePathStyle=true, region=us-east-1)', note: 'access_key/secret_key 및 ca.crt = Secret backbone-rustfs.' },
   gitea: { secret: 'backbone-gitea', proto: 'HTTP · 3000', connect: 'http://backbone-gitea.opensphere-backbone.svc.cluster.local:3000/', note: '전용 DB role과 관리자 자격은 Secret backbone-gitea에 있으며 값은 API에 노출하지 않는다.' },
 };
 // Backbone resources are installed only from the governed Setup release manifest.
@@ -1149,8 +1157,13 @@ const CLAIM_V = 'v1alpha1';
 const CLAIM_FINALIZER = 'backbone.opensphere.io/finalizer';
 const PG_DNS = `backbone-postgres.${BACKBONE_NS}.svc.cluster.local`;
 const S3_DNS = `backbone-rustfs.${BACKBONE_NS}.svc.cluster.local`;
-const S3_ENDPOINT = process.env.BACKBONE_S3_ENDPOINT || `http://${S3_DNS}:9000`;
+const S3_ENDPOINT = process.env.BACKBONE_S3_ENDPOINT || `https://${S3_DNS}:9000`;
 const S3_REGION = process.env.BACKBONE_S3_REGION || 'us-east-1';
+const BACKBONE_S3_CA_PATH = process.env.BACKBONE_S3_CA_PATH || KANIDM_CA_PATH;
+function backboneS3Ca() {
+  try { return fs.readFileSync(BACKBONE_S3_CA_PATH, 'utf8'); }
+  catch (error) { throw new Error(`RustFS CA read failed: ${error.message}`); }
+}
 // 컨트롤러 상태(콘솔 '컨트롤러' 탭 노출용) — 인메모리.
 const claimController = { crdReady: false, lastRun: '', lastError: '', runs: 0, total: 0, bound: 0 };
 
@@ -1163,7 +1176,7 @@ async function initBackboneStorage(quiet = false) {
     const dec = (k) => Buffer.from(r.json?.data?.[k] || '', 'base64').toString('utf8');
     const ak = dec('access_key'), sk = dec('secret_key');
     if (!ak || !sk) { if (!quiet) console.warn('[s3] backbone-rustfs Secret에 access_key/secret_key 없음 → 비활성'); return; }
-    storage.init({ endpoint: S3_ENDPOINT, region: S3_REGION, accessKey: ak, secretKey: sk });
+    storage.init({ endpoint: S3_ENDPOINT, region: S3_REGION, accessKey: ak, secretKey: sk, caPath: BACKBONE_S3_CA_PATH });
     if (!await storage.healthCheck()) throw new Error('RustFS S3 health check failed');
     console.log(`[s3] connected ${S3_ENDPOINT} (objectStore 할당 활성)`);
   } catch (e) {
@@ -1241,31 +1254,28 @@ async function reconcileOneClaim(cr) {
     await k8s('PATCH', base, { metadata: { finalizers: [...fins, CLAIM_FINALIZER] } });
   }
   const status = { phase: 'Bound', observedGeneration: cr.metadata.generation || 0, message: '', postgres: null, objectStore: null };
-  // PostgreSQL — 전용 db/role + Secret(claim NS). 기존 Secret 비번 재사용(드리프트 방지).
+  // PostgreSQL — sealed NOLOGIN owner + 기능 가능한 app role 하나만 claim NS에 발급한다.
+  // 소비자에게 database owner credential을 배포하는 fallback은 금지한다.
   if (cr.spec?.postgres?.enabled) {
     const dbName = cr.spec.postgres.database || name.replace(/-/g, '_');
-    const secretName = `${name}-backbone-postgres`;
-    if (!db.isEnabled()) { status.phase = 'Pending'; status.message = 'PostgreSQL 미연결'; }
+    const legacySecretName = `${name}-backbone-postgres`;
+    const appSecretName = `${name}-backbone-postgres-app`;
+    if (cr.spec?.postgres?.appRole?.enabled === false) {
+      status.phase = 'Error';
+      status.message = 'BackboneClaim은 owner credential을 발급하지 않으며 appRole을 비활성화할 수 없습니다';
+    } else if (!db.isEnabled()) { status.phase = 'Pending'; status.message = 'PostgreSQL 미연결'; }
     else {
-      const sec = await k8s('GET', `/api/v1/namespaces/${ns}/secrets/${secretName}`);
-      let pw = sec.ok ? Buffer.from(sec.json?.data?.password || '', 'base64').toString('utf8') : '';
-      if (!pw) pw = randomBytes(24).toString('hex');
-      await db.provisionTenant(dbName, pw);
-      await upsertSecret(ns, secretName, { host: PG_DNS, port: '5432', database: dbName, username: dbName, password: pw });
-      const appSecretName = `${name}-backbone-postgres-app`;
-      status.postgres = { secretRef: secretName, host: PG_DNS, database: dbName };
-      if (cr.spec?.postgres?.appRole?.enabled === false) {
-        await k8s('DELETE', `/api/v1/namespaces/${ns}/secrets/${appSecretName}`);
-      } else {
-        const appSec = await k8s('GET', `/api/v1/namespaces/${ns}/secrets/${appSecretName}`);
-        let appPw = appSec.ok ? Buffer.from(appSec.json?.data?.password || '', 'base64').toString('utf8') : '';
-        if (!appPw) appPw = randomBytes(24).toString('hex');
-        const appUser = postgresAppRoleName(dbName, cr, appSec);
-        await db.provisionTenantAppRole(dbName, appUser, appPw);
-        await upsertSecret(ns, appSecretName, { host: PG_DNS, port: '5432', database: dbName, username: appUser, password: appPw, role: 'app' });
-        status.postgres.appSecretRef = appSecretName;
-        status.postgres.appUsername = appUser;
-      }
+      await db.provisionTenant(dbName);
+      // Remove the legacy owner Secret only after the sealed owner exists. The app
+      // secret remains stable across reconcile, so a consumer need not restart.
+      await k8s('DELETE', `/api/v1/namespaces/${ns}/secrets/${legacySecretName}`);
+      const appSec = await k8s('GET', `/api/v1/namespaces/${ns}/secrets/${appSecretName}`);
+      let appPw = appSec.ok ? Buffer.from(appSec.json?.data?.password || '', 'base64').toString('utf8') : '';
+      if (!appPw) appPw = randomBytes(24).toString('hex');
+      const appUser = postgresAppRoleName(dbName, cr, appSec);
+      await db.provisionTenantAppRole(dbName, appUser, appPw);
+      await upsertSecret(ns, appSecretName, { host: PG_DNS, port: '5432', database: dbName, username: appUser, password: appPw, role: 'app', schema: 'public' });
+      status.postgres = { secretRef: appSecretName, appSecretRef: appSecretName, appUsername: appUser, host: PG_DNS, database: dbName, ownerCredential: 'sealed-nologin' };
     }
   }
   // objectStore — 전용 버킷 + Secret(claim NS). dev는 인스턴스 키 재사용 + 버킷 격리(provision-backbone-tenant.sh 모델).
@@ -1278,7 +1288,7 @@ async function reconcileOneClaim(cr) {
     } else {
       try {
         await storage.ensureBucket(bucket);
-        await upsertSecret(ns, s3secret, { endpoint: S3_ENDPOINT, region: S3_REGION, bucket, access_key: storage.accessKey(), secret_key: storage.secretKey() });
+        await upsertSecret(ns, s3secret, { endpoint: S3_ENDPOINT, region: S3_REGION, bucket, access_key: storage.accessKey(), secret_key: storage.secretKey(), 'ca.crt': backboneS3Ca() });
         // message: '' 명시 — merge-patch는 키를 지우지 않으므로 이전 stub의 message를 덮어써 stale 표기 제거.
         status.objectStore = { secretRef: s3secret, endpoint: S3_ENDPOINT, bucket, state: 'Bound', message: '' };
       } catch (e) {
@@ -1508,6 +1518,7 @@ const server = http.createServer(async (req, res) => {
             kind, id, owner: owner || 'unknown', record,
             audit: {
               time: new Date().toISOString(), opId,
+              source: 'opensphere-console-auth',
               actor: String(body?.actor || owner || 'opensphere-console-auth').slice(0, 128),
               action: String(body?.action || `${kind}-${req.method === 'DELETE' ? 'revoke' : 'upsert'}`).slice(0, 80),
               result: 'accepted', reason: String(body?.reason || '').slice(0, 240),
@@ -1735,7 +1746,7 @@ const server = http.createServer(async (req, res) => {
       const source = pluginId === 'opensphere-console-backend' || pluginId === 'opensphere-console-auth'
         ? `core:${pluginId}/${clip(b.userActor || 'system', 60)}`
         : 'ext:' + pluginId;
-      const event = logAudit(source, clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId, { deferPersistence: true });
+      const event = logAudit(clip(b.userActor || 'system', 60), clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId, { deferPersistence: true, source });
       try { await persistAuditNow(event); }
       catch (e) { console.error(`[audit] durable event persist failed op=${opId}:`, e); return json(res, 503, { error: 'event persistence unavailable', opId }); }
       return json(res, 202, { accepted: true, source });

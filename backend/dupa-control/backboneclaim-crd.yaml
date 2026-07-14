@@ -42,8 +42,8 @@ spec:
                     # username 생략 시 기존 app Secret username을 재사용하고, 없으면 <database>_app.
                     appRole:
                       type: object
+                      additionalProperties: false
                       properties:
-                        enabled: { type: boolean, default: true }
                         username: { type: string, pattern: '^[a-z_][a-z0-9_]{0,62}$' }
                 objectStore:
                   type: object

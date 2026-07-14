@@ -68,8 +68,12 @@ test('isAdminGroups: admin 그룹만 true', () => {
   assert.equal(isAdminGroups(undefined), false);
 });
 
-test('assertManagedTokenActive: 브라우저 OIDC 토큰은 서버 상태 검사가 필요 없다', () => {
-  assert.doesNotThrow(() => assertManagedTokenActive(goodClaims, null));
+test('assertManagedTokenActive: 브라우저 OIDC 세션도 live identity 상태와 일치해야 한다', () => {
+  const active = { active: true, type: 'browser_session', sub: goodClaims.sub, username: goodClaims.preferred_username, exp: goodClaims.exp };
+  assert.doesNotThrow(() => assertManagedTokenActive(goodClaims, active));
+  rejects(() => assertManagedTokenActive(goodClaims, null), /inactive|revoked/);
+  rejects(() => assertManagedTokenActive(goodClaims, { ...active, type: 'pat' }), /browser session state mismatch/);
+  rejects(() => assertManagedTokenActive(goodClaims, { ...active, sub: 'other-user' }), /state mismatch/);
 });
 
 test('assertManagedTokenActive: 활성 PAT의 서명 claim과 서버 상태가 모두 일치해야 한다', () => {
