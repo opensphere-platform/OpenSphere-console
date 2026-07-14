@@ -27,6 +27,7 @@ permissions:
   packages: write
   id-token: write
   attestations: write
+  artifact-metadata: write
 
 concurrency:
   group: console-edge-images
@@ -149,11 +150,29 @@ jobs:
           provenance: mode=max
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-      - name: Attest published digest
-        uses: actions/attest-build-provenance@v3
+      - name: Attest published digest provenance
+        uses: actions/attest@v4
         with:
           subject-name: ghcr.io/opensphere-platform/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      # Buildx's `sbom: true` attaches registry metadata.  Generate and attest
+      # an explicit SPDX document as well, so Setup can verify the SBOM with
+      # the same GitHub Actions/Sigstore identity as build provenance.
+      - name: Generate SPDX SBOM
+        # anchore/sbom-action v0, pinned to the resolved v0 commit.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: ghcr.io/opensphere-platform/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/${{ matrix.image }}.spdx.json
+          upload-artifact: false
+      - name: Attest SPDX SBOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/opensphere-platform/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/${{ matrix.image }}.spdx.json
           push-to-registry: true
       - name: Publish summary
         run: echo '`${{ matrix.image }}:edge` → `${{ steps.build.outputs.digest }}`' >> "$GITHUB_STEP_SUMMARY"
