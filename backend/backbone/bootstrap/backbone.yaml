@@ -55,7 +55,12 @@ data:
     # Objects are lexicographically time-ordered. Enforce retention server-side from the
     # writer; a failed cleanup does not invalidate the just-written recovery point.
     retention_days="${BACKUP_RETENTION_DAYS:-30}"
-    cutoff="$(date -u -d "${retention_days} days ago" +%Y%m%dT%H%M%SZ)"
+    # The PostgreSQL 19 Alpine image uses BusyBox date, which accepts an epoch
+    # timestamp but not GNU date's relative "N days ago" expression.  Keep the
+    # retention gate portable so a successful upload cannot be followed by a
+    # failed cleanup (and falsely mark the recovery point as failed).
+    cutoff_epoch="$(( $(date -u +%s) - retention_days * 86400 ))"
+    cutoff="$(date -u -d "@${cutoff_epoch}" +%Y%m%dT%H%M%SZ)"
     curl --fail --silent --show-error --cacert /tls/ca.crt --connect-timeout 5 --max-time 60 \
       --aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
       "${endpoint}/backups?list-type=2&prefix=postgres/" \
