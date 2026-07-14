@@ -303,7 +303,10 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  generateName: backbone-postgres-boundary-reconcile-
+  # A release-revision name makes this one-shot migration idempotent for
+  # kubectl apply, while a new immutable release creates its own reconcile Job.
+  # Setup substitutes the 40-character Git revision before applying it.
+  name: backbone-postgres-boundary-reconcile-__OPENSPHERE_RELEASE_REVISION__
   namespace: opensphere-backbone
   labels:
     opensphere.io/backbone-module: postgres

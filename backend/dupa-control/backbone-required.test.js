@@ -76,6 +76,8 @@ test('Backbone bootstrap pins and isolates all three pillars', () => {
   assert.match(backbone, /RUSTFS_ENDPOINT, value: https:\/\/backbone-rustfs/);
   assert.match(backbone, /GITEA__lfs__MINIO_USE_SSL, value: "true"/);
   assert.match(backbone, /backbone-postgres-boundary-reconcile/);
+  assert.match(backbone, /name: backbone-postgres-boundary-reconcile-__OPENSPHERE_RELEASE_REVISION__/);
+  assert.doesNotMatch(backbone, /generateName: backbone-postgres-boundary-reconcile-/);
   assert.match(backbone, /ALTER ROLE console NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB/);
   assert.match(backbone, /ALTER TABLE public\.audit_log ADD COLUMN IF NOT EXISTS source text/);
   assert.doesNotMatch(backbone, /:latest\b/);
