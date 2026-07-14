@@ -306,7 +306,9 @@ metadata:
   # A release-revision name makes this one-shot migration idempotent for
   # kubectl apply, while a new immutable release creates its own reconcile Job.
   # Setup substitutes the 40-character Git revision before applying it.
-  name: backbone-postgres-boundary-reconcile-__OPENSPHERE_RELEASE_REVISION__
+  # Keep the generated controller label below Kubernetes' 63-byte limit:
+  # "bb-audit-boundary-" (18 bytes) + a 40-byte Git revision.
+  name: bb-audit-boundary-__OPENSPHERE_RELEASE_REVISION__
   namespace: opensphere-backbone
   labels:
     opensphere.io/backbone-module: postgres
