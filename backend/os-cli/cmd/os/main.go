@@ -30,6 +30,7 @@ var version = "0.3.0"
 
 type Config struct {
 	Profile     string `json:"profile"`
+	Kind        string `json:"kind,omitempty"`
 	PAT         string `json:"-"` // process-memory only: OS_PAT or one-time enrollment bootstrap
 	IDToken     string `json:"-"` // process-memory only: never persist bearer credentials
 	DeviceID    string `json:"deviceId,omitempty"`
@@ -39,6 +40,13 @@ type Config struct {
 	BFFURL      string `json:"bffUrl"`
 	ConsoleURL  string `json:"consoleUrl"`
 	CABundle    string `json:"caBundle,omitempty"`
+	profileName string `json:"-"`
+}
+
+type ConfigFile struct {
+	Config
+	CurrentProfile string            `json:"currentProfile"`
+	Profiles       map[string]Config `json:"profiles"`
 }
 
 type CLIContribution struct {
@@ -101,6 +109,7 @@ func defaults() Config {
 	console := env("OS_CONSOLE", "http://localhost:8090")
 	return Config{
 		Profile:     "admin",
+		Kind:        "admin",
 		PAT:         os.Getenv("OS_PAT"),
 		IDToken:     os.Getenv("OS_ID_TOKEN"),
 		RegistryURL: env("OS_REGISTRY", console+"/api/v1/registry"),
@@ -129,7 +138,9 @@ func configPath() (string, error) {
 	return filepath.Join(home, ".os", "config.json"), nil
 }
 
-func loadConfig() (Config, error) {
+func loadConfig() (Config, error) { return loadConfigFor("") }
+
+func loadConfigFor(selected string) (Config, error) {
 	cfg := defaults()
 	p, err := configPath()
 	if err != nil {
@@ -137,19 +148,61 @@ func loadConfig() (Config, error) {
 	}
 	b, err := os.ReadFile(p)
 	if errors.Is(err, os.ErrNotExist) {
+		if selected == "" {
+			selected = strings.TrimSpace(os.Getenv("OS_PROFILE"))
+		}
+		if selected == "" {
+			selected = "default"
+		}
+		if !validProfileName(selected) {
+			return cfg, fmt.Errorf("허용되지 않은 프로파일 이름 %q", selected)
+		}
+		cfg.profileName = selected
 		return cfg, nil
 	}
 	if err != nil {
 		return cfg, err
 	}
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	var file ConfigFile
+	if err := json.Unmarshal(b, &file); err != nil {
 		return cfg, fmt.Errorf("설정 파싱 실패: %w", err)
 	}
+	if len(file.Profiles) == 0 {
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			return cfg, err
+		}
+		file.CurrentProfile = "default"
+		file.Profiles = map[string]Config{"default": cfg}
+	}
+	if selected == "" {
+		selected = strings.TrimSpace(os.Getenv("OS_PROFILE"))
+	}
+	if selected == "" {
+		selected = file.CurrentProfile
+	}
+	if selected == "" {
+		selected = "default"
+	}
+	if !validProfileName(selected) {
+		return cfg, fmt.Errorf("허용되지 않은 프로파일 이름 %q", selected)
+	}
+	var ok bool
+	cfg, ok = file.Profiles[selected]
+	if !ok {
+		return defaults(), fmt.Errorf("프로파일 %q을(를) 찾을 수 없습니다", selected)
+	}
+	cfg.profileName = selected
 	if ca := strings.TrimSpace(os.Getenv("OS_CACERT")); ca != "" {
 		cfg.CABundle = ca
 	}
 	if cfg.Profile == "" {
 		cfg.Profile = "admin"
+	}
+	if cfg.Kind == "" {
+		cfg.Kind = cfg.Profile
+	}
+	if cfg.Kind == "" {
+		cfg.Kind = "admin"
 	}
 	// Legacy config could contain year-long PAT/idToken fields. They are deliberately
 	// ignored rather than loaded back into memory; `os login` performs one-time device pairing.
@@ -157,8 +210,17 @@ func loadConfig() (Config, error) {
 }
 
 func saveConfig(cfg Config) error {
-	if cfg.Profile != "admin" {
-		return errors.New("현재 native os CLI는 admin 프로파일만 허용합니다; workforce는 승인된 Binding으로 추가해야 합니다")
+	if cfg.Kind == "" {
+		cfg.Kind = cfg.Profile
+	}
+	if cfg.Kind == "" {
+		cfg.Kind = "admin"
+	}
+	if cfg.Kind != "admin" && cfg.Kind != "workforce" {
+		return fmt.Errorf("지원하지 않는 프로파일 kind %q", cfg.Kind)
+	}
+	if cfg.Kind == "admin" {
+		cfg.Profile = "admin"
 	}
 	for _, raw := range []string{cfg.RegistryURL, cfg.APIURL, cfg.BFFURL, cfg.ConsoleURL} {
 		if err := validateURL(raw); err != nil {
@@ -172,7 +234,42 @@ func saveConfig(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	defaultConfig := defaults()
+	file := ConfigFile{}
+	if existing, readErr := os.ReadFile(p); readErr == nil {
+		if err := json.Unmarshal(existing, &file); err != nil {
+			return fmt.Errorf("설정 파싱 실패: %w", err)
+		}
+		if len(file.Profiles) == 0 {
+			var legacy Config
+			if err := json.Unmarshal(existing, &legacy); err != nil {
+				return err
+			}
+			file.Profiles = map[string]Config{"default": legacy}
+			file.CurrentProfile = "default"
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return readErr
+	} else {
+		file = ConfigFile{Config: defaultConfig, CurrentProfile: "default", Profiles: map[string]Config{"default": defaultConfig}}
+	}
+	name := cfg.profileName
+	if name == "" {
+		name = strings.TrimSpace(os.Getenv("OS_PROFILE"))
+	}
+	if name == "" {
+		name = file.CurrentProfile
+	}
+	if name == "" {
+		name = "default"
+	}
+	cfg.profileName = ""
+	file.Profiles[name] = cfg
+	if file.CurrentProfile == "" {
+		file.CurrentProfile = "default"
+	}
+	file.Config = file.Profiles[file.CurrentProfile]
+	b, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -353,13 +450,16 @@ func signDeviceChallenge(privateDER []byte, deviceID, challengeID, nonce string)
 }
 
 func credentialToken(cfg Config) (string, error) {
+	if cfg.Kind == "workforce" {
+		return "", cliError(exitAuth, "workforce 프로파일 인증은 아직 지원되지 않습니다", nil)
+	}
 	if strings.TrimSpace(cfg.PAT) != "" {
 		return strings.TrimSpace(cfg.PAT), nil
 	}
 	if cfg.DeviceID == "" {
 		return "", errors.New("등록된 CLI 디바이스가 없습니다; os login을 실행하세요")
 	}
-	privateDER, err := deviceKeyLoad(cfg.DeviceID)
+	privateDER, err := deviceKeyLoad(deviceCredentialID(cfg))
 	if err != nil {
 		return "", fmt.Errorf("OS 보안 저장소에서 디바이스 키를 읽지 못했습니다: %w", err)
 	}
@@ -401,6 +501,26 @@ func credentialToken(cfg Config) (string, error) {
 	return session.AccessToken, nil
 }
 
+func deviceCredentialID(cfg Config) string {
+	if cfg.profileName == "" || cfg.profileName == "default" {
+		return cfg.DeviceID
+	}
+	return cfg.profileName + "--" + cfg.DeviceID
+}
+
+func validProfileName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func operationID() string {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
@@ -434,6 +554,11 @@ func requireOK(b []byte, status int) error {
 }
 
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
+	selectedProfile, cleanedArgs, err := globalProfile(args)
+	if err != nil {
+		return cliError(exitUsage, err.Error(), err)
+	}
+	args = cleanedArgs
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		printHelp(out)
 		return nil
@@ -456,13 +581,13 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return nil
 	}
 	if args[0] == "login" {
-		return login(args[1:], in, out, errOut)
+		return login(selectedProfile, args[1:], in, out, errOut)
 	}
 	if args[0] == "setup" {
-		return setup(args[1:], out)
+		return setup(selectedProfile, args[1:], out)
 	}
 	if args[0] == "config" {
-		return configCommand(args[1:], out)
+		return configCommandFor(selectedProfile, args[1:], out)
 	}
 	if args[0] == "completion" {
 		return completion(args[1:], out)
@@ -481,7 +606,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
 		return cliError(exitUsage, "명령이 필요합니다; os help를 실행하세요", nil)
 	}
-	cfg, err := loadConfig()
+	cfg, err := loadConfigFor(selectedProfile)
 	if err != nil {
 		return err
 	}
@@ -508,6 +633,26 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 }
 
+func globalProfile(args []string) (string, []string, error) {
+	cleaned := make([]string, 0, len(args))
+	var profile string
+	for i := 0; i < len(args); i++ {
+		if args[i] != "--profile" {
+			cleaned = append(cleaned, args[i])
+			continue
+		}
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+			return "", nil, errors.New("--profile에는 프로파일 이름이 필요합니다")
+		}
+		profile = strings.TrimSpace(args[i+1])
+		if !validProfileName(profile) {
+			return "", nil, fmt.Errorf("허용되지 않은 프로파일 이름 %q", profile)
+		}
+		i++
+	}
+	return profile, cleaned, nil
+}
+
 func globalCABundle(args []string) (string, []string, error) {
 	cleaned := make([]string, 0, len(args))
 	var ca string
@@ -525,14 +670,14 @@ func globalCABundle(args []string) (string, []string, error) {
 	return ca, cleaned, nil
 }
 
-func setup(args []string, out io.Writer) error {
+func setup(selectedProfile string, args []string, out io.Writer) error {
 	if len(args) != 2 || args[0] != "ca" {
 		return errors.New("사용법: os setup ca <file>")
 	}
 	if _, err := client(args[1]); err != nil {
 		return err
 	}
-	cfg, err := loadConfig()
+	cfg, err := loadConfigFor(selectedProfile)
 	if err != nil {
 		return err
 	}
@@ -561,7 +706,7 @@ func logout(cfg Config, out io.Writer) error {
 			return err
 		}
 	}
-	if err := deviceKeyDelete(cfg.DeviceID); err != nil {
+	if err := deviceKeyDelete(deviceCredentialID(cfg)); err != nil {
 		return err
 	}
 	cfg.DeviceID, cfg.DeviceLabel, cfg.PAT, cfg.IDToken = "", "", "", ""
@@ -596,7 +741,7 @@ func devices(cfg Config, args []string, out io.Writer) error {
 			return err
 		}
 		if id == cfg.DeviceID {
-			if err := deviceKeyDelete(id); err != nil {
+			if err := deviceKeyDelete(deviceCredentialID(cfg)); err != nil {
 				return err
 			}
 			cfg.DeviceID, cfg.DeviceLabel = "", ""
@@ -609,8 +754,11 @@ func devices(cfg Config, args []string, out io.Writer) error {
 	return fmt.Errorf("알 수 없는 device 하위명령: %s", args[0])
 }
 
-func login(args []string, in io.Reader, out, errOut io.Writer) error {
-	cfg, _ := loadConfig()
+func login(selectedProfile string, args []string, in io.Reader, out, errOut io.Writer) error {
+	cfg, _ := loadConfigFor(selectedProfile)
+	if cfg.Kind == "workforce" {
+		return cliError(exitAuth, "workforce 프로파일 인증은 아직 지원되지 않습니다", nil)
+	}
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	pat := fs.String("pat", "", "one-time API token bootstrap (deprecated; --pat-stdin 사용)")
@@ -690,16 +838,23 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 		}
 		device = registered
 	}
-	if err := deviceKeyStore(device.ID, privateDER); err != nil {
+	cfg = Config{Profile: "admin", Kind: "admin", DeviceID: device.ID, DeviceLabel: device.Label, RegistryURL: *registryURL, APIURL: *apiURL, BFFURL: *bffURL, ConsoleURL: *consoleURL, CABundle: *caBundle, profileName: cfg.profileName}
+	if cfg.profileName == "" {
+		if selectedProfile != "" {
+			cfg.profileName = selectedProfile
+		} else {
+			cfg.profileName = "default"
+		}
+	}
+	if err := deviceKeyStore(deviceCredentialID(cfg), privateDER); err != nil {
 		return fmt.Errorf("OS 보안 저장소에 디바이스 키 저장 실패: %w", err)
 	}
-	cfg = Config{Profile: "admin", DeviceID: device.ID, DeviceLabel: device.Label, RegistryURL: *registryURL, APIURL: *apiURL, BFFURL: *bffURL, ConsoleURL: *consoleURL, CABundle: *caBundle}
 	if err := whoami(cfg, io.Discard); err != nil {
-		_ = deviceKeyDelete(device.ID)
+		_ = deviceKeyDelete(deviceCredentialID(cfg))
 		return fmt.Errorf("등록 디바이스 세션 검증 실패(설정은 저장하지 않음): %w", err)
 	}
 	if err := saveConfig(cfg); err != nil {
-		_ = deviceKeyDelete(device.ID)
+		_ = deviceKeyDelete(deviceCredentialID(cfg))
 		return err
 	}
 	fmt.Fprintf(out, "admin 디바이스가 등록되고 검증되었습니다: %s (%s)\n", device.Label, device.Fingerprint)
@@ -1125,9 +1280,11 @@ func printHelp(out io.Writer) {
   os role list | grant <user> <role> | revoke <user> <role>
   os setup ca <file>                           (검증에 사용할 사설 CA를 설정에 저장)
   os config get [key] | set <key> <value> | list
+  os config profiles | use-profile <name>
   os completion bash|zsh|powershell
   os version | help
 
+공통 플래그: --profile NAME · --ca-bundle PEM
 공통 출력 플래그: -o, --output json|table|yaml · --query JMESPATH · --limit N · --all
 
 종료 코드:

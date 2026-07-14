@@ -183,7 +183,7 @@ func TestLoginWarnsOnArgvPat(t *testing.T) {
 	}
 }
 
-func TestConfigIsAdminOnlyAndPrivate(t *testing.T) {
+func TestConfigIsPrivateAndAllowsWorkforceGroundwork(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("OS_CONFIG", p)
 	cfg := defaults()
@@ -210,8 +210,102 @@ func TestConfigIsAdminOnlyAndPrivate(t *testing.T) {
 		t.Fatalf("profile=%q", saved.Profile)
 	}
 	saved.Profile = "workforce"
-	if err := saveConfig(saved); err == nil {
-		t.Fatal("workforce profile must require an approved Binding")
+	saved.Kind = "workforce"
+	if err := saveConfig(saved); err != nil {
+		t.Fatalf("workforce profile should be storable groundwork: %v", err)
+	}
+}
+
+func TestLegacyFlatConfigMigratesToDefaultInMemory(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("OS_CONFIG", p)
+	legacy := `{"profile":"admin","consoleUrl":"https://legacy.example.test","registryUrl":"https://legacy.example.test/registry","apiUrl":"https://legacy.example.test/api","bffUrl":"https://legacy.example.test"}`
+	if err := os.WriteFile(p, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.profileName != "default" || cfg.Kind != "admin" || cfg.ConsoleURL != "https://legacy.example.test" {
+		t.Fatalf("legacy migration mismatch: %#v", cfg)
+	}
+	b, _ := os.ReadFile(p)
+	if string(b) != legacy {
+		t.Fatal("loading legacy config must not rewrite it")
+	}
+}
+
+func TestProfileFlagOverridesEnvironmentSelection(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("OS_CONFIG", p)
+	file := ConfigFile{CurrentProfile: "default", Profiles: map[string]Config{
+		"default": {Profile: "admin", Kind: "admin", ConsoleURL: "https://default.example.test"},
+		"env":     {Profile: "admin", Kind: "admin", ConsoleURL: "https://env.example.test"},
+		"flag":    {Profile: "admin", Kind: "admin", ConsoleURL: "https://flag.example.test"},
+	}}
+	b, _ := json.Marshal(file)
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OS_PROFILE", "env")
+	var out bytes.Buffer
+	if err := run([]string{"config", "get", "consoleUrl"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "https://env.example.test" {
+		t.Fatalf("env selection=%q", out.String())
+	}
+	out.Reset()
+	if err := run([]string{"--profile", "flag", "config", "get", "consoleUrl"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "https://flag.example.test" {
+		t.Fatalf("flag selection=%q", out.String())
+	}
+}
+
+func TestConfigProfilesUseAndScopedGetSet(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("OS_CONFIG", p)
+	var out bytes.Buffer
+	if err := run([]string{"config", "--profile", "work", "set", "consoleUrl", "https://work.example.test"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"config", "use-profile", "work"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := run([]string{"config", "profiles"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "  default") || !strings.Contains(out.String(), "* work") {
+		t.Fatalf("profiles output=%q", out.String())
+	}
+	out.Reset()
+	if err := run([]string{"config", "get", "consoleUrl"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != "https://work.example.test" {
+		t.Fatalf("active scoped get=%q", out.String())
+	}
+}
+
+func TestWorkforceProfileStoredButLiveCallRejected(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("OS_CONFIG", p)
+	for _, pair := range [][]string{{"kind", "workforce"}, {"consoleUrl", "https://workforce.example.test"}} {
+		if err := run([]string{"config", "--profile", "workforce", "set", pair[0], pair[1]}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := loadConfigFor("workforce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = request(cfg, http.MethodGet, cfg.ConsoleURL, nil, "")
+	if err == nil || !strings.Contains(err.Error(), "workforce 프로파일 인증은 아직 지원되지 않습니다") {
+		t.Fatalf("workforce live call error=%v", err)
 	}
 }
 
@@ -324,7 +418,10 @@ func TestUnknownCommandUsesDynamicRegistryLookupAndReturnsActionableError(t *tes
 }
 
 func TestStatusErrorMappingIncludesCorrelationID(t *testing.T) {
-	tests := []struct{ status int; want string }{
+	tests := []struct {
+		status int
+		want   string
+	}{
 		{http.StatusUnauthorized, "os login"},
 		{http.StatusForbidden, "권한이 부족"},
 		{http.StatusBadGateway, "백엔드를 사용할 수 없"},
