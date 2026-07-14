@@ -148,7 +148,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          sbom: true
           provenance: mode=max
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
@@ -158,9 +157,11 @@ jobs:
           subject-name: ghcr.io/opensphere-platform/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
-      # Buildx's `sbom: true` attaches registry metadata.  Generate and attest
-      # an explicit SPDX document as well, so Setup can verify the SBOM with
-      # the same GitHub Actions/Sigstore identity as build provenance.
+      # Generate and attest an explicit SPDX document so Setup can verify the
+      # SBOM with the same GitHub Actions/Sigstore identity as provenance.
+      # Do not enable Buildx's additional scanner: it duplicates this trusted
+      # attestation and can make all image builds fail on a scanner-registry
+      # outage before the explicit SBOM step runs.
       - name: Generate SPDX SBOM
         # anchore/sbom-action v0, pinned to the resolved v0 commit.
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
