@@ -142,7 +142,9 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          platforms: linux/amd64
+          # Setup supports Linux amd64 and arm64 nodes.  The release digest is
+          # a multi-platform index, so each cluster pulls its native manifest.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
