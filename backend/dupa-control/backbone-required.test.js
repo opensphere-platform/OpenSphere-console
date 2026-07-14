@@ -64,6 +64,7 @@ test('Backbone bootstrap pins and isolates all three pillars', () => {
   assert.match(backbone, /OPENSPHERE_CONSOLE_PASSWORD/);
   assert.match(backbone, /opensphere_audit_owner/);
   assert.match(backbone, /CREATE ROLE console LOGIN PASSWORD/);
+  assert.match(backbone, /NOCREATEROLE NOCREATEDB/);
   assert.match(backbone, /ENABLE ALWAYS TRIGGER audit_log_append_only/);
   assert.match(backbone, /source\s+text NOT NULL DEFAULT 'dupa-controller'/);
   assert.match(backbone, /ssl=on/);
@@ -74,7 +75,9 @@ test('Backbone bootstrap pins and isolates all three pillars', () => {
   assert.match(backbone, /rustfs_cert\.pem/);
   assert.match(backbone, /RUSTFS_ENDPOINT, value: https:\/\/backbone-rustfs/);
   assert.match(backbone, /GITEA__lfs__MINIO_USE_SSL, value: "true"/);
-  assert.doesNotMatch(backbone, /audit-migration/);
+  assert.match(backbone, /backbone-postgres-boundary-reconcile/);
+  assert.match(backbone, /ALTER ROLE console NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB/);
+  assert.match(backbone, /ALTER TABLE public\.audit_log ADD COLUMN IF NOT EXISTS source text/);
   assert.doesNotMatch(backbone, /:latest\b/);
 });
 

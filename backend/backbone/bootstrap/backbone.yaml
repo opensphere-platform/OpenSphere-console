@@ -131,9 +131,9 @@ data:
     END
     $$;
 
-    SELECT format('CREATE ROLE console LOGIN PASSWORD %L NOSUPERUSER INHERIT CREATEROLE CREATEDB NOREPLICATION NOBYPASSRLS', :'console_password')
+    SELECT format('CREATE ROLE console LOGIN PASSWORD %L NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS', :'console_password')
       WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'console') \gexec
-    SELECT format('ALTER ROLE console LOGIN PASSWORD %L NOSUPERUSER INHERIT CREATEROLE CREATEDB NOREPLICATION NOBYPASSRLS', :'console_password')
+    SELECT format('ALTER ROLE console LOGIN PASSWORD %L NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS', :'console_password')
       WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'console') \gexec
 
     CREATE TABLE public.audit_log (
@@ -193,6 +193,151 @@ data:
     GRANT USAGE, SELECT ON SEQUENCE public.audit_log_id_seq TO console;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.managed_credential TO console;
     SQL
+---
+# PostgreSQL init scripts only run on an empty PVC. This Job makes the same
+# audit ownership boundary idempotent for an existing installation before any
+# Console service is allowed to become Ready. It requires the sealed bootstrap
+# operator: PostgreSQL protects an original cluster superuser from self-demotion,
+# so a legacy `console` bootstrap role must be migrated through a fresh setup.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backbone-postgres-boundary-reconcile
+  namespace: opensphere-backbone
+  labels: { opensphere.io/backbone-module: postgres }
+data:
+  reconcile.sh: |
+    #!/bin/sh
+    set -eu
+    export PGSSLMODE=verify-full
+    export PGSSLROOTCERT=/tls/ca.crt
+    host=backbone-postgres.opensphere-backbone.svc.cluster.local
+    for attempt in $(seq 1 120); do
+      if PGPASSWORD="$BOOTSTRAP_PASSWORD" psql -h "$host" -U opensphere_db_bootstrap -d console -Atc 'SELECT 1' >/dev/null 2>&1; then
+        export PGPASSWORD="$BOOTSTRAP_PASSWORD"
+        exec psql -v ON_ERROR_STOP=1 -h "$host" -U opensphere_db_bootstrap -d console -f /scripts/reconcile.sql
+      fi
+      sleep 3
+    done
+    echo "Sealed PostgreSQL bootstrap operator is unavailable; a legacy console-superuser installation requires fresh bootstrap" >&2
+    exit 1
+  reconcile.sql: |
+    \set ON_ERROR_STOP on
+    \getenv bootstrap_password BOOTSTRAP_PASSWORD
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_audit_owner') THEN
+        CREATE ROLE opensphere_audit_owner NOLOGIN SUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+      END IF;
+    END
+    $$;
+    SELECT format('CREATE ROLE opensphere_db_bootstrap LOGIN SUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'bootstrap_password')
+      WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_db_bootstrap') \gexec
+    SELECT format('ALTER ROLE opensphere_db_bootstrap LOGIN SUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', :'bootstrap_password')
+      WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_db_bootstrap') \gexec
+
+    CREATE TABLE IF NOT EXISTS public.audit_log (
+      id bigserial PRIMARY KEY,
+      ts timestamptz NOT NULL DEFAULT now(),
+      op_id text,
+      source text NOT NULL DEFAULT 'dupa-controller',
+      actor text,
+      action text,
+      target text,
+      result text,
+      reason text
+    );
+    ALTER TABLE public.audit_log ADD COLUMN IF NOT EXISTS source text;
+    CREATE OR REPLACE FUNCTION public.opensphere_reject_audit_mutation()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'audit_log is append-only';
+      END;
+      $$;
+    DROP TRIGGER IF EXISTS audit_log_append_only ON public.audit_log;
+    UPDATE public.audit_log SET source = 'dupa-controller' WHERE source IS NULL;
+    ALTER TABLE public.audit_log ALTER COLUMN source SET DEFAULT 'dupa-controller';
+    ALTER TABLE public.audit_log ALTER COLUMN source SET NOT NULL;
+    CREATE INDEX IF NOT EXISTS audit_log_ts_idx ON public.audit_log (ts DESC);
+    CREATE INDEX IF NOT EXISTS audit_log_actor_idx ON public.audit_log (actor);
+    CREATE INDEX IF NOT EXISTS audit_log_source_idx ON public.audit_log (source);
+    CREATE INDEX IF NOT EXISTS audit_log_action_idx ON public.audit_log (action);
+    CREATE TRIGGER audit_log_append_only
+      BEFORE UPDATE OR DELETE ON public.audit_log
+      FOR EACH ROW EXECUTE FUNCTION public.opensphere_reject_audit_mutation();
+
+    CREATE TABLE IF NOT EXISTS public.managed_credential (
+      kind text NOT NULL,
+      credential_id text NOT NULL,
+      owner_name text NOT NULL,
+      record jsonb NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      last_used_at timestamptz,
+      PRIMARY KEY (kind, credential_id),
+      CHECK (kind IN ('pat', 'device'))
+    );
+    CREATE INDEX IF NOT EXISTS managed_credential_owner_idx ON public.managed_credential (owner_name, kind);
+
+    ALTER DATABASE console OWNER TO opensphere_audit_owner;
+    ALTER TABLE public.audit_log OWNER TO opensphere_audit_owner;
+    ALTER SEQUENCE public.audit_log_id_seq OWNER TO opensphere_audit_owner;
+    ALTER FUNCTION public.opensphere_reject_audit_mutation() OWNER TO opensphere_audit_owner;
+    ALTER TABLE public.managed_credential OWNER TO opensphere_audit_owner;
+    ALTER TABLE public.audit_log ENABLE ALWAYS TRIGGER audit_log_append_only;
+    REVOKE ALL ON DATABASE console FROM PUBLIC;
+    GRANT CONNECT ON DATABASE console TO console;
+    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+    REVOKE ALL ON SCHEMA public FROM console;
+    GRANT USAGE ON SCHEMA public TO console;
+    REVOKE ALL ON TABLE public.audit_log FROM PUBLIC;
+    REVOKE ALL ON TABLE public.managed_credential FROM PUBLIC;
+    REVOKE ALL ON SEQUENCE public.audit_log_id_seq FROM PUBLIC;
+    GRANT SELECT, INSERT ON TABLE public.audit_log TO console;
+    GRANT USAGE, SELECT ON SEQUENCE public.audit_log_id_seq TO console;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.managed_credential TO console;
+    ALTER ROLE console NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS;
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: backbone-postgres-boundary-reconcile-
+  namespace: opensphere-backbone
+  labels:
+    opensphere.io/backbone-module: postgres
+    opensphere.io/boundary-reconcile: "true"
+    opensphere.io/release-revision: "__OPENSPHERE_RELEASE_REVISION__"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        opensphere.io/backbone-module: postgres
+        opensphere.io/boundary-reconcile: "true"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 70, runAsGroup: 70, fsGroup: 70, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: reconcile
+          image: opensphere-backbone-postgres@sha256:562d7d862b5379141e0658cf90c3b1fb3b126e4fe3c120c9ef05fb81a801f647
+          imagePullPolicy: IfNotPresent
+          command: [sh, /scripts/reconcile.sh]
+          env:
+            - { name: BOOTSTRAP_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: bootstrap_password } } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: scripts, mountPath: /scripts, readOnly: true }
+            - { name: tls, mountPath: /tls, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: scripts, configMap: { name: backbone-postgres-boundary-reconcile, defaultMode: 365 } }
+        - { name: tls, secret: { secretName: backbone-postgres, items: [{ key: ca.crt, path: ca.crt }] } }
+        - { name: tmp, emptyDir: {} }
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
