@@ -650,7 +650,11 @@ async function ensureInitialAdministrator(profile) {
   let r = await kanidmReq('GET', `/v1/person/${encodeURIComponent(profile.username)}`, undefined, headers);
   if (r.status === 404 || (r.status === 200 && r.json === null)) {
     r = await kanidmReq('POST', '/v1/person', {
-      attrs: { name: [profile.username], displayname: [profile.displayName], entry_managed_by: ['idm_admin'] },
+      // The scoped role-manager is an idm_people_admins member, but assigning
+      // idm_admin as entry_managed_by is itself a system-administrator-only
+      // mutation. Let Kanidm apply its normal person ownership so the least-
+      // privilege service account can create the first human administrator.
+      attrs: { name: [profile.username], displayname: [profile.displayName] },
     }, headers);
     if (r.status >= 300) throw new Error(`administrator create HTTP ${r.status}`);
   } else if (r.status !== 200) {
@@ -722,6 +726,10 @@ async function handleInitialSetupBegin(req, res) {
     await publishAuthAudit(profile.username, 'initial-admin-setup', 'console-access', 'accepted', 'first-access administrator created');
     return patJson(res, 201, { state: 'complete', username: profile.username });
   } catch (error) {
+    const diagnostic = /^(administrator|credential|setup_)[a-z _-]*HTTP \d{3}$/i.test(String(error?.message || ''))
+      ? error.message
+      : error?.publicError || 'setup_failed';
+    await publishAuthAudit(profile.username, 'initial-admin-setup', 'console-access', 'error', diagnostic).catch(() => {});
     await setInitialSetupState(claimId, 'required', { claimHash: null, claimedAt: null }).catch(() => {});
     return patJson(res, error?.statusCode === 503 ? 503 : 400, { error: error?.publicError || 'setup_failed' });
   }

@@ -38,5 +38,7 @@ test('first-access setup is same-origin, resourceVersion-claimed and keeps crede
   assert.match(server, /p === '\/bff\/setup\/status'/);
   assert.match(server, /p === '\/bff\/setup\/begin'/);
   assert.match(server, /p === '\/bff\/setup\/totp'/);
+  assert.doesNotMatch(server, /attrs:\s*\{[^}]*entry_managed_by:\s*\['idm_admin'\]/);
+  assert.match(server, /initial-admin-setup', 'console-access', 'error'/);
   assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-policy",\s*"opensphere-initial-admin"\]/);
 });
