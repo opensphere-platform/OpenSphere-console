@@ -159,9 +159,15 @@ interface NavBand {
   styles: [
     `
       /* ACC식 헤더 — 차콜 바 + 하단 sphere-blue 라인. 절대중앙 검색을 위해 position:relative,
-       * 모든 항목 수직 중앙(align-items:center). */
+       * 모든 항목 수직 중앙(align-items:center).
+       * z-index: var(--os-z-header) — position:relative와 함께 헤더 자신의 stacking context를 만든다.
+       * 이게 없으면 헤더는 stacking context를 형성하지 못해 자식(os-search 드롭다운 등)의 z-index가
+       * 문서 전체가 아니라 헤더 로컬 범위에서만 유효해지고, 콘텐츠 영역의 datagrid sticky 헤더처럼
+       * DOM 순서상 뒤에 오는 요소가 그 위로 새어나올 수 있다(레이어링 회귀 버그).
+       * --os-z-header는 OAA/패널 그립/알림 위, skip-link 아래(styles.scss 레이어 스케일 참고). */
       .header {
         position: relative;
+        z-index: var(--os-z-header);
         display: flex;
         align-items: center;
         height: 3rem;
@@ -283,7 +289,7 @@ interface NavBand {
         position: fixed;
         inset-block-start: 0.25rem;
         inset-inline-start: 0.25rem;
-        z-index: 2000;
+        z-index: var(--os-z-skip-link);
         transform: translateY(-150%);
         padding: 0.5rem 0.75rem;
         background: #fff;

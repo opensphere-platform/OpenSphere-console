@@ -106,7 +106,10 @@ interface SecView {
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
     `
-      /* 헤더 절대 중앙 배치 (ACC: top/left 50% + translate, 좌우 균형 무관하게 진짜 중앙) */
+      /* 헤더 절대 중앙 배치 (ACC: top/left 50% + translate, 좌우 균형 무관하게 진짜 중앙).
+       * z-index:5 는 전역 레이어 스케일(--os-z-*)이 아니라 os-shell .header 내부 로컬 순서일 뿐 —
+       * .header가 자체 stacking context(position:relative + z-index:var(--os-z-header))를 갖기
+       * 때문에, 여기 값은 형제(브랜딩·header-actions)보다만 위이면 되고 페이지 전체와는 무관하다. */
       :host {
         position: absolute; inset-block-start: 50%; inset-inline-start: 50%;
         transform: translate(-50%, -50%); z-index: 5;
@@ -128,7 +131,10 @@ interface SecView {
       .os-search-input::placeholder { color: #8d8d8d; }
       .os-kbd { font-size: 0.55rem; opacity: 0.6; border: 1px solid #6f6f6f; border-radius: 3px; padding: 0 0.25rem; color: #a8a8a8; }
 
-      /* 입력창 바로 아래 드롭다운 — OCI: 입력과 동일 너비·좌측정렬·radius4·shadow */
+      /* 입력창 바로 아래 드롭다운 — OCI: 입력과 동일 너비·좌측정렬·radius4·shadow.
+       * z-index:1001은 :host stacking context 내부(os-search-field 등) 로컬 순서 —
+       * .header가 var(--os-z-header)로 자체 stacking context를 형성하므로 이 드롭다운은
+       * 항상 헤더의 순위(OAA·패널그립·알림 위, skip-link 아래)로 캡핑되어 문서 전체로 새어나가지 않는다. */
       .os-search-drop {
         position: absolute; top: calc(100% + 5px); left: 0;
         width: 100%; background: #fdfdfc; border: 1px solid #e0e3ea;

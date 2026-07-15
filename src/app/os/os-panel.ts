@@ -75,7 +75,7 @@ import { ClarityModule } from '@clr/angular';
         top: 0;
         bottom: 0;
         width: 8px;
-        z-index: 1060;
+        z-index: var(--os-z-panel-grip, 1060);
         cursor: col-resize;
       }
       .os-panel-grip:hover {

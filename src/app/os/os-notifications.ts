@@ -119,7 +119,7 @@ import Notification16 from '@carbon/icons/es/notification/16';
         position: fixed;
         inset-block-start: 3.5rem;
         inset-inline-end: 1rem;
-        z-index: 1100;
+        z-index: var(--os-z-notifications, 1100);
         width: min(30rem, 92vw);
       }
     `,

@@ -232,7 +232,7 @@ interface OaaSession {
         width: 8px; height: 3px; border-radius: 999px; background: #ff4f62;
       }
       .oaa-panel {
-        position: fixed; top: 3rem; right: 0; bottom: 0; z-index: 1000;
+        position: fixed; top: 3rem; right: 0; bottom: 0; z-index: var(--os-z-oaa, 1000);
         width: var(--oaa-dock-width, 390px); display: flex; flex-direction: column;
         height: calc(100dvh - 3rem); max-height: calc(100dvh - 3rem);
         background: #f7f8fb; border-left: 1px solid #d9dde7;

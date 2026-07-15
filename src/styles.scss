@@ -54,6 +54,18 @@
   --os-font: "IBM Plex Sans", "IBM Plex Sans KR", system-ui, "Segoe UI", sans-serif;
   --os-font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
 
+  /* ── Z-index 레이어 스케일 (전역 오버레이 순서, 낮음→높음) ──
+   * OAA 에이전트 도킹 패널 < 퀵뷰 패널 드래그 그립 < 알림 토스트 < 전역 헤더(검색 포함) < 접근성 skip-link.
+   * 헤더는 이 스케일 중 가장 높은 콘텐츠 레이어여야 한다 — position:relative + z-index로 자체
+   * stacking context를 형성해, 콘텐츠 영역의 Clarity datagrid sticky 헤더 등이 검색 드롭다운 위로
+   * 새어나오는 레이어링 버그(콘솔 전역검색 vs datagrid 헤더)를 막는다. 값 자체보다 "순서"가 계약이므로
+   * 매직넘버 대신 반드시 이 토큰을 통해서만 참조한다. */
+  --os-z-oaa: 1000;
+  --os-z-panel-grip: 1060;
+  --os-z-notifications: 1100;
+  --os-z-header: 1150;
+  --os-z-skip-link: 2000;
+
   /* ── Overview 공통 배경(규약: 모든 섹션 /overview 페이지가 동일 배경 사용) ──
      containers/overview 기준 하단-우측 블루/핑크 글로우. CSS 변수는 ShadowDom도 상속하므로 subShell overview도 동일하게 var(--os-overview-bg) 사용 가능. */
   --os-overview-bg:
