@@ -28,7 +28,7 @@ export const appConfig: ApplicationConfig = {
       } catch (error) {
         auth.setInitError(error);
       }
-      void ext.load().catch((error) => console.warn('[extension-host] optional bootstrap load failed:', error));
+      if (!auth.setupRequired()) void ext.load().catch((error) => console.warn('[extension-host] optional bootstrap load failed:', error));
     }),
   ],
 };

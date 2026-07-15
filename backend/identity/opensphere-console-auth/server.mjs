@@ -16,6 +16,7 @@ import { URL, URLSearchParams } from 'node:url';
 import QRCode from 'qrcode';
 import { DEFAULT_TOTP_ENABLED, authPolicyFromConfigMap, authPolicyPatch } from './auth-policy.mjs';
 import { credentialCommitError, shouldResetExistingTotp } from './credential-onboarding.mjs';
+import { initialSetupData, initialSetupView, validateInitialSetup } from './initial-setup.mjs';
 import { credentialUpdateBeginRequest, passwordCredentialRequest, passwordUpdateOutcome, privilegedInitStep, validateSelfPasswordChange } from './self-service-password.mjs';
 import { deviceFingerprint, safeEqualToken, validateDevicePublicJwk, verifyDeviceChallenge } from './cli-device.mjs';
 import { isActivePat, verifyEs256Jwt } from './token-verifier.mjs';
@@ -40,6 +41,7 @@ const SIG_KEY_PATH = process.env.SIG_KEY_PATH || '/keys/sig.key';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const KSVC_SECRET_NS = process.env.KSVC_SECRET_NS || 'opensphere-console';
 const KSVC_SECRET_NAME = process.env.KSVC_SECRET_NAME || 'opensphere-identity-kanidm';
+const KSVC_ROLE_SECRET_NAME = process.env.KSVC_ROLE_SECRET_NAME || 'opensphere-rolemgr-kanidm';
 const AUTH_CODE_SECRET_NAME = process.env.AUTH_CODE_SECRET_NAME || 'opensphere-console-auth-codes';
 const CLI_DEVICE_CM_NAME = process.env.CLI_DEVICE_CM_NAME || 'opensphere-console-auth-cli-devices';
 const CLI_FLOW_SECRET_NAME = process.env.CLI_FLOW_SECRET_NAME || 'opensphere-console-auth-cli-flows';
@@ -153,10 +155,10 @@ async function kanidmPrivilegedAuthSession(username, password, totp, totpPolicyE
 
 // ---- admin SA token + group lookup ----
 const saToken = () => fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8');
-let _adminTok = null;
-async function adminToken() {
-  if (_adminTok) return _adminTok;
-  const u = new URL(`${APISERVER}/api/v1/namespaces/${KSVC_SECRET_NS}/secrets/${KSVC_SECRET_NAME}`);
+const _serviceTokens = new Map();
+async function serviceToken(secretName) {
+  if (_serviceTokens.has(secretName)) return _serviceTokens.get(secretName);
+  const u = new URL(`${APISERVER}/api/v1/namespaces/${KSVC_SECRET_NS}/secrets/${secretName}`);
   const out = await new Promise((resolve, reject) => {
     const rq = https.request({ method: 'GET', hostname: u.hostname, port: u.port || 443, path: u.pathname,
       ca: (() => { try { return fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'); } catch { return undefined; } })(),
@@ -164,9 +166,12 @@ async function adminToken() {
     rq.on('error', reject); rq.end();
   });
   if (out.status !== 200) throw new Error(`secret read HTTP ${out.status}`);
-  _adminTok = Buffer.from(JSON.parse(out.txt).data.token, 'base64').toString('utf8');
-  return _adminTok;
+  const token = Buffer.from(JSON.parse(out.txt).data.token, 'base64').toString('utf8');
+  _serviceTokens.set(secretName, token);
+  return token;
 }
+const adminToken = () => serviceToken(KSVC_SECRET_NAME);
+const roleManagerToken = () => serviceToken(KSVC_ROLE_SECRET_NAME);
 async function lookupConsoleIdentity(username) {
   const tok = await adminToken();
   const r = await kanidmReq('GET', `/v1/person/${encodeURIComponent(username)}`, undefined, { authorization: `Bearer ${tok}` });
@@ -298,6 +303,7 @@ function redirect(res, location) { res.writeHead(302, { location, 'cache-control
 const PAT_CM_NS = process.env.PAT_CM_NS || 'opensphere-console';
 const PAT_CM_NAME = process.env.PAT_CM_NAME || 'opensphere-console-auth-pats';
 const AUTH_POLICY_CM_NAME = process.env.AUTH_POLICY_CM_NAME || 'opensphere-console-auth-policy';
+const INITIAL_SETUP_CM_NAME = process.env.INITIAL_SETUP_CM_NAME || 'opensphere-initial-admin';
 // AG-5: 배포에서 권위 있게 설정하는 운영 환경 지시자. production이면 TOTP를 강제하고 비활성화를 거부한다.
 // 비워두면 ConfigMap의 environment를 사용(로컬/개발 기본 development → 기존 동작 유지).
 const AUTH_ENVIRONMENT = process.env.AUTH_ENVIRONMENT || '';
@@ -308,6 +314,7 @@ const CLI_CHALLENGE_TTL = parseInt(process.env.CLI_CHALLENGE_TTL || '60', 10);
 const OIDC_TOKEN_TTL = parseInt(process.env.OIDC_TOKEN_TTL || '3600', 10); // console session (id_token) lifetime in seconds; default 1h, set 86400 for 24h
 const PAT_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${PAT_CM_NAME}`;
 const AUTH_POLICY_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${AUTH_POLICY_CM_NAME}`;
+const INITIAL_SETUP_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${INITIAL_SETUP_CM_NAME}`;
 const AUTH_CODE_SECRET_PATH = `/api/v1/namespaces/${PAT_CM_NS}/secrets/${AUTH_CODE_SECRET_NAME}`;
 const CLI_DEVICE_CM_PATH = `/api/v1/namespaces/${PAT_CM_NS}/configmaps/${CLI_DEVICE_CM_NAME}`;
 const CLI_FLOW_SECRET_PATH = `/api/v1/namespaces/${PAT_CM_NS}/secrets/${CLI_FLOW_SECRET_NAME}`;
@@ -588,6 +595,159 @@ async function readAuthPolicy() {
   if (r.status === 200) return authPolicyFromConfigMap(r.json, DEFAULT_TOTP_ENABLED, AUTH_ENVIRONMENT);
   console.error(`[auth-policy] ConfigMap read HTTP ${r.status}; using default`);
   return authPolicyFromConfigMap(null, DEFAULT_TOTP_ENABLED, AUTH_ENVIRONMENT);
+}
+
+async function readInitialSetup() {
+  const r = await k8sApi('GET', INITIAL_SETUP_CM_PATH);
+  if (r.status === 404) return { status: 404, configMap: null, view: { required: false, busy: false } };
+  if (r.status !== 200) throw Object.assign(new Error(`initial setup state HTTP ${r.status}`), { statusCode: 503 });
+  return { status: 200, configMap: r.json, view: initialSetupView(r.json) };
+}
+
+async function replaceInitialSetup(configMap, data) {
+  return k8sApi('PUT', INITIAL_SETUP_CM_PATH, {
+    apiVersion: 'v1', kind: 'ConfigMap',
+    metadata: {
+      name: INITIAL_SETUP_CM_NAME,
+      namespace: PAT_CM_NS,
+      resourceVersion: configMap.metadata?.resourceVersion,
+    },
+    data,
+  });
+}
+
+async function claimInitialSetup(claimId) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const current = await readInitialSetup();
+    if (!current.configMap) return { error: 'setup_unavailable', status: 503 };
+    if (!current.view.required) return { error: current.view.busy ? 'setup_busy' : 'setup_complete', status: 409 };
+    const claimedAt = new Date().toISOString();
+    const result = await replaceInitialSetup(current.configMap, initialSetupData(current.configMap, 'configuring', {
+      claimHash: hashToken(claimId), claimedAt,
+    }));
+    if (result.status === 409) continue;
+    if (result.status >= 300) return { error: 'setup_state_failed', status: 503 };
+    return { configMap: result.json };
+  }
+  return { error: 'setup_busy', status: 409 };
+}
+
+async function setInitialSetupState(claimId, state, fields = {}) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const current = await readInitialSetup();
+    if (!current.configMap || current.configMap.data?.claimHash !== hashToken(claimId)) return false;
+    const result = await replaceInitialSetup(current.configMap, initialSetupData(current.configMap, state, fields));
+    if (result.status === 409) continue;
+    if (result.status >= 300) throw Object.assign(new Error(`initial setup state write HTTP ${result.status}`), { statusCode: 503 });
+    return true;
+  }
+  throw Object.assign(new Error('initial setup state write conflict'), { statusCode: 503 });
+}
+
+async function ensureInitialAdministrator(profile) {
+  const token = await roleManagerToken();
+  const headers = { authorization: `Bearer ${token}` };
+  let r = await kanidmReq('GET', `/v1/person/${encodeURIComponent(profile.username)}`, undefined, headers);
+  if (r.status === 404 || (r.status === 200 && r.json === null)) {
+    r = await kanidmReq('POST', '/v1/person', {
+      attrs: { name: [profile.username], displayname: [profile.displayName], entry_managed_by: ['idm_admin'] },
+    }, headers);
+    if (r.status >= 300) throw new Error(`administrator create HTTP ${r.status}`);
+  } else if (r.status !== 200) {
+    throw new Error(`administrator read HTTP ${r.status}`);
+  }
+  r = await kanidmReq('PATCH', `/v1/person/${encodeURIComponent(profile.username)}`, {
+    attrs: { displayname: [profile.displayName], mail: [profile.email] },
+  }, headers);
+  if (r.status >= 300) throw new Error(`administrator profile HTTP ${r.status}`);
+  r = await kanidmReq('POST', `/v1/group/${encodeURIComponent(ADMIN_GROUP)}/_attr/member`, [profile.username], headers);
+  if (r.status >= 300 && r.status !== 409) throw new Error(`administrator role HTTP ${r.status}`);
+  r = await kanidmReq('GET', `/v1/person/${encodeURIComponent(profile.username)}/_credential/_update_intent/600`, undefined, headers);
+  if (r.status !== 200 || !r.json?.token) throw new Error(`administrator credential intent HTTP ${r.status}`);
+  const exchanged = await cuExchange(r.json.token);
+  if (exchanged.status !== 200 || !Array.isArray(exchanged.json)) throw new Error(`administrator credential exchange HTTP ${exchanged.status}`);
+  return exchanged.json[0];
+}
+
+function initialSetupOriginAllowed(req) {
+  return req.headers.origin === ORIGIN && String(req.headers['content-type'] || '').toLowerCase().startsWith('application/json');
+}
+
+async function handleInitialSetupStatus(res) {
+  const current = await readInitialSetup();
+  res.setHeader('cache-control', 'no-store');
+  patJson(res, 200, current.view.busy
+    ? { state: 'busy' }
+    : current.view.required
+      ? { state: 'required', username: current.view.username, displayName: current.view.displayName, email: current.view.email }
+      : { state: 'complete' });
+}
+
+async function handleInitialSetupBegin(req, res) {
+  if (!initialSetupOriginAllowed(req)) return patJson(res, 403, { error: 'same_origin_json_required' });
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  const checked = validateInitialSetup(body);
+  if (!checked.ok) return patJson(res, 400, { error: checked.error });
+  const profile = checked.value;
+  const claimId = crypto.randomBytes(32).toString('base64url');
+  const claimed = await claimInitialSetup(claimId);
+  if (claimed.error) return patJson(res, claimed.status, { error: claimed.error });
+  try {
+    await publishAuthAudit(profile.username, 'initial-admin-setup', 'console-access', 'attempt', 'first-access administrator wizard');
+    const session = await ensureInitialAdministrator(profile);
+    let updated = await cuUpdate({ password: profile.password }, session);
+    if (updated.status !== 200) throw Object.assign(new Error('password_policy'), { publicError: 'password_policy' });
+    const policy = await readAuthPolicy();
+    if (policy.totpEnabled) {
+      const generated = await cuUpdate('totpgenerate', session);
+      const totp = generated.json?.mfaregstate?.TotpCheck;
+      if (!totp || !Array.isArray(totp.secret)) throw new Error('totp_setup_failed');
+      const secret = base32(totp.secret);
+      const otpauth = `otpauth://totp/OpenSphere:${encodeURIComponent(profile.username)}?secret=${secret}&issuer=OpenSphere&algorithm=SHA256&digits=${totp.digits || 6}&period=${totp.step || 30}`;
+      const setupId = crypto.randomBytes(16).toString('hex');
+      const exp = Math.floor(Date.now() / 1000) + 600;
+      const stored = await patchFlow('initialsetup', setupId, { claimId, session, profile: { username: profile.username, displayName: profile.displayName, email: profile.email }, exp });
+      if (stored.status >= 300) throw new Error('setup_session_store_failed');
+      return patJson(res, 200, { state: 'totp-required', setupId, secret, qrDataUrl: await QRCode.toDataURL(otpauth), expiresAt: expiresIso(exp) });
+    }
+    if (updated.json?.can_commit !== true) throw Object.assign(new Error('password_policy'), { publicError: 'password_policy' });
+    const committed = await cuCommit(session);
+    if (committed.status !== 200) throw new Error('credential_commit_failed');
+    await setInitialSetupState(claimId, 'complete', {
+      username: profile.username, displayName: profile.displayName, email: profile.email,
+      completedAt: new Date().toISOString(), claimHash: null, claimedAt: null,
+    });
+    await publishAuthAudit(profile.username, 'initial-admin-setup', 'console-access', 'accepted', 'first-access administrator created');
+    return patJson(res, 201, { state: 'complete', username: profile.username });
+  } catch (error) {
+    await setInitialSetupState(claimId, 'required', { claimHash: null, claimedAt: null }).catch(() => {});
+    return patJson(res, error?.statusCode === 503 ? 503 : 400, { error: error?.publicError || 'setup_failed' });
+  }
+}
+
+async function handleInitialSetupTotp(req, res) {
+  if (!initialSetupOriginAllowed(req)) return patJson(res, 403, { error: 'same_origin_json_required' });
+  let body;
+  try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+  catch { return patJson(res, 400, { error: 'invalid_json' }); }
+  if (!/^[a-f0-9]{32}$/.test(String(body.setupId || ''))) return patJson(res, 400, { error: 'invalid_setup_session' });
+  const flow = await readFlow('initialsetup', body.setupId);
+  if (!flow || flow.exp < Math.floor(Date.now() / 1000)) return patJson(res, 410, { error: 'setup_session_expired' });
+  const code = Number.parseInt(String(body.code || '').replace(/\s+/g, ''), 10);
+  if (!Number.isInteger(code)) return patJson(res, 400, { error: 'invalid_totp' });
+  let verified = await cuUpdate({ totpverify: [code, 'app'] }, flow.session);
+  if (verified.json?.mfaregstate === 'TotpInvalidSha1') verified = await cuUpdate('totpacceptsha1', flow.session);
+  if (verified.status !== 200 || verified.json?.can_commit !== true) return patJson(res, 400, { error: 'invalid_totp' });
+  const committed = await cuCommit(flow.session);
+  if (committed.status !== 200) return patJson(res, 503, { error: 'credential_commit_failed' });
+  await patchFlow('initialsetup', body.setupId, null);
+  await setInitialSetupState(flow.claimId, 'complete', {
+    ...flow.profile, completedAt: new Date().toISOString(), claimHash: null, claimedAt: null,
+  });
+  await publishAuthAudit(flow.profile.username, 'initial-admin-setup', 'console-access', 'accepted', 'first-access administrator created with TOTP');
+  patJson(res, 201, { state: 'complete', username: flow.profile.username });
 }
 
 async function handleAuthPolicyGet(res) {
@@ -1258,7 +1418,7 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
   const reqUrl = new URL(req.url, ORIGIN);
   const p = reqUrl.pathname;
   const isOidcEp = [EP.discovery, EP.jwks, EP.token, EP.authorize].includes(p);
-  const isPatEp = p.startsWith('/bff/pat') || p.startsWith('/bff/admin/tokens') || p.startsWith('/bff/token') || p.startsWith('/bff/cli') || p.startsWith('/bff/roles') || p.startsWith('/bff/account') || p === '/bff/auth-policy';
+  const isPatEp = p.startsWith('/bff/setup') || p.startsWith('/bff/pat') || p.startsWith('/bff/admin/tokens') || p.startsWith('/bff/token') || p.startsWith('/bff/cli') || p.startsWith('/bff/roles') || p.startsWith('/bff/account') || p === '/bff/auth-policy';
   const corsAllowed = Boolean(req.headers.origin && CORS_ORIGINS.has(req.headers.origin));
   if ((isOidcEp || isPatEp) && corsAllowed) {
     res.setHeader('access-control-allow-origin', req.headers.origin); res.setHeader('vary', 'origin');
@@ -1277,6 +1437,12 @@ const server = https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.rea
         const state = await bffReadiness();
         return patJson(res, state.ready ? 200 : 503, state);
       }
+      // First-access installation wizard. These routes are public only while the
+      // Setup-owned state is explicitly `required`; a resourceVersion CAS lets
+      // exactly one browser claim the installation and every mutation is same-origin.
+      if (p === '/bff/setup/status' && req.method === 'GET') return await handleInitialSetupStatus(res);
+      if (p === '/bff/setup/begin' && req.method === 'POST') return await handleInitialSetupBegin(req, res);
+      if (p === '/bff/setup/totp' && req.method === 'POST') return await handleInitialSetupTotp(req, res);
       // 관리 자격 introspection — 폐기·현재 Kanidm 역할을 매 요청 확인한다. 구 PAT 경로는 호환 alias.
       if ((p === '/bff/token/introspect' || p === '/bff/pat/introspect') && req.method === 'POST') return await handleTokenIntrospect(req, res);
       // Human CLI device authorization: 등록 시작/대기는 unauthenticated one-time flow,

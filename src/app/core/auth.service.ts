@@ -51,6 +51,9 @@ export class AuthService {
   /** 토큰 만료(epoch sec) */
   readonly tokenExp = signal<number>(0);
   readonly initError = signal<string>('');
+  readonly setupRequired = signal(false);
+  readonly setupBusy = signal(false);
+  readonly setupDefaults = signal({ username: 'opensphere-admin', displayName: 'OpenSphere Administrator', email: 'admin@opensphere.local' });
   private reauthenticationStarted = false;
 
   setInitError(error: unknown): void {
@@ -85,6 +88,7 @@ export class AuthService {
 
   /** 앱 부트스트랩 전 로그인 강제 (Authorization Code + PKCE S256) */
   async init(): Promise<void> {
+    if (await this.refreshInitialSetup()) return;
     const qs = window.location.search;
     // ① 인가코드 리다이렉트 콜백 복귀
     if (/[?&](code|error)=/.test(qs) && /[?&]state=/.test(qs)) {
@@ -179,6 +183,26 @@ export class AuthService {
 
     // Consumer에는 raw token을 노출하지 않는다. Extension Host의 ctx.api.fetch가
     // 검증된 same-origin API 요청에만 Authorization을 주입한다.
+  }
+
+  async refreshInitialSetup(): Promise<boolean> {
+    const response = await fetch('/bff/setup/status', { cache: 'no-store', headers: { accept: 'application/json' } });
+    // Rolling compatibility: an older BFF has no setup API and should continue
+    // through the existing OIDC login path during a zero-downtime rollout.
+    if (response.status === 404) { this.setupRequired.set(false); this.setupBusy.set(false); return false; }
+    if (!response.ok) throw new Error(`최초 관리자 상태 확인 실패: HTTP ${response.status}`);
+    const body = await response.json() as { state?: string; username?: string; displayName?: string; email?: string };
+    this.setupBusy.set(body.state === 'busy');
+    this.setupRequired.set(body.state === 'required' || body.state === 'busy');
+    if (body.state === 'required') this.setupDefaults.set({
+      username: body.username || 'opensphere-admin', displayName: body.displayName || 'OpenSphere Administrator', email: body.email || 'admin@opensphere.local'
+    });
+    return this.setupRequired();
+  }
+
+  async completeInitialSetup(): Promise<void> {
+    this.setupRequired.set(false); this.setupBusy.set(false);
+    await this.redirectToLogin();
   }
 
   private userHasValidIdToken(u: User): boolean {

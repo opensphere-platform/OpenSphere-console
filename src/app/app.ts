@@ -1,13 +1,16 @@
 import { Component, ChangeDetectionStrategy, inject } from '@angular/core';
 import { OsShell } from './os/os-shell';
 import { AuthService } from './core/auth.service';
+import { InitialSetup } from './pages/initial-setup';
 
 @Component({
   selector: 'app-root',
-  imports: [OsShell],
+  imports: [OsShell, InitialSetup],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
-    @if (auth.initError(); as error) {
+    @if (auth.setupRequired()) {
+      <os-initial-setup />
+    } @else if (auth.initError(); as error) {
       <main class="os-bootstrap-error" role="alert">
         <h1>OpenSphere Console</h1>
         <p>인증 서비스를 초기화하지 못했습니다.</p>

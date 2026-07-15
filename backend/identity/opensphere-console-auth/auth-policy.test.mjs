@@ -57,7 +57,7 @@ test('deployment declares shared development policy and scoped RBAC', () => {
   assert.match(deploy, /environment:\s*development/);
   assert.match(deploy, /opensphere\.io\/default-totp-enabled:\s*"false"/);
   assert.doesNotMatch(deploy, /\n\s+totpEnabled:\s*"false"/);
-  assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-policy"\][\s\S]*verbs:\s*\["get",\s*"patch",\s*"update"\]/);
+  assert.match(deploy, /resourceNames:\s*\["opensphere-console-auth-policy",\s*"opensphere-initial-admin"\][\s\S]*verbs:\s*\["get",\s*"patch",\s*"update"\]/);
   // Legacy credential ConfigMaps may be patched only to delete successfully
   // migrated records.  `update` remains forbidden: it could replace an entire
   // ConfigMap and reintroduce revoked credential material.
