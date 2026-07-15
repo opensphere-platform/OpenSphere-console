@@ -6,8 +6,10 @@ RUN apk upgrade --no-cache \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY server.js /app/server.js
 COPY manual-seeds /app/manual-seeds
-COPY kanidm-ca.crt /app/kanidm-ca.crt
-ENV PORT=8080 KANIDM_CA_PATH=/app/kanidm-ca.crt
+# The Kanidm trust CA is never baked into the image. It is a Setup-provisioned Secret
+# (opensphere-console-auth-ca) mounted read-only at /etc/kanidm-ca by the base manifest
+# (backend/backbone/console-services.yaml); server.js defaults KANIDM_CA_PATH to that same path.
+ENV PORT=8080
 USER node
 EXPOSE 8080
 CMD ["node", "/app/server.js"]

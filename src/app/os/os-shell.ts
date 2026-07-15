@@ -23,6 +23,7 @@ import { routeForPlugin } from '../core/perspectives';
 import { OsNavNode } from './os-nav-node';
 import { OsSearch } from './os-search';
 import { OsNotifications } from './os-notifications';
+import { OsOaaAgent } from './os-oaa-agent';
 
 interface NavItem {
   path: string;
@@ -49,6 +50,7 @@ interface NavBand {
     OsNavNode,
     OsSearch,
     OsNotifications,
+    OsOaaAgent,
     CarbonIcon,
     OsRawIcon,
   ],
@@ -68,6 +70,10 @@ interface NavBand {
         </div>
         <os-search />
         <div class="header-actions">
+          <a class="os-header-manual" routerLink="/manual" routerLinkActive="active" title="Manual" aria-label="Manual">
+            <os-cicon [icon]="iconManual" [size]="18" />
+          </a>
+          <os-oaa-agent />
           <os-notifications />
           <!-- 콘솔 관리는 1단 nav 하단 항목으로 이동(Model A). 헤더는 프로필 전용. -->
           <!-- ACC식 계정 영역: 아바타 → Account profile / Log out (프로필 전용) -->
@@ -191,6 +197,25 @@ interface NavBand {
         gap: 0.15rem;
         margin-left: auto;
         padding-right: 0.5rem;
+      }
+      /* Manual 네이티브 헤더 액션 — /manual 딥링크(§manual-native-console). */
+      .os-header-manual {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 2.25rem;
+        min-height: 2.25rem;
+        background: transparent;
+        border: 0;
+        color: #c7d0e8;
+        text-decoration: none;
+        cursor: pointer;
+        border-radius: 4px;
+      }
+      .os-header-manual:hover,
+      .os-header-manual.active {
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
       }
       /* 좌측 nav 컬럼 = [nav(flex:1, 스크롤)] + [하단 바]. 풀 높이. */
       .os-nav-col { display: flex; flex-direction: column; align-self: stretch; }
@@ -337,6 +362,7 @@ export class OsShell {
   });
   readonly iconMenu = Menu20;
   readonly iconHome = Dashboard16;
+  readonly iconManual = Document16;
   readonly iconSettings = Settings16;
   readonly iconChevLeft = ChevronLeft16;
   readonly iconChevRight = ChevronRight16;

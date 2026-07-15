@@ -70,7 +70,7 @@ Console의 토대 + 승인된 Host Contract = subShell / Plugin / Binding 확장
 
 ### 3.4 문서 및 회귀 방지
 
-- 최상위 `DESIGN-GUIDE.md`와 `docs/MAIN-SHELL-BASELINE.md`에 native CLI 및 workforce 경계 반영
+- 최상위 `DESIGN-GUIDE.md`와 `../../_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md`에 native CLI 및 workforce 경계 반영 (`MAIN-SHELL-BASELINE.md`는 0004로 흡수·삭제)
 - Main Shell 계약 테스트에 route/menu/Clarity/native API/native ownership/no-Binding 조건 추가
 
 ## 4. 검증 증거

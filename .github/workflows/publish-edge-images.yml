@@ -20,6 +20,9 @@ on:
       - backend/opensphere-console-oaa-gateway/**
       - backend/os-cli/**
       - backend/backbone/images/**
+      - backend/backbone/bootstrap/**
+      - backend/backbone/console-services.yaml
+      - deploy/**
       - .github/workflows/publish-edge-images.yml
 
 permissions:

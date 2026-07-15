@@ -8,11 +8,13 @@ import { AdminRoles } from './pages/admin-roles';
 import { MyInfo } from './pages/my-info';
 import { ConsoleAdmins } from './pages/console-admins';
 import { AdminBackbone } from './pages/admin-backbone';
+import { AdminOaa } from './pages/admin-oaa';
 import { AdminObservability } from './pages/admin-observability';
 import { AdminNotifications } from './pages/admin-notifications';
 import { AdminAudit } from './pages/admin-audit';
 import { AdminCli } from './pages/admin-cli';
 import { AdminLayout } from './pages/admin-layout';
+import { ManualPage } from './pages/manual';
 import { authenticatedGuard } from './core/authenticated.guard';
 
 /**
@@ -36,6 +38,9 @@ function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
 export const routes: Routes = [
   { path: '', component: Landing },
   { path: 'me', component: MyInfo },
+  // Manual — Main Shell 네이티브 페이지(subShell/plugin/Consumer 아님). OAA Manual Registry
+  // (/api/manual/*)를 ManualService로 직접 소비. 딥링크 `/manual?doc=<sourceId>`.
+  { path: 'manual', component: ManualPage, canActivate: [authenticatedGuard] },
   // Containers 섹션은 DUPA subShell(shell-template)로 이전됨 → 네이티브 라우트 제거. /p/shell-template 로 진입.
 
   // "콘솔 관리" 섹션 (Model A): 1단 진입 → AdminLayout이 2단 보조메뉴 + 자식 페이지를 렌더.
@@ -53,6 +58,9 @@ export const routes: Routes = [
       { path: 'extensions', component: AdminPlugins },
       { path: 'roles', component: AdminRoles },
       { path: 'backbone', component: AdminBackbone },
+      // OAA Gateway 관리 — CONSTITUTION-0004 §4.2/§4.4. OAA Core는 Main Shell native, Gateway는 별도 CBS
+      // consumer workload. Backbone 화면에는 섞지 않고 전용 페이지로 흡수(§8 감사 판정).
+      { path: 'oaa', component: AdminOaa },
       { path: 'observability', component: AdminObservability },
       { path: 'notifications', component: AdminNotifications },
       { path: 'audit', component: AdminAudit },

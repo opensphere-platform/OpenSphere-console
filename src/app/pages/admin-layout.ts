@@ -8,6 +8,7 @@ import UserMultiple16 from '@carbon/icons/es/user--multiple/16';
 import Catalog16 from '@carbon/icons/es/catalog/16';
 import Api16 from '@carbon/icons/es/api/16';
 import Layers16 from '@carbon/icons/es/layers/16';
+import ChatBot16 from '@carbon/icons/es/chat-bot/16';
 import Activity16 from '@carbon/icons/es/activity/16';
 import Notification16 from '@carbon/icons/es/notification/16';
 import Terminal16 from '@carbon/icons/es/terminal/16';
@@ -77,6 +78,7 @@ export class AdminLayout {
       label: '플랫폼 기반',
       items: [
         { label: 'Backbone', route: '/manage/backbone', icon: Layers16 },
+        { label: 'OAA Gateway', route: '/manage/oaa', icon: ChatBot16 },
         { label: 'Observability', route: '/manage/observability', icon: Activity16 },
       ],
     },

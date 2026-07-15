@@ -82,7 +82,7 @@ Cluster infra : K8s · CNI · storage(local-path) · ingress-nginx
    (각자 /metrics + ServiceMonitor 노출 = 관측 "대상")
 ```
 
-- **Backbone에 prometheus를 넣지 않는다.** Backbone은 콘솔의 수직 backing(상태저장)이고 prometheus는 수평 관측이다. 단 Backbone 컴포넌트도 **관측 대상**으로서 ServiceMonitor를 노출한다(집이 아니라 대상). → [BACKBONE-ARCHITECTURE.md](BACKBONE-ARCHITECTURE.md) §3.4
+- **CBS에 Prometheus를 넣지 않는다.** CBS는 Console의 수직 backing(상태저장)이고 Prometheus는 HIS/PFS 경계를 따르는 수평 관측 capability다. 단 CBS 컴포넌트도 **관측 대상**으로서 ServiceMonitor를 노출한다(집이 아니라 대상). → [BACKBONE-ARCHITECTURE.md](BACKBONE-ARCHITECTURE.md) §3.4
 - **AI의 TrustyAI/Prometheus는 별도 스택이 아니라** 이 공유 prometheus 위에 얹는 도메인 특화 룰/소비다. 통합 관측층으로 일반화하면 현재 문서의 산발적 배치가 정리된다. **중복 스택 금지.**
 
 ---

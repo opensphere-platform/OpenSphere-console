@@ -2,6 +2,7 @@ import { Injectable, computed, inject } from '@angular/core';
 import { ExtensionHostService } from './extension-host.service';
 import { PerspectiveService } from './perspective.service';
 import { ApiService, CatalogEntity } from './api.service';
+import { ManualService } from './manual.service';
 import { SearchResult, SearchProvider } from './search.types';
 
 export type { SearchResult, SearchProvider } from './search.types';
@@ -33,6 +34,7 @@ export class SearchService {
   private ext = inject(ExtensionHostService);
   private psp = inject(PerspectiveService);
   private api = inject(ApiService);
+  private manual = inject(ManualService);
   /** 데이터층/셸 provider(예: OpenSearch). 런타임 플러그인 provider는 ext가 소유(search:contribute). */
   private dataProviders: SearchProvider[] = [];
 
@@ -46,6 +48,7 @@ export class SearchService {
     { label: 'Extensions 관리', sublabel: 'Console', path: '/manage/extensions', kind: 'result' },
     { label: '역할/권한(RBAC)', sublabel: 'Identity', path: '/manage/roles', kind: 'result' },
     { label: '콘솔 관리자 온보딩', sublabel: 'Identity', path: '/manage/console-admins', kind: 'result' },
+    { label: 'OAA Gateway 관리', sublabel: 'OAA · Platform Foundation', path: '/manage/oaa', kind: 'result' },
   ];
 
   /** 카탈로그 엔티티 캐시(검색 키 입력마다 재요청 방지) — 실패 시 빈 목록(graceful). */
@@ -61,6 +64,7 @@ export class SearchService {
     { label: 'APIs', sublabel: '관리 · 자산 및 확장', path: '/manage/apis', kind: 'page' },
     { label: 'Console CLI', sublabel: '관리 · 자산 및 확장', path: '/manage/cli', kind: 'page' },
     { label: 'Extensions', sublabel: '관리 · 자산 및 확장', path: '/manage/extensions', kind: 'page' },
+    { label: 'OAA Gateway', sublabel: '관리 · 플랫폼 기반', path: '/manage/oaa', kind: 'page' },
   ];
 
   /** 즉시 로컬 인덱스(정적 + 동적 플러그인 페이지 + 워크스페이스) — "이동" 표면 */
@@ -105,6 +109,22 @@ export class SearchService {
     return settled.flat().slice(0, 30);
   }
 
+  /**
+   * 코어 Manual Registry(/api/manual/*) 전문검색 — 콘솔 네이티브 /manual 페이지의 문서를 대상.
+   * 결과 경로는 `/manual?doc=<sourceId>` (콘솔 네이티브 라우트). 플러그인 런타임 기여(§queryManualContributions)와는
+   * 별개 소스이며 실패해도 그 결과에 영향을 주지 않는다(호출부에서 개별 격리).
+   */
+  private async queryManualRegistry(q: string): Promise<SearchResult[]> {
+    const hits = await this.manual.search(q, 6);
+    return hits.map((h) => ({
+      label: h.title || h.documentId,
+      sublabel: [h.sourceName, h.documentType].filter(Boolean).join(' · ') || 'Manual',
+      path: `/manual?doc=${encodeURIComponent(h.sourceId)}`,
+      kind: 'result' as const,
+      source: 'manual-registry',
+    }));
+  }
+
   private queryManualContributions(q: string): SearchResult[] {
     const s = q.trim().toLowerCase();
     if (!s) return [];
@@ -143,6 +163,9 @@ export class SearchService {
       (d) => d.label.toLowerCase().includes(s) || d.sublabel.toLowerCase().includes(s),
     ).slice(0, 6);
     documentation.push(...this.queryManualContributions(q));
+    try {
+      documentation.push(...(await this.queryManualRegistry(q)));
+    } catch { /* Manual Registry 미가용 → documentation 섹션은 다른 소스로 graceful degrade */ }
 
     let services: SearchResult[] = [];
     let marketplace: SearchResult[] = [];

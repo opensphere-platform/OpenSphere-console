@@ -6,19 +6,34 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
-test('base Main Shell has no built-in AI or Manual consumer surface', () => {
+test('base Main Shell has no built-in Consumer surface, but Manual and OAA Core are required native capability (CONSTITUTION-0004 §4.2)', () => {
   const shell = read('src', 'app', 'os', 'os-shell.ts');
   const routes = read('src', 'app', 'app.routes.ts');
   const search = read('src', 'app', 'core', 'search.service.ts');
   const nginx = read('nginx', 'default.conf.template');
 
-  assert.doesNotMatch(shell, /OsOaaAgent|<os-oaa-agent/);
+  // OAA Core (the global assistant entry point) is Main Shell native, not an optional
+  // Backbone-gated Consumer — it is always present in the base shell, same as Manual.
+  assert.match(shell, /OsOaaAgent/);
+  assert.match(shell, /<os-oaa-agent/);
+  // The Manual subShell/registration pattern is retired; Manual is now a Main Shell native
+  // page (not a subShell redirect) — always present.
   assert.doesNotMatch(routes, /redirectTo:\s*'p\/manual'/);
-  assert.doesNotMatch(search, /ManualService|\/p\/manual/);
-  assert.doesNotMatch(nginx, /location\s+\/api\/(?:oaa|manual)\//);
+  assert.match(routes, /path:\s*'manual',\s*component:\s*ManualPage/);
+  assert.match(search, /ManualService/);
+  assert.match(search, /\/manual\?doc=/);
+  assert.doesNotMatch(search, /\/p\/manual/);
+  assert.match(shell, /os-header-manual/);
+  assert.match(shell, /routerLink="\/manual"/);
+  // The OAA-Gateway backend (Manual + OAA chat) is a Main Shell native, same-origin proxied
+  // CBS consumer — not an optional add-on and not a cross-origin/compatibility-redirect path.
+  assert.match(nginx, /location \/api\/oaa\/ \{/);
+  assert.match(nginx, /location \/api\/manual\/ \{/);
+  assert.match(nginx, /opensphere-console-oaa-gateway\.opensphere-backbone\.svc\.cluster\.local/);
+  assert.equal(fs.existsSync(path.join(root, 'backend', 'manual-subShell')), false);
 });
 
-test('Backbone bootstrap contains exactly the three required pillars', () => {
+test('Backbone bootstrap contains exactly the three CBS pillars; OAA-Gateway is a Main Shell native CBS consumer, not a fourth pillar', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   const manifest = read('backend', 'backbone', 'bootstrap', 'backbone.yaml');
   const components = controller.slice(controller.indexOf('const BB_COMPONENTS'), controller.indexOf('const BB_ACCESS'));
@@ -27,18 +42,31 @@ test('Backbone bootstrap contains exactly the three required pillars', () => {
     assert.match(components, new RegExp(pillar));
     assert.match(manifest, new RegExp(pillar));
   }
+  // BB_COMPONENTS (the CBS pillar list) and the CBS bootstrap manifest stay exactly three
+  // pillars — OAA-Gateway is never added there. Its own readiness is tracked separately by
+  // backboneReadiness()'s `oaa` field (asserted below) so it never gains pillar/reconcile status.
   assert.doesNotMatch(components, /oaa|manual/i);
   assert.doesNotMatch(manifest, /opensphere-console-oaa-gateway|OAA_GATEWAY_IMAGE/);
   assert.doesNotMatch(controller, /function bbWorkloads/);
+  // Main Shell Baseline Ready requires OAA-Gateway readiness alongside the CBS three pillars
+  // (CONSTITUTION-0004 §4.5), probed read-only via /readyz — never reconciled/created/owned here.
+  assert.match(controller, /async function oaaGatewayReadiness\(\)/);
+  assert.match(controller, /OAA_GATEWAY_URL/);
+  assert.match(controller, /\$\{OAA_GATEWAY_URL\}\/readyz/);
+  assert.match(controller, /postgres && rustfs && gitea && workloads\.ready && oaa\.ready/);
 });
 
-test('base deployment does not declare or pre-install any Consumer', () => {
+test('base deployment does not declare or pre-install any Consumer; OAA-Gateway base manifest is native, not optional AI staging', () => {
   const deploy = read('deploy', 'opensphere-console.yaml');
-  const optionalAi = read('backend', 'backbone', 'console-services.yaml');
+  const oaaManifest = read('backend', 'backbone', 'console-services.yaml');
   const adminBackbone = read('src', 'app', 'pages', 'admin-backbone.ts');
 
   assert.doesNotMatch(deploy, /kind:\s*UIPlugin(?:Package|Registration)/);
-  assert.match(optionalAi, /OPTIONAL AI STAGING MANIFEST/);
+  // The former "OPTIONAL AI STAGING MANIFEST" framing is retired — the manifest now documents
+  // Main Shell native ownership and ordering after the CBS three pillars are Ready.
+  assert.doesNotMatch(oaaManifest, /OPTIONAL AI STAGING MANIFEST/);
+  assert.match(oaaManifest, /Main Shell native/);
+  assert.match(oaaManifest, /CBS consumer/);
   assert.doesNotMatch(adminBackbone, /OAA|oaa|LlmKey|KnowledgeStore/);
 });
 

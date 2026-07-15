@@ -1211,16 +1211,33 @@ async function giteaHealth() {
     return r.ok;
   } catch { return false; }
 }
+// OAA-Gateway is Main Shell native (CONSTITUTION-0004 §4.2), not a CBS pillar and not owned or
+// reconciled by this controller — the controller only probes its unauthenticated, in-cluster-only
+// /readyz the same way it probes Gitea's /api/healthz. Main Shell Baseline Ready requires this to
+// be true alongside the CBS three pillars (§4.5); this function never creates, patches, or deletes
+// the OAA-Gateway workload.
+const OAA_GATEWAY_URL = process.env.OAA_GATEWAY_URL || `http://opensphere-console-oaa-gateway.${BACKBONE_NS}.svc.cluster.local:8080`;
+async function oaaGatewayReadiness() {
+  try {
+    const r = await fetch(`${OAA_GATEWAY_URL}/readyz`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(3000) });
+    let body = null;
+    try { body = await r.json(); } catch { body = null; }
+    return { ready: r.ok === true, components: body?.components || null, reason: body?.reason || (r.ok ? null : 'oaa_gateway_not_ready') };
+  } catch {
+    return { ready: false, components: null, reason: 'oaa_gateway_unreachable' };
+  }
+}
 async function backboneReadiness() {
   await ensureBackboneConnections();
-  const [postgres, rustfs, gitea, workloads] = await Promise.all([
+  const [postgres, rustfs, gitea, workloads, oaa] = await Promise.all([
     db.healthCheck(),
     storage.isEnabled() ? storage.healthCheck() : Promise.resolve(false),
     giteaHealth(),
     backboneStatus(),
+    oaaGatewayReadiness(),
   ]);
-  const ready = postgres && rustfs && gitea && workloads.ready;
-  return { ready, required: true, postgres, rustfs, gitea, workloads };
+  const ready = postgres && rustfs && gitea && workloads.ready && oaa.ready;
+  return { ready, required: true, postgres, rustfs, gitea, workloads, oaa };
 }
 
 async function upsertSecret(ns, name, stringData) {

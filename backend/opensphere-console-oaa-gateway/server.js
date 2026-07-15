@@ -15,7 +15,18 @@ const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-conso
 const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
 const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
 const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
-const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/app/kanidm-ca.crt';
+// CONSTITUTION-0004 base manifest: the installation CA is a Setup-provisioned Secret
+// (opensphere-console-auth-ca) mounted read-only at /etc/kanidm-ca, never a certificate baked
+// into the image at build time.
+const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
+// Signed group claims alone are trusted only until exp — a revoked PAT/CLI session, a disabled
+// account, or a removed admin role must stop working starting with the very next request, not at
+// token expiry. dupa-control's controller.js already requires the auth BFF's live
+// /bff/token/introspect state on every request with no cache; OAA must have the same live identity
+// authority instead of trusting locally-verified signed claims until exp.
+const TOKEN_INTROSPECTION_URL = process.env.TOKEN_INTROSPECTION_URL
+  || 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect';
+const TOKEN_INTROSPECTION_SERVERNAME = process.env.TOKEN_INTROSPECTION_SERVERNAME || KANIDM_TLS_SERVERNAME;
 const PG = {
   host: process.env.BACKBONE_PG_HOST || 'backbone-postgres.opensphere-backbone.svc.cluster.local',
   port: Number(process.env.BACKBONE_PG_PORT || 5432),
@@ -31,6 +42,12 @@ const OAA_MANUAL_SEED_PATH = process.env.OAA_MANUAL_SEED_PATH || '/app/manual-se
 const OAA_ENV_NAMESPACES = (process.env.OAA_ENV_NAMESPACES || 'opensphere-console,opensphere-backbone,opensphere-console-auth,opensphere-monitoring')
   .split(',').map((x) => x.trim()).filter(Boolean).slice(0, 8);
 const OAA_SCALE_MAX = Math.max(1, Math.min(50, Number(process.env.OAA_SCALE_MAX || 10) || 10));
+// CONSTITUTION-0004 §4.2: before Cluster Manager Activated + HIS Preflight Ready, OAA may only
+// expose Manual/help/search/safe read-only capability. Kubernetes mutation/action tools must stay
+// unavailable. This must be exactly the string 'true' to open the gate; any other value (including
+// unset) fails closed.
+const OAA_MUTATION_ENABLED = process.env.OAA_MUTATION_ENABLED === 'true';
+const OAA_MUTATION_GATE_REASON = 'mutation_disabled_until_his_ready';
 
 const KEY_LABEL = 'opensphere.io/oaa-llm-key';
 const PART_LABEL = 'opensphere.io/part-of';
@@ -123,25 +140,115 @@ async function loadJwks(force = false) {
   return jwks;
 }
 
+// Strict signed-claim validation only (no live-identity check). Kept as a separate, pure function
+// (like dupa-control's assertClaims) so the shape/ordering can be unit-tested without a network
+// round trip. now is injectable for deterministic nbf/exp tests.
+function assertClaims(header, claims, now) {
+  now = now || Date.now();
+  const aud = Array.isArray(claims.aud) ? claims.aud : (claims.aud ? [claims.aud] : []);
+  if (header.alg !== 'ES256') throw { code: 401, msg: 'unexpected alg' };
+  if (!KANIDM_ISSUERS.includes(claims.iss)) throw { code: 401, msg: 'bad iss' };
+  if (claims.azp !== KANIDM_AZP && !aud.includes(KANIDM_AZP)) throw { code: 401, msg: 'bad azp/aud' };
+  if (!claims.exp) throw { code: 401, msg: 'missing exp' };
+  if (!claims.sub) throw { code: 401, msg: 'missing sub' };
+  if (!claims.iat) throw { code: 401, msg: 'missing iat' };
+  if (claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
+  if (claims.nbf && claims.nbf * 1000 > now + 30000) throw { code: 401, msg: 'token not yet valid' };
+  if (claims.typ !== undefined && claims.typ !== 'browser' && claims.typ !== 'pat' && claims.typ !== 'cli_session') {
+    throw { code: 401, msg: 'unsupported token type' };
+  }
+}
+
+// Introspects the exact raw JWT against the auth BFF's live session/PAT/CLI state on every call —
+// no cache, no TTL. https.request (not fetch) so the installation CA and SNI are explicit, and the
+// response is size- and time-bounded so a slow/misbehaving BFF cannot hang the request or exhaust
+// memory. Any non-200 / oversized / non-JSON response rejects, which verifyAuthed below turns into
+// a generic fail-closed 401 without ever logging or echoing the token.
+function introspectManagedToken(jwt) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(TOKEN_INTROSPECTION_URL);
+    const body = Buffer.from(new URLSearchParams({ token: jwt }).toString());
+    const rq = https.request({
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + u.search,
+      method: 'POST',
+      ca: jwksCa(),
+      servername: TOKEN_INTROSPECTION_SERVERNAME,
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'content-length': body.length,
+        accept: 'application/json',
+      },
+    }, (resp) => {
+      const chunks = [];
+      let size = 0;
+      resp.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 64 * 1024) chunks.push(chunk);
+      });
+      resp.on('end', () => {
+        if (size > 64 * 1024) return reject(new Error('token introspection response too large'));
+        if (resp.statusCode !== 200) return reject(new Error(`token introspection HTTP ${resp.statusCode}`));
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+        catch { reject(new Error('token introspection returned invalid JSON')); }
+      });
+    });
+    rq.setTimeout(3000, () => rq.destroy(new Error('token introspection timeout')));
+    rq.on('error', reject);
+    rq.write(body);
+    rq.end();
+  });
+}
+
+// The live-identity gate: signed claims describe what the token *said* at issuance time; only the
+// introspection state describes whether that credential is still active *right now*. Every field
+// pinned here must match, or the request fails closed — never fall back to the signed claims.
+function assertManagedTokenActive(claims, state) {
+  if (!state || state.active !== true) throw { code: 401, msg: 'credential inactive or revoked' };
+  if (state.sub !== claims.sub || state.username !== claims.preferred_username || state.exp !== claims.exp) {
+    throw { code: 401, msg: 'credential state mismatch' };
+  }
+  if (claims.typ === undefined || claims.typ === 'browser') {
+    if (state.type !== 'browser_session') throw { code: 401, msg: 'browser session state mismatch' };
+    return;
+  }
+  if (!claims.jti || state.jti !== claims.jti) throw { code: 401, msg: 'credential state mismatch' };
+  if (claims.typ === 'cli_session' && (!claims.device_id || state.deviceId !== claims.device_id)) {
+    throw { code: 401, msg: 'device state mismatch' };
+  }
+}
+
 async function verifyAuthed(req) {
   const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
   if (!m) throw { code: 401, msg: 'no bearer token' };
-  const [h, p, s] = m[1].split('.');
+  const rawToken = m[1];
+  const [h, p, s] = rawToken.split('.');
   if (!h || !p || !s) throw { code: 401, msg: 'malformed token' };
   const header = JSON.parse(b64urlToBuf(h).toString('utf8'));
   const claims = JSON.parse(b64urlToBuf(p).toString('utf8'));
-  const aud = Array.isArray(claims.aud) ? claims.aud : (claims.aud ? [claims.aud] : []);
-  if (header.alg !== 'ES256') throw { code: 401, msg: 'unexpected alg' };
   let jwk = (await loadJwks()).find((k) => k.kid === header.kid);
   if (!jwk) jwk = (await loadJwks(true)).find((k) => k.kid === header.kid);
   if (!jwk) throw { code: 401, msg: 'unknown kid' };
   const pub = createPublicKey({ key: jwk, format: 'jwk' });
   const ok = verify('SHA256', Buffer.from(`${h}.${p}`), { key: pub, dsaEncoding: 'ieee-p1363' }, b64urlToBuf(s));
   if (!ok) throw { code: 401, msg: 'bad signature' };
-  if (!KANIDM_ISSUERS.includes(claims.iss)) throw { code: 401, msg: 'bad iss' };
-  if (claims.azp !== KANIDM_AZP && !aud.includes(KANIDM_AZP)) throw { code: 401, msg: 'bad azp/aud' };
-  if (!claims.exp || claims.exp * 1000 < Date.now()) throw { code: 401, msg: 'token expired' };
-  const groups = (claims.groups || []).map((g) => String(g).replace(/^\//, '').replace(/@.*$/, ''));
+  assertClaims(header, claims);
+  // Live identity authority (no cache): re-check the exact raw JWT against the auth BFF's current
+  // session/PAT/CLI state on EVERY authenticated request. A revoked PAT/CLI session, a disabled
+  // account, or a removed admin role must be rejected starting with the very next request, not at
+  // token expiry. Any introspection outage/error/mismatch fails closed as a generic 401 — never
+  // fall back to trusting the signed claims, and never leak the token in the failure.
+  let managedState;
+  try {
+    managedState = await introspectManagedToken(rawToken);
+  } catch {
+    throw { code: 401, msg: 'token introspection unavailable' };
+  }
+  assertManagedTokenActive(claims, managedState);
+  // Current groups/admin decision are derived from the live introspection state, not the signed
+  // claims, so a role removed after issuance stops granting access immediately.
+  const groups = (managedState.groups || []).map((g) => String(g).replace(/^\//, '').replace(/@.*$/, ''));
   return { username: claims.preferred_username || claims.sub || 'unknown', subject: claims.sub || '', groups };
 }
 
@@ -372,7 +479,13 @@ async function ensureKnowledgeSchema() {
   try {
     return await pgSchemaPromise;
   } finally {
-    if (pgSchemaReady) pgSchemaPromise = null;
+    // Always clear the in-flight promise, on both success and failure. Only the caller that
+    // created pgSchemaPromise reaches this finally (concurrent callers returned the shared
+    // promise early above), so this cannot race a fast-path pgSchemaReady check. Clearing it
+    // unconditionally lets a later call retry schema setup after a transient failure (e.g. the
+    // async startup seed racing PostgreSQL before it was ready) instead of leaving
+    // pgSchemaPromise pinned to a rejected Promise forever.
+    pgSchemaPromise = null;
   }
 }
 
@@ -1320,6 +1433,71 @@ function requireConfirm(actual, expected) {
   if (String(actual || '').trim() !== expected) throw { code: 400, msg: `confirmation required: ${expected}` };
 }
 
+// Server-side nonempty mutation reason validator (CONSTITUTION-0004 §4.2/§4.4). Every write
+// execution path must be given a real, caller-supplied, nonempty human reason before mutation.
+// This never synthesizes a fallback reason (e.g. 'binding <id>' or a canned string) on the
+// caller's behalf — an empty/whitespace-only reason fails closed with a stable machine-readable
+// error code the UI/tooling can branch on.
+function requireMutationReason(reason) {
+  const trimmed = String(reason ?? '').trim();
+  if (!trimmed) {
+    throw { code: 400, msg: 'a nonempty reason is required for this write action', errorCode: 'mutation_reason_required' };
+  }
+  return trimmed;
+}
+
+// Fail-closed mutation gate (CONSTITUTION-0004 §4.2). Every write-capable tool/binding/HTTP path
+// must call this before performing any Kubernetes mutation, with no bypass. Audits the block.
+function assertMutationEnabled(actor, target = 'oaa-mutation') {
+  if (OAA_MUTATION_ENABLED) return;
+  audit(actor, 'mutation-gate-block', target, 'blocked', OAA_MUTATION_GATE_REASON);
+  throw {
+    code: 403,
+    msg: 'OAA Kubernetes mutation/action tools are disabled until Cluster Manager Activated and HIS Preflight Ready.',
+    errorCode: OAA_MUTATION_GATE_REASON,
+  };
+}
+
+// Filters a tool manifest so write tools (readOnly !== true) are removed while the mutation gate is
+// closed, and stamps explicit gate status fields the admin UI can read.
+function withMutationGate(toolManifest) {
+  const mutationEnabled = OAA_MUTATION_ENABLED;
+  const tools = mutationEnabled
+    ? (toolManifest.tools || [])
+    : (toolManifest.tools || []).filter((t) => t && t.readOnly === true);
+  return {
+    ...toolManifest,
+    mutationEnabled,
+    mutationGateReason: mutationEnabled ? null : OAA_MUTATION_GATE_REASON,
+    tools,
+  };
+}
+
+// Filters an action-binding manifest so any binding whose risk is not 'read', or whose referenced
+// tool is not read-only, is removed while the mutation gate is closed. `toolManifest` should already
+// be the raw (unfiltered) tool manifest so the tool's readOnly flag can be resolved.
+function withActionBindingMutationGate(bindingManifest, toolManifest) {
+  const mutationEnabled = OAA_MUTATION_ENABLED;
+  if (mutationEnabled) {
+    return { ...bindingManifest, mutationEnabled: true, mutationGateReason: null };
+  }
+  const toolReadOnly = new Map((toolManifest.tools || []).map((t) => [t.id, t.readOnly === true]));
+  const bindings = (bindingManifest.bindings || []).filter((b) => {
+    if (!b || b.riskLevel !== 'read') return false;
+    // Fail closed: only retain a binding when its referenced tool is known AND explicitly
+    // readOnly === true. An unknown/missing tool (absent from the raw tool manifest) must never
+    // be treated as safe just because Map#get() returns undefined instead of false.
+    return toolReadOnly.get(b.toolId) === true;
+  });
+  return {
+    ...bindingManifest,
+    mutationEnabled: false,
+    mutationGateReason: OAA_MUTATION_GATE_REASON,
+    bindings,
+    invalidBindings: bindings.filter((b) => !b.valid).map((b) => ({ id: b.id, toolId: b.toolId })),
+  };
+}
+
 async function getDeployment(ns, name) {
   const r = await k8s('GET', `/apis/apps/v1/namespaces/${ns}/deployments/${name}`);
   if (r.status === 404) throw { code: 404, msg: 'deployment not found' };
@@ -1459,9 +1637,11 @@ async function rolloutStatus(body = {}, actor = null) {
 }
 
 async function restartDeployment(body = {}, actor = null) {
+  assertMutationEnabled(actor, 'k8s-restart-deployment');
   const ns = requireAllowedNamespace(body.namespace);
   const name = requireK8sName(body.name || body.deployment, 'deployment');
   requireConfirm(body.confirm, `restart deployment ${ns}/${name}`);
+  const reason = requireMutationReason(body.reason);
   const before = await getDeployment(ns, name);
   const now = new Date().toISOString();
   const patch = {
@@ -1479,7 +1659,7 @@ async function restartDeployment(body = {}, actor = null) {
   };
   const r = await k8s('PATCH', `/apis/apps/v1/namespaces/${ns}/deployments/${name}`, patch);
   if (!r.ok) throw { code: 502, msg: `deployment restart patch HTTP ${r.status}` };
-  audit(actor, 'k8s-restart-deployment', `${ns}/${name}`, 'ok', body.reason || '');
+  audit(actor, 'k8s-restart-deployment', `${ns}/${name}`, 'ok', reason);
   return {
     action: 'restart-deployment',
     namespace: ns,
@@ -1491,15 +1671,17 @@ async function restartDeployment(body = {}, actor = null) {
 }
 
 async function scaleDeployment(body = {}, actor = null) {
+  assertMutationEnabled(actor, 'k8s-scale-deployment');
   const ns = requireAllowedNamespace(body.namespace);
   const name = requireK8sName(body.name || body.deployment, 'deployment');
   const replicas = Number(body.replicas);
   if (!Number.isInteger(replicas) || replicas < 0 || replicas > OAA_SCALE_MAX) throw { code: 400, msg: `replicas must be an integer between 0 and ${OAA_SCALE_MAX}` };
   requireConfirm(body.confirm, `scale deployment ${ns}/${name} to ${replicas}`);
+  const reason = requireMutationReason(body.reason);
   const before = await getDeployment(ns, name);
   const r = await k8s('PATCH', `/apis/apps/v1/namespaces/${ns}/deployments/${name}`, { spec: { replicas } });
   if (!r.ok) throw { code: 502, msg: `deployment scale patch HTTP ${r.status}` };
-  audit(actor, 'k8s-scale-deployment', `${ns}/${name}`, 'ok', `replicas ${before.spec?.replicas ?? ''} -> ${replicas}; ${body.reason || ''}`);
+  audit(actor, 'k8s-scale-deployment', `${ns}/${name}`, 'ok', `replicas ${before.spec?.replicas ?? ''} -> ${replicas}; ${reason}`);
   return {
     action: 'scale-deployment',
     namespace: ns,
@@ -1738,8 +1920,12 @@ function operationalAnswerPolicySystemMessage() {
 }
 
 function controlToolsSystemMessage() {
-  const manifest = oaaToolManifest();
-  const bindings = oaaActionBindings();
+  const rawToolManifest = oaaToolManifest();
+  const manifest = withMutationGate(rawToolManifest);
+  const bindings = withActionBindingMutationGate(oaaActionBindings(), rawToolManifest);
+  const mutationNote = manifest.mutationEnabled
+    ? 'Kubernetes/administrative write actions are enabled subject to admin RBAC and exact confirmation.'
+    : `Kubernetes mutation/action tools are disabled (${manifest.mutationGateReason}). Only Manual/help/search and safe read-only tools are available. Do not suggest restart/scale/apply/delete actions as executable; they are not present in the tool list below.`;
   return {
     role: 'system',
     content: [
@@ -1748,7 +1934,7 @@ function controlToolsSystemMessage() {
       `Tool manifest schema: ${manifest.schema}. Tool IDs: ${manifest.tools.map((t) => t.id).join(', ')}.`,
       `Action binding schema: ${bindings.schema}. Action binding IDs: ${bindings.bindings.map((b) => b.id).join(', ')}.`,
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/oaa/tools/k8s/*.',
-      'Admin action tools: /api/oaa/actions/k8s/restart-deployment and /api/oaa/actions/k8s/scale-deployment.',
+      mutationNote,
       'Action safety rules: admin token required, target namespace must be allowed, deployment name must be RFC1123-safe, and exact confirmation text is required.',
       'Restart confirmation format: restart deployment <namespace>/<deployment>.',
       `Scale confirmation format: scale deployment <namespace>/<deployment> to <replicas>. Maximum replicas: ${OAA_SCALE_MAX}.`,
@@ -2121,10 +2307,10 @@ function oaaToolManifest() {
   };
 }
 
-function summarizeToolManifest() {
-  const manifest = oaaToolManifest();
+function summarizeToolManifest(manifest = withMutationGate(oaaToolManifest())) {
   const lines = [
-    `OAA tool manifest: ${manifest.schema}`,
+    `OAA tool manifest: ${manifest.schema}${manifest.storage ? ` (${manifest.storage})` : ''}`,
+    `Mutation gate: ${manifest.mutationEnabled === false ? `closed (${manifest.mutationGateReason})` : 'open'}`,
     `Allowed namespaces: ${manifest.allowedNamespaces.join(', ')}`,
     `Scale max: ${manifest.scaleMax}`,
     'Tools:',
@@ -2135,10 +2321,10 @@ function summarizeToolManifest() {
   return lines.join('\n');
 }
 
-function summarizeActionBindings() {
-  const manifest = oaaActionBindings();
+function summarizeActionBindings(manifest = withActionBindingMutationGate(oaaActionBindings(), oaaToolManifest())) {
   const lines = [
-    `OAA action bindings: ${manifest.schema}`,
+    `OAA action bindings: ${manifest.schema}${manifest.storage ? ` (${manifest.storage})` : ''}`,
+    `Mutation gate: ${manifest.mutationEnabled === false ? `closed (${manifest.mutationGateReason})` : 'open'}`,
     `Bindings: ${manifest.bindings.length}, invalid: ${manifest.invalidBindings.length}`,
   ];
   for (const b of manifest.bindings) {
@@ -2197,6 +2383,32 @@ async function seedToolRegistry(actor = null) {
     tools: toolManifest.tools.length,
     bindings: bindingManifest.bindings.length,
   };
+}
+
+let toolSeedReady = false;
+let toolSeedInflight = null;
+
+// Concurrency-safe, idempotent "seed if absent" wrapper around seedToolRegistry, mirroring the
+// manualSeedReady/manualSeedInflight pattern for the Manual Registry. seedToolRegistry itself is an
+// unconditional upsert, so this guard is what keeps computeReadiness() from re-writing the tool
+// registry on every /readyz probe once rows already exist, while still allowing self-healing
+// reconciliation the first time rows are found missing (e.g. startup seed raced PostgreSQL).
+async function ensureToolRegistryReady(actor = null) {
+  await ensureKnowledgeSchema();
+  const pool = getPgPool();
+  if (!pool) return false;
+  if (!toolSeedReady) {
+    toolSeedInflight ||= seedToolRegistry(actor)
+      .then((out) => {
+        toolSeedReady = true;
+        return out;
+      })
+      .finally(() => {
+        toolSeedInflight = null;
+      });
+    await toolSeedInflight;
+  }
+  return true;
 }
 
 async function toolManifestFromStore() {
@@ -2259,30 +2471,23 @@ async function actionBindingsFromStore() {
   };
 }
 
+async function gatedToolManifestFromStore() {
+  return withMutationGate(await toolManifestFromStore());
+}
+
+async function gatedActionBindingsFromStore() {
+  // Use the raw (unfiltered) tool manifest to resolve each binding's tool readOnly flag; the
+  // gated/filtered manifest would already be missing write tools and could mask a mismatch.
+  const rawToolManifest = await toolManifestFromStore();
+  return withActionBindingMutationGate(await actionBindingsFromStore(), rawToolManifest);
+}
+
 async function summarizeStoredToolManifest() {
-  const manifest = await toolManifestFromStore();
-  const lines = [
-    `OAA tool manifest: ${manifest.schema}${manifest.storage ? ` (${manifest.storage})` : ''}`,
-    `Allowed namespaces: ${manifest.allowedNamespaces.join(', ')}`,
-    `Scale max: ${manifest.scaleMax}`,
-    'Tools:',
-  ];
-  for (const tool of manifest.tools) {
-    lines.push(`- ${tool.id}: ${tool.readOnly ? 'read' : 'write'} ${tool.endpoint?.method || '-'} ${tool.endpoint?.path || '-'} confirmation=${tool.confirmation}`);
-  }
-  return lines.join('\n');
+  return summarizeToolManifest(await gatedToolManifestFromStore());
 }
 
 async function summarizeStoredActionBindings() {
-  const manifest = await actionBindingsFromStore();
-  const lines = [
-    `OAA action bindings: ${manifest.schema}${manifest.storage ? ` (${manifest.storage})` : ''}`,
-    `Bindings: ${manifest.bindings.length}, invalid: ${manifest.invalidBindings.length}`,
-  ];
-  for (const b of manifest.bindings) {
-    lines.push(`- ${b.id}: ${b.intent} -> ${b.toolId} risk=${b.riskLevel} confirmation=${b.confirmation} source=${b.sourceId}${b.valid ? '' : ' INVALID_TOOL'}`);
-  }
-  return lines.join('\n');
+  return summarizeActionBindings(await gatedActionBindingsFromStore());
 }
 
 function actionCommandForBinding(binding, query = '') {
@@ -2304,7 +2509,8 @@ function actionCommandForBinding(binding, query = '') {
 }
 
 async function suggestActionBindings({ query = '', sources = [], conceptGraph = null } = {}) {
-  const manifest = await actionBindingsFromStore();
+  // Never suggest write actions while the mutation gate is closed (CONSTITUTION-0004 §4.2).
+  const manifest = await gatedActionBindingsFromStore();
   const sourceIds = new Set((sources || []).map((s) => s.sourceId).filter(Boolean));
   for (const c of conceptGraph?.concepts || []) {
     for (const id of c.sourceIds || []) sourceIds.add(id);
@@ -2344,7 +2550,14 @@ async function getActionBinding(id) {
   const binding = (manifest.bindings || []).find((b) => b.id === wanted);
   if (!binding) throw { code: 404, msg: 'action binding not found' };
   if (binding.valid === false) throw { code: 409, msg: `action binding references missing tool: ${binding.toolId}` };
-  return binding;
+  // Resolve the connected tool from the raw (unfiltered) tool store — never from a filtered/gated
+  // manifest — so a binding whose stored risk_level was poisoned to 'read' but whose bound tool is
+  // actually mutating (readOnly !== true) cannot slip a direct binding-id execute past the mutation
+  // gate (CONSTITUTION-0004 §4.2). Missing/unresolvable tool fails closed with 409.
+  const toolManifest = await toolManifestFromStore();
+  const tool = (toolManifest.tools || []).find((t) => t && t.id === binding.toolId);
+  if (!tool) throw { code: 409, msg: `action binding references missing tool: ${binding.toolId}` };
+  return { ...binding, toolReadOnly: tool.readOnly === true };
 }
 
 function bindingConfirmationExpected(binding, inputs = {}) {
@@ -2381,12 +2594,21 @@ function bindingSummary(binding, result) {
 async function executeActionBinding(body = {}, actor = null) {
   const started = Date.now();
   const binding = await getActionBinding(body.bindingId || body.id);
+  // Mutation gate takes priority over every other check (confirmation phrase, admin membership):
+  // a write binding — OR a binding whose stored risk_level says 'read' but whose resolved tool is
+  // not readOnly (data poisoning / raw-store mismatch) — must fail closed with a stable 403 before
+  // we validate or execute anything else (CONSTITUTION-0004 §4.2).
+  const mutationRequired = binding.riskLevel !== 'read' || binding.toolReadOnly !== true;
+  if (mutationRequired) assertMutationEnabled(actor, binding.id);
   const inputs = { ...(body.inputs && typeof body.inputs === 'object' ? body.inputs : {}) };
   if (body.confirm && !inputs.confirm) inputs.confirm = body.confirm;
   if (body.reason && !inputs.reason) inputs.reason = body.reason;
   const expected = requireBindingConfirmation(binding, inputs, body.confirm || '');
   let result;
-  if (binding.riskLevel !== 'read') assertActorAdmin(actor);
+  if (mutationRequired) assertActorAdmin(actor);
+  // Nonempty human reason required before any write execution — never synthesized on the
+  // caller's behalf (CONSTITUTION-0004 §4.2/§4.4). Read-only bindings are exempt.
+  if (mutationRequired) inputs.reason = requireMutationReason(inputs.reason);
 
   switch (binding.toolId) {
     case 'oaa.environment.read':
@@ -2426,7 +2648,7 @@ async function executeActionBinding(body = {}, actor = null) {
         namespace: inputs.namespace || binding.targetHints?.namespace,
         name: inputs.name || inputs.deployment || binding.targetHints?.deployment,
         confirm: inputs.confirm,
-        reason: inputs.reason || `binding ${binding.id}`,
+        reason: inputs.reason,
       }, actor);
       break;
     case 'oaa.k8s.deployment.scale':
@@ -2435,7 +2657,7 @@ async function executeActionBinding(body = {}, actor = null) {
         name: inputs.name || inputs.deployment || binding.targetHints?.deployment,
         replicas: inputs.replicas,
         confirm: inputs.confirm,
-        reason: inputs.reason || `binding ${binding.id}`,
+        reason: inputs.reason,
       }, actor);
       break;
     default:
@@ -2637,8 +2859,14 @@ async function handleSlashCommand(text, body, actor) {
   const parts = raw.split(/\s+/);
   const cmd = parts[0].toLowerCase();
   if (cmd === '/help') return commandResponse(started, commandHelp());
-  if (cmd === '/tools') return commandResponse(started, await summarizeStoredToolManifest(), await toolManifestFromStore());
-  if (cmd === '/bindings') return commandResponse(started, await summarizeStoredActionBindings(), await actionBindingsFromStore());
+  if (cmd === '/tools') {
+    const manifest = await gatedToolManifestFromStore();
+    return commandResponse(started, summarizeToolManifest(manifest), manifest);
+  }
+  if (cmd === '/bindings') {
+    const manifest = await gatedActionBindingsFromStore();
+    return commandResponse(started, summarizeActionBindings(manifest), manifest);
+  }
   if (cmd === '/action') {
     const bindingId = parts[1] || '';
     const confirm = confirmTail(raw);
@@ -2975,12 +3203,139 @@ function audit(actor, action, target, result, reason) {
   }));
 }
 
+// CONSTITUTION-0004 §4.5: Main Shell Baseline Ready requires PostgreSQL/pgvector connectivity and
+// Manual Registry availability. /readyz is the unauthenticated, in-cluster-only probe target the
+// Console DUPA controller's backboneReadiness()/Main Shell /readyz aggregates as a required
+// component. It must never return 200 on a guess — every component below is a live check, and the
+// response body is structured booleans/reasons only (no secret material, no stack traces).
+async function computeReadiness() {
+  const components = {
+    postgres: false,
+    vectorSchema: false,
+    manualRegistrySeed: false,
+    toolRegistrySeed: false,
+  };
+  const pool = getPgPool();
+  if (!pool) {
+    return { ready: false, components, reason: 'postgres_not_configured' };
+  }
+  try {
+    await pool.query('SELECT 1');
+    components.postgres = true;
+  } catch {
+    return { ready: false, components, reason: 'postgres_unreachable' };
+  }
+  try {
+    await ensureKnowledgeSchema();
+    components.vectorSchema = pgSchemaReady === true;
+  } catch {
+    components.vectorSchema = false;
+  }
+  if (!components.vectorSchema) {
+    return { ready: false, components, reason: 'vector_schema_not_ready' };
+  }
+  const manualRegistrySeedQuery = `
+    SELECT count(*)::int AS n
+    FROM oaa_knowledge_documents
+    WHERE source_type = 'manual' AND metadata->'source'->>'id' = 'opensphere-core-manuals'
+  `;
+  try {
+    loadBundledManualSeedManifest();
+    const r = await pool.query(manualRegistrySeedQuery);
+    if (Number(r.rows[0]?.n || 0) > 0) {
+      // Rows already present — never re-upsert/write on a readiness probe once seeded.
+      components.manualRegistrySeed = true;
+    } else {
+      // Self-heal: the schema is ready but the bundled Manual Registry seed row is absent. This
+      // happens when the async startup seed raced PostgreSQL before it was ready and failed
+      // (leaving /readyz stuck 503 forever). Retry through the existing concurrency-safe seeder
+      // and re-query before deciding the component's state.
+      await ensureManualRegistryReady().catch(() => null);
+      const r2 = await pool.query(manualRegistrySeedQuery);
+      components.manualRegistrySeed = Number(r2.rows[0]?.n || 0) > 0;
+    }
+  } catch {
+    components.manualRegistrySeed = false;
+  }
+  if (!components.manualRegistrySeed) {
+    return { ready: false, components, reason: 'manual_registry_seed_not_ready' };
+  }
+  const toolRegistrySeedQuery = 'SELECT count(*)::int AS n FROM oaa_tool_capabilities';
+  try {
+    const r = await pool.query(toolRegistrySeedQuery);
+    if (Number(r.rows[0]?.n || 0) > 0) {
+      // Rows already present — never re-upsert/write on a readiness probe once seeded.
+      components.toolRegistrySeed = true;
+    } else {
+      // Self-heal: same startup-race scenario as the Manual Registry above, but for the tool
+      // capability registry. Retry through the concurrency-safe ensureToolRegistryReady() and
+      // re-query before deciding the component's state.
+      await ensureToolRegistryReady().catch(() => null);
+      const r2 = await pool.query(toolRegistrySeedQuery);
+      components.toolRegistrySeed = Number(r2.rows[0]?.n || 0) > 0;
+    }
+  } catch {
+    components.toolRegistrySeed = false;
+  }
+  if (!components.toolRegistrySeed) {
+    return { ready: false, components, reason: 'tool_registry_seed_not_ready' };
+  }
+  return { ready: true, components, reason: null };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    // /healthz is the internal (unauthenticated) liveness/startup probe target for Kubernetes only
+    // (process is up). It intentionally never checks PostgreSQL/pgvector/seed state — that is /readyz.
     if (url.pathname === '/healthz') return json(res, 200, { ok: true });
+    // /readyz is the internal (unauthenticated), in-cluster-only readiness probe target. It is the
+    // component the Console DUPA controller's Main Shell /readyz aggregation depends on
+    // (CONSTITUTION-0004 §4.5). It returns 200 only once PostgreSQL is reachable, the pgvector
+    // extension/schema exist, the bundled Manual Registry seed is present, and the tool registry
+    // schema/seed is present. On failure it returns a structured 503 with per-component booleans
+    // and a stable machine-readable reason — never secret material or a stack trace. This endpoint
+    // is not proxied through nginx and must only be reachable from in-cluster probes.
+    if (url.pathname === '/readyz') {
+      const state = await computeReadiness().catch(() => ({ ready: false, components: {}, reason: 'readiness_check_failed' }));
+      return json(res, state.ready ? 200 : 503, {
+        service: 'opensphere-console-oaa-gateway',
+        ready: state.ready,
+        components: state.components,
+        reason: state.reason,
+      });
+    }
+    // /api/oaa/health is the browser-facing, authenticated status contract the admin UI reads to
+    // decide whether mutation/action tools may be surfaced. It must never be reachable without a
+    // valid session, and it must expose explicit readiness/degraded/mutation gate state rather than
+    // requiring the UI to infer it.
     if (url.pathname === '/api/oaa/health') {
-      return json(res, 200, { service: 'opensphere-console-oaa-gateway', version: VERSION, namespace: BACKBONE_NS });
+      await verifyAuthed(req);
+      const readiness = await computeReadiness().catch(() => ({ ready: false, components: {}, reason: 'readiness_check_failed' }));
+      let hasEnabledLlmKey = false;
+      if (readiness.ready) {
+        try { await loadEnabledKey(''); hasEnabledLlmKey = true; } catch { hasEnabledLlmKey = false; }
+      }
+      const degraded = readiness.ready && !hasEnabledLlmKey;
+      const status = !readiness.ready ? 'not_ready' : (degraded ? 'degraded' : 'ready');
+      return json(res, 200, {
+        service: 'opensphere-console-oaa-gateway',
+        version: VERSION,
+        namespace: BACKBONE_NS,
+        ok: true,
+        status,
+        readiness: { ready: readiness.ready, components: readiness.components, reason: readiness.reason },
+        degraded,
+        degradedReason: degraded ? 'llm_key_not_configured' : null,
+        mutationEnabled: OAA_MUTATION_ENABLED,
+        mutationGateReason: OAA_MUTATION_ENABLED ? null : OAA_MUTATION_GATE_REASON,
+        mutationGate: { enabled: OAA_MUTATION_ENABLED, reason: OAA_MUTATION_ENABLED ? null : OAA_MUTATION_GATE_REASON },
+        ragEnabled: OAA_RAG_ENABLED,
+        pgConfigured: pgEnabled(),
+        embedDim: OAA_EMBED_DIM,
+        allowedNamespaces: OAA_ENV_NAMESPACES,
+        scaleMax: OAA_SCALE_MAX,
+      });
     }
     if (url.pathname === '/api/oaa/admin/knowledge/stats' && req.method === 'GET') {
       await verifyAdmin(req);
@@ -3040,11 +3395,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/oaa/tools/manifest' && req.method === 'GET') {
       await verifyAuthed(req);
-      return json(res, 200, await toolManifestFromStore());
+      return json(res, 200, await gatedToolManifestFromStore());
     }
     if (url.pathname === '/api/oaa/tools/action-bindings' && req.method === 'GET') {
       await verifyAuthed(req);
-      return json(res, 200, await actionBindingsFromStore());
+      return json(res, 200, await gatedActionBindingsFromStore());
     }
     if (url.pathname === '/api/oaa/tools/environment' && (req.method === 'GET' || req.method === 'POST')) {
       const actor = await verifyAuthed(req);
@@ -3133,7 +3488,11 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const code = typeof e.code === 'number' ? e.code : 500;
     if (code >= 500) console.error('[oaa-error]', req.method, url.pathname, e && (e.stack || e.message || e));
-    return json(res, code, { error: e.msg || e.message || String(e) });
+    // Stable machine-readable error code (e.g. mutation_disabled_until_his_ready) alongside the
+    // human-readable message. Never include raw secrets/tokens/stack traces in the response body.
+    const responseBody = { error: e.msg || e.message || String(e) };
+    if (e.errorCode) responseBody.code = e.errorCode;
+    return json(res, code, responseBody);
   }
 });
 

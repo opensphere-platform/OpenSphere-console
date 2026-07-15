@@ -7,7 +7,7 @@ Scope: OpenSphere AI Agent(OAA), OpenSphere manuals, Backbone PostgreSQL + pgvec
 Governance note: Manual contribution, authority and Shell integration follow
 [`CONSTITUTION-0003` §14](../../_DOCS_/01-CONSTITUTION/CONSTITUTION-0003-SHELL-HOSTING-INTEGRATION.md#14-manual과-search-연결).
 The current implementation exposes the OAA manual knowledge store through `/api/manual/*`,
-the top-header Documentation search section, and the registered `/p/manual` subShell.
+the top-header Documentation search section, and the Console-native `/manual` page.
 
 ## 1. Goal
 
@@ -91,7 +91,7 @@ Authority tier:
 |---:|---|---|
 | 0 | Constitution / invariant authority | `_DOCS_/01-CONSTITUTION/*` |
 | 1 | Architecture / ADR authority | `_DOCS_/20-*`, `_DOCS_/10-*` |
-| 2 | Product/manual authority | `OpenSphere-shell-menual`, Help Center articles, registered `manual` subShell |
+| 2 | Product/manual authority | Manual Registry seed/canonical docs, Help Center articles (legacy `OpenSphere-shell-menual` source retired after migration verification) |
 | 3 | Implementation notes / audit / runbook | `OpenSphere-console/docs/*`, audit docs |
 | 4 | Temporary imported notes | admin pasted documents |
 
@@ -746,6 +746,6 @@ Recommended ingestion order:
 3. `_DOCS_/02-평면설계/*`: tier 1
 4. `OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md`: tier 3
 5. `OpenSphere-console/docs/OAA-BACKBONE-IMPLEMENTATION-PLAN.md`: tier 3
-6. `OpenSphere-shell-menual/src/app/docs.ts`: tier 2 Help Center source
+6. Manual Registry seed/canonical docs (`backend/opensphere-console-oaa-gateway/manual-seeds/opensphere-core-manuals.json`): tier 2 Help Center source
 
-`OpenSphere-shell-menual/src/app/docs.ts` should eventually be converted from UI-local TypeScript data into a shared manual seed or API source so the Help Center, the registered `/p/manual` subShell, and OAA use the same canonical content.
+The Manual Registry seed/canonical docs are authoritative. The legacy `OpenSphere-shell-menual/src/app/docs.ts` source is retired after migration verification; the Help Center, the Console-native `/manual` page, and OAA all consume the same canonical content served from the Manual Registry.
