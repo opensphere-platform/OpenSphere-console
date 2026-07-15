@@ -4,6 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const workflow = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'publish-edge-images.yml'), 'utf8');
+const angularConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'angular.json'), 'utf8'));
 
 test('edge is advanced only after every immutable console component is verified', () => {
   const matrixMetadata = workflow.slice(workflow.indexOf('      - name: Image metadata'), workflow.indexOf('      - name: Build and push'));
@@ -31,4 +32,9 @@ test('edge workflow triggers on every source that changes the released manifests
       `publish-edge-images.yml push.paths must include "${requiredPath}" so Clean Setup / atomic edge releases stay in sync with CBS manifests and the Main Shell runtime contract`,
     );
   }
+});
+
+test('production image build does not fetch external fonts while compiling', () => {
+  const optimization = angularConfig.projects['opensphere-console'].architect.build.configurations.production.optimization;
+  assert.equal(optimization.fonts, false);
 });
