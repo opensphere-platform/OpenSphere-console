@@ -27,12 +27,24 @@ const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
 const TOKEN_INTROSPECTION_URL = process.env.TOKEN_INTROSPECTION_URL
   || 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect';
 const TOKEN_INTROSPECTION_SERVERNAME = process.env.TOKEN_INTROSPECTION_SERVERNAME || KANIDM_TLS_SERVERNAME;
+const SCHEMA_ID_RE = /^[a-z_][a-z0-9_]{0,62}$/;
+// opensphere_oaa is a dedicated, independently-generated PostgreSQL login role
+// (CONSTITUTION-0004 §4.5 OAA bootstrap boundary) — it must never default to or reuse the
+// shared `console` runtime credential, which the Backbone bootstrap boundary deliberately
+// restricts to USAGE-only on public plus explicit audit/credential table DML. See
+// backend/backbone/bootstrap/backbone.yaml for the role/schema provisioning.
 const PG = {
   host: process.env.BACKBONE_PG_HOST || 'backbone-postgres.opensphere-backbone.svc.cluster.local',
   port: Number(process.env.BACKBONE_PG_PORT || 5432),
   database: process.env.BACKBONE_PG_DB || 'console',
-  user: process.env.BACKBONE_PG_USER || 'console',
+  user: process.env.BACKBONE_PG_USER || 'opensphere_oaa',
   password: process.env.BACKBONE_PG_PASSWORD || process.env.BACKBONE_PG_password || process.env.password || '',
+  // The dedicated schema opensphere_oaa owns. Unqualified OAA table names resolve here via
+  // search_path, never requiring (or granting) CREATE on public.
+  schema: SCHEMA_ID_RE.test(process.env.BACKBONE_PG_SCHEMA || '') ? process.env.BACKBONE_PG_SCHEMA : 'oaa',
+  // Setup-managed installation CA for verified TLS to Backbone PostgreSQL — never a baked-in
+  // image certificate, and connections never disable certificate verification.
+  caPath: process.env.BACKBONE_PG_CA_PATH || '/etc/backbone-postgres-ca/ca.crt',
 };
 const OAA_EMBED_DIM = Math.max(16, Math.min(4096, Number(process.env.OAA_EMBED_DIM || 384) || 384));
 const OAA_RAG_TOP_K = Math.max(1, Math.min(12, Number(process.env.OAA_RAG_TOP_K || 5) || 5));
@@ -347,15 +359,48 @@ function pgEnabled() {
   return Boolean(PG.password);
 }
 
+// Reads the Setup-managed installation CA mounted read-only from the backbone-postgres
+// Secret (never a baked-in image certificate). Returns undefined (never throws) so a missing
+// mount fails closed into getPgPool() below refusing to open an unverified connection, rather
+// than silently connecting without TLS verification.
+function pgCa() {
+  try {
+    return fs.readFileSync(PG.caPath);
+  } catch {
+    return undefined;
+  }
+}
+
 function getPgPool() {
   if (!pgEnabled()) return null;
   if (!pgPool) {
+    const ca = pgCa();
+    if (!ca) {
+      // Fail closed: never fall back to an unverified/plaintext connection. The caller sees
+      // "no pool" (same shape as postgres-not-configured) and /readyz stays a structured 503.
+      console.error('[oaa-db] Backbone PostgreSQL installation CA is unavailable at', PG.caPath, '- refusing to connect without verified TLS');
+      return null;
+    }
     pgPool = new Pool({
       host: PG.host,
       port: PG.port,
       database: PG.database,
       user: PG.user,
       password: PG.password,
+      // Verified TLS against the Setup-managed installation CA — rejectUnauthorized stays
+      // true and servername is pinned to the Backbone PostgreSQL DNS name.
+      ssl: { ca, rejectUnauthorized: true, servername: PG.host },
+      // Deterministic, race-free search_path: `options` is sent inside the libpq StartupMessage
+      // (see pg/lib/client.js _startup) and applied by the server before authentication
+      // completes and before the pool can ever hand the connection to a caller's query -- unlike
+      // a 'connect'-event client.query(), there is no window where a caller's first query can
+      // race an unawaited SET. This is also belt-and-suspenders with the role-level
+      // `ALTER ROLE opensphere_oaa ... SET search_path = oaa, public` already established by
+      // Backbone bootstrap/reconcile (backend/backbone/bootstrap/backbone.yaml), so search_path
+      // is correct even for a bare `psql -U opensphere_oaa` session that never sets `options`.
+      // PG.schema is validated against SCHEMA_ID_RE above, never interpolated from an
+      // unvalidated source.
+      options: `-c search_path=${PG.schema},public`,
       max: 4,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
@@ -371,7 +416,11 @@ async function ensureKnowledgeSchema() {
   if (pgSchemaReady) return true;
   if (pgSchemaPromise) return pgSchemaPromise;
   pgSchemaPromise = (async () => {
-  await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
+  // pgvector installation is bootstrap-owner responsibility only (CONSTITUTION-0004 §4.5):
+  // Setup's sealed opensphere_db_bootstrap superuser runs `CREATE EXTENSION IF NOT EXISTS
+  // vector` during empty-PVC init and idempotent boundary reconcile (see
+  // backend/backbone/bootstrap/backbone.yaml). opensphere_oaa deliberately has no CREATE on
+  // public and must never attempt to install the extension itself.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS oaa_knowledge_documents (
       id uuid PRIMARY KEY,

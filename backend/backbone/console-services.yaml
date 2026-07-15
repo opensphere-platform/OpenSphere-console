@@ -102,8 +102,17 @@ spec:
             - { name: BACKBONE_PG_HOST, value: backbone-postgres.opensphere-backbone.svc.cluster.local }
             - { name: BACKBONE_PG_PORT, value: "5432" }
             - { name: BACKBONE_PG_DB, value: console }
-            - { name: BACKBONE_PG_USER, value: console }
-            - { name: BACKBONE_PG_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
+            # Dedicated, independently-generated OAA PostgreSQL identity (CONSTITUTION-0004
+            # §4.5 OAA bootstrap boundary) -- never the console runtime role/password, and it
+            # holds no audit-table grants. See backend/backbone/bootstrap/backbone.yaml.
+            - { name: BACKBONE_PG_USER, value: opensphere_oaa }
+            - { name: BACKBONE_PG_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: oaa_password } } }
+            # opensphere_oaa owns this schema and has USAGE-only (never CREATE) on public;
+            # search_path resolves unqualified OAA table names into it without opening public.
+            - { name: BACKBONE_PG_SCHEMA, value: oaa }
+            # Verified TLS to Backbone PostgreSQL using the same Setup-managed installation CA
+            # mounted below (never a baked-in image certificate, never disabled verification).
+            - { name: BACKBONE_PG_CA_PATH, value: /etc/backbone-postgres-ca/ca.crt }
             - { name: OAA_EMBED_DIM, value: "384" }
             - { name: OAA_RAG_TOP_K, value: "5" }
             # CONSTITUTION-0004 §4.2 fail-closed default: Kubernetes mutation/action tools stay
@@ -127,11 +136,19 @@ spec:
             - { name: tmp, mountPath: /tmp }
             # Setup-provisioned installation CA — never a baked-in image certificate.
             - { name: kanidm-ca, mountPath: /etc/kanidm-ca, readOnly: true }
+            # Same Setup-managed installation CA, sourced from the backbone-postgres Secret
+            # (already holds ca.crt for the CBS PostgreSQL leaf) so the OAA gateway verifies
+            # the Backbone PostgreSQL server certificate rather than skipping TLS validation.
+            - { name: backbone-postgres-ca, mountPath: /etc/backbone-postgres-ca, readOnly: true }
       volumes:
         - { name: tmp, emptyDir: {} }
         - name: kanidm-ca
           secret:
             secretName: opensphere-console-auth-ca
+            items: [{ key: ca.crt, path: ca.crt }]
+        - name: backbone-postgres-ca
+          secret:
+            secretName: backbone-postgres
             items: [{ key: ca.crt, path: ca.crt }]
 ---
 apiVersion: v1

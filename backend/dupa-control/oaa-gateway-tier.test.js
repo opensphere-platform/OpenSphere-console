@@ -137,7 +137,12 @@ test('OAA-Gateway exposes authenticated chat without exposing key material', () 
 
 test('OAA-Gateway stores project knowledge in Backbone PostgreSQL pgvector', () => {
   assert.match(gateway, /require\('pg'\)/);
-  assert.match(gateway, /CREATE EXTENSION IF NOT EXISTS vector/);
+  // pgvector installation is bootstrap-owner responsibility only (CONSTITUTION-0004 §4.5 OAA
+  // bootstrap boundary) -- the sealed opensphere_db_bootstrap superuser runs `CREATE EXTENSION
+  // IF NOT EXISTS vector` in backend/backbone/bootstrap/backbone.yaml. The dedicated
+  // opensphere_oaa runtime role has no CREATE on public and must never attempt this itself; see
+  // oaa-gateway-postgres-boundary.test.js.
+  assert.doesNotMatch(gateway, /CREATE EXTENSION IF NOT EXISTS vector/);
   assert.match(gateway, /oaa_knowledge_documents/);
   assert.match(gateway, /oaa_knowledge_chunks/);
   assert.match(gateway, /oaa_manual_concepts/);
