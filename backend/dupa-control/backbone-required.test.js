@@ -115,3 +115,80 @@ test('audit evidence has a retained S3-compatible backup target and a non-destru
   assert.match(backbone, /pg_restore -h backbone-postgres/);
   assert.match(backbone, /console_restore_drill_/);
 });
+
+test('the scheduled backup runs as a dedicated least-privilege opensphere_backup role, not console or the bootstrap superuser', () => {
+  // The Setup-created backup Job failed because pg_dump ran as the console
+  // runtime role, which has no access to schema oaa. The dump now authenticates
+  // as an independent, read-only opensphere_backup role.
+  assert.match(backbone, /pg_dump -h backbone-postgres\.opensphere-backbone\.svc\.cluster\.local -U opensphere_backup -d console/);
+  // The console runtime role must never be the backup principal again.
+  assert.doesNotMatch(backbone, /pg_dump[^\n]*-U console\b/);
+  // The scheduled backup never uses the sealed bootstrap superuser.
+  assert.doesNotMatch(backbone, /pg_dump[^\n]*-U opensphere_db_bootstrap\b/);
+});
+
+test('opensphere_backup is provisioned identically in both the empty-PVC init and the idempotent reconcile paths', () => {
+  const initBlock = backbone.slice(
+    backbone.indexOf('00-console-runtime-boundary.sh'),
+    backbone.indexOf('backbone-postgres-boundary-reconcile')
+  );
+  const reconcileBlock = backbone.slice(backbone.indexOf('reconcile.sql:'));
+  for (const block of [initBlock, reconcileBlock]) {
+    // Created idempotently and always with the full least-privilege attribute set.
+    assert.match(block, /CREATE ROLE opensphere_backup LOGIN PASSWORD %L NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS/);
+    assert.match(block, /ALTER ROLE opensphere_backup LOGIN PASSWORD %L NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS/);
+    // CONNECT to console + read-only membership via the PostgreSQL predefined role.
+    assert.match(block, /GRANT CONNECT ON DATABASE console TO opensphere_backup;/);
+    assert.match(block, /GRANT pg_read_all_data TO opensphere_backup;/);
+  }
+});
+
+test('opensphere_backup receives no write grants and never the console/OAA credentials or superuser powers', () => {
+  // Only CONNECT and the predefined read-only role may target opensphere_backup;
+  // no INSERT/UPDATE/DELETE/CREATE/USAGE-on-schema write path is ever granted.
+  assert.doesNotMatch(backbone, /GRANT[^\n]*(INSERT|UPDATE|DELETE|CREATE|TEMP)[^\n]*TO opensphere_backup/);
+  assert.doesNotMatch(backbone, /GRANT[^\n]*ON SCHEMA[^\n]*TO opensphere_backup/);
+  // The backup role is a plain login: the enabling attributes only ever appear in
+  // their negated NO* form (a leading space would signal an un-negated grant).
+  assert.doesNotMatch(backbone, /opensphere_backup[^\n]* (SUPERUSER|CREATEROLE|CREATEDB|REPLICATION|BYPASSRLS)\b/);
+  // It never inherits the console/OAA/audit-owner/bootstrap roles' privileges.
+  assert.doesNotMatch(backbone, /GRANT (console|opensphere_oaa|opensphere_audit_owner|opensphere_db_bootstrap) TO opensphere_backup/);
+});
+
+test('the backup_password credential is wired from backbone-postgres and carried only via Secret references', () => {
+  // Empty-PVC init: required and imported inside psql from the Secret-backed
+  // environment, never serialized into the psql process argv.
+  assert.match(backbone, /OPENSPHERE_BACKUP_PASSWORD:\?OPENSPHERE_BACKUP_PASSWORD is required/);
+  assert.match(backbone, /\\getenv backup_password OPENSPHERE_BACKUP_PASSWORD/);
+  assert.doesNotMatch(backbone, /--set=(?:console|oaa|backup)_password=/);
+  assert.match(backbone, /OPENSPHERE_BACKUP_PASSWORD, valueFrom: \{ secretKeyRef: \{ name: backbone-postgres, key: backup_password \} \}/);
+  // Reconcile Job: injected via \getenv from the BACKUP_PASSWORD env, itself a secretKeyRef.
+  assert.match(backbone, /\\getenv backup_password BACKUP_PASSWORD/);
+  assert.match(backbone, /BACKUP_PASSWORD, valueFrom: \{ secretKeyRef: \{ name: backbone-postgres, key: backup_password \} \}/);
+});
+
+test('the backup CronJob authenticates with backup_password, distinct from the console runtime password', () => {
+  assert.match(
+    backbone,
+    /command: \[sh, \/scripts\/backup\.sh\]\n\s*env:\n\s*- \{ name: PGPASSWORD, valueFrom: \{ secretKeyRef: \{ name: backbone-postgres, key: backup_password \} \} \}/
+  );
+  // The backup job must not fall back to the console runtime `password` key.
+  assert.doesNotMatch(
+    backbone,
+    /command: \[sh, \/scripts\/backup\.sh\]\n\s*env:\n\s*- \{ name: PGPASSWORD, valueFrom: \{ secretKeyRef: \{ name: backbone-postgres, key: password \} \} \}/
+  );
+});
+
+test('the restore drill keeps the sealed bootstrap operator and drops its unused console-password dependency', () => {
+  const drillScript = backbone.slice(backbone.indexOf('restore-drill.sh: |'), backbone.indexOf('backbone-postgres-init'));
+  // The drill still creates/drops an ephemeral database as the bootstrap operator.
+  assert.match(drillScript, /POSTGRES_PASSWORD:\?POSTGRES_PASSWORD is required/);
+  assert.match(drillScript, /createdb -h backbone-postgres[^\n]*\\\n\s*-U opensphere_db_bootstrap/);
+  // The unused console-password PGPASSWORD requirement is gone from the script...
+  assert.doesNotMatch(drillScript, /PGPASSWORD:\?PGPASSWORD is required/);
+  // ...and from the restore-drill Job's env (no PGPASSWORD secretKeyRef there).
+  const drillJob = backbone.slice(backbone.indexOf('command: [sh, /scripts/restore-drill.sh]'));
+  const drillEnv = drillJob.slice(0, drillJob.indexOf('resources:'));
+  assert.doesNotMatch(drillEnv, /name: PGPASSWORD/);
+  assert.match(drillEnv, /POSTGRES_PASSWORD, valueFrom: \{ secretKeyRef: \{ name: backbone-postgres, key: bootstrap_password \} \}/);
+});

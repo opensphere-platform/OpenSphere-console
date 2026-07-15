@@ -48,7 +48,10 @@ data:
     dump="/tmp/console.dump"
     cleanup() { rm -f "$dump"; }
     trap cleanup EXIT
-    pg_dump -h backbone-postgres.opensphere-backbone.svc.cluster.local -U console -d console \
+    # Dump as the dedicated least-privilege opensphere_backup role (pg_read_all_data),
+    # never the console runtime role (no access to schema oaa) and never the sealed
+    # bootstrap superuser. --no-owner/--no-privileges keep the dump role-neutral.
+    pg_dump -h backbone-postgres.opensphere-backbone.svc.cluster.local -U opensphere_backup -d console \
       --format=custom --no-owner --no-privileges --file="$dump"
     test -s "$dump"
     curl --fail --silent --show-error --cacert /backup-tls/ca.crt --connect-timeout 5 --max-time 900 \
@@ -80,8 +83,11 @@ data:
     #!/bin/sh
     # A non-destructive recovery drill: restore the newest audit dump into an ephemeral
     # database, validate its evidence table, then drop that database before exit.
+    # The drill creates and drops an ephemeral database, so it uses the sealed
+    # bootstrap operator (POSTGRES_PASSWORD) for every psql/createdb/dropdb/
+    # pg_restore call. It never authenticates as the console runtime role, so no
+    # console-password PGPASSWORD is wired or required here.
     set -eu
-    : "${PGPASSWORD:?PGPASSWORD is required}"
     : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
     : "${BACKUP_S3_ACCESS_KEY:?BACKUP_S3_ACCESS_KEY is required}"
     : "${BACKUP_S3_SECRET_KEY:?BACKUP_S3_SECRET_KEY is required}"
@@ -130,8 +136,13 @@ data:
     set -eu
     : "${OPENSPHERE_CONSOLE_PASSWORD:?OPENSPHERE_CONSOLE_PASSWORD is required}"
     : "${OPENSPHERE_OAA_PASSWORD:?OPENSPHERE_OAA_PASSWORD is required}"
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-      --set=console_password="$OPENSPHERE_CONSOLE_PASSWORD" --set=oaa_password="$OPENSPHERE_OAA_PASSWORD" <<'SQL'
+    : "${OPENSPHERE_BACKUP_PASSWORD:?OPENSPHERE_BACKUP_PASSWORD is required}"
+    # Read credentials inside psql from the inherited Kubernetes Secret-backed
+    # environment. They never appear in the psql process argv or command logs.
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'SQL'
+    \getenv console_password OPENSPHERE_CONSOLE_PASSWORD
+    \getenv oaa_password OPENSPHERE_OAA_PASSWORD
+    \getenv backup_password OPENSPHERE_BACKUP_PASSWORD
     CREATE EXTENSION IF NOT EXISTS vector;
     \connect template1
     CREATE EXTENSION IF NOT EXISTS vector;
@@ -226,6 +237,20 @@ data:
     -- Unqualified OAA table names resolve to the dedicated schema first, falling back to
     -- public only for pgvector type/operator lookup -- never opening public CREATE.
     ALTER ROLE opensphere_oaa IN DATABASE console SET search_path = oaa, public;
+
+    -- Dedicated, independently-generated backup identity for the scheduled pg_dump
+    -- job. It is a plain LOGIN role that reads every schema (public + oaa) through
+    -- the PostgreSQL predefined pg_read_all_data role, so the recovery point can
+    -- capture the OAA gateway's data without granting the console runtime role
+    -- access to schema oaa and without using the sealed bootstrap superuser. It
+    -- must never receive write grants, the console/OAA runtime credentials, or
+    -- superuser/role/database-creation/replication/BYPASSRLS.
+    SELECT format('CREATE ROLE opensphere_backup LOGIN PASSWORD %L NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS', :'backup_password')
+      WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_backup') \gexec
+    SELECT format('ALTER ROLE opensphere_backup LOGIN PASSWORD %L NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS', :'backup_password')
+      WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_backup') \gexec
+    GRANT CONNECT ON DATABASE console TO opensphere_backup;
+    GRANT pg_read_all_data TO opensphere_backup;
     SQL
 ---
 # PostgreSQL init scripts only run on an empty PVC. This Job makes the same
@@ -259,6 +284,7 @@ data:
     \set ON_ERROR_STOP on
     \getenv bootstrap_password BOOTSTRAP_PASSWORD
     \getenv oaa_password OAA_PASSWORD
+    \getenv backup_password BACKUP_PASSWORD
     CREATE EXTENSION IF NOT EXISTS vector;
 
     DO $$
@@ -351,6 +377,20 @@ data:
     CREATE SCHEMA IF NOT EXISTS oaa AUTHORIZATION opensphere_oaa;
     ALTER SCHEMA oaa OWNER TO opensphere_oaa;
     ALTER ROLE opensphere_oaa IN DATABASE console SET search_path = oaa, public;
+
+    -- Dedicated backup identity, idempotent for both a legacy installation that
+    -- predates this role (created here for the first time) and a fresh install
+    -- (already created by 00-console-runtime-boundary.sh; this ALTER is then a
+    -- same-value no-op). A plain LOGIN role reading every schema (public + oaa)
+    -- through the predefined pg_read_all_data role -- never write grants, never
+    -- the console/OAA runtime role/password, never superuser/role/database-
+    -- creation/replication/BYPASSRLS.
+    SELECT format('CREATE ROLE opensphere_backup LOGIN PASSWORD %L NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS', :'backup_password')
+      WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_backup') \gexec
+    SELECT format('ALTER ROLE opensphere_backup LOGIN PASSWORD %L NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS', :'backup_password')
+      WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_backup') \gexec
+    GRANT CONNECT ON DATABASE console TO opensphere_backup;
+    GRANT pg_read_all_data TO opensphere_backup;
 ---
 apiVersion: batch/v1
 kind: Job
@@ -389,6 +429,7 @@ spec:
           env:
             - { name: BOOTSTRAP_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: bootstrap_password } } }
             - { name: OAA_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: oaa_password } } }
+            - { name: BACKUP_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: backup_password } } }
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           volumeMounts:
             - { name: scripts, mountPath: /scripts, readOnly: true }
@@ -445,6 +486,7 @@ spec:
             - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: bootstrap_password } } }
             - { name: OPENSPHERE_CONSOLE_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
             - { name: OPENSPHERE_OAA_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: oaa_password } } }
+            - { name: OPENSPHERE_BACKUP_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: backup_password } } }
             - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
           args: [postgres, -c, ssl=on, -c, ssl_cert_file=/var/run/postgres-tls/tls.crt, -c, ssl_key_file=/var/run/postgres-tls/tls.key]
           ports: [{ name: postgres, containerPort: 5432 }]
@@ -512,7 +554,7 @@ spec:
               imagePullPolicy: IfNotPresent
               command: [sh, /scripts/backup.sh]
               env:
-                - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
+                - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: backup_password } } }
                 - { name: PGSSLMODE, value: verify-full }
                 - { name: PGSSLROOTCERT, value: /tls/ca.crt }
                 - { name: BACKUP_S3_ACCESS_KEY, valueFrom: { secretKeyRef: { name: backbone-postgres-backup-target, key: access_key } } }
@@ -564,7 +606,6 @@ spec:
               imagePullPolicy: IfNotPresent
               command: [sh, /scripts/restore-drill.sh]
               env:
-                - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: password } } }
                 - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: backbone-postgres, key: bootstrap_password } } }
                 - { name: PGSSLMODE, value: verify-full }
                 - { name: PGSSLROOTCERT, value: /tls/ca.crt }
