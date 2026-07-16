@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest, hisManagerClusterRoleManifest } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -39,4 +39,18 @@ test('HIS manager profile is fixed to Helm prerequisites and never grants impers
   assert.ok(rules.some((rule) => rule.resources.includes('clusterroles') && rule.verbs.includes('escalate')));
   assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
   assert.ok(!rules.some((rule) => rule.resources.includes('users')));
+});
+
+test('managed plugin workload receives the Console authentication CA read-only', () => {
+  const pkg = packageFromInspection({ descriptor, repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager', digest: `sha256:${'b'.repeat(64)}` });
+  pkg.metadata = { ...pkg.metadata, uid: '00000000-0000-0000-0000-000000000000' };
+  const deployment = deploymentManifest(pkg);
+  const pod = deployment.spec.template.spec;
+  const container = pod.containers[0];
+  assert.ok(container.env.some((item) => item.name === 'KANIDM_CA_PATH' && item.value === '/etc/opensphere/auth-ca/ca.crt'));
+  assert.deepEqual(container.volumeMounts, [{ name: 'opensphere-console-auth-ca', mountPath: '/etc/opensphere/auth-ca', readOnly: true }]);
+  assert.deepEqual(pod.volumes, [{
+    name: 'opensphere-console-auth-ca',
+    secret: { secretName: 'opensphere-console-auth-ca', items: [{ key: 'ca.crt', path: 'ca.crt' }] },
+  }]);
 });

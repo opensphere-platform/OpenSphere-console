@@ -430,7 +430,10 @@ function podLabels(pkg) {
   return labels;
 }
 function podEnv(pkg) {
-  const env = [{ name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' }];
+  const env = [
+    { name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' },
+    { name: 'KANIDM_CA_PATH', value: '/etc/opensphere/auth-ca/ca.crt' },
+  ];
   const seen = new Set(env.map((item) => item.name));
   for (const item of pkg.spec?.env || []) {
     const name = String(item?.name || '');
@@ -486,10 +489,17 @@ function deploymentManifest(pkg) {
             name: 'plugin', image: img, ports: [{ containerPort: port }],
             // K8s API를 호출하는 기능 컨테이너(예: platform-status)의 TLS 검증용 — 기본 제공
             env: podEnv(pkg),
+            // Console 인증 CA는 공개 신뢰 앵커이며 비밀키가 아니다. 플러그인이 Kanidm JWT의
+            // JWKS를 TLS 검증 후 조회할 수 있도록 모든 관리 워크로드에 read-only로 제공한다.
+            volumeMounts: [{ name: 'opensphere-console-auth-ca', mountPath: '/etc/opensphere/auth-ca', readOnly: true }],
             readinessProbe: { httpGet: { path: healthPath, port }, initialDelaySeconds: 1 },
             livenessProbe: { httpGet: { path: healthPath, port }, initialDelaySeconds: 10, periodSeconds: 10 },
             securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } },
             resources: { requests: { cpu: r.cpuRequest || '20m', memory: r.memoryRequest || '32Mi' }, limits: { cpu: r.cpuLimit || '200m', memory: r.memoryLimit || '128Mi' } },
+          }],
+          volumes: [{
+            name: 'opensphere-console-auth-ca',
+            secret: { secretName: 'opensphere-console-auth-ca', items: [{ key: 'ca.crt', path: 'ca.crt' }] },
           }],
         },
       },
@@ -1890,5 +1900,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest, hisManagerClusterRoleManifest, allowedCLIResourcePath };
+  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, allowedCLIResourcePath };
 }
