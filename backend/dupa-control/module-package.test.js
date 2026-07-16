@@ -48,6 +48,10 @@ test('managed plugin workload receives the Console authentication CA read-only',
   const pod = deployment.spec.template.spec;
   const container = pod.containers[0];
   assert.ok(container.env.some((item) => item.name === 'KANIDM_CA_PATH' && item.value === '/etc/opensphere/auth-ca/ca.crt'));
+  assert.ok(container.env.some((item) => item.name === 'KANIDM_ISSUERS' && item.value === 'https://localhost:8090/oauth2/openid/opensphere-console'));
+  assert.ok(container.env.some((item) => item.name === 'KANIDM_JWKS_URL' && item.value.includes('opensphere-console-auth.opensphere-console.svc')));
+  assert.ok(container.env.some((item) => item.name === 'TOKEN_INTROSPECTION_URL' && item.value.endsWith('/bff/token/introspect')));
+  assert.ok(container.env.some((item) => item.name === 'TOKEN_INTROSPECTION_SERVERNAME' && item.value === 'kanidm.opensphere-console-auth.svc'));
   assert.deepEqual(container.volumeMounts, [{ name: 'opensphere-console-auth-ca', mountPath: '/etc/opensphere/auth-ca', readOnly: true }]);
   assert.deepEqual(pod.volumes, [{
     name: 'opensphere-console-auth-ca',

@@ -433,6 +433,11 @@ function podEnv(pkg) {
   const env = [
     { name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' },
     { name: 'KANIDM_CA_PATH', value: '/etc/opensphere/auth-ca/ca.crt' },
+    { name: 'KANIDM_ISSUERS', value: 'https://localhost:8090/oauth2/openid/opensphere-console' },
+    { name: 'KANIDM_JWKS_URL', value: 'https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk' },
+    { name: 'KANIDM_TLS_SERVERNAME', value: 'kanidm.opensphere-console-auth.svc' },
+    { name: 'TOKEN_INTROSPECTION_URL', value: 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect' },
+    { name: 'TOKEN_INTROSPECTION_SERVERNAME', value: 'kanidm.opensphere-console-auth.svc' },
   ];
   const seen = new Set(env.map((item) => item.name));
   for (const item of pkg.spec?.env || []) {
