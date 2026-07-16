@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, observerClusterRoleManifest, hisManagerClusterRoleManifest } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -27,4 +27,16 @@ test('rejects unapproved permission profile and observer role is read-only', () 
   assert.ok(rules.some((rule) => rule.apiGroups.includes('networking.k8s.io') && rule.resources.includes('ingressclasses')));
   assert.ok(!rules.some((rule) => rule.resources.includes('secrets')));
   assert.ok(!rules.some((rule) => rule.resources.includes('users') || rule.verbs.includes('impersonate')));
+});
+
+test('HIS manager profile is fixed to Helm prerequisites and never grants impersonation', () => {
+  const his = structuredClone(descriptor);
+  his.permissionProfile = 'cluster-his-manager-v1';
+  assert.deepEqual(moduleDescriptorIssues(his), []);
+  const rules = hisManagerClusterRoleManifest().rules;
+  assert.ok(rules.some((rule) => rule.resources.includes('secrets') && rule.verbs.includes('create')));
+  assert.ok(rules.some((rule) => rule.resources.includes('customresourcedefinitions') && rule.verbs.includes('create')));
+  assert.ok(rules.some((rule) => rule.resources.includes('clusterroles') && rule.verbs.includes('escalate')));
+  assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
+  assert.ok(!rules.some((rule) => rule.resources.includes('users')));
 });

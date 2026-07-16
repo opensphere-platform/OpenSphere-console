@@ -87,7 +87,7 @@ spec:
                 shellCompat: { type: string }   # semver range, 예 ">=0.2.0 <0.4.0"
                 permissionProfile:
                   type: string
-                  enum: [none, cluster-observer-v1]
+                  enum: [none, cluster-observer-v1, cluster-his-manager-v1]
                 runtime:
                   type: object
                   properties:
