@@ -55,6 +55,7 @@ test('infrastructure manager adds only consumer-side storage integration writes'
   const rules = infrastructureManagerClusterRoleManifest().rules;
   assert.ok(rules.some((rule) => rule.apiGroups.includes('storage.k8s.io') && rule.resources.includes('storageclasses') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshotclasses') && rule.verbs.includes('delete')));
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshots') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.apiGroups.includes('ceph.rook.io') && rule.verbs.includes('create')));
   assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
   assert.ok(!rules.some((rule) => rule.resources.includes('users')));

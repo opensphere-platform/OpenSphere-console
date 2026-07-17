@@ -588,6 +588,7 @@ function infrastructureManagerClusterRoleManifest() {
       ...hisManagerClusterRoleManifest().rules,
       { apiGroups: ['storage.k8s.io'], resources: ['storageclasses'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
       { apiGroups: ['snapshot.storage.k8s.io'], resources: ['volumesnapshotclasses'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
+      { apiGroups: ['snapshot.storage.k8s.io'], resources: ['volumesnapshots'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
       { apiGroups: ['ceph.rook.io', 'csi.ceph.io'], resources: ['*'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
     ],
   };
