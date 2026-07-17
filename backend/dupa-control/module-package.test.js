@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -38,6 +38,18 @@ test('HIS manager profile is fixed to Helm prerequisites and never grants impers
   assert.ok(rules.some((rule) => rule.resources.includes('customresourcedefinitions') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.apiGroups.includes('monitoring.coreos.com') && rule.resources.includes('prometheuses') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.resources.includes('clusterroles') && rule.verbs.includes('escalate')));
+  assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
+  assert.ok(!rules.some((rule) => rule.resources.includes('users')));
+});
+
+test('infrastructure manager adds only consumer-side storage integration writes', () => {
+  const infrastructure = structuredClone(descriptor);
+  infrastructure.permissionProfile = 'cluster-infrastructure-manager-v1';
+  assert.deepEqual(moduleDescriptorIssues(infrastructure), []);
+  const rules = infrastructureManagerClusterRoleManifest().rules;
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('storage.k8s.io') && rule.resources.includes('storageclasses') && rule.verbs.includes('create')));
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshotclasses') && rule.verbs.includes('delete')));
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('ceph.rook.io') && rule.verbs.includes('create')));
   assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
   assert.ok(!rules.some((rule) => rule.resources.includes('users')));
 });

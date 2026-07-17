@@ -149,11 +149,55 @@ rules:
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
+metadata:
+  name: opensphere-module-cluster-infrastructure-manager-v1
+  labels: { opensphere.io/managed-by: dupa }
+rules:
+  # cluster-infrastructure-manager-v1 is the fixed Cluster Manager profile:
+  # HIS allowlist plus consumer-side external storage integration resources.
+  - { apiGroups: [""], resources: [namespaces, nodes, pods, pods/log, services, endpoints, persistentvolumeclaims, persistentvolumes, events, configmaps, limitranges, resourcequotas, serviceaccounts, replicationcontrollers], verbs: [get, list, watch] }
+  - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets, controllerrevisions], verbs: [get, list, watch] }
+  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
+  - { apiGroups: [storage.k8s.io], resources: [storageclasses, csidrivers, csinodes, volumeattachments], verbs: [get, list, watch] }
+  - { apiGroups: [networking.k8s.io], resources: [ingresses, networkpolicies, ingressclasses], verbs: [get, list, watch] }
+  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch] }
+  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch] }
+  - { apiGroups: [autoscaling.k8s.io], resources: [verticalpodautoscalers], verbs: [get, list, watch] }
+  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch] }
+  - { apiGroups: [scheduling.k8s.io], resources: [priorityclasses], verbs: [get, list, watch] }
+  - { apiGroups: [node.k8s.io], resources: [runtimeclasses], verbs: [get, list, watch] }
+  - { apiGroups: [coordination.k8s.io], resources: [leases], verbs: [get, list, watch] }
+  - { apiGroups: [rbac.authorization.k8s.io], resources: [roles, rolebindings, clusterroles, clusterrolebindings], verbs: [get, list, watch] }
+  - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch] }
+  - { apiGroups: [metrics.k8s.io], resources: [nodes, pods], verbs: [get, list] }
+  - { apiGroups: [jobset.x-k8s.io], resources: [jobsets], verbs: [get, list, watch] }
+  - apiGroups: [kubevirt.io, subresources.kubevirt.io, cdi.kubevirt.io, instancetype.kubevirt.io, migrations.kubevirt.io, snapshot.storage.k8s.io, forklift.konveyor.io, monitoring.coreos.com, ceph.rook.io, template.openshift.io, fleet.opensphere.io, cluster.open-cluster-management.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - { apiGroups: [""], resources: [namespaces, serviceaccounts, services, configmaps, secrets, pods, endpoints, events], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [batch], resources: [jobs], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [networking.k8s.io], resources: [ingresses, ingressclasses, networkpolicies], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [coordination.k8s.io], resources: [leases], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [admissionregistration.k8s.io], resources: [validatingwebhookconfigurations, mutatingwebhookconfigurations], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [apiregistration.k8s.io], resources: [apiservices], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [monitoring.coreos.com], resources: [prometheuses, alertmanagers, prometheusrules, servicemonitors, podmonitors, probes, thanosrulers, scrapeconfigs, alertmanagerconfigs], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [rbac.authorization.k8s.io], resources: [roles, clusterroles], verbs: [get, list, watch, create, update, patch, delete, bind, escalate] }
+  - { apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings, clusterrolebindings], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [storage.k8s.io], resources: [storageclasses], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [snapshot.storage.k8s.io], resources: [volumesnapshotclasses], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [ceph.rook.io, csi.ceph.io], resources: ["*"], verbs: [get, list, watch, create, update, patch, delete] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
 metadata: { name: dupa-module-profile-installer }
 rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [clusterroles]
-    resourceNames: [opensphere-module-cluster-observer-v1, opensphere-module-cluster-his-manager-v1]
+    resourceNames: [opensphere-module-cluster-observer-v1, opensphere-module-cluster-his-manager-v1, opensphere-module-cluster-infrastructure-manager-v1]
     verbs: [get, bind]
   - { apiGroups: [rbac.authorization.k8s.io], resources: [clusterrolebindings], verbs: [get, list, create, patch, delete] }
 ---

@@ -25,7 +25,7 @@ const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단,
 const MODULE_DESCRIPTOR_LABEL = 'io.opensphere.module.descriptor';
 const MODULE_SIGNATURE_LABEL = 'io.opensphere.module.descriptor.signature';
 const MODULE_KEY_ID_LABEL = 'io.opensphere.module.descriptor.key-id';
-const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1', 'cluster-his-manager-v1']);
+const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1', 'cluster-his-manager-v1', 'cluster-infrastructure-manager-v1']);
 const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)@sha256:([a-f0-9]{64})$/;
 // /api/admin/events는 workload의 projected ServiceAccount token을 TokenReview로 검증한다.
 // 모든 plugin에 같은 공유 secret을 배포하지 않아 한 workload 침해가 다른 source 위장으로 번지지 않는다.
@@ -576,6 +576,18 @@ function hisManagerClusterRoleManifest() {
     ],
   };
 }
+function infrastructureManagerClusterRoleManifest() {
+  return {
+    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole',
+    metadata: { name: 'opensphere-module-cluster-infrastructure-manager-v1', labels: { 'opensphere.io/managed-by': 'dupa' } },
+    rules: [
+      ...hisManagerClusterRoleManifest().rules,
+      { apiGroups: ['storage.k8s.io'], resources: ['storageclasses'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
+      { apiGroups: ['snapshot.storage.k8s.io'], resources: ['volumesnapshotclasses'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
+      { apiGroups: ['ceph.rook.io', 'csi.ceph.io'], resources: ['*'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
+    ],
+  };
+}
 function permissionBindingManifest(pkg, saName, profile) {
   const suffix = profile === 'cluster-observer-v1' ? 'observer-v1' : profile;
   return {
@@ -590,7 +602,9 @@ async function applyPermissionProfile(pkg, saName) {
   if (!APPROVED_PERMISSION_PROFILES.has(profile)) throw Object.assign(new Error('unapproved permission profile'), { reason: 'UnknownPermissionProfile' });
   if (profile === 'none') return;
   const rolePath = '/apis/rbac.authorization.k8s.io/v1/clusterroles';
-  const expectedRole = profile === 'cluster-his-manager-v1' ? hisManagerClusterRoleManifest() : observerClusterRoleManifest();
+  const expectedRole = profile === 'cluster-infrastructure-manager-v1'
+    ? infrastructureManagerClusterRoleManifest()
+    : profile === 'cluster-his-manager-v1' ? hisManagerClusterRoleManifest() : observerClusterRoleManifest();
   const existingRole = await k8s('GET', `${rolePath}/${expectedRole.metadata.name}`);
   if (!existingRole.ok) throw Object.assign(new Error('pre-provisioned permission profile is missing'), { reason: 'PermissionProfileMissing' });
   if (JSON.stringify(canonical(existingRole.json?.rules || [])) !== JSON.stringify(canonical(expectedRole.rules))) {
@@ -1906,5 +1920,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, allowedCLIResourcePath };
+  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, allowedCLIResourcePath };
 }
