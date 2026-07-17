@@ -133,7 +133,7 @@ rules:
     resources: ["*"]
     verbs: [get, list, watch]
   # Helm-managed HIS allowlist surface
-  - { apiGroups: [""], resources: [namespaces, serviceaccounts, services, configmaps, secrets, pods, endpoints, events], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [""], resources: [namespaces, serviceaccounts, services, configmaps, secrets, pods, persistentvolumeclaims, endpoints, events], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [batch], resources: [jobs], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch, create, update, patch, delete] }
@@ -174,7 +174,7 @@ rules:
   - apiGroups: [kubevirt.io, subresources.kubevirt.io, cdi.kubevirt.io, instancetype.kubevirt.io, migrations.kubevirt.io, snapshot.storage.k8s.io, forklift.konveyor.io, monitoring.coreos.com, ceph.rook.io, template.openshift.io, fleet.opensphere.io, cluster.open-cluster-management.io]
     resources: ["*"]
     verbs: [get, list, watch]
-  - { apiGroups: [""], resources: [namespaces, serviceaccounts, services, configmaps, secrets, pods, endpoints, events], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [""], resources: [namespaces, serviceaccounts, services, configmaps, secrets, pods, persistentvolumeclaims, endpoints, events], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [batch], resources: [jobs], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch, create, update, patch, delete] }

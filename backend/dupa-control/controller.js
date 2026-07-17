@@ -560,7 +560,7 @@ function hisManagerClusterRoleManifest() {
     metadata: { name: 'opensphere-module-cluster-his-manager-v1', labels: { 'opensphere.io/managed-by': 'dupa' } },
     rules: [
       ...observerClusterRoleManifest().rules,
-      { apiGroups: [''], resources: ['namespaces', 'serviceaccounts', 'services', 'configmaps', 'secrets', 'pods', 'endpoints', 'events'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
+      { apiGroups: [''], resources: ['namespaces', 'serviceaccounts', 'services', 'configmaps', 'secrets', 'pods', 'persistentvolumeclaims', 'endpoints', 'events'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
       { apiGroups: ['apps'], resources: ['deployments', 'daemonsets', 'statefulsets', 'replicasets'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
       { apiGroups: ['batch'], resources: ['jobs'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
       { apiGroups: ['autoscaling'], resources: ['horizontalpodautoscalers'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },

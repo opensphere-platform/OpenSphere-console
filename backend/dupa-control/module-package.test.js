@@ -35,6 +35,7 @@ test('HIS manager profile is fixed to Helm prerequisites and never grants impers
   assert.deepEqual(moduleDescriptorIssues(his), []);
   const rules = hisManagerClusterRoleManifest().rules;
   assert.ok(rules.some((rule) => rule.resources.includes('secrets') && rule.verbs.includes('create')));
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('') && rule.resources.includes('persistentvolumeclaims') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.resources.includes('customresourcedefinitions') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.apiGroups.includes('monitoring.coreos.com') && rule.resources.includes('prometheuses') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.resources.includes('clusterroles') && rule.verbs.includes('escalate')));
