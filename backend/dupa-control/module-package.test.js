@@ -25,6 +25,8 @@ test('rejects unapproved permission profile and observer role is read-only', () 
   const verbs = rules.flatMap((rule) => rule.verbs);
   assert.deepEqual([...new Set(verbs)].sort(), ['get', 'list', 'watch']);
   assert.ok(rules.some((rule) => rule.apiGroups.includes('networking.k8s.io') && rule.resources.includes('ingressclasses')));
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('cert-manager.io') && rule.resources.includes('clusterissuers')));
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('acme.cert-manager.io') && rule.resources.includes('challenges')));
   assert.ok(!rules.some((rule) => rule.resources.includes('secrets')));
   assert.ok(!rules.some((rule) => rule.resources.includes('users') || rule.verbs.includes('impersonate')));
 });
