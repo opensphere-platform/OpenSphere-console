@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -70,4 +70,13 @@ test('managed plugin workload receives the Console authentication CA read-only',
     name: 'opensphere-console-auth-ca',
     secret: { secretName: 'opensphere-console-auth-ca', items: [{ key: 'ca.crt', path: 'ca.crt' }] },
   }]);
+});
+
+test('runtime Registry projection satisfies native CLI identity fields', () => {
+  const pkg = packageFromInspection({ descriptor, repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager', digest: `sha256:${'b'.repeat(64)}` });
+  pkg.metadata = { ...pkg.metadata, name: 'cluster-manager' };
+  const entry = publishedPluginEntry(pkg, '/api/plugins/cluster-manager/plugins/ui-shell.manifest.json', '/api/plugins/cluster-manager/plugins/ui-shell.manifest.json.sig');
+  assert.equal(entry.id, 'cluster-manager');
+  assert.equal(entry.name, 'Cluster Manager');
+  assert.equal(entry.manifestSha256, 'a'.repeat(64));
 });

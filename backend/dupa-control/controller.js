@@ -868,6 +868,23 @@ let publishedPlugins = [];
 // + (b) enabled workforce CLIDownload 바인딩 서비스 id. Main Shell native os-cli는 고정 /api/cli 경로를 사용한다.
 // reconcile 끝에서 published로 계산(루프 뒤). 전이 실패 시 직전 allowlist 유지(가용성).
 let proxyAllow = new Set();
+function publishedPluginEntry(pkg, manifestUrl, sigUrl) {
+  return {
+    id: pkg.metadata.name,
+    name: pkg.spec.displayName || pkg.metadata.name,
+    manifest: manifestUrl,
+    manifestSha256: pkg.spec.manifest.sha256,
+    signature: sigUrl,
+    keyId: pkg.spec.trust.keyId,
+    kind: pkg.spec.kind,
+    hostRef: pkg.spec.hostRef,
+    hostApiVersion: pkg.spec.hostApiVersion || '',
+    hostCompat: pkg.spec.hostCompat,
+    contributions: pkg.spec.contributions,
+    // 관리자 지정 1단 아이콘(Carbon 토큰명). 서명 무관 오버라이드(CR spec.nav.icon) — 셸이 토큰→아이콘 매핑.
+    icon: pkg.spec.nav?.icon || '',
+  };
+}
 async function reconcile() {
   const [pkgs, regs] = await Promise.all([listPackages(), listRegs()]);
   if (!pkgs.ok || !regs.ok) return;
@@ -940,20 +957,7 @@ async function reconcile() {
       // 통과 — registry에 '승인값 전사'(§B.5): manifestSha256/keyId는 controller 계산값이 아니라 CR값
       const manifestUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/ui-shell.manifest.json`;
       const sigUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/${(pkg.spec.manifest.signaturePath || 'ui-shell.manifest.json.sig').split('/').pop()}`;
-      published.push({
-        id: pkg.metadata.name,
-        manifest: manifestUrl,
-        manifestSha256: pkg.spec.manifest.sha256,
-        signature: sigUrl,
-        keyId: pkg.spec.trust.keyId,
-        kind: pkg.spec.kind,
-        hostRef: pkg.spec.hostRef,
-        hostApiVersion: pkg.spec.hostApiVersion || '',
-        hostCompat: pkg.spec.hostCompat,
-        contributions: pkg.spec.contributions,
-        // 관리자 지정 1단 아이콘(Carbon 토큰명). 서명 무관 오버라이드(CR spec.nav.icon) — 셸이 토큰→아이콘 매핑.
-        icon: pkg.spec.nav?.icon || '',
-      });
+      published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl));
       if (!stableRelease) await updateStatus({ phase: 'Ready', reason: '', manifestUrl, retryable: false });
       await updateStatus({ phase: 'Activated', reason: '', manifestUrl, retryable: false });
     } catch (e) {
@@ -1920,5 +1924,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, allowedCLIResourcePath };
+  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath };
 }
