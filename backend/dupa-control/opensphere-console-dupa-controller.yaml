@@ -143,6 +143,7 @@ rules:
   - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [admissionregistration.k8s.io], resources: [validatingwebhookconfigurations, mutatingwebhookconfigurations], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [apiregistration.k8s.io], resources: [apiservices], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [monitoring.coreos.com], resources: [prometheuses, alertmanagers, prometheusrules, servicemonitors, podmonitors, probes, thanosrulers, scrapeconfigs, alertmanagerconfigs], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [rbac.authorization.k8s.io], resources: [roles, clusterroles], verbs: [get, list, watch, create, update, patch, delete, bind, escalate] }
   - { apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings, clusterrolebindings], verbs: [get, list, watch, create, update, patch, delete] }
 ---
