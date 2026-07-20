@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, serviceMonitorManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -13,9 +13,66 @@ const descriptor = {
 
 test('accepts SDK module package and materializes digest-pinned package', () => {
   assert.deepEqual(moduleDescriptorIssues(descriptor), []);
-  const pkg = packageFromInspection({ descriptor, repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager', digest: `sha256:${'b'.repeat(64)}` });
+  const digest = `sha256:${'b'.repeat(64)}`;
+  const pkg = packageFromInspection({
+    descriptor,
+    repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager',
+    digest,
+    requestedImage: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager:edge',
+    channel: 'edge', resolvedAt: '2026-07-19T00:00:00.000Z',
+    source: 'https://github.com/opensphere-platform/OpenSphere-shell-clusterManager',
+    revision: 'c'.repeat(40),
+    registryCredentialsRequired: true,
+    image: `ghcr.io/opensphere-platform/opensphere-shell-cluster-manager@${digest}`,
+  });
   assert.equal(pkg.spec.permissionProfile, 'cluster-observer-v1');
   assert.equal(pkg.spec.image.repository, 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager');
+  assert.equal(pkg.spec.resolution.requestedChannel, 'edge');
+  assert.equal(pkg.spec.resolution.resolvedDigest, digest);
+  assert.equal(pkg.spec.resolution.registryCredentialsRequired, true);
+  assert.equal(pkg.spec.resolution.evidenceRefs.length, 2);
+});
+
+test('binds attestations to an OpenSphere repository main-branch workflow', () => {
+  const repository = governedSourceRepository('https://github.com/opensphere-platform/OpenSphere-shell-foundation');
+  assert.equal(repository, 'opensphere-platform/OpenSphere-shell-foundation');
+  assert.equal(governedSourceRepository('https://github.com/other/repository'), '');
+  const image = `ghcr.io/opensphere-platform/opensphere-shell-foundation@sha256:${'d'.repeat(64)}`;
+  const args = attestationArguments(image, repository, 'https://slsa.dev/provenance/v1');
+  assert.deepEqual(args.slice(0, 4), ['attestation', 'verify', `oci://${image}`, '--bundle-from-oci']);
+  assert.ok(args.includes('opensphere-platform/OpenSphere-shell-foundation/.github/workflows/publish-image.yml'));
+  assert.ok(args.includes('refs/heads/main'));
+  assert.ok(args.includes('--deny-self-hosted-runners'));
+});
+
+test('accepts only OpenSphere digest or governed channel image references', () => {
+  const digest = 'a'.repeat(64);
+  assert.deepEqual(parseModuleImageReference(`ghcr.io/opensphere-platform/opensphere-shell-foundation@sha256:${digest}`), {
+    repositoryPath: 'opensphere-platform/opensphere-shell-foundation',
+    repository: 'ghcr.io/opensphere-platform/opensphere-shell-foundation',
+    reference: `sha256:${digest}`,
+    channel: null,
+  });
+  for (const channel of ['edge', 'candidate', 'stable']) {
+    assert.equal(parseModuleImageReference(`ghcr.io/opensphere-platform/opensphere-shell-foundation:${channel}`).channel, channel);
+  }
+  for (const invalid of [
+    'ghcr.io/opensphere-platform/opensphere-shell-foundation:latest',
+    'ghcr.io/other/opensphere-shell-foundation:edge',
+    'ghcr.io/opensphere-platform/mirror/postgresql:edge',
+    'docker.io/opensphere-platform/opensphere-shell-foundation:edge',
+  ]) assert.throws(() => parseModuleImageReference(invalid), (error) => error.reason === 'InvalidImageReference');
+});
+
+test('selects runnable multi-architecture manifests and ignores attestations', () => {
+  const sha = (char) => `sha256:${char.repeat(64)}`;
+  const selected = runnablePlatformManifests({ manifests: [
+    { digest: sha('c'), platform: { os: 'unknown', architecture: 'unknown' } },
+    { digest: sha('b'), platform: { os: 'linux', architecture: 'arm64' } },
+    { digest: sha('a'), platform: { os: 'linux', architecture: 'amd64' } },
+    { digest: sha('d'), platform: { os: 'windows', architecture: 'amd64' } },
+  ] });
+  assert.deepEqual(selected.map((entry) => `${entry.platform.os}/${entry.platform.architecture}`), ['linux/amd64', 'linux/arm64']);
 });
 
 test('rejects unapproved permission profile and observer role is read-only', () => {
@@ -79,6 +136,17 @@ test('managed plugin workload receives the Console authentication CA read-only',
   }]);
 });
 
+test('private package workload uses the managed GHCR imagePullSecret', () => {
+  const pkg = packageFromInspection({
+    descriptor,
+    repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager',
+    digest: `sha256:${'b'.repeat(64)}`,
+    registryCredentialsRequired: true,
+  });
+  pkg.metadata = { ...pkg.metadata, uid: '00000000-0000-0000-0000-000000000000' };
+  assert.deepEqual(deploymentManifest(pkg).spec.template.spec.imagePullSecrets, [{ name: 'opensphere-ghcr-pull' }]);
+});
+
 test('runtime Registry projection satisfies native CLI identity fields', () => {
   const pkg = packageFromInspection({ descriptor, repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager', digest: `sha256:${'b'.repeat(64)}` });
   pkg.metadata = { ...pkg.metadata, name: 'cluster-manager' };
@@ -86,4 +154,75 @@ test('runtime Registry projection satisfies native CLI identity fields', () => {
   assert.equal(entry.id, 'cluster-manager');
   assert.equal(entry.name, 'Cluster Manager');
   assert.equal(entry.manifestSha256, 'a'.repeat(64));
+  assert.equal(entry.updateState, 'ChannelUnavailable');
+});
+
+test('runtime Registry projects the signed CLI contribution for dynamic os dispatch', () => {
+  const cliDescriptor = structuredClone(descriptor);
+  cliDescriptor.nav = { band: '구축 Build', label: 'Cluster Manager' };
+  cliDescriptor.contributions.cli = { enabled: true, namespace: 'cluster', manifestPath: '/cli/manifest' };
+  const pkg = packageFromInspection({ cli: true, descriptor: cliDescriptor, repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager', digest: `sha256:${'b'.repeat(64)}` });
+  pkg.metadata = { ...pkg.metadata, name: 'cluster-manager' };
+  assert.deepEqual(pkg.spec.nav, cliDescriptor.nav);
+  assert.deepEqual(pkg.spec.cli, { namespace: 'cluster', manifestPath: '/cli/manifest' });
+  const entry = publishedPluginEntry(pkg, '/manifest', '/signature');
+  assert.deepEqual(entry.cli, { namespace: 'cluster', manifestPath: '/cli/manifest', apiBase: '/api/plugins/cluster-manager' });
+});
+
+test('hardened runtime materializes Pod security, availability, network and scrape policy', () => {
+  const hardened = structuredClone(descriptor);
+  hardened.runtime.security = { automountServiceAccountToken: false, runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, readOnlyRootFilesystem: true, seccompProfile: 'RuntimeDefault' };
+  hardened.runtime.availability = { replicas: 2, minAvailable: 1, topologySpread: true, autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 4, targetCPUUtilization: 70 } };
+  hardened.runtime.networkPolicy = { enabled: true, allowMonitoring: true };
+  hardened.runtime.observability = {
+    metricsPath: '/metrics', scrapeInterval: '30s',
+    logs: { format: 'json', schema: 'opensphere.v1', stream: 'stdout' },
+    traces: { propagation: 'w3c', responseHeaders: true },
+  };
+  hardened.contributions.observability = { enabled: true, logs: true, metrics: true, traces: true };
+  assert.deepEqual(moduleDescriptorIssues(hardened), []);
+  const pkg = packageFromInspection({ descriptor: hardened, repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager', digest: `sha256:${'b'.repeat(64)}` });
+  pkg.metadata = { ...pkg.metadata, uid: '00000000-0000-0000-0000-000000000000' };
+  const deployment = deploymentManifest(pkg);
+  const pod = deployment.spec.template.spec;
+  assert.equal(pod.automountServiceAccountToken, false);
+  assert.deepEqual(pod.securityContext, { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: { type: 'RuntimeDefault' } });
+  assert.equal(pod.containers[0].securityContext.readOnlyRootFilesystem, true);
+  assert.equal(pod.topologySpreadConstraints[0].topologyKey, 'kubernetes.io/hostname');
+  assert.equal(deployment.spec.template.metadata.annotations['opensphere.io/log-format'], 'json');
+  assert.equal(deployment.spec.template.metadata.annotations['opensphere.io/log-enabled'], 'true');
+  assert.equal(deployment.spec.template.metadata.annotations['opensphere.io/log-schema'], 'opensphere.v1');
+  assert.equal(deployment.spec.template.metadata.annotations['opensphere.io/log-stream'], 'stdout');
+  assert.equal(deployment.spec.template.metadata.annotations['opensphere.io/log-correlation'], 'w3c+opensphere');
+  assert.deepEqual(pod.containers[0].env.find((item) => item.name === 'POD_NAMESPACE').valueFrom, { fieldRef: { fieldPath: 'metadata.namespace' } });
+  assert.equal(pod.containers[0].env.find((item) => item.name === 'OSP_LOG_SCHEMA').value, 'opensphere.v1');
+  assert.equal(hpaManifest(pkg).spec.maxReplicas, 4);
+  assert.equal(networkPolicyManifest(pkg).spec.policyTypes.includes('Egress'), true);
+  assert.equal(serviceMonitorManifest(pkg).spec.endpoints[0].path, '/metrics');
+});
+
+test('runtime Registry projects channel status and immutable approval evidence', () => {
+  const pkg = packageFromInspection({
+    descriptor,
+    repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager',
+    digest: `sha256:${'b'.repeat(64)}`,
+    requestedImage: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager:edge',
+    channel: 'edge',
+  });
+  pkg.metadata = { ...pkg.metadata, name: 'cluster-manager' };
+  const reg = {
+    metadata: { creationTimestamp: '2026-07-19T00:00:00.000Z' },
+    spec: { approval: { requestedBy: 'cmars', reason: 'approved development install' } },
+  };
+  const current = `sha256:${'c'.repeat(64)}`;
+  const entry = publishedPluginEntry(pkg, '/manifest', '/signature', reg, {
+    channelState: 'UpdateAvailable', currentChannelDigest: current,
+    channelCheckedAt: '2026-07-20T00:00:00.000Z', channelReason: '',
+  });
+  assert.equal(entry.requestedChannel, 'edge');
+  assert.equal(entry.currentChannelDigest, current);
+  assert.equal(entry.updateState, 'UpdateAvailable');
+  assert.deepEqual(entry.approval, {
+    actor: 'cmars', reason: 'approved development install', time: '2026-07-19T00:00:00.000Z',
+  });
 });

@@ -9,6 +9,7 @@ WORKDIR /app
 # 의존성 먼저(레이어 캐시) — pg는 순수 JS라 네이티브 빌드 없음(alpine 호환).
 COPY package.json /app/package.json
 RUN apk upgrade --no-cache \
+    && apk add --no-cache github-cli \
     && npm install --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY controller.js /app/controller.js

@@ -26,14 +26,27 @@ rules:
     resources: [uipluginpackages, uipluginpackages/finalizers, uipluginregistrations, uipluginregistrations/status]
     # delete: uninstall ??registration CR ?뚯닔 (?놁쑝硫?CR??Removed濡??붾쪟 ??UX??'??젣 ????)
     verbs: [get, list, watch, create, update, patch, delete]
+  # Main Shell-owned lifecycle declaration/evidence between HIS and PFS.
+  - apiGroups: ["platform.opensphere.io"]
+    resources: [platformsupportprofiles, platformsupportprofiles/status]
+    verbs: [get, list, watch, create, update, patch]
   - apiGroups: ["apps"]
     resources: [deployments]
     verbs: [get, list, create, update, patch, delete]
   - apiGroups: ["policy"]
     resources: [poddisruptionbudgets]
     verbs: [get, list, create, update, patch, delete]
+  - apiGroups: ["autoscaling"]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, create, update, patch, delete]
+  - apiGroups: ["networking.k8s.io"]
+    resources: [networkpolicies]
+    verbs: [get, list, create, update, patch, delete]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: [servicemonitors]
+    verbs: [get, list, create, update, patch, delete]
   - apiGroups: [""]
-    resources: [services, serviceaccounts, configmaps]
+    resources: [services, serviceaccounts, configmaps, secrets]
     verbs: [get, list, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -53,7 +66,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: { name: dupa-backbone-installer }
 rules:
-  - { apiGroups: [""], resources: [namespaces], verbs: [get, create] }
+  - { apiGroups: [""], resources: [namespaces], verbs: [get, list, create] }
   # secrets delete: BackboneClaim finalizer GC(?뚮꼳??Secret ?뚯닔)???꾩슂
   - { apiGroups: [""], resources: [secrets, services, serviceaccounts, persistentvolumeclaims, configmaps, pods], verbs: [get, list, create, patch, delete] }
   - { apiGroups: ["apps"], resources: [deployments, statefulsets], verbs: [get, list, create, patch] }
@@ -64,6 +77,12 @@ rules:
   # additional exact path allowlist and accepts GET only.
   - { apiGroups: ["config.opensphere.io"], resources: [platformconfigs], verbs: [get, list] }
   - { apiGroups: ["platform.opensphere.io"], resources: [platformversions], verbs: [get, list] }
+  # Platform readiness evidence reads. Mutation of these resources remains outside DUPA.
+  - { apiGroups: ["batch"], resources: [jobs, cronjobs], verbs: [get, list] }
+  - { apiGroups: ["networking.k8s.io"], resources: [networkpolicies], verbs: [get, list] }
+  - { apiGroups: ["admissionregistration.k8s.io"], resources: [validatingwebhookconfigurations], verbs: [get, list] }
+  - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterrolebindings], verbs: [get, list] }
+  - { apiGroups: ["observability.opensphere.io"], resources: [observabilityclaims], verbs: [get, list] }
   # Observability ?뺣낫 酉???ServiceMonitor ?몃깽?좊━ ?쎄린(monitoring ns ?뚮뱶/?쒕퉬?ㅻ뒗 ??core 洹쒖튃?쇰줈 而ㅻ쾭).
   - { apiGroups: ["monitoring.coreos.com"], resources: [servicemonitors], verbs: [get, list] }
   # Workload event identity: projected ServiceAccount token validation (shared service secret 금지).
@@ -229,6 +248,7 @@ spec:
       labels: { app: opensphere-console-dupa-controller }
     spec:
       serviceAccountName: opensphere-console-dupa-controller
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -242,8 +262,14 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - { name: NAMESPACE, value: opensphere-console }
+            # Production is fail-closed. Development override requires both values explicitly.
+            - { name: OPENSPHERE_RUNTIME_MODE, value: production }
+            - { name: FOUNDATION_ACTIVATION_DEV_OVERRIDE, value: "false" }
             # K8s API TLS 寃利???Node fetch(undici)???쒖옉 ?쒖젏???쎌쑝誘濡?env濡?以섏빞 ??
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            # GitHub attestation verification uses only this writable cache; the image root remains read-only.
+            - { name: HOME, value: /tmp/gh-home }
+            - { name: GH_CONFIG_DIR, value: /tmp/gh-config }
             # Backbone PostgreSQL(媛먯궗濡쒓렇 ?곸냽, ??. 鍮꾨쾲? cross-ns secretKeyRef 遺덇? ??
             #   而⑦듃濡ㅻ윭媛 opensphere-backbone/backbone-postgres Secret??K8s API濡??쎌뼱 二쇱엯(dupa-backbone-installer RBAC).
             #   媛믪? 肄붾뱶 湲곕낯媛믨낵 ?숈씪(?ㅻ쾭?쇱씠??臾몄꽌?붿슜). 誘몄꽕移???媛먯궗濡쒓렇??ConfigMap ?대갚.
@@ -268,6 +294,10 @@ spec:
             - { name: TOKEN_INTROSPECTION_SERVERNAME, value: kanidm.opensphere-console-auth.svc }
           volumeMounts:
             - { name: kanidm-ca, mountPath: /etc/kanidm-ca, readOnly: true }
+            # Optional private GHCR access. Standard kubernetes.io/dockerconfigjson Secret;
+            # credentials are consumed as a file and never projected into process environment.
+            - { name: opensphere-ghcr, mountPath: /var/run/secrets/opensphere-ghcr, readOnly: true }
+            - { name: verifier-tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
@@ -283,6 +313,13 @@ spec:
           secret:
             secretName: opensphere-console-auth-ca
             items: [{ key: ca.crt, path: ca.crt }]
+        - name: opensphere-ghcr
+          secret:
+            secretName: opensphere-ghcr-pull
+            optional: true
+            items: [{ key: .dockerconfigjson, path: config.json }]
+        - name: verifier-tmp
+          emptyDir: { sizeLimit: 64Mi }
 ---
 apiVersion: v1
 kind: Service

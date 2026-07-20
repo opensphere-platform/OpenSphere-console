@@ -13,7 +13,10 @@ test('edge is advanced only after every immutable console component is verified'
   assert.match(workflow, /publish-edge:\s*\n\s+needs: \[publish\]/);
   assert.match(workflow, /source_tag="sha-\$\{GITHUB_SHA:0:7\}"/);
   assert.match(workflow, /Do not move any channel tag until every immutable component was/);
-  assert.match(workflow, /crane tag "\$repository@\$\{digests\[\$image\]\}" edge/);
+  assert.match(workflow, /bom="\$RUNNER_TEMP\/opensphere-release-bom\.json"/);
+  assert.match(workflow, /digest="\$\(jq -r --arg key "\$key" '\.components\[\$key\]\.image \| split\("@"\)\[1\]' "\$bom"\)"/);
+  assert.match(workflow, /crane tag "\$repository@\$digest" edge/);
+  assert.match(workflow, /crane tag "\$anchor_repository@\$anchor_digest" edge/);
 });
 
 test('edge workflow triggers on every source that changes the released manifests or runtime contract', () => {

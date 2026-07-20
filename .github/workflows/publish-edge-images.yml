@@ -235,23 +235,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: crane auth login ghcr.io -u "${{ github.actor }}" -p "$GH_TOKEN"
-      - name: Verify immutable release and advance edge
+      - name: Verify immutable release and prepare signed BOM
+        id: release-bom
         run: |
           set -euo pipefail
           source_tag="sha-${GITHUB_SHA:0:7}"
           release_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
           release_tag="$(TZ=Asia/Seoul date -d "@$release_epoch" +%Y%m%d%H%M)"
           [[ "$release_tag" =~ ^[0-9]{12}$ ]]
-          publish_immutable_tag() {
-            local repository="$1" digest="$2" existing
-            existing="$(crane digest "$repository:$release_tag" 2>/dev/null || true)"
-            if [[ -n "$existing" && "$existing" != "$digest" ]]; then
-              echo "Immutable release tag collision: $repository:$release_tag is $existing, expected $digest" >&2
-              exit 1
-            fi
-            crane tag "$repository@$digest" "$release_tag"
-            test "$(crane digest "$repository:$release_tag")" = "$digest"
-          }
           images=(
             opensphere-console
             opensphere-console-auth
@@ -263,11 +254,25 @@ jobs:
             opensphere-cbs-rustfs
             opensphere-cbs-gitea
           )
+          component_keys=(
+            console
+            auth
+            backend
+            dupaController
+            oaaGateway
+            kanidm
+            cbsPostgresql
+            cbsRustfs
+            cbsGitea
+          )
           declare -A digests
+          components='{}'
 
           # Do not move any channel tag until every immutable component was
-          # built from this exact source revision.
-          for image in "${images[@]}"; do
+          # built from this exact revision and admitted into the signed BOM.
+          for index in "${!images[@]}"; do
+            image="${images[$index]}"
+            key="${component_keys[$index]}"
             repository="ghcr.io/opensphere-platform/$image"
             source="$repository:$source_tag"
             digest="$(crane digest "$source")"
@@ -281,22 +286,101 @@ jobs:
               exit 1
             fi
             digests[$image]="$digest"
+            components="$(jq -c \
+              --arg key "$key" \
+              --arg repository "$image" \
+              --arg image "$repository@$digest" \
+              --arg revision "$GITHUB_SHA" \
+              '. + {($key): {repository: $repository, image: $image, sourceRevision: $revision}}' \
+              <<<"$components")"
           done
 
-          for image in "${images[@]}"; do
-            repository="ghcr.io/opensphere-platform/$image"
-            publish_immutable_tag "$repository" "${digests[$image]}"
-            crane tag "$repository@${digests[$image]}" edge
-          done
+          jq -n \
+            --arg apiVersion 'release.opensphere.io/v1alpha1' \
+            --arg kind 'OpenSphereReleaseBOM' \
+            --arg channel 'edge' \
+            --arg status 'Active' \
+            --arg releaseTag "$release_tag" \
+            --arg source 'https://github.com/opensphere-platform/OpenSphere-console' \
+            --arg sourceRevision "$GITHUB_SHA" \
+            --argjson supportedPlatforms '["linux/amd64", "linux/arm64"]' \
+            --argjson components "$components" \
+            '{apiVersion: $apiVersion, kind: $kind, channel: $channel, status: $status, releaseTag: $releaseTag,
+              source: $source, sourceRevision: $sourceRevision,
+              supportedPlatforms: $supportedPlatforms, components: $components}' \
+            > "$RUNNER_TEMP/opensphere-release-bom.json"
 
-          for image in "${images[@]}"; do
-            repository="ghcr.io/opensphere-platform/$image"
-            actual="$(crane digest "$repository:edge")"
-            if [[ "$actual" != "${digests[$image]}" ]]; then
-              echo "$repository:edge resolved to $actual, expected ${digests[$image]}" >&2
+          jq -e --arg revision "$GITHUB_SHA" \
+            '.sourceRevision == $revision and (.components | length) == 9' \
+            "$RUNNER_TEMP/opensphere-release-bom.json" >/dev/null
+          echo "anchor-digest=${digests[opensphere-console]}" >> "$GITHUB_OUTPUT"
+          echo "release-tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo 'Signed Release BOM prepared; no mutable channel tag has moved.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest atomic OpenSphere Release BOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/opensphere-platform/opensphere-console
+          subject-digest: ${{ steps.release-bom.outputs.anchor-digest }}
+          predicate-type: https://opensphere.io/attestations/release-bom/v1
+          predicate-path: ${{ runner.temp }}/opensphere-release-bom.json
+          push-to-registry: true
+
+      - name: Advance edge with Console anchor last
+        env:
+          RELEASE_TAG: ${{ steps.release-bom.outputs.release-tag }}
+        run: |
+          set -euo pipefail
+          bom="$RUNNER_TEMP/opensphere-release-bom.json"
+          publish_immutable_tag() {
+            local repository="$1" digest="$2" existing
+            existing="$(crane digest "$repository:$RELEASE_TAG" 2>/dev/null || true)"
+            if [[ -n "$existing" && "$existing" != "$digest" ]]; then
+              echo "Immutable release tag collision: $repository:$RELEASE_TAG is $existing, expected $digest" >&2
               exit 1
             fi
-            test "$(crane digest "$repository:$release_tag")" = "${digests[$image]}"
-            echo "- \`$image:$release_tag\` → \`${digests[$image]}\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- \`$image:edge\` → \`${digests[$image]}\`" >> "$GITHUB_STEP_SUMMARY"
+            crane tag "$repository@$digest" "$RELEASE_TAG"
+            test "$(crane digest "$repository:$RELEASE_TAG")" = "$digest"
+          }
+          images=(
+            opensphere-console-auth
+            opensphere-console-backend
+            opensphere-console-dupa-controller
+            opensphere-console-oaa-gateway
+            opensphere-console-kanidm
+            opensphere-cbs-postgresql
+            opensphere-cbs-rustfs
+            opensphere-cbs-gitea
+          )
+          component_keys=(auth backend dupaController oaaGateway kanidm cbsPostgresql cbsRustfs cbsGitea)
+
+          # Non-anchor tags may move first. Setup never samples them; it reads
+          # their immutable digests from the signed BOM attached to Console.
+          for index in "${!images[@]}"; do
+            image="${images[$index]}"
+            key="${component_keys[$index]}"
+            repository="ghcr.io/opensphere-platform/$image"
+            digest="$(jq -r --arg key "$key" '.components[$key].image | split("@")[1]' "$bom")"
+            publish_immutable_tag "$repository" "$digest"
+            crane tag "$repository@$digest" edge
+          done
+
+          # This is the atomic publication point. If any earlier step fails,
+          # Console:edge still anchors the previous complete signed BOM.
+          anchor_digest="$(jq -r '.components.console.image | split("@")[1]' "$bom")"
+          anchor_repository="ghcr.io/opensphere-platform/opensphere-console"
+          publish_immutable_tag "$anchor_repository" "$anchor_digest"
+          crane tag "$anchor_repository@$anchor_digest" edge
+
+          for key in $(jq -r '.components | keys[]' "$bom"); do
+            image="$(jq -r --arg key "$key" '.components[$key].repository' "$bom")"
+            repository="ghcr.io/opensphere-platform/$image"
+            expected="$(jq -r --arg key "$key" '.components[$key].image | split("@")[1]' "$bom")"
+            test "$(crane digest "$repository:$RELEASE_TAG")" = "$expected"
+            actual="$(crane digest "$repository:edge")"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "$repository:edge resolved to $actual, expected $expected" >&2
+              exit 1
+            fi
+            echo "- \`$image:edge\` → \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
           done
