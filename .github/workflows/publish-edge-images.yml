@@ -229,6 +229,7 @@ jobs:
     needs: [publish]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: imjasonh/setup-crane@v0.4
       - name: Login to GHCR
         env:
@@ -238,6 +239,19 @@ jobs:
         run: |
           set -euo pipefail
           source_tag="sha-${GITHUB_SHA:0:7}"
+          release_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          release_tag="$(TZ=Asia/Seoul date -d "@$release_epoch" +%Y%m%d%H%M)"
+          [[ "$release_tag" =~ ^[0-9]{12}$ ]]
+          publish_immutable_tag() {
+            local repository="$1" digest="$2" existing
+            existing="$(crane digest "$repository:$release_tag" 2>/dev/null || true)"
+            if [[ -n "$existing" && "$existing" != "$digest" ]]; then
+              echo "Immutable release tag collision: $repository:$release_tag is $existing, expected $digest" >&2
+              exit 1
+            fi
+            crane tag "$repository@$digest" "$release_tag"
+            test "$(crane digest "$repository:$release_tag")" = "$digest"
+          }
           images=(
             opensphere-console
             opensphere-console-auth
@@ -271,6 +285,7 @@ jobs:
 
           for image in "${images[@]}"; do
             repository="ghcr.io/opensphere-platform/$image"
+            publish_immutable_tag "$repository" "${digests[$image]}"
             crane tag "$repository@${digests[$image]}" edge
           done
 
@@ -281,5 +296,7 @@ jobs:
               echo "$repository:edge resolved to $actual, expected ${digests[$image]}" >&2
               exit 1
             fi
+            test "$(crane digest "$repository:$release_tag")" = "${digests[$image]}"
+            echo "- \`$image:$release_tag\` → \`${digests[$image]}\`" >> "$GITHUB_STEP_SUMMARY"
             echo "- \`$image:edge\` → \`${digests[$image]}\`" >> "$GITHUB_STEP_SUMMARY"
           done

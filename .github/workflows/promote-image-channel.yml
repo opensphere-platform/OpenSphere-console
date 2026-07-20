@@ -57,6 +57,17 @@ jobs:
           EXPECTED_REVISION: ${{ inputs.expected_source_revision }}
         run: |
           set -euo pipefail
+          verify_immutable_release_tag() {
+            local repository="$1" digest="$2" tag
+            while IFS= read -r tag; do
+              [[ "$tag" =~ ^[0-9]{12}$ ]] || continue
+              if [[ "$(crane digest "$repository:$tag")" = "$digest" ]]; then
+                return 0
+              fi
+            done < <(crane ls "$repository")
+            echo "$repository@$digest has no immutable yyyyMMddHHmm release tag" >&2
+            return 1
+          }
           images=(
             opensphere-console
             opensphere-console-auth
@@ -70,7 +81,8 @@ jobs:
           )
           declare -A digests
           for image in "${images[@]}"; do
-            ref="ghcr.io/opensphere-platform/$image:$SOURCE_CHANNEL"
+            repository="ghcr.io/opensphere-platform/$image"
+            ref="$repository:$SOURCE_CHANNEL"
             digest="$(crane digest "$ref")"
             revision="$(crane config "$ref" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
             if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -81,6 +93,7 @@ jobs:
               echo "$ref revision $revision differs from approved $EXPECTED_REVISION" >&2
               exit 1
             fi
+            verify_immutable_release_tag "$repository" "$digest"
             digests[$image]="$digest"
           done
 
