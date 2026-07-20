@@ -65,6 +65,24 @@ spec:
                     digest:
                       type: string
                       pattern: '^sha256:[a-f0-9]{64}$'
+                # User intent and immutable execution coordinate are stored together.
+                # The workload still consumes only image.repository@image.digest.
+                resolution:
+                  type: object
+                  required: [requestedRef, requestedChannel, resolvedDigest, resolvedAt, artifactVersion, signatureIdentity, registryCredentialsRequired, evidenceRefs]
+                  properties:
+                    requestedRef: { type: string }
+                    requestedChannel: { type: string, enum: ["", edge, candidate, stable] }
+                    resolvedDigest: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
+                    resolvedAt: { type: string, format: date-time }
+                    artifactVersion: { type: string }
+                    source: { type: string }
+                    revision: { type: string, pattern: '^(|[a-f0-9]{40})$' }
+                    signatureIdentity: { type: string }
+                    registryCredentialsRequired: { type: boolean }
+                    evidenceRefs:
+                      type: array
+                      items: { type: string }
                 nav:
                   type: object
                   properties:
@@ -101,6 +119,40 @@ spec:
                         memoryRequest: { type: string }
                         cpuLimit: { type: string }
                         memoryLimit: { type: string }
+                    security:
+                      type: object
+                      properties:
+                        automountServiceAccountToken: { type: boolean }
+                        runAsNonRoot: { type: boolean }
+                        runAsUser: { type: integer, minimum: 1 }
+                        runAsGroup: { type: integer, minimum: 1 }
+                        readOnlyRootFilesystem: { type: boolean }
+                        seccompProfile: { type: string, enum: [RuntimeDefault, Localhost] }
+                    availability:
+                      type: object
+                      properties:
+                        replicas: { type: integer, minimum: 1, maximum: 20 }
+                        minAvailable: { type: integer, minimum: 0, maximum: 20 }
+                        topologySpread: { type: boolean }
+                        autoscaling:
+                          type: object
+                          required: [enabled]
+                          properties:
+                            enabled: { type: boolean }
+                            minReplicas: { type: integer, minimum: 1, maximum: 20 }
+                            maxReplicas: { type: integer, minimum: 1, maximum: 50 }
+                            targetCPUUtilization: { type: integer, minimum: 1, maximum: 100 }
+                    networkPolicy:
+                      type: object
+                      required: [enabled]
+                      properties:
+                        enabled: { type: boolean }
+                        allowMonitoring: { type: boolean }
+                    observability:
+                      type: object
+                      properties:
+                        metricsPath: { type: string, pattern: '^/' }
+                        scrapeInterval: { type: string, pattern: '^[0-9]+(s|m|h)$' }
                 permissions:
                   type: array
                   items: { type: string }
@@ -249,9 +301,35 @@ spec:
                 currentDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
                 currentManifestSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
                 currentVersion: { type: string }
+                currentRequestedRef: { type: string }
+                currentRequestedChannel: { type: string, enum: ["", edge, candidate, stable] }
+                currentResolvedAt: { type: string }
+                currentSource: { type: string }
+                currentRevision: { type: string, pattern: '^(|[a-f0-9]{40})$' }
+                currentSignatureIdentity: { type: string }
+                currentEvidenceRefs:
+                  type: array
+                  items: { type: string }
+                currentRegistryCredentialsRequired: { type: boolean }
+                currentChannelDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
+                channelState:
+                  type: string
+                  enum: [Current, UpdateAvailable, SecurityActionRequired, ChannelUnavailable]
+                channelCheckedAt: { type: string }
+                channelReason: { type: string }
                 previousDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
                 previousManifestSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
                 previousVersion: { type: string }
+                previousRequestedRef: { type: string }
+                previousRequestedChannel: { type: string, enum: ["", edge, candidate, stable] }
+                previousResolvedAt: { type: string }
+                previousSource: { type: string }
+                previousRevision: { type: string, pattern: '^(|[a-f0-9]{40})$' }
+                previousSignatureIdentity: { type: string }
+                previousEvidenceRefs:
+                  type: array
+                  items: { type: string }
+                previousRegistryCredentialsRequired: { type: boolean }
                 host:
                   type: object
                   properties:

@@ -9,6 +9,7 @@
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes } = require('crypto');
 const db = require('./db'); // Backbone PostgreSQL(감사로그 영속). 미연결 시 관리 쓰기 fail-closed.
 const storage = require('./storage'); // Backbone RustFS(S3). BackboneClaim objectStore 할당. 미연결 시 관리 쓰기 fail-closed.
@@ -19,6 +20,15 @@ const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
 const API = 'https://kubernetes.default.svc';
 const GROUP = 'plugins.opensphere.io';
 const V = 'v1alpha1';
+const PLATFORM_GROUP = 'platform.opensphere.io';
+const PLATFORM_PROFILE_NAME = 'default';
+const PLATFORM_PROFILE_PATH = `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles/${PLATFORM_PROFILE_NAME}`;
+function foundationDevOverrideEnabled(env = process.env) {
+  return env.OPENSPHERE_RUNTIME_MODE === 'development'
+    && String(env.FOUNDATION_ACTIVATION_DEV_OVERRIDE || '').toLowerCase() === 'true';
+}
+// 기본값은 운영 fail-closed. 개발 예외는 두 개의 명시적 플래그가 모두 일치할 때만 열린다.
+const FOUNDATION_ACTIVATION_DEV_OVERRIDE = foundationDevOverrideEnabled();
 // 셸(브라우저)이 플러그인 manifest/번들에 접근하는 경로 prefix (nginx 프록시 기준)
 const SHELL_API_PREFIX = '/api/plugins';
 const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단, 감사 H)
@@ -26,7 +36,19 @@ const MODULE_DESCRIPTOR_LABEL = 'io.opensphere.module.descriptor';
 const MODULE_SIGNATURE_LABEL = 'io.opensphere.module.descriptor.signature';
 const MODULE_KEY_ID_LABEL = 'io.opensphere.module.descriptor.key-id';
 const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1', 'cluster-his-manager-v1', 'cluster-infrastructure-manager-v1']);
-const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)@sha256:([a-f0-9]{64})$/;
+const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)(?:@sha256:([a-f0-9]{64})|:(edge|candidate|stable))$/;
+const OCI_ACCEPT = [
+  'application/vnd.oci.image.index.v1+json',
+  'application/vnd.docker.distribution.manifest.list.v2+json',
+  'application/vnd.oci.image.manifest.v1+json',
+  'application/vnd.docker.distribution.manifest.v2+json',
+].join(', ');
+const ATTESTATION_PREDICATES = Object.freeze({
+  provenance: 'https://slsa.dev/provenance/v1',
+  sbom: 'https://spdx.dev/Document/v2.3',
+});
+const GITHUB_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
+const GHCR_PULL_SECRET = process.env.GHCR_PULL_SECRET || 'opensphere-ghcr-pull';
 // /api/admin/events는 workload의 projected ServiceAccount token을 TokenReview로 검증한다.
 // 모든 plugin에 같은 공유 secret을 배포하지 않아 한 workload 침해가 다른 source 위장으로 번지지 않는다.
 // Backbone PostgreSQL(감사로그 영속) — 기본값=이 클러스터 service DNS. 비번은 env 아닌 Secret에서 런타임 로드.
@@ -279,6 +301,32 @@ const listRegs = () => k8s('GET', crd('uipluginregistrations'));
 const isCorePkg = (pkg) => (pkg?.metadata?.labels?.['opensphere.io/scope'] || '').startsWith('main-shell');
 const getPackage = (n) => k8s('GET', `${crd('uipluginpackages')}/${n}`);
 const getReg = (n) => k8s('GET', `${crd('uipluginregistrations')}/${n}`);
+function verifiedActivatedRegistration(reg) {
+  const status = reg?.status || {};
+  return reg?.spec?.desiredState === 'Enabled'
+    && status.phase === 'Activated'
+    && status.workload?.phase === 'Ready'
+    && status.verification?.manifest === 'Verified'
+    && status.verification?.signature === 'Verified'
+    && status.verification?.entryDigest === 'Verified'
+    && status.verification?.permissions === 'Approved'
+    && /^sha256:[a-f0-9]{64}$/.test(String(status.currentDigest || ''));
+}
+function verifiedStagedUpdate(reg) {
+  const status = reg?.status || {};
+  const currentDigest = String(status.currentDigest || '');
+  const previousDigest = String(status.previousDigest || '');
+  return reg?.spec?.desiredState === 'Installed'
+    && status.phase === 'Ready'
+    && status.workload?.phase === 'Ready'
+    && status.verification?.manifest === 'Verified'
+    && status.verification?.signature === 'Verified'
+    && status.verification?.entryDigest === 'Verified'
+    && status.verification?.permissions === 'Approved'
+    && /^sha256:[a-f0-9]{64}$/.test(currentDigest)
+    && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
+    && currentDigest !== previousDigest;
+}
 // CLIDownload (console.opensphere.io, cluster-scoped) — headless 비-UI 콘솔 바인딩. UIPluginPackage(UI 게스트)와 별개 kind.
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
 const CONSOLE_GROUP = 'console.opensphere.io';
@@ -338,6 +386,7 @@ async function setStatus(name, status, reg, pkg) {
   const currentDigest = String(pkg?.spec?.image?.digest || '');
   const currentManifestSha256 = String(pkg?.spec?.manifest?.sha256 || '');
   const currentVersion = String(pkg?.spec?.version || '');
+  const resolution = pkg?.spec?.resolution || {};
   const releaseChanged = Boolean(reg?.status?.currentDigest && reg.status.currentDigest !== currentDigest);
   return k8s('PATCH', `${crd('uipluginregistrations')}/${name}/status`, { status: {
     ...status,
@@ -346,9 +395,25 @@ async function setStatus(name, status, reg, pkg) {
     currentDigest,
     currentManifestSha256,
     currentVersion,
+    currentRequestedRef: String(resolution.requestedRef || ''),
+    currentRequestedChannel: String(resolution.requestedChannel || ''),
+    currentResolvedAt: String(resolution.resolvedAt || ''),
+    currentSource: String(resolution.source || ''),
+    currentRevision: String(resolution.revision || ''),
+    currentSignatureIdentity: String(resolution.signatureIdentity || ''),
+    currentEvidenceRefs: Array.isArray(resolution.evidenceRefs) ? resolution.evidenceRefs.map(String) : [],
+    currentRegistryCredentialsRequired: resolution.registryCredentialsRequired === true,
     previousDigest: releaseChanged ? String(reg.status.currentDigest) : String(reg?.status?.previousDigest || ''),
     previousManifestSha256: releaseChanged ? String(reg.status.currentManifestSha256 || '') : String(reg?.status?.previousManifestSha256 || ''),
     previousVersion: releaseChanged ? String(reg.status.currentVersion || reg.status.observedVersion || '') : String(reg?.status?.previousVersion || ''),
+    previousRequestedRef: releaseChanged ? String(reg.status.currentRequestedRef || '') : String(reg?.status?.previousRequestedRef || ''),
+    previousRequestedChannel: releaseChanged ? String(reg.status.currentRequestedChannel || '') : String(reg?.status?.previousRequestedChannel || ''),
+    previousResolvedAt: releaseChanged ? String(reg.status.currentResolvedAt || '') : String(reg?.status?.previousResolvedAt || ''),
+    previousSource: releaseChanged ? String(reg.status.currentSource || '') : String(reg?.status?.previousSource || ''),
+    previousRevision: releaseChanged ? String(reg.status.currentRevision || '') : String(reg?.status?.previousRevision || ''),
+    previousSignatureIdentity: releaseChanged ? String(reg.status.currentSignatureIdentity || '') : String(reg?.status?.previousSignatureIdentity || ''),
+    previousEvidenceRefs: releaseChanged ? (Array.isArray(reg.status.currentEvidenceRefs) ? reg.status.currentEvidenceRefs.map(String) : []) : (Array.isArray(reg?.status?.previousEvidenceRefs) ? reg.status.previousEvidenceRefs.map(String) : []),
+    previousRegistryCredentialsRequired: releaseChanged ? reg.status.currentRegistryCredentialsRequired === true : reg?.status?.previousRegistryCredentialsRequired === true,
     retryable,
     nextRetryAt: retryable ? new Date(Date.now() + 15000).toISOString() : '',
     host: {
@@ -370,14 +435,29 @@ async function setStatus(name, status, reg, pkg) {
 const retryableReason = (reason) => new Set([
   'PackageNotFound', 'HostPending', 'ManifestUnreachable', 'SignatureUnreachable',
   'EntryUnreachable', 'WorkloadNotReady', 'ServiceAccountNotFound',
+  'HorizontalPodAutoscalerApplyFailed', 'NetworkPolicyApplyFailed', 'ServiceMonitorApplyFailed',
 ]).has(reason);
 
-async function verifyWorkloadToken(req, pluginId) {
+async function verifyWorkloadToken(req, pluginId, { allowVerifiedInstalled = false } = {}) {
   const firstParty = new Map([
     ['opensphere-console-backend', `system:serviceaccount:${NS}:opensphere-console-backend`],
     ['opensphere-console-auth', `system:serviceaccount:${NS}:opensphere-console-auth`],
   ]);
-  if (!safeName(pluginId) || (!firstParty.has(pluginId) && !proxyAllow.has(pluginId))) throw { code: 403, msg: 'source is not active' };
+  if (!safeName(pluginId)) throw { code: 403, msg: 'invalid workload source' };
+  let stagedReg = null;
+  if (!firstParty.has(pluginId) && !proxyAllow.has(pluginId)) {
+    if (!allowVerifiedInstalled) throw { code: 403, msg: 'source is not active' };
+    stagedReg = await getReg(pluginId);
+    const status = stagedReg.json?.status || {};
+    const verifiedInstalled = stagedReg.ok
+      && stagedReg.json?.spec?.desiredState === 'Installed'
+      && status.phase === 'Ready'
+      && status.workload?.phase === 'Ready'
+      && status.verification?.manifest === 'Verified'
+      && status.verification?.signature === 'Verified'
+      && status.verification?.permissions === 'Approved';
+    if (!verifiedInstalled) throw { code: 403, msg: 'source is neither active nor verified Installed' };
+  }
   const match = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
   if (!match) throw { code: 401, msg: 'workload bearer token required' };
   const review = await k8s('POST', '/apis/authentication.k8s.io/v1/tokenreviews', {
@@ -479,33 +559,69 @@ function deploymentManifest(pkg) {
   const port = Number(runtime.port) || 8080;
   const healthPath = String(runtime.healthPath || '/healthz');
   const r = runtime.resources || {};
+  const security = runtime.security || {};
+  const availability = runtime.availability || {};
+  const autoscaling = availability.autoscaling || {};
+  const metricsEnabled = pkg.spec.contributions?.observability?.enabled === true
+    && pkg.spec.contributions?.observability?.metrics === true
+    && Boolean(runtime.observability?.metricsPath);
+  const metricsPath = String(runtime.observability?.metricsPath || '/metrics');
+  const replicas = Number.isInteger(availability.replicas) ? availability.replicas : 2;
+  const podSecurityContext = {
+    ...(security.runAsNonRoot !== undefined ? { runAsNonRoot: security.runAsNonRoot } : {}),
+    ...(Number.isInteger(security.runAsUser) ? { runAsUser: security.runAsUser } : {}),
+    ...(Number.isInteger(security.runAsGroup) ? { runAsGroup: security.runAsGroup } : {}),
+    ...(security.seccompProfile ? { seccompProfile: { type: security.seccompProfile } } : {}),
+  };
+  const readOnlyRootFilesystem = security.readOnlyRootFilesystem === true;
   return {
     apiVersion: 'apps/v1', kind: 'Deployment',
     metadata: { name, namespace: NS, labels: { app: name, 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
     spec: {
-      replicas: 2,
+      ...(autoscaling.enabled === true ? {} : { replicas }),
       strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
       selector: { matchLabels: { app: name } },
       template: {
-        metadata: { labels: { ...podLabels(pkg), app: name } },
+        metadata: {
+          labels: { ...podLabels(pkg), app: name },
+          annotations: {
+            'opensphere.io/log-format': pkg.spec.contributions?.observability?.logs ? 'json' : 'text',
+            'opensphere.io/log-correlation': pkg.spec.contributions?.observability?.traces ? 'w3c+opensphere' : 'none',
+            ...(metricsEnabled ? { 'prometheus.io/scrape': 'true', 'prometheus.io/path': metricsPath, 'prometheus.io/port': String(port) } : {}),
+          },
+        },
         spec: {
           serviceAccountName,
+          automountServiceAccountToken: security.automountServiceAccountToken !== false,
+          ...(Object.keys(podSecurityContext).length ? { securityContext: podSecurityContext } : {}),
+          ...(availability.topologySpread === true ? { topologySpreadConstraints: [{
+            maxSkew: 1,
+            topologyKey: 'kubernetes.io/hostname',
+            whenUnsatisfiable: 'ScheduleAnyway',
+            labelSelector: { matchLabels: { app: name } },
+          }] } : {}),
+          ...(pkg.spec?.resolution?.registryCredentialsRequired === true
+            ? { imagePullSecrets: [{ name: GHCR_PULL_SECRET }] }
+            : {}),
           containers: [{
-            name: 'plugin', image: img, ports: [{ containerPort: port }],
+            name: 'plugin', image: img, ports: [{ name: 'http', containerPort: port }],
             // K8s API를 호출하는 기능 컨테이너(예: platform-status)의 TLS 검증용 — 기본 제공
             env: podEnv(pkg),
             // Console 인증 CA는 공개 신뢰 앵커이며 비밀키가 아니다. 플러그인이 Kanidm JWT의
             // JWKS를 TLS 검증 후 조회할 수 있도록 모든 관리 워크로드에 read-only로 제공한다.
-            volumeMounts: [{ name: 'opensphere-console-auth-ca', mountPath: '/etc/opensphere/auth-ca', readOnly: true }],
+            volumeMounts: [
+              { name: 'opensphere-console-auth-ca', mountPath: '/etc/opensphere/auth-ca', readOnly: true },
+              ...(readOnlyRootFilesystem ? [{ name: 'runtime-tmp', mountPath: '/tmp' }] : []),
+            ],
             readinessProbe: { httpGet: { path: healthPath, port }, initialDelaySeconds: 1 },
             livenessProbe: { httpGet: { path: healthPath, port }, initialDelaySeconds: 10, periodSeconds: 10 },
-            securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } },
+            securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem },
             resources: { requests: { cpu: r.cpuRequest || '20m', memory: r.memoryRequest || '32Mi' }, limits: { cpu: r.cpuLimit || '200m', memory: r.memoryLimit || '128Mi' } },
           }],
-          volumes: [{
-            name: 'opensphere-console-auth-ca',
-            secret: { secretName: 'opensphere-console-auth-ca', items: [{ key: 'ca.crt', path: 'ca.crt' }] },
-          }],
+          volumes: [
+            { name: 'opensphere-console-auth-ca', secret: { secretName: 'opensphere-console-auth-ca', items: [{ key: 'ca.crt', path: 'ca.crt' }] } },
+            ...(readOnlyRootFilesystem ? [{ name: 'runtime-tmp', emptyDir: { sizeLimit: '32Mi' } }] : []),
+          ],
         },
       },
     },
@@ -513,10 +629,11 @@ function deploymentManifest(pkg) {
 }
 function pdbManifest(pkg) {
   const name = pkg.metadata.name;
+  const minAvailable = Number.isInteger(pkg.spec.runtime?.availability?.minAvailable) ? pkg.spec.runtime.availability.minAvailable : 1;
   return {
     apiVersion: 'policy/v1', kind: 'PodDisruptionBudget',
     metadata: { name, namespace: NS, labels: { 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
-    spec: { minAvailable: 1, selector: { matchLabels: { app: name } } },
+    spec: { minAvailable, selector: { matchLabels: { app: name } } },
   };
 }
 function serviceManifest(pkg) {
@@ -524,8 +641,64 @@ function serviceManifest(pkg) {
   const port = Number(pkg.spec.runtime?.port) || 8080;
   return {
     apiVersion: 'v1', kind: 'Service',
+    metadata: { name, namespace: NS, labels: { app: name, 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
+    spec: { selector: { app: name }, ports: [{ name: 'http', port, targetPort: 'http' }] },
+  };
+}
+
+function hpaManifest(pkg) {
+  const autoscaling = pkg.spec.runtime?.availability?.autoscaling;
+  if (autoscaling?.enabled !== true) return null;
+  const name = pkg.metadata.name;
+  return {
+    apiVersion: 'autoscaling/v2', kind: 'HorizontalPodAutoscaler',
     metadata: { name, namespace: NS, labels: { 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
-    spec: { selector: { app: name }, ports: [{ port, targetPort: port }] },
+    spec: {
+      scaleTargetRef: { apiVersion: 'apps/v1', kind: 'Deployment', name },
+      minReplicas: Number(autoscaling.minReplicas) || 2,
+      maxReplicas: Number(autoscaling.maxReplicas) || 4,
+      behavior: {
+        scaleUp: { stabilizationWindowSeconds: 30, policies: [{ type: 'Percent', value: 100, periodSeconds: 60 }] },
+        scaleDown: { stabilizationWindowSeconds: 300, policies: [{ type: 'Percent', value: 50, periodSeconds: 60 }] },
+      },
+      metrics: [{ type: 'Resource', resource: { name: 'cpu', target: { type: 'Utilization', averageUtilization: Number(autoscaling.targetCPUUtilization) || 70 } } }],
+    },
+  };
+}
+
+function networkPolicyManifest(pkg) {
+  const policy = pkg.spec.runtime?.networkPolicy;
+  if (policy?.enabled !== true) return null;
+  const name = pkg.metadata.name;
+  const ingressFrom = [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': NS } } }];
+  if (policy.allowMonitoring === true) ingressFrom.push({ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'monitoring' } } });
+  return {
+    apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy',
+    metadata: { name, namespace: NS, labels: { 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
+    spec: {
+      podSelector: { matchLabels: { app: name } },
+      policyTypes: ['Ingress', 'Egress'],
+      ingress: [{ from: ingressFrom, ports: [{ protocol: 'TCP', port: Number(pkg.spec.runtime?.port) || 8080 }] }],
+      egress: [
+        { to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': NS } } }] },
+        { to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' } }, podSelector: { matchLabels: { 'k8s-app': 'kube-dns' } } }], ports: [{ protocol: 'UDP', port: 53 }, { protocol: 'TCP', port: 53 }] },
+      ],
+    },
+  };
+}
+
+function serviceMonitorManifest(pkg) {
+  const obs = pkg.spec.contributions?.observability;
+  if (obs?.enabled !== true || obs.metrics !== true || !pkg.spec.runtime?.observability?.metricsPath) return null;
+  const name = pkg.metadata.name;
+  return {
+    apiVersion: 'monitoring.coreos.com/v1', kind: 'ServiceMonitor',
+    metadata: { name, namespace: NS, labels: { app: name, release: 'kube-prometheus-stack', 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
+    spec: {
+      namespaceSelector: { matchNames: [NS] },
+      selector: { matchLabels: { app: name } },
+      endpoints: [{ port: 'http', path: String(pkg.spec.runtime?.observability?.metricsPath || '/metrics'), interval: String(pkg.spec.runtime?.observability?.scrapeInterval || '30s') }],
+    },
   };
 }
 
@@ -645,6 +818,17 @@ async function applyWorkload(pkg) {
   const existingPdb = await k8s('GET', `${pdbPath}/${name}`);
   if (existingPdb.ok) await k8s('PATCH', `${pdbPath}/${name}`, pdb);
   else await k8s('POST', pdbPath, pdb);
+  const optionalResources = [
+    ['/apis/autoscaling/v2/namespaces/' + NS + '/horizontalpodautoscalers', hpaManifest(pkg), 'HorizontalPodAutoscaler'],
+    ['/apis/networking.k8s.io/v1/namespaces/' + NS + '/networkpolicies', networkPolicyManifest(pkg), 'NetworkPolicy'],
+    ['/apis/monitoring.coreos.com/v1/namespaces/' + NS + '/servicemonitors', serviceMonitorManifest(pkg), 'ServiceMonitor'],
+  ];
+  for (const [basePath, manifest, label] of optionalResources) {
+    if (!manifest) continue;
+    const existing = await k8s('GET', `${basePath}/${name}`);
+    const result = existing.ok ? await k8s('PATCH', `${basePath}/${name}`, manifest) : await k8s('POST', basePath, manifest);
+    if (!result.ok) throw Object.assign(new Error(`${label} apply failed (HTTP ${result.status})`), { reason: `${label}ApplyFailed` });
+  }
 }
 async function deleteManagedResource(path, label) {
   const result = await k8s('DELETE', path);
@@ -662,6 +846,9 @@ async function deleteWorkload(pkg) {
   await deleteManagedResource(`/apis/apps/v1/namespaces/${NS}/deployments/${name}`, `Deployment/${name}`);
   await deleteManagedResource(`/api/v1/namespaces/${NS}/services/${name}`, `Service/${name}`);
   await deleteManagedResource(`/apis/policy/v1/namespaces/${NS}/poddisruptionbudgets/${name}`, `PodDisruptionBudget/${name}`);
+  await deleteManagedResource(`/apis/autoscaling/v2/namespaces/${NS}/horizontalpodautoscalers/${name}`, `HorizontalPodAutoscaler/${name}`);
+  await deleteManagedResource(`/apis/networking.k8s.io/v1/namespaces/${NS}/networkpolicies/${name}`, `NetworkPolicy/${name}`);
+  await deleteManagedResource(`/apis/monitoring.coreos.com/v1/namespaces/${NS}/servicemonitors/${name}`, `ServiceMonitor/${name}`);
   const sa = pluginServiceAccount(pkg);
   await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/opensphere-module-${pkg.metadata.name}-observer-v1`, `ClusterRoleBinding/${name}`);
   if (sa.managed) await deleteManagedResource(`/api/v1/namespaces/${NS}/serviceaccounts/${sa.name}`, `ServiceAccount/${sa.name}`);
@@ -759,6 +946,26 @@ function moduleDescriptorIssues(value) {
   if (!/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/.test(String(value.runtime?.healthPath || ''))) add('InvalidRuntime', 'runtime.healthPath', 'absolute health path required');
   if (value.runtime?.serviceAccountName && !safeName(value.runtime.serviceAccountName)) add('InvalidRuntime', 'runtime.serviceAccountName', 'invalid service account');
   for (const key of ['cpuRequest', 'memoryRequest', 'cpuLimit', 'memoryLimit']) if (!/^\d+(?:m|Mi|Gi)$/.test(String(value.runtime?.resources?.[key] || ''))) add('InvalidRuntime', `runtime.resources.${key}`, 'invalid resource quantity');
+  const security = value.runtime?.security;
+  if (security) {
+    for (const key of ['automountServiceAccountToken', 'runAsNonRoot', 'readOnlyRootFilesystem']) if (security[key] !== undefined && typeof security[key] !== 'boolean') add('InvalidRuntimeSecurity', `runtime.security.${key}`, 'boolean required');
+    for (const key of ['runAsUser', 'runAsGroup']) if (security[key] !== undefined && (!Number.isInteger(security[key]) || security[key] < 1)) add('InvalidRuntimeSecurity', `runtime.security.${key}`, 'positive integer required');
+    if (security.seccompProfile && !['RuntimeDefault', 'Localhost'].includes(security.seccompProfile)) add('InvalidRuntimeSecurity', 'runtime.security.seccompProfile', 'unsupported seccomp profile');
+  }
+  const availability = value.runtime?.availability;
+  if (availability) {
+    const replicas = availability.replicas ?? 2;
+    if (!Number.isInteger(replicas) || replicas < 1 || replicas > 20) add('InvalidRuntimeAvailability', 'runtime.availability.replicas', 'replicas must be 1..20');
+    if (availability.minAvailable !== undefined && (!Number.isInteger(availability.minAvailable) || availability.minAvailable < 0 || availability.minAvailable > replicas)) add('InvalidRuntimeAvailability', 'runtime.availability.minAvailable', 'minAvailable must be 0..replicas');
+    const autoscaling = availability.autoscaling;
+    if (autoscaling?.enabled === true) {
+      const min = autoscaling.minReplicas ?? replicas;
+      const max = autoscaling.maxReplicas ?? min;
+      if (!Number.isInteger(min) || min < 1 || !Number.isInteger(max) || max < min || max > 50) add('InvalidRuntimeAutoscaling', 'runtime.availability.autoscaling', 'invalid autoscaling range');
+    }
+  }
+  if (value.runtime?.networkPolicy && typeof value.runtime.networkPolicy.enabled !== 'boolean') add('InvalidRuntimeNetworkPolicy', 'runtime.networkPolicy.enabled', 'boolean required');
+  if (value.runtime?.observability?.metricsPath && !String(value.runtime.observability.metricsPath).startsWith('/')) add('InvalidRuntimeObservability', 'runtime.observability.metricsPath', 'absolute path required');
   if (!String(value.manifest?.path || '').startsWith('/plugins/')) add('InvalidManifest', 'manifest.path', 'manifest must be below /plugins/');
   if (!/^[a-f0-9]{64}$/.test(String(value.manifest?.sha256 || ''))) add('InvalidManifest', 'manifest.sha256', 'lowercase sha256 required');
   if (!String(value.manifest?.signaturePath || '').startsWith('/plugins/')) add('InvalidManifest', 'manifest.signaturePath', 'signature must be below /plugins/');
@@ -767,42 +974,290 @@ function moduleDescriptorIssues(value) {
   if (!validContributions(value.contributions)) add('InvalidContribution', 'contributions', 'closed contribution declaration is invalid');
   return issues;
 }
+function readOptionalFile(path) {
+  try { return fs.readFileSync(path, 'utf8').trim(); } catch { return ''; }
+}
+let runtimeGhcrCredentials = null;
+function ghcrCredentials() {
+  // Registry credentials are file-only so the token is not exposed through Pod env inspection.
+  // The optional mount is a standard kubernetes.io/dockerconfigjson imagePullSecret, so the
+  // resolver and Kubernetes pull path share one narrowly scoped read credential.
+  const configPath = process.env.GHCR_DOCKER_CONFIG_FILE || '/var/run/secrets/opensphere-ghcr/config.json';
+  if (runtimeGhcrCredentials) return runtimeGhcrCredentials;
+  const raw = readOptionalFile(configPath);
+  if (!raw) return null;
+  try {
+    const config = JSON.parse(raw);
+    const entry = config?.auths?.['ghcr.io'] || config?.auths?.['https://ghcr.io'];
+    if (!entry) return null;
+    if (entry.username && entry.password) return { username: String(entry.username), password: String(entry.password) };
+    const decoded = Buffer.from(String(entry.auth || ''), 'base64').toString('utf8');
+    const split = decoded.indexOf(':');
+    return split > 0 ? { username: decoded.slice(0, split), password: decoded.slice(split + 1) } : null;
+  } catch { return null; }
+}
+function registryDockerConfig(username, password) {
+  return JSON.stringify({
+    auths: {
+      'ghcr.io': {
+        username,
+        password,
+        auth: Buffer.from(`${username}:${password}`).toString('base64'),
+      },
+    },
+  });
+}
+function dockerConfigUsername(encoded) {
+  try {
+    const config = JSON.parse(Buffer.from(String(encoded || ''), 'base64').toString('utf8'));
+    const entry = config?.auths?.['ghcr.io'] || config?.auths?.['https://ghcr.io'];
+    if (entry?.username) return String(entry.username);
+    const decoded = Buffer.from(String(entry?.auth || ''), 'base64').toString('utf8');
+    return decoded.includes(':') ? decoded.slice(0, decoded.indexOf(':')) : '';
+  } catch { return ''; }
+}
+async function registryCredentialStatus() {
+  const result = await k8s('GET', `/api/v1/namespaces/${NS}/secrets/${GHCR_PULL_SECRET}`);
+  if (result.status === 404) return { registry: 'ghcr.io', configured: false, secretName: GHCR_PULL_SECRET };
+  if (!result.ok) throw Object.assign(new Error(`registry credential status HTTP ${result.status}`), { code: 503, reason: 'RegistryCredentialStoreUnavailable' });
+  const encoded = result.json?.data?.['.dockerconfigjson'];
+  return {
+    registry: 'ghcr.io',
+    configured: result.json?.type === 'kubernetes.io/dockerconfigjson' && Boolean(encoded),
+    username: dockerConfigUsername(encoded),
+    secretName: GHCR_PULL_SECRET,
+    updatedAt: result.json?.metadata?.creationTimestamp || '',
+  };
+}
+async function storeRegistryCredentials(username, password) {
+  const document = registryDockerConfig(username, password);
+  const path = `/api/v1/namespaces/${NS}/secrets/${GHCR_PULL_SECRET}`;
+  const existing = await k8s('GET', path);
+  const body = {
+    apiVersion: 'v1', kind: 'Secret', type: 'kubernetes.io/dockerconfigjson',
+    metadata: {
+      name: GHCR_PULL_SECRET, namespace: NS,
+      labels: { 'app.kubernetes.io/managed-by': 'opensphere-console', 'opensphere.io/purpose': 'registry-read' },
+    },
+    data: { '.dockerconfigjson': Buffer.from(document).toString('base64') },
+  };
+  const result = existing.ok
+    ? await k8s('PATCH', path, { type: body.type, metadata: { labels: body.metadata.labels }, data: body.data })
+    : await k8s('POST', `/api/v1/namespaces/${NS}/secrets`, body);
+  if (!result.ok) throw Object.assign(new Error(`registry credential store HTTP ${result.status}`), { code: 503, reason: 'RegistryCredentialStoreUnavailable' });
+  runtimeGhcrCredentials = { username, password };
+  return { registry: 'ghcr.io', configured: true, username, secretName: GHCR_PULL_SECRET };
+}
+async function deleteRegistryCredentials() {
+  const result = await k8s('DELETE', `/api/v1/namespaces/${NS}/secrets/${GHCR_PULL_SECRET}`);
+  if (!result.ok && result.status !== 404) throw Object.assign(new Error(`registry credential delete HTTP ${result.status}`), { code: 503, reason: 'RegistryCredentialStoreUnavailable' });
+  runtimeGhcrCredentials = null;
+  return { registry: 'ghcr.io', configured: false, secretName: GHCR_PULL_SECRET };
+}
+function parseModuleImageReference(image) {
+  const match = ALLOWED_IMAGE.exec(String(image || '').trim());
+  if (!match) throw Object.assign(new Error('image must be an opensphere-platform GHCR digest or channel reference'), { code: 400, reason: 'InvalidImageReference' });
+  return {
+    repositoryPath: `opensphere-platform/${match[1]}`,
+    repository: `ghcr.io/opensphere-platform/${match[1]}`,
+    reference: match[2] ? `sha256:${match[2]}` : match[3],
+    channel: match[3] || null,
+  };
+}
+function runnablePlatformManifests(manifest) {
+  if (!Array.isArray(manifest?.manifests)) return [];
+  return manifest.manifests.filter((entry) =>
+    entry?.platform?.os === 'linux'
+    && ['amd64', 'arm64'].includes(entry?.platform?.architecture)
+    && /^sha256:[a-f0-9]{64}$/.test(String(entry?.digest || ''))
+  ).sort((a, b) => String(a.platform.architecture).localeCompare(String(b.platform.architecture)));
+}
 async function ghcrFetch(path, accept) {
   const headers = { Accept: accept || 'application/json' };
   let response = await fetch(`https://ghcr.io${path}`, { headers, signal: AbortSignal.timeout(15000) });
-  if (response.status === 401) {
-    const challenge = response.headers.get('www-authenticate') || '';
-    const service = /service="([^"]+)"/.exec(challenge)?.[1];
-    const scope = /scope="([^"]+)"/.exec(challenge)?.[1];
-    if (service !== 'ghcr.io' || !scope?.startsWith('repository:opensphere-platform/')) throw Object.assign(new Error('registry challenge rejected'), { reason: 'RegistryAuthRejected' });
-    const tokenResponse = await fetch(`https://ghcr.io/token?service=${encodeURIComponent(service)}&scope=${encodeURIComponent(scope)}`, { signal: AbortSignal.timeout(15000) });
-    if (!tokenResponse.ok) throw Object.assign(new Error('registry token unavailable'), { reason: 'RegistryAuthFailed' });
-    const registryToken = (await tokenResponse.json()).token;
-    response = await fetch(`https://ghcr.io${path}`, { headers: { ...headers, Authorization: `Bearer ${registryToken}` }, signal: AbortSignal.timeout(15000) });
+  if (response.status !== 401) return { response, authenticated: false };
+  const challenge = response.headers.get('www-authenticate') || '';
+  const service = /service="([^"]+)"/.exec(challenge)?.[1];
+  const scope = /scope="([^"]+)"/.exec(challenge)?.[1];
+  if (service !== 'ghcr.io' || !scope?.startsWith('repository:opensphere-platform/')) throw Object.assign(new Error('registry challenge rejected'), { code: 401, reason: 'RegistryAuthRejected' });
+  const tokenUrl = `https://ghcr.io/token?service=${encodeURIComponent(service)}&scope=${encodeURIComponent(scope)}`;
+  const requestToken = async (credentials = null) => {
+    const tokenHeaders = credentials
+      ? { Authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}` }
+      : {};
+    const tokenResponse = await fetch(tokenUrl, { headers: tokenHeaders, signal: AbortSignal.timeout(15000) });
+    if (!tokenResponse.ok) return '';
+    return String((await tokenResponse.json()).token || '');
+  };
+  const fetchWithToken = (registryToken) => fetch(`https://ghcr.io${path}`, {
+    headers: { ...headers, Authorization: `Bearer ${registryToken}` }, signal: AbortSignal.timeout(15000),
+  });
+
+  // 공개 패키지는 익명 토큰으로 먼저 확인한다. 자격증명이 등록되어 있어도 공개
+  // 패키지를 불필요하게 private dependency로 기록하지 않는다.
+  const anonymousToken = await requestToken();
+  if (anonymousToken) {
+    response = await fetchWithToken(anonymousToken);
+    if (response.ok) return { response, authenticated: false };
   }
-  return response;
+  const credentials = ghcrCredentials();
+  if (!credentials) throw Object.assign(new Error('private GHCR package requires configured registry credentials'), { code: 401, reason: 'RegistryCredentialsRequired' });
+  const authenticatedToken = await requestToken(credentials);
+  if (!authenticatedToken) throw Object.assign(new Error('configured GHCR credentials were rejected'), { code: 401, reason: 'RegistryAuthFailed' });
+  response = await fetchWithToken(authenticatedToken);
+  if (!response.ok && [401, 403].includes(response.status)) throw Object.assign(new Error('configured GHCR credentials cannot read this package'), { code: 401, reason: 'RegistryAuthFailed' });
+  return { response, authenticated: true };
 }
-async function inspectModuleImage(image) {
-  const match = ALLOWED_IMAGE.exec(String(image || '').trim());
-  if (!match) throw Object.assign(new Error('image must be an opensphere-platform GHCR digest reference'), { code: 400, reason: 'InvalidImageReference' });
-  const repositoryPath = `opensphere-platform/${match[1]}`;
-  const expectedDigest = `sha256:${match[2]}`;
-  const manifestResponse = await ghcrFetch(`/v2/${repositoryPath}/manifests/${expectedDigest}`, 'application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json');
-  if (!manifestResponse.ok) throw Object.assign(new Error(`registry manifest HTTP ${manifestResponse.status}`), { code: 422, reason: 'ImageManifestUnreachable' });
-  const manifestText = await manifestResponse.text();
-  const actualDigest = manifestResponse.headers.get('docker-content-digest') || `sha256:${sha256(manifestText)}`;
-  if (actualDigest !== expectedDigest) throw Object.assign(new Error('registry digest mismatch'), { code: 422, reason: 'ImageDigestMismatch' });
+async function fetchImageManifest(repositoryPath, reference) {
+  const fetched = await ghcrFetch(`/v2/${repositoryPath}/manifests/${reference}`, OCI_ACCEPT);
+  const { response } = fetched;
+  if (!response.ok) throw Object.assign(new Error(`registry manifest HTTP ${response.status}`), { code: 422, reason: 'ImageManifestUnreachable' });
+  const text = await response.text();
+  const digest = response.headers.get('docker-content-digest') || `sha256:${sha256(text)}`;
+  if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw Object.assign(new Error('registry returned an invalid content digest'), { code: 422, reason: 'InvalidImageDigest' });
   let manifest;
-  try { manifest = JSON.parse(manifestText); } catch { throw Object.assign(new Error('invalid registry manifest'), { code: 422, reason: 'InvalidImageManifest' }); }
-  if (!/^sha256:[a-f0-9]{64}$/.test(String(manifest.config?.digest || ''))) throw Object.assign(new Error('image config digest missing'), { code: 422, reason: 'InvalidImageManifest' });
-  const configResponse = await ghcrFetch(`/v2/${repositoryPath}/blobs/${manifest.config.digest}`, 'application/vnd.oci.image.config.v1+json');
+  try { manifest = JSON.parse(text); } catch { throw Object.assign(new Error('invalid registry manifest'), { code: 422, reason: 'InvalidImageManifest' }); }
+  return { digest, manifest, authenticated: fetched.authenticated };
+}
+async function readModuleLabels(repositoryPath, manifest, expectedManifestDigest = '') {
+  if (expectedManifestDigest && !/^sha256:[a-f0-9]{64}$/.test(expectedManifestDigest)) throw Object.assign(new Error('invalid platform manifest digest'), { code: 422, reason: 'InvalidImageManifest' });
+  if (!/^sha256:[a-f0-9]{64}$/.test(String(manifest?.config?.digest || ''))) throw Object.assign(new Error('image config digest missing'), { code: 422, reason: 'InvalidImageManifest' });
+  const configFetched = await ghcrFetch(
+    `/v2/${repositoryPath}/blobs/${manifest.config.digest}`,
+    'application/vnd.oci.image.config.v1+json, application/vnd.docker.container.image.v1+json',
+  );
+  const { response: configResponse } = configFetched;
   if (!configResponse.ok) throw Object.assign(new Error(`image config HTTP ${configResponse.status}`), { code: 422, reason: 'ImageConfigUnreachable' });
   const config = await configResponse.json();
   const labels = config?.config?.Labels || {};
-  const descriptorText = labels[MODULE_DESCRIPTOR_LABEL];
-  const signature = labels[MODULE_SIGNATURE_LABEL];
-  const keyId = labels[MODULE_KEY_ID_LABEL];
+  return {
+    descriptorText: labels[MODULE_DESCRIPTOR_LABEL],
+    signature: labels[MODULE_SIGNATURE_LABEL],
+    keyId: labels[MODULE_KEY_ID_LABEL],
+    source: labels['org.opencontainers.image.source'],
+    revision: labels['org.opencontainers.image.revision'] || labels['io.opensphere.source-revision'],
+    authenticated: configFetched.authenticated,
+  };
+}
+function governedSourceRepository(source) {
+  const match = /^https:\/\/github\.com\/(opensphere-platform\/[A-Za-z0-9._-]+)$/.exec(String(source || ''));
+  return match?.[1] || '';
+}
+function attestationArguments(image, repository, predicateType) {
+  return [
+    'attestation', 'verify', `oci://${image}`, '--bundle-from-oci',
+    '--repo', repository,
+    '--signer-workflow', `${repository}/.github/workflows/publish-image.yml`,
+    '--cert-oidc-issuer', GITHUB_OIDC_ISSUER,
+    '--source-ref', 'refs/heads/main',
+    '--deny-self-hosted-runners',
+    '--predicate-type', predicateType,
+  ];
+}
+function verifyAttestation(image, repository, predicateType, reason) {
+  const dockerConfigFile = process.env.GHCR_DOCKER_CONFIG_FILE || '/var/run/secrets/opensphere-ghcr/config.json';
+  const dockerConfigDir = dockerConfigFile.replace(/[\\/][^\\/]+$/, '') || '.';
+  return new Promise((resolve, reject) => {
+    const credentials = ghcrCredentials();
+    execFile('gh', attestationArguments(image, repository, predicateType), {
+      // gh currently insists that GH_TOKEN is present even with --bundle-from-oci.
+      // The sentinel is never sent to GitHub because this path reads the bundle and
+      // Sigstore trust root from OCI; private packages reuse the same read-only PAT.
+      env: { ...process.env, DOCKER_CONFIG: dockerConfigDir, GH_TOKEN: credentials?.password || 'anonymous-bundle-verification' },
+      timeout: 45_000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      if (!error) return resolve({ verified: true });
+      const detail = String(stderr || stdout || error.message || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      const unavailable = error.code === 'ENOENT' || error.killed || /\bHTTP\s+(?:408|425|429|500|502|503|504)\b/i.test(detail);
+      reject(Object.assign(new Error(`supply-chain attestation verification failed${detail ? `: ${detail}` : ''}`), {
+        code: unavailable ? 503 : 422,
+        reason: unavailable ? 'AttestationVerifierUnavailable' : reason,
+      }));
+    });
+  });
+}
+async function verifySupplyChainAttestations(image, repository) {
+  await verifyAttestation(image, repository, ATTESTATION_PREDICATES.provenance, 'ImageProvenanceInvalid');
+  await verifyAttestation(image, repository, ATTESTATION_PREDICATES.sbom, 'ImageSbomInvalid');
+  return { provenance: 'Verified', sbom: 'Verified' };
+}
+async function assertImageNotRevoked(repository, digest) {
+  if (!db.isEnabled()) throw Object.assign(new Error('Backbone revocation ledger is unavailable'), { code: 503, reason: 'RevocationLedgerUnavailable' });
+  const revocation = await db.isImageRevoked(repository, digest);
+  if (revocation) throw Object.assign(new Error(`image digest was revoked: ${revocation.reason}`), { code: 409, reason: 'ImageRevoked', revocation });
+}
+async function installedChannelStatus(pkg) {
+  const installedDigest = String(pkg?.spec?.image?.digest || '');
+  const channel = String(pkg?.spec?.resolution?.requestedChannel || '');
+  const repository = String(pkg?.spec?.image?.repository || '');
+  const checkedAt = new Date().toISOString();
+  if (!db.isEnabled()) return { channelState: 'ChannelUnavailable', currentChannelDigest: '', channelCheckedAt: checkedAt, channelReason: 'RevocationLedgerUnavailable' };
+  try {
+    const installedRevocation = await db.isImageRevoked(repository, installedDigest);
+    if (installedRevocation) return {
+      channelState: 'SecurityActionRequired', currentChannelDigest: channel ? '' : installedDigest,
+      channelCheckedAt: checkedAt, channelReason: installedRevocation.reason,
+    };
+    if (!channel) return { channelState: 'Current', currentChannelDigest: installedDigest, channelCheckedAt: checkedAt, channelReason: '' };
+    const parsed = parseModuleImageReference(`${repository}:${channel}`);
+    const current = await fetchImageManifest(parsed.repositoryPath, channel);
+    const channelPlatforms = runnablePlatformManifests(current.manifest).map((entry) => entry.platform.architecture);
+    if (!Array.isArray(current.manifest?.manifests) || !['amd64', 'arm64'].every((architecture) => channelPlatforms.includes(architecture))) {
+      throw Object.assign(new Error('channel image is not a complete amd64/arm64 index'), { reason: 'IncompleteChannelPlatforms' });
+    }
+    const channelRevocation = await db.isImageRevoked(repository, current.digest);
+    if (channelRevocation) return {
+      channelState: 'SecurityActionRequired', currentChannelDigest: current.digest, channelCheckedAt: checkedAt,
+      channelReason: channelRevocation.reason,
+    };
+    return {
+      channelState: current.digest === installedDigest ? 'Current' : 'UpdateAvailable',
+      currentChannelDigest: current.digest,
+      channelCheckedAt: checkedAt,
+      channelReason: '',
+    };
+  } catch (error) {
+    return { channelState: 'ChannelUnavailable', currentChannelDigest: '', channelCheckedAt: checkedAt, channelReason: error?.reason || 'ChannelResolveFailed' };
+  }
+}
+async function inspectModuleImage(image) {
+  const parsed = parseModuleImageReference(image);
+  const resolved = await fetchImageManifest(parsed.repositoryPath, parsed.reference);
+  if (!parsed.channel && resolved.digest !== parsed.reference) throw Object.assign(new Error('registry digest mismatch'), { code: 422, reason: 'ImageDigestMismatch' });
+  const children = runnablePlatformManifests(resolved.manifest);
+  const platformLabels = [];
+  let registryCredentialsRequired = resolved.authenticated === true;
+  if (Array.isArray(resolved.manifest?.manifests)) {
+    if (!children.length) throw Object.assign(new Error('multi-platform image has no supported linux/amd64 or linux/arm64 manifest'), { code: 422, reason: 'UnsupportedImagePlatforms' });
+    const architectures = children.map((entry) => entry.platform.architecture);
+    if (new Set(architectures).size !== architectures.length) throw Object.assign(new Error('multi-platform image contains duplicate runnable platform manifests'), { code: 422, reason: 'AmbiguousImagePlatforms' });
+    if (parsed.channel && !['amd64', 'arm64'].every((architecture) => architectures.includes(architecture))) {
+      throw Object.assign(new Error('channel image must publish both linux/amd64 and linux/arm64'), { code: 422, reason: 'IncompleteChannelPlatforms' });
+    }
+    for (const child of children) {
+      const childManifest = await fetchImageManifest(parsed.repositoryPath, child.digest);
+      registryCredentialsRequired ||= childManifest.authenticated === true;
+      if (childManifest.digest !== child.digest) throw Object.assign(new Error('platform manifest digest mismatch'), { code: 422, reason: 'ImageDigestMismatch' });
+      const labels = await readModuleLabels(parsed.repositoryPath, childManifest.manifest, child.digest);
+      registryCredentialsRequired ||= labels.authenticated === true;
+      platformLabels.push({
+        platform: `${child.platform.os}/${child.platform.architecture}`,
+        ...labels,
+      });
+    }
+  } else {
+    if (parsed.channel) throw Object.assign(new Error('channel image must be a linux/amd64 and linux/arm64 OCI index'), { code: 422, reason: 'IncompleteChannelPlatforms' });
+    const labels = await readModuleLabels(parsed.repositoryPath, resolved.manifest, resolved.digest);
+    registryCredentialsRequired ||= labels.authenticated === true;
+    platformLabels.push({ platform: 'single', ...labels });
+  }
+  const [{ descriptorText, signature, keyId }] = platformLabels;
   if (!descriptorText || !signature || !keyId) throw Object.assign(new Error('required OpenSphere OCI labels are missing'), { code: 422, reason: 'ModuleLabelsMissing' });
+  if (platformLabels.some((entry) => entry.descriptorText !== descriptorText || entry.signature !== signature || entry.keyId !== keyId || entry.source !== platformLabels[0].source || entry.revision !== platformLabels[0].revision)) {
+    throw Object.assign(new Error('OpenSphere module labels differ across supported platforms'), { code: 422, reason: 'PlatformModuleMetadataDrift' });
+  }
   let descriptor;
   try { descriptor = JSON.parse(descriptorText); } catch { throw Object.assign(new Error('module descriptor is not JSON'), { code: 422, reason: 'InvalidDescriptor' }); }
   const issues = moduleDescriptorIssues(descriptor);
@@ -811,12 +1266,26 @@ async function inspectModuleImage(image) {
   const trustedKey = (await loadTrustedKeys())[keyId];
   if (!trustedKey) throw Object.assign(new Error('module signing key is not trusted'), { code: 422, reason: 'UntrustedKey' });
   if (!verifyP256(trustedKey, signature, descriptorText)) throw Object.assign(new Error('module descriptor signature invalid'), { code: 422, reason: 'DescriptorSignatureInvalid' });
+  const sourceRepository = governedSourceRepository(platformLabels[0].source);
+  if (!sourceRepository || !/^[a-f0-9]{40}$/.test(String(platformLabels[0].revision || ''))) {
+    throw Object.assign(new Error('governed source repository or full source revision is missing'), { code: 422, reason: 'ImageSourceInvalid' });
+  }
+  const resolvedImage = `${parsed.repository}@${resolved.digest}`;
+  await assertImageNotRevoked(parsed.repository, resolved.digest);
+  const supplyChain = await verifySupplyChainAttestations(resolvedImage, sourceRepository);
+  const resolvedAt = new Date().toISOString();
   return {
-    image: `ghcr.io/${repositoryPath}@${expectedDigest}`,
-    repository: `ghcr.io/${repositoryPath}`,
-    digest: expectedDigest,
+    image: resolvedImage,
+    requestedImage: String(image || '').trim(),
+    channel: parsed.channel,
+    repository: parsed.repository,
+    digest: resolved.digest,
+    resolvedAt,
+    source: platformLabels[0].source,
+    revision: platformLabels[0].revision,
+    registryCredentialsRequired,
     descriptor,
-    verification: { registry: 'ghcr.io', digest: 'Verified', descriptor: 'Verified', signature: 'Verified', permissionProfile: descriptor.permissionProfile },
+    verification: { registry: 'ghcr.io', digest: 'Verified', descriptor: 'Verified', signature: 'Verified', ...supplyChain, permissionProfile: descriptor.permissionProfile, platforms: platformLabels.map((entry) => entry.platform) },
   };
 }
 function packageFromInspection(inspection) {
@@ -828,9 +1297,23 @@ function packageFromInspection(inspection) {
       kind: d.kind, hostRef: d.hostRef, hostApiVersion: d.hostApiVersion || '', hostCompat: d.hostCompat,
       serviceAccountName: d.runtime.serviceAccountName || `uip-${d.id}`, displayName: d.displayName, owner: d.owner,
       version: d.version, description: d.description, image: { repository: inspection.repository, digest: inspection.digest },
-      nav: { band: d.kind === 'subShell' ? 'Operate' : 'Extensions', label: d.displayName },
+      resolution: {
+        requestedRef: inspection.requestedImage,
+        requestedChannel: inspection.channel || '',
+        resolvedDigest: inspection.digest,
+        resolvedAt: inspection.resolvedAt,
+        artifactVersion: d.version,
+        source: inspection.source,
+        revision: inspection.revision,
+        signatureIdentity: d.trust.keyId,
+        registryCredentialsRequired: inspection.registryCredentialsRequired === true,
+        evidenceRefs: [`oci:${inspection.image}#slsa-provenance`, `oci:${inspection.image}#spdx-sbom`],
+      },
+      nav: d.nav || { band: d.kind === 'subShell' ? '구축 Build' : 'Extensions', label: d.displayName },
       manifest: d.manifest, trust: d.trust, shellCompat: d.shellCompat, permissions: d.permissions,
-      permissionProfile: d.permissionProfile, runtime: d.runtime, api: d.api, contributions: d.contributions,
+      permissionProfile: d.permissionProfile, runtime: d.runtime, api: d.api,
+      ...(d.contributions?.cli?.enabled ? { cli: { namespace: d.contributions.cli.namespace, manifestPath: d.contributions.cli.manifestPath } } : {}),
+      contributions: d.contributions,
     },
   };
 }
@@ -872,7 +1355,12 @@ let publishedPlugins = [];
 // + (b) enabled workforce CLIDownload 바인딩 서비스 id. Main Shell native os-cli는 고정 /api/cli 경로를 사용한다.
 // reconcile 끝에서 published로 계산(루프 뒤). 전이 실패 시 직전 allowlist 유지(가용성).
 let proxyAllow = new Set();
-function publishedPluginEntry(pkg, manifestUrl, sigUrl) {
+function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}) {
+  const cli = pkg.spec.contributions?.cli?.enabled === true ? {
+    namespace: pkg.spec.cli?.namespace || pkg.spec.contributions.cli.namespace,
+    manifestPath: pkg.spec.cli?.manifestPath || pkg.spec.contributions.cli.manifestPath,
+    apiBase: pkg.spec.api?.basePath || pkg.spec.contributions.api?.basePath || '',
+  } : undefined;
   return {
     id: pkg.metadata.name,
     name: pkg.spec.displayName || pkg.metadata.name,
@@ -885,6 +1373,23 @@ function publishedPluginEntry(pkg, manifestUrl, sigUrl) {
     hostApiVersion: pkg.spec.hostApiVersion || '',
     hostCompat: pkg.spec.hostCompat,
     contributions: pkg.spec.contributions,
+    ...(cli ? { cli } : {}),
+    requestedRef: pkg.spec.resolution?.requestedRef || '',
+    requestedChannel: pkg.spec.resolution?.requestedChannel || '',
+    installedDigest: pkg.spec.image?.digest || '',
+    resolvedAt: pkg.spec.resolution?.resolvedAt || '',
+    artifactVersion: pkg.spec.resolution?.artifactVersion || pkg.spec.version || '',
+    sourceRevision: pkg.spec.resolution?.revision || '',
+    evidenceRefs: pkg.spec.resolution?.evidenceRefs || [],
+    currentChannelDigest: channel.currentChannelDigest || reg.status?.currentChannelDigest || '',
+    updateState: channel.channelState || reg.status?.channelState || 'ChannelUnavailable',
+    channelCheckedAt: channel.channelCheckedAt || reg.status?.channelCheckedAt || '',
+    channelReason: channel.channelReason || reg.status?.channelReason || '',
+    approval: {
+      actor: reg.spec?.approval?.requestedBy || '',
+      reason: reg.spec?.approval?.reason || '',
+      time: reg.metadata?.creationTimestamp || '',
+    },
     // 관리자 지정 1단 아이콘(Carbon 토큰명). 서명 무관 오버라이드(CR spec.nav.icon) — 셸이 토큰→아이콘 매핑.
     icon: pkg.spec.nav?.icon || '',
   };
@@ -902,7 +1407,8 @@ async function reconcile() {
     const name = reg.metadata.name;
     const pkg = pkgByName[reg.spec.packageRef.name];
     const desired = reg.spec.desiredState;
-    const updateStatus = (status) => setStatus(name, status, reg, pkg);
+    const channelEvidence = await installedChannelStatus(pkg);
+    const updateStatus = (status) => setStatus(name, { ...channelEvidence, ...status }, reg, pkg);
     if (!pkg) { await updateStatus({ phase: 'DependencyPending', reason: 'PackageNotFound', retryable: true }); continue; }
     const stableRelease = ['Ready', 'Activated'].includes(reg.status?.phase)
       && reg.status?.currentDigest === pkg.spec.image?.digest
@@ -921,6 +1427,10 @@ async function reconcile() {
       if (desired === 'Disabled') {
         // workload 유지, registry에서만 제외 (메뉴/route 소멸)
         await updateStatus({ phase: 'Disabled', reason: '' });
+        continue;
+      }
+      if (channelEvidence.channelState === 'SecurityActionRequired') {
+        await updateStatus({ phase: 'Failed', reason: 'ImageRevoked', retryable: false });
         continue;
       }
       // Installed/Enabled: 설치는 워크로드 검증까지만, Enabled는 검증된 릴리스를 Registry에 활성화한다.
@@ -961,7 +1471,7 @@ async function reconcile() {
       // 통과 — registry에 '승인값 전사'(§B.5): manifestSha256/keyId는 controller 계산값이 아니라 CR값
       const manifestUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/ui-shell.manifest.json`;
       const sigUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/${(pkg.spec.manifest.signaturePath || 'ui-shell.manifest.json.sig').split('/').pop()}`;
-      published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl));
+      published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence));
       if (!stableRelease) await updateStatus({ phase: 'Ready', reason: '', manifestUrl, retryable: false });
       await updateStatus({ phase: 'Activated', reason: '', manifestUrl, retryable: false });
     } catch (e) {
@@ -1488,6 +1998,231 @@ async function promQuery(expr, range) {
   } catch (e) { return { ok: false, hint: String((e && e.message) || e).slice(0, 120) }; }
 }
 
+// ── Platform Readiness (CONSTITUTION-0004 §7~§8) ───────────────────────────
+// PlatformSupportProfile is a Main Shell-owned, machine-readable admission gate. It is not a
+// fourth service stack and it does not install HIS. HIS mutation remains owned by Cluster Manager;
+// this controller only reads its authenticated status and points the administrator to that surface.
+const FOUNDATION_ID = 'foundation';
+const requiredProfileSpec = Object.freeze({
+  hostRequirements: { clusterManager: true, his: true },
+  delivery: { required: true },
+  observability: { required: true },
+  backupRestore: { required: true },
+  securityPolicy: { required: true },
+  optionalCapabilities: [],
+});
+
+function condition(type, ready, reason, message, evidence = []) {
+  return { type, status: ready ? 'True' : 'False', ready, reason, message, evidence };
+}
+function deploymentReadyResult(ns, name, resource) {
+  if (!resource?.ok) return { name, namespace: ns, ready: false, reason: `Deployment HTTP ${resource?.status || 0}` };
+  const d = resource.json || {};
+  const desired = Number(d.spec?.replicas ?? 1);
+  const ready = Number(d.status?.readyReplicas || 0);
+  return { name, namespace: ns, ready: desired > 0 && ready >= desired, detail: `${ready}/${desired} ready` };
+}
+async function mainShellBaselineStatus() {
+  const targets = [
+    [NS, 'opensphere-console'],
+    [NS, 'opensphere-console-auth'],
+    [NS, 'opensphere-console-backend'],
+    [NS, 'opensphere-console-dupa-controller'],
+    [BACKBONE_NS, 'opensphere-console-oaa-gateway'],
+  ];
+  const results = await Promise.all(targets.map(([ns, name]) =>
+    k8s('GET', `/apis/apps/v1/namespaces/${ns}/deployments/${name}`).then((r) => deploymentReadyResult(ns, name, r))));
+  return { ready: results.every((x) => x.ready), components: results };
+}
+async function clusterManagerActivationStatus() {
+  const [pkg, reg] = await Promise.all([getPackage('cluster-manager'), getReg('cluster-manager')]);
+  const s = reg.json?.status || {};
+  const ready = pkg.ok && reg.ok && reg.json?.spec?.desiredState === 'Enabled'
+    && s.phase === 'Activated' && s.workload?.phase === 'Ready'
+    && s.integrations?.api?.phase === 'Ready' && s.integrations?.page?.phase === 'Ready';
+  return {
+    ready, installed: pkg.ok && reg.ok, phase: s.phase || (reg.ok ? 'Pending' : 'Missing'),
+    workload: s.workload?.phase || 'Unknown', api: s.integrations?.api?.phase || 'Unknown',
+    page: s.integrations?.page?.phase || 'Unknown', version: pkg.json?.spec?.version || '',
+  };
+}
+async function clusterManagerAdminGet(req, path) {
+  try {
+    const r = await fetch(`http://cluster-manager.${NS}.svc.cluster.local:8080${path}`, {
+      headers: { authorization: req.headers.authorization || '', accept: 'application/json' },
+      signal: AbortSignal.timeout(6000),
+    });
+    let body = null;
+    try { body = await r.json(); } catch { body = null; }
+    return { ok: r.ok, status: r.status, body };
+  } catch (e) {
+    return { ok: false, status: 0, body: null, error: String(e?.message || e).slice(0, 120) };
+  }
+}
+function normalizeHisStatus(result) {
+  const body = result.body || {};
+  const state = body.state || body.phase || body.status?.phase || 'Unavailable';
+  const ready = result.ok && (state === 'Ready' || body.ready === true || body.status?.ready === true);
+  return {
+    ready, reachable: result.ok, state, summary: body.summary || body.message || '',
+    items: body.items || body.components || body.status?.items || [],
+    reason: result.ok ? (ready ? '' : (body.reason || 'HIS requirements are not Ready'))
+      : `Cluster Manager HIS API HTTP ${result.status || 'unreachable'}`,
+  };
+}
+async function backupRestoreEvidence() {
+  const [cronjobs, jobs, target] = await Promise.all([
+    k8s('GET', `/apis/batch/v1/namespaces/${BACKBONE_NS}/cronjobs`),
+    k8s('GET', `/apis/batch/v1/namespaces/${BACKBONE_NS}/jobs`),
+    k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/secrets/backbone-postgres-backup-target`),
+  ]);
+  const all = jobs.json?.items || [];
+  const complete = (prefix) => all.filter((j) => j.metadata?.name?.startsWith(prefix)
+    && (j.status?.conditions || []).some((c) => c.type === 'Complete' && c.status === 'True'))
+    .sort((a, b) => String(b.status?.completionTime || '').localeCompare(String(a.status?.completionTime || '')))[0];
+  const backup = complete('backbone-postgres-backup-');
+  const restore = complete('backbone-postgres-restore-drill-');
+  const schedules = cronjobs.json?.items || [];
+  const scheduled = schedules.some((x) => x.metadata?.name === 'backbone-postgres-backup' && x.spec?.suspend !== true);
+  const ready = target.ok && scheduled && !!backup && !!restore;
+  return {
+    ready, targetConfigured: target.ok, scheduled,
+    lastBackupAt: backup?.status?.completionTime || '', lastRestoreDrillAt: restore?.status?.completionTime || '',
+    reason: ready ? '' : 'backup target, completed backup, and completed restore drill are all required',
+  };
+}
+async function securityPolicyEvidence() {
+  const [policies, webhooks, admins] = await Promise.all([
+    k8s('GET', `/apis/networking.k8s.io/v1/networkpolicies`),
+    k8s('GET', `/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations`),
+    k8s('GET', `/apis/rbac.authorization.k8s.io/v1/clusterrolebindings`),
+  ]);
+  const np = policies.json?.items || [];
+  const wh = webhooks.json?.items || [];
+  const rb = admins.json?.items || [];
+  const isolation = [BACKBONE_NS, NS, MON_NS].every((ns) => np.some((x) => x.metadata?.namespace === ns));
+  const admission = wh.length > 0;
+  const leastPrivilege = rb.some((x) => x.metadata?.name === 'dupa-module-profile-installer');
+  // Presence alone is not a constitutional red-test. Keep the gate false until a signed, recent
+  // negative admission test is recorded by the future policy evidence controller.
+  const redTest = false;
+  return {
+    ready: isolation && admission && leastPrivilege && redTest,
+    isolation, admission, leastPrivilege, redTest,
+    reason: redTest ? '' : 'signed admission-policy red-test evidence is missing',
+  };
+}
+async function deliveryEvidence() {
+  const [gitea, packages, regs] = await Promise.all([giteaHealth(), listPackages(), listRegs()]);
+  const pkgs = packages.json?.items || [];
+  const registrations = regs.json?.items || [];
+  const immutable = pkgs.every((p) => /^sha256:[a-f0-9]{64}$/.test(p.spec?.image?.digest || ''));
+  const verified = registrations.every((r) => !['Installed', 'Enabled'].includes(r.spec?.desiredState)
+    || (['Ready', 'Activated', 'Disabled'].includes(r.status?.phase)
+      && r.status?.verification?.signature === 'Verified'
+      && r.status?.verification?.manifest === 'Verified'));
+  const failed = registrations.filter((r) => ['Failed', 'Degraded'].includes(r.status?.phase)).map((r) => r.metadata?.name);
+  const ready = gitea && packages.ok && regs.ok && immutable && verified && failed.length === 0;
+  return { ready, gitea, immutable, verified, failed, packageCount: pkgs.length, reason: ready ? '' : 'GitOps, immutable digest, signature, and drift evidence are required' };
+}
+async function observabilityProfileEvidence() {
+  const [status, targets, claims] = await Promise.all([
+    observabilityStatus(), observabilityTargets(),
+    k8s('GET', `/apis/observability.opensphere.io/${V}/observabilityclaims`),
+  ]);
+  const active = targets.active || [];
+  const liveMetrics = targets.reachable === true && active.some((t) => t.health === 'up');
+  const claimItems = claims.json?.items || [];
+  const connectedClaim = claims.ok && claimItems.some((x) => x.status?.phase === 'Connected' || x.status?.binding?.phase === 'Connected');
+  const telemetry = { metrics: liveMetrics, logs: false, traces: false, otlp: false, connectedClaim };
+  const ready = status.ready && Object.values(telemetry).every(Boolean);
+  return {
+    ready, stackReady: status.ready, activeTargets: active.length, telemetry,
+    reason: ready ? '' : 'live metrics, structured logs, OTLP traces, and a Connected ObservabilityClaim are required',
+  };
+}
+async function readPlatformProfile() {
+  const r = await k8s('GET', PLATFORM_PROFILE_PATH);
+  if (r.status === 404) return { declared: false, crdReady: true, resource: null };
+  if (!r.ok) return { declared: false, crdReady: false, resource: null, reason: `PlatformSupportProfile HTTP ${r.status}` };
+  return { declared: true, crdReady: true, resource: r.json };
+}
+async function platformReadinessStatus(req) {
+  const [cbs, mainShell, clusterManager, hisRaw, profile, delivery, observability, backupRestore, securityPolicy, regs] = await Promise.all([
+    backboneReadiness(), mainShellBaselineStatus(), clusterManagerActivationStatus(),
+    clusterManagerAdminGet(req, '/api/his/status'), readPlatformProfile(), deliveryEvidence(),
+    observabilityProfileEvidence(), backupRestoreEvidence(), securityPolicyEvidence(), listRegs(),
+  ]);
+  const his = normalizeHisStatus(hisRaw);
+  const capabilities = [
+    condition('Delivery', delivery.ready, delivery.ready ? 'Verified' : 'DeliveryEvidenceMissing', delivery.reason || 'GitOps delivery evidence verified', [delivery]),
+    condition('Observability', observability.ready, observability.ready ? 'Verified' : 'TelemetryEvidenceMissing', observability.reason || 'Live telemetry verified', [observability]),
+    condition('BackupRestore', backupRestore.ready, backupRestore.ready ? 'Verified' : 'RestoreEvidenceMissing', backupRestore.reason || 'Backup and restore drill verified', [backupRestore]),
+    condition('SecurityPolicy', securityPolicy.ready, securityPolicy.ready ? 'Verified' : 'PolicyEvidenceMissing', securityPolicy.reason || 'Security and policy evidence verified', [securityPolicy]),
+  ];
+  const prerequisites = [
+    { key: 'cbs', label: 'CBS Ready', ready: cbs.ready, detail: cbs.ready ? 'PostgreSQL · RustFS · Gitea ready' : 'Backbone required capabilities unavailable', route: '/manage/backbone' },
+    { key: 'main-shell', label: 'Main Shell Baseline Ready', ready: mainShell.ready, detail: mainShell.ready ? 'Console native baseline ready' : 'Console/Auth/Backend/DUPA/OAA workload incomplete', route: '/manage/observability' },
+    { key: 'cluster-manager', label: 'Cluster Manager Activated', ready: clusterManager.ready, detail: `${clusterManager.phase} · workload ${clusterManager.workload}`, route: '/manage/extensions' },
+    { key: 'his', label: 'HIS Ready', ready: his.ready, detail: his.ready ? 'Host Infrastructure Service Stack ready' : (his.reason || his.state), route: '/p/cluster-manager/his/his' },
+  ];
+  const prerequisitesReady = prerequisites.every((x) => x.ready);
+  const supportReady = profile.declared && prerequisitesReady && capabilities.every((x) => x.ready);
+  const foundationActivationOverride = !supportReady && FOUNDATION_ACTIVATION_DEV_OVERRIDE;
+  const foundationActivationAllowed = supportReady || foundationActivationOverride;
+  const foundationReg = (regs.json?.items || []).find((x) => x.metadata?.name === FOUNDATION_ID);
+  const pfsEstablished = foundationReg?.status?.phase === 'Activated';
+  const domainAdmissionReady = pfsEstablished && supportReady;
+  const profilePhase = !profile.crdReady ? 'Blocked' : !profile.declared ? 'NotDeclared'
+    : !prerequisitesReady ? 'Blocked' : supportReady ? 'Ready' : 'Degraded';
+  const lifecycle = [
+    ...prerequisites.map((x) => ({ ...x, state: x.ready ? 'Ready' : 'Blocked' })),
+    { key: 'support-profile', label: 'Platform Support Profile Ready', ready: supportReady, state: profilePhase, detail: profile.declared ? `${capabilities.filter((x) => x.ready).length}/4 capability evidence verified` : 'Profile preflight has not been declared', route: '/manage/platform-readiness' },
+    { key: 'pfs', label: 'PFS Established', ready: pfsEstablished, state: pfsEstablished ? 'Ready' : (foundationActivationAllowed ? 'Available' : (foundationReg?.status?.phase === 'Ready' ? 'Staged' : 'Locked')), detail: pfsEstablished ? (supportReady ? 'Foundation activated' : 'Foundation activated by development override; PFS plugins remain locked') : (supportReady ? 'Foundation activation is unlocked' : (foundationActivationOverride ? 'Development override permits Foundation subShell activation only' : (foundationReg?.status?.phase === 'Ready' ? 'Foundation is staged; activation waits for Platform Support Profile Ready' : 'Foundation may be staged, but activation waits for Platform Support Profile Ready'))), route: foundationActivationAllowed ? '/manage/extensions' : '/manage/platform-readiness' },
+    { key: 'domain', label: 'Domain subShell Admission', ready: domainAdmissionReady, state: domainAdmissionReady ? 'Available' : 'Locked', detail: domainAdmissionReady ? 'Domain subShell admission available' : (pfsEstablished ? 'Development override does not unlock Domain subShell admission' : 'PFS must be established first'), route: domainAdmissionReady ? '/manage/extensions' : '/manage/platform-readiness' },
+  ];
+  return {
+    apiVersion: `${PLATFORM_GROUP}/${V}`, kind: 'PlatformReadinessStatus', observedAt: new Date().toISOString(),
+    phase: profilePhase, ready: supportReady, profile: { declared: profile.declared, crdReady: profile.crdReady, name: PLATFORM_PROFILE_NAME, generation: profile.resource?.metadata?.generation || 0, lastVerifiedAt: profile.resource?.status?.lastVerifiedAt || '', status: profile.resource?.status || null },
+    prerequisites, capabilities, lifecycle, evidence: { cbs, mainShell, clusterManager, his },
+    admission: {
+      foundationStageAllowed: true,
+      foundationActivationAllowed,
+      foundationActivationOverride,
+      mode: foundationActivationOverride ? 'DevelopmentOverride' : (supportReady ? 'PlatformSupportProfile' : 'Blocked'),
+      // Compatibility alias for older clients. This gate now means activation,
+      // because an immutable, verified workload may be staged before PFS admission.
+      foundationInstallAllowed: foundationActivationAllowed,
+      pfsPluginInstallAllowed: supportReady,
+      reason: supportReady ? '' : (foundationActivationOverride ? 'DevelopmentOverride' : 'PlatformSupportProfileRequired'),
+    },
+    pfs: { established: pfsEstablished, phase: foundationReg?.status?.phase || 'NotInstalled' },
+  };
+}
+async function declarePlatformProfile(actor, reason) {
+  const current = await readPlatformProfile();
+  const body = {
+    apiVersion: `${PLATFORM_GROUP}/${V}`, kind: 'PlatformSupportProfile',
+    metadata: { name: PLATFORM_PROFILE_NAME, namespace: NS },
+    spec: { ...requiredProfileSpec, approval: { requestedBy: actor, reason, requestedAt: new Date().toISOString() } },
+  };
+  if (!current.crdReady) return { ok: false, status: 503, json: { message: current.reason || 'PlatformSupportProfile CRD unavailable' } };
+  if (!current.declared) return k8s('POST', `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles`, body);
+  return k8s('PATCH', PLATFORM_PROFILE_PATH, { spec: body.spec });
+}
+async function writePlatformVerification(actor, status) {
+  if (!status.profile.declared) return { ok: false, status: 409, json: { message: 'PlatformSupportProfile must be preflighted first' } };
+  const conditions = status.capabilities.map((x) => ({
+    type: x.type, status: x.status, reason: x.reason, message: x.message,
+    lastTransitionTime: status.observedAt,
+  }));
+  return k8s('PATCH', `${PLATFORM_PROFILE_PATH}/status`, { status: {
+    phase: status.phase, observedGeneration: status.profile.generation,
+    lastVerifiedAt: status.observedAt, verifiedBy: actor, conditions,
+    evidenceRefs: status.capabilities.flatMap((x) => x.evidence.map((_, i) => ({ type: x.type, ref: `live:${x.type.toLowerCase()}:${i}` }))),
+  } });
+}
+
 // ── /metrics (Prometheus exposition, 의존성 0; 클러스터 내부 전용 — nginx 미라우팅) ──
 // 공유 관측 계층(k8s basic stack / prometheus-stack)이 ServiceMonitor로 scrape. docs/OBSERVABILITY-ARCHITECTURE.md.
 let _httpReqs = 0;
@@ -1733,6 +2468,32 @@ const server = http.createServer(async (req, res) => {
       }));
       return json(res, 200, { crdReady: true, items });
     }
+    // Platform Readiness — Console native lifecycle gate. HIS 변경은 Cluster Manager 소유이며
+    // 이 API는 live evidence를 집계하고 PlatformSupportProfile의 선언/검증 이력만 관리한다.
+    if (p === '/api/admin/platform-readiness/status' && req.method === 'GET') {
+      return json(res, 200, await platformReadinessStatus(req));
+    }
+    if (p === '/api/admin/platform-readiness/preflight' && req.method === 'POST') {
+      const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || '').trim();
+      if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'preflight reason must be at least 8 characters', opId });
+      const declared = await declarePlatformProfile(actor, reason);
+      if (!declared.ok) return json(res, declared.status >= 500 ? 503 : declared.status, { error: 'PlatformSupportProfileWriteFailed', message: declared.json?.message || `HTTP ${declared.status}`, opId });
+      const state = await platformReadinessStatus(req);
+      await durableAudit(actor, 'platform-readiness-preflight', PLATFORM_PROFILE_NAME, 'accepted', reason, opId);
+      return json(res, 200, state);
+    }
+    if (p === '/api/admin/platform-readiness/verify' && req.method === 'POST') {
+      const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || '').trim();
+      if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'verification reason must be at least 8 characters', opId });
+      const state = await platformReadinessStatus(req);
+      const written = await writePlatformVerification(actor, state);
+      if (!written.ok) return json(res, written.status >= 500 ? 503 : written.status, { error: 'PlatformSupportProfileStatusWriteFailed', message: written.json?.message || `HTTP ${written.status}`, opId });
+      await durableAudit(actor, 'platform-readiness-verify', PLATFORM_PROFILE_NAME, state.ready ? 'accepted' : 'degraded', reason, opId);
+      return json(res, 200, await platformReadinessStatus(req));
+    }
+
     // Observability(공유 관측 스택) 정보 뷰 — 읽기 전용. 콘솔은 소유 아닌 대상/소비자.
     if (p === '/api/admin/observability/status' && req.method === 'GET') return json(res, 200, await observabilityStatus());
     if (p === '/api/admin/observability/targets' && req.method === 'GET') return json(res, 200, await observabilityTargets());
@@ -1758,10 +2519,74 @@ const server = http.createServer(async (req, res) => {
       catch (e) { console.error(`[err] op=${opId} backbone install:`, e); await durableAudit(actor, 'backbone-install', BACKBONE_NS, 'error', String(e).slice(0, 120), opId); return json(res, 502, { error: 'install failed', opId }); }
     }
 
+    if (p === '/api/admin/extensions/revocations' && req.method === 'GET') {
+      if (!db.isEnabled()) return json(res, 503, { error: 'RevocationLedgerUnavailable', opId });
+      try { return json(res, 200, { items: await db.listImageRevocations() }); }
+      catch (e) { return json(res, 503, { error: 'RevocationLedgerUnavailable', message: e?.message, opId }); }
+    }
+    if (p === '/api/admin/extensions/revocations' && req.method === 'POST') {
+      const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || '').trim();
+      if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'revocation reason must be at least 8 characters', opId });
+      try {
+        const parsed = parseModuleImageReference(body.image);
+        if (parsed.channel) return json(res, 400, { error: 'ExactDigestRequired', message: 'revocation requires repository@sha256:digest', opId });
+        let replacementDigest = '';
+        if (body.replacementImage) {
+          const replacement = parseModuleImageReference(body.replacementImage);
+          if (replacement.channel || replacement.repository !== parsed.repository) return json(res, 400, { error: 'InvalidReplacementDigest', opId });
+          replacementDigest = replacement.reference;
+        }
+        if (!db.isEnabled()) return json(res, 503, { error: 'RevocationLedgerUnavailable', opId });
+        const item = await db.revokeImage({
+          repository: parsed.repository, digest: parsed.reference, replacementDigest, actor, reason,
+          audit: { time: new Date().toISOString(), opId, source: 'dupa-controller' },
+        });
+        reconcile().catch((e) => console.error('reconcile error', e));
+        return json(res, 201, { item });
+      } catch (e) {
+        const duplicate = /already revoked/i.test(String(e?.message || ''));
+        return json(res, duplicate ? 409 : Number(e?.code) || 503, { error: duplicate ? 'ImageAlreadyRevoked' : e?.reason || 'RevocationFailed', message: e?.message, opId });
+      }
+    }
     if (p === '/api/admin/extensions/inspect' && req.method === 'POST') {
       const body = await readBody(req).catch(() => ({}));
       try { return json(res, 200, await inspectModuleImage(body.image)); }
-      catch (e) { return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], opId }); }
+      catch (e) { return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], revocation: e?.revocation || null, opId }); }
+    }
+    if (p === '/api/admin/extensions/registry-credentials' && req.method === 'GET') {
+      try { return json(res, 200, await registryCredentialStatus()); }
+      catch (e) { return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryCredentialStoreUnavailable', message: e?.message, opId }); }
+    }
+    if (p === '/api/admin/extensions/registry-credentials' && req.method === 'PUT') {
+      const body = await readBody(req).catch(() => ({}));
+      const username = String(body.username || '').trim();
+      const registryToken = String(body.token || '').trim();
+      const reason = String(body.reason || '').trim();
+      if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(username)) return json(res, 400, { error: 'InvalidRegistryUsername', opId });
+      if (registryToken.length < 20 || registryToken.length > 1024 || /\s/.test(registryToken)) return json(res, 400, { error: 'InvalidRegistryToken', opId });
+      if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'registry credential change reason must be at least 8 characters', opId });
+      try {
+        const stored = await storeRegistryCredentials(username, registryToken);
+        await durableAudit(actor, 'registry-credentials-configure', 'ghcr.io', 'accepted', reason, opId);
+        return json(res, 200, stored);
+      } catch (e) {
+        await durableAudit(actor, 'registry-credentials-configure', 'ghcr.io', 'error', e?.reason || 'store failed', opId);
+        return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryCredentialStoreUnavailable', message: e?.message, opId });
+      }
+    }
+    if (p === '/api/admin/extensions/registry-credentials' && req.method === 'DELETE') {
+      const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || '').trim();
+      if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'registry credential removal reason must be at least 8 characters', opId });
+      try {
+        const removed = await deleteRegistryCredentials();
+        await durableAudit(actor, 'registry-credentials-remove', 'ghcr.io', 'accepted', reason, opId);
+        return json(res, 200, removed);
+      } catch (e) {
+        await durableAudit(actor, 'registry-credentials-remove', 'ghcr.io', 'error', e?.reason || 'delete failed', opId);
+        return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryCredentialStoreUnavailable', message: e?.message, opId });
+      }
     }
     if (p === '/api/admin/extensions/install' && req.method === 'POST') {
       const body = await readBody(req).catch(() => ({}));
@@ -1770,6 +2595,22 @@ const server = http.createServer(async (req, res) => {
       try {
         const inspection = await inspectModuleImage(body.image);
         const pkg = packageFromInspection(inspection);
+        if (pkg.spec.hostRef === FOUNDATION_ID) {
+          const readiness = await platformReadinessStatus(req);
+          const currentReg = await getReg(pkg.metadata.name);
+          const verifiedUpdate = currentReg.ok && verifiedActivatedRegistration(currentReg.json);
+          if (!readiness.ready && !verifiedUpdate) {
+            await durableAudit(actor, 'extension-install', pkg.metadata.name, 'denied', 'PlatformSupportProfileRequiredForPfsPlugin', opId);
+            return json(res, 409, {
+              error: 'PlatformSupportProfileRequiredForPfsPlugin',
+              message: 'A new PFS plugin installation requires Platform Support Profile Ready. A verified update is allowed only for an already Activated and Ready plugin.',
+              opId,
+            });
+          }
+          if (!readiness.ready && verifiedUpdate) {
+            await durableAudit(actor, 'pfs-plugin-update-stage', pkg.metadata.name, 'accepted', 'verified Activated release update; new installation gate remains closed', opId);
+          }
+        }
         const stored = await upsertPackage(pkg);
         if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, { error: 'PackageStoreFailed', status: stored.status, opId });
         const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason);
@@ -1779,7 +2620,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 202, { accepted: true, id: pkg.metadata.name, desiredState: 'Installed', image: inspection.image, verification: inspection.verification });
       } catch (e) {
         await durableAudit(actor, 'extension-install', String(body.image || '').slice(0, 160), 'denied', e?.reason || 'InspectionFailed', opId);
-        return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], opId });
+        return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], revocation: e?.revocation || null, opId });
       }
     }
 
@@ -1833,12 +2674,13 @@ const server = http.createServer(async (req, res) => {
 
     // ── P1 발행 백본(ADR-UI-003/UI-002 §D3): subShell 백엔드 → 콘솔 알림 소스(audit bus) 발행.
     // 콘솔 알림 NotificationService가 /api/admin/plugins/events 폴링으로 수집. source는 attribution.
-    // ⚠️ 인증은 컨트롤 API 전체와 동급(X-OpenSphere-* 헤더) — 강화(SA TokenReview/NetworkPolicy)는 후속.
+    // 활성 확장뿐 아니라 서명·권한·워크로드 검증을 마친 Installed(stage) 확장도 수명주기 이벤트는
+    // 발행할 수 있다. 이 예외는 이벤트 단일 경로에만 적용하며 proxyAllow/Registry/nav는 열지 않는다.
     if (p === '/api/admin/events' && req.method === 'POST') {
       const b = await readBody(req).catch(() => ({}));
       const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
       const pluginId = clip(b.source || req.headers['x-opensphere-source'] || '', 60);
-      try { await verifyWorkloadToken(req, pluginId); }
+      try { await verifyWorkloadToken(req, pluginId, { allowVerifiedInstalled: true }); }
       catch (e) { return json(res, typeof e?.code === 'number' ? e.code : 502, { error: e?.msg || 'workload authentication failed', opId }); }
       const source = pluginId === 'opensphere-console-backend' || pluginId === 'opensphere-console-auth'
         ? `core:${pluginId}/${clip(b.userActor || 'system', 60)}`
@@ -1852,6 +2694,39 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall|rollback)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
+      if (id === FOUNDATION_ID && action === 'enable') {
+        const readiness = await platformReadinessStatus(req);
+        if (!readiness.admission.foundationActivationAllowed) {
+          await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequired', opId);
+          return json(res, 409, {
+            error: 'PlatformSupportProfileRequired',
+            message: 'Foundation activation requires Platform Support Profile Ready; staging as Installed/Ready is allowed',
+            readiness: { phase: readiness.phase, prerequisites: readiness.prerequisites, capabilities: readiness.capabilities }, opId,
+          });
+        }
+        if (readiness.admission.foundationActivationOverride) {
+          await durableAudit(actor, 'foundation-development-override', id, 'accepted', 'Foundation subShell activation only; PFS plugins remain gated', opId);
+        }
+      }
+      if (id !== FOUNDATION_ID && ['install', 'enable', 'rollback'].includes(action)) {
+        const targetPkg = await getPackage(id);
+        if (targetPkg.ok && targetPkg.json?.spec?.hostRef === FOUNDATION_ID) {
+          const readiness = await platformReadinessStatus(req);
+          const targetReg = await getReg(id);
+          const verifiedUpdate = action === 'enable' && targetReg.ok && verifiedStagedUpdate(targetReg.json);
+          if (!readiness.ready && !verifiedUpdate) {
+            await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequiredForPfsPlugin', opId);
+            return json(res, 409, {
+              error: 'PlatformSupportProfileRequiredForPfsPlugin',
+              message: 'PFS plugin lifecycle requires Platform Support Profile Ready. Only activation of a fully verified staged update to an existing plugin is permitted while the gate is closed.',
+              opId,
+            });
+          }
+          if (!readiness.ready && verifiedUpdate) {
+            await durableAudit(actor, 'pfs-plugin-update-activate', id, 'accepted', 'verified staged update; new installation gate remains closed', opId);
+          }
+        }
+      }
       // §3.1 강제: shell-pinned core 표면은 제거/비활성 불가(보안 경계 — UI 억제보다 본질).
       if (action === 'disable' || action === 'uninstall') {
         const pkgC = await k8s('GET', `${crd('uipluginpackages')}/${id}`);
@@ -1866,14 +2741,35 @@ const server = http.createServer(async (req, res) => {
         const previousDigest = String(rr.json?.status?.previousDigest || '');
         const previousManifestSha256 = String(rr.json?.status?.previousManifestSha256 || '');
         const previousVersion = String(rr.json?.status?.previousVersion || '');
-        if (!/^sha256:[a-f0-9]{64}$/.test(previousDigest) || !/^[a-f0-9]{64}$/.test(previousManifestSha256) || !previousVersion) {
-          await durableAudit(actor, action, id, 'denied', 'verified previous release is unavailable', opId);
-          return json(res, 409, { error: 'verified previous release is unavailable', opId });
+        const previousRequestedRef = String(rr.json?.status?.previousRequestedRef || '');
+        const previousRequestedChannel = String(rr.json?.status?.previousRequestedChannel || '');
+        const previousSource = String(rr.json?.status?.previousSource || '');
+        const previousRevision = String(rr.json?.status?.previousRevision || '');
+        const previousSignatureIdentity = String(rr.json?.status?.previousSignatureIdentity || '');
+        const previousEvidenceRefs = Array.isArray(rr.json?.status?.previousEvidenceRefs) ? rr.json.status.previousEvidenceRefs.map(String) : [];
+        const previousRegistryCredentialsRequired = rr.json?.status?.previousRegistryCredentialsRequired === true;
+        if (!/^sha256:[a-f0-9]{64}$/.test(previousDigest) || !/^[a-f0-9]{64}$/.test(previousManifestSha256) || !previousVersion
+          || !previousRequestedRef || !governedSourceRepository(previousSource) || !/^[a-f0-9]{40}$/.test(previousRevision)
+          || !previousSignatureIdentity || previousEvidenceRefs.length < 2) {
+          await durableAudit(actor, action, id, 'denied', 'verified previous release evidence is unavailable', opId);
+          return json(res, 409, { error: 'verified previous release evidence is unavailable', opId });
         }
         const pr = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: {
           version: previousVersion,
           image: { digest: previousDigest },
           manifest: { sha256: previousManifestSha256 },
+          resolution: {
+            requestedRef: previousRequestedRef || previousDigest,
+            requestedChannel: previousRequestedChannel,
+            resolvedDigest: previousDigest,
+            resolvedAt: new Date().toISOString(),
+            artifactVersion: previousVersion,
+            source: previousSource,
+            revision: previousRevision,
+            signatureIdentity: previousSignatureIdentity,
+            registryCredentialsRequired: previousRegistryCredentialsRequired,
+            evidenceRefs: previousEvidenceRefs,
+          },
         } });
         if (!pr.ok) {
           await durableAudit(actor, action, id, 'error', `HTTP ${pr.status}`, opId);
@@ -1928,5 +2824,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath };
+  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, serviceMonitorManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, verifiedActivatedRegistration, verifiedStagedUpdate };
 }
