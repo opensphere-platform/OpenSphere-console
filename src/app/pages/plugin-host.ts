@@ -45,6 +45,14 @@ import { ExtensionHostService } from '../core/extension-host.service';
         </clr-alert>
       }
       <div #host [style.display]="runtimeError() ? 'none' : 'block'"></div>
+    } @else if (loading()) {
+      <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false">
+        <clr-alert-item>
+          <span class="alert-text">
+            플러그인 '{{ id() }}'의 서명·권한·호환성을 확인하고 실행 모듈을 적재하고 있습니다.
+          </span>
+        </clr-alert-item>
+      </clr-alert>
     } @else {
       <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
         <clr-alert-item>
@@ -88,6 +96,7 @@ export class PluginHost {
   );
   readonly page = computed(() => this.ext.pages().find((p) => p.id === this.id()) ?? null);
   readonly failure = computed(() => this.ext.failures().find((f) => f.id === this.id()) ?? null);
+  readonly loading = computed(() => this.ext.loadState() === 'loading');
   readonly runtimeError = signal<string>('');
 
   private host = viewChild<ElementRef<HTMLElement>>('host');
