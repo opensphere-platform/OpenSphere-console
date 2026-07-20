@@ -99,6 +99,12 @@ export class ExtensionHostService {
   private registryWatch?: number;
   private registryEntries: RegistryEntry[] = [];
 
+  /**
+   * PluginHost가 Registry의 비동기 초기 적재를 실제 미등록 상태와 구분할 수 있게 한다.
+   * Main Shell first paint는 계속 Registry와 독립적으로 진행하되, deep link가 적재 중
+   * 잠깐 나타나는 상태를 설치 실패로 오인하지 않도록 명시적인 lifecycle을 제공한다.
+   */
+  readonly loadState = signal<'idle' | 'loading' | 'ready'>('idle');
   readonly pages = signal<PluginPage[]>([]);
   readonly failures = signal<PluginFailure[]>([]);
   /** 플러그인별 기여 내비 트리(nav:contribute) — pluginId → 재귀 NavNode[] */
@@ -119,28 +125,33 @@ export class ExtensionHostService {
 
   async load(): Promise<void> {
     this.startRegistryWatch();
-    let reg: RegistryV3;
+    this.loadState.set('loading');
     try {
-      const res = await fetchWithTimeout('/api/v1/registry', { cache: 'no-store' });
-      if (!res.ok) return; // 레지스트리 없음 = 플러그인 0개로 기동
-      reg = await res.json();
-    } catch {
-      return;
+      let reg: RegistryV3;
+      try {
+        const res = await fetchWithTimeout('/api/v1/registry', { cache: 'no-store' });
+        if (!res.ok) return; // 레지스트리 없음 = 플러그인 0개로 기동
+        reg = await res.json();
+      } catch {
+        return;
+      }
+      if (reg.version !== 3) {
+        console.warn('[extension-host] Registry contract v3 아님 — 전체 거부(fail-closed)');
+        return;
+      }
+      const activePlugins = (reg.plugins ?? []).filter((entry) => entry.available === true);
+			this.registryFingerprint = this.fingerprint(activePlugins, reg.trustedKeys ?? {});
+      // 1단 아이콘 맵(registry 전사값). registry에는 Enabled 플러그인만 들어오므로 그대로 사용.
+      this.pluginIcons.set(Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])));
+      this.registryEntries = activePlugins;
+      // Main Shell은 직속 consumer만 활성화한다. subShell의 child는 subShell-scoped host를 통해
+      // mountChild()로 활성화되어 위계와 capability 경계를 보존한다.
+      await Promise.all(activePlugins
+        .filter((e) => (e.hostRef ?? 'main') === 'main')
+        .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+    } finally {
+      this.loadState.set('ready');
     }
-    if (reg.version !== 3) {
-      console.warn('[extension-host] Registry contract v3 아님 — 전체 거부(fail-closed)');
-      return;
-    }
-    const activePlugins = (reg.plugins ?? []).filter((entry) => entry.available === true);
-		this.registryFingerprint = this.fingerprint(activePlugins, reg.trustedKeys ?? {});
-    // 1단 아이콘 맵(registry 전사값). registry에는 Enabled 플러그인만 들어오므로 그대로 사용.
-    this.pluginIcons.set(Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])));
-    this.registryEntries = activePlugins;
-    // Main Shell은 직속 consumer만 활성화한다. subShell의 child는 subShell-scoped host를 통해
-    // mountChild()로 활성화되어 위계와 capability 경계를 보존한다.
-    await Promise.all(activePlugins
-      .filter((e) => (e.hostRef ?? 'main') === 'main')
-      .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
   }
 
   /**
@@ -265,15 +276,16 @@ export class ExtensionHostService {
 			if (manifest.manifestVersion === 3 && typeof mod.deactivate !== 'function') {
 				throw new Error('deactivate() export 없음 (Production lifecycle 계약 위반)');
 			}
-      await mod.activate(context);
-      this.activeModules.set(e.id, mod);
-      // 기존 subShell이 명시적으로 mountChild를 호출하지 않아도 Registry의 child가 고아가 되지 않도록
-      // controller가 승인한 hostRef를 기준으로 한 번 자동 수렴한다. 중복 호출은 activeModules가 막는다.
+      // 부모가 page를 등록하기 전에 승인된 child의 custom element를 먼저 정의한다.
+      // 그렇지 않으면 deep link 첫 렌더에서 Foundation이 정상 Activated child를
+      // "아직 로드되지 않음"으로 오인하는 일시적 경쟁 조건이 발생한다.
       if (manifest.kind === 'subShell') {
         await Promise.all(this.registryEntries
           .filter((child) => (child.hostRef ?? 'main') === e.id)
           .map((child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION)));
       }
+      await mod.activate(context);
+      this.activeModules.set(e.id, mod);
       console.info(`[extension-host] plugin '${e.id}' 검증 통과(무결성·서명·호환·권한) 후 활성화`);
     } catch (err) {
       try { await mod?.deactivate?.(); } catch (cleanupError) { console.warn(`[extension-host] plugin '${e.id}' cleanup 실패:`, cleanupError); }
