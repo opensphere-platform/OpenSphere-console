@@ -17,7 +17,9 @@
 #     MmhXSMxldwecUcpr4YnaOsW6UfTBUa0o52cb2dSdcA==)는 개인키 분실로 폐기(2026-06-29 사고 연관).
 #   · 당시 재서명하며 keyId 'opensphere-plugins-v1'을 **재사용한 채 값만 교체**(현행 v1 값 ≠ 초대 v1 값)
 #     — 2026-07-06 DUPA 기술감사(S3)에서 실측 규명. 규칙 1) 제정 전의 예외로 기록하며, 이후 재발 금지.
-#   · 현행: v1(ai·cluster-manager·os·shell-template 서명), v2(foundation 서명) 공존.
+#   · 현행: v1·v2·v3은 기존 설치 이미지 검증을 위해 유지하고, v4는 재현 가능한
+#     GitHub 공급망으로 전환한 cluster-manager·foundation·samba-ad 신규 이미지에 사용한다.
+#   · v5는 독립 저장소에서 게시되는 Shell Template reference package부터 사용한다.
 #
 # 규칙(기존 유지):
 #   1) 이 파일은 opensphere-console-dupa-controller.yaml(배포/RBAC)에서 의도적으로 분리됨.
@@ -35,6 +37,9 @@ data:
     {
       "trustedKeys": {
         "opensphere-plugins-v1": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEez09mUpKxAetbTqqktGZJ9MObsK2jFXM+Q8xM1invyK7oMlB2gwHZUtKBFcrev6AK4bWHRHhhoAJz7ukuH/6cA==",
-        "opensphere-plugins-v2": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh/5jxLrOgGfrKoL5LTzwsjLgwtzebC5w8OCablgADf4GkfwfvOcQpOXIW4nmrSQOlcnszDREj0z15XF69ILX1g=="
+        "opensphere-plugins-v2": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh/5jxLrOgGfrKoL5LTzwsjLgwtzebC5w8OCablgADf4GkfwfvOcQpOXIW4nmrSQOlcnszDREj0z15XF69ILX1g==",
+        "opensphere-plugins-v3": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaKnt+IQsm9iknQtVYvN1RW4PIimBmTiOE5lH7EuyonfqK7zyT8bE+NI3mwYNc8/m4hTltVAowXFXIYW9adoU7g==",
+        "opensphere-plugins-v4": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEwiCXIFQxnjEHqDqnRJiYl2rImF+eKrRyBK0T2gg9ltFFxipacco66h8TIOZgVq6XtmsRPdBr0NuODIrsG5YiwA==",
+        "opensphere-plugins-v5": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE3/nGajqxx8aNsEgBq7qY3EgwLFWWp65/DafkdQTffrjFy6rJGQEKiRl4kwT05Qnn4ZzlHIdOhmmg0PkNXG7vxA=="
       }
     }

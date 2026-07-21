@@ -50,7 +50,16 @@ async function ensureSchema() {
       NOT has_table_privilege(current_user, 'public.audit_log', 'UPDATE') AS audit_no_update,
       NOT has_table_privilege(current_user, 'public.audit_log', 'DELETE') AS audit_no_delete,
       NOT has_table_privilege(current_user, 'public.audit_log', 'TRUNCATE') AS audit_no_truncate,
-      to_regclass('public.managed_credential') IS NOT NULL AS credentials_ready
+      to_regclass('public.managed_credential') IS NOT NULL AS credentials_ready,
+      (SELECT pg_get_userbyid(c.relowner) = 'opensphere_audit_owner'
+       FROM pg_class c WHERE c.oid = 'public.oci_image_revocation'::regclass) AS revocation_owner_isolated,
+      (SELECT tgenabled = 'A' FROM pg_trigger
+       WHERE tgrelid = 'public.oci_image_revocation'::regclass AND tgname = 'oci_image_revocation_append_only') AS revocation_trigger_always,
+      has_table_privilege(current_user, 'public.oci_image_revocation', 'SELECT') AS revocation_read,
+      has_table_privilege(current_user, 'public.oci_image_revocation', 'INSERT') AS revocation_append,
+      NOT has_table_privilege(current_user, 'public.oci_image_revocation', 'UPDATE') AS revocation_no_update,
+      NOT has_table_privilege(current_user, 'public.oci_image_revocation', 'DELETE') AS revocation_no_delete,
+      NOT has_table_privilege(current_user, 'public.oci_image_revocation', 'TRUNCATE') AS revocation_no_truncate
   `);
   const row = check.rows[0] || {};
   if (!Object.values(row).every((value) => value === true)) {
@@ -176,6 +185,71 @@ async function mutateManagedCredential({ kind, id, owner, record, audit }) {
         audit?.result || 'accepted', audit?.reason || ''],
     );
     await client.query('COMMIT');
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch { /* noop */ }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function isImageRevoked(repository, digest) {
+  if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
+  const result = await pool.query(
+    `SELECT repository, digest, replacement_digest, revoked_at, actor, reason
+     FROM oci_image_revocation WHERE repository=$1 AND digest=$2`,
+    [repository, digest],
+  );
+  if (!result.rowCount) return null;
+  const row = result.rows[0];
+  return {
+    repository: row.repository,
+    digest: row.digest,
+    replacementDigest: row.replacement_digest || '',
+    revokedAt: row.revoked_at instanceof Date ? row.revoked_at.toISOString() : String(row.revoked_at),
+    actor: row.actor,
+    reason: row.reason,
+  };
+}
+
+async function listImageRevocations() {
+  if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
+  const result = await pool.query(
+    `SELECT repository, digest, replacement_digest, revoked_at, actor, reason
+     FROM oci_image_revocation ORDER BY revoked_at DESC`,
+  );
+  return result.rows.map((row) => ({
+    repository: row.repository,
+    digest: row.digest,
+    replacementDigest: row.replacement_digest || '',
+    revokedAt: row.revoked_at instanceof Date ? row.revoked_at.toISOString() : String(row.revoked_at),
+    actor: row.actor,
+    reason: row.reason,
+  }));
+}
+
+// 철회와 감사는 한 트랜잭션에서 append-only로 확정한다. 철회 해제/수정 API는
+// 의도적으로 제공하지 않으며, 교체 digest는 새로운 release 승인 증거일 뿐 원 철회를 지우지 않는다.
+async function revokeImage({ repository, digest, replacementDigest, actor, reason, audit }) {
+  if (!enabled || !pool) throw new Error('Backbone PostgreSQL unavailable');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const inserted = await client.query(
+      `INSERT INTO oci_image_revocation (repository, digest, replacement_digest, actor, reason)
+       VALUES ($1,$2,NULLIF($3,''),$4,$5)
+       ON CONFLICT (repository, digest) DO NOTHING
+       RETURNING revoked_at`,
+      [repository, digest, replacementDigest || '', actor, reason],
+    );
+    if (!inserted.rowCount) throw new Error('image digest is already revoked');
+    await client.query(
+      'INSERT INTO audit_log (ts, op_id, source, actor, action, target, result, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [audit?.time || new Date().toISOString(), audit?.opId || '', audit?.source || 'dupa-controller', actor,
+        'oci-image-revoke', `${repository}@${digest}`, 'accepted', reason],
+    );
+    await client.query('COMMIT');
+    return isImageRevoked(repository, digest);
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch { /* noop */ }
     throw error;
@@ -386,4 +460,4 @@ async function dropFunction({ database, schema, name, args }) {
   } finally { if (client) { try { await client.end(); } catch { /* noop */ } } }
 }
 
-module.exports = { init, insertAudit, recentAudit, listManagedCredentials, getManagedCredential, touchManagedCredential, mutateManagedCredential, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };
+module.exports = { init, insertAudit, recentAudit, listManagedCredentials, getManagedCredential, touchManagedCredential, mutateManagedCredential, isImageRevoked, listImageRevocations, revokeImage, healthCheck, listDatabases, listTree, previewRows, provisionTenant, provisionTenantAppRole, dropTenant, createFunction, functionSource, dropFunction, isEnabled: () => enabled };

@@ -43,8 +43,9 @@ test('release lifecycle retains a verified previous release and exposes rollback
   const crd = fs.readFileSync(path.join(__dirname, 'ui-plugin-crds.yaml'), 'utf8');
   assert.match(controller, /previousDigest/);
   assert.match(controller, /previousManifestSha256/);
+  assert.match(controller, /previousRegistryCredentialsRequired/);
   assert.match(controller, /install\|enable\|disable\|uninstall\|rollback/);
-  assert.match(controller, /verified previous release is unavailable/);
+  assert.match(controller, /verified previous release evidence is unavailable/);
   assert.match(crd, /previousDigest:/);
   assert.match(crd, /previousManifestSha256:/);
 });
@@ -56,4 +57,13 @@ test('extension uninstall retains its registration after a non-idempotent worklo
   assert.match(controller, /reason: 'UninstallDeleteFailed'/);
   assert.match(controller, /await deleteManagedResource\(`\/apis\/apps\/v1\/namespaces\/\$\{NS\}\/deployments\/\$\{name\}`/);
   assert.match(controller, /await deleteWorkload\(pkg\);\s+await k8s\('DELETE', `\$\{crd\('uipluginregistrations'\)\}\/\$\{name\}`\);/);
+});
+
+test('verified Installed workloads may publish audit events without entering the active proxy allowlist', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  assert.match(controller, /allowVerifiedInstalled/);
+  assert.match(controller, /desiredState === 'Installed'/);
+  assert.match(controller, /status\.verification\?\.signature === 'Verified'/);
+  assert.match(controller, /verifyWorkloadToken\(req, pluginId, \{ allowVerifiedInstalled: true \}\)/);
+  assert.match(controller, /const permitted = proxyAllow\.has\(id\) && !RESERVED_PROXY_SERVICE_IDS\.has\(id\)/);
 });

@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const yaml = require('js-yaml');
 const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, serviceMonitorManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
@@ -112,10 +115,20 @@ test('infrastructure manager adds only consumer-side storage integration writes'
   const rules = infrastructureManagerClusterRoleManifest().rules;
   assert.ok(rules.some((rule) => rule.apiGroups.includes('storage.k8s.io') && rule.resources.includes('storageclasses') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshotclasses') && rule.verbs.includes('delete')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshots') && rule.verbs.includes('create')));
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshots') && rule.verbs.includes('create') && rule.verbs.includes('delete')));
   assert.ok(rules.some((rule) => rule.apiGroups.includes('ceph.rook.io') && rule.verbs.includes('create')));
   assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
   assert.ok(!rules.some((rule) => rule.resources.includes('users')));
+});
+
+test('deployed infrastructure manager ClusterRole exactly matches the controller permission profile', () => {
+  const manifestPath = path.join(__dirname, 'opensphere-console-dupa-controller.yaml');
+  const documents = [];
+  yaml.loadAll(fs.readFileSync(manifestPath, 'utf8'), (document) => documents.push(document));
+  const deployedRole = documents.find((document) => document?.kind === 'ClusterRole'
+    && document?.metadata?.name === 'opensphere-module-cluster-infrastructure-manager-v1');
+  assert.ok(deployedRole, 'infrastructure manager ClusterRole manifest must exist');
+  assert.deepEqual(deployedRole.rules, infrastructureManagerClusterRoleManifest().rules);
 });
 
 test('managed plugin workload receives the Console authentication CA read-only', () => {

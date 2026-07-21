@@ -199,12 +199,30 @@ data:
     );
     CREATE INDEX managed_credential_owner_idx ON public.managed_credential (owner_name, kind);
 
+    CREATE TABLE public.oci_image_revocation (
+      id                 bigserial PRIMARY KEY,
+      repository         text NOT NULL CHECK (repository ~ '^ghcr[.]io/opensphere-platform/opensphere-[a-z0-9._-]+$'),
+      digest             text NOT NULL CHECK (digest ~ '^sha256:[a-f0-9]{64}$'),
+      replacement_digest text CHECK (replacement_digest IS NULL OR replacement_digest ~ '^sha256:[a-f0-9]{64}$'),
+      revoked_at         timestamptz NOT NULL DEFAULT now(),
+      actor              text NOT NULL,
+      reason             text NOT NULL,
+      UNIQUE (repository, digest)
+    );
+    CREATE INDEX oci_image_revocation_time_idx ON public.oci_image_revocation (revoked_at DESC);
+    CREATE TRIGGER oci_image_revocation_append_only
+      BEFORE UPDATE OR DELETE ON public.oci_image_revocation
+      FOR EACH ROW EXECUTE FUNCTION public.opensphere_reject_audit_mutation();
+
     ALTER DATABASE console OWNER TO opensphere_audit_owner;
     ALTER TABLE public.audit_log OWNER TO opensphere_audit_owner;
     ALTER SEQUENCE public.audit_log_id_seq OWNER TO opensphere_audit_owner;
     ALTER FUNCTION public.opensphere_reject_audit_mutation() OWNER TO opensphere_audit_owner;
     ALTER TABLE public.managed_credential OWNER TO opensphere_audit_owner;
+    ALTER TABLE public.oci_image_revocation OWNER TO opensphere_audit_owner;
+    ALTER SEQUENCE public.oci_image_revocation_id_seq OWNER TO opensphere_audit_owner;
     ALTER TABLE public.audit_log ENABLE ALWAYS TRIGGER audit_log_append_only;
+    ALTER TABLE public.oci_image_revocation ENABLE ALWAYS TRIGGER oci_image_revocation_append_only;
 
     REVOKE ALL ON DATABASE console FROM PUBLIC;
     GRANT CONNECT ON DATABASE console TO console;
@@ -213,10 +231,14 @@ data:
     GRANT USAGE ON SCHEMA public TO console;
     REVOKE ALL ON TABLE public.audit_log FROM PUBLIC;
     REVOKE ALL ON TABLE public.managed_credential FROM PUBLIC;
+    REVOKE ALL ON TABLE public.oci_image_revocation FROM PUBLIC;
     REVOKE ALL ON SEQUENCE public.audit_log_id_seq FROM PUBLIC;
+    REVOKE ALL ON SEQUENCE public.oci_image_revocation_id_seq FROM PUBLIC;
     GRANT SELECT, INSERT ON TABLE public.audit_log TO console;
     GRANT USAGE, SELECT ON SEQUENCE public.audit_log_id_seq TO console;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.managed_credential TO console;
+    GRANT SELECT, INSERT ON TABLE public.oci_image_revocation TO console;
+    GRANT USAGE, SELECT ON SEQUENCE public.oci_image_revocation_id_seq TO console;
 
     -- OAA gateway dedicated PostgreSQL identity (CONSTITUTION-0004 §4.5 OAA bootstrap
     -- boundary). A second, independently-generated login role and its own owned schema --
@@ -342,12 +364,31 @@ data:
     );
     CREATE INDEX IF NOT EXISTS managed_credential_owner_idx ON public.managed_credential (owner_name, kind);
 
+    CREATE TABLE IF NOT EXISTS public.oci_image_revocation (
+      id bigserial PRIMARY KEY,
+      repository text NOT NULL CHECK (repository ~ '^ghcr[.]io/opensphere-platform/opensphere-[a-z0-9._-]+$'),
+      digest text NOT NULL CHECK (digest ~ '^sha256:[a-f0-9]{64}$'),
+      replacement_digest text CHECK (replacement_digest IS NULL OR replacement_digest ~ '^sha256:[a-f0-9]{64}$'),
+      revoked_at timestamptz NOT NULL DEFAULT now(),
+      actor text NOT NULL,
+      reason text NOT NULL,
+      UNIQUE (repository, digest)
+    );
+    CREATE INDEX IF NOT EXISTS oci_image_revocation_time_idx ON public.oci_image_revocation (revoked_at DESC);
+    DROP TRIGGER IF EXISTS oci_image_revocation_append_only ON public.oci_image_revocation;
+    CREATE TRIGGER oci_image_revocation_append_only
+      BEFORE UPDATE OR DELETE ON public.oci_image_revocation
+      FOR EACH ROW EXECUTE FUNCTION public.opensphere_reject_audit_mutation();
+
     ALTER DATABASE console OWNER TO opensphere_audit_owner;
     ALTER TABLE public.audit_log OWNER TO opensphere_audit_owner;
     ALTER SEQUENCE public.audit_log_id_seq OWNER TO opensphere_audit_owner;
     ALTER FUNCTION public.opensphere_reject_audit_mutation() OWNER TO opensphere_audit_owner;
     ALTER TABLE public.managed_credential OWNER TO opensphere_audit_owner;
+    ALTER TABLE public.oci_image_revocation OWNER TO opensphere_audit_owner;
+    ALTER SEQUENCE public.oci_image_revocation_id_seq OWNER TO opensphere_audit_owner;
     ALTER TABLE public.audit_log ENABLE ALWAYS TRIGGER audit_log_append_only;
+    ALTER TABLE public.oci_image_revocation ENABLE ALWAYS TRIGGER oci_image_revocation_append_only;
     REVOKE ALL ON DATABASE console FROM PUBLIC;
     GRANT CONNECT ON DATABASE console TO console;
     REVOKE CREATE ON SCHEMA public FROM PUBLIC;
@@ -355,10 +396,14 @@ data:
     GRANT USAGE ON SCHEMA public TO console;
     REVOKE ALL ON TABLE public.audit_log FROM PUBLIC;
     REVOKE ALL ON TABLE public.managed_credential FROM PUBLIC;
+    REVOKE ALL ON TABLE public.oci_image_revocation FROM PUBLIC;
     REVOKE ALL ON SEQUENCE public.audit_log_id_seq FROM PUBLIC;
+    REVOKE ALL ON SEQUENCE public.oci_image_revocation_id_seq FROM PUBLIC;
     GRANT SELECT, INSERT ON TABLE public.audit_log TO console;
     GRANT USAGE, SELECT ON SEQUENCE public.audit_log_id_seq TO console;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.managed_credential TO console;
+    GRANT SELECT, INSERT ON TABLE public.oci_image_revocation TO console;
+    GRANT USAGE, SELECT ON SEQUENCE public.oci_image_revocation_id_seq TO console;
     ALTER ROLE console NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS;
 
     -- OAA gateway dedicated PostgreSQL identity, idempotent for both a legacy
@@ -419,6 +464,7 @@ spec:
         opensphere.io/boundary-reconcile: "true"
     spec:
       restartPolicy: Never
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       automountServiceAccountToken: false
       securityContext: { runAsNonRoot: true, runAsUser: 70, runAsGroup: 70, fsGroup: 70, seccompProfile: { type: RuntimeDefault } }
       containers:
@@ -466,6 +512,7 @@ spec:
       labels: { app: backbone-postgres, opensphere.io/backbone-module: postgres }
     spec:
       serviceAccountName: backbone-postgres
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext: { runAsNonRoot: true, runAsUser: 70, runAsGroup: 70, fsGroup: 70, seccompProfile: { type: RuntimeDefault } }
       initContainers:
         - name: tls-permissions
@@ -546,6 +593,7 @@ spec:
         spec:
           restartPolicy: OnFailure
           serviceAccountName: backbone-postgres-backup
+          imagePullSecrets: [{ name: opensphere-ghcr-pull }]
           automountServiceAccountToken: false
           securityContext: { runAsNonRoot: true, runAsUser: 70, runAsGroup: 70, fsGroup: 70, seccompProfile: { type: RuntimeDefault } }
           containers:
@@ -598,6 +646,7 @@ spec:
         spec:
           restartPolicy: Never
           serviceAccountName: backbone-postgres-backup
+          imagePullSecrets: [{ name: opensphere-ghcr-pull }]
           automountServiceAccountToken: false
           securityContext: { runAsNonRoot: true, runAsUser: 70, runAsGroup: 70, fsGroup: 70, seccompProfile: { type: RuntimeDefault } }
           containers:
@@ -642,6 +691,7 @@ spec:
       labels: { app: backbone-rustfs, opensphere.io/backbone-module: rustfs }
     spec:
       serviceAccountName: backbone-rustfs
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       initContainers:
         # RustFS accepts TLS only when the pair has these exact names and is readable
@@ -741,6 +791,7 @@ spec:
       labels: { app: backbone-gitea, opensphere.io/backbone-module: gitea }
     spec:
       serviceAccountName: backbone-gitea
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
       initContainers:
         - name: database-init

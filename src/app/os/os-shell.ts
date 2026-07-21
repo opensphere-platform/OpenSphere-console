@@ -170,7 +170,7 @@ interface NavBand {
         z-index: var(--os-z-header);
         display: flex;
         align-items: center;
-        height: 3rem;
+        height: var(--os-header-height);
         border-bottom: 2px solid var(--os-accent);
       }
 

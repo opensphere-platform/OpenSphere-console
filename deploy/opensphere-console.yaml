@@ -21,6 +21,7 @@ spec:
     metadata:
       labels: { app: opensphere-console }
     spec:
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: shell
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).

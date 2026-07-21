@@ -1,5 +1,6 @@
 import { Component, ChangeDetectionStrategy, OnDestroy, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from './carbon-icon';
 import { AuthService } from '../core/auth.service';
 import Send16 from '@carbon/icons/es/send/16';
@@ -78,7 +79,7 @@ interface OaaSession {
  */
 @Component({
   selector: 'os-oaa-agent',
-  imports: [FormsModule, CarbonIcon],
+  imports: [FormsModule, ClarityModule, CarbonIcon],
   template: `
     <button class="oaa-trigger" [class.oaa-active]="open()" (click)="toggle()" title="OpenSphere AI Agent" aria-label="OpenSphere AI Agent">
       <span class="oaa-agent-mark" aria-hidden="true">
@@ -200,6 +201,34 @@ interface OaaSession {
         </form>
       </aside>
     }
+
+    <clr-modal
+      [clrModalOpen]="renameOpen()"
+      (clrModalOpenChange)="onRenameOpenChange($event)"
+      [clrModalClosable]="true"
+      [clrModalSize]="'sm'"
+    >
+      <h3 class="modal-title">채팅 제목 변경</h3>
+      <div class="modal-body">
+        <clr-input-container>
+          <label for="oaa-chat-title-input">채팅 제목</label>
+          <input
+            clrInput
+            id="oaa-chat-title-input"
+            name="oaa-chat-title"
+            [(ngModel)]="renameDraft"
+            maxlength="80"
+            required
+            (keydown.enter)="applyTitle()"
+          />
+          <clr-control-helper>현재 탭의 대화 기록에 표시할 제목입니다.</clr-control-helper>
+        </clr-input-container>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" (click)="cancelTitleEdit()">취소</button>
+        <button type="button" class="btn btn-primary" (click)="applyTitle()" [disabled]="!renameDraft.trim()">저장</button>
+      </div>
+    </clr-modal>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
   styles: [
@@ -400,6 +429,7 @@ export class OsOaaAgent implements OnDestroy {
   readonly full = signal(false);
   readonly historyOpen = signal(false);
   readonly menuOpen = signal(false);
+  readonly renameOpen = signal(false);
   readonly busy = signal(false);
   readonly error = signal('');
   readonly sessions = signal<OaaSession[]>(this.readSessions());
@@ -408,6 +438,7 @@ export class OsOaaAgent implements OnDestroy {
   readonly messages = signal<OaaMessage[]>(this.initialMessages());
   readonly dockWidth = signal(this.initialDockWidth());
   draft = '';
+  renameDraft = '';
   readonly modelLabel = computed(() => {
     const last = [...this.messages()].reverse().find((m) => m.role === 'assistant' && m.meta);
     return last?.meta || 'deepseek-v4-flash';
@@ -494,10 +525,25 @@ export class OsOaaAgent implements OnDestroy {
   }
 
   editTitle(): void {
-    const next = window.prompt('Chat title', this.chatTitle());
-    if (next == null) return;
-    const title = next.trim() || 'New chat';
+    this.renameDraft = this.chatTitle();
+    this.renameOpen.set(true);
+  }
+
+  onRenameOpenChange(open: boolean): void {
+    if (!open && this.renameOpen()) this.cancelTitleEdit();
+  }
+
+  cancelTitleEdit(): void {
+    this.renameOpen.set(false);
+    this.renameDraft = '';
+  }
+
+  applyTitle(): void {
+    const title = this.renameDraft.trim();
+    if (!title) return;
     this.chatTitle.set(title);
+    this.renameOpen.set(false);
+    this.renameDraft = '';
     this.saveCurrentSession();
   }
 

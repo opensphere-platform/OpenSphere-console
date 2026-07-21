@@ -105,3 +105,10 @@ test('os-search 드롭다운은 헤더 stacking context에 포함되어 있고, 
     '드롭다운 로컬 z-index가 안전한 이유(헤더가 stacking context를 형성해 캡핑됨)가 주석으로 설명되어 있어야 한다',
   );
 });
+
+test('Clarity side panel 제목은 전역 헤더 아래에서 시작해 가려지지 않는다', () => {
+  assert.match(stylesScss, /--os-header-height:\s*3rem;/);
+  assert.match(osShellTs, /height:\s*var\(--os-header-height\);/);
+  assert.match(osPanelTs, /top:\s*var\(--os-header-height,\s*3rem\);/);
+  assert.match(osPanelTs, /height:\s*calc\(100vh\s*-\s*var\(--os-header-height,\s*3rem\)\)\s*!important;/);
+});

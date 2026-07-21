@@ -1,0 +1,22 @@
+# Local verification image: consumes an already verified `npm run build` output.
+# Release images still use the repository root Dockerfile and signed multi-arch pipeline.
+#
+# This is an overlay of a complete Console image, not a new Nginx image. The
+# complete base owns native Console assets such as /api/cli/index.json and the
+# downloadable os binaries; an Angular-only rebuild must preserve them.
+ARG BASE_IMAGE=ghcr.io/opensphere-platform/opensphere-console@sha256:3afd4b43fcddbcce518091b4c2109fba6a65c78d917a8453ff88fd20ed7d578b
+FROM ${BASE_IMAGE}
+
+ENV OS_PLUGIN_NAMESPACE=opensphere-console
+USER root
+COPY dist/opensphere-console/browser/ /usr/share/nginx/html/
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+
+# Reject a local UI deployment that would make /manage/cli return HTTP 404.
+RUN test -s /usr/share/nginx/html/api/cli/index.json \
+    && test -x /usr/share/nginx/html/api/cli/opensphere-cli-linux-amd64 \
+    && test -x /usr/share/nginx/html/api/cli/opensphere-cli-darwin-arm64 \
+    && test -x /usr/share/nginx/html/api/cli/opensphere-cli-windows-amd64.exe
+
+USER 101
+EXPOSE 8080

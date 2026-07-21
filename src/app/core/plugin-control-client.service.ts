@@ -10,18 +10,51 @@ export interface CatalogItem {
   kind: 'subShell' | 'plugin'; hostRef: string; hostApiVersion?: string; hostCompat: string;
   contributions: Record<string, unknown>;
   scope?: string; core?: boolean;
+  requestedChannel?: string; installedDigest?: string; currentChannelDigest?: string;
+  updateState?: 'Current' | 'UpdateAvailable' | 'SecurityActionRequired' | 'ChannelUnavailable';
+  channelCheckedAt?: string; channelReason?: string;
 }
 export interface Registration {
   name: string; desiredState: string;
-  status: { phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string; retryable?: boolean; nextRetryAt?: string; observedGeneration?: number };
+  status: {
+    phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string;
+    retryable?: boolean; nextRetryAt?: string; observedGeneration?: number;
+    observedVersion?: string; currentVersion?: string; currentDigest?: string;
+    currentRequestedChannel?: string; currentChannelDigest?: string;
+    channelState?: 'Current' | 'UpdateAvailable' | 'SecurityActionRequired' | 'ChannelUnavailable';
+    channelCheckedAt?: string; channelReason?: string;
+    host?: { ref?: string; observedApiVersion?: string; phase?: string };
+    workload?: { phase?: string };
+    verification?: {
+      manifest?: string; signature?: string; entryDigest?: string; permissions?: string;
+    };
+    integrations?: Record<string, IntegrationStatus>;
+  };
   approval?: { requestedBy?: string; reason?: string };
   health?: 'Ready' | 'NotReady' | 'N/A'; // P2-2: 활성 플러그인 워크로드 health(컨트롤러 제공)
+}
+export interface IntegrationStatus {
+  phase: 'Ready' | 'Disabled' | 'Failed' | 'Degraded' | 'DependencyPending' | string;
+  reason?: string; message?: string; retryable?: boolean; nextRetryAt?: string;
+  lastTransitionTime?: string; observedVersion?: string;
 }
 export interface AuditEvent { time: string; actor: string; action: string; target: string; result: string; reason: string; }
 export interface ExtensionInspection {
   image: string;
+  requestedImage: string;
+  channel: 'edge' | 'candidate' | 'stable' | null;
+  resolvedAt: string;
+  source: string;
+  revision: string;
+  registryCredentialsRequired: boolean;
   descriptor: { id: string; kind: 'subShell' | 'plugin'; displayName: string; version: string; owner: string; permissionProfile: string; permissions: string[] };
-  verification: { registry: string; digest: string; descriptor: string; signature: string; permissionProfile: string };
+  verification: { registry: string; digest: string; descriptor: string; signature: string; provenance: string; sbom: string; permissionProfile: string; platforms: string[] };
+}
+export interface RegistryCredentialStatus {
+  registry: 'ghcr.io'; configured: boolean; username?: string; secretName: string; updatedAt?: string;
+}
+export interface ImageRevocation {
+  repository: string; digest: string; replacementDigest?: string; revokedAt: string; actor: string; reason: string;
 }
 // Binding — 비-UI 콘솔 확장(CLIDownload 등). UI plugin(UIPluginPackage)과 별개 kind. 콘솔이 '선언'을 인식·노출.
 export interface BindingLink { os?: string; arch?: string; text: string; href: string; }
@@ -61,6 +94,29 @@ export class PluginControlClient {
     return this.http.request('/api/admin/extensions/install', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, reason }),
     }).then(async (r) => { if (!r.ok) throw new Error(`install HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+  }
+  registryCredentialStatus(): Promise<RegistryCredentialStatus> {
+    return this.http.request('/api/admin/extensions/registry-credentials', { cache: 'no-store' })
+      .then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}`); return r.json(); });
+  }
+  configureRegistryCredentials(username: string, token: string, reason: string): Promise<RegistryCredentialStatus> {
+    return this.http.request('/api/admin/extensions/registry-credentials', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, token, reason }),
+    }).then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+  }
+  removeRegistryCredentials(reason: string): Promise<RegistryCredentialStatus> {
+    return this.http.request('/api/admin/extensions/registry-credentials', {
+      method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }),
+    }).then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+  }
+  revocations(): Promise<ImageRevocation[]> {
+    return this.http.request('/api/admin/extensions/revocations', { cache: 'no-store' })
+      .then(async (r) => { if (!r.ok) throw new Error(`revocations HTTP ${r.status}`); return (await r.json()).items; });
+  }
+  revokeImage(image: string, replacementImage: string, reason: string): Promise<ImageRevocation> {
+    return this.http.request('/api/admin/extensions/revocations', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason }),
+    }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return (await r.json()).item; });
   }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
   bindingAction(name: string, action: 'enable' | 'disable') {

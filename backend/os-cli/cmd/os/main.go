@@ -984,7 +984,7 @@ func catalog(cfg Config, args []string, out io.Writer) error {
 
 func extensions(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("사용법: os extensions inspect|install|activate|disable|uninstall|rollback|list|bindings")
+		return errors.New("사용법: os extensions inspect|install|activate|disable|uninstall|rollback|list|bindings|registry|revocations|revoke-image")
 	}
 	action := strings.ToLower(args[0])
 	var method, path string
@@ -992,12 +992,12 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 	switch action {
 	case "inspect":
 		if len(args) != 2 {
-			return errors.New("사용법: os extensions inspect <ghcr-image@sha256:digest>")
+			return errors.New("사용법: os extensions inspect <ghcr-image:edge|candidate|stable|@sha256:digest>")
 		}
 		method, path, payload = http.MethodPost, "/api/admin/extensions/inspect", map[string]string{"image": args[1]}
 	case "install":
 		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
-			return errors.New("사용법: os extensions install <ghcr-image@sha256:digest> --reason <승인 사유>")
+			return errors.New("사용법: os extensions install <ghcr-image:edge|candidate|stable|@sha256:digest> --reason <승인 사유>")
 		}
 		flags := parseLongFlags(args[2:])
 		reason := strings.TrimSpace(flags["reason"])
@@ -1024,6 +1024,48 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 		} else {
 			return errors.New("사용법: os extensions bindings list | enable|disable <binding-id>")
 		}
+	case "registry":
+		if len(args) == 1 || args[1] == "status" {
+			method, path = http.MethodGet, "/api/admin/extensions/registry-credentials"
+		} else if args[1] == "login" {
+			flags := parseLongFlags(args[2:])
+			username, reason := strings.TrimSpace(flags["username"]), strings.TrimSpace(flags["reason"])
+			if username == "" || !hasArg(args[2:], "--token-stdin") || len(reason) < 8 {
+				return errors.New("사용법: os extensions registry login --username <GitHub 사용자> --token-stdin --reason <8자 이상 사유>")
+			}
+			secret, err := io.ReadAll(io.LimitReader(os.Stdin, 2049))
+			if err != nil {
+				return fmt.Errorf("registry token stdin 읽기 실패: %w", err)
+			}
+			tokenValue := strings.TrimSpace(string(secret))
+			if len(tokenValue) < 20 || len(tokenValue) > 1024 || strings.ContainsAny(tokenValue, " \t\r\n") {
+				return errors.New("유효한 package read token을 stdin으로 입력하세요")
+			}
+			method, path, payload = http.MethodPut, "/api/admin/extensions/registry-credentials", map[string]string{"username": username, "token": tokenValue, "reason": reason}
+		} else if args[1] == "logout" {
+			reason := strings.TrimSpace(parseLongFlags(args[2:])["reason"])
+			if len(reason) < 8 {
+				return errors.New("사용법: os extensions registry logout --reason <8자 이상 사유>")
+			}
+			method, path, payload = http.MethodDelete, "/api/admin/extensions/registry-credentials", map[string]string{"reason": reason}
+		} else {
+			return errors.New("사용법: os extensions registry status | login --username <사용자> --token-stdin --reason <사유> | logout --reason <사유>")
+		}
+	case "revocations":
+		if len(args) != 1 {
+			return errors.New("사용법: os extensions revocations")
+		}
+		method, path = http.MethodGet, "/api/admin/extensions/revocations"
+	case "revoke-image":
+		if len(args) < 2 || !strings.Contains(args[1], "@sha256:") {
+			return errors.New("사용법: os extensions revoke-image <repository@sha256:digest> [--replacement <repository@sha256:digest>] --reason <8자 이상 사유>")
+		}
+		flags := parseLongFlags(args[2:])
+		reason := strings.TrimSpace(flags["reason"])
+		if len(reason) < 8 {
+			return errors.New("--reason은 8자 이상의 철회 사유여야 합니다")
+		}
+		method, path, payload = http.MethodPost, "/api/admin/extensions/revocations", map[string]string{"image": args[1], "replacementImage": strings.TrimSpace(flags["replacement"]), "reason": reason}
 	default:
 		return fmt.Errorf("알 수 없는 extensions 동작: %s", action)
 	}
@@ -1213,10 +1255,15 @@ func printHelp(out io.Writer) {
   os backbone status | detail --component <이름>
   os observability status | targets | query --expr <PromQL>
   os audit list
-  os extensions inspect <ghcr-image@sha256:digest>
-  os extensions install <ghcr-image@sha256:digest> --reason <승인 사유>
+  os extensions inspect <ghcr-image:edge|candidate|stable|@sha256:digest>
+  os extensions install <ghcr-image:edge|candidate|stable|@sha256:digest> --reason <승인 사유>
   os extensions activate|disable|uninstall|rollback <module-id> | list
   os extensions bindings list | enable|disable <binding-id>
+  os extensions registry status
+  os extensions registry login --username <GitHub 사용자> --token-stdin --reason <승인 사유>
+  os extensions registry logout --reason <승인 사유>
+  os extensions revocations
+  os extensions revoke-image <repository@sha256:digest> [--replacement <repository@sha256:digest>] --reason <철회 사유>
   os get <resource> [name] [-o json]
   os role list | grant|revoke <user> <role> --reason <사유>
   os <namespace> [명령...] [-o json]

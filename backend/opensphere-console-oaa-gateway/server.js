@@ -1408,6 +1408,8 @@ async function seedBundledManualKnowledgeIfEmpty(actor = null) {
       (SELECT count(*)::int FROM oaa_manual_relations WHERE source_id = $1) AS relations
   `, ['opensphere-core-manuals']);
   const bySourceId = new Map(current.rows.map((r) => [r.source_id, r.checksum || '']));
+  const manifestSourceIds = docs.map((d) => String(d.sourceId || d.source_id || '')).filter(Boolean);
+  const manifestSourceIdSet = new Set(manifestSourceIds);
   const missing = docs.filter((d) => !bySourceId.has(String(d.sourceId || d.source_id || ''))).map((d) => d.sourceId || d.source_id);
   const changed = docs
     .filter((d) => {
@@ -1416,13 +1418,30 @@ async function seedBundledManualKnowledgeIfEmpty(actor = null) {
       return id && bySourceId.has(id) && checksum && bySourceId.get(id) !== checksum;
     })
     .map((d) => d.sourceId || d.source_id);
+  // Bundled manuals are release-bound and declarative. Removing a document from the manifest must
+  // remove the old PostgreSQL row as well; otherwise retired sources (notably the legacy docs.ts
+  // migration input) remain searchable indefinitely after an upgrade.
+  const stale = current.rows.map((r) => r.source_id).filter((id) => !manifestSourceIdSet.has(String(id || '')));
   const missingConcepts = concepts.length > Number(structure.rows[0]?.concepts || 0);
   const missingRelations = relations.length > Number(structure.rows[0]?.relations || 0);
-  if (!missing.length && !changed.length && !missingConcepts && !missingRelations && current.rows.length >= docs.length) {
+  if (!missing.length && !changed.length && !stale.length && !missingConcepts && !missingRelations && current.rows.length >= docs.length) {
     return { seeded: false, reason: 'bundled manuals up to date', documents: current.rows.length };
   }
   const out = await seedBundledManualKnowledge(actor);
-  return { ...out, seeded: true, missing, changed, missingConcepts, missingRelations };
+  if (stale.length) {
+    await pool.query(`
+      DELETE FROM oaa_manual_relations
+      WHERE source_id = ANY($1::text[])
+    `, [stale]);
+    await pool.query(`
+      DELETE FROM oaa_knowledge_documents
+      WHERE source_type = 'manual'
+        AND metadata->'source'->>'id' = 'opensphere-core-manuals'
+        AND source_id = ANY($1::text[])
+    `, [stale]);
+    audit(actor, 'knowledge-bundled-manual-prune', 'opensphere-core-manuals', 'ok', stale.join(', '));
+  }
+  return { ...out, seeded: true, missing, changed, stale, missingConcepts, missingRelations };
 }
 
 function trimText(value, max = 220) {

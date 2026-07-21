@@ -1,0 +1,89 @@
+# PlatformSupportProfile is the Console-native capability gate between HIS and PFS.
+# It is not a service stack, subShell, or plugin. DUPA records declarations and verification
+# evidence while live readiness remains derived from authoritative workloads and controllers.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: platformsupportprofiles.platform.opensphere.io
+spec:
+  group: platform.opensphere.io
+  scope: Namespaced
+  names:
+    plural: platformsupportprofiles
+    singular: platformsupportprofile
+    kind: PlatformSupportProfile
+    shortNames: [psp]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - { name: Phase, type: string, jsonPath: .status.phase }
+        - { name: Verified, type: date, jsonPath: .status.lastVerifiedAt }
+        - { name: Age, type: date, jsonPath: .metadata.creationTimestamp }
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [hostRequirements, delivery, observability, backupRestore, securityPolicy]
+              properties:
+                hostRequirements:
+                  type: object
+                  properties:
+                    clusterManager: { type: boolean, default: true }
+                    his: { type: boolean, default: true }
+                delivery:
+                  type: object
+                  properties: { required: { type: boolean, default: true } }
+                observability:
+                  type: object
+                  properties: { required: { type: boolean, default: true } }
+                backupRestore:
+                  type: object
+                  properties: { required: { type: boolean, default: true } }
+                securityPolicy:
+                  type: object
+                  properties: { required: { type: boolean, default: true } }
+                optionalCapabilities:
+                  type: array
+                  items: { type: string }
+                approval:
+                  type: object
+                  properties:
+                    requestedBy: { type: string, maxLength: 128 }
+                    reason: { type: string, minLength: 8, maxLength: 512 }
+                    requestedAt: { type: string, format: date-time }
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Declared, Preflighted, Installing, Verifying, Ready, Degraded, Blocked, NotDeclared]
+                observedGeneration: { type: integer, format: int64 }
+                lastVerifiedAt: { type: string, format: date-time }
+                verifiedBy: { type: string, maxLength: 128 }
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: { type: string }
+                      status: { type: string, enum: ['True', 'False', Unknown] }
+                      reason: { type: string }
+                      message: { type: string }
+                      lastTransitionTime: { type: string, format: date-time }
+                evidenceRefs:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, ref]
+                    properties:
+                      type: { type: string }
+                      ref: { type: string }

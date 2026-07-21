@@ -10,6 +10,7 @@ import { ConsoleAdmins } from './pages/console-admins';
 import { AdminBackbone } from './pages/admin-backbone';
 import { AdminOaa } from './pages/admin-oaa';
 import { AdminObservability } from './pages/admin-observability';
+import { AdminPlatformReadiness } from './pages/admin-platform-readiness';
 import { AdminNotifications } from './pages/admin-notifications';
 import { AdminAudit } from './pages/admin-audit';
 import { AdminCli } from './pages/admin-cli';
@@ -62,6 +63,8 @@ export const routes: Routes = [
       // consumer workload. Backbone 화면에는 섞지 않고 전용 페이지로 흡수(§8 감사 판정).
       { path: 'oaa', component: AdminOaa },
       { path: 'observability', component: AdminObservability },
+      // Console-native lifecycle gate: HIS evidence → PlatformSupportProfile → PFS admission.
+      { path: 'platform-readiness', component: AdminPlatformReadiness },
       { path: 'notifications', component: AdminNotifications },
       { path: 'audit', component: AdminAudit },
     ],

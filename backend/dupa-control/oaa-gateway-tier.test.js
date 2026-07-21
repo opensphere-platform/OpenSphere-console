@@ -16,7 +16,7 @@ const root = path.resolve(__dirname, '..', '..');
 // nginx proxying, base-manifest RBAC/image/CA-mount wiring, and the /readyz contract are covered in
 // main-shell-base.test.js and oaa-base-runtime.test.js.
 const controller = fs.readFileSync(path.join(root, 'backend', 'dupa-control', 'controller.js'), 'utf8');
-const gateway = fs.readFileSync(path.join(root, 'backend', 'opensphere-console-oaa-gateway', 'server.js'), 'utf8');
+const gateway = fs.readFileSync(path.join(root, 'backend', 'opensphere-console-oaa-gateway', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
 const oaaAgent = fs.readFileSync(path.join(root, 'src', 'app', 'os', 'os-oaa-agent.ts'), 'utf8');
 const manualService = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'manual.service.ts'), 'utf8');
 const searchService = fs.readFileSync(path.join(root, 'src', 'app', 'core', 'search.service.ts'), 'utf8');
@@ -177,6 +177,9 @@ test('OAA-Gateway stores project knowledge in Backbone PostgreSQL pgvector', () 
   assert.match(gateway, /ON CONFLICT \(document_id, chunk_index\)/);
   assert.match(gateway, /bundled manuals up to date/);
   assert.match(gateway, /metadata->>'checksum'/);
+  assert.match(gateway, /knowledge-bundled-manual-prune/);
+  assert.match(gateway, /const stale = current\.rows/);
+  assert.match(gateway, /DELETE FROM oaa_knowledge_documents/);
   assert.match(gateway, /authorityTier/);
   assert.match(gateway, /sourcePath/);
   assert.match(gateway, /sectionHeading/);
@@ -191,7 +194,9 @@ test('OAA bundled manual seed carries core OpenSphere manuals', () => {
   assert.ok(ids.includes('opensphere-docs/p4-intelligence'));
   assert.ok(ids.includes('console-docs/backbone-architecture'));
   assert.ok(ids.includes('console-docs/oaa-manual-knowledge-data-model'));
-  assert.ok(ids.includes('help-center/docs-ts'));
+  assert.ok(ids.includes('help-center/perspective-overview'));
+  assert.equal(ids.filter((id) => /^help-center\/perspective-\d{2}-/.test(id)).length, 10);
+  assert.equal(ids.includes('help-center/docs-ts'), false);
   assert.ok(manualSeed.concepts.length >= 10);
   assert.ok(manualSeed.relations.length >= 10);
   assert.ok(manualSeed.concepts.some((c) => c.id === 'concept:opensphere:perspective:ai-level'));

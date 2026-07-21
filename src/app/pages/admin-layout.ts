@@ -13,6 +13,7 @@ import Activity16 from '@carbon/icons/es/activity/16';
 import Notification16 from '@carbon/icons/es/notification/16';
 import Terminal16 from '@carbon/icons/es/terminal/16';
 import List16 from '@carbon/icons/es/list/16';
+import Roadmap16 from '@carbon/icons/es/roadmap/16';
 
 interface AdminItem { label: string; route: string; icon: any }
 interface AdminGroup { label: string; items: AdminItem[] }
@@ -72,6 +73,12 @@ export class AdminLayout {
       items: [
         { label: '콘솔 관리자', route: '/manage/console-admins', icon: UserAdmin16 },
         { label: '역할', route: '/manage/roles', icon: UserMultiple16 },
+      ],
+    },
+    {
+      label: '플랫폼 수명주기',
+      items: [
+        { label: '플랫폼 준비 상태', route: '/manage/platform-readiness', icon: Roadmap16 },
       ],
     },
     {

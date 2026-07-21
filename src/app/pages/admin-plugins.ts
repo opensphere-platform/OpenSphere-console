@@ -1,4 +1,5 @@
 import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsRawIcon } from '../os/os-raw-icon';
@@ -6,6 +7,7 @@ import { OsPanel } from '../os/os-panel';
 import { OsActionDialog } from '../os/os-action-dialog';
 import { IconLibraryService } from '../os/icon-library.service';
 import { ExtensionHostService } from '../core/extension-host.service';
+import { PlatformReadinessService } from '../core/platform-readiness.service';
 import {
   PluginControlClient,
   CatalogItem,
@@ -13,7 +15,29 @@ import {
   AuditEvent,
   Binding,
   ExtensionInspection,
+  RegistryCredentialStatus,
+  ImageRevocation,
+  IntegrationStatus,
 } from '../core/plugin-control-client.service';
+
+interface EffectiveExtensionState {
+  label: string;
+  detail: string;
+  tone: 'success' | 'warning' | 'danger' | 'neutral';
+}
+
+interface IntegrationRow {
+  key: string;
+  label: string;
+  status: IntegrationStatus;
+}
+
+interface StatusLayer {
+  label: string;
+  value: string;
+  detail: string;
+  tone: 'success' | 'warning' | 'danger' | 'neutral';
+}
 
 /** 위계 트리 노드 — console(mainShell) → subShell/plugin, + Bindings 분기(§2.7 shell→plugin 귀속 시각화). */
 interface TreeNode {
@@ -33,7 +57,7 @@ interface TreeNode {
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
+  imports: [RouterLink, ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
       <os-page-header title="Console Extensions" tag="Admin Control">
@@ -61,13 +85,85 @@ interface TreeNode {
       <span class="label label-info">Bindings {{ bindings().length }}</span>
     </div>
 
+    <clr-accordion class="management-actions">
+      <clr-accordion-panel>
+        <clr-accordion-title>관리 작업</clr-accordion-title>
+        <clr-accordion-description>설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
+        <clr-accordion-content *clrIfExpanded>
+    <section class="registry-access" aria-labelledby="registry-access-title">
+      <div class="registry-access-head">
+        <div>
+          <h2 id="registry-access-title">Private GHCR access</h2>
+          <p class="os-sub">공개 전환 없이 private OpenSphere 패키지를 검사하고 Kubernetes workload가 pull하도록 동일한 read-only 자격증명을 사용합니다. 토큰은 화면에 다시 표시되지 않습니다.</p>
+        </div>
+        @if (registryStatus(); as registry) {
+          <span class="label" [class.label-success]="registry.configured">{{ registry.configured ? 'Configured' : 'Not configured' }}</span>
+        }
+      </div>
+      <div class="registry-access-form">
+        <div class="clr-form-control">
+          <label for="registry-user" class="clr-control-label">GitHub username</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper">
+            <input id="registry-user" #registryUser class="clr-input" [value]="registryStatus()?.username || ''" autocomplete="username" />
+          </div></div>
+        </div>
+        <div class="clr-form-control">
+          <label for="registry-token" class="clr-control-label">Package read token</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper">
+            <input id="registry-token" #registryToken type="password" class="clr-input" autocomplete="new-password" placeholder="read:packages 권한 토큰" />
+          </div></div>
+        </div>
+        <div class="clr-form-control">
+          <label for="registry-reason" class="clr-control-label">Change reason</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper">
+            <input id="registry-reason" #registryReason class="clr-input" placeholder="등록 또는 제거 승인 사유(8자 이상)" />
+          </div></div>
+        </div>
+        <button class="btn btn-outline" [disabled]="registryToken.value.length < 20 || registryReason.value.trim().length < 8" (click)="configureRegistryCredentials(registryUser.value, registryToken.value, registryReason.value); registryToken.value = ''">저장</button>
+        <button class="btn btn-danger-outline" [disabled]="!registryStatus()?.configured || registryReason.value.trim().length < 8" (click)="removeRegistryCredentials(registryReason.value)">제거</button>
+      </div>
+    </section>
+
+    <section class="registry-access" aria-labelledby="revocation-title">
+      <div class="registry-access-head">
+        <div>
+          <h2 id="revocation-title">OCI image revocation ledger</h2>
+          <p class="os-sub">취약하거나 손상된 exact digest를 Backbone PostgreSQL의 append-only 원장에 철회합니다. 철회는 수정·삭제할 수 없고 신규 설치 및 활성 Registry 투영을 차단합니다.</p>
+        </div>
+        <span class="label label-danger">Revoked {{ revocations().length }}</span>
+      </div>
+      <div class="registry-access-form">
+        <div class="clr-form-control">
+          <label for="revoke-image" class="clr-control-label">Repository digest</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-image" #revokeImageRef class="clr-input" size="70" placeholder="ghcr.io/opensphere-platform/...@sha256:..." /></div></div>
+        </div>
+        <div class="clr-form-control">
+          <label for="replacement-image" class="clr-control-label">Replacement digest (optional)</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="replacement-image" #replacementImageRef class="clr-input" size="52" placeholder="same repository@sha256:..." /></div></div>
+        </div>
+        <div class="clr-form-control">
+          <label for="revoke-reason" class="clr-control-label">Revocation reason</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-reason" #revokeReason class="clr-input" placeholder="철회 근거(8자 이상)" /></div></div>
+        </div>
+        <button class="btn btn-danger" [disabled]="!revokeImageRef.value.includes('@sha256:') || revokeReason.value.trim().length < 8" (click)="revokeImage(revokeImageRef.value, replacementImageRef.value, revokeReason.value)">Digest 철회</button>
+      </div>
+      @if (revocations().length) {
+        <table class="table table-compact">
+          <thead><tr><th class="left">Image digest</th><th>Replacement</th><th>Actor</th><th>Time</th><th class="left">Reason</th></tr></thead>
+          <tbody>@for (item of revocations(); track item.repository + item.digest) {
+            <tr><td class="left os-mono">{{ item.repository }}&#64;{{ item.digest }}</td><td class="os-mono">{{ item.replacementDigest || '—' }}</td><td>{{ item.actor }}</td><td>{{ item.revokedAt }}</td><td class="left">{{ item.reason }}</td></tr>
+          }</tbody>
+        </table>
+      }
+    </section>
+
     <section class="oci-install" aria-labelledby="oci-install-title">
       <h2 id="oci-install-title">OCI 이미지로 설치</h2>
-      <p class="os-sub">GHCR digest 고정 이미지의 SDK 계약·서명·권한 프로필을 먼저 검증합니다. 검증 후 설치해도 메뉴 활성화는 별도 승인입니다.</p>
+      <p class="os-sub">OpenSphere GHCR 이미지의 SDK 계약·서명·권한 프로필을 먼저 검증합니다. 채널(edge/candidate/stable)은 설치 전에 불변 digest로 해석되며, 메뉴 활성화는 별도 승인입니다.</p>
       <div class="clr-form-control">
-        <label for="extension-image" class="clr-control-label">Image digest</label>
+        <label for="extension-image" class="clr-control-label">OCI image address</label>
         <div class="clr-control-container"><div class="clr-input-wrapper">
-          <input id="extension-image" #imageRef class="clr-input" size="90" placeholder="ghcr.io/opensphere-platform/opensphere-...@sha256:..." />
+          <input id="extension-image" #imageRef class="clr-input" size="90" placeholder="ghcr.io/opensphere-platform/opensphere-shell-foundation:edge" />
         </div></div>
       </div>
       <div class="clr-form-control">
@@ -77,17 +173,29 @@ interface TreeNode {
         </div></div>
       </div>
       <button class="btn btn-outline" (click)="inspectImage(imageRef.value)">검증</button>
-      <button class="btn btn-primary" [disabled]="!inspection() || inspection()?.image !== imageRef.value.trim()" (click)="installImage(imageRef.value, reasonRef.value)">설치</button>
+      <button class="btn btn-primary" [disabled]="!inspection() || inspection()?.requestedImage !== imageRef.value.trim()" (click)="installImage(imageRef.value, reasonRef.value)">설치</button>
       @if (inspection(); as plan) {
         <div class="inspection-plan" role="status">
           <strong>{{ plan.descriptor.displayName }} {{ plan.descriptor.version }}</strong>
           <span class="label label-success">Descriptor {{ plan.verification.descriptor }}</span>
           <span class="label label-success">Signature {{ plan.verification.signature }}</span>
+          <span class="label label-success">Provenance {{ plan.verification.provenance }}</span>
+          <span class="label label-success">SBOM {{ plan.verification.sbom }}</span>
           <span class="label">{{ plan.descriptor.permissionProfile }}</span>
+          @if (plan.channel) { <span class="label label-info">{{ plan.channel }} → digest</span> }
+          <span class="os-mono">{{ plan.image }}</span>
+          <span class="os-mono">{{ plan.verification.platforms.join(', ') }}</span>
+          @if (plan.registryCredentialsRequired) { <span class="label label-info">Private pull credential</span> }
           <span class="os-mono">{{ plan.descriptor.permissions.join(', ') }}</span>
         </div>
+        @if (foundationActivationLocked(plan.descriptor.id)) {
+          <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">Foundation은 Ready 상태까지 사전 설치할 수 있습니다. 메뉴 활성화는 Platform Support Profile Ready 이후에 허용됩니다. <a routerLink="/manage/platform-readiness">플랫폼 준비 상태 확인</a></span></clr-alert-item></clr-alert>
+        }
       }
     </section>
+        </clr-accordion-content>
+      </clr-accordion-panel>
+    </clr-accordion>
 
     <clr-tabs>
       <clr-tab>
@@ -119,9 +227,10 @@ interface TreeNode {
                     @if (c.phase) {
                       <span
                         class="label"
-                        [class.label-success]="c.phase === 'Activated' || c.phase === 'Ready'"
-                        [class.label-danger]="c.phase === 'Failed'"
-                        >{{ c.phase }}</span
+                        [class.label-success]="effectiveStateByName(c.id).tone === 'success'"
+                        [class.label-warning]="effectiveStateByName(c.id).tone === 'warning'"
+                        [class.label-danger]="effectiveStateByName(c.id).tone === 'danger'"
+                        >{{ effectiveStateByName(c.id).label }}</span
                       >
                     }
                     @if (c.actionable && c.phase) {
@@ -141,9 +250,10 @@ interface TreeNode {
                         <span class="caret-sp"></span><span class="tt tt-plugin">plugin</span>
                         <span class="tl cc-sel" (click)="select(g.id)">{{ g.label }}</span>
                         @if (g.phase) {
-                          <span class="label" [class.label-success]="g.phase === 'Activated' || g.phase === 'Ready'">{{
-                            g.phase
-                          }}</span>
+                          <span class="label"
+                            [class.label-success]="effectiveStateByName(g.id).tone === 'success'"
+                            [class.label-warning]="effectiveStateByName(g.id).tone === 'warning'"
+                            [class.label-danger]="effectiveStateByName(g.id).tone === 'danger'">{{ effectiveStateByName(g.id).label }}</span>
                         }
                         <span class="tm">{{ g.meta }}</span>
                       </div>
@@ -167,34 +277,47 @@ interface TreeNode {
       <clr-tab>
         <button clrTabLink>Installed</button>
         <clr-tab-content>
-          <p class="os-sub">
-            Enable/Disable만 여기서. 삭제(Uninstall)는 Catalog 탭에서 Disabled 상태일 때만.
-          </p>
+          <div class="status-guide">
+            <strong>상태 읽는 법</strong>
+            <span><i class="status-dot success"></i>서비스와 Console 연동 완료</span>
+            <span><i class="status-dot warning"></i>실행 중이지만 메뉴 등 일부 연동 미노출</span>
+            <span><i class="status-dot danger"></i>실패 또는 성능 저하</span>
+          </div>
           <table class="table">
             <thead>
               <tr>
-                <th class="left">Plugin</th>
-                <th>State</th>
-                <th>Reason</th>
-                <th>Requested by</th>
+                <th class="left">Extension</th>
+                <th>Effective state</th>
+                <th>Workload</th>
+                <th>Global menu</th>
+                <th>Integrations</th>
+                <th>Channel</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               @for (r of registrations(); track r.name) {
                 <tr>
-                  <td class="left">{{ r.name }}</td>
+                  <td class="left">
+                    <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
+                    <div class="os-mono">{{ r.name }}</div>
+                  </td>
                   <td>
                     <span
                       class="label"
-                      [class.label-success]="r.status.phase === 'Activated' || r.status.phase === 'Ready'"
-                      [class.label-danger]="r.status.phase === 'Failed'"
-                      >{{ r.status.phase ?? '—' }}</span
+                      [class.label-success]="effectiveState(r).tone === 'success'"
+                      [class.label-warning]="effectiveState(r).tone === 'warning'"
+                      [class.label-danger]="effectiveState(r).tone === 'danger'"
+                      >{{ effectiveState(r).label }}</span
                     >
+                    <div class="state-detail">{{ effectiveState(r).detail }}</div>
                   </td>
-                  <td>{{ r.status.reason || '—' }}</td>
-                  <td>{{ r.approval?.requestedBy ?? '—' }}</td>
+                  <td><span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span></td>
+                  <td><span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span><div class="state-detail">{{ menuState(r).reason }}</div></td>
+                  <td>{{ integrationSummary(r) }}</td>
+                  <td><span class="label" [class.label-success]="r.status.channelState === 'Current'" [class.label-danger]="r.status.channelState === 'SecurityActionRequired'">{{ r.status.currentRequestedChannel || 'exact' }} · {{ r.status.channelState || '—' }}</span></td>
                   <td>
+                    <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
                     @if (r.status.phase === 'Activated') {
                       <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
                     } @else {
@@ -209,7 +332,7 @@ interface TreeNode {
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="5" class="os-sub">설치된 플러그인 없음 — Catalog 탭에서 설치</td>
+                  <td colspan="7" class="os-sub">설치된 Extension 없음 — Catalog 탭에서 설치</td>
                 </tr>
               }
             </tbody>
@@ -261,7 +384,7 @@ interface TreeNode {
                         <button class="btn btn-sm" (click)="run('disable', c.name)">Disable</button>
                       }
                       @case ('Ready') {
-                        <button class="btn btn-sm btn-success-outline" (click)="run('enable', c.name)">Activate</button>
+                        <button class="btn btn-sm btn-success-outline" [disabled]="foundationActivationLocked(c.name)" [title]="foundationActivationLocked(c.name) ? 'Platform Support Profile Ready 필요' : ''" (click)="run('enable', c.name)">Activate</button>
                       }
                       @case ('Disabled') {
                         <button
@@ -398,15 +521,31 @@ interface TreeNode {
     @if (selectedReg(); as r) {
       <os-panel
         [open]="true"
-        [title]="selectedLabel()"
-        [subtitle]="r.name"
+        [title]="selectedPanelTitle()"
+        [subtitle]="selectedPanelSubtitle()"
         (closed)="closePanel()"
       >
 
-        <div class="cc-state cc-state-{{ (r.status.phase || 'Unknown').toLowerCase() }}">
+        <div class="cc-state cc-state-{{ effectiveState(r).tone }}">
           <span class="cc-dot"></span>
-          <strong>{{ r.status.phase || 'Unknown' }}</strong>
+          <div>
+            <strong>{{ effectiveState(r).label }}</strong>
+            <p>{{ effectiveState(r).detail }}</p>
+          </div>
           <span class="cc-desired">목표: {{ r.desiredState }}</span>
+        </div>
+
+        @if (!menuState(r).visible) {
+          <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+            <clr-alert-item><span class="alert-text"><strong>메뉴 미노출</strong> — {{ menuState(r).reason }}. Extension은 실행 중일 수 있지만 전역 메뉴에는 표시되지 않습니다.</span></clr-alert-item>
+          </clr-alert>
+        }
+
+        <div class="cc-primary-actions">
+          @if (pageReady(r)) {
+            <a class="btn btn-sm btn-primary" [routerLink]="['/p', r.name]">Extension 페이지 열기</a>
+          }
+          <button class="btn btn-sm btn-outline" (click)="refresh()">상태 새로고침</button>
         </div>
 
         @if (r.status.phase === 'Failed' && r.status.reason) {
@@ -416,44 +555,88 @@ interface TreeNode {
           </div>
         }
 
-        <div class="cc-steps">
-          <div class="cc-steps-h">검증 진행 단계</div>
-          @for (s of steps(); track s.label) {
-            <div class="cc-step cc-step-{{ s.state }}">
-              <span class="cc-step-ic">{{ s.state === 'done' ? '✓' : s.state === 'fail' ? '✗' : s.state === 'active' ? '⋯' : '○' }}</span>
-              <span>{{ s.label }}</span>
+        <div class="cc-layers" aria-label="Extension 상태 계층">
+          @for (layer of statusLayers(r); track layer.label) {
+            <div class="cc-layer cc-layer-{{ layer.tone }}">
+              <span class="cc-layer-label">{{ layer.label }}</span>
+              <strong>{{ layer.value }}</strong>
+              <span>{{ layer.detail }}</span>
             </div>
           }
         </div>
 
-        <dl class="cc-kv">
-          <dt>상태(phase)</dt><dd>{{ r.status.phase || '—' }}</dd>
-          <dt>사유(reason)</dt><dd>{{ r.status.reason || '—' }}</dd>
-          <dt>마지막 변경</dt><dd class="os-mono">{{ r.status.lastTransitionTime || '—' }}</dd>
-          <dt>manifest</dt><dd class="os-mono cc-break">{{ r.status.manifestUrl || '—' }}</dd>
-          <dt>요청자</dt><dd>{{ r.approval?.requestedBy || '—' }}</dd>
-          <dt>승인 사유</dt><dd>{{ r.approval?.reason || '—' }}</dd>
-        </dl>
-
-        <!-- 1단 아이콘 선택(IBM Carbon) — 기본값 + 사용자 선택. spec.nav.icon 패치. -->
-        <div class="cc-iconpick">
-          <div class="cc-iconpick-h">1단 아이콘 <span class="os-mono">{{ iconToken() || '(기본)' }}</span></div>
-          <input class="cc-iconsearch" type="search" placeholder="아이콘 검색…"
-                 [value]="iconQuery()" (input)="iconQuery.set($any($event.target).value)" />
-          <div class="cc-iconpick-note">
-            {{ iconLib.list().length ? (iconMatchCount() + '개 일치' + (iconMatchCount() > iconList().length ? (' · 상위 ' + iconList().length + '개 표시(검색으로 좁히기)') : '')) : '라이브러리 로딩 중…' }}
+        <section class="cc-integrations" aria-labelledby="cc-integrations-title">
+          <div class="cc-section-head">
+            <div><h3 id="cc-integrations-title">Console 연동 상태</h3><p>메뉴·페이지·API·검색·문서·관측 신호를 각각 확인합니다.</p></div>
+            <span class="label">{{ integrationSummary(r) }}</span>
           </div>
-          <div class="cc-iconpick-grid">
-            <button type="button" class="cc-iconbtn" [class.sel]="!iconToken()" title="기본(자동)" (click)="chooseIcon('')">∅</button>
-            @for (c of iconList(); track c.token) {
-              <button type="button" class="cc-iconbtn" [class.sel]="iconToken() === c.token" [title]="c.label" (click)="chooseIcon(c.token)">
-                <os-rawicon [svg]="c.svg" [size]="24" />
-              </button>
-            }
-          </div>
-        </div>
+          <table class="table table-compact">
+            <thead><tr><th class="left">기능</th><th>상태</th><th class="left">근거</th><th>버전</th></tr></thead>
+            <tbody>
+              @for (item of integrationRows(r); track item.key) {
+                <tr>
+                  <td class="left"><strong>{{ item.label }}</strong><div class="os-mono">{{ item.key }}</div></td>
+                  <td><span class="label" [class.label-success]="item.status.phase === 'Ready'" [class.label-warning]="item.status.phase === 'Disabled' || item.status.phase === 'DependencyPending'" [class.label-danger]="item.status.phase === 'Failed' || item.status.phase === 'Degraded'">{{ integrationPhaseLabel(item.status.phase) }}</span></td>
+                  <td class="left">{{ item.status.reason || item.status.message || '연동 준비 완료' }}</td>
+                  <td class="os-mono">{{ item.status.observedVersion || '—' }}</td>
+                </tr>
+              } @empty {
+                <tr><td colspan="4" class="left os-sub">연동 상태가 아직 보고되지 않았습니다. 컨트롤러 상태를 새로고침하세요.</td></tr>
+              }
+            </tbody>
+          </table>
+        </section>
 
-        <div class="cc-actions">
+        <clr-accordion class="cc-secondary">
+          <clr-accordion-panel>
+            <clr-accordion-title>배포·승인 상세</clr-accordion-title>
+            <clr-accordion-description>{{ r.status.currentVersion || r.status.observedVersion || '버전 미보고' }}</clr-accordion-description>
+            <clr-accordion-content *clrIfExpanded>
+              <div class="cc-steps">
+                <div class="cc-steps-h">Artifact 검증 단계</div>
+                @for (s of steps(); track s.label) {
+                  <div class="cc-step cc-step-{{ s.state }}">
+                    <span class="cc-step-ic">{{ s.state === 'done' ? '✓' : s.state === 'fail' ? '✗' : s.state === 'active' ? '⋯' : '○' }}</span>
+                    <span>{{ s.label }}</span>
+                  </div>
+                }
+              </div>
+              <dl class="cc-kv">
+                <dt>등록 phase</dt><dd>{{ r.status.phase || '—' }}</dd>
+                <dt>워크로드</dt><dd>{{ workloadPhase(r) }}</dd>
+                <dt>사유</dt><dd>{{ r.status.reason || '—' }}</dd>
+                <dt>마지막 변경</dt><dd class="os-mono">{{ r.status.lastTransitionTime || '—' }}</dd>
+                <dt>manifest</dt><dd class="os-mono cc-break">{{ r.status.manifestUrl || '—' }}</dd>
+                <dt>요청자</dt><dd>{{ r.approval?.requestedBy || '—' }}</dd>
+                <dt>승인 사유</dt><dd>{{ r.approval?.reason || '—' }}</dd>
+              </dl>
+            </clr-accordion-content>
+          </clr-accordion-panel>
+
+          <clr-accordion-panel>
+            <clr-accordion-title>메뉴 아이콘</clr-accordion-title>
+            <clr-accordion-description>{{ iconToken() || '기본 아이콘' }}</clr-accordion-description>
+            <clr-accordion-content *clrIfExpanded>
+              <div class="cc-iconpick">
+                <input class="cc-iconsearch" type="search" placeholder="Carbon 아이콘 검색…"
+                       [value]="iconQuery()" (input)="iconQuery.set($any($event.target).value)" />
+                <div class="cc-iconpick-note">
+                  {{ iconLib.list().length ? (iconMatchCount() + '개 일치' + (iconMatchCount() > iconList().length ? (' · 상위 ' + iconList().length + '개 표시') : '')) : '라이브러리 로딩 중…' }}
+                </div>
+                <div class="cc-iconpick-grid">
+                  <button type="button" class="cc-iconbtn" [class.sel]="!iconToken()" title="기본(자동)" (click)="chooseIcon('')">∅</button>
+                  @for (c of iconList(); track c.token) {
+                    <button type="button" class="cc-iconbtn" [class.sel]="iconToken() === c.token" [title]="c.label" (click)="chooseIcon(c.token)">
+                      <os-rawicon [svg]="c.svg" [size]="24" />
+                    </button>
+                  }
+                </div>
+              </div>
+            </clr-accordion-content>
+          </clr-accordion-panel>
+        </clr-accordion>
+
+        <div class="cc-actions" aria-label="Extension lifecycle actions">
           @if (r.status.phase === 'Activated') {
             <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
           } @else {
@@ -503,6 +686,11 @@ interface TreeNode {
       .os-summary .label {
         margin-right: 0.3rem;
       }
+      .management-actions {
+        display: block;
+        margin: 0 0 0.8rem;
+      }
+      .management-actions .registry-access:first-child { margin-top: 0.7rem; }
       .oci-install {
         padding: 0.8rem 1rem;
         margin-bottom: 1rem;
@@ -510,12 +698,54 @@ interface TreeNode {
         border-radius: var(--os-radius);
         background: var(--os-surface-1);
       }
+      .registry-access {
+        padding: 0.8rem 1rem;
+        margin-bottom: 1rem;
+        border: 1px solid var(--os-hairline);
+        border-radius: var(--os-radius);
+        background: var(--os-surface-1);
+      }
+      .registry-access-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+      .registry-access h2 { margin: 0; font-size: 1rem; }
+      .registry-access-form { display: flex; align-items: flex-end; gap: 0.55rem; flex-wrap: wrap; }
+      .registry-access-form .clr-form-control { margin-top: 0.45rem; }
       .oci-install h2 { margin: 0; font-size: 1rem; }
       .oci-install .clr-form-control { margin-top: 0.45rem; }
       .inspection-plan { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.65rem; flex-wrap: wrap; }
       .table .left {
         text-align: left;
       }
+      .extension-link {
+        border: 0;
+        background: transparent;
+        color: var(--os-link, #0065ab);
+        font: inherit;
+        font-weight: 600;
+        padding: 0;
+        cursor: pointer;
+      }
+      .extension-link:hover { text-decoration: underline; }
+      .state-detail {
+        max-width: 16rem;
+        margin-top: 0.22rem;
+        color: var(--os-muted);
+        font-size: 0.64rem;
+        line-height: 1.35;
+      }
+      .status-guide {
+        display: flex;
+        align-items: center;
+        gap: 0.9rem;
+        margin: 0.6rem 0;
+        color: var(--os-muted);
+        font-size: 0.68rem;
+      }
+      .status-guide strong { color: var(--os-ink); }
+      .status-guide span { display: inline-flex; align-items: center; gap: 0.25rem; }
+      .status-dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; display: inline-block; }
+      .status-dot.success { background: var(--os-success); }
+      .status-dot.warning { background: var(--os-warning); }
+      .status-dot.danger { background: var(--os-error); }
       .tree {
         font-size: 0.8rem;
         margin: 0.2rem 0 0.5rem;
@@ -607,12 +837,14 @@ interface TreeNode {
         display: flex; align-items: center; gap: 0.5rem; margin: 0.9rem 0; padding: 0.55rem 0.75rem;
         border-radius: var(--os-radius); background: var(--os-surface-1); font-size: 0.9rem; color: var(--os-ink);
       }
+      .cc-state p { margin: 0.12rem 0 0; color: var(--os-muted); font-size: 0.7rem; line-height: 1.35; }
       .cc-state .cc-desired { margin-left: auto; font-size: 0.72rem; color: var(--os-ink-muted); }
       .cc-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--os-ink-subtle); flex: 0 0 auto; }
-      .cc-state-enabled .cc-dot { background: var(--os-success); }
-      .cc-state-failed .cc-dot { background: var(--os-error); }
-      .cc-state-disabled .cc-dot { background: var(--os-warning); }
-      .cc-state-failed { background: rgba(218, 30, 40, 0.08); }
+      .cc-state-success .cc-dot { background: var(--os-success); }
+      .cc-state-danger .cc-dot { background: var(--os-error); }
+      .cc-state-warning .cc-dot { background: var(--os-warning); }
+      .cc-state-danger { background: rgba(218, 30, 40, 0.08); }
+      .cc-state-warning { background: rgba(255, 183, 0, 0.09); }
       .cc-reason { margin: 0 0 0.9rem; padding: 0.6rem 0.75rem; border-left: 3px solid var(--os-error); background: rgba(218, 30, 40, 0.06); font-size: 0.82rem; }
       .cc-reason strong { display: block; color: var(--os-error); margin-bottom: 0.15rem; }
       .cc-kv { display: grid; grid-template-columns: 6rem 1fr; gap: 0.35rem 0.6rem; margin: 0.6rem 0 1rem; font-size: 0.8rem; }
@@ -620,6 +852,37 @@ interface TreeNode {
       .cc-kv dd { margin: 0; color: var(--os-ink); }
       .cc-break { word-break: break-all; }
       .cc-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+      .cc-primary-actions { display: flex; gap: 0.4rem; margin: 0.5rem 0 0.9rem; }
+
+      .cc-layers {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.45rem;
+        margin: 0.7rem 0 1rem;
+      }
+      .cc-layer {
+        display: flex;
+        flex-direction: column;
+        min-height: 5.2rem;
+        padding: 0.55rem 0.6rem;
+        border: 1px solid var(--os-hairline);
+        border-top-width: 3px;
+        background: var(--os-surface-1);
+      }
+      .cc-layer-success { border-top-color: var(--os-success); }
+      .cc-layer-warning { border-top-color: var(--os-warning); }
+      .cc-layer-danger { border-top-color: var(--os-error); }
+      .cc-layer-neutral { border-top-color: var(--os-ink-subtle); }
+      .cc-layer-label { color: var(--os-muted); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; }
+      .cc-layer strong { margin: 0.18rem 0; font-size: 0.78rem; }
+      .cc-layer > span:last-child { color: var(--os-muted); font-size: 0.62rem; line-height: 1.35; }
+
+      .cc-integrations { margin: 0 0 1rem; }
+      .cc-section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 0.8rem; }
+      .cc-section-head h3 { margin: 0; font-size: 0.9rem; }
+      .cc-section-head p { margin: 0.18rem 0 0.4rem; color: var(--os-muted); font-size: 0.68rem; }
+      .cc-integrations .table { margin-top: 0.2rem; }
+      .cc-secondary { display: block; margin-bottom: 0.8rem; }
 
       .cc-iconpick { margin: 0 0 1rem; }
       .cc-iconpick-h { font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--os-ink-muted); margin-bottom: 0.4rem; }
@@ -644,12 +907,17 @@ interface TreeNode {
       .cc-step-fail .cc-step-ic { color: var(--os-error); }
       .cc-step-active .cc-step-ic { color: var(--os-accent); }
       .cc-step-pending { opacity: 0.6; }
+      @media (max-width: 1100px) {
+        .cc-layers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .status-guide { align-items: flex-start; flex-direction: column; gap: 0.25rem; }
+      }
     `,
   ],
 })
 export class AdminPlugins implements OnInit {
   private ctl = inject(PluginControlClient);
   private ext = inject(ExtensionHostService);
+  private readinessApi = inject(PlatformReadinessService);
   readonly iconLib = inject(IconLibraryService);
 
   readonly catalog = signal<CatalogItem[]>([]);
@@ -657,6 +925,9 @@ export class AdminPlugins implements OnInit {
   readonly events = signal<AuditEvent[]>([]);
   readonly bindings = signal<Binding[]>([]);
   readonly inspection = signal<ExtensionInspection | null>(null);
+  readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
+  readonly revocations = signal<ImageRevocation[]>([]);
+  readonly foundationActivationAllowed = signal(false);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   readonly pendingUninstall = signal<string | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
@@ -702,6 +973,101 @@ export class AdminPlugins implements OnInit {
     const n = this.selected();
     return this.catalog().find((c) => c.name === n)?.displayName || n || '';
   }
+  selectedPanelTitle(): string {
+    return `${this.selectedLabel()} — Extension 상세`;
+  }
+  selectedPanelSubtitle(): string {
+    const n = this.selected();
+    const item = n ? this.catalogItem(n) : undefined;
+    const registration = n ? this.registrations().find((r) => r.name === n) : undefined;
+    const version = registration?.status.currentVersion || registration?.status.observedVersion || item?.version;
+    return [item?.kind || 'Extension', n, version ? `v${version}` : ''].filter(Boolean).join(' · ');
+  }
+  displayName(name: string): string {
+    return this.catalog().find((c) => c.name === name)?.displayName || name;
+  }
+  private catalogItem(name: string): CatalogItem | undefined {
+    return this.catalog().find((c) => c.name === name);
+  }
+  integrationRows(r: Registration): IntegrationRow[] {
+    const labels: Record<string, string> = {
+      page: '페이지', navigation: '내부 메뉴 트리', api: 'API Proxy', cli: 'CLI', manual: 'Manual',
+      search: '통합 검색', notification: '알림', logs: '로그', metrics: '메트릭', traces: '트레이스',
+    };
+    const order = Object.keys(labels);
+    return Object.entries(r.status.integrations || {})
+      .map(([key, status]) => ({ key, label: labels[key] || key, status }))
+      .sort((a, b) => (order.indexOf(a.key) < 0 ? 99 : order.indexOf(a.key)) - (order.indexOf(b.key) < 0 ? 99 : order.indexOf(b.key)));
+  }
+  integrationPhaseLabel(phase?: string): string {
+    const labels: Record<string, string> = {
+      Ready: 'Ready', Disabled: '미제공', Failed: '실패', Degraded: '저하', DependencyPending: '의존성 대기',
+    };
+    return labels[phase || ''] || phase || '미보고';
+  }
+  integrationSummary(r: Registration): string {
+    const rows = this.integrationRows(r);
+    if (!rows.length) return '상태 미보고';
+    const ready = rows.filter((x) => x.status.phase === 'Ready').length;
+    const issues = rows.filter((x) => ['Failed', 'Degraded', 'DependencyPending'].includes(x.status.phase)).length;
+    const disabled = rows.filter((x) => x.status.phase === 'Disabled').length;
+    return `${ready} Ready · ${disabled} 미제공${issues ? ` · ${issues} 확인 필요` : ''}`;
+  }
+  workloadPhase(r: Registration): string {
+    return r.status.workload?.phase || r.health || '미보고';
+  }
+  menuState(r: Registration): { visible: boolean; label: string; reason: string } {
+    const loadedPage = this.ext.pages().find((page) => page.id === r.name);
+    if (loadedPage) return { visible: true, label: '메뉴 노출', reason: `${loadedPage.navBand} · /p/${r.name}` };
+    const failure = this.ext.failures().find((item) => item.id === r.name);
+    if (failure) return { visible: false, label: 'Host 적재 실패', reason: failure.error };
+    if (this.ext.loadState() === 'loading') return { visible: false, label: 'Host 적재 중', reason: 'Extension Host가 검증·등록하는 중' };
+    if (r.status.phase !== 'Activated') return { visible: false, label: '메뉴 미노출', reason: `Registration ${r.status.phase || '미보고'} 상태` };
+    if (!this.catalogItem(r.name)?.nav) return { visible: false, label: '메뉴 미선언', reason: 'UIPluginPackage spec.nav가 없음' };
+    return { visible: false, label: '메뉴 미노출', reason: 'Activated이지만 Extension Host pages registry에 적재되지 않음' };
+  }
+  pageReady(r: Registration): boolean {
+    return r.status.integrations?.['page']?.phase === 'Ready';
+  }
+  effectiveStateByName(name: string): EffectiveExtensionState {
+    const r = this.registrations().find((item) => item.name === name);
+    return r ? this.effectiveState(r) : { label: '미설치', detail: 'Registration 없음', tone: 'neutral' };
+  }
+  effectiveState(r: Registration): EffectiveExtensionState {
+    const phase = r.status.phase || 'Unknown';
+    const rows = this.integrationRows(r);
+    const failed = rows.filter((x) => ['Failed', 'Degraded'].includes(x.status.phase));
+    if (phase === 'Failed' || failed.length) {
+      return { label: phase === 'Failed' ? '실패' : '연동 저하', detail: r.status.reason || failed.map((x) => x.label).join(', '), tone: 'danger' };
+    }
+    if (phase === 'Disabled') return { label: '비활성', detail: '워크로드는 유지되지만 Console에서 비활성화됨', tone: 'neutral' };
+    if (!['Activated', 'Ready'].includes(phase)) {
+      return { label: phase, detail: r.status.reason || '설치·검증 진행 상태', tone: phase === 'Degraded' ? 'danger' : 'warning' };
+    }
+    const menu = this.menuState(r);
+    const isSubShell = this.catalogItem(r.name)?.kind === 'subShell';
+    if (isSubShell && !menu.visible) {
+      return { label: `${phase} · 메뉴 미노출`, detail: menu.reason, tone: 'warning' };
+    }
+    const pending = rows.filter((x) => x.status.phase === 'DependencyPending');
+    if (pending.length) return { label: `${phase} · 연동 대기`, detail: pending.map((x) => x.label).join(', '), tone: 'warning' };
+    return { label: phase === 'Activated' ? 'Activated · 연동 완료' : 'Ready · 활성화 대기', detail: this.integrationSummary(r), tone: phase === 'Activated' ? 'success' : 'warning' };
+  }
+  statusLayers(r: Registration): StatusLayer[] {
+    const verification = r.status.verification;
+    const verificationValues = verification ? Object.values(verification) : [];
+    const verified = verificationValues.length > 0 && verificationValues.every((v) => v === 'Verified' || v === 'Approved');
+    const workload = this.workloadPhase(r);
+    const menu = this.menuState(r);
+    const integrationIssue = this.integrationRows(r).some((x) => ['Failed', 'Degraded', 'DependencyPending'].includes(x.status.phase));
+    return [
+      { label: '1. Artifact', value: verified ? 'Verified' : verificationValues.length ? '확인 필요' : '미보고', detail: 'manifest · signature · digest · permission', tone: verified ? 'success' : 'warning' },
+      { label: '2. Workload', value: workload, detail: 'Pod · Service · health', tone: workload === 'Ready' ? 'success' : workload === 'Degraded' || workload === 'NotReady' ? 'danger' : 'warning' },
+      { label: '3. Registration', value: r.status.phase || '미보고', detail: r.status.reason || 'DUPA lifecycle', tone: r.status.phase === 'Activated' || r.status.phase === 'Ready' ? 'success' : r.status.phase === 'Failed' ? 'danger' : 'warning' },
+      { label: '4. Console integration', value: integrationIssue ? '확인 필요' : this.integrationSummary(r), detail: 'page · API · manual · search · observability', tone: integrationIssue ? 'danger' : 'success' },
+      { label: '5. User visibility', value: menu.label, detail: menu.reason, tone: menu.visible ? 'success' : 'warning' },
+    ];
+  }
   /** 검증 실패 사유(reason) 한글 설명. */
   reasonText(reason?: string): string {
     const m: Record<string, string> = {
@@ -713,6 +1079,7 @@ export class AdminPlugins implements OnInit {
       ManifestUnreachable: 'manifest 접근 불가(파드/서비스)',
       EntryUnreachable: '엔트리 파일 접근 불가',
       SignatureUnreachable: '서명 파일 접근 불가',
+      PermissionProfileDrift: 'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름',
     };
     return reason ? (m[reason] ?? reason) : '';
   }
@@ -726,7 +1093,7 @@ export class AdminPlugins implements OnInit {
     { label: '서명 검증 (P-256)', fail: ['SignatureInvalid'] },
     { label: 'shellCompat 호환', fail: ['ShellCompatDrift'] },
     { label: '엔트리(plugin.js) 해시', fail: ['EntryUnreachable', 'EntryDigestMismatch'] },
-    { label: '레지스트리 등록 · nav 노출' },
+    { label: 'Console 레지스트리 등록' },
   ];
   steps(): { label: string; state: 'done' | 'fail' | 'pending' | 'active' }[] {
     const r = this.selectedReg();
@@ -753,19 +1120,52 @@ export class AdminPlugins implements OnInit {
 
   async refresh(): Promise<void> {
     try {
-      const [c, r, e, b] = await Promise.all([
+      const [c, r, e, b, readiness, registry, revocations] = await Promise.all([
         this.ctl.catalog(),
         this.ctl.registrations(),
         this.ctl.events(),
         this.ctl.bindings(),
+        this.readinessApi.status().catch(() => null),
+        this.ctl.registryCredentialStatus().catch(() => null),
+        this.ctl.revocations().catch(() => []),
       ]);
       this.catalog.set(c);
       this.registrations.set(r);
       this.events.set(e);
       this.bindings.set(b);
+      this.foundationActivationAllowed.set(readiness?.admission.foundationActivationAllowed === true);
+      this.registryStatus.set(registry);
+      this.revocations.set(revocations);
     } catch (err) {
       this.msg.set({ type: 'danger', text: String(err) });
     }
+  }
+
+  async configureRegistryCredentials(username: string, token: string, reason: string): Promise<void> {
+    try {
+      this.registryStatus.set(await this.ctl.configureRegistryCredentials(username.trim(), token.trim(), reason.trim()));
+      this.msg.set({ type: 'success', text: 'Private GHCR read credential이 저장되었습니다. 토큰 값은 다시 표시되지 않습니다.' });
+    } catch (err) { this.msg.set({ type: 'danger', text: `GHCR 자격증명 저장 실패: ${err}` }); }
+  }
+
+  async removeRegistryCredentials(reason: string): Promise<void> {
+    try {
+      this.registryStatus.set(await this.ctl.removeRegistryCredentials(reason.trim()));
+      this.msg.set({ type: 'success', text: 'Private GHCR read credential이 제거되었습니다.' });
+    } catch (err) { this.msg.set({ type: 'danger', text: `GHCR 자격증명 제거 실패: ${err}` }); }
+  }
+
+  async revokeImage(image: string, replacementImage: string, reason: string): Promise<void> {
+    try {
+      await this.ctl.revokeImage(image.trim(), replacementImage.trim(), reason.trim());
+      this.revocations.set(await this.ctl.revocations());
+      this.msg.set({ type: 'success', text: 'Image digest가 철회되었고 신규 설치 및 활성 Registry 투영이 차단됩니다.' });
+      await this.refresh();
+    } catch (err) { this.msg.set({ type: 'danger', text: `Image 철회 실패: ${err}` }); }
+  }
+
+  foundationActivationLocked(id?: string | null): boolean {
+    return id === 'foundation' && !this.foundationActivationAllowed();
   }
 
   async inspectImage(image: string): Promise<void> {
@@ -778,7 +1178,7 @@ export class AdminPlugins implements OnInit {
   }
 
   async installImage(image: string, reason: string): Promise<void> {
-    if (!this.inspection() || this.inspection()?.image !== image.trim()) return;
+    if (!this.inspection() || this.inspection()?.requestedImage !== image.trim()) return;
     try {
       const result = await this.ctl.installImage(image.trim(), reason.trim());
       this.msg.set({ type: 'info', text: `설치 요청됨: ${result.id} — 검증 완료 후 Ready 상태가 됩니다.` });

@@ -35,6 +35,7 @@ spec:
     metadata:
       labels: { app: kanidm, app.kubernetes.io/part-of: opensphere }
     spec:
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: kanidmd
           image: ghcr.io/opensphere-platform/opensphere-console-kanidm:edge

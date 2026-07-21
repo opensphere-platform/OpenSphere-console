@@ -135,9 +135,13 @@ GET https://logos.opl.io.kr/i/{shortname}
 - 검색·선정 도구는 `/api/resolve`의 `match.confidence`, `file.role`, `url`을 사용한다.
 - 아이콘형 공간에는 `variant=icon`, 브랜드 타이틀에는 `variant=wordmark`를 우선한다.
 - 로고 크기는 CSS width/height로 정하고 CDN URL에 크기를 인코딩하지 않는다.
+- UI 소스에는 resolver가 반환한 CDN 주소를 직접 저장하지 않는다. 항상
+  `https://logos.opl.io.kr/i/{shortname}`을 사용해 OpenSphere Logos를 경유한다.
 - 임의 검색 결과, 비공식 CDN, 저장소 복사본, base64 로고를 새로 추가하지 않는다.
-- 일치하는 로고가 없으면 유사한 다른 제품 로고를 쓰지 않는다. 카탈로그 등록을 요청하거나 사용자의
-  명시적 승인을 받아 프로젝트 고유 fallback을 예외로 등록한다.
+- 새 로고를 사용하기 전 `logos.opl.io.kr` 검색 또는 `/api/resolve`로 존재와 variant를 확인한다.
+- **일치하는 로고가 없으면 구현을 중단하고 사용자에게 대상·검색어·검색 결과를 신고한다.** 유사 제품
+  로고, monogram, 임의 fallback을 자동 선택하지 않는다. 상위 제품 로고의 상속이나 프로젝트 고유
+  fallback은 사용자의 명시적 지시를 받은 뒤에만 §8 예외로 등록한다.
 - 일러스트레이션, 데이터 시각화, 사용자 업로드 이미지는 이 로고 정책의 대상이 아니다.
 
 승인된 현재 shortname:
@@ -148,6 +152,11 @@ GET https://logos.opl.io.kr/i/{shortname}
 | PostgreSQL | `postgresql` |
 | RustFS | `rustfs` |
 | Gitea | `gitea` |
+| Argo CD | `argocd` |
+| Crossplane | `crossplane-non-typo` |
+| Mattermost | `mattermost?variant=icon` |
+| Grafana·Tempo·Loki(승인된 상속) | `grafana` |
+| Velero·.ptm(승인된 상속) | `velero` |
 
 ### 5.2 Carbon 아이콘
 

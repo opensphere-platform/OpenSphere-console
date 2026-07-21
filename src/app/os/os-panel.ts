@@ -66,7 +66,9 @@ import { ClarityModule } from '@clr/angular';
       /* R2 확장: Clarity size 프리셋 대신 연속 폭 — 변수 하나만 주입
      * (.side-panel은 clr-side-panel 호스트 자신의 클래스) */
       :host ::ng-deep clr-side-panel.side-panel .modal-dialog {
+        top: var(--os-header-height, 3rem);
         width: var(--os-panel-w, 72vw) !important;
+        height: calc(100vh - var(--os-header-height, 3rem)) !important;
         min-width: 420px;
         max-width: 92vw;
       }

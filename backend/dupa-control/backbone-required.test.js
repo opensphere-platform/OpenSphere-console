@@ -9,7 +9,7 @@ const db = fs.readFileSync(path.join(__dirname, 'db.js'), 'utf8');
 const identity = fs.readFileSync(path.join(consoleRoot, 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
 const nginx = fs.readFileSync(path.join(consoleRoot, 'nginx', 'default.conf.template'), 'utf8');
 const consoleDeploy = fs.readFileSync(path.join(consoleRoot, 'deploy', 'opensphere-console.yaml'), 'utf8');
-const backbone = fs.readFileSync(path.join(consoleRoot, 'backend', 'backbone', 'bootstrap', 'backbone.yaml'), 'utf8');
+const backbone = fs.readFileSync(path.join(consoleRoot, 'backend', 'backbone', 'bootstrap', 'backbone.yaml'), 'utf8').replace(/\r\n/g, '\n');
 const architecture = fs.readFileSync(path.join(consoleRoot, 'docs', 'BACKBONE-ARCHITECTURE.md'), 'utf8');
 
 test('Backbone is the mandatory readiness base for the Main Shell', () => {
@@ -41,11 +41,17 @@ test('durable audit is fail-closed with no ConfigMap fallback', () => {
   assert.match(db, /audit_no_update/);
   assert.match(db, /audit_no_delete/);
   assert.match(db, /audit_no_truncate/);
+  assert.match(db, /revocation_owner_isolated/);
+  assert.match(db, /revocation_trigger_always/);
+  assert.match(db, /revocation_no_update/);
+  assert.match(db, /revocation_no_delete/);
+  assert.match(db, /revocation_no_truncate/);
   assert.match(db, /source, actor, action, target, result, reason/);
   assert.match(db, /Backbone PostgreSQL CA is required/);
   assert.match(db, /rejectUnauthorized: true/);
   assert.doesNotMatch(db, /CREATE TRIGGER audit_log_append_only/);
   assert.doesNotMatch(db, /CREATE TABLE IF NOT EXISTS audit_log/);
+  assert.doesNotMatch(db, /CREATE TABLE IF NOT EXISTS oci_image_revocation/);
   assert.match(db, /async function mutateManagedCredential/);
   assert.match(db, /BEGIN/);
   assert.match(db, /INSERT INTO audit_log/);
@@ -74,6 +80,10 @@ test('Backbone bootstrap pins and isolates all three pillars', () => {
   assert.match(backbone, /CREATE ROLE console LOGIN PASSWORD/);
   assert.match(backbone, /NOCREATEROLE NOCREATEDB/);
   assert.match(backbone, /ENABLE ALWAYS TRIGGER audit_log_append_only/);
+  assert.match(backbone, /ENABLE ALWAYS TRIGGER oci_image_revocation_append_only/);
+  assert.match(backbone, /CREATE TABLE public\.oci_image_revocation/);
+  assert.match(backbone, /GRANT SELECT, INSERT ON TABLE public\.oci_image_revocation TO console/);
+  assert.doesNotMatch(backbone, /GRANT[^\n]*(?:UPDATE|DELETE|TRUNCATE)[^\n]*oci_image_revocation TO console/);
   assert.match(backbone, /source\s+text NOT NULL DEFAULT 'dupa-controller'/);
   assert.match(backbone, /ssl=on/);
   assert.match(backbone, /ssl_cert_file=\/var\/run\/postgres-tls\/tls\.crt/);

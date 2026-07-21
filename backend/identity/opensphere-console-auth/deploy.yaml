@@ -137,6 +137,7 @@ spec:
       labels: { app: opensphere-console-auth }
     spec:
       serviceAccountName: opensphere-console-auth
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

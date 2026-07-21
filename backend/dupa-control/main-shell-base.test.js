@@ -112,17 +112,19 @@ test('audited management UI uses Clarity controls and explicit accessibility sta
   const admins = read('src', 'app', 'pages', 'console-admins.ts');
   const backbone = read('src', 'app', 'pages', 'backbone-slice.ts');
   const notifications = read('src', 'app', 'os', 'os-notifications.ts');
+  const oaaAgent = read('src', 'app', 'os', 'os-oaa-agent.ts');
   const catalog = read('src', 'app', 'pages', 'catalog.ts');
   const apis = read('src', 'app', 'pages', 'apis.ts');
   const shell = read('src', 'app', 'os', 'os-shell.ts');
   const styles = read('src', 'styles.scss');
   const index = read('src', 'index.html');
-  const audited = [plugins, roles, admins, backbone, notifications, catalog, apis].join('\n');
+  const audited = [plugins, roles, admins, backbone, notifications, oaaAgent, catalog, apis].join('\n');
 
   assert.match(plugins, /<os-panel/);
   assert.doesNotMatch(plugins, /cc-drawer-backdrop|<aside class="cc-drawer"/);
   assert.match(notifications, /<clr-dropdown/);
   assert.match(notifications, /<clr-alert/);
+  assert.match(oaaAgent, /<clr-modal/);
   assert.doesNotMatch(audited, /\b(?:window\.)?(?:prompt|confirm)\s*\(/);
   assert.doesNotMatch(audited, /http:\/\/localhost:7007|cdn\.statically\.io/);
   assert.match(backbone, /https:\/\/logos\.opl\.io\.kr\/i\//);
@@ -171,6 +173,7 @@ test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
   const deploy = read('backend', 'os-cli', 'deploy.yaml');
   const cliDockerfile = read('backend', 'os-cli', 'Dockerfile');
   const dockerfile = read('Dockerfile');
+  const localRuntimeDockerfile = read('deploy', 'Dockerfile.local-runtime');
 
   assert.match(routes, /path:\s*'cli',\s*component:\s*AdminCli/);
   assert.match(layout, /route:\s*'\/manage\/cli'/);
@@ -183,6 +186,10 @@ test('os CLI is Console-native and cannot be reintroduced as a Binding', () => {
   assert.match(dockerfile, /AS cli-manifest/);
   assert.match(dockerfile, /RUN node \.\/generate-manifest\.mjs/);
   assert.match(dockerfile, /COPY --from=cli-manifest \/manifest\/artifacts\/ \/usr\/share\/nginx\/html\/api\/cli\//);
+  assert.match(localRuntimeDockerfile, /ARG BASE_IMAGE=/);
+  assert.match(localRuntimeDockerfile, /FROM \$\{BASE_IMAGE\}/);
+  assert.match(localRuntimeDockerfile, /test -s \/usr\/share\/nginx\/html\/api\/cli\/index\.json/);
+  assert.doesNotMatch(localRuntimeDockerfile, /FROM .*nginx-unprivileged/);
   assert.doesNotMatch(nginx, /location .*\/api\/plugins\/os-cli/);
   assert.match(controller, /NATIVE_BINDING_NAMES = new Set\(\['os'\]\)/);
   assert.equal(manifest.ownership, 'console-native');

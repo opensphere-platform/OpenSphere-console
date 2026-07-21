@@ -4,6 +4,8 @@ Status: draft v0.2
 Date: 2026-07-04
 Scope: OpenSphere AI Agent(OAA), OpenSphere manuals, Backbone PostgreSQL + pgvector
 
+Product ownership: Manual UI, canonical Help Center documents, release seed and lifecycle are owned exclusively by `OpenSphere-console`. OAA Gateway provides the Console-owned durable registry/search execution boundary; it is not a separate Manual product owner. See `MANUAL-OWNERSHIP.md`.
+
 Governance note: Manual contribution, authority and Shell integration follow
 [`CONSTITUTION-0003` §14](../../_DOCS_/01-CONSTITUTION/CONSTITUTION-0003-SHELL-HOSTING-INTEGRATION.md#14-manual과-search-연결).
 The current implementation exposes the OAA manual knowledge store through `/api/manual/*`,
@@ -722,7 +724,7 @@ Backbone > OAA Gateway > Knowledge Store should evolve from a free text form int
 
 1. Manual paste: current MVP form.
 2. Manual seed: upload or trigger a `manual-seed` manifest.
-3. Repository sync: ingest selected paths from `_DOCS_`, `OpenSphere-console/docs`, `OpenSphere-shell-menual`, and signed subShell manual contributions.
+3. Repository sync: ingest selected paths from `_DOCS_`, `OpenSphere-console/docs`, and signed subShell manual contributions. There is no standalone Manual repository or Manual subShell ingestion source.
 
 The UI must display:
 
@@ -748,4 +750,4 @@ Recommended ingestion order:
 5. `OpenSphere-console/docs/OAA-BACKBONE-IMPLEMENTATION-PLAN.md`: tier 3
 6. Manual Registry seed/canonical docs (`backend/opensphere-console-oaa-gateway/manual-seeds/opensphere-core-manuals.json`): tier 2 Help Center source
 
-The Manual Registry seed/canonical docs are authoritative. The legacy `OpenSphere-shell-menual/src/app/docs.ts` source is retired after migration verification; the Help Center, the Console-native `/manual` page, and OAA all consume the same canonical content served from the Manual Registry.
+The Manual Registry seed/canonical docs are authoritative. The legacy standalone Manual source was retired after migration verification; the Help Center, the Console-native `/manual` page, and OAA all consume the same canonical content served from the Manual Registry.

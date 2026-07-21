@@ -1,5 +1,8 @@
 node_modules
 dist
+!dist/
+!dist/opensphere-console/
+!dist/opensphere-console/browser/**
 .git
 .angular
 *.md
