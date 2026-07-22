@@ -51,7 +51,7 @@ spec:
       containers:
         - name: api
           # 실배포 기준: 현재 검증된 로컬 런타임 이미지.
-          image: opensphere-console-backend:manage-audit-v6
+          image: opensphere-console-backend:cli-contract-v7
           imagePullPolicy: IfNotPresent
           env:
             # fetch(kube API / secret read)가 kube CA 신뢰하도록

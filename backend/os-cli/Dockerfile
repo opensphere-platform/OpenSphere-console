@@ -11,9 +11,9 @@ COPY --from=macos-cli /opensphere-cli-darwin-arm64 /prebuilt/opensphere-cli-darw
 # cross-compiled. This keeps the arm64 image build from executing an amd64 test.
 RUN test -s /prebuilt/opensphere-cli-darwin-arm64 || { echo >&2 'native macOS CLI artifact is missing or empty'; exit 1; }
 RUN mkdir -p /out && go test ./... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.5.0" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.5.1" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
     install -m 0755 /prebuilt/opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64 && \
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.5.0" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.5.1" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 
 # index.json의 크기·SHA-256은 소스에 적힌 과거 값이 아니라 이 빌드에서 나온 정확한
 # 세 바이너리로 다시 생성한다. Console은 이 생성물만 배포한다.

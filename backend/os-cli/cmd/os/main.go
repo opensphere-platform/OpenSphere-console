@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-var version = "0.5.0"
+var version = "0.5.1"
 
 type Config struct {
 	Profile     string `json:"profile"`
@@ -62,14 +62,14 @@ type Registry struct {
 }
 
 type Tool struct {
-	Command     string `json:"command"`
-	Method      string `json:"method"`
-	Path        string `json:"path"`
+	Command     string               `json:"command"`
+	Method      string               `json:"method"`
+	Path        string               `json:"path"`
 	Components  map[string]ToolRoute `json:"components"`
 	Operations  map[string]ToolRoute `json:"operations"`
-	Description string `json:"description"`
-	Risk        string `json:"risk"`
-	Scope       string `json:"scope"`
+	Description string               `json:"description"`
+	Risk        string               `json:"risk"`
+	Scope       string               `json:"scope"`
 }
 
 type ToolRoute struct {
@@ -267,7 +267,7 @@ func signDeviceChallenge(privateDER []byte, deviceID, challengeID, nonce string)
 	if err != nil {
 		return "", fmt.Errorf("디바이스 개인키 파싱 실패: %w", err)
 	}
-	message := fmt.Sprintf("opensphere-cli-session-v1\n%s\n%s\n%s", deviceID, challengeID, nonce)
+	message := fmt.Sprintf("opensphere-cli-session-v2\n%s\n%s\n%s", deviceID, challengeID, nonce)
 	digest := sha256.Sum256([]byte(message))
 	signature, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
 	if err != nil {
@@ -279,13 +279,6 @@ func signDeviceChallenge(privateDER []byte, deviceID, challengeID, nonce string)
 func credentialToken(cfg Config) (string, error) {
 	if strings.TrimSpace(cfg.PAT) != "" {
 		return strings.TrimSpace(cfg.PAT), nil
-	}
-	// Supabase access tokens are short-lived, MFA-bound bearer credentials.  They
-	// are deliberately process-only (OS_ID_TOKEN) and must never be persisted in
-	// config.json or the device key store.  This also preserves the existing
-	// Kanidm device challenge as the default when no explicit session is supplied.
-	if strings.TrimSpace(cfg.IDToken) != "" {
-		return strings.TrimSpace(cfg.IDToken), nil
 	}
 	if cfg.DeviceID == "" {
 		return "", errors.New("등록된 CLI 디바이스가 없습니다; os login을 실행하세요")
@@ -358,7 +351,24 @@ func requireOK(b []byte, status int) error {
 	if status >= 200 && status < 300 {
 		return nil
 	}
-	msg := strings.TrimSpace(string(b))
+	var payload map[string]any
+	if err := json.Unmarshal(b, &payload); err != nil {
+		return fmt.Errorf("HTTP %d: Console API가 JSON이 아닌 응답을 반환했습니다", status)
+	}
+	msg := ""
+	for _, key := range []string{"message", "error", "msg"} {
+		if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
+			msg = strings.TrimSpace(value)
+			break
+		}
+	}
+	if msg == "" {
+		compact, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("HTTP %d: Console API 요청이 실패했습니다", status)
+		}
+		msg = string(compact)
+	}
 	if len(msg) > 500 {
 		msg = msg[:500]
 	}

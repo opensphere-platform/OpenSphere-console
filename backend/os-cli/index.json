@@ -4,7 +4,7 @@
   "description": "OpenSphere Console native 관리자 CLI. Supabase 장치 신뢰·Registry·API·role 계약을 Console과 공유합니다.",
   "ownership": "console-native",
   "profile": "admin",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "links": [
     { "os": "linux",   "arch": "amd64", "text": "Linux (amd64)",   "href": "/api/cli/opensphere-cli-linux-amd64",       "size": 0, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
     { "os": "windows", "arch": "amd64", "text": "Windows (amd64)", "href": "/api/cli/opensphere-cli-windows-amd64.exe", "size": 0, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" }

@@ -2,6 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -37,20 +41,6 @@ func TestDynamicModuleCommandsIgnoreManifestFlagsAndNormalizePayloadKeys(t *test
 	}
 }
 
-func TestCredentialTokenUsesProcessOnlyIDTokenBeforeDeviceState(t *testing.T) {
-	cfg := defaults()
-	cfg.PAT = ""
-	cfg.IDToken = "supabase-access-token"
-	cfg.DeviceID = ""
-	token, err := credentialToken(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if token != "supabase-access-token" {
-		t.Fatalf("credentialToken()=%q", token)
-	}
-}
-
 func TestJSONCallRejectsSuccessfulHTMLFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -64,6 +54,50 @@ func TestJSONCallRejectsSuccessfulHTMLFallback(t *testing.T) {
 	err := jsonCall(cfg, http.MethodGet, server.URL+"/api/catalog/entities", nil, &out)
 	if err == nil || !strings.Contains(err.Error(), "JSON 대신 text/html") {
 		t.Fatalf("HTML fallback must fail closed, got err=%v out=%q", err, out.String())
+	}
+}
+
+func TestRequireOKNeverEchoesHTML(t *testing.T) {
+	err := requireOK([]byte("<html><body><h1>405 Not Allowed</h1></body></html>"), http.StatusMethodNotAllowed)
+	if err == nil {
+		t.Fatal("non-JSON API error must fail")
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "<html") || !strings.Contains(err.Error(), "JSON이 아닌 응답") {
+		t.Fatalf("HTML must not be echoed to the terminal: %v", err)
+	}
+}
+
+func TestRequireOKUsesJSONErrorMessage(t *testing.T) {
+	err := requireOK([]byte(`{"error":"method_not_allowed","message":"GET 또는 HEAD만 허용됩니다"}`), http.StatusMethodNotAllowed)
+	if err == nil || !strings.Contains(err.Error(), "GET 또는 HEAD만 허용됩니다") {
+		t.Fatalf("structured JSON error must remain useful: %v", err)
+	}
+}
+
+func TestDeviceChallengeSignatureUsesServerV2Contract(t *testing.T) {
+	privateDER, _, err := generateDeviceKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := signDeviceChallenge(privateDER, "device-id", "challenge-id", "nonce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := x509.ParseECPrivateKey(privateDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := sha256.Sum256([]byte("opensphere-cli-session-v2\ndevice-id\nchallenge-id\nnonce"))
+	if !ecdsa.VerifyASN1(&key.PublicKey, v2[:], decoded) {
+		t.Fatal("signature must verify against the server v2 challenge contract")
+	}
+	v1 := sha256.Sum256([]byte("opensphere-cli-session-v1\ndevice-id\nchallenge-id\nnonce"))
+	if ecdsa.VerifyASN1(&key.PublicKey, v1[:], decoded) {
+		t.Fatal("retired v1 challenge contract must not verify")
 	}
 }
 

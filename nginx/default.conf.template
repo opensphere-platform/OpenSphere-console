@@ -211,8 +211,24 @@ server {
 
     # Main Shell native os CLI — artifacts are packaged in the Console image itself.
     location /api/cli/ {
-        limit_except GET { deny all; }
+        # /api/cli is artifact delivery only. A retired CLI once posted its login
+        # request here and nginx's default HTML 405 leaked into the terminal.
+        # Keep the API error contract machine-readable even for stale clients.
+        error_page 404 = @cli_artifact_not_found;
+        error_page 418 = @cli_method_not_allowed;
+        if ($request_method !~ ^(GET|HEAD)$) { return 418; }
         try_files $uri =404;
+    }
+
+    location @cli_method_not_allowed {
+        default_type application/json;
+        add_header Allow "GET, HEAD" always;
+        return 405 '{"error":"method_not_allowed","message":"/api/cli/ is a GET-only CLI artifact endpoint. Authentication uses /api/identity/cli/."}';
+    }
+
+    location @cli_artifact_not_found {
+        default_type application/json;
+        return 404 '{"error":"cli_artifact_not_found","message":"The requested CLI artifact does not exist."}';
     }
 
     # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).

@@ -91,7 +91,7 @@ jobs:
           test "$(go env GOARCH)" = arm64
           test "$(go env CGO_ENABLED)" = 1
           go test ./...
-          go build -trimpath -ldflags="-s -w -X main.version=0.5.0" -o opensphere-cli-darwin-arm64 ./cmd/os
+          go build -trimpath -ldflags="-s -w -X main.version=0.5.1" -o opensphere-cli-darwin-arm64 ./cmd/os
           file opensphere-cli-darwin-arm64 | grep -q 'arm64'
       - name: Upload macOS CLI artifact
         uses: actions/upload-artifact@v4

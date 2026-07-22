@@ -10,7 +10,7 @@ const newOpId = () => randomUUID();
 
 const PORT = process.env.PORT || 8080;
 const PLUGIN_DIR = process.env.PLUGIN_DIR || '/plugins';
-const VERSION = process.env.APP_VERSION || '0.5.0-supabase-cli';
+const VERSION = process.env.APP_VERSION || '0.5.1-supabase-cli';
 const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
 
 const SUPABASE_REST_URL = process.env.SUPABASE_REST_URL || '';
@@ -1497,7 +1497,8 @@ const server = http.createServer(async (req, res) => {
     // browser credential; browser approval always re-verifies the Supabase
     // session and atomically binds the device to that Console subject.
     if (p === '/api/identity/cli/enrollments' && req.method === 'POST') {
-      return json(res, 201, await cliEnrollmentCreate(await readBody(req)));
+      try { return json(res, 201, await cliEnrollmentCreate(await readBody(req))); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'CLI enrollment creation failed' }); }
     }
     const cliEnrollmentPath = p.match(/^\/api\/identity\/cli\/enrollments\/([0-9a-fA-F-]+)$/);
     const cliEnrollmentPollPath = p.match(/^\/api\/identity\/cli\/enrollments\/([0-9a-fA-F-]+)\/poll$/);
