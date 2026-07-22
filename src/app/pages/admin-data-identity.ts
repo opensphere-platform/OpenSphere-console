@@ -15,6 +15,17 @@ interface SupabaseComponent { key: 'auth' | 'data' | 'storage'; name: string; re
 interface SupabaseBucket { id: string; name: string; public: boolean; file_size_limit: number | null; }
 interface RecoveryCheck { assertion: string; expected: string; observed: string; verdict: string; }
 interface RecoveryUnit { state: string; declaredState?: string; verifiedAt: string | null; assertions: string[]; checks?: RecoveryCheck[]; evidenceQuality?: string; }
+interface RecoveryEvidenceRow {
+  id: string;
+  domain: string;
+  domainState: string;
+  verifiedAt: string | null;
+  domainStart: boolean;
+  assertion: string;
+  expected: string;
+  observed: string;
+  verdict: string;
+}
 interface Integration {
   consumerId: string; displayName: string; status: string; schemas: string[]; buckets: string[];
   observability: { phase: string; binding: string | null; observedAt: string | null } | null;
@@ -115,8 +126,36 @@ interface SupabaseStatus {
                 <div class="recovery-overview">
                   @for (unit of recoveryRows(current); track unit.name) { <section><span>{{ unit.name }}</span><strong [class]="recoveryUnitClass(unit.value)">{{ recoveryUnitVerdict(unit.value) }}</strong><small>{{ formatDate(unit.value.verifiedAt) }}</small></section> }
                 </div>
-                @for (unit of recoveryRows(current); track unit.name) { <section class="os-card recovery-detail"><div class="os-card-h"><span>{{ unit.name }} restore assertions</span><strong [class]="recoveryUnitClass(unit.value)">{{ recoveryUnitVerdict(unit.value) }}</strong></div>@if (unit.value.checks?.length) { <div class="check-table"><div class="check-head"><span>Assertion</span><span>Expected</span><span>Observed</span><span>Verdict</span></div>@for (check of unit.value.checks || []; track check.assertion) { <div><strong>{{ check.assertion }}</strong><span>{{ check.expected }}</span><span>{{ check.observed }}</span><span [class]="check.verdict === 'Verified' ? 'ok' : 'warn'">{{ check.verdict === 'Verified' ? 'Verified' : 'Insufficient evidence' }}</span></div> }</div> } @else if (unit.value.assertions.length) { <ul>@for (assertion of unit.value.assertions; track assertion) { <li class="os-mono">{{ assertion }}</li> }</ul> } @else { <p class="os-sub">검증 assertion이 기록되지 않았습니다. 이 상태는 Verified가 아닙니다.</p> }</section> }
-                <p class="os-sub">Legacy cleanup: {{ current.recovery.legacyDecommission?.approved ? 'approved and completed ' + (current.recovery.legacyDecommission?.completedAt || '') : 'not recorded' }}.</p>
+                <section class="recovery-evidence" aria-labelledby="recovery-evidence-title">
+                  <header>
+                    <div><span>Recovery evidence</span><strong id="recovery-evidence-title">Restore assertions</strong></div>
+                    <small>{{ recoveryRows(current).length }} domains · {{ recoveryEvidenceRows(current).length }} assertions</small>
+                  </header>
+                  <div class="evidence-scroll">
+                    <div class="evidence-table" role="table" aria-label="Supabase, Storage 및 Gitea 복구 검증 결과">
+                      <div class="evidence-head" role="row">
+                        <span role="columnheader">Domain</span><span role="columnheader">Assertion</span><span role="columnheader">Expected</span><span role="columnheader">Observed</span><span role="columnheader">Verdict</span>
+                      </div>
+                      <div class="evidence-body" role="rowgroup">
+                        @for (row of recoveryEvidenceRows(current); track row.id) {
+                          <div class="evidence-row" [class.domain-start]="row.domainStart" role="row">
+                            <div class="evidence-domain" role="cell">
+                              @if (row.domainStart) {
+                                <strong>{{ row.domain }}</strong>
+                                <small [class]="row.domainState === 'Verified' ? 'ok' : 'warn'">{{ row.domainState }} · {{ formatDate(row.verifiedAt) }}</small>
+                              }
+                            </div>
+                            <strong role="cell">{{ row.assertion }}</strong>
+                            <span role="cell">{{ row.expected }}</span>
+                            <span role="cell">{{ row.observed }}</span>
+                            <span class="evidence-verdict" [class.ok]="row.verdict === 'Verified'" [class.warn]="row.verdict !== 'Verified'" role="cell"><os-cicon [icon]="row.verdict === 'Verified' ? icons.check : icons.warning" [size]="14" />{{ row.verdict }}</span>
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  </div>
+                  <footer><span>Legacy cleanup</span><strong>{{ current.recovery.legacyDecommission?.approved ? 'Approved · ' + formatDate(current.recovery.legacyDecommission?.completedAt) : 'Not recorded' }}</strong></footer>
+                </section>
               } @else { <clr-alert clrAlertType="warning" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">복구 증거를 읽을 수 없습니다: {{ current.recovery.reason || 'unknown' }}</span></clr-alert-item></clr-alert> }
           </section>
         }
@@ -135,12 +174,12 @@ interface SupabaseStatus {
     </div>
   `,
   styles: [`
-    .visibility-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:.75rem 0;border:1px solid var(--os-hairline);background:var(--os-canvas)}.visibility-grid section{display:grid;gap:.22rem;padding:.75rem;border-right:1px solid var(--os-hairline)}.visibility-grid section:last-child{border-right:0}.visibility-grid span,.visibility-grid small{color:var(--os-ink-muted);font-size:.6rem}.visibility-grid strong{font-size:.72rem}.recovery-overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:.75rem 0;border:1px solid var(--os-hairline);background:var(--os-canvas)}.recovery-overview section{display:grid;gap:.2rem;padding:.8rem;border-right:1px solid var(--os-hairline)}.recovery-overview section:last-child{border-right:0}.recovery-overview span,.recovery-overview small{color:var(--os-ink-muted);font-size:.6rem}.recovery-overview strong{font-size:.78rem}.recovery-detail .os-card-h{display:flex;justify-content:space-between;gap:.75rem}.check-table{display:grid;font-size:.64rem}.check-table>div{display:grid;grid-template-columns:minmax(12rem,1.4fr) .65fr .65fr 1fr;gap:.5rem;padding:.42rem 0;border-bottom:1px solid var(--os-hairline)}.check-table>div:last-child{border-bottom:0}.check-table .check-head{color:var(--os-ink-muted);font-size:.57rem}.status-label{display:inline-flex;align-items:center;gap:.25rem}.ok{color:var(--os-success)!important}.warn{color:#a15c00!important}.danger{color:var(--os-danger)!important}
+    .visibility-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:.75rem 0;border:1px solid var(--os-hairline);background:var(--os-canvas)}.visibility-grid section{display:grid;gap:.22rem;padding:.75rem;border-right:1px solid var(--os-hairline)}.visibility-grid section:last-child{border-right:0}.visibility-grid span,.visibility-grid small{color:var(--os-ink-muted);font-size:.6rem}.visibility-grid strong{font-size:.72rem}.recovery-overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:.75rem 0 .6rem;border:1px solid var(--os-hairline);background:var(--os-canvas)}.recovery-overview section{display:grid;gap:.16rem;padding:.62rem .72rem;border-right:1px solid var(--os-hairline)}.recovery-overview section:last-child{border-right:0}.recovery-overview span,.recovery-overview small{color:var(--os-ink-muted);font-size:.58rem}.recovery-overview strong{font-size:.72rem}.recovery-evidence{border:1px solid var(--os-hairline);background:var(--os-canvas)}.recovery-evidence>header{display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:3.1rem;padding:.55rem .72rem;border-bottom:1px solid var(--os-hairline);background:var(--os-surface-1)}.recovery-evidence>header>div{display:grid;gap:.08rem}.recovery-evidence>header span,.recovery-evidence>header small{color:var(--os-ink-muted);font-size:.56rem}.recovery-evidence>header strong{color:var(--os-ink);font-size:.78rem;font-weight:600}.evidence-scroll{overflow-x:auto}.evidence-table{min-width:62rem}.evidence-head,.evidence-row{display:grid;grid-template-columns:minmax(11rem,1.05fr) minmax(14rem,1.45fr) minmax(6rem,.55fr) minmax(6rem,.55fr) minmax(10rem,.85fr)}.evidence-head{min-height:1.9rem;border-bottom:1px solid var(--os-hairline);background:var(--os-surface-1);color:var(--os-ink-muted);font-size:.56rem;font-weight:600}.evidence-head span,.evidence-row>[role='cell']{display:flex;align-items:center;min-width:0;padding:.35rem .62rem;border-right:1px solid var(--os-hairline)}.evidence-head span:last-child,.evidence-row>[role='cell']:last-child{border-right:0}.evidence-row{min-height:2.3rem;border-bottom:1px solid var(--os-hairline);font-size:.63rem}.evidence-row:last-child{border-bottom:0}.evidence-row.domain-start{border-top:1px solid #c7ccd4}.evidence-body .evidence-row:first-child{border-top:0}.evidence-row>strong{font-weight:600;overflow-wrap:anywhere}.evidence-domain{display:grid!important;align-content:center!important;gap:.08rem;background:var(--os-surface-1)}.evidence-domain strong{font-size:.63rem}.evidence-domain small{overflow:hidden;font-size:.53rem;text-overflow:ellipsis;white-space:nowrap}.evidence-verdict{gap:.28rem;font-weight:600;white-space:nowrap}.recovery-evidence>footer{display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:2.15rem;padding:.4rem .72rem;border-top:1px solid var(--os-hairline);background:var(--os-surface-1);font-size:.58rem}.recovery-evidence>footer span{color:var(--os-ink-muted)}.recovery-evidence>footer strong{font-size:.6rem}.status-label{display:inline-flex;align-items:center;gap:.25rem}.ok{color:var(--os-success)!important}.warn{color:#a15c00!important}.danger{color:var(--os-danger)!important}
     .os-sub { color:var(--os-ink-muted); font-size:.72rem; margin:.3rem 0 .9rem; } .os-mono { font-family:monospace; font-size:.64rem; color:var(--os-ink-muted); }
     .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.75rem; margin:.8rem 0 1rem; } .summary-grid section { display:grid; gap:.25rem; padding:1rem; border:1px solid var(--os-border); background:var(--os-surface-raised); } .summary-grid span,.summary-grid small,small { color:var(--os-muted); font-size:.64rem; } .summary-grid strong { color:var(--os-accent); font-size:1.05rem; overflow-wrap:anywhere; }
     .architecture { display:flex; flex-wrap:wrap; gap:.45rem; align-items:center; margin:.8rem 0; padding:.8rem 1rem; background:var(--os-surface-raised); border:1px solid var(--os-border); font-size:.75rem; } .architecture span { padding:.28rem .5rem; background:#e8f0ff; color:#164a9b; border-radius:.2rem; font-weight:600; } .architecture b { color:var(--os-muted); }
     .os-card { margin:.85rem 0; padding:.8rem 1rem; border:1px solid var(--os-border); background:var(--os-surface-raised); } .os-card-h { margin:-.8rem -1rem .7rem; padding:.55rem .8rem; border-bottom:1px solid var(--os-border); font-weight:600; font-size:.8rem; } .os-card p { font-size:.75rem; margin:.45rem 0; } .property { display:grid; grid-template-columns:9rem minmax(0,1fr); gap:.35rem .75rem; margin:.6rem 0; font-size:.72rem; } .property small { grid-column:2; } h2 { margin:1rem 0 .5rem; font-size:.9rem; } ul { margin:.35rem 0; padding-left:1.2rem; } li { margin:.25rem 0; } clr-dg-cell { display:grid; gap:.18rem; }
-    @media (max-width:64rem) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } } @media (max-width:48rem) { .summary-grid,.visibility-grid,.recovery-overview { grid-template-columns:1fr; }.visibility-grid section,.recovery-overview section{border-right:0;border-bottom:1px solid var(--os-hairline)} .property { grid-template-columns:1fr; } .property small { grid-column:1; }.check-table>div{grid-template-columns:1fr 1fr}.check-table .check-head{display:none} }
+    @media (max-width:64rem) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } } @media (max-width:48rem) { .summary-grid,.visibility-grid,.recovery-overview { grid-template-columns:1fr; }.visibility-grid section,.recovery-overview section{border-right:0;border-bottom:1px solid var(--os-hairline)}.recovery-overview section:last-child{border-bottom:0}.property { grid-template-columns:1fr; } .property small { grid-column:1; }.recovery-evidence>header{align-items:flex-start}.recovery-evidence>header small{text-align:right} }
   `],
 })
 export class AdminDataIdentity implements OnInit, OnDestroy {
@@ -166,5 +205,25 @@ export class AdminDataIdentity implements OnInit, OnDestroy {
   recoveryVerdict(value: SupabaseStatus): string { if (!value.recovery.available) return 'Attention required'; return this.recoveryRows(value).every((row) => this.recoveryUnitVerdict(row.value) === 'Verified') ? 'Verified' : 'Attention required'; }
   recoveryStatusClass(value: SupabaseStatus): string { return this.recoveryVerdict(value) === 'Verified' ? 'status-label ok' : 'status-label warn'; }
   recoveryRows(value: SupabaseStatus): { name: string; value: RecoveryUnit }[] { const recovery = value.recovery; return [{ name: 'Supabase database', value: recovery.supabase || { state: 'Unknown', verifiedAt: null, assertions: [] } }, { name: 'Storage', value: recovery.storage || { state: 'Unknown', verifiedAt: null, assertions: [] } }, { name: 'Gitea change authority', value: recovery.gitea || { state: 'Unknown', verifiedAt: null, assertions: [] } }]; }
+  recoveryEvidenceRows(value: SupabaseStatus): RecoveryEvidenceRow[] {
+    return this.recoveryRows(value).flatMap(({ name, value: unit }) => {
+      const checks: RecoveryCheck[] = unit.checks?.length
+        ? unit.checks
+        : unit.assertions.length
+          ? unit.assertions.map((assertion) => ({ assertion, expected: 'Recorded evidence', observed: 'Recorded', verdict: this.recoveryUnitVerdict(unit) }))
+          : [{ assertion: 'Recovery assertion recorded', expected: 'Recorded evidence', observed: 'None', verdict: 'Insufficient evidence' }];
+      return checks.map((check, index) => ({
+        id: `${name}:${check.assertion}:${index}`,
+        domain: name,
+        domainState: this.recoveryUnitVerdict(unit),
+        verifiedAt: unit.verifiedAt,
+        domainStart: index === 0,
+        assertion: check.assertion,
+        expected: check.expected,
+        observed: check.observed,
+        verdict: check.verdict === 'Verified' ? 'Verified' : 'Insufficient evidence',
+      }));
+    });
+  }
   async refresh(silent = false): Promise<void> { if (!silent) this.busy.set(true); try { const response = await this.http.request('/api/identity/supabase/status', { cache: 'no-store' }); if (response.status === 401) { this.message.set({ type: 'danger', text: 'Console 세션을 다시 확인하세요.' }); return; } if (response.status === 403) { this.message.set({ type: 'danger', text: 'Supabase 기반 관리 상태는 console-admins 역할만 볼 수 있습니다.' }); return; } if (!response.ok) { this.down.set(`Supabase status HTTP ${response.status}`); return; } this.status.set(await response.json() as SupabaseStatus); this.down.set(''); } catch (error) { this.down.set(`Supabase 상태 조회 실패: ${String(error)}`); } finally { if (!silent) this.busy.set(false); } }
 }

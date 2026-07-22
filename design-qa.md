@@ -177,3 +177,59 @@ Date: 2026-07-23 (KST)
 - Re-authenticate the existing Chrome Console tab, open one Catalog entity, and capture the same viewport/state for the final visual comparison.
 
 final result: blocked
+
+---
+
+# Data & Identity recovery evidence grid — Design QA
+
+Date: 2026-07-23 (KST)
+
+## Source and implementation
+
+- Source visual truth: `C:\Users\cmars\AppData\Local\Temp\codex-clipboard-1ed66712-6df5-432c-869f-b5232e2166a7.png`
+- Source pixels: 2510×1515 including 75 px of Chrome chrome; normalized app viewport: 2510×1440.
+- Implementation runtime: `https://localhost:8090/manage/data-identity`, `Security & DR` selected.
+- Initial implementation evidence: `docs/audit-evidence/data-identity-security-dr-v20.png` at 2705×1713.
+- Final implementation evidence: `docs/audit-evidence/data-identity-security-dr-v21.png` at 2705×1713.
+- Normalized final implementation: `docs/audit-evidence/data-identity-security-dr-v21-normalized.png`, resized to 2510 px wide and cropped to 2510×1440.
+- Combined comparison: `docs/audit-evidence/data-identity-security-dr-v21-comparison.png`, source and final implementation in the same comparison image.
+- Density normalization: both comparison panels are 2510×1440 at 1× output density. The source browser chrome was removed; the implementation was proportionally resized and bottom-cropped without changing the data-grid region.
+
+## Findings and fixes
+
+1. **P1 — repeated loose grids destroyed scan density.** The source repeated three full-width cards, column headers, and large vertical gaps for eight assertions. The recovery units were replaced by one semantic table with shared `Domain / Assertion / Expected / Observed / Verdict` tracks.
+2. **P2 — domain boundaries were unclear.** The new table uses a persistent domain column, shaded domain cells, explicit group-start rules, vertical column borders, and one compact footer for legacy cleanup.
+3. **P2 — first implementation title contrast was weak.** The v20 capture showed `Restore assertions` inheriting an insufficient foreground. The v21 iteration pins the title to `--os-ink` with 600 weight; the final capture confirms readable hierarchy.
+4. **P2 — narrow viewport overflow risk.** The evidence table now owns a 62rem minimum track width inside an explicit horizontal scroll container; surrounding status summaries continue to collapse through the existing responsive rules.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Console font stack and compact control scale are preserved. Assertion names use 600 weight, metadata uses the muted small-text scale, and the final table title has explicit ink contrast.
+- Spacing and layout rhythm: three separated card blocks are consolidated into one bordered surface. Rows use a 2.3rem minimum height, consistent 0.62rem cell padding, and single-pixel group and column boundaries.
+- Colors and tokens: canvas, surface, hairline, ink, muted ink, success, and warning colors use existing OpenSphere tokens. No new page-local palette was introduced.
+- Image quality and assets: no raster imagery was added. Existing Carbon success and warning icons are rendered at 14 px and remain sharp at the captured density.
+- Copy and content: all eight live recovery assertions, expected/observed values, verdicts, verification times, and legacy-cleanup state are preserved without synthesized evidence.
+
+## Interactions and accessibility
+
+- `Security & DR` activates as a semantic tab and exposes a semantic table with column headers, rows, cells, and a row group.
+- The authenticated session remained active through the rollout and final route refresh.
+- The final Chrome error-log query returned an empty list.
+- The table does not overflow the page at wide viewport and has an owned horizontal scroll boundary for constrained widths.
+
+## Comparison history
+
+1. The source capture established the P1 loose-layout problem: repeated headings and broad whitespace separated related evidence.
+2. v20 consolidated the content into a single dense table and removed the repeated custom `check-table` blocks.
+3. Same-input source/v20 comparison found the remaining P2 title-contrast issue.
+4. v21 added explicit title ink/weight, was redeployed, and was captured again in the same authenticated state.
+5. Final combined source/v21 comparison found no remaining P0, P1, or P2 issue in the recovery evidence region.
+
+## Verification
+
+- `npm test`: 78 passed, 0 failed.
+- `npm run build`: passed; pre-existing bundle and component-style budget warnings remain.
+- Layout regression tests: 2 passed, enforcing one table, compact row tracks, overflow ownership, and header contrast.
+- Kubernetes rollout: `opensphere-console:data-identity-grid-v21`, 2/2 replicas Ready.
+
+final result: passed
