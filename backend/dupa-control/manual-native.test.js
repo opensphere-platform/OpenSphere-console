@@ -78,6 +78,7 @@ test('native manual.ts consumes ManualService and implements the Help Center lan
   // Oracle Help Center-inspired information architecture: hero search, 3 operating bands,
   // 10 Perspective data cards and a full document reader (not the old registry datagrid/panel).
   assert.match(manualPage, /class="manual-hero"/);
+  assert.match(manualPage, /data-manual-contract="console-help-center-v2"/);
   assert.match(manualPage, /class="manual-primary-grid"/);
   assert.match(manualPage, /class="manual-deliver-grid"/);
   assert.match(manualPage, /class="manual-reader manual-shell-width"/);
@@ -94,6 +95,29 @@ test('native manual.ts consumes ManualService and implements the Help Center lan
   // Safe rendering only — no innerHTML binding/assignment anywhere in the native page (a JSDoc
   // comment noting that innerHTML is intentionally *not* used is expected and is not a usage).
   assert.doesNotMatch(manualPage, /\[innerHTML\]|\.innerHTML\s*=|bypassSecurityTrustHtml/);
+});
+
+test('build, image, and Kubernetes admission gates reject the retired Manual UI', () => {
+  const pkg = JSON.parse(read('package.json'));
+  const verifier = read('scripts', 'verify-manual-ui.mjs');
+  const releaseDockerfile = read('Dockerfile');
+  const deployment = read('deploy', 'opensphere-console.yaml');
+  const admission = read('deploy', 'manual-ui-admission-policy.yaml');
+  const contract = JSON.parse(read('public', 'manual-contract.json'));
+
+  assert.equal(contract.contract, 'console-help-center-v2');
+  assert.equal(contract.route, '/manual');
+  assert.match(pkg.scripts.prebuild, /verify-manual-ui\.mjs --source/);
+  assert.match(pkg.scripts.postbuild, /verify-manual-ui\.mjs --dist/);
+  assert.match(verifier, /os-source-chips/);
+  assert.match(verifier, /manual-primary-grid/);
+  assert.match(releaseDockerfile, /console-help-center-v2/);
+  assert.match(deployment, /opensphere\.io\/manual-ui-contract: console-help-center-v2/);
+  assert.match(deployment, /readinessProbe:[\s\S]*exec:[\s\S]*console-help-center-v2/);
+  assert.match(admission, /kind: ValidatingAdmissionPolicy/);
+  assert.match(admission, /failurePolicy: Fail/);
+  assert.match(admission, /validationActions: \[Deny\]/);
+  assert.match(admission, /console-help-center-v2/);
 });
 
 test('bundled Manual Registry provides ten readable Perspective documents and never ingests legacy docs.ts', () => {

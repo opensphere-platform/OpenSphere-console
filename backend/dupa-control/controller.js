@@ -13,6 +13,7 @@ const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes } = require('crypto');
 const db = require('./db'); // Backbone PostgreSQL(감사로그 영속). 미연결 시 관리 쓰기 fail-closed.
 const storage = require('./storage'); // Backbone RustFS(S3). BackboneClaim objectStore 할당. 미연결 시 관리 쓰기 fail-closed.
+const { createSupabaseVerifier } = require('./supabase-auth');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-console';
@@ -35,7 +36,8 @@ const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단,
 const MODULE_DESCRIPTOR_LABEL = 'io.opensphere.module.descriptor';
 const MODULE_SIGNATURE_LABEL = 'io.opensphere.module.descriptor.signature';
 const MODULE_KEY_ID_LABEL = 'io.opensphere.module.descriptor.key-id';
-const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1', 'cluster-his-manager-v1', 'cluster-infrastructure-manager-v1']);
+const AI_DOMAIN_NAMESPACE = process.env.AI_DOMAIN_NAMESPACE || 'opensphere-system';
+const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1', 'cluster-his-manager-v1', 'cluster-infrastructure-manager-v1', 'ai-domain-operator-v1']);
 const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)(?:@sha256:([a-f0-9]{64})|:(edge|candidate|stable))$/;
 const OCI_ACCEPT = [
   'application/vnd.oci.image.index.v1+json',
@@ -90,6 +92,17 @@ const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
 const TOKEN_INTROSPECTION_URL = process.env.TOKEN_INTROSPECTION_URL
   || 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect';
 const TOKEN_INTROSPECTION_SERVERNAME = process.env.TOKEN_INTROSPECTION_SERVERNAME || KANIDM_TLS_SERVERNAME;
+// Console auth is in Supabase cutover.  Keep Kanidm support only for an
+// explicit dual-read migration; production Supabase tokens are verified against
+// the live operator and role records, never JWT claims alone.
+const AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'kanidm';
+const SUPABASE_AUTH_ISSUER = process.env.SUPABASE_AUTH_ISSUER || '';
+const SUPABASE_AUTH_AUDIENCE = process.env.SUPABASE_AUTH_AUDIENCE || 'authenticated';
+const SUPABASE_REST_URL = (process.env.SUPABASE_REST_URL || '').replace(/\/$/, '');
+const SUPABASE_RUNTIME_SECRET_NS = process.env.SUPABASE_RUNTIME_SECRET_NS || NS;
+const SUPABASE_RUNTIME_SECRET = process.env.SUPABASE_RUNTIME_SECRET || 'opensphere-supabase-runtime';
+const SUPABASE_ADMIN_GROUP = process.env.SUPABASE_ADMIN_GROUP || 'console-admins';
+let _supabaseVerifier = null;
 let _kanidmCa;
 function kanidmCa() { if (_kanidmCa === undefined) { try { _kanidmCa = fs.readFileSync(KANIDM_CA_PATH); } catch (e) { console.error('[auth] kanidm CA read failed: ' + e); _kanidmCa = null; } } return _kanidmCa; }
 function b64urlToBuf(s) { return Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/'), 'base64'); }
@@ -173,8 +186,43 @@ function introspectManagedToken(jwt) {
     rq.end();
   });
 }
-const isAdminGroups = (groups) => (groups || []).includes(KANIDM_ADMIN_GROUP);
-async function verifyAuthed(req) {
+const SUPABASE_ROLE_COMPAT = Object.freeze({
+  'console-admins': 'opensphere-console-admins',
+  'console-operators': 'opensphere-console-operators',
+  'console-viewers': 'opensphere-console-viewers',
+});
+function canonicalConsoleGroups(groups) {
+  const out = [];
+  for (const item of groups || []) {
+    const group = String(item || '').trim();
+    if (!group || out.includes(group)) continue;
+    out.push(group);
+    const compat = SUPABASE_ROLE_COMPAT[group];
+    if (compat && !out.includes(compat)) out.push(compat);
+  }
+  return out;
+}
+async function loadSupabaseVerifier() {
+  if (_supabaseVerifier) return _supabaseVerifier;
+  if (!SUPABASE_AUTH_ISSUER || !SUPABASE_REST_URL) {
+    throw { code: 503, msg: 'Supabase auth configuration is incomplete' };
+  }
+  const secret = await k8s('GET', `/api/v1/namespaces/${SUPABASE_RUNTIME_SECRET_NS}/secrets/${SUPABASE_RUNTIME_SECRET}`);
+  if (!secret.ok) throw { code: 503, msg: `Supabase runtime secret HTTP ${secret.status}` };
+  const jwtSecret = Buffer.from(String(secret.json?.data?.['jwt-secret'] || ''), 'base64').toString('utf8');
+  const serviceRoleKey = Buffer.from(String(secret.json?.data?.['service-role-key'] || ''), 'base64').toString('utf8');
+  if (!jwtSecret || !serviceRoleKey) throw { code: 503, msg: 'Supabase runtime secret is incomplete' };
+  _supabaseVerifier = createSupabaseVerifier({
+    issuer: SUPABASE_AUTH_ISSUER,
+    audience: SUPABASE_AUTH_AUDIENCE,
+    restUrl: SUPABASE_REST_URL,
+    jwtSecret,
+    serviceRoleKey,
+  });
+  return _supabaseVerifier;
+}
+const isAdminGroups = (groups) => (groups || []).includes(KANIDM_ADMIN_GROUP) || (groups || []).includes(SUPABASE_ADMIN_GROUP);
+async function verifyKanidmAuthed(req) {
   const auth = req.headers['authorization'] || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
   if (!m) throw { code: 401, msg: 'no bearer token' };
@@ -197,9 +245,31 @@ async function verifyAuthed(req) {
   const groups = (managedState.groups || []).map((g) => shortName(g).replace(/^\//, ''));
   return { username: claims.preferred_username || 'unknown', groups };
 }
+async function verifyAuthed(req) {
+  if (AUTH_PROVIDER === 'kanidm') return verifyKanidmAuthed(req);
+  const auth = req.headers['authorization'] || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  if (!match) throw { code: 401, msg: 'no bearer token' };
+  if (AUTH_PROVIDER === 'supabase') {
+    const actor = await (await loadSupabaseVerifier())(match[1]);
+    actor.groups = canonicalConsoleGroups(actor.groups);
+    return actor;
+  }
+  if (AUTH_PROVIDER !== 'dual') throw { code: 503, msg: 'unknown authentication provider' };
+  let issuer = '';
+  try { issuer = JSON.parse(b64urlToBuf(match[1].split('.')[1]).toString()).iss || ''; }
+  catch { throw { code: 401, msg: 'malformed token' }; }
+  if (issuer === SUPABASE_AUTH_ISSUER) {
+    const actor = await (await loadSupabaseVerifier())(match[1]);
+    actor.groups = canonicalConsoleGroups(actor.groups);
+    return actor;
+  }
+  return verifyKanidmAuthed(req);
+}
 async function verifyActor(req) {
   const a = await verifyAuthed(req);
   if (!isAdminGroups(a.groups)) throw { code: 403, msg: `not in ${KANIDM_ADMIN_GROUP}` };
+  if (a.provider === 'supabase' && a.assurance !== 'aal2') throw { code: 403, msg: 'admin action requires MFA assurance aal2' };
   return a;
 }
 
@@ -526,6 +596,17 @@ function podEnv(pkg) {
     { name: 'OTEL_SERVICE_NAME', value: String(pkg.metadata?.name || '') },
   ];
   const seen = new Set(env.map((item) => item.name));
+  if (pkg.spec?.permissionProfile === 'ai-domain-operator-v1') {
+    env.push(
+      { name: 'AI_DOMAIN_NAMESPACE', value: AI_DOMAIN_NAMESPACE },
+      { name: 'OSP_AI_RUNTIME_MODE', value: 'managed' },
+      { name: 'OSP_CONTROLLER', value: `http://opensphere-console-dupa-controller.${NS}.svc.cluster.local:8080` },
+      // The platform release must provide an immutable, approved workbench
+      // image.  Deliberately do not fall back to a localhost development tag.
+      { name: 'WORKBENCH_IMAGE', value: process.env.AI_WORKBENCH_IMAGE || '' },
+    );
+    for (const item of env.slice(-4)) seen.add(item.name);
+  }
   for (const item of pkg.spec?.env || []) {
     const name = String(item?.name || '');
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || seen.has(name)) continue;
@@ -688,6 +769,18 @@ function networkPolicyManifest(pkg) {
   const name = pkg.metadata.name;
   const ingressFrom = [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': NS } } }];
   if (policy.allowMonitoring === true) ingressFrom.push({ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'monitoring' } } });
+  const egress = [
+    { to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': NS } } }] },
+    { to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' } }, podSelector: { matchLabels: { 'k8s-app': 'kube-dns' } } }], ports: [{ protocol: 'UDP', port: 53 }, { protocol: 'TCP', port: 53 }] },
+  ];
+  // AI runs in the Console namespace but its declared operands live in the AI,
+  // Backbone and identity namespaces.  Keep this fixed in the host profile;
+  // arbitrary egress selectors must never come from an OCI descriptor.
+  if (pkg.spec?.permissionProfile === 'ai-domain-operator-v1') {
+    for (const namespace of [AI_DOMAIN_NAMESPACE, 'opensphere-backbone', 'opensphere-console-auth', 'opendatahub', 'default']) {
+      egress.push({ to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': namespace } } }] });
+    }
+  }
   return {
     apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy',
     metadata: { name, namespace: NS, labels: { 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
@@ -695,10 +788,7 @@ function networkPolicyManifest(pkg) {
       podSelector: { matchLabels: { app: name } },
       policyTypes: ['Ingress', 'Egress'],
       ingress: [{ from: ingressFrom, ports: [{ protocol: 'TCP', port: Number(pkg.spec.runtime?.port) || 8080 }] }],
-      egress: [
-        { to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': NS } } }] },
-        { to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' } }, podSelector: { matchLabels: { 'k8s-app': 'kube-dns' } } }], ports: [{ protocol: 'UDP', port: 53 }, { protocol: 'TCP', port: 53 }] },
-      ],
+      egress,
     },
   };
 }
@@ -782,6 +872,78 @@ function infrastructureManagerClusterRoleManifest() {
     ],
   };
 }
+function requiresDomainSubShellAdmission(pkg) {
+  // Bootstrap/reference shells use the existing lifecycle gates.  AI is the
+  // first domain subShell and must not bypass the PFS admission boundary.
+  return pkg?.spec?.kind === 'subShell'
+    && pkg?.spec?.hostRef === 'main'
+    && pkg?.spec?.permissionProfile === 'ai-domain-operator-v1';
+}
+function aiDomainOperatorClusterRoleManifest() {
+  const read = ['get', 'list', 'watch'];
+  return {
+    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole',
+    metadata: { name: 'opensphere-module-ai-domain-operator-v1', labels: { 'opensphere.io/managed-by': 'dupa' } },
+    rules: [
+      { apiGroups: [''], resources: ['nodes', 'namespaces', 'pods', 'pods/log', 'services', 'configmaps', 'events'], verbs: read },
+      { apiGroups: ['apps'], resources: ['deployments', 'replicasets', 'statefulsets'], verbs: read },
+      { apiGroups: ['batch'], resources: ['jobs'], verbs: read },
+      { apiGroups: ['storage.k8s.io'], resources: ['storageclasses'], verbs: read },
+      { apiGroups: ['apiextensions.k8s.io'], resources: ['customresourcedefinitions'], verbs: read },
+      { apiGroups: ['authorization.k8s.io'], resources: ['selfsubjectaccessreviews'], verbs: ['create'] },
+      { apiGroups: [''], resources: ['users'], verbs: ['impersonate'] },
+      { apiGroups: ['operators.coreos.com'], resources: ['operatorgroups', 'subscriptions', 'installplans', 'clusterserviceversions'], verbs: read },
+      { apiGroups: ['kubeflow.org'], resources: ['notebooks'], verbs: read },
+      { apiGroups: ['serving.kserve.io'], resources: ['servingruntimes', 'clusterservingruntimes', 'inferenceservices'], verbs: read },
+      { apiGroups: ['modelregistry.opendatahub.io'], resources: ['modelregistries'], verbs: read },
+      { apiGroups: ['trustyai.opendatahub.io'], resources: ['trustyaiservices'], verbs: read },
+      { apiGroups: ['kueue.x-k8s.io'], resources: ['workloads', 'clusterqueues', 'localqueues', 'resourceflavors'], verbs: read },
+      { apiGroups: ['ray.io'], resources: ['rayclusters', 'rayjobs', 'rayservices'], verbs: read },
+      { apiGroups: ['tekton.dev'], resources: ['pipelines', 'pipelineruns'], verbs: read },
+      { apiGroups: ['datasciencepipelinesapplications.opendatahub.io'], resources: ['datasciencepipelinesapplications', 'datasciencepipelinesapplications/api'], verbs: read },
+      { apiGroups: ['datasciencecluster.opendatahub.io'], resources: ['datascienceclusters'], verbs: read },
+      { apiGroups: ['backbone.opensphere.io'], resources: ['backboneclaims'], verbs: read },
+      { apiGroups: ['orchestrator.ai.opensphere.io'], resources: ['aiagents', 'promptlibraries', 'toolclaims', 'agenttracepolicies'], verbs: read },
+      { apiGroups: ['ai.foundation.opensphere.io'], resources: ['llmrouteclaims', 'vectorretrievalclaims'], verbs: read },
+      { apiGroups: ['ai.opensphere.io'], resources: ['aitrainingstacks', 'workbenchclaims', 'dataconnectionclaims', 'computebackendclaims', 'datasetclaims', 'trainingjobclaims', 'modelpromotionclaims', 'inferenceclaims', 'pipelineclaims', 'pipelinerunclaims', 'experimentclaims', 'executionclaims', 'artifactclaims', 'monitoringtargets', 'distributedworkloadclaims', 'openspherecomponentcatalogs', 'openspherecomponentversions', 'openspheresubscriptions', 'opensphereinstallplans', 'openspheredatascienceclusters'], verbs: read },
+      { apiGroups: ['eval.ai.opensphere.io'], resources: ['evaluationpolicies', 'evaluationjobs'], verbs: read },
+    ],
+  };
+}
+function aiDomainScopedRoleManifest() {
+  const mutate = ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'];
+  return {
+    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role',
+    metadata: { name: 'opensphere-module-ai-domain-operator-v1', namespace: AI_DOMAIN_NAMESPACE, labels: { 'opensphere.io/managed-by': 'dupa' } },
+    rules: [
+      { apiGroups: [''], resources: ['services', 'persistentvolumeclaims', 'configmaps', 'events'], verbs: mutate },
+      { apiGroups: [''], resources: ['secrets'], resourceNames: ['oah-external-gpu-credentials', 'ai-hub-backbone-postgres', 'ai-hub-backbone-postgres-app', 'oah-dspa-postgres', 'ai-hub-backbone-rustfs', 'ai-hub-kserve-s3', 'ds-pipelines-proxy-tls-oah-dspa', 'ds-pipelines-envoy-proxy-tls-oah-dspa', 'opensphere-wildcard-tls', 'shell-service-token'], verbs: ['get', 'update', 'patch'] },
+      { apiGroups: [''], resources: ['secrets'], verbs: ['create'] },
+      { apiGroups: [''], resources: ['serviceaccounts'], resourceNames: ['ai-runtime'], verbs: ['get', 'update', 'patch'] },
+      { apiGroups: ['apps'], resources: ['deployments'], verbs: mutate },
+      { apiGroups: ['batch'], resources: ['jobs'], verbs: mutate },
+      { apiGroups: ['networking.k8s.io'], resources: ['networkpolicies'], verbs: mutate },
+      { apiGroups: ['kubeflow.org'], resources: ['notebooks'], verbs: ['update', 'patch'] },
+      { apiGroups: ['serving.kserve.io'], resources: ['inferenceservices'], verbs: mutate },
+      { apiGroups: ['ray.io'], resources: ['rayjobs'], verbs: mutate },
+      { apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: mutate },
+      { apiGroups: ['datasciencepipelinesapplications.opendatahub.io'], resources: ['datasciencepipelinesapplications'], verbs: mutate },
+      { apiGroups: ['orchestrator.ai.opensphere.io'], resources: ['aiagents', 'promptlibraries', 'toolclaims', 'agenttracepolicies', 'aiagents/status', 'promptlibraries/status', 'toolclaims/status', 'agenttracepolicies/status'], verbs: mutate },
+      { apiGroups: ['ai.foundation.opensphere.io'], resources: ['llmrouteclaims', 'vectorretrievalclaims', 'llmrouteclaims/status', 'vectorretrievalclaims/status'], verbs: mutate },
+      { apiGroups: ['ai.opensphere.io'], resources: ['aitrainingstacks', 'workbenchclaims', 'dataconnectionclaims', 'computebackendclaims', 'datasetclaims', 'trainingjobclaims', 'modelpromotionclaims', 'inferenceclaims', 'pipelineclaims', 'pipelinerunclaims', 'experimentclaims', 'executionclaims', 'artifactclaims', 'monitoringtargets', 'distributedworkloadclaims', 'openspheresubscriptions', 'opensphereinstallplans', 'openspheredatascienceclusters', 'workbenchclaims/status', 'dataconnectionclaims/status', 'computebackendclaims/status', 'datasetclaims/status', 'trainingjobclaims/status', 'pipelineclaims/status', 'pipelinerunclaims/status', 'experimentclaims/status', 'executionclaims/status', 'artifactclaims/status', 'inferenceclaims/status', 'modelpromotionclaims/status', 'monitoringtargets/status', 'distributedworkloadclaims/status', 'openspheresubscriptions/status', 'opensphereinstallplans/status', 'openspheredatascienceclusters/status'], verbs: mutate },
+      { apiGroups: ['backbone.opensphere.io'], resources: ['backboneclaims'], verbs: ['create', 'update', 'patch'] },
+      { apiGroups: ['eval.ai.opensphere.io'], resources: ['evaluationpolicies', 'evaluationjobs', 'evaluationpolicies/status', 'evaluationjobs/status'], verbs: mutate },
+    ],
+  };
+}
+function aiDomainScopedRoleBindingManifest(pkg, saName) {
+  return {
+    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding',
+    metadata: { name: `opensphere-module-${pkg.metadata.name}-ai-domain-operator-v1`, namespace: AI_DOMAIN_NAMESPACE, labels: { 'opensphere.io/dupa-plugin': pkg.metadata.name, 'opensphere.io/managed-by': 'dupa' } },
+    roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'Role', name: 'opensphere-module-ai-domain-operator-v1' },
+    subjects: [{ kind: 'ServiceAccount', name: saName, namespace: NS }],
+  };
+}
 function permissionBindingManifest(pkg, saName, profile) {
   const suffix = profile === 'cluster-observer-v1' ? 'observer-v1' : profile;
   return {
@@ -798,7 +960,8 @@ async function applyPermissionProfile(pkg, saName) {
   const rolePath = '/apis/rbac.authorization.k8s.io/v1/clusterroles';
   const expectedRole = profile === 'cluster-infrastructure-manager-v1'
     ? infrastructureManagerClusterRoleManifest()
-    : profile === 'cluster-his-manager-v1' ? hisManagerClusterRoleManifest() : observerClusterRoleManifest();
+    : profile === 'cluster-his-manager-v1' ? hisManagerClusterRoleManifest()
+      : profile === 'ai-domain-operator-v1' ? aiDomainOperatorClusterRoleManifest() : observerClusterRoleManifest();
   const existingRole = await k8s('GET', `${rolePath}/${expectedRole.metadata.name}`);
   if (!existingRole.ok) throw Object.assign(new Error('pre-provisioned permission profile is missing'), { reason: 'PermissionProfileMissing' });
   if (JSON.stringify(canonical(existingRole.json?.rules || [])) !== JSON.stringify(canonical(expectedRole.rules))) {
@@ -809,6 +972,20 @@ async function applyPermissionProfile(pkg, saName) {
   const existingBinding = await k8s('GET', `${bindingPath}/${binding.metadata.name}`);
   const bindingResult = existingBinding.ok ? await k8s('PATCH', `${bindingPath}/${binding.metadata.name}`, binding) : await k8s('POST', bindingPath, binding);
   if (!bindingResult.ok) throw Object.assign(new Error(`permission profile binding apply failed (HTTP ${bindingResult.status})`), { reason: 'PermissionProfileApplyFailed' });
+  if (profile === 'ai-domain-operator-v1') {
+    const role = aiDomainScopedRoleManifest();
+    const rolePath = `/apis/rbac.authorization.k8s.io/v1/namespaces/${AI_DOMAIN_NAMESPACE}/roles/${role.metadata.name}`;
+    const existingScopedRole = await k8s('GET', rolePath);
+    if (!existingScopedRole.ok) throw Object.assign(new Error('pre-provisioned AI scoped permission profile is missing'), { reason: 'PermissionProfileMissing' });
+    if (JSON.stringify(canonical(existingScopedRole.json?.rules || [])) !== JSON.stringify(canonical(role.rules))) {
+      throw Object.assign(new Error('pre-provisioned AI scoped permission profile drifted'), { reason: 'PermissionProfileDrift' });
+    }
+    const scopedBinding = aiDomainScopedRoleBindingManifest(pkg, saName);
+    const scopedBindingPath = `/apis/rbac.authorization.k8s.io/v1/namespaces/${AI_DOMAIN_NAMESPACE}/rolebindings`;
+    const existingScopedBinding = await k8s('GET', `${scopedBindingPath}/${scopedBinding.metadata.name}`);
+    const scopedBindingResult = existingScopedBinding.ok ? await k8s('PATCH', `${scopedBindingPath}/${scopedBinding.metadata.name}`, scopedBinding) : await k8s('POST', scopedBindingPath, scopedBinding);
+    if (!scopedBindingResult.ok) throw Object.assign(new Error(`AI scoped permission binding apply failed (HTTP ${scopedBindingResult.status})`), { reason: 'PermissionProfileApplyFailed' });
+  }
 }
 async function applyWorkload(pkg) {
   const name = pkg.metadata.name;
@@ -867,7 +1044,14 @@ async function deleteWorkload(pkg) {
   await deleteManagedResource(`/apis/networking.k8s.io/v1/namespaces/${NS}/networkpolicies/${name}`, `NetworkPolicy/${name}`);
   await deleteManagedResource(`/apis/monitoring.coreos.com/v1/namespaces/${NS}/servicemonitors/${name}`, `ServiceMonitor/${name}`);
   const sa = pluginServiceAccount(pkg);
-  await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/opensphere-module-${pkg.metadata.name}-observer-v1`, `ClusterRoleBinding/${name}`);
+  const profile = pkg.spec?.permissionProfile || 'none';
+  if (profile !== 'none') {
+    const suffix = profile === 'cluster-observer-v1' ? 'observer-v1' : profile;
+    await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/opensphere-module-${pkg.metadata.name}-${suffix}`, `ClusterRoleBinding/${name}`);
+    if (profile === 'ai-domain-operator-v1') {
+      await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/namespaces/${AI_DOMAIN_NAMESPACE}/rolebindings/opensphere-module-${pkg.metadata.name}-ai-domain-operator-v1`, `RoleBinding/${name}`);
+    }
+  }
   if (sa.managed) await deleteManagedResource(`/api/v1/namespaces/${NS}/serviceaccounts/${sa.name}`, `ServiceAccount/${sa.name}`);
 }
 async function workloadReady(name) {
@@ -2222,6 +2406,7 @@ async function platformReadinessStatus(req) {
       // because an immutable, verified workload may be staged before PFS admission.
       foundationInstallAllowed: foundationActivationAllowed,
       pfsPluginInstallAllowed: supportReady,
+      domainSubShellAdmissionAllowed: domainAdmissionReady,
       reason: supportReady ? '' : (foundationActivationOverride ? 'DevelopmentOverride' : 'PlatformSupportProfileRequired'),
     },
     pfs: { established: pfsEstablished, phase: foundationReg?.status?.phase || 'NotInstalled' },
@@ -2623,6 +2808,17 @@ const server = http.createServer(async (req, res) => {
       try {
         const inspection = await inspectModuleImage(body.image);
         const pkg = packageFromInspection(inspection);
+        if (requiresDomainSubShellAdmission(pkg)) {
+          const readiness = await platformReadinessStatus(req);
+          if (!readiness.admission.domainSubShellAdmissionAllowed) {
+            await durableAudit(actor, 'extension-install', pkg.metadata.name, 'denied', 'DomainSubShellAdmissionRequired', opId);
+            return json(res, 409, {
+              error: 'DomainSubShellAdmissionRequired',
+              message: 'AI domain subShell installation requires Platform Support Profile Ready and PFS Established.',
+              readiness: { phase: readiness.phase, pfs: readiness.pfs, admission: readiness.admission }, opId,
+            });
+          }
+        }
         if (pkg.spec.hostRef === FOUNDATION_ID) {
           const readiness = await platformReadinessStatus(req);
           const currentReg = await getReg(pkg.metadata.name);
@@ -2722,6 +2918,18 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall|rollback)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
+      const candidatePkg = await getPackage(id);
+      if (candidatePkg.ok && requiresDomainSubShellAdmission(candidatePkg.json) && ['install', 'enable', 'rollback'].includes(action)) {
+        const readiness = await platformReadinessStatus(req);
+        if (!readiness.admission.domainSubShellAdmissionAllowed) {
+          await durableAudit(actor, action, id, 'denied', 'DomainSubShellAdmissionRequired', opId);
+          return json(res, 409, {
+            error: 'DomainSubShellAdmissionRequired',
+            message: 'AI domain subShell lifecycle requires Platform Support Profile Ready and PFS Established.',
+            readiness: { phase: readiness.phase, pfs: readiness.pfs, admission: readiness.admission }, opId,
+          });
+        }
+      }
       if (id === FOUNDATION_ID && action === 'enable') {
         const readiness = await platformReadinessStatus(req);
         if (!readiness.admission.foundationActivationAllowed) {
@@ -2852,5 +3060,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, serviceMonitorManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, verifiedActivatedRegistration, verifiedStagedUpdate };
+  module.exports = { assertClaims, assertManagedTokenActive, isAdminGroups, safeName, b64urlToBuf, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, serviceMonitorManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, aiDomainScopedRoleManifest, aiDomainScopedRoleBindingManifest, requiresDomainSubShellAdmission, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, verifiedActivatedRegistration, verifiedStagedUpdate };
 }

@@ -132,6 +132,31 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    # ADR-006 Supabase same-origin endpoints. During dual-read migration the
+    # legacy Kanidm OIDC/BFF routes below remain available; cutover removes them
+    # only after browser/CLI/session-revocation conformance passes.
+    location ^~ /auth/v1/ {
+        set $supabase_auth_upstream opensphere-supabase-auth.opensphere-cbs.svc.cluster.local;
+        proxy_pass http://$supabase_auth_upstream:9999$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    location ^~ /storage/v1/ {
+        client_max_body_size 500m;
+        set $supabase_storage_upstream opensphere-supabase-storage.opensphere-cbs.svc.cluster.local;
+        proxy_pass http://$supabase_storage_upstream:5000$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+        proxy_request_buffering off;
+    }
+
     # 콘솔 역할/PAT — opensphere-console-auth BFF(console-core 서비스). §3.2: same-origin 프록시로 크로스오리진 CORS 제거.
     # /admin/roles가 https://localhost:8444(Kanidm) 직격 → CORS 실패였음. 이제 /bff(상대) → 셸이 BFF로 프록시.
     # 브라우저 OIDC는 Console과 동일한 TLS origin으로 통합한다. BFF가 발급하는

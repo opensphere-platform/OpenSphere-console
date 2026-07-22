@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const yaml = require('js-yaml');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, serviceMonitorManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, serviceMonitorManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, aiDomainScopedRoleManifest, requiresDomainSubShellAdmission, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -131,6 +131,30 @@ test('deployed infrastructure manager ClusterRole exactly matches the controller
   assert.deepEqual(deployedRole.rules, infrastructureManagerClusterRoleManifest().rules);
 });
 
+test('AI domain operator is a fixed, scoped profile and is present in the deployment contract', () => {
+  const ai = structuredClone(descriptor);
+  ai.id = 'ai';
+  ai.api.basePath = '/api/plugins/ai';
+  ai.contributions.api.basePath = '/api/plugins/ai';
+  ai.permissionProfile = 'ai-domain-operator-v1';
+  ai.runtime.serviceAccountName = 'ai-runtime';
+  assert.deepEqual(moduleDescriptorIssues(ai), []);
+  assert.equal(requiresDomainSubShellAdmission({ spec: ai }), true);
+  assert.equal(requiresDomainSubShellAdmission({ spec: descriptor }), false);
+  const clusterRules = aiDomainOperatorClusterRoleManifest().rules;
+  assert.ok(clusterRules.some((rule) => rule.resources.includes('users') && rule.verbs.includes('impersonate')));
+  assert.ok(!clusterRules.some((rule) => rule.resources.includes('secrets')));
+  const scopedRules = aiDomainScopedRoleManifest().rules;
+  assert.ok(scopedRules.some((rule) => rule.resources.includes('secrets') && Array.isArray(rule.resourceNames)));
+
+  const documents = [];
+  yaml.loadAll(fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8'), (document) => documents.push(document));
+  const deployedClusterRole = documents.find((document) => document?.kind === 'ClusterRole' && document?.metadata?.name === 'opensphere-module-ai-domain-operator-v1');
+  const deployedScopedRole = documents.find((document) => document?.kind === 'Role' && document?.metadata?.name === 'opensphere-module-ai-domain-operator-v1');
+  assert.deepEqual(deployedClusterRole.rules, clusterRules);
+  assert.deepEqual(deployedScopedRole.rules, scopedRules);
+});
+
 test('managed plugin workload receives the Console authentication CA read-only', () => {
   const pkg = packageFromInspection({ descriptor, repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager', digest: `sha256:${'b'.repeat(64)}` });
   pkg.metadata = { ...pkg.metadata, uid: '00000000-0000-0000-0000-000000000000' };
@@ -212,6 +236,19 @@ test('hardened runtime materializes Pod security, availability, network and scra
   assert.equal(hpaManifest(pkg).spec.maxReplicas, 4);
   assert.equal(networkPolicyManifest(pkg).spec.policyTypes.includes('Egress'), true);
   assert.equal(serviceMonitorManifest(pkg).spec.endpoints[0].path, '/metrics');
+});
+
+test('AI network policy permits only its fixed platform dependencies in addition to DNS', () => {
+  const ai = structuredClone(descriptor);
+  ai.id = 'ai';
+  ai.api.basePath = '/api/plugins/ai';
+  ai.contributions.api.basePath = '/api/plugins/ai';
+  ai.permissionProfile = 'ai-domain-operator-v1';
+  ai.runtime.networkPolicy = { enabled: true, allowMonitoring: true };
+  const pkg = packageFromInspection({ descriptor: ai, repository: 'ghcr.io/opensphere-platform/opensphere-shell-ai-workbench', digest: `sha256:${'b'.repeat(64)}` });
+  pkg.metadata = { ...pkg.metadata, uid: '00000000-0000-0000-0000-000000000000' };
+  const egressNamespaces = networkPolicyManifest(pkg).spec.egress.flatMap((entry) => entry.to || []).map((entry) => entry.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name']).filter(Boolean);
+  for (const namespace of ['opensphere-system', 'opensphere-backbone', 'opensphere-console-auth', 'opendatahub', 'default']) assert.ok(egressNamespaces.includes(namespace));
 });
 
 test('runtime Registry projects channel status and immutable approval evidence', () => {

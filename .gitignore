@@ -43,3 +43,18 @@ __screenshots__/
 # System files
 .DS_Store
 Thumbs.db
+
+# Local build and verification artifacts
+/Dockerfile.local
+/Dockerfile.local.dockerignore
+/backend/os-cli/*.exe
+/backend/os-cli/release/
+/audit-evidence/
+/visual-qa/
+/docs/audit-evidence/**/*.png
+/docs/audit-evidence/**/*.jpg
+/docs/audit-evidence/**/*.jpeg
+/docs/audit-evidence/**/*.webp
+
+# Retired CBS sources must not return through a local archive copy.
+/archive/

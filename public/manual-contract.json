@@ -1,0 +1,6 @@
+{
+  "schema": "manual-ui.opensphere.io/v1",
+  "contract": "console-help-center-v2",
+  "route": "/manual",
+  "owner": "OpenSphere-console"
+}

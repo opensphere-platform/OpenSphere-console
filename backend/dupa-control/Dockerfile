@@ -13,6 +13,7 @@ RUN apk upgrade --no-cache \
     && npm install --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY controller.js /app/controller.js
+COPY supabase-auth.js /app/supabase-auth.js
 COPY db.js /app/db.js
 COPY storage.js /app/storage.js
 COPY kanidm-ca.crt /app/kanidm-ca.crt

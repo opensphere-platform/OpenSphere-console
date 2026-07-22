@@ -24,6 +24,33 @@ func TestHelpDeclaresNativeAdminBoundary(t *testing.T) {
 	}
 }
 
+func TestDynamicModuleCommandsIgnoreManifestFlagsAndNormalizePayloadKeys(t *testing.T) {
+	if got := strings.Join(toolCommandPrefix("os ai vector query --namespace <ns> --collection <name>", "ai"), " "); got != "vector query" {
+		t.Fatalf("unexpected dynamic command prefix: %q", got)
+	}
+	if got := strings.Join(toolCommandPrefix("os ai gpu bridge <health|capabilities> --apply", "ai"), " "); got != "gpu bridge" {
+		t.Fatalf("unexpected operation command prefix: %q", got)
+	}
+	payload := jsonFlagPayload(map[string]string{"credential-secret": "gpu-token", "max-concurrency": "2", "apply": "true"})
+	if payload["credentialSecret"] != "gpu-token" || payload["maxConcurrency"] != "2" || payload["apply"] != "true" {
+		t.Fatalf("flag payload was not normalized: %#v", payload)
+	}
+}
+
+func TestCredentialTokenUsesProcessOnlyIDTokenBeforeDeviceState(t *testing.T) {
+	cfg := defaults()
+	cfg.PAT = ""
+	cfg.IDToken = "supabase-access-token"
+	cfg.DeviceID = ""
+	token, err := credentialToken(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "supabase-access-token" {
+		t.Fatalf("credentialToken()=%q", token)
+	}
+}
+
 func TestJSONCallRejectsSuccessfulHTMLFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

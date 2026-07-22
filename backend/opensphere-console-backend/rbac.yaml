@@ -14,3 +14,21 @@ metadata: { name: console-identity-kanidm-reader, namespace: opensphere-console 
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: console-identity-kanidm-reader }
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
+
+# console-backend dual-read 전환: Console 런타임은 Supabase runtime secret도 필요.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: console-identity-supabase-runtime-reader, namespace: opensphere-console }
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["opensphere-supabase-runtime"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: console-identity-supabase-runtime-reader, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: console-identity-supabase-runtime-reader }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }

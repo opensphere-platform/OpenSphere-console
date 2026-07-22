@@ -41,7 +41,7 @@ interface ManualBlock {
   selector: 'os-manual',
   imports: [ClarityModule, FormsModule, CarbonIcon, BackendUnavailable],
   template: `
-    <div class="manual-page">
+    <div class="manual-page" data-manual-contract="console-help-center-v2">
       <header class="manual-local-header">
         <button type="button" class="manual-brand" (click)="closeDocument()" aria-label="OpenSphere Manual 홈">
           <os-cicon [icon]="iconWikis" [size]="20" />

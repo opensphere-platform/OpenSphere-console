@@ -19,6 +19,8 @@ spec:
     matchLabels: { app: opensphere-console }
   template:
     metadata:
+      annotations:
+        opensphere.io/manual-ui-contract: console-help-center-v2
       labels: { app: opensphere-console }
     spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
@@ -43,7 +45,14 @@ spec:
               mountPath: /etc/nginx/upstream-ca
               readOnly: true
           readinessProbe:
-            httpGet: { path: /readyz, port: 8080 }
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - >-
+                  grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json &&
+                  grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js &&
+                  ! grep -Rqs 'os-source-chips' /usr/share/nginx/html/main-*.js
             initialDelaySeconds: 2
             periodSeconds: 10
           livenessProbe:

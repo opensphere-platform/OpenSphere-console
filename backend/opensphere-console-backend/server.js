@@ -9,6 +9,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { createPublicKey, verify, randomBytes } = require('crypto');
+const { createSupabaseVerifier } = require('./supabase-auth');
 const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단, 감사 H)
 const newOpId = () => randomBytes(8).toString('hex');
 
@@ -49,6 +50,27 @@ const CONSOLE_ROLE_GROUPS = new Set(
   (process.env.CONSOLE_ROLE_GROUPS || 'opensphere-console-admins,opensphere-console-operators,opensphere-console-viewers')
     .split(',').map((s) => s.trim()).filter(Boolean),
 );
+const SUPABASE_ROLE_COMPAT = Object.freeze({
+  'console-admins': 'opensphere-console-admins',
+  'console-operators': 'opensphere-console-operators',
+  'console-viewers': 'opensphere-console-viewers',
+});
+function canonicalConsoleGroups(groups) {
+  const out = [];
+  for (const item of groups || []) {
+    const g = String(item || '').trim();
+    if (!g || out.includes(g)) continue;
+    out.push(g);
+    const compat = SUPABASE_ROLE_COMPAT[g];
+    if (compat && !out.includes(compat)) out.push(compat);
+  }
+  return out;
+}
+const AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'kanidm';
+let verifySupabaseToken = null;
+if (AUTH_PROVIDER === 'supabase' || AUTH_PROVIDER === 'dual') {
+  verifySupabaseToken = createSupabaseVerifier();
+}
 
 function saToken() { return fs.readFileSync(`${SA}/token`, 'utf8').trim(); }
 function b64d(s) { return Buffer.from(s, 'base64').toString('utf8'); }
@@ -167,7 +189,7 @@ function assertLiveTokenState(claims, state) {
     }
   }
 }
-async function verifyAuthed(req) {
+async function verifyKanidmAuthed(req) {
   const auth = req.headers['authorization'] || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
   if (!m) throw { code: 401, msg: 'no bearer token' };
@@ -199,9 +221,37 @@ async function verifyAuthed(req) {
   const groups = (state.groups || []).map((g) => shortName(g).replace(/^\//, ''));
   return { username: claims.preferred_username || 'unknown', groups };
 }
+async function verifyAuthed(req) {
+  if (AUTH_PROVIDER === 'kanidm') return verifyKanidmAuthed(req);
+  const auth = req.headers['authorization'] || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  if (!match) throw { code: 401, msg: 'no bearer token' };
+  if (AUTH_PROVIDER === 'supabase') {
+    const actor = await verifySupabaseToken(match[1]);
+    actor.groups = canonicalConsoleGroups(actor.groups);
+    return actor;
+  }
+  // Dual-read migration routes by the signed issuer. It never falls back after
+  // one verifier rejects a token, preventing issuer-confusion downgrade.
+  let issuer = '';
+  try { issuer = JSON.parse(b64urlToBuf(match[1].split('.')[1]).toString()).iss || ''; }
+  catch { throw { code: 401, msg: 'malformed token' }; }
+  if (issuer === process.env.SUPABASE_AUTH_ISSUER) {
+    const actor = await verifySupabaseToken(match[1]);
+    actor.groups = canonicalConsoleGroups(actor.groups);
+    return actor;
+  }
+  return verifyKanidmAuthed(req);
+}
+async function verifyAuthedCompat(req) {
+  const actor = await verifyAuthed(req);
+  actor.groups = canonicalConsoleGroups(actor.groups);
+  return actor;
+}
 async function verifyActor(req) {
-  const a = await verifyAuthed(req);
+  const a = await verifyAuthedCompat(req);
   if (!a.groups.includes(KANIDM_ADMIN_GROUP)) throw { code: 403, msg: `not in ${KANIDM_ADMIN_GROUP}` };
+  if (a.provider === 'supabase' && a.assurance !== 'aal2') throw { code: 403, msg: 'admin action requires MFA assurance aal2' };
   return a;
 }
 

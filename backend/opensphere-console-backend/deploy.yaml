@@ -43,7 +43,6 @@ spec:
     metadata: { labels: { app: opensphere-console-backend } }
     spec:
       serviceAccountName: opensphere-console-backend
-      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: api
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
@@ -59,6 +58,16 @@ spec:
             - { name: TOKEN_INTROSPECTION_URL, value: "https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect" }
             - { name: TOKEN_INTROSPECTION_SERVERNAME, value: kanidm.opensphere-console-auth.svc }
             - { name: DUPA_URL, value: http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080 }
+            # ADR-006 migration begins in dual mode. Cutover changes this to
+            # "supabase" only after identity/data/object conformance passes.
+            - { name: AUTH_PROVIDER, value: dual }
+            - { name: SUPABASE_AUTH_ISSUER, value: "__OPENSPHERE_CONSOLE_URL__/auth/v1" }
+            - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
+            - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-cbs.svc.cluster.local:3000" }
+            - name: SUPABASE_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: jwt-secret } }
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: service-role-key } }
           volumeMounts:
             - { name: kanidm-ca, mountPath: /etc/kanidm-ca, readOnly: true }
           ports: [{ containerPort: 8080 }]

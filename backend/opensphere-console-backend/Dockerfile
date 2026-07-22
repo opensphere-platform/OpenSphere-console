@@ -6,6 +6,7 @@ WORKDIR /app
 # Kanidm self-signed CA — REST/JWKS https 명시 CA 신뢰(/etc/kanidm-ca/ca.crt).
 COPY kanidm-ca.crt /etc/kanidm-ca/ca.crt
 COPY server.js /app/server.js
+COPY supabase-auth.js /app/supabase-auth.js
 COPY ui-shell/ /plugins/
 ENV PORT=8080 PLUGIN_DIR=/plugins
 EXPOSE 8080

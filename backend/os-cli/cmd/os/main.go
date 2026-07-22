@@ -66,9 +66,17 @@ type Tool struct {
 	Command     string `json:"command"`
 	Method      string `json:"method"`
 	Path        string `json:"path"`
+	Components  map[string]ToolRoute `json:"components"`
+	Operations  map[string]ToolRoute `json:"operations"`
 	Description string `json:"description"`
 	Risk        string `json:"risk"`
 	Scope       string `json:"scope"`
+}
+
+type ToolRoute struct {
+	Path        string `json:"path"`
+	PreviewPath string `json:"previewPath"`
+	ApplyPath   string `json:"applyPath"`
 }
 
 type ToolManifest struct {
@@ -219,6 +227,9 @@ func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken,
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-OS-Correlation-ID", operationID())
+	if method != http.MethodGet && method != http.MethodHead {
+		req.Header.Set("X-OS-Idempotency-Key", operationID())
+	}
 	resp, err := client().Do(req)
 	if err != nil {
 		return nil, 0, "", err
@@ -273,6 +284,13 @@ func signDeviceChallenge(privateDER []byte, deviceID, challengeID, nonce string)
 func credentialToken(cfg Config) (string, error) {
 	if strings.TrimSpace(cfg.PAT) != "" {
 		return strings.TrimSpace(cfg.PAT), nil
+	}
+	// Supabase access tokens are short-lived, MFA-bound bearer credentials.  They
+	// are deliberately process-only (OS_ID_TOKEN) and must never be persisted in
+	// config.json or the device key store.  This also preserves the existing
+	// Kanidm device challenge as the default when no explicit session is supplied.
+	if strings.TrimSpace(cfg.IDToken) != "" {
+		return strings.TrimSpace(cfg.IDToken), nil
 	}
 	if cfg.DeviceID == "" {
 		return "", errors.New("등록된 CLI 디바이스가 없습니다; os login을 실행하세요")
@@ -1151,11 +1169,8 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	commandWords := nonFlagArgs(args[1:])
 	var selected *Tool
 	for i := range manifest.Tools {
-		words := strings.Fields(manifest.Tools[i].Command)
-		if len(words) >= 2 && words[0] == "os" && words[1] == ns {
-			words = words[2:]
-		}
-		if strings.Join(words, " ") == strings.Join(commandWords, " ") {
+		words := toolCommandPrefix(manifest.Tools[i].Command, ns)
+		if len(words) > 0 && len(commandWords) >= len(words) && strings.Join(words, " ") == strings.Join(commandWords[:len(words)], " ") {
 			selected = &manifest.Tools[i]
 			break
 		}
@@ -1168,15 +1183,39 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		sort.Strings(available)
 		return fmt.Errorf("명령을 찾을 수 없습니다; 사용 가능: %s", strings.Join(available, ", "))
 	}
+	flags := parseLongFlags(args[1:])
 	method := strings.ToUpper(selected.Method)
+	path := selected.Path
+	if len(selected.Components) > 0 {
+		component := strings.TrimSpace(flags["component"])
+		route, ok := selected.Components[component]
+		if !ok {
+			return errors.New("지원 서비스 명령에는 유효한 --component 값이 필요합니다")
+		}
+		if hasArg(args, "--apply") {
+			method, path = http.MethodPost, route.ApplyPath
+		} else {
+			method, path = http.MethodGet, route.PreviewPath
+		}
+	}
+	if len(selected.Operations) > 0 {
+		prefix := toolCommandPrefix(selected.Command, ns)
+		if len(commandWords) <= len(prefix) {
+			return errors.New("GPU bridge 명령에는 operation이 필요합니다")
+		}
+		route, ok := selected.Operations[commandWords[len(prefix)]]
+		if !ok || route.Path == "" {
+			return fmt.Errorf("지원하지 않는 GPU bridge operation: %s", commandWords[len(prefix)])
+		}
+		path = route.Path
+	}
 	if method == "" {
 		method = http.MethodGet
 	}
 	if method != http.MethodGet && !hasArg(args, "--preview") && !hasArg(args, "--apply") {
 		return errors.New("write 명령은 --preview 또는 --apply를 명시해야 합니다")
 	}
-	flags := parseLongFlags(args[1:])
-	target := join(base, selected.Path)
+	target := join(base, path)
 	var body io.Reader
 	contentType = ""
 	if method == http.MethodGet {
@@ -1188,7 +1227,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		u.RawQuery = q.Encode()
 		target = u.String()
 	} else {
-		payload, _ := json.Marshal(flags)
+		payload, _ := json.Marshal(jsonFlagPayload(flags))
 		body, contentType = bytes.NewReader(payload), "application/json"
 	}
 	response, status, err := request(cfg, method, target, body, contentType)
@@ -1200,6 +1239,35 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	}
 	_ = errOut
 	return pretty(out, response)
+}
+
+func toolCommandPrefix(command, ns string) []string {
+	words := strings.Fields(command)
+	if len(words) >= 2 && words[0] == "os" && words[1] == ns {
+		words = words[2:]
+	}
+	prefix := make([]string, 0, len(words))
+	for _, word := range words {
+		if strings.HasPrefix(word, "--") || strings.HasPrefix(word, "<") || strings.HasPrefix(word, "(") {
+			break
+		}
+		prefix = append(prefix, word)
+	}
+	return prefix
+}
+
+func jsonFlagPayload(flags map[string]string) map[string]string {
+	payload := make(map[string]string, len(flags))
+	for key, value := range flags {
+		parts := strings.Split(key, "-")
+		for i := 1; i < len(parts); i++ {
+			if len(parts[i]) > 0 {
+				parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+			}
+		}
+		payload[strings.Join(parts, "")] = value
+	}
+	return payload
 }
 
 func nonFlagArgs(args []string) []string {

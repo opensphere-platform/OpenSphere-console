@@ -7,9 +7,10 @@ RUN cd /app/OpenSphere-SDK && npm install --no-audit --no-fund && npm run build
 COPY OpenSphere-console/package.json OpenSphere-console/package-lock.json ./
 RUN npm ci --no-audit --no-fund --legacy-peer-deps
 COPY OpenSphere-console/angular.json OpenSphere-console/tsconfig.json OpenSphere-console/tsconfig.app.json OpenSphere-console/tsconfig.spec.json ./
+COPY OpenSphere-console/scripts ./scripts
 COPY OpenSphere-console/public ./public
 COPY OpenSphere-console/src ./src
-RUN npx ng build --configuration production
+RUN npm run build -- --configuration production
 
 FROM docker.io/library/golang@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7c3a92bfcc4e7ed55b18c2 AS cli-build
 WORKDIR /src
@@ -43,4 +44,8 @@ USER 101
 COPY --from=build /app/OpenSphere-console/dist/opensphere-console/browser /usr/share/nginx/html
 COPY --from=cli-manifest /manifest/artifacts/ /usr/share/nginx/html/api/cli/
 COPY OpenSphere-console/nginx/default.conf.template /etc/nginx/templates/default.conf.template
+RUN set -eu; \
+    grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json; \
+    grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js; \
+    if grep -Rqs 'os-source-chips' /usr/share/nginx/html/main-*.js; then exit 1; fi
 EXPOSE 8080
