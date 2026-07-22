@@ -17,7 +17,7 @@ func TestHelpDeclaresNativeAdminBoundary(t *testing.T) {
 	if err := run([]string{"help"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Console native 관리자 CLI", "admin 디바이스 신뢰", "workforce", "CLI Binding", "--pat-stdin", "extensions install", "15분 서명 세션"} {
+	for _, expected := range []string{"Console native 관리자 CLI", "Supabase RBAC", "admin 디바이스 신뢰", "workforce", "CLI Binding", "extensions install", "15분 서명 세션"} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("help missing %q", expected)
 		}
@@ -62,24 +62,10 @@ func TestRegistryDiscoveryRejectsHTMLAndInvalidSchema(t *testing.T) {
 	}
 }
 
-// F-2: --pat-stdin은 stdin에서 PAT를 읽어 argv 노출을 없앤다. 원격 endpoint를 지정하면
-// whoami 검증이 네트워크로 나가기 전에 stdin 파싱이 선행되므로, 여기서는 파싱 경계만 검증한다.
-func TestLoginReadsPatFromStdin(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("OS_CONFIG", filepath.Join(dir, "config.json"))
-	var out, errOut bytes.Buffer
-	// 존재하지 않는 로컬 포트로 향하게 해 whoami가 실패하도록 만든다. stdin이 비어 있으면
-	// "PAT가 필요합니다"로, 채워져 있으면 whoami 검증 단계까지 진행됨을 구분한다.
-	emptyErr := run([]string{"login", "--pat-stdin", "--console", "http://127.0.0.1:1"}, strings.NewReader("  \n"), &out, &errOut)
-	if emptyErr == nil || !strings.Contains(emptyErr.Error(), "bootstrap API token") {
-		t.Fatalf("empty stdin should require a bootstrap API token, got: %v", emptyErr)
-	}
-	filledErr := run([]string{"login", "--pat-stdin", "--console", "http://127.0.0.1:1"}, strings.NewReader("stdin-token\n"), &out, &errOut)
-	if filledErr == nil || strings.Contains(filledErr.Error(), "bootstrap API token이 필요") {
-		t.Fatalf("non-empty stdin must be accepted then fail at registration, got: %v", filledErr)
-	}
-	if strings.Contains(errOut.String(), "--pat는 프로세스 목록") {
-		t.Fatal("--pat-stdin path must not emit the --pat deprecation warning")
+func TestLoginRejectsRetiredBootstrapFlags(t *testing.T) {
+	err := run([]string{"login", "--pat-stdin"}, strings.NewReader("token\n"), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("retired PAT bootstrap must not be accepted")
 	}
 }
 
@@ -99,18 +85,18 @@ func TestLoginWebRegistersDeviceWithoutPersistingBearer(t *testing.T) {
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/bff/cli/enrollments":
+		case "/api/identity/cli/enrollments":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"enrollmentId": strings.Repeat("a", 32), "pollToken": "poll-secret", "userCode": "A1B2C3D4",
 				"verificationUriComplete": server.URL + "/me?tab=credentials", "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339), "pollInterval": 1,
 			})
-		case "/bff/cli/enrollments/" + strings.Repeat("a", 32) + "/poll":
+		case "/api/identity/cli/enrollments/" + strings.Repeat("a", 32) + "/poll":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "approved", "deviceId": strings.Repeat("d", 32), "label": "test-device", "fingerprint": "aa:bb"})
-		case "/bff/cli/challenge":
+		case "/api/identity/cli/challenge":
 			_ = json.NewEncoder(w).Encode(map[string]string{"challengeId": strings.Repeat("c", 32), "nonce": "nonce"})
-		case "/bff/cli/session":
+		case "/api/identity/cli/session":
 			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "short-session", "expiresIn": 900})
-		case "/bff/token/introspect":
+		case "/api/identity/cli/introspect":
 			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "type": "cli_session"})
 		default:
 			http.NotFound(w, r)
@@ -143,17 +129,6 @@ func TestLoginWebRegistersDeviceWithoutPersistingBearer(t *testing.T) {
 	var saved Config
 	if json.Unmarshal(b, &saved) != nil || saved.DeviceID != strings.Repeat("d", 32) {
 		t.Fatalf("device identity was not saved: %s", b)
-	}
-}
-
-// F-2: argv의 --pat는 하위호환으로 동작하되 노출 경고를 stderr로 낸다.
-func TestLoginWarnsOnArgvPat(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("OS_CONFIG", filepath.Join(dir, "config.json"))
-	var out, errOut bytes.Buffer
-	_ = run([]string{"login", "--pat", "argv-token", "--console", "http://127.0.0.1:1"}, strings.NewReader(""), &out, &errOut)
-	if !strings.Contains(errOut.String(), "--pat는 프로세스 목록") {
-		t.Fatalf("argv --pat must emit a deprecation/exposure warning, stderr=%q", errOut.String())
 	}
 }
 
@@ -193,8 +168,7 @@ func TestLoadConfigScrubsLegacyBearerFields(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("OS_CONFIG", p)
 	t.Setenv("OS_PAT", "")
-	t.Setenv("OS_ID_TOKEN", "")
-	legacy := `{"profile":"admin","pat":"legacy-secret","idToken":"legacy-id","registryUrl":"http://localhost:8090/api/v1/registry","apiUrl":"http://localhost:8090/api/proxy","bffUrl":"http://localhost:8090","consoleUrl":"http://localhost:8090"}`
+	legacy := `{"profile":"admin","pat":"legacy-secret","idToken":"legacy-id","registryUrl":"https://localhost:8090/api/v1/registry","apiUrl":"https://localhost:8090/api/proxy","bffUrl":"https://localhost:8090","consoleUrl":"https://localhost:8090"}`
 	if err := os.WriteFile(p, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +176,7 @@ func TestLoadConfigScrubsLegacyBearerFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PAT != "" || cfg.IDToken != "" {
+	if cfg.PAT != "" {
 		t.Fatal("legacy bearer values must never be loaded")
 	}
 	b, err := os.ReadFile(p)
@@ -251,7 +225,6 @@ func TestSensitiveNativeMutationsRequireReasonBeforeNetwork(t *testing.T) {
 	for _, args := range [][]string{
 		{"role", "grant", "alice", "opensphere-console-admins"},
 		{"token", "create", "--label", "automation"},
-		{"auth-policy", "set", "enabled"},
 		{"admin", "disable", "00000000-0000-0000-0000-000000000000"},
 		{"device", "revoke", "00000000000000000000000000000000"},
 	} {

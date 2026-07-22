@@ -8,8 +8,19 @@ const consoleRoot = path.resolve(gatewayRoot, '..', '..');
 const platformRoot = path.resolve(consoleRoot, '..');
 const outPath = path.join(gatewayRoot, 'manual-seeds', 'opensphere-core-manuals.json');
 
+function resolveSourcePath(relPath) {
+  const normalized = relPath.replace(/\\/g, '/');
+  // The release repository is commonly checked out as `OpenSphere-console`,
+  // while local worktrees have a generated directory name. Resolve Console
+  // docs from the actual current checkout in both cases.
+  if (normalized.startsWith('OpenSphere-console/')) {
+    return path.join(consoleRoot, normalized.slice('OpenSphere-console/'.length));
+  }
+  return path.join(platformRoot, normalized);
+}
+
 function readText(relPath) {
-  const full = path.join(platformRoot, relPath);
+  const full = resolveSourcePath(relPath);
   const content = fs.readFileSync(full, 'utf8')
     .replace(/\r\n/g, '\n')
     .replace(/\u0000/g, '')
@@ -105,7 +116,7 @@ const documents = [
     authorityTier: 1,
     perspective: ['base-substrate', 'api-information-flow'],
     plane: ['p2-foundation'],
-    component: ['foundation', 'backbone'],
+    component: ['foundation', 'data-identity', 'change-control'],
     tags: ['plane', 'p2'],
   }),
   doc({
@@ -164,26 +175,16 @@ const documents = [
     tags: ['plane', 'p7'],
   }),
   doc({
-    sourceId: 'console-docs/backbone-architecture',
-    title: 'Console Backbone Service Stack (CBS)',
-    path: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md',
-    documentType: 'reference',
-    authorityTier: 3,
-    perspective: ['base-substrate', 'api-information-flow'],
-    plane: ['p2-foundation', 'p6-experience'],
-    component: ['backbone', 'postgresql', 'rustfs', 'gitea', 'oaa-gateway'],
-    tags: ['backbone', 'pgvector', 'oaa'],
-  }),
-  doc({
-    sourceId: 'console-docs/oaa-backbone-implementation-plan',
-    title: 'OAA Backbone Implementation Plan',
-    path: 'OpenSphere-console/docs/OAA-BACKBONE-IMPLEMENTATION-PLAN.md',
-    documentType: 'reference',
-    authorityTier: 3,
-    perspective: ['ai-level', 'main-shell'],
-    plane: ['p2-foundation', 'p4-intelligence', 'p6-experience'],
-    component: ['oaa', 'oaa-gateway', 'agent-ui', 'pgvector'],
-    tags: ['oaa', 'implementation-plan'],
+    sourceId: 'console-docs/platform-control-plane-v2',
+    title: 'OpenSphere Console Platform Control Plane V2',
+    version: '2026-07-22',
+    path: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md',
+    documentType: 'architecture',
+    authorityTier: 1,
+    perspective: ['main-shell', 'ai-level'],
+    plane: ['p1-control', 'p4-intelligence', 'p6-experience'],
+    component: ['supabase', 'gitea', 'observability-binding', 'oaa-gateway'],
+    tags: ['platform-control-plane', 'supabase', 'gitea', 'his-binding', 'oaa'],
   }),
   doc({
     sourceId: 'console-docs/oaa-manual-knowledge-data-model',
@@ -197,19 +198,116 @@ const documents = [
     tags: ['oaa', 'manual', 'knowledge-model'],
   }),
   doc({
-    sourceId: 'help-center/docs-ts',
-    title: 'OpenSphere Help Center Static Manual Source',
-    path: 'OpenSphere-shell-menual/src/app/docs.ts',
-    documentType: 'reference',
-    authorityTier: 2,
-    perspective: ['main-shell', 'ai-level'],
+    sourceId: 'console-docs/manual-ownership',
+    title: 'OpenSphere Manual Ownership',
+    version: '2026-07-16',
+    path: 'OpenSphere-console/docs/MANUAL-OWNERSHIP.md',
+    documentType: 'policy',
+    authorityTier: 1,
+    perspective: ['main-shell'],
+    plane: ['p6-experience'],
+    component: ['console', 'manual', 'oaa-gateway'],
+    tags: ['manual', 'ownership', 'main-shell', 'console-native'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-overview',
+    title: 'OpenSphere 10 Perspectives',
+    path: 'OpenSphere-console/docs/manual/00-10-PERSPECTIVES.md',
+    documentType: 'concept',
+    authorityTier: 1,
+    perspective: ['main-shell', 'os-level', 'k8s-cluster-ceph', 'user-auth', 'developer', 'ai-level', 'api-information-flow', 'workspace-internal', 'customer', 'external-edge-service', 'website'],
     plane: ['p6-experience'],
     component: ['help-center', 'manual'],
-    tags: ['help-center', 'manual', 'perspectives'],
+    tags: ['help-center', 'manual', 'perspectives', 'perspective-overview'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-01-os-level',
+    title: '1. OS Level',
+    path: 'OpenSphere-console/docs/manual/01-OS-LEVEL.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['os-level'], plane: ['p0-host-substrate'], component: ['host', 'operating-system'],
+    tags: ['help-center', 'perspective-home', 'manual-band-operate', 'order-01'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-02-k8s-cluster-ceph',
+    title: '2. K8s Cluster + Ceph',
+    path: 'OpenSphere-console/docs/manual/02-K8S-CLUSTER-CEPH.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['k8s-cluster-ceph'], plane: ['p0-host-substrate', 'p2-foundation'], component: ['kubernetes', 'ceph'],
+    tags: ['help-center', 'perspective-home', 'manual-band-operate', 'order-02'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-03-user-auth',
+    title: '3. User & Auth',
+    path: 'OpenSphere-console/docs/manual/03-USER-AUTH.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['user-auth'], plane: ['p1-control'], component: ['identity', 'supabase-auth'],
+    tags: ['help-center', 'perspective-home', 'manual-band-operate', 'order-03'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-04-developer',
+    title: '4. Developer',
+    path: 'OpenSphere-console/docs/manual/04-DEVELOPER.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['developer'], plane: ['p5-catalog-store', 'p6-experience'], component: ['developer', 'sdk'],
+    tags: ['help-center', 'perspective-home', 'manual-band-build', 'order-04'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-05-ai-level',
+    title: '5. AI Level',
+    path: 'OpenSphere-console/docs/manual/05-AI-LEVEL.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['ai-level'], plane: ['p4-intelligence'], component: ['ai', 'oaa'],
+    tags: ['help-center', 'perspective-home', 'manual-band-build', 'order-05'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-06-api',
+    title: '6. API',
+    path: 'OpenSphere-console/docs/manual/06-API.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['api-information-flow'], plane: ['p1-control', 'p7-access-edge'], component: ['api', 'information-flow'],
+    tags: ['help-center', 'perspective-home', 'manual-band-build', 'order-06'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-07-workspace',
+    title: '7. Workspace',
+    path: 'OpenSphere-console/docs/manual/07-WORKSPACE.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['workspace-internal'], plane: ['p3-service', 'p6-experience'], component: ['workspace'],
+    tags: ['help-center', 'perspective-home', 'manual-band-deliver', 'order-07'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-08-customer',
+    title: '8. Customer',
+    path: 'OpenSphere-console/docs/manual/08-CUSTOMER.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['customer'], plane: ['p3-service', 'p6-experience'], component: ['customer', 'ciam'],
+    tags: ['help-center', 'perspective-home', 'manual-band-deliver', 'order-08'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-09-edge',
+    title: '9. Edge',
+    path: 'OpenSphere-console/docs/manual/09-EDGE.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['external-edge-service'], plane: ['p7-access-edge'], component: ['edge', 'ingress'],
+    tags: ['help-center', 'perspective-home', 'manual-band-deliver', 'order-09'],
+  }),
+  doc({
+    sourceId: 'help-center/perspective-10-website',
+    title: '10. WebSite',
+    path: 'OpenSphere-console/docs/manual/10-WEBSITE.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['website'], plane: ['p6-experience', 'p7-access-edge'], component: ['website', 'content'],
+    tags: ['help-center', 'perspective-home', 'manual-band-deliver', 'order-10'],
   }),
 ];
 
 const perspectiveDefinitions = {
+  'os-level': {
+    name: 'OS Level',
+    aliases: ['host operating system', 'host level'],
+    summary: 'Host operating system, network, storage and runtime prerequisite perspective.',
+  },
   'main-shell': {
     name: 'Main Shell',
     aliases: ['OpenSphere shell', 'console shell'],
@@ -217,7 +315,7 @@ const perspectiveDefinitions = {
   },
   'base-substrate': {
     name: 'Base Substrate',
-    aliases: ['Backbone substrate', 'base platform'],
+    aliases: ['base platform'],
     summary: 'Base platform services, storage, control data tier and shared runtime substrate.',
   },
   'k8s-cluster-ceph': {
@@ -312,12 +410,12 @@ concepts.push({
   type: 'service-tier',
   name: 'OAA Gateway',
   aliases: ['OpenSphere AI Agent Gateway', 'OAA-Gateway'],
-  summary: 'Backbone service tier that owns LLM key custody, model calls, manual knowledge retrieval and controlled OAA tools.',
-  definition: 'OAA Gateway is the Backbone service tier used by OpenSphere AI Agent for LLM key management, RAG over Backbone PostgreSQL pgvector, tool manifests and guarded action execution.',
+  summary: 'Console-native server workload that owns LLM key custody, model calls, Supabase-backed manual knowledge retrieval and governed OAA tools.',
+  definition: 'OAA Gateway is a Main Shell capability that uses Supabase for its durable data boundary, Gitea-correlated change control, tool manifests and guarded action submission.',
   authorityTier: 3,
   status: 'active',
-  sourceIds: ['console-docs/backbone-architecture', 'console-docs/oaa-backbone-implementation-plan', 'console-docs/oaa-manual-knowledge-data-model'],
-  tags: ['oaa', 'gateway', 'backbone'],
+  sourceIds: ['console-docs/platform-control-plane-v2', 'console-docs/oaa-manual-knowledge-data-model'],
+  tags: ['oaa', 'gateway', 'supabase', 'gitea'],
 });
 
 relations.push({

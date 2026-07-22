@@ -2,14 +2,17 @@ import { Component, ChangeDetectionStrategy, inject } from '@angular/core';
 import { OsShell } from './os/os-shell';
 import { AuthService } from './core/auth.service';
 import { InitialSetup } from './pages/initial-setup';
+import { LoginPage } from './pages/login';
 
 @Component({
   selector: 'app-root',
-  imports: [OsShell, InitialSetup],
+  imports: [OsShell, InitialSetup, LoginPage],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     @if (auth.setupRequired()) {
       <os-initial-setup />
+    } @else if (auth.loginRequired()) {
+      <os-login />
     } @else if (auth.initError(); as error) {
       <main class="os-bootstrap-error" role="alert">
         <h1>OpenSphere Console</h1>

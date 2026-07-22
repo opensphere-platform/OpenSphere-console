@@ -22,9 +22,9 @@ test('edge is advanced only after every immutable console component is verified'
 test('edge workflow triggers on every source that changes the released manifests or runtime contract', () => {
   const pushSection = workflow.slice(workflow.indexOf('  push:'), workflow.indexOf('permissions:'));
   const requiredPaths = [
-    'backend/backbone/images/**',
-    'backend/backbone/bootstrap/**',
-    'backend/backbone/console-services.yaml',
+    'backend/supabase/**',
+    'backend/gitea/**',
+    'backend/recovery/**',
     'deploy/**',
   ];
   for (const requiredPath of requiredPaths) {
@@ -32,9 +32,15 @@ test('edge workflow triggers on every source that changes the released manifests
     assert.match(
       pushSection,
       pattern,
-      `publish-edge-images.yml push.paths must include "${requiredPath}" so Clean Setup / atomic edge releases stay in sync with CBS manifests and the Main Shell runtime contract`,
+      `publish-edge-images.yml push.paths must include "${requiredPath}" so atomic edge releases stay in sync with the Supabase/Gitea runtime contract`,
     );
   }
+  assert.doesNotMatch(pushSection, /backend\/backbone\//);
+  assert.doesNotMatch(workflow, /opensphere-cbs-/);
+  assert.match(workflow, /image: opensphere-console-gitea/);
+  assert.match(workflow, /context: OpenSphere-console\/backend\/gitea\/image/);
+  assert.match(workflow, /component_keys=\(\s*console\s+backend\s+dupaController\s+oaaGateway\s+gitea\s*\)/);
+  assert.match(workflow, /component_keys=\(backend dupaController oaaGateway gitea\)/);
 });
 
 test('production image build does not fetch external fonts while compiling', () => {

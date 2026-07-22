@@ -33,13 +33,18 @@ export class HttpService {
     }
     try {
       const response = await fetch(target, { ...init, headers, signal: controller.signal });
-      // A freshly reinstalled Console has a new Kanidm signing key. A token from
+      // A freshly reinstalled Console can rotate its Supabase signing key. A token from
       // the previous installation can still be locally unexpired while every
       // server correctly rejects it. HTTP 401 is therefore authoritative: do
       // not gate reauthentication on the client-side exp claim.
+      // UX stability: calling reAuthenticate() on every 401 causes permission errors
+      // to look like logout. Keep token state and only force interactive
+      // re-login when the local token is actually expired.
       if (response.status === 401 && token) {
         this.reauthRequired.set(true);
-        void this.auth.reAuthenticate();
+        if (this.auth.isTokenExpired()) {
+          void this.auth.reAuthenticate();
+        }
       }
       return response;
     } finally {

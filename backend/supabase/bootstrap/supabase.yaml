@@ -1,0 +1,305 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: __OPENSPHERE_SUPABASE_NAMESPACE__
+  labels:
+    opensphere.io/layer: console-data
+    opensphere.io/data-authority: supabase
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-supabase-postgres, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-supabase-auth, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-supabase-rest, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-supabase-storage, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: opensphere-supabase-postgres-data, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 20Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: opensphere-supabase-storage-data, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 50Gi } }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensphere-supabase-postgres
+  namespace: __OPENSPHERE_SUPABASE_NAMESPACE__
+  labels: { app: opensphere-supabase-postgres, opensphere.io/supabase-component: data-identity }
+spec:
+  serviceName: opensphere-supabase-postgres
+  replicas: 1
+  selector: { matchLabels: { app: opensphere-supabase-postgres } }
+  template:
+    metadata: { labels: { app: opensphere-supabase-postgres, opensphere.io/supabase-component: data-identity } }
+    spec:
+      serviceAccountName: opensphere-supabase-postgres
+      terminationGracePeriodSeconds: 60
+      securityContext: { fsGroup: 999 }
+      containers:
+        - name: postgres
+          image: docker.io/supabase/postgres:17.6.1.136
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: POSTGRES_PORT, value: "5432" }
+            - { name: POSTGRES_DB, value: postgres }
+            - { name: POSTGRES_USER, value: supabase_admin }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: jwt-secret } }
+          args:
+            - postgres
+            - -c
+            - password_encryption=scram-sha-256
+            - -c
+            - log_min_messages=warning
+            - -c
+            - listen_addresses=0.0.0.0
+            - -c
+            - shared_preload_libraries=pg_stat_statements
+          ports: [{ name: postgres, containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: ["/bin/sh", "-c", "pg_isready -U postgres -d postgres"] }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["/bin/sh", "-c", "pg_isready -U postgres -d postgres"] }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          # The upstream image performs first-boot ownership initialization.
+          # Pod-level fsGroup contains the data boundary; further capability
+          # reduction requires a derived image and is a release-hardening gate.
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: opensphere-supabase-postgres-data }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-supabase-postgres, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  selector: { app: opensphere-supabase-postgres }
+  ports: [{ name: postgres, port: 5432, targetPort: postgres }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensphere-supabase-auth
+  namespace: __OPENSPHERE_SUPABASE_NAMESPACE__
+  labels: { app: opensphere-supabase-auth, opensphere.io/supabase-component: identity }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: opensphere-supabase-auth } }
+  template:
+    metadata: { labels: { app: opensphere-supabase-auth, opensphere.io/supabase-component: identity } }
+    spec:
+      serviceAccountName: opensphere-supabase-auth
+      containers:
+        - name: auth
+          image: docker.io/supabase/gotrue:v2.189.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: GOTRUE_API_HOST, value: 0.0.0.0 }
+            - { name: GOTRUE_API_PORT, value: "9999" }
+            - { name: API_EXTERNAL_URL, value: __OPENSPHERE_CONSOLE_URL__/auth/v1 }
+            - { name: GOTRUE_SITE_URL, value: __OPENSPHERE_CONSOLE_URL__ }
+            - { name: GOTRUE_URI_ALLOW_LIST, value: __OPENSPHERE_CONSOLE_URL__/** }
+            - { name: GOTRUE_DB_DRIVER, value: postgres }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
+            - { name: GOTRUE_DB_DATABASE_URL, value: "postgres://supabase_auth_admin:$(POSTGRES_PASSWORD)@opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local:5432/postgres" }
+            - { name: GOTRUE_DISABLE_SIGNUP, value: "true" }
+            - { name: GOTRUE_EXTERNAL_EMAIL_ENABLED, value: "true" }
+            - { name: GOTRUE_MAILER_AUTOCONFIRM, value: "false" }
+            - { name: GOTRUE_JWT_ADMIN_ROLES, value: service_role }
+            - { name: GOTRUE_JWT_AUD, value: authenticated }
+            - { name: GOTRUE_JWT_DEFAULT_GROUP_NAME, value: authenticated }
+            - { name: GOTRUE_JWT_EXP, value: "900" }
+            - name: GOTRUE_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: jwt-secret } }
+            - { name: GOTRUE_JWT_ISSUER, value: __OPENSPHERE_CONSOLE_URL__/auth/v1 }
+            - { name: GOTRUE_MFA_TOTP_ENROLL_ENABLED, value: "true" }
+            - { name: GOTRUE_MFA_TOTP_VERIFY_ENABLED, value: "true" }
+            - { name: GOTRUE_SECURITY_CAPTCHA_ENABLED, value: "false" }
+          ports: [{ name: http, containerPort: 9999 }]
+          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 5, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-supabase-auth, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  selector: { app: opensphere-supabase-auth }
+  ports: [{ name: http, port: 9999, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensphere-supabase-rest
+  namespace: __OPENSPHERE_SUPABASE_NAMESPACE__
+  labels: { app: opensphere-supabase-rest, opensphere.io/supabase-component: data-api }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: opensphere-supabase-rest } }
+  template:
+    metadata: { labels: { app: opensphere-supabase-rest, opensphere.io/supabase-component: data-api } }
+    spec:
+      serviceAccountName: opensphere-supabase-rest
+      containers:
+        - name: rest
+          image: docker.io/postgrest/postgrest:v14.12
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
+            - { name: PGRST_DB_URI, value: "postgres://authenticator:$(POSTGRES_PASSWORD)@opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local:5432/postgres" }
+            - { name: PGRST_DB_SCHEMAS, value: "console,audit,storage" }
+            - { name: PGRST_DB_EXTRA_SEARCH_PATH, value: "public,auth,extensions" }
+            - { name: PGRST_DB_ANON_ROLE, value: anon }
+            - name: PGRST_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: jwt-secret } }
+            - { name: PGRST_ADMIN_SERVER_PORT, value: "3001" }
+            - { name: PGRST_DB_USE_LEGACY_GUCS, value: "false" }
+            - { name: PGRST_DB_MAX_ROWS, value: "1000" }
+          ports: [{ name: http, containerPort: 3000 }, { name: admin, containerPort: 3001 }]
+          readinessProbe: { httpGet: { path: /ready, port: admin }, initialDelaySeconds: 5, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /live, port: admin }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-supabase-rest, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  selector: { app: opensphere-supabase-rest }
+  ports: [{ name: http, port: 3000, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensphere-supabase-storage
+  namespace: __OPENSPHERE_SUPABASE_NAMESPACE__
+  labels: { app: opensphere-supabase-storage, opensphere.io/supabase-component: object }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: opensphere-supabase-storage } }
+  template:
+    metadata: { labels: { app: opensphere-supabase-storage, opensphere.io/supabase-component: object } }
+    spec:
+      serviceAccountName: opensphere-supabase-storage
+      securityContext: { fsGroup: 1000 }
+      containers:
+        - name: storage
+          image: docker.io/supabase/storage-api:v1.60.4
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ANON_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: anon-key } }
+            - name: SERVICE_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: service-role-key } }
+            - name: AUTH_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: jwt-secret } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
+            - { name: DATABASE_URL, value: "postgres://supabase_storage_admin:$(POSTGRES_PASSWORD)@opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local:5432/postgres" }
+            - { name: POSTGREST_URL, value: http://opensphere-supabase-rest.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local:3000 }
+            - { name: STORAGE_PUBLIC_URL, value: __OPENSPHERE_CONSOLE_URL__/storage/v1 }
+            - { name: STORAGE_BACKEND, value: file }
+            - { name: FILE_STORAGE_BACKEND_PATH, value: /var/lib/storage }
+            - { name: FILE_SIZE_LIMIT, value: "524288000" }
+            - { name: TENANT_ID, value: opensphere-console }
+            - { name: REGION, value: local }
+            - { name: GLOBAL_S3_BUCKET, value: opensphere-console }
+            - { name: ENABLE_IMAGE_TRANSFORMATION, value: "false" }
+          ports: [{ name: http, containerPort: 5000 }]
+          readinessProbe: { httpGet: { path: /status, port: http }, initialDelaySeconds: 10, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /status, port: http }, initialDelaySeconds: 30, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts: [{ name: data, mountPath: /var/lib/storage }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: opensphere-supabase-storage-data }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-supabase-storage, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  selector: { app: opensphere-supabase-storage }
+  ports: [{ name: http, port: 5000, targetPort: http }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-supabase-default-deny, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-supabase-console-ingress, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: opensphere.io/supabase-component, operator: In, values: [identity, data-api, object] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 9999 }
+        - { protocol: TCP, port: 3000 }
+        - { protocol: TCP, port: 5000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-supabase-postgres-ingress, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
+spec:
+  podSelector: { matchLabels: { app: opensphere-supabase-postgres } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+      ports: [{ protocol: TCP, port: 5432 }]

@@ -75,15 +75,17 @@ export class AdminLayout {
       ],
     },
     {
-      label: '플랫폼 기반',
+      label: '플랫폼 제어',
       items: [
-        { label: 'Backbone', route: '/manage/backbone', icon: Layers16 },
-        { label: 'OAA Gateway', route: '/manage/oaa', icon: ChatBot16 },
-        { label: 'Observability', route: '/manage/observability', icon: Activity16 },
+        { label: 'Control Plane', route: '/manage/platform-control', icon: Layers16 },
+        { label: 'Data & Identity', route: '/manage/data-identity', icon: UserAdmin16 },
+        { label: 'Change Control', route: '/manage/change-control', icon: List16 },
+        { label: 'OAA', route: '/manage/oaa', icon: ChatBot16 },
+        { label: 'HIS Observability', route: '/manage/observability', icon: Activity16 },
       ],
     },
     {
-      label: '운영',
+      label: '운영 및 증거',
       items: [
         { label: '알림', route: '/manage/notifications', icon: Notification16 },
         { label: '감사 로그', route: '/manage/audit', icon: List16 },

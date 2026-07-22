@@ -1,0 +1,152 @@
+# opensphere-console-oaa-gateway — Main Shell native OAA Core runtime (CONSTITUTION-0004 §4.2/§4.5).
+# Ownership and lifecycle are Console/Main Shell native, exactly like Manual. This is NOT an
+# optional AI staging manifest, NOT a subShell/Consumer, and NOT an independent
+# platform pillar. It is installed after Supabase Data & Identity and Gitea
+# Declarative Change Authority are Ready. Clean bootstrap, upgrade and uninstall
+# own its lifecycle; a normal install must not require a post-install patch.
+# Before Cluster Manager Activated + HIS Preflight Ready, Kubernetes mutation/action tools stay
+# fail closed (OAA_MUTATION_ENABLED='false' below) and this base runtime grants no deployment
+# patch RBAC at all — see the removed *-controlled-operator ClusterRole/ClusterRoleBinding below.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }
+---
+# OAA is a planner/read broker, not a Kubernetes write principal.  Key rotation
+# and all other mutations go through Console Backend policy/approval flow.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }
+rules:
+  - { apiGroups: [""], resources: [secrets], verbs: [get, list] }
+  - { apiGroups: [""], resources: [pods, pods/log, services, events], verbs: [get, list] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-oaa-gateway }
+subjects: [{ kind: ServiceAccount, name: opensphere-console-oaa-gateway, namespace: opensphere-console }]
+---
+# Read-only environment reader across the allowlisted namespaces the OAA `/env`, `/pods`,
+# `/services`, `/events`, `/describe`, `/rollout` tools summarize. No write verb anywhere here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: opensphere-console-oaa-gateway-environment-reader }
+rules:
+  - { apiGroups: [""], resources: [pods, pods/log, services, events], verbs: [get, list] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: opensphere-console-oaa-gateway-environment-reader }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensphere-console-oaa-gateway-environment-reader }
+subjects: [{ kind: ServiceAccount, name: opensphere-console-oaa-gateway, namespace: opensphere-console }]
+---
+# CONSTITUTION-0004 §4.2: before Cluster Manager Activated + HIS Preflight Ready, OAA must stay
+# read-only. The base runtime therefore grants NO deployment patch capability at all — the former
+# opensphere-console-oaa-gateway-controlled-operator ClusterRole/ClusterRoleBinding (apps/deployments
+# get/list/patch) is permanently removed from this manifest, not merely left unbound. Any later
+# controlled-mutation capability is a Cluster Manager Activated + HIS Preflight Ready gated addition,
+# never a base-install grant.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensphere-console-oaa-gateway
+  namespace: opensphere-console
+  labels:
+    app: opensphere-console-oaa-gateway
+    app.kubernetes.io/name: opensphere-console-oaa-gateway
+    app.kubernetes.io/component: oaa-core
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/layer: console-service
+    opensphere.io/scope: main-shell-core
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector: { matchLabels: { app: opensphere-console-oaa-gateway } }
+  template:
+    metadata:
+      labels:
+        app: opensphere-console-oaa-gateway
+        app.kubernetes.io/name: opensphere-console-oaa-gateway
+        app.kubernetes.io/component: oaa-core
+        app.kubernetes.io/part-of: opensphere-console
+        opensphere.io/layer: console-service
+        opensphere.io/scope: main-shell-core
+    spec:
+      serviceAccountName: opensphere-console-oaa-gateway
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: gateway
+          # Canonical GHCR repo pinned by digest, never a mutable tag. Setup replaces the
+          # __OAA_GATEWAY_IMAGE_DIGEST__ token with the release-pinned sha256 digest from the BOM
+          # before this manifest is applied (NAMING-STANDARD §1/§4/§6).
+          image: opensphere-console-oaa-gateway:platform-control-v5
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: OAA_NAMESPACE, value: opensphere-console }
+            # Supabase-backed Console identity is the only Console token/role authority.
+            - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
+            - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            # ADR-006 target: OAA knowledge/control metadata lives in Supabase.
+            # The gateway can read this schema but is not its migration owner.
+            - { name: OAA_DATA_AUTHORITY, value: supabase }
+            - { name: OAA_PG_HOST, value: opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local }
+            - { name: OAA_PG_PORT, value: "5432" }
+            - { name: OAA_PG_DB, value: postgres }
+            - { name: OAA_PG_USER, value: opensphere_oaa_gateway }
+            - { name: OAA_PG_PASSWORD, valueFrom: { secretKeyRef: { name: opensphere-oaa-runtime, key: pg-password } } }
+            - { name: OAA_PG_SCHEMA, value: oaa }
+            - { name: OAA_EMBED_DIM, value: "1536" }
+            - { name: OAA_ALLOW_HASH_EMBEDDINGS, value: "false" }
+            - { name: OAA_RAG_TOP_K, value: "5" }
+            # CONSTITUTION-0004 §4.2 fail-closed default: Kubernetes mutation/action tools stay
+            # unavailable until Cluster Manager Activated + HIS Preflight Ready explicitly flips this.
+            - { name: OAA_MUTATION_ENABLED, value: "false" }
+          ports: [{ name: http, containerPort: 8080 }]
+          # /healthz is liveness/startup only. /readyz additionally requires PostgreSQL connectivity,
+          # the pgvector/schema migration, the bundled Manual Registry seed, and the tool registry
+          # seed to be live before this Pod is added to the Service endpoints.
+          startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 3, failureThreshold: 40 }
+          readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 5, failureThreshold: 3 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10, failureThreshold: 6 }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console, labels: { app: opensphere-console-oaa-gateway } }
+spec:
+  selector: { app: opensphere-console-oaa-gateway }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }
+spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-console-oaa-gateway } } }
+---
+# Ingress is limited to the Console namespace (same-origin nginx proxy + Main Shell readiness
+# probe) and pods within the Console namespace, each allowed exactly once.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-console-oaa-gateway-ingress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-console-oaa-gateway } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - { namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } } }
+        - { podSelector: {} }
+      ports: [{ protocol: TCP, port: 8080 }]

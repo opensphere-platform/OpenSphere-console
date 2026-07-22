@@ -1,57 +1,47 @@
 const http = require('http');
-const https = require('https');
 const fs = require('fs');
-const { createHash, createPublicKey, randomUUID, verify } = require('crypto');
+const { createHash, randomUUID } = require('crypto');
 const { Pool } = require('pg');
 
 const PORT = Number(process.env.PORT || 8080);
 const VERSION = process.env.APP_VERSION || '0.1.0';
-const BACKBONE_NS = process.env.BACKBONE_NS || 'opensphere-backbone';
+const OAA_NAMESPACE = process.env.OAA_NAMESPACE || 'opensphere-console';
 const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
-const KANIDM_ISSUERS = (process.env.KANIDM_ISSUERS || process.env.KANIDM_ISS || 'https://auth.console.opensphere.dev/oauth2/openid/opensphere-console,https://localhost:8444/oauth2/openid/opensphere-console')
-  .split(',').map((x) => x.trim()).filter(Boolean);
-const KANIDM_JWKS_URL = process.env.KANIDM_JWKS_URL || 'https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk';
-const KANIDM_TLS_SERVERNAME = process.env.KANIDM_TLS_SERVERNAME || 'kanidm.opensphere-console-auth.svc';
-const KANIDM_AZP = process.env.KANIDM_AZP || 'opensphere-console';
-const KANIDM_ADMIN_GROUP = process.env.KANIDM_ADMIN_GROUP || 'opensphere-console-admins';
-// CONSTITUTION-0004 base manifest: the installation CA is a Setup-provisioned Secret
-// (opensphere-console-auth-ca) mounted read-only at /etc/kanidm-ca, never a certificate baked
-// into the image at build time.
-const KANIDM_CA_PATH = process.env.KANIDM_CA_PATH || '/etc/kanidm-ca/ca.crt';
-// Signed group claims alone are trusted only until exp — a revoked PAT/CLI session, a disabled
-// account, or a removed admin role must stop working starting with the very next request, not at
-// token expiry. dupa-control's controller.js already requires the auth BFF's live
-// /bff/token/introspect state on every request with no cache; OAA must have the same live identity
-// authority instead of trusting locally-verified signed claims until exp.
-const TOKEN_INTROSPECTION_URL = process.env.TOKEN_INTROSPECTION_URL
-  || 'https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect';
-const TOKEN_INTROSPECTION_SERVERNAME = process.env.TOKEN_INTROSPECTION_SERVERNAME || KANIDM_TLS_SERVERNAME;
+const CONSOLE_ADMIN_GROUP = process.env.CONSOLE_ADMIN_GROUP || 'console-admins';
+const CONSOLE_IDENTITY_URL = (process.env.CONSOLE_IDENTITY_URL || 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const SCHEMA_ID_RE = /^[a-z_][a-z0-9_]{0,62}$/;
-// opensphere_oaa is a dedicated, independently-generated PostgreSQL login role
-// (CONSTITUTION-0004 §4.5 OAA bootstrap boundary) — it must never default to or reuse the
-// shared `console` runtime credential, which the Backbone bootstrap boundary deliberately
-// restricts to USAGE-only on public plus explicit audit/credential table DML. See
-// backend/backbone/bootstrap/backbone.yaml for the role/schema provisioning.
+// ADR-006 target mode.  In this mode schema ownership belongs exclusively to
+// versioned Supabase migrations; the gateway validates and consumes it but
+// never performs runtime DDL.
+const OAA_DATA_AUTHORITY = 'supabase';
+const OAA_SUPABASE_MODE = true;
+// The gateway uses its own Supabase PostgreSQL role; it never reuses a Console
+// Backend credential or owns schema migration/DDL.
 const PG = {
-  host: process.env.BACKBONE_PG_HOST || 'backbone-postgres.opensphere-backbone.svc.cluster.local',
-  port: Number(process.env.BACKBONE_PG_PORT || 5432),
-  database: process.env.BACKBONE_PG_DB || 'console',
-  user: process.env.BACKBONE_PG_USER || 'opensphere_oaa',
-  password: process.env.BACKBONE_PG_PASSWORD || process.env.BACKBONE_PG_password || process.env.password || '',
+  host: process.env.OAA_PG_HOST || 'opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local',
+  port: Number(process.env.OAA_PG_PORT || 5432),
+  database: process.env.OAA_PG_DB || 'postgres',
+  user: process.env.OAA_PG_USER || 'opensphere_oaa_gateway',
+  password: process.env.OAA_PG_PASSWORD || '',
   // The dedicated schema opensphere_oaa owns. Unqualified OAA table names resolve here via
   // search_path, never requiring (or granting) CREATE on public.
-  schema: SCHEMA_ID_RE.test(process.env.BACKBONE_PG_SCHEMA || '') ? process.env.BACKBONE_PG_SCHEMA : 'oaa',
-  // Setup-managed installation CA for verified TLS to Backbone PostgreSQL — never a baked-in
+  schema: SCHEMA_ID_RE.test(process.env.OAA_PG_SCHEMA || '') ? process.env.OAA_PG_SCHEMA : 'oaa',
+  // Setup-managed installation CA for verified TLS to Supabase PostgreSQL — never a baked-in
   // image certificate, and connections never disable certificate verification.
-  caPath: process.env.BACKBONE_PG_CA_PATH || '/etc/backbone-postgres-ca/ca.crt',
+  caPath: process.env.OAA_PG_CA_PATH || '/etc/oaa-postgres-ca/ca.crt',
 };
-const OAA_EMBED_DIM = Math.max(16, Math.min(4096, Number(process.env.OAA_EMBED_DIM || 384) || 384));
+const OAA_PG_TLS = process.env.OAA_PG_TLS === 'true';
+const OAA_EMBED_DIM = Math.max(16, Math.min(4096, Number(process.env.OAA_EMBED_DIM || (OAA_SUPABASE_MODE ? 1536 : 384)) || (OAA_SUPABASE_MODE ? 1536 : 384)));
 const OAA_RAG_TOP_K = Math.max(1, Math.min(12, Number(process.env.OAA_RAG_TOP_K || 5) || 5));
 const OAA_RAG_ENABLED = process.env.OAA_RAG_ENABLED !== 'false';
+// Hash vectors are an explicit local-development escape hatch only.  Production
+// Supabase mode must fail closed until a real embedding provider is configured.
+const OAA_ALLOW_HASH_EMBEDDINGS = process.env.OAA_ALLOW_HASH_EMBEDDINGS === 'true';
+const OAA_ACTION_SUBMISSION_ENABLED = process.env.OAA_ACTION_SUBMISSION_ENABLED !== 'false';
 const OAA_EMBED_KEY_ID = String(process.env.OAA_EMBED_KEY_ID || '').trim();
 const OAA_MANUAL_SEED_PATH = process.env.OAA_MANUAL_SEED_PATH || '/app/manual-seeds/opensphere-core-manuals.json';
-const OAA_ENV_NAMESPACES = (process.env.OAA_ENV_NAMESPACES || 'opensphere-console,opensphere-backbone,opensphere-console-auth,opensphere-monitoring')
+const OAA_ENV_NAMESPACES = (process.env.OAA_ENV_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change')
   .split(',').map((x) => x.trim()).filter(Boolean).slice(0, 8);
 const OAA_SCALE_MAX = Math.max(1, Math.min(50, Number(process.env.OAA_SCALE_MAX || 10) || 10));
 // CONSTITUTION-0004 §4.2: before Cluster Manager Activated + HIS Preflight Ready, OAA may only
@@ -114,159 +104,36 @@ async function k8s(method, path, body) {
   return { ok: res.ok, status: res.status, json: data };
 }
 
-let jwks = null;
-let jwksAt = 0;
-function jwksCa() {
-  if (!KANIDM_CA_PATH) return undefined;
-  try {
-    return fs.readFileSync(KANIDM_CA_PATH);
-  } catch {
-    return undefined;
-  }
-}
-
-async function loadJwks(force = false) {
-  if (!force && jwks && Date.now() - jwksAt < 5 * 60 * 1000) return jwks;
-  const u = new URL(KANIDM_JWKS_URL);
-  const data = await new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: u.hostname,
-      port: u.port || 443,
-      path: u.pathname + u.search,
-      method: 'GET',
-      ca: jwksCa(),
-      servername: KANIDM_TLS_SERVERNAME,
-    }, (resp) => {
-      const chunks = [];
-      resp.on('data', (x) => chunks.push(x));
-      resp.on('end', () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
-        catch (e) { reject(e); }
-      });
-    });
-    req.on('error', reject);
-    req.end();
-  });
-  jwks = data.keys || (data.kty ? [data] : []);
-  jwksAt = Date.now();
-  return jwks;
-}
-
-// Strict signed-claim validation only (no live-identity check). Kept as a separate, pure function
-// (like dupa-control's assertClaims) so the shape/ordering can be unit-tested without a network
-// round trip. now is injectable for deterministic nbf/exp tests.
-function assertClaims(header, claims, now) {
-  now = now || Date.now();
-  const aud = Array.isArray(claims.aud) ? claims.aud : (claims.aud ? [claims.aud] : []);
-  if (header.alg !== 'ES256') throw { code: 401, msg: 'unexpected alg' };
-  if (!KANIDM_ISSUERS.includes(claims.iss)) throw { code: 401, msg: 'bad iss' };
-  if (claims.azp !== KANIDM_AZP && !aud.includes(KANIDM_AZP)) throw { code: 401, msg: 'bad azp/aud' };
-  if (!claims.exp) throw { code: 401, msg: 'missing exp' };
-  if (!claims.sub) throw { code: 401, msg: 'missing sub' };
-  if (!claims.iat) throw { code: 401, msg: 'missing iat' };
-  if (claims.exp * 1000 < now) throw { code: 401, msg: 'token expired' };
-  if (claims.nbf && claims.nbf * 1000 > now + 30000) throw { code: 401, msg: 'token not yet valid' };
-  if (claims.typ !== undefined && claims.typ !== 'browser' && claims.typ !== 'pat' && claims.typ !== 'cli_session') {
-    throw { code: 401, msg: 'unsupported token type' };
-  }
-}
-
-// Introspects the exact raw JWT against the auth BFF's live session/PAT/CLI state on every call —
-// no cache, no TTL. https.request (not fetch) so the installation CA and SNI are explicit, and the
-// response is size- and time-bounded so a slow/misbehaving BFF cannot hang the request or exhaust
-// memory. Any non-200 / oversized / non-JSON response rejects, which verifyAuthed below turns into
-// a generic fail-closed 401 without ever logging or echoing the token.
-function introspectManagedToken(jwt) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(TOKEN_INTROSPECTION_URL);
-    const body = Buffer.from(new URLSearchParams({ token: jwt }).toString());
-    const rq = https.request({
-      hostname: u.hostname,
-      port: u.port || 443,
-      path: u.pathname + u.search,
-      method: 'POST',
-      ca: jwksCa(),
-      servername: TOKEN_INTROSPECTION_SERVERNAME,
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'content-length': body.length,
-        accept: 'application/json',
-      },
-    }, (resp) => {
-      const chunks = [];
-      let size = 0;
-      resp.on('data', (chunk) => {
-        size += chunk.length;
-        if (size <= 64 * 1024) chunks.push(chunk);
-      });
-      resp.on('end', () => {
-        if (size > 64 * 1024) return reject(new Error('token introspection response too large'));
-        if (resp.statusCode !== 200) return reject(new Error(`token introspection HTTP ${resp.statusCode}`));
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
-        catch { reject(new Error('token introspection returned invalid JSON')); }
-      });
-    });
-    rq.setTimeout(3000, () => rq.destroy(new Error('token introspection timeout')));
-    rq.on('error', reject);
-    rq.write(body);
-    rq.end();
-  });
-}
-
-// The live-identity gate: signed claims describe what the token *said* at issuance time; only the
-// introspection state describes whether that credential is still active *right now*. Every field
-// pinned here must match, or the request fails closed — never fall back to the signed claims.
-function assertManagedTokenActive(claims, state) {
-  if (!state || state.active !== true) throw { code: 401, msg: 'credential inactive or revoked' };
-  if (state.sub !== claims.sub || state.username !== claims.preferred_username || state.exp !== claims.exp) {
-    throw { code: 401, msg: 'credential state mismatch' };
-  }
-  if (claims.typ === undefined || claims.typ === 'browser') {
-    if (state.type !== 'browser_session') throw { code: 401, msg: 'browser session state mismatch' };
-    return;
-  }
-  if (!claims.jti || state.jti !== claims.jti) throw { code: 401, msg: 'credential state mismatch' };
-  if (claims.typ === 'cli_session' && (!claims.device_id || state.deviceId !== claims.device_id)) {
-    throw { code: 401, msg: 'device state mismatch' };
-  }
-}
-
 async function verifyAuthed(req) {
   const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
   if (!m) throw { code: 401, msg: 'no bearer token' };
-  const rawToken = m[1];
-  const [h, p, s] = rawToken.split('.');
-  if (!h || !p || !s) throw { code: 401, msg: 'malformed token' };
-  const header = JSON.parse(b64urlToBuf(h).toString('utf8'));
-  const claims = JSON.parse(b64urlToBuf(p).toString('utf8'));
-  let jwk = (await loadJwks()).find((k) => k.kid === header.kid);
-  if (!jwk) jwk = (await loadJwks(true)).find((k) => k.kid === header.kid);
-  if (!jwk) throw { code: 401, msg: 'unknown kid' };
-  const pub = createPublicKey({ key: jwk, format: 'jwk' });
-  const ok = verify('SHA256', Buffer.from(`${h}.${p}`), { key: pub, dsaEncoding: 'ieee-p1363' }, b64urlToBuf(s));
-  if (!ok) throw { code: 401, msg: 'bad signature' };
-  assertClaims(header, claims);
-  // Live identity authority (no cache): re-check the exact raw JWT against the auth BFF's current
-  // session/PAT/CLI state on EVERY authenticated request. A revoked PAT/CLI session, a disabled
-  // account, or a removed admin role must be rejected starting with the very next request, not at
-  // token expiry. Any introspection outage/error/mismatch fails closed as a generic 401 — never
-  // fall back to trusting the signed claims, and never leak the token in the failure.
-  let managedState;
+  let response;
   try {
-    managedState = await introspectManagedToken(rawToken);
+    response = await fetch(`${CONSOLE_IDENTITY_URL}/api/identity/session`, {
+      headers: { authorization: `Bearer ${m[1]}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(3000),
+    });
   } catch {
-    throw { code: 401, msg: 'token introspection unavailable' };
+    throw { code: 503, msg: 'Supabase identity authority unavailable' };
   }
-  assertManagedTokenActive(claims, managedState);
-  // Current groups/admin decision are derived from the live introspection state, not the signed
-  // claims, so a role removed after issuance stops granting access immediately.
-  const groups = (managedState.groups || []).map((g) => String(g).replace(/^\//, '').replace(/@.*$/, ''));
-  return { username: claims.preferred_username || claims.sub || 'unknown', subject: claims.sub || '', groups };
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status === 403 ? 403 : 401, msg: body.error || 'invalid Supabase session' };
+  return {
+    username: body.username || body.subject || 'unknown',
+    subject: body.subject || '',
+    groups: Array.isArray(body.groups) ? body.groups : [],
+    permissions: Array.isArray(body.permissions) ? body.permissions : [],
+    assurance: body.assurance || 'aal1',
+    // Never log this value.  It is retained only for a same-request call to
+    // the Console Backend audit authority.
+    bearerToken: m[1],
+    provider: 'supabase',
+  };
 }
 
 async function verifyAdmin(req) {
   const actor = await verifyAuthed(req);
-  if (!actor.groups.includes(KANIDM_ADMIN_GROUP)) throw { code: 403, msg: `not in ${KANIDM_ADMIN_GROUP}` };
+  if (!actor.groups.includes(CONSOLE_ADMIN_GROUP)) throw { code: 403, msg: `requires ${CONSOLE_ADMIN_GROUP}` };
   return actor;
 }
 
@@ -299,7 +166,7 @@ function enabledKeyFromSecret(s) {
 }
 
 async function listKeys() {
-  const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
+  const r = await k8s('GET', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
   if (!r.ok) throw Object.assign(new Error(`secret list HTTP ${r.status}`), { code: 502 });
   return (r.json?.items || []).map(keyMetaFromSecret).sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -307,14 +174,14 @@ async function listKeys() {
 async function loadEnabledKey(id = '') {
   if (id) {
     if (!ID_RE.test(id)) throw { code: 400, msg: 'invalid keyId' };
-    const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/secrets/${secretName(id)}`);
+    const r = await k8s('GET', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets/${secretName(id)}`);
     if (r.status === 404) throw { code: 404, msg: 'llm key not found' };
     if (!r.ok) throw { code: 502, msg: `secret read HTTP ${r.status}` };
     const key = enabledKeyFromSecret(r.json);
     if (!key) throw { code: 400, msg: 'llm key is disabled or empty' };
     return key;
   }
-  const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
+  const r = await k8s('GET', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
   if (!r.ok) throw { code: 502, msg: `secret list HTTP ${r.status}` };
   const keys = (r.json?.items || []).map(enabledKeyFromSecret).filter(Boolean);
   const preferred = keys.find((k) => k.id === 'deepseek') || keys.find((k) => k.provider === 'deepseek') || keys[0];
@@ -329,7 +196,7 @@ async function loadEmbeddingKey(id = '') {
     if (!key.embeddingModel) throw { code: 400, msg: `llm key ${wanted} has no embedding model` };
     return key;
   }
-  const r = await k8s('GET', `/api/v1/namespaces/${BACKBONE_NS}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
+  const r = await k8s('GET', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
   if (!r.ok) throw { code: 502, msg: `secret list HTTP ${r.status}` };
   const keys = (r.json?.items || []).map(enabledKeyFromSecret).filter((k) => k && k.embeddingModel);
   return keys.find((k) => k.id === 'openai-main') || keys.find((k) => k.provider === 'openai') || keys[0] || null;
@@ -359,7 +226,7 @@ function pgEnabled() {
   return Boolean(PG.password);
 }
 
-// Reads the Setup-managed installation CA mounted read-only from the backbone-postgres
+// Reads the Setup-managed installation CA mounted read-only from Supabase PostgreSQL
 // Secret (never a baked-in image certificate). Returns undefined (never throws) so a missing
 // mount fails closed into getPgPool() below refusing to open an unverified connection, rather
 // than silently connecting without TLS verification.
@@ -375,10 +242,10 @@ function getPgPool() {
   if (!pgEnabled()) return null;
   if (!pgPool) {
     const ca = pgCa();
-    if (!ca) {
+    if (OAA_PG_TLS && !ca) {
       // Fail closed: never fall back to an unverified/plaintext connection. The caller sees
       // "no pool" (same shape as postgres-not-configured) and /readyz stays a structured 503.
-      console.error('[oaa-db] Backbone PostgreSQL installation CA is unavailable at', PG.caPath, '- refusing to connect without verified TLS');
+      console.error('[oaa-db] Supabase PostgreSQL installation CA is unavailable at', PG.caPath, '- refusing to connect without verified TLS');
       return null;
     }
     pgPool = new Pool({
@@ -388,19 +255,23 @@ function getPgPool() {
       user: PG.user,
       password: PG.password,
       // Verified TLS against the Setup-managed installation CA — rejectUnauthorized stays
-      // true and servername is pinned to the Backbone PostgreSQL DNS name.
-      ssl: { ca, rejectUnauthorized: true, servername: PG.host },
+      // true and servername is pinned to the Supabase PostgreSQL DNS name.
+      // Supabase PostgreSQL is reached only over the cluster NetworkPolicy in
+      // the current self-hosted install; TLS can be required explicitly when a
+      // TLS-enabled service is configured. The deprecated legacy database path
+      // is not supported by this runtime.
+      ssl: OAA_PG_TLS ? { ca, rejectUnauthorized: true, servername: PG.host } : (OAA_SUPABASE_MODE ? false : { ca, rejectUnauthorized: true, servername: PG.host }),
       // Deterministic, race-free search_path: `options` is sent inside the libpq StartupMessage
       // (see pg/lib/client.js _startup) and applied by the server before authentication
       // completes and before the pool can ever hand the connection to a caller's query -- unlike
       // a 'connect'-event client.query(), there is no window where a caller's first query can
       // race an unawaited SET. This is also belt-and-suspenders with the role-level
       // `ALTER ROLE opensphere_oaa ... SET search_path = oaa, public` already established by
-      // Backbone bootstrap/reconcile (backend/backbone/bootstrap/backbone.yaml), so search_path
+      // Supabase bootstrap/reconcile, so search_path
       // is correct even for a bare `psql -U opensphere_oaa` session that never sets `options`.
       // PG.schema is validated against SCHEMA_ID_RE above, never interpolated from an
       // unvalidated source.
-      options: `-c search_path=${PG.schema},public`,
+      options: `-c search_path=${PG.schema},extensions,public`,
       max: 4,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
@@ -416,10 +287,28 @@ async function ensureKnowledgeSchema() {
   if (pgSchemaReady) return true;
   if (pgSchemaPromise) return pgSchemaPromise;
   pgSchemaPromise = (async () => {
+  if (OAA_SUPABASE_MODE) {
+    // Migration 0005 is the only schema writer in the target architecture.
+    // Verify the serving projection and vector extension rather than silently
+    // creating partial tables from an application pod.
+    const state = await pool.query(`
+      SELECT
+        to_regclass('oaa.oaa_knowledge_documents') AS documents,
+        to_regclass('oaa.oaa_knowledge_chunks') AS chunks,
+        to_regclass('oaa.oaa_tool_capabilities') AS tools,
+        EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS vector_ready
+    `);
+    const row = state.rows[0] || {};
+    if (!row.documents || !row.chunks || !row.tools || row.vector_ready !== true) {
+      throw new Error('Supabase OAA migration 0005 is not applied');
+    }
+    pgSchemaReady = true;
+    return true;
+  }
   // pgvector installation is bootstrap-owner responsibility only (CONSTITUTION-0004 §4.5):
   // Setup's sealed opensphere_db_bootstrap superuser runs `CREATE EXTENSION IF NOT EXISTS
   // vector` during empty-PVC init and idempotent boundary reconcile (see
-  // backend/backbone/bootstrap/backbone.yaml). opensphere_oaa deliberately has no CREATE on
+  // Supabase migrations). opensphere_oaa deliberately has no CREATE on
   // public and must never attempt to install the extension itself.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS oaa_knowledge_documents (
@@ -614,7 +503,11 @@ async function providerEmbedding(text, key) {
 }
 
 async function embeddingVector(text, opts = {}) {
-  const strict = Boolean(opts.strict);
+  // Manual Registry content must remain browseable when no external embedding provider is
+  // configured. This fallback is limited to callers that explicitly opt into the Manual path;
+  // general OAA knowledge and chat retrieval remain provider-only.
+  const allowHashFallback = OAA_ALLOW_HASH_EMBEDDINGS || opts.allowHashFallback === true;
+  const strict = Boolean(opts.strict) || (OAA_SUPABASE_MODE && !allowHashFallback);
   try {
     const key = await loadEmbeddingKey(opts.keyId || '');
     if (key) return await providerEmbedding(text, key);
@@ -622,6 +515,9 @@ async function embeddingVector(text, opts = {}) {
   } catch (e) {
     if (strict) throw e;
     console.warn('[oaa-embed] provider skipped:', e.message || e);
+  }
+  if (!allowHashFallback) {
+    throw new Error('provider embedding is required; hash embeddings are disabled');
   }
   return {
     vector: hashEmbedding(text),
@@ -664,7 +560,7 @@ function builtInKnowledgeDocs() {
       content: [
         'OpenSphere 10 Perspective is the internal operating model used by OpenSphere. Generic LLMs do not know it unless OAA stores it as project knowledge.',
         '0 Main Shell: console operation and control surface. 1 Base/Substrate: cloud, region, cluster fleet, node, OS, network and physical substrate. 2 K8s Cluster + Ceph: in-cluster control plane, etcd, storage, VM and resource reality. 3 User: employees, members, groups and workforce IGA. 4 Developer: catalog declarations combined with cluster reality and golden path. 5 AI Level: model serving, inference, agent and AI capability layer. 6 API = information flow: contracts, state, inbound and outbound information. 7 Workspace internal: internal business apps and employee work surfaces. 8 Customer: customer-facing services and portals. 9 External/Edge Service: ingress, TLS, domains and probes. 10 WebSite: public web pages and the organization face.',
-        'OAA must answer questions about these perspectives from Backbone knowledge, not from provider model memory.'
+        'OAA must answer questions about these perspectives from governed OpenSphere knowledge, not from provider model memory.'
       ].join('\n\n'),
     },
     {
@@ -675,22 +571,22 @@ function builtInKnowledgeDocs() {
       version: '2026-07-04',
       metadata: { kind: 'architecture' },
       content: [
-        'OAA means OpenSphere AI Agent. In the MVP, OAA is implemented as a right-side console chat panel plus the opensphere-console-oaa-gateway Backbone tier.',
-        'The gateway owns LLM key custody through Kubernetes Secrets, reads project knowledge from Backbone PostgreSQL, searches pgvector chunks, and injects selected context into the model request.',
-        'The MVP does not require a separate vector database. Backbone PostgreSQL with pgvector is enough for initial project knowledge, policy, and console documentation RAG.'
+        'OAA means OpenSphere AI Agent. It is implemented as a right-side Console chat panel plus the opensphere-console-oaa-gateway in the Console namespace.',
+        'The gateway owns LLM key custody through Kubernetes Secrets, reads project knowledge from Supabase PostgreSQL, searches pgvector chunks, and injects selected context into the model request.',
+        'The MVP does not require a separate vector database. Supabase PostgreSQL with pgvector is the authority for project knowledge, policy, and Console documentation RAG.'
       ].join('\n\n'),
     },
     {
       namespace: 'opensphere',
       sourceType: 'builtin',
-      sourceId: 'backbone-services',
-      title: 'Backbone Services',
+      sourceId: 'platform-data-identity',
+      title: 'Platform Data & Identity',
       version: '2026-07-04',
-      metadata: { kind: 'backbone' },
+      metadata: { kind: 'platform-data-identity' },
       content: [
-        'Backbone is the console data tier. Current core services include PostgreSQL with pgvector, RustFS, Gitea, Foundation support, and OAA-Gateway.',
-        'PostgreSQL is the preferred MVP store for OAA memory because it is already part of Backbone, supports relational audit/config data, and supports vector search through pgvector.',
-        'RustFS is useful later for larger document objects, files, snapshots and binary artifacts. Gitea is useful later for code and Git-backed knowledge ingestion.'
+        'Supabase is the Console authority for identity, relational data, audit and object storage. Gitea is the authority for reviewed declarative changes and history.',
+        'Supabase PostgreSQL with pgvector is the OAA knowledge authority; the gateway has no schema-migration ownership and uses its dedicated least-privileged role.',
+        'Gitea provides code and Git-backed knowledge ingestion. HIS remains the authority for Prometheus-compatible observability rather than a Console-owned monitoring stack.'
       ].join('\n\n'),
     },
     {
@@ -711,7 +607,7 @@ function builtInKnowledgeDocs() {
 async function upsertKnowledgeDocument(doc, actor = null) {
   await ensureKnowledgeSchema();
   const pool = getPgPool();
-  if (!pool) throw { code: 503, msg: 'Backbone PostgreSQL is not configured for OAA knowledge' };
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OAA knowledge' };
   const namespace = String(doc.namespace || 'opensphere').trim() || 'opensphere';
   const sourceType = String(doc.sourceType || doc.source_type || 'manual').trim() || 'manual';
   const sourceId = String(doc.sourceId || doc.source_id || '').trim();
@@ -721,16 +617,30 @@ async function upsertKnowledgeDocument(doc, actor = null) {
   if (!content) throw { code: 400, msg: 'content required' };
   const metadata = doc.metadata && typeof doc.metadata === 'object' ? doc.metadata : {};
   const version = doc.version ? String(doc.version) : null;
+  const status = String(doc.status || metadata.status || 'active');
+  const authorityTier = Math.max(0, Math.min(4, Number(doc.authorityTier ?? metadata.authorityTier ?? 3) || 3));
+  const acl = (doc.acl && typeof doc.acl === 'object') ? doc.acl
+    : ((metadata.acl && typeof metadata.acl === 'object') ? metadata.acl : { visibility: 'authenticated' });
   const contentHash = createHash('sha256').update(content).digest('hex');
   const id = randomUUID();
-  const upsert = await pool.query(`
-    INSERT INTO oaa_knowledge_documents (id, namespace, source_type, source_id, title, version, metadata, content_hash)
-    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-    ON CONFLICT (namespace, source_type, source_id)
-    DO UPDATE SET title = EXCLUDED.title, version = EXCLUDED.version, metadata = EXCLUDED.metadata,
-      content_hash = EXCLUDED.content_hash, updated_at = now()
-    RETURNING id, content_hash
-  `, [id, namespace, sourceType, sourceId, title, version, JSON.stringify(metadata), contentHash]);
+  const upsert = OAA_SUPABASE_MODE
+    ? await pool.query(`
+      INSERT INTO oaa_knowledge_documents (id, namespace, source_type, source_id, title, version, metadata, content_hash, status, authority_tier, acl)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)
+      ON CONFLICT (namespace, source_type, source_id)
+      DO UPDATE SET title = EXCLUDED.title, version = EXCLUDED.version, metadata = EXCLUDED.metadata,
+        content_hash = EXCLUDED.content_hash, status = EXCLUDED.status, authority_tier = EXCLUDED.authority_tier,
+        acl = EXCLUDED.acl, updated_at = now()
+      RETURNING id, content_hash
+    `, [id, namespace, sourceType, sourceId, title, version, JSON.stringify(metadata), contentHash, status, authorityTier, JSON.stringify(acl)])
+    : await pool.query(`
+      INSERT INTO oaa_knowledge_documents (id, namespace, source_type, source_id, title, version, metadata, content_hash)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+      ON CONFLICT (namespace, source_type, source_id)
+      DO UPDATE SET title = EXCLUDED.title, version = EXCLUDED.version, metadata = EXCLUDED.metadata,
+        content_hash = EXCLUDED.content_hash, updated_at = now()
+      RETURNING id, content_hash
+    `, [id, namespace, sourceType, sourceId, title, version, JSON.stringify(metadata), contentHash]);
   const docId = upsert.rows[0].id;
   await pool.query('DELETE FROM oaa_knowledge_chunks WHERE document_id = $1', [docId]);
   const chunks = chunkText(content);
@@ -739,7 +649,11 @@ async function upsertKnowledgeDocument(doc, actor = null) {
   let embeddingModel = `hash-${OAA_EMBED_DIM}`;
   for (let i = 0; i < chunks.length; i += 1) {
     const chunk = chunks[i];
-    const embedding = await embeddingVector(`${title}\n${chunk}`, { keyId: doc.embeddingKeyId || '', strict: doc.strictEmbedding === true });
+    const embedding = await embeddingVector(`${title}\n${chunk}`, {
+      keyId: doc.embeddingKeyId || '',
+      strict: doc.strictEmbedding === true,
+      allowHashFallback: doc.allowHashFallback === true,
+    });
     embeddingMode = embedding.source.mode;
     embeddingProvider = embedding.source.provider;
     embeddingModel = embedding.source.model;
@@ -778,7 +692,7 @@ async function seedBuiltinKnowledge(force = false, actor = null) {
 async function knowledgeStats() {
   await ensureKnowledgeSchema();
   const pool = getPgPool();
-  if (!pool) throw { code: 503, msg: 'Backbone PostgreSQL is not configured for OAA knowledge' };
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OAA knowledge' };
   const [counts, modes, manualSources, keys] = await Promise.all([
     pool.query(`
     SELECT
@@ -828,8 +742,9 @@ async function knowledgeStats() {
   };
 }
 
-async function searchKnowledge(query, limit = OAA_RAG_TOP_K) {
+async function searchKnowledge(query, limit = OAA_RAG_TOP_K, actor = null) {
   if (!OAA_RAG_ENABLED || !String(query || '').trim()) return [];
+  assertPermission(actor, 'oaa.knowledge.read');
   const pool = getPgPool();
   if (!pool) return [];
   await seedBuiltinKnowledge();
@@ -837,6 +752,8 @@ async function searchKnowledge(query, limit = OAA_RAG_TOP_K) {
   const emb = vectorLiteral(embedding.vector);
   const r = await pool.query(`
     SELECT
+      d.id AS "documentId",
+      c.id AS "chunkId",
       d.title,
       d.source_type AS "sourceType",
       d.source_id AS "sourceId",
@@ -846,10 +763,12 @@ async function searchKnowledge(query, limit = OAA_RAG_TOP_K) {
       1 - (c.embedding <=> $1::vector) AS score
     FROM oaa_knowledge_chunks c
     JOIN oaa_knowledge_documents d ON d.id = c.document_id
+    WHERE d.status = 'active'
+    ${knowledgeAclSql(1)}
     ORDER BY c.embedding <=> $1::vector
-    LIMIT $2
-  `, [emb, limit]);
-  return r.rows.map((x) => {
+    LIMIT $6
+  `, [emb, ...knowledgeAclParams(actor), limit]);
+  const hits = r.rows.map((x) => {
     const metadata = x.metadata && typeof x.metadata === 'object' ? x.metadata : {};
     return {
       ...x,
@@ -865,6 +784,8 @@ async function searchKnowledge(query, limit = OAA_RAG_TOP_K) {
       queryEmbedding: embedding.source,
     };
   });
+  await recordRetrievalTrace(actor, query, hits);
+  return hits;
 }
 
 function manualDocFromRow(row) {
@@ -901,7 +822,7 @@ let manualSeedInflight = null;
 async function ensureManualRegistryReady() {
   await ensureKnowledgeSchema();
   const pool = getPgPool();
-  if (!pool) throw { code: 503, msg: 'Backbone PostgreSQL is not configured for Manual Registry' };
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for Manual Registry' };
   if (!manualSeedReady) {
     manualSeedInflight ||= seedBundledManualKnowledgeIfEmpty()
       .then((out) => {
@@ -916,7 +837,8 @@ async function ensureManualRegistryReady() {
   return pool;
 }
 
-async function listManualSources() {
+async function listManualSources(actor = null) {
+  assertPermission(actor, 'oaa.knowledge.read');
   const pool = await ensureManualRegistryReady();
   const r = await pool.query(`
     SELECT
@@ -926,11 +848,12 @@ async function listManualSources() {
       MIN(COALESCE((metadata->>'authorityTier')::int, 4)) AS "authorityTier",
       count(*)::int AS documents,
       max(updated_at) AS "updatedAt"
-    FROM oaa_knowledge_documents
-    WHERE source_type = 'manual'
+    FROM oaa_knowledge_documents d
+    WHERE source_type = 'manual' AND status = 'active'
+    ${knowledgeAclSql(0)}
     GROUP BY 1, 2, 3
     ORDER BY "authorityTier" ASC, name
-  `);
+  `, knowledgeAclParams(actor));
   return {
     schema: 'manual-sources.opensphere.io/v1alpha1',
     generatedAt: new Date().toISOString(),
@@ -938,13 +861,14 @@ async function listManualSources() {
   };
 }
 
-async function listManualDocuments(options = {}) {
+async function listManualDocuments(options = {}, actor = null) {
+  assertPermission(actor, 'oaa.knowledge.read');
   const pool = await ensureManualRegistryReady();
   const q = String(options.q || '').trim();
   const source = String(options.source || '').trim();
   const limit = Math.max(1, Math.min(100, Number(options.limit || 40) || 40));
-  const params = [limit];
-  const where = ["d.source_type = 'manual'"];
+  const params = [...knowledgeAclParams(actor), limit];
+  const where = ["d.source_type = 'manual'", "d.status = 'active'", knowledgeAclSql(0).replace(/^\s*AND\s*/m, '')];
   if (q) {
     params.push(`%${q}%`);
     where.push(`(
@@ -971,7 +895,7 @@ async function listManualDocuments(options = {}) {
     WHERE ${where.join(' AND ')}
     GROUP BY d.id
     ORDER BY COALESCE((d.metadata->>'authorityTier')::int, 4), d.title
-    LIMIT $1
+    LIMIT $5
   `, params);
   return {
     schema: 'manual-documents.opensphere.io/v1alpha1',
@@ -982,7 +906,8 @@ async function listManualDocuments(options = {}) {
   };
 }
 
-async function getManualDocument(sourceId) {
+async function getManualDocument(sourceId, actor = null) {
+  assertPermission(actor, 'oaa.knowledge.read');
   const pool = await ensureManualRegistryReady();
   const sid = String(sourceId || '').trim();
   if (!sid) throw { code: 400, msg: 'sourceId required' };
@@ -993,10 +918,11 @@ async function getManualDocument(sourceId) {
            left(string_agg(c.content, ' ' ORDER BY c.chunk_index), 360) AS summary
     FROM oaa_knowledge_documents d
     LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id
-    WHERE d.source_type = 'manual' AND d.source_id = $1
+    WHERE d.source_type = 'manual' AND d.status = 'active' AND d.source_id = $1
+    ${knowledgeAclSql(1)}
     GROUP BY d.id
     LIMIT 1
-  `, [sid]);
+  `, [sid, ...knowledgeAclParams(actor)]);
   if (!doc.rows.length) throw { code: 404, msg: 'manual document not found' };
   const chunks = await pool.query(`
     SELECT chunk_index AS "chunkIndex", content, metadata
@@ -1021,11 +947,14 @@ async function getManualDocument(sourceId) {
   };
 }
 
-async function searchManualRegistry(query, limit = 8) {
+async function searchManualRegistry(query, limit = 8, actor = null) {
   const q = String(query || '').trim();
   if (!q) return { schema: 'manual-search.opensphere.io/v1alpha1', query: q, items: [] };
+  assertPermission(actor, 'oaa.knowledge.read');
   const pool = await ensureManualRegistryReady();
-  const embedding = await embeddingVector(q);
+  // Manual search shares the bundled Manual's deterministic fallback. This does not relax
+  // provider-only embeddings for general OAA knowledge or chat retrieval.
+  const embedding = await embeddingVector(q, { allowHashFallback: true });
   const emb = vectorLiteral(embedding.vector);
   const n = Math.max(1, Math.min(25, Number(limit || 8) || 8));
   const r = await pool.query(`
@@ -1042,10 +971,11 @@ async function searchManualRegistry(query, limit = 8) {
       1 - (c.embedding <=> $1::vector) AS score
     FROM oaa_knowledge_chunks c
     JOIN oaa_knowledge_documents d ON d.id = c.document_id
-    WHERE d.source_type = 'manual'
+    WHERE d.source_type = 'manual' AND d.status = 'active'
+    ${knowledgeAclSql(1)}
     ORDER BY c.embedding <=> $1::vector
-    LIMIT $2
-  `, [emb, n]);
+    LIMIT $6
+  `, [emb, ...knowledgeAclParams(actor), n]);
   return {
     schema: 'manual-search.opensphere.io/v1alpha1',
     generatedAt: new Date().toISOString(),
@@ -1075,7 +1005,8 @@ async function searchManualRegistry(query, limit = 8) {
   };
 }
 
-async function listManualConceptGraph(query = '', limit = 64) {
+async function listManualConceptGraph(query = '', limit = 64, actor = null) {
+  assertPermission(actor, 'oaa.knowledge.read');
   await ensureKnowledgeSchema();
   const pool = getPgPool();
   if (!pool) return { schema: 'manual-concept-graph.opensphere.io/v1alpha1', concepts: [], relations: [] };
@@ -1133,7 +1064,7 @@ async function listManualConceptGraph(query = '', limit = 64) {
 async function reembedKnowledge(body = {}, actor = null) {
   await ensureKnowledgeSchema();
   const pool = getPgPool();
-  if (!pool) throw { code: 503, msg: 'Backbone PostgreSQL is not configured for OAA knowledge' };
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OAA knowledge' };
   const keyId = String(body.keyId || '').trim();
   const strict = body.strict !== false;
   const rows = await pool.query(`
@@ -1189,7 +1120,7 @@ async function upsertManualConcepts(concepts, defaults, actor = null) {
   if (!Array.isArray(concepts) || !concepts.length) return { concepts: 0, items: [] };
   await ensureKnowledgeSchema();
   const pool = getPgPool();
-  if (!pool) throw { code: 503, msg: 'Backbone PostgreSQL is not configured for OAA concepts' };
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OAA concepts' };
   const items = [];
   for (const raw of concepts) {
     if (!raw || typeof raw !== 'object') continue;
@@ -1247,7 +1178,7 @@ async function upsertManualRelations(relations, defaults, actor = null) {
   if (!Array.isArray(relations) || !relations.length) return { relations: 0, items: [] };
   await ensureKnowledgeSchema();
   const pool = getPgPool();
-  if (!pool) throw { code: 503, msg: 'Backbone PostgreSQL is not configured for OAA relations' };
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OAA relations' };
   const items = [];
   for (const raw of relations) {
     if (!raw || typeof raw !== 'object') continue;
@@ -1294,7 +1225,7 @@ async function upsertManualRelations(relations, defaults, actor = null) {
   return { relations: items.length, items };
 }
 
-async function upsertManualSeedManifest(body = {}, actor = null) {
+async function upsertManualSeedManifest(body = {}, actor = null, options = { allowHashFallback: true }) {
   if (!body || typeof body !== 'object') throw { code: 400, msg: 'manual seed manifest required' };
   const source = body.source && typeof body.source === 'object' ? body.source : {};
   const sourceId = String(source.id || 'manual-upload').trim();
@@ -1346,6 +1277,7 @@ async function upsertManualSeedManifest(body = {}, actor = null) {
       content: raw.content,
       embeddingKeyId: raw.embeddingKeyId || body.embeddingKeyId || '',
       strictEmbedding: raw.strictEmbedding === true || body.strictEmbedding === true,
+      allowHashFallback: options.allowHashFallback !== false,
     }, actor);
     chunks += out.chunks;
     results.push({ sourceId: rawSourceId, title: raw.title || rawSourceId, chunks: out.chunks, embeddingMode: out.embeddingMode });
@@ -1377,7 +1309,7 @@ async function seedBundledManualKnowledge(actor = null) {
   } catch (e) {
     throw { code: 503, msg: `bundled manual seed unavailable: ${e.message || e}` };
   }
-  const out = await upsertManualSeedManifest(manifest, actor);
+  const out = await upsertManualSeedManifest(manifest, actor, { allowHashFallback: true });
   audit(actor, 'knowledge-bundled-manual-seed', OAA_MANUAL_SEED_PATH, 'ok', `${out.documents} documents / ${out.chunks} chunks`);
   return { ...out, bundled: true, seedPath: OAA_MANUAL_SEED_PATH, version: manifest.version || null };
 }
@@ -1408,6 +1340,8 @@ async function seedBundledManualKnowledgeIfEmpty(actor = null) {
       (SELECT count(*)::int FROM oaa_manual_relations WHERE source_id = $1) AS relations
   `, ['opensphere-core-manuals']);
   const bySourceId = new Map(current.rows.map((r) => [r.source_id, r.checksum || '']));
+  const manifestSourceIds = docs.map((d) => String(d.sourceId || d.source_id || '')).filter(Boolean);
+  const manifestSourceIdSet = new Set(manifestSourceIds);
   const missing = docs.filter((d) => !bySourceId.has(String(d.sourceId || d.source_id || ''))).map((d) => d.sourceId || d.source_id);
   const changed = docs
     .filter((d) => {
@@ -1416,13 +1350,66 @@ async function seedBundledManualKnowledgeIfEmpty(actor = null) {
       return id && bySourceId.has(id) && checksum && bySourceId.get(id) !== checksum;
     })
     .map((d) => d.sourceId || d.source_id);
+  // Bundled manuals are release-bound and declarative. Removing a document from the manifest must
+  // remove the old PostgreSQL row as well; otherwise retired sources (notably the legacy docs.ts
+  // migration input) remain searchable indefinitely after an upgrade.
+  const stale = current.rows.map((r) => r.source_id).filter((id) => !manifestSourceIdSet.has(String(id || '')));
   const missingConcepts = concepts.length > Number(structure.rows[0]?.concepts || 0);
   const missingRelations = relations.length > Number(structure.rows[0]?.relations || 0);
-  if (!missing.length && !changed.length && !missingConcepts && !missingRelations && current.rows.length >= docs.length) {
+  if (!missing.length && !changed.length && !stale.length && !missingConcepts && !missingRelations && current.rows.length >= docs.length) {
     return { seeded: false, reason: 'bundled manuals up to date', documents: current.rows.length };
   }
   const out = await seedBundledManualKnowledge(actor);
-  return { ...out, seeded: true, missing, changed, missingConcepts, missingRelations };
+  if (stale.length) {
+    await pool.query(`
+      DELETE FROM oaa_manual_relations
+      WHERE source_id = ANY($1::text[])
+    `, [stale]);
+    await pool.query(`
+      DELETE FROM oaa_knowledge_documents
+      WHERE source_type = 'manual'
+        AND metadata->'source'->>'id' = 'opensphere-core-manuals'
+        AND source_id = ANY($1::text[])
+    `, [stale]);
+    audit(actor, 'knowledge-bundled-manual-prune', 'opensphere-core-manuals', 'ok', stale.join(', '));
+  }
+  return { ...out, seeded: true, missing, changed, stale, missingConcepts, missingRelations };
+}
+
+function hasPermission(actor, permission) {
+  return Boolean(actor?.groups?.includes(CONSOLE_ADMIN_GROUP) || actor?.permissions?.includes(permission));
+}
+
+function assertPermission(actor, permission) {
+  if (!hasPermission(actor, permission)) throw { code: 403, msg: `requires ${permission}` };
+}
+
+function knowledgeAclParams(actor) {
+  return [
+    actor?.subject || '',
+    Array.isArray(actor?.groups) ? actor.groups : [],
+    Array.isArray(actor?.permissions) ? actor.permissions : [],
+    Boolean(actor?.groups?.includes(CONSOLE_ADMIN_GROUP)),
+  ];
+}
+
+// ACL is applied in SQL before ranking.  `authenticated` is the explicit
+// baseline assigned to migrated non-sensitive manuals; restricted documents
+// must name users, groups, or permissions in metadata.acl.
+function knowledgeAclSql(parameterOffset = 0) {
+  const subject = parameterOffset + 1;
+  const groups = parameterOffset + 2;
+  const permissions = parameterOffset + 3;
+  const administrator = parameterOffset + 4;
+  return `
+  AND (
+    $${administrator}::boolean
+    OR COALESCE(d.acl->>'visibility', d.metadata->'acl'->>'visibility', 'authenticated') IN ('public', 'authenticated')
+    OR COALESCE(d.acl->'users', d.metadata->'acl'->'users', '[]'::jsonb) ? $${subject}
+    OR COALESCE(d.acl->'groups', d.metadata->'acl'->'groups', '[]'::jsonb) ?| $${groups}::text[]
+    OR COALESCE(d.acl->'permissions', d.metadata->'acl'->'permissions', '[]'::jsonb) ?| $${permissions}::text[]
+  )
+`;
 }
 
 function trimText(value, max = 220) {
@@ -1498,35 +1485,41 @@ function requireMutationReason(reason) {
 // Fail-closed mutation gate (CONSTITUTION-0004 §4.2). Every write-capable tool/binding/HTTP path
 // must call this before performing any Kubernetes mutation, with no bypass. Audits the block.
 function assertMutationEnabled(actor, target = 'oaa-mutation') {
-  if (OAA_MUTATION_ENABLED) return;
-  audit(actor, 'mutation-gate-block', target, 'blocked', OAA_MUTATION_GATE_REASON);
+  // The Gateway is a planner/read broker, never a Kubernetes write principal.
+  // Keep the old endpoints fail-closed even if a stale deployment accidentally
+  // flips OAA_MUTATION_ENABLED; controlled changes must enter Console Backend's
+  // policy/approval/Gitea reconciliation path instead.
+  audit(actor, 'mutation-gate-block', target, 'blocked', 'oaa_direct_mutation_removed_use_console_backend');
   throw {
     code: 403,
-    msg: 'OAA Kubernetes mutation/action tools are disabled until Cluster Manager Activated and HIS Preflight Ready.',
-    errorCode: OAA_MUTATION_GATE_REASON,
+    msg: 'OAA does not directly mutate Kubernetes. Submit this action through the Console Backend control plane.',
+    errorCode: 'oaa_direct_mutation_removed_use_console_backend',
   };
 }
 
-// Filters a tool manifest so write tools (readOnly !== true) are removed while the mutation gate is
-// closed, and stamps explicit gate status fields the admin UI can read.
+// Filters control-plane submission capabilities while the Console Backend
+// submission boundary is closed.  `mutationEnabled` is retained as the UI
+// compatibility field, but means "controlled action submission" — never a
+// Gateway Kubernetes write permission.
 function withMutationGate(toolManifest) {
-  const mutationEnabled = OAA_MUTATION_ENABLED;
+  const mutationEnabled = OAA_ACTION_SUBMISSION_ENABLED;
   const tools = mutationEnabled
     ? (toolManifest.tools || [])
     : (toolManifest.tools || []).filter((t) => t && t.readOnly === true);
   return {
     ...toolManifest,
     mutationEnabled,
-    mutationGateReason: mutationEnabled ? null : OAA_MUTATION_GATE_REASON,
+    mutationGateReason: mutationEnabled ? null : 'console_backend_action_submission_disabled',
     tools,
   };
 }
 
 // Filters an action-binding manifest so any binding whose risk is not 'read', or whose referenced
-// tool is not read-only, is removed while the mutation gate is closed. `toolManifest` should already
-// be the raw (unfiltered) tool manifest so the tool's readOnly flag can be resolved.
+// tool is not read-only, is removed while controlled action submission is closed.
+// `toolManifest` should already be the raw (unfiltered) tool manifest so the tool's readOnly flag
+// can be resolved.
 function withActionBindingMutationGate(bindingManifest, toolManifest) {
-  const mutationEnabled = OAA_MUTATION_ENABLED;
+  const mutationEnabled = OAA_ACTION_SUBMISSION_ENABLED;
   if (mutationEnabled) {
     return { ...bindingManifest, mutationEnabled: true, mutationGateReason: null };
   }
@@ -1541,7 +1534,7 @@ function withActionBindingMutationGate(bindingManifest, toolManifest) {
   return {
     ...bindingManifest,
     mutationEnabled: false,
-    mutationGateReason: OAA_MUTATION_GATE_REASON,
+    mutationGateReason: 'console_backend_action_submission_disabled',
     bindings,
     invalidBindings: bindings.filter((b) => !b.valid).map((b) => ({ id: b.id, toolId: b.toolId })),
   };
@@ -1956,7 +1949,7 @@ function operationalAnswerPolicySystemMessage() {
     role: 'system',
     content: [
       'OpenSphere Operational Answer Contract:',
-      'For OpenSphere operations, installation, preflight, Kubernetes, plugin, Backbone, Foundation, or OAA troubleshooting questions, separate the answer into: 확인한 현재 클러스터 사실, 문서 기반 판단, 필요한 조치, 승인 필요한 작업.',
+      'For OpenSphere operations, installation, preflight, Kubernetes, plugin, Data & Identity, Change Control, Foundation, or OAA troubleshooting questions, separate the answer into: 확인한 현재 클러스터 사실, 문서 기반 판단, 필요한 조치, 승인 필요한 작업.',
       'Use the attached live environment snapshot as the primary source for current runtime facts. If the live snapshot is unavailable or incomplete, explicitly say which live fact could not be verified.',
       'Do not infer namespaces, pods, services, deployments, CRDs, readiness, install state, or action results from manuals alone. Manuals describe intended design; live snapshot/tool results describe current reality.',
       'Before recommending a write/apply/install/delete/restart/scale action, state the read-only evidence first and mark the action as a proposal unless an explicit OAA action endpoint result is present.',
@@ -1973,8 +1966,8 @@ function controlToolsSystemMessage() {
   const manifest = withMutationGate(rawToolManifest);
   const bindings = withActionBindingMutationGate(oaaActionBindings(), rawToolManifest);
   const mutationNote = manifest.mutationEnabled
-    ? 'Kubernetes/administrative write actions are enabled subject to admin RBAC and exact confirmation.'
-    : `Kubernetes mutation/action tools are disabled (${manifest.mutationGateReason}). Only Manual/help/search and safe read-only tools are available. Do not suggest restart/scale/apply/delete actions as executable; they are not present in the tool list below.`;
+    ? 'Administrative actions can be submitted to the Console Backend only after permission, assurance, confirmation, and a human reason are validated. OAA never writes Kubernetes directly.'
+    : `Controlled action submission is disabled (${manifest.mutationGateReason}). Only Manual/help/search and safe read-only tools are available. Do not suggest restart/scale/apply/delete actions as executable; they are not present in the tool list below.`;
   return {
     role: 'system',
     content: [
@@ -2007,8 +2000,8 @@ function oaaActionBindings() {
     mk({
       id: 'manual-action:opensphere:environment-read',
       namespace: 'opensphere',
-      sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
+      sourceId: 'console-docs/platform-control-plane-v2',
+      sectionId: 'manual-section:console-docs/platform-control-plane-v2#phase-1',
       title: 'Inspect live OpenSphere environment before operational answers',
       intent: 'inspect',
       toolId: 'oaa.environment.read',
@@ -2018,7 +2011,7 @@ function oaaActionBindings() {
       requiredInputs: bindingInput({ context: 'optional current console route/title/selection' }),
       permission: { roles: ['authenticated'], scopes: ['oaa:tools:read'] },
       audit: { eventType: 'environment-snapshot', targetTemplate: 'opensphere namespaces' },
-      citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
+      citations: [{ sourceId: 'console-docs/platform-control-plane-v2', sourcePath: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:knowledge-search',
@@ -2041,7 +2034,7 @@ function oaaActionBindings() {
       namespace: 'opensphere',
       sourceId: 'console-docs/oaa-manual-knowledge-data-model',
       sectionId: 'manual-section:console-docs/oaa-manual-knowledge-data-model#seed-manifest-format',
-      title: 'Ingest OpenSphere manuals into Backbone PostgreSQL pgvector',
+      title: 'Ingest OpenSphere manuals into Supabase PostgreSQL pgvector',
       intent: 'ingest-knowledge',
       toolId: 'oaa.knowledge.ingest-manual',
       controlPlane: 'opensphere-console-oaa-gateway',
@@ -2049,16 +2042,16 @@ function oaaActionBindings() {
       confirmation: 'required',
       preflightToolIds: ['oaa.knowledge.search'],
       requiredInputs: bindingInput({ manifest: 'manual-seed.opensphere.io/v1alpha1 manifest' }),
-      permission: { roles: [KANIDM_ADMIN_GROUP], scopes: ['oaa:knowledge:write'] },
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:knowledge:write'] },
       audit: { eventType: 'knowledge-manual-seed', targetTemplate: '<manifest.source.id>' },
       citations: [{ sourceId: 'console-docs/oaa-manual-knowledge-data-model', sourcePath: 'OpenSphere-console/docs/OAA-MANUAL-KNOWLEDGE-DATA-MODEL.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:k8s-describe',
       namespace: 'opensphere',
-      sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
-      title: 'Describe pods or deployments when diagnosing OAA and Backbone services',
+      sourceId: 'console-docs/platform-control-plane-v2',
+      sectionId: 'manual-section:console-docs/platform-control-plane-v2#phase-1',
+      title: 'Describe pods or deployments when diagnosing OAA and platform services',
       intent: 'diagnose',
       toolId: 'oaa.k8s.resource.describe',
       controlPlane: 'kubernetes-api',
@@ -2067,13 +2060,13 @@ function oaaActionBindings() {
       requiredInputs: bindingInput({ kind: 'pod | deployment', namespace: OAA_ENV_NAMESPACES.join(' | '), name: 'Kubernetes resource name' }),
       permission: { roles: ['authenticated'], scopes: ['oaa:k8s:read'], namespaceScope: OAA_ENV_NAMESPACES },
       audit: { eventType: 'k8s-describe-resource', targetTemplate: '<namespace>/<kind>/<name>' },
-      citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
+      citations: [{ sourceId: 'console-docs/platform-control-plane-v2', sourcePath: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:cluster-pod-count',
       namespace: 'opensphere',
-      sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
+      sourceId: 'console-docs/platform-control-plane-v2',
+      sectionId: 'manual-section:console-docs/platform-control-plane-v2#phase-1',
       title: 'Count current Kubernetes pods across all namespaces',
       intent: 'inspect',
       toolId: 'oaa.k8s.cluster.pods.summary',
@@ -2083,62 +2076,62 @@ function oaaActionBindings() {
       requiredInputs: bindingInput({}),
       permission: { roles: ['authenticated'], scopes: ['oaa:k8s:read'] },
       audit: { eventType: 'k8s-cluster-pod-summary', targetTemplate: 'cluster' },
-      citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
+      citations: [{ sourceId: 'console-docs/platform-control-plane-v2', sourcePath: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:opensphere-console-oaa-gateway-rollout',
       namespace: 'opensphere',
-      sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
+      sourceId: 'console-docs/platform-control-plane-v2',
+      sectionId: 'manual-section:console-docs/platform-control-plane-v2#phase-1',
       title: 'Check OAA Gateway rollout status',
       intent: 'diagnose',
       toolId: 'oaa.k8s.deployment.rollout',
       controlPlane: 'kubernetes-api',
       riskLevel: 'read',
       confirmation: 'none',
-      targetHints: { namespace: BACKBONE_NS, deployment: 'opensphere-console-oaa-gateway' },
-      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'opensphere-console-oaa-gateway' }),
-      permission: { roles: ['authenticated'], scopes: ['oaa:k8s:read'], namespaceScope: [BACKBONE_NS] },
-      audit: { eventType: 'k8s-rollout-status', targetTemplate: `${BACKBONE_NS}/opensphere-console-oaa-gateway` },
-      citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
+      targetHints: { namespace: OAA_NAMESPACE, deployment: 'opensphere-console-oaa-gateway' },
+      requiredInputs: bindingInput({ namespace: OAA_NAMESPACE, name: 'opensphere-console-oaa-gateway' }),
+      permission: { roles: ['authenticated'], scopes: ['oaa:k8s:read'], namespaceScope: [OAA_NAMESPACE] },
+      audit: { eventType: 'k8s-rollout-status', targetTemplate: `${OAA_NAMESPACE}/opensphere-console-oaa-gateway` },
+      citations: [{ sourceId: 'console-docs/platform-control-plane-v2', sourcePath: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:opensphere-console-oaa-gateway-restart',
       namespace: 'opensphere',
-      sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
+      sourceId: 'console-docs/platform-control-plane-v2',
+      sectionId: 'manual-section:console-docs/platform-control-plane-v2#phase-1',
       title: 'Restart OAA Gateway after configuration or manual seed changes',
       intent: 'restart',
       toolId: 'oaa.k8s.deployment.restart',
       controlPlane: 'kubernetes-api',
       riskLevel: 'medium',
       confirmation: 'required',
-      confirmationTemplate: `restart deployment ${BACKBONE_NS}/opensphere-console-oaa-gateway`,
+      confirmationTemplate: `restart deployment ${OAA_NAMESPACE}/opensphere-console-oaa-gateway`,
       preflightToolIds: ['oaa.k8s.deployment.rollout'],
-      targetHints: { namespace: BACKBONE_NS, deployment: 'opensphere-console-oaa-gateway' },
-      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'opensphere-console-oaa-gateway', confirm: `restart deployment ${BACKBONE_NS}/opensphere-console-oaa-gateway` }),
-      permission: { roles: [KANIDM_ADMIN_GROUP], scopes: ['oaa:k8s:write'], namespaceScope: [BACKBONE_NS] },
-      audit: { eventType: 'k8s-restart-deployment', targetTemplate: `${BACKBONE_NS}/opensphere-console-oaa-gateway` },
-      citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
+      targetHints: { namespace: OAA_NAMESPACE, deployment: 'opensphere-console-oaa-gateway' },
+      requiredInputs: bindingInput({ namespace: OAA_NAMESPACE, name: 'opensphere-console-oaa-gateway', confirm: `restart deployment ${OAA_NAMESPACE}/opensphere-console-oaa-gateway` }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:k8s:write'], namespaceScope: [OAA_NAMESPACE] },
+      audit: { eventType: 'k8s-restart-deployment', targetTemplate: `${OAA_NAMESPACE}/opensphere-console-oaa-gateway` },
+      citations: [{ sourceId: 'console-docs/platform-control-plane-v2', sourcePath: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:opensphere-console-oaa-gateway-scale',
       namespace: 'opensphere',
-      sourceId: 'console-docs/backbone-architecture',
-      sectionId: 'manual-section:console-docs/backbone-architecture#opensphere-console-oaa-gateway',
+      sourceId: 'console-docs/platform-control-plane-v2',
+      sectionId: 'manual-section:console-docs/platform-control-plane-v2#phase-1',
       title: 'Scale OAA Gateway deployment within configured replica limits',
       intent: 'scale',
       toolId: 'oaa.k8s.deployment.scale',
       controlPlane: 'kubernetes-api',
       riskLevel: 'medium',
       confirmation: 'required',
-      confirmationTemplate: `scale deployment ${BACKBONE_NS}/opensphere-console-oaa-gateway to <replicas>`,
+      confirmationTemplate: `scale deployment ${OAA_NAMESPACE}/opensphere-console-oaa-gateway to <replicas>`,
       preflightToolIds: ['oaa.k8s.deployment.rollout'],
-      targetHints: { namespace: BACKBONE_NS, deployment: 'opensphere-console-oaa-gateway', maxReplicas: OAA_SCALE_MAX },
-      requiredInputs: bindingInput({ namespace: BACKBONE_NS, name: 'opensphere-console-oaa-gateway', replicas: `0..${OAA_SCALE_MAX}`, confirm: `scale deployment ${BACKBONE_NS}/opensphere-console-oaa-gateway to <replicas>` }),
-      permission: { roles: [KANIDM_ADMIN_GROUP], scopes: ['oaa:k8s:write'], namespaceScope: [BACKBONE_NS] },
-      audit: { eventType: 'k8s-scale-deployment', targetTemplate: `${BACKBONE_NS}/opensphere-console-oaa-gateway` },
-      citations: [{ sourceId: 'console-docs/backbone-architecture', sourcePath: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md' }],
+      targetHints: { namespace: OAA_NAMESPACE, deployment: 'opensphere-console-oaa-gateway', maxReplicas: OAA_SCALE_MAX },
+      requiredInputs: bindingInput({ namespace: OAA_NAMESPACE, name: 'opensphere-console-oaa-gateway', replicas: `0..${OAA_SCALE_MAX}`, confirm: `scale deployment ${OAA_NAMESPACE}/opensphere-console-oaa-gateway to <replicas>` }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:k8s:write'], namespaceScope: [OAA_NAMESPACE] },
+      audit: { eventType: 'k8s-scale-deployment', targetTemplate: `${OAA_NAMESPACE}/opensphere-console-oaa-gateway` },
+      citations: [{ sourceId: 'console-docs/platform-control-plane-v2', sourcePath: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md' }],
     }),
   ];
   return {
@@ -2290,40 +2283,40 @@ function oaaToolManifest() {
       },
       {
         id: 'oaa.k8s.deployment.restart',
-        name: 'Restart deployment by patching pod template annotation',
-        channel: 'kubernetes',
+        name: 'Submit deployment restart to the Console control plane',
+        channel: 'control-plane',
         readOnly: false,
-        endpoint: toolEndpoint('POST', '/api/oaa/actions/k8s/restart-deployment'),
-        riskLevel: 'medium',
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high',
         confirmation: 'required',
         confirmationTemplate: 'restart deployment <namespace>/<deployment>',
         preflightToolIds: ['oaa.k8s.deployment.rollout'],
-        kubernetes: { verbs: ['get', 'patch'], apiGroups: ['apps'], resources: ['deployments'], namespaces: nsEnum },
+        kubernetes: { verbs: ['get'], apiGroups: ['apps'], resources: ['deployments'], namespaces: nsEnum },
         inputSchema: schemaObject({
           namespace: nsField,
           name: deploymentField,
           confirm: confirmField,
-          reason: { type: 'string', required: false },
+          reason: { type: 'string', required: true },
         }),
         auditEventType: 'k8s-restart-deployment',
       },
       {
         id: 'oaa.k8s.deployment.scale',
-        name: 'Scale deployment replicas',
-        channel: 'kubernetes',
+        name: 'Submit deployment scale change to the Console control plane',
+        channel: 'control-plane',
         readOnly: false,
-        endpoint: toolEndpoint('POST', '/api/oaa/actions/k8s/scale-deployment'),
-        riskLevel: 'medium',
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high',
         confirmation: 'required',
         confirmationTemplate: 'scale deployment <namespace>/<deployment> to <replicas>',
         preflightToolIds: ['oaa.k8s.deployment.rollout'],
-        kubernetes: { verbs: ['get', 'patch'], apiGroups: ['apps'], resources: ['deployments'], namespaces: nsEnum },
+        kubernetes: { verbs: ['get'], apiGroups: ['apps'], resources: ['deployments'], namespaces: nsEnum },
         inputSchema: schemaObject({
           namespace: nsField,
           name: deploymentField,
           replicas: { type: 'integer', minimum: 0, maximum: OAA_SCALE_MAX },
           confirm: confirmField,
-          reason: { type: 'string', required: false },
+          reason: { type: 'string', required: true },
         }),
         auditEventType: 'k8s-scale-deployment',
       },
@@ -2531,6 +2524,35 @@ async function gatedActionBindingsFromStore() {
   return withActionBindingMutationGate(await actionBindingsFromStore(), rawToolManifest);
 }
 
+const TOOL_PERMISSION = {
+  'oaa.knowledge.search': 'oaa.knowledge.read',
+  'oaa.knowledge.ingest-manual': 'oaa.knowledge.manage',
+  'oaa.k8s.logs.tail': 'oaa.logs.read',
+};
+
+function requiredPermissionForTool(tool) {
+  if (TOOL_PERMISSION[tool.id]) return TOOL_PERMISSION[tool.id];
+  return tool.readOnly === false ? 'oaa.action.execute.low' : 'oaa.system.read';
+}
+
+function filterToolManifestForActor(manifest, actor) {
+  return {
+    ...manifest,
+    tools: (manifest.tools || []).filter((tool) => hasPermission(actor, requiredPermissionForTool(tool))),
+  };
+}
+
+async function gatedToolManifestForActor(actor) {
+  return filterToolManifestForActor(await gatedToolManifestFromStore(), actor);
+}
+
+async function gatedActionBindingsForActor(actor) {
+  const manifest = await gatedToolManifestForActor(actor);
+  const allowedTools = new Set((manifest.tools || []).map((tool) => tool.id));
+  const bindings = await gatedActionBindingsFromStore();
+  return { ...bindings, bindings: (bindings.bindings || []).filter((binding) => allowedTools.has(binding.toolId)) };
+}
+
 async function summarizeStoredToolManifest() {
   return summarizeToolManifest(await gatedToolManifestFromStore());
 }
@@ -2544,11 +2566,11 @@ function actionCommandForBinding(binding, query = '') {
   if (binding.toolId === 'oaa.knowledge.search') inputs.q = query || 'OpenSphere';
   if (binding.toolId === 'oaa.k8s.resource.describe') {
     inputs.kind = 'deployment';
-    inputs.namespace = binding.targetHints?.namespace || BACKBONE_NS;
+    inputs.namespace = binding.targetHints?.namespace || OAA_NAMESPACE;
     inputs.name = binding.targetHints?.deployment || 'opensphere-console-oaa-gateway';
   }
   if (binding.toolId === 'oaa.k8s.deployment.rollout' || binding.toolId === 'oaa.k8s.deployment.restart' || binding.toolId === 'oaa.k8s.deployment.scale') {
-    inputs.namespace = binding.targetHints?.namespace || BACKBONE_NS;
+    inputs.namespace = binding.targetHints?.namespace || OAA_NAMESPACE;
     inputs.name = binding.targetHints?.deployment || 'opensphere-console-oaa-gateway';
   }
   if (binding.toolId === 'oaa.k8s.deployment.scale') inputs.replicas = 1;
@@ -2648,16 +2670,38 @@ async function executeActionBinding(body = {}, actor = null) {
   // not readOnly (data poisoning / raw-store mismatch) — must fail closed with a stable 403 before
   // we validate or execute anything else (CONSTITUTION-0004 §4.2).
   const mutationRequired = binding.riskLevel !== 'read' || binding.toolReadOnly !== true;
-  if (mutationRequired) assertMutationEnabled(actor, binding.id);
+  if (mutationRequired && !OAA_ACTION_SUBMISSION_ENABLED) assertMutationEnabled(actor, binding.id);
   const inputs = { ...(body.inputs && typeof body.inputs === 'object' ? body.inputs : {}) };
   if (body.confirm && !inputs.confirm) inputs.confirm = body.confirm;
   if (body.reason && !inputs.reason) inputs.reason = body.reason;
   const expected = requireBindingConfirmation(binding, inputs, body.confirm || '');
   let result;
-  if (mutationRequired) assertActorAdmin(actor);
   // Nonempty human reason required before any write execution — never synthesized on the
   // caller's behalf (CONSTITUTION-0004 §4.2/§4.4). Read-only bindings are exempt.
   if (mutationRequired) inputs.reason = requireMutationReason(inputs.reason);
+
+  if (mutationRequired) {
+    const target = `${inputs.namespace || binding.targetHints?.namespace || ''}/${inputs.name || inputs.deployment || binding.targetHints?.deployment || binding.id}`.replace(/^\/+|\/+$/g, '');
+    const controlPlane = await submitControlPlaneAction(binding, inputs, target, actor);
+    await recordToolRun(actor, {
+      requestId: controlPlane.requestId,
+      toolId: binding.toolId,
+      target,
+      permissionCode: TOOL_PERMISSION[binding.toolId] || 'oaa.action.propose',
+      reason: inputs.reason,
+      input: inputs,
+      status: 'intent',
+      result: controlPlane,
+    });
+    return {
+      action: 'binding-submit',
+      binding,
+      confirmationExpected: expected || null,
+      result: controlPlane,
+      message: `Control-plane request ${controlPlane.requestId} was recorded. It awaits the approved Backend adapter.`,
+      latencyMs: Date.now() - started,
+    };
+  }
 
   switch (binding.toolId) {
     case 'oaa.environment.read':
@@ -2672,7 +2716,7 @@ async function executeActionBinding(body = {}, actor = null) {
     case 'oaa.knowledge.search': {
       const q = String(inputs.q || inputs.query || '').trim();
       if (!q) throw { code: 400, msg: 'q is required for knowledge search binding' };
-      result = { action: 'knowledge-search', q, items: await searchKnowledge(q, Number(inputs.limit || OAA_RAG_TOP_K)) };
+      result = { action: 'knowledge-search', q, items: await searchKnowledge(q, Number(inputs.limit || OAA_RAG_TOP_K), actor) };
       audit(actor, 'binding-knowledge-search', binding.id, 'ok', q);
       break;
     }
@@ -2767,7 +2811,7 @@ function confirmTail(text) {
 }
 
 function assertActorAdmin(actor) {
-  if (!actor?.groups?.includes(KANIDM_ADMIN_GROUP)) throw { code: 403, msg: `not in ${KANIDM_ADMIN_GROUP}` };
+  if (!actor?.groups?.includes(CONSOLE_ADMIN_GROUP)) throw { code: 403, msg: `requires ${CONSOLE_ADMIN_GROUP}` };
 }
 
 function summarizeEnvironment(snapshot) {
@@ -2926,7 +2970,10 @@ async function handleSlashCommand(text, body, actor) {
       try { inputs = JSON.parse(jsonText); }
       catch { return commandResponse(started, 'Usage: /action <binding-id> {"field":"value"} confirm <required confirmation>'); }
     }
-    const out = await executeActionBinding({ bindingId, inputs, confirm, reason: 'OAA chat binding command' }, actor);
+    // A chat command is not a management reason.  Mutating bindings must get
+    // a concrete, human-supplied reason from the JSON inputs (or the caller's
+    // request envelope), otherwise the Backend refuses the intent.
+    const out = await executeActionBinding({ bindingId, inputs, confirm, reason: body?.reason || '' }, actor);
     return commandResponse(started, out.message, out);
   }
   if (cmd === '/env') {
@@ -2977,12 +3024,12 @@ async function handleSlashCommand(text, body, actor) {
   }
   if (cmd === '/restart') {
     assertActorAdmin(actor);
-    const out = await restartDeployment({ namespace: parts[1], name: parts[2], confirm: confirmTail(raw), reason: 'OAA chat command' }, actor);
+    const out = await restartDeployment({ namespace: parts[1], name: parts[2], confirm: confirmTail(raw), reason: body?.reason || '' }, actor);
     return commandResponse(started, `Restart requested for Deployment ${out.namespace}/${out.name}. generation ${out.previousGeneration || '-'} -> ${out.generation || '-'}.`, out);
   }
   if (cmd === '/scale') {
     assertActorAdmin(actor);
-    const out = await scaleDeployment({ namespace: parts[1], name: parts[2], replicas: parts[3], confirm: confirmTail(raw), reason: 'OAA chat command' }, actor);
+    const out = await scaleDeployment({ namespace: parts[1], name: parts[2], replicas: parts[3], confirm: confirmTail(raw), reason: body?.reason || '' }, actor);
     return commandResponse(started, `Scale requested for Deployment ${out.namespace}/${out.name}. replicas ${out.previousReplicas ?? '-'} -> ${out.replicas}.`, out);
   }
   return commandResponse(started, `Unknown OAA command: ${cmd}\n\n${commandHelp()}`);
@@ -3070,13 +3117,13 @@ async function chatCompletion(body, actor) {
   const systemMessages = [operationalAnswerPolicySystemMessage(), controlToolsSystemMessage()];
   const userContent = latestUserContent(baseMessages);
   try {
-    sources = await searchKnowledge(userContent);
+    sources = await searchKnowledge(userContent, OAA_RAG_TOP_K, actor);
     if (sources.length) systemMessages.push(knowledgeSystemMessage(sources));
   } catch (e) {
     console.warn('[oaa-rag] search skipped:', e.message || e);
   }
   try {
-    conceptGraph = await listManualConceptGraph(userContent, 24);
+    conceptGraph = await listManualConceptGraph(userContent, 24, actor);
     const msg = conceptGraphSystemMessage(conceptGraph);
     if (msg) systemMessages.push(msg);
   } catch (e) {
@@ -3196,6 +3243,7 @@ function validateKeyBody(body, rotate = false) {
 }
 
 async function upsertKey(body, actor) {
+  assertMutationEnabled(actor, 'llm-key-upsert');
   const b = validateKeyBody(body);
   const fingerprint = createHash('sha256').update(b.apiKey).digest('hex').slice(0, 16);
   const now = new Date().toISOString();
@@ -3204,7 +3252,7 @@ async function upsertKey(body, actor) {
     kind: 'Secret',
     metadata: {
       name: secretName(b.id),
-      namespace: BACKBONE_NS,
+      namespace: OAA_NAMESPACE,
       labels: { [PART_LABEL]: 'opensphere-oaa', [KEY_LABEL]: 'true' },
       annotations: {
         'opensphere.io/oaa-key-id': b.id,
@@ -3223,10 +3271,10 @@ async function upsertKey(body, actor) {
     type: 'Opaque',
     stringData: { api_key: b.apiKey },
   };
-  const created = await k8s('POST', `/api/v1/namespaces/${BACKBONE_NS}/secrets`, obj);
+  const created = await k8s('POST', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets`, obj);
   if (created.ok) return { created: true, item: keyMetaFromSecret({ metadata: obj.metadata }) };
   if (created.status !== 409) throw { code: 502, msg: `secret create HTTP ${created.status}` };
-  const patched = await k8s('PATCH', `/api/v1/namespaces/${BACKBONE_NS}/secrets/${obj.metadata.name}`, {
+  const patched = await k8s('PATCH', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets/${obj.metadata.name}`, {
     metadata: { labels: obj.metadata.labels, annotations: obj.metadata.annotations },
     stringData: obj.stringData,
   });
@@ -3235,26 +3283,111 @@ async function upsertKey(body, actor) {
 }
 
 async function deleteKey(id) {
+  assertMutationEnabled(null, 'llm-key-delete');
   if (!ID_RE.test(id)) throw { code: 400, msg: 'invalid id' };
-  const r = await k8s('DELETE', `/api/v1/namespaces/${BACKBONE_NS}/secrets/${secretName(id)}`);
+  const r = await k8s('DELETE', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets/${secretName(id)}`);
   if (r.ok || r.status === 404) return { deleted: r.status !== 404 };
   throw { code: 502, msg: `secret delete HTTP ${r.status}` };
 }
 
 function audit(actor, action, target, result, reason) {
-  console.log('[oaa-audit] ' + JSON.stringify({
+  const entry = {
     time: new Date().toISOString(),
     actor: actor?.username || 'system',
     action,
     target,
     result,
     reason: reason || '',
-  }));
+  };
+  console.log('[oaa-audit] ' + JSON.stringify(entry));
+  // Best-effort for reads.  Mutations are fail-closed elsewhere and cannot be
+  // performed by this gateway; their intent/result must be recorded by the
+  // Console Backend before any control-plane side effect.
+  if (actor?.bearerToken) {
+    void fetch(`${CONSOLE_IDENTITY_URL}/api/oaa/audit`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${actor.bearerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action, target, result, reason: reason || 'OAA read/planning operation', targetType: 'oaa' }),
+      signal: AbortSignal.timeout(3000),
+    }).catch((error) => console.warn('[oaa-audit] persistence skipped:', error.message || error));
+  }
+}
+
+// Retrieval evidence is deliberately separate from the Console audit event.
+// The latter records a user-visible operation; this table preserves the exact
+// (ACL-filtered) corpus evidence used to answer it.  Some authenticated
+// service principals do not have a Supabase auth.users UUID, so only write a
+// foreign-key-safe trace when the Console identity subject is a UUID.
+async function recordRetrievalTrace(actor, query, hits) {
+  if (!OAA_SUPABASE_MODE || !Array.isArray(hits) || hits.length === 0) return;
+  const actorId = String(actor?.subject || '');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(actorId)) return;
+  const pool = getPgPool();
+  if (!pool) return;
+  const requestId = randomUUID();
+  const queryDigest = `sha256:${createHash('sha256').update(String(query || '')).digest('hex')}`;
+  try {
+    await Promise.all(hits.map((hit, index) => {
+      if (!hit.documentId || !hit.chunkId) return Promise.resolve();
+      return pool.query(
+        `INSERT INTO retrieval_trace
+           (request_id, actor_id, query_digest, document_id, chunk_id, rank, score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [requestId, actorId, queryDigest, hit.documentId, hit.chunkId, index + 1, Number(hit.score || 0)],
+      );
+    }));
+  } catch (error) {
+    // Evidence failure must not leak content or turn an already ACL-safe read
+    // into an availability incident; the Console audit still records the read.
+    console.warn('[oaa-retrieval-trace] persistence skipped:', error.message || error);
+  }
+}
+
+async function recordToolRun(actor, { requestId, toolId, target, permissionCode, reason, input, status, result }) {
+  if (!OAA_SUPABASE_MODE) return;
+  const actorId = String(actor?.subject || '');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(actorId)) return;
+  const pool = getPgPool();
+  if (!pool || !requestId) return;
+  const digest = (value) => `sha256:${createHash('sha256').update(JSON.stringify(value || {})).digest('hex')}`;
+  try {
+    await pool.query(
+      `INSERT INTO tool_run
+         (request_id, actor_id, tool_id, target, permission_code, reason, input_digest, status, result_digest, completed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $8 IN ('applied', 'failed', 'blocked') THEN now() ELSE NULL END)`,
+      [requestId, actorId, toolId, target, permissionCode, reason || null, digest(input), status, digest(result)],
+    );
+  } catch (error) {
+    // The Console Backend's begin_change transaction is authoritative for a
+    // mutating intent.  This OAA-side evidence row is supplemental and must
+    // not make a persisted, idempotent request appear rejected to the user.
+    console.warn('[oaa-tool-run] persistence skipped:', error.message || error);
+  }
+}
+
+async function submitControlPlaneAction(binding, inputs, target, actor) {
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable for control-plane submission' };
+  let response;
+  try {
+    response = await fetch(`${CONSOLE_IDENTITY_URL}/api/oaa/actions/submit`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${actor.bearerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ bindingId: binding.id, toolId: binding.toolId, target, inputs, reason: inputs.reason }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    throw { code: 503, msg: 'Console Backend control-plane submission is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.accepted || !body.requestId) {
+    throw { code: response.status >= 400 ? response.status : 502, msg: body.error || 'Console Backend rejected OAA action submission' };
+  }
+  return body;
 }
 
 // CONSTITUTION-0004 §4.5: Main Shell Baseline Ready requires PostgreSQL/pgvector connectivity and
 // Manual Registry availability. /readyz is the unauthenticated, in-cluster-only probe target the
-// Console DUPA controller's backboneReadiness()/Main Shell /readyz aggregates as a required
+// Console DUPA controller's platform-control readiness aggregate consumes as a required
 // component. It must never return 200 on a guess — every component below is a live check, and the
 // response body is structured booleans/reasons only (no secret material, no stack traces).
 async function computeReadiness() {
@@ -3370,15 +3503,19 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         service: 'opensphere-console-oaa-gateway',
         version: VERSION,
-        namespace: BACKBONE_NS,
+        namespace: OAA_NAMESPACE,
         ok: true,
         status,
         readiness: { ready: readiness.ready, components: readiness.components, reason: readiness.reason },
         degraded,
         degradedReason: degraded ? 'llm_key_not_configured' : null,
-        mutationEnabled: OAA_MUTATION_ENABLED,
-        mutationGateReason: OAA_MUTATION_ENABLED ? null : OAA_MUTATION_GATE_REASON,
-        mutationGate: { enabled: OAA_MUTATION_ENABLED, reason: OAA_MUTATION_ENABLED ? null : OAA_MUTATION_GATE_REASON },
+        // Compatibility names describe controlled submission availability, not
+        // a Kubernetes-write capability.  The Gateway direct-write path stays
+        // permanently fail-closed even when this is true.
+        mutationEnabled: OAA_ACTION_SUBMISSION_ENABLED,
+        mutationGateReason: OAA_ACTION_SUBMISSION_ENABLED ? null : 'console_backend_action_submission_disabled',
+        mutationGate: { enabled: OAA_ACTION_SUBMISSION_ENABLED, reason: OAA_ACTION_SUBMISSION_ENABLED ? null : 'console_backend_action_submission_disabled' },
+        directKubernetesMutationEnabled: false,
         ragEnabled: OAA_RAG_ENABLED,
         pgConfigured: pgEnabled(),
         embedDim: OAA_EMBED_DIM,
@@ -3414,60 +3551,64 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await seedBundledManualKnowledge(actor));
     }
     if (url.pathname === '/api/oaa/knowledge/search' && req.method === 'GET') {
-      await verifyAuthed(req);
+      const actor = await verifyAuthed(req);
       const q = url.searchParams.get('q') || '';
-      return json(res, 200, { items: await searchKnowledge(q, Number(url.searchParams.get('limit') || OAA_RAG_TOP_K)) });
+      return json(res, 200, { items: await searchKnowledge(q, Number(url.searchParams.get('limit') || OAA_RAG_TOP_K), actor) });
     }
     if (url.pathname === '/api/oaa/knowledge/concepts' && req.method === 'GET') {
-      await verifyAuthed(req);
-      return json(res, 200, await listManualConceptGraph(url.searchParams.get('q') || '', Number(url.searchParams.get('limit') || 64)));
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await listManualConceptGraph(url.searchParams.get('q') || '', Number(url.searchParams.get('limit') || 64), actor));
     }
     if (url.pathname === '/api/manual/sources' && req.method === 'GET') {
-      await verifyAuthed(req);
-      return json(res, 200, await listManualSources());
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await listManualSources(actor));
     }
     if (url.pathname === '/api/manual/documents' && req.method === 'GET') {
-      await verifyAuthed(req);
+      const actor = await verifyAuthed(req);
       return json(res, 200, await listManualDocuments({
         q: url.searchParams.get('q') || '',
         source: url.searchParams.get('source') || '',
         limit: url.searchParams.get('limit') || 40,
-      }));
+      }, actor));
     }
     if (url.pathname === '/api/manual/document' && req.method === 'GET') {
-      await verifyAuthed(req);
-      return json(res, 200, await getManualDocument(url.searchParams.get('sourceId') || ''));
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await getManualDocument(url.searchParams.get('sourceId') || '', actor));
     }
     if (url.pathname === '/api/manual/search' && req.method === 'GET') {
-      await verifyAuthed(req);
-      return json(res, 200, await searchManualRegistry(url.searchParams.get('q') || '', Number(url.searchParams.get('limit') || 8)));
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await searchManualRegistry(url.searchParams.get('q') || '', Number(url.searchParams.get('limit') || 8), actor));
     }
     if (url.pathname === '/api/oaa/tools/manifest' && req.method === 'GET') {
-      await verifyAuthed(req);
-      return json(res, 200, await gatedToolManifestFromStore());
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await gatedToolManifestForActor(actor));
     }
     if (url.pathname === '/api/oaa/tools/action-bindings' && req.method === 'GET') {
-      await verifyAuthed(req);
-      return json(res, 200, await gatedActionBindingsFromStore());
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await gatedActionBindingsForActor(actor));
     }
     if (url.pathname === '/api/oaa/tools/environment' && (req.method === 'GET' || req.method === 'POST')) {
       const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
       const body = req.method === 'POST' ? await readBody(req) : {};
       return json(res, 200, await environmentSnapshot(body, actor));
     }
     if (url.pathname === '/api/oaa/tools/k8s/pod-logs' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.logs.read');
       const body = await readBody(req);
       return json(res, 200, await podLogs(body, actor));
     }
     if (url.pathname === '/api/oaa/tools/k8s/pods-summary' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
       const out = await clusterPodSummary();
       audit(actor, 'k8s-cluster-pod-summary', 'cluster', 'ok', `${out.totalPods || 0} pods`);
       return json(res, 200, { action: 'cluster-pod-summary', message: summarizeClusterPods(out), cluster: out });
     }
     if (url.pathname === '/api/oaa/tools/k8s/describe' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
       const body = await readBody(req);
       const kind = String(body.kind || '').toLowerCase();
       if (kind === 'pod' || kind === 'pods') return json(res, 200, await describePod(body, actor));
@@ -3476,11 +3617,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/oaa/tools/k8s/rollout' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
       const body = await readBody(req);
       return json(res, 200, await rolloutStatus(body, actor));
     }
     if (url.pathname === '/api/oaa/tools/k8s/services' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
       const body = await readBody(req);
       const out = await selectedSnapshots(body.namespace || '');
       audit(actor, 'k8s-services', body.namespace || OAA_ENV_NAMESPACES.join(','), 'ok', `${out.length} namespaces`);
@@ -3488,6 +3631,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/oaa/tools/k8s/events' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
       const body = await readBody(req);
       const out = await selectedSnapshots(body.namespace || '');
       audit(actor, 'k8s-events', body.namespace || OAA_ENV_NAMESPACES.join(','), 'ok', `${out.length} namespaces`);
@@ -3521,6 +3665,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/oaa/chat' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.chat.use');
       const body = await readBody(req);
       return json(res, 200, await chatCompletion(body, actor));
     }
@@ -3546,7 +3691,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`opensphere-console-oaa-gateway v${VERSION} listening :${PORT} (ns=${BACKBONE_NS})`);
+  console.log(`opensphere-console-oaa-gateway v${VERSION} listening :${PORT} (ns=${OAA_NAMESPACE})`);
   seedBuiltinKnowledge().then((out) => {
     if (out.seeded) console.log(`[oaa-db] seeded ${out.documents} docs / ${out.chunks} chunks (dim=${OAA_EMBED_DIM})`);
     else console.log(`[oaa-db] ready (${out.reason || 'ok'}, dim=${OAA_EMBED_DIM})`);

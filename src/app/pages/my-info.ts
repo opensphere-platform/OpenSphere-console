@@ -129,7 +129,7 @@ interface AuditEvent {
                   <div><dt>표시 이름</dt><dd>{{ identityUser()?.displayName || auth.name() || '—' }}</dd></div>
                   <div><dt>이메일</dt><dd>{{ identityUser()?.email || auth.email() || '—' }}</dd></div>
                   <div><dt>상태</dt><dd><span class="label" [class.label-success]="identityUser()?.enabled !== false">{{ identityUser()?.enabled === false ? '비활성' : '활성' }}</span></dd></div>
-                  <div><dt>인증 방식</dt><dd>Kanidm · OIDC PKCE</dd></div>
+                  <div><dt>인증 방식</dt><dd>Supabase Auth · Console RBAC</dd></div>
                 </dl>
 
                 <h2>기능</h2>
@@ -167,7 +167,7 @@ interface AuditEvent {
           <clr-tab-content *clrIfActive="tab() === 'access'">
             <section class="tab-section">
               <h2>내 그룹과 역할</h2>
-              <p class="section-lead">현재 Kanidm 신원 권위에서 평가된 접근 권한입니다. 권한 변경은 콘솔 역할 관리자의 승인을 거칩니다.</p>
+              <p class="section-lead">현재 Supabase Console 신원·역할 경계에서 평가된 접근 권한입니다. 권한 변경은 콘솔 역할 관리자의 승인을 거칩니다.</p>
               <clr-datagrid>
                 <clr-dg-column>이름</clr-dg-column>
                 <clr-dg-column>유형</clr-dg-column>
@@ -341,7 +341,7 @@ interface AuditEvent {
                   <clr-dg-row>
                     <clr-dg-cell><strong>OpenSphere Console 세션</strong><div class="os-mono">{{ auth.subject() || auth.user() }}</div></clr-dg-cell>
                     <clr-dg-cell><span class="label" [class.label-success]="!auth.isTokenExpired()">{{ auth.isTokenExpired() ? '만료' : '활성' }}</span></clr-dg-cell>
-                    <clr-dg-cell>Kanidm · OIDC PKCE</clr-dg-cell>
+                    <clr-dg-cell>Supabase Auth · Console RBAC</clr-dg-cell>
                     <clr-dg-cell>{{ expText() }}</clr-dg-cell>
                     <clr-dg-cell>sessionStorage · 현재 탭</clr-dg-cell>
                     <clr-dg-cell><span class="label">내보내기 금지</span></clr-dg-cell>
@@ -373,13 +373,13 @@ interface AuditEvent {
             <section class="tab-section">
               <h2>현재 세션</h2>
               <dl class="kv-list security-list">
-                <div><dt>인증 공급자</dt><dd>Kanidm · opensphere-console</dd></div>
+                <div><dt>인증 공급자</dt><dd>Supabase Auth · opensphere-console</dd></div>
                 <div><dt>세션 만료</dt><dd>{{ expText() }}</dd></div>
                 <div><dt>TOTP 정책</dt><dd>{{ authPolicy()?.totpEnabled ? '활성' : '개발 중 비활성' }} <span class="label">{{ authPolicy()?.environment || 'unknown' }}</span></dd></div>
                 <div><dt>브라우저 토큰 보관</dt><dd>sessionStorage · 브라우저 종료 시 삭제</dd></div>
               </dl>
               <h2>비밀번호</h2>
-              <p class="section-lead">현재 비밀번호로 재인증한 뒤 새 비밀번호를 설정합니다. TOTP·passkey 등 다른 자격 증명은 그대로 유지되며, 최종 비밀번호 정책은 Kanidm이 판정합니다.</p>
+              <p class="section-lead">Supabase Auth의 안전한 회복 링크로 비밀번호를 설정합니다. 다른 MFA 자격 증명은 그대로 유지됩니다.</p>
               <button class="btn btn-sm btn-primary" (click)="openPasswordPanel()" [disabled]="busy()">비밀번호 변경</button>
 
               <h2>복구와 보호</h2>
@@ -394,7 +394,7 @@ interface AuditEvent {
           <clr-tab-content *clrIfActive="tab() === 'activity'">
             <section class="tab-section">
               <h2>내 최근 관리 활동</h2>
-              <p class="section-lead">Backbone 영구 감사에서 현재 사용자와 관련된 항목만 표시합니다.</p>
+              <p class="section-lead">Supabase 영구 감사에서 현재 사용자와 관련된 항목만 표시합니다.</p>
               <clr-datagrid [clrDgLoading]="activityLoading()">
                 <clr-dg-column>시각</clr-dg-column><clr-dg-column>동작</clr-dg-column><clr-dg-column>대상</clr-dg-column><clr-dg-column>결과</clr-dg-column><clr-dg-column>사유</clr-dg-column>
                 @for (event of activities(); track (event.time || '') + (event.action || '') + (event.target || '')) {
@@ -411,7 +411,7 @@ interface AuditEvent {
       </clr-tabs>
     </div>
 
-    <os-panel [open]="editOpen()" title="내 프로필 편집" subtitle="Kanidm IGA · 감사 사유 필수" (closed)="editOpen.set(false)">
+    <os-panel [open]="editOpen()" title="내 프로필 편집" subtitle="Supabase Console Identity · 감사 사유 필수" (closed)="editOpen.set(false)">
       <form clrForm clrLayout="vertical">
         <clr-input-container>
           <label>표시 이름</label>
@@ -466,7 +466,7 @@ interface AuditEvent {
       }
     </os-panel>
 
-    <os-panel [open]="passwordPanelOpen()" title="비밀번호 변경" subtitle="현재 비밀번호 재인증 필요 · Kanidm 정책 판정" (closed)="closePasswordPanel()">
+    <os-panel [open]="passwordPanelOpen()" title="비밀번호 변경" subtitle="Supabase Auth 회복 링크" (closed)="closePasswordPanel()">
       @if (!passwordChanged()) {
         <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false">
           <clr-alert-item><span class="alert-text">현재 로그인한 계정(<strong>{{ auth.user() }}</strong>)의 비밀번호만 변경됩니다. TOTP·passkey 등 다른 자격 증명은 삭제하거나 재설정하지 않습니다.</span></clr-alert-item>
@@ -476,33 +476,9 @@ interface AuditEvent {
             <clr-alert-item><span class="alert-text">{{ passwordError() }}</span></clr-alert-item>
           </clr-alert>
         }
-        <form clrForm clrLayout="vertical" autocomplete="off" (ngSubmit)="changePassword()">
-          <clr-password-container>
-            <label>현재 비밀번호</label>
-            <input clrPassword [(ngModel)]="passwordForm.current" name="current-password" autocomplete="current-password" required />
-          </clr-password-container>
-          @if (passwordNeedsTotp()) {
-            <clr-input-container>
-              <label>인증 앱 코드</label>
-              <input clrInput [(ngModel)]="passwordForm.totp" name="current-totp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6자리" />
-              <clr-control-helper>TOTP가 활성화된 계정은 현재 인증 앱 코드로 재인증합니다.</clr-control-helper>
-            </clr-input-container>
-          }
-          <clr-password-container>
-            <label>새 비밀번호</label>
-            <input clrPassword [(ngModel)]="passwordForm.next" name="new-password" autocomplete="new-password" minlength="8" required />
-            <clr-control-helper>8자 이상. 최종 강도 정책은 Kanidm이 판정합니다.</clr-control-helper>
-          </clr-password-container>
-          <clr-password-container>
-            <label>새 비밀번호 확인</label>
-            <input clrPassword [(ngModel)]="passwordForm.confirm" name="confirm-password" autocomplete="new-password" required />
-          </clr-password-container>
-          @if (passwordClientHint(); as hint) {
-            <p class="section-lead">{{ hint }}</p>
-          }
-        </form>
+        <p class="section-lead">현재 비밀번호나 인증 코드를 이 화면에 입력하지 않습니다. Supabase Auth가 발급한 일회성 회복 링크에서 안전하게 설정합니다.</p>
         <div class="panel-actions">
-          <button class="btn btn-primary" (click)="changePassword()" [disabled]="busy() || !passwordFormValid()">비밀번호 변경</button>
+          <button class="btn btn-primary" (click)="changePassword()" [disabled]="busy()">회복 링크 발급</button>
           <button class="btn btn-outline" (click)="closePasswordPanel()" [disabled]="busy()">취소</button>
         </div>
       } @else {
@@ -612,7 +588,6 @@ export class MyInfo {
   readonly passwordPanelOpen = signal(false);
   readonly passwordChanged = signal(false);
   readonly passwordError = signal('');
-  readonly passwordTotpRequired = signal(false);
 
   edit = { displayName: '', email: '', reason: '' };
   tokenLabel = '';
@@ -620,7 +595,6 @@ export class MyInfo {
   revokeReason = '';
   deviceSearchText = '';
   tokenSearchText = '';
-  passwordForm = { current: '', next: '', confirm: '', totp: '' };
   readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '—';
   readonly language = navigator.language || '—';
 
@@ -650,7 +624,7 @@ export class MyInfo {
     this.route.queryParamMap.subscribe((params) => {
       const requested = params.get('tab') as ProfileTab | null;
       if (requested && this.validTab(requested)) this.tab.set(requested);
-      const enrollmentId = params.get('enrollment');
+		const enrollmentId = params.get('cli_enrollment');
       const code = params.get('code');
       if (enrollmentId && code) {
         this.tab.set('credentials');
@@ -688,8 +662,8 @@ export class MyInfo {
     this.credentialError.set('');
     try {
       const [deviceResponse, tokenResponse] = await Promise.all([
-        this.http.request('/bff/cli/devices'),
-        this.http.request('/bff/pat'),
+        this.http.request('/api/identity/cli/devices'),
+        this.http.request('/api/identity/cli/tokens'),
       ]);
       if (!deviceResponse.ok) throw new Error(`장치 HTTP ${deviceResponse.status}`);
       if (!tokenResponse.ok) throw new Error(`API 토큰 HTTP ${tokenResponse.status}`);
@@ -726,7 +700,9 @@ export class MyInfo {
 
   private async loadAuthPolicy(): Promise<void> {
     try {
-      this.authPolicy.set(await this.http.json<AuthPolicy>('/bff/auth-policy'));
+      // MFA policy belongs to Supabase Auth. The profile surface does not
+      // expose a parallel identity-provider toggle.
+      this.authPolicy.set(null);
     } catch {
       this.authPolicy.set(null);
     }
@@ -778,7 +754,7 @@ export class MyInfo {
 
   private async loadEnrollment(enrollmentId: string, code: string): Promise<void> {
     try {
-      const response = await this.http.request(`/bff/cli/enrollments/${encodeURIComponent(enrollmentId)}?code=${encodeURIComponent(code)}`);
+      const response = await this.http.request(`/api/identity/cli/enrollments/${encodeURIComponent(enrollmentId)}?code=${encodeURIComponent(code)}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       this.enrollment.set((await response.json()) as Enrollment);
     } catch (error) {
@@ -793,7 +769,7 @@ export class MyInfo {
     if (!request || !code || this.busy()) return;
     this.busy.set(true);
     try {
-      const response = await this.http.request(`/bff/cli/enrollments/${encodeURIComponent(request.enrollmentId)}/approve`, {
+      const response = await this.http.request(`/api/identity/cli/enrollments/${encodeURIComponent(request.enrollmentId)}/approve`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ userCode: code }),
@@ -831,10 +807,10 @@ export class MyInfo {
     if (!this.tokenLabel.trim() || this.busy()) return;
     this.busy.set(true);
     try {
-      const response = await this.http.request('/bff/pat', {
+      const response = await this.http.request('/api/identity/cli/tokens', {
         method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ label: this.tokenLabel.trim(), reason: this.tokenReason.trim() }).toString(),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ label: this.tokenLabel.trim(), reason: this.tokenReason.trim() }),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       this.mintedToken.set((await response.json()) as MintedToken);
@@ -862,8 +838,8 @@ export class MyInfo {
     const credential = this.pendingRevoke();
     if (!credential || this.revokeReason.trim().length < 8) return;
     const path = credential.kind === 'device'
-      ? `/bff/cli/devices/${encodeURIComponent(credential.id)}`
-      : `/bff/pat/${encodeURIComponent(credential.id)}`;
+      ? `/api/identity/cli/devices/${encodeURIComponent(credential.id)}`
+      : `/api/identity/cli/tokens/${encodeURIComponent(credential.id)}`;
     const success = credential.kind === 'device' ? 'CLI 장치 신뢰를 해제했습니다.' : '자동화 API 토큰을 폐기했습니다.';
     await this.deleteCredential(path, success, this.revokeReason.trim());
   }
@@ -884,76 +860,37 @@ export class MyInfo {
   }
 
   openPasswordPanel(): void {
-    this.clearPasswordForm();
     this.passwordChanged.set(false);
     this.passwordError.set('');
-    this.passwordTotpRequired.set(false);
     this.passwordPanelOpen.set(true);
   }
 
   closePasswordPanel(): void {
     this.passwordPanelOpen.set(false);
-    this.clearPasswordForm();
     this.passwordChanged.set(false);
     this.passwordError.set('');
-    this.passwordTotpRequired.set(false);
-  }
-
-  private clearPasswordForm(): void {
-    this.passwordForm = { current: '', next: '', confirm: '', totp: '' };
-  }
-
-  /** TOTP 필드는 정책이 TOTP를 강제하거나 서버가 재인증에 코드를 요구할 때만 노출한다. */
-  passwordNeedsTotp(): boolean {
-    return Boolean(this.authPolicy()?.totpEnabled) || this.passwordTotpRequired();
-  }
-
-  /** 전송 전 클라이언트 검증(최종 정책 판정은 Kanidm). */
-  passwordFormValid(): boolean {
-    const f = this.passwordForm;
-    if (!f.current || f.next.length < 8 || f.next !== f.confirm || f.next === f.current) return false;
-    if (this.passwordNeedsTotp() && !/^\d{6}$/.test(f.totp.trim())) return false;
-    return true;
-  }
-
-  passwordClientHint(): string {
-    const f = this.passwordForm;
-    if (f.next && f.next.length < 8) return '새 비밀번호는 8자 이상이어야 합니다.';
-    if (f.next && f.confirm && f.next !== f.confirm) return '새 비밀번호와 확인 값이 일치하지 않습니다.';
-    if (f.next && f.current && f.next === f.current) return '현재 비밀번호와 다른 새 비밀번호를 사용하세요.';
-    return '';
   }
 
   async changePassword(): Promise<void> {
-    if (this.busy() || !this.passwordFormValid()) return;
+    if (this.busy()) return;
     this.busy.set(true);
     this.passwordError.set('');
-    // 요청 본문에 username을 넣지 않는다 — 서버가 현재 인증 세션의 subject만 대상으로 삼는다.
-    const payload: Record<string, string> = {
-      currentPassword: this.passwordForm.current,
-      newPassword: this.passwordForm.next,
-      confirmPassword: this.passwordForm.confirm,
-    };
-    if (this.passwordNeedsTotp()) payload['totp'] = this.passwordForm.totp.trim();
+    // 서버는 현재 Supabase 세션의 subject만 대상으로 회복 링크를 발급한다.
     try {
-      const response = await this.http.request('/bff/account/password', {
+      const response = await this.http.request('/api/identity/me/password', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ reason: 'self-service password change' }),
       });
-      const body = (await response.json().catch(() => ({}))) as { error?: string; requiresTotp?: boolean; ok?: boolean };
-      // 성공·실패와 무관하게 민감 입력을 즉시 UI에서 지운다.
-      this.clearPasswordForm();
+      const body = (await response.json().catch(() => ({}))) as { error?: string; ok?: boolean; resetUrl?: string };
       if (!response.ok || !body.ok) {
-        if (body.requiresTotp) this.passwordTotpRequired.set(true);
         this.passwordError.set(this.passwordErrorText(body.error, response.status));
         return;
       }
       this.passwordChanged.set(true);
-      this.message.set({ type: 'success', text: '비밀번호를 변경했습니다. 보안을 위해 로그아웃합니다. 새 비밀번호로 다시 로그인하세요.' });
-      this.scheduleForcedLogout();
+      this.message.set({ type: 'success', text: 'Supabase 비밀번호 설정 링크를 발급했습니다. 링크로 이동합니다.' });
+      if (body.resetUrl) window.location.assign(body.resetUrl);
     } catch {
-      this.clearPasswordForm();
       this.passwordError.set('비밀번호 변경 요청을 보내지 못했습니다. 네트워크를 확인하고 다시 시도하세요.');
     } finally {
       this.busy.set(false);
@@ -980,7 +917,7 @@ export class MyInfo {
   }
 
   /**
-   * 서버가 비밀번호 commit 전에 CBS의 browser session epoch를 회전해 기존 id_token을 즉시
+   * 서버가 비밀번호 commit 전에 Supabase Auth session epoch를 회전해 기존 id_token을 즉시
    * 무효화한다. 클라이언트도 로컬 OIDC 상태를 지워 새 자격으로 재로그인하게 한다
    * (서버 응답 reloginRequired=true와 일치). 확인 문구를 잠깐 보여준 뒤 자동 로그아웃한다.
    */
@@ -1006,7 +943,7 @@ export class MyInfo {
     if (group === 'opensphere-console-admins') return 'Console 전역 관리자';
     if (group === 'opensphere-console-operators') return '운영 작업 수행';
     if (group === 'opensphere-console-viewers') return '읽기 전용 접근';
-    return 'Kanidm 그룹 기반 접근';
+    return 'Supabase Console 역할 기반 접근';
   }
 
   fmt(iso: string | null): string {

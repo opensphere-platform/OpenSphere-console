@@ -4,10 +4,14 @@
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
+    "prebuild": "node scripts/verify-manual-ui.mjs --source",
     "build": "ng build",
+    "postbuild": "node scripts/verify-manual-ui.mjs --dist dist/opensphere-console/browser",
+    "manual:seed": "node backend/opensphere-console-oaa-gateway/scripts/build-manual-seed.js",
     "watch": "ng build --watch --configuration development",
-    "test": "node --test backend/dupa-control/security.test.js backend/dupa-control/profile-device.test.js backend/dupa-control/host-contract.test.js backend/dupa-control/backboneclaim.test.js backend/dupa-control/backbone-required.test.js backend/dupa-control/main-shell-base.test.js backend/dupa-control/manual-native.test.js backend/dupa-control/oaa-native-ui.test.js backend/dupa-control/oaa-admin-native.test.js backend/dupa-control/oaa-gateway-tier.test.js backend/dupa-control/oaa-gateway-postgres-boundary.test.js backend/dupa-control/release-channel-workflow.test.js backend/identity/opensphere-console-auth/token-verifier.test.mjs backend/identity/opensphere-console-auth/auth-policy.test.mjs backend/identity/opensphere-console-auth/credential-onboarding.test.mjs backend/identity/opensphere-console-auth/initial-setup.test.mjs backend/identity/opensphere-console-auth/self-service-password.test.mjs backend/identity/opensphere-console-auth/cli-device.test.mjs backend/identity/opensphere-console-auth/dev-auth-helper.test.mjs backend/os-cli/manifest.test.mjs src/app/core/notification.merge.spec.ts src/app/os/z-index-layers.spec.ts",
-    "test:security": "node --test backend/dupa-control/security.test.js backend/dupa-control/profile-device.test.js backend/identity/opensphere-console-auth/token-verifier.test.mjs backend/identity/opensphere-console-auth/auth-policy.test.mjs backend/identity/opensphere-console-auth/cli-device.test.mjs backend/identity/opensphere-console-auth/dev-auth-helper.test.mjs"
+    "test": "node --test --test-concurrency=1 backend/dupa-control/platform-control-plane.test.js backend/dupa-control/module-package.test.js backend/dupa-control/observability-binding.test.js backend/dupa-control/manual-native.test.js backend/dupa-control/oaa-native-ui.test.js backend/dupa-control/release-channel-workflow.test.js backend/os-cli/manifest.test.mjs backend/supabase/supabase-contract.test.mjs backend/opensphere-console-backend/supabase-auth.test.js backend/opensphere-console-backend/platform-control-governance.test.js src/app/core/notification.merge.spec.ts src/app/os/z-index-layers.spec.ts",
+    "test:supabase": "node --test backend/supabase/supabase-contract.test.mjs backend/opensphere-console-backend/supabase-auth.test.js",
+    "test:security": "node --test backend/dupa-control/platform-control-plane.test.js backend/dupa-control/module-package.test.js backend/dupa-control/observability-binding.test.js backend/supabase/supabase-contract.test.mjs backend/opensphere-console-backend/supabase-auth.test.js backend/opensphere-console-backend/platform-control-governance.test.js"
   },
   "private": true,
   "packageManager": "npm@11.6.2",

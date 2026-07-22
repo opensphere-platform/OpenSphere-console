@@ -29,8 +29,8 @@ test('release manifest is hydrated from the exact compiled CLI artifacts', async
 test('Console and diagnostic CLI images compile the manifest version', async () => {
   const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
   const diagnosticDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
-  assert.match(rootDockerfile, /main\.version=0\.4\.0/g);
-  assert.match(diagnosticDockerfile, /main\.version=0\.4\.0/g);
+  assert.match(rootDockerfile, /main\.version=0\.5\.0/g);
+  assert.match(diagnosticDockerfile, /main\.version=0\.5\.0/g);
 });
 
 test('release manifest generation fails when a declared artifact is missing', async () => {

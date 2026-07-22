@@ -111,9 +111,9 @@ interface OaaActionBindingManifest {
 
 /**
  * /manage/oaa — OAA(OpenSphere AI Agent) Gateway 관리 표면. **셸 네이티브** 전용 페이지(CONSTITUTION-0004 §4.2/§4.4).
- * OAA Core는 Main Shell native capability이고 OAA Gateway는 CBS consumer인 별도 서버 workload다 — 여기서는
+ * OAA Core는 Main Shell native capability이고 OAA Gateway는 Supabase consumer인 별도 서버 workload다 — 여기서는
  * Gateway health, LLM provider key custody, Knowledge/Manual Registry, Tool Registry/Action Bindings만 다룬다.
- * Backbone(admin-backbone.ts)에는 절대 다시 흡수하지 않는다(§8 감사 판정).
+ * Data & Identity 페이지에는 절대 다시 흡수하지 않는다(§8 감사 판정).
  *
  * 모든 호출은 same-origin `/api/oaa/*` + HttpService(내부적으로 AuthService.token()을 Bearer로 첨부, cross-origin 차단).
  * LLM API key는 여기서 절대 localStorage/sessionStorage/log/DOM 목록에 저장하지 않는다 — 생성/회전 성공(또는 실패) 직후
@@ -137,15 +137,24 @@ interface OaaActionBindingManifest {
         <os-backend-unavailable
           feature="OAA Gateway"
           backend="opensphere-console-oaa-gateway (/api/oaa)"
-          hint="opensphere-console-oaa-gateway 배포 · Backbone PostgreSQL/pgvector 연결 시 복구됩니다. 미배포여도 콘솔 로그인/관리/Manual은 영향받지 않습니다."
+          hint="opensphere-console-oaa-gateway 배포 · Supabase PostgreSQL/pgvector 연결 시 복구됩니다. 미배포여도 콘솔 로그인/관리/Manual은 영향받지 않습니다."
           [detail]="d"
         />
       } @else {
         <p class="os-sub">
-          OAA Core는 Main Shell native capability이고, OAA Gateway는 보안·격리를 위한 별도 CBS consumer workload입니다
+          OAA Core는 Main Shell native capability이고, OAA Gateway는 보안·격리를 위한 별도 Supabase consumer workload입니다
           (<code>CONSTITUTION-0004 §4.2</code>). Provider key 미배포 시 채팅은 <strong>Degraded</strong>일 수 있으나 콘솔 관리는 항상 동작합니다.
           @if (health(); as h) { · <code>{{ h.service }}</code> v{{ h.version }} · ns <code>{{ h.namespace }}</code> }
         </p>
+
+        <section class="manage-status-rail" aria-label="OAA 운영 상태">
+          <div><span>Gateway</span><strong [class.ok]="!!health()">{{ health() ? 'Reachable' : 'Unavailable' }}</strong><small>{{ health()?.service || 'health unavailable' }}</small></div>
+          <div><span>LLM keys</span><strong [class.warn]="llmKeysLoaded() && !llmKeys().length">{{ llmKeysLoaded() ? llmKeys().length : 'Loading' }}</strong><small>{{ llmKeys().length ? 'fingerprint inventory' : 'provider custody' }}</small></div>
+          <div><span>Knowledge</span><strong>{{ knowledgeStats()?.documents ?? 'Loading' }}</strong><small>{{ knowledgeStats()?.chunks ?? 0 }} chunks</small></div>
+          <div><span>Tools</span><strong>{{ toolManifest()?.tools?.length ?? 'Loading' }}</strong><small>registered capabilities</small></div>
+          <div><span>Bindings</span><strong>{{ actionBindings()?.bindings?.length ?? 'Loading' }}</strong><small>{{ actionBindings()?.invalidBindings?.length ?? 0 }} invalid</small></div>
+          <div><span>Mutation gate</span><strong [class.ok]="mutationGateOpen()" [class.warn]="!mutationGateOpen()">{{ mutationGateOpen() ? 'Server enabled' : 'Closed' }}</strong><small>{{ mutationGateOpen() ? 'governed submissions only' : mutationGateReasonText() }}</small></div>
+        </section>
 
         @if (msg(); as m) {
           <clr-alert [clrAlertType]="m.type" [clrAlertClosable]="true" (clrAlertClosedChange)="msg.set(null)">
@@ -511,7 +520,7 @@ export class AdminOaa implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     await this.loadHealth();
-    await Promise.all([this.loadToolManifest(), this.loadActionBindings()]);
+    await Promise.all([this.loadLlmKeys(), this.loadKnowledgeStats(), this.loadToolManifest(), this.loadActionBindings()]);
     this.timer = setInterval(() => this.loadHealth(true), 15000);
   }
   ngOnDestroy(): void {

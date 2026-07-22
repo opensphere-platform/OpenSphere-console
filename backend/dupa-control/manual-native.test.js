@@ -37,7 +37,7 @@ test('search.service.ts routes Manual Registry hits to /manual?doc= and never /p
   assert.doesNotMatch(search, /\/p\/manual/);
 });
 
-test('native manual.ts consumes ManualService (not /api/manual directly) with loading/error/retry/detail states and no innerHTML', () => {
+test('native manual.ts consumes ManualService and implements the Help Center landing and reader without innerHTML', () => {
   const manualPage = read('src', 'app', 'pages', 'manual.ts');
   const manualService = read('src', 'app', 'core', 'manual.service.ts');
 
@@ -46,7 +46,7 @@ test('native manual.ts consumes ManualService (not /api/manual directly) with lo
   // ManualService indirection. (The template legitimately *displays* the backend name
   // "OAA Manual Registry (/api/manual)" as user-facing text — that is not a network call.)
   assert.match(manualPage, /import\s*\{[\s\S]*ManualService[\s\S]*\}\s*from\s*'\.\.\/core\/manual\.service'/);
-  assert.match(manualPage, /private manual = inject\(ManualService\)/);
+  assert.match(manualPage, /private readonly manual = inject\(ManualService\)/);
   assert.doesNotMatch(manualPage, /inject\(HttpService\)|inject\(ApiService\)/);
   assert.doesNotMatch(manualPage, /fetch\(|\.request\(/);
 
@@ -64,11 +64,87 @@ test('native manual.ts consumes ManualService (not /api/manual directly) with lo
   assert.match(manualPage, /retryDocument\(\)/);
   assert.match(manualPage, /\(click\)="retryDocument\(\)"/);
   assert.match(manualPage, /detail = signal<ManualDocumentDetail \| null>\(null\)/);
-  assert.match(manualPage, /openDocument\(sourceId: string\)/);
+  assert.match(manualPage, /openDocument\(sourceId: string, syncRoute = true\)/);
+
+  // Global search can navigate from an already-mounted /manual page to another
+  // `/manual?doc=<sourceId>` result. Query-param changes must therefore remain reactive;
+  // reading only the initial ActivatedRoute snapshot breaks the integrated-search link.
+  assert.match(manualPage, /route\.queryParamMap/);
+  assert.match(manualPage, /takeUntilDestroyed\(this\.destroyRef\)/);
+  assert.match(manualPage, /docParam !== this\.selectedDocId\(\)/);
+  assert.match(manualPage, /openDocument\(docParam, false\)/);
+  assert.doesNotMatch(manualPage, /const docParam = this\.route\.snapshot\.queryParamMap\.get\('doc'\)/);
+
+  // Oracle Help Center-inspired information architecture: hero search, 3 operating bands,
+  // 10 Perspective data cards and a full document reader (not the old registry datagrid/panel).
+  assert.match(manualPage, /class="manual-hero"/);
+  assert.match(manualPage, /data-manual-contract="console-help-center-v2"/);
+  assert.match(manualPage, /class="manual-primary-grid"/);
+  assert.match(manualPage, /class="manual-deliver-grid"/);
+  assert.match(manualPage, /class="manual-reader manual-shell-width"/);
+  assert.match(manualPage, /perspectiveDocuments = computed/);
+  assert.match(manualPage, /type ManualBand = 'operate' \| 'build' \| 'deliver'/);
+  assert.match(manualPage, /manual-band-\$\{band\}/);
+  // The old admin-facing Manual Registry table must never return as the user-facing /manual page.
+  // Registry operation remains in /manage/oaa; /manual is exclusively the Help Center and reader.
+  assert.doesNotMatch(
+    manualPage,
+    /OsDatagrid|OsPanel|os-datagrid|os-panel|os-source-chips|sourceFilter\(|OAA Manual Registry 소스\/문서 탐색 및 검색/,
+  );
 
   // Safe rendering only — no innerHTML binding/assignment anywhere in the native page (a JSDoc
   // comment noting that innerHTML is intentionally *not* used is expected and is not a usage).
   assert.doesNotMatch(manualPage, /\[innerHTML\]|\.innerHTML\s*=|bypassSecurityTrustHtml/);
+});
+
+test('build, image, and Kubernetes admission gates reject the retired Manual UI', () => {
+  const pkg = JSON.parse(read('package.json'));
+  const verifier = read('scripts', 'verify-manual-ui.mjs');
+  const releaseDockerfile = read('Dockerfile');
+  const localDockerfile = read('Dockerfile.local');
+  const deployment = read('deploy', 'opensphere-console.yaml');
+  const admission = read('deploy', 'manual-ui-admission-policy.yaml');
+  const contract = JSON.parse(read('public', 'manual-contract.json'));
+
+  assert.equal(contract.contract, 'console-help-center-v2');
+  assert.equal(contract.route, '/manual');
+  assert.match(pkg.scripts.prebuild, /verify-manual-ui\.mjs --source/);
+  assert.match(pkg.scripts.postbuild, /verify-manual-ui\.mjs --dist/);
+  assert.match(verifier, /os-source-chips/);
+  assert.match(verifier, /manual-primary-grid/);
+  assert.match(releaseDockerfile, /console-help-center-v2/);
+  assert.match(localDockerfile, /console-help-center-v2/);
+  assert.match(deployment, /opensphere\.io\/manual-ui-contract: console-help-center-v2/);
+  assert.match(deployment, /readinessProbe:[\s\S]*exec:[\s\S]*console-help-center-v2/);
+  assert.match(admission, /kind: ValidatingAdmissionPolicy/);
+  assert.match(admission, /failurePolicy: Fail/);
+  assert.match(admission, /validationActions: \[Deny\]/);
+  assert.match(admission, /console-help-center-v2/);
+});
+
+test('bundled Manual Registry provides ten readable Perspective documents and never ingests legacy docs.ts', () => {
+  const seed = JSON.parse(read('backend', 'opensphere-console-oaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'));
+  const perspectiveDocs = seed.documents.filter((doc) => doc.tags?.includes('perspective-home'));
+
+  assert.equal(perspectiveDocs.length, 10);
+  assert.deepEqual(
+    perspectiveDocs.map((doc) => doc.tags.find((tag) => /^order-\d{2}$/.test(tag))),
+    Array.from({ length: 10 }, (_, index) => `order-${String(index + 1).padStart(2, '0')}`),
+  );
+  assert.equal(seed.documents.some((doc) => doc.sourceId === 'help-center/docs-ts'), false);
+  assert.equal(seed.documents.some((doc) => /OpenSphere-shell-menual\/src\/app\/docs\.ts/i.test(doc.sourcePath || '')), false);
+  assert.equal(seed.documents.some((doc) => doc.sourceId === 'console-docs/manual-ownership'), true);
+});
+
+test('Manual product ownership is Console-native and the standalone legacy repository stays deleted', () => {
+  const ownership = read('docs', 'MANUAL-OWNERSHIP.md');
+  const legacyStandalone = path.resolve(root, '..', 'OpenSphere-shell-menual');
+
+  assert.match(ownership, /Manual의 유일한 제품 소유자는 Main Shell인 `OpenSphere-console`/);
+  assert.match(ownership, /`docs\/manual\/\*\.md`/);
+  assert.match(ownership, /`src\/app\/pages\/manual\.ts`/);
+  assert.match(ownership, /같은 기능을 다른 이름의 Manual subShell로 다시 만들지 않는다/);
+  assert.equal(fs.existsSync(legacyStandalone), false, 'the retired standalone Manual repository must stay deleted');
 });
 
 test('the retired backend/manual-subShell package is fully absent', () => {

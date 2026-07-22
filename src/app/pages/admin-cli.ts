@@ -44,6 +44,14 @@ interface CliManifest {
       }
 
       @if (manifest(); as cli) {
+        <section class="manage-status-rail" aria-label="CLI 배포 상태">
+          <div><span>Release</span><strong>{{ cli.version }}</strong><small>{{ cli.displayName }}</small></div>
+          <div><span>Ownership</span><strong class="ok">Console native</strong><small>Binding 아님</small></div>
+          <div><span>Profile</span><strong>{{ cli.profile }}</strong><small>관리자 권한 경계</small></div>
+          <div><span>Platforms</span><strong>{{ cli.links.length }}</strong><small>서명된 아티팩트</small></div>
+          <div><span>Credential custody</span><strong class="ok">Device trust</strong><small>15분 session exchange</small></div>
+        </section>
+
         <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false">
           <clr-alert-item>
             <span class="alert-text">
@@ -82,7 +90,7 @@ interface CliManifest {
           <a class="btn btn-sm btn-outline" routerLink="/me" [queryParams]="{ tab: 'credentials' }">내 장치·자격 증명 관리</a>
         </section>
 
-        <pre class="command">os login --console {{ origin }}</pre>
+        <div class="command-row"><pre class="command">os login --console {{ origin }}</pre><button class="btn btn-sm btn-outline" (click)="copyLoginCommand()">{{ copied() ? '복사됨' : '명령 복사' }}</button></div>
 
         <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
           <clr-alert-item>
@@ -103,7 +111,7 @@ interface CliManifest {
       .login-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-top: 1px solid var(--os-hairline); border-bottom: 1px solid var(--os-hairline); margin: 1.2rem 0 0.7rem; padding: 0.8rem 0; }
       .login-card h2 { font-size: 0.9rem; margin: 0 0 0.2rem; }
       .login-card p { color: var(--os-muted); font-size: 0.7rem; margin: 0; max-width: 52rem; }
-      .command { background: var(--os-surface-1); border: 1px solid var(--os-hairline); color: var(--os-ink); font-family: var(--os-font-mono, monospace); font-size: 0.72rem; margin: 0 0 0.8rem; padding: 0.55rem 0.7rem; white-space: pre-wrap; }
+      .command-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:.55rem; margin:0 0 .8rem; }.command { background: var(--os-surface-1); border: 1px solid var(--os-hairline); color: var(--os-ink); font-family: var(--os-font-mono, monospace); font-size: 0.72rem; margin: 0; padding: 0.55rem 0.7rem; white-space: pre-wrap; }
       @media (max-width: 760px) { .login-card { align-items: flex-start; flex-direction: column; } }
     `,
   ],
@@ -112,6 +120,7 @@ export class AdminCli {
   private readonly http = inject(HttpService);
   readonly manifest = signal<CliManifest | null>(null);
   readonly error = signal('');
+  readonly copied = signal(false);
   readonly origin = window.location.origin;
 
   constructor() {
@@ -134,5 +143,15 @@ export class AdminCli {
 
   filename(href: string): string {
     return href.split('/').pop() || 'os';
+  }
+
+  async copyLoginCommand(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(`os login --console ${this.origin}`);
+      this.copied.set(true);
+      window.setTimeout(() => this.copied.set(false), 1800);
+    } catch {
+      this.error.set('로그인 명령을 클립보드에 복사하지 못했습니다. 명령을 직접 선택해 복사하세요.');
+    }
   }
 }

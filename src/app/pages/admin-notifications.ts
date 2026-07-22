@@ -1,4 +1,4 @@
-import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
+import { Component, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { NgClass } from '@angular/common';
 import { ClarityModule } from '@clr/angular';
 import { Router } from '@angular/router';
@@ -18,13 +18,17 @@ import { NotificationService, OsNotification, OsSeverity } from '../core/notific
   template: `
     <div class="os-page">
       <os-page-header title="알림" tag="Core·Admin · 셸 단일 인박스(audit bus + subShell 발행)" />
-      <p class="os-sub">
-        헤더 벨과 동일한 <strong>단일 인박스</strong>를 관리 화면으로 흡수 — 소스: 콘솔 audit bus(<code>DUPA</code>) · subShell in-page 발행(<code>ctx.notify</code>).
-        전체 {{ notif.items().length }} · 안읽음 <strong>{{ notif.unread() }}</strong>.
-      </p>
-      <div class="os-actions">
-        <button class="btn btn-sm btn-outline" (click)="notif.refresh()">새로고침</button>
-        <button class="btn btn-sm btn-outline" [disabled]="!notif.unread()" (click)="notif.markAllRead()">모두 읽음</button>
+      <div class="manage-page-lead"><p>헤더 벨과 동일한 단일 인박스입니다. Console audit bus와 subShell의 <code>ctx.notify</code> 이벤트를 한곳에서 확인하고 관련 화면으로 이동할 수 있습니다.</p><span>persistent inbox · 최대 {{ notif.items().length }}</span></div>
+      <section class="manage-status-rail" aria-label="알림 상태">
+        <div><span>Total</span><strong>{{ notif.items().length }}</strong><small>현재 인박스 범위</small></div>
+        <div><span>Unread</span><strong [class.warn]="notif.unread() > 0">{{ notif.unread() }}</strong><small>확인 필요</small></div>
+        <div><span>Errors</span><strong [class.danger]="severityCount('error') > 0">{{ severityCount('error') }}</strong><small>실패·차단 이벤트</small></div>
+        <div><span>Warnings</span><strong [class.warn]="severityCount('warning') > 0">{{ severityCount('warning') }}</strong><small>주의 이벤트</small></div>
+        <div><span>Sources</span><strong>{{ sourceCount() }}</strong><small>발행 권위</small></div>
+      </section>
+      <div class="manage-toolbar">
+        <div class="manage-toolbar-group"><button class="manage-filter-button" [class.active]="viewFilter() === 'all'" (click)="viewFilter.set('all')">전체</button><button class="manage-filter-button" [class.active]="viewFilter() === 'unread'" (click)="viewFilter.set('unread')">안읽음</button><button class="manage-filter-button" [class.active]="viewFilter() === 'attention'" (click)="viewFilter.set('attention')">주의 이상</button><label class="clr-sr-only" for="notification-search">알림 검색</label><input id="notification-search" class="manage-search" type="search" placeholder="제목·소스·분류 검색" [value]="query()" (input)="query.set(inputValue($event))" /></div>
+        <div class="manage-toolbar-group"><span class="manage-toolbar-copy"><small>{{ filteredItems().length }}건 표시</small></span><button class="btn btn-sm btn-outline" (click)="notif.refresh()">새로고침</button><button class="btn btn-sm btn-outline" [disabled]="!notif.unread()" (click)="notif.markAllRead()">모두 읽음</button></div>
       </div>
 
       <clr-datagrid>
@@ -35,7 +39,7 @@ import { NotificationService, OsNotification, OsSeverity } from '../core/notific
         <clr-dg-column [clrDgField]="'time'">시각</clr-dg-column>
         <clr-dg-column>상태</clr-dg-column>
         <clr-dg-row
-          *clrDgItems="let n of notif.items()"
+          *clrDgItems="let n of filteredItems()"
           [clrDgItem]="n"
           class="os-notification-row"
           tabindex="0"
@@ -104,9 +108,23 @@ import { NotificationService, OsNotification, OsSeverity } from '../core/notific
 export class AdminNotifications {
   readonly notif = inject(NotificationService);
   readonly selected = signal<OsNotification | null>(null);
+  readonly query = signal('');
+  readonly viewFilter = signal<'all' | 'unread' | 'attention'>('all');
+  readonly filteredItems = computed(() => {
+    const query = this.query().trim().toLowerCase();
+    return this.notif.items().filter((item) => {
+      const matchesView = this.viewFilter() === 'all' || (this.viewFilter() === 'unread' ? !item.read : item.severity === 'warning' || item.severity === 'error');
+      const matchesQuery = !query || [item.title, item.detail, item.source, item.category, item.topic].some((value) => String(value || '').toLowerCase().includes(query));
+      return matchesView && matchesQuery;
+    });
+  });
   private router = inject(Router);
 
   constructor() { this.notif.start(); this.notif.refresh(); }
+
+  severityCount(severity: OsSeverity): number { return this.notif.items().filter((item) => item.severity === severity).length; }
+  sourceCount(): number { return new Set(this.notif.items().map((item) => item.source)).size; }
+  inputValue(event: Event): string { return (event.target as HTMLInputElement).value; }
 
   sevClass(s: OsSeverity): string {
     return { info: 'label-info', success: 'label-success', warning: 'label-warning', error: 'label-danger' }[s] || '';

@@ -6,11 +6,6 @@ spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-console } } 
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: opensphere-console-auth, namespace: opensphere-console-auth }
-spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-console-auth } } }
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
 metadata: { name: opensphere-console-backend, namespace: opensphere-console }
 spec: { minAvailable: 1, selector: { matchLabels: { app: opensphere-console-backend } } }
 ---
@@ -39,23 +34,6 @@ spec:
     - ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 8443 }
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata: { name: opensphere-console-auth-ingress, namespace: opensphere-console-auth }
-spec:
-  podSelector: { matchLabels: { app: opensphere-console-auth } }
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console-auth } }
-      ports: [{ protocol: TCP, port: 8443 }]
-    # Public OIDC/login surface. Authentication, PKCE, issuer/audience and rate
-    # limits remain enforced by opensphere-console-auth; Kanidm itself stays ClusterIP-only.
-    - from:
-        - ipBlock: { cidr: 0.0.0.0/0 }
-      ports: [{ protocol: TCP, port: 8443 }]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

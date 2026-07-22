@@ -70,14 +70,10 @@ jobs:
           }
           images=(
             opensphere-console
-            opensphere-console-auth
             opensphere-console-backend
             opensphere-console-dupa-controller
             opensphere-console-oaa-gateway
-            opensphere-console-kanidm
-            opensphere-cbs-postgresql
-            opensphere-cbs-rustfs
-            opensphere-cbs-gitea
+            opensphere-console-gitea
           )
           declare -A digests
           for image in "${images[@]}"; do

@@ -1,49 +1,135 @@
-# My Profile 자격 증명 화면 디자인 QA
+# Data & Identity / Change Control consistency — Design QA
 
-- 판정: **passed**
-- 검증일: 2026-07-14
-- 구현 경로: `https://localhost:8090/me?tab=credentials`
-- 기준 이미지: `C:\Users\cmars\AppData\Local\Temp\codex-clipboard-5cc533f3-7289-4fdb-ad75-09645c80905a.png`
-- 최종 데스크톱: `C:\Users\cmars\.codex\visualizations\2026\07\10\019f4b93-e2d1-7653-96a2-5dffe43b2a35\my-profile-credentials-final-2032x1608.png`
-- 기준/구현 병렬 비교: `C:\Users\cmars\.codex\visualizations\2026\07\10\019f4b93-e2d1-7653-96a2-5dffe43b2a35\my-profile-credentials-comparison.png`
-- 태블릿: `C:\Users\cmars\.codex\visualizations\2026\07\10\019f4b93-e2d1-7653-96a2-5dffe43b2a35\my-profile-credentials-tablet-final.png`
-- 모바일: `C:\Users\cmars\.codex\visualizations\2026\07\10\019f4b93-e2d1-7653-96a2-5dffe43b2a35\my-profile-credentials-mobile-final.png`
+Date: 2026-07-22 (KST)
 
-## 기준 일치와 의도된 차이
+## Source and implementation
 
-- OCI 기준의 프로필 헤더, 탭, 검색 도구막대, 조밀한 데이터 그리드, 생성·폐기 동작 밀도를 Clarity v18 구성요소로 재현했다.
-- OpenSphere Main Shell의 상단 헤더와 좌측 관리 레일은 제품 고유 호스팅 계약이므로 유지했다.
-- OCI의 API key·customer secret을 그대로 흉내 내지 않고 실제 OpenSphere 권한 모델에 맞춰 CLI 신뢰 장치, 자동화 API 토큰, 현재 Console 세션, Extension 제공 자격으로 구성했다.
-- 실제 OpenSphere 로고와 승인된 Carbon 아이콘만 사용했다. 새 래스터 자산, CSS 도형, 수제 SVG는 추가하지 않았다.
+- Visual baseline: `docs/audit-evidence/2026-07-22-data-change-consistency/01-platform-control.png`
+- Initial Data & Identity: `docs/audit-evidence/2026-07-22-data-change-consistency/02-data-identity.png`
+- Initial Change Control: `docs/audit-evidence/2026-07-22-data-change-consistency/03-change-control.png`
+- Intermediate aligned surfaces: `04-data-identity-implemented.png`, `05-change-control-implemented.png`
+- Intermediate Clarity-hosted workspace tabs: `06-change-control-workspace-tabs.png`, `07-data-identity-workspace-tabs.png`
+- Exact native-tab comparison: `08-platform-control-v14-reference.png`, `09-change-control-native-tabs.png`
+- Selected terminal workspace: `10-change-control-dr-native-selected.png`
+- Final shared-style comparison: `11-platform-control-shared-tabs.png`, `12-change-control-shared-tabs.png`
+- Runtime: `https://localhost:8090/manage/data-identity` and `https://localhost:8090/manage/change-control`
 
-## 반응형·접근성 검증
+All runtime captures were produced from the same authenticated Chrome window at 2705×1713. The captures therefore have aligned viewport dimensions and device density. The default Overview state was used for the full-view visual comparison; specialist tabs were verified separately through the accessibility tree and live interaction.
 
-| Viewport | 결과 |
-|---|---|
-| 2032×1608 | 전체 표와 동작이 한 화면 흐름에 정렬되고 body 가로 넘침 없음 |
-| 1024×900 | 240px 레일과 784px 본문 확보, 넓은 표는 자체 가로 스크롤 |
-| 390×844 | 50px 축소 레일, 본문 전체 폭 확보, 긴 사용자명 정상 줄바꿈, 헤더·탭·본문 충돌 없음 |
+## Comparison result
 
-- 각 자격 증명 영역은 `article`과 제목 연결을 갖는다.
-- 넓은 데이터 그리드는 키보드 포커스 가능한 스크롤 컨테이너이며 페이지 전체 overflow를 만들지 않는다.
-- 프로필 탭은 모바일에서 자체 가로 스크롤하며 탭 의미와 선택 상태를 유지한다.
-- 검색 입력은 명시적 label을 갖고 버튼은 키보드로 접근 가능하다.
+- Header, last-checked metadata, compact refresh action, six-cell state rail, tab rail, content border, and panel bands now use the Platform Control hierarchy and shared Console tokens.
+- The initial pages used page-local header/rail CSS and default one-line Clarity tabs. Those independent component boundaries caused the inconsistency.
+- Data & Identity and Change Control now use the same native `workspace-tabs` DOM anatomy as Platform Control: direct tab buttons, two-digit index, task title, specialist subtitle, selected accent rule, and horizontal overflow at constrained widths.
+- Change Control intentionally has eight specialist workspaces while Platform Control has three primary perspectives, but their visual grammar is now the same. The difference is information architecture, not styling.
+- Typography, spacing, color, border, focus, and responsive behavior were inspected at full-image detail. No P0, P1, or P2 fidelity issue remains.
+- No imagery was introduced. Existing Carbon icons and Console semantic colors remain the only visual assets.
 
-## 핵심 흐름 검증
+## Interactions and accessibility
 
-- 토큰 검색: 정확 일치 1건, 불일치 empty state, 초기화 후 전체 복원 통과.
-- API 토큰 생성: 라벨·8자 이상 사유, 원문 1회 표시, JTI·만료 메타데이터 표시 통과.
-- API 토큰 폐기: 사유 입력, 즉시 목록 제거, 이후 서버 상태 거부 계약 통과.
-- 브라우저 Console 오류와 페이지 오류: 0건.
-- QA 토큰은 검증 후 모두 폐기했으며 최종 PAT 목록은 0건이다.
+- Every specialist workspace remains a semantic `tab` inside a `tablist`, with the active content exposed as a `tabpanel`.
+- Change Control `Supply Chain` and `DR & Contracts` activated successfully after the final tab change.
+- Refresh preserved the active authenticated session and rendered state; no browser warning or error was observed.
+- At narrow widths the subtitle and index are removed before the task title, and the tablist remains horizontally navigable.
 
-## 결함 발견과 종결
+## QA history
 
-- 1차 모바일 QA에서 확장된 좌측 레일이 본문을 압축하는 P1을 발견해 축소 레일·오버레이 계약으로 수정했다.
-- 2차 QA에서 Clarity 전역 header 고정 높이가 프로필 동작을 본문과 겹치게 하는 P1을 발견해 프로필 헤더의 display·height 소유권을 고정했다.
-- 3차 QA에서 긴 관리자명 `nowrap` 잘림을 발견해 모바일 정상 줄바꿈을 적용했다.
-- 최종 재검증 결과 P0/P1/P2 잔여 결함은 없다.
+1. Initial audit found standalone refresh buttons, unframed overview content, locally styled rails, and default single-line Clarity tabs.
+2. Shared header, status rail, content surface, and numbered one-line tabs were applied to both specialist pages.
+3. Follow-up review found the numbered one-line Change Control tabs still did not match Platform Control's title-plus-description workspace tabs.
+4. Both specialist pages were upgraded to an indexed title/subtitle anatomy, but follow-up screenshot review showed Clarity's wrapper still changed the active tab width, surface, and underline behavior.
+5. The Clarity tab header/container was removed from both specialist pages and replaced with the same direct native `workspace-tabs` structure used by Platform Control.
+6. The duplicated Platform Control tab CSS was removed; all three pages now consume one global `.workspace-tabs` rule, preventing the two styles from drifting again.
+7. Final same-window comparison and interaction checks found no remaining high- or medium-severity design inconsistency.
 
-## 비차단 빌드 부채
+## Verification
 
-- 프로덕션 빌드는 성공했으나 초기 bundle 및 일부 component style budget 경고가 남아 있다. 기능·런타임·반응형 수용을 차단하지 않으며 별도 성능 최적화 대상으로 관리한다.
+- `npm test`: 71 passed, 0 failed.
+- `npm run test:security`: 34 passed, 0 failed.
+- `npm run build`: passed; pre-existing bundle and component-style budget warnings remain.
+- Kubernetes rollout: `opensphere-console:manage-consistency-v15`, 2/2 replicas ready.
+
+final result: passed
+
+---
+
+# Platform Control Plane redesign — Design QA
+
+Date: 2026-07-22 (KST)
+
+## Source of truth
+
+The redesign intentionally combines three approved visual directions as task-oriented tabs instead of discarding any direction:
+
+- Operations: `C:\Users\cmars\.codex\generated_images\019f83a9-d008-7f52-8455-c46626b72eb5\exec-68f294fa-7639-4f6e-8b60-ba958ee1d097.png` (1487×1058)
+- Evidence: `C:\Users\cmars\.codex\generated_images\019f83a9-d008-7f52-8455-c46626b72eb5\exec-c529cc6a-870f-4eca-8759-8cae90671128.png` (1487×1058)
+- Change Journey: `C:\Users\cmars\.codex\generated_images\019f83a9-d008-7f52-8455-c46626b72eb5\exec-761c4b18-315e-417e-afce-e68bb79821da.png` (1487×1058)
+
+Runtime under test: `https://localhost:8090/manage/platform-control`
+
+## Final implementation evidence
+
+Authenticated Chrome full-page captures at the native 2705×1713 viewport:
+
+- `docs/audit-evidence/2026-07-22-platform-control-redesign/01-operations.png`
+- `docs/audit-evidence/2026-07-22-platform-control-redesign/02-evidence.png`
+- `docs/audit-evidence/2026-07-22-platform-control-redesign/03-change-journey.png`
+- `docs/audit-evidence/2026-07-22-platform-control-redesign/04-data-identity.png`
+- `docs/audit-evidence/2026-07-22-platform-control-redesign/05-data-identity-recovery.png`
+- `docs/audit-evidence/2026-07-22-platform-control-redesign/06-change-control.png`
+- `docs/audit-evidence/2026-07-22-platform-control-redesign/07-change-control-journey.png`
+
+The reference and implementation differ in pixel dimensions, so comparisons were made using normalized composition, hierarchy, density, state semantics, and panel relationships. Each of the three source images was opened in the same visual-comparison input as its corresponding implementation capture.
+
+## Comparison result
+
+### Operations
+
+- Preserves the dense authority dashboard, top state rail, Supabase/Gitea split, risk inspector, and recent governed activity structure.
+- Uses live Console data: Supabase service readiness, identity/storage/audit inventory, Gitea policy, and recovery evidence.
+- `No evidence` and `NotConfigured` remain neutral states rather than success.
+
+### Evidence
+
+- Preserves the master/detail evidence workspace: authority filters, evidence table, selected-evidence inspector, provenance chain, and recommended next step.
+- Defaults selection to the first non-Verified item, making active risk visible without manufacturing an incident.
+- Zero restored objects/users/repositories are rendered as `Attention required` / insufficient evidence, never `Verified`.
+
+### Change Journey
+
+- Preserves the three-lane Supabase → Gitea → Kubernetes relationship, policy inspector, next-action banner, and request list.
+- The empty runtime state is explicit: there is no active request and the first governed change is still awaited.
+- The screen does not invent PR, outbox, reconciliation, Kubernetes receipt, or HIS telemetry evidence.
+
+### Dedicated management views
+
+- Data & Identity keeps Supabase-specific service, identity, RLS, storage, audit, integration, and structured recovery visibility.
+- Change Control keeps Gitea-specific repository, protected branch, signed-commit, direct-push, approval, webhook, supply-chain, DR, and contract visibility.
+- The Gitea overview exposes `opensphere/platform-declarations`, protected `main`, signed commits required, and direct push denied.
+- HIS remains an external telemetry authority and is displayed as `NotConfigured` when no binding exists; the Console does not create Prometheus/HIS resources.
+
+## States and interactions verified
+
+- Existing authenticated session persisted across `/manage/platform-control`, `/manage/data-identity`, and `/manage/change-control`.
+- Operations, Evidence, and Change Journey tabs activated and rendered without route changes or logout.
+- Data & Identity `Security & DR` and Change Control `Change Journey` tabs activated correctly.
+- Live backend data loaded from both `/api/identity/supabase/status` and `/api/platform/gitea/status`.
+- During the complete route/tab pass, no `pageerror` event was emitted.
+- During a final Platform Control navigation and observation window, no browser `console` event or `pageerror` event was emitted.
+
+## QA history and fixes
+
+1. Initial comparison found Clarity's global header styling rendering panel headers black and `No evidence` using an incorrect success tone.
+2. The redesign stylesheet was ordered explicitly, panel headers were normalized to the Console canvas, and evidence-free state styling was made neutral.
+3. Second comparison found the Evidence/Change Journey canvas headers outside that override, initial Evidence selection prioritizing a passing row, and insufficient Gitea overview detail.
+4. Canvas headers were added to the override, Evidence now selects the first non-Verified row, and the Gitea overview now exposes repository and branch/signing/direct-push policy.
+5. Final captures and the full interaction pass found no remaining P0, P1, or P2 design defects.
+
+## Verification
+
+- `npm test`: 70 passed, 0 failed.
+- `npm run test:security`: 33 passed, 0 failed.
+- `npm run build`: completed successfully; existing size-budget warnings remain.
+- Kubernetes rollout: `opensphere-console:platform-control-v10`, 2/2 replicas ready.
+
+Final result: passed

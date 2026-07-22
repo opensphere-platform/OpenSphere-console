@@ -1,7 +1,7 @@
 # OpenSphere Console (Angular + ng-clarity 셸 PoC) — ADR-UI-001 T2 스파이크
 # 소스: https://dev.azure.com/OpenSphere-Platform/OpenSphere-Platform/_git/opensphere-console
 # 이미지: 자체 빌드 → 클러스터 노드 반입 후 digest 핀 (이미지 규약)
-# 선행: Secret shell-tls, Secret opensphere-console-auth-ca — git에 값 없음
+# 선행: Secret shell-tls — git에 값 없음
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -19,13 +19,15 @@ spec:
     matchLabels: { app: opensphere-console }
   template:
     metadata:
+      annotations:
+        opensphere.io/manual-ui-contract: console-help-center-v2
       labels: { app: opensphere-console }
     spec:
       containers:
         - name: shell
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
           # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console@sha256:<digest>로 고정.
-          image: ghcr.io/opensphere-platform/opensphere-console:2.0.0-rc.1
+          image: opensphere-console:manage-consistency-v15
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -38,11 +40,15 @@ spec:
             - name: nginx-certs
               mountPath: /etc/nginx/certs
               readOnly: true
-            - name: upstream-auth-ca
-              mountPath: /etc/nginx/upstream-ca
-              readOnly: true
           readinessProbe:
-            httpGet: { path: /readyz, port: 8080 }
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - >-
+                  grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json &&
+                  grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js &&
+                  ! grep -Rqs 'os-source-chips' /usr/share/nginx/html/main-*.js
             initialDelaySeconds: 2
             periodSeconds: 10
           livenessProbe:
@@ -59,9 +65,6 @@ spec:
         - name: nginx-certs
           secret:
             secretName: shell-tls
-        - name: upstream-auth-ca
-          secret:
-            secretName: opensphere-console-auth-ca
 ---
 apiVersion: v1
 kind: Service

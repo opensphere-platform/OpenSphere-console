@@ -1,4 +1,10 @@
-# OpenSphere Console 명명·공급 표준 (Naming & Supply Standard) v2
+# Historical — OpenSphere Console 명명·공급 표준 (Naming & Supply Standard) v2
+
+> **Superseded (2026-07-22).** 이 문서의 CBS/Backbone naming 규칙은 역사 기록이다.
+> 현재 정본은 `PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md`다.
+> 새 Data & Identity 리소스는 `opensphere-console-data`, 새 Change Control
+> 리소스는 `opensphere-console-change`를 사용하며 `opensphere-cbs`와
+> `opensphere-backbone`을 새 코드·배포·운영 명칭으로 사용하지 않는다.
 
 Status: **정본 정책 · 필수 준수 (정책이 먼저)**
 Authority: 워크로드/네임스페이스/이미지/태그 명명의 단일 기준(SSOT). 코드·매니페스트가 충돌하면 이 문서가 우선한다.

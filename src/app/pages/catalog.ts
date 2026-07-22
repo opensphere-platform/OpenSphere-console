@@ -1,10 +1,11 @@
-import { Component, OnInit, inject, signal, ChangeDetectionStrategy } from '@angular/core';
+import { Component, OnInit, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { ApiService, CatalogEntity, RuntimeResource } from '../core/api.service';
 import { OsDatagrid, OsColumn } from '../os/os-datagrid';
 import { OsPanel } from '../os/os-panel';
 import { BackendUnavailable } from '../os/backend-unavailable';
+import { OsPageHeader } from '../os/os-page-header';
 
 /**
  * Developer Catalog — rhdh-self를 headless 엔진으로 소비(헌법 §4),
@@ -12,10 +13,24 @@ import { BackendUnavailable } from '../os/backend-unavailable';
  */
 @Component({
   selector: 'os-catalog',
-  imports: [ClarityModule, OsDatagrid, OsPanel, BackendUnavailable],
+  imports: [ClarityModule, OsDatagrid, OsPanel, BackendUnavailable, OsPageHeader],
   template: `
-    <h1>Developer Catalog</h1>
-    <p class="os-sub">engine: rhdh-self (headless · REST 소비) — UI 임베드 0</p>
+    <div class="os-page">
+    <os-page-header title="Developer Catalog" tag="RHDH headless · Console inventory" />
+    <div class="manage-page-lead"><p>Console이 headless RHDH Catalog API를 통해 읽는 자산 인벤토리입니다. 항목을 선택하면 관계와 Kubernetes runtime evidence를 같은 문맥에서 확인할 수 있습니다.</p><span>UI embed 0 · REST only</span></div>
+
+    <section class="manage-status-rail" aria-label="Catalog 요약">
+      <div><span>Catalog entities</span><strong>{{ rows().length }}</strong><small>현재 조회 범위</small></div>
+      <div><span>Components</span><strong>{{ countKind('Component') }}</strong><small>runtime evidence 대상</small></div>
+      <div><span>Owners</span><strong>{{ uniqueSpec('owner') }}</strong><small>명시된 소유자</small></div>
+      <div><span>Lifecycle</span><strong>{{ uniqueSpec('lifecycle') }}</strong><small>선언된 단계</small></div>
+      <div><span>Source</span><strong>rhdh-self</strong><small>headless catalog engine</small></div>
+    </section>
+
+    <div class="manage-toolbar">
+      <div class="manage-toolbar-copy"><strong>자산 탐색</strong><small>이름·종류·소유자·설명으로 필터링합니다.</small></div>
+      <div class="manage-toolbar-group"><label class="clr-sr-only" for="catalog-search">Catalog 검색</label><input id="catalog-search" class="manage-search" type="search" placeholder="Catalog 검색" [value]="query()" (input)="query.set(inputValue($event))" /><button class="btn btn-sm btn-outline" [disabled]="loading()" (click)="refresh()">새로고침</button></div>
+    </div>
 
     @if (forbidden()) {
       <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
@@ -31,9 +46,9 @@ import { BackendUnavailable } from '../os/backend-unavailable';
     } @else {
       <os-datagrid
         [columns]="columns"
-        [rows]="rows()"
+        [rows]="filteredRows()"
         [loading]="loading()"
-        empty="등록된 카탈로그 엔티티가 없습니다"
+        empty="검색 조건에 맞는 카탈로그 엔티티가 없습니다"
         [selected]="selected()"
         (rowClick)="openQuickview($event)"
       />
@@ -128,6 +143,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
         }
       }
     </os-panel>
+    </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
@@ -184,25 +200,33 @@ export class Catalog implements OnInit {
   ];
 
   readonly rows = signal<CatalogEntity[]>([]);
+  readonly query = signal('');
   readonly selected = signal<CatalogEntity | null>(null);
   readonly error = signal<string>('');
   readonly loading = signal(true);
   readonly forbidden = signal(false);
   readonly runtime = signal<RuntimeResource[] | null>(null);
   readonly runtimeError = signal<string>('');
+  readonly filteredRows = computed(() => {
+    const query = this.query().trim().toLowerCase();
+    if (!query) return this.rows();
+    return this.rows().filter((entity) => [entity.kind, entity.metadata.name, entity.metadata.description, this.specOf(entity, 'owner'), this.specOf(entity, 'type'), this.specOf(entity, 'lifecycle')].some((value) => String(value || '').toLowerCase().includes(query)));
+  });
 
   async ngOnInit(): Promise<void> {
+    await this.refresh();
+    // R4: deep-link 복원 (?quickview=kind:namespace/name)
+    const q = this.route.snapshot.queryParamMap.get('quickview');
+    if (q) {
+      const hit = this.rows().find((e) => this.ref(e) === q);
+      if (hit) { this.selected.set(hit); this.loadRuntime(hit); }
+    }
+  }
+
+  async refresh(): Promise<void> {
+    this.loading.set(true); this.error.set(''); this.forbidden.set(false);
     try {
       this.rows.set(await this.api.catalogEntities());
-      // R4: deep-link 복원 (?quickview=kind:namespace/name)
-      const q = this.route.snapshot.queryParamMap.get('quickview');
-      if (q) {
-        const hit = this.rows().find((e) => this.ref(e) === q);
-        if (hit) {
-          this.selected.set(hit);
-          this.loadRuntime(hit);
-        }
-      }
     } catch (e) {
       const message = String(e);
       if (/HTTP (401|403)\b/.test(message)) this.forbidden.set(true);
@@ -211,6 +235,10 @@ export class Catalog implements OnInit {
       this.loading.set(false);
     }
   }
+
+  countKind(kind: string): number { return this.rows().filter((entity) => entity.kind === kind).length; }
+  uniqueSpec(key: string): number { return new Set(this.rows().map((entity) => this.specOf(entity, key)).filter((value) => value !== '—')).size; }
+  inputValue(event: Event): string { return (event.target as HTMLInputElement).value; }
 
   openQuickview(e: CatalogEntity): void {
     this.selected.set(e);

@@ -198,7 +198,7 @@ export class Landing {
     ];
     if (this.psp.isAdmin()) {
       base.push(
-        { path: '/manage/console-admins', title: '콘솔 관리자', sub: 'Kanidm IGA' },
+        { path: '/manage/console-admins', title: '콘솔 관리자', sub: 'Supabase Identity' },
         { path: '/manage/extensions', title: 'Console Extensions', sub: 'subShell·plugin·binding' },
         { path: '/manage/roles', title: '역할', sub: '역할 정의·부여' },
       );
