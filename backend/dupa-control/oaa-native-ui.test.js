@@ -144,3 +144,20 @@ test('os-oaa-agent is absent from Extension Host / DUPA plugin nav registration 
   assert.doesNotMatch(extensionHost, /os-oaa-agent/i);
   assert.doesNotMatch(controller, /os-oaa-agent/i);
 });
+
+test('OAA admin uses the Supabase console-admins contract and the shared full-width side-panel workflow', () => {
+  const admin = read('src', 'app', 'pages', 'admin-oaa.ts');
+  const panel = read('src', 'app', 'os', 'os-panel.ts');
+  const styles = read('src', 'styles.scss');
+
+  assert.doesNotMatch(admin, /opensphere-console-admins/);
+  assert.match(admin, /OAA Gateway 관리자 역할\(console-admins\)이 필요합니다/);
+  assert.match(admin, /class="clr-form-full-width oaa-key-form"/);
+  assert.match(admin, /name="oaa-key-id" autocomplete="off"/);
+  assert.match(admin, /type="password" autocomplete="new-password"/);
+  assert.match(admin, /<div osPanelFooter class="panel-actions">/);
+  assert.match(panel, /class="side-panel-footer os-panel-footer"/);
+  assert.match(panel, /class="os-panel-content clr-form-full-width"/);
+  assert.match(panel, /<ng-content select="\[osPanelFooter\]" \/>/);
+  assert.match(styles, /os-panel \.side-panel-body form\.clr-form:not\(\.clr-row\)[\s\S]*max-width: var\(--os-panel-form-max, 48rem\)/);
+});

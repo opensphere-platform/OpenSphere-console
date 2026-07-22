@@ -1,3 +1,73 @@
+# Design QA — OAA and shared side panels
+
+Date: 2026-07-23 KST
+
+## Visual sources
+
+- Reference: `C:/Users/cmars/AppData/Local/Temp/codex-clipboard-efbd084d-8395-4508-bebd-d12cf335abee.png`
+- Final OAA capture: `visual-qa/oaa-panel-v27.png`
+- Shared-form cross-check: `visual-qa/console-admin-panel-v27.png`
+- Full-height comparison: `visual-qa/oaa-panel-comparison-v27.png`
+- Focused form comparison: `visual-qa/oaa-panel-focused-comparison-v27.png`
+
+## Capture conditions
+
+- Reference pixels: 1146 × 1080.
+- Implementation pixels: 2705 × 1713 in the user's authenticated Chrome session.
+- State: `/manage/oaa` → `LLM Keys` → `Key 추가`, with zero configured provider keys.
+- Full-height comparison: reference panel cropped from x=29 and implementation panel cropped from x≈1856; both normalized to 1000 px height.
+- Focused comparison: the populated form regions were cropped and normalized to 1000 px width so control geometry and information density could be judged at equal visual scale.
+
+## Full-view comparison
+
+- The panel header starts below the global shell header and remains fully visible.
+- The right panel retains the established Clarity side-panel width and overlay treatment.
+- Primary actions are consistently anchored in the panel footer instead of floating after a narrow form column.
+- The full page remains legible behind the modal scrim, with no unexpected horizontal overflow.
+
+## Focused comparison
+
+- Before: all fields were constrained to an approximately 160 px single column, leaving most panel width unused.
+- After: provider and model fields use a responsive two-column grid; credential and reason fields span the available width.
+- Section dividers make provider configuration, model routing, and governance independently scannable.
+- Labels, helper text, checkbox placement, and control baselines follow the existing Clarity design system.
+- The common `os-panel` content facade now supplies the native `clr-form-full-width` contract, so Console administrator and other vertical forms use the same working width.
+
+## Interaction and state verification
+
+- Authenticated navigation to `/manage/oaa` succeeded.
+- Gateway, tool manifest, action bindings, knowledge stats, and LLM key administration loaded.
+- `GET /api/oaa/admin/llm-keys` returned HTTP 200; no OAA permission alert was rendered.
+- `Key 추가` opened the panel; `취소` closed it; reopening succeeded.
+- ID and API-key fields remained unfilled by the browser credential manager. The form uses `autocomplete="off"`, while the secret field uses `autocomplete="new-password"`.
+- The disabled Save state is correct while required values and the governance reason are absent.
+- `/manage/console-admins` → `사용자 생성` confirmed that the shared full-width form contract also applies outside OAA.
+
+## Error review
+
+- No visible OAA error or stale permission alert remained in the rendered DOM.
+- Deployment/request logs showed OAA health and administration requests returning HTTP 200, including `/api/oaa/admin/llm-keys`.
+- Separate `/api/admin/plugins/events` 401 entries came from other stale browser tabs and are unrelated to the OAA panel flow.
+- Kubernetes rollout completed with 2/2 ready replicas on `opensphere-console:oaa-panel-v27`.
+
+## Comparison history
+
+1. Initial capture showed narrow controls, credential-manager autofill, inline actions, and an obsolete `opensphere-console-admins` permission message.
+2. The OAA form was reorganized into responsive task sections, secret autofill was blocked, and authorization copy was aligned to the Supabase `console-admins` role.
+3. Cross-page verification exposed that a page-scoped width rule did not reliably affect projected panel content.
+4. The width contract was moved to the shared `os-panel` facade using Clarity's native full-width class and verified on both OAA and Console administrator forms.
+5. The deployment readiness probe timeout was raised to five seconds because its static contract checks legitimately exceeded the previous one-second default; the final rollout reached 2/2 ready.
+
+## Findings
+
+- P0: none.
+- P1: none.
+- P2: none remaining for the requested panel consistency and OAA form flow.
+
+final result: passed
+
+---
+
 # Data & Identity / Change Control consistency — Design QA
 
 Date: 2026-07-22 (KST)

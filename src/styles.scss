@@ -125,6 +125,29 @@ body.oaa-agent-open.oaa-agent-full .content-container {
   margin-right: 0;
 }
 
+/* Console side-panel form contract.
+ * Projected page content does not inherit component-scoped selectors from
+ * os-panel, so the shared form geometry belongs at the global facade boundary.
+ * Every vertical Clarity form now uses the same readable working width; a page
+ * can raise the cap with --os-panel-form-max without replacing Clarity controls. */
+os-panel .side-panel-body form.clr-form:not(.clr-row) {
+  width: 100%;
+  max-width: var(--os-panel-form-max, 48rem);
+  padding-inline: 0;
+}
+os-panel .side-panel-body form.clr-form:not(.clr-row) .clr-control-container,
+os-panel .side-panel-body form.clr-form:not(.clr-row) .clr-input-wrapper,
+os-panel .side-panel-body form.clr-form:not(.clr-row) .clr-select-wrapper,
+os-panel .side-panel-body form.clr-form:not(.clr-row) .clr-textarea-wrapper {
+  width: 100%;
+}
+os-panel .side-panel-body form.clr-form:not(.clr-row) input.clr-input,
+os-panel .side-panel-body form.clr-form:not(.clr-row) select.clr-select,
+os-panel .side-panel-body form.clr-form:not(.clr-row) textarea.clr-textarea {
+  width: 100%;
+  max-width: none;
+}
+
 @media (max-width: 720px) {
   /* Narrow layouts intentionally use the panel as an overlay/full workspace.
    * Reserving dock width here would leave the Console unusably narrow. */

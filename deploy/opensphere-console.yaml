@@ -28,7 +28,7 @@ spec:
         - name: shell
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
           # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console@sha256:<digest>로 고정.
-          image: opensphere-console:data-identity-grid-v21
+          image: opensphere-console:oaa-panel-v27
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -54,6 +54,7 @@ spec:
                   ! grep -aRqs '/bff/cli' /usr/share/nginx/html/api/cli/opensphere-cli-*
             # Authentication uses /api/identity/cli/; retired BFF artifacts fail readiness.
             initialDelaySeconds: 2
+            timeoutSeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet: { path: /index.html, port: 8080 }

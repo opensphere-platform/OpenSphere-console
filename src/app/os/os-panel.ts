@@ -56,7 +56,12 @@ import { ClarityModule } from '@clr/angular';
         }
       </div>
       <div class="side-panel-body">
-        <ng-content />
+        <div class="os-panel-content clr-form-full-width">
+          <ng-content />
+        </div>
+      </div>
+      <div class="side-panel-footer os-panel-footer">
+        <ng-content select="[osPanelFooter]" />
       </div>
     </clr-side-panel>
   `,
@@ -116,6 +121,30 @@ import { ClarityModule } from '@clr/angular';
         font-size: 0.65rem;
         font-weight: 400;
         white-space: nowrap;
+      }
+      .os-panel-content {
+        width: 100%;
+        min-height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      .os-panel-footer {
+        min-height: 3.25rem;
+        align-items: center;
+        padding: 0.65rem 1.2rem;
+        border-top: 1px solid var(--os-hairline, #d7dce1);
+        background: var(--os-canvas, #fff);
+      }
+      .os-panel-footer:empty {
+        display: none;
+      }
+      .os-panel-footer > [osPanelFooter] {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        margin: 0;
       }
     `,
   ],

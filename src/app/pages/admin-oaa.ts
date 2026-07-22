@@ -333,11 +333,19 @@ interface OaaActionBindingManifest {
 
         <!-- LLM key 생성/회전 — 인라인 폼 대신 우측 슬라이딩 패널. apiKey는 password 입력이고 성공/실패 직후 즉시 비운다. -->
         <os-panel [open]="llmPanelOpen()" [title]="llmEditingId() ? 'LLM Key 회전 — ' + llmEditingId() : 'LLM Key 추가'" subtitle="OAA Gateway · Kubernetes Secret custody" (closed)="closeKeyPanel()">
-          <p class="os-sub">API key는 게이트웨이가 Kubernetes Secret으로만 보관합니다. 이 화면은 raw key를 절대 저장·표시하지 않으며, 저장 직후 입력값을 비웁니다.</p>
-          <form clrForm clrLayout="vertical">
+          <div class="oaa-key-intro">
+            <strong>Provider credential</strong>
+            <p>API key는 게이트웨이가 Kubernetes Secret으로만 보관합니다. 이 화면은 raw key를 저장·재표시하지 않으며, 저장 직후 입력값을 비웁니다.</p>
+          </div>
+          <form clrForm clrLayout="vertical" class="clr-form-full-width oaa-key-form" autocomplete="off">
+            <div class="oaa-form-section">
+              <strong>Provider configuration</strong>
+              <span>식별자와 provider endpoint</span>
+            </div>
             <clr-input-container>
               <label>ID</label>
-              <input clrInput [(ngModel)]="llmForm.id" name="oaa-key-id" placeholder="openai-main" [disabled]="!!llmEditingId() || llmSaving()" maxlength="48" />
+              <input clrInput [(ngModel)]="llmForm.id" name="oaa-key-id" autocomplete="off" spellcheck="false" placeholder="openai-main" [disabled]="!!llmEditingId() || llmSaving()" maxlength="48" />
+              <clr-control-helper>Gateway와 감사 로그에서 사용하는 고정 식별자입니다.</clr-control-helper>
             </clr-input-container>
             <clr-select-container>
               <label>Provider</label>
@@ -358,6 +366,10 @@ interface OaaActionBindingManifest {
               <label>Base URL</label>
               <input clrInput [(ngModel)]="llmForm.baseUrl" name="oaa-key-baseurl" placeholder="https://api.openai.com/v1" [disabled]="llmSaving()" maxlength="200" />
             </clr-input-container>
+            <div class="oaa-form-section">
+              <strong>Model routing</strong>
+              <span>기본 응답 모델과 knowledge embedding 모델</span>
+            </div>
             <clr-input-container>
               <label>Default model</label>
               <input clrInput [(ngModel)]="llmForm.defaultModel" name="oaa-key-model" placeholder="gpt-4.1" [disabled]="llmSaving()" maxlength="128" />
@@ -366,9 +378,14 @@ interface OaaActionBindingManifest {
               <label>Embedding model (선택)</label>
               <input clrInput [(ngModel)]="llmForm.embeddingModel" name="oaa-key-embed" placeholder="text-embedding-3-large" [disabled]="llmSaving()" maxlength="128" />
             </clr-input-container>
-            <clr-input-container>
+            <div class="oaa-form-section">
+              <strong>Credential & governance</strong>
+              <span>비밀 값과 운영 변경 증거</span>
+            </div>
+            <clr-input-container class="oaa-field-wide">
               <label>API key{{ llmEditingId() ? ' (비우면 메타데이터만 갱신)' : '' }}</label>
-              <input clrInput type="password" autocomplete="off" [(ngModel)]="llmForm.apiKey" name="oaa-key-secret" placeholder="sk-..." [disabled]="llmSaving()" maxlength="256" />
+              <input clrInput type="password" autocomplete="new-password" [(ngModel)]="llmForm.apiKey" name="oaa-key-secret" placeholder="sk-..." [disabled]="llmSaving()" maxlength="256" />
+              <clr-control-helper>원문은 저장 후 다시 조회할 수 없습니다.</clr-control-helper>
             </clr-input-container>
             <clr-checkbox-container>
               <clr-checkbox-wrapper>
@@ -376,12 +393,13 @@ interface OaaActionBindingManifest {
                 <label>Enabled</label>
               </clr-checkbox-wrapper>
             </clr-checkbox-container>
-            <clr-input-container>
+            <clr-input-container class="oaa-field-wide">
               <label>사유 (필수)</label>
               <input clrInput [(ngModel)]="llmForm.reason" name="oaa-key-reason" placeholder="초기 설정 / 회전 사유" [disabled]="llmSaving()" maxlength="200" />
+              <clr-control-helper>변경 사유는 Console 감사 증거에 기록됩니다.</clr-control-helper>
             </clr-input-container>
           </form>
-          <div class="panel-actions">
+          <div osPanelFooter class="panel-actions">
             <button class="btn btn-primary" [disabled]="llmSaving() || !llmForm.id.trim() || (!llmEditingId() && !llmForm.apiKey.trim()) || !llmForm.reason.trim()" (click)="saveLlmKey()">저장</button>
             <button class="btn btn-outline" [disabled]="llmSaving()" (click)="closeKeyPanel()">취소</button>
             @if (llmSaving()) { <span class="spinner spinner-inline"></span> }
@@ -455,8 +473,35 @@ interface OaaActionBindingManifest {
       .stat-grid span { display: block; color: var(--os-muted); font-size: 0.62rem; }
       .stat-grid strong { display: block; margin-top: 0.15rem; font-size: 1rem; color: #1b2733; }
       .panel-actions { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; }
+      .oaa-key-intro { margin: 0 0 1rem; padding: 0 0 0.8rem; border-bottom: 1px solid var(--os-hairline); }
+      .oaa-key-intro strong { display: block; color: var(--os-ink); font-size: 0.78rem; }
+      .oaa-key-intro p { max-width: 62rem; margin: 0.25rem 0 0; color: var(--os-muted); font-size: 0.68rem; line-height: 1.5; }
+      .oaa-key-form { --os-panel-form-max: 68rem; width: 100%; max-width: 68rem; display: grid; grid-template-columns: repeat(2, minmax(16rem, 1fr)); column-gap: 1.4rem; row-gap: 0; padding: 0; }
+      .oaa-key-form clr-input-container,
+      .oaa-key-form clr-select-container,
+      .oaa-key-form clr-checkbox-container { min-width: 0; display: block; }
+      .oaa-key-form .oaa-field-wide,
+      .oaa-form-section { grid-column: 1 / -1; }
+      .oaa-form-section { display: flex; align-items: baseline; gap: 0.45rem; margin: 1rem 0 -0.15rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--os-hairline); }
+      .oaa-form-section:first-child { margin-top: 0; }
+      .oaa-form-section strong { color: var(--os-ink); font-size: 0.72rem; }
+      .oaa-form-section span { color: var(--os-muted); font-size: 0.62rem; }
+      :host ::ng-deep .oaa-key-form .clr-form-control { margin-top: 0.7rem; }
+      :host ::ng-deep .oaa-key-form .clr-control-container,
+      :host ::ng-deep .oaa-key-form .clr-input-wrapper,
+      :host ::ng-deep .oaa-key-form .clr-select-wrapper { width: 100%; }
+      :host ::ng-deep .oaa-key-form input.clr-input,
+      :host ::ng-deep .oaa-key-form select.clr-select { width: 100%; max-width: none; }
+      :host ::ng-deep .oaa-key-form .clr-checkbox-wrapper { margin-top: 0.7rem; }
+      :host ::ng-deep .oaa-key-form + .panel-actions { margin-top: 1rem; }
       .exec-result { margin: 0.7rem 0 0; max-height: 16rem; overflow: auto; border: 1px solid #e1e5ea; border-radius: 4px; background: #0f2230; color: #d7e6ee; padding: 0.7rem; font-size: 0.66rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
       @media (max-width: 980px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
+      @media (max-width: 760px) {
+        .oaa-key-form { grid-template-columns: 1fr; }
+        .oaa-key-form .oaa-field-wide,
+        .oaa-form-section { grid-column: 1; }
+        .oaa-form-section { align-items: flex-start; flex-direction: column; gap: 0.1rem; }
+      }
     `,
   ],
 })
@@ -579,11 +624,13 @@ export class AdminOaa implements OnInit, OnDestroy {
   }
   async loadLlmKeys(): Promise<void> {
     this.llmBusy.set(true);
+    this.msg.set(null);
     try {
       const r = await this.http.request('/api/oaa/admin/llm-keys', { cache: 'no-store' });
       this.llmKeysLoaded.set(true);
-      if (r.status === 401 || r.status === 403) {
-        this.msg.set({ type: 'danger', text: 'OAA Gateway admin permission is required (opensphere-console-admins).' });
+      const accessError = this.adminAccessMessage(r.status);
+      if (accessError) {
+        this.msg.set({ type: 'danger', text: accessError });
         return;
       }
       if (!r.ok) {
@@ -610,8 +657,9 @@ export class AdminOaa implements OnInit, OnDestroy {
         body: JSON.stringify(this.llmForm),
       });
       const out = await r.json().catch(() => ({}) as any);
-      if (r.status === 401 || r.status === 403) {
-        this.msg.set({ type: 'danger', text: 'OAA Gateway admin permission is required (opensphere-console-admins).' });
+      const accessError = this.adminAccessMessage(r.status);
+      if (accessError) {
+        this.msg.set({ type: 'danger', text: accessError });
         return;
       }
       if (!r.ok) {
@@ -644,8 +692,9 @@ export class AdminOaa implements OnInit, OnDestroy {
         `/api/oaa/admin/llm-keys/${encodeURIComponent(k.id)}?reason=${encodeURIComponent(reason)}`,
         { method: 'DELETE' },
       );
-      if (r.status === 401 || r.status === 403) {
-        this.msg.set({ type: 'danger', text: 'OAA Gateway admin permission is required (opensphere-console-admins).' });
+      const accessError = this.adminAccessMessage(r.status);
+      if (accessError) {
+        this.msg.set({ type: 'danger', text: accessError });
         return;
       }
       if (!r.ok) {
@@ -673,8 +722,9 @@ export class AdminOaa implements OnInit, OnDestroy {
     try {
       const r = await this.http.request('/api/oaa/admin/knowledge/stats', { cache: 'no-store' });
       this.knowledgeLoaded.set(true);
-      if (r.status === 401 || r.status === 403) {
-        this.knowledgeError.set('OAA Gateway admin permission is required (opensphere-console-admins).');
+      const accessError = this.adminAccessMessage(r.status);
+      if (accessError) {
+        this.knowledgeError.set(accessError);
         return;
       }
       if (!r.ok) {
@@ -702,8 +752,9 @@ export class AdminOaa implements OnInit, OnDestroy {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (r.status === 401 || r.status === 403) {
-        this.msg.set({ type: 'danger', text: 'OAA Gateway admin permission is required (opensphere-console-admins).' });
+      const accessError = this.adminAccessMessage(r.status);
+      if (accessError) {
+        this.msg.set({ type: 'danger', text: accessError });
         return;
       }
       if (!r.ok) {
@@ -718,6 +769,12 @@ export class AdminOaa implements OnInit, OnDestroy {
     } finally {
       this.knowledgeBusy.set(false);
     }
+  }
+
+  private adminAccessMessage(status: number): string {
+    if (status === 401) return 'OAA Gateway가 현재 로그인 세션을 확인하지 못했습니다. 세션을 갱신한 뒤 다시 시도하세요.';
+    if (status === 403) return 'OAA Gateway 관리자 역할(console-admins)이 필요합니다.';
+    return '';
   }
 
   // ---------- Tool Registry / Action Bindings ----------
