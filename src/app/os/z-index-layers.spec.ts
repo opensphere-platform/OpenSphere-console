@@ -109,6 +109,19 @@ test('os-search 드롭다운은 헤더 stacking context에 포함되어 있고, 
 test('Clarity side panel 제목은 전역 헤더 아래에서 시작해 가려지지 않는다', () => {
   assert.match(stylesScss, /--os-header-height:\s*3rem;/);
   assert.match(osShellTs, /height:\s*var\(--os-header-height\);/);
-  assert.match(osPanelTs, /top:\s*var\(--os-header-height,\s*3rem\);/);
-  assert.match(osPanelTs, /height:\s*calc\(100vh\s*-\s*var\(--os-header-height,\s*3rem\)\)\s*!important;/);
+  assert.match(
+    osPanelTs,
+    /clr-side-panel\.side-panel \.modal:not\(\.modal-full-screen\)[\s\S]*top:\s*var\(--os-header-height,\s*3rem\);[\s\S]*height:\s*calc\(100vh\s*-\s*var\(--os-header-height,\s*3rem\)\)\s*!important;/,
+    '내부 dialog가 아니라 Clarity의 fixed modal 레이어 전체가 헤더 아래에서 시작해야 한다',
+  );
+  assert.match(
+    osPanelTs,
+    /\.os-panel-grip\s*\{[\s\S]*top:\s*var\(--os-header-height,\s*3rem\);/,
+    '폭 조절 그립도 패널과 같은 상단 경계를 사용해야 한다',
+  );
+  assert.doesNotMatch(
+    osPanelTs,
+    /clr-side-panel\.side-panel \.modal-dialog\s*\{[\s\S]{0,180}top:\s*var\(--os-header-height/,
+    '내부 dialog의 상대 위치 보정으로 회귀하면 Clarity flex 레이아웃에서 제목이 다시 가려질 수 있다',
+  );
 });

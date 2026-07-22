@@ -65,16 +65,22 @@ import { ClarityModule } from '@clr/angular';
     `
       /* R2 확장: Clarity size 프리셋 대신 연속 폭 — 변수 하나만 주입
      * (.side-panel은 clr-side-panel 호스트 자신의 클래스) */
-      :host ::ng-deep clr-side-panel.side-panel .modal-dialog {
+      /* Clarity owns the fixed viewport layer on .modal, not on the inner
+       * .modal-dialog. Offset the whole layer so its title, close control,
+       * body and hit area all begin below the Main Shell header. */
+      :host ::ng-deep clr-side-panel.side-panel .modal:not(.modal-full-screen) {
         top: var(--os-header-height, 3rem);
-        width: var(--os-panel-w, 72vw) !important;
         height: calc(100vh - var(--os-header-height, 3rem)) !important;
+      }
+      :host ::ng-deep clr-side-panel.side-panel .modal-dialog {
+        width: var(--os-panel-w, 72vw) !important;
+        height: 100% !important;
         min-width: 420px;
         max-width: 92vw;
       }
       .os-panel-grip {
         position: fixed;
-        top: 0;
+        top: var(--os-header-height, 3rem);
         bottom: 0;
         width: 8px;
         z-index: var(--os-z-panel-grip, 1060);

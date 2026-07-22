@@ -133,3 +133,47 @@ The reference and implementation differ in pixel dimensions, so comparisons were
 - Kubernetes rollout: `opensphere-console:platform-control-v10`, 2/2 replicas ready.
 
 Final result: passed
+
+---
+
+# Developer Catalog quick-view header — Design QA
+
+Date: 2026-07-23 (KST)
+
+## Source and implementation
+
+- Source visual truth: `C:\Users\cmars\AppData\Local\Temp\codex-clipboard-71fe96c5-205b-40c8-9ebb-63b418a18928.png`
+- Source pixels: 1321×925; desktop viewport capture, density not available.
+- Implementation runtime: `https://localhost:8090/manage/catalog`
+- Implementation image: `opensphere-console:catalog-panel-header-v19`, 2/2 replicas Ready.
+- Implementation screenshot: not captured because the authenticated Chrome session expired before the post-fix panel could be opened.
+- Intended state: Developer Catalog entity selected, right-side quick-view panel open.
+
+## Full-view and focused comparison
+
+- The source image was opened at original resolution. Its P1 defect is the side-panel title and close control occupying the same top band as the global shell header, leaving the title clipped behind the header.
+- Source inspection and Clarity's rendered structure show that `.modal` owns the fixed viewport layer while `.modal-dialog` is only the flex child. The previous implementation offset the child and therefore did not establish a stable panel boundary.
+- The implementation now offsets `.modal:not(.modal-full-screen)` by `--os-header-height`, gives it the remaining viewport height, and keeps `.modal-dialog` at 100% of that bounded layer. The resize grip uses the same top boundary.
+- A focused post-fix image comparison is unavailable until the authenticated Catalog panel can be reopened.
+
+## Fidelity surfaces
+
+- Fonts and typography: unchanged; the fix only restores the existing title typography to a visible position.
+- Spacing and layout rhythm: the fixed panel boundary now begins at the shell header's lower edge; post-fix pixel evidence is pending authentication.
+- Colors and tokens: unchanged; `--os-header-height` remains the single shared boundary token.
+- Image quality and assets: no new imagery or icon substitution.
+- Copy and content: unchanged.
+
+## Comparison history
+
+1. Source evidence showed the title clipped behind the global header.
+2. Code inspection found the offset applied to Clarity's inner `.modal-dialog` instead of its fixed `.modal` layer.
+3. The fixed layer and resize grip were aligned to `--os-header-height`; the regression contract was expanded to reject the old selector pattern.
+4. `npm test` passed 76/76, the production build passed, and the v19 runtime rolled out 2/2 Ready.
+5. Post-fix browser comparison remains blocked by the expired authenticated session.
+
+## Remaining blocker
+
+- Re-authenticate the existing Chrome Console tab, open one Catalog entity, and capture the same viewport/state for the final visual comparison.
+
+final result: blocked
