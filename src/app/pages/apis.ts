@@ -13,6 +13,7 @@ import { ApiService, CatalogEntity } from '../core/api.service';
 import { OsDatagrid, OsColumn } from '../os/os-datagrid';
 import { OsPanel } from '../os/os-panel';
 import { BackendUnavailable } from '../os/backend-unavailable';
+import { OsPageHeader } from '../os/os-page-header';
 
 /**
  * APIs — RHDH 'API Explorer'의 셸판. kind=API 엔티티 목록 + 퀵뷰에서 OpenAPI 스펙 원문.
@@ -20,10 +21,19 @@ import { BackendUnavailable } from '../os/backend-unavailable';
  */
 @Component({
   selector: 'os-apis',
-  imports: [ClarityModule, FormsModule, OsDatagrid, OsPanel, BackendUnavailable],
+  imports: [ClarityModule, FormsModule, OsDatagrid, OsPanel, BackendUnavailable, OsPageHeader],
   template: `
-    <h1>APIs</h1>
-    <p class="os-sub">조직의 API 인벤토리 — engine: rhdh-self catalog (kind=API)</p>
+    <div class="os-page">
+    <os-page-header title="APIs" tag="RHDH headless · API inventory" />
+    <div class="manage-page-lead"><p>조직의 API 계약을 headless Catalog에서 조회합니다. 시스템·소유자·수명주기별로 좁히고, 선택한 항목에서 OpenAPI 정의와 관계를 확인할 수 있습니다.</p><span>kind=API · REST only</span></div>
+
+    <section class="manage-status-rail" aria-label="API 인벤토리 요약">
+      <div><span>Registered APIs</span><strong>{{ rows().length }}</strong><small>Catalog kind=API</small></div>
+      <div><span>Systems</span><strong>{{ values('system').length }}</strong><small>연결된 시스템</small></div>
+      <div><span>Owners</span><strong>{{ values('owner').length }}</strong><small>명시된 소유자</small></div>
+      <div><span>Lifecycle</span><strong>{{ values('lifecycle').length }}</strong><small>선언된 단계</small></div>
+      <div><span>Visible now</span><strong>{{ filtered().length }}</strong><small>현재 필터 결과</small></div>
+    </section>
 
     @if (forbidden()) {
       <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
@@ -37,6 +47,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
         [detail]="error()"
       />
     } @else {
+      <div class="manage-toolbar"><div class="manage-toolbar-copy"><strong>API 탐색</strong><small>검색과 구조화 필터를 함께 적용합니다.</small></div><div class="manage-toolbar-group"><label class="clr-sr-only" for="api-search">API 검색</label><input id="api-search" class="manage-search" type="search" placeholder="이름·시스템·설명 검색" [value]="query()" (input)="query.set(inputValue($event))" /><button class="btn btn-sm btn-outline" [disabled]="loading()" (click)="refresh()">새로고침</button></div></div>
       <form clrForm clrLayout="vertical" class="clr-row os-filters">
         <div class="clr-col-auto">
           <clr-select-container>
@@ -87,7 +98,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
         [columns]="columns"
         [rows]="filtered()"
         [loading]="loading()"
-        empty="등록된 API가 없습니다"
+        empty="검색 또는 필터 조건에 맞는 API가 없습니다"
         [selected]="selected()"
         (rowClick)="openQuickview($event)"
       />
@@ -140,6 +151,7 @@ import { BackendUnavailable } from '../os/backend-unavailable';
         }
       }
     </os-panel>
+    </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
@@ -213,10 +225,12 @@ export class Apis implements OnInit {
   readonly fType = signal<string>('');
   readonly fOwner = signal<string>('');
   readonly fLifecycle = signal<string>('');
+  readonly query = signal('');
 
   readonly filtered = computed(() =>
     this.rows().filter(
       (e) =>
+        (!this.query().trim() || [e.metadata.name, e.metadata.description, this.specOf(e, 'system'), this.specOf(e, 'owner'), this.specOf(e, 'type')].some((value) => String(value || '').toLowerCase().includes(this.query().trim().toLowerCase()))) &&
         (!this.fType() || this.specOf(e, 'type') === this.fType()) &&
         (!this.fOwner() || this.specOf(e, 'owner') === this.fOwner()) &&
         (!this.fLifecycle() || this.specOf(e, 'lifecycle') === this.fLifecycle()),
@@ -224,13 +238,18 @@ export class Apis implements OnInit {
   );
 
   async ngOnInit(): Promise<void> {
+    await this.refresh();
+    const q = this.route.snapshot.queryParamMap.get('quickview');
+    if (q) {
+      const hit = this.rows().find((e) => this.ref(e) === q);
+      if (hit) this.selected.set(hit);
+    }
+  }
+
+  async refresh(): Promise<void> {
+    this.loading.set(true); this.error.set(''); this.forbidden.set(false);
     try {
       this.rows.set(await this.api.apiEntities());
-      const q = this.route.snapshot.queryParamMap.get('quickview');
-      if (q) {
-        const hit = this.rows().find((e) => this.ref(e) === q);
-        if (hit) this.selected.set(hit);
-      }
     } catch (e) {
       const message = String(e);
       if (/HTTP (401|403)\b/.test(message)) this.forbidden.set(true);
@@ -239,6 +258,8 @@ export class Apis implements OnInit {
       this.loading.set(false);
     }
   }
+
+  inputValue(event: Event): string { return (event.target as HTMLInputElement).value; }
 
   values(key: string): string[] {
     return [

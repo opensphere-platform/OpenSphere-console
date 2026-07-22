@@ -169,7 +169,7 @@ interface ManualBlock {
                 name="manual-query"
                 [ngModel]="query()"
                 (ngModelChange)="query.set($event)"
-                placeholder="Perspective, Cluster Manager, Backbone, OAA 검색"
+                placeholder="Perspective, Cluster Manager, Data & Identity, OAA 검색"
                 aria-label="Manual 검색"
               />
               <button type="submit" [disabled]="searchLoading() || !query().trim()">검색</button>
@@ -289,6 +289,7 @@ export class ManualPage implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
+  private catalogRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   readonly iconSearch = Search20;
   readonly iconArrow = ArrowRight16;
@@ -331,6 +332,7 @@ export class ManualPage implements OnInit {
   });
 
   async ngOnInit(): Promise<void> {
+    this.destroyRef.onDestroy(() => this.clearCatalogRetry());
     this.route.queryParamMap
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((params) => {
@@ -346,6 +348,7 @@ export class ManualPage implements OnInit {
   }
 
   private async loadCatalog(): Promise<void> {
+    this.clearCatalogRetry();
     this.docsLoading.set(true);
     this.docsError.set('');
     this.forbidden.set(false);
@@ -359,9 +362,24 @@ export class ManualPage implements OnInit {
     } catch (error) {
       const message = String(error);
       if (/HTTP (401|403)\b/.test(message)) this.forbidden.set(true);
-      else this.docsError.set(message);
+      else {
+        this.docsError.set(message);
+        // The Manual Registry can briefly be unavailable during its own rollout. Keep this
+        // native Console route live and make the recovery claim in the UI true without a reload.
+        this.catalogRetryTimer = setTimeout(() => {
+          this.catalogRetryTimer = null;
+          void this.loadCatalog();
+        }, 10_000);
+      }
     } finally {
       this.docsLoading.set(false);
+    }
+  }
+
+  private clearCatalogRetry(): void {
+    if (this.catalogRetryTimer !== null) {
+      clearTimeout(this.catalogRetryTimer);
+      this.catalogRetryTimer = null;
     }
   }
 

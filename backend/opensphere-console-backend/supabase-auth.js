@@ -30,11 +30,19 @@ function verifyHs256Jwt(token, options) {
 }
 
 async function restRows(options, resource, query) {
+  const resolveToken = (candidate) => (typeof candidate === 'function' ? candidate() : candidate);
+  const token = resolveToken(options.dataAuthToken || options.serviceRoleKey);
+  const apiKey = resolveToken(options.apiKey || options.serviceRoleKey);
   const response = await options.fetch(`${options.restUrl}/${resource}?${query}`, {
     headers: {
-      authorization: `Bearer ${options.serviceRoleKey}`,
-      apikey: options.serviceRoleKey,
+      authorization: `Bearer ${token}`,
+      apikey: apiKey,
       accept: 'application/json',
+      ...(options.profile ? {
+        'accept-profile': options.profile,
+        'content-profile': options.profile,
+      } : {}),
+      ...(options.prefer ? { Prefer: options.prefer } : {}),
     },
     signal: AbortSignal.timeout(options.timeoutMs),
   });
@@ -51,6 +59,10 @@ function createSupabaseVerifier(config = {}) {
     jwtSecret: config.jwtSecret || process.env.SUPABASE_JWT_SECRET,
     restUrl: (config.restUrl || process.env.SUPABASE_REST_URL || '').replace(/\/$/, ''),
     serviceRoleKey: config.serviceRoleKey || process.env.SUPABASE_SERVICE_ROLE_KEY,
+    dataAuthToken: config.dataAuthToken || config.backendAccessToken,
+    apiKey: config.apiKey,
+    profile: config.profile || 'console',
+    prefer: config.prefer || 'return=representation',
     timeoutMs: Number(config.timeoutMs || process.env.SUPABASE_AUTHZ_TIMEOUT_MS || 3000),
     fetch: config.fetch || globalThis.fetch,
   };
@@ -66,7 +78,7 @@ function createSupabaseVerifier(config = {}) {
     try {
       [operatorRows, roleRows] = await Promise.all([
         restRows(options, 'operator', `user_id=eq.${subject}&select=status,credential_revision`),
-        restRows(options, 'operator_role', `user_id=eq.${subject}&select=expires_at,role(code)`),
+        restRows(options, 'operator_role', `user_id=eq.${subject}&select=expires_at,role(code,role_permission(permission(code)))`),
       ]);
     } catch (error) {
       if (error?.code) throw error;
@@ -82,10 +94,19 @@ function createSupabaseVerifier(config = {}) {
       .filter((entry) => !entry.expires_at || Date.parse(entry.expires_at) > now)
       .map((entry) => entry.role?.code)
       .filter(Boolean);
+    // Roles are a presentation grouping.  Callers that can inspect or control
+    // Console resources need the evaluated canonical permission set as well;
+    // do not make downstream services re-implement role_permission joins.
+    const permissions = [...new Set(roleRows
+      .filter((entry) => !entry.expires_at || Date.parse(entry.expires_at) > now)
+      .flatMap((entry) => entry.role?.role_permission || [])
+      .map((entry) => entry?.permission?.code)
+      .filter(Boolean))];
     return {
       sub: claims.sub,
       username: claims.email || claims.user_metadata?.preferred_username || claims.sub,
       groups,
+      permissions,
       assurance: claims.aal || 'aal1',
       authSessionId: claims.session_id || null,
       provider: 'supabase',

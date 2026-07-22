@@ -1,834 +1,115 @@
-import { Component, OnInit, signal, inject, ChangeDetectionStrategy } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
-import { BackendUnavailable } from '../os/backend-unavailable';
-import { OsPageHeader } from '../os/os-page-header';
-import { OsDatagrid, OsCellDef, OsColumn } from '../os/os-datagrid';
-import { OsPanel } from '../os/os-panel';
-import { OsActionDialog } from '../os/os-action-dialog';
-import { AuthService } from '../core/auth.service';
 import { HttpService } from '../core/http.service';
+import { BackendUnavailable } from '../os/backend-unavailable';
+import { OsActionDialog } from '../os/os-action-dialog';
+import { OsCellDef, OsColumn, OsDatagrid } from '../os/os-datagrid';
+import { OsPageHeader } from '../os/os-page-header';
+import { OsPanel } from '../os/os-panel';
 
-interface IdUser {
-  id: string;
-  username: string;
-  email?: string;
-  enabled: boolean;
-  displayName?: string;
-  groups?: string[];
-}
-interface IdMeta {
-  realm?: string;
-  idp?: string;
-  writeEnabled?: boolean;
-}
-interface AuditEvent {
-  time?: string;
-  actor?: string;
-  action?: string;
-  target?: string;
-  result?: string;
-}
-interface AuthPolicy {
-  totpEnabled: boolean;
-  environment: string;
-  enforced?: boolean;
-  updatedAt?: string | null;
-  updatedBy?: string | null;
-  source?: string;
-}
-interface AdminApiToken {
-  jti: string;
-  user: string;
-  label: string;
-  scope: string;
-  status: 'active' | 'expired';
-  createdAt: string | null;
-  expiresAt: string | null;
-  lastUsedAt: string | null;
-}
+interface IdUser { id: string; username: string; email: string; enabled: boolean; displayName: string; groups: string[] }
+interface AuditEvent { time?: string; actor?: string; action?: string; target?: string; result?: string }
 
-/**
- * 콘솔 관리자 (Kanidm IGA) — **셸 네이티브** 페이지(ADR-UI-003 §3.2 Core≠Plugin).
- * 콘솔 자체 기능(운영관리자 identity)이므로 DUPA plugin이 아니라 mainShell에 내장.
- * 백엔드 = console-core 서비스 `console-identity-api`(셸 nginx가 /api/identity 프록시). console==cli: `os identity …`.
- *
- * 사용자 라이프사이클: 생성(그룹 없이) → 온보딩 링크(Kanidm credential update intent)로 비번/패스키 설정 →
- * 활성/비활성 토글. 권한(그룹) 부여는 별도 역할 화면(/manage/roles)에서 수행한다(생성 시 자동 권한 부여 없음).
- */
+/** Supabase Auth users projected through the Console's operator/role boundary. */
 @Component({
   selector: 'os-console-admins',
   imports: [ClarityModule, FormsModule, RouterLink, BackendUnavailable, OsPageHeader, OsDatagrid, OsCellDef, OsPanel, OsActionDialog],
+  changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="os-page">
-      <os-page-header title="콘솔 관리자" tag="Kanidm IGA · 내장(core-native)" />
-      @if (down(); as d) {
-      <os-backend-unavailable
-        feature="콘솔 관리자"
-        backend="console-identity-api (Kanidm IGA)"
-        hint="console-identity-api 배포 · Kanidm 시크릿(opensphere-identity-kanidm) 확인 시 자동 복구됩니다."
-        [detail]="d"
-      />
-    } @else {
-    <p class="os-sub">
-      콘솔 운영관리자 = Kanidm 사용자/그룹. 셸 네이티브 — DUPA plugin 아님(ADR-UI-003 §3.2).
-      @if (meta(); as mt) {
-        · realm <code>{{ mt.realm }}</code> · idp {{ mt.idp }} · write {{ mt.writeEnabled ? 'on' : 'off' }}
-      }
-    </p>
-
-    @if (msg(); as m) {
-      <clr-alert [clrAlertType]="m.type" [clrAlertClosable]="true" (clrAlertClosedChange)="msg.set(null)">
-        <clr-alert-item><span class="alert-text">{{ m.text }}</span></clr-alert-item>
-      </clr-alert>
-    }
-
-    <section class="policy-card" aria-labelledby="auth-policy-title">
-      <div>
-        <h2 id="auth-policy-title">Console 로그인 보안</h2>
-        <p class="os-sub">
-          개발 환경 기본값은 비밀번호 로그인입니다. 운영 전환 시 TOTP를 활성화하면 이후 로그인과 신규 온보딩에 인증 앱 코드가 필수입니다.
-        </p>
-        @if (authPolicy(); as policy) {
-          <p class="os-mono">
-            environment={{ policy.environment }} · source={{ policy.source || 'configmap' }}
-            @if (policy.updatedAt) { · updated {{ policy.updatedAt }} by {{ policy.updatedBy || 'unknown' }} }
-          </p>
-        }
-      </div>
-      <div class="policy-controls">
-        <clr-input-container>
-          <label>정책 변경 사유</label>
-          <input clrInput [(ngModel)]="policyReason" name="policy-reason" maxlength="240" />
-          <clr-control-helper>영구 감사에 기록됩니다(8자 이상).</clr-control-helper>
-        </clr-input-container>
-        <clr-toggle-wrapper>
-          <input
-          type="checkbox" clrToggle
-          [checked]="authPolicy()?.totpEnabled === true"
-          [disabled]="policyBusy() || !authPolicy() || authPolicy()?.enforced === true || policyReason.trim().length < 8"
-          (change)="setTotpEnabled($any($event.target).checked)"
-          />
-          <label>
-          <strong>TOTP 로그인 활성화</strong>
-          @if (authPolicy()?.enforced) {
-            <small>운영 환경 — 강제 활성(관리자가 끌 수 없음)</small>
-          } @else {
-            <small>{{ authPolicy()?.totpEnabled ? '활성 — 인증 앱 코드 필수' : '비활성 — 개발용 비밀번호 로그인' }}</small>
-          }
-          </label>
-        </clr-toggle-wrapper>
-      </div>
-      <p class="policy-warning">
-        기존에 TOTP가 등록된 계정은 잠금 방지를 위해 등록된 코드를 계속 요구할 수 있습니다. 비밀번호 전용으로 바꾸려면 비활성 상태에서 해당 계정을 재온보딩하세요.
-      </p>
-    </section>
-
-    <div class="users-head">
-      <h2>사용자 <span class="os-engine">({{ users().length }})</span></h2>
-      <button class="btn btn-sm btn-primary" (click)="openCreate()">사용자 생성</button>
-    </div>
-    <os-datagrid [columns]="userCols" [rows]="users()" [loading]="identityLoading()" empty="등록된 사용자가 없습니다">
-      <ng-template osCell="username" let-u><strong>{{ u.username }}</strong></ng-template>
-      <ng-template osCell="displayName" let-u>{{ u.displayName || '—' }}</ng-template>
-      <ng-template osCell="email" let-u>{{ u.email || '—' }}</ng-template>
-      <ng-template osCell="status" let-u>
-        @if (u.enabled) { <span class="label label-success">활성</span> } @else { <span class="label">비활성</span> }
-      </ng-template>
-      <ng-template osCell="groups" let-u>
-        @for (g of u.groups; track g) { <span class="label label-info">{{ g }}</span> } @empty { <span class="os-sub">—</span> }
-      </ng-template>
-      <ng-template osCell="tokens" let-u>
-        <span class="label" [class.label-info]="tokenCount(u.username) > 0">{{ tokenCount(u.username) }}개</span>
-      </ng-template>
-      <ng-template osCell="actions" let-u>
-        <button class="btn btn-sm btn-outline" (click)="openDetail(u)" [disabled]="busy()">관리</button>
-      </ng-template>
-    </os-datagrid>
-
-    <p class="os-sub">계정·역할·정책 변경 이력은 <a routerLink="/manage/audit">감사 로그</a> 화면에서 전역으로 조회합니다.</p>
+      <os-page-header title="콘솔 관리자" tag="Supabase Auth · Console-native" />
+      @if (down(); as detail) {
+        <os-backend-unavailable feature="콘솔 관리자" backend="opensphere-console-backend (/api/identity)" hint="Supabase Auth·PostgREST와 Console backend 상태를 확인하세요." [detail]="detail" />
+      } @else {
+        <div class="manage-page-lead"><p>사용자 자격 증명은 Supabase Auth가, Console 역할은 <code>console.operator_role</code>이 소유합니다. 변경은 append-only 감사에 기록됩니다.</p><span>권위: Supabase Auth</span></div>
+        <section class="manage-status-rail" aria-label="Console 관리자 상태">
+          <div><span>Identities</span><strong>{{ users().length }}</strong><small>Console 운영자 범위</small></div>
+          <div><span>Active</span><strong class="ok">{{ activeUsers() }}</strong><small>로그인 허용</small></div>
+          <div><span>Disabled</span><strong [class.warn]="disabledUsers() > 0">{{ disabledUsers() }}</strong><small>세션 차단 대상</small></div>
+          <div><span>Administrators</span><strong>{{ roleMemberCount('console-admins') }}</strong><small>고권한 역할</small></div>
+          <div><span>Role contracts</span><strong>{{ consoleRoles.length }}</strong><small>Supabase RLS 평가</small></div>
+        </section>
+        @if (msg(); as item) { <clr-alert [clrAlertType]="item.type" [clrAlertClosable]="true" (clrAlertClosedChange)="msg.set(null)"><clr-alert-item><span class="alert-text">{{ item.text }}</span></clr-alert-item></clr-alert> }
+        <div class="manage-toolbar"><div class="manage-toolbar-copy"><strong>사용자 관리</strong><small>계정·프로필·역할 변경에는 감사 사유가 필요합니다.</small></div><div class="manage-toolbar-group"><button class="btn btn-sm btn-outline" [disabled]="loading()" (click)="loadIdentity()">새로고침</button><button class="btn btn-sm btn-primary" (click)="openCreate()">사용자 생성</button></div></div>
+        <os-datagrid [columns]="userCols" [rows]="users()" [loading]="loading()" empty="등록된 사용자가 없습니다">
+          <ng-template osCell="username" let-user><strong>{{ user.username }}</strong></ng-template><ng-template osCell="displayName" let-user>{{ user.displayName || '—' }}</ng-template><ng-template osCell="email" let-user>{{ user.email || '—' }}</ng-template>
+          <ng-template osCell="status" let-user><span class="label" [class.label-success]="user.enabled">{{ user.enabled ? '활성' : '비활성' }}</span></ng-template>
+          <ng-template osCell="roles" let-user>@for (role of user.groups; track role) { <span class="label label-info">{{ role }}</span> } @empty { <span class="os-sub">—</span> }</ng-template>
+          <ng-template osCell="actions" let-user><button class="btn btn-sm btn-outline" (click)="openDetail(user)" [disabled]="busy()">관리</button></ng-template>
+        </os-datagrid>
+        <p class="os-sub">역할의 일괄 관리는 <a routerLink="/manage/roles">역할</a>, 전체 변경 이력은 <a routerLink="/manage/audit">감사 로그</a>에서 확인합니다.</p>
       }
 
-      <!-- 우측 슬라이딩 패널 — 사용자 생성 / 온보딩 링크 (인라인 폼 대신 공용 os-panel) -->
-      <os-panel
-        [open]="panelOpen()"
-        [title]="panelMode() === 'create' ? '사용자 생성' : panelMode() === 'detail' ? (selectedUser()?.username || '사용자 관리') : '온보딩 링크'"
-        [subtitle]="panelMode() === 'detail' ? '역할·활성·온보딩·이력' : 'Kanidm IGA · 신규 계정은 그룹 없이 생성'"
-        (closed)="closePanel()"
-      >
+      <os-panel [open]="panelOpen()" [title]="panelMode() === 'create' ? '사용자 생성' : (selectedUser()?.username || '사용자 관리')" [subtitle]="'Supabase Auth · Console roles'" (closed)="closePanel()">
         @if (panelMode() === 'create') {
-          <p class="os-sub">
-            역할을 선택하면 생성과 동시에 부여됩니다(콘솔 역할만). 선택하지 않으면 <strong>권한 없이</strong> 생성되고
-            역할은 나중에 <code>역할</code> 화면에서 부여할 수 있습니다. 생성 후 온보딩 링크를 당사자에게 전달하세요.
-          </p>
+          <p class="os-sub">Supabase Auth 계정을 만들고 선택한 Console 역할을 부여합니다. 회복 링크는 비밀번호 설정을 위해 한 번만 사용합니다.</p>
           <form clrForm clrLayout="vertical">
-            <clr-input-container>
-              <label>사용자명</label>
-              <input clrInput [(ngModel)]="draft.username" name="c-username" placeholder="예: hchoi" [disabled]="busy()" maxlength="63" />
-            </clr-input-container>
-            <clr-input-container>
-              <label>표시이름</label>
-              <input clrInput [(ngModel)]="draft.displayName" name="c-display" placeholder="예: Hwa Sung Choi" [disabled]="busy()" maxlength="120" />
-            </clr-input-container>
-            <clr-input-container>
-              <label>이메일 (선택)</label>
-              <input clrInput type="email" [(ngModel)]="draft.email" name="c-email" placeholder="예: hchoi@triangles.co.kr" [disabled]="busy()" maxlength="200" />
-            </clr-input-container>
-            <clr-checkbox-container>
-              <label>역할 (선택 — 생성 시 부여)</label>
-              @for (r of consoleRoles; track r.group) {
-                <clr-checkbox-wrapper>
-                  <input type="checkbox" clrCheckbox [name]="'role-' + r.group" [(ngModel)]="roleSel[r.group]" [disabled]="busy()" />
-                  <label>{{ r.label }}@if (r.admin) { <span class="role-admin-tag">· 강조 감사</span> }</label>
-                </clr-checkbox-wrapper>
-              }
-            </clr-checkbox-container>
-            <clr-input-container>
-              <label>사유 (IGA 필수)</label>
-              <input clrInput [(ngModel)]="draft.reason" name="c-reason" placeholder="생성 사유" [disabled]="busy()" maxlength="200" (keyup.enter)="createUser()" />
-            </clr-input-container>
+            <clr-input-container><label>사용자명</label><input clrInput [(ngModel)]="draft.username" name="username" [disabled]="busy()" maxlength="63"></clr-input-container>
+            <clr-input-container><label>표시이름</label><input clrInput [(ngModel)]="draft.displayName" name="displayName" [disabled]="busy()" maxlength="120"></clr-input-container>
+            <clr-input-container><label>이메일</label><input clrInput type="email" [(ngModel)]="draft.email" name="email" [disabled]="busy()" maxlength="200" required></clr-input-container>
+            <clr-checkbox-container><label>역할 (선택)</label>@for (role of consoleRoles; track role.group) { <clr-checkbox-wrapper><input type="checkbox" clrCheckbox [name]="'role-' + role.group" [(ngModel)]="roleSelection[role.group]" [disabled]="busy()"><label>{{ role.label }}</label></clr-checkbox-wrapper> }</clr-checkbox-container>
+            <clr-input-container><label>사유</label><input clrInput [(ngModel)]="draft.reason" name="reason" [disabled]="busy()" maxlength="200"></clr-input-container>
           </form>
-          <div class="panel-actions">
-            <button class="btn btn-primary" (click)="createUser()" [disabled]="busy() || !draft.username.trim() || !draft.displayName.trim() || !draft.reason.trim()">계정 생성</button>
-            <button class="btn btn-outline" (click)="closePanel()" [disabled]="busy()">닫기</button>
-          </div>
+          <div class="panel-actions"><button class="btn btn-primary" (click)="createUser()" [disabled]="busy() || !validDraft()">계정 생성</button><button class="btn btn-outline" (click)="closePanel()">닫기</button></div>
         }
-
-        @if (panelMode() === 'detail' && selectedUser(); as u) {
-          <div class="detail-info">
-            <div>
-              <strong>{{ u.username }}</strong>
-              @if (u.enabled) { <span class="label label-success">활성</span> } @else { <span class="label">비활성</span> }
-            </div>
-          </div>
-
-          <h4 class="detail-h">속성</h4>
-          <form clrForm clrLayout="vertical">
-            <clr-input-container>
-              <label>표시이름</label>
-              <input clrInput [(ngModel)]="detailAttrs.displayName" name="d-display" [disabled]="busy()" maxlength="120" />
-            </clr-input-container>
-            <clr-input-container>
-              <label>이메일 (비우면 제거)</label>
-              <input clrInput type="email" [(ngModel)]="detailAttrs.email" name="d-email" [disabled]="busy()" maxlength="200" placeholder="예: hchoi@triangles.co.kr" />
-            </clr-input-container>
-          </form>
-          <div class="panel-actions">
-            <button class="btn btn-sm btn-primary" (click)="saveAttrs(u)" [disabled]="busy() || !detailAttrs.displayName.trim()">속성 저장</button>
-          </div>
-
-          <h4 class="detail-h">역할</h4>
-          <form clrForm clrLayout="vertical">
-            <clr-checkbox-container>
-              @for (r of consoleRoles; track r.group) {
-                <clr-checkbox-wrapper>
-                  <input type="checkbox" clrCheckbox [name]="'d-role-' + r.group" [(ngModel)]="detailRoleSel[r.group]" [disabled]="busy()" />
-                  <label>{{ r.label }}@if (r.admin) { <span class="role-admin-tag">· 강조 감사</span> }</label>
-                </clr-checkbox-wrapper>
-              }
-            </clr-checkbox-container>
-          </form>
-          <div class="panel-actions">
-            <button class="btn btn-sm btn-primary" (click)="saveRoles(u)" [disabled]="busy()">역할 저장</button>
-            @if (u.enabled) {
-              <button class="btn btn-sm btn-danger-outline" (click)="setEnabled(u, false)" [disabled]="busy()">비활성</button>
-            } @else {
-              <button class="btn btn-sm btn-outline" (click)="setEnabled(u, true)" [disabled]="busy()">활성</button>
-            }
-            <button class="btn btn-sm btn-link" (click)="regenOnboarding(u)" [disabled]="busy()">온보딩 링크</button>
-          </div>
-
-          <div class="detail-section-head">
-            <h4 class="detail-h">자동화 API 토큰 <span class="os-engine">({{ tokensForUser(u.username).length }})</span></h4>
-            <button class="btn btn-sm btn-outline" (click)="loadAdminTokens()" [disabled]="tokenBusy()">새로고침</button>
-          </div>
-          <p class="os-sub">사용자가 My Profile에서 직접 발급한 토큰의 메타데이터입니다. 관리자는 토큰 원문을 보거나 대리 발급할 수 없으며 강제 폐기만 할 수 있습니다.</p>
-          <clr-datagrid [clrDgLoading]="tokenBusy()">
-            <clr-dg-column>설명</clr-dg-column>
-            <clr-dg-column>상태</clr-dg-column>
-            <clr-dg-column>생성</clr-dg-column>
-            <clr-dg-column>만료</clr-dg-column>
-            <clr-dg-column>마지막 사용</clr-dg-column>
-            <clr-dg-column>동작</clr-dg-column>
-            @for (token of tokensForUser(u.username); track token.jti) {
-              <clr-dg-row>
-                <clr-dg-cell><strong>{{ token.label }}</strong><div class="os-mono">{{ token.jti }}</div></clr-dg-cell>
-                <clr-dg-cell>
-                  @if (token.status === 'active') { <span class="label label-success">활성</span> }
-                  @else { <span class="label label-warning">만료</span> }
-                </clr-dg-cell>
-                <clr-dg-cell>{{ fmt(token.createdAt) }}</clr-dg-cell>
-                <clr-dg-cell>{{ fmt(token.expiresAt) }}</clr-dg-cell>
-                <clr-dg-cell>{{ fmt(token.lastUsedAt) }}</clr-dg-cell>
-                <clr-dg-cell><button class="btn btn-sm btn-danger-outline" (click)="openAdminTokenRevoke(token)" [disabled]="busy()">강제 폐기</button></clr-dg-cell>
-              </clr-dg-row>
-            }
-            <clr-dg-placeholder>이 사용자가 발급한 자동화 API 토큰이 없습니다</clr-dg-placeholder>
-            <clr-dg-footer>{{ tokensForUser(u.username).length }}개 토큰</clr-dg-footer>
-          </clr-datagrid>
-
-          <h4 class="detail-h">최근 이력 <span class="os-engine">(이 사용자)</span></h4>
-          <clr-datagrid [clrDgLoading]="auditBusy()">
-            <clr-dg-column>시각</clr-dg-column>
-            <clr-dg-column>행위자</clr-dg-column>
-            <clr-dg-column>동작</clr-dg-column>
-            <clr-dg-column>결과</clr-dg-column>
-            @for (e of userAudit(); track $index) {
-              <clr-dg-row>
-                <clr-dg-cell><span class="os-mono">{{ e.time }}</span></clr-dg-cell>
-                <clr-dg-cell>{{ e.actor }}</clr-dg-cell>
-                <clr-dg-cell><code>{{ e.action }}</code></clr-dg-cell>
-                <clr-dg-cell>{{ e.result }}</clr-dg-cell>
-              </clr-dg-row>
-            }
-            <clr-dg-placeholder>이 사용자 관련 이력이 없습니다</clr-dg-placeholder>
-            <clr-dg-footer><a routerLink="/manage/audit" (click)="closePanel()">전체 감사 로그 →</a></clr-dg-footer>
-          </clr-datagrid>
-
-          <div class="panel-actions">
-            <button class="btn btn-outline" (click)="closePanel()">닫기</button>
-          </div>
+        @if (panelMode() === 'detail' && selectedUser(); as user) {
+          <h4 class="detail-h">속성</h4><form clrForm clrLayout="vertical"><clr-input-container><label>표시이름</label><input clrInput [(ngModel)]="attrs.displayName" name="edit-name" [disabled]="busy()"></clr-input-container><clr-input-container><label>이메일</label><input clrInput type="email" [(ngModel)]="attrs.email" name="edit-email" [disabled]="busy()"></clr-input-container></form>
+          <div class="panel-actions"><button class="btn btn-sm btn-primary" (click)="saveAttrs(user)" [disabled]="busy() || !attrs.displayName.trim()">속성 저장</button><button class="btn btn-sm" [class.btn-danger-outline]="user.enabled" [class.btn-outline]="!user.enabled" (click)="setEnabled(user, !user.enabled)" [disabled]="busy()">{{ user.enabled ? '비활성' : '활성' }}</button><button class="btn btn-sm btn-link" (click)="recovery(user)" [disabled]="busy()">회복 링크</button></div>
+          <h4 class="detail-h">역할</h4><clr-checkbox-container>@for (role of consoleRoles; track role.group) { <clr-checkbox-wrapper><input type="checkbox" clrCheckbox [name]="'edit-role-' + role.group" [(ngModel)]="roleSelection[role.group]" [disabled]="busy()"><label>{{ role.label }}</label></clr-checkbox-wrapper> }</clr-checkbox-container>
+          <div class="panel-actions"><button class="btn btn-sm btn-primary" (click)="saveRoles(user)" [disabled]="busy()">역할 저장</button></div>
+          <h4 class="detail-h">최근 이력</h4><clr-datagrid [clrDgLoading]="auditBusy()"><clr-dg-column>시각</clr-dg-column><clr-dg-column>행위자</clr-dg-column><clr-dg-column>동작</clr-dg-column><clr-dg-column>결과</clr-dg-column>@for (event of userAudit(); track $index) { <clr-dg-row><clr-dg-cell>{{ event.time }}</clr-dg-cell><clr-dg-cell>{{ event.actor }}</clr-dg-cell><clr-dg-cell><code>{{ event.action }}</code></clr-dg-cell><clr-dg-cell>{{ event.result }}</clr-dg-cell></clr-dg-row> }<clr-dg-placeholder>관련 이력이 없습니다.</clr-dg-placeholder></clr-datagrid>
+          <div class="panel-actions"><button class="btn btn-outline" (click)="closePanel()">닫기</button></div>
         }
-
-        @if (onboarding(); as ob) {
-          <div class="onboard-box">
-            <div><strong>{{ ob.username }}</strong> 온보딩 링크 — 당사자에게 전달하세요(만료 전 1회 설정).</div>
-            @if (ob.url) {
-              <pre class="link">{{ ob.url }}</pre>
-              <div class="onboard-actions">
-                <button class="btn btn-sm btn-primary" (click)="copy(ob.url)">링크 복사</button>
-                @if (copied()) { <span class="copied">복사됨 ✓</span> }
-              </div>
-            } @else {
-              <div class="warn">온보딩 링크를 발급하지 못했습니다(Kanidm credential intent 실패). 다시 시도하거나 재발급하세요.</div>
-            }
-          </div>
-        }
+        @if (recoveryUrl(); as recovery) { <div class="recovery"><strong>회복 링크</strong><pre>{{ recovery }}</pre><button class="btn btn-sm btn-primary" (click)="copy(recovery)">링크 복사</button></div> }
       </os-panel>
-
-      <os-panel [open]="tokenRevokeOpen()" title="사용자 토큰 강제 폐기" subtitle="즉시 효력 상실 · CBS 영구 감사" (closed)="closeAdminTokenRevoke()">
-        @if (pendingAdminToken(); as token) {
-          <p><strong>{{ token.user }}</strong> 사용자의 <strong>{{ token.label }}</strong> 토큰을 폐기합니다. 토큰 원문은 관리자에게 노출되지 않습니다.</p>
-          <form clrForm clrLayout="vertical">
-            <clr-textarea-container>
-              <label>강제 폐기 사유</label>
-              <textarea clrTextarea [(ngModel)]="tokenRevokeReason" name="admin-token-revoke-reason" maxlength="240" required></textarea>
-              <clr-control-helper>행위자·대상 사용자와 함께 영구 감사에 기록됩니다(8자 이상).</clr-control-helper>
-            </clr-textarea-container>
-          </form>
-          <div class="panel-actions">
-            <button class="btn btn-danger" (click)="confirmAdminTokenRevoke()" [disabled]="busy() || tokenRevokeReason.trim().length < 8">강제 폐기</button>
-            <button class="btn btn-outline" (click)="closeAdminTokenRevoke()" [disabled]="busy()">취소</button>
-          </div>
-        }
-      </os-panel>
-
-      <os-action-dialog
-        [open]="reasonDialogOpen()"
-        [title]="reasonDialogTitle()"
-        [message]="reasonDialogMessage()"
-        [confirmLabel]="reasonDialogConfirmLabel()"
-        [danger]="reasonDialogDanger()"
-        [busy]="busy()"
-        [reasonRequired]="true"
-        (confirmed)="confirmReasonAction($event)"
-        (cancelled)="closeReasonDialog()"
-      />
+      <os-action-dialog [open]="reasonOpen()" [title]="reasonTitle()" [message]="reasonMessage()" [confirmLabel]="reasonConfirm()" [danger]="reasonDanger()" [busy]="busy()" [reasonRequired]="true" (confirmed)="confirmReason($event)" (cancelled)="closeReason()" />
     </div>
   `,
-  changeDetection: ChangeDetectionStrategy.Eager,
-  styles: [
-    `
-      .os-sub { color: var(--os-muted); font-size: 0.7rem; margin: 0.3rem 0 0.8rem; }
-      .os-engine { font-size: 0.6rem; color: var(--os-muted); font-weight: 400; margin-left: 0.4rem; }
-      .os-mono { font-family: monospace; font-size: 0.62rem; color: var(--os-muted); }
-      .table .left { text-align: left; }
-      .label { margin: 0 0.25rem 0.25rem 0; }
-      .policy-card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.7rem 1.4rem; align-items:center; border:1px solid var(--os-hairline); border-radius:.25rem; padding:1rem 1.2rem; margin:1rem 0 1.4rem; background:var(--os-canvas); }
-      .policy-card h2 { margin:0 0 .25rem; }
-      .policy-toggle { display:flex; align-items:center; gap:.6rem; cursor:pointer; min-width:14rem; }
-      .policy-toggle input { width:1.1rem; height:1.1rem; }
-      .policy-toggle span { display:flex; flex-direction:column; gap:.15rem; }
-      .policy-toggle small { color:var(--os-muted); }
-      .policy-warning { grid-column:1/-1; margin:0; color:var(--os-ink-muted); font-size:.68rem; }
-      .users-head { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin:1.2rem 0 .3rem; }
-      .users-head h2 { margin:0; }
-      .panel-actions { display:flex; gap:.5rem; align-items:center; margin-top:.6rem; }
-      .role-admin-tag { color:var(--os-ink-subtle); font-size:.62rem; }
-      .detail-info { margin-bottom:.6rem; }
-      .detail-h { font-size:.8rem; margin:1.1rem 0 .3rem; color:var(--os-ink); }
-      .detail-section-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; margin-top:1.1rem; }
-      .detail-section-head .detail-h { margin:0; }
-      .onboard-box { margin-top:.8rem; padding:.7rem .8rem; border:1px dashed var(--os-hairline); border-radius:.25rem; display:flex; flex-direction:column; gap:.4rem; }
-      .onboard-box .link { background:var(--os-surface-1); color:var(--os-ink); font-family:var(--os-font-mono, monospace); padding:.5rem .6rem; border-radius:3px; font-size:.7rem; white-space:pre-wrap; word-break:break-all; margin:0; }
-      .onboard-actions { display:flex; gap:.4rem; align-items:center; }
-      .onboard-box .warn { color:var(--os-error); font-size:.72rem; }
-      .copied { color:var(--os-success); font-size:.72rem; }
-      @media (max-width: 760px) { .policy-card { grid-template-columns:1fr; } }
-    `,
-  ],
+  styles: [`
+    .os-sub{color:var(--os-muted);font-size:.7rem;margin:.3rem 0 .8rem}.os-engine{font-size:.6rem;color:var(--os-muted)}.detail-h{font-size:.8rem;margin:1.1rem 0 .3rem}.panel-actions{display:flex;gap:.5rem;align-items:center;margin-top:.6rem}.label{margin:0 .25rem .25rem 0}.recovery{margin-top:.8rem;padding:.7rem;border:1px dashed var(--os-hairline)}.recovery pre{white-space:pre-wrap;word-break:break-all;font-size:.68rem}
+  `],
 })
 export class ConsoleAdmins implements OnInit {
-  readonly userCols: OsColumn[] = [
-    { key: 'username', label: '사용자명' },
-    { key: 'displayName', label: '표시이름' },
-    { key: 'email', label: '이메일' },
-    { key: 'status', label: '상태' },
-    { key: 'groups', label: '그룹' },
-    { key: 'tokens', label: '자동화 토큰' },
-    { key: 'actions', label: '동작' },
-  ];
-  readonly users = signal<IdUser[]>([]);
-  readonly meta = signal<IdMeta | null>(null);
-  readonly authPolicy = signal<AuthPolicy | null>(null);
-  readonly policyBusy = signal(false);
-  readonly busy = signal(false);
-  readonly copied = signal(false);
-  readonly onboarding = signal<{ username: string; url: string } | null>(null);
-  readonly panelOpen = signal(false);
-  readonly panelMode = signal<'create' | 'link' | 'detail'>('create');
-  readonly selectedUser = signal<IdUser | null>(null);
-  readonly userAudit = signal<AuditEvent[]>([]);
-  readonly auditBusy = signal(false);
-  readonly adminTokens = signal<AdminApiToken[]>([]);
-  readonly tokenBusy = signal(false);
-  readonly tokenRevokeOpen = signal(false);
-  readonly pendingAdminToken = signal<AdminApiToken | null>(null);
-  detailRoleSel: Record<string, boolean> = {};
-  detailAttrs = { displayName: '', email: '' };
-  readonly down = signal<string>(''); // 백엔드 미배포/불건전 → graceful degradation
-  readonly identityLoading = signal(true);
-  readonly reasonDialogOpen = signal(false);
-  readonly reasonDialogTitle = signal('변경 확인');
-  readonly reasonDialogMessage = signal('');
-  readonly reasonDialogConfirmLabel = signal('적용');
-  readonly reasonDialogDanger = signal(false);
-  private pendingReasonAction: ((reason: string) => Promise<void>) | null = null;
-  readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
-  // 생성 시 선택 가능한 콘솔 역할(백엔드 CONSOLE_ROLE_GROUPS allowlist와 일치). admin은 강조 감사.
-  readonly consoleRoles: { group: string; label: string; admin: boolean }[] = [
-    { group: 'opensphere-console-admins', label: '관리자 (Admin)', admin: true },
-    { group: 'opensphere-console-operators', label: '운영자 (Operator)', admin: false },
-    { group: 'opensphere-console-viewers', label: '뷰어 (Viewer)', admin: false },
-  ];
-  roleSel: Record<string, boolean> = {};
-  policyReason = '';
-  tokenRevokeReason = '';
-  draft = { username: '', displayName: '', email: '', reason: '' };
+  private readonly http = inject(HttpService);
+  readonly userCols: OsColumn[] = [{ key: 'username', label: '사용자명' }, { key: 'displayName', label: '표시이름' }, { key: 'email', label: '이메일' }, { key: 'status', label: '상태' }, { key: 'roles', label: '역할' }, { key: 'actions', label: '동작' }];
+  readonly users = signal<IdUser[]>([]); readonly loading = signal(true); readonly busy = signal(false); readonly down = signal(''); readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
+  readonly panelOpen = signal(false); readonly panelMode = signal<'create' | 'detail'>('create'); readonly selectedUser = signal<IdUser | null>(null); readonly recoveryUrl = signal(''); readonly userAudit = signal<AuditEvent[]>([]); readonly auditBusy = signal(false);
+  readonly reasonOpen = signal(false); readonly reasonTitle = signal('변경 확인'); readonly reasonMessage = signal(''); readonly reasonConfirm = signal('적용'); readonly reasonDanger = signal(false);
+  readonly consoleRoles = [{ group: 'console-admins', label: '관리자' }, { group: 'console-operators', label: '운영자' }, { group: 'console-viewers', label: '뷰어' }];
+  draft = { username: '', displayName: '', email: '', reason: '' }; attrs = { displayName: '', email: '' }; roleSelection: Record<string, boolean> = {};
+  private pendingAction: ((reason: string) => Promise<void>) | null = null;
 
-  private auth = inject(AuthService);
-  private http = inject(HttpService);
-  // 감사 B: /api/identity 읽기도 인증 필수 → 검증된 id_token(Bearer) 첨부.
-  private authGet(): RequestInit {
-    return { cache: 'no-store', headers: { authorization: 'Bearer ' + (this.auth.token() || '') } };
-  }
+  async ngOnInit(): Promise<void> { await this.loadIdentity(); }
+  validDraft(): boolean { return !!this.draft.username.trim() && !!this.draft.displayName.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(this.draft.email.trim()) && this.draft.reason.trim().length >= 8; }
+  openCreate(): void { this.draft = { username: '', displayName: '', email: '', reason: '' }; this.roleSelection = {}; this.recoveryUrl.set(''); this.panelMode.set('create'); this.panelOpen.set(true); }
+  openDetail(user: IdUser): void { this.selectedUser.set(user); this.attrs = { displayName: user.displayName, email: user.email }; this.roleSelection = Object.fromEntries(this.consoleRoles.map((role) => [role.group, user.groups.includes(role.group)])); this.recoveryUrl.set(''); this.panelMode.set('detail'); this.panelOpen.set(true); void this.loadAudit(user); }
+  closePanel(): void { this.panelOpen.set(false); this.selectedUser.set(null); this.recoveryUrl.set(''); }
 
-  async ngOnInit(): Promise<void> {
-    await Promise.all([this.loadIdentity(), this.loadAuthPolicy(), this.loadAdminTokens()]);
-  }
+  activeUsers(): number { return this.users().filter((user) => user.enabled).length; }
+  disabledUsers(): number { return this.users().filter((user) => !user.enabled).length; }
+  roleMemberCount(role: string): number { return this.users().filter((user) => user.groups.includes(role)).length; }
 
-  private originLink(path: string): string {
-    return path ? window.location.origin + path : '';
-  }
-
-  openCreate(): void {
-    this.draft = { username: '', displayName: '', email: '', reason: '' };
-    this.roleSel = {};
-    this.onboarding.set(null);
-    this.panelMode.set('create');
-    this.panelOpen.set(true);
-  }
-
-  closePanel(): void {
-    this.panelOpen.set(false);
-    this.onboarding.set(null);
-    this.selectedUser.set(null);
-    this.userAudit.set([]);
-    this.closeAdminTokenRevoke();
-  }
-
-  // 사용자 행 "관리" → 상세 패널(역할 편집 + 활성/온보딩 + 이 사용자 문맥 감사).
-  openDetail(u: IdUser): void {
-    this.selectedUser.set(u);
-    this.syncDetailRoleSel(u);
-    this.detailAttrs = { displayName: u.displayName ?? '', email: u.email ?? '' };
-    this.onboarding.set(null);
-    this.userAudit.set([]);
-    this.msg.set(null);
-    this.panelMode.set('detail');
-    this.panelOpen.set(true);
-    void this.loadUserAudit(u.username);
-    void this.loadAdminTokens();
-  }
-
-  tokenCount(username: string): number {
-    return this.tokensForUser(username).length;
-  }
-
-  tokensForUser(username: string): AdminApiToken[] {
-    return this.adminTokens().filter((token) => token.user === username);
-  }
-
-  async loadAdminTokens(): Promise<void> {
-    this.tokenBusy.set(true);
+  async loadIdentity(): Promise<void> {
+    this.loading.set(true); this.down.set('');
     try {
-      const r = await this.http.request('/bff/admin/tokens');
-      const body = (await r.json().catch(() => ({}))) as { pats?: AdminApiToken[]; error?: string };
-      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
-      this.adminTokens.set(Array.isArray(body.pats) ? body.pats : []);
-    } catch (error) {
-      this.adminTokens.set([]);
-      this.msg.set({ type: 'danger', text: `사용자별 토큰 조회 실패: ${String(error)}` });
-    } finally {
-      this.tokenBusy.set(false);
-    }
+      const response = await this.http.request('/api/identity');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.json() as { users?: Array<Omit<IdUser, 'groups'> & { groups?: unknown[] }> };
+      this.users.set((body.users || []).map((user) => ({ ...user, groups: (user.groups || []).map((group) => typeof group === 'string' ? group : String((group as { name?: unknown })?.name || '')).filter(Boolean) })));
+    } catch (error) { this.down.set(`Supabase identity 조회 실패: ${String(error)}`); }
+    finally { this.loading.set(false); }
   }
-
-  openAdminTokenRevoke(token: AdminApiToken): void {
-    this.pendingAdminToken.set(token);
-    this.tokenRevokeReason = '';
-    this.tokenRevokeOpen.set(true);
-  }
-
-  closeAdminTokenRevoke(): void {
-    this.tokenRevokeOpen.set(false);
-    this.pendingAdminToken.set(null);
-    this.tokenRevokeReason = '';
-  }
-
-  async confirmAdminTokenRevoke(): Promise<void> {
-    const token = this.pendingAdminToken();
-    const reason = this.tokenRevokeReason.trim();
-    if (!token || reason.length < 8 || this.busy()) return;
-    this.busy.set(true);
-    try {
-      const r = await this.http.request(`/bff/admin/tokens/${encodeURIComponent(token.jti)}`, {
-        method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }),
-      });
-      const body = (await r.json().catch(() => ({}))) as { error?: string };
-      if (!r.ok && r.status !== 404) throw new Error(body.error || `HTTP ${r.status}`);
-      await Promise.all([this.loadAdminTokens(), this.loadUserAudit(token.user)]);
-      this.msg.set({ type: 'success', text: `${token.user} 사용자의 ${token.label} 토큰을 강제 폐기하고 영구 감사에 기록했습니다.` });
-      this.closeAdminTokenRevoke();
-    } catch (error) {
-      this.msg.set({ type: 'danger', text: `사용자 토큰 강제 폐기 실패: ${String(error)}` });
-    } finally {
-      this.busy.set(false);
-    }
-  }
-
-  private syncDetailRoleSel(u: IdUser): void {
-    const sel: Record<string, boolean> = {};
-    for (const r of this.consoleRoles) sel[r.group] = (u.groups ?? []).includes(r.group);
-    this.detailRoleSel = sel;
-  }
-
-  // 전역 감사에서 이 사용자 관련(대상 또는 행위자) 이벤트만 문맥 슬라이스로 필터(클라이언트 측, 최근 500건 기준).
-  private async loadUserAudit(username: string): Promise<void> {
-    this.auditBusy.set(true);
-    try {
-      const r = await this.http.request('/api/admin/plugins/events');
-      if (!r.ok) return;
-      const j = (await r.json()) as { items?: AuditEvent[] };
-      const items = Array.isArray(j.items) ? j.items : [];
-      this.userAudit.set(items.filter((e) => (e.target ?? '').includes(username) || e.actor === username).slice(0, 50));
-    } catch {
-      /* 문맥 감사 best-effort */
-    } finally {
-      this.auditBusy.set(false);
-    }
-  }
-
-  async saveAttrs(u: IdUser): Promise<void> {
-    const displayName = this.detailAttrs.displayName.trim();
-    const email = this.detailAttrs.email.trim();
-    if (!displayName) return;
-    if (displayName === (u.displayName ?? '') && email === (u.email ?? '')) { this.msg.set({ type: 'info', text: '속성 변경 사항이 없습니다.' }); return; }
-    this.openReasonDialog(
-      '사용자 속성 변경',
-      `${u.username} 사용자의 표시이름 또는 이메일을 변경합니다.`,
-      '속성 저장',
-      false,
-      (reason) => this.saveAttrsWithReason(u, displayName, email, reason),
-    );
-  }
-
-  private async saveAttrsWithReason(u: IdUser, displayName: string, email: string, reason: string): Promise<void> {
-    this.busy.set(true);
-    this.msg.set(null);
-    try {
-      const r = await this.http.request(`/api/identity/users/${u.id}/attrs`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ displayName, email, reason }),
-      });
-      const body = (await r.json().catch(() => ({}))) as { error?: string };
-      if (!r.ok) { this.msg.set({ type: 'danger', text: `속성 저장 실패: ${body.error || 'HTTP ' + r.status}` }); return; }
-      this.msg.set({ type: 'success', text: `${u.username} 속성을 갱신했습니다.` });
-      await this.loadIdentity();
-      const fresh = this.selectedUser();
-      if (fresh) this.detailAttrs = { displayName: fresh.displayName ?? '', email: fresh.email ?? '' };
-    } catch (e) {
-      this.msg.set({ type: 'danger', text: `속성 저장 실패: ${e}` });
-    } finally {
-      this.busy.set(false);
-    }
-  }
-
-  async saveRoles(u: IdUser): Promise<void> {
-    const desired = this.consoleRoles.filter((r) => this.detailRoleSel[r.group]).map((r) => r.group);
-    const current = this.consoleRoles.filter((r) => (u.groups ?? []).includes(r.group)).map((r) => r.group);
-    const toAdd = desired.filter((g) => !current.includes(g));
-    const toRemove = current.filter((g) => !desired.includes(g));
-    if (!toAdd.length && !toRemove.length) { this.msg.set({ type: 'info', text: '역할 변경 사항이 없습니다.' }); return; }
-    this.openReasonDialog(
-      '사용자 역할 변경',
-      `${u.username} 사용자의 콘솔 역할을 변경합니다.`,
-      '역할 저장',
-      true,
-      (reason) => this.saveRolesWithReason(u, toAdd, toRemove, reason),
-    );
-  }
-
-  private async saveRolesWithReason(u: IdUser, toAdd: string[], toRemove: string[], reason: string): Promise<void> {
-    this.busy.set(true);
-    this.msg.set(null);
-    try {
-      for (const g of toAdd) await this.groupChange(u.id, g, 'add', reason);
-      for (const g of toRemove) await this.groupChange(u.id, g, 'remove', reason);
-      this.msg.set({ type: 'success', text: `${u.username} 역할을 갱신했습니다.` });
-      await this.loadIdentity();
-      const fresh = this.selectedUser();
-      if (fresh) this.syncDetailRoleSel(fresh);
-    } catch (e) {
-      this.msg.set({ type: 'danger', text: `역할 저장 실패: ${e}` });
-    } finally {
-      this.busy.set(false);
-    }
-  }
-
-  private async groupChange(userId: string, group: string, op: 'add' | 'remove', reason: string): Promise<void> {
-    const r = await this.http.request(`/api/identity/users/${userId}/group`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ group, op, reason }),
-    });
-    if (!r.ok) { const b = (await r.json().catch(() => ({}))) as { error?: string }; throw new Error(b.error || `HTTP ${r.status}`); }
-  }
-
-  async createUser(): Promise<void> {
-    const { username, displayName, email, reason } = this.draft;
-    if (!username.trim() || !displayName.trim() || !reason.trim() || this.busy()) return;
-    const roles = this.consoleRoles.filter((r) => this.roleSel[r.group]).map((r) => r.group);
-    this.busy.set(true);
-    this.msg.set(null);
-    try {
-      const r = await this.http.request('/api/identity/users', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), displayName: displayName.trim(), email: email.trim(), reason: reason.trim(), roles }),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (r.status === 401 || r.status === 403) { this.msg.set({ type: 'danger', text: '계정 생성에는 관리자 권한이 필요합니다.' }); return; }
-      if (!r.ok) { this.msg.set({ type: 'danger', text: `계정 생성 실패: ${body.error || 'HTTP ' + r.status}` }); return; }
-      // 성공 — 패널은 열어둔 채 온보딩 링크를 표시(관리자가 복사 후 닫음).
-      this.onboarding.set({ username: body.username, url: this.originLink(body.onboardingPath || '') });
-      const rolesTxt = Array.isArray(body.roles) && body.roles.length ? ` · 역할: ${body.roles.join(', ')}` : '';
-      this.msg.set({ type: 'success', text: `${body.username} 계정을 생성했습니다${rolesTxt}. 온보딩 링크를 전달하세요.` });
-      this.draft = { username: '', displayName: '', email: '', reason: '' };
-      this.roleSel = {};
-      await this.loadIdentity();
-    } catch (e) {
-      this.msg.set({ type: 'danger', text: '계정 생성 실패: ' + e });
-    } finally {
-      this.busy.set(false);
-    }
-  }
-
-  async setEnabled(u: IdUser, enabled: boolean): Promise<void> {
-    const action = enabled ? '활성화' : '비활성화';
-    this.openReasonDialog(
-      `계정 ${action}`,
-      `${u.username} 계정을 ${action}합니다.`,
-      action,
-      !enabled,
-      (reason) => this.userWrite(`/api/identity/users/${u.id}/enabled`, { enabled, reason }, `${u.username} ${action}`),
-    );
-  }
-
-  async regenOnboarding(u: IdUser): Promise<void> {
-    this.openReasonDialog(
-      '온보딩 링크 재발급',
-      `${u.username} 사용자의 기존 온보딩 의도를 폐기하고 새 링크를 발급합니다.`,
-      '재발급',
-      true,
-      (reason) => this.regenOnboardingWithReason(u, reason),
-    );
-  }
-
-  private async regenOnboardingWithReason(u: IdUser, reason: string): Promise<void> {
-    this.busy.set(true);
-    this.msg.set(null);
-    try {
-      const r = await this.http.request(`/api/identity/users/${u.id}/onboarding`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ reason }),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) { this.msg.set({ type: 'danger', text: `링크 재발급 실패: ${body.error || 'HTTP ' + r.status}` }); return; }
-      // 재발급 결과도 우측 슬라이딩 패널(링크 모드)로 표시.
-      this.onboarding.set({ username: body.username || u.username, url: this.originLink(body.onboardingPath || '') });
-      this.panelMode.set('link');
-      this.panelOpen.set(true);
-      this.msg.set({ type: 'success', text: `${u.username} 온보딩 링크를 재발급했습니다.` });
-    } catch (e) {
-      this.msg.set({ type: 'danger', text: '링크 재발급 실패: ' + e });
-    } finally {
-      this.busy.set(false);
-    }
-  }
-
-  private async userWrite(path: string, payload: unknown, label: string): Promise<void> {
-    this.busy.set(true);
-    this.msg.set(null);
-    try {
-      const r = await this.http.request(path, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) { this.msg.set({ type: 'danger', text: `${label} 실패: ${body.error || 'HTTP ' + r.status}` }); return; }
-      this.msg.set({ type: 'success', text: `${label} 완료` });
-      await this.loadIdentity();
-    } catch (e) {
-      this.msg.set({ type: 'danger', text: `${label} 실패: ` + e });
-    } finally {
-      this.busy.set(false);
-    }
-  }
-
-  private openReasonDialog(
-    title: string,
-    message: string,
-    confirmLabel: string,
-    danger: boolean,
-    action: (reason: string) => Promise<void>,
-  ): void {
-    this.reasonDialogTitle.set(title);
-    this.reasonDialogMessage.set(message);
-    this.reasonDialogConfirmLabel.set(confirmLabel);
-    this.reasonDialogDanger.set(danger);
-    this.pendingReasonAction = action;
-    this.reasonDialogOpen.set(true);
-  }
-
-  closeReasonDialog(): void {
-    if (this.busy()) return;
-    this.reasonDialogOpen.set(false);
-    this.pendingReasonAction = null;
-  }
-
-  async confirmReasonAction(reason: string): Promise<void> {
-    const action = this.pendingReasonAction;
-    if (!action || this.busy()) return;
-    this.reasonDialogOpen.set(false);
-    this.pendingReasonAction = null;
-    await action(reason);
-  }
-
-  async copy(text: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-      this.copied.set(true);
-      window.setTimeout(() => this.copied.set(false), 2000);
-    } catch {
-      this.msg.set({ type: 'danger', text: '클립보드 복사 실패 — 수동으로 선택해 복사하세요.' });
-    }
-  }
-
-  fmt(iso: string | null): string {
-    if (!iso) return '—';
-    const date = new Date(iso);
-    return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
-  }
-
-  async setTotpEnabled(enabled: boolean): Promise<void> {
-    const previous = this.authPolicy();
-    const reason = this.policyReason.trim();
-    if (reason.length < 8) {
-      this.authPolicy.set(previous);
-      this.msg.set({ type: 'danger', text: '정책 변경 사유를 8자 이상 입력하세요.' });
-      return;
-    }
-    this.policyBusy.set(true);
-    try {
-      const r = await this.http.request('/bff/auth-policy', {
-        method: 'PATCH',
-        headers: {
-          authorization: 'Bearer ' + (this.auth.token() || ''),
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ totpEnabled: enabled, reason }),
-      });
-      if (r.status === 403) {
-        this.authPolicy.set(previous);
-        this.msg.set({ type: 'danger', text: '운영 환경에서는 TOTP를 비활성화할 수 없습니다(강제).' });
-        return;
-      }
-      if (!r.ok) throw new Error(`auth policy HTTP ${r.status}`);
-      this.authPolicy.set(await r.json());
-      this.policyReason = '';
-      this.msg.set({
-        type: 'success',
-        text: enabled ? 'TOTP 로그인을 활성화했습니다. TOTP 미등록 계정은 재온보딩이 필요합니다.' : '개발용 비밀번호 로그인을 활성화했습니다.',
-      });
-    } catch (error) {
-      this.authPolicy.set(previous);
-      this.msg.set({ type: 'danger', text: 'TOTP 정책 변경 실패: ' + error });
-    } finally {
-      this.policyBusy.set(false);
-    }
-  }
-
-  private async loadIdentity(): Promise<void> {
-    this.identityLoading.set(true);
-    this.down.set('');
-    try {
-      const r = await this.http.request('/api/identity', this.authGet());
-      if (!r.ok) {
-        if (r.status === 401 || r.status === 403) {
-          this.msg.set({ type: 'danger', text: '콘솔 관리자 목록을 조회할 권한이 없습니다.' });
-        } else {
-          this.down.set(`identity HTTP ${r.status}`);
-        }
-        return;
-      }
-      const d = await r.json();
-      this.meta.set(d.meta ?? null);
-      this.users.set(d.users ?? []);
-      // 상세 패널이 열려 있으면 갱신된 목록으로 선택 사용자 재동기화(활성/역할 변경 반영).
-      const sel = this.selectedUser();
-      if (sel) {
-        const fresh = (d.users ?? []).find((u: IdUser) => u.username === sel.username);
-        if (fresh) this.selectedUser.set(fresh);
-      }
-    } catch (e) {
-      this.down.set('조회 실패: ' + e);
-    } finally {
-      this.identityLoading.set(false);
-    }
-  }
-
-  private async loadAuthPolicy(): Promise<void> {
-    try {
-      const r = await this.http.request('/bff/auth-policy', this.authGet());
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      this.authPolicy.set(await r.json());
-    } catch (error) {
-      this.msg.set({ type: 'danger', text: 'TOTP 정책 조회 실패: ' + error });
-    }
-  }
+  private openReason(title: string, message: string, confirm: string, danger: boolean, action: (reason: string) => Promise<void>): void { this.reasonTitle.set(title); this.reasonMessage.set(message); this.reasonConfirm.set(confirm); this.reasonDanger.set(danger); this.pendingAction = action; this.reasonOpen.set(true); }
+  closeReason(): void { if (!this.busy()) { this.reasonOpen.set(false); this.pendingAction = null; } }
+  async confirmReason(reason: string): Promise<void> { const action = this.pendingAction; if (!action) return; this.reasonOpen.set(false); this.pendingAction = null; await action(reason); }
+  async createUser(): Promise<void> { if (!this.validDraft()) return; this.busy.set(true); try { const roles = this.consoleRoles.filter((role) => this.roleSelection[role.group]).map((role) => role.group); const response = await this.http.request('/api/identity/users', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...this.draft, username: this.draft.username.trim(), displayName: this.draft.displayName.trim(), email: this.draft.email.trim(), roles }) }); const body = await response.json().catch(() => ({})) as { error?: string; onboardingPath?: string }; if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.recoveryUrl.set(body.onboardingPath ? new URL(body.onboardingPath, window.location.origin).toString() : ''); this.msg.set({ type: 'success', text: 'Supabase Console 계정을 생성했습니다.' }); await this.loadIdentity(); } catch (error) { this.msg.set({ type: 'danger', text: `계정 생성 실패: ${String(error)}` }); } finally { this.busy.set(false); } }
+  saveAttrs(user: IdUser): void { const displayName = this.attrs.displayName.trim(); const email = this.attrs.email.trim(); if (!displayName || !email) return; this.openReason('사용자 속성 변경', `${user.username} 사용자의 Supabase 프로필을 변경합니다.`, '저장', false, (reason) => this.write(`/api/identity/users/${user.id}/attrs`, { displayName, email, reason }, '속성을 갱신했습니다.')); }
+  setEnabled(user: IdUser, enabled: boolean): void { this.openReason(`계정 ${enabled ? '활성화' : '비활성화'}`, `${user.username} 계정을 ${enabled ? '활성화' : '비활성화'}합니다.`, enabled ? '활성화' : '비활성화', !enabled, (reason) => this.write(`/api/identity/users/${user.id}/enabled`, { enabled, reason }, '계정 상태를 변경했습니다.')); }
+  recovery(user: IdUser): void { this.openReason('회복 링크 발급', `${user.username}의 Supabase 비밀번호 회복 링크를 발급합니다.`, '발급', false, async (reason) => { const response = await this.http.request(`/api/identity/users/${user.id}/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }) }); const body = await response.json().catch(() => ({})) as { error?: string; onboardingPath?: string }; if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.recoveryUrl.set(body.onboardingPath ? new URL(body.onboardingPath, window.location.origin).toString() : ''); this.msg.set({ type: 'success', text: '회복 링크를 발급했습니다.' }); }); }
+  saveRoles(user: IdUser): void { const desired = this.consoleRoles.filter((role) => this.roleSelection[role.group]).map((role) => role.group); const add = desired.filter((role) => !user.groups.includes(role)); const remove = user.groups.filter((role) => this.consoleRoles.some((candidate) => candidate.group === role) && !desired.includes(role)); if (!add.length && !remove.length) return; this.openReason('사용자 역할 변경', `${user.username}의 Supabase Console 역할을 변경합니다.`, '저장', true, async (reason) => { for (const group of add) await this.write(`/api/identity/users/${user.id}/group`, { op: 'add', group, reason }, '', false); for (const group of remove) await this.write(`/api/identity/users/${user.id}/group`, { op: 'remove', group, reason }, '', false); this.msg.set({ type: 'success', text: '역할을 갱신했습니다.' }); await this.loadIdentity(); }); }
+  private async write(path: string, payload: unknown, success: string, refresh = true): Promise<void> { this.busy.set(true); try { const response = await this.http.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }); const body = await response.json().catch(() => ({})) as { error?: string }; if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); if (success) this.msg.set({ type: 'success', text: success }); if (refresh) await this.loadIdentity(); } finally { this.busy.set(false); } }
+  private async loadAudit(user: IdUser): Promise<void> { this.auditBusy.set(true); try { const response = await this.http.request('/api/identity/audit'); const body = await response.json().catch(() => ({})) as { items?: AuditEvent[] }; this.userAudit.set((body.items || []).filter((event) => (event.target || '').includes(user.id) || (event.target || '').includes(user.username) || event.actor === user.id).slice(0, 50)); } finally { this.auditBusy.set(false); } }
+  async copy(value: string): Promise<void> { await navigator.clipboard.writeText(value).catch(() => this.msg.set({ type: 'danger', text: '클립보드 복사 실패' })); }
 }

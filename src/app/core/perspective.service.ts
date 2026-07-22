@@ -32,10 +32,14 @@ export class PerspectiveService {
   /** 정책 결정: 역할/그룹 → 허용 워크스페이스 id 집합.
    *  ⚠️ PoC: 셸 내 정책. 운영 전 OPA(rego)로 이관 — 이 함수가 그 seam이다. */
   private decide(groups: string[], roles: string[]): Array<Workspace['id']> {
-    // 관리자 그룹: Kanidm(콘솔 break-glass)=opensphere-console-admins, 레거시 Keycloak=platform-admins
+    // `console-admins` is the canonical Supabase Console role.  The two
+    // legacy names remain accepted only while older identity projections are
+    // being retired.
     const isAdmin =
+      groups.includes('console-admins') ||
       groups.includes('opensphere-console-admins') ||
       groups.includes('platform-admins') ||
+      roles.includes('console-admins') ||
       roles.includes('platform-admin');
     if (isAdmin) return ['A', 'B', 'C', 'D'];     // 운영자: 전 워크스페이스(지능 포함)
     return ['B', 'C'];                            // 일반: 운영(A) 제외, 협업·업무만

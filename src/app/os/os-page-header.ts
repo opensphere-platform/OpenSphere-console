@@ -3,7 +3,7 @@ import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 /**
  * os-page-header — 모든 셸 네이티브 페이지의 공통 헤더(페이지 템플릿 강제).
  * 일관된 타이틀 타이포(디자인 토큰) + 보조 태그 + lead 슬롯(<ng-content>).
- * 사용: <os-page-header title="콘솔 관리자" tag="Kanidm IGA"><p>lead…</p></os-page-header>
+ * 사용: <os-page-header title="콘솔 관리자" tag="Supabase Identity"><p>lead…</p></os-page-header>
  * 주의: Clarity 전역 CSS가 <header>/<h3>를 다크 처리 → div + h1만 사용.
  */
 @Component({

@@ -8,8 +8,19 @@ const consoleRoot = path.resolve(gatewayRoot, '..', '..');
 const platformRoot = path.resolve(consoleRoot, '..');
 const outPath = path.join(gatewayRoot, 'manual-seeds', 'opensphere-core-manuals.json');
 
+function resolveSourcePath(relPath) {
+  const normalized = relPath.replace(/\\/g, '/');
+  // The release repository is commonly checked out as `OpenSphere-console`,
+  // while local worktrees have a generated directory name. Resolve Console
+  // docs from the actual current checkout in both cases.
+  if (normalized.startsWith('OpenSphere-console/')) {
+    return path.join(consoleRoot, normalized.slice('OpenSphere-console/'.length));
+  }
+  return path.join(platformRoot, normalized);
+}
+
 function readText(relPath) {
-  const full = path.join(platformRoot, relPath);
+  const full = resolveSourcePath(relPath);
   const content = fs.readFileSync(full, 'utf8')
     .replace(/\r\n/g, '\n')
     .replace(/\u0000/g, '')
@@ -105,7 +116,7 @@ const documents = [
     authorityTier: 1,
     perspective: ['base-substrate', 'api-information-flow'],
     plane: ['p2-foundation'],
-    component: ['foundation', 'backbone'],
+    component: ['foundation', 'data-identity', 'change-control'],
     tags: ['plane', 'p2'],
   }),
   doc({
@@ -164,26 +175,16 @@ const documents = [
     tags: ['plane', 'p7'],
   }),
   doc({
-    sourceId: 'console-docs/backbone-architecture',
-    title: 'Console Backbone Service Stack (CBS)',
-    path: 'OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md',
-    documentType: 'reference',
-    authorityTier: 3,
-    perspective: ['base-substrate', 'api-information-flow'],
-    plane: ['p2-foundation', 'p6-experience'],
-    component: ['backbone', 'postgresql', 'rustfs', 'gitea', 'oaa-gateway'],
-    tags: ['backbone', 'pgvector', 'oaa'],
-  }),
-  doc({
-    sourceId: 'console-docs/oaa-backbone-implementation-plan',
-    title: 'OAA Backbone Implementation Plan',
-    path: 'OpenSphere-console/docs/OAA-BACKBONE-IMPLEMENTATION-PLAN.md',
-    documentType: 'reference',
-    authorityTier: 3,
-    perspective: ['ai-level', 'main-shell'],
-    plane: ['p2-foundation', 'p4-intelligence', 'p6-experience'],
-    component: ['oaa', 'oaa-gateway', 'agent-ui', 'pgvector'],
-    tags: ['oaa', 'implementation-plan'],
+    sourceId: 'console-docs/platform-control-plane-v2',
+    title: 'OpenSphere Console Platform Control Plane V2',
+    version: '2026-07-22',
+    path: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md',
+    documentType: 'architecture',
+    authorityTier: 1,
+    perspective: ['main-shell', 'ai-level'],
+    plane: ['p1-control', 'p4-intelligence', 'p6-experience'],
+    component: ['supabase', 'gitea', 'observability-binding', 'oaa-gateway'],
+    tags: ['platform-control-plane', 'supabase', 'gitea', 'his-binding', 'oaa'],
   }),
   doc({
     sourceId: 'console-docs/oaa-manual-knowledge-data-model',
@@ -240,7 +241,7 @@ const documents = [
     title: '3. User & Auth',
     path: 'OpenSphere-console/docs/manual/03-USER-AUTH.md',
     documentType: 'guide', authorityTier: 2,
-    perspective: ['user-auth'], plane: ['p1-control'], component: ['identity', 'kanidm'],
+    perspective: ['user-auth'], plane: ['p1-control'], component: ['identity', 'supabase-auth'],
     tags: ['help-center', 'perspective-home', 'manual-band-operate', 'order-03'],
   }),
   doc({
@@ -314,7 +315,7 @@ const perspectiveDefinitions = {
   },
   'base-substrate': {
     name: 'Base Substrate',
-    aliases: ['Backbone substrate', 'base platform'],
+    aliases: ['base platform'],
     summary: 'Base platform services, storage, control data tier and shared runtime substrate.',
   },
   'k8s-cluster-ceph': {
@@ -409,12 +410,12 @@ concepts.push({
   type: 'service-tier',
   name: 'OAA Gateway',
   aliases: ['OpenSphere AI Agent Gateway', 'OAA-Gateway'],
-  summary: 'Backbone service tier that owns LLM key custody, model calls, manual knowledge retrieval and controlled OAA tools.',
-  definition: 'OAA Gateway is the Backbone service tier used by OpenSphere AI Agent for LLM key management, RAG over Backbone PostgreSQL pgvector, tool manifests and guarded action execution.',
+  summary: 'Console-native server workload that owns LLM key custody, model calls, Supabase-backed manual knowledge retrieval and governed OAA tools.',
+  definition: 'OAA Gateway is a Main Shell capability that uses Supabase for its durable data boundary, Gitea-correlated change control, tool manifests and guarded action submission.',
   authorityTier: 3,
   status: 'active',
-  sourceIds: ['console-docs/backbone-architecture', 'console-docs/oaa-backbone-implementation-plan', 'console-docs/oaa-manual-knowledge-data-model'],
-  tags: ['oaa', 'gateway', 'backbone'],
+  sourceIds: ['console-docs/platform-control-plane-v2', 'console-docs/oaa-manual-knowledge-data-model'],
+  tags: ['oaa', 'gateway', 'supabase', 'gitea'],
 });
 
 relations.push({

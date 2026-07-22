@@ -1,8 +1,8 @@
 # OAA Manual Knowledge Data Model
 
-Status: draft v0.2
-Date: 2026-07-04
-Scope: OpenSphere AI Agent(OAA), OpenSphere manuals, Backbone PostgreSQL + pgvector
+Status: implementation contract v0.3
+Date: 2026-07-22
+Scope: OpenSphere AI Agent(OAA), OpenSphere manuals, Supabase PostgreSQL + pgvector, Console control plane
 
 Product ownership: Manual UI, canonical Help Center documents, release seed and lifecycle are owned exclusively by `OpenSphere-console`. OAA Gateway provides the Console-owned durable registry/search execution boundary; it is not a separate Manual product owner. See `MANUAL-OWNERSHIP.md`.
 
@@ -20,21 +20,21 @@ The manual knowledge model therefore has four required layers:
 1. `ManualSource`: where the manual came from.
 2. `ManualDocument`: one authoritative document or article.
 3. `ManualSection`: stable semantic sections inside a document.
-4. `ManualChunk`: retrieval-sized text blocks stored in pgvector.
+4. `ManualChunk`: retrieval-sized text blocks stored in Supabase pgvector.
 
 It also has two optional but important semantic layers:
 
 5. `ManualConcept`: named OpenSphere concepts such as the 10 Perspectives, architecture planes, service tiers, policies, and product vocabulary.
 6. `ManualRelation`: explicit links between concepts, documents, sections, tools, APIs, menus, and runtime resources.
 
-The key decision is this: OAA should not manage manuals as only vectorized text. It should manage manuals as a small knowledge graph backed by PostgreSQL rows, with pgvector used as the retrieval index for natural-language lookup.
+The key decision is this: OAA should not manage manuals as only vectorized text. It should manage manuals as a small knowledge graph backed by Supabase PostgreSQL rows, with pgvector used as the retrieval index for natural-language lookup.
 
-For MVP, `ManualDocument` and `ManualChunk` are stored in the existing OAA tables:
+For the current implementation, `ManualDocument` and `ManualChunk` are stored in the migration-owned `oaa` schema:
 
 - `oaa_knowledge_documents`
 - `oaa_knowledge_chunks`
 
-The remaining structure is stored in `metadata` JSON. Later, the same fields can be promoted into normalized tables without changing the chat contract.
+`document`, `document_version`, `section`, `embedding_model`, `embedding`, `concept`, `concept_relation`, `tool_capability`, and `action_binding` are also normalized in the same schema. The serving tables preserve the existing Console Manual/search contract while sources are migrated.
 
 This means a question like "What is OpenSphere 10 Perspective?" should resolve through this path:
 
@@ -63,7 +63,7 @@ Examples:
 
 ```text
 manual:docs:01-constitution/open-sphere-constitution
-manual:console-docs:backbone-architecture
+manual:console-docs:platform-control-plane-v2
 manual:help-center:perspectives
 manual-section:manual:help-center:perspectives#10-perspectives
 ```
@@ -216,7 +216,7 @@ For the OpenSphere 10 Perspective, each perspective should be one `ManualConcept
 | Concept ID | Type | Purpose |
 |---|---|---|
 | `concept:opensphere:perspective:main-shell` | `perspective` | Main shell / user-facing operating frame |
-| `concept:opensphere:perspective:base-substrate` | `perspective` | Backbone, storage, base platform layer |
+| `concept:opensphere:perspective:base-substrate` | `perspective` | Host, storage, and base platform layer |
 | `concept:opensphere:perspective:k8s-cluster-ceph` | `perspective` | Cluster and storage substrate |
 | `concept:opensphere:perspective:user-auth` | `perspective` | Identity, auth, tenant and access model |
 | `concept:opensphere:perspective:developer` | `perspective` | Developer workflow and build/deploy model |
@@ -289,7 +289,7 @@ interface ManualSection {
 Section IDs must be stable enough to support citation:
 
 ```text
-manual-section:manual:console-docs:backbone-architecture#oaa-consumer
+manual-section:manual:console-docs:platform-control-plane-v2#oaa
 ```
 
 ## 6. ManualChunk
@@ -369,7 +369,7 @@ OAA should answer using this rule:
 
 For operational questions, OAA must treat manuals and live cluster inspection as different evidence classes.
 
-Operational questions include installation, preflight, plugin lifecycle, Kubernetes runtime state, Backbone, Foundation, Samba-AD, OpenSearch, and OAA Gateway troubleshooting.
+Operational questions include installation, preflight, plugin lifecycle, Kubernetes runtime state, Data & Identity, Change Control, Foundation, Samba-AD, OpenSearch, and OAA Gateway troubleshooting.
 
 OAA must answer in four parts when the question asks what is happening now or what an admin should do:
 
@@ -513,7 +513,9 @@ The first registry entries should cover:
 
 ## 10. Normalized Storage Target
 
-The current MVP stores manual structure in JSON metadata. That is acceptable while the corpus is small. Once OAA starts executing actions from manuals, the following tables should be promoted to first-class storage:
+Implemented by `backend/supabase/migrations/0005_oaa_governed_agent.sql` in the `oaa` schema. The production table names are `document`, `document_version`, `section`, `embedding_model`, `embedding`, `concept`, `concept_relation`, `tool_capability`, and `action_binding`, with `oaa_knowledge_documents` and `oaa_knowledge_chunks` retained as the serving contract.
+
+The SQL below is a historical logical-model sketch, not a second schema to create. New code must use migration `0005` rather than these obsolete `oaa_manual_*` names.
 
 ```sql
 CREATE TABLE oaa_manual_sources (
@@ -636,7 +638,7 @@ interface ManualChunkMetadata {
 | `document_id` | FK to document |
 | `chunk_index` | order in document |
 | `content` | chunk text |
-| `embedding` | provider or local hash vector |
+| `embedding` | provider-generated `vector(1536)`; hash vectors are prohibited in Supabase production mode |
 | `metadata` | `ManualChunkMetadata` |
 
 ## 12. Seed Manifest Format
@@ -658,16 +660,16 @@ The initial automated ingestion format should be JSON:
   },
   "documents": [
     {
-      "sourceId": "console-docs/backbone-architecture",
-      "title": "Backbone Architecture",
-      "version": "2026-07-04",
-      "sourcePath": "docs/BACKBONE-ARCHITECTURE.md",
-      "documentType": "reference",
-      "authorityTier": 3,
-      "perspective": ["base-substrate", "api-information-flow"],
-      "plane": ["p2-foundation", "p6-experience"],
-      "component": ["backbone", "postgresql", "oaa-gateway"],
-      "tags": ["backbone", "pgvector", "oaa"],
+      "sourceId": "console-docs/platform-control-plane-v2",
+      "title": "OpenSphere Console Platform Control Plane V2",
+      "version": "2026-07-22",
+      "sourcePath": "docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md",
+      "documentType": "architecture",
+      "authorityTier": 1,
+      "perspective": ["main-shell", "ai-level"],
+      "plane": ["p1-control", "p4-intelligence", "p6-experience"],
+      "component": ["supabase", "gitea", "oaa-gateway"],
+      "tags": ["platform-control-plane", "supabase", "gitea", "oaa"],
       "content": "..."
     }
   ],
@@ -706,9 +708,9 @@ The manifest may also include action bindings:
 {
   "actionBindings": [
     {
-      "id": "manual-action:backbone:restart-oaa-gateway",
-      "sourceId": "console-docs/backbone-architecture",
-      "sectionId": "manual-section:console-docs/backbone-architecture#oaa-gateway",
+      "id": "manual-action:platform-control:restart-oaa-gateway",
+      "sourceId": "console-docs/platform-control-plane-v2",
+      "sectionId": "manual-section:console-docs/platform-control-plane-v2#oaa",
       "intent": "restart",
       "toolId": "oaa.k8s.deployment.restart",
       "riskLevel": "medium",
@@ -720,7 +722,7 @@ The manifest may also include action bindings:
 
 ## 13. Admin UI Implications
 
-Backbone > OAA Gateway > Knowledge Store should evolve from a free text form into three modes:
+Console 관리 > OAA > Knowledge Store should evolve from a free text form into three modes:
 
 1. Manual paste: current MVP form.
 2. Manual seed: upload or trigger a `manual-seed` manifest.
@@ -746,8 +748,33 @@ Recommended ingestion order:
 1. `_DOCS_/01-CONSTITUTION/*`: tier 0
 2. `_DOCS_/README.md`, `_DOCS_/00-전체그림.md`: tier 1
 3. `_DOCS_/02-평면설계/*`: tier 1
-4. `OpenSphere-console/docs/BACKBONE-ARCHITECTURE.md`: tier 3
-5. `OpenSphere-console/docs/OAA-BACKBONE-IMPLEMENTATION-PLAN.md`: tier 3
+4. `OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md`: tier 1
+5. `OpenSphere-console/docs/OAA-MANUAL-KNOWLEDGE-DATA-MODEL.md`: tier 3
 6. Manual Registry seed/canonical docs (`backend/opensphere-console-oaa-gateway/manual-seeds/opensphere-core-manuals.json`): tier 2 Help Center source
 
 The Manual Registry seed/canonical docs are authoritative. The legacy standalone Manual source was retired after migration verification; the Help Center, the Console-native `/manual` page, and OAA all consume the same canonical content served from the Manual Registry.
+
+## 15. Governed Retrieval and Action Execution
+
+OAA is a Console operator tool, not a generic chat panel. Every retrieval is filtered by the caller's current Console permissions and document ACL before vector ranking. Supabase records the resulting evidence in `oaa.retrieval_trace`; the answer must cite the selected document/chunk rather than claim ungrounded system knowledge.
+
+Non-read actions follow this control path:
+
+```text
+OAA binding
+  -> Gateway validates confirmation and caller-supplied reason
+  -> Console Backend validates canonical permission and MFA assurance
+  -> console.begin_change records an idempotent audited intent
+  -> approved GitOps adapter creates the declared desired-state change
+  -> reconciler applies it and reports result to the same request ID
+```
+
+The Gateway has no Kubernetes write RBAC. A restart or scale capability is therefore a **control-plane submission**, not a `kubectl patch` capability. `oaa.tool_run` records the OAA-side intent evidence and `audit.event` / `console.change_request` are the authoritative management audit trail.
+
+### Production cutover checklist
+
+1. Apply Supabase migrations through `0005_oaa_governed_agent.sql` and verify the `oaa` schema, `vector` extension, RLS policies, and constrained `opensphere_oaa_gateway` role.
+2. Run `scripts/migrate-legacy-knowledge-to-supabase.js --dry-run`, then `--apply` with a real embedding provider. It must re-embed source text; legacy hash vectors must not be copied.
+3. Confirm retrieval ACL tests with at least a viewer, operator, and administrator account; inspect `oaa.retrieval_trace` and answer citations.
+4. Bind each allowed action to a named GitOps repository, branch, manifest path, validation command, approval policy, and reconciler status source. This repository currently has Gitea read inspection only; it does not yet define that write adapter.
+5. Exercise one non-production change end-to-end: intent, approval, Git commit, reconcile, observed result, and immutable audit correlation. Only then enable the action for the production role.

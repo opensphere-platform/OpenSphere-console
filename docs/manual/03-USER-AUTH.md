@@ -17,4 +17,4 @@
 
 ## 운영 시작
 
-최초 관리자 Wizard에서 root administrator를 구성합니다. 이후 모든 사용자·토큰 관리는 프로필 또는 Console 관리 화면에서 수행하고, Kanidm과 Console 권한 모델을 단일 경로로 사용합니다.
+최초 관리자 Wizard에서 root administrator를 구성합니다. 이후 모든 사용자·세션·토큰 관리는 프로필 또는 Console 관리 화면에서 수행하며, Supabase Auth와 Console 역할 모델을 단일 경로로 사용합니다.

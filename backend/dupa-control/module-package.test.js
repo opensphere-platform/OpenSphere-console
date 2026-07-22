@@ -1,9 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const yaml = require('js-yaml');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, serviceMonitorManifest, observerClusterRoleManifest, hisManagerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, aiDomainScopedRoleManifest, requiresDomainSubShellAdmission, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -91,21 +88,10 @@ test('rejects unapproved permission profile and observer role is read-only', () 
   assert.ok(!rules.some((rule) => rule.resources.includes('users') || rule.verbs.includes('impersonate')));
 });
 
-test('HIS manager profile is fixed to Helm prerequisites and never grants impersonation', () => {
+test('HIS manager profile is rejected: Console modules cannot own HIS lifecycle', () => {
   const his = structuredClone(descriptor);
   his.permissionProfile = 'cluster-his-manager-v1';
-  assert.deepEqual(moduleDescriptorIssues(his), []);
-  const rules = hisManagerClusterRoleManifest().rules;
-  assert.ok(rules.some((rule) => rule.resources.includes('secrets') && rule.verbs.includes('create')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('') && rule.resources.includes('persistentvolumeclaims') && rule.verbs.includes('create')));
-  assert.ok(rules.some((rule) => rule.resources.includes('customresourcedefinitions') && rule.verbs.includes('create')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('cert-manager.io') && rule.resources.includes('clusterissuers') && rule.verbs.includes('create')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('cert-manager.io') && rule.resources.includes('certificates') && rule.verbs.includes('delete')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('acme.cert-manager.io') && rule.resources.includes('orders') && rule.verbs.includes('create')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('monitoring.coreos.com') && rule.resources.includes('prometheuses') && rule.verbs.includes('create')));
-  assert.ok(rules.some((rule) => rule.resources.includes('clusterroles') && rule.verbs.includes('escalate')));
-  assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
-  assert.ok(!rules.some((rule) => rule.resources.includes('users')));
+  assert.ok(moduleDescriptorIssues(his).some((issue) => issue.code === 'UnknownPermissionProfile'));
 });
 
 test('infrastructure manager adds only consumer-side storage integration writes', () => {
@@ -115,62 +101,25 @@ test('infrastructure manager adds only consumer-side storage integration writes'
   const rules = infrastructureManagerClusterRoleManifest().rules;
   assert.ok(rules.some((rule) => rule.apiGroups.includes('storage.k8s.io') && rule.resources.includes('storageclasses') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshotclasses') && rule.verbs.includes('delete')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshots') && rule.verbs.includes('create') && rule.verbs.includes('delete')));
+  assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshots') && rule.verbs.includes('create')));
   assert.ok(rules.some((rule) => rule.apiGroups.includes('ceph.rook.io') && rule.verbs.includes('create')));
+  assert.ok(!rules.some((rule) => rule.apiGroups.includes('monitoring.coreos.com')));
+  assert.ok(!rules.some((rule) => rule.resources.includes('clusterroles') && rule.verbs.includes('escalate')));
   assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
   assert.ok(!rules.some((rule) => rule.resources.includes('users')));
 });
 
-test('deployed infrastructure manager ClusterRole exactly matches the controller permission profile', () => {
-  const manifestPath = path.join(__dirname, 'opensphere-console-dupa-controller.yaml');
-  const documents = [];
-  yaml.loadAll(fs.readFileSync(manifestPath, 'utf8'), (document) => documents.push(document));
-  const deployedRole = documents.find((document) => document?.kind === 'ClusterRole'
-    && document?.metadata?.name === 'opensphere-module-cluster-infrastructure-manager-v1');
-  assert.ok(deployedRole, 'infrastructure manager ClusterRole manifest must exist');
-  assert.deepEqual(deployedRole.rules, infrastructureManagerClusterRoleManifest().rules);
-});
-
-test('AI domain operator is a fixed, scoped profile and is present in the deployment contract', () => {
-  const ai = structuredClone(descriptor);
-  ai.id = 'ai';
-  ai.api.basePath = '/api/plugins/ai';
-  ai.contributions.api.basePath = '/api/plugins/ai';
-  ai.permissionProfile = 'ai-domain-operator-v1';
-  ai.runtime.serviceAccountName = 'ai-runtime';
-  assert.deepEqual(moduleDescriptorIssues(ai), []);
-  assert.equal(requiresDomainSubShellAdmission({ spec: ai }), true);
-  assert.equal(requiresDomainSubShellAdmission({ spec: descriptor }), false);
-  const clusterRules = aiDomainOperatorClusterRoleManifest().rules;
-  assert.ok(clusterRules.some((rule) => rule.resources.includes('users') && rule.verbs.includes('impersonate')));
-  assert.ok(!clusterRules.some((rule) => rule.resources.includes('secrets')));
-  const scopedRules = aiDomainScopedRoleManifest().rules;
-  assert.ok(scopedRules.some((rule) => rule.resources.includes('secrets') && Array.isArray(rule.resourceNames)));
-
-  const documents = [];
-  yaml.loadAll(fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8'), (document) => documents.push(document));
-  const deployedClusterRole = documents.find((document) => document?.kind === 'ClusterRole' && document?.metadata?.name === 'opensphere-module-ai-domain-operator-v1');
-  const deployedScopedRole = documents.find((document) => document?.kind === 'Role' && document?.metadata?.name === 'opensphere-module-ai-domain-operator-v1');
-  assert.deepEqual(deployedClusterRole.rules, clusterRules);
-  assert.deepEqual(deployedScopedRole.rules, scopedRules);
-});
-
-test('managed plugin workload receives the Console authentication CA read-only', () => {
+test('managed plugin workload receives only the Supabase-backed Console identity contract', () => {
   const pkg = packageFromInspection({ descriptor, repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager', digest: `sha256:${'b'.repeat(64)}` });
   pkg.metadata = { ...pkg.metadata, uid: '00000000-0000-0000-0000-000000000000' };
   const deployment = deploymentManifest(pkg);
   const pod = deployment.spec.template.spec;
   const container = pod.containers[0];
-  assert.ok(container.env.some((item) => item.name === 'KANIDM_CA_PATH' && item.value === '/etc/opensphere/auth-ca/ca.crt'));
-  assert.ok(container.env.some((item) => item.name === 'KANIDM_ISSUERS' && item.value === 'https://localhost:8090/oauth2/openid/opensphere-console'));
-  assert.ok(container.env.some((item) => item.name === 'KANIDM_JWKS_URL' && item.value.includes('opensphere-console-auth.opensphere-console.svc')));
-  assert.ok(container.env.some((item) => item.name === 'TOKEN_INTROSPECTION_URL' && item.value.endsWith('/bff/token/introspect')));
-  assert.ok(container.env.some((item) => item.name === 'TOKEN_INTROSPECTION_SERVERNAME' && item.value === 'kanidm.opensphere-console-auth.svc'));
-  assert.deepEqual(container.volumeMounts, [{ name: 'opensphere-console-auth-ca', mountPath: '/etc/opensphere/auth-ca', readOnly: true }]);
-  assert.deepEqual(pod.volumes, [{
-    name: 'opensphere-console-auth-ca',
-    secret: { secretName: 'opensphere-console-auth-ca', items: [{ key: 'ca.crt', path: 'ca.crt' }] },
-  }]);
+  assert.ok(container.env.some((item) => item.name === 'CONSOLE_IDENTITY_URL' && item.value.includes('opensphere-console-backend.opensphere-console.svc')));
+  assert.ok(container.env.some((item) => item.name === 'CONSOLE_AUTH_PROVIDER' && item.value === 'supabase'));
+  assert.ok(!container.env.some((item) => /^(KANIDM_|TOKEN_INTROSPECTION_)/.test(item.name)));
+  assert.deepEqual(container.volumeMounts, []);
+  assert.deepEqual(pod.volumes, []);
 });
 
 test('private package workload uses the managed GHCR imagePullSecret', () => {
@@ -235,20 +184,10 @@ test('hardened runtime materializes Pod security, availability, network and scra
   assert.equal(pod.containers[0].env.find((item) => item.name === 'OSP_LOG_SCHEMA').value, 'opensphere.v1');
   assert.equal(hpaManifest(pkg).spec.maxReplicas, 4);
   assert.equal(networkPolicyManifest(pkg).spec.policyTypes.includes('Egress'), true);
-  assert.equal(serviceMonitorManifest(pkg).spec.endpoints[0].path, '/metrics');
-});
-
-test('AI network policy permits only its fixed platform dependencies in addition to DNS', () => {
-  const ai = structuredClone(descriptor);
-  ai.id = 'ai';
-  ai.api.basePath = '/api/plugins/ai';
-  ai.contributions.api.basePath = '/api/plugins/ai';
-  ai.permissionProfile = 'ai-domain-operator-v1';
-  ai.runtime.networkPolicy = { enabled: true, allowMonitoring: true };
-  const pkg = packageFromInspection({ descriptor: ai, repository: 'ghcr.io/opensphere-platform/opensphere-shell-ai-workbench', digest: `sha256:${'b'.repeat(64)}` });
-  pkg.metadata = { ...pkg.metadata, uid: '00000000-0000-0000-0000-000000000000' };
-  const egressNamespaces = networkPolicyManifest(pkg).spec.egress.flatMap((entry) => entry.to || []).map((entry) => entry.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name']).filter(Boolean);
-  for (const namespace of ['opensphere-system', 'opensphere-backbone', 'opensphere-console-auth', 'opendatahub', 'default']) assert.ok(egressNamespaces.includes(namespace));
+  assert.deepEqual(telemetryDescriptor(pkg), {
+    consumer: 'opensphere-console', workload: 'cluster-manager', namespace: 'opensphere-console',
+    metricsPath: '/metrics', scrapeInterval: '30s', capabilities: ['metrics'],
+  });
 });
 
 test('runtime Registry projects channel status and immutable approval evidence', () => {

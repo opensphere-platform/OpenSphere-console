@@ -1,4 +1,10 @@
-# Phase C 마이그레이션 계획서 — 상태저장(cbs-*·kanidm) 이름·네임스페이스 정렬
+# Historical — Phase C 마이그레이션 계획서 — 상태저장(cbs-*·kanidm) 이름·네임스페이스 정렬
+
+> **Superseded (2026-07-22).** 이 문서는 이전 CBS/Kanidm 이관의 역사 기록이다.
+> 현재 정본은 `PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md`이며,
+> Data & Identity는 self-hosted Supabase, 선언형 변경은 Gitea가 소유한다.
+> `opensphere-cbs`와 `opensphere-backbone`은 물리 제거되어 이 문서를 신규
+> 배포·복구 절차로 사용하면 안 된다.
 
 - 작성일: 2026-07-12
 - 범위: `opensphere-backbone` 데이터 티어 → `opensphere-cbs`, `kanidm` → `opensphere-console-kanidm`(ns `opensphere-console-auth` 유지 권장, §6 참조)

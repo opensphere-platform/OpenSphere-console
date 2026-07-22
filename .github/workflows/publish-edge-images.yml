@@ -13,15 +13,13 @@ on:
       - public/**
       - src/**
       - nginx/**
-      - backend/identity/opensphere-console-auth/**
-      - backend/identity/kanidm-image/**
       - backend/opensphere-console-backend/**
       - backend/dupa-control/**
       - backend/opensphere-console-oaa-gateway/**
       - backend/os-cli/**
-      - backend/backbone/images/**
-      - backend/backbone/bootstrap/**
-      - backend/backbone/console-services.yaml
+      - backend/supabase/**
+      - backend/gitea/**
+      - backend/recovery/**
       - deploy/**
       - .github/workflows/publish-edge-images.yml
 
@@ -93,7 +91,7 @@ jobs:
           test "$(go env GOARCH)" = arm64
           test "$(go env CGO_ENABLED)" = 1
           go test ./...
-          go build -trimpath -ldflags="-s -w -X main.version=0.4.0" -o opensphere-cli-darwin-arm64 ./cmd/os
+          go build -trimpath -ldflags="-s -w -X main.version=0.5.0" -o opensphere-cli-darwin-arm64 ./cmd/os
           file opensphere-cli-darwin-arm64 | grep -q 'arm64'
       - name: Upload macOS CLI artifact
         uses: actions/upload-artifact@v4
@@ -114,9 +112,6 @@ jobs:
           - image: opensphere-console
             context: .
             file: OpenSphere-console/Dockerfile
-          - image: opensphere-console-auth
-            context: OpenSphere-console/backend/identity/opensphere-console-auth
-            file: OpenSphere-console/backend/identity/opensphere-console-auth/Dockerfile
           - image: opensphere-console-backend
             context: OpenSphere-console/backend/opensphere-console-backend
             file: OpenSphere-console/backend/opensphere-console-backend/Dockerfile
@@ -126,18 +121,9 @@ jobs:
           - image: opensphere-console-oaa-gateway
             context: OpenSphere-console/backend/opensphere-console-oaa-gateway
             file: OpenSphere-console/backend/opensphere-console-oaa-gateway/Dockerfile
-          - image: opensphere-console-kanidm
-            context: OpenSphere-console/backend/identity/kanidm-image
-            file: OpenSphere-console/backend/identity/kanidm-image/Dockerfile
-          - image: opensphere-cbs-postgresql
-            context: OpenSphere-console/backend/backbone/images/postgres
-            file: OpenSphere-console/backend/backbone/images/postgres/Dockerfile
-          - image: opensphere-cbs-rustfs
-            context: OpenSphere-console/backend/backbone/images/rustfs
-            file: OpenSphere-console/backend/backbone/images/rustfs/Dockerfile
-          - image: opensphere-cbs-gitea
-            context: OpenSphere-console/backend/backbone/images/gitea
-            file: OpenSphere-console/backend/backbone/images/gitea/Dockerfile
+          - image: opensphere-console-gitea
+            context: OpenSphere-console/backend/gitea/image
+            file: OpenSphere-console/backend/gitea/image/Dockerfile
     steps:
       - name: Checkout Console
         uses: actions/checkout@v4
@@ -245,25 +231,17 @@ jobs:
           [[ "$release_tag" =~ ^[0-9]{12}$ ]]
           images=(
             opensphere-console
-            opensphere-console-auth
             opensphere-console-backend
             opensphere-console-dupa-controller
             opensphere-console-oaa-gateway
-            opensphere-console-kanidm
-            opensphere-cbs-postgresql
-            opensphere-cbs-rustfs
-            opensphere-cbs-gitea
+            opensphere-console-gitea
           )
           component_keys=(
             console
-            auth
             backend
             dupaController
             oaaGateway
-            kanidm
-            cbsPostgresql
-            cbsRustfs
-            cbsGitea
+            gitea
           )
           declare -A digests
           components='{}'
@@ -311,7 +289,7 @@ jobs:
             > "$RUNNER_TEMP/opensphere-release-bom.json"
 
           jq -e --arg revision "$GITHUB_SHA" \
-            '.sourceRevision == $revision and (.components | length) == 9' \
+            '.sourceRevision == $revision and (.components | length) == 5' \
             "$RUNNER_TEMP/opensphere-release-bom.json" >/dev/null
           echo "anchor-digest=${digests[opensphere-console]}" >> "$GITHUB_OUTPUT"
           echo "release-tag=$release_tag" >> "$GITHUB_OUTPUT"
@@ -343,16 +321,12 @@ jobs:
             test "$(crane digest "$repository:$RELEASE_TAG")" = "$digest"
           }
           images=(
-            opensphere-console-auth
             opensphere-console-backend
             opensphere-console-dupa-controller
             opensphere-console-oaa-gateway
-            opensphere-console-kanidm
-            opensphere-cbs-postgresql
-            opensphere-cbs-rustfs
-            opensphere-cbs-gitea
+            opensphere-console-gitea
           )
-          component_keys=(auth backend dupaController oaaGateway kanidm cbsPostgresql cbsRustfs cbsGitea)
+          component_keys=(backend dupaController oaaGateway gitea)
 
           # Non-anchor tags may move first. Setup never samples them; it reads
           # their immutable digests from the signed BOM attached to Console.

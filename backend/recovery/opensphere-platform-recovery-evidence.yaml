@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensphere-platform-recovery-evidence
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/authority: recovery-evidence
+    opensphere.io/managed-by: gitea-change-control
+data:
+  recovery-evidence.json: |
+    {
+      "schemaVersion": "v1",
+      "generatedAt": "2026-07-22T05:51:00Z",
+      "backup": {
+        "locationRef": "operator-controlled external recovery vault",
+        "supabase": {
+          "database": {
+            "sha256": "8C1E65B1506D774E246D620BA532E75D5B028529D20AB18B4B1CAA384D1BC1D3",
+            "verified": true
+          },
+          "storage": {
+            "sha256": "6363F55657B4F713D1BB2ED7D674DBECC6AA1825145B94F0A864B7A880287FC6",
+            "verified": true
+          }
+        },
+        "gitea": {
+          "sha256": "B612B6810A4322366975E178CB2D5BA425F39F9ED07287E26B3C157879BBBD17",
+          "verified": true
+        }
+      },
+      "restore": {
+        "supabase": {
+          "state": "Verified",
+          "verifiedAt": "2026-07-22T05:47:00Z",
+          "assertions": ["auth.users=3", "console.operator=1", "audit.event=98"],
+          "checks": [
+            { "assertion": "auth.users restored", "expected": ">=1", "observed": "3", "verdict": "Verified" },
+            { "assertion": "console operators restored", "expected": ">=1", "observed": "1", "verdict": "Verified" },
+            { "assertion": "audit events restored", "expected": ">=1", "observed": "98", "verdict": "Verified" }
+          ]
+        },
+        "storage": {
+          "state": "AttentionRequired",
+          "verifiedAt": "2026-07-22T05:51:00Z",
+          "assertions": ["restored object files=0"],
+          "checks": [
+            { "assertion": "restored object files", "expected": ">=1", "observed": "0", "verdict": "InsufficientEvidence" }
+          ]
+        },
+        "gitea": {
+          "state": "AttentionRequired",
+          "verifiedAt": "2026-07-22T05:51:00Z",
+          "assertions": ["users=0", "repositories=0", "issues=0", "target deployment Ready"],
+          "checks": [
+            { "assertion": "users restored", "expected": ">=1", "observed": "0", "verdict": "InsufficientEvidence" },
+            { "assertion": "repositories restored", "expected": ">=1", "observed": "0", "verdict": "InsufficientEvidence" },
+            { "assertion": "issues restored", "expected": ">=0", "observed": "0", "verdict": "Verified" },
+            { "assertion": "target deployment", "expected": "Ready", "observed": "Ready", "verdict": "Verified" }
+          ]
+        }
+      },
+      "decommission": {
+        "approved": false,
+        "approvedBy": "",
+        "approvedAt": ""
+      }
+    }

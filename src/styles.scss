@@ -98,6 +98,41 @@
   --clr-card-border-radius: var(--os-radius);   /* 10px → 4px (플랫) */
 }
 
+/* OAA desktop dock contract.
+ *
+ * The panel itself is fixed so that its transcript can own the viewport height.
+ * The shell, however, must reserve the identical width while it is open.  Without
+ * this global contract a fixed panel silently becomes an overlay over Console
+ * content.  Keep this outside the OAA component: `.content-container` belongs to
+ * the Main Shell, not to the agent component's encapsulated stylesheet. */
+html.oaa-agent-open,
+body.oaa-agent-open {
+  overflow-x: hidden;
+}
+
+body.oaa-agent-open .content-container {
+  margin-right: calc(var(--oaa-dock-width, 390px) + var(--oaa-dock-gap, 8px));
+  transition: margin-right 160ms ease;
+}
+
+body.oaa-agent-open .content-container .content-area {
+  min-width: 0;
+}
+
+/* Full workspace is intentionally an overlay mode; it must not retain a stale
+ * dock reservation from the normal desktop state. */
+body.oaa-agent-open.oaa-agent-full .content-container {
+  margin-right: 0;
+}
+
+@media (max-width: 720px) {
+  /* Narrow layouts intentionally use the panel as an overlay/full workspace.
+   * Reserving dock width here would leave the Console unusably narrow. */
+  body.oaa-agent-open .content-container {
+    margin-right: 0;
+  }
+}
+
 /* ── 타이포 base (Carbon 규율: 중립 그로테스크 + body tracking 0.16px) ── */
 html, body { height: 100%; margin: 0; background: var(--os-surface-1); font-family: var(--os-font) !important; }
 body { letter-spacing: 0.16px; color: var(--os-ink); }
@@ -747,3 +782,303 @@ a.card:hover {
 .cm-host { overflow: hidden; resize: vertical; min-height: 120px; }
 .cm-host .cm-editor { height: 100%; }
 .cm-host .cm-editor.cm-focused { outline: none; }
+
+/* ── Console manage/* 공통 작업 화면 ───────────────────────────────────────
+ * Platform Control Plane에서 확립한 flat status rail + task toolbar 언어를
+ * 나머지 관리 화면에도 적용한다. 페이지별 데이터 모델은 유지하고, 정보
+ * 위계·상태 의미·action 위치만 공통화한다. */
+.manage-page-lead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: -0.45rem 0 0.75rem;
+}
+.manage-page-lead > p {
+  max-width: 64rem;
+  margin: 0;
+  color: var(--os-ink-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.manage-page-lead > span {
+  color: var(--os-ink-muted);
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+.manage-status-rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  margin: 0.7rem 0 0.85rem;
+  border: 1px solid var(--os-hairline);
+  background: var(--os-canvas, #fff);
+}
+.manage-status-rail > div {
+  display: grid;
+  align-content: center;
+  gap: 0.12rem;
+  min-width: 0;
+  min-height: 4.2rem;
+  padding: 0.62rem 0.72rem;
+  border-right: 1px solid var(--os-hairline);
+}
+.manage-status-rail > div:last-child { border-right: 0; }
+.manage-status-rail span,
+.manage-status-rail small {
+  overflow: hidden;
+  color: var(--os-ink-muted);
+  font-size: 0.56rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manage-status-rail strong {
+  overflow: hidden;
+  color: var(--os-ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manage-status-rail strong.ok { color: var(--os-success, #198038); }
+.manage-status-rail strong.warn { color: #8a4b00; }
+.manage-status-rail strong.danger { color: var(--os-danger, #da1e28); }
+.manage-status-rail strong.neutral { color: var(--os-ink-muted); }
+.manage-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  margin: 0 0 0.65rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--os-hairline);
+}
+.manage-toolbar-group { display: flex; align-items: flex-end; gap: 0.45rem; flex-wrap: wrap; }
+.manage-toolbar-copy { display: grid; gap: 0.08rem; }
+.manage-toolbar-copy strong { font-size: 0.72rem; }
+.manage-toolbar-copy small { color: var(--os-ink-muted); font-size: 0.57rem; }
+.manage-search {
+  width: min(22rem, 40vw);
+  min-height: 1.75rem;
+  padding: 0.28rem 0.5rem;
+  border: 1px solid var(--os-hairline);
+  border-radius: 0;
+  background: var(--os-canvas, #fff);
+  color: var(--os-ink);
+  font: inherit;
+  font-size: 0.68rem;
+}
+.manage-search:focus-visible { outline: 2px solid var(--os-accent); outline-offset: 1px; }
+.manage-filter-button {
+  min-height: 1.75rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--os-hairline);
+  background: var(--os-canvas, #fff);
+  color: var(--os-ink-muted);
+  font-size: 0.62rem;
+  cursor: pointer;
+}
+.manage-filter-button.active {
+  border-color: var(--os-accent);
+  background: var(--os-accent-subtle);
+  color: var(--os-ink);
+}
+.manage-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.85rem 0 0.35rem;
+}
+.manage-section-title h2 { margin: 0; font-size: 0.9rem; font-weight: 600; }
+.manage-section-title small { color: var(--os-ink-muted); font-size: 0.58rem; }
+.manage-empty {
+  display: grid;
+  justify-items: start;
+  gap: 0.25rem;
+  min-height: 6rem;
+  padding: 1rem;
+  border: 1px solid var(--os-hairline);
+  background: var(--os-canvas, #fff);
+  color: var(--os-ink-muted);
+  font-size: 0.64rem;
+}
+.manage-empty strong { color: var(--os-ink); font-size: 0.72rem; }
+
+@media (max-width: 64rem) {
+  .manage-status-rail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .manage-status-rail > div:nth-child(3n) { border-right: 0; }
+}
+@media (max-width: 48rem) {
+  .manage-page-lead, .manage-toolbar { display: grid; }
+  .manage-status-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .manage-status-rail > div:nth-child(3n) { border-right: 1px solid var(--os-hairline); }
+  .manage-status-rail > div:nth-child(2n) { border-right: 0; }
+  .manage-search { width: 100%; }
+}
+
+/* ── Console control-detail surfaces ──────────────────────────────────────
+ * Platform Control Plane의 header/meta/status/tab/panel 문법을 전문 관리
+ * 화면(Data & Identity, Change Control)에서도 그대로 사용한다. 데이터 모델과
+ * 심층 탭은 유지하고, 페이지를 다르게 보이게 하던 로컬 spacing/token 분기를
+ * 이 공통 표면에서 제거한다. */
+.control-detail-page {
+  display: block;
+  max-width: none;
+}
+.control-detail-page .page-lead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.4rem 0 1rem;
+}
+.control-detail-page .page-lead > p {
+  max-width: 63rem;
+  margin: 0;
+  color: var(--os-ink-muted);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+.control-detail-page .page-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--os-ink-muted);
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+.control-detail-page .page-meta strong {
+  color: var(--os-ink);
+  font-weight: 500;
+}
+.control-detail-page .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--os-accent);
+  cursor: pointer;
+}
+.control-detail-page .icon-button:hover,
+.control-detail-page .icon-button:focus-visible {
+  border-color: var(--os-accent);
+  outline: none;
+}
+.control-detail-page .icon-button[disabled] {
+  opacity: 0.45;
+  cursor: wait;
+}
+.control-detail-page .status-rail {
+  display: grid;
+  grid-template-columns: 1.05fr 0.8fr 0.95fr 0.85fr 1.15fr 1fr;
+  border: 1px solid var(--os-hairline);
+  background: var(--os-canvas, #fff);
+}
+.control-detail-page .rail-cell {
+  display: grid;
+  align-content: center;
+  gap: 0.18rem;
+  min-width: 0;
+  min-height: 4.25rem;
+  padding: 0.72rem 0.8rem;
+  border-right: 1px solid var(--os-hairline);
+}
+.control-detail-page .rail-cell:last-child { border-right: 0; }
+.control-detail-page .rail-cell > span,
+.control-detail-page .rail-cell small {
+  overflow: hidden;
+  color: var(--os-ink-muted);
+  font-size: 0.61rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.control-detail-page .rail-cell strong {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-height: 1.15rem;
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-tabs {
+  display: flex;
+  overflow-x: auto;
+  margin-top: 0.85rem;
+  border-bottom: 1px solid var(--os-hairline);
+  scrollbar-width: thin;
+}
+.workspace-tabs button {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.05rem 0.45rem;
+  flex: 0 0 auto;
+  min-width: 10.5rem;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--os-ink-muted);
+  text-align: left;
+  cursor: pointer;
+}
+.workspace-tabs button > span {
+  grid-row: 1 / 3;
+  color: var(--os-ink-subtle);
+  font-family: var(--os-font-mono);
+  font-size: 0.6rem;
+}
+.workspace-tabs button small {
+  color: var(--os-ink-subtle);
+  font-size: 0.58rem;
+}
+.workspace-tabs button.active {
+  border-bottom-color: var(--os-accent);
+  background: var(--os-canvas);
+  color: var(--os-ink);
+}
+.workspace-tabs button:focus-visible {
+  outline: 2px solid var(--os-accent);
+  outline-offset: -2px;
+}
+.control-detail-page .domain-workspace {
+  padding-top: 0.75rem;
+}
+.control-detail-page .overview-surface {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--os-hairline);
+  background: var(--os-surface-1);
+}
+.control-detail-page .overview-surface .architecture,
+.control-detail-page .overview-surface .visibility-grid,
+.control-detail-page .overview-surface .os-card,
+.control-detail-page .overview-surface .os-sub {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+@media (max-width: 78rem) {
+  .control-detail-page .status-rail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .control-detail-page .rail-cell:nth-child(3) { border-right: 0; }
+  .control-detail-page .rail-cell:nth-child(-n + 3) { border-bottom: 1px solid var(--os-hairline); }
+}
+@media (max-width: 48rem) {
+  .control-detail-page .page-lead { display: grid; }
+  .control-detail-page .page-meta { justify-content: space-between; }
+  .control-detail-page .status-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-detail-page .rail-cell { border-bottom: 1px solid var(--os-hairline) !important; }
+  .control-detail-page .rail-cell:nth-child(2n) { border-right: 0; }
+  .control-detail-page .rail-cell:nth-child(3) { border-right: 1px solid var(--os-hairline); }
+  .workspace-tabs button { display: block; min-width: 8rem; text-align: center; }
+  .workspace-tabs button small,
+  .workspace-tabs button > span { display: none; }
+  .control-detail-page .overview-surface { padding: 0.5rem; }
+}

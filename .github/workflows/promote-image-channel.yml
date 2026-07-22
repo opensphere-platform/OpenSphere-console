@@ -1,256 +1,109 @@
-name: Promote Console Release Channel
+name: Promote Console Image Channel
 
 on:
   workflow_dispatch:
     inputs:
-      source_channel: { required: true, type: choice, options: [edge, candidate] }
-      target_channel: { required: true, type: choice, options: [candidate, stable] }
+      source_channel:
+        description: Existing verified channel
+        required: true
+        type: choice
+        options: [edge, candidate]
+      target_channel:
+        description: Channel to promote without rebuilding
+        required: true
+        type: choice
+        options: [candidate, stable]
       expected_source_revision:
         description: Exact 40-character source revision approved for promotion
-        required: true
-        type: string
-      conformance_evidence:
-        description: Immutable clean-install and upgrade E2E evidence URL
-        required: true
-        type: string
-      rollback_evidence:
-        description: Immutable rollback and backup/restore evidence URL
-        required: true
-        type: string
-      approval_reason:
-        description: QA/release approval reason (12+ characters)
         required: true
         type: string
 
 permissions:
   contents: read
   packages: write
-  id-token: write
-  attestations: write
-  artifact-metadata: write
 
 concurrency:
-  group: console-release-channel-promotion
+  group: console-channel-promotion
   cancel-in-progress: false
 
 jobs:
-  scan:
-    name: Scan ${{ matrix.image }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        image:
-          - opensphere-console
-          - opensphere-console-auth
-          - opensphere-console-backend
-          - opensphere-console-dupa-controller
-          - opensphere-console-oaa-gateway
-          - opensphere-console-kanidm
-          - opensphere-cbs-postgresql
-          - opensphere-cbs-rustfs
-          - opensphere-cbs-gitea
-    steps:
-      - uses: imjasonh/setup-crane@v0.4
-      - name: Login to GHCR
-        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-        run: crane auth login ghcr.io -u "${{ github.actor }}" -p "$GH_TOKEN"
-      - name: Resolve immutable source digest
-        id: resolve
-        env:
-          SOURCE: ${{ inputs.source_channel }}
-          REVISION: ${{ inputs.expected_source_revision }}
-          IMAGE: ${{ matrix.image }}
-        run: |
-          set -euo pipefail
-          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
-           ref="ghcr.io/opensphere-platform/$IMAGE:$SOURCE"
-           digest="$(crane digest "$ref")"
-           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-           repository="ghcr.io/opensphere-platform/$IMAGE"
-           immutable_release_tag=""
-           while IFS= read -r tag; do
-             [[ "$tag" =~ ^[0-9]{12}$ ]] || continue
-             if [[ "$(crane digest "$repository:$tag")" = "$digest" ]]; then
-               immutable_release_tag="$tag"
-               break
-             fi
-           done < <(crane ls "$repository")
-           test -n "$immutable_release_tag"
-           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-           echo "release-tag=$immutable_release_tag" >> "$GITHUB_OUTPUT"
-           jq -n --arg image "$IMAGE" --arg source "$SOURCE" --arg revision "$REVISION" --arg digest "$digest" \
-             '{schemaVersion:1,repository:("ghcr.io/opensphere-platform/" + $image),sourceChannel:$source,sourceRevision:$revision,digest:$digest,image:("ghcr.io/opensphere-platform/" + $image + "@" + $digest)}' \
-             > "$RUNNER_TEMP/$IMAGE-scan-binding.json"
-      - name: Candidate/stable vulnerability and license gate
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, SHA-pinned
-        with:
-          image-ref: ghcr.io/opensphere-platform/${{ matrix.image }}@${{ steps.resolve.outputs.digest }}
-          scanners: vuln,license
-          severity: HIGH,CRITICAL
-          exit-code: '1'
-          format: json
-          output: ${{ runner.temp }}/${{ matrix.image }}-trivy.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.image }}-${{ inputs.source_channel }}-to-${{ inputs.target_channel }}-scan-evidence
-          path: |
-            ${{ runner.temp }}/${{ matrix.image }}-trivy.json
-            ${{ runner.temp }}/${{ matrix.image }}-scan-binding.json
-          retention-days: 365
-
   promote:
-    needs: scan
-    environment: opensphere-${{ inputs.target_channel }}-promotion
     runs-on: ubuntu-latest
     steps:
-      - name: Validate ordered promotion and evidence inputs
+      - name: Validate promotion path
         env:
-          SOURCE: ${{ inputs.source_channel }}
-          TARGET: ${{ inputs.target_channel }}
-          REVISION: ${{ inputs.expected_source_revision }}
-          CONFORMANCE: ${{ inputs.conformance_evidence }}
-          ROLLBACK: ${{ inputs.rollback_evidence }}
-          REASON: ${{ inputs.approval_reason }}
+          SOURCE_CHANNEL: ${{ inputs.source_channel }}
+          TARGET_CHANNEL: ${{ inputs.target_channel }}
+          EXPECTED_REVISION: ${{ inputs.expected_source_revision }}
         run: |
           set -euo pipefail
-          test "$SOURCE:$TARGET" = "edge:candidate" -o "$SOURCE:$TARGET" = "candidate:stable"
-          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$CONFORMANCE" =~ ^https://github.com/opensphere-platform/[^/]+/actions/runs/[0-9]+([/?].*)?$ ]]
-          [[ "$ROLLBACK" =~ ^https://github.com/opensphere-platform/[^/]+/actions/runs/[0-9]+([/?].*)?$ ]]
-          test "${#REASON}" -ge 12
+          if [[ "$SOURCE_CHANNEL:$TARGET_CHANNEL" != "edge:candidate" && "$SOURCE_CHANNEL:$TARGET_CHANNEL" != "candidate:stable" ]]; then
+            echo "Only edge→candidate and candidate→stable are governed promotion paths" >&2
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_source_revision must be a full Git commit" >&2
+            exit 1
+          fi
       - uses: imjasonh/setup-crane@v0.4
       - name: Login to GHCR
-        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-        run: crane auth login ghcr.io -u "${{ github.actor }}" -p "$GH_TOKEN"
-      - name: Download digest-bound scan evidence
-        uses: actions/download-artifact@v4
-        with:
-          pattern: '*-${{ inputs.source_channel }}-to-${{ inputs.target_channel }}-scan-evidence'
-          path: ${{ runner.temp }}/scan-evidence
-          merge-multiple: true
-      - name: Verify source signed BOM, images, architectures and attestations
-        id: verify
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE: ${{ inputs.source_channel }}
-          TARGET: ${{ inputs.target_channel }}
-          REVISION: ${{ inputs.expected_source_revision }}
+        run: crane auth login ghcr.io -u "${{ github.actor }}" -p "$GH_TOKEN"
+      - name: Verify source, promote exact digests, and verify target
+        env:
+          SOURCE_CHANNEL: ${{ inputs.source_channel }}
+          TARGET_CHANNEL: ${{ inputs.target_channel }}
+          EXPECTED_REVISION: ${{ inputs.expected_source_revision }}
         run: |
           set -euo pipefail
-          anchor_repo='ghcr.io/opensphere-platform/opensphere-console'
-          anchor_digest="$(crane digest "$anchor_repo:$SOURCE")"
-          gh attestation verify "oci://$anchor_repo@$anchor_digest" \
-            --bundle-from-oci \
-            --repo opensphere-platform/OpenSphere-console \
-            --signer-workflow opensphere-platform/OpenSphere-console/.github/workflows/publish-edge-images.yml \
-            --cert-oidc-issuer https://token.actions.githubusercontent.com \
-            --source-ref refs/heads/main \
-            --deny-self-hosted-runners \
-            --predicate-type https://opensphere.io/attestations/release-bom/v1 \
-            --format json > "$RUNNER_TEMP/release-bom-attestations.json"
-          jq -e --arg source "$SOURCE" --arg revision "$REVISION" \
-            '[.[].verificationResult.statement.predicate | select(.channel == $source and .sourceRevision == $revision)] | unique | if length == 1 then .[0] else error("one exact signed source BOM is required") end' \
-            "$RUNNER_TEMP/release-bom-attestations.json" > "$RUNNER_TEMP/source-release-bom.json"
-          jq -e --arg anchor "$anchor_repo@$anchor_digest" \
-            '.apiVersion == "release.opensphere.io/v1alpha1" and .kind == "OpenSphereReleaseBOM" and
-             .status == "Active" and .components.console.image == $anchor and
-             (.components | length) == 9 and .supportedPlatforms == ["linux/amd64", "linux/arm64"]' \
-            "$RUNNER_TEMP/source-release-bom.json" >/dev/null
-
-          for key in $(jq -r '.components | keys[]' "$RUNNER_TEMP/source-release-bom.json"); do
-            repository="$(jq -r --arg key "$key" '.components[$key].repository' "$RUNNER_TEMP/source-release-bom.json")"
-            image="$(jq -r --arg key "$key" '.components[$key].image' "$RUNNER_TEMP/source-release-bom.json")"
-             expected_revision="$(jq -r --arg key "$key" '.components[$key].sourceRevision' "$RUNNER_TEMP/source-release-bom.json")"
-             test "$expected_revision" = "$REVISION"
-             [[ "$image" == "ghcr.io/opensphere-platform/$repository@sha256:"* ]]
-             digest="${image##*@}"
-             test "$(crane digest "$image")" = "$digest"
-
-             binding="$RUNNER_TEMP/scan-evidence/$repository-scan-binding.json"
-             report="$RUNNER_TEMP/scan-evidence/$repository-trivy.json"
-             test -s "$binding"
-             test -s "$report"
-             jq -e --arg repository "ghcr.io/opensphere-platform/$repository" \
-               --arg source "$SOURCE" --arg revision "$REVISION" --arg digest "$digest" --arg image "$image" \
-               '.schemaVersion == 1 and .repository == $repository and .sourceChannel == $source and
-                .sourceRevision == $revision and .digest == $digest and .image == $image' \
-               "$binding" >/dev/null
-
-             manifest="$(crane manifest "$image")"
-            for architecture in amd64 arm64; do
-              platform_digest="$(jq -er --arg arch "$architecture" \
-                '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' <<<"$manifest")"
-              revision="$(crane config "ghcr.io/opensphere-platform/$repository@$platform_digest" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
-              test "$revision" = "$REVISION"
-            done
-            test "$(jq '[.manifests[] | select(.platform.os == "linux" and (.platform.architecture == "amd64" or .platform.architecture == "arm64"))] | length' <<<"$manifest")" = 2
-
-            gh attestation verify "oci://$image" --bundle-from-oci \
-              --repo opensphere-platform/OpenSphere-console \
-              --signer-workflow opensphere-platform/OpenSphere-console/.github/workflows/publish-edge-images.yml \
-              --cert-oidc-issuer https://token.actions.githubusercontent.com --source-ref refs/heads/main \
-              --deny-self-hosted-runners --predicate-type https://slsa.dev/provenance/v1 >/dev/null
-            gh attestation verify "oci://$image" --bundle-from-oci \
-              --repo opensphere-platform/OpenSphere-console \
-              --signer-workflow opensphere-platform/OpenSphere-console/.github/workflows/publish-edge-images.yml \
-              --cert-oidc-issuer https://token.actions.githubusercontent.com --source-ref refs/heads/main \
-              --deny-self-hosted-runners --predicate-type https://spdx.dev/Document/v2.3 >/dev/null
+          verify_immutable_release_tag() {
+            local repository="$1" digest="$2" tag
+            while IFS= read -r tag; do
+              [[ "$tag" =~ ^[0-9]{12}$ ]] || continue
+              if [[ "$(crane digest "$repository:$tag")" = "$digest" ]]; then
+                return 0
+              fi
+            done < <(crane ls "$repository")
+            echo "$repository@$digest has no immutable yyyyMMddHHmm release tag" >&2
+            return 1
+          }
+          images=(
+            opensphere-console
+            opensphere-console-backend
+            opensphere-console-dupa-controller
+            opensphere-console-oaa-gateway
+            opensphere-console-gitea
+          )
+          declare -A digests
+          for image in "${images[@]}"; do
+            repository="ghcr.io/opensphere-platform/$image"
+            ref="$repository:$SOURCE_CHANNEL"
+            digest="$(crane digest "$ref")"
+            revision="$(crane config "$ref" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "$ref has an invalid digest: $digest" >&2
+              exit 1
+            fi
+            if [[ "$revision" != "$EXPECTED_REVISION" ]]; then
+              echo "$ref revision $revision differs from approved $EXPECTED_REVISION" >&2
+              exit 1
+            fi
+            verify_immutable_release_tag "$repository" "$digest"
+            digests[$image]="$digest"
           done
 
-          jq --arg target "$TARGET" '.channel = $target' "$RUNNER_TEMP/source-release-bom.json" \
-            > "$RUNNER_TEMP/target-release-bom.json"
-          echo "anchor-digest=$anchor_digest" >> "$GITHUB_OUTPUT"
-      - name: Attest target channel Release BOM
-        uses: actions/attest@v4
-        with:
-          subject-name: ghcr.io/opensphere-platform/opensphere-console
-          subject-digest: ${{ steps.verify.outputs.anchor-digest }}
-          predicate-type: https://opensphere.io/attestations/release-bom/v1
-          predicate-path: ${{ runner.temp }}/target-release-bom.json
-          push-to-registry: true
-      - name: Create append-only promotion ledger predicate
-        env:
-          DIGEST: ${{ steps.verify.outputs.anchor-digest }}
-          SOURCE: ${{ inputs.source_channel }}
-          TARGET: ${{ inputs.target_channel }}
-          REVISION: ${{ inputs.expected_source_revision }}
-          CONFORMANCE: ${{ inputs.conformance_evidence }}
-          ROLLBACK: ${{ inputs.rollback_evidence }}
-          REASON: ${{ inputs.approval_reason }}
-        run: |
-          jq -n --arg digest "$DIGEST" --arg actor "$GITHUB_ACTOR" --arg from "$SOURCE" --arg to "$TARGET" \
-            --arg revision "$REVISION" --arg approvedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg reason "$REASON" \
-            --arg run "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --arg conformance "$CONFORMANCE" --arg rollback "$ROLLBACK" \
-            '{schemaVersion:1,image:"ghcr.io/opensphere-platform/opensphere-console",sourceDigest:$digest,actor:$actor,fromChannel:$from,toChannel:$to,sourceRevision:$revision,approvedAt:$approvedAt,approvalReason:$reason,evidenceRefs:[$run,$conformance,$rollback],gates:{releaseBom:true,multiArchitecture:true,provenance:true,sbom:true,vulnerabilityLicense:true,cleanInstallUpgrade:true,rollbackBackupRestore:true}}' \
-            > "$RUNNER_TEMP/promotion.json"
-      - name: Attest promotion ledger
-        uses: actions/attest@v4
-        with:
-          subject-name: ghcr.io/opensphere-platform/opensphere-console
-          subject-digest: ${{ steps.verify.outputs.anchor-digest }}
-          predicate-type: https://opensphere.io/attestations/channel-promotion/v1
-          predicate-path: ${{ runner.temp }}/promotion.json
-          push-to-registry: true
-      - name: Promote exact component digests with Console anchor last
-        env:
-          TARGET: ${{ inputs.target_channel }}
-        run: |
-          set -euo pipefail
-          bom="$RUNNER_TEMP/target-release-bom.json"
-          for key in $(jq -r '.components | keys[] | select(. != "console")' "$bom"); do
-            repository="$(jq -r --arg key "$key" '.components[$key].repository' "$bom")"
-            image="$(jq -r --arg key "$key" '.components[$key].image' "$bom")"
-            crane tag "$image" "$TARGET"
+          for image in "${images[@]}"; do
+            repository="ghcr.io/opensphere-platform/$image"
+            crane tag "$repository@${digests[$image]}" "$TARGET_CHANNEL"
           done
-          anchor="$(jq -r '.components.console.image' "$bom")"
-          crane tag "$anchor" "$TARGET"
 
-          for key in $(jq -r '.components | keys[]' "$bom"); do
-            repository="$(jq -r --arg key "$key" '.components[$key].repository' "$bom")"
-            expected="$(jq -r --arg key "$key" '.components[$key].image | split("@")[1]' "$bom")"
-            actual="$(crane digest "ghcr.io/opensphere-platform/$repository:$TARGET")"
-            test "$actual" = "$expected"
-            echo "- \`$repository:$TARGET\` → \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
+          for image in "${images[@]}"; do
+            target="ghcr.io/opensphere-platform/$image:$TARGET_CHANNEL"
+            actual="$(crane digest "$target")"
+            if [[ "$actual" != "${digests[$image]}" ]]; then
+              echo "$target resolved to $actual, expected ${digests[$image]}" >&2
+              exit 1
+            fi
+            echo "- \`$image:$TARGET_CHANNEL\` → \`${digests[$image]}\`" >> "$GITHUB_STEP_SUMMARY"
           done

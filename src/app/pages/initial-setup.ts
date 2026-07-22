@@ -146,7 +146,7 @@ export class InitialSetup implements OnDestroy {
   async begin(): Promise<void> {
     this.error.set(''); this.working.set(true);
     try {
-      const response = await fetch('/bff/setup/begin', {
+      const response = await fetch('/api/identity/bootstrap', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: this.username, displayName: this.displayName, email: this.email, password: this.password, passwordConfirm: this.passwordConfirm })
       });
@@ -165,7 +165,7 @@ export class InitialSetup implements OnDestroy {
   async finishTotp(): Promise<void> {
     this.error.set(''); this.working.set(true);
     try {
-      const response = await fetch('/bff/setup/totp', {
+      const response = await fetch('/api/identity/bootstrap/totp', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ setupId: this.setupId(), code: this.totp })
       });

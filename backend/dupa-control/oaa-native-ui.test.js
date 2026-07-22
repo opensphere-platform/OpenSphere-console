@@ -110,6 +110,20 @@ test('os-oaa-agent.ts exposes accessible open/close controls and dock resize + f
   assert.match(agent, /Expand to workspace/);
 });
 
+test('OAA desktop dock reserves Main Shell workspace instead of overlaying it', () => {
+  const styles = read('src', 'styles.scss');
+  const agent = read('src', 'app', 'os', 'os-oaa-agent.ts');
+
+  // The agent owns the fixed right panel, while the global shell stylesheet owns
+  // the corresponding workspace reservation.  Testing both sides prevents a
+  // future component restore from bringing back only the fixed panel.
+  assert.match(agent, /document\.body\.classList\.toggle\('oaa-agent-open', this\.open\(\)\)/);
+  assert.match(agent, /position:\s*fixed;\s*top:\s*3rem;\s*right:\s*0/);
+  assert.match(styles, /body\.oaa-agent-open\s+\.content-container\s*\{[\s\S]*?margin-right:\s*calc\(var\(--oaa-dock-width, 390px\) \+ var\(--oaa-dock-gap, 8px\)\)/);
+  assert.match(styles, /body\.oaa-agent-open\.oaa-agent-full\s+\.content-container\s*\{[\s\S]*?margin-right:\s*0/);
+  assert.match(styles, /@media \(max-width:\s*720px\)[\s\S]*?body\.oaa-agent-open\s+\.content-container\s*\{[\s\S]*?margin-right:\s*0/);
+});
+
 test('os-oaa-agent.ts never offers a direct UI path to execute Kubernetes mutations — suggested actions are proposals only', () => {
   const agent = read('src', 'app', 'os', 'os-oaa-agent.ts');
 

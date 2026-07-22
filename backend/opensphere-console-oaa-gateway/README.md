@@ -2,36 +2,36 @@
 
 OpenSphere AI Agent gateway.
 
-This service is a stateless Backbone tier. It uses Backbone PostgreSQL,
-Kubernetes Secrets, and Kubernetes APIs instead of storing sensitive state in the
-browser.
+This service is a stateless, Console-native OAA workload. It uses Supabase
+PostgreSQL, Console Backend policy APIs, and bounded Kubernetes read APIs
+instead of storing sensitive state or privileged credentials in the browser.
 
 ## Responsibilities
 
-- Verify Kanidm Bearer tokens.
-- Own server-side LLM API key custody.
-- Store LLM key material in `opensphere-backbone` Kubernetes Secrets.
+- Delegate session and role verification to the Supabase-backed Console identity service.
+- Keep server-side LLM provider interaction outside the browser.
+- Submit LLM key changes through the Console Backend policy and audit path.
 - Return only masked key metadata and fingerprints to the browser.
 - Call OpenAI-compatible LLM providers such as DeepSeek.
-- Store and search OpenSphere knowledge in Backbone PostgreSQL + pgvector.
+- Store and search OpenSphere knowledge in the Supabase `oaa` schema.
 - Seed OpenSphere manual documents, concepts, and relations.
 - Expose read-only Kubernetes tools for OAA.
-- Expose controlled Kubernetes actions with exact confirmation.
-- Audit key changes, tool calls, action execution, and chat completions.
+- Submit controlled Kubernetes actions only through the Console Backend after explicit confirmation.
+- Correlate key changes, tool calls, action execution, and chat completions with Supabase audit and Gitea change evidence.
 
 ## Runtime
 
-Installed by the Backbone stack installer:
+Installed as a Main Shell native workload after the Supabase and Gitea readiness gates:
 
-- Namespace: `opensphere-backbone`
-- ServiceAccount: `oaa-gateway`
-- Deployment: `oaa-gateway`
-- Service: `oaa-gateway:8080`
+- Namespace: `opensphere-console`
+- ServiceAccount: `opensphere-console-oaa-gateway`
+- Deployment: `opensphere-console-oaa-gateway`
+- Service: `opensphere-console-oaa-gateway:8080`
 - Console route: same-origin `/api/oaa/*`
 
-The deployment image is controlled by the `OAA_GATEWAY_IMAGE` environment
-variable in the Backbone installer. Local development deployments have used
-tags such as `localhost:5000/oaa-gateway:oaa-20260704-27`.
+The deployment contract is [`deploy.yaml`](deploy.yaml). Production releases
+use the Console release BOM; a local cluster may use the corresponding pinned
+local image tag.
 
 ## Key APIs
 
@@ -62,19 +62,19 @@ Read-only examples:
 ```text
 /env
 /pod-count
-/pods opensphere-backbone
-/describe deployment opensphere-backbone oaa-gateway
-/rollout opensphere-backbone oaa-gateway
+/pods opensphere-console
+/describe deployment opensphere-console opensphere-console-oaa-gateway
+/rollout opensphere-console opensphere-console-oaa-gateway
 ```
 
 Controlled write examples:
 
 ```text
-/restart opensphere-backbone oaa-gateway confirm restart deployment opensphere-backbone/oaa-gateway
+/restart opensphere-console opensphere-console-oaa-gateway confirm restart deployment opensphere-console/opensphere-console-oaa-gateway
 ```
 
 ```text
-/scale opensphere-backbone oaa-gateway 2 confirm scale deployment opensphere-backbone/oaa-gateway to 2
+/scale opensphere-console opensphere-console-oaa-gateway 2 confirm scale deployment opensphere-console/opensphere-console-oaa-gateway to 2
 ```
 
 Natural-language chat can propose action bindings. Mutating actions still need
@@ -83,7 +83,7 @@ an explicit confirmation path and admin authorization.
 ## Local Checks
 
 ```powershell
-node --check backend/oaa-gateway/server.js
+node --check backend/opensphere-console-oaa-gateway/server.js
 npm.cmd test
 npm.cmd run build
 ```

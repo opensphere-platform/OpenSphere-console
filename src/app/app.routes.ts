@@ -7,10 +7,11 @@ import { AdminPlugins } from './pages/admin-plugins';
 import { AdminRoles } from './pages/admin-roles';
 import { MyInfo } from './pages/my-info';
 import { ConsoleAdmins } from './pages/console-admins';
-import { AdminBackbone } from './pages/admin-backbone';
+import { AdminDataIdentity } from './pages/admin-data-identity';
+import { AdminChangeControl } from './pages/admin-change-control';
 import { AdminOaa } from './pages/admin-oaa';
 import { AdminObservability } from './pages/admin-observability';
-import { AdminPlatformReadiness } from './pages/admin-platform-readiness';
+import { AdminPlatformControl } from './pages/admin-platform-control';
 import { AdminNotifications } from './pages/admin-notifications';
 import { AdminAudit } from './pages/admin-audit';
 import { AdminCli } from './pages/admin-cli';
@@ -45,7 +46,7 @@ export const routes: Routes = [
   // Containers 섹션은 DUPA subShell(shell-template)로 이전됨 → 네이티브 라우트 제거. /p/shell-template 로 진입.
 
   // "콘솔 관리" 섹션 (Model A): 1단 진입 → AdminLayout이 2단 보조메뉴 + 자식 페이지를 렌더.
-  // §3.2 Core≠Plugin: 셸 네이티브 컴포넌트. 백엔드는 console-identity-api(/api/identity 프록시).
+  // §3.2 Core≠Plugin: 셸 네이티브 컴포넌트. 백엔드는 Console Backend(`/api/identity` 프록시).
   {
     path: 'manage',
     component: AdminLayout,
@@ -58,13 +59,19 @@ export const routes: Routes = [
       { path: 'console-admins', component: ConsoleAdmins },
       { path: 'extensions', component: AdminPlugins },
       { path: 'roles', component: AdminRoles },
-      { path: 'backbone', component: AdminBackbone },
-      // OAA Gateway 관리 — CONSTITUTION-0004 §4.2/§4.4. OAA Core는 Main Shell native, Gateway는 별도 CBS
-      // consumer workload. Backbone 화면에는 섞지 않고 전용 페이지로 흡수(§8 감사 판정).
+      { path: 'platform-control', component: AdminPlatformControl },
+      { path: 'data-identity', component: AdminDataIdentity },
+      { path: 'change-control', component: AdminChangeControl },
+      // Platform readiness is now part of the integrated Control Plane view.
+      // Preserve controller links and old bookmarks without reviving a parallel page.
+      { path: 'platform-readiness', redirectTo: 'platform-control', pathMatch: 'full' },
+      // Permanent compatibility path. Preserve old bookmarks without exposing
+      // the former screen in current Console navigation.
+      { path: 'backbone', redirectTo: 'data-identity', pathMatch: 'full' },
+      // OAA Core is Main Shell native; its data/audit authority is Supabase and
+      // every applied operation follows the Gitea declarative change chain.
       { path: 'oaa', component: AdminOaa },
       { path: 'observability', component: AdminObservability },
-      // Console-native lifecycle gate: HIS evidence → PlatformSupportProfile → PFS admission.
-      { path: 'platform-readiness', component: AdminPlatformReadiness },
       { path: 'notifications', component: AdminNotifications },
       { path: 'audit', component: AdminAudit },
     ],

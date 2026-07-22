@@ -27,17 +27,16 @@ import (
 	"time"
 )
 
-var version = "0.4.0"
+var version = "0.5.0"
 
 type Config struct {
 	Profile     string `json:"profile"`
-	PAT         string `json:"-"` // process-memory only: OS_PAT or one-time enrollment bootstrap
-	IDToken     string `json:"-"` // process-memory only: never persist bearer credentials
+	PAT         string `json:"-"` // process-memory only: OS_PAT automation token
 	DeviceID    string `json:"deviceId,omitempty"`
 	DeviceLabel string `json:"deviceLabel,omitempty"`
 	RegistryURL string `json:"registryUrl"`
 	APIURL      string `json:"apiUrl"`
-	BFFURL      string `json:"bffUrl"`
+	IdentityURL string `json:"identityUrl"`
 	ConsoleURL  string `json:"consoleUrl"`
 }
 
@@ -85,14 +84,13 @@ type ToolManifest struct {
 }
 
 func defaults() Config {
-	console := env("OS_CONSOLE", "http://localhost:8090")
+	console := env("OS_CONSOLE", "https://localhost:8090")
 	return Config{
 		Profile:     "admin",
 		PAT:         os.Getenv("OS_PAT"),
-		IDToken:     os.Getenv("OS_ID_TOKEN"),
 		RegistryURL: env("OS_REGISTRY", console+"/api/v1/registry"),
 		APIURL:      env("OS_API", console+"/api/proxy"),
-		BFFURL:      env("OS_BFF", console),
+		IdentityURL: env("OS_IDENTITY", console+"/api/identity/cli"),
 		ConsoleURL:  console,
 	}
 }
@@ -154,7 +152,7 @@ func saveConfig(cfg Config) error {
 	if cfg.Profile != "admin" {
 		return errors.New("현재 native os CLI는 admin 프로파일만 허용합니다; workforce는 승인된 Binding으로 추가해야 합니다")
 	}
-	for _, raw := range []string{cfg.RegistryURL, cfg.APIURL, cfg.BFFURL, cfg.ConsoleURL} {
+	for _, raw := range []string{cfg.RegistryURL, cfg.APIURL, cfg.IdentityURL, cfg.ConsoleURL} {
 		if err := validateURL(raw); err != nil {
 			return err
 		}
@@ -205,10 +203,10 @@ func requestWithContentType(cfg Config, method, rawURL string, body io.Reader, c
 	if err != nil {
 		return nil, 0, "", err
 	}
-	return rawRequest(method, rawURL, body, contentType, accessToken, cfg.IDToken)
+	return rawRequest(method, rawURL, body, contentType, accessToken)
 }
 
-func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken, idToken string) ([]byte, int, string, error) {
+func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken string) ([]byte, int, string, error) {
 	if err := validateURL(rawURL); err != nil {
 		return nil, 0, "", err
 	}
@@ -218,9 +216,6 @@ func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken,
 	}
 	if accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+accessToken)
-	}
-	if idToken != "" {
-		req.Header.Set("X-OS-Id-Token", idToken)
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -300,7 +295,7 @@ func credentialToken(cfg Config) (string, error) {
 		return "", fmt.Errorf("OS 보안 저장소에서 디바이스 키를 읽지 못했습니다: %w", err)
 	}
 	challengeBody, _ := json.Marshal(map[string]string{"deviceId": cfg.DeviceID})
-	b, status, _, err := rawRequest(http.MethodPost, join(cfg.BFFURL, "/bff/cli/challenge"), bytes.NewReader(challengeBody), "application/json", "", "")
+	b, status, _, err := rawRequest(http.MethodPost, join(cfg.IdentityURL, "/challenge"), bytes.NewReader(challengeBody), "application/json", "")
 	if err != nil {
 		return "", err
 	}
@@ -319,9 +314,9 @@ func credentialToken(cfg Config) (string, error) {
 		return "", err
 	}
 	sessionBody, _ := json.Marshal(map[string]string{
-		"deviceId": cfg.DeviceID, "challengeId": challenge.ChallengeID, "signature": signature,
+		"deviceId": cfg.DeviceID, "challengeId": challenge.ChallengeID, "nonce": challenge.Nonce, "signature": signature,
 	})
-	b, status, _, err = rawRequest(http.MethodPost, join(cfg.BFFURL, "/bff/cli/session"), bytes.NewReader(sessionBody), "application/json", "", "")
+	b, status, _, err = rawRequest(http.MethodPost, join(cfg.IdentityURL, "/session"), bytes.NewReader(sessionBody), "application/json", "")
 	if err != nil {
 		return "", err
 	}
@@ -401,8 +396,6 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return role(cfg, args[1:], out)
 	case "token":
 		return tokens(cfg, args[1:], out)
-	case "auth-policy":
-		return authPolicy(cfg, args[1:], out)
 	case "admin":
 		return admins(cfg, args[1:], out)
 	case "backbone":
@@ -425,7 +418,7 @@ func logout(cfg Config, out io.Writer) error {
 		return errors.New("등록된 CLI 디바이스가 없습니다")
 	}
 	body, _ := json.Marshal(map[string]string{"reason": "Interactive CLI logout"})
-	b, status, err := request(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/cli/devices/"+url.PathEscape(cfg.DeviceID)), bytes.NewReader(body), "application/json")
+	b, status, err := request(cfg, http.MethodDelete, join(cfg.IdentityURL, "/devices/"+url.PathEscape(cfg.DeviceID)), bytes.NewReader(body), "application/json")
 	if err != nil {
 		return err
 	}
@@ -437,7 +430,7 @@ func logout(cfg Config, out io.Writer) error {
 	if err := deviceKeyDelete(cfg.DeviceID); err != nil {
 		return err
 	}
-	cfg.DeviceID, cfg.DeviceLabel, cfg.PAT, cfg.IDToken = "", "", "", ""
+	cfg.DeviceID, cfg.DeviceLabel, cfg.PAT = "", "", ""
 	if err := saveConfig(cfg); err != nil {
 		return err
 	}
@@ -447,7 +440,7 @@ func logout(cfg Config, out io.Writer) error {
 
 func devices(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 || args[0] == "list" {
-		b, status, err := request(cfg, http.MethodGet, join(cfg.BFFURL, "/bff/cli/devices"), nil, "")
+		b, status, err := request(cfg, http.MethodGet, join(cfg.IdentityURL, "/devices"), nil, "")
 		if err != nil {
 			return err
 		}
@@ -467,7 +460,7 @@ func devices(cfg Config, args []string, out io.Writer) error {
 			return errors.New("--reason은 8자 이상의 장치 폐기 사유여야 합니다")
 		}
 		body, _ := json.Marshal(map[string]string{"reason": reason})
-		b, status, err := request(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/cli/devices/"+url.PathEscape(id)), bytes.NewReader(body), "application/json")
+		b, status, err := request(cfg, http.MethodDelete, join(cfg.IdentityURL, "/devices/"+url.PathEscape(id)), bytes.NewReader(body), "application/json")
 		if err != nil {
 			return err
 		}
@@ -492,15 +485,12 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 	cfg, _ := loadConfig()
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	pat := fs.String("pat", "", "one-time API token bootstrap (deprecated; --pat-stdin 사용)")
-	patStdin := fs.Bool("pat-stdin", false, "기존 API token으로 디바이스를 한 번 등록합니다")
 	web := fs.Bool("web", false, "브라우저 디바이스 승인(기본 동작)")
-	idToken := fs.String("id-token", "", "one-time Kanidm/OIDC id_token bootstrap")
 	host, _ := os.Hostname()
 	label := fs.String("label", strings.TrimSpace(host), "등록할 CLI 디바이스 이름")
 	registryURL := fs.String("registry", cfg.RegistryURL, "Registry URL")
 	apiURL := fs.String("api", cfg.APIURL, "API proxy URL")
-	bffURL := fs.String("bff", cfg.BFFURL, "BFF URL")
+	identityURL := fs.String("identity", cfg.IdentityURL, "Supabase Console identity URL")
 	consoleURL := fs.String("console", cfg.ConsoleURL, "Console URL")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -513,25 +503,12 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 		if !hasArg(args, "--api") {
 			*apiURL = join(*consoleURL, "/api/proxy")
 		}
-		if !hasArg(args, "--bff") {
-			*bffURL = *consoleURL
+		if !hasArg(args, "--identity") {
+			*identityURL = join(*consoleURL, "/api/identity/cli")
 		}
 	}
 	if err := validateURL(*consoleURL); err != nil {
 		return err
-	}
-	if *patStdin {
-		data, err := io.ReadAll(io.LimitReader(in, 1<<20))
-		if err != nil {
-			return fmt.Errorf("stdin에서 API token 읽기 실패: %w", err)
-		}
-		*pat = strings.TrimSpace(string(data))
-		if *pat == "" {
-			return errors.New("--pat-stdin에는 1회 bootstrap API token이 필요합니다")
-		}
-	}
-	if hasArg(args, "--pat") {
-		fmt.Fprintln(errOut, "경고: --pat는 프로세스 목록·셸 히스토리에 노출됩니다. --pat-stdin 또는 기본 브라우저 승인을 사용하세요.")
 	}
 	privateDER, publicJwk, err := generateDeviceKey()
 	if err != nil {
@@ -542,36 +519,15 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 		Label       string `json:"label"`
 		Fingerprint string `json:"fingerprint"`
 	}
-	bootstrapToken := strings.TrimSpace(*pat)
-	if bootstrapToken == "" {
-		bootstrapToken = strings.TrimSpace(*idToken)
+	registered, enrollErr := browserDeviceEnrollment(*identityURL, *label, publicJwk, out, errOut)
+	if enrollErr != nil {
+		return enrollErr
 	}
-	if bootstrapToken != "" {
-		requestBody, _ := json.Marshal(map[string]any{"label": *label, "publicJwk": publicJwk})
-		b, status, _, reqErr := rawRequest(http.MethodPost, join(*bffURL, "/bff/cli/devices"), bytes.NewReader(requestBody), "application/json", bootstrapToken, "")
-		if reqErr != nil {
-			return reqErr
-		}
-		if err := requireOK(b, status); err != nil {
-			return fmt.Errorf("디바이스 등록 실패: %w", err)
-		}
-		var response struct {
-			Device json.RawMessage `json:"device"`
-		}
-		if json.Unmarshal(b, &response) != nil || json.Unmarshal(response.Device, &device) != nil || device.ID == "" {
-			return errors.New("디바이스 등록 응답이 올바르지 않습니다")
-		}
-	} else {
-		registered, enrollErr := browserDeviceEnrollment(*bffURL, *label, publicJwk, out, errOut)
-		if enrollErr != nil {
-			return enrollErr
-		}
-		device = registered
-	}
+	device = registered
 	if err := deviceKeyStore(device.ID, privateDER); err != nil {
 		return fmt.Errorf("OS 보안 저장소에 디바이스 키 저장 실패: %w", err)
 	}
-	cfg = Config{Profile: "admin", DeviceID: device.ID, DeviceLabel: device.Label, RegistryURL: *registryURL, APIURL: *apiURL, BFFURL: *bffURL, ConsoleURL: *consoleURL}
+	cfg = Config{Profile: "admin", DeviceID: device.ID, DeviceLabel: device.Label, RegistryURL: *registryURL, APIURL: *apiURL, IdentityURL: *identityURL, ConsoleURL: *consoleURL}
 	if err := whoami(cfg, io.Discard); err != nil {
 		_ = deviceKeyDelete(device.ID)
 		return fmt.Errorf("등록 디바이스 세션 검증 실패(설정은 저장하지 않음): %w", err)
@@ -586,7 +542,7 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 
 var sleepFn = time.Sleep
 
-func browserDeviceEnrollment(bffURL, label string, publicJwk devicePublicJWK, out, errOut io.Writer) (struct {
+func browserDeviceEnrollment(identityURL, label string, publicJwk devicePublicJWK, out, errOut io.Writer) (struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
 	Fingerprint string `json:"fingerprint"`
@@ -597,7 +553,7 @@ func browserDeviceEnrollment(bffURL, label string, publicJwk devicePublicJWK, ou
 		Fingerprint string `json:"fingerprint"`
 	}
 	requestBody, _ := json.Marshal(map[string]any{"label": label, "publicJwk": publicJwk})
-	b, status, _, err := rawRequest(http.MethodPost, join(bffURL, "/bff/cli/enrollments"), bytes.NewReader(requestBody), "application/json", "", "")
+	b, status, _, err := rawRequest(http.MethodPost, join(identityURL, "/enrollments"), bytes.NewReader(requestBody), "application/json", "")
 	if err != nil {
 		return device, err
 	}
@@ -630,7 +586,7 @@ func browserDeviceEnrollment(bffURL, label string, publicJwk devicePublicJWK, ou
 	}
 	for time.Now().Before(deadline) {
 		pollBody, _ := json.Marshal(map[string]string{"pollToken": enrollment.PollToken})
-		b, status, _, err = rawRequest(http.MethodPost, join(bffURL, "/bff/cli/enrollments/"+enrollment.EnrollmentID+"/poll"), bytes.NewReader(pollBody), "application/json", "", "")
+		b, status, _, err = rawRequest(http.MethodPost, join(identityURL, "/enrollments/"+enrollment.EnrollmentID+"/poll"), bytes.NewReader(pollBody), "application/json", "")
 		if err != nil {
 			return device, err
 		}
@@ -674,8 +630,7 @@ func whoami(cfg Config, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	form := url.Values{"token": {token}}.Encode()
-	b, status, _, err := rawRequest(http.MethodPost, join(cfg.BFFURL, "/bff/token/introspect"), strings.NewReader(form), "application/x-www-form-urlencoded", token, "")
+	b, status, _, err := rawRequest(http.MethodGet, join(cfg.IdentityURL, "/introspect"), nil, "", token)
 	if err != nil {
 		return err
 	}
@@ -803,11 +758,9 @@ func role(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("사용법: os role list | grant <user> <role> --reason <사유> | revoke <user> <role> --reason <사유>")
 	}
-	method, path := http.MethodGet, "/bff/roles"
-	var body io.Reader
-	contentType := ""
 	switch args[0] {
 	case "list":
+		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/identity"), nil, out)
 	case "grant", "revoke":
 		if len(args) < 3 {
 			return fmt.Errorf("사용법: os role %s <user> <role> --reason <사유>", args[0])
@@ -817,20 +770,14 @@ func role(cfg Config, args []string, out io.Writer) error {
 		if len(reason) < 8 {
 			return errors.New("--reason은 8자 이상의 권한 변경 사유여야 합니다")
 		}
-		method, path = http.MethodPost, "/bff/roles/"+args[0]
-		body = strings.NewReader(url.Values{"user": {args[1]}, "role": {args[2]}, "reason": {reason}}.Encode())
-		contentType = "application/x-www-form-urlencoded"
+		operation := "add"
+		if args[0] == "revoke" {
+			operation = "remove"
+		}
+		return jsonCall(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/identity/users/"+url.PathEscape(args[1])+"/group"), map[string]string{"group": args[2], "op": operation, "reason": reason}, out)
 	default:
 		return fmt.Errorf("알 수 없는 role 동작: %s", args[0])
 	}
-	b, status, err := request(cfg, method, join(cfg.BFFURL, path), body, contentType)
-	if err != nil {
-		return err
-	}
-	if err := requireOK(b, status); err != nil {
-		return err
-	}
-	return pretty(out, b)
 }
 
 func jsonCall(cfg Config, method, rawURL string, payload any, out io.Writer) error {
@@ -867,47 +814,23 @@ func tokens(cfg Config, args []string, out io.Writer) error {
 	}
 	switch args[0] {
 	case "list":
-		return jsonCall(cfg, http.MethodGet, join(cfg.BFFURL, "/bff/pat"), nil, out)
+		return jsonCall(cfg, http.MethodGet, join(cfg.IdentityURL, "/tokens"), nil, out)
 	case "create":
 		flags := parseLongFlags(args[1:])
 		label, reason := strings.TrimSpace(flags["label"]), strings.TrimSpace(flags["reason"])
 		if label == "" || len(reason) < 8 {
 			return errors.New("token create에는 --label과 8자 이상의 --reason이 필요합니다")
 		}
-		form := url.Values{"label": {label}, "reason": {reason}}.Encode()
-		b, status, err := request(cfg, http.MethodPost, join(cfg.BFFURL, "/bff/pat"), strings.NewReader(form), "application/x-www-form-urlencoded")
-		if err != nil {
-			return err
-		}
-		if err := requireOK(b, status); err != nil {
-			return err
-		}
-		return pretty(out, b)
+		return jsonCall(cfg, http.MethodPost, join(cfg.IdentityURL, "/tokens"), map[string]string{"label": label, "reason": reason}, out)
 	case "revoke":
 		reason := strings.TrimSpace(parseLongFlags(args[2:])["reason"])
 		if len(args) < 2 || len(reason) < 8 {
 			return errors.New("사용법: os token revoke <jti> --reason <8자 이상 사유>")
 		}
-		return jsonCall(cfg, http.MethodDelete, join(cfg.BFFURL, "/bff/pat/"+url.PathEscape(args[1])), map[string]string{"reason": reason}, out)
+		return jsonCall(cfg, http.MethodDelete, join(cfg.IdentityURL, "/tokens/"+url.PathEscape(args[1])), map[string]string{"reason": reason}, out)
 	default:
 		return fmt.Errorf("알 수 없는 token 동작: %s", args[0])
 	}
-}
-
-func authPolicy(cfg Config, args []string, out io.Writer) error {
-	if len(args) == 0 || args[0] == "get" {
-		return jsonCall(cfg, http.MethodGet, join(cfg.BFFURL, "/bff/auth-policy"), nil, out)
-	}
-	if args[0] != "set" || len(args) < 2 || (args[1] != "enabled" && args[1] != "disabled") {
-		return errors.New("사용법: os auth-policy get | set enabled|disabled --reason <사유>")
-	}
-	reason := strings.TrimSpace(parseLongFlags(args[2:])["reason"])
-	if len(reason) < 8 {
-		return errors.New("--reason은 8자 이상의 정책 변경 사유여야 합니다")
-	}
-	return jsonCall(cfg, http.MethodPatch, join(cfg.BFFURL, "/bff/auth-policy"), map[string]any{
-		"totpEnabled": args[1] == "enabled", "reason": reason,
-	}, out)
 }
 
 func admins(cfg Config, args []string, out io.Writer) error {
@@ -1308,15 +1231,13 @@ func parseLongFlags(args []string) map[string]string {
 }
 
 func printHelp(out io.Writer) {
-	fmt.Fprintln(out, `os — OpenSphere Console native 관리자 CLI. console==cli: 동일 Registry·API·Kanidm·RBAC 소비.
+	fmt.Fprintln(out, `os — OpenSphere Console native 관리자 CLI. console==cli: 동일 Registry·API·Supabase RBAC 소비.
 
-  os login [--console URL] [--label DEVICE]   (브라우저에서 한 번 승인 → OS 보안 저장소에 디바이스 키 등록)
-  os login --pat-stdin [...]                   (기존 API token을 1회 bootstrap으로 사용; token은 저장하지 않음)
+  os login [--console URL] [--label DEVICE]   (Supabase 브라우저 세션에서 한 번 승인 → OS 보안 저장소에 디바이스 키 등록)
   os whoami
   os logout                                    (서버 디바이스 신뢰 + 로컬 키 동시 폐기)
   os device list | revoke <device-id> --reason <사유>
   os token list | create --label <이름> --reason <사유> | revoke <jti> --reason <사유>
-  os auth-policy get | set enabled|disabled --reason <사유>
   os admin list | create|enable|disable|onboard ... --reason <사유>
   os registry [--kind capability|plugin|template] [-o json]
   os catalog list | apis
@@ -1337,8 +1258,8 @@ func printHelp(out io.Writer) {
   os <namespace> [명령...] [-o json]
   os version | help
 
-현재 native 프로파일은 admin 디바이스 신뢰 + 15분 서명 세션을 사용한다. 개인키는 config.json에 저장하지 않는다.
-비대화형 자동화는 별도 API token(OS_PAT), 향후 workforce는 승인된 CLI Binding으로 분리한다.
+현재 native 프로파일은 Supabase 사용자·역할을 매 요청 확인하는 admin 디바이스 신뢰 + 15분 서명 세션을 사용한다. 개인키는 config.json에 저장하지 않는다.
+비대화형 자동화는 별도 Supabase 관리 API token(OS_PAT), 향후 workforce는 승인된 CLI Binding으로 분리한다.
 설정 ~/.os/config.json(비밀 없음) · 보안키 Windows DPAPI/macOS Keychain/Linux Secret Service.`)
 }
 

@@ -76,14 +76,14 @@ interface TreeNode {
       </clr-alert>
     }
 
-    <div class="os-summary">
-      <span class="label label-info">Catalog {{ catalog().length }}</span>
-      <span class="label label-success">Active {{ countPhase('Activated') }}</span>
-      <span class="label label-info">Ready {{ countPhase('Ready') }}</span>
-      <span class="label">Disabled {{ countPhase('Disabled') }}</span>
-      <span class="label label-danger">Failed {{ countPhase('Failed') }}</span>
-      <span class="label label-info">Bindings {{ bindings().length }}</span>
-    </div>
+    <section class="manage-status-rail" aria-label="Extension 운영 상태">
+      <div><span>Catalog</span><strong>{{ catalog().length }}</strong><small>서명된 패키지</small></div>
+      <div><span>Active</span><strong class="ok">{{ countPhase('Activated') }}</strong><small>메뉴·workload 활성</small></div>
+      <div><span>Ready</span><strong>{{ countPhase('Ready') }}</strong><small>활성화 대기</small></div>
+      <div><span>Disabled</span><strong class="neutral">{{ countPhase('Disabled') }}</strong><small>운영 제외</small></div>
+      <div><span>Failed</span><strong [class.danger]="countPhase('Failed') > 0">{{ countPhase('Failed') }}</strong><small>검토 필요</small></div>
+      <div><span>Bindings</span><strong>{{ bindings().length }}</strong><small>headless channels</small></div>
+    </section>
 
     <clr-accordion class="management-actions">
       <clr-accordion-panel>
@@ -128,7 +128,7 @@ interface TreeNode {
       <div class="registry-access-head">
         <div>
           <h2 id="revocation-title">OCI image revocation ledger</h2>
-          <p class="os-sub">취약하거나 손상된 exact digest를 Backbone PostgreSQL의 append-only 원장에 철회합니다. 철회는 수정·삭제할 수 없고 신규 설치 및 활성 Registry 투영을 차단합니다.</p>
+          <p class="os-sub">취약하거나 손상된 exact digest를 Supabase append-only 원장에 철회합니다. 철회는 수정·삭제할 수 없고 신규 설치 및 활성 Registry 투영을 차단합니다.</p>
         </div>
         <span class="label label-danger">Revoked {{ revocations().length }}</span>
       </div>
@@ -189,7 +189,7 @@ interface TreeNode {
           <span class="os-mono">{{ plan.descriptor.permissions.join(', ') }}</span>
         </div>
         @if (foundationActivationLocked(plan.descriptor.id)) {
-          <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">Foundation은 Ready 상태까지 사전 설치할 수 있습니다. 메뉴 활성화는 Platform Support Profile Ready 이후에 허용됩니다. <a routerLink="/manage/platform-readiness">플랫폼 준비 상태 확인</a></span></clr-alert-item></clr-alert>
+          <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">Foundation은 Ready 상태까지 사전 설치할 수 있습니다. 메뉴 활성화는 Platform Support Profile Ready 이후에 허용됩니다. <a routerLink="/manage/platform-control">Control Plane에서 준비 상태 확인</a></span></clr-alert-item></clr-alert>
         }
       }
     </section>
@@ -679,12 +679,6 @@ interface TreeNode {
       .os-mono {
         font-family: monospace;
         font-size: 0.62rem;
-      }
-      .os-summary {
-        margin: 0.4rem 0 0.8rem;
-      }
-      .os-summary .label {
-        margin-right: 0.3rem;
       }
       .management-actions {
         display: block;

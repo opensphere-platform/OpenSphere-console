@@ -42,9 +42,6 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: [networkpolicies]
     verbs: [get, list, create, update, patch, delete]
-  - apiGroups: ["monitoring.coreos.com"]
-    resources: [servicemonitors]
-    verbs: [get, list, create, update, patch, delete]
   - apiGroups: [""]
     resources: [services, serviceaccounts, configmaps, secrets]
     verbs: [get, list, create, update, patch, delete]
@@ -60,38 +57,25 @@ subjects:
     name: opensphere-console-dupa-controller
     namespace: opensphere-console
 ---
-# Backbone ?ㅼ튂 沅뚰븳(opensphere-backbone) ??namespace ?앹꽦 + ?곗씠???곗뼱 ?뚰겕濡쒕뱶. admin 寃뚯씠??verifyActor) ?ㅼ뿉?쒕쭔 ?ъ슜.
-# 蹂꾨룄 ClusterRole濡?遺꾨━(??least-privilege Role 蹂댁〈, 沅뚰븳 紐낆떆쨌媛먯궗 ?⑹씠).
+# Console-wide evidence is read-only.  Runtime mutation is constrained to the
+# namespace Role above; no data-stack installer or claim reconciler exists.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
-metadata: { name: dupa-backbone-installer }
+metadata: { name: dupa-console-evidence-reader }
 rules:
-  - { apiGroups: [""], resources: [namespaces], verbs: [get, list, create] }
-  # secrets delete: BackboneClaim finalizer GC(?뚮꼳??Secret ?뚯닔)???꾩슂
-  - { apiGroups: [""], resources: [secrets, services, serviceaccounts, persistentvolumeclaims, configmaps, pods], verbs: [get, list, create, patch, delete] }
-  - { apiGroups: ["apps"], resources: [deployments, statefulsets], verbs: [get, list, create, patch] }
-  - { apiGroups: ["rbac.authorization.k8s.io"], resources: [roles, rolebindings], verbs: [get, list, create, patch, delete] }
-  # BackboneClaim ?좊떦 而⑦듃濡ㅻ윭 ??claim watch/reconcile + status + finalizer
-  - { apiGroups: ["backbone.opensphere.io"], resources: [backboneclaims, backboneclaims/status, backboneclaims/finalizers], verbs: [get, list, watch, update, patch] }
-  # Console-native os CLI read-only resource plane. Controller code applies an
-  # additional exact path allowlist and accepts GET only.
+  - { apiGroups: [""], resources: [namespaces], verbs: [get, list] }
   - { apiGroups: ["config.opensphere.io"], resources: [platformconfigs], verbs: [get, list] }
   - { apiGroups: ["platform.opensphere.io"], resources: [platformversions], verbs: [get, list] }
-  # Platform readiness evidence reads. Mutation of these resources remains outside DUPA.
-  - { apiGroups: ["batch"], resources: [jobs, cronjobs], verbs: [get, list] }
   - { apiGroups: ["networking.k8s.io"], resources: [networkpolicies], verbs: [get, list] }
   - { apiGroups: ["admissionregistration.k8s.io"], resources: [validatingwebhookconfigurations], verbs: [get, list] }
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterrolebindings], verbs: [get, list] }
-  - { apiGroups: ["observability.opensphere.io"], resources: [observabilityclaims], verbs: [get, list] }
-  # Observability ?뺣낫 酉???ServiceMonitor ?몃깽?좊━ ?쎄린(monitoring ns ?뚮뱶/?쒕퉬?ㅻ뒗 ??core 洹쒖튃?쇰줈 而ㅻ쾭).
-  - { apiGroups: ["monitoring.coreos.com"], resources: [servicemonitors], verbs: [get, list] }
-  # Workload event identity: projected ServiceAccount token validation (shared service secret 금지).
+  - { apiGroups: ["observability.opensphere.io"], resources: [observabilitybindings], verbs: [get, list] }
   - { apiGroups: ["authentication.k8s.io"], resources: [tokenreviews], verbs: [create] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
-metadata: { name: dupa-backbone-installer }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-backbone-installer }
+metadata: { name: dupa-console-evidence-reader }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-console-evidence-reader }
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
 ---
@@ -121,56 +105,9 @@ rules:
   - { apiGroups: [jobset.x-k8s.io], resources: [jobsets], verbs: [get, list, watch] }
   - { apiGroups: [cert-manager.io], resources: [issuers, clusterissuers, certificates, certificaterequests], verbs: [get, list, watch] }
   - { apiGroups: [acme.cert-manager.io], resources: [challenges, orders], verbs: [get, list, watch] }
-  - apiGroups: [kubevirt.io, subresources.kubevirt.io, cdi.kubevirt.io, instancetype.kubevirt.io, migrations.kubevirt.io, snapshot.storage.k8s.io, forklift.konveyor.io, monitoring.coreos.com, ceph.rook.io, template.openshift.io, fleet.opensphere.io, cluster.open-cluster-management.io]
+  - apiGroups: [kubevirt.io, subresources.kubevirt.io, cdi.kubevirt.io, instancetype.kubevirt.io, migrations.kubevirt.io, snapshot.storage.k8s.io, forklift.konveyor.io, ceph.rook.io, template.openshift.io, fleet.opensphere.io, cluster.open-cluster-management.io]
     resources: ["*"]
     verbs: [get, list, watch]
----
-# Cluster Manager 전용 HIS 관리 profile. 브라우저에는 이 credential이
-# 노출되지 않으며 backend의 고정 chart catalog만 Helm을 실행한다.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: opensphere-module-cluster-his-manager-v1
-  labels: { opensphere.io/managed-by: dupa }
-rules:
-  # cluster-observer-v1 read surface
-  - { apiGroups: [""], resources: [namespaces, nodes, pods, pods/log, services, endpoints, persistentvolumeclaims, persistentvolumes, events, configmaps, limitranges, resourcequotas, serviceaccounts, replicationcontrollers], verbs: [get, list, watch] }
-  - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets, controllerrevisions], verbs: [get, list, watch] }
-  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
-  - { apiGroups: [storage.k8s.io], resources: [storageclasses, csidrivers, csinodes, volumeattachments], verbs: [get, list, watch] }
-  - { apiGroups: [networking.k8s.io], resources: [ingresses, networkpolicies, ingressclasses], verbs: [get, list, watch] }
-  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch] }
-  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch] }
-  - { apiGroups: [autoscaling.k8s.io], resources: [verticalpodautoscalers], verbs: [get, list, watch] }
-  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch] }
-  - { apiGroups: [scheduling.k8s.io], resources: [priorityclasses], verbs: [get, list, watch] }
-  - { apiGroups: [node.k8s.io], resources: [runtimeclasses], verbs: [get, list, watch] }
-  - { apiGroups: [coordination.k8s.io], resources: [leases], verbs: [get, list, watch] }
-  - { apiGroups: [rbac.authorization.k8s.io], resources: [roles, rolebindings, clusterroles, clusterrolebindings], verbs: [get, list, watch] }
-  - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch] }
-  - { apiGroups: [metrics.k8s.io], resources: [nodes, pods], verbs: [get, list] }
-  - { apiGroups: [jobset.x-k8s.io], resources: [jobsets], verbs: [get, list, watch] }
-  - { apiGroups: [cert-manager.io], resources: [issuers, clusterissuers, certificates, certificaterequests], verbs: [get, list, watch] }
-  - { apiGroups: [acme.cert-manager.io], resources: [challenges, orders], verbs: [get, list, watch] }
-  - apiGroups: [kubevirt.io, subresources.kubevirt.io, cdi.kubevirt.io, instancetype.kubevirt.io, migrations.kubevirt.io, snapshot.storage.k8s.io, forklift.konveyor.io, monitoring.coreos.com, ceph.rook.io, template.openshift.io, fleet.opensphere.io, cluster.open-cluster-management.io]
-    resources: ["*"]
-    verbs: [get, list, watch]
-  # Helm-managed HIS allowlist surface
-  - { apiGroups: [""], resources: [namespaces, serviceaccounts, services, configmaps, secrets, pods, persistentvolumeclaims, endpoints, events], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [batch], resources: [jobs], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [networking.k8s.io], resources: [ingresses, ingressclasses, networkpolicies], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [coordination.k8s.io], resources: [leases], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [admissionregistration.k8s.io], resources: [validatingwebhookconfigurations, mutatingwebhookconfigurations], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [apiregistration.k8s.io], resources: [apiservices], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [cert-manager.io], resources: [issuers, clusterissuers, certificates, certificaterequests], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [acme.cert-manager.io], resources: [challenges, orders], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [monitoring.coreos.com], resources: [prometheuses, alertmanagers, prometheusrules, servicemonitors, podmonitors, probes, thanosrulers, scrapeconfigs, alertmanagerconfigs], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [rbac.authorization.k8s.io], resources: [roles, clusterroles], verbs: [get, list, watch, create, update, patch, delete, bind, escalate] }
-  - { apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings, clusterrolebindings], verbs: [get, list, watch, create, update, patch, delete] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -178,8 +115,8 @@ metadata:
   name: opensphere-module-cluster-infrastructure-manager-v1
   labels: { opensphere.io/managed-by: dupa }
 rules:
-  # cluster-infrastructure-manager-v1 is the fixed Cluster Manager profile:
-  # HIS allowlist plus consumer-side external storage integration resources.
+  # Console-side storage integration only. HIS lifecycle is never delegated
+  # through a Console module permission profile.
   - { apiGroups: [""], resources: [namespaces, nodes, pods, pods/log, services, endpoints, persistentvolumeclaims, persistentvolumes, events, configmaps, limitranges, resourcequotas, serviceaccounts, replicationcontrollers], verbs: [get, list, watch] }
   - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets, controllerrevisions], verbs: [get, list, watch] }
   - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
@@ -198,24 +135,9 @@ rules:
   - { apiGroups: [jobset.x-k8s.io], resources: [jobsets], verbs: [get, list, watch] }
   - { apiGroups: [cert-manager.io], resources: [issuers, clusterissuers, certificates, certificaterequests], verbs: [get, list, watch] }
   - { apiGroups: [acme.cert-manager.io], resources: [challenges, orders], verbs: [get, list, watch] }
-  - apiGroups: [kubevirt.io, subresources.kubevirt.io, cdi.kubevirt.io, instancetype.kubevirt.io, migrations.kubevirt.io, snapshot.storage.k8s.io, forklift.konveyor.io, monitoring.coreos.com, ceph.rook.io, template.openshift.io, fleet.opensphere.io, cluster.open-cluster-management.io]
+  - apiGroups: [kubevirt.io, subresources.kubevirt.io, cdi.kubevirt.io, instancetype.kubevirt.io, migrations.kubevirt.io, snapshot.storage.k8s.io, forklift.konveyor.io, ceph.rook.io, template.openshift.io, fleet.opensphere.io, cluster.open-cluster-management.io]
     resources: ["*"]
     verbs: [get, list, watch]
-  - { apiGroups: [""], resources: [namespaces, serviceaccounts, services, configmaps, secrets, pods, persistentvolumeclaims, endpoints, events], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [batch], resources: [jobs], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [networking.k8s.io], resources: [ingresses, ingressclasses, networkpolicies], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [coordination.k8s.io], resources: [leases], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [admissionregistration.k8s.io], resources: [validatingwebhookconfigurations, mutatingwebhookconfigurations], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [apiregistration.k8s.io], resources: [apiservices], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [cert-manager.io], resources: [issuers, clusterissuers, certificates, certificaterequests], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [acme.cert-manager.io], resources: [challenges, orders], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [monitoring.coreos.com], resources: [prometheuses, alertmanagers, prometheusrules, servicemonitors, podmonitors, probes, thanosrulers, scrapeconfigs, alertmanagerconfigs], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [rbac.authorization.k8s.io], resources: [roles, clusterroles], verbs: [get, list, watch, create, update, patch, delete, bind, escalate] }
-  - { apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings, clusterrolebindings], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [storage.k8s.io], resources: [storageclasses], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [snapshot.storage.k8s.io], resources: [volumesnapshotclasses], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [snapshot.storage.k8s.io], resources: [volumesnapshots], verbs: [get, list, watch, create, update, patch, delete] }
@@ -223,72 +145,13 @@ rules:
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
-metadata:
-  name: opensphere-module-ai-domain-operator-v1
-  labels: { opensphere.io/managed-by: dupa }
-rules:
-  - { apiGroups: [""], resources: [nodes, namespaces, pods, pods/log, services, configmaps, events], verbs: [get, list, watch] }
-  - { apiGroups: [apps], resources: [deployments, replicasets, statefulsets], verbs: [get, list, watch] }
-  - { apiGroups: [batch], resources: [jobs], verbs: [get, list, watch] }
-  - { apiGroups: [storage.k8s.io], resources: [storageclasses], verbs: [get, list, watch] }
-  - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch] }
-  - { apiGroups: [authorization.k8s.io], resources: [selfsubjectaccessreviews], verbs: [create] }
-  - { apiGroups: [""], resources: [users], verbs: [impersonate] }
-  - { apiGroups: [operators.coreos.com], resources: [operatorgroups, subscriptions, installplans, clusterserviceversions], verbs: [get, list, watch] }
-  - { apiGroups: [kubeflow.org], resources: [notebooks], verbs: [get, list, watch] }
-  - { apiGroups: [serving.kserve.io], resources: [servingruntimes, clusterservingruntimes, inferenceservices], verbs: [get, list, watch] }
-  - { apiGroups: [modelregistry.opendatahub.io], resources: [modelregistries], verbs: [get, list, watch] }
-  - { apiGroups: [trustyai.opendatahub.io], resources: [trustyaiservices], verbs: [get, list, watch] }
-  - { apiGroups: [kueue.x-k8s.io], resources: [workloads, clusterqueues, localqueues, resourceflavors], verbs: [get, list, watch] }
-  - { apiGroups: [ray.io], resources: [rayclusters, rayjobs, rayservices], verbs: [get, list, watch] }
-  - { apiGroups: [tekton.dev], resources: [pipelines, pipelineruns], verbs: [get, list, watch] }
-  - { apiGroups: [datasciencepipelinesapplications.opendatahub.io], resources: [datasciencepipelinesapplications, datasciencepipelinesapplications/api], verbs: [get, list, watch] }
-  - { apiGroups: [datasciencecluster.opendatahub.io], resources: [datascienceclusters], verbs: [get, list, watch] }
-  - { apiGroups: [backbone.opensphere.io], resources: [backboneclaims], verbs: [get, list, watch] }
-  - { apiGroups: [orchestrator.ai.opensphere.io], resources: [aiagents, promptlibraries, toolclaims, agenttracepolicies], verbs: [get, list, watch] }
-  - { apiGroups: [ai.foundation.opensphere.io], resources: [llmrouteclaims, vectorretrievalclaims], verbs: [get, list, watch] }
-  - { apiGroups: [ai.opensphere.io], resources: [aitrainingstacks, workbenchclaims, dataconnectionclaims, computebackendclaims, datasetclaims, trainingjobclaims, modelpromotionclaims, inferenceclaims, pipelineclaims, pipelinerunclaims, experimentclaims, executionclaims, artifactclaims, monitoringtargets, distributedworkloadclaims, openspherecomponentcatalogs, openspherecomponentversions, openspheresubscriptions, opensphereinstallplans, openspheredatascienceclusters], verbs: [get, list, watch] }
-  - { apiGroups: [eval.ai.opensphere.io], resources: [evaluationpolicies, evaluationjobs], verbs: [get, list, watch] }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: opensphere-module-ai-domain-operator-v1
-  namespace: opensphere-system
-  labels: { opensphere.io/managed-by: dupa }
-rules:
-  - { apiGroups: [""], resources: [services, persistentvolumeclaims, configmaps, events], verbs: [get, list, watch, create, update, patch, delete] }
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [oah-external-gpu-credentials, ai-hub-backbone-postgres, ai-hub-backbone-postgres-app, oah-dspa-postgres, ai-hub-backbone-rustfs, ai-hub-kserve-s3, ds-pipelines-proxy-tls-oah-dspa, ds-pipelines-envoy-proxy-tls-oah-dspa, opensphere-wildcard-tls, shell-service-token]
-    verbs: [get, update, patch]
-  - { apiGroups: [""], resources: [secrets], verbs: [create] }
-  - { apiGroups: [""], resources: [serviceaccounts], resourceNames: [ai-runtime], verbs: [get, update, patch] }
-  - { apiGroups: [apps], resources: [deployments], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [batch], resources: [jobs], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [networking.k8s.io], resources: [networkpolicies], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [kubeflow.org], resources: [notebooks], verbs: [update, patch] }
-  - { apiGroups: [serving.kserve.io], resources: [inferenceservices], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [ray.io], resources: [rayjobs], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [tekton.dev], resources: [pipelineruns], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [datasciencepipelinesapplications.opendatahub.io], resources: [datasciencepipelinesapplications], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [orchestrator.ai.opensphere.io], resources: [aiagents, promptlibraries, toolclaims, agenttracepolicies, aiagents/status, promptlibraries/status, toolclaims/status, agenttracepolicies/status], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [ai.foundation.opensphere.io], resources: [llmrouteclaims, vectorretrievalclaims, llmrouteclaims/status, vectorretrievalclaims/status], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [ai.opensphere.io], resources: [aitrainingstacks, workbenchclaims, dataconnectionclaims, computebackendclaims, datasetclaims, trainingjobclaims, modelpromotionclaims, inferenceclaims, pipelineclaims, pipelinerunclaims, experimentclaims, executionclaims, artifactclaims, monitoringtargets, distributedworkloadclaims, openspheresubscriptions, opensphereinstallplans, openspheredatascienceclusters, workbenchclaims/status, dataconnectionclaims/status, computebackendclaims/status, datasetclaims/status, trainingjobclaims/status, pipelineclaims/status, pipelinerunclaims/status, experimentclaims/status, executionclaims/status, artifactclaims/status, inferenceclaims/status, modelpromotionclaims/status, monitoringtargets/status, distributedworkloadclaims/status, openspheresubscriptions/status, opensphereinstallplans/status, openspheredatascienceclusters/status], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [backbone.opensphere.io], resources: [backboneclaims], verbs: [create, update, patch] }
-  - { apiGroups: [eval.ai.opensphere.io], resources: [evaluationpolicies, evaluationjobs, evaluationpolicies/status, evaluationjobs/status], verbs: [get, list, watch, create, update, patch, delete] }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
 metadata: { name: dupa-module-profile-installer }
 rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [clusterroles]
-    resourceNames: [opensphere-module-cluster-observer-v1, opensphere-module-cluster-his-manager-v1, opensphere-module-cluster-infrastructure-manager-v1, opensphere-module-ai-domain-operator-v1]
+    resourceNames: [opensphere-module-cluster-observer-v1, opensphere-module-cluster-infrastructure-manager-v1]
     verbs: [get, bind]
   - { apiGroups: [rbac.authorization.k8s.io], resources: [clusterrolebindings], verbs: [get, list, create, patch, delete] }
-  - { apiGroups: [rbac.authorization.k8s.io], resources: [roles], resourceNames: [opensphere-module-ai-domain-operator-v1], verbs: [get] }
-  - { apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings], verbs: [get, list, create, patch, delete] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -321,7 +184,7 @@ spec:
         - name: controller
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
           # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console-dupa-controller@sha256:<digest>로 고정.
-          image: ghcr.io/opensphere-platform/opensphere-console-dupa-controller:2.0.0-rc.1
+          image: opensphere-console-dupa:manage-audit-v9
           imagePullPolicy: IfNotPresent
           env:
             - { name: NAMESPACE, value: opensphere-console }
@@ -333,40 +196,14 @@ spec:
             # GitHub attestation verification uses only this writable cache; the image root remains read-only.
             - { name: HOME, value: /tmp/gh-home }
             - { name: GH_CONFIG_DIR, value: /tmp/gh-config }
-            # Backbone PostgreSQL(媛먯궗濡쒓렇 ?곸냽, ??. 鍮꾨쾲? cross-ns secretKeyRef 遺덇? ??
-            #   而⑦듃濡ㅻ윭媛 opensphere-backbone/backbone-postgres Secret??K8s API濡??쎌뼱 二쇱엯(dupa-backbone-installer RBAC).
-            #   媛믪? 肄붾뱶 湲곕낯媛믨낵 ?숈씪(?ㅻ쾭?쇱씠??臾몄꽌?붿슜). 誘몄꽕移???媛먯궗濡쒓렇??ConfigMap ?대갚.
-            - { name: BACKBONE_PG_HOST, value: backbone-postgres.opensphere-backbone.svc.cluster.local }
-            - { name: BACKBONE_PG_PORT, value: "5432" }
-            - { name: BACKBONE_PG_DB, value: console }
-            - { name: BACKBONE_PG_USER, value: console }
-            - { name: BACKBONE_PG_SECRET_NS, value: opensphere-backbone }
-            - { name: BACKBONE_PG_SECRET, value: backbone-postgres }
-            # Backbone RustFS(S3) ??BackboneClaim objectStore ?좊떦(踰꾪궥 ?앹꽦 + ?뚮꼳??Secret).
-            #   ?몄뒪?댁뒪 ?ㅻ뒗 而⑦듃濡ㅻ윭媛 opensphere-backbone/backbone-rustfs Secret??K8s API濡??쎌쓬(dupa-backbone-installer RBAC).
-            #   媛믪? 肄붾뱶 湲곕낯媛믨낵 ?숈씪(?ㅻ쾭?쇱씠??臾몄꽌?붿슜). 誘몄꽕移???objectStore??Pending.
-            - { name: BACKBONE_S3_ENDPOINT, value: https://backbone-rustfs.opensphere-backbone.svc.cluster.local:9000 }
-            - { name: BACKBONE_S3_REGION, value: us-east-1 }
-            - { name: BACKBONE_S3_CA_PATH, value: /etc/kanidm-ca/ca.crt }
-            # Kanidm id_token 발급자(iss) 검증값 — 도메인 운영 전환(auth.console.opensphere.dev) 반영.
-            - { name: KANIDM_ISSUERS, value: "__OPENSPHERE_CONSOLE_URL__/oauth2/openid/opensphere-console" }
-            - { name: KANIDM_JWKS_URL, value: "https://opensphere-console-auth.opensphere-console.svc:8443/oauth2/openid/opensphere-console/public_key.jwk" }
-            - { name: KANIDM_CA_PATH, value: /etc/kanidm-ca/ca.crt }
-            # BFF 발급 PAT는 매 요청 서버측 상태 검사. 폐기 후 서명 만료까지 살아남는 우회를 금지한다.
-            - { name: TOKEN_INTROSPECTION_URL, value: https://opensphere-console-auth.opensphere-console.svc:8443/bff/token/introspect }
-            - { name: TOKEN_INTROSPECTION_SERVERNAME, value: kanidm.opensphere-console-auth.svc }
-            # Admin CLI/browser bearer authentication follows the Console auth provider.
-            # Supabase tokens are live-checked against operator and role records; no
-            # JWT or service credential is exposed to the client process.
-            - { name: AUTH_PROVIDER, value: supabase }
-            - { name: SUPABASE_AUTH_ISSUER, value: "__OPENSPHERE_CONSOLE_URL__/auth/v1" }
-            - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
-            - { name: SUPABASE_REST_URL, value: http://opensphere-supabase-rest.opensphere-cbs.svc.cluster.local:3000 }
-            - { name: SUPABASE_RUNTIME_SECRET_NS, value: opensphere-console }
-            - { name: SUPABASE_RUNTIME_SECRET, value: opensphere-supabase-runtime }
-            - { name: SUPABASE_ADMIN_GROUP, value: console-admins }
+            # Supabase audit is the controller's only durable data authority.
+            # 모든 Console 권한은 Supabase-backed Console identity service가 단일 검증한다.
+            - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
+            - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
+            - { name: SUPABASE_REST_URL, value: http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000 }
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: service-role-key } }
           volumeMounts:
-            - { name: kanidm-ca, mountPath: /etc/kanidm-ca, readOnly: true }
             # Optional private GHCR access. Standard kubernetes.io/dockerconfigjson Secret;
             # credentials are consumed as a file and never projected into process environment.
             - { name: opensphere-ghcr, mountPath: /var/run/secrets/opensphere-ghcr, readOnly: true }
@@ -382,10 +219,6 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
       volumes:
-        - name: kanidm-ca
-          secret:
-            secretName: opensphere-console-auth-ca
-            items: [{ key: ca.crt, path: ca.crt }]
         - name: opensphere-ghcr
           secret:
             secretName: opensphere-ghcr-pull
@@ -401,7 +234,7 @@ metadata:
   namespace: opensphere-console
   labels: { app: opensphere-console-dupa-controller }
 spec:
-  # Backbone 장애 시에도 소비자가 Controller의 명시적 503 응답을 받아
+  # Data & Identity authority 장애 시에도 소비자가 Controller의 명시적 503 응답을 받아
   # 연결 타임아웃/모호한 5xx로 상태를 오인하지 않도록 한다.
   publishNotReadyAddresses: true
   selector: { app: opensphere-console-dupa-controller }
