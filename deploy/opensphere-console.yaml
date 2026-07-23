@@ -55,7 +55,9 @@ spec:
                   ! grep -aRqs '/bff/cli' /usr/share/nginx/html/api/cli/opensphere-cli-*
             # Authentication uses /api/identity/cli/; retired BFF artifacts fail readiness.
             initialDelaySeconds: 2
-            timeoutSeconds: 5
+            # Contract checks scan the production bundle. Constrained single-node
+            # bootstrap clusters can legitimately need more than five seconds.
+            timeoutSeconds: 15
             periodSeconds: 10
           livenessProbe:
             httpGet: { path: /index.html, port: 8080 }
