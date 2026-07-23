@@ -181,10 +181,13 @@ ALTER ROLE supabase_storage_admin LOGIN PASSWORD '$escapedPostgresPassword';
 Invoke-SupabasePsql $supabaseServiceRoleSql
 
 # The initial manifest is intentionally applied before its Secret can exist.
-# Restart the API deployments now that their role passwords are valid; a pod
-# that failed its first database connection will otherwise remain in a long
-# CrashLoopBackOff window on an existing namespace.
-foreach ($workload in @('opensphere-supabase-auth', 'opensphere-supabase-rest', 'opensphere-supabase-storage')) {
+# Restart Auth and Storage now that their role passwords are valid; a pod that
+# failed its first database connection will otherwise remain in a long
+# CrashLoopBackOff window on an existing namespace. PostgREST is deliberately
+# deferred until the Console migrations create every schema named by
+# PGRST_DB_SCHEMAS. Waiting for it here deadlocks a fresh install because its
+# readiness endpoint remains 503 while `console` and `audit` do not yet exist.
+foreach ($workload in @('opensphere-supabase-auth', 'opensphere-supabase-storage')) {
   Invoke-Kubectl @('-n', $Namespace, 'rollout', 'restart', "deployment/$workload")
   Invoke-Kubectl @('-n', $Namespace, 'rollout', 'status', "deployment/$workload", '--timeout=10m')
 }

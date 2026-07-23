@@ -19,6 +19,9 @@ test('fresh Gitea install is digest-locked, resumable, and owns the safe zero-to
   assert.match(installer, /scale', 'deployment\/opensphere-gitea', '--replicas=1'/);
   assert.doesNotMatch(installer, /--from-literal/);
   assert.match(manifest, /name: opensphere-gitea[\s\S]+?replicas: 0/);
+  assert.match(controlPlane, /"\$command`n#"\s*\|\s*& kubectl/);
+  assert.match(controlPlane, /"\$protectionsCommand`n#"/);
+  assert.match(controlPlane, /"\$hooksCommand`n#"/);
 });
 
 test('Gitea change authority keeps signing and control credentials server-side', () => {

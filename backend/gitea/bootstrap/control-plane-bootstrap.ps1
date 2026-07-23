@@ -63,7 +63,7 @@ if (-not $token) {
     # Send the one-use password through kubectl exec stdin. It must never be a
     # host process argument, shell-history entry, log line, or retained Secret.
     $createUser = "set -eu`nexec gitea --config /etc/gitea/app.ini admin user create --username '$ServiceAccount' --email '$ServiceAccount@opensphere.local' --password '$password' --must-change-password=false"
-    Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') $createUser
+    Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$createUser`n#"
   }
   # Repository and organization scopes are sufficient for this adapter. The
   # account has no interactive Console role and its generated password is not
@@ -82,7 +82,7 @@ if (-not $reviewToken) {
     # the private organization repository without becoming an interactive
     # Console identity. Its token is restricted to repository operations.
     $createReviewUser = "set -eu`nexec gitea --config /etc/gitea/app.ini admin user create --username '$ReviewServiceAccount' --email '$ReviewServiceAccount@opensphere.local' --password '$password' --admin --must-change-password=false"
-    Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') $createReviewUser
+    Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$createReviewUser`n#"
   }
   $reviewTokenName = "console-platform-review-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
   $reviewToken = (& kubectl @kubectlArgs -n $GiteaNamespace exec -c gitea $giteaPod -- gitea --config /etc/gitea/app.ini admin user generate-access-token --username $ReviewServiceAccount --token-name $reviewTokenName --scopes 'read:repository,write:repository' --raw 2>$null).Trim()
@@ -105,7 +105,10 @@ function Test-GiteaApi([string]$ApiPath) {
   $priorErrorAction = $ErrorActionPreference
   try {
     $ErrorActionPreference = 'Continue'
-    $discard = ($command | & kubectl @kubectlArgs -n $GiteaNamespace exec -i -c gitea $giteaPod -- sh -s 2>$null)
+    # PowerShell writes CRLF at the native-pipeline boundary on Windows. End
+    # the executable shell line with an explicit LF and put the trailing CRLF
+    # on a comment line so it cannot become part of curl/wget's URL argument.
+    $discard = ("$command`n#" | & kubectl @kubectlArgs -n $GiteaNamespace exec -i -c gitea $giteaPod -- sh -s 2>$null)
     return $LASTEXITCODE -eq 0
   } finally {
     $ErrorActionPreference = $priorErrorAction
@@ -115,7 +118,7 @@ function Test-GiteaApi([string]$ApiPath) {
 function Invoke-GiteaRequest([string]$Method, [string]$ApiPath, [object]$Payload) {
   $body = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Payload | ConvertTo-Json -Depth 32 -Compress)))
   $command = "set -eu; body=`$(printf '%s' '$body' | base64 -d); printf '%s' `"`$body`" | curl -fsS -X '$Method' --header 'Authorization: token $token' --header 'Content-Type: application/json' --data-binary @- 'http://127.0.0.1:3000$ApiPath'"
-  $discard = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') $command
+  $discard = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$command`n#"
 }
 
 function Invoke-GiteaPost([string]$ApiPath, [object]$Payload) {
@@ -130,7 +133,7 @@ if (-not (Test-GiteaApi "/api/v1/repos/$Organization/$Repository")) {
 }
 
 $protectionsCommand = "wget -qO- --header 'Authorization: token $token' 'http://127.0.0.1:3000/api/v1/repos/$Organization/$Repository/branch_protections'"
-$protectionsJson = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') $protectionsCommand
+$protectionsJson = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$protectionsCommand`n#"
 $protections = @()
 if ($protectionsJson) { $protections = @($protectionsJson | ConvertFrom-Json) }
 $mainProtection = $protections | Where-Object { $_.branch_name -eq 'main' } | Select-Object -First 1
@@ -149,7 +152,7 @@ if (-not $mainProtection) {
 
 $hookTarget = 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080/api/platform/gitea/webhook'
 $hooksCommand = "wget -qO- --header 'Authorization: token $token' 'http://127.0.0.1:3000/api/v1/repos/$Organization/$Repository/hooks'"
-$hooksJson = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') $hooksCommand
+$hooksJson = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$hooksCommand`n#"
 $hooks = @()
 if ($hooksJson) { $hooks = @($hooksJson | ConvertFrom-Json) }
 if (-not ($hooks | Where-Object { $_.config.url -eq $hookTarget })) {

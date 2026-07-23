@@ -36,6 +36,8 @@ assert.match(installer, /\.Replace\("__OPENSPHERE_SUPABASE_NAMESPACE__", \$Names
 assert.match(installer, /Get-ChildItem[\s\S]+-Filter '\*\.sql'[\s\S]+Sort-Object Name/);
 assert.match(installer, /foreach \(\$migration in \$migrations\)/);
 assert.match(installer, /Get-Content -Raw -LiteralPath \$migration\.FullName/);
+assert.match(installer, /foreach \(\$workload in @\('opensphere-supabase-auth', 'opensphere-supabase-storage'\)\)[\s\S]+foreach \(\$migration in \$migrations\)/);
+assert.match(installer, /foreach \(\$migration in \$migrations\)[\s\S]+foreach \(\$workload in @\('opensphere-supabase-rest', 'opensphere-supabase-storage'\)\)/);
 assert.doesNotMatch(installer, /--from-literal/);
 assert.match(manifest, /supabase\/postgres:17\.6\.1\.136/);
 assert.match(manifest, /supabase\/gotrue:v2\.189\.0/);
