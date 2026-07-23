@@ -77,6 +77,17 @@ test('edge workflow triggers on every source that changes the released manifests
   assert.deepEqual(componentKeyBlocks, [releaseComponents, releaseComponents.slice(1)]);
 });
 
+test('public Console edge workflow reads private Setup through a dedicated read-only secret', () => {
+  const checkout = workflow.slice(
+    workflow.indexOf('      - name: Require private Setup read credential'),
+    workflow.indexOf('      - name: Checkout Cluster Manager'),
+  );
+  assert.match(checkout, /SETUP_REPOSITORY_SSH_KEY/);
+  assert.match(checkout, /ssh-key: \$\{\{ secrets\.SETUP_REPOSITORY_SSH_KEY \}\}/);
+  assert.match(checkout, /persist-credentials: false/);
+  assert.doesNotMatch(checkout, /secrets\.GITHUB_TOKEN/);
+});
+
 test('production image build does not fetch external fonts while compiling', () => {
   const optimization = angularConfig.projects['opensphere-console'].architect.build.configurations.production.optimization;
   assert.equal(optimization.fonts, false);

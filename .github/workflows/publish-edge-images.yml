@@ -49,11 +49,17 @@ jobs:
         with:
           repository: opensphere-platform/OpenSphere-SDK
           path: OpenSphere-SDK
+      - name: Require private Setup read credential
+        env:
+          SETUP_REPOSITORY_SSH_KEY: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
+        run: test -n "$SETUP_REPOSITORY_SSH_KEY"
       - name: Checkout Setup CLI
         uses: actions/checkout@v4
         with:
           repository: opensphere-platform/OpenSphere-Setup-CLI
           path: OpenSphere-Setup-CLI
+          ssh-key: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
+          persist-credentials: false
       - name: Checkout Cluster Manager
         uses: actions/checkout@v4
         with:
