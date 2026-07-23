@@ -204,6 +204,14 @@ spec:
         opensphere.io/layer: console-service
         opensphere.io/scope: main-shell-core
     spec:
+      # OAA is a stateless Console-native service. Keep replicas in separate
+      # host failure domains when available; production promotion verifies the
+      # cluster capacity and durable data profile independently.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: { matchLabels: { app: opensphere-console-oaa-gateway } }
       serviceAccountName: opensphere-console-oaa-gateway
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: { type: RuntimeDefault } }

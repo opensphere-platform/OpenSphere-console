@@ -70,7 +70,10 @@ rules:
   - { apiGroups: ["admissionregistration.k8s.io"], resources: [validatingwebhookconfigurations], verbs: [get, list] }
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
-    resourceNames: [opensphere-console-manual-ui-contract]
+    resourceNames:
+      - opensphere-console-manual-ui-contract
+      - opensphere-console-image-integrity-workload
+      - opensphere-console-image-integrity-cronjob
     verbs: [get]
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterrolebindings], verbs: [get, list] }
   - { apiGroups: ["observability.opensphere.io"], resources: [observabilitybindings], verbs: [get, list] }

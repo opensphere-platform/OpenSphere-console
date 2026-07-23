@@ -78,10 +78,10 @@ if (-not $reviewToken) {
   if ($LASTEXITCODE -ne 0) { throw 'Unable to list Gitea review users' }
   if (-not (($users | Out-String) -match "(?m)^\s*\d+\s+$([regex]::Escape($ReviewServiceAccount))\s")) {
     $password = "Rv!$([Guid]::NewGuid().ToString('N'))$([Guid]::NewGuid().ToString('N'))"
-    # The review identity is an API-only Gitea administrator so it can review
-    # the private organization repository without becoming an interactive
-    # Console identity. Its token is restricted to repository operations.
-    $createReviewUser = "set -eu`nexec gitea --config /etc/gitea/app.ini admin user create --username '$ReviewServiceAccount' --email '$ReviewServiceAccount@opensphere.local' --password '$password' --admin --must-change-password=false"
+    # Review is an API-only repository collaborator, never a site admin. The
+    # Console DB records the independent human approval; this identity only
+    # mirrors that reviewed decision into the protected Git workflow.
+    $createReviewUser = "set -eu`nexec gitea --config /etc/gitea/app.ini admin user create --username '$ReviewServiceAccount' --email '$ReviewServiceAccount@opensphere.local' --password '$password' --must-change-password=false"
     Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$createReviewUser`n#"
   }
   $reviewTokenName = "console-platform-review-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
@@ -129,8 +129,15 @@ if (-not (Test-GiteaApi "/api/v1/orgs/$Organization")) {
   Invoke-GiteaPost '/api/v1/orgs' @{ username = $Organization; full_name = 'OpenSphere Platform Control'; description = 'OpenSphere declarative Console control-plane source'; visibility = 'private' }
 }
 if (-not (Test-GiteaApi "/api/v1/repos/$Organization/$Repository")) {
-  Invoke-GiteaPost "/api/v1/orgs/$Organization/repos" @{ name = $Repository; description = 'Reviewed OpenSphere Console desired-state declarations'; private = $true; auto_init = $true; default_branch = 'main' }
+  Invoke-GiteaPost "/api/v1/orgs/$Organization/repos" @{ name = $Repository; description = 'Reviewed OpenSphere Console desired-state declarations'; private = $true; auto_init = $true; default_branch = 'main'; trust_model = 'collaboratorcommitter' }
 }
+# Existing installations may have created the review user as a site admin. The
+# CLI command is idempotent and makes the least-privilege policy explicit.
+$demoteReviewUser = "set -eu`nexec gitea --config /etc/gitea/app.ini admin user change-access --username '$ReviewServiceAccount' --admin=false"
+Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$demoteReviewUser`n#"
+# Grant the reviewer only repository write/review rights; it must not own the
+# organization or have a Console login path.
+Invoke-GiteaRequest 'PUT' "/api/v1/repos/$Organization/$Repository/collaborators/$ReviewServiceAccount" @{ permission = 'write' }
 
 $protectionsCommand = "wget -qO- --header 'Authorization: token $token' 'http://127.0.0.1:3000/api/v1/repos/$Organization/$Repository/branch_protections'"
 $protectionsJson = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$protectionsCommand`n#"
@@ -139,9 +146,12 @@ if ($protectionsJson) { $protections = @($protectionsJson | ConvertFrom-Json) }
 $mainProtection = $protections | Where-Object { $_.branch_name -eq 'main' } | Select-Object -First 1
 $protectionPayload = @{
   branch_name = 'main'; enable_push = $false; enable_push_whitelist = $false;
-  enable_merge_whitelist = $false; enable_status_check = $false; required_approvals = 1;
-  block_on_rejected_reviews = $true; dismiss_stale_approvals = $true;
-  require_signed_commits = $true
+  enable_merge_whitelist = $true; merge_whitelist_usernames = @($ServiceAccount);
+  enable_approvals_whitelist = $true; approvals_whitelist_username = @($ReviewServiceAccount);
+  enable_status_check = $false; required_approvals = 1;
+  block_on_rejected_reviews = $true; block_on_outdated_branch = $true;
+  block_on_official_review_requests = $true; dismiss_stale_approvals = $true;
+  require_signed_commits = $true; block_admin_merge_override = $true
 }
 if (-not $mainProtection) {
   Invoke-GiteaPost "/api/v1/repos/$Organization/$Repository/branch_protections" $protectionPayload

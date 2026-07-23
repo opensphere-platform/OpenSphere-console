@@ -2,7 +2,11 @@ param(
   [string]$ConsoleUrl = "https://console.opensphere.local",
   [string]$Namespace = "opensphere-console-data",
   [string]$StorageClass = "",
-  [string]$KubeContext = ""
+  [string]$KubeContext = "",
+  # Every release installer is invoked from an immutable Setup CLI lock.  The
+  # source revision is persisted with each migration so a live database can be
+  # tied back to the reviewed source, not just to a filename on an operator PC.
+  [string]$SourceRevision = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +15,10 @@ $manifest = Join-Path $here "bootstrap\supabase.yaml"
 $migrationDirectory = Join-Path $here "migrations"
 $migrations = @(Get-ChildItem -LiteralPath $migrationDirectory -Filter '*.sql' -File | Sort-Object Name)
 if ($migrations.Count -eq 0) { throw "No Supabase migrations found in $migrationDirectory" }
+if (-not $SourceRevision) { $SourceRevision = [string]$env:OPENSPHERE_SOURCE_REVISION }
+if ($SourceRevision -notmatch '^[a-f0-9]{40}$') {
+  throw "SourceRevision must be the immutable 40-character release commit SHA"
+}
 $kubectlArgs = @()
 if ($KubeContext) { $kubectlArgs += @("--context", $KubeContext) }
 
@@ -261,6 +269,13 @@ function Invoke-SupabaseMigrationPsql([string]$Sql) {
   Invoke-Kubectl @("-n", $Namespace, "exec", "-i", $pod, "--", "sh", "-ec", 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1') $Sql
 }
 
+function Get-SupabaseMigrationChecksum([string]$MigrationId) {
+  if ($MigrationId -notmatch '^[0-9]{4}_[a-z0-9_]+$') { throw "Invalid migration id $MigrationId" }
+  $sql = "SELECT COALESCE((SELECT sha256 FROM console.schema_migration WHERE migration_id = '$MigrationId'), '');"
+  $output = @(Invoke-Kubectl @("-n", $Namespace, "exec", "-i", $pod, "--", "sh", "-ec", 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U supabase_admin -d postgres -tA -v ON_ERROR_STOP=1') $sql)
+  return (($output | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | Select-Object -Last 1)
+}
+
 # Do not create these roles ourselves: their membership and grants are owned by
 # the Supabase PostgreSQL image.  A missing role means the image contract has
 # changed, and the installer must fail closed rather than invent a weaker role.
@@ -351,9 +366,57 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'oah_dspa')\gexec
 "@
 
 Invoke-SupabasePsql $roleSql
+
+# The migration ledger is created before the release migrations themselves so
+# it can attest the full ordered set including 0001.  It intentionally has no
+# runtime write grant: only this release-pinned migration path can append a
+# record, and UPDATE/DELETE are rejected even for the table owner.
+$migrationLedgerBootstrap = @"
+CREATE SCHEMA IF NOT EXISTS console AUTHORIZATION supabase_admin;
+CREATE TABLE IF NOT EXISTS console.schema_migration (
+  migration_id text PRIMARY KEY CHECK (migration_id ~ '^[0-9]{4}_[a-z0-9_]+$'),
+  sha256 text NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
+  source_revision text NOT NULL CHECK (source_revision ~ '^[a-f0-9]{40}$'),
+  applied_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  executor text NOT NULL DEFAULT current_user,
+  result text NOT NULL DEFAULT 'applied' CHECK (result = 'applied')
+);
+CREATE OR REPLACE FUNCTION console.reject_schema_migration_mutation()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, console AS `$`$
+BEGIN
+  RAISE EXCEPTION 'console.schema_migration is append-only';
+END;
+`$`$;
+DROP TRIGGER IF EXISTS schema_migration_append_only ON console.schema_migration;
+CREATE TRIGGER schema_migration_append_only
+  BEFORE UPDATE OR DELETE ON console.schema_migration
+  FOR EACH ROW EXECUTE FUNCTION console.reject_schema_migration_mutation();
+ALTER TABLE console.schema_migration ENABLE ALWAYS TRIGGER schema_migration_append_only;
+REVOKE ALL ON TABLE console.schema_migration FROM PUBLIC, anon, authenticated, service_role, authenticator;
+GRANT SELECT ON TABLE console.schema_migration TO opensphere_console_backend;
+"@
+Invoke-SupabaseMigrationPsql $migrationLedgerBootstrap
 foreach ($migration in $migrations) {
-  Write-Host "Applying Supabase migration $($migration.Name)"
+  $migrationId = [IO.Path]::GetFileNameWithoutExtension($migration.Name)
+  $checksum = (Get-FileHash -LiteralPath $migration.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+  $recordedChecksum = Get-SupabaseMigrationChecksum $migrationId
+  if ($recordedChecksum -and $recordedChecksum -ne $checksum) {
+    throw "Migration checksum drift for $migrationId: live=$recordedChecksum release=$checksum"
+  }
+  if ($recordedChecksum -eq $checksum) {
+    Write-Host "Supabase migration $migrationId already attested"
+    continue
+  }
+  Write-Host "Applying Supabase migration $($migration.Name) sha256=$checksum"
   Invoke-SupabaseMigrationPsql (Get-Content -Raw -LiteralPath $migration.FullName)
+  $ledgerSql = @"
+INSERT INTO console.schema_migration(migration_id, sha256, source_revision, executor)
+VALUES ('$migrationId', '$checksum', '$SourceRevision', current_user)
+ON CONFLICT (migration_id) DO NOTHING;
+"@
+  Invoke-SupabaseMigrationPsql $ledgerSql
+  $attestedChecksum = Get-SupabaseMigrationChecksum $migrationId
+  if ($attestedChecksum -ne $checksum) { throw "Migration ledger did not attest $migrationId" }
 }
 
 # Reload the two schema-consuming APIs after Console migrations have completed.

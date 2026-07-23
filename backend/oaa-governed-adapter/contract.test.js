@@ -102,7 +102,9 @@ test('agent automatic loop exposes reads while mutations remain governed', () =>
   assert.match(gateway, /startRuntimeWatches\(\)/);
   assert.match(gateway, /persistRuntimeWatchHeartbeat/);
   assert.match(gateway, /currentObserverStreams >= expectedStreams/);
-  assert.match(gateway, /watching === states\.length && errors === 0/);
+  assert.match(gateway, /watching === expected\.length && errors === 0/);
+  assert.match(gateway, /unavailableStreams/);
+  assert.match(gateway, /OAA_K8S_WATCH_MAX_BACKOFF_MS/);
   assert.doesNotMatch(gateway, /resourceVersionMatch:\s*state\.resourceVersion/);
   assert.match(gateway, /list_kubernetes_resources/);
   assert.match(gateway, /oaa\.control-plane\.status/);

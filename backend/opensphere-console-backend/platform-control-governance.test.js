@@ -30,6 +30,8 @@ test('Gitea webhook cannot advance a change before HMAC verification', () => {
   assert.ok(valid >= 0 && commit > valid && queue > commit, 'HMAC verification must precede commit and outbox transitions');
   assert.match(server, /safeEqual\(createHmac\('sha256', GITEA_WEBHOOK_SECRET\)/);
   assert.match(server, /payload_digest: digest/);
+  assert.match(server, /async function assertVerifiedGovernedMerge/);
+  assert.ok(server.indexOf('await assertVerifiedGovernedMerge(mergeRevision)') < commit, 'verified merge signature must precede commit transition');
 });
 
 test('governed proposal rejects browser-supplied secret material and persists intent first', () => {
@@ -136,7 +138,12 @@ test('Gitea supply-chain policy requires signed commits and server-only signing 
   assert.match(gitea, /emptyDir: \{ medium: Memory \}/);
   assert.match(gitea, /GITEA__repository_0x2E_signing__SIGNING_KEY/);
   assert.match(gitea, /GITEA__repository_0x2E_signing__MERGES, value: "approved,commitssigned"/);
+  assert.match(gitea, /DEFAULT_TRUST_MODEL, value: collaboratorcommitter/);
   assert.match(bootstrap, /require_signed_commits = \$true/);
+  assert.match(bootstrap, /block_admin_merge_override = \$true/);
+  assert.match(bootstrap, /enable_approvals_whitelist = \$true/);
+  assert.match(bootstrap, /enable_merge_whitelist = \$true/);
   assert.match(bootstrap, /branch_protections\/main/);
   assert.match(bootstrap, /Invoke-GiteaRequest 'PATCH'/);
+  assert.match(server, /merged commit signature is not verified/);
 });

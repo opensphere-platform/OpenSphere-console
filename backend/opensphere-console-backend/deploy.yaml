@@ -89,6 +89,13 @@ spec:
   template:
     metadata: { labels: { app: opensphere-console-backend } }
     spec:
+      # The Backend is stateless. Spread its two replicas across host failure
+      # domains without inventing HA for the separate RWO data plane.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: { matchLabels: { app: opensphere-console-backend } }
       serviceAccountName: opensphere-console-backend
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
@@ -130,6 +137,7 @@ spec:
             - { name: GITEA_RECONCILER_NAME, value: oaa-governed-adapter }
             - { name: GITEA_RECONCILER_NAMES, value: "oaa-governed-adapter,ceph-prerequisite-reconciler" }
             - { name: GITEA_CHANGE_REQUIRE_AAL2, value: "true" }
+            - { name: GITEA_REQUIRE_VERIFIED_MERGE, value: "true" }
             - name: GITEA_TOKEN
               valueFrom: { secretKeyRef: { name: opensphere-gitea-control-plane, key: token } }
             - name: GITEA_REVIEW_TOKEN

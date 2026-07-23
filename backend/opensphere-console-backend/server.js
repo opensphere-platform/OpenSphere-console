@@ -37,6 +37,7 @@ const GITEA_RECONCILER_NAME = process.env.GITEA_RECONCILER_NAME || 'opensphere-d
 const GITEA_RECONCILER_NAMES = new Set((process.env.GITEA_RECONCILER_NAMES || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler`)
   .split(',').map((value) => value.trim()).filter(Boolean));
 const GITEA_CHANGE_REQUIRE_AAL2 = String(process.env.GITEA_CHANGE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
+const GITEA_REQUIRE_VERIFIED_MERGE = String(process.env.GITEA_REQUIRE_VERIFIED_MERGE || 'true').toLowerCase() !== 'false';
 const RECONCILER_RECEIPT_TOKEN = process.env.RECONCILER_RECEIPT_TOKEN || '';
 const GITEA_TIMEOUT_MS = Number(process.env.GITEA_TIMEOUT_MS || 3000);
 const SUPABASE_BACKEND_ROLE = process.env.SUPABASE_BACKEND_ROLE || 'console-admins';
@@ -1135,6 +1136,20 @@ function giteaRepositoryView(repository) {
   };
 }
 
+async function assertVerifiedGovernedMerge(mergeRevision) {
+  if (!GITEA_REQUIRE_VERIFIED_MERGE) return { verified: false, bypassed: true };
+  const commit = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/git/commits/${encodeURIComponent(mergeRevision)}`);
+  const verification = commit.body?.verification || commit.body?.commit?.verification || {};
+  if (verification.verified !== true) {
+    throw { code: 409, msg: 'merged commit signature is not verified by the configured Gitea trust model', detail: String(verification.reason || 'unverified').slice(0, 180) };
+  }
+  return {
+    verified: true,
+    reason: String(verification.reason || 'verified').slice(0, 180),
+    signer: verification.signer?.username || verification.signer?.email || null,
+  };
+}
+
 async function giteaStatus() {
   const meta = {
     source: 'gitea', checkedAt: new Date().toISOString(), organization: GITEA_ORGANIZATION,
@@ -1172,6 +1187,12 @@ async function giteaStatus() {
         directPushEnabled: mainProtection?.enable_push === true,
         signedCommitsRequired: mainProtection?.require_signed_commits === true,
         blockRejectedReviews: mainProtection?.block_on_rejected_reviews === true,
+        blockOutdatedBranch: mainProtection?.block_on_outdated_branch === true,
+        blockOfficialReviewRequests: mainProtection?.block_on_official_review_requests === true,
+        approvalsAllowlistEnabled: mainProtection?.enable_approvals_whitelist === true,
+        mergeAllowlistEnabled: mainProtection?.enable_merge_whitelist === true,
+        blockAdminMergeOverride: mainProtection?.block_admin_merge_override === true,
+        verifiedMergeRequired: GITEA_REQUIRE_VERIFIED_MERGE,
       },
       managementReady: Boolean(GITEA_TOKEN && GITEA_WEBHOOK_SECRET),
       reason: GITEA_TOKEN ? (GITEA_WEBHOOK_SECRET ? '' : 'Gitea webhook secret is not configured; merge events cannot start reconciliation') : 'Gitea is reachable, but repository inventory and governed changes require a Console service token',
@@ -1428,6 +1449,12 @@ async function processGiteaWebhook(req) {
   if (!execution?.request_id) {
     await patchWebhookReceipt(deliveryId, { disposition: 'ignored', error_code: 'unknown-branch' });
     return { duplicate: false, accepted: false, ignored: true };
+  }
+  try {
+    await assertVerifiedGovernedMerge(mergeRevision);
+  } catch (error) {
+    await patchWebhookReceipt(deliveryId, { disposition: 'rejected', error_code: 'merge-signature-unverified' });
+    return { duplicate: false, accepted: false, ignored: true, reason: error?.msg || 'merge-signature-unverified' };
   }
   await restRequest('rpc/record_change_commit', { method: 'POST', body: { p_request_id: execution.request_id, p_git_repo: repository, p_git_ref: GITEA_DEFAULT_BRANCH, p_git_commit_sha: mergeRevision } });
   await restRequest('change_execution', { method: 'PATCH', query: `request_id=eq.${encodeURIComponent(execution.request_id)}`, body: { merge_revision: mergeRevision, updated_at: new Date().toISOString() }, prefer: 'return=minimal' });

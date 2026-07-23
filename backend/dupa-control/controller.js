@@ -1852,67 +1852,88 @@ async function backupRestoreEvidence() {
   };
 }
 
-const SECURITY_ADMISSION_POLICY = 'opensphere-console-manual-ui-contract';
-const SECURITY_ADMISSION_DENIAL = 'opensphere-console must declare Manual UI contract console-help-center-v2';
+const SECURITY_ADMISSION_TESTS = Object.freeze([
+  {
+    name: 'opensphere-console-manual-ui-contract',
+    denial: 'opensphere-console must declare Manual UI contract console-help-center-v2',
+    workloadPath: `/apis/apps/v1/namespaces/${NS}/deployments/opensphere-console`,
+    mutate(candidate) {
+      const annotations = { ...(candidate.spec?.template?.metadata?.annotations || {}) };
+      delete annotations['opensphere.io/manual-ui-contract'];
+      candidate.spec.template.metadata = { ...(candidate.spec.template.metadata || {}), annotations };
+    },
+  },
+  {
+    name: 'opensphere-console-image-integrity-workload',
+    denial: 'OpenSphere managed workloads require a release-pinned ghcr.io/opensphere-platform image digest',
+    workloadPath: `/apis/apps/v1/namespaces/${NS}/deployments/opensphere-console`,
+    mutate(candidate) {
+      candidate.spec.template.spec.containers[0].image = 'ghcr.io/opensphere-platform/opensphere-console:mutable-red-test';
+    },
+  },
+  {
+    name: 'opensphere-console-image-integrity-cronjob',
+    denial: 'OpenSphere managed CronJobs require a release-pinned ghcr.io/opensphere-platform image digest',
+    workloadPath: '/apis/batch/v1/namespaces/opensphere-console-data/cronjobs/opensphere-supabase-recovery-backup',
+    mutate(candidate) {
+      candidate.spec.jobTemplate.spec.template.spec.containers[0].image = 'ghcr.io/opensphere-platform/opensphere-console-recovery:mutable-red-test';
+    },
+  },
+]);
 
-function admissionRedTestDenied(result) {
+function admissionRedTestDenied(result, expectedDenial = SECURITY_ADMISSION_TESTS[0].denial) {
   const message = String(result?.json?.message || '');
   return result?.ok === false
     && [400, 403, 422].includes(Number(result?.status || 0))
-    && message.includes(SECURITY_ADMISSION_DENIAL);
+    && message.includes(expectedDenial);
 }
 
 // Exercise the real API server admission path on every readiness evaluation.
-// dryRun=All guarantees that a policy regression cannot modify the canonical
-// Console Deployment.  The evidence digest binds the denial to the exact
-// policy, binding and workload revisions that Kubernetes evaluated.
-async function admissionPolicyRedTest() {
-  const policyPath = `/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/${SECURITY_ADMISSION_POLICY}`;
-  const bindingPath = `/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/${SECURITY_ADMISSION_POLICY}`;
-  const deploymentPath = `/apis/apps/v1/namespaces/${NS}/deployments/opensphere-console`;
+// dryRun=All guarantees that a policy regression cannot modify a workload. The
+// evidence digest binds every tested policy, binding and workload revision to
+// the server-side Deny response instead of trusting existence checks alone.
+async function admissionPolicyRedTest(definition) {
+  const policyPath = `/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/${definition.name}`;
+  const bindingPath = `/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/${definition.name}`;
   const [policy, binding, deployment] = await Promise.all([
     k8s('GET', policyPath),
     k8s('GET', bindingPath),
-    k8s('GET', deploymentPath),
+    k8s('GET', definition.workloadPath),
   ]);
   const policyReady = policy.ok
     && Number(policy.json?.status?.observedGeneration || 0) === Number(policy.json?.metadata?.generation || 0)
     && binding.ok
-    && binding.json?.spec?.policyName === SECURITY_ADMISSION_POLICY
+    && binding.json?.spec?.policyName === definition.name
     && (binding.json?.spec?.validationActions || []).includes('Deny');
   if (!policyReady || !deployment.ok) {
     return {
-      denied: false,
+      name: definition.name, denied: false,
       policyReady,
       mode: 'KubernetesServerDryRun',
       checkedAt: new Date().toISOString(),
-      reason: !policyReady ? 'canonical ValidatingAdmissionPolicy and Deny binding are not ready' : 'canonical Console Deployment is unavailable',
+      reason: !policyReady ? 'canonical ValidatingAdmissionPolicy and Deny binding are not ready' : 'canonical admission red-test workload is unavailable',
     };
   }
 
   const current = deployment.json || {};
   const candidate = {
-    apiVersion: 'apps/v1',
-    kind: 'Deployment',
+    apiVersion: current.apiVersion,
+    kind: current.kind,
     metadata: {
-      name: 'opensphere-console',
-      namespace: NS,
+      name: current.metadata?.name,
+      namespace: current.metadata?.namespace,
       resourceVersion: current.metadata?.resourceVersion,
       labels: current.metadata?.labels || {},
       annotations: current.metadata?.annotations || {},
     },
     spec: structuredClone(current.spec || {}),
   };
-  const templateAnnotations = { ...(candidate.spec?.template?.metadata?.annotations || {}) };
-  delete templateAnnotations['opensphere.io/manual-ui-contract'];
-  candidate.spec.template.metadata = {
-    ...(candidate.spec.template.metadata || {}),
-    annotations: templateAnnotations,
-  };
-  const attempt = await k8s('PUT', `${deploymentPath}?dryRun=All&fieldManager=opensphere-security-red-test`, candidate);
-  const denied = admissionRedTestDenied(attempt);
+  definition.mutate(candidate);
+  const attempt = await k8s('PUT', `${definition.workloadPath}?dryRun=All&fieldManager=opensphere-security-red-test`, candidate);
+  const denied = admissionRedTestDenied(attempt, definition.denial);
   const checkedAt = new Date().toISOString();
   const evidenceDigest = `sha256:${createHash('sha256').update(JSON.stringify({
+    name: definition.name,
     policy: [policy.json?.metadata?.uid || '', policy.json?.metadata?.resourceVersion || ''],
     binding: [binding.json?.metadata?.uid || '', binding.json?.metadata?.resourceVersion || ''],
     workload: [current.metadata?.uid || '', current.metadata?.resourceVersion || ''],
@@ -1920,18 +1941,19 @@ async function admissionPolicyRedTest() {
     denialMessage: String(attempt.json?.message || ''),
   })).digest('hex')}`;
   return {
+    name: definition.name,
     denied,
     policyReady,
     mode: 'KubernetesServerDryRun',
     checkedAt,
     evidenceDigest,
     policy: {
-      name: SECURITY_ADMISSION_POLICY,
+      name: definition.name,
       uid: policy.json?.metadata?.uid || '',
       resourceVersion: policy.json?.metadata?.resourceVersion || '',
     },
     binding: {
-      name: SECURITY_ADMISSION_POLICY,
+      name: definition.name,
       uid: binding.json?.metadata?.uid || '',
       resourceVersion: binding.json?.metadata?.resourceVersion || '',
     },
@@ -1940,30 +1962,31 @@ async function admissionPolicyRedTest() {
       uid: current.metadata?.uid || '',
       resourceVersion: current.metadata?.resourceVersion || '',
     },
-    reason: denied ? '' : `Kubernetes admission red-test was not denied by the canonical policy (HTTP ${attempt.status})`,
+    reason: denied ? '' : `Kubernetes admission red-test was not denied by ${definition.name} (HTTP ${attempt.status})`,
   };
 }
 
 async function securityPolicyEvidence() {
-  const [policies, webhooks, admins, redTestEvidence] = await Promise.all([
+  const [policies, admins, redTestEvidence] = await Promise.all([
     k8s('GET', `/apis/networking.k8s.io/v1/networkpolicies`),
-    k8s('GET', `/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations`),
     k8s('GET', `/apis/rbac.authorization.k8s.io/v1/clusterrolebindings`),
-    admissionPolicyRedTest(),
+    Promise.all(SECURITY_ADMISSION_TESTS.map((definition) => admissionPolicyRedTest(definition))),
   ]);
   const np = policies.json?.items || [];
-  const wh = webhooks.json?.items || [];
   const rb = admins.json?.items || [];
-  // HIS has an independent boundary; the Console proves only its own isolation.
+  // HIS has an independent boundary; Console proves only its own isolation and
+  // immutable-image admission policies. No unrelated validating webhook is
+  // treated as substitute evidence for these native VAP Deny bindings.
   const isolation = np.some((x) => x.metadata?.namespace === NS);
-  const admission = wh.length > 0 && redTestEvidence.policyReady;
+  const admission = redTestEvidence.length === SECURITY_ADMISSION_TESTS.length
+    && redTestEvidence.every((item) => item.policyReady);
   const leastPrivilege = rb.some((x) => x.metadata?.name === 'dupa-module-profile-installer');
-  const redTest = redTestEvidence.denied;
+  const redTest = admission && redTestEvidence.every((item) => item.denied);
   return {
     ready: isolation && admission && leastPrivilege && redTest,
     isolation, admission, leastPrivilege, redTest,
     redTestEvidence,
-    reason: redTest ? '' : (redTestEvidence.reason || 'live admission-policy red-test evidence is missing'),
+    reason: redTest ? '' : (redTestEvidence.find((item) => item.reason)?.reason || 'live admission-policy red-test evidence is missing'),
   };
 }
 async function deliveryEvidence() {

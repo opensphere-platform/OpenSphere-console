@@ -105,10 +105,9 @@ test('recovery readiness consumes current Supabase and Gitea evidence, never a l
   assert.doesNotMatch(evidence, /BACKBONE_NS|backbone-postgres|opensphere-backbone|opensphere-cbs/);
   assert.match(recovery, /"supabase"/);
   assert.match(recovery, /"gitea"/);
-  assert.match(recovery, /"state": "Verified"/);
   assert.match(recovery, /"state": "AttentionRequired"/);
-  assert.match(recovery, /"assertion": "restored object files"[\s\S]{0,120}"verdict": "InsufficientEvidence"/);
-  assert.match(recovery, /"assertion": "repositories restored"[\s\S]{0,120}"verdict": "InsufficientEvidence"/);
+  assert.match(recovery, /"verified": false/);
+  assert.match(recovery, /Do not replace it with made-up checksum/);
   assert.match(recovery, /"approved": false/);
 });
 

@@ -179,6 +179,10 @@ spec:
             - { name: GITEA__repository_0x2E_signing__SIGNING_FORMAT, value: ssh }
             - { name: GITEA__repository_0x2E_signing__SIGNING_NAME, value: OpenSphere Gitea }
             - { name: GITEA__repository_0x2E_signing__SIGNING_EMAIL, value: gitea-signing@opensphere.local }
+            # A verified signature must belong to a repository collaborator and
+            # match the recorded committer. This avoids treating a generic
+            # server-verified signature as approval by an arbitrary key.
+            - { name: GITEA__repository_0x2E_signing__DEFAULT_TRUST_MODEL, value: collaboratorcommitter }
             - { name: GITEA__repository_0x2E_signing__INITIAL_COMMIT, value: always }
             - { name: GITEA__repository_0x2E_signing__CRUD_ACTIONS, value: always }
             - { name: GITEA__repository_0x2E_signing__MERGES, value: "approved,commitssigned" }

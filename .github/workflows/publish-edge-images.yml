@@ -152,6 +152,9 @@ jobs:
           - image: opensphere-console-notification-dispatcher
             context: OpenSphere-console/backend/notification-dispatcher
             file: OpenSphere-console/backend/notification-dispatcher/Dockerfile
+          - image: opensphere-console-recovery
+            context: OpenSphere-console/backend/recovery
+            file: OpenSphere-console/backend/recovery/Dockerfile
           - image: opensphere-console-gitea
             context: OpenSphere-console/backend/gitea/image
             file: OpenSphere-console/backend/gitea/image/Dockerfile
@@ -288,6 +291,7 @@ jobs:
             opensphere-console-oaa-gateway
             opensphere-oaa-governed-adapter
             opensphere-console-notification-dispatcher
+            opensphere-console-recovery
             opensphere-console-gitea
             opensphere-console-supabase-postgres
             opensphere-console-supabase-auth
@@ -302,6 +306,7 @@ jobs:
             oaaGateway
             oaaGovernedAdapter
             notificationDispatcher
+            recovery
             gitea
             supabasePostgres
             supabaseAuth
@@ -355,7 +360,7 @@ jobs:
             > "$RUNNER_TEMP/opensphere-release-bom.json"
 
           jq -e --arg revision "$GITHUB_SHA" \
-            '.sourceRevision == $revision and (.components | length) == 12' \
+            '.sourceRevision == $revision and (.components | length) == 13' \
             "$RUNNER_TEMP/opensphere-release-bom.json" >/dev/null
           echo "anchor-digest=${digests[opensphere-console]}" >> "$GITHUB_OUTPUT"
           echo "release-tag=$release_tag" >> "$GITHUB_OUTPUT"
@@ -392,6 +397,7 @@ jobs:
             opensphere-console-oaa-gateway
             opensphere-oaa-governed-adapter
             opensphere-console-notification-dispatcher
+            opensphere-console-recovery
             opensphere-console-gitea
             opensphere-console-supabase-postgres
             opensphere-console-supabase-auth
@@ -405,6 +411,7 @@ jobs:
             oaaGateway
             oaaGovernedAdapter
             notificationDispatcher
+            recovery
             gitea
             supabasePostgres
             supabaseAuth

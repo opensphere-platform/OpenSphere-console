@@ -30,6 +30,7 @@ const recoveryOwnerPermissions = read('migrations', '0022_oaa_recovery_owner_per
 const cephPrerequisiteConsumer = read('migrations', '0023_ceph_prerequisite_consumer.sql');
 const aiConsumerContract = read('migrations', '0024_ai_consumer_contract.sql');
 const externalChannelsBackup = read('migrations', '0025_external_channels_backup.sql');
+const migrationLedger = read('migrations', '0026_schema_migration_ledger.sql');
 const installer = read('install.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
@@ -38,6 +39,11 @@ assert.match(installer, /\.Replace\("__OPENSPHERE_SUPABASE_NAMESPACE__", \$Names
 assert.match(installer, /Get-ChildItem[\s\S]+-Filter '\*\.sql'[\s\S]+Sort-Object Name/);
 assert.match(installer, /function Invoke-SupabaseMigrationPsql/);
 assert.match(installer, /supabase_admin -d postgres -v ON_ERROR_STOP=1/);
+assert.match(installer, /\[string\]\$SourceRevision/);
+assert.match(installer, /SourceRevision must be the immutable 40-character release commit SHA/);
+assert.match(installer, /function Get-SupabaseMigrationChecksum/);
+assert.match(installer, /Migration checksum drift/);
+assert.match(installer, /Supabase migration \$migrationId already attested/);
 assert.match(installer, /foreach \(\$migration in \$migrations\)/);
 assert.match(installer, /Invoke-SupabaseMigrationPsql \(Get-Content -Raw -LiteralPath \$migration\.FullName\)/);
 assert.match(installer, /foreach \(\$workload in @\('opensphere-supabase-auth', 'opensphere-supabase-storage'\)\)[\s\S]+foreach \(\$migration in \$migrations\)/);
@@ -167,6 +173,11 @@ assert.match(externalChannelsBackup, /opensphere_external_channel_executor/);
 assert.match(externalChannelsBackup, /external_backup_secret/);
 assert.match(externalChannelsBackup, /restore_configuration_snapshot/);
 assert.match(externalChannelsBackup, /configuration-backup\.opensphere\.io\/v1/);
+assert.match(migrationLedger, /CREATE TABLE IF NOT EXISTS console\.schema_migration/);
+assert.match(migrationLedger, /sha256 text NOT NULL/);
+assert.match(migrationLedger, /source_revision text NOT NULL/);
+assert.match(migrationLedger, /schema_migration_append_only/);
+assert.match(migrationLedger, /REVOKE ALL ON TABLE console\.schema_migration FROM PUBLIC/);
 assert.match(nginx, /location \^~ \/auth\/v1\//);
 assert.match(nginx, /opensphere-supabase-auth\.opensphere-console-data\.svc\.cluster\.local/);
 assert.match(nginx, /location \^~ \/storage\/v1\//);

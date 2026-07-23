@@ -84,9 +84,26 @@ test('SecurityPolicy readiness requires a real server dry-run denial from the ca
   assert.match(controller, /dryRun=All&fieldManager=opensphere-security-red-test/);
   assert.match(controller, /mode: 'KubernetesServerDryRun'/);
   assert.match(controller, /evidenceDigest/);
+  assert.match(controller, /opensphere-console-image-integrity-workload/);
+  assert.match(controller, /opensphere-console-image-integrity-cronjob/);
+  assert.match(controller, /Promise\.all\(SECURITY_ADMISSION_TESTS\.map/);
   assert.doesNotMatch(controller, /const redTest = false/);
   assert.match(manifest, /resources: \[validatingadmissionpolicies, validatingadmissionpolicybindings\]/);
-  assert.match(manifest, /resourceNames: \[opensphere-console-manual-ui-contract\]/);
+  assert.match(manifest, /opensphere-console-manual-ui-contract/);
+  assert.match(manifest, /opensphere-console-image-integrity-workload/);
+  assert.match(manifest, /opensphere-console-image-integrity-cronjob/);
+});
+
+test('image admission policies deny mutable and off-registry workload references in every Console-managed namespace', () => {
+  const policy = read('deploy', 'console-image-admission-policy.yaml');
+  assert.match(policy, /kind: ValidatingAdmissionPolicy/);
+  assert.match(policy, /failurePolicy: Fail/);
+  assert.match(policy, /resources: \["deployments", "statefulsets", "daemonsets"\]/);
+  assert.match(policy, /resources: \["cronjobs"\]/);
+  assert.match(policy, /opensphere-console-data/);
+  assert.match(policy, /ghcr\\\\\.io\/opensphere-platform/);
+  assert.match(policy, /@sha256:\[a-f0-9\]\{64\}/);
+  assert.match(policy, /validationActions: \[Deny\]/);
 });
 
 test('PlatformSupportProfile status is a controller-owned projection that changes only with evidence', () => {

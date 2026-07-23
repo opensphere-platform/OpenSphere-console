@@ -23,6 +23,15 @@ spec:
         opensphere.io/manual-ui-contract: console-help-center-v2
       labels: { app: opensphere-console }
     spec:
+      # Keep the two stateless Shell replicas in distinct host failure domains
+      # whenever the cluster offers them. A one-node edge installation remains
+      # supported; candidate/stable promotion separately requires 3 Ready
+      # nodes and certified redundant storage.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: { matchLabels: { app: opensphere-console } }
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: shell

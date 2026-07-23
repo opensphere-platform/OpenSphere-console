@@ -58,6 +58,8 @@ const OAA_RUNTIME_REFRESH_MS = Math.max(30000, Math.min(300000, Number(process.e
 const OAA_K8S_WATCH_ENABLED = process.env.OAA_K8S_WATCH_ENABLED !== 'false';
 const OAA_K8S_WATCH_TIMEOUT_SECONDS = Math.max(60, Math.min(600, Number(process.env.OAA_K8S_WATCH_TIMEOUT_SECONDS || 240) || 240));
 const OAA_K8S_WATCH_RECONNECT_MS = Math.max(1000, Math.min(30000, Number(process.env.OAA_K8S_WATCH_RECONNECT_MS || 3000) || 3000));
+const OAA_K8S_WATCH_MAX_BACKOFF_MS = Math.max(OAA_K8S_WATCH_RECONNECT_MS, Math.min(300000, Number(process.env.OAA_K8S_WATCH_MAX_BACKOFF_MS || 120000) || 120000));
+const OAA_K8S_WATCH_DISCOVERY_MS = Math.max(60000, Math.min(900000, Number(process.env.OAA_K8S_WATCH_DISCOVERY_MS || 300000) || 300000));
 const OAA_K8S_WATCH_HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.OAA_K8S_WATCH_HEARTBEAT_MS || 15000) || 15000));
 const OAA_WATCH_OBSERVER_ID = String(process.env.OAA_WATCH_OBSERVER_ID || process.env.HOSTNAME || randomUUID()).trim().slice(0, 128);
 const OAA_ACTION_SUBMISSION_ENABLED = process.env.OAA_ACTION_SUBMISSION_ENABLED === 'true';
@@ -2629,6 +2631,8 @@ const runtimeWatchControllers = new Set();
 const runtimeWatchState = new Map();
 let runtimeWatchHeartbeatTimer = null;
 let runtimeWatchHeartbeatInFlight = false;
+let runtimeWatchDiscoveryTimer = null;
+let runtimeWatchDiscoveryInFlight = false;
 
 function projectedHealth(item) {
   if (item.kind === 'Pod') return item.payload.phase === 'Running' && !item.payload.reason ? 'Ready' : 'NotReady';
@@ -2824,7 +2828,7 @@ async function persistedRuntimeWatchStatus(pool) {
   if (!OAA_K8S_WATCH_ENABLED) return { ready: true, observers: 0, observerStreams: 0, watchingStreams: 0, expectedStreams: 0 };
   try {
     if (!(await ensureRuntimeWatchSchema(pool))) return { ready: false, reason: 'replica_aware_watch_schema_missing' };
-    const freshnessSeconds = OAA_K8S_WATCH_TIMEOUT_SECONDS + Math.ceil(OAA_K8S_WATCH_RECONNECT_MS / 1000) + 60;
+    const freshnessSeconds = OAA_K8S_WATCH_TIMEOUT_SECONDS + Math.ceil(OAA_K8S_WATCH_MAX_BACKOFF_MS / 1000) + 60;
     const result = await pool.query(`
       SELECT
         count(DISTINCT observer_id) FILTER (WHERE status = 'watching')::int AS observers,
@@ -2840,7 +2844,7 @@ async function persistedRuntimeWatchStatus(pool) {
         AND updated_at > clock_timestamp() - ($1::int * interval '1 second')
     `, [freshnessSeconds, OAA_WATCH_OBSERVER_ID]);
     const row = result.rows[0] || {};
-    const expectedStreams = runtimeWatchState.size;
+    const expectedStreams = [...runtimeWatchState.values()].filter((state) => state.expected !== false).length;
     const watchingStreams = Number(row.watching_streams || 0);
     const currentObserverStreams = Number(row.current_observer_streams || 0);
     return {
@@ -2938,6 +2942,9 @@ async function environmentSnapshot(body = {}, actor = null) {
     namespaces,
     evidenceSource: liveClusterReady && liveNamespacesReady ? 'kubernetes-live' : (projectionFallback ? 'kubernetes-live+supabase-projection' : 'kubernetes-partial'),
     projectionObservedAt: projectionFallback?.observedAt || null,
+    projectionLagSeconds: projectionFallback?.observedAt
+      ? Math.max(0, Math.round((Date.now() - Date.parse(projectionFallback.observedAt)) / 1000))
+      : null,
     latencyMs: Date.now() - started,
   };
   out.supabaseProjection = liveClusterReady && liveNamespacesReady ? await projectRuntimeSnapshot(out) : false;
@@ -3115,7 +3122,15 @@ async function consumeWatchResponse(response, kind, namespace, state) {
 async function watchResourceLoop(kind, namespace = '') {
   const definition = resourceDefinition(kind);
   const key = runtimeKey(definition.kind, namespace);
-  const state = { kind: definition.kind, namespace: namespace || '', status: 'starting', resourceVersion: '0', lastEventAt: null, events: 0, reconnects: 0, lastError: null };
+  const state = runtimeWatchState.get(key) || {
+    kind: definition.kind, namespace: namespace || '', status: 'starting', resourceVersion: '0',
+    lastEventAt: null, events: 0, reconnects: 0, lastError: null, expected: true,
+    consecutiveErrors: 0, running: false,
+  };
+  if (state.running || state.expected === false) return;
+  state.running = true;
+  state.status = 'starting';
+  state.expected = true;
   runtimeWatchState.set(key, state);
   while (!runtimeWatchStopping) {
     const controller = new AbortController();
@@ -3132,6 +3147,7 @@ async function watchResourceLoop(kind, namespace = '') {
       if (!response.ok) throw new Error(`${definition.kind} watch HTTP ${response.status}`);
       state.status = 'watching';
       state.lastError = null;
+      state.consecutiveErrors = 0;
       await consumeWatchResponse(response, kind, namespace, state);
       state.reconnects += 1;
       state.status = 'reconnecting';
@@ -3140,42 +3156,116 @@ async function watchResourceLoop(kind, namespace = '') {
       state.reconnects += 1;
       state.status = 'error';
       state.lastError = String(error?.message || error).slice(0, 300);
+      const terminalApiError = /watch HTTP (403|404)\b/.test(state.lastError);
+      if (terminalApiError) {
+        // A removed CRD or intentionally absent RBAC permission is not a
+        // transient transport failure.  Discovery will reconsider it later;
+        // keeping this loop alive would otherwise generate permanent API load.
+        state.status = 'unsupported';
+        state.expected = false;
+        await updateRuntimeWatchCursor(definition.kind, namespace, { resourceVersion: state.resourceVersion, status: 'unsupported', lastError: state.lastError, reconnectCount: state.reconnects });
+        break;
+      }
+      state.consecutiveErrors += 1;
       if (/too old resource version|\b410\b/i.test(state.lastError)) state.resourceVersion = '0';
       await updateRuntimeWatchCursor(definition.kind, namespace, { resourceVersion: state.resourceVersion, status: 'error', lastError: state.lastError, reconnectCount: state.reconnects });
     } finally {
       runtimeWatchControllers.delete(controller);
     }
-    if (!runtimeWatchStopping) await new Promise((resolve) => setTimeout(resolve, OAA_K8S_WATCH_RECONNECT_MS + Math.floor(Math.random() * 1000)));
+    if (!runtimeWatchStopping && state.expected !== false) {
+      const exponent = Math.min(7, Math.max(0, state.consecutiveErrors || 0));
+      const baseDelay = Math.min(OAA_K8S_WATCH_MAX_BACKOFF_MS, OAA_K8S_WATCH_RECONNECT_MS * (2 ** exponent));
+      await new Promise((resolve) => setTimeout(resolve, baseDelay + Math.floor(Math.random() * Math.min(1000, Math.max(100, baseDelay / 5)))));
+    }
   }
-  state.status = 'stopped';
-  await updateRuntimeWatchCursor(definition.kind, namespace, { resourceVersion: state.resourceVersion, status: 'stopped', lastEventAt: state.lastEventAt, reconnectCount: state.reconnects });
+  state.running = false;
+  if (state.expected !== false) {
+    state.status = 'stopped';
+    await updateRuntimeWatchCursor(definition.kind, namespace, { resourceVersion: state.resourceVersion, status: 'stopped', lastEventAt: state.lastEventAt, reconnectCount: state.reconnects });
+  }
 }
 
 function runtimeWatchStatus() {
   const states = [...runtimeWatchState.values()];
-  const watching = states.filter((state) => state.status === 'watching').length;
-  const errors = states.filter((state) => state.status === 'error').length;
+  const expected = states.filter((state) => state.expected !== false);
+  const unavailable = states.filter((state) => state.expected === false);
+  const watching = expected.filter((state) => state.status === 'watching').length;
+  const errors = expected.filter((state) => state.status === 'error').length;
   const lastEventAt = states.map((state) => state.lastEventAt).filter(Boolean).sort().at(-1) || null;
   return {
     enabled: OAA_K8S_WATCH_ENABLED,
-    ready: OAA_K8S_WATCH_ENABLED && states.length > 0 && watching === states.length && errors === 0,
-    streams: states.length, watching, errors,
+    ready: OAA_K8S_WATCH_ENABLED && expected.length > 0 && watching === expected.length && errors === 0,
+    streams: expected.length, watching, errors,
+    unavailableStreams: unavailable.length,
+    unavailable: unavailable.map((state) => ({ kind: state.kind, namespace: state.namespace || null, reason: state.lastError || 'api-unavailable' })),
     events: states.reduce((count, state) => count + state.events, 0),
     reconnects: states.reduce((count, state) => count + state.reconnects, 0),
     lastEventAt,
   };
 }
 
+function kubernetesApiDiscoveryPath(definition) {
+  return definition.group ? `/apis/${definition.group}/${definition.version}` : `/api/${definition.version}`;
+}
+
+async function discoverWatchableResource(definition) {
+  try {
+    const response = await fetch(`${APISERVER}${kubernetesApiDiscoveryPath(definition)}`, {
+      headers: { authorization: `Bearer ${saToken()}`, accept: 'application/json' },
+    });
+    if (response.status === 403 || response.status === 404) {
+      return { available: false, terminal: true, reason: `api-discovery-http-${response.status}` };
+    }
+    if (!response.ok) return { available: false, terminal: false, reason: `api-discovery-http-${response.status}` };
+    const body = await response.json().catch(() => ({}));
+    const resource = (body.resources || []).find((item) => item.name === definition.plural);
+    if (!resource || !Array.isArray(resource.verbs) || !resource.verbs.includes('watch')) {
+      return { available: false, terminal: true, reason: 'watch-verb-unavailable' };
+    }
+    return { available: true, terminal: false, reason: null };
+  } catch (error) {
+    return { available: false, terminal: false, reason: `api-discovery-error:${String(error?.message || error).slice(0, 180)}` };
+  }
+}
+
+async function reconcileRuntimeWatchTargets() {
+  if (runtimeWatchDiscoveryInFlight || runtimeWatchStopping) return;
+  runtimeWatchDiscoveryInFlight = true;
+  try {
+    for (const kind of WATCH_RESOURCE_KINDS) {
+      const definition = resourceDefinition(kind);
+      const discovered = await discoverWatchableResource(definition);
+      const namespaces = definition.namespaced ? OAA_ENV_NAMESPACES : [''];
+      for (const namespace of namespaces) {
+        const key = runtimeKey(definition.kind, namespace);
+        const state = runtimeWatchState.get(key) || {
+          kind: definition.kind, namespace: namespace || '', status: 'discovery', resourceVersion: '0',
+          lastEventAt: null, events: 0, reconnects: 0, lastError: null, expected: true,
+          consecutiveErrors: 0, running: false,
+        };
+        if (!discovered.available) {
+          state.expected = discovered.terminal ? false : true;
+          state.status = discovered.terminal ? 'unsupported' : 'discovery-error';
+          state.lastError = discovered.reason;
+          runtimeWatchState.set(key, state);
+          continue;
+        }
+        state.expected = true;
+        state.lastError = null;
+        runtimeWatchState.set(key, state);
+        if (!state.running) void watchResourceLoop(kind, namespace);
+      }
+    }
+  } finally {
+    runtimeWatchDiscoveryInFlight = false;
+  }
+}
+
 function startRuntimeWatches() {
   if (!OAA_K8S_WATCH_ENABLED) return;
-  for (const kind of WATCH_RESOURCE_KINDS) {
-    const definition = resourceDefinition(kind);
-    if (definition.namespaced) {
-      for (const namespace of OAA_ENV_NAMESPACES) void watchResourceLoop(kind, namespace);
-    } else {
-      void watchResourceLoop(kind, '');
-    }
-  }
+  void reconcileRuntimeWatchTargets();
+  runtimeWatchDiscoveryTimer = setInterval(() => { void reconcileRuntimeWatchTargets(); }, OAA_K8S_WATCH_DISCOVERY_MS);
+  runtimeWatchDiscoveryTimer.unref();
   void persistRuntimeWatchHeartbeat();
   runtimeWatchHeartbeatTimer = setInterval(() => { void persistRuntimeWatchHeartbeat(); }, OAA_K8S_WATCH_HEARTBEAT_MS);
   runtimeWatchHeartbeatTimer.unref();
@@ -3184,6 +3274,10 @@ function startRuntimeWatches() {
 function environmentSystemMessage(snapshot) {
   const lines = [];
   lines.push('OpenSphere Live Environment Snapshot:');
+  lines.push(`Evidence source: ${snapshot.evidenceSource || 'unknown'}; projectionObservedAt=${snapshot.projectionObservedAt || 'n/a'}; projectionLagSeconds=${snapshot.projectionLagSeconds ?? 'n/a'}.`);
+  if (snapshot.evidenceSource !== 'kubernetes-live') {
+    lines.push('WARNING: this response contains partial or cached projection data. State its source and freshness; do not present it as current Kubernetes truth.');
+  }
   if (snapshot.pageContext?.path) lines.push(`Current console route: ${snapshot.pageContext.path}${snapshot.pageContext.hash || ''}`);
   if (snapshot.pageContext?.title) lines.push(`Browser title: ${snapshot.pageContext.title}`);
   if (snapshot.cluster) {
@@ -8049,6 +8143,7 @@ server.listen(PORT, () => {
 function stopGateway() {
   runtimeWatchStopping = true;
   if (runtimeWatchHeartbeatTimer) clearInterval(runtimeWatchHeartbeatTimer);
+  if (runtimeWatchDiscoveryTimer) clearInterval(runtimeWatchDiscoveryTimer);
   for (const controller of runtimeWatchControllers) controller.abort();
   server.close();
 }
