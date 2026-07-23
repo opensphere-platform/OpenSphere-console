@@ -1,0 +1,10 @@
+# Local Kubernetes runtime overlay. Build after `npm run build` from the
+# Console directory; keep the current verified shell image's entrypoint and
+# CLI artifacts while replacing the compiled UI and nginx routing template.
+FROM opensphere-console:oaa-agent-v1
+COPY dist/opensphere-console/browser/ /usr/share/nginx/html/
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+RUN set -eu; \
+    grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json; \
+    grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js; \
+    grep -q 'location /api/notifications/' /etc/nginx/templates/default.conf.template

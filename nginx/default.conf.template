@@ -80,6 +80,20 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    # OAA credential administration is a Console Backend policy/audit write.
+    # Keep this more-specific location ahead of the read-only Gateway proxy so
+    # create/rotate/delete never enter the Gateway's forbidden mutation path.
+    location ^~ /api/oaa/admin/llm-keys {
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
     # OAA Core (Manual + OAA assistant) is Main Shell native. Same-origin proxy
     # to the Supabase-backed in-cluster gateway. The gateway verifies the
     # Supabase Console bearer token, so the
@@ -102,6 +116,19 @@ server {
     location /api/platform/ {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # Outbound notification channel administration. Keep this same-origin so
+    # the Console Backend can verify the Supabase bearer token and enforce the
+    # MFA/admin boundary; the Shell never calls the Dispatcher directly.
+    location /api/notifications/ {
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
         proxy_set_header X-OS-Id-Token "";
@@ -249,6 +276,11 @@ server {
         proxy_set_header Connection $os_conn_upgrade;
         proxy_set_header X-Forwarded-Proto $scheme; # 흡수앱 쿠키 Secure 판정용(운영 https→Secure)
         proxy_set_header X-OpenSphere-User "";
+        # ADR-002 §9.12 옵션①/INV-13: subShell lens(identity)는 프록시 주입 X-OpenSphere-User/Groups만
+        #   신뢰한다. 클라 제공 신원 헤더는 모두 clear해야 스푸핑(특히 groups 위조)이 무력화된다.
+        #   User는 위에서 이미 clear. Groups도 동일하게 clear(현행: 주입기 미배선 → lens는 user 부재로 401
+        #   fail-closed. 주입 배선 도입 시 auth_request_set로 여기에 검증값을 채운다 — 아래 [§9.12 잔여] 참고).
+        proxy_set_header X-OpenSphere-Groups "";
         proxy_set_header X-OpenSphere-Actor "";
         proxy_set_header X-OS-Id-Token "";
         proxy_set_header Authorization $http_authorization;

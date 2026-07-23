@@ -57,6 +57,7 @@ spec:
     metadata: { labels: { app: opensphere-gitea-postgres, opensphere.io/component: gitea-postgres } }
     spec:
       serviceAccountName: opensphere-gitea-postgres
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext: { runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, seccompProfile: { type: RuntimeDefault } }
       # rancher local-path provisions a root-owned volume.  This short-lived
       # initializer has access only to that PVC; the database process remains
@@ -129,6 +130,7 @@ spec:
     metadata: { labels: { app: opensphere-gitea, opensphere.io/component: gitea } }
     spec:
       serviceAccountName: opensphere-gitea
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
       initContainers:
         - name: materialize-config

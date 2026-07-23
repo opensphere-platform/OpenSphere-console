@@ -303,3 +303,65 @@ Date: 2026-07-23 (KST)
 - Kubernetes rollout: `opensphere-console:data-identity-grid-v21`, 2/2 replicas Ready.
 
 final result: passed
+
+---
+
+# OAA Composer Design QA
+
+- Source visual truth: `C:\Users\cmars\AppData\Local\Temp\codex-clipboard-af66cc7b-770a-47f1-a521-923e2b245e65.png`
+- Implementation screenshot: `D:\@PROJECT\OpenSphere\OpenSphere-Platform-V2\OpenSphere-console\artifacts\oaa-composer-implementation-busy.png`
+- Combined comparison: `D:\@PROJECT\OpenSphere\OpenSphere-Platform-V2\OpenSphere-console\artifacts\oaa-composer-comparison-busy.png`
+- Browser viewport: 2705 × 1769 CSS px, device pixel ratio 1
+- Source pixels: 920 × 145
+- Implementation component pixels/CSS size: 583 × 145 at device pixel ratio 1
+- Density normalization: both captures are 1×. Width differs intentionally because the implementation is constrained to the responsive OAA dock; component height and interaction state are matched.
+- State: authenticated Console, OAA dock open, completion request in progress, stop control visible
+
+## Full-view comparison evidence
+
+The implementation preserves the source hierarchy: one rounded white composer, large borderless prompt area, lower control rail, left context controls, right model/voice controls, and a circular dark stop action. It is placed at the bottom of the existing OAA dock without obscuring the thread.
+
+## Focused region comparison evidence
+
+The combined comparison image evaluates the composer only because the supplied source contains no surrounding application shell. Both captures use the busy state. Corner radius, vertical height, prompt/control separation, neutral border, subtle elevation, and control alignment are materially consistent.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing OpenSphere font stack retained. Prompt hierarchy, muted placeholder, and compact lower-rail labels match the reference's optical roles.
+- Spacing and layout rhythm: 145px composer height matches the source; responsive dock width is intentional. Internal vertical rhythm and circular action sizing are consistent.
+- Colors and visual tokens: white surface, neutral hairline, muted placeholder, dark primary action, and orange context indicator are aligned with the source while using Console-compatible tokens.
+- Image and icon fidelity: no raster assets are required. All controls use Carbon icons already owned by the product; no handcrafted SVG or text-glyph substitute was introduced.
+- Copy and content: `무엇이든 요청하세요` matches the source. `환경 컨텍스트` intentionally replaces `전체 액세스` because OAA remains governed and does not grant unrestricted mutation access.
+
+## Interaction verification
+
+- Enter submitted a real OAA request and returned `OAA chat ready.` from DeepSeek.
+- Shift+Enter produced `첫째 줄\n둘째 줄` without submitting.
+- Busy state exposed the stop control.
+- Voice control uses the browser SpeechRecognition capability when available and reports an explicit unsupported state otherwise.
+- Environment context control changes the `includeEnvironment` request field.
+- Provider selection used `deepseek-main`; Gateway audit recorded a successful chat completion.
+
+## Findings
+
+- No actionable P0/P1/P2 mismatch remains.
+- P3: the Carbon stop glyph has slightly different internal geometry from the reference's square stop mark. It remains clearly recognizable and uses the product's required icon library.
+- P3: the model leading icon replaces the source activity spinner in the idle design; the actual busy state is communicated by the stop control and thread thinking indicator.
+
+## Comparison history
+
+1. Initial capture showed the browser-native textarea resize handle, which was absent from the source. Fixed by disabling manual textarea resize.
+2. Post-fix busy-state capture confirmed the handle is gone and the 145px rounded composer silhouette matches the reference.
+
+## Implementation checklist
+
+- [x] Rounded desktop composer
+- [x] Borderless multiline prompt
+- [x] Enter sends
+- [x] Shift+Enter inserts a newline
+- [x] IME composition does not submit prematurely
+- [x] Provider/model, voice, context, send, and stop controls
+- [x] Responsive dock behavior
+- [x] Real provider response verified
+
+final result: passed

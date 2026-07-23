@@ -54,6 +54,7 @@ spec:
     metadata: { labels: { app: opensphere-supabase-postgres, opensphere.io/supabase-component: data-identity } }
     spec:
       serviceAccountName: opensphere-supabase-postgres
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       terminationGracePeriodSeconds: 60
       securityContext: { fsGroup: 999 }
       containers:
@@ -119,6 +120,7 @@ spec:
     metadata: { labels: { app: opensphere-supabase-auth, opensphere.io/supabase-component: identity } }
     spec:
       serviceAccountName: opensphere-supabase-auth
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: auth
           image: docker.io/supabase/gotrue:v2.189.0
@@ -176,6 +178,7 @@ spec:
     metadata: { labels: { app: opensphere-supabase-rest, opensphere.io/supabase-component: data-api } }
     spec:
       serviceAccountName: opensphere-supabase-rest
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: rest
           image: docker.io/postgrest/postgrest:v14.12
@@ -223,6 +226,7 @@ spec:
     metadata: { labels: { app: opensphere-supabase-storage, opensphere.io/supabase-component: object } }
     spec:
       serviceAccountName: opensphere-supabase-storage
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       securityContext: { fsGroup: 1000 }
       containers:
         - name: storage

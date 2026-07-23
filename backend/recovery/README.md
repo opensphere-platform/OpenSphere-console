@@ -14,7 +14,18 @@ the following are true:
    recorded its assertions; and
 4. a named operator has separately approved legacy decommission.
 
-The current manifest records verified Supabase, Storage and Gitea restore
-drills.  It deliberately keeps `decommission.approved` false until an
-independent human approval is recorded.  The Console must show that approval
-as a decommission gate, never infer it from technical evidence.
+The current manifest records verified backup checksums and a verified
+Supabase database restore.  Storage and Gitea restore assertions remain
+`AttentionRequired` until an isolated drill with a Storage canary object and
+reviewed Gitea counts is promoted through Change Control.  A completed live
+Job or a healthy target is not allowed to rewrite this evidence implicitly.
+`decommission.approved` also remains false until an independent human approval
+is recorded.  The Console must show both gaps as gates, never infer approval or
+restore success from workload presence.
+
+Schema `v2` also declares an evidence freshness policy. The OAA recovery owner
+returns only checksum-present/verified flags, structured restore assertions and
+freshness; it never returns the vault location or checksum values. Its current
+capability set is deliberately limited to `status-read` and `plan-read`.
+`drill-request` and `evidence-promote` remain unavailable until a separately
+signed, two-person-approved isolated recovery executor exists.

@@ -8,6 +8,17 @@
 # fail closed (OAA_MUTATION_ENABLED='false' below) and this base runtime grants no deployment
 # patch RBAC at all — see the removed *-controlled-operator ClusterRole/ClusterRoleBinding below.
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: opensphere-oaa-credentials
+  labels:
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/scope: oaa-provider-credentials
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }
 ---
@@ -17,14 +28,124 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }
 rules:
-  - { apiGroups: [""], resources: [secrets], verbs: [get, list] }
-  - { apiGroups: [""], resources: [pods, pods/log, services, events], verbs: [get, list] }
-  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list] }
+  - { apiGroups: [""], resources: [pods, services, endpoints, events, configmaps, persistentvolumeclaims], verbs: [get, list, watch] }
+  - { apiGroups: [""], resources: [pods/log], verbs: [get] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list, watch] }
+  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
+  - { apiGroups: [networking.k8s.io], resources: [ingresses, networkpolicies], verbs: [get, list, watch] }
+  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch] }
+  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch] }
+  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch] }
+  - { apiGroups: [platform.opensphere.io], resources: [platformsupportprofiles], verbs: [get, list, watch] }
+  - { apiGroups: [plugins.opensphere.io], resources: [uipluginpackages, uipluginregistrations], verbs: [get, list, watch] }
+  - { apiGroups: [foundation.opensphere.io], resources: [foundationclaims, foundationbindings, identitydirectoryclaims, identitydirectorybindings], verbs: [get, list, watch] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-oaa-gateway }
+subjects: [{ kind: ServiceAccount, name: opensphere-console-oaa-gateway, namespace: opensphere-console }]
+---
+# Provider credentials are isolated from Console auth, Gitea, Supabase, TLS and
+# notification Secrets. This namespace contains only `oaa-llm-*` objects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-oaa-gateway-credentials, namespace: opensphere-oaa-credentials }
+rules:
+  - { apiGroups: [""], resources: [secrets], verbs: [get, list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-oaa-gateway-credentials, namespace: opensphere-oaa-credentials }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-oaa-gateway-credentials }
+subjects: [{ kind: ServiceAccount, name: opensphere-console-oaa-gateway, namespace: opensphere-console }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-oaa-gateway-reader, namespace: opensphere-console-data }
+rules:
+  - { apiGroups: [""], resources: [pods, services, endpoints, events, configmaps, persistentvolumeclaims], verbs: [get, list, watch] }
+  - { apiGroups: [""], resources: [pods/log], verbs: [get] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list, watch] }
+  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
+  - { apiGroups: [networking.k8s.io], resources: [ingresses, networkpolicies], verbs: [get, list, watch] }
+  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch] }
+  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch] }
+  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch] }
+  - { apiGroups: [platform.opensphere.io], resources: [platformsupportprofiles], verbs: [get, list, watch] }
+  - { apiGroups: [plugins.opensphere.io], resources: [uipluginpackages, uipluginregistrations], verbs: [get, list, watch] }
+  - { apiGroups: [foundation.opensphere.io], resources: [foundationclaims, foundationbindings, identitydirectoryclaims, identitydirectorybindings], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-oaa-gateway-reader, namespace: opensphere-console-data }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-oaa-gateway-reader }
+subjects: [{ kind: ServiceAccount, name: opensphere-console-oaa-gateway, namespace: opensphere-console }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-oaa-gateway-reader, namespace: opensphere-console-change }
+rules:
+  - { apiGroups: [""], resources: [pods, services, endpoints, events, configmaps, persistentvolumeclaims], verbs: [get, list, watch] }
+  - { apiGroups: [""], resources: [pods/log], verbs: [get] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list, watch] }
+  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
+  - { apiGroups: [networking.k8s.io], resources: [ingresses, networkpolicies], verbs: [get, list, watch] }
+  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch] }
+  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch] }
+  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch] }
+  - { apiGroups: [platform.opensphere.io], resources: [platformsupportprofiles], verbs: [get, list, watch] }
+  - { apiGroups: [plugins.opensphere.io], resources: [uipluginpackages, uipluginregistrations], verbs: [get, list, watch] }
+  - { apiGroups: [foundation.opensphere.io], resources: [foundationclaims, foundationbindings, identitydirectoryclaims, identitydirectorybindings], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-oaa-gateway-reader, namespace: opensphere-console-change }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-oaa-gateway-reader }
+subjects: [{ kind: ServiceAccount, name: opensphere-console-oaa-gateway, namespace: opensphere-console }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-oaa-gateway-reader, namespace: opensphere-foundation }
+rules:
+  - { apiGroups: [""], resources: [pods, services, endpoints, events, configmaps, persistentvolumeclaims], verbs: [get, list, watch] }
+  - { apiGroups: [""], resources: [pods/log], verbs: [get] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list, watch] }
+  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
+  - { apiGroups: [networking.k8s.io], resources: [ingresses, networkpolicies], verbs: [get, list, watch] }
+  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch] }
+  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch] }
+  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch] }
+  - { apiGroups: [platform.opensphere.io], resources: [platformsupportprofiles], verbs: [get, list, watch] }
+  - { apiGroups: [plugins.opensphere.io], resources: [uipluginpackages, uipluginregistrations], verbs: [get, list, watch] }
+  - { apiGroups: [foundation.opensphere.io], resources: [foundationclaims, foundationbindings, identitydirectoryclaims, identitydirectorybindings], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-oaa-gateway-reader, namespace: opensphere-foundation }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-oaa-gateway-reader }
+subjects: [{ kind: ServiceAccount, name: opensphere-console-oaa-gateway, namespace: opensphere-console }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-oaa-gateway-reader, namespace: opensphere-system }
+rules:
+  - { apiGroups: [""], resources: [pods, services, endpoints, events, configmaps, persistentvolumeclaims], verbs: [get, list, watch] }
+  - { apiGroups: [""], resources: [pods/log], verbs: [get] }
+  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list, watch] }
+  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
+  - { apiGroups: [networking.k8s.io], resources: [ingresses, networkpolicies], verbs: [get, list, watch] }
+  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch] }
+  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch] }
+  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch] }
+  - { apiGroups: [platform.opensphere.io], resources: [platformsupportprofiles], verbs: [get, list, watch] }
+  - { apiGroups: [plugins.opensphere.io], resources: [uipluginpackages, uipluginregistrations], verbs: [get, list, watch] }
+  - { apiGroups: [foundation.opensphere.io], resources: [foundationclaims, foundationbindings, identitydirectoryclaims, identitydirectorybindings], verbs: [get, list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-oaa-gateway-reader, namespace: opensphere-system }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-oaa-gateway-reader }
 subjects: [{ kind: ServiceAccount, name: opensphere-console-oaa-gateway, namespace: opensphere-console }]
 ---
 # Read-only environment reader across the allowlisted namespaces the OAA `/env`, `/pods`,
@@ -33,8 +154,15 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: { name: opensphere-console-oaa-gateway-environment-reader }
 rules:
-  - { apiGroups: [""], resources: [pods, pods/log, services, events], verbs: [get, list] }
-  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list] }
+  # Cluster-wide Pod list is retained for the explicit cluster health summary; all detailed
+  # namespaced reads are still application-filtered and Role-bound to the Console namespaces.
+  - { apiGroups: [""], resources: [pods], verbs: [get, list] }
+  - { apiGroups: [""], resources: [nodes, namespaces, persistentvolumes], verbs: [get, list, watch] }
+  - { apiGroups: [storage.k8s.io], resources: [storageclasses], verbs: [get, list, watch] }
+  - { apiGroups: [apiextensions.k8s.io], resources: [customresourcedefinitions], verbs: [get, list, watch] }
+  - { apiGroups: [apiregistration.k8s.io], resources: [apiservices], verbs: [get, list, watch] }
+  - { apiGroups: [observability.opensphere.io], resources: [observabilitybindings], verbs: [get, list, watch] }
+  - { apiGroups: [foundation.opensphere.io], resources: [foundationmodels, foundationmoduledescriptors], verbs: [get, list, watch] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -84,17 +212,22 @@ spec:
           # Canonical GHCR repo pinned by digest, never a mutable tag. Setup replaces the
           # __OAA_GATEWAY_IMAGE_DIGEST__ token with the release-pinned sha256 digest from the BOM
           # before this manifest is applied (NAMING-STANDARD §1/§4/§6).
-          image: opensphere-console-oaa-gateway:platform-control-v5
+          image: opensphere-console-oaa-gateway:oaa-agent-v47
           imagePullPolicy: IfNotPresent
           env:
+            - { name: APP_VERSION, value: "0.38.0-recovery-owner-read-plan" }
             - { name: OAA_NAMESPACE, value: opensphere-console }
+            - { name: OAA_KEY_NAMESPACE, value: opensphere-oaa-credentials }
             # Supabase-backed Console identity is the only Console token/role authority.
             - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
+            - { name: FOUNDATION_CONTROL_URL, value: http://foundation-oaa-owner.opensphere-console.svc.cluster.local:8080 }
             - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
             # ADR-006 target: OAA knowledge/control metadata lives in Supabase.
             # The gateway can read this schema but is not its migration owner.
             - { name: OAA_DATA_AUTHORITY, value: supabase }
+            - { name: OAA_ENV_NAMESPACES, value: "opensphere-console,opensphere-console-data,opensphere-console-change,opensphere-foundation,opensphere-system" }
+            - { name: OAA_MUTATION_NAMESPACES, value: "opensphere-console,opensphere-console-data,opensphere-console-change" }
             - { name: OAA_PG_HOST, value: opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local }
             - { name: OAA_PG_PORT, value: "5432" }
             - { name: OAA_PG_DB, value: postgres }
@@ -104,13 +237,19 @@ spec:
             - { name: OAA_EMBED_DIM, value: "1536" }
             - { name: OAA_ALLOW_HASH_EMBEDDINGS, value: "false" }
             - { name: OAA_RAG_TOP_K, value: "5" }
+            - { name: OAA_K8S_WATCH_ENABLED, value: "true" }
+            - { name: OAA_K8S_WATCH_HEARTBEAT_MS, value: "15000" }
+            # Master switch only. The Gateway and Backend still require live Cluster Manager
+            # Activated + HIS Preflight Ready evidence for every mutating action.
+            - { name: OAA_ACTION_SUBMISSION_ENABLED, value: "true" }
             # CONSTITUTION-0004 §4.2 fail-closed default: Kubernetes mutation/action tools stay
             # unavailable until Cluster Manager Activated + HIS Preflight Ready explicitly flips this.
             - { name: OAA_MUTATION_ENABLED, value: "false" }
           ports: [{ name: http, containerPort: 8080 }]
           # /healthz is liveness/startup only. /readyz additionally requires PostgreSQL connectivity,
           # the pgvector/schema migration, the bundled Manual Registry seed, and the tool registry
-          # seed to be live before this Pod is added to the Service endpoints.
+          # seed and this replica's complete persisted watch-cursor set to be live before this Pod
+          # is added to the Service endpoints.
           startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 3, failureThreshold: 40 }
           readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10, failureThreshold: 6 }

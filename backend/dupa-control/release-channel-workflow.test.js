@@ -24,6 +24,8 @@ test('edge workflow triggers on every source that changes the released manifests
   const requiredPaths = [
     'backend/supabase/**',
     'backend/gitea/**',
+    'backend/oaa-governed-adapter/**',
+    'backend/notification-dispatcher/**',
     'backend/recovery/**',
     'deploy/**',
   ];
@@ -39,8 +41,40 @@ test('edge workflow triggers on every source that changes the released manifests
   assert.doesNotMatch(workflow, /opensphere-cbs-/);
   assert.match(workflow, /image: opensphere-console-gitea/);
   assert.match(workflow, /context: OpenSphere-console\/backend\/gitea\/image/);
-  assert.match(workflow, /component_keys=\(\s*console\s+backend\s+dupaController\s+oaaGateway\s+gitea\s*\)/);
-  assert.match(workflow, /component_keys=\(backend dupaController oaaGateway gitea\)/);
+  assert.match(workflow, /image: opensphere-oaa-governed-adapter/);
+  const componentKeyBlocks = [...workflow.matchAll(/component_keys=\(\s*([\s\S]*?)\s*\)/g)]
+    .map((match) => match[1].trim().split(/\s+/));
+  const releaseComponents = [
+    'console',
+    'backend',
+    'dupaController',
+    'oaaGateway',
+    'oaaGovernedAdapter',
+    'notificationDispatcher',
+    'gitea',
+    'supabasePostgres',
+    'supabaseAuth',
+    'supabaseRest',
+    'supabaseStorage',
+    'giteaPostgres',
+  ];
+  const publishedImages = [...workflow.matchAll(/^\s+- image: ([a-z0-9-]+)$/gm)]
+    .map((match) => match[1]);
+  assert.deepEqual(publishedImages, [
+    'opensphere-console',
+    'opensphere-console-backend',
+    'opensphere-console-dupa-controller',
+    'opensphere-console-oaa-gateway',
+    'opensphere-oaa-governed-adapter',
+    'opensphere-console-notification-dispatcher',
+    'opensphere-console-gitea',
+    'opensphere-console-supabase-postgres',
+    'opensphere-console-supabase-auth',
+    'opensphere-console-supabase-rest',
+    'opensphere-console-supabase-storage',
+    'opensphere-console-gitea-postgres',
+  ]);
+  assert.deepEqual(componentKeyBlocks, [releaseComponents, releaseComponents.slice(1)]);
 });
 
 test('production image build does not fetch external fonts while compiling', () => {

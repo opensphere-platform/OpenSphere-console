@@ -71,7 +71,12 @@ async function verifyAuthed(req) {
   }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw { code: response.status === 403 ? 403 : 401, msg: body.error || 'invalid Supabase session' };
-  return { username: body.username || body.subject || 'unknown', subject: body.subject || '', groups: Array.isArray(body.groups) ? body.groups : [], provider: 'supabase' };
+  return {
+    username: body.username || body.subject || 'unknown', subject: body.subject || '',
+    groups: Array.isArray(body.groups) ? body.groups : [],
+    permissions: Array.isArray(body.permissions) ? body.permissions : [],
+    assurance: String(body.assurance || 'aal1'), provider: 'supabase',
+  };
 }
 const isAdminGroups = (groups) => (groups || []).includes(CONSOLE_ADMIN_GROUP);
 async function verifyActor(req) {
@@ -1733,6 +1738,47 @@ function deploymentReadyResult(ns, name, resource) {
   const ready = Number(d.status?.readyReplicas || 0);
   return { name, namespace: ns, ready: desired > 0 && ready >= desired, detail: `${ready}/${desired} ready` };
 }
+
+function requireOaaOwnerPermission(actor, permission) {
+  if (!actor?.permissions?.includes(permission)) throw { code: 403, msg: `requires ${permission}` };
+}
+
+function requireClosedOaaExtensionBody(body, allowed) {
+  if (!body || Array.isArray(body) || typeof body !== 'object') throw { code: 400, msg: 'OAA Extension owner body must be an object' };
+  const extra = Object.keys(body).filter((key) => !allowed.includes(key));
+  if (extra.length) throw { code: 400, msg: `OAA Extension owner action contains unsupported inputs: ${extra.join(', ')}` };
+}
+
+function requireOaaExtensionConfirmation(actual, expected) {
+  if (String(actual || '').trim() !== expected) throw { code: 400, msg: `confirmation required: ${expected}` };
+}
+
+function oaaExtensionInspectionProjection(inspection) {
+  const descriptor = inspection?.descriptor || {};
+  return {
+    schema: 'oaa-extension-inspection.opensphere.io/v1alpha1',
+    owner: 'DUPA Extension Host',
+    image: inspection.image, repository: inspection.repository, digest: inspection.digest,
+    resolvedAt: inspection.resolvedAt, source: inspection.source, revision: inspection.revision,
+    registryCredentialsRequired: Boolean(inspection.registryCredentialsRequired),
+    extension: {
+      id: descriptor.id, displayName: descriptor.displayName, kind: descriptor.kind,
+      hostRef: descriptor.hostRef, version: descriptor.version, owner: descriptor.owner,
+      permissionProfile: descriptor.permissionProfile,
+      permissions: Array.isArray(descriptor.permissions) ? descriptor.permissions : [],
+    },
+    verification: inspection.verification,
+  };
+}
+function normalizeHisStatus(response) {
+  const body = response?.body || response?.json || {};
+  const ready = response?.ok === true && body.state === 'Ready';
+  return {
+    ready,
+    state: body.state || (response?.ok ? 'Unknown' : 'Unavailable'),
+    reason: ready ? '' : (body.reason || body.message || `Cluster Manager HIS status HTTP ${response?.status || 0}`),
+  };
+}
 async function mainShellBaselineStatus() {
   const targets = [
     [NS, 'opensphere-console'],
@@ -1781,26 +1827,119 @@ async function backupRestoreEvidence() {
     reason: ready ? '' : 'verified Supabase, Storage, and Gitea restore drills are required',
   };
 }
+
+const SECURITY_ADMISSION_POLICY = 'opensphere-console-manual-ui-contract';
+const SECURITY_ADMISSION_DENIAL = 'opensphere-console must declare Manual UI contract console-help-center-v2';
+
+function admissionRedTestDenied(result) {
+  const message = String(result?.json?.message || '');
+  return result?.ok === false
+    && [400, 403, 422].includes(Number(result?.status || 0))
+    && message.includes(SECURITY_ADMISSION_DENIAL);
+}
+
+// Exercise the real API server admission path on every readiness evaluation.
+// dryRun=All guarantees that a policy regression cannot modify the canonical
+// Console Deployment.  The evidence digest binds the denial to the exact
+// policy, binding and workload revisions that Kubernetes evaluated.
+async function admissionPolicyRedTest() {
+  const policyPath = `/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/${SECURITY_ADMISSION_POLICY}`;
+  const bindingPath = `/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/${SECURITY_ADMISSION_POLICY}`;
+  const deploymentPath = `/apis/apps/v1/namespaces/${NS}/deployments/opensphere-console`;
+  const [policy, binding, deployment] = await Promise.all([
+    k8s('GET', policyPath),
+    k8s('GET', bindingPath),
+    k8s('GET', deploymentPath),
+  ]);
+  const policyReady = policy.ok
+    && Number(policy.json?.status?.observedGeneration || 0) === Number(policy.json?.metadata?.generation || 0)
+    && binding.ok
+    && binding.json?.spec?.policyName === SECURITY_ADMISSION_POLICY
+    && (binding.json?.spec?.validationActions || []).includes('Deny');
+  if (!policyReady || !deployment.ok) {
+    return {
+      denied: false,
+      policyReady,
+      mode: 'KubernetesServerDryRun',
+      checkedAt: new Date().toISOString(),
+      reason: !policyReady ? 'canonical ValidatingAdmissionPolicy and Deny binding are not ready' : 'canonical Console Deployment is unavailable',
+    };
+  }
+
+  const current = deployment.json || {};
+  const candidate = {
+    apiVersion: 'apps/v1',
+    kind: 'Deployment',
+    metadata: {
+      name: 'opensphere-console',
+      namespace: NS,
+      resourceVersion: current.metadata?.resourceVersion,
+      labels: current.metadata?.labels || {},
+      annotations: current.metadata?.annotations || {},
+    },
+    spec: structuredClone(current.spec || {}),
+  };
+  const templateAnnotations = { ...(candidate.spec?.template?.metadata?.annotations || {}) };
+  delete templateAnnotations['opensphere.io/manual-ui-contract'];
+  candidate.spec.template.metadata = {
+    ...(candidate.spec.template.metadata || {}),
+    annotations: templateAnnotations,
+  };
+  const attempt = await k8s('PUT', `${deploymentPath}?dryRun=All&fieldManager=opensphere-security-red-test`, candidate);
+  const denied = admissionRedTestDenied(attempt);
+  const checkedAt = new Date().toISOString();
+  const evidenceDigest = `sha256:${createHash('sha256').update(JSON.stringify({
+    policy: [policy.json?.metadata?.uid || '', policy.json?.metadata?.resourceVersion || ''],
+    binding: [binding.json?.metadata?.uid || '', binding.json?.metadata?.resourceVersion || ''],
+    workload: [current.metadata?.uid || '', current.metadata?.resourceVersion || ''],
+    denialStatus: attempt.status,
+    denialMessage: String(attempt.json?.message || ''),
+  })).digest('hex')}`;
+  return {
+    denied,
+    policyReady,
+    mode: 'KubernetesServerDryRun',
+    checkedAt,
+    evidenceDigest,
+    policy: {
+      name: SECURITY_ADMISSION_POLICY,
+      uid: policy.json?.metadata?.uid || '',
+      resourceVersion: policy.json?.metadata?.resourceVersion || '',
+    },
+    binding: {
+      name: SECURITY_ADMISSION_POLICY,
+      uid: binding.json?.metadata?.uid || '',
+      resourceVersion: binding.json?.metadata?.resourceVersion || '',
+    },
+    workload: {
+      name: 'opensphere-console',
+      uid: current.metadata?.uid || '',
+      resourceVersion: current.metadata?.resourceVersion || '',
+    },
+    reason: denied ? '' : `Kubernetes admission red-test was not denied by the canonical policy (HTTP ${attempt.status})`,
+  };
+}
+
 async function securityPolicyEvidence() {
-  const [policies, webhooks, admins] = await Promise.all([
+  const [policies, webhooks, admins, redTestEvidence] = await Promise.all([
     k8s('GET', `/apis/networking.k8s.io/v1/networkpolicies`),
     k8s('GET', `/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations`),
     k8s('GET', `/apis/rbac.authorization.k8s.io/v1/clusterrolebindings`),
+    admissionPolicyRedTest(),
   ]);
   const np = policies.json?.items || [];
   const wh = webhooks.json?.items || [];
   const rb = admins.json?.items || [];
   // HIS has an independent boundary; the Console proves only its own isolation.
   const isolation = np.some((x) => x.metadata?.namespace === NS);
-  const admission = wh.length > 0;
+  const admission = wh.length > 0 && redTestEvidence.policyReady;
   const leastPrivilege = rb.some((x) => x.metadata?.name === 'dupa-module-profile-installer');
-  // Presence alone is not a constitutional red-test. Keep the gate false until a signed, recent
-  // negative admission test is recorded by the future policy evidence controller.
-  const redTest = false;
+  const redTest = redTestEvidence.denied;
   return {
     ready: isolation && admission && leastPrivilege && redTest,
     isolation, admission, leastPrivilege, redTest,
-    reason: redTest ? '' : 'signed admission-policy red-test evidence is missing',
+    redTestEvidence,
+    reason: redTest ? '' : (redTestEvidence.reason || 'live admission-policy red-test evidence is missing'),
   };
 }
 async function deliveryEvidence() {
@@ -1906,17 +2045,56 @@ async function declarePlatformProfile(actor, reason) {
   if (!current.declared) return k8s('POST', `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles`, body);
   return k8s('PATCH', PLATFORM_PROFILE_PATH, { spec: body.spec });
 }
+function platformVerificationProjection(actor, status) {
+  const previous = status.profile?.status || {};
+  const previousConditions = new Map((previous.conditions || []).map((item) => [item.type, item]));
+  const conditions = status.capabilities.map((item) => {
+    const prior = previousConditions.get(item.type);
+    const unchanged = prior?.status === item.status && prior?.reason === item.reason && prior?.message === item.message;
+    return {
+      type: item.type, status: item.status, reason: item.reason, message: item.message,
+      lastTransitionTime: unchanged && prior.lastTransitionTime ? prior.lastTransitionTime : status.observedAt,
+    };
+  });
+  return {
+    phase: status.phase,
+    observedGeneration: status.profile.generation,
+    lastVerifiedAt: status.observedAt,
+    verifiedBy: auditActorLabel(actor),
+    conditions,
+    evidenceRefs: status.capabilities.flatMap((item) => item.evidence.map((_, index) => ({ type: item.type, ref: `live:${item.type.toLowerCase()}:${index}` }))),
+  };
+}
+
+function platformVerificationComparable(value = {}) {
+  return JSON.stringify({
+    phase: value.phase || '',
+    observedGeneration: Number(value.observedGeneration || 0),
+    conditions: (value.conditions || []).map((item) => ({ type: item.type, status: item.status, reason: item.reason, message: item.message })),
+    evidenceRefs: (value.evidenceRefs || []).map((item) => ({ type: item.type || '', ref: item.ref || '' })),
+  });
+}
+
 async function writePlatformVerification(actor, status) {
   if (!status.profile.declared) return { ok: false, status: 409, json: { message: 'PlatformSupportProfile must be preflighted first' } };
-  const conditions = status.capabilities.map((x) => ({
-    type: x.type, status: x.status, reason: x.reason, message: x.message,
-    lastTransitionTime: status.observedAt,
-  }));
-  return k8s('PATCH', `${PLATFORM_PROFILE_PATH}/status`, { status: {
-    phase: status.phase, observedGeneration: status.profile.generation,
-    lastVerifiedAt: status.observedAt, verifiedBy: actor, conditions,
-    evidenceRefs: status.capabilities.flatMap((x) => x.evidence.map((_, i) => ({ type: x.type, ref: `live:${x.type.toLowerCase()}:${i}` }))),
-  } });
+  return k8s('PATCH', `${PLATFORM_PROFILE_PATH}/status`, { status: platformVerificationProjection(actor, status) });
+}
+
+let _platformVerificationRunning = false;
+async function reconcilePlatformVerification() {
+  if (_platformVerificationRunning) return;
+  _platformVerificationRunning = true;
+  try {
+    const state = await platformReadinessStatus();
+    if (!state.profile.declared) return;
+    const desired = platformVerificationProjection('opensphere-console-dupa-controller', state);
+    if (platformVerificationComparable(state.profile.status) === platformVerificationComparable(desired)) return;
+    const written = await k8s('PATCH', `${PLATFORM_PROFILE_PATH}/status`, { status: desired });
+    if (!written.ok) throw new Error(`PlatformSupportProfile status reconcile HTTP ${written.status}`);
+    console.log(`[platform-readiness] reconciled phase=${desired.phase} conditions=${desired.conditions.map((item) => `${item.type}:${item.status}`).join(',')}`);
+  } finally {
+    _platformVerificationRunning = false;
+  }
 }
 
 // ── /metrics (Prometheus exposition, dependency-free; never browser-routed) ──
@@ -2002,6 +2180,76 @@ const server = http.createServer(async (req, res) => {
       // F-3: 예약된 native 서비스 id는 allowlist 상태와 무관하게 항상 403(이중 방어).
       const permitted = proxyAllow.has(id) && !RESERVED_PROXY_SERVICE_IDS.has(id);
       res.writeHead(permitted ? 204 : 403); return res.end();
+    }
+
+    // OAA Extension supply-chain owner facade.  It is deliberately separate
+    // from the generic Admin API so the owning controller can re-evaluate the
+    // canonical permission, MFA assurance, closed schema and exact digest.
+    if (p.startsWith('/api/oaa/owner/extensions/')) {
+      let oaaActor;
+      try { oaaActor = await verifyAuthed(req); }
+      catch (e) {
+        const numeric = e && typeof e.code === 'number';
+        return json(res, numeric ? e.code : 502, { error: numeric ? (e.msg || 'unauthorized') : 'auth backend error', opId });
+      }
+      try {
+        if (p === '/api/oaa/owner/extensions/security' && req.method === 'GET') {
+          requireOaaOwnerPermission(oaaActor, 'console.extension.security.read');
+          const items = (await listImageRevocations()).map((item) => ({
+            repository: item.repository, digest: item.digest,
+            replacementDigest: item.replacement_digest || '', reason: item.reason,
+            revokedAt: item.revoked_at,
+          }));
+          return json(res, 200, {
+            schema: 'oaa-extension-security-status.opensphere.io/v1alpha1',
+            owner: 'DUPA Extension Host / Supabase append-only revocation ledger',
+            observedAt: new Date().toISOString(), items,
+          });
+        }
+        if (p === '/api/oaa/owner/extensions/inspect' && req.method === 'POST') {
+          requireOaaOwnerPermission(oaaActor, 'console.extension.security.read');
+          const body = await readBody(req);
+          requireClosedOaaExtensionBody(body, ['image']);
+          const parsed = parseModuleImageReference(body.image);
+          if (parsed.channel) throw { code: 400, msg: 'OAA inspection requires repository@sha256:digest' };
+          return json(res, 200, oaaExtensionInspectionProjection(await inspectModuleImage(`${parsed.repository}@${parsed.reference}`)));
+        }
+        if (p === '/api/oaa/owner/extensions/revoke' && req.method === 'POST') {
+          requireOaaOwnerPermission(oaaActor, 'console.extension.security.manage');
+          if (oaaActor.assurance !== 'aal2') throw { code: 403, msg: 'OAA Extension revocation requires MFA assurance aal2' };
+          const body = await readBody(req);
+          requireClosedOaaExtensionBody(body, ['image', 'replacementImage', 'confirm', 'reason']);
+          const reason = String(body.reason || '').trim();
+          if (reason.length < 8 || reason.length > 2000) throw { code: 400, msg: 'revocation reason must be 8-2000 characters' };
+          const parsed = parseModuleImageReference(body.image);
+          if (parsed.channel) throw { code: 400, msg: 'revocation requires repository@sha256:digest' };
+          const image = `${parsed.repository}@${parsed.reference}`;
+          requireOaaExtensionConfirmation(body.confirm, `revoke extension image ${image}`);
+          let replacementDigest = '';
+          if (body.replacementImage) {
+            const replacement = parseModuleImageReference(body.replacementImage);
+            if (replacement.channel || replacement.repository !== parsed.repository) throw { code: 400, msg: 'replacement must be an exact digest in the same repository' };
+            replacementDigest = replacement.reference;
+          }
+          const item = await revokeImage({ repository: parsed.repository, digest: parsed.reference, replacementDigest, actor: oaaActor, reason, opId });
+          reconcile().catch((e) => console.error('reconcile error', e));
+          return json(res, 201, {
+            accepted: true, owner: 'DUPA Extension Host / Supabase append-only revocation ledger',
+            target: `OCIImage/${image}`, item: {
+              repository: item.repository, digest: item.digest,
+              replacementDigest: item.replacement_digest || '', reason: item.reason,
+              revokedAt: item.revoked_at,
+            },
+          });
+        }
+        return json(res, 404, { error: 'not found', opId });
+      } catch (e) {
+        const duplicate = /already revoked/i.test(String(e?.message || e?.msg || ''));
+        return json(res, duplicate ? 409 : Number(e?.code) || 503, {
+          error: duplicate ? 'ImageAlreadyRevoked' : e?.reason || e?.msg || 'OAAExtensionOwnerFailed',
+          message: e?.message || e?.msg || 'OAA Extension owner action failed', opId,
+        });
+      }
     }
 
     // ── 인증 게이트(감사 P0-1/P1-3): /api/admin/* 는 검증된 admin id_token 필수.
@@ -2362,7 +2610,7 @@ if (require.main === module) {
     // Supabase is the durable Data & Identity authority.  DUPA retains only
     // its plugin reconciliation/event loop and does not bootstrap CBS claims.
     hydrateAudit().finally(() => {
-      const loop = () => Promise.all([reconcile(), pollK8sEvents()])
+      const loop = () => Promise.all([reconcile(), pollK8sEvents(), reconcilePlatformVerification()])
         .catch((e) => console.error('loop error', e))
         .finally(() => setTimeout(loop, 15000));
       loop();
@@ -2370,5 +2618,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, verifiedActivatedRegistration, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, verifiedActivatedRegistration, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
 }

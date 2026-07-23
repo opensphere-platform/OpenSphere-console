@@ -2,14 +2,29 @@ const http = require('http');
 const fs = require('fs');
 const { createHash, randomUUID } = require('crypto');
 const { Pool } = require('pg');
+const { normalizeProviderToolCalls } = require('./provider-tool-calls');
+const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
+const { buildAgentControlReadiness } = require('./agent-control-readiness');
+const {
+  RUNTIME_RESOURCE_KINDS,
+  WATCH_RESOURCE_KINDS,
+  resourceDefinition,
+  kubernetesResourcePath,
+  sanitizeKubernetesObject,
+  projectedResourceHealth,
+} = require('./kubernetes-resource-catalog');
 
 const PORT = Number(process.env.PORT || 8080);
 const VERSION = process.env.APP_VERSION || '0.1.0';
 const OAA_NAMESPACE = process.env.OAA_NAMESPACE || 'opensphere-console';
+const OAA_KEY_NAMESPACE = process.env.OAA_KEY_NAMESPACE || 'opensphere-oaa-credentials';
 const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const CONSOLE_ADMIN_GROUP = process.env.CONSOLE_ADMIN_GROUP || 'console-admins';
 const CONSOLE_IDENTITY_URL = (process.env.CONSOLE_IDENTITY_URL || 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const FOUNDATION_CONTROL_URL = (process.env.FOUNDATION_CONTROL_URL || 'http://foundation-oaa-owner.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const SCHEMA_ID_RE = /^[a-z_][a-z0-9_]{0,62}$/;
 // ADR-006 target mode.  In this mode schema ownership belongs exclusively to
 // versioned Supabase migrations; the gateway validates and consumes it but
@@ -35,15 +50,69 @@ const OAA_PG_TLS = process.env.OAA_PG_TLS === 'true';
 const OAA_EMBED_DIM = Math.max(16, Math.min(4096, Number(process.env.OAA_EMBED_DIM || (OAA_SUPABASE_MODE ? 1536 : 384)) || (OAA_SUPABASE_MODE ? 1536 : 384)));
 const OAA_RAG_TOP_K = Math.max(1, Math.min(12, Number(process.env.OAA_RAG_TOP_K || 5) || 5));
 const OAA_RAG_ENABLED = process.env.OAA_RAG_ENABLED !== 'false';
-// Hash vectors are an explicit local-development escape hatch only.  Production
-// Supabase mode must fail closed until a real embedding provider is configured.
+// Legacy compatibility flag. It now permits PostgreSQL lexical fallback only;
+// OAA never manufactures hash vectors that can be confused with semantic evidence.
 const OAA_ALLOW_HASH_EMBEDDINGS = process.env.OAA_ALLOW_HASH_EMBEDDINGS === 'true';
-const OAA_ACTION_SUBMISSION_ENABLED = process.env.OAA_ACTION_SUBMISSION_ENABLED !== 'false';
+const OAA_EMBED_READINESS_TTL_MS = Math.max(30000, Math.min(900000, Number(process.env.OAA_EMBED_READINESS_TTL_MS || 300000) || 300000));
+const OAA_RUNTIME_REFRESH_MS = Math.max(30000, Math.min(300000, Number(process.env.OAA_RUNTIME_REFRESH_MS || 60000) || 60000));
+const OAA_K8S_WATCH_ENABLED = process.env.OAA_K8S_WATCH_ENABLED !== 'false';
+const OAA_K8S_WATCH_TIMEOUT_SECONDS = Math.max(60, Math.min(600, Number(process.env.OAA_K8S_WATCH_TIMEOUT_SECONDS || 240) || 240));
+const OAA_K8S_WATCH_RECONNECT_MS = Math.max(1000, Math.min(30000, Number(process.env.OAA_K8S_WATCH_RECONNECT_MS || 3000) || 3000));
+const OAA_K8S_WATCH_HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.OAA_K8S_WATCH_HEARTBEAT_MS || 15000) || 15000));
+const OAA_WATCH_OBSERVER_ID = String(process.env.OAA_WATCH_OBSERVER_ID || process.env.HOSTNAME || randomUUID()).trim().slice(0, 128);
+const OAA_ACTION_SUBMISSION_ENABLED = process.env.OAA_ACTION_SUBMISSION_ENABLED === 'true';
 const OAA_EMBED_KEY_ID = String(process.env.OAA_EMBED_KEY_ID || '').trim();
 const OAA_MANUAL_SEED_PATH = process.env.OAA_MANUAL_SEED_PATH || '/app/manual-seeds/opensphere-core-manuals.json';
-const OAA_ENV_NAMESPACES = (process.env.OAA_ENV_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change')
+const OAA_ENV_NAMESPACES = (process.env.OAA_ENV_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change,opensphere-foundation,opensphere-system')
   .split(',').map((x) => x.trim()).filter(Boolean).slice(0, 8);
+const OAA_MUTATION_NAMESPACES = (process.env.OAA_MUTATION_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change')
+  .split(',').map((x) => x.trim()).filter((x) => OAA_ENV_NAMESPACES.includes(x)).slice(0, 8);
 const OAA_SCALE_MAX = Math.max(1, Math.min(50, Number(process.env.OAA_SCALE_MAX || 10) || 10));
+const OAA_WORKLOAD_KINDS = Object.freeze(['deployment', 'statefulset', 'daemonset']);
+const OAA_SCALABLE_WORKLOAD_KINDS = Object.freeze(['deployment', 'statefulset']);
+const OAA_APPLY_RESOURCE_KINDS = Object.freeze([
+  'configmap', 'service', 'deployment', 'statefulset', 'daemonset', 'job', 'cronjob',
+  'ingress', 'networkpolicy', 'horizontalpodautoscaler', 'poddisruptionbudget', 'persistentvolumeclaim',
+]);
+const OAA_DELETE_RESOURCE_KINDS = Object.freeze([
+  'configmap', 'service', 'deployment', 'statefulset', 'daemonset', 'job', 'cronjob',
+  'ingress', 'networkpolicy', 'horizontalpodautoscaler', 'poddisruptionbudget',
+]);
+const OAA_HIS_VALIDATION_IDS = Object.freeze(['cluster-network', 'cluster-dns', 'kube-prometheus-stack', 'storage', 'csi-snapshot']);
+const OAA_HIS_MANAGED_IDS = Object.freeze(['ingress-nginx', 'cert-manager', 'metrics-server', 'kube-prometheus-stack']);
+const OAA_HIS_LIFECYCLE_ACTIONS = Object.freeze(['install', 'upgrade', 'recover', 'rollback', 'uninstall']);
+const OAA_EXTENSION_LIFECYCLE_ACTIONS = Object.freeze(['install', 'enable', 'disable', 'uninstall', 'rollback']);
+const OAA_FOUNDATION_ENGINES = Object.freeze(['keycloak', 'samba', 'postgres', 'psmdb', 'valkey', 'opensearch', 'rustfs']);
+const OAA_FOUNDATION_MODELS = Object.freeze(['identity', 'data']);
+const OAA_CONSOLE_ROLES = Object.freeze(['console-admins', 'console-operators', 'console-viewers']);
+const OAA_EVIDENCE_STREAMS = Object.freeze(['agent_run', 'agent_step', 'tool_run', 'retrieval_trace', 'llm_usage_event', 'runtime_event']);
+const OAA_RECOVERY_COMPONENTS = Object.freeze(['all', 'supabase-database', 'supabase-storage', 'gitea']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const OAA_EXTENSION_IMAGE_RE = /^ghcr\.io\/opensphere-platform\/[a-z0-9._-]+@sha256:[0-9a-f]{64}$/;
+const OAA_CEPH_IMPORT_REF_RE = /^opensphere-ceph-imports\/opensphere-ceph-import-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const OAA_OWNER_ACTION_TOOL_IDS = new Set([
+  'oaa.platform.readiness.preflight',
+  'oaa.platform.readiness.verify',
+  'oaa.extension.lifecycle',
+  'oaa.extension.image.revoke',
+  'oaa.notification.channel.enabled',
+  'oaa.notification.channel.test',
+  'oaa.notification.delivery.retry',
+  'oaa.his.validate',
+  'oaa.his.lifecycle',
+  'oaa.his.observability.configure',
+  'oaa.ceph.connect',
+  'oaa.ceph.disconnect',
+  'oaa.foundation.engine.lifecycle',
+  'oaa.foundation.claim.create',
+  'oaa.foundation.claim.release',
+  'oaa.foundation.identity-directory.claim.create',
+  'oaa.foundation.identity-directory.claim.release',
+  'oaa.identity.user.create',
+  'oaa.identity.user.enabled',
+  'oaa.identity.role.membership',
+  'oaa.evidence.retention.update',
+]);
 // CONSTITUTION-0004 §4.2: before Cluster Manager Activated + HIS Preflight Ready, OAA may only
 // expose Manual/help/search/safe read-only capability. Kubernetes mutation/action tools must stay
 // unavailable. This must be exactly the string 'true' to open the gate; any other value (including
@@ -111,7 +180,7 @@ async function verifyAuthed(req) {
   try {
     response = await fetch(`${CONSOLE_IDENTITY_URL}/api/identity/session`, {
       headers: { authorization: `Bearer ${m[1]}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(8000),
     });
   } catch {
     throw { code: 503, msg: 'Supabase identity authority unavailable' };
@@ -150,6 +219,9 @@ function keyMetaFromSecret(s) {
     baseUrl: a['opensphere.io/oaa-base-url'] || '',
     defaultModel: a['opensphere.io/oaa-default-model'] || '',
     embeddingModel: a['opensphere.io/oaa-embedding-model'] || '',
+    validationStatus: a['opensphere.io/oaa-validation-status'] || 'untested',
+    validationMessage: a['opensphere.io/oaa-validation-message'] || '',
+    validatedAt: a['opensphere.io/oaa-validated-at'] || '',
     enabled: a['opensphere.io/oaa-enabled'] !== 'false',
     keyFingerprint: a['opensphere.io/oaa-key-fingerprint'] || '',
     secretRef: s.metadata?.name || '',
@@ -166,7 +238,7 @@ function enabledKeyFromSecret(s) {
 }
 
 async function listKeys() {
-  const r = await k8s('GET', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
+  const r = await k8s('GET', `/api/v1/namespaces/${OAA_KEY_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
   if (!r.ok) throw Object.assign(new Error(`secret list HTTP ${r.status}`), { code: 502 });
   return (r.json?.items || []).map(keyMetaFromSecret).sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -174,14 +246,14 @@ async function listKeys() {
 async function loadEnabledKey(id = '') {
   if (id) {
     if (!ID_RE.test(id)) throw { code: 400, msg: 'invalid keyId' };
-    const r = await k8s('GET', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets/${secretName(id)}`);
+    const r = await k8s('GET', `/api/v1/namespaces/${OAA_KEY_NAMESPACE}/secrets/${secretName(id)}`);
     if (r.status === 404) throw { code: 404, msg: 'llm key not found' };
     if (!r.ok) throw { code: 502, msg: `secret read HTTP ${r.status}` };
     const key = enabledKeyFromSecret(r.json);
     if (!key) throw { code: 400, msg: 'llm key is disabled or empty' };
     return key;
   }
-  const r = await k8s('GET', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
+  const r = await k8s('GET', `/api/v1/namespaces/${OAA_KEY_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
   if (!r.ok) throw { code: 502, msg: `secret list HTTP ${r.status}` };
   const keys = (r.json?.items || []).map(enabledKeyFromSecret).filter(Boolean);
   const preferred = keys.find((k) => k.id === 'deepseek') || keys.find((k) => k.provider === 'deepseek') || keys[0];
@@ -189,16 +261,26 @@ async function loadEnabledKey(id = '') {
   return preferred;
 }
 
+function supportsProviderEmbedding(key) {
+  if (!key?.embeddingModel) return false;
+  // The current embedding adapter implements the OpenAI-compatible
+  // /embeddings contract. DeepSeek's configured endpoint is chat-only and
+  // must never be probed with an OpenAI embedding model merely because the
+  // metadata field was populated by an old form default.
+  return key.provider === 'openai' || key.provider === 'custom';
+}
+
 async function loadEmbeddingKey(id = '') {
   const wanted = String(id || OAA_EMBED_KEY_ID || '').trim();
   if (wanted) {
     const key = await loadEnabledKey(wanted);
     if (!key.embeddingModel) throw { code: 400, msg: `llm key ${wanted} has no embedding model` };
+    if (!supportsProviderEmbedding(key)) throw { code: 400, msg: `llm key ${wanted} provider does not support the configured embedding adapter` };
     return key;
   }
-  const r = await k8s('GET', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
+  const r = await k8s('GET', `/api/v1/namespaces/${OAA_KEY_NAMESPACE}/secrets?labelSelector=${encodeURIComponent(`${KEY_LABEL}=true`)}`);
   if (!r.ok) throw { code: 502, msg: `secret list HTTP ${r.status}` };
-  const keys = (r.json?.items || []).map(enabledKeyFromSecret).filter((k) => k && k.embeddingModel);
+  const keys = (r.json?.items || []).map(enabledKeyFromSecret).filter(supportsProviderEmbedding);
   return keys.find((k) => k.id === 'openai-main') || keys.find((k) => k.provider === 'openai') || keys[0] || null;
 }
 
@@ -220,6 +302,8 @@ function normalizeMessages(body) {
 let pgPool = null;
 let pgSchemaReady = false;
 let pgSchemaPromise = null;
+let pgUsageLedgerReady = false;
+let pgUsageLedgerPromise = null;
 let pgSeedReady = false;
 
 function pgEnabled() {
@@ -296,11 +380,21 @@ async function ensureKnowledgeSchema() {
         to_regclass('oaa.oaa_knowledge_documents') AS documents,
         to_regclass('oaa.oaa_knowledge_chunks') AS chunks,
         to_regclass('oaa.oaa_tool_capabilities') AS tools,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'oaa' AND table_name = 'oaa_knowledge_chunks'
+            AND column_name = 'document_revision'
+        ) AS revision_ready,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'oaa' AND table_name = 'oaa_knowledge_chunks'
+            AND column_name = 'active'
+        ) AS active_ready,
         EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS vector_ready
     `);
     const row = state.rows[0] || {};
-    if (!row.documents || !row.chunks || !row.tools || row.vector_ready !== true) {
-      throw new Error('Supabase OAA migration 0005 is not applied');
+    if (!row.documents || !row.chunks || !row.tools || row.vector_ready !== true || row.revision_ready !== true || row.active_ready !== true) {
+      throw new Error('Supabase OAA migrations 0005 and 0015 are not applied');
     }
     pgSchemaReady = true;
     return true;
@@ -427,28 +521,400 @@ async function ensureKnowledgeSchema() {
   }
 }
 
-function hashEmbedding(text) {
-  const vec = new Array(OAA_EMBED_DIM).fill(0);
-  const tokens = String(text || '')
-    .toLowerCase()
-    .split(/[^a-z0-9_.:/-]+/g)
-    .map((t) => t.trim())
-    .filter(Boolean)
-    .slice(0, 2000);
-  const source = tokens.length ? tokens : ['opensphere'];
-  for (const token of source) {
-    const h = createHash('sha256').update(token).digest();
-    const idx = h.readUInt32BE(0) % OAA_EMBED_DIM;
-    const sign = (h[4] & 1) ? 1 : -1;
-    const weight = 1 + Math.min(token.length, 24) / 24;
-    vec[idx] += sign * weight;
-    if (token.includes('-') || token.includes('/')) {
-      const idx2 = h.readUInt32BE(8) % OAA_EMBED_DIM;
-      vec[idx2] += weight * 0.5;
-    }
+async function ensureUsageLedgerSchema() {
+  const pool = getPgPool();
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for LLM usage' };
+  if (pgUsageLedgerReady) return true;
+  if (pgUsageLedgerPromise) return pgUsageLedgerPromise;
+  pgUsageLedgerPromise = (async () => {
+    const state = await pool.query("SELECT to_regclass('oaa.llm_usage_event') AS usage_ledger");
+    if (!state.rows[0]?.usage_ledger) throw new Error('Supabase OAA migration 0012 is not applied');
+    pgUsageLedgerReady = true;
+    return true;
+  })();
+  try {
+    return await pgUsageLedgerPromise;
+  } finally {
+    pgUsageLedgerPromise = null;
   }
-  const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0)) || 1;
-  return vec.map((v) => Number((v / norm).toFixed(6)));
+}
+
+function usageToken(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function normalizeProviderUsage(raw) {
+  const usage = raw && typeof raw === 'object' ? raw : null;
+  const inputTokens = usageToken(usage?.prompt_tokens ?? usage?.input_tokens);
+  const outputTokens = usageToken(usage?.completion_tokens ?? usage?.output_tokens);
+  const cachedInputTokens = usageToken(
+    usage?.prompt_cache_hit_tokens
+      ?? usage?.prompt_tokens_details?.cached_tokens
+      ?? usage?.input_tokens_details?.cached_tokens,
+  );
+  const reasoningTokens = usageToken(
+    usage?.completion_tokens_details?.reasoning_tokens
+      ?? usage?.output_tokens_details?.reasoning_tokens,
+  );
+  const reportedTotal = usageToken(usage?.total_tokens);
+  const totalTokens = Math.max(reportedTotal, inputTokens + outputTokens);
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    reasoningTokens,
+    totalTokens,
+    source: usage ? 'provider' : 'unavailable',
+  };
+}
+
+function usageSource(value, fallback = 'oaa-gateway') {
+  const source = String(value || fallback).trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9._:-]{0,63}$/.test(source) ? source : fallback;
+}
+
+function digestUsageSession(value) {
+  const sessionId = String(value || '').trim();
+  return sessionId ? `sha256:${createHash('sha256').update(sessionId).digest('hex')}` : null;
+}
+
+async function recordLlmUsageEvent(event) {
+  try {
+    await ensureUsageLedgerSchema();
+    const pool = getPgPool();
+    if (!pool) return false;
+    const usage = event.usage || normalizeProviderUsage(null);
+    const actorId = String(event.actor?.subject || 'system').slice(0, 200);
+    const actorLabel = String(event.actor?.username || event.actor?.subject || 'system').slice(0, 200);
+    await pool.query(`
+      INSERT INTO llm_usage_event (
+        request_id, agent_run_id, provider_request_id, actor_id, actor_label, source, session_digest,
+        key_id, key_fingerprint, credential_revision, provider, model, operation, status,
+        input_tokens, output_tokens, cached_input_tokens, reasoning_tokens, total_tokens,
+        usage_source, latency_ms, finish_reason, error_code, estimated_cost_usd, pricing_version
+      ) VALUES (
+        $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+        $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+      ) ON CONFLICT (request_id) DO NOTHING
+    `, [
+      event.requestId,
+      event.agentRunId || null,
+      event.providerRequestId ? String(event.providerRequestId).slice(0, 240) : null,
+      actorId,
+      actorLabel,
+      usageSource(event.source),
+      digestUsageSession(event.sessionId),
+      String(event.key?.id || 'unknown').slice(0, 48),
+      event.key?.keyFingerprint ? String(event.key.keyFingerprint).slice(0, 160) : null,
+      event.key?.updatedAt ? String(event.key.updatedAt).slice(0, 160) : null,
+      String(event.key?.provider || event.provider || 'unknown').slice(0, 64),
+      String(event.model || 'unknown').slice(0, 160),
+      event.operation === 'embedding' ? 'embedding' : 'chat_completion',
+      ['succeeded', 'failed', 'cancelled'].includes(event.status) ? event.status : 'failed',
+      usage.inputTokens,
+      usage.outputTokens,
+      usage.cachedInputTokens,
+      usage.reasoningTokens,
+      usage.totalTokens,
+      usage.source,
+      Number.isFinite(Number(event.latencyMs)) ? Math.max(0, Math.floor(Number(event.latencyMs))) : null,
+      event.finishReason ? String(event.finishReason).slice(0, 160) : null,
+      event.errorCode ? String(event.errorCode).slice(0, 160) : null,
+      Number.isFinite(Number(event.estimatedCostUsd)) ? Number(event.estimatedCostUsd) : null,
+      event.pricingVersion ? String(event.pricingVersion).slice(0, 160) : null,
+    ]);
+    return true;
+  } catch (error) {
+    console.warn('[oaa-usage] Supabase ledger write skipped:', error.message || error);
+    return false;
+  }
+}
+
+function usageMetric(row = {}) {
+  const requests = Number(row.requests || 0);
+  const successfulRequests = Number(row.successfulRequests || 0);
+  return {
+    requests,
+    successfulRequests,
+    failedRequests: Number(row.failedRequests || 0),
+    inputTokens: Number(row.inputTokens || 0),
+    outputTokens: Number(row.outputTokens || 0),
+    cachedInputTokens: Number(row.cachedInputTokens || 0),
+    reasoningTokens: Number(row.reasoningTokens || 0),
+    totalTokens: Number(row.totalTokens || 0),
+    successRate: requests ? Number(((successfulRequests / requests) * 100).toFixed(1)) : 0,
+    p95LatencyMs: row.p95LatencyMs == null ? null : Math.round(Number(row.p95LatencyMs)),
+    estimatedCostUsd: row.estimatedCostUsd == null ? null : Number(row.estimatedCostUsd),
+    pricedRequests: Number(row.pricedRequests || 0),
+    unpricedRequests: Number(row.unpricedRequests || 0),
+  };
+}
+
+async function llmUsageDashboard(days = 30) {
+  await ensureUsageLedgerSchema();
+  const pool = getPgPool();
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for LLM usage' };
+  const rangeDays = [1, 7, 30, 90, 365].includes(Number(days)) ? Number(days) : 30;
+  const metricColumns = `
+    count(e.request_id)::int AS "requests",
+    count(*) FILTER (WHERE e.status = 'succeeded')::int AS "successfulRequests",
+    count(*) FILTER (WHERE e.status <> 'succeeded')::int AS "failedRequests",
+    COALESCE(sum(e.input_tokens), 0)::bigint AS "inputTokens",
+    COALESCE(sum(e.output_tokens), 0)::bigint AS "outputTokens",
+    COALESCE(sum(e.cached_input_tokens), 0)::bigint AS "cachedInputTokens",
+    COALESCE(sum(e.reasoning_tokens), 0)::bigint AS "reasoningTokens",
+    COALESCE(sum(e.total_tokens), 0)::bigint AS "totalTokens",
+    percentile_cont(0.95) WITHIN GROUP (ORDER BY e.latency_ms) FILTER (WHERE e.latency_ms IS NOT NULL) AS "p95LatencyMs",
+    sum(e.estimated_cost_usd) AS "estimatedCostUsd",
+    count(*) FILTER (WHERE e.estimated_cost_usd IS NOT NULL)::int AS "pricedRequests",
+    count(*) FILTER (WHERE e.total_tokens > 0 AND e.estimated_cost_usd IS NULL)::int AS "unpricedRequests"`;
+  const [summaryResult, windowsResult, byKeyResult, byModelResult, bySourceResult, dailyResult, recentResult] = await Promise.all([
+    pool.query(`SELECT ${metricColumns} FROM llm_usage_event e WHERE e.occurred_at >= now() - ($1::int * interval '1 day')`, [rangeDays]),
+    pool.query(`
+      WITH windows(name, since_at) AS (VALUES
+        ('hours24', now() - interval '24 hours'),
+        ('days7', now() - interval '7 days'),
+        ('days30', now() - interval '30 days')
+      )
+      SELECT w.name, ${metricColumns}
+      FROM windows w LEFT JOIN llm_usage_event e ON e.occurred_at >= w.since_at
+      GROUP BY w.name
+    `),
+    pool.query(`
+      SELECT e.key_id AS "keyId", max(e.provider) AS "provider",
+        array_agg(DISTINCT e.model ORDER BY e.model) AS "models",
+        max(e.occurred_at) AS "lastUsedAt", ${metricColumns},
+        COALESCE(sum(e.total_tokens) FILTER (WHERE e.occurred_at >= now() - interval '24 hours'), 0)::bigint AS "tokens24h",
+        COALESCE(sum(e.total_tokens) FILTER (WHERE e.occurred_at >= now() - interval '7 days'), 0)::bigint AS "tokens7d",
+        COALESCE(sum(e.total_tokens) FILTER (WHERE e.occurred_at >= now() - interval '30 days'), 0)::bigint AS "tokens30d"
+      FROM llm_usage_event e
+      WHERE e.occurred_at >= now() - (GREATEST($1::int, 30) * interval '1 day')
+      GROUP BY e.key_id ORDER BY "totalTokens" DESC
+    `, [rangeDays]),
+    pool.query(`
+      SELECT e.provider, e.model, e.operation, ${metricColumns}
+      FROM llm_usage_event e
+      WHERE e.occurred_at >= now() - ($1::int * interval '1 day')
+      GROUP BY e.provider, e.model, e.operation ORDER BY "totalTokens" DESC
+    `, [rangeDays]),
+    pool.query(`
+      SELECT e.source, ${metricColumns}
+      FROM llm_usage_event e
+      WHERE e.occurred_at >= now() - ($1::int * interval '1 day')
+      GROUP BY e.source ORDER BY "totalTokens" DESC
+    `, [rangeDays]),
+    pool.query(`
+      WITH days AS (
+        SELECT generate_series(
+          (now() AT TIME ZONE 'Asia/Seoul')::date - ($1::int - 1),
+          (now() AT TIME ZONE 'Asia/Seoul')::date,
+          interval '1 day'
+        )::date AS day
+      )
+      SELECT to_char(d.day, 'YYYY-MM-DD') AS "date", ${metricColumns}
+      FROM days d
+      LEFT JOIN llm_usage_event e
+        ON (e.occurred_at AT TIME ZONE 'Asia/Seoul') >= d.day
+       AND (e.occurred_at AT TIME ZONE 'Asia/Seoul') < d.day + interval '1 day'
+      GROUP BY d.day ORDER BY d.day
+    `, [rangeDays]),
+    pool.query(`
+      SELECT request_id AS "requestId", occurred_at AS "occurredAt", key_id AS "keyId",
+        provider, model, operation, source, status, input_tokens AS "inputTokens",
+        output_tokens AS "outputTokens", total_tokens AS "totalTokens", usage_source AS "usageSource",
+        latency_ms AS "latencyMs", estimated_cost_usd AS "estimatedCostUsd"
+      FROM llm_usage_event ORDER BY occurred_at DESC LIMIT 25
+    `),
+  ]);
+  const windows = Object.fromEntries(windowsResult.rows.map((row) => [row.name, usageMetric(row)]));
+  return {
+    schema: 'oaa-llm-usage.opensphere.io/v1alpha1',
+    generatedAt: new Date().toISOString(),
+    rangeDays,
+    timeZone: 'Asia/Seoul',
+    currency: 'USD',
+    costBasis: 'provider-price-not-configured',
+    summary: usageMetric(summaryResult.rows[0]),
+    windows,
+    byKey: byKeyResult.rows.map((row) => ({
+      ...usageMetric(row), keyId: row.keyId, provider: row.provider, models: row.models || [],
+      lastUsedAt: row.lastUsedAt, tokens24h: Number(row.tokens24h || 0),
+      tokens7d: Number(row.tokens7d || 0), tokens30d: Number(row.tokens30d || 0),
+    })),
+    byModel: byModelResult.rows.map((row) => ({ ...usageMetric(row), provider: row.provider, model: row.model, operation: row.operation })),
+    bySource: bySourceResult.rows.map((row) => ({ ...usageMetric(row), source: row.source })),
+    daily: dailyResult.rows.map((row) => ({ ...usageMetric(row), date: row.date })),
+    recent: recentResult.rows.map((row) => ({
+      ...row,
+      inputTokens: Number(row.inputTokens || 0), outputTokens: Number(row.outputTokens || 0),
+      totalTokens: Number(row.totalTokens || 0), latencyMs: row.latencyMs == null ? null : Number(row.latencyMs),
+      estimatedCostUsd: row.estimatedCostUsd == null ? null : Number(row.estimatedCostUsd),
+    })),
+  };
+}
+
+async function agentEvidenceDashboard(days = 30, limit = 25) {
+  const pool = getPgPool();
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OAA evidence' };
+  const rangeDays = [1, 7, 30, 90, 365].includes(Number(days)) ? Number(days) : 30;
+  const rowLimit = Math.max(1, Math.min(100, Number(limit) || 25));
+  const schema = await pool.query(`
+    SELECT to_regclass('oaa.evidence_retention_policy') IS NOT NULL AS ready,
+      EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'oaa' AND table_name = 'tool_run' AND column_name = 'agent_run_id'
+      ) AS correlated
+  `);
+  if (!schema.rows[0]?.ready || !schema.rows[0]?.correlated) {
+    throw { code: 503, msg: 'Supabase OAA migration 0019 is not applied' };
+  }
+  const [summaryResult, runsResult, retentionResult] = await Promise.all([
+    pool.query(`
+      SELECT count(*)::int AS runs,
+        count(*) FILTER (WHERE status = 'completed')::int AS completed,
+        count(*) FILTER (WHERE status = 'failed')::int AS failed,
+        count(*) FILTER (WHERE status = 'running')::int AS running,
+        COALESCE(sum(tool_calls), 0)::bigint AS "toolCalls"
+      FROM agent_run WHERE started_at >= now() - ($1::int * interval '1 day')
+    `, [rangeDays]),
+    pool.query(`
+      SELECT id AS "runId", actor_label AS "actorLabel", session_digest AS "sessionDigest",
+        request_digest AS "requestDigest", provider, model, status, tool_calls AS "toolCalls",
+        started_at AS "startedAt", completed_at AS "completedAt", error_code AS "errorCode"
+      FROM agent_run
+      WHERE started_at >= now() - ($1::int * interval '1 day')
+      ORDER BY started_at DESC LIMIT $2
+    `, [rangeDays, rowLimit]),
+    pool.query(`
+      SELECT stream, retention_days AS "retentionDays", disposition, legal_hold AS "legalHold",
+        updated_at AS "updatedAt", updated_by AS "updatedBy", row_count AS "rowCount",
+        oldest_at AS "oldestAt", due_rows AS "dueRows", export_covered_rows AS "exportCoveredRows",
+        last_export_at AS "lastExportAt"
+      FROM evidence_retention_status ORDER BY stream
+    `),
+  ]);
+  const runIds = runsResult.rows.map((row) => row.runId);
+  let steps = [];
+  let retrievals = [];
+  let tools = [];
+  let providerCalls = [];
+  if (runIds.length) {
+    const [stepsResult, retrievalResult, toolsResult, providerResult] = await Promise.all([
+      pool.query(`
+        SELECT run_id AS "runId", step_index AS "stepIndex", step_kind AS "stepKind", tool_id AS "toolId",
+          status, input_digest AS "inputDigest", output_digest AS "outputDigest", metadata, occurred_at AS "occurredAt"
+        FROM agent_step WHERE run_id = ANY($1::uuid[]) ORDER BY run_id, step_index
+      `, [runIds]),
+      pool.query(`
+        SELECT trace.agent_run_id AS "runId", trace.request_id AS "requestId", trace.rank, trace.score,
+          trace.query_digest AS "queryDigest", trace.document_revision AS "documentRevision",
+          document.source_id AS "sourceId", document.title, trace.created_at AS "occurredAt"
+        FROM retrieval_trace trace
+        LEFT JOIN oaa_knowledge_documents document ON document.id = trace.document_id
+        WHERE trace.agent_run_id = ANY($1::uuid[])
+        ORDER BY trace.agent_run_id, trace.rank
+      `, [runIds]),
+      pool.query(`
+        SELECT agent_run_id AS "runId", request_id AS "requestId", tool_id AS "toolId", target,
+          permission_code AS "permissionCode", status, input_digest AS "inputDigest",
+          result_digest AS "resultDigest", created_at AS "occurredAt", completed_at AS "completedAt"
+        FROM tool_run WHERE agent_run_id = ANY($1::uuid[]) ORDER BY agent_run_id, created_at
+      `, [runIds]),
+      pool.query(`
+        SELECT agent_run_id AS "runId", request_id AS "requestId", provider, model, operation, status,
+          input_tokens AS "inputTokens", output_tokens AS "outputTokens", total_tokens AS "totalTokens",
+          usage_source AS "usageSource", latency_ms AS "latencyMs", occurred_at AS "occurredAt"
+        FROM llm_usage_event WHERE agent_run_id = ANY($1::uuid[]) ORDER BY agent_run_id, occurred_at
+      `, [runIds]),
+    ]);
+    steps = stepsResult.rows.map((row) => ({ ...row, metadata: redactProjection(row.metadata || {}) }));
+    retrievals = retrievalResult.rows.map((row) => ({ ...row, rank: Number(row.rank), score: Number(row.score || 0) }));
+    tools = toolsResult.rows;
+    providerCalls = providerResult.rows.map((row) => ({
+      ...row, inputTokens: Number(row.inputTokens || 0), outputTokens: Number(row.outputTokens || 0),
+      totalTokens: Number(row.totalTokens || 0), latencyMs: row.latencyMs == null ? null : Number(row.latencyMs),
+    }));
+  }
+  const groupByRun = (rows) => rows.reduce((map, row) => {
+    const runId = row.runId;
+    if (!map.has(runId)) map.set(runId, []);
+    map.get(runId).push(row);
+    return map;
+  }, new Map());
+  const stepMap = groupByRun(steps);
+  const retrievalMap = groupByRun(retrievals);
+  const toolMap = groupByRun(tools);
+  const providerMap = groupByRun(providerCalls);
+  return {
+    schema: 'oaa-agent-evidence.opensphere.io/v1alpha1',
+    generatedAt: new Date().toISOString(), rangeDays,
+    privacy: 'digest-and-metadata-only; prompts, responses, credentials, and raw logs are excluded',
+    deletionControl: 'No purge API is exposed. Export receipt and reviewed owner maintenance are required.',
+    summary: {
+      runs: Number(summaryResult.rows[0]?.runs || 0), completed: Number(summaryResult.rows[0]?.completed || 0),
+      failed: Number(summaryResult.rows[0]?.failed || 0), running: Number(summaryResult.rows[0]?.running || 0),
+      toolCalls: Number(summaryResult.rows[0]?.toolCalls || 0),
+    },
+    retention: retentionResult.rows.map((row) => ({
+      ...row, rowCount: Number(row.rowCount || 0), dueRows: Number(row.dueRows || 0),
+      exportCoveredRows: Number(row.exportCoveredRows || 0),
+    })),
+    runs: runsResult.rows.map((run) => ({
+      ...run, toolCalls: Number(run.toolCalls || 0), steps: stepMap.get(run.runId) || [],
+      retrievals: retrievalMap.get(run.runId) || [], tools: toolMap.get(run.runId) || [],
+      providerCalls: providerMap.get(run.runId) || [],
+    })),
+  };
+}
+
+async function setEvidenceRetentionPolicy(actor, rawBody) {
+  const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {};
+  requireClosedOwnerInputs(body, ['stream', 'retentionDays', 'disposition', 'legalHold', 'confirm', 'reason']);
+  assertPermission(actor, 'oaa.evidence.manage');
+  if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'evidence retention update requires MFA assurance aal2' };
+  const stream = String(body.stream || '').trim();
+  const retentionDays = Number(body.retentionDays);
+  const disposition = String(body.disposition || '').trim().toLowerCase();
+  const legalHold = body.legalHold;
+  const reason = requireMutationReason(body.reason);
+  if (!OAA_EVIDENCE_STREAMS.includes(stream)) throw { code: 400, msg: 'unsupported evidence stream' };
+  if (!Number.isInteger(retentionDays) || retentionDays < 30 || retentionDays > 3650) throw { code: 400, msg: 'retentionDays must be an integer between 30 and 3650' };
+  if (!['retain', 'export-before-delete'].includes(disposition)) throw { code: 400, msg: 'unsupported evidence disposition' };
+  if (typeof legalHold !== 'boolean') throw { code: 400, msg: 'legalHold must be boolean' };
+  requireConfirm(body.confirm, `update OAA evidence retention ${stream} to ${retentionDays} days`);
+  const pool = getPgPool();
+  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OAA evidence' };
+  const result = await pool.query(`
+    SELECT stream, retention_days AS "retentionDays", disposition, legal_hold AS "legalHold",
+      updated_at AS "updatedAt", updated_by AS "updatedBy"
+    FROM oaa.set_evidence_retention_policy($1, $2, $3, $4, $5, $6)
+  `, [stream, retentionDays, disposition, legalHold, String(actor?.subject || actor?.username || 'unknown').slice(0, 200), reason]);
+  return {
+    accepted: true, owner: 'OAA Supabase evidence owner', target: `OAAEvidence/${stream}`,
+    policy: result.rows[0], deletionPerformed: false,
+    nextBoundary: disposition === 'export-before-delete' ? 'export receipt plus reviewed owner maintenance required' : 'retained in Supabase',
+  };
+}
+
+let embeddingReadiness = {
+  checkedAtMs: 0,
+  ready: false,
+  reason: 'not_checked',
+  keyId: '',
+  provider: '',
+  model: '',
+};
+
+function rememberEmbeddingReadiness(ready, key, reason = '') {
+  embeddingReadiness = {
+    checkedAtMs: Date.now(),
+    ready: Boolean(ready),
+    reason: ready ? null : String(reason || 'embedding_provider_unavailable').slice(0, 240),
+    keyId: String(key?.id || ''),
+    provider: String(key?.provider || ''),
+    model: String(key?.embeddingModel || ''),
+  };
 }
 
 function normalizeProviderEmbedding(values) {
@@ -460,9 +926,10 @@ function normalizeProviderEmbedding(values) {
   return vec.map((v) => Number(v.toFixed(8)));
 }
 
-async function providerEmbedding(text, key) {
+async function providerEmbedding(text, key, opts = {}) {
   const baseUrl = (key.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
   const started = Date.now();
+  const requestId = randomUUID();
   const commonBody = {
     model: key.embeddingModel,
     input: String(text || '').slice(0, 12000),
@@ -474,20 +941,53 @@ async function providerEmbedding(text, key) {
   attempts.push(commonBody);
 
   let lastMsg = '';
+  let lastErrorCode = '';
   for (const reqBody of attempts) {
-    const resp = await fetch(`${baseUrl}/embeddings`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${key.apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify(reqBody),
-    });
+    let resp;
+    try {
+      resp = await fetch(`${baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key.apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify(reqBody),
+      });
+    } catch {
+      lastMsg = 'embedding provider network error';
+      lastErrorCode = 'provider_network_error';
+      continue;
+    }
     const raw = await resp.text();
     let data = null;
     try { data = raw ? JSON.parse(raw) : null; } catch { data = { raw }; }
     if (!resp.ok) {
       lastMsg = data?.error?.message || data?.message || `provider HTTP ${resp.status}`;
+      lastErrorCode = `provider_http_${resp.status}`;
       continue;
     }
-    const vector = normalizeProviderEmbedding(data?.data?.[0]?.embedding);
+    let vector;
+    try {
+      vector = normalizeProviderEmbedding(data?.data?.[0]?.embedding);
+    } catch (error) {
+      lastMsg = error.message || 'invalid provider embedding';
+      lastErrorCode = 'invalid_provider_embedding';
+      continue;
+    }
+    const usage = normalizeProviderUsage(data?.usage);
+    const latencyMs = Date.now() - started;
+    const usageRecorded = await recordLlmUsageEvent({
+      requestId,
+      agentRunId: opts.agentRunId,
+      providerRequestId: data?.id,
+      actor: opts.actor,
+      source: opts.source || 'oaa-embedding',
+      sessionId: opts.sessionId,
+      key,
+      model: key.embeddingModel,
+      operation: 'embedding',
+      status: 'succeeded',
+      usage,
+      latencyMs,
+    });
+    rememberEmbeddingReadiness(true, key);
     return {
       vector,
       source: {
@@ -495,33 +995,56 @@ async function providerEmbedding(text, key) {
         keyId: key.id,
         provider: key.provider,
         model: key.embeddingModel,
-        latencyMs: Date.now() - started,
+        latencyMs,
+        usage,
+        usageRecorded,
       },
     };
   }
+  await recordLlmUsageEvent({
+    requestId,
+    agentRunId: opts.agentRunId,
+    actor: opts.actor,
+    source: opts.source || 'oaa-embedding',
+    sessionId: opts.sessionId,
+    key,
+    model: key.embeddingModel,
+    operation: 'embedding',
+    status: 'failed',
+    usage: normalizeProviderUsage(null),
+    latencyMs: Date.now() - started,
+    errorCode: lastErrorCode || 'provider_error',
+  });
+  rememberEmbeddingReadiness(false, key, lastMsg || lastErrorCode || 'embedding provider failed');
   throw new Error(lastMsg || 'embedding provider failed');
 }
 
 async function embeddingVector(text, opts = {}) {
-  // Manual Registry content must remain browseable when no external embedding provider is
-  // configured. This fallback is limited to callers that explicitly opt into the Manual path;
-  // general OAA knowledge and chat retrieval remain provider-only.
-  const allowHashFallback = OAA_ALLOW_HASH_EMBEDDINGS || opts.allowHashFallback === true;
-  const strict = Boolean(opts.strict) || (OAA_SUPABASE_MODE && !allowHashFallback);
+  // Documents remain browseable through PostgreSQL FTS when the external semantic provider is
+  // absent. allowHashFallback is accepted only as a legacy caller name; the returned mode is
+  // explicitly lexical and the vector is an inert zero placeholder.
+  const allowLexicalFallback = OAA_ALLOW_HASH_EMBEDDINGS
+    || opts.allowLexicalFallback === true
+    || opts.allowHashFallback === true;
+  const strict = Boolean(opts.strict) || (OAA_SUPABASE_MODE && !allowLexicalFallback);
   try {
     const key = await loadEmbeddingKey(opts.keyId || '');
-    if (key) return await providerEmbedding(text, key);
+    if (key) return await providerEmbedding(text, key, opts);
     if (strict) throw new Error('no enabled embedding key');
   } catch (e) {
     if (strict) throw e;
     console.warn('[oaa-embed] provider skipped:', e.message || e);
   }
-  if (!allowHashFallback) {
-    throw new Error('provider embedding is required; hash embeddings are disabled');
+  if (!allowLexicalFallback) {
+    throw new Error('provider embedding is required; lexical fallback is disabled for this operation');
   }
+  // Keep the document available to PostgreSQL full-text search without
+  // manufacturing a vector that could be mistaken for semantic evidence.
+  // Strict re-embedding replaces this lexical placeholder once a real
+  // embedding provider is configured.
   return {
-    vector: hashEmbedding(text),
-    source: { mode: 'hash', keyId: '', provider: 'local', model: `hash-${OAA_EMBED_DIM}` },
+    vector: new Array(OAA_EMBED_DIM).fill(0),
+    source: { mode: 'lexical', keyId: '', provider: 'postgresql', model: 'tsvector' },
   };
 }
 
@@ -622,31 +1145,42 @@ async function upsertKnowledgeDocument(doc, actor = null) {
   const acl = (doc.acl && typeof doc.acl === 'object') ? doc.acl
     : ((metadata.acl && typeof metadata.acl === 'object') ? metadata.acl : { visibility: 'authenticated' });
   const contentHash = createHash('sha256').update(content).digest('hex');
-  const id = randomUUID();
-  const upsert = OAA_SUPABASE_MODE
-    ? await pool.query(`
-      INSERT INTO oaa_knowledge_documents (id, namespace, source_type, source_id, title, version, metadata, content_hash, status, authority_tier, acl)
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)
-      ON CONFLICT (namespace, source_type, source_id)
-      DO UPDATE SET title = EXCLUDED.title, version = EXCLUDED.version, metadata = EXCLUDED.metadata,
-        content_hash = EXCLUDED.content_hash, status = EXCLUDED.status, authority_tier = EXCLUDED.authority_tier,
-        acl = EXCLUDED.acl, updated_at = now()
-      RETURNING id, content_hash
-    `, [id, namespace, sourceType, sourceId, title, version, JSON.stringify(metadata), contentHash, status, authorityTier, JSON.stringify(acl)])
-    : await pool.query(`
-      INSERT INTO oaa_knowledge_documents (id, namespace, source_type, source_id, title, version, metadata, content_hash)
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-      ON CONFLICT (namespace, source_type, source_id)
-      DO UPDATE SET title = EXCLUDED.title, version = EXCLUDED.version, metadata = EXCLUDED.metadata,
-        content_hash = EXCLUDED.content_hash, updated_at = now()
-      RETURNING id, content_hash
-    `, [id, namespace, sourceType, sourceId, title, version, JSON.stringify(metadata), contentHash]);
-  const docId = upsert.rows[0].id;
-  await pool.query('DELETE FROM oaa_knowledge_chunks WHERE document_id = $1', [docId]);
   const chunks = chunkText(content);
-  let embeddingMode = 'hash';
-  let embeddingProvider = 'local';
-  let embeddingModel = `hash-${OAA_EMBED_DIM}`;
+  const existing = await pool.query(`
+    SELECT d.id, d.content_hash,
+      (SELECT count(*)::int FROM oaa_knowledge_chunks c
+       WHERE c.document_id = d.id AND c.active AND c.document_revision = d.content_hash) AS active_chunks,
+      (SELECT c.metadata->'embedding' FROM oaa_knowledge_chunks c
+       WHERE c.document_id = d.id AND c.active AND c.document_revision = d.content_hash
+       ORDER BY c.chunk_index LIMIT 1) AS embedding
+    FROM oaa_knowledge_documents d
+    WHERE d.namespace = $1 AND d.source_type = $2 AND d.source_id = $3
+    LIMIT 1
+  `, [namespace, sourceType, sourceId]);
+  if (existing.rows[0]?.content_hash === contentHash && Number(existing.rows[0]?.active_chunks || 0) === chunks.length) {
+    await pool.query(`
+      UPDATE oaa_knowledge_documents
+      SET title = $4, version = $5, metadata = $6::jsonb, status = $7,
+          authority_tier = $8, acl = $9::jsonb, updated_at = now()
+      WHERE namespace = $1 AND source_type = $2 AND source_id = $3
+    `, [namespace, sourceType, sourceId, title, version, JSON.stringify(metadata), status, authorityTier, JSON.stringify(acl)]);
+    const retained = existing.rows[0].embedding && typeof existing.rows[0].embedding === 'object'
+      ? existing.rows[0].embedding : { mode: 'lexical', provider: 'postgresql', model: 'tsvector' };
+    audit(actor, 'knowledge-upsert', `${namespace}/${sourceType}/${sourceId}`, 'ok', `${chunks.length} chunks / ${retained.mode || 'retained'} / unchanged`);
+    return {
+      id: existing.rows[0].id,
+      chunks: chunks.length,
+      contentHash,
+      embeddingMode: retained.mode || 'retained',
+      embeddingProvider: retained.provider || '',
+      embeddingModel: retained.model || '',
+    };
+  }
+
+  const preparedChunks = [];
+  let embeddingMode = 'lexical';
+  let embeddingProvider = 'postgresql';
+  let embeddingModel = 'tsvector';
   for (let i = 0; i < chunks.length; i += 1) {
     const chunk = chunks[i];
     const embedding = await embeddingVector(`${title}\n${chunk}`, {
@@ -657,13 +1191,58 @@ async function upsertKnowledgeDocument(doc, actor = null) {
     embeddingMode = embedding.source.mode;
     embeddingProvider = embedding.source.provider;
     embeddingModel = embedding.source.model;
-    const emb = vectorLiteral(embedding.vector);
-    await pool.query(`
-      INSERT INTO oaa_knowledge_chunks (id, document_id, chunk_index, content, embedding, metadata)
-      VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb)
-      ON CONFLICT (document_id, chunk_index)
-      DO UPDATE SET content = EXCLUDED.content, embedding = EXCLUDED.embedding, metadata = EXCLUDED.metadata
-    `, [randomUUID(), docId, i, chunk, emb, JSON.stringify({ title, namespace, sourceType, sourceId, embedding: embedding.source, ...metadata })]);
+    preparedChunks.push({
+      index: i,
+      content: chunk,
+      vector: vectorLiteral(embedding.vector),
+      metadata: { title, namespace, sourceType, sourceId, embedding: embedding.source, ...metadata },
+    });
+  }
+
+  const id = randomUUID();
+  const client = await pool.connect();
+  let docId;
+  try {
+    await client.query('BEGIN');
+    const upsert = OAA_SUPABASE_MODE
+    ? await client.query(`
+      INSERT INTO oaa_knowledge_documents (id, namespace, source_type, source_id, title, version, metadata, content_hash, status, authority_tier, acl)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)
+      ON CONFLICT (namespace, source_type, source_id)
+      DO UPDATE SET title = EXCLUDED.title, version = EXCLUDED.version, metadata = EXCLUDED.metadata,
+        content_hash = EXCLUDED.content_hash, status = EXCLUDED.status, authority_tier = EXCLUDED.authority_tier,
+        acl = EXCLUDED.acl, updated_at = now()
+      RETURNING id, content_hash
+    `, [id, namespace, sourceType, sourceId, title, version, JSON.stringify(metadata), contentHash, status, authorityTier, JSON.stringify(acl)])
+    : await client.query(`
+      INSERT INTO oaa_knowledge_documents (id, namespace, source_type, source_id, title, version, metadata, content_hash)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+      ON CONFLICT (namespace, source_type, source_id)
+      DO UPDATE SET title = EXCLUDED.title, version = EXCLUDED.version, metadata = EXCLUDED.metadata,
+        content_hash = EXCLUDED.content_hash, updated_at = now()
+      RETURNING id, content_hash
+    `, [id, namespace, sourceType, sourceId, title, version, JSON.stringify(metadata), contentHash]);
+    docId = upsert.rows[0].id;
+    for (const chunk of preparedChunks) {
+      await client.query(`
+        INSERT INTO oaa_knowledge_chunks
+          (id, document_id, document_revision, active, chunk_index, content, embedding, metadata)
+        VALUES ($1, $2, $3, true, $4, $5, $6::vector, $7::jsonb)
+        ON CONFLICT (document_id, document_revision, chunk_index)
+        DO UPDATE SET active = true
+      `, [randomUUID(), docId, contentHash, chunk.index, chunk.content, chunk.vector, JSON.stringify(chunk.metadata)]);
+    }
+    await client.query(`
+      UPDATE oaa_knowledge_chunks
+      SET active = (document_revision = $2)
+      WHERE document_id = $1 AND active IS DISTINCT FROM (document_revision = $2)
+    `, [docId, contentHash]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
   audit(actor, 'knowledge-upsert', `${namespace}/${sourceType}/${sourceId}`, 'ok', `${chunks.length} chunks / ${embeddingMode}`);
   return { id: docId, chunks: chunks.length, contentHash, embeddingMode, embeddingProvider, embeddingModel };
@@ -697,13 +1276,13 @@ async function knowledgeStats() {
     pool.query(`
     SELECT
       (SELECT count(*)::int FROM oaa_knowledge_documents) AS documents,
-      (SELECT count(*)::int FROM oaa_knowledge_chunks) AS chunks,
+      (SELECT count(*)::int FROM oaa_knowledge_chunks WHERE active) AS chunks,
       (SELECT count(*)::int FROM oaa_knowledge_documents WHERE source_type = 'manual') AS "manualDocuments",
       (
         SELECT count(*)::int
         FROM oaa_knowledge_chunks c
         JOIN oaa_knowledge_documents d ON d.id = c.document_id
-        WHERE d.source_type = 'manual'
+        WHERE d.source_type = 'manual' AND c.active
       ) AS "manualChunks",
       (SELECT count(*)::int FROM oaa_manual_concepts) AS "manualConcepts",
       (SELECT count(*)::int FROM oaa_manual_relations) AS "manualRelations"
@@ -711,13 +1290,14 @@ async function knowledgeStats() {
     pool.query(`
       SELECT COALESCE(metadata->'embedding'->>'mode', 'unknown') AS mode, count(*)::int AS chunks
       FROM oaa_knowledge_chunks
+      WHERE active
       GROUP BY 1
       ORDER BY 1
     `),
     pool.query(`
       SELECT COALESCE(d.metadata->'source'->>'id', d.source_id) AS source, count(DISTINCT d.id)::int AS documents, count(c.id)::int AS chunks
       FROM oaa_knowledge_documents d
-      LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id
+      LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id AND c.active
       WHERE d.source_type = 'manual'
       GROUP BY 1
       ORDER BY documents DESC, source
@@ -730,6 +1310,12 @@ async function knowledgeStats() {
     provider: k.provider,
     displayName: k.displayName,
     embeddingModel: k.embeddingModel,
+    validationStatus: k.validationStatus,
+    validationMessage: k.validationMessage,
+    validatedAt: k.validatedAt,
+  }));
+  const semanticSearch = await checkEmbeddingReadiness(false).catch(() => ({
+    ready: false, reason: 'embedding_readiness_check_failed', keyId: '', provider: '', model: '', checkedAt: null,
   }));
   return {
     enabled: OAA_RAG_ENABLED,
@@ -739,18 +1325,29 @@ async function knowledgeStats() {
     manualSources: manualSources.rows,
     embeddingModes: modes.rows,
     embeddingKeys,
+    lexicalSearchReady: true,
+    semanticSearch,
   };
 }
 
-async function searchKnowledge(query, limit = OAA_RAG_TOP_K, actor = null) {
+async function searchKnowledge(query, limit = OAA_RAG_TOP_K, actor = null, usageContext = {}) {
   if (!OAA_RAG_ENABLED || !String(query || '').trim()) return [];
   assertPermission(actor, 'oaa.knowledge.read');
   const pool = getPgPool();
   if (!pool) return [];
   await seedBuiltinKnowledge();
-  const embedding = await embeddingVector(query);
-  const emb = vectorLiteral(embedding.vector);
-  const r = await pool.query(`
+  let embedding = null;
+  try {
+    embedding = await embeddingVector(query, {
+      actor,
+      source: usageContext.source || 'knowledge-search',
+      sessionId: usageContext.sessionId || '',
+      agentRunId: usageContext.runId || null,
+    });
+  } catch (error) {
+    console.warn('[oaa-rag] semantic search degraded to PostgreSQL full-text:', error.message || error);
+  }
+  const r = embedding ? await pool.query(`
     SELECT
       d.id AS "documentId",
       c.id AS "chunkId",
@@ -758,16 +1355,44 @@ async function searchKnowledge(query, limit = OAA_RAG_TOP_K, actor = null) {
       d.source_type AS "sourceType",
       d.source_id AS "sourceId",
       c.chunk_index AS "chunkIndex",
+      c.document_revision AS "documentRevision",
       c.content,
       c.metadata,
       1 - (c.embedding <=> $1::vector) AS score
     FROM oaa_knowledge_chunks c
     JOIN oaa_knowledge_documents d ON d.id = c.document_id
-    WHERE d.status = 'active'
+    WHERE c.active AND d.status = 'active'
     ${knowledgeAclSql(1)}
     ORDER BY c.embedding <=> $1::vector
     LIMIT $6
-  `, [emb, ...knowledgeAclParams(actor), limit]);
+  `, [vectorLiteral(embedding.vector), ...knowledgeAclParams(actor), limit]) : await pool.query(`
+    SELECT
+      d.id AS "documentId",
+      c.id AS "chunkId",
+      d.title,
+      d.source_type AS "sourceType",
+      d.source_id AS "sourceId",
+      c.chunk_index AS "chunkIndex",
+      c.document_revision AS "documentRevision",
+      c.content,
+      c.metadata,
+      (
+        ts_rank_cd(c.search_vector, plainto_tsquery('simple', $1))
+        + CASE WHEN d.title ILIKE ('%' || $1 || '%') THEN 0.4 ELSE 0 END
+        + CASE WHEN c.content ILIKE ('%' || $1 || '%') THEN 0.2 ELSE 0 END
+      )::double precision AS score
+    FROM oaa_knowledge_chunks c
+    JOIN oaa_knowledge_documents d ON d.id = c.document_id
+    WHERE c.active AND d.status = 'active'
+      ${knowledgeAclSql(1)}
+      AND (
+        c.search_vector @@ plainto_tsquery('simple', $1)
+        OR d.title ILIKE ('%' || $1 || '%')
+        OR c.content ILIKE ('%' || $1 || '%')
+      )
+    ORDER BY score DESC, d.authority_tier ASC, d.updated_at DESC
+    LIMIT $6
+  `, [String(query).trim(), ...knowledgeAclParams(actor), limit]);
   const hits = r.rows.map((x) => {
     const metadata = x.metadata && typeof x.metadata === 'object' ? x.metadata : {};
     return {
@@ -781,10 +1406,10 @@ async function searchKnowledge(query, limit = OAA_RAG_TOP_K, actor = null) {
       sourcePath: metadata.sourcePath || '',
       sourceUrl: metadata.sourceUrl || '',
       sourceName: metadata.source?.name || metadata.source?.id || '',
-      queryEmbedding: embedding.source,
+      queryEmbedding: embedding?.source || { mode: 'lexical', provider: 'postgresql', model: 'tsvector' },
     };
   });
-  await recordRetrievalTrace(actor, query, hits);
+  await recordRetrievalTrace(actor, query, hits, usageContext.runId || null);
   return hits;
 }
 
@@ -824,7 +1449,7 @@ async function ensureManualRegistryReady() {
   const pool = getPgPool();
   if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for Manual Registry' };
   if (!manualSeedReady) {
-    manualSeedInflight ||= seedBundledManualKnowledgeIfEmpty()
+    manualSeedInflight ||= reconcileBundledManualKnowledge()
       .then((out) => {
         manualSeedReady = true;
         return out;
@@ -877,7 +1502,7 @@ async function listManualDocuments(options = {}, actor = null) {
       OR d.metadata::text ILIKE $${params.length}
       OR EXISTS (
         SELECT 1 FROM oaa_knowledge_chunks cx
-        WHERE cx.document_id = d.id AND cx.content ILIKE $${params.length}
+        WHERE cx.document_id = d.id AND cx.active AND cx.content ILIKE $${params.length}
       )
     )`);
   }
@@ -891,7 +1516,7 @@ async function listManualDocuments(options = {}, actor = null) {
            count(c.id)::int AS "chunkCount",
            left(string_agg(c.content, ' ' ORDER BY c.chunk_index), 360) AS summary
     FROM oaa_knowledge_documents d
-    LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id
+    LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id AND c.active
     WHERE ${where.join(' AND ')}
     GROUP BY d.id
     ORDER BY COALESCE((d.metadata->>'authorityTier')::int, 4), d.title
@@ -917,7 +1542,7 @@ async function getManualDocument(sourceId, actor = null) {
            count(c.id)::int AS "chunkCount",
            left(string_agg(c.content, ' ' ORDER BY c.chunk_index), 360) AS summary
     FROM oaa_knowledge_documents d
-    LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id
+    LEFT JOIN oaa_knowledge_chunks c ON c.document_id = d.id AND c.active
     WHERE d.source_type = 'manual' AND d.status = 'active' AND d.source_id = $1
     ${knowledgeAclSql(1)}
     GROUP BY d.id
@@ -927,7 +1552,7 @@ async function getManualDocument(sourceId, actor = null) {
   const chunks = await pool.query(`
     SELECT chunk_index AS "chunkIndex", content, metadata
     FROM oaa_knowledge_chunks
-    WHERE document_id = $1
+    WHERE document_id = $1 AND active
     ORDER BY chunk_index
   `, [doc.rows[0].id]);
   const bindings = await pool.query(`
@@ -952,12 +1577,11 @@ async function searchManualRegistry(query, limit = 8, actor = null) {
   if (!q) return { schema: 'manual-search.opensphere.io/v1alpha1', query: q, items: [] };
   assertPermission(actor, 'oaa.knowledge.read');
   const pool = await ensureManualRegistryReady();
-  // Manual search shares the bundled Manual's deterministic fallback. This does not relax
-  // provider-only embeddings for general OAA knowledge or chat retrieval.
+  // Manual search remains available through PostgreSQL full-text while a
+  // semantic embedding provider is unavailable.
   const embedding = await embeddingVector(q, { allowHashFallback: true });
-  const emb = vectorLiteral(embedding.vector);
   const n = Math.max(1, Math.min(25, Number(limit || 8) || 8));
-  const r = await pool.query(`
+  const r = embedding.source.mode === 'provider' ? await pool.query(`
     SELECT
       d.id AS "documentId",
       d.title,
@@ -971,11 +1595,38 @@ async function searchManualRegistry(query, limit = 8, actor = null) {
       1 - (c.embedding <=> $1::vector) AS score
     FROM oaa_knowledge_chunks c
     JOIN oaa_knowledge_documents d ON d.id = c.document_id
-    WHERE d.source_type = 'manual' AND d.status = 'active'
+    WHERE c.active AND d.source_type = 'manual' AND d.status = 'active'
     ${knowledgeAclSql(1)}
     ORDER BY c.embedding <=> $1::vector
     LIMIT $6
-  `, [emb, ...knowledgeAclParams(actor), n]);
+  `, [vectorLiteral(embedding.vector), ...knowledgeAclParams(actor), n]) : await pool.query(`
+    SELECT
+      d.id AS "documentId",
+      d.title,
+      d.namespace,
+      d.source_id AS "sourceId",
+      d.version,
+      d.metadata,
+      c.chunk_index AS "chunkIndex",
+      c.content,
+      c.metadata AS "chunkMetadata",
+      (
+        ts_rank_cd(c.search_vector, plainto_tsquery('simple', $1))
+        + CASE WHEN d.title ILIKE ('%' || $1 || '%') THEN 0.4 ELSE 0 END
+        + CASE WHEN c.content ILIKE ('%' || $1 || '%') THEN 0.2 ELSE 0 END
+      )::double precision AS score
+    FROM oaa_knowledge_chunks c
+    JOIN oaa_knowledge_documents d ON d.id = c.document_id
+    WHERE c.active AND d.source_type = 'manual' AND d.status = 'active'
+      ${knowledgeAclSql(1)}
+      AND (
+        c.search_vector @@ plainto_tsquery('simple', $1)
+        OR d.title ILIKE ('%' || $1 || '%')
+        OR c.content ILIKE ('%' || $1 || '%')
+      )
+    ORDER BY score DESC, d.authority_tier ASC, d.updated_at DESC
+    LIMIT $6
+  `, [q, ...knowledgeAclParams(actor), n]);
   return {
     schema: 'manual-search.opensphere.io/v1alpha1',
     generatedAt: new Date().toISOString(),
@@ -1071,6 +1722,7 @@ async function reembedKnowledge(body = {}, actor = null) {
     SELECT c.id, c.content, c.metadata, d.title
     FROM oaa_knowledge_chunks c
     JOIN oaa_knowledge_documents d ON d.id = c.document_id
+    WHERE c.active
     ORDER BY d.source_id, c.chunk_index
   `);
   let updated = 0;
@@ -1131,7 +1783,7 @@ async function upsertManualConcepts(concepts, defaults, actor = null) {
     const definition = String(raw.definition || raw.summary || name).trim();
     const metadata = compactObject({
       ...(raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {}),
-      schema: 'manual-concept.opensphere.io/v1alpha1',
+      ...seedOwnershipMetadata(raw, defaults.sourceId, 'manual-concept.opensphere.io/v1alpha1'),
     });
     await pool.query(`
       INSERT INTO oaa_manual_concepts (
@@ -1186,10 +1838,10 @@ async function upsertManualRelations(relations, defaults, actor = null) {
     const toId = String(raw.toId || raw.to_id || '').trim();
     const relation = String(raw.relation || '').trim();
     if (!fromId || !toId || !relation) throw { code: 400, msg: 'manual relation fromId, toId, relation required' };
-    const id = String(raw.id || `relation:${fromId}:${relation}:${toId}`).trim();
+    const id = relationId(raw);
     const metadata = compactObject({
       ...(raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {}),
-      schema: 'manual-relation.opensphere.io/v1alpha1',
+      ...seedOwnershipMetadata(raw, defaults.sourceId, 'manual-relation.opensphere.io/v1alpha1'),
     });
     await pool.query(`
       INSERT INTO oaa_manual_relations (
@@ -1314,7 +1966,7 @@ async function seedBundledManualKnowledge(actor = null) {
   return { ...out, bundled: true, seedPath: OAA_MANUAL_SEED_PATH, version: manifest.version || null };
 }
 
-async function seedBundledManualKnowledgeIfEmpty(actor = null) {
+async function reconcileBundledManualKnowledge(actor = null) {
   if (!OAA_RAG_ENABLED) return { seeded: false, reason: 'rag disabled' };
   await ensureKnowledgeSchema();
   const pool = getPgPool();
@@ -1329,17 +1981,31 @@ async function seedBundledManualKnowledgeIfEmpty(actor = null) {
   const concepts = Array.isArray(manifest.concepts) ? manifest.concepts : [];
   const relations = Array.isArray(manifest.relations) ? manifest.relations : [];
   const current = await pool.query(`
-    SELECT source_id, metadata->>'checksum' AS checksum
-    FROM oaa_knowledge_documents
+    SELECT d.source_id, d.metadata->>'checksum' AS checksum,
+      EXISTS (
+        SELECT 1 FROM oaa_knowledge_chunks c
+        WHERE c.document_id = d.id AND c.active AND c.document_revision = d.content_hash
+      ) AS revision_aligned
+    FROM oaa_knowledge_documents d
     WHERE source_type = 'manual'
       AND metadata->'source'->>'id' = 'opensphere-core-manuals'
   `);
-  const structure = await pool.query(`
-    SELECT
-      (SELECT count(*)::int FROM oaa_manual_concepts WHERE $1 = ANY(source_ids)) AS concepts,
-      (SELECT count(*)::int FROM oaa_manual_relations WHERE source_id = $1) AS relations
-  `, ['opensphere-core-manuals']);
-  const bySourceId = new Map(current.rows.map((r) => [r.source_id, r.checksum || '']));
+  const [currentConcepts, currentRelations] = await Promise.all([
+    pool.query(`
+      SELECT id, metadata->>'seedChecksum' AS "seedChecksum"
+      FROM oaa_manual_concepts
+      WHERE metadata->>'seedSourceId' = $1 AND status <> 'retired'
+    `, ['opensphere-core-manuals']),
+    pool.query(`
+      SELECT id, metadata->>'seedChecksum' AS "seedChecksum"
+      FROM oaa_manual_relations
+      WHERE metadata->>'seedSourceId' = $1
+    `, ['opensphere-core-manuals']),
+  ]);
+  const bySourceId = new Map(current.rows.map((r) => [r.source_id, {
+    checksum: r.checksum || '',
+    revisionAligned: r.revision_aligned === true,
+  }]));
   const manifestSourceIds = docs.map((d) => String(d.sourceId || d.source_id || '')).filter(Boolean);
   const manifestSourceIdSet = new Set(manifestSourceIds);
   const missing = docs.filter((d) => !bySourceId.has(String(d.sourceId || d.source_id || ''))).map((d) => d.sourceId || d.source_id);
@@ -1347,16 +2013,18 @@ async function seedBundledManualKnowledgeIfEmpty(actor = null) {
     .filter((d) => {
       const id = String(d.sourceId || d.source_id || '');
       const checksum = String(d.checksum || '');
-      return id && bySourceId.has(id) && checksum && bySourceId.get(id) !== checksum;
+      const currentDoc = bySourceId.get(id);
+      return id && currentDoc && ((!checksum || currentDoc.checksum !== checksum) || !currentDoc.revisionAligned);
     })
     .map((d) => d.sourceId || d.source_id);
-  // Bundled manuals are release-bound and declarative. Removing a document from the manifest must
-  // remove the old PostgreSQL row as well; otherwise retired sources (notably the legacy docs.ts
-  // migration input) remain searchable indefinitely after an upgrade.
+  // Bundled manuals are release-bound and declarative. Removed documents are retired instead of
+  // deleted so append-only retrieval evidence keeps stable document and chunk references.
   const stale = current.rows.map((r) => r.source_id).filter((id) => !manifestSourceIdSet.has(String(id || '')));
-  const missingConcepts = concepts.length > Number(structure.rows[0]?.concepts || 0);
-  const missingRelations = relations.length > Number(structure.rows[0]?.relations || 0);
-  if (!missing.length && !changed.length && !stale.length && !missingConcepts && !missingRelations && current.rows.length >= docs.length) {
+  const structure = manualSeedStructureDiff(manifest, {
+    concepts: currentConcepts.rows,
+    relations: currentRelations.rows,
+  });
+  if (!missing.length && !changed.length && !stale.length && !structure.needsReconcile && current.rows.length >= docs.length) {
     return { seeded: false, reason: 'bundled manuals up to date', documents: current.rows.length };
   }
   const out = await seedBundledManualKnowledge(actor);
@@ -1366,14 +2034,40 @@ async function seedBundledManualKnowledgeIfEmpty(actor = null) {
       WHERE source_id = ANY($1::text[])
     `, [stale]);
     await pool.query(`
-      DELETE FROM oaa_knowledge_documents
+      UPDATE oaa_knowledge_documents
+      SET status = 'retired', updated_at = now()
       WHERE source_type = 'manual'
         AND metadata->'source'->>'id' = 'opensphere-core-manuals'
         AND source_id = ANY($1::text[])
     `, [stale]);
-    audit(actor, 'knowledge-bundled-manual-prune', 'opensphere-core-manuals', 'ok', stale.join(', '));
+    await pool.query(`
+      UPDATE oaa_knowledge_chunks c
+      SET active = false
+      FROM oaa_knowledge_documents d
+      WHERE c.document_id = d.id
+        AND d.source_type = 'manual'
+        AND d.metadata->'source'->>'id' = 'opensphere-core-manuals'
+        AND d.source_id = ANY($1::text[])
+        AND c.active
+    `, [stale]);
+    audit(actor, 'knowledge-bundled-manual-retire', 'opensphere-core-manuals', 'ok', stale.join(', '));
   }
-  return { ...out, seeded: true, missing, changed, stale, missingConcepts, missingRelations };
+  if (structure.concepts.stale.length) {
+    await pool.query(`
+      UPDATE oaa_manual_concepts
+      SET status = 'retired', updated_at = now()
+      WHERE metadata->>'seedSourceId' = $1 AND id = ANY($2::text[])
+    `, ['opensphere-core-manuals', structure.concepts.stale]);
+    audit(actor, 'knowledge-bundled-concept-retire', 'opensphere-core-manuals', 'ok', structure.concepts.stale.join(', '));
+  }
+  if (structure.relations.stale.length) {
+    await pool.query(`
+      DELETE FROM oaa_manual_relations
+      WHERE metadata->>'seedSourceId' = $1 AND id = ANY($2::text[])
+    `, ['opensphere-core-manuals', structure.relations.stale]);
+    audit(actor, 'knowledge-bundled-relation-prune', 'opensphere-core-manuals', 'ok', structure.relations.stale.join(', '));
+  }
+  return { ...out, seeded: true, missing, changed, stale, structure };
 }
 
 function hasPermission(actor, permission) {
@@ -1456,6 +2150,12 @@ async function k8sGet(path) {
 function requireAllowedNamespace(ns) {
   const value = String(ns || '').trim();
   if (!K8S_NAME_RE.test(value) || !OAA_ENV_NAMESPACES.includes(value)) throw { code: 400, msg: 'namespace is not allowed for OAA tools' };
+  return value;
+}
+
+function requireMutationNamespace(ns) {
+  const value = String(ns || '').trim();
+  if (!K8S_NAME_RE.test(value) || !OAA_MUTATION_NAMESPACES.includes(value)) throw { code: 400, msg: 'namespace is not allowed for OAA mutations' };
   return value;
 }
 
@@ -1680,7 +2380,7 @@ async function rolloutStatus(body = {}, actor = null) {
 
 async function restartDeployment(body = {}, actor = null) {
   assertMutationEnabled(actor, 'k8s-restart-deployment');
-  const ns = requireAllowedNamespace(body.namespace);
+  const ns = requireMutationNamespace(body.namespace);
   const name = requireK8sName(body.name || body.deployment, 'deployment');
   requireConfirm(body.confirm, `restart deployment ${ns}/${name}`);
   const reason = requireMutationReason(body.reason);
@@ -1714,7 +2414,7 @@ async function restartDeployment(body = {}, actor = null) {
 
 async function scaleDeployment(body = {}, actor = null) {
   assertMutationEnabled(actor, 'k8s-scale-deployment');
-  const ns = requireAllowedNamespace(body.namespace);
+  const ns = requireMutationNamespace(body.namespace);
   const name = requireK8sName(body.name || body.deployment, 'deployment');
   const replicas = Number(body.replicas);
   if (!Number.isInteger(replicas) || replicas < 0 || replicas > OAA_SCALE_MAX) throw { code: 400, msg: `replicas must be an integer between 0 and ${OAA_SCALE_MAX}` };
@@ -1883,10 +2583,322 @@ function sanitizePageContext(input = {}) {
   };
 }
 
+function resourceNamespace(kind, namespace, requireNamespaced = true) {
+  const definition = resourceDefinition(kind);
+  if (!definition.namespaced) return { definition, namespace: '' };
+  if (!requireNamespaced && !namespace) return { definition, namespace: '' };
+  return { definition, namespace: requireAllowedNamespace(namespace) };
+}
+
+async function listKubernetesResources(body = {}, actor = null) {
+  const { definition, namespace } = resourceNamespace(body.kind, body.namespace);
+  const limit = Math.max(1, Math.min(500, Number(body.limit || 200) || 200));
+  const query = { limit };
+  if (body.labelSelector) query.labelSelector = String(body.labelSelector).slice(0, 500);
+  const response = await k8sGet(kubernetesResourcePath(definition.key, namespace, '', query));
+  if (!response.ok) throw { code: response.status === 403 ? 403 : 502, msg: `${definition.kind} list failed: ${response.error}` };
+  let items = response.items || [];
+  if (definition.key === 'namespace') items = items.filter((item) => OAA_ENV_NAMESPACES.includes(item.metadata?.name || ''));
+  const resources = items.map((item) => sanitizeKubernetesObject(definition.key, item));
+  audit(actor, 'k8s-list-resources', `${definition.kind}/${namespace || 'cluster'}`, 'ok', `${resources.length} resources`);
+  return {
+    action: 'list-kubernetes-resources', kind: definition.kind, namespace: namespace || null,
+    count: resources.length, continue: response.json?.metadata?.continue || null, resources,
+  };
+}
+
+async function getKubernetesResource(body = {}, actor = null) {
+  const { definition, namespace } = resourceNamespace(body.kind, body.namespace);
+  const name = requireK8sName(body.name, 'resource name');
+  if (definition.key === 'namespace' && !OAA_ENV_NAMESPACES.includes(name)) throw { code: 403, msg: 'namespace is outside the OAA allowlist' };
+  const response = await k8s('GET', kubernetesResourcePath(definition.key, namespace, name));
+  if (response.status === 404) throw { code: 404, msg: `${definition.kind} not found` };
+  if (!response.ok) throw { code: response.status === 403 ? 403 : 502, msg: `${definition.kind} read HTTP ${response.status}` };
+  const resource = sanitizeKubernetesObject(definition.key, response.json || {});
+  const events = definition.namespaced ? await objectEvents(namespace, definition.kind, name) : [];
+  audit(actor, 'k8s-get-resource', `${definition.kind}/${namespace || 'cluster'}/${name}`, 'ok', '');
+  return { action: 'get-kubernetes-resource', resource, health: projectedResourceHealth(resource), events };
+}
+
+let runtimeProjectionSupported = null;
+let runtimeWatchSchemaSupported = null;
+let runtimeProjectionWarningLogged = false;
+let runtimeRefreshInFlight = false;
+let runtimeWatchStopping = false;
+const runtimeWatchControllers = new Set();
+const runtimeWatchState = new Map();
+let runtimeWatchHeartbeatTimer = null;
+let runtimeWatchHeartbeatInFlight = false;
+
+function projectedHealth(item) {
+  if (item.kind === 'Pod') return item.payload.phase === 'Running' && !item.payload.reason ? 'Ready' : 'NotReady';
+  if (['Deployment', 'StatefulSet', 'DaemonSet'].includes(item.kind)) {
+    return Number(item.payload.ready || 0) >= Number(item.payload.desired || 0) ? 'Ready' : 'Degraded';
+  }
+  if (item.kind === 'NamespaceSnapshot') return Number(item.payload.counts?.unhealthyPods || 0) > 0 ? 'Degraded' : 'Ready';
+  return 'Unknown';
+}
+
+function runtimeKey(kind, namespace = '') {
+  return `${kind}:${namespace || 'cluster'}`;
+}
+
+function runtimeProjectionRow(resource) {
+  return {
+    kind: resource.kind,
+    namespace: resource.metadata?.namespace || '',
+    name: resource.metadata?.name || '',
+    resourceVersion: resource.metadata?.resourceVersion || null,
+    health: projectedResourceHealth(resource),
+    payload: resource,
+  };
+}
+
+async function mapLimit(items, concurrency, worker) {
+  const queue = [...items];
+  const results = [];
+  const runners = Array.from({ length: Math.max(1, Math.min(concurrency, queue.length || 1)) }, async () => {
+    while (queue.length) {
+      const item = queue.shift();
+      results.push(await worker(item));
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+async function collectRuntimeInventory() {
+  const tasks = [];
+  for (const kind of RUNTIME_RESOURCE_KINDS) {
+    const definition = resourceDefinition(kind);
+    if (definition.namespaced) {
+      for (const namespace of OAA_ENV_NAMESPACES) tasks.push({ kind, namespace });
+    } else {
+      tasks.push({ kind, namespace: '' });
+    }
+  }
+  const batches = await mapLimit(tasks, 8, async ({ kind, namespace }) => {
+    const definition = resourceDefinition(kind);
+    const response = await k8sGet(kubernetesResourcePath(kind, namespace, '', { limit: 500 }));
+    if (!response.ok) return { kind, namespace, ok: false, error: response.error, rows: [] };
+    let items = response.items || [];
+    if (definition.key === 'namespace') items = items.filter((item) => OAA_ENV_NAMESPACES.includes(item.metadata?.name || ''));
+    return { kind, namespace, ok: true, rows: items.map((item) => runtimeProjectionRow(sanitizeKubernetesObject(kind, item))) };
+  });
+  return {
+    observedAt: new Date().toISOString(),
+    rows: batches.flatMap((batch) => batch.rows),
+    access: batches.map(({ kind, namespace, ok, error, rows }) => ({ kind, namespace: namespace || null, ok, count: rows.length, error: error || null })),
+  };
+}
+
+async function ensureRuntimeWatchSchema(pool) {
+  if (runtimeWatchSchemaSupported != null) return runtimeWatchSchemaSupported;
+  const check = await pool.query(`
+    SELECT to_regclass('oaa.runtime_event') AS event_table,
+           to_regclass('oaa.watch_cursor') AS cursor_table,
+           EXISTS (
+             SELECT 1 FROM information_schema.columns
+             WHERE table_schema = 'oaa' AND table_name = 'watch_cursor' AND column_name = 'observer_id'
+           ) AS observer_column
+  `);
+  runtimeWatchSchemaSupported = Boolean(check.rows[0]?.event_table && check.rows[0]?.cursor_table && check.rows[0]?.observer_column);
+  return runtimeWatchSchemaSupported;
+}
+
+async function projectRuntimeInventory(inventory) {
+  const pool = getPgPool();
+  if (!pool) return false;
+  if (runtimeProjectionSupported == null) {
+    const check = await pool.query("SELECT to_regclass('oaa.runtime_resource') AS table_name");
+    runtimeProjectionSupported = Boolean(check.rows[0]?.table_name);
+  }
+  if (!runtimeProjectionSupported) return false;
+  const observedAt = inventory.observedAt || new Date().toISOString();
+  const expiresAt = new Date(Date.parse(observedAt) + OAA_RUNTIME_REFRESH_MS * 3).toISOString();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const item of inventory.rows || []) {
+      if (!item.name) continue;
+      await client.query(`
+        INSERT INTO runtime_resource (source, kind, namespace, name, resource_version, health, payload, observed_at, expires_at)
+        VALUES ('kubernetes', $1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+        ON CONFLICT (source, kind, namespace, name) DO UPDATE SET
+          resource_version = EXCLUDED.resource_version, health = EXCLUDED.health, payload = EXCLUDED.payload,
+          observed_at = EXCLUDED.observed_at, expires_at = EXCLUDED.expires_at, updated_at = clock_timestamp()
+      `, [item.kind, item.namespace, item.name, item.resourceVersion, item.health, JSON.stringify(item.payload || {}), observedAt, expiresAt]);
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function projectRuntimeSnapshot(snapshot) {
+  const pool = getPgPool();
+  if (!pool) return false;
+  try {
+    if (runtimeProjectionSupported == null) {
+      const check = await pool.query("SELECT to_regclass('oaa.runtime_resource') AS table_name");
+      runtimeProjectionSupported = Boolean(check.rows[0]?.table_name);
+    }
+    if (!runtimeProjectionSupported) return false;
+    const observedAt = snapshot.time || new Date().toISOString();
+    const expiresAt = new Date(Date.parse(observedAt) + OAA_RUNTIME_REFRESH_MS * 3).toISOString();
+    const rows = [{ kind: 'ClusterSummary', namespace: '', name: 'cluster', payload: snapshot.cluster }];
+    for (const ns of snapshot.namespaces || []) {
+      rows.push({ kind: 'NamespaceSnapshot', namespace: ns.namespace, name: ns.namespace, payload: { access: ns.access, counts: ns.counts, recentEvents: ns.recentEvents } });
+      for (const workload of ns.workloads || []) rows.push({ kind: workload.kind || 'Workload', namespace: ns.namespace, name: workload.name, payload: workload });
+      for (const pod of ns.pods || []) rows.push({ kind: 'Pod', namespace: ns.namespace, name: pod.name, payload: pod });
+      for (const service of ns.services || []) rows.push({ kind: 'Service', namespace: ns.namespace, name: service.name, payload: service });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const item of rows) {
+        await client.query(`
+          INSERT INTO runtime_resource (source, kind, namespace, name, health, payload, observed_at, expires_at)
+          VALUES ('kubernetes', $1, $2, $3, $4, $5::jsonb, $6, $7)
+          ON CONFLICT (source, kind, namespace, name) DO UPDATE SET
+            health = EXCLUDED.health, payload = EXCLUDED.payload,
+            observed_at = EXCLUDED.observed_at, expires_at = EXCLUDED.expires_at,
+            updated_at = clock_timestamp()
+        `, [item.kind, item.namespace, item.name, projectedHealth(item), JSON.stringify(item.payload || {}), observedAt, expiresAt]);
+      }
+      await client.query("DELETE FROM runtime_resource WHERE expires_at < clock_timestamp() - interval '10 minutes'");
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return true;
+  } catch (error) {
+    if (!runtimeProjectionWarningLogged) {
+      runtimeProjectionWarningLogged = true;
+      console.warn('[oaa-runtime] Supabase projection skipped:', error.message || error);
+    }
+    return false;
+  }
+}
+
+async function runtimeProjectionStatus() {
+  const pool = getPgPool();
+  if (!pool) return { ready: false, reason: 'postgres_not_configured' };
+  try {
+    const result = await pool.query(`
+      SELECT
+        count(*)::int AS total,
+        count(*) FILTER (WHERE expires_at > clock_timestamp())::int AS fresh,
+        max(observed_at) FILTER (WHERE expires_at > clock_timestamp()) AS last_observed_at
+      FROM runtime_resource
+      WHERE source = 'kubernetes'
+    `);
+    const row = result.rows[0] || {};
+    const observedAt = row.last_observed_at || null;
+    const watch = runtimeWatchStatus();
+    watch.projection = await persistedRuntimeWatchStatus(pool);
+    return {
+      ready: Number(row.fresh || 0) > 0 && (!OAA_K8S_WATCH_ENABLED || (watch.ready && watch.projection.ready)),
+      totalResources: Number(row.total || 0),
+      freshResources: Number(row.fresh || 0),
+      lastObservedAt: observedAt,
+      lagSeconds: observedAt ? Math.max(0, Math.round((Date.now() - Date.parse(observedAt)) / 1000)) : null,
+      refreshSeconds: Math.round(OAA_RUNTIME_REFRESH_MS / 1000),
+      authority: 'kubernetes',
+      projection: 'supabase',
+      watch,
+    };
+  } catch (error) {
+    return { ready: false, reason: error.message || 'runtime_projection_unavailable' };
+  }
+}
+
+async function persistedRuntimeWatchStatus(pool) {
+  if (!OAA_K8S_WATCH_ENABLED) return { ready: true, observers: 0, observerStreams: 0, watchingStreams: 0, expectedStreams: 0 };
+  try {
+    if (!(await ensureRuntimeWatchSchema(pool))) return { ready: false, reason: 'replica_aware_watch_schema_missing' };
+    const freshnessSeconds = OAA_K8S_WATCH_TIMEOUT_SECONDS + Math.ceil(OAA_K8S_WATCH_RECONNECT_MS / 1000) + 60;
+    const result = await pool.query(`
+      SELECT
+        count(DISTINCT observer_id) FILTER (WHERE status = 'watching')::int AS observers,
+        count(*) FILTER (WHERE status = 'watching')::int AS observer_streams,
+        count(*) FILTER (WHERE status = 'watching')::int AS watching_observer_streams,
+        count(*) FILTER (WHERE status = 'watching' AND observer_id = $2)::int AS current_observer_streams,
+        count(DISTINCT (kind, namespace)) FILTER (WHERE status = 'watching')::int AS watching_streams,
+        count(*) FILTER (WHERE status = 'error')::int AS errors,
+        max(updated_at) AS last_updated_at
+      FROM watch_cursor
+      WHERE source = 'kubernetes'
+        AND observer_id <> 'legacy'
+        AND updated_at > clock_timestamp() - ($1::int * interval '1 second')
+    `, [freshnessSeconds, OAA_WATCH_OBSERVER_ID]);
+    const row = result.rows[0] || {};
+    const expectedStreams = runtimeWatchState.size;
+    const watchingStreams = Number(row.watching_streams || 0);
+    const currentObserverStreams = Number(row.current_observer_streams || 0);
+    return {
+      ready: expectedStreams > 0 && watchingStreams >= expectedStreams && currentObserverStreams >= expectedStreams,
+      observers: Number(row.observers || 0),
+      observerStreams: Number(row.observer_streams || 0),
+      watchingObserverStreams: Number(row.watching_observer_streams || 0),
+      currentObserverStreams,
+      watchingStreams,
+      expectedStreams,
+      errors: Number(row.errors || 0),
+      lastUpdatedAt: row.last_updated_at || null,
+    };
+  } catch (error) {
+    return { ready: false, reason: error.message || 'watch_projection_unavailable' };
+  }
+}
+
+async function readRuntimeProjectionSnapshot() {
+  const pool = getPgPool();
+  if (!pool) return null;
+  try {
+    const result = await pool.query(`
+      SELECT kind, namespace, name, payload, observed_at
+      FROM runtime_resource
+      WHERE source = 'kubernetes' AND expires_at > clock_timestamp()
+      ORDER BY kind, namespace, name
+    `);
+    const rows = result.rows || [];
+    const clusterRow = rows.find((row) => row.kind === 'ClusterSummary' && row.name === 'cluster');
+    if (!clusterRow) return null;
+    const namespaces = OAA_ENV_NAMESPACES.map((namespace) => {
+      const summary = rows.find((row) => row.kind === 'NamespaceSnapshot' && row.namespace === namespace)?.payload || {};
+      return {
+        namespace,
+        access: { ...(summary.access || {}), source: 'supabase-runtime-projection' },
+        counts: summary.counts || { pods: 0, services: 0, events: 0, workloads: 0, unhealthyPods: 0 },
+        workloads: rows.filter((row) => row.namespace === namespace && ['Deployment', 'StatefulSet', 'DaemonSet'].includes(row.kind)).map((row) => row.payload),
+        pods: rows.filter((row) => row.namespace === namespace && row.kind === 'Pod').map((row) => row.payload),
+        services: rows.filter((row) => row.namespace === namespace && row.kind === 'Service').map((row) => row.payload),
+        unhealthyPods: rows.filter((row) => row.namespace === namespace && row.kind === 'Pod' && (row.payload?.phase !== 'Running' || row.payload?.reason || Number(row.payload?.restarts || 0) > 0)).map((row) => row.payload),
+        recentEvents: summary.recentEvents || [],
+      };
+    });
+    return {
+      cluster: { ...(clusterRow.payload || {}), source: 'supabase-runtime-projection' },
+      namespaces,
+      observedAt: clusterRow.observed_at,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function environmentSnapshot(body = {}, actor = null) {
   const context = sanitizePageContext(body.context || body.pageContext || {});
   const started = Date.now();
-  const [cluster, namespaces] = await Promise.all([
+  let [cluster, namespaces] = await Promise.all([
     clusterPodSummary().catch((e) => ({
       access: e.message || String(e),
       totalPods: 0,
@@ -1905,16 +2917,268 @@ async function environmentSnapshot(body = {}, actor = null) {
     recentEvents: [],
     })))),
   ]);
+  const liveClusterReady = cluster.access === 'ok';
+  const liveNamespacesReady = namespaces.every((ns) => !ns.access?.error && Object.values(ns.access || {}).some((value) => value === 'ok'));
+  let projectionFallback = null;
+  if (!liveClusterReady || !liveNamespacesReady) {
+    projectionFallback = await readRuntimeProjectionSnapshot();
+    if (!liveClusterReady && projectionFallback?.cluster) cluster = projectionFallback.cluster;
+    if (!liveNamespacesReady && projectionFallback?.namespaces?.length) {
+      namespaces = namespaces.map((ns) => {
+        const usable = !ns.access?.error && Object.values(ns.access || {}).some((value) => value === 'ok');
+        return usable ? ns : (projectionFallback.namespaces.find((row) => row.namespace === ns.namespace) || ns);
+      });
+    }
+  }
   const out = {
     time: new Date().toISOString(),
     actor: actor?.username || 'unknown',
     pageContext: context,
     cluster,
     namespaces,
+    evidenceSource: liveClusterReady && liveNamespacesReady ? 'kubernetes-live' : (projectionFallback ? 'kubernetes-live+supabase-projection' : 'kubernetes-partial'),
+    projectionObservedAt: projectionFallback?.observedAt || null,
     latencyMs: Date.now() - started,
   };
+  out.supabaseProjection = liveClusterReady && liveNamespacesReady ? await projectRuntimeSnapshot(out) : false;
   audit(actor, 'environment-snapshot', OAA_ENV_NAMESPACES.join(','), 'ok', `${namespaces.length} namespaces / ${cluster.totalPods || 0} cluster pods`);
   return out;
+}
+
+async function refreshRuntimeProjection() {
+  if (runtimeRefreshInFlight) return;
+  runtimeRefreshInFlight = true;
+  try {
+    await environmentSnapshot({ context: { title: 'scheduled runtime projection' } }, null);
+    const inventory = await collectRuntimeInventory();
+    await projectRuntimeInventory(inventory);
+    await cleanupRuntimeWatchCursors();
+  } catch (error) {
+    console.warn('[oaa-runtime] scheduled refresh failed:', error.message || error);
+  } finally {
+    runtimeRefreshInFlight = false;
+  }
+}
+
+async function cleanupRuntimeWatchCursors() {
+  const pool = getPgPool();
+  if (!pool || !(await ensureRuntimeWatchSchema(pool))) return false;
+  await pool.query("DELETE FROM watch_cursor WHERE updated_at < clock_timestamp() - interval '1 day'");
+  return true;
+}
+
+async function updateRuntimeWatchCursor(kind, namespace, values = {}) {
+  const pool = getPgPool();
+  if (!pool) return false;
+  try {
+    if (!(await ensureRuntimeWatchSchema(pool))) return false;
+    await pool.query(`
+      INSERT INTO watch_cursor (source, observer_id, kind, namespace, resource_version, status, last_event_at, last_error, reconnect_count, updated_at)
+      VALUES ('kubernetes', $1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
+      ON CONFLICT (source, observer_id, kind, namespace) DO UPDATE SET
+        resource_version = COALESCE(EXCLUDED.resource_version, watch_cursor.resource_version),
+        status = EXCLUDED.status,
+        last_event_at = COALESCE(EXCLUDED.last_event_at, watch_cursor.last_event_at),
+        last_error = EXCLUDED.last_error,
+        reconnect_count = greatest(watch_cursor.reconnect_count, EXCLUDED.reconnect_count),
+        updated_at = clock_timestamp()
+    `, [OAA_WATCH_OBSERVER_ID, kind, namespace || '', values.resourceVersion || null, values.status || 'starting', values.lastEventAt || null, values.lastError || null, Number(values.reconnectCount || 0)]);
+    return true;
+  } catch (error) {
+    if (!runtimeProjectionWarningLogged) console.warn('[oaa-runtime] watch cursor skipped:', error.message || error);
+    return false;
+  }
+}
+
+async function persistRuntimeWatchHeartbeat() {
+  if (runtimeWatchHeartbeatInFlight || runtimeWatchStopping) return false;
+  const pool = getPgPool();
+  const states = [...runtimeWatchState.values()];
+  if (!pool || !states.length) return false;
+  runtimeWatchHeartbeatInFlight = true;
+  try {
+    if (!(await ensureRuntimeWatchSchema(pool))) return false;
+    const rows = states.map((state) => ({
+      kind: state.kind,
+      namespace: state.namespace || '',
+      resource_version: state.resourceVersion || null,
+      status: state.status || 'starting',
+      last_event_at: state.lastEventAt || null,
+      last_error: state.lastError || null,
+      reconnect_count: Number(state.reconnects || 0),
+    }));
+    await pool.query(`
+      INSERT INTO watch_cursor
+        (source, observer_id, kind, namespace, resource_version, status, last_event_at, last_error, reconnect_count, updated_at)
+      SELECT 'kubernetes', $1, x.kind, x.namespace, x.resource_version, x.status,
+             x.last_event_at, x.last_error, x.reconnect_count, clock_timestamp()
+      FROM jsonb_to_recordset($2::jsonb) AS x(
+        kind text, namespace text, resource_version text, status text,
+        last_event_at timestamptz, last_error text, reconnect_count integer
+      )
+      ON CONFLICT (source, observer_id, kind, namespace) DO UPDATE SET
+        resource_version = COALESCE(EXCLUDED.resource_version, watch_cursor.resource_version),
+        status = EXCLUDED.status,
+        last_event_at = COALESCE(EXCLUDED.last_event_at, watch_cursor.last_event_at),
+        last_error = EXCLUDED.last_error,
+        reconnect_count = greatest(watch_cursor.reconnect_count, EXCLUDED.reconnect_count),
+        updated_at = clock_timestamp()
+    `, [OAA_WATCH_OBSERVER_ID, JSON.stringify(rows)]);
+    return true;
+  } catch (error) {
+    if (!runtimeProjectionWarningLogged) console.warn('[oaa-runtime] watch heartbeat skipped:', error.message || error);
+    return false;
+  } finally {
+    runtimeWatchHeartbeatInFlight = false;
+  }
+}
+
+async function projectRuntimeWatchEvent(eventType, kind, object) {
+  if (!['ADDED', 'MODIFIED', 'DELETED'].includes(eventType)) return false;
+  const definition = resourceDefinition(kind);
+  const namespace = object?.metadata?.namespace || '';
+  if (definition.namespaced && !OAA_ENV_NAMESPACES.includes(namespace)) return false;
+  if (definition.key === 'namespace' && !OAA_ENV_NAMESPACES.includes(object?.metadata?.name || '')) return false;
+  const resource = sanitizeKubernetesObject(kind, object || {});
+  const item = runtimeProjectionRow(resource);
+  if (!item.name || !item.resourceVersion) return false;
+  const pool = getPgPool();
+  if (!pool) return false;
+  if (runtimeProjectionSupported == null) {
+    const check = await pool.query("SELECT to_regclass('oaa.runtime_resource') AS table_name");
+    runtimeProjectionSupported = Boolean(check.rows[0]?.table_name);
+  }
+  if (!runtimeProjectionSupported) return false;
+  const observedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.parse(observedAt) + OAA_RUNTIME_REFRESH_MS * 3).toISOString();
+  const digest = `sha256:${createHash('sha256').update(JSON.stringify(item.payload || {})).digest('hex')}`;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (eventType === 'DELETED') {
+      await client.query(`DELETE FROM runtime_resource WHERE source = 'kubernetes' AND kind = $1 AND namespace = $2 AND name = $3`, [item.kind, item.namespace, item.name]);
+    } else {
+      await client.query(`
+        INSERT INTO runtime_resource (source, kind, namespace, name, resource_version, health, payload, observed_at, expires_at)
+        VALUES ('kubernetes', $1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+        ON CONFLICT (source, kind, namespace, name) DO UPDATE SET
+          resource_version = EXCLUDED.resource_version, health = EXCLUDED.health, payload = EXCLUDED.payload,
+          observed_at = EXCLUDED.observed_at, expires_at = EXCLUDED.expires_at, updated_at = clock_timestamp()
+      `, [item.kind, item.namespace, item.name, item.resourceVersion, item.health, JSON.stringify(item.payload || {}), observedAt, expiresAt]);
+    }
+    if (await ensureRuntimeWatchSchema(pool)) {
+      await client.query(`
+        INSERT INTO runtime_event (source, event_type, kind, namespace, name, resource_version, health, payload_digest, observed_at, metadata)
+        VALUES ('kubernetes', $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        ON CONFLICT (source, event_type, kind, namespace, name, resource_version) DO NOTHING
+      `, [eventType, item.kind, item.namespace, item.name, item.resourceVersion, item.health, digest, observedAt, JSON.stringify({ generation: resource.metadata?.generation ?? null })]);
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function consumeWatchResponse(response, kind, namespace, state) {
+  let buffered = '';
+  for await (const chunk of response.body) {
+    if (runtimeWatchStopping) break;
+    buffered += Buffer.from(chunk).toString('utf8');
+    let newline;
+    while ((newline = buffered.indexOf('\n')) >= 0) {
+      const line = buffered.slice(0, newline).trim();
+      buffered = buffered.slice(newline + 1);
+      if (!line) continue;
+      const event = JSON.parse(line);
+      const eventType = String(event.type || '').toUpperCase();
+      const resourceVersion = event.object?.metadata?.resourceVersion || '';
+      if (eventType === 'ERROR') throw new Error(event.object?.message || 'Kubernetes watch error');
+      if (eventType === 'BOOKMARK') {
+        if (resourceVersion) state.resourceVersion = resourceVersion;
+        continue;
+      }
+      if (!['ADDED', 'MODIFIED', 'DELETED'].includes(eventType)) continue;
+      await projectRuntimeWatchEvent(eventType, kind, event.object || {});
+      state.resourceVersion = resourceVersion || state.resourceVersion;
+      state.lastEventAt = new Date().toISOString();
+      state.events += 1;
+      state.status = 'watching';
+      state.lastError = null;
+    }
+  }
+}
+
+async function watchResourceLoop(kind, namespace = '') {
+  const definition = resourceDefinition(kind);
+  const key = runtimeKey(definition.kind, namespace);
+  const state = { kind: definition.kind, namespace: namespace || '', status: 'starting', resourceVersion: '0', lastEventAt: null, events: 0, reconnects: 0, lastError: null };
+  runtimeWatchState.set(key, state);
+  while (!runtimeWatchStopping) {
+    const controller = new AbortController();
+    runtimeWatchControllers.add(controller);
+    try {
+      state.status = 'starting';
+      const path = kubernetesResourcePath(kind, namespace, '', {
+        watch: 'true', allowWatchBookmarks: 'true', timeoutSeconds: OAA_K8S_WATCH_TIMEOUT_SECONDS,
+        resourceVersion: state.resourceVersion || '0',
+      });
+      const response = await fetch(`${APISERVER}${path}`, {
+        headers: { authorization: `Bearer ${saToken()}`, accept: 'application/json' }, signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`${definition.kind} watch HTTP ${response.status}`);
+      state.status = 'watching';
+      state.lastError = null;
+      await consumeWatchResponse(response, kind, namespace, state);
+      state.reconnects += 1;
+      state.status = 'reconnecting';
+    } catch (error) {
+      if (runtimeWatchStopping || error?.name === 'AbortError') break;
+      state.reconnects += 1;
+      state.status = 'error';
+      state.lastError = String(error?.message || error).slice(0, 300);
+      if (/too old resource version|\b410\b/i.test(state.lastError)) state.resourceVersion = '0';
+      await updateRuntimeWatchCursor(definition.kind, namespace, { resourceVersion: state.resourceVersion, status: 'error', lastError: state.lastError, reconnectCount: state.reconnects });
+    } finally {
+      runtimeWatchControllers.delete(controller);
+    }
+    if (!runtimeWatchStopping) await new Promise((resolve) => setTimeout(resolve, OAA_K8S_WATCH_RECONNECT_MS + Math.floor(Math.random() * 1000)));
+  }
+  state.status = 'stopped';
+  await updateRuntimeWatchCursor(definition.kind, namespace, { resourceVersion: state.resourceVersion, status: 'stopped', lastEventAt: state.lastEventAt, reconnectCount: state.reconnects });
+}
+
+function runtimeWatchStatus() {
+  const states = [...runtimeWatchState.values()];
+  const watching = states.filter((state) => state.status === 'watching').length;
+  const errors = states.filter((state) => state.status === 'error').length;
+  const lastEventAt = states.map((state) => state.lastEventAt).filter(Boolean).sort().at(-1) || null;
+  return {
+    enabled: OAA_K8S_WATCH_ENABLED,
+    ready: OAA_K8S_WATCH_ENABLED && states.length > 0 && watching === states.length && errors === 0,
+    streams: states.length, watching, errors,
+    events: states.reduce((count, state) => count + state.events, 0),
+    reconnects: states.reduce((count, state) => count + state.reconnects, 0),
+    lastEventAt,
+  };
+}
+
+function startRuntimeWatches() {
+  if (!OAA_K8S_WATCH_ENABLED) return;
+  for (const kind of WATCH_RESOURCE_KINDS) {
+    const definition = resourceDefinition(kind);
+    if (definition.namespaced) {
+      for (const namespace of OAA_ENV_NAMESPACES) void watchResourceLoop(kind, namespace);
+    } else {
+      void watchResourceLoop(kind, '');
+    }
+  }
+  void persistRuntimeWatchHeartbeat();
+  runtimeWatchHeartbeatTimer = setInterval(() => { void persistRuntimeWatchHeartbeat(); }, OAA_K8S_WATCH_HEARTBEAT_MS);
+  runtimeWatchHeartbeatTimer.unref();
 }
 
 function environmentSystemMessage(snapshot) {
@@ -1966,21 +3230,28 @@ function controlToolsSystemMessage() {
   const manifest = withMutationGate(rawToolManifest);
   const bindings = withActionBindingMutationGate(oaaActionBindings(), rawToolManifest);
   const mutationNote = manifest.mutationEnabled
-    ? 'Administrative actions can be submitted to the Console Backend only after permission, assurance, confirmation, and a human reason are validated. OAA never writes Kubernetes directly.'
+    ? 'Administrative actions require permission, AAL2 assurance for high-risk owner operations, exact confirmation, and a human reason. Kubernetes desired-state changes enter Backend/Gitea/reconciler; lifecycle changes call only a fixed owning Console or Cluster Manager facade. OAA never writes Kubernetes directly and never forwards an operator-supplied URL.'
     : `Controlled action submission is disabled (${manifest.mutationGateReason}). Only Manual/help/search and safe read-only tools are available. Do not suggest restart/scale/apply/delete actions as executable; they are not present in the tool list below.`;
   return {
     role: 'system',
     content: [
       'OAA Controlled Tools available through OAA Gateway:',
-      `Allowed namespaces: ${OAA_ENV_NAMESPACES.join(', ')}`,
+      `Read namespaces: ${OAA_ENV_NAMESPACES.join(', ')}`,
+      `Mutation namespaces: ${OAA_MUTATION_NAMESPACES.join(', ')}`,
       `Tool manifest schema: ${manifest.schema}. Tool IDs: ${manifest.tools.map((t) => t.id).join(', ')}.`,
       `Action binding schema: ${bindings.schema}. Action binding IDs: ${bindings.bindings.map((b) => b.id).join(', ')}.`,
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/oaa/tools/k8s/*.',
+      'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HIS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
+      'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HIS is telemetry authority.',
+      'Platform recovery status is structured evidence, not proof that a restore executor exists. The current owner supports sanitized status and isolated-drill planning only; never claim that backup restore can be executed unless drill-request and evidence-promote capabilities are both advertised.',
+      'The provider may call only the permission-filtered read tools supplied with this request. Treat their returned data as current evidence and cite what was actually observed.',
       mutationNote,
-      'Action safety rules: admin token required, target namespace must be allowed, deployment name must be RFC1123-safe, and exact confirmation text is required.',
+      'Action safety rules: admin token required, target namespace/kind must be allowlisted, resource names must be RFC1123-safe, and exact confirmation text is required.',
       'Restart confirmation format: restart deployment <namespace>/<deployment>.',
       `Scale confirmation format: scale deployment <namespace>/<deployment> to <replicas>. Maximum replicas: ${OAA_SCALE_MAX}.`,
+      'Other mutation confirmation formats are supplied by the matching action binding. Image updates require immutable sha256 digests; protected deletion additionally requires impact, recovery plan, and backup evidence.',
       'Do not state that an action was executed unless an explicit action endpoint result is present.',
+      'Never construct or simulate a confirmation on the operator behalf. A mutating action is accepted only when the operator sends the exact /action confirmation command with their own reason. Kubernetes changes then enter Gitea review and the dedicated reconciler; registered lifecycle actions execute only through their fixed owning facade and return its durable operation result.',
     ].join('\n'),
   };
 }
@@ -2038,10 +3309,11 @@ function oaaActionBindings() {
       intent: 'ingest-knowledge',
       toolId: 'oaa.knowledge.ingest-manual',
       controlPlane: 'opensphere-console-oaa-gateway',
-      riskLevel: 'medium',
+      riskLevel: 'high',
       confirmation: 'required',
+      confirmationTemplate: 'ingest OpenSphere manual knowledge',
       preflightToolIds: ['oaa.knowledge.search'],
-      requiredInputs: bindingInput({ manifest: 'manual-seed.opensphere.io/v1alpha1 manifest' }),
+      requiredInputs: bindingInput({ manifest: 'manual-seed.opensphere.io/v1alpha1 manifest', reason: 'human management reason (8+ chars)', confirm: 'ingest OpenSphere manual knowledge' }),
       permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:knowledge:write'] },
       audit: { eventType: 'knowledge-manual-seed', targetTemplate: '<manifest.source.id>' },
       citations: [{ sourceId: 'console-docs/oaa-manual-knowledge-data-model', sourcePath: 'OpenSphere-console/docs/OAA-MANUAL-KNOWLEDGE-DATA-MODEL.md' }],
@@ -2133,6 +3405,480 @@ function oaaActionBindings() {
       audit: { eventType: 'k8s-scale-deployment', targetTemplate: `${OAA_NAMESPACE}/opensphere-console-oaa-gateway` },
       citations: [{ sourceId: 'console-docs/platform-control-plane-v2', sourcePath: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md' }],
     }),
+    mk({
+      id: 'manual-action:opensphere:control-plane-status',
+      namespace: 'opensphere',
+      sourceId: 'console-docs/platform-control-plane-v2',
+      sectionId: 'manual-section:console-docs/platform-control-plane-v2#target-state',
+      title: 'Inspect the OpenSphere control-plane authorities and lifecycle gates',
+      intent: 'diagnose',
+      toolId: 'oaa.control-plane.status',
+      controlPlane: 'opensphere-console-oaa-gateway',
+      riskLevel: 'read',
+      confirmation: 'none',
+      requiredInputs: bindingInput({}),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:platform:read'] },
+      audit: { eventType: 'control-plane-status', targetTemplate: 'opensphere/control-plane' },
+      citations: [{ sourceId: 'console-docs/platform-control-plane-v2', sourcePath: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:identity-status',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#console-identity-owner-control',
+      title: 'Inspect the sanitized Console user and role inventory', intent: 'inspect-identity',
+      toolId: 'oaa.identity.status', controlPlane: 'console-identity-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:identity:manage'] },
+      audit: { eventType: 'identity-owner-status', targetTemplate: 'ConsoleIdentity/users' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:identity-user-create',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#console-identity-owner-control',
+      title: 'Create a Console user without returning a recovery link or credential', intent: 'create-console-user',
+      toolId: 'oaa.identity.user.create', controlPlane: 'console-identity-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'create Console user <username>',
+      requiredInputs: bindingInput({ email: 'user email', username: 'Console username', displayName: 'display name', roles: OAA_CONSOLE_ROLES.join(' | '), reason: 'human management reason (8+ chars)', confirm: 'create Console user <username>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:identity:manage'] },
+      audit: { eventType: 'oaa-identity-user-create', targetTemplate: 'ConsoleUser/<username>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:identity-user-enabled',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#console-identity-owner-control',
+      title: 'Enable or disable a Console user while preserving administrator continuity', intent: 'set-console-user-enabled',
+      toolId: 'oaa.identity.user.enabled', controlPlane: 'console-identity-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<verb> Console user <userId>',
+      requiredInputs: bindingInput({ userId: 'Console user UUID', enabled: 'true | false', reason: 'human management reason (8+ chars)', confirm: '<enable|disable> Console user <userId>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:identity:manage'] },
+      audit: { eventType: 'oaa-identity-user-enabled', targetTemplate: 'ConsoleUser/<userId>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:identity-role-membership',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#console-identity-owner-control',
+      title: 'Add or remove one canonical Console role', intent: 'manage-console-role',
+      toolId: 'oaa.identity.role.membership', controlPlane: 'console-identity-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<operation> Console role <role> for user <userId>',
+      requiredInputs: bindingInput({ userId: 'Console user UUID', role: OAA_CONSOLE_ROLES.join(' | '), operation: 'add | remove', reason: 'human management reason (8+ chars)', confirm: '<add|remove> Console role <role> for user <userId>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:identity:manage'] },
+      audit: { eventType: 'oaa-identity-role-membership', targetTemplate: 'ConsoleUser/<userId>/Role/<role>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:evidence-status',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#agent-evidence-correlation-and-retention',
+      title: 'Inspect correlated agent, tool, retrieval, provider usage, and retention evidence', intent: 'inspect-agent-evidence',
+      toolId: 'oaa.evidence.status', controlPlane: 'oaa-supabase-evidence-owner',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:evidence:read'] },
+      audit: { eventType: 'oaa-evidence-status', targetTemplate: 'OAAEvidence/all' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:evidence-retention-update',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#agent-evidence-correlation-and-retention',
+      title: 'Update one OAA evidence retention or legal-hold policy', intent: 'manage-evidence-retention',
+      toolId: 'oaa.evidence.retention.update', controlPlane: 'oaa-supabase-evidence-owner',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'update OAA evidence retention <stream> to <retentionDays> days',
+      requiredInputs: bindingInput({ stream: OAA_EVIDENCE_STREAMS.join(' | '), retentionDays: '30..3650', disposition: 'retain | export-before-delete', legalHold: 'true | false', reason: 'human management reason (8+ chars)', confirm: 'update OAA evidence retention <stream> to <retentionDays> days' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:evidence:manage'] },
+      audit: { eventType: 'oaa-evidence-retention-update', targetTemplate: 'OAAEvidence/<stream>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:recovery-status',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#platform-recovery-owner-control',
+      title: 'Inspect sanitized Supabase, Storage, and Gitea recovery evidence', intent: 'inspect-recovery',
+      toolId: 'oaa.recovery.status', controlPlane: 'console-platform-recovery-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:recovery:read'] },
+      audit: { eventType: 'recovery-owner-status', targetTemplate: 'PlatformRecovery/all' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:recovery-plan',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#platform-recovery-owner-control',
+      title: 'Plan an isolated non-destructive platform recovery drill', intent: 'plan-recovery',
+      toolId: 'oaa.recovery.plan', controlPlane: 'console-platform-recovery-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({ component: OAA_RECOVERY_COMPONENTS.join(' | ') }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:recovery:read'] },
+      audit: { eventType: 'recovery-owner-plan', targetTemplate: 'PlatformRecovery/<component>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:observability-logs-query',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#his-observability-owner-control',
+      title: 'Query redacted centralized logs through the HIS owner facade', intent: 'diagnose-logs',
+      toolId: 'oaa.observability.logs.query', controlPlane: 'cluster-manager-his-owner-facade',
+      riskLevel: 'read', confirmation: 'none',
+      requiredInputs: bindingInput({ template: 'service.recent | service.errors | namespace.recent', service: 'service name for service templates', namespace: 'namespace for namespace.recent', sinceMinutes: '1..1440', limit: '1..200' }),
+      permission: { roles: ['authenticated'], scopes: ['oaa:logs:read'] },
+      audit: { eventType: 'his-observability-logs-query', targetTemplate: 'HIS/Loki/<target>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:observability-traces-query',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#his-observability-owner-control',
+      title: 'Query sanitized distributed traces through the HIS owner facade', intent: 'diagnose-traces',
+      toolId: 'oaa.observability.traces.query', controlPlane: 'cluster-manager-his-owner-facade',
+      riskLevel: 'read', confirmation: 'none',
+      requiredInputs: bindingInput({ template: 'trace.by_id | service.recent', traceId: '32 hex characters for trace.by_id', service: 'service name for service.recent', sinceMinutes: '1..1440', limit: '1..100' }),
+      permission: { roles: ['authenticated'], scopes: ['oaa:logs:read'] },
+      audit: { eventType: 'his-observability-traces-query', targetTemplate: 'HIS/Tempo/<target>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:catalog-read',
+      namespace: 'opensphere',
+      sourceId: 'opensphere-docs/constitution-0002-registry',
+      sectionId: 'manual-section:opensphere-docs/constitution-0002-registry#registry-api',
+      title: 'Search the canonical OpenSphere catalog projection',
+      intent: 'inspect',
+      toolId: 'oaa.catalog.entities.list',
+      controlPlane: 'opensphere-console-backend',
+      riskLevel: 'read',
+      confirmation: 'none',
+      requiredInputs: bindingInput({ filter: 'optional catalog filter', limit: '1..100' }),
+      permission: { roles: ['authenticated'], scopes: ['oaa:system:read'] },
+      audit: { eventType: 'catalog-entities-read', targetTemplate: 'opensphere/catalog' },
+      citations: [{ sourceId: 'opensphere-docs/constitution-0002-registry', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0002-레지스트리.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:registry-read',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/constitution-0002-registry',
+      sectionId: 'manual-section:opensphere-docs/constitution-0002-registry#registry-api',
+      title: 'Read the canonical Main Shell Registry projection', intent: 'inspect-registry',
+      toolId: 'oaa.registry.read', controlPlane: 'dupa-registry-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: ['authenticated'], scopes: ['oaa:system:read'] },
+      audit: { eventType: 'registry-read', targetTemplate: 'opensphere/registry' },
+      citations: [{ sourceId: 'opensphere-docs/constitution-0002-registry', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0002-레지스트리.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:foundation-status',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Read the Foundation models, claims, bindings, and controller readiness', intent: 'inspect-foundation',
+      toolId: 'oaa.foundation.status', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: ['authenticated'], scopes: ['oaa:system:read'] },
+      audit: { eventType: 'foundation-status-read', targetTemplate: 'Foundation/control-plane' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:foundation-engine-lifecycle',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Enable or disable one closed-catalog Foundation engine', intent: 'manage-foundation-engine',
+      toolId: 'oaa.foundation.engine.lifecycle', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> Foundation engine <engine>',
+      requiredInputs: bindingInput({ engine: OAA_FOUNDATION_ENGINES.join(' | '), action: 'enable | disable', reason: 'human management reason (8+ chars)', confirm: '<action> Foundation engine <engine>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'] },
+      audit: { eventType: 'foundation-engine-lifecycle', targetTemplate: 'FoundationModel/<model>/engine/<engine>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:foundation-claim-create',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Create a parameter-free Foundation consumer claim from the closed model catalog', intent: 'create-foundation-claim',
+      toolId: 'oaa.foundation.claim.create', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'create Foundation claim <name> for <model>',
+      requiredInputs: bindingInput({ name: 'claim name', model: OAA_FOUNDATION_MODELS.join(' | '), reason: 'human management reason (8+ chars)', confirm: 'create Foundation claim <name> for <model>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'], namespaceScope: ['opensphere-foundation'] },
+      audit: { eventType: 'foundation-claim-create', targetTemplate: 'FoundationClaim/opensphere-foundation/<name>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:foundation-claim-release',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Release a Foundation consumer claim through its finalizer-backed owner contract', intent: 'release-foundation-claim',
+      toolId: 'oaa.foundation.claim.release', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'release Foundation claim <name>',
+      requiredInputs: bindingInput({ name: 'claim name', reason: 'human management reason (8+ chars)', confirm: 'release Foundation claim <name>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'], namespaceScope: ['opensphere-foundation'] },
+      audit: { eventType: 'foundation-claim-release', targetTemplate: 'FoundationClaim/opensphere-foundation/<name>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:foundation-identity-directory-claim-create',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Create a typed Samba-AD IdentityDirectory consumer claim', intent: 'create-identity-directory-claim',
+      toolId: 'oaa.foundation.identity-directory.claim.create', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'create IdentityDirectory claim <name>',
+      requiredInputs: bindingInput({ name: 'claim name', reason: 'human management reason (8+ chars)', confirm: 'create IdentityDirectory claim <name>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'], namespaceScope: ['opensphere-foundation'] },
+      audit: { eventType: 'identity-directory-claim-create', targetTemplate: 'IdentityDirectoryClaim/opensphere-foundation/<name>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:foundation-identity-directory-claim-release',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Release a typed IdentityDirectory claim through its finalizer-backed owner contract', intent: 'release-identity-directory-claim',
+      toolId: 'oaa.foundation.identity-directory.claim.release', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'release IdentityDirectory claim <name>',
+      requiredInputs: bindingInput({ name: 'claim name', reason: 'human management reason (8+ chars)', confirm: 'release IdentityDirectory claim <name>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'], namespaceScope: ['opensphere-foundation'] },
+      audit: { eventType: 'identity-directory-claim-release', targetTemplate: 'IdentityDirectoryClaim/opensphere-foundation/<name>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:platform-readiness-preflight',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/platform-bootstrap-lifecycle',
+      sectionId: 'manual-section:opensphere-docs/platform-bootstrap-lifecycle#platform-support-profile',
+      title: 'Declare and re-evaluate the Platform Support Profile', intent: 'preflight-platform',
+      toolId: 'oaa.platform.readiness.preflight', controlPlane: 'console-lifecycle-owner-facade',
+      riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'run platform readiness preflight',
+      requiredInputs: bindingInput({ reason: 'human management reason (8+ chars)', confirm: 'run platform readiness preflight' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'] },
+      audit: { eventType: 'platform-readiness-preflight', targetTemplate: 'PlatformSupportProfile/default' },
+      citations: [{ sourceId: 'opensphere-docs/platform-bootstrap-lifecycle', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:platform-readiness-verify',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/platform-bootstrap-lifecycle',
+      sectionId: 'manual-section:opensphere-docs/platform-bootstrap-lifecycle#platform-support-profile',
+      title: 'Verify current support evidence and persist Platform Support status', intent: 'verify-platform',
+      toolId: 'oaa.platform.readiness.verify', controlPlane: 'console-lifecycle-owner-facade',
+      riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'verify platform support profile',
+      requiredInputs: bindingInput({ reason: 'human management reason (8+ chars)', confirm: 'verify platform support profile' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'] },
+      audit: { eventType: 'platform-readiness-verify', targetTemplate: 'PlatformSupportProfile/default' },
+      citations: [{ sourceId: 'opensphere-docs/platform-bootstrap-lifecycle', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:extension-lifecycle',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/constitution-0003-shell-hosting',
+      sectionId: 'manual-section:opensphere-docs/constitution-0003-shell-hosting#consumer-lifecycle',
+      title: 'Change one registered extension lifecycle state', intent: 'manage-extension',
+      toolId: 'oaa.extension.lifecycle', controlPlane: 'dupa-extension-host-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'extension <action> <id>',
+      requiredInputs: bindingInput({ id: 'registered extension id', action: OAA_EXTENSION_LIFECYCLE_ACTIONS.join(' | '), reason: 'human management reason (8+ chars)', confirm: 'extension <action> <id>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'] },
+      audit: { eventType: 'extension-lifecycle', targetTemplate: 'UIPluginRegistration/<id>' },
+      citations: [{ sourceId: 'opensphere-docs/constitution-0003-shell-hosting', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0003-SHELL-HOSTING-INTEGRATION.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:extension-security-status',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Read the append-only Extension image revocation ledger', intent: 'inspect-extension-security',
+      toolId: 'oaa.extension.security.status', controlPlane: 'dupa-extension-security-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:extension:security:read'] },
+      audit: { eventType: 'extension-security-status', targetTemplate: 'ExtensionSecurity/revocations' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:extension-image-inspect',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Inspect one exact-digest Extension image and its signed supply-chain evidence', intent: 'inspect-extension-image',
+      toolId: 'oaa.extension.image.inspect', controlPlane: 'dupa-extension-security-owner-facade',
+      riskLevel: 'read', confirmation: 'none',
+      requiredInputs: bindingInput({ image: 'ghcr.io/opensphere-platform/<repository>@sha256:<64 hex>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:extension:security:read'] },
+      audit: { eventType: 'extension-image-inspect', targetTemplate: 'OCIImage/<image>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:extension-image-revoke',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Append one exact-digest Extension image revocation', intent: 'revoke-extension-image',
+      toolId: 'oaa.extension.image.revoke', controlPlane: 'dupa-extension-security-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'revoke extension image <image>',
+      requiredInputs: bindingInput({ image: 'exact digest image', replacementImage: 'optional exact digest in the same repository', reason: 'human management reason (8+ chars)', confirm: 'revoke extension image <image>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:extension:security:manage'] },
+      audit: { eventType: 'extension-image-revoke', targetTemplate: 'OCIImage/<image>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:notification-status',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Read sanitized Notification channels, rules, and delivery status', intent: 'inspect-notifications',
+      toolId: 'oaa.notification.status', controlPlane: 'console-notification-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({ limit: '1..100 deliveries' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:notification:read'] },
+      audit: { eventType: 'notification-owner-status', targetTemplate: 'NotificationDelivery/all' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:notification-channel-enabled',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Enable or disable one configured Notification channel', intent: 'set-notification-channel-enabled',
+      toolId: 'oaa.notification.channel.enabled', controlPlane: 'console-notification-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<verb> notification channel <channelId>',
+      requiredInputs: bindingInput({ channelId: 'Notification channel UUID', enabled: 'true | false', reason: 'human management reason (8+ chars)', confirm: '<enable|disable> notification channel <channelId>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:notification:manage'] },
+      audit: { eventType: 'notification-channel-enabled', targetTemplate: 'NotificationChannel/<channelId>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:notification-channel-test',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Send one test through a configured Notification channel', intent: 'test-notification-channel',
+      toolId: 'oaa.notification.channel.test', controlPlane: 'console-notification-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'test notification channel <channelId>',
+      requiredInputs: bindingInput({ channelId: 'Notification channel UUID', reason: 'human management reason (8+ chars)', confirm: 'test notification channel <channelId>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:notification:manage'] },
+      audit: { eventType: 'notification-channel-test', targetTemplate: 'NotificationChannel/<channelId>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:notification-delivery-retry',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Retry one failed or dead-letter Notification delivery', intent: 'retry-notification-delivery',
+      toolId: 'oaa.notification.delivery.retry', controlPlane: 'console-notification-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'retry notification delivery <deliveryId>',
+      requiredInputs: bindingInput({ deliveryId: 'Notification delivery UUID', reason: 'human management reason (8+ chars)', confirm: 'retry notification delivery <deliveryId>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:notification:manage'] },
+      audit: { eventType: 'notification-delivery-retry', targetTemplate: 'NotificationDelivery/<deliveryId>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:his-observability-config',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Read the current managed HIS Observability configuration', intent: 'inspect-his-observability-config',
+      toolId: 'oaa.his.observability.config', controlPlane: 'cluster-manager-his-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:his:read'] },
+      audit: { eventType: 'his-observability-config-read', targetTemplate: 'HIS/kube-prometheus-stack' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:his-observability-plan',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Plan a closed-schema HIS Observability configuration change', intent: 'plan-his-observability',
+      toolId: 'oaa.his.observability.plan', controlPlane: 'cluster-manager-his-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({ config: 'complete SecretRef-only Observability configuration' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:his:read'] },
+      audit: { eventType: 'his-observability-plan', targetTemplate: 'HIS/kube-prometheus-stack' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:his-observability-configure',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Apply a planned HIS Observability configuration', intent: 'configure-his-observability',
+      toolId: 'oaa.his.observability.configure', controlPlane: 'cluster-manager-his-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure HIS observability public=<public> data-reset=<resetData>',
+      requiredInputs: bindingInput({ config: 'complete SecretRef-only Observability configuration', resetData: 'boolean matching the owner plan', reason: 'human management reason (8+ chars)', confirm: 'configure HIS observability public=<public> data-reset=<resetData>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:his:manage'] },
+      audit: { eventType: 'his-observability-configure', targetTemplate: 'HIS/kube-prometheus-stack' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:his-validate',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/platform-bootstrap-lifecycle',
+      sectionId: 'manual-section:opensphere-docs/platform-bootstrap-lifecycle#his-preflight',
+      title: 'Run a closed-catalog HIS canary validation', intent: 'validate-his',
+      toolId: 'oaa.his.validate', controlPlane: 'cluster-manager-his-owner-facade',
+      riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'validate HIS <id>',
+      requiredInputs: bindingInput({ id: OAA_HIS_VALIDATION_IDS.join(' | '), reason: 'human management reason (8+ chars)', confirm: 'validate HIS <id>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'] },
+      audit: { eventType: 'his-canary-validation', targetTemplate: 'HIS/<id>' },
+      citations: [{ sourceId: 'opensphere-docs/platform-bootstrap-lifecycle', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:his-lifecycle',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/platform-bootstrap-lifecycle',
+      sectionId: 'manual-section:opensphere-docs/platform-bootstrap-lifecycle#his-preflight',
+      title: 'Operate one closed-catalog HelmManaged HIS add-on', intent: 'manage-his',
+      toolId: 'oaa.his.lifecycle', controlPlane: 'cluster-manager-his-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> HIS <id><revisionSuffix>',
+      requiredInputs: bindingInput({ id: OAA_HIS_MANAGED_IDS.join(' | '), action: OAA_HIS_LIFECYCLE_ACTIONS.join(' | '), revision: 'required for rollback', reason: 'human management reason (8+ chars)', confirm: '<action> HIS <id> [to revision <revision>]' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'] },
+      audit: { eventType: 'his-lifecycle', targetTemplate: 'HIS/<id>' },
+      citations: [{ sourceId: 'opensphere-docs/platform-bootstrap-lifecycle', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:ceph-status',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Read external Ceph connection and runtime prerequisite status', intent: 'inspect-ceph',
+      toolId: 'oaa.ceph.status', controlPlane: 'cluster-manager-ceph-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:ceph:read'] },
+      audit: { eventType: 'ceph-external-status', targetTemplate: 'CephExternal/rook-ceph' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:ceph-plan',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Plan an external Ceph connection from an owner-staged SecretRef', intent: 'plan-ceph-connect',
+      toolId: 'oaa.ceph.plan', controlPlane: 'cluster-manager-ceph-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({ importRef: 'opensphere-ceph-imports/opensphere-ceph-import-<uuid>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:ceph:read'] },
+      audit: { eventType: 'ceph-external-plan', targetTemplate: 'CephExternal/rook-ceph' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:ceph-connect',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
+      title: 'Connect external Ceph from an owner-staged SecretRef', intent: 'connect-ceph',
+      toolId: 'oaa.ceph.connect', controlPlane: 'cluster-manager-ceph-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'connect Ceph external storage using <importRef>',
+      requiredInputs: bindingInput({ importRef: 'opensphere-ceph-imports/opensphere-ceph-import-<uuid>', reason: 'human management reason (8+ chars)', confirm: 'connect Ceph external storage using <importRef>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:ceph:manage'] },
+      audit: { eventType: 'ceph-external-connect', targetTemplate: 'CephExternal/rook-ceph' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:ceph-disconnect',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/platform-bootstrap-lifecycle',
+      sectionId: 'manual-section:opensphere-docs/platform-bootstrap-lifecycle#external-ceph',
+      title: 'Disconnect the managed external Ceph consumer integration while retaining remote data', intent: 'disconnect-ceph',
+      toolId: 'oaa.ceph.disconnect', controlPlane: 'cluster-manager-ceph-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'disconnect Ceph external storage',
+      requiredInputs: bindingInput({ reason: 'human management reason (8+ chars)', confirm: 'disconnect Ceph external storage' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:ceph:manage'] },
+      audit: { eventType: 'ceph-external-disconnect', targetTemplate: 'CephExternal/rook-ceph' },
+      citations: [{ sourceId: 'opensphere-docs/platform-bootstrap-lifecycle', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md' }],
+    }),
+    ...[
+      ['workload-restart', 'Restart an allowlisted Kubernetes workload', 'restart', 'oaa.k8s.workload.restart', 'high', 'restart <kind> <namespace>/<name>', { kind: OAA_WORKLOAD_KINDS.join(' | '), namespace: OAA_MUTATION_NAMESPACES.join(' | '), name: 'workload name' }],
+      ['workload-scale', 'Scale an allowlisted Kubernetes workload', 'scale', 'oaa.k8s.workload.scale', 'high', 'scale <kind> <namespace>/<name> to <replicas>', { kind: OAA_SCALABLE_WORKLOAD_KINDS.join(' | '), namespace: OAA_MUTATION_NAMESPACES.join(' | '), name: 'workload name', replicas: `0..${OAA_SCALE_MAX}` }],
+      ['workload-update-image', 'Update a workload container to a digest-pinned image', 'update', 'oaa.k8s.workload.update-image', 'high', 'update image <kind> <namespace>/<name> container <container> to <image>', { kind: OAA_WORKLOAD_KINDS.join(' | '), namespace: OAA_MUTATION_NAMESPACES.join(' | '), name: 'workload name', container: 'container name', image: 'repository@sha256:<64 hex>' }],
+      ['workload-rollback-image', 'Rollback a workload container to a reviewed digest-pinned image', 'rollback', 'oaa.k8s.workload.rollback-image', 'critical', 'rollback image <kind> <namespace>/<name> container <container> to <image>', { kind: OAA_WORKLOAD_KINDS.join(' | '), namespace: OAA_MUTATION_NAMESPACES.join(' | '), name: 'workload name', container: 'container name', image: 'repository@sha256:<64 hex>', rollbackOf: 'prior change request UUID' }],
+      ['resource-apply', 'Apply an allowlisted Kubernetes desired-state manifest', 'apply', 'oaa.k8s.resource.apply', 'high', 'apply <kind> <namespace>/<name>', { kind: OAA_APPLY_RESOURCE_KINDS.join(' | '), namespace: OAA_MUTATION_NAMESPACES.join(' | '), name: 'resource name', manifest: 'allowlisted Kubernetes JSON manifest' }],
+      ['resource-delete', 'Delete an allowlisted Kubernetes resource with recovery evidence', 'delete', 'oaa.k8s.resource.delete', 'critical', 'delete <kind> <namespace>/<name>', { kind: OAA_DELETE_RESOURCE_KINDS.join(' | '), namespace: OAA_MUTATION_NAMESPACES.join(' | '), name: 'resource name', impact: 'impact assessment', recoveryPlan: 'tested recovery plan', backupReference: 'backup or not-applicable rationale' }],
+      ['cronjob-run', 'Run an idempotent one-off Job from a CronJob', 'run', 'oaa.k8s.cronjob.run', 'high', 'run cronjob <namespace>/<name>', { namespace: OAA_MUTATION_NAMESPACES.join(' | '), name: 'CronJob name' }],
+      ['cronjob-suspend', 'Suspend or resume a CronJob', 'configure', 'oaa.k8s.cronjob.suspend', 'high', 'set cronjob <namespace>/<name> suspend <suspend>', { namespace: OAA_MUTATION_NAMESPACES.join(' | '), name: 'CronJob name', suspend: 'true | false' }],
+    ].map(([suffix, title, intent, toolId, riskLevel, confirmationTemplate, inputs]) => mk({
+      id: `manual-action:opensphere:k8s-${suffix}`,
+      namespace: 'opensphere',
+      sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#target-control-contract',
+      title, intent, toolId,
+      controlPlane: 'gitea-declarative-change+oaa-governed-adapter',
+      riskLevel, confirmation: 'required', confirmationTemplate,
+      requiredInputs: bindingInput({ ...inputs, reason: 'human management reason (8+ chars)', confirm: confirmationTemplate }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'], namespaceScope: OAA_MUTATION_NAMESPACES },
+      audit: { eventType: toolId, targetTemplate: '<namespace>/<kind>/<name>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    })),
   ];
   return {
     schema: 'oaa-action-bindings.opensphere.io/v1alpha1',
@@ -2160,6 +3906,7 @@ function toolEndpoint(method, path) {
 function oaaToolManifest() {
   const nsEnum = OAA_ENV_NAMESPACES;
   const nsField = { type: 'string', enum: nsEnum, description: 'Allowed OpenSphere namespace' };
+  const mutationNsField = { type: 'string', enum: OAA_MUTATION_NAMESPACES, description: 'Allowlisted Console mutation namespace' };
   const deploymentField = { type: 'string', pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' };
   const podField = { type: 'string', pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' };
   const confirmField = { type: 'string', description: 'Exact confirmation phrase required by the action' };
@@ -2169,6 +3916,7 @@ function oaaToolManifest() {
     version: VERSION,
     generatedAt: new Date().toISOString(),
     allowedNamespaces: nsEnum,
+    mutationNamespaces: OAA_MUTATION_NAMESPACES,
     scaleMax: OAA_SCALE_MAX,
     safety: {
       writeActionsRequireAdmin: true,
@@ -2187,6 +3935,416 @@ function oaaToolManifest() {
         confirmation: 'none',
         inputSchema: schemaObject({ context: { type: 'object', required: false } }),
         auditEventType: 'environment-snapshot',
+      },
+      {
+        id: 'oaa.control-plane.status',
+        name: 'Read OpenSphere control-plane authorities and lifecycle status',
+        channel: 'api',
+        readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/control-plane/status'),
+        riskLevel: 'read',
+        confirmation: 'none',
+        inputSchema: schemaObject({}),
+        auditEventType: 'control-plane-status',
+      },
+      {
+        id: 'oaa.identity.status',
+        name: 'Read the sanitized Console user and role inventory',
+        channel: 'owner-control-plane',
+        readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/identity/status'),
+        riskLevel: 'read',
+        confirmation: 'none',
+        inputSchema: schemaObject({}),
+        auditEventType: 'identity-owner-status',
+      },
+      {
+        id: 'oaa.identity.user.create',
+        name: 'Create a Console user through the Supabase identity owner',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'create Console user <username>',
+        inputSchema: schemaObject({
+          email: { type: 'string', minLength: 3, maxLength: 254 },
+          username: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{1,63}$' },
+          displayName: { type: 'string', minLength: 1, maxLength: 120 },
+          roles: { type: 'array', maxItems: 3, uniqueItems: true, items: { type: 'string', enum: OAA_CONSOLE_ROLES } },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'oaa-identity-user-create',
+      },
+      {
+        id: 'oaa.identity.user.enabled',
+        name: 'Enable or disable a Console user with administrator-continuity protection',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<verb> Console user <userId>',
+        inputSchema: schemaObject({
+          userId: { type: 'string', pattern: UUID_RE.source }, enabled: { type: 'boolean' },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'oaa-identity-user-enabled',
+      },
+      {
+        id: 'oaa.identity.role.membership',
+        name: 'Add or remove one canonical Console role',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<operation> Console role <role> for user <userId>',
+        inputSchema: schemaObject({
+          userId: { type: 'string', pattern: UUID_RE.source },
+          role: { type: 'string', enum: OAA_CONSOLE_ROLES },
+          operation: { type: 'string', enum: ['add', 'remove'] },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'oaa-identity-role-membership',
+      },
+      {
+        id: 'oaa.evidence.status',
+        name: 'Read correlated OAA agent and retention evidence',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/evidence/status'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'oaa-evidence-status',
+      },
+      {
+        id: 'oaa.evidence.retention.update',
+        name: 'Update one OAA evidence retention or legal-hold policy',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'update OAA evidence retention <stream> to <retentionDays> days',
+        inputSchema: schemaObject({
+          stream: { type: 'string', enum: OAA_EVIDENCE_STREAMS },
+          retentionDays: { type: 'integer', minimum: 30, maximum: 3650 },
+          disposition: { type: 'string', enum: ['retain', 'export-before-delete'] },
+          legalHold: { type: 'boolean' }, confirm: confirmField,
+          reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'oaa-evidence-retention-update',
+      },
+      {
+        id: 'oaa.recovery.status',
+        name: 'Read sanitized Supabase, Storage, and Gitea recovery evidence',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/recovery/status'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'recovery-owner-status',
+      },
+      {
+        id: 'oaa.recovery.plan',
+        name: 'Plan an isolated non-destructive recovery drill',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/recovery/plan'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({ component: { type: 'string', enum: OAA_RECOVERY_COMPONENTS } }),
+        auditEventType: 'recovery-owner-plan',
+      },
+      {
+        id: 'oaa.observability.logs.query',
+        name: 'Query redacted centralized logs through the HIS owner API',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/observability/logs'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({
+          template: { type: 'string', enum: ['service.recent', 'service.errors', 'namespace.recent'] },
+          service: { type: 'string', required: false }, namespace: { type: 'string', required: false },
+          sinceMinutes: { type: 'integer', minimum: 1, maximum: 1440, required: false },
+          limit: { type: 'integer', minimum: 1, maximum: 200, required: false },
+        }),
+        auditEventType: 'his-observability-logs-query',
+      },
+      {
+        id: 'oaa.observability.traces.query',
+        name: 'Query sanitized distributed traces through the HIS owner API',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/observability/traces'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({
+          template: { type: 'string', enum: ['trace.by_id', 'service.recent'] },
+          traceId: { type: 'string', pattern: '^[a-fA-F0-9]{32}$', required: false }, service: { type: 'string', required: false },
+          sinceMinutes: { type: 'integer', minimum: 1, maximum: 1440, required: false },
+          limit: { type: 'integer', minimum: 1, maximum: 100, required: false },
+        }),
+        auditEventType: 'his-observability-traces-query',
+      },
+      {
+        id: 'oaa.catalog.entities.list',
+        name: 'Search the canonical OpenSphere catalog projection',
+        channel: 'api',
+        readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/catalog/entities'),
+        riskLevel: 'read',
+        confirmation: 'none',
+        inputSchema: schemaObject({
+          filter: { type: 'string', required: false, maxLength: 200 },
+          limit: { type: 'integer', minimum: 1, maximum: 100, required: false },
+        }),
+        auditEventType: 'catalog-entities-read',
+      },
+      {
+        id: 'oaa.registry.read',
+        name: 'Read the Main Shell canonical Registry projection',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/registry'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'registry-read',
+      },
+      {
+        id: 'oaa.foundation.status',
+        name: 'Read Foundation owner models, claims, bindings, and controller readiness',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/status'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'foundation-status-read',
+      },
+      {
+        id: 'oaa.foundation.engine.lifecycle',
+        name: 'Enable or disable one closed-catalog Foundation engine',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> Foundation engine <engine>',
+        inputSchema: schemaObject({
+          engine: { type: 'string', enum: OAA_FOUNDATION_ENGINES },
+          action: { type: 'string', enum: ['enable', 'disable'] },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'foundation-engine-lifecycle',
+      },
+      {
+        id: 'oaa.foundation.claim.create',
+        name: 'Create a parameter-free Foundation claim from the closed model catalog',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'create Foundation claim <name> for <model>',
+        inputSchema: schemaObject({
+          name: deploymentField, model: { type: 'string', enum: OAA_FOUNDATION_MODELS },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'foundation-claim-create',
+      },
+      {
+        id: 'oaa.foundation.claim.release',
+        name: 'Release a Foundation claim through the finalizer-backed owner contract',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'release Foundation claim <name>',
+        inputSchema: schemaObject({
+          name: deploymentField, confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'foundation-claim-release',
+      },
+      {
+        id: 'oaa.foundation.identity-directory.claim.create',
+        name: 'Create a typed Samba-AD IdentityDirectory claim',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'create IdentityDirectory claim <name>',
+        inputSchema: schemaObject({
+          name: deploymentField, confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'identity-directory-claim-create',
+      },
+      {
+        id: 'oaa.foundation.identity-directory.claim.release',
+        name: 'Release a typed IdentityDirectory claim through its owner contract',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'release IdentityDirectory claim <name>',
+        inputSchema: schemaObject({
+          name: deploymentField, confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'identity-directory-claim-release',
+      },
+      {
+        id: 'oaa.platform.readiness.preflight',
+        name: 'Declare and re-evaluate Platform Support Profile readiness',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'run platform readiness preflight',
+        inputSchema: schemaObject({ confirm: confirmField, reason: { type: 'string' } }),
+        auditEventType: 'platform-readiness-preflight',
+      },
+      {
+        id: 'oaa.platform.readiness.verify',
+        name: 'Verify and persist current Platform Support Profile evidence',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'verify platform support profile',
+        inputSchema: schemaObject({ confirm: confirmField, reason: { type: 'string' } }),
+        auditEventType: 'platform-readiness-verify',
+      },
+      {
+        id: 'oaa.extension.lifecycle',
+        name: 'Operate one registered Extension Host lifecycle',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'extension <action> <id>',
+        inputSchema: schemaObject({ id: deploymentField, action: { type: 'string', enum: OAA_EXTENSION_LIFECYCLE_ACTIONS }, confirm: confirmField, reason: { type: 'string' } }),
+        auditEventType: 'extension-lifecycle',
+      },
+      {
+        id: 'oaa.extension.security.status',
+        name: 'Read the append-only Extension image revocation ledger',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/extensions/security'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'extension-security-status',
+      },
+      {
+        id: 'oaa.extension.image.inspect',
+        name: 'Inspect an exact-digest Extension image and signed supply-chain evidence',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/extensions/inspect'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({ image: { type: 'string', pattern: OAA_EXTENSION_IMAGE_RE.source } }),
+        auditEventType: 'extension-image-inspect',
+      },
+      {
+        id: 'oaa.extension.image.revoke',
+        name: 'Append an exact-digest Extension image revocation',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'revoke extension image <image>',
+        inputSchema: schemaObject({
+          image: { type: 'string', pattern: OAA_EXTENSION_IMAGE_RE.source },
+          replacementImage: { type: 'string', pattern: OAA_EXTENSION_IMAGE_RE.source, required: false },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'extension-image-revoke',
+      },
+      {
+        id: 'oaa.notification.status',
+        name: 'Read sanitized Notification channels, rules, and deliveries',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/notifications/status'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({ limit: { type: 'integer', minimum: 1, maximum: 100, required: false } }),
+        auditEventType: 'notification-owner-status',
+      },
+      {
+        id: 'oaa.notification.channel.enabled',
+        name: 'Enable or disable one configured Notification channel',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<verb> notification channel <channelId>',
+        inputSchema: schemaObject({
+          channelId: { type: 'string', pattern: UUID_RE.source }, enabled: { type: 'boolean' },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'notification-channel-enabled',
+      },
+      {
+        id: 'oaa.notification.channel.test',
+        name: 'Send one test through a configured Notification channel',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'test notification channel <channelId>',
+        inputSchema: schemaObject({
+          channelId: { type: 'string', pattern: UUID_RE.source },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'notification-channel-test',
+      },
+      {
+        id: 'oaa.notification.delivery.retry',
+        name: 'Retry one failed or dead-letter Notification delivery',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'retry notification delivery <deliveryId>',
+        inputSchema: schemaObject({
+          deliveryId: { type: 'string', pattern: UUID_RE.source },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'notification-delivery-retry',
+      },
+      {
+        id: 'oaa.his.observability.config',
+        name: 'Read the current managed HIS Observability configuration',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/his/observability/config'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'his-observability-config-read',
+      },
+      {
+        id: 'oaa.his.observability.plan',
+        name: 'Plan a complete SecretRef-only HIS Observability configuration',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/his/observability/plan'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({ config: hisObservabilityConfigSchema() }),
+        auditEventType: 'his-observability-plan',
+      },
+      {
+        id: 'oaa.his.observability.configure',
+        name: 'Apply a planned HIS Observability configuration through its owner',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure HIS observability public=<public> data-reset=<resetData>',
+        inputSchema: schemaObject({
+          config: hisObservabilityConfigSchema(), resetData: { type: 'boolean' },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'his-observability-configure',
+      },
+      {
+        id: 'oaa.his.validate',
+        name: 'Run a closed-catalog HIS canary validation',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'validate HIS <id>',
+        inputSchema: schemaObject({ id: { type: 'string', enum: OAA_HIS_VALIDATION_IDS }, confirm: confirmField, reason: { type: 'string' } }),
+        auditEventType: 'his-canary-validation',
+      },
+      {
+        id: 'oaa.his.lifecycle',
+        name: 'Operate one closed-catalog HelmManaged HIS add-on',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> HIS <id><revisionSuffix>',
+        inputSchema: schemaObject({
+          id: { type: 'string', enum: OAA_HIS_MANAGED_IDS },
+          action: { type: 'string', enum: OAA_HIS_LIFECYCLE_ACTIONS },
+          revision: { type: 'integer', minimum: 1, required: false }, confirm: confirmField, reason: { type: 'string' },
+        }),
+        auditEventType: 'his-lifecycle',
+      },
+      {
+        id: 'oaa.ceph.status',
+        name: 'Read external Ceph connection and runtime prerequisite status',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/ceph/status'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'ceph-external-status',
+      },
+      {
+        id: 'oaa.ceph.plan',
+        name: 'Plan external Ceph from an owner-staged SecretRef',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/ceph/plan'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({ importRef: { type: 'string', pattern: OAA_CEPH_IMPORT_REF_RE.source } }),
+        auditEventType: 'ceph-external-plan',
+      },
+      {
+        id: 'oaa.ceph.connect',
+        name: 'Connect external Ceph from an owner-staged SecretRef',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'connect Ceph external storage using <importRef>',
+        inputSchema: schemaObject({
+          importRef: { type: 'string', pattern: OAA_CEPH_IMPORT_REF_RE.source },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'ceph-external-connect',
+      },
+      {
+        id: 'oaa.ceph.disconnect',
+        name: 'Disconnect managed external Ceph consumer resources while retaining remote data',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'disconnect Ceph external storage',
+        inputSchema: schemaObject({ confirm: confirmField, reason: { type: 'string' } }),
+        auditEventType: 'ceph-external-disconnect',
       },
       {
         id: 'oaa.k8s.pods.list',
@@ -2211,6 +4369,39 @@ function oaaToolManifest() {
         kubernetes: { verbs: ['get', 'list'], apiGroups: [''], resources: ['pods'], namespaces: ['*'] },
         inputSchema: schemaObject({}),
         auditEventType: 'k8s-cluster-pod-summary',
+      },
+      {
+        id: 'oaa.k8s.resources.list',
+        name: 'List sanitized Kubernetes operational resources',
+        channel: 'kubernetes',
+        readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/k8s/resources'),
+        riskLevel: 'read',
+        confirmation: 'none',
+        kubernetes: { verbs: ['get', 'list'], resources: RUNTIME_RESOURCE_KINDS, namespaces: nsEnum },
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: RUNTIME_RESOURCE_KINDS },
+          namespace: { ...nsField, required: false },
+          labelSelector: { type: 'string', required: false },
+          limit: { type: 'integer', minimum: 1, maximum: 500, required: false },
+        }),
+        auditEventType: 'k8s-list-resources',
+      },
+      {
+        id: 'oaa.k8s.resource.get',
+        name: 'Read one sanitized Kubernetes operational resource',
+        channel: 'kubernetes',
+        readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/k8s/resource'),
+        riskLevel: 'read',
+        confirmation: 'none',
+        kubernetes: { verbs: ['get', 'list'], resources: RUNTIME_RESOURCE_KINDS, namespaces: nsEnum },
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: RUNTIME_RESOURCE_KINDS },
+          namespace: { ...nsField, required: false },
+          name: { type: 'string' },
+        }),
+        auditEventType: 'k8s-get-resource',
       },
       {
         id: 'oaa.k8s.services.list',
@@ -2291,9 +4482,9 @@ function oaaToolManifest() {
         confirmation: 'required',
         confirmationTemplate: 'restart deployment <namespace>/<deployment>',
         preflightToolIds: ['oaa.k8s.deployment.rollout'],
-        kubernetes: { verbs: ['get'], apiGroups: ['apps'], resources: ['deployments'], namespaces: nsEnum },
+        kubernetes: { verbs: ['get'], apiGroups: ['apps'], resources: ['deployments'], namespaces: OAA_MUTATION_NAMESPACES },
         inputSchema: schemaObject({
-          namespace: nsField,
+          namespace: mutationNsField,
           name: deploymentField,
           confirm: confirmField,
           reason: { type: 'string', required: true },
@@ -2310,15 +4501,92 @@ function oaaToolManifest() {
         confirmation: 'required',
         confirmationTemplate: 'scale deployment <namespace>/<deployment> to <replicas>',
         preflightToolIds: ['oaa.k8s.deployment.rollout'],
-        kubernetes: { verbs: ['get'], apiGroups: ['apps'], resources: ['deployments'], namespaces: nsEnum },
+        kubernetes: { verbs: ['get'], apiGroups: ['apps'], resources: ['deployments'], namespaces: OAA_MUTATION_NAMESPACES },
         inputSchema: schemaObject({
-          namespace: nsField,
+          namespace: mutationNsField,
           name: deploymentField,
           replicas: { type: 'integer', minimum: 0, maximum: OAA_SCALE_MAX },
           confirm: confirmField,
           reason: { type: 'string', required: true },
         }),
         auditEventType: 'k8s-scale-deployment',
+      },
+      {
+        id: 'oaa.k8s.workload.restart',
+        name: 'Submit an allowlisted workload restart',
+        channel: 'control-plane', readOnly: false, endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'restart <kind> <namespace>/<name>',
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: OAA_WORKLOAD_KINDS }, namespace: mutationNsField, name: deploymentField,
+          confirm: confirmField, reason: { type: 'string' },
+        }), auditEventType: 'k8s-restart-workload',
+      },
+      {
+        id: 'oaa.k8s.workload.scale',
+        name: 'Submit an allowlisted workload scale change',
+        channel: 'control-plane', readOnly: false, endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'scale <kind> <namespace>/<name> to <replicas>',
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: OAA_SCALABLE_WORKLOAD_KINDS }, namespace: mutationNsField, name: deploymentField,
+          replicas: { type: 'integer', minimum: 0, maximum: OAA_SCALE_MAX }, confirm: confirmField, reason: { type: 'string' },
+        }), auditEventType: 'k8s-scale-workload',
+      },
+      {
+        id: 'oaa.k8s.workload.update-image',
+        name: 'Submit a digest-pinned workload image update',
+        channel: 'control-plane', readOnly: false, endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'update image <kind> <namespace>/<name> container <container> to <image>',
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: OAA_WORKLOAD_KINDS }, namespace: mutationNsField, name: deploymentField,
+          container: deploymentField, image: { type: 'string' }, confirm: confirmField, reason: { type: 'string' },
+        }), auditEventType: 'k8s-update-workload-image',
+      },
+      {
+        id: 'oaa.k8s.workload.rollback-image',
+        name: 'Submit a digest-pinned workload image rollback',
+        channel: 'control-plane', readOnly: false, endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'rollback image <kind> <namespace>/<name> container <container> to <image>',
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: OAA_WORKLOAD_KINDS }, namespace: mutationNsField, name: deploymentField,
+          container: deploymentField, image: { type: 'string' }, rollbackOf: { type: 'string' }, confirm: confirmField, reason: { type: 'string' },
+        }), auditEventType: 'k8s-rollback-workload-image',
+      },
+      {
+        id: 'oaa.k8s.resource.apply',
+        name: 'Submit a declarative server-side apply for an allowlisted resource',
+        channel: 'control-plane', readOnly: false, endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'apply <kind> <namespace>/<name>',
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: OAA_APPLY_RESOURCE_KINDS }, namespace: mutationNsField, name: deploymentField,
+          manifest: { type: 'object' }, confirm: confirmField, reason: { type: 'string' },
+        }), auditEventType: 'k8s-apply-resource',
+      },
+      {
+        id: 'oaa.k8s.resource.delete',
+        name: 'Submit a protected deletion for an allowlisted resource',
+        channel: 'control-plane', readOnly: false, endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'delete <kind> <namespace>/<name>',
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: OAA_DELETE_RESOURCE_KINDS }, namespace: mutationNsField, name: deploymentField,
+          impact: { type: 'string' }, recoveryPlan: { type: 'string' }, backupReference: { type: 'string' },
+          confirm: confirmField, reason: { type: 'string' },
+        }), auditEventType: 'k8s-delete-resource',
+      },
+      {
+        id: 'oaa.k8s.cronjob.run',
+        name: 'Submit an idempotent one-off Job from a CronJob template',
+        channel: 'control-plane', readOnly: false, endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'run cronjob <namespace>/<name>',
+        inputSchema: schemaObject({ namespace: mutationNsField, name: deploymentField, confirm: confirmField, reason: { type: 'string' } }),
+        auditEventType: 'k8s-run-cronjob',
+      },
+      {
+        id: 'oaa.k8s.cronjob.suspend',
+        name: 'Submit a CronJob suspend or resume change',
+        channel: 'control-plane', readOnly: false, endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'set cronjob <namespace>/<name> suspend <suspend>',
+        inputSchema: schemaObject({ namespace: mutationNsField, name: deploymentField, suspend: { type: 'boolean' }, confirm: confirmField, reason: { type: 'string' } }),
+        auditEventType: 'k8s-suspend-cronjob',
       },
       {
         id: 'oaa.knowledge.search',
@@ -2353,7 +4621,8 @@ function summarizeToolManifest(manifest = withMutationGate(oaaToolManifest())) {
   const lines = [
     `OAA tool manifest: ${manifest.schema}${manifest.storage ? ` (${manifest.storage})` : ''}`,
     `Mutation gate: ${manifest.mutationEnabled === false ? `closed (${manifest.mutationGateReason})` : 'open'}`,
-    `Allowed namespaces: ${manifest.allowedNamespaces.join(', ')}`,
+    `Read namespaces: ${manifest.allowedNamespaces.join(', ')}`,
+    `Mutation namespaces: ${(manifest.mutationNamespaces || []).join(', ')}`,
     `Scale max: ${manifest.scaleMax}`,
     'Tools:',
   ];
@@ -2525,9 +4794,56 @@ async function gatedActionBindingsFromStore() {
 }
 
 const TOOL_PERMISSION = {
+  'oaa.control-plane.status': 'console.git.change',
+  'oaa.identity.status': 'console.identity.manage',
+  'oaa.identity.user.create': 'console.identity.manage',
+  'oaa.identity.user.enabled': 'console.identity.manage',
+  'oaa.identity.role.membership': 'console.identity.manage',
+  'oaa.evidence.status': 'oaa.evidence.read',
+  'oaa.evidence.retention.update': 'oaa.evidence.manage',
+  'oaa.recovery.status': 'console.recovery.read',
+  'oaa.recovery.plan': 'console.recovery.read',
+  'oaa.observability.logs.query': 'oaa.logs.read',
+  'oaa.observability.traces.query': 'oaa.logs.read',
+  'oaa.registry.read': 'oaa.system.read',
+  'oaa.foundation.status': 'oaa.system.read',
   'oaa.knowledge.search': 'oaa.knowledge.read',
   'oaa.knowledge.ingest-manual': 'oaa.knowledge.manage',
   'oaa.k8s.logs.tail': 'oaa.logs.read',
+  'oaa.k8s.deployment.restart': 'oaa.action.execute.high',
+  'oaa.k8s.deployment.scale': 'oaa.action.execute.high',
+  'oaa.k8s.workload.restart': 'oaa.action.execute.high',
+  'oaa.k8s.workload.scale': 'oaa.action.execute.high',
+  'oaa.k8s.workload.update-image': 'oaa.action.execute.high',
+  'oaa.k8s.workload.rollback-image': 'oaa.action.execute.high',
+  'oaa.k8s.resource.apply': 'oaa.action.execute.high',
+  'oaa.k8s.resource.delete': 'oaa.action.execute.high',
+  'oaa.k8s.cronjob.run': 'oaa.action.execute.high',
+  'oaa.k8s.cronjob.suspend': 'oaa.action.execute.high',
+  'oaa.platform.readiness.preflight': 'oaa.action.execute.high',
+  'oaa.platform.readiness.verify': 'oaa.action.execute.high',
+  'oaa.extension.lifecycle': 'oaa.action.execute.high',
+  'oaa.extension.security.status': 'console.extension.security.read',
+  'oaa.extension.image.inspect': 'console.extension.security.read',
+  'oaa.extension.image.revoke': 'console.extension.security.manage',
+  'oaa.notification.status': 'console.notification.read',
+  'oaa.notification.channel.enabled': 'console.notification.manage',
+  'oaa.notification.channel.test': 'console.notification.manage',
+  'oaa.notification.delivery.retry': 'console.notification.manage',
+  'oaa.his.validate': 'oaa.action.execute.high',
+  'oaa.his.lifecycle': 'oaa.action.execute.high',
+  'oaa.his.observability.config': 'console.his.read',
+  'oaa.his.observability.plan': 'console.his.read',
+  'oaa.his.observability.configure': 'console.his.manage',
+  'oaa.ceph.status': 'console.ceph.read',
+  'oaa.ceph.plan': 'console.ceph.read',
+  'oaa.ceph.connect': 'console.ceph.manage',
+  'oaa.ceph.disconnect': 'console.ceph.manage',
+  'oaa.foundation.engine.lifecycle': 'oaa.action.execute.high',
+  'oaa.foundation.claim.create': 'oaa.action.execute.high',
+  'oaa.foundation.claim.release': 'oaa.action.execute.high',
+  'oaa.foundation.identity-directory.claim.create': 'oaa.action.execute.high',
+  'oaa.foundation.identity-directory.claim.release': 'oaa.action.execute.high',
 };
 
 function requiredPermissionForTool(tool) {
@@ -2542,15 +4858,244 @@ function filterToolManifestForActor(manifest, actor) {
   };
 }
 
+const lifecycleGateCache = new Map();
+const observabilityCapabilityCache = new Map();
+const hisOwnerCapabilityCache = new Map();
+const cephOwnerCapabilityCache = new Map();
+const recoveryOwnerCapabilityCache = new Map();
+
+async function oaaObservabilityCapabilities(actor) {
+  const subject = String(actor?.subject || 'unknown');
+  const cached = observabilityCapabilityCache.get(subject);
+  if (cached && Date.now() - cached.checkedAt < 15000) return cached.capabilities;
+  let capabilities = new Set();
+  try {
+    const response = await fetch(`${DUPA_CONTROL_URL}/api/admin/observability/status`, {
+      headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok) capabilities = new Set((body.capabilities || []).map((value) => String(value).toLowerCase()));
+  } catch { /* fail closed: unavailable capability evidence exposes no HIS query tool */ }
+  observabilityCapabilityCache.set(subject, { checkedAt: Date.now(), capabilities });
+  return capabilities;
+}
+
+async function oaaHisOwnerCapabilities(actor) {
+  const subject = String(actor?.subject || 'unknown');
+  const cached = hisOwnerCapabilityCache.get(subject);
+  if (cached && Date.now() - cached.checkedAt < 15000) return cached.capabilities;
+  let capabilities = new Set();
+  if (hasPermission(actor, 'console.his.read')) {
+    try {
+      const response = await fetch(`${CLUSTER_MANAGER_URL}/api/his/oaa/capabilities`, {
+        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body.apiVersion === 'opensphere.io/oaa-his-owner/v1') {
+        capabilities = new Set((body.capabilities || []).map((value) => String(value)));
+      }
+    } catch { /* fail closed: an old or unavailable owner exposes no advanced HIS controls */ }
+  }
+  hisOwnerCapabilityCache.set(subject, { checkedAt: Date.now(), capabilities });
+  return capabilities;
+}
+
+async function oaaCephOwnerCapabilities(actor) {
+  const subject = String(actor?.subject || 'unknown');
+  const cached = cephOwnerCapabilityCache.get(subject);
+  if (cached && Date.now() - cached.checkedAt < 15000) return cached.capabilities;
+  let capabilities = new Set();
+  if (hasPermission(actor, 'console.ceph.read')) {
+    try {
+      const response = await fetch(`${CLUSTER_MANAGER_URL}/api/ceph/oaa/capabilities`, {
+        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(10000),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body.apiVersion === 'opensphere.io/oaa-ceph-owner/v1') {
+        capabilities = new Set((body.capabilities || []).map((value) => String(value)));
+      }
+    } catch { /* fail closed: old owner or incomplete Rook prerequisites expose no Ceph control */ }
+  }
+  cephOwnerCapabilityCache.set(subject, { checkedAt: Date.now(), capabilities });
+  return capabilities;
+}
+
+async function oaaRecoveryOwnerCapabilities(actor) {
+  const subject = String(actor?.subject || 'unknown');
+  const cached = recoveryOwnerCapabilityCache.get(subject);
+  if (cached && Date.now() - cached.checkedAt < 15000) return cached.capabilities;
+  let capabilities = new Set();
+  if (hasPermission(actor, 'console.recovery.read')) {
+    try {
+      const response = await fetch(`${CONSOLE_IDENTITY_URL}/api/oaa/owner/recovery/capabilities`, {
+        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body.apiVersion === 'opensphere.io/oaa-recovery-owner/v1') {
+        capabilities = new Set((body.capabilities || []).map((value) => String(value)));
+      }
+    } catch { /* fail closed: no owner evidence means no recovery tool exposure */ }
+  }
+  recoveryOwnerCapabilityCache.set(subject, { checkedAt: Date.now(), capabilities });
+  return capabilities;
+}
+
+async function oaaMutationLifecycle(actor) {
+  if (!OAA_ACTION_SUBMISSION_ENABLED) return { ready: false, reason: 'console_backend_action_submission_disabled' };
+  const subject = String(actor?.subject || 'unknown');
+  const cached = lifecycleGateCache.get(subject);
+  if (cached && Date.now() - cached.checkedAt < 15000) return cached.value;
+  let value;
+  try {
+    const response = await fetch(`${DUPA_CONTROL_URL}/api/admin/platform-readiness/status`, {
+      headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) value = { ready: false, reason: body.error || `lifecycle_gate_http_${response.status}` };
+    else {
+      const prerequisites = Array.isArray(body.prerequisites) ? body.prerequisites : [];
+      const clusterManager = prerequisites.find((item) => item.key === 'cluster-manager');
+      const hisBinding = prerequisites.find((item) => item.key === 'his-binding');
+      value = {
+        ready: Boolean(clusterManager?.ready && hisBinding?.ready),
+        reason: clusterManager?.ready ? (hisBinding?.ready ? null : 'his_preflight_not_ready') : 'cluster_manager_not_activated',
+        clusterManagerActivated: Boolean(clusterManager?.ready), hisPreflightReady: Boolean(hisBinding?.ready), observedAt: body.observedAt || null,
+      };
+    }
+  } catch {
+    value = { ready: false, reason: 'lifecycle_authority_unavailable' };
+  }
+  lifecycleGateCache.set(subject, { checkedAt: Date.now(), value });
+  return value;
+}
+
+async function requireOaaMutationLifecycle(actor, options = {}) {
+  const lifecycle = await oaaMutationLifecycle(actor);
+  if (options.allowConsoleRecovery === true && OAA_ACTION_SUBMISSION_ENABLED) {
+    return { ...lifecycle, recoveryGate: 'console-owner-independent' };
+  }
+  if (options.allowEvidenceControl === true && OAA_ACTION_SUBMISSION_ENABLED) {
+    return { ...lifecycle, recoveryGate: 'evidence-owner-independent' };
+  }
+  if (options.allowExtensionSecurity === true && OAA_ACTION_SUBMISSION_ENABLED) {
+    return { ...lifecycle, recoveryGate: 'extension-security-owner-independent' };
+  }
+  if (options.allowNotificationControl === true && OAA_ACTION_SUBMISSION_ENABLED) {
+    return { ...lifecycle, recoveryGate: 'notification-owner-independent' };
+  }
+  if (options.allowHisRecovery === true && lifecycle.clusterManagerActivated) return { ...lifecycle, recoveryGate: 'cluster-manager-activated' };
+  if (options.allowCephRecovery === true && lifecycle.clusterManagerActivated) return { ...lifecycle, recoveryGate: 'cluster-manager-activated' };
+  if (!lifecycle.ready) throw { code: lifecycle.reason === 'lifecycle_authority_unavailable' ? 503 : 409, msg: `OAA mutation gate closed: ${lifecycle.reason}` };
+  return lifecycle;
+}
+
 async function gatedToolManifestForActor(actor) {
-  return filterToolManifestForActor(await gatedToolManifestFromStore(), actor);
+  const manifest = await gatedToolManifestFromStore();
+  const [lifecycle, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
+    oaaMutationLifecycle(actor), oaaObservabilityCapabilities(actor), oaaHisOwnerCapabilities(actor), oaaCephOwnerCapabilities(actor), oaaRecoveryOwnerCapabilities(actor),
+  ]);
+  const hisRecoveryTools = new Set(['oaa.his.validate', 'oaa.his.lifecycle', 'oaa.his.observability.configure']);
+  const cephRecoveryTools = new Set(['oaa.ceph.connect', 'oaa.ceph.disconnect']);
+  const consoleRecoveryTools = new Set(['oaa.identity.user.create', 'oaa.identity.user.enabled', 'oaa.identity.role.membership']);
+  const evidenceControlTools = new Set(['oaa.evidence.retention.update']);
+  const extensionSecurityTools = new Set(['oaa.extension.image.revoke']);
+  const notificationControlTools = new Set(['oaa.notification.channel.enabled', 'oaa.notification.channel.test', 'oaa.notification.delivery.retry']);
+  const lifecycleGated = lifecycle.ready ? manifest : {
+    ...manifest,
+    mutationEnabled: false,
+    mutationGateReason: lifecycle.reason,
+    tools: (manifest.tools || []).filter((tool) => tool.readOnly === true || tool.id === 'oaa.knowledge.ingest-manual'
+      || consoleRecoveryTools.has(tool.id) || evidenceControlTools.has(tool.id)
+      || extensionSecurityTools.has(tool.id) || notificationControlTools.has(tool.id)
+      || (lifecycle.clusterManagerActivated && (hisRecoveryTools.has(tool.id) || cephRecoveryTools.has(tool.id)))),
+  };
+  const capabilityGated = {
+    ...lifecycleGated,
+    tools: (lifecycleGated.tools || []).filter((tool) => tool.id !== 'oaa.observability.logs.query' || observabilityCapabilities.has('logs'))
+      .filter((tool) => tool.id !== 'oaa.observability.traces.query' || observabilityCapabilities.has('traces'))
+      .filter((tool) => tool.id !== 'oaa.his.observability.config' || hisOwnerCapabilities.has('observability-config-read'))
+      .filter((tool) => tool.id !== 'oaa.his.observability.plan' || hisOwnerCapabilities.has('observability-plan'))
+      .filter((tool) => tool.id !== 'oaa.his.observability.configure' || hisOwnerCapabilities.has('observability-configure'))
+      .filter((tool) => tool.id !== 'oaa.ceph.status' || cephOwnerCapabilities.has('status-read'))
+      .filter((tool) => tool.id !== 'oaa.ceph.plan' || cephOwnerCapabilities.has('plan-from-import'))
+      .filter((tool) => tool.id !== 'oaa.ceph.connect' || cephOwnerCapabilities.has('connect-from-import'))
+      .filter((tool) => tool.id !== 'oaa.ceph.disconnect' || cephOwnerCapabilities.has('disconnect'))
+      .filter((tool) => tool.id !== 'oaa.recovery.status' || recoveryOwnerCapabilities.has('status-read'))
+      .filter((tool) => tool.id !== 'oaa.recovery.plan' || recoveryOwnerCapabilities.has('plan-read')),
+  };
+  return {
+    ...filterToolManifestForActor(capabilityGated, actor), lifecycle,
+    observabilityCapabilities: [...observabilityCapabilities].sort(),
+    hisOwnerCapabilities: [...hisOwnerCapabilities].sort(),
+    cephOwnerCapabilities: [...cephOwnerCapabilities].sort(),
+    recoveryOwnerCapabilities: [...recoveryOwnerCapabilities].sort(),
+  };
 }
 
 async function gatedActionBindingsForActor(actor) {
   const manifest = await gatedToolManifestForActor(actor);
   const allowedTools = new Set((manifest.tools || []).map((tool) => tool.id));
   const bindings = await gatedActionBindingsFromStore();
-  return { ...bindings, bindings: (bindings.bindings || []).filter((binding) => allowedTools.has(binding.toolId)) };
+  return {
+    ...bindings,
+    mutationEnabled: manifest.mutationEnabled,
+    mutationGateReason: manifest.mutationGateReason,
+    lifecycle: manifest.lifecycle,
+    bindings: (bindings.bindings || []).filter((binding) => allowedTools.has(binding.toolId)),
+  };
+}
+
+function hisObservabilityConfigSchema() {
+  const closed = (properties) => ({ type: 'object', additionalProperties: false, properties, required: Object.keys(properties) });
+  const boundedName = { type: 'string', maxLength: 253 };
+  const storage = { type: 'string', pattern: '^[1-9][0-9]*(Mi|Gi|Ti)$' };
+  const duration = { type: 'string', pattern: '^[1-9][0-9]*(m|h|d|w|y)$' };
+  return closed({
+    schemaVersion: { type: 'integer', enum: [1] },
+    prometheus: closed({
+      retention: duration,
+      storageClassName: boundedName,
+      storageSize: storage,
+      remoteWrite: closed({
+        enabled: { type: 'boolean' },
+        url: { type: 'string', maxLength: 2048 },
+        secretName: boundedName,
+        secretKey: boundedName,
+      }),
+    }),
+    alertmanager: closed({ retention: duration, storageClassName: boundedName, storageSize: storage }),
+    grafana: closed({
+      storageClassName: boundedName,
+      storageSize: storage,
+      exposureMode: { type: 'string', enum: ['ClusterInternal', 'PrivateIngress', 'PublicIngress'] },
+      hostname: boundedName,
+      ingressClassName: boundedName,
+      ingressNamespace: boundedName,
+      tlsSecretName: boundedName,
+      oidcSecretName: boundedName,
+      allowedCidrs: { type: 'array', maxItems: 32, items: { type: 'string', maxLength: 64 } },
+    }),
+    telemetry: closed({
+      enabled: { type: 'boolean' },
+      retention: duration,
+      storageClassName: boundedName,
+      lokiStorageSize: storage,
+      tempoStorageSize: storage,
+    }),
+  });
+}
+
+function sampleHisObservabilityConfig() {
+  return {
+    schemaVersion: 1,
+    prometheus: { retention: '7d', storageClassName: '', storageSize: '20Gi', remoteWrite: { enabled: false, url: '', secretName: '', secretKey: 'token' } },
+    alertmanager: { retention: '120h', storageClassName: '', storageSize: '2Gi' },
+    grafana: {
+      storageClassName: '', storageSize: '5Gi', exposureMode: 'ClusterInternal', hostname: '',
+      ingressClassName: 'nginx', ingressNamespace: 'ingress-nginx', tlsSecretName: '', oidcSecretName: '', allowedCidrs: [],
+    },
+    telemetry: { enabled: true, retention: '168h', storageClassName: '', lokiStorageSize: '10Gi', tempoStorageSize: '10Gi' },
+  };
 }
 
 async function summarizeStoredToolManifest() {
@@ -2574,6 +5119,65 @@ function actionCommandForBinding(binding, query = '') {
     inputs.name = binding.targetHints?.deployment || 'opensphere-console-oaa-gateway';
   }
   if (binding.toolId === 'oaa.k8s.deployment.scale') inputs.replicas = 1;
+  if (binding.toolId === 'oaa.k8s.workload.restart' || binding.toolId === 'oaa.k8s.workload.scale' || binding.toolId === 'oaa.k8s.workload.update-image' || binding.toolId === 'oaa.k8s.workload.rollback-image') {
+    inputs.kind = 'deployment'; inputs.namespace = OAA_NAMESPACE; inputs.name = 'replace-me';
+  }
+  if (binding.toolId === 'oaa.k8s.workload.scale') inputs.replicas = 1;
+  if (binding.toolId === 'oaa.k8s.workload.update-image' || binding.toolId === 'oaa.k8s.workload.rollback-image') {
+    inputs.container = 'replace-me'; inputs.image = 'registry.example/repository@sha256:<64-hex-digest>';
+  }
+  if (binding.toolId === 'oaa.k8s.workload.rollback-image') inputs.rollbackOf = '<prior-change-request-uuid>';
+  if (binding.toolId === 'oaa.k8s.resource.apply' || binding.toolId === 'oaa.k8s.resource.delete') {
+    inputs.kind = 'configmap'; inputs.namespace = OAA_NAMESPACE; inputs.name = 'replace-me';
+  }
+  if (binding.toolId === 'oaa.k8s.resource.apply') {
+    inputs.manifest = { apiVersion: 'v1', kind: 'ConfigMap', metadata: { namespace: OAA_NAMESPACE, name: 'replace-me' }, data: { setting: 'value' } };
+  }
+  if (binding.toolId === 'oaa.k8s.resource.delete') {
+    inputs.impact = '<impact assessment>'; inputs.recoveryPlan = '<recovery plan>'; inputs.backupReference = '<backup reference or rationale>';
+  }
+  if (binding.toolId === 'oaa.k8s.cronjob.run' || binding.toolId === 'oaa.k8s.cronjob.suspend') {
+    inputs.namespace = OAA_NAMESPACE; inputs.name = 'replace-me';
+  }
+  if (binding.toolId === 'oaa.k8s.cronjob.suspend') inputs.suspend = true;
+  if (binding.toolId === 'oaa.extension.lifecycle') {
+    inputs.id = 'replace-me'; inputs.action = 'enable';
+  }
+  if (binding.toolId === 'oaa.extension.image.inspect' || binding.toolId === 'oaa.extension.image.revoke') {
+    inputs.image = 'ghcr.io/opensphere-platform/replace-me@sha256:<64-hex-digest>';
+  }
+  if (binding.toolId === 'oaa.notification.status') inputs.limit = 50;
+  if (binding.toolId === 'oaa.notification.channel.enabled') {
+    inputs.channelId = '00000000-0000-4000-8000-000000000000'; inputs.enabled = true;
+  }
+  if (binding.toolId === 'oaa.notification.channel.test') inputs.channelId = '00000000-0000-4000-8000-000000000000';
+  if (binding.toolId === 'oaa.notification.delivery.retry') inputs.deliveryId = '00000000-0000-4000-8000-000000000000';
+  if (['oaa.his.observability.plan', 'oaa.his.observability.configure'].includes(binding.toolId)) inputs.config = sampleHisObservabilityConfig();
+  if (binding.toolId === 'oaa.his.observability.configure') inputs.resetData = false;
+  if (binding.toolId === 'oaa.his.validate') inputs.id = 'cluster-network';
+  if (binding.toolId === 'oaa.his.lifecycle') {
+    inputs.id = 'kube-prometheus-stack'; inputs.action = 'upgrade';
+  }
+  if (binding.toolId === 'oaa.ceph.plan' || binding.toolId === 'oaa.ceph.connect') {
+    inputs.importRef = 'opensphere-ceph-imports/opensphere-ceph-import-00000000-0000-4000-8000-000000000000';
+  }
+  if (binding.toolId === 'oaa.identity.user.create') {
+    inputs.email = 'replace-me@example.invalid'; inputs.username = 'replace-me';
+    inputs.displayName = 'Replace Me'; inputs.roles = ['console-viewers'];
+  }
+  if (binding.toolId === 'oaa.identity.user.enabled') {
+    inputs.userId = '00000000-0000-4000-8000-000000000000'; inputs.enabled = true;
+  }
+  if (binding.toolId === 'oaa.identity.role.membership') {
+    inputs.userId = '00000000-0000-4000-8000-000000000000';
+    inputs.role = 'console-viewers'; inputs.operation = 'add';
+  }
+  if (binding.toolId === 'oaa.evidence.retention.update') {
+    inputs.stream = 'runtime_event'; inputs.retentionDays = 90;
+    inputs.disposition = 'export-before-delete'; inputs.legalHold = false;
+  }
+  if (binding.toolId === 'oaa.recovery.plan') inputs.component = 'all';
+  if (binding.riskLevel !== 'read') inputs.reason = '<human management reason, at least 8 characters>';
   const jsonText = Object.keys(inputs).length ? ` ${JSON.stringify(inputs)}` : '';
   const expected = bindingConfirmationExpected(binding, inputs);
   return `/action ${binding.id}${jsonText}${expected ? ` confirm ${expected}` : ''}`;
@@ -2634,11 +5238,45 @@ async function getActionBinding(id) {
 function bindingConfirmationExpected(binding, inputs = {}) {
   if (!binding || binding.confirmation === 'none') return '';
   let expected = binding.confirmationTemplate || `execute binding ${binding.id}`;
+  const revisionSuffix = String(inputs.action || '').toLowerCase() === 'rollback'
+    ? ` to revision ${inputs.revision ?? ''}`
+    : '';
   expected = expected
     .replace(/<namespace>/g, String(inputs.namespace || binding.targetHints?.namespace || ''))
     .replace(/<deployment>/g, String(inputs.deployment || inputs.name || binding.targetHints?.deployment || ''))
-    .replace(/<replicas>/g, String(inputs.replicas ?? ''));
+    .replace(/<replicas>/g, String(inputs.replicas ?? ''))
+    .replace(/<kind>/g, String(inputs.kind || inputs.manifest?.kind || '').toLowerCase())
+    .replace(/<name>/g, String(inputs.name || inputs.manifest?.metadata?.name || ''))
+    .replace(/<container>/g, String(inputs.container || ''))
+    .replace(/<image>/g, String(inputs.image || ''))
+    .replace(/<suspend>/g, String(inputs.suspend ?? ''))
+    .replace(/<id>/g, String(inputs.id || ''))
+    .replace(/<action>/g, String(inputs.action || '').toLowerCase())
+    .replace(/<revision>/g, String(inputs.revision ?? ''))
+    .replace(/<revisionSuffix>/g, revisionSuffix)
+    .replace(/<username>/g, String(inputs.username || ''))
+    .replace(/<userId>/g, String(inputs.userId || ''))
+    .replace(/<role>/g, String(inputs.role || ''))
+    .replace(/<operation>/g, String(inputs.operation || '').toLowerCase())
+    .replace(/<verb>/g, inputs.enabled === true ? 'enable' : (inputs.enabled === false ? 'disable' : ''))
+    .replace(/<image>/g, String(inputs.image || ''))
+    .replace(/<channelId>/g, String(inputs.channelId || ''))
+    .replace(/<deliveryId>/g, String(inputs.deliveryId || ''));
+  expected = expected
+    .replace(/<stream>/g, String(inputs.stream || ''))
+    .replace(/<retentionDays>/g, String(inputs.retentionDays ?? ''))
+    .replace(/<importRef>/g, String(inputs.importRef || ''))
+    .replace(/<public>/g, String(inputs.config?.grafana?.exposureMode === 'PublicIngress'))
+    .replace(/<resetData>/g, String(inputs.resetData));
   return expected.trim();
+}
+
+function actionTarget(binding, inputs = {}) {
+  const manifest = inputs.manifest && typeof inputs.manifest === 'object' ? inputs.manifest : {};
+  const namespace = inputs.namespace || manifest.metadata?.namespace || binding.targetHints?.namespace || '';
+  const name = inputs.name || inputs.deployment || inputs.userId || inputs.username || inputs.stream || inputs.image || inputs.channelId || inputs.deliveryId || manifest.metadata?.name || binding.targetHints?.deployment || binding.id;
+  const kind = String(inputs.kind || manifest.kind || '').toLowerCase();
+  return `${kind ? `${kind}:` : ''}${namespace}/${name}`.replace(/\/+$/g, '').replace(/^:\/+/, '');
 }
 
 function requireBindingConfirmation(binding, inputs = {}, fallbackConfirm = '') {
@@ -2681,7 +5319,74 @@ async function executeActionBinding(body = {}, actor = null) {
   if (mutationRequired) inputs.reason = requireMutationReason(inputs.reason);
 
   if (mutationRequired) {
-    const target = `${inputs.namespace || binding.targetHints?.namespace || ''}/${inputs.name || inputs.deployment || binding.targetHints?.deployment || binding.id}`.replace(/^\/+|\/+$/g, '');
+    if (binding.toolId === 'oaa.knowledge.ingest-manual') {
+      assertPermission(actor, 'oaa.knowledge.manage');
+      if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'manual knowledge ingestion requires MFA assurance aal2' };
+      result = await upsertManualSeedManifest(inputs.manifest || inputs, actor);
+      const target = String(inputs.manifest?.source?.id || 'opensphere/manuals').slice(0, 200);
+      await recordToolRun(actor, {
+        requestId: randomUUID(), toolId: binding.toolId, target,
+        permissionCode: 'oaa.knowledge.manage', reason: inputs.reason,
+        input: inputs, status: 'applied', result,
+      });
+      return {
+        action: 'binding-execute', binding, confirmationExpected: expected || null, result,
+        message: bindingSummary(binding, result), latencyMs: Date.now() - started,
+      };
+    }
+    await requireOaaMutationLifecycle(actor, {
+      allowHisRecovery: ['oaa.his.validate', 'oaa.his.lifecycle', 'oaa.his.observability.configure'].includes(binding.toolId),
+      allowCephRecovery: ['oaa.ceph.connect', 'oaa.ceph.disconnect'].includes(binding.toolId),
+      allowConsoleRecovery: ['oaa.identity.user.create', 'oaa.identity.user.enabled', 'oaa.identity.role.membership'].includes(binding.toolId),
+      allowEvidenceControl: binding.toolId === 'oaa.evidence.retention.update',
+      allowExtensionSecurity: binding.toolId === 'oaa.extension.image.revoke',
+      allowNotificationControl: ['oaa.notification.channel.enabled', 'oaa.notification.channel.test', 'oaa.notification.delivery.retry'].includes(binding.toolId),
+    });
+    if (OAA_OWNER_ACTION_TOOL_IDS.has(binding.toolId)) {
+      let ownerResult;
+      try {
+        ownerResult = await executeOwnerControlAction(binding.toolId, inputs, actor);
+      } catch (error) {
+        const failure = { code: Number(error?.code) || 500, error: String(error?.msg || error?.message || 'owner action failed').slice(0, 500) };
+        await recordToolRun(actor, {
+          requestId: randomUUID(),
+          toolId: binding.toolId,
+          target: actionTarget(binding, inputs),
+          permissionCode: TOOL_PERMISSION[binding.toolId] || 'oaa.action.execute.high',
+          reason: inputs.reason,
+          input: inputs,
+          status: 'failed',
+          result: failure,
+        }).catch(() => undefined);
+        audit(actor, 'owner-control-action', actionTarget(binding, inputs), 'failed', `${binding.toolId} / ${failure.error}`);
+        throw error;
+      }
+      await recordToolRun(actor, {
+        requestId: randomUUID(),
+        toolId: binding.toolId,
+        target: ownerResult.target,
+        permissionCode: TOOL_PERMISSION[binding.toolId] || 'oaa.action.execute.high',
+        reason: inputs.reason,
+        input: inputs,
+        status: 'applied',
+        result: ownerResult,
+      });
+      return {
+        action: 'binding-execute',
+        binding,
+        confirmationExpected: expected || null,
+        result: ownerResult,
+        message: bindingSummary(binding, ownerResult),
+        latencyMs: Date.now() - started,
+      };
+    }
+    if (binding.toolId.startsWith('oaa.k8s.')) {
+      const manifestNamespace = inputs.manifest && typeof inputs.manifest === 'object'
+        ? inputs.manifest.metadata?.namespace
+        : '';
+      inputs.namespace = requireMutationNamespace(inputs.namespace || manifestNamespace || binding.targetHints?.namespace);
+    }
+    const target = actionTarget(binding, inputs);
     const controlPlane = await submitControlPlaneAction(binding, inputs, target, actor);
     await recordToolRun(actor, {
       requestId: controlPlane.requestId,
@@ -2722,6 +5427,58 @@ async function executeActionBinding(body = {}, actor = null) {
     }
     case 'oaa.knowledge.ingest-manual':
       result = await upsertManualSeedManifest(inputs.manifest || inputs, actor);
+      break;
+    case 'oaa.control-plane.status':
+      result = await controlPlaneStatus(actor);
+      break;
+    case 'oaa.identity.status':
+      result = await identityStatusRead(actor);
+      break;
+    case 'oaa.extension.security.status':
+      result = await extensionSecurityStatusRead(actor);
+      break;
+    case 'oaa.extension.image.inspect':
+      result = await extensionImageInspectRead(inputs, actor);
+      break;
+    case 'oaa.notification.status':
+      result = await notificationStatusRead(inputs, actor);
+      break;
+    case 'oaa.his.observability.config':
+      result = await hisObservabilityConfigRead(actor);
+      break;
+    case 'oaa.his.observability.plan':
+      result = await hisObservabilityPlanRead(inputs, actor);
+      break;
+    case 'oaa.ceph.status':
+      result = await cephStatusRead(actor);
+      break;
+    case 'oaa.ceph.plan':
+      result = await cephPlanRead(inputs, actor);
+      break;
+    case 'oaa.evidence.status':
+      assertPermission(actor, 'oaa.evidence.read');
+      result = await agentEvidenceDashboard(inputs.days || 30, inputs.limit || 25);
+      break;
+    case 'oaa.recovery.status':
+      result = await recoveryStatusRead(actor);
+      break;
+    case 'oaa.recovery.plan':
+      result = await recoveryPlanRead(inputs, actor);
+      break;
+    case 'oaa.observability.logs.query':
+      result = await observabilityRead(inputs, actor, 'logs');
+      break;
+    case 'oaa.observability.traces.query':
+      result = await observabilityRead(inputs, actor, 'traces');
+      break;
+    case 'oaa.catalog.entities.list':
+      result = await catalogEntitySearch(inputs, actor);
+      break;
+    case 'oaa.registry.read':
+      result = await registryRead(actor);
+      break;
+    case 'oaa.foundation.status':
+      result = await foundationStatusRead(actor);
       break;
     case 'oaa.k8s.resource.describe': {
       const kind = String(inputs.kind || '').toLowerCase();
@@ -2772,6 +5529,9 @@ function commandHelp() {
   return [
     'OAA commands:',
     '/env',
+    '/control-plane',
+    '/catalog [filter]',
+    '/registry',
     '/pod-count',
     '/pods [namespace]',
     '/services [namespace]',
@@ -2786,7 +5546,8 @@ function commandHelp() {
     '/action <binding-id> [json-input] confirm <required confirmation>',
     '/tools',
     '/bindings',
-    `Allowed namespaces: ${OAA_ENV_NAMESPACES.join(', ')}`,
+    `Read namespaces: ${OAA_ENV_NAMESPACES.join(', ')}`,
+    `Mutation namespaces: ${OAA_MUTATION_NAMESPACES.join(', ')}`,
   ].join('\n');
 }
 
@@ -2953,11 +5714,11 @@ async function handleSlashCommand(text, body, actor) {
   const cmd = parts[0].toLowerCase();
   if (cmd === '/help') return commandResponse(started, commandHelp());
   if (cmd === '/tools') {
-    const manifest = await gatedToolManifestFromStore();
+    const manifest = await gatedToolManifestForActor(actor);
     return commandResponse(started, summarizeToolManifest(manifest), manifest);
   }
   if (cmd === '/bindings') {
-    const manifest = await gatedActionBindingsFromStore();
+    const manifest = await gatedActionBindingsForActor(actor);
     return commandResponse(started, summarizeActionBindings(manifest), manifest);
   }
   if (cmd === '/action') {
@@ -2979,6 +5740,18 @@ async function handleSlashCommand(text, body, actor) {
   if (cmd === '/env') {
     const out = await environmentSnapshot(body, actor);
     return commandResponse(started, summarizeEnvironment(out), out);
+  }
+  if (cmd === '/control-plane' || cmd === '/controlplane') {
+    const out = await controlPlaneStatus(actor);
+    return commandResponse(started, JSON.stringify(out, null, 2), out);
+  }
+  if (cmd === '/catalog') {
+    const out = await catalogEntitySearch({ filter: parts.slice(1).join(' '), limit: 100 }, actor);
+    return commandResponse(started, JSON.stringify(out, null, 2), out);
+  }
+  if (cmd === '/registry') {
+    const out = await registryRead(actor);
+    return commandResponse(started, JSON.stringify(out, null, 2), out);
   }
   if (cmd === '/pod-count' || cmd === '/podcount') {
     const out = await clusterPodSummary();
@@ -3104,11 +5877,1123 @@ function actionSuggestionsSystemMessage(actions) {
   };
 }
 
+const AGENT_MAX_TOOL_ROUNDS = 6;
+
+function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisOwnerCapabilities = new Set(), cephOwnerCapabilities = new Set(), recoveryOwnerCapabilities = new Set()) {
+  const tools = [];
+  const add = (permission, name, description, properties = {}, required = []) => {
+    if (!hasPermission(actor, permission)) return;
+    tools.push({
+      type: 'function',
+      function: {
+        name,
+        description,
+        parameters: { type: 'object', properties, required, additionalProperties: false },
+      },
+    });
+  };
+  const namespace = { type: 'string', description: `Allowed namespace: ${OAA_ENV_NAMESPACES.join(', ')}` };
+  const name = { type: 'string', description: 'Kubernetes resource name' };
+  add('oaa.system.read', 'get_environment_snapshot', 'Read the current OpenSphere runtime snapshot. Use this for live facts, never manuals.', {
+    namespace: { ...namespace, description: `${namespace.description}. Omit to inspect all allowed namespaces.` },
+  });
+  add('oaa.system.read', 'get_cluster_pod_summary', 'Read current cluster-wide pod phase and unhealthy/restart counts.');
+  add('oaa.system.read', 'list_kubernetes_resources', 'List current sanitized operational resources from the live Kubernetes API. Namespace is required for namespaced kinds and omitted for cluster-scoped kinds.', {
+    kind: { type: 'string', enum: RUNTIME_RESOURCE_KINDS },
+    namespace: { ...namespace, description: `${namespace.description}. Required only for namespaced kinds.` },
+    labelSelector: { type: 'string', maxLength: 500 },
+    limit: { type: 'integer', minimum: 1, maximum: 500 },
+  }, ['kind']);
+  add('oaa.system.read', 'get_kubernetes_resource', 'Read one current sanitized operational resource and its recent events. Namespace is required for namespaced kinds and omitted for cluster-scoped kinds.', {
+    kind: { type: 'string', enum: RUNTIME_RESOURCE_KINDS },
+    namespace: { ...namespace, description: `${namespace.description}. Required only for namespaced kinds.` },
+    name,
+  }, ['kind', 'name']);
+  add('oaa.system.read', 'list_namespace_resources', 'List current resources in one allowed namespace.', {
+    namespace,
+    category: { type: 'string', enum: ['pods', 'deployments', 'services', 'events', 'all'] },
+  }, ['namespace', 'category']);
+  add('oaa.system.read', 'describe_kubernetes_resource', 'Read detailed current status and events for a Pod or Deployment.', {
+    kind: { type: 'string', enum: ['pod', 'deployment'] }, namespace, name,
+  }, ['kind', 'namespace', 'name']);
+  add('oaa.system.read', 'get_deployment_rollout', 'Read observed rollout readiness for a Deployment.', {
+    namespace, name,
+  }, ['namespace', 'name']);
+  add('oaa.logs.read', 'get_pod_logs', 'Read a redacted tail of current Pod logs for diagnosis.', {
+    namespace,
+    pod: name,
+    container: { type: 'string' },
+    tailLines: { type: 'integer', minimum: 1, maximum: 300 },
+  }, ['namespace', 'pod']);
+  if (observabilityCapabilities.has('logs')) add('oaa.logs.read', 'query_centralized_logs', 'Query redacted historical logs from HIS/Loki using a fixed template. Use service.errors for failures, service.recent for recent service output, or namespace.recent for an allowed namespace.', {
+    template: { type: 'string', enum: ['service.recent', 'service.errors', 'namespace.recent'] },
+    service: { type: 'string', description: 'Required for service templates' },
+    namespace: { ...namespace, description: 'Required for namespace.recent' },
+    sinceMinutes: { type: 'integer', minimum: 1, maximum: 1440 },
+    limit: { type: 'integer', minimum: 1, maximum: 200 },
+  }, ['template']);
+  if (observabilityCapabilities.has('traces')) add('oaa.logs.read', 'query_distributed_traces', 'Query sanitized traces from HIS/Tempo using trace.by_id or service.recent.', {
+    template: { type: 'string', enum: ['trace.by_id', 'service.recent'] },
+    traceId: { type: 'string', pattern: '^[a-fA-F0-9]{32}$', description: 'Required for trace.by_id' },
+    service: { type: 'string', description: 'Required for service.recent' },
+    sinceMinutes: { type: 'integer', minimum: 1, maximum: 1440 },
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+  }, ['template']);
+  add('oaa.knowledge.read', 'search_opensphere_knowledge', 'Search governed OpenSphere manuals and knowledge with document ACL enforcement.', {
+    query: { type: 'string', minLength: 1, maxLength: 1000 },
+    limit: { type: 'integer', minimum: 1, maximum: 12 },
+  }, ['query']);
+  add('oaa.system.read', 'list_governed_actions', 'List actions allowed for this user. Mutating actions are proposals and still require an exact human confirmation and approval workflow.', {
+    query: { type: 'string', maxLength: 1000 },
+  });
+  add('oaa.system.read', 'search_catalog_entities', 'Search the canonical OpenSphere catalog projection. Use this to relate services, owners, APIs, and declared platform components to live resources.', {
+    filter: { type: 'string', maxLength: 200 },
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+  });
+  add('oaa.system.read', 'get_opensphere_registry', 'Read the current Main Shell native Registry projection from its owning DUPA API. Treat it as discovery and activation state, not Kubernetes runtime truth.', {});
+  add('oaa.system.read', 'get_foundation_status', 'Read Foundation models, engine states, consumer claims, bindings, and controller readiness from the Foundation owner API.', {});
+  add('console.identity.manage', 'get_console_identity_status', 'Read the current PII-minimized Console user and canonical role inventory from the Supabase identity owner.', {});
+  add('console.extension.security.read', 'get_extension_security_status', 'Read the append-only exact-digest Extension image revocation ledger.', {});
+  add('console.extension.security.read', 'inspect_extension_image', 'Inspect an exact-digest OpenSphere Extension image, signed descriptor, source revision, platforms, provenance and SBOM evidence.', {
+    image: { type: 'string', pattern: OAA_EXTENSION_IMAGE_RE.source },
+  }, ['image']);
+  add('console.notification.read', 'get_notification_status', 'Read sanitized Notification channel, rule, and recent delivery state without recipients, message bodies, routes, or provider message IDs.', {
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+  });
+  if (recoveryOwnerCapabilities.has('status-read')) {
+    add('console.recovery.read', 'get_platform_recovery_status', 'Read current sanitized backup verification, restore assertions, evidence freshness, and recovery execution blockers. This never returns vault paths, checksum values, credentials, or archive contents.', {});
+  }
+  if (recoveryOwnerCapabilities.has('plan-read')) {
+    add('console.recovery.read', 'plan_platform_recovery_drill', 'Plan an isolated non-destructive recovery drill for Supabase database, Supabase Storage, Gitea, or all components. The plan is not execution.', {
+      component: { type: 'string', enum: OAA_RECOVERY_COMPONENTS },
+    }, ['component']);
+  }
+  if (hisOwnerCapabilities.has('observability-config-read')) {
+    add('console.his.read', 'get_his_observability_config', 'Read the current complete managed HIS Observability configuration and owner policy. Secret values are never returned.', {});
+  }
+  if (hisOwnerCapabilities.has('observability-plan')) {
+    add('console.his.read', 'plan_his_observability_config', 'Plan a complete closed-schema HIS Observability configuration and return live blockers, warnings, storage effects, and whether data reset is required. Only SecretRef names are accepted.', {
+      config: hisObservabilityConfigSchema(),
+    }, ['config']);
+  }
+  if (cephOwnerCapabilities.has('status-read')) {
+    add('console.ceph.read', 'get_ceph_status', 'Read external Ceph connection state and the independently verified Rook/RBAC/runtime prerequisites.', {});
+  }
+  if (cephOwnerCapabilities.has('plan-from-import')) {
+    add('console.ceph.read', 'plan_ceph_connection', 'Plan external Ceph from an owner-staged SecretRef. Raw provider credentials are never accepted or returned by this tool.', {
+      importRef: { type: 'string', pattern: OAA_CEPH_IMPORT_REF_RE.source },
+    }, ['importRef']);
+  }
+  add('oaa.evidence.read', 'get_agent_evidence_status', 'Read correlated digest-only agent runs, tool calls, retrieval revisions, provider usage, and retention/export coverage.', {
+    days: { type: 'integer', enum: [1, 7, 30, 90, 365] },
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+  });
+  if (hasPermission(actor, 'console.git.change')) {
+    add('console.git.change', 'get_change_control_status', 'Read Gitea declaration authority and reconciler consumer status.', {});
+    add('console.git.change', 'get_control_plane_status', 'Read the current OpenSphere lifecycle and complete OAA operating readiness through owning APIs. Use agentControl.blockers and missingCapabilities instead of assuming that reachable APIs mean full control is ready.', {});
+  }
+  return tools;
+}
+
+function redactToolText(value) {
+  return String(value || '')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b/g, '[REDACTED_JWT]')
+    .replace(/\b(sk|rk|pk|ghp|glpat)-[A-Za-z0-9_-]{12,}\b/gi, '[REDACTED_TOKEN]')
+    .replace(/((?:password|passwd|api[_-]?key|access[_-]?token|client[_-]?secret)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]');
+}
+
+function toolResultContent(result) {
+  return redactToolText(JSON.stringify(result)).slice(0, 18000);
+}
+
+async function backendGet(path, actor) {
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${CONSOLE_IDENTITY_URL}${path}`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    throw { code: 503, msg: 'Console Backend status API is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `Console Backend HTTP ${response.status}` };
+  return body;
+}
+
+async function identityStatusRead(actor) {
+  assertPermission(actor, 'console.identity.manage');
+  const projection = redactProjection(await backendGet('/api/oaa/owner/identity/status', actor));
+  audit(actor, 'identity-owner-status', 'ConsoleIdentity/users', 'ok', `${projection.users?.length || 0} users / ${projection.roles?.length || 0} roles`);
+  return projection;
+}
+
+function requireExtensionDigestImage(value, label = 'Extension image') {
+  const image = String(value || '').trim().toLowerCase();
+  if (!OAA_EXTENSION_IMAGE_RE.test(image)) throw { code: 400, msg: `${label} must be ghcr.io/opensphere-platform/<repository>@sha256:<64 hex>` };
+  return image;
+}
+
+async function extensionSecurityStatusRead(actor) {
+  assertPermission(actor, 'console.extension.security.read');
+  const projection = redactProjection(await dupaGet('/api/oaa/owner/extensions/security', actor));
+  audit(actor, 'extension-security-status', 'ExtensionSecurity/revocations', 'ok', `${projection.items?.length || 0} revocations`);
+  return projection;
+}
+
+async function extensionImageInspectRead(inputs, actor) {
+  assertPermission(actor, 'console.extension.security.read');
+  requireClosedOwnerInputs(inputs, ['image']);
+  const image = requireExtensionDigestImage(inputs.image);
+  const projection = redactProjection(await fixedOwnerPost(
+    DUPA_CONTROL_URL, '/api/oaa/owner/extensions/inspect', actor, { image }, 'DUPA Extension security', 60000,
+  ));
+  audit(actor, 'extension-image-inspect', `OCIImage/${image}`, 'ok', projection.verification?.signature || 'verified');
+  return projection;
+}
+
+async function notificationStatusRead(inputs, actor) {
+  assertPermission(actor, 'console.notification.read');
+  requireClosedOwnerInputs(inputs, ['limit']);
+  const limit = Number(inputs.limit || 50);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw { code: 400, msg: 'notification delivery limit must be 1-100' };
+  const projection = redactProjection(await backendGet(`/api/oaa/owner/notifications/status?limit=${limit}`, actor));
+  audit(actor, 'notification-owner-status', 'NotificationDelivery/all', 'ok', `${projection.channels?.length || 0} channels / ${projection.deliveries?.length || 0} deliveries`);
+  return projection;
+}
+
+async function recoveryStatusRead(actor) {
+  assertPermission(actor, 'console.recovery.read');
+  if (!(await oaaRecoveryOwnerCapabilities(actor)).has('status-read')) throw { code: 409, msg: 'Console recovery owner does not expose status-read' };
+  const projection = redactProjection(await backendGet('/api/oaa/owner/recovery/status', actor));
+  audit(actor, 'recovery-owner-status', 'PlatformRecovery/all', 'ok', `${projection.blockers?.length || 0} blockers`);
+  return projection;
+}
+
+async function recoveryPlanRead(inputs, actor) {
+  assertPermission(actor, 'console.recovery.read');
+  requireClosedOwnerInputs(inputs, ['component']);
+  if (!(await oaaRecoveryOwnerCapabilities(actor)).has('plan-read')) throw { code: 409, msg: 'Console recovery owner does not expose plan-read' };
+  const component = String(inputs?.component || 'all').trim().toLowerCase();
+  if (!OAA_RECOVERY_COMPONENTS.includes(component)) throw { code: 400, msg: `component must be one of ${OAA_RECOVERY_COMPONENTS.join(', ')}` };
+  const projection = redactProjection(await fixedOwnerPost(
+    CONSOLE_IDENTITY_URL, '/api/oaa/owner/recovery/plan', actor, { component }, 'Console Platform Recovery', 30000,
+  ));
+  audit(actor, 'recovery-owner-plan', `PlatformRecovery/${component}`, 'ok', `${projection.steps?.length || 0} steps / ${projection.blockers?.length || 0} blockers`);
+  return projection;
+}
+
+async function dupaGet(path, actor) {
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${DUPA_CONTROL_URL}${path}`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    throw { code: 503, msg: 'Console lifecycle API is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `Console lifecycle HTTP ${response.status}` };
+  return body;
+}
+
+async function clusterManagerGet(path, actor) {
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${CLUSTER_MANAGER_URL}${path}`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw { code: 503, msg: 'Cluster Manager owner API is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `Cluster Manager HTTP ${response.status}` };
+  return body;
+}
+
+function boundedObservabilityReadInputs(inputs, kind) {
+  const value = inputs && typeof inputs === 'object' ? inputs : {};
+  const allowed = kind === 'logs'
+    ? ['template', 'service', 'namespace', 'sinceMinutes', 'limit']
+    : ['template', 'traceId', 'service', 'sinceMinutes', 'limit'];
+  const extra = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (extra.length) throw { code: 400, msg: `observability query contains unsupported inputs: ${extra.join(', ')}` };
+  const templates = kind === 'logs' ? ['service.recent', 'service.errors', 'namespace.recent'] : ['trace.by_id', 'service.recent'];
+  const template = String(value.template || (kind === 'logs' ? 'service.recent' : 'trace.by_id'));
+  if (!templates.includes(template)) throw { code: 400, msg: `unsupported ${kind} query template` };
+  const output = { template };
+  if (value.service !== undefined) output.service = requireOwnerActionId(value.service);
+  if (value.namespace !== undefined) output.namespace = requireNamespace(value.namespace);
+  if (value.traceId !== undefined) {
+    const traceId = String(value.traceId || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{32}$/.test(traceId)) throw { code: 400, msg: 'traceId must be 32 hexadecimal characters' };
+    output.traceId = traceId;
+  }
+  const sinceMinutes = Number(value.sinceMinutes || 60);
+  const maximumLimit = kind === 'logs' ? 200 : 100;
+  const limit = Number(value.limit || 100);
+  if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 1440) throw { code: 400, msg: 'sinceMinutes must be an integer from 1 to 1440' };
+  if (!Number.isInteger(limit) || limit < 1 || limit > maximumLimit) throw { code: 400, msg: `limit must be an integer from 1 to ${maximumLimit}` };
+  output.sinceMinutes = sinceMinutes;
+  output.limit = limit;
+  if (template.startsWith('service.') && !output.service) throw { code: 400, msg: 'service is required for the selected template' };
+  if (template === 'namespace.recent' && !output.namespace) throw { code: 400, msg: 'namespace is required for namespace.recent' };
+  if (template === 'trace.by_id' && !output.traceId) throw { code: 400, msg: 'traceId is required for trace.by_id' };
+  return output;
+}
+
+async function observabilityRead(inputs, actor, kind) {
+  assertPermission(actor, 'oaa.logs.read');
+  const query = boundedObservabilityReadInputs(inputs, kind);
+  const params = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]));
+  const result = redactProjection(await clusterManagerGet(`/api/his/observability/${kind}?${params.toString()}`, actor));
+  const target = query.traceId || query.service || query.namespace || kind;
+  audit(actor, `his-observability-${kind}-query`, `HIS/${kind}/${target}`, 'ok', `${query.template} limit=${query.limit}`);
+  return result;
+}
+
+async function fixedOwnerPost(baseUrl, path, actor, payload, owner, timeoutMs = 30000) {
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    throw { code: 503, msg: `${owner} owner API is unavailable` };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `${owner} HTTP ${response.status}` };
+  return body;
+}
+
+function requireClosedOwnerInputs(inputs, allowed) {
+  const keys = Object.keys(inputs || {});
+  const extra = keys.filter((key) => !allowed.includes(key));
+  if (extra.length) throw { code: 400, msg: `owner action contains unsupported inputs: ${extra.join(', ')}` };
+}
+
+function requireExactOwnerObject(value, keys, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw { code: 400, msg: `${label} must be an object` };
+  requireClosedOwnerInputs(value, keys);
+  const missing = keys.filter((key) => !Object.prototype.hasOwnProperty.call(value, key));
+  if (missing.length) throw { code: 400, msg: `${label} is missing required fields: ${missing.join(', ')}` };
+  return value;
+}
+
+function ownerConfigString(value, label, maximum = 253) {
+  if (typeof value !== 'string' || value.length > maximum || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw { code: 400, msg: `${label} must be a bounded string` };
+  }
+  return value;
+}
+
+function normalizeHisObservabilityOwnerConfig(value) {
+  const source = requireExactOwnerObject(value, ['schemaVersion', 'prometheus', 'alertmanager', 'grafana', 'telemetry'], 'config');
+  if (source.schemaVersion !== 1) throw { code: 400, msg: 'config.schemaVersion must be 1' };
+  const prometheus = requireExactOwnerObject(source.prometheus, ['retention', 'storageClassName', 'storageSize', 'remoteWrite'], 'config.prometheus');
+  const remoteWrite = requireExactOwnerObject(prometheus.remoteWrite, ['enabled', 'url', 'secretName', 'secretKey'], 'config.prometheus.remoteWrite');
+  const alertmanager = requireExactOwnerObject(source.alertmanager, ['retention', 'storageClassName', 'storageSize'], 'config.alertmanager');
+  const grafana = requireExactOwnerObject(source.grafana, ['storageClassName', 'storageSize', 'exposureMode', 'hostname', 'ingressClassName', 'ingressNamespace', 'tlsSecretName', 'oidcSecretName', 'allowedCidrs'], 'config.grafana');
+  const telemetry = requireExactOwnerObject(source.telemetry, ['enabled', 'retention', 'storageClassName', 'lokiStorageSize', 'tempoStorageSize'], 'config.telemetry');
+  if (typeof remoteWrite.enabled !== 'boolean' || typeof telemetry.enabled !== 'boolean') throw { code: 400, msg: 'Observability enabled fields must be boolean' };
+  if (!['ClusterInternal', 'PrivateIngress', 'PublicIngress'].includes(grafana.exposureMode)) throw { code: 400, msg: 'Grafana exposureMode is outside the closed policy' };
+  if (!Array.isArray(grafana.allowedCidrs) || grafana.allowedCidrs.length > 32) throw { code: 400, msg: 'Grafana allowedCidrs must be a bounded array' };
+  return {
+    schemaVersion: 1,
+    prometheus: {
+      retention: ownerConfigString(prometheus.retention, 'config.prometheus.retention'),
+      storageClassName: ownerConfigString(prometheus.storageClassName, 'config.prometheus.storageClassName'),
+      storageSize: ownerConfigString(prometheus.storageSize, 'config.prometheus.storageSize'),
+      remoteWrite: {
+        enabled: remoteWrite.enabled,
+        url: ownerConfigString(remoteWrite.url, 'config.prometheus.remoteWrite.url', 2048),
+        secretName: ownerConfigString(remoteWrite.secretName, 'config.prometheus.remoteWrite.secretName'),
+        secretKey: ownerConfigString(remoteWrite.secretKey, 'config.prometheus.remoteWrite.secretKey'),
+      },
+    },
+    alertmanager: {
+      retention: ownerConfigString(alertmanager.retention, 'config.alertmanager.retention'),
+      storageClassName: ownerConfigString(alertmanager.storageClassName, 'config.alertmanager.storageClassName'),
+      storageSize: ownerConfigString(alertmanager.storageSize, 'config.alertmanager.storageSize'),
+    },
+    grafana: {
+      storageClassName: ownerConfigString(grafana.storageClassName, 'config.grafana.storageClassName'),
+      storageSize: ownerConfigString(grafana.storageSize, 'config.grafana.storageSize'),
+      exposureMode: grafana.exposureMode,
+      hostname: ownerConfigString(grafana.hostname, 'config.grafana.hostname'),
+      ingressClassName: ownerConfigString(grafana.ingressClassName, 'config.grafana.ingressClassName'),
+      ingressNamespace: ownerConfigString(grafana.ingressNamespace, 'config.grafana.ingressNamespace'),
+      tlsSecretName: ownerConfigString(grafana.tlsSecretName, 'config.grafana.tlsSecretName'),
+      oidcSecretName: ownerConfigString(grafana.oidcSecretName, 'config.grafana.oidcSecretName'),
+      allowedCidrs: grafana.allowedCidrs.map((cidr) => ownerConfigString(cidr, 'config.grafana.allowedCidrs[]', 64)),
+    },
+    telemetry: {
+      enabled: telemetry.enabled,
+      retention: ownerConfigString(telemetry.retention, 'config.telemetry.retention'),
+      storageClassName: ownerConfigString(telemetry.storageClassName, 'config.telemetry.storageClassName'),
+      lokiStorageSize: ownerConfigString(telemetry.lokiStorageSize, 'config.telemetry.lokiStorageSize'),
+      tempoStorageSize: ownerConfigString(telemetry.tempoStorageSize, 'config.telemetry.tempoStorageSize'),
+    },
+  };
+}
+
+function hisObservabilityConfirmation(config, resetData) {
+  return `configure HIS observability public=${config.grafana.exposureMode === 'PublicIngress'} data-reset=${Boolean(resetData)}`;
+}
+
+async function hisObservabilityConfigRead(actor) {
+  assertPermission(actor, 'console.his.read');
+  if (!(await oaaHisOwnerCapabilities(actor)).has('observability-config-read')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability config owner capability' };
+  const projection = redactProjection(await clusterManagerGet('/api/his/oaa/observability/config', actor));
+  audit(actor, 'his-observability-config-read', 'HIS/kube-prometheus-stack', 'ok', projection.source || 'managed configuration');
+  return projection;
+}
+
+async function hisObservabilityPlanRead(inputs, actor) {
+  assertPermission(actor, 'console.his.read');
+  if (!(await oaaHisOwnerCapabilities(actor)).has('observability-plan')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability plan owner capability' };
+  requireClosedOwnerInputs(inputs, ['config']);
+  const config = normalizeHisObservabilityOwnerConfig(inputs.config);
+  const projection = redactProjection(await fixedOwnerPost(
+    CLUSTER_MANAGER_URL, '/api/his/oaa/observability/plan', actor, { config }, 'Cluster Manager HIS', 120000,
+  ));
+  audit(actor, 'his-observability-plan', 'HIS/kube-prometheus-stack', 'ok', `${projection.changes?.length || 0} changes / ${projection.blockers?.length || 0} blockers`);
+  return projection;
+}
+
+function requireCephImportRef(value) {
+  const importRef = String(value || '').trim().toLowerCase();
+  if (!OAA_CEPH_IMPORT_REF_RE.test(importRef)) throw { code: 400, msg: 'importRef must be opensphere-ceph-imports/opensphere-ceph-import-<uuid>' };
+  return importRef;
+}
+
+async function cephStatusRead(actor) {
+  assertPermission(actor, 'console.ceph.read');
+  if (!(await oaaCephOwnerCapabilities(actor)).has('status-read')) throw { code: 409, msg: 'signed Cluster Manager does not expose the Ceph owner status capability' };
+  const projection = redactProjection(await clusterManagerGet('/api/ceph/oaa/status', actor));
+  audit(actor, 'ceph-external-status', 'CephExternal/rook-ceph', 'ok', `${projection.state || 'Unknown'}:${projection.reason || 'unknown'}`);
+  return projection;
+}
+
+async function cephPlanRead(inputs, actor) {
+  assertPermission(actor, 'console.ceph.read');
+  requireClosedOwnerInputs(inputs, ['importRef']);
+  if (!(await oaaCephOwnerCapabilities(actor)).has('plan-from-import')) throw { code: 409, msg: 'signed Cluster Manager or Rook prerequisites do not expose the Ceph plan capability' };
+  const importRef = requireCephImportRef(inputs.importRef);
+  const projection = redactProjection(await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/ceph/oaa/plan', actor, { importRef }, 'Cluster Manager Ceph', 120000));
+  audit(actor, 'ceph-external-plan', 'CephExternal/rook-ceph', 'ok', `${projection.storage?.length || 0} storage classes`);
+  return projection;
+}
+
+function requireOwnerActionId(value, allowed = null) {
+  const id = String(value || '').trim();
+  if (!K8S_NAME_RE.test(id)) throw { code: 400, msg: 'owner action id is invalid' };
+  if (allowed && !allowed.includes(id)) throw { code: 400, msg: 'owner action id is outside the closed catalog' };
+  return id;
+}
+
+async function executeOwnerControlAction(toolId, inputs, actor) {
+  if (!OAA_OWNER_ACTION_TOOL_IDS.has(toolId)) throw { code: 403, msg: 'tool is not an approved owner control-plane action' };
+  assertPermission(actor, TOOL_PERMISSION[toolId] || 'oaa.action.execute.high');
+  if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'owner control-plane action requires MFA assurance aal2' };
+  const reason = requireMutationReason(inputs.reason);
+  let owner;
+  let target;
+  let response;
+
+  if (toolId === 'oaa.evidence.retention.update') {
+    response = await setEvidenceRetentionPolicy(actor, inputs);
+    owner = 'OAA Supabase evidence owner'; target = response.target;
+  } else if (toolId === 'oaa.identity.user.create') {
+    requireClosedOwnerInputs(inputs, ['email', 'username', 'displayName', 'roles', 'confirm', 'reason']);
+    const email = String(inputs.email || '').trim().toLowerCase();
+    const username = String(inputs.username || '').trim().toLowerCase();
+    const displayName = String(inputs.displayName || '').trim();
+    const roles = [...new Set((Array.isArray(inputs.roles) ? inputs.roles : []).map((role) => String(role || '').trim()).filter(Boolean))];
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 254) throw { code: 400, msg: 'invalid Console user email' };
+    if (!/^[a-z0-9][a-z0-9._-]{1,63}$/.test(username)) throw { code: 400, msg: 'invalid Console username' };
+    if (!displayName || displayName.length > 120) throw { code: 400, msg: 'displayName must be 1-120 characters' };
+    if (roles.length > OAA_CONSOLE_ROLES.length || roles.some((role) => !OAA_CONSOLE_ROLES.includes(role))) {
+      throw { code: 400, msg: 'roles must be a subset of the canonical Console role catalog' };
+    }
+    requireConfirm(inputs.confirm, `create Console user ${username}`);
+    owner = 'Console Data & Identity / Supabase'; target = `ConsoleUser/${username}`;
+    response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/owner/identity/actions', actor, {
+      action: 'create', email, username, displayName, roles, confirm: inputs.confirm, reason,
+    }, owner);
+  } else if (toolId === 'oaa.identity.user.enabled') {
+    requireClosedOwnerInputs(inputs, ['userId', 'enabled', 'confirm', 'reason']);
+    const userId = String(inputs.userId || '').trim().toLowerCase();
+    if (!UUID_RE.test(userId)) throw { code: 400, msg: 'Console user id must be a UUID' };
+    if (typeof inputs.enabled !== 'boolean') throw { code: 400, msg: 'enabled must be boolean' };
+    const verb = inputs.enabled ? 'enable' : 'disable';
+    requireConfirm(inputs.confirm, `${verb} Console user ${userId}`);
+    owner = 'Console Data & Identity / Supabase'; target = `ConsoleUser/${userId}`;
+    response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/owner/identity/actions', actor, {
+      action: 'set-enabled', userId, enabled: inputs.enabled, confirm: inputs.confirm, reason,
+    }, owner);
+  } else if (toolId === 'oaa.identity.role.membership') {
+    requireClosedOwnerInputs(inputs, ['userId', 'role', 'operation', 'confirm', 'reason']);
+    const userId = String(inputs.userId || '').trim().toLowerCase();
+    const role = String(inputs.role || '').trim();
+    const operation = String(inputs.operation || '').trim().toLowerCase();
+    if (!UUID_RE.test(userId)) throw { code: 400, msg: 'Console user id must be a UUID' };
+    if (!OAA_CONSOLE_ROLES.includes(role)) throw { code: 400, msg: 'role is outside the canonical Console role catalog' };
+    if (!['add', 'remove'].includes(operation)) throw { code: 400, msg: 'role operation must be add or remove' };
+    requireConfirm(inputs.confirm, `${operation} Console role ${role} for user ${userId}`);
+    owner = 'Console Data & Identity / Supabase'; target = `ConsoleUser/${userId}/Role/${role}`;
+    response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/owner/identity/actions', actor, {
+      action: 'role', userId, role, operation, confirm: inputs.confirm, reason,
+    }, owner);
+  } else if (toolId === 'oaa.extension.image.revoke') {
+    requireClosedOwnerInputs(inputs, ['image', 'replacementImage', 'confirm', 'reason']);
+    const image = requireExtensionDigestImage(inputs.image);
+    const replacementImage = inputs.replacementImage === undefined || String(inputs.replacementImage || '').trim() === ''
+      ? '' : requireExtensionDigestImage(inputs.replacementImage, 'replacement Extension image');
+    if (replacementImage && replacementImage.split('@')[0] !== image.split('@')[0]) throw { code: 400, msg: 'replacement Extension image must use the same repository' };
+    requireConfirm(inputs.confirm, `revoke extension image ${image}`);
+    owner = 'DUPA Extension security'; target = `OCIImage/${image}`;
+    response = await fixedOwnerPost(DUPA_CONTROL_URL, '/api/oaa/owner/extensions/revoke', actor, {
+      image, ...(replacementImage ? { replacementImage } : {}), confirm: inputs.confirm, reason,
+    }, owner, 60000);
+  } else if (toolId === 'oaa.notification.channel.enabled') {
+    requireClosedOwnerInputs(inputs, ['channelId', 'enabled', 'confirm', 'reason']);
+    const channelId = String(inputs.channelId || '').trim().toLowerCase();
+    if (!UUID_RE.test(channelId)) throw { code: 400, msg: 'Notification channel id must be a UUID' };
+    if (typeof inputs.enabled !== 'boolean') throw { code: 400, msg: 'enabled must be boolean' };
+    const verb = inputs.enabled ? 'enable' : 'disable';
+    requireConfirm(inputs.confirm, `${verb} notification channel ${channelId}`);
+    owner = 'Console Notification Delivery / Supabase'; target = `NotificationChannel/${channelId}`;
+    response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/owner/notifications/actions', actor, {
+      action: 'set-channel-enabled', channelId, enabled: inputs.enabled, confirm: inputs.confirm, reason,
+    }, owner);
+  } else if (toolId === 'oaa.notification.channel.test') {
+    requireClosedOwnerInputs(inputs, ['channelId', 'confirm', 'reason']);
+    const channelId = String(inputs.channelId || '').trim().toLowerCase();
+    if (!UUID_RE.test(channelId)) throw { code: 400, msg: 'Notification channel id must be a UUID' };
+    requireConfirm(inputs.confirm, `test notification channel ${channelId}`);
+    owner = 'Console Notification Delivery / Supabase'; target = `NotificationChannel/${channelId}`;
+    response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/owner/notifications/actions', actor, {
+      action: 'test-channel', channelId, confirm: inputs.confirm, reason,
+    }, owner);
+  } else if (toolId === 'oaa.notification.delivery.retry') {
+    requireClosedOwnerInputs(inputs, ['deliveryId', 'confirm', 'reason']);
+    const deliveryId = String(inputs.deliveryId || '').trim().toLowerCase();
+    if (!UUID_RE.test(deliveryId)) throw { code: 400, msg: 'Notification delivery id must be a UUID' };
+    requireConfirm(inputs.confirm, `retry notification delivery ${deliveryId}`);
+    owner = 'Console Notification Delivery / Supabase'; target = `NotificationDelivery/${deliveryId}`;
+    response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/owner/notifications/actions', actor, {
+      action: 'retry-delivery', deliveryId, confirm: inputs.confirm, reason,
+    }, owner);
+  } else if (toolId === 'oaa.platform.readiness.preflight') {
+    requireClosedOwnerInputs(inputs, ['confirm', 'reason']);
+    requireConfirm(inputs.confirm, 'run platform readiness preflight');
+    owner = 'Console lifecycle / DUPA'; target = 'PlatformSupportProfile/default';
+    response = await fixedOwnerPost(DUPA_CONTROL_URL, '/api/admin/platform-readiness/preflight', actor, { reason }, owner);
+  } else if (toolId === 'oaa.platform.readiness.verify') {
+    requireClosedOwnerInputs(inputs, ['confirm', 'reason']);
+    requireConfirm(inputs.confirm, 'verify platform support profile');
+    owner = 'Console lifecycle / DUPA'; target = 'PlatformSupportProfile/default';
+    response = await fixedOwnerPost(DUPA_CONTROL_URL, '/api/admin/platform-readiness/verify', actor, { reason }, owner);
+  } else if (toolId === 'oaa.extension.lifecycle') {
+    requireClosedOwnerInputs(inputs, ['id', 'action', 'confirm', 'reason']);
+    const id = requireOwnerActionId(inputs.id);
+    const action = String(inputs.action || '').trim().toLowerCase();
+    if (!OAA_EXTENSION_LIFECYCLE_ACTIONS.includes(action)) throw { code: 400, msg: 'extension action is outside the closed lifecycle contract' };
+    requireConfirm(inputs.confirm, `extension ${action} ${id}`);
+    owner = 'DUPA Extension Host'; target = `UIPluginRegistration/${id}`;
+    response = await fixedOwnerPost(DUPA_CONTROL_URL, `/api/admin/plugins/registrations/${encodeURIComponent(id)}/${action}`, actor, { reason }, owner);
+  } else if (toolId === 'oaa.his.validate') {
+    requireClosedOwnerInputs(inputs, ['id', 'confirm', 'reason']);
+    const id = requireOwnerActionId(inputs.id, OAA_HIS_VALIDATION_IDS);
+    requireConfirm(inputs.confirm, `validate HIS ${id}`);
+    owner = 'Cluster Manager HIS'; target = `HIS/${id}`;
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/his/validate', actor, { id, reason }, owner);
+  } else if (toolId === 'oaa.his.lifecycle') {
+    requireClosedOwnerInputs(inputs, ['id', 'action', 'revision', 'confirm', 'reason']);
+    const id = requireOwnerActionId(inputs.id, OAA_HIS_MANAGED_IDS);
+    const action = String(inputs.action || '').trim().toLowerCase();
+    if (!OAA_HIS_LIFECYCLE_ACTIONS.includes(action)) throw { code: 400, msg: 'HIS action is outside the closed lifecycle contract' };
+    const payload = { id, reason };
+    let expected = `${action} HIS ${id}`;
+    if (action === 'rollback') {
+      const revision = Number(inputs.revision);
+      if (!Number.isInteger(revision) || revision < 1) throw { code: 400, msg: 'rollback revision must be a positive integer' };
+      payload.revision = revision;
+      payload.confirm = `${id}:${revision}`;
+      expected += ` to revision ${revision}`;
+    } else {
+      if (inputs.revision !== undefined) throw { code: 400, msg: 'revision is accepted only for HIS rollback' };
+      if (action === 'uninstall') payload.confirm = id;
+    }
+    requireConfirm(inputs.confirm, expected);
+    owner = 'Cluster Manager HIS'; target = `HIS/${id}`;
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, `/api/his/${action}`, actor, payload, owner);
+  } else if (toolId === 'oaa.his.observability.configure') {
+    requireClosedOwnerInputs(inputs, ['config', 'resetData', 'confirm', 'reason']);
+    const ownerCapabilities = await oaaHisOwnerCapabilities(actor);
+    if (!ownerCapabilities.has('observability-configure')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability owner capability' };
+    if (typeof inputs.resetData !== 'boolean') throw { code: 400, msg: 'resetData must be boolean' };
+    const config = normalizeHisObservabilityOwnerConfig(inputs.config);
+    const expected = hisObservabilityConfirmation(config, inputs.resetData);
+    requireConfirm(inputs.confirm, expected);
+    owner = 'Cluster Manager HIS'; target = 'HIS/kube-prometheus-stack';
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/his/oaa/observability/configure', actor, {
+      config, resetData: inputs.resetData, confirm: inputs.confirm, reason,
+    }, owner, 600000);
+  } else if (toolId === 'oaa.ceph.connect') {
+    requireClosedOwnerInputs(inputs, ['importRef', 'confirm', 'reason']);
+    const ownerCapabilities = await oaaCephOwnerCapabilities(actor);
+    if (!ownerCapabilities.has('connect-from-import')) throw { code: 409, msg: 'signed Cluster Manager or Rook prerequisites do not expose the Ceph connect capability' };
+    const importRef = requireCephImportRef(inputs.importRef);
+    requireConfirm(inputs.confirm, `connect Ceph external storage using ${importRef}`);
+    owner = 'Cluster Manager Ceph'; target = 'CephExternal/rook-ceph';
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/ceph/oaa/connect', actor, {
+      importRef, confirm: inputs.confirm, reason,
+    }, owner, 900000);
+  } else if (toolId === 'oaa.ceph.disconnect') {
+    requireClosedOwnerInputs(inputs, ['confirm', 'reason']);
+    const ownerCapabilities = await oaaCephOwnerCapabilities(actor);
+    if (!ownerCapabilities.has('disconnect')) throw { code: 409, msg: 'signed Cluster Manager or Rook prerequisites do not expose the Ceph disconnect capability' };
+    requireConfirm(inputs.confirm, 'disconnect Ceph external storage');
+    owner = 'Cluster Manager Ceph'; target = 'CephExternal/rook-ceph';
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/ceph/oaa/disconnect', actor, { confirm: inputs.confirm, reason }, owner, 900000);
+  } else if (toolId === 'oaa.foundation.engine.lifecycle') {
+    requireClosedOwnerInputs(inputs, ['engine', 'action', 'confirm', 'reason']);
+    const engine = requireOwnerActionId(inputs.engine, OAA_FOUNDATION_ENGINES);
+    const action = String(inputs.action || '').trim().toLowerCase();
+    if (!['enable', 'disable'].includes(action)) throw { code: 400, msg: 'Foundation engine action must be enable or disable' };
+    requireConfirm(inputs.confirm, `${action} Foundation engine ${engine}`);
+    owner = 'Foundation control plane'; target = `FoundationEngine/${engine}`;
+    response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/oaa/engines/lifecycle', actor, { engine, action, confirm: inputs.confirm, reason }, owner, 120000);
+  } else if (toolId === 'oaa.foundation.claim.create') {
+    requireClosedOwnerInputs(inputs, ['name', 'model', 'confirm', 'reason']);
+    const name = requireOwnerActionId(inputs.name);
+    const model = requireOwnerActionId(inputs.model, OAA_FOUNDATION_MODELS);
+    requireConfirm(inputs.confirm, `create Foundation claim ${name} for ${model}`);
+    owner = 'Foundation control plane'; target = `FoundationClaim/opensphere-foundation/${name}`;
+    response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/oaa/claims/create', actor, { name, model, confirm: inputs.confirm, reason }, owner, 120000);
+  } else if (toolId === 'oaa.foundation.claim.release') {
+    requireClosedOwnerInputs(inputs, ['name', 'confirm', 'reason']);
+    const name = requireOwnerActionId(inputs.name);
+    requireConfirm(inputs.confirm, `release Foundation claim ${name}`);
+    owner = 'Foundation control plane'; target = `FoundationClaim/opensphere-foundation/${name}`;
+    response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/oaa/claims/release', actor, { name, confirm: inputs.confirm, reason }, owner, 120000);
+  } else if (toolId === 'oaa.foundation.identity-directory.claim.create') {
+    requireClosedOwnerInputs(inputs, ['name', 'confirm', 'reason']);
+    const name = requireOwnerActionId(inputs.name);
+    requireConfirm(inputs.confirm, `create IdentityDirectory claim ${name}`);
+    owner = 'Foundation control plane'; target = `IdentityDirectoryClaim/opensphere-foundation/${name}`;
+    response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/oaa/identity-directory/claims/create', actor, { name, confirm: inputs.confirm, reason }, owner, 120000);
+  } else if (toolId === 'oaa.foundation.identity-directory.claim.release') {
+    requireClosedOwnerInputs(inputs, ['name', 'confirm', 'reason']);
+    const name = requireOwnerActionId(inputs.name);
+    requireConfirm(inputs.confirm, `release IdentityDirectory claim ${name}`);
+    owner = 'Foundation control plane'; target = `IdentityDirectoryClaim/opensphere-foundation/${name}`;
+    response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/oaa/identity-directory/claims/release', actor, { name, confirm: inputs.confirm, reason }, owner, 120000);
+  }
+
+  const result = { action: 'owner-control-action', toolId, owner, target, accepted: true, response: redactProjection(response) };
+  audit(actor, 'owner-control-action', target, 'ok', `${toolId} / ${reason}`);
+  return result;
+}
+
+async function settledControlPlaneComponent(owner, request) {
+  try {
+    return { owner, available: true, value: await request() };
+  } catch (error) {
+    return { owner, available: false, error: String(error?.msg || error?.message || error).slice(0, 240) };
+  }
+}
+
+function ownerProjectionName(owner) {
+  const names = {
+    'Console lifecycle / DUPA': 'console-lifecycle',
+    'HIS ObservabilityBinding': 'his-observability-binding',
+    'Cluster Manager HIS preflight': 'cluster-manager-his',
+    'Cluster Manager Ceph integration': 'cluster-manager-ceph',
+    'Supabase Data & Identity': 'supabase-data-identity',
+    'Gitea Change Control': 'gitea-change-control',
+    'Console consumer contracts': 'console-consumer-contracts',
+    'Console notification delivery': 'console-notification-delivery',
+    'Console Platform Recovery': 'console-platform-recovery',
+    'Extension Host registrations': 'extension-host-registrations',
+    'Main Shell Registry': 'main-shell-registry',
+    'Foundation control plane': 'foundation-control-plane',
+  };
+  return names[owner] || `owner-${createHash('sha256').update(String(owner || '')).digest('hex').slice(0, 16)}`;
+}
+
+function redactProjection(value) {
+  const sensitiveKey = /^(password|passwd|apiKey|accessToken|refreshToken|clientSecret|token|secret|secrets|credential|credentials|keyring|kubeconfig|providerExport|stringData)$/i;
+  const sanitize = (item, depth = 0) => {
+    if (depth > 12) return '[TRUNCATED]';
+    if (Array.isArray(item)) return item.slice(0, 500).map((entry) => sanitize(entry, depth + 1));
+    if (!item || typeof item !== 'object') return typeof item === 'string' ? redactToolText(item) : item;
+    return Object.fromEntries(Object.entries(item).map(([key, entry]) => [
+      key,
+      sensitiveKey.test(key) ? '[REDACTED]' : sanitize(entry, depth + 1),
+    ]));
+  };
+  try { return sanitize(value ?? null); }
+  catch { return { redacted: true, reason: 'projection_serialization_failed' }; }
+}
+
+function stableOwnerProjection(value) {
+  if (Array.isArray(value)) return value.map(stableOwnerProjection);
+  if (!value || typeof value !== 'object') return value;
+  const volatile = /^(checkedAt|observedAt|generatedAt|servedAt|time|timestamp|lastCheckedAt|lastObservedAt|latencyMs)$/i;
+  return Object.fromEntries(Object.keys(value).sort()
+    .filter((key) => !volatile.test(key))
+    .map((key) => [key, stableOwnerProjection(value[key])]));
+}
+
+function ownerProjectionHealth(entry) {
+  if (!entry?.available) return 'NotReady';
+  const value = entry.value || {};
+  if (value.ready === true || ['Ready', 'Connected', 'Activated', 'Established'].includes(value.state || value.status || value.phase)) return 'Ready';
+  if (value.ready === false || ['Blocked', 'Failed', 'Denied', 'NotReady'].includes(value.state || value.status || value.phase)) return 'NotReady';
+  if (['Degraded', 'Stale'].includes(value.state || value.status || value.phase)) return 'Degraded';
+  return 'Unknown';
+}
+
+async function readOwnerControlPlaneProjection() {
+  const pool = getPgPool();
+  if (!pool) return new Map();
+  try {
+    const result = await pool.query(`
+      SELECT name, health, payload, observed_at, expires_at
+      FROM runtime_resource
+      WHERE source = 'owner-api' AND kind = 'ControlPlaneAuthority'
+    `);
+    return new Map((result.rows || []).map((row) => [row.name, {
+      health: row.health, payload: row.payload, observedAt: row.observed_at,
+      fresh: Date.parse(row.expires_at) > Date.now(),
+    }]));
+  } catch {
+    return new Map();
+  }
+}
+
+async function projectOwnerControlPlaneStatus(entries, observedAt) {
+  const pool = getPgPool();
+  if (!pool) return false;
+  const expiresAt = new Date(Date.parse(observedAt) + Math.max(OAA_RUNTIME_REFRESH_MS * 5, 300000)).toISOString();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const rawEntry of entries) {
+      const entry = { owner: rawEntry.owner, available: rawEntry.available, ...(rawEntry.available ? { value: redactProjection(rawEntry.value) } : { error: String(rawEntry.error || 'unavailable').slice(0, 240) }) };
+      const name = ownerProjectionName(entry.owner);
+      const payload = { ...entry, authority: entry.owner, source: 'owner-api' };
+      const digest = `sha256:${createHash('sha256').update(JSON.stringify(stableOwnerProjection(payload))).digest('hex')}`;
+      const health = ownerProjectionHealth(entry);
+      const previous = await client.query(`
+        SELECT resource_version FROM runtime_resource
+        WHERE source = 'owner-api' AND kind = 'ControlPlaneAuthority' AND namespace = '' AND name = $1
+      `, [name]);
+      const previousDigest = previous.rows[0]?.resource_version || '';
+      await client.query(`
+        INSERT INTO runtime_resource (source, kind, namespace, name, resource_version, health, payload, observed_at, expires_at)
+        VALUES ('owner-api', 'ControlPlaneAuthority', '', $1, $2, $3, $4::jsonb, $5, $6)
+        ON CONFLICT (source, kind, namespace, name) DO UPDATE SET
+          resource_version = EXCLUDED.resource_version, health = EXCLUDED.health, payload = EXCLUDED.payload,
+          observed_at = EXCLUDED.observed_at, expires_at = EXCLUDED.expires_at, updated_at = clock_timestamp()
+      `, [name, digest, health, JSON.stringify(payload), observedAt, expiresAt]);
+      if (previousDigest !== digest && await ensureRuntimeWatchSchema(pool)) {
+        await client.query(`
+          INSERT INTO runtime_event (source, event_type, kind, namespace, name, resource_version, health, payload_digest, observed_at, metadata)
+          VALUES ('owner-api', $1, 'ControlPlaneAuthority', '', $2, $3, $4, $3, $5, $6::jsonb)
+          ON CONFLICT (source, event_type, kind, namespace, name, resource_version) DO NOTHING
+        `, [previousDigest ? 'MODIFIED' : 'ADDED', name, digest, health, observedAt, JSON.stringify({ owner: entry.owner })]);
+      }
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    console.warn('[oaa-owner-projection] Supabase projection skipped:', error.message || error);
+    return false;
+  } finally {
+    client.release();
+  }
+}
+
+async function controlPlaneStatus(actor) {
+  assertPermission(actor, 'console.git.change');
+  const checkedAt = new Date().toISOString();
+  const [entries, coreReadiness, mutationLifecycle, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities, llmConfigured] = await Promise.all([
+    Promise.all([
+      settledControlPlaneComponent('Console lifecycle / DUPA', () => dupaGet('/api/admin/platform-readiness/status', actor)),
+      settledControlPlaneComponent('HIS ObservabilityBinding', () => dupaGet('/api/admin/observability/status', actor)),
+      settledControlPlaneComponent('Cluster Manager HIS preflight', () => clusterManagerGet('/api/his/status', actor)),
+      settledControlPlaneComponent('Cluster Manager Ceph integration', () => clusterManagerGet('/api/ceph/status', actor)),
+      settledControlPlaneComponent('Supabase Data & Identity', () => backendGet('/api/identity/supabase/status', actor)),
+      settledControlPlaneComponent('Gitea Change Control', () => backendGet('/api/platform/gitea/status', actor)),
+      settledControlPlaneComponent('Console consumer contracts', () => backendGet('/api/platform/contracts', actor)),
+      settledControlPlaneComponent('Console notification delivery', () => backendGet('/api/notifications/summary', actor)),
+      settledControlPlaneComponent('Console Platform Recovery', () => backendGet('/api/oaa/owner/recovery/status', actor)),
+      settledControlPlaneComponent('Extension Host registrations', () => dupaGet('/api/admin/plugins/registrations', actor)),
+      settledControlPlaneComponent('Main Shell Registry', () => dupaGet('/api/v1/registry', actor)),
+      settledControlPlaneComponent('Foundation control plane', () => foundationStatusRead(actor)),
+    ]),
+    computeReadiness({ probeSemantic: false }).catch(() => ({ ready: false, reason: 'readiness_check_failed', capabilities: {} })),
+    oaaMutationLifecycle(actor),
+    oaaObservabilityCapabilities(actor),
+    oaaHisOwnerCapabilities(actor),
+    oaaCephOwnerCapabilities(actor),
+    oaaRecoveryOwnerCapabilities(actor),
+    loadEnabledKey('').then(() => true).catch(() => false),
+  ]);
+  const previous = await readOwnerControlPlaneProjection();
+  const components = Object.fromEntries(entries.map((entry) => {
+    if (entry.available) return [entry.owner, entry];
+    const last = previous.get(ownerProjectionName(entry.owner));
+    return [entry.owner, {
+      ...entry,
+      ...(last ? { lastKnown: last.payload, lastObservedAt: last.observedAt, stale: true } : {}),
+    }];
+  }));
+  const unavailable = entries.filter((entry) => !entry.available).map((entry) => entry.owner);
+  const platformReadiness = entries.find((entry) => entry.owner === 'Console lifecycle / DUPA' && entry.available)?.value || { ready: false, phase: 'Unavailable' };
+  const agentControl = buildAgentControlReadiness({
+    coreReadiness,
+    llmConfigured,
+    mutationLifecycle,
+    platformReadiness,
+    ownerApisUnavailable: unavailable,
+    observabilityCapabilities,
+    hisOwnerCapabilities,
+    cephOwnerCapabilities,
+    recoveryOwnerCapabilities,
+  });
+  const projectionRecorded = await projectOwnerControlPlaneStatus(entries, checkedAt);
+  audit(actor, 'control-plane-status', 'opensphere/control-plane', unavailable.length ? 'degraded' : 'ok', unavailable.length ? unavailable.join(', ') : 'all owning APIs reachable');
+  return {
+    action: 'control-plane-status',
+    checkedAt,
+    authorityModel: {
+      dataAndIdentity: 'Supabase', declarations: 'Gitea', runtime: 'Kubernetes', telemetry: 'HIS', lifecycle: 'Console/Cluster Manager/PFS owner facades',
+    },
+    ready: unavailable.length === 0,
+    fullyOperational: agentControl.fullyOperational,
+    agentControl,
+    unavailable,
+    projection: { authority: 'live owner APIs', durableEvidence: 'supabase', recorded: projectionRecorded },
+    components,
+  };
+}
+
+async function catalogEntitySearch(input, actor) {
+  assertPermission(actor, 'oaa.system.read');
+  const filter = String(input?.filter || '').trim().slice(0, 200);
+  const limit = Math.max(1, Math.min(100, Number(input?.limit || 30) || 30));
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (filter) query.set('filter', filter);
+  const items = await backendGet(`/api/catalog/entities?${query.toString()}`, actor);
+  const list = Array.isArray(items) ? items : [];
+  audit(actor, 'catalog-entities-read', 'opensphere/catalog', 'ok', `${list.length} entities`);
+  return { action: 'catalog-entities-read', filter, count: list.length, items: list };
+}
+
+async function registryRead(actor) {
+  assertPermission(actor, 'oaa.system.read');
+  const registry = redactProjection(await dupaGet('/api/v1/registry', actor));
+  const count = Array.isArray(registry?.items)
+    ? registry.items.length
+    : (Array.isArray(registry?.registrations) ? registry.registrations.length : null);
+  audit(actor, 'registry-read', 'opensphere/registry', 'ok', count === null ? 'registry projection read' : `${count} entries`);
+  return { action: 'registry-read', authority: 'Main Shell DUPA owner API', count, registry };
+}
+
+async function foundationStatusRead(actor) {
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/status`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw { code: 503, msg: 'Foundation owner API is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `Foundation owner HTTP ${response.status}` };
+  const projection = redactProjection(body);
+  audit(actor, 'foundation-status-read', 'Foundation/control-plane', 'ok', `${projection.models?.length || 0} models / ${projection.claims?.length || 0} claims`);
+  return projection;
+}
+
+async function executeAgentTool(name, args, actor, context = {}) {
+  const input = args && typeof args === 'object' ? args : {};
+  let result;
+  let permissionCode = 'oaa.system.read';
+  switch (name) {
+    case 'get_environment_snapshot':
+      assertPermission(actor, 'oaa.system.read');
+      result = await environmentSnapshot(input, actor);
+      break;
+    case 'get_cluster_pod_summary': {
+      assertPermission(actor, 'oaa.system.read');
+      const cluster = await clusterPodSummary();
+      audit(actor, 'k8s-cluster-pod-summary', 'cluster', 'ok', `${cluster.totalPods || 0} pods`);
+      result = { action: 'cluster-pod-summary', cluster };
+      break;
+    }
+    case 'list_kubernetes_resources':
+      assertPermission(actor, 'oaa.system.read');
+      result = await listKubernetesResources(input, actor);
+      break;
+    case 'get_kubernetes_resource':
+      assertPermission(actor, 'oaa.system.read');
+      result = await getKubernetesResource(input, actor);
+      break;
+    case 'list_namespace_resources': {
+      assertPermission(actor, 'oaa.system.read');
+      const snapshot = (await selectedSnapshots(input.namespace))[0];
+      const category = String(input.category || 'all');
+      result = category === 'all' ? snapshot : {
+        namespace: snapshot.namespace,
+        access: snapshot.access,
+        counts: snapshot.counts,
+        [category]: category === 'deployments'
+          ? (snapshot.workloads || []).filter((item) => item.kind === 'Deployment')
+          : (category === 'events' ? snapshot.recentEvents : snapshot[category]),
+      };
+      break;
+    }
+    case 'describe_kubernetes_resource':
+      assertPermission(actor, 'oaa.system.read');
+      result = input.kind === 'pod'
+        ? await describePod(input, actor)
+        : await describeDeployment(input, actor);
+      break;
+    case 'get_deployment_rollout':
+      assertPermission(actor, 'oaa.system.read');
+      result = await rolloutStatus(input, actor);
+      break;
+    case 'get_pod_logs':
+      permissionCode = 'oaa.logs.read';
+      assertPermission(actor, permissionCode);
+      result = await podLogs(input, actor);
+      break;
+    case 'query_centralized_logs':
+      permissionCode = 'oaa.logs.read';
+      result = await observabilityRead(input, actor, 'logs');
+      break;
+    case 'query_distributed_traces':
+      permissionCode = 'oaa.logs.read';
+      result = await observabilityRead(input, actor, 'traces');
+      break;
+    case 'search_opensphere_knowledge':
+      permissionCode = 'oaa.knowledge.read';
+      assertPermission(actor, permissionCode);
+      result = {
+        action: 'knowledge-search',
+        items: await searchKnowledge(String(input.query || ''), Number(input.limit || OAA_RAG_TOP_K), actor, context),
+      };
+      break;
+    case 'list_governed_actions': {
+      assertPermission(actor, 'oaa.system.read');
+      const manifest = await gatedActionBindingsForActor(actor);
+      const query = String(input.query || '').toLowerCase();
+      result = {
+        schema: manifest.schema,
+        bindings: (manifest.bindings || [])
+          .filter((binding) => !query || [binding.id, binding.title, binding.intent, binding.toolId].join(' ').toLowerCase().includes(query))
+          .slice(0, 24)
+          .map((binding) => ({
+            id: binding.id,
+            title: binding.title,
+            toolId: binding.toolId,
+            intent: binding.intent,
+            riskLevel: binding.riskLevel,
+            confirmation: binding.confirmation,
+            confirmationTemplate: binding.confirmationTemplate,
+            command: actionCommandForBinding(binding, query),
+          })),
+      };
+      break;
+    }
+    case 'search_catalog_entities':
+      assertPermission(actor, 'oaa.system.read');
+      result = await catalogEntitySearch(input, actor);
+      break;
+    case 'get_opensphere_registry':
+      assertPermission(actor, 'oaa.system.read');
+      result = await registryRead(actor);
+      break;
+    case 'get_foundation_status':
+      assertPermission(actor, 'oaa.system.read');
+      result = await foundationStatusRead(actor);
+      break;
+    case 'get_console_identity_status':
+      permissionCode = 'console.identity.manage';
+      result = await identityStatusRead(actor);
+      break;
+    case 'get_extension_security_status':
+      permissionCode = 'console.extension.security.read';
+      result = await extensionSecurityStatusRead(actor);
+      break;
+    case 'inspect_extension_image':
+      permissionCode = 'console.extension.security.read';
+      result = await extensionImageInspectRead(input, actor);
+      break;
+    case 'get_notification_status':
+      permissionCode = 'console.notification.read';
+      result = await notificationStatusRead(input, actor);
+      break;
+    case 'get_platform_recovery_status':
+      permissionCode = 'console.recovery.read';
+      result = await recoveryStatusRead(actor);
+      break;
+    case 'plan_platform_recovery_drill':
+      permissionCode = 'console.recovery.read';
+      result = await recoveryPlanRead(input, actor);
+      break;
+    case 'get_his_observability_config':
+      permissionCode = 'console.his.read';
+      result = await hisObservabilityConfigRead(actor);
+      break;
+    case 'plan_his_observability_config':
+      permissionCode = 'console.his.read';
+      result = await hisObservabilityPlanRead(input, actor);
+      break;
+    case 'get_ceph_status':
+      permissionCode = 'console.ceph.read';
+      result = await cephStatusRead(actor);
+      break;
+    case 'plan_ceph_connection':
+      permissionCode = 'console.ceph.read';
+      result = await cephPlanRead(input, actor);
+      break;
+    case 'get_agent_evidence_status':
+      permissionCode = 'oaa.evidence.read';
+      assertPermission(actor, permissionCode);
+      result = await agentEvidenceDashboard(input.days || 30, input.limit || 25);
+      break;
+    case 'get_change_control_status':
+      permissionCode = 'console.git.change';
+      assertPermission(actor, permissionCode);
+      result = {
+        gitea: await backendGet('/api/platform/gitea/status', actor),
+        contracts: await backendGet('/api/platform/contracts', actor),
+      };
+      break;
+    case 'get_control_plane_status':
+      permissionCode = 'console.git.change';
+      assertPermission(actor, permissionCode);
+      result = await controlPlaneStatus(actor);
+      break;
+    default:
+      throw { code: 400, msg: `unsupported agent tool: ${name}` };
+  }
+  await recordToolRun(actor, {
+    requestId: randomUUID(),
+    agentRunId: context.runId || null,
+    toolId: `agent.${name}`,
+    target: `${input.namespace || 'opensphere'}/${input.name || input.pod || name}`,
+    permissionCode,
+    reason: 'LLM read-tool loop',
+    input,
+    status: 'applied',
+    result,
+  });
+  return result;
+}
+
+function parseToolArguments(value) {
+  const raw = String(value || '{}');
+  if (raw.length > 12000) throw { code: 400, msg: 'tool arguments too large' };
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw { code: 400, msg: 'invalid tool arguments JSON' }; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw { code: 400, msg: 'tool arguments must be an object' };
+  return parsed;
+}
+
+function canonicalToolValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalToolValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalToolValue(value[key])]));
+  }
+  return value;
+}
+
+function toolCallSignature(name, args) {
+  return `${String(name || '')}:${JSON.stringify(canonicalToolValue(args || {}))}`;
+}
+
+function addProviderUsage(total, usage) {
+  for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens', 'reasoningTokens', 'totalTokens']) {
+    total[key] += Number(usage?.[key] || 0);
+  }
+  total.source = total.source === 'provider' || usage?.source === 'provider' ? 'provider' : 'unavailable';
+  return total;
+}
+
+async function providerChatTurn({ baseUrl, key, model, requestBody, actor, source, sessionId, agentRunId = null, round }) {
+  const requestId = randomUUID();
+  const started = Date.now();
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key.apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+  } catch {
+    await recordLlmUsageEvent({
+      requestId, agentRunId, actor, source, sessionId, key, model, operation: 'chat_completion', status: 'failed',
+      usage: normalizeProviderUsage(null), latencyMs: Date.now() - started, errorCode: 'provider_network_error',
+    });
+    throw { code: 502, msg: 'LLM provider network request failed' };
+  }
+  const text = await response.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  const usage = normalizeProviderUsage(data?.usage);
+  const latencyMs = Date.now() - started;
+  const message = data?.choices?.[0]?.message || {};
+  const finishReason = data?.choices?.[0]?.finish_reason || '';
+  if (!response.ok) {
+    await recordLlmUsageEvent({
+      requestId, agentRunId, providerRequestId: data?.id, actor, source, sessionId, key, model,
+      operation: 'chat_completion', status: 'failed', usage, latencyMs,
+      errorCode: `provider_http_${response.status}`,
+    });
+    throw { code: 502, msg: data?.error?.message || data?.message || `provider HTTP ${response.status}` };
+  }
+  const usageRecorded = await recordLlmUsageEvent({
+    requestId, agentRunId, providerRequestId: data?.id, actor, source, sessionId, key,
+    model: data?.model || model, operation: 'chat_completion', status: 'succeeded',
+    usage, latencyMs, finishReason,
+  });
+  return { requestId, data, message, usage, usageRecorded, latencyMs, finishReason, round };
+}
+
 async function chatCompletion(body, actor) {
   const baseMessages = normalizeMessages(body);
   const commandOut = await handleSlashCommand(latestUserContent(baseMessages), body, actor);
   if (commandOut) return commandOut;
   const key = await loadEnabledKey(String(body.keyId || '').trim());
+  const source = usageSource(body.source, 'console-oaa-agent');
+  const sessionId = String(body.sessionId || '').slice(0, 200);
+  const baseUrl = (key.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
+  const model = String(body.model || key.defaultModel || 'deepseek-v4-flash').trim();
+  if (!MODEL_RE.test(model)) throw { code: 400, msg: 'invalid model' };
+  const requestId = randomUUID();
+  const started = Date.now();
+  const agentRunRecorded = await beginAgentRun({ id: requestId, actor, sessionId, requestText: latestUserContent(baseMessages), key, model });
   let sources = [];
   let conceptGraph = null;
   let suggestedActions = [];
@@ -3117,7 +7002,7 @@ async function chatCompletion(body, actor) {
   const systemMessages = [operationalAnswerPolicySystemMessage(), controlToolsSystemMessage()];
   const userContent = latestUserContent(baseMessages);
   try {
-    sources = await searchKnowledge(userContent, OAA_RAG_TOP_K, actor);
+    sources = await searchKnowledge(userContent, OAA_RAG_TOP_K, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
     if (sources.length) systemMessages.push(knowledgeSystemMessage(sources));
   } catch (e) {
     console.warn('[oaa-rag] search skipped:', e.message || e);
@@ -3145,39 +7030,187 @@ async function chatCompletion(body, actor) {
     console.warn('[oaa-env] snapshot skipped:', e.message || e);
   }
   if (systemMessages.length) messages = [...systemMessages, ...baseMessages];
-  const baseUrl = (key.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
-  const model = String(body.model || key.defaultModel || 'deepseek-v4-flash').trim();
-  if (!MODEL_RE.test(model)) throw { code: 400, msg: 'invalid model' };
-  const reqBody = {
-    model,
-    messages,
-    stream: false,
-    max_tokens: Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024)),
-  };
-  if (key.provider === 'deepseek') reqBody.thinking = { type: 'disabled' };
+  const maxTokens = Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024));
+  const [observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
+    oaaObservabilityCapabilities(actor), oaaHisOwnerCapabilities(actor), oaaCephOwnerCapabilities(actor), oaaRecoveryOwnerCapabilities(actor),
+  ]);
+  const tools = agentToolDefinitions(actor, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities);
+  const usage = normalizeProviderUsage(null);
+  let usageRecorded = true;
+  let data = {};
+  let content = '';
+  let providerModel = model;
+  let rounds = 0;
+  const toolTrace = [];
+  const toolResultCache = new Map();
+  const verifiedToolEvidence = new Map();
+  let agentStepIndex = 0;
+  try {
+  while (rounds < AGENT_MAX_TOOL_ROUNDS) {
+    rounds += 1;
+    const requestBody = { model, messages, stream: false, max_tokens: maxTokens };
+    if (tools.length) {
+      requestBody.tools = tools;
+      requestBody.tool_choice = 'auto';
+    }
+    if (key.provider === 'deepseek') requestBody.thinking = { type: 'disabled' };
+    const turn = await providerChatTurn({ baseUrl, key, model, requestBody, actor, source, sessionId, agentRunId: agentRunRecorded ? requestId : null, round: rounds });
+    data = turn.data;
+    providerModel = data?.model || providerModel;
+    usageRecorded = usageRecorded && turn.usageRecorded;
+    addProviderUsage(usage, turn.usage);
+    const normalizedToolCalls = normalizeProviderToolCalls(turn.message, `dsml-${requestId}-${rounds}`);
+    if (normalizedToolCalls.malformed) throw { code: 502, msg: 'LLM provider returned a malformed tool-call envelope' };
+    const toolCalls = normalizedToolCalls.toolCalls;
+    if (agentRunRecorded) await recordAgentStep({
+      runId: requestId,
+      index: agentStepIndex++,
+      kind: 'llm',
+      status: 'succeeded',
+      input: { round: rounds, messageCount: messages.length, toolCount: tools.length },
+      output: { finishReason: turn.finishReason, usage: turn.usage, toolNames: toolCalls.map((call) => call?.function?.name || '') },
+      metadata: { provider: key.provider, model: data?.model || model, latencyMs: turn.latencyMs, toolCallEncoding: normalizedToolCalls.encoding },
+    });
+    if (!toolCalls.length) {
+      content = String(turn.message?.content || '');
+      break;
+    }
 
-  const started = Date.now();
-  const resp = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${key.apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify(reqBody),
-  });
-  const text = await resp.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
-  if (!resp.ok) {
-    const msg = data?.error?.message || data?.message || `provider HTTP ${resp.status}`;
-    throw { code: 502, msg };
+    messages.push({
+      role: 'assistant',
+      content: normalizedToolCalls.encoding === 'deepseek-dsml' || turn.message?.content == null ? null : String(turn.message.content),
+      tool_calls: toolCalls,
+    });
+    let freshToolCalls = 0;
+    for (const call of toolCalls.slice(0, 8)) {
+      const toolName = String(call?.function?.name || '');
+      let args = {};
+      let output;
+      let ok = false;
+      let cached = false;
+      try {
+        args = parseToolArguments(call?.function?.arguments);
+        const signature = toolCallSignature(toolName, args);
+        if (toolResultCache.has(signature)) {
+          ({ output, ok } = toolResultCache.get(signature));
+          cached = true;
+        } else {
+          output = await executeAgentTool(toolName, args, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
+          ok = true;
+          freshToolCalls += 1;
+          toolResultCache.set(signature, { output, ok });
+          verifiedToolEvidence.set(signature, { tool: toolName, arguments: args, result: output });
+        }
+      } catch (error) {
+        output = { ok: false, error: error.msg || error.message || String(error) };
+        const signature = toolCallSignature(toolName, args);
+        if (!toolResultCache.has(signature)) {
+          freshToolCalls += 1;
+          toolResultCache.set(signature, { output, ok: false });
+          verifiedToolEvidence.set(signature, { tool: toolName, arguments: args, result: output });
+          await recordToolRun(actor, {
+            requestId: randomUUID(),
+            agentRunId: agentRunRecorded ? requestId : null,
+            toolId: `agent.${toolName || 'unknown'}`,
+            target: `${args.namespace || 'opensphere'}/${args.name || args.pod || toolName || 'unknown'}`,
+            permissionCode: 'oaa.system.read',
+            reason: 'LLM read-tool loop',
+            input: args,
+            status: 'failed',
+            result: output,
+          });
+        } else {
+          cached = true;
+        }
+      }
+      toolTrace.push({
+        round: rounds,
+        name: toolName,
+        status: ok ? 'succeeded' : 'failed',
+        target: `${args.namespace || 'opensphere'}/${args.name || args.pod || toolName || 'unknown'}`,
+        encoding: normalizedToolCalls.encoding,
+        cached,
+      });
+      if (agentRunRecorded) await recordAgentStep({
+        runId: requestId,
+        index: agentStepIndex++,
+        kind: 'tool',
+        toolId: toolName,
+        status: ok ? 'succeeded' : 'failed',
+        input: args,
+        output,
+        metadata: { round: rounds, target: `${args.namespace || 'opensphere'}/${args.name || args.pod || toolName || 'unknown'}`, toolCallEncoding: normalizedToolCalls.encoding, cached },
+      });
+      messages.push({
+        role: 'tool',
+        tool_call_id: String(call?.id || randomUUID()),
+        name: toolName,
+        content: toolResultContent(output),
+      });
+    }
+    if (freshToolCalls === 0) {
+      audit(actor, 'agent-tool-loop-deduplicated', key.id, 'ok', `round=${rounds}; repeated_calls=${toolCalls.length}`);
+      break;
+    }
   }
-  const content = data?.choices?.[0]?.message?.content || '';
-  audit(actor, 'chat-completion', key.id, 'ok', `${key.provider}/${model}`);
+
+  if (!content) {
+    const evidence = redactToolText(JSON.stringify(Array.from(verifiedToolEvidence.values()))).slice(0, 24000);
+    const finalMessages = [...systemMessages, {
+      role: 'system',
+      content: `Automatic tool execution is complete. Produce the final natural-language answer using only the verified evidence JSON below. Do not emit XML, DSML, JSON, tool calls, or requests for more tools. State uncertainty when evidence is insufficient.\nVERIFIED_TOOL_EVIDENCE=${evidence}`,
+    }, ...baseMessages];
+    // Do not send a tools field on the synthesis request. Some OpenAI-compatible
+    // providers ignore tool_choice=none and otherwise emit another tool envelope.
+    const requestBody = { model, messages: finalMessages, stream: false, max_tokens: maxTokens };
+    if (key.provider === 'deepseek') requestBody.thinking = { type: 'disabled' };
+    const finalTurn = await providerChatTurn({ baseUrl, key, model, requestBody, actor, source, sessionId, agentRunId: agentRunRecorded ? requestId : null, round: rounds + 1 });
+    data = finalTurn.data;
+    providerModel = data?.model || providerModel;
+    usageRecorded = usageRecorded && finalTurn.usageRecorded;
+    addProviderUsage(usage, finalTurn.usage);
+    const finalToolCalls = normalizeProviderToolCalls(finalTurn.message, `dsml-${requestId}-final`);
+    if (finalToolCalls.malformed || finalToolCalls.toolCalls.length) {
+      throw { code: 502, msg: 'LLM provider did not honor the final no-tool response contract' };
+    }
+    content = String(finalTurn.message?.content || '');
+    if (!content.trim()) throw { code: 502, msg: 'LLM provider returned an empty final response' };
+    rounds += 1;
+    if (agentRunRecorded) await recordAgentStep({
+      runId: requestId,
+      index: agentStepIndex++,
+      kind: 'llm',
+      status: 'succeeded',
+      input: { round: rounds, messageCount: finalMessages.length, toolCount: 0, forcedFinal: true },
+      output: { finishReason: finalTurn.finishReason, usage: finalTurn.usage, toolNames: [] },
+      metadata: { provider: key.provider, model: data?.model || model, latencyMs: finalTurn.latencyMs },
+    });
+  }
+  } catch (error) {
+    if (agentRunRecorded) await finishAgentRun(requestId, 'failed', toolTrace.length, error.errorCode || error.code || 'agent_loop_failed');
+    throw error;
+  }
+  const latencyMs = Date.now() - started;
+  if (agentRunRecorded) await finishAgentRun(requestId, 'completed', toolTrace.length);
+  audit(actor, 'chat-completion', key.id, 'ok', `${key.provider}/${model}; agent_rounds=${rounds}; tool_calls=${toolTrace.length}; total_tokens=${usage.totalTokens}; usage_recorded=${usageRecorded}`);
   return {
+    requestId,
     keyId: key.id,
     provider: key.provider,
-    model: data?.model || model,
+    model: providerModel,
     message: content,
-    usage: data?.usage || null,
-    latencyMs: Date.now() - started,
+    usage,
+    usageRecorded,
+    latencyMs,
+    agent: {
+      mode: 'permission-filtered-read-tool-loop',
+      rounds,
+      maxToolRounds: AGENT_MAX_TOOL_ROUNDS,
+      toolsAvailable: tools.map((tool) => tool.function.name),
+      toolCalls: toolTrace,
+      mutationsRequireExplicitCommand: true,
+      evidenceRecorded: agentRunRecorded,
+    },
     sources: sources.map((s) => ({
       title: s.title,
       sourceType: s.sourceType,
@@ -3252,7 +7285,7 @@ async function upsertKey(body, actor) {
     kind: 'Secret',
     metadata: {
       name: secretName(b.id),
-      namespace: OAA_NAMESPACE,
+      namespace: OAA_KEY_NAMESPACE,
       labels: { [PART_LABEL]: 'opensphere-oaa', [KEY_LABEL]: 'true' },
       annotations: {
         'opensphere.io/oaa-key-id': b.id,
@@ -3271,10 +7304,10 @@ async function upsertKey(body, actor) {
     type: 'Opaque',
     stringData: { api_key: b.apiKey },
   };
-  const created = await k8s('POST', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets`, obj);
+  const created = await k8s('POST', `/api/v1/namespaces/${OAA_KEY_NAMESPACE}/secrets`, obj);
   if (created.ok) return { created: true, item: keyMetaFromSecret({ metadata: obj.metadata }) };
   if (created.status !== 409) throw { code: 502, msg: `secret create HTTP ${created.status}` };
-  const patched = await k8s('PATCH', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets/${obj.metadata.name}`, {
+  const patched = await k8s('PATCH', `/api/v1/namespaces/${OAA_KEY_NAMESPACE}/secrets/${obj.metadata.name}`, {
     metadata: { labels: obj.metadata.labels, annotations: obj.metadata.annotations },
     stringData: obj.stringData,
   });
@@ -3285,7 +7318,7 @@ async function upsertKey(body, actor) {
 async function deleteKey(id) {
   assertMutationEnabled(null, 'llm-key-delete');
   if (!ID_RE.test(id)) throw { code: 400, msg: 'invalid id' };
-  const r = await k8s('DELETE', `/api/v1/namespaces/${OAA_NAMESPACE}/secrets/${secretName(id)}`);
+  const r = await k8s('DELETE', `/api/v1/namespaces/${OAA_KEY_NAMESPACE}/secrets/${secretName(id)}`);
   if (r.ok || r.status === 404) return { deleted: r.status !== 404 };
   throw { code: 502, msg: `secret delete HTTP ${r.status}` };
 }
@@ -3318,7 +7351,7 @@ function audit(actor, action, target, result, reason) {
 // (ACL-filtered) corpus evidence used to answer it.  Some authenticated
 // service principals do not have a Supabase auth.users UUID, so only write a
 // foreign-key-safe trace when the Console identity subject is a UUID.
-async function recordRetrievalTrace(actor, query, hits) {
+async function recordRetrievalTrace(actor, query, hits, agentRunId = null) {
   if (!OAA_SUPABASE_MODE || !Array.isArray(hits) || hits.length === 0) return;
   const actorId = String(actor?.subject || '');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(actorId)) return;
@@ -3331,9 +7364,9 @@ async function recordRetrievalTrace(actor, query, hits) {
       if (!hit.documentId || !hit.chunkId) return Promise.resolve();
       return pool.query(
         `INSERT INTO retrieval_trace
-           (request_id, actor_id, query_digest, document_id, chunk_id, rank, score)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [requestId, actorId, queryDigest, hit.documentId, hit.chunkId, index + 1, Number(hit.score || 0)],
+           (request_id, agent_run_id, actor_id, query_digest, document_id, chunk_id, document_revision, rank, score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [requestId, agentRunId, actorId, queryDigest, hit.documentId, hit.chunkId, hit.documentRevision || null, index + 1, Number(hit.score || 0)],
       );
     }));
   } catch (error) {
@@ -3343,7 +7376,7 @@ async function recordRetrievalTrace(actor, query, hits) {
   }
 }
 
-async function recordToolRun(actor, { requestId, toolId, target, permissionCode, reason, input, status, result }) {
+async function recordToolRun(actor, { requestId, agentRunId = null, toolId, target, permissionCode, reason, input, status, result }) {
   if (!OAA_SUPABASE_MODE) return;
   const actorId = String(actor?.subject || '');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(actorId)) return;
@@ -3353,15 +7386,75 @@ async function recordToolRun(actor, { requestId, toolId, target, permissionCode,
   try {
     await pool.query(
       `INSERT INTO tool_run
-         (request_id, actor_id, tool_id, target, permission_code, reason, input_digest, status, result_digest, completed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $8 IN ('applied', 'failed', 'blocked') THEN now() ELSE NULL END)`,
-      [requestId, actorId, toolId, target, permissionCode, reason || null, digest(input), status, digest(result)],
+         (request_id, agent_run_id, actor_id, tool_id, target, permission_code, reason, input_digest, status, result_digest, completed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CASE WHEN $9 IN ('applied', 'failed', 'blocked') THEN now() ELSE NULL END)`,
+      [requestId, agentRunId, actorId, toolId, target, permissionCode, reason || null, digest(input), status, digest(result)],
     );
   } catch (error) {
     // The Console Backend's begin_change transaction is authoritative for a
     // mutating intent.  This OAA-side evidence row is supplemental and must
     // not make a persisted, idempotent request appear rejected to the user.
     console.warn('[oaa-tool-run] persistence skipped:', error.message || error);
+  }
+}
+
+function evidenceDigest(value) {
+  return `sha256:${createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value || {})).digest('hex')}`;
+}
+
+async function beginAgentRun({ id, actor, sessionId, requestText, key, model }) {
+  const pool = getPgPool();
+  if (!pool) return false;
+  try {
+    await pool.query(`
+      INSERT INTO agent_run
+        (id, actor_id, actor_label, session_digest, request_digest, provider, model, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'running')
+    `, [
+      id,
+      String(actor?.subject || 'system').slice(0, 200),
+      String(actor?.username || actor?.subject || 'system').slice(0, 200),
+      sessionId ? evidenceDigest(sessionId) : null,
+      evidenceDigest(requestText),
+      String(key?.provider || 'unknown').slice(0, 64),
+      String(model || 'unknown').slice(0, 160),
+    ]);
+    return true;
+  } catch (error) {
+    console.warn('[oaa-agent-run] start persistence skipped:', error.message || error);
+    return false;
+  }
+}
+
+async function recordAgentStep({ runId, index, kind, toolId = null, status, input, output, metadata = {} }) {
+  const pool = getPgPool();
+  if (!pool || !runId) return false;
+  try {
+    await pool.query(`
+      INSERT INTO agent_step
+        (run_id, step_index, step_kind, tool_id, status, input_digest, output_digest, metadata)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+      ON CONFLICT (run_id, step_index) DO NOTHING
+    `, [runId, index, kind, toolId, status, evidenceDigest(input), evidenceDigest(output), JSON.stringify(metadata || {})]);
+    return true;
+  } catch (error) {
+    console.warn('[oaa-agent-run] step persistence skipped:', error.message || error);
+    return false;
+  }
+}
+
+async function finishAgentRun(runId, status, toolCalls, errorCode = null) {
+  const pool = getPgPool();
+  if (!pool || !runId) return false;
+  try {
+    await pool.query(`
+      UPDATE agent_run SET status = $2, tool_calls = $3, completed_at = clock_timestamp(), error_code = $4
+      WHERE id = $1 AND status = 'running'
+    `, [runId, status, Math.max(0, Number(toolCalls || 0)), errorCode ? String(errorCode).slice(0, 160) : null]);
+    return true;
+  } catch (error) {
+    console.warn('[oaa-agent-run] completion persistence skipped:', error.message || error);
+    return false;
   }
 }
 
@@ -3385,15 +7478,70 @@ async function submitControlPlaneAction(binding, inputs, target, actor) {
   return body;
 }
 
+function publicEmbeddingReadiness() {
+  return {
+    ready: embeddingReadiness.ready,
+    reason: embeddingReadiness.reason,
+    keyId: embeddingReadiness.keyId,
+    provider: embeddingReadiness.provider,
+    model: embeddingReadiness.model,
+    checkedAt: embeddingReadiness.checkedAtMs ? new Date(embeddingReadiness.checkedAtMs).toISOString() : null,
+  };
+}
+
+async function checkEmbeddingReadiness(forceProbe = false) {
+  const fresh = embeddingReadiness.checkedAtMs > 0
+    && Date.now() - embeddingReadiness.checkedAtMs < OAA_EMBED_READINESS_TTL_MS;
+  if (fresh) return publicEmbeddingReadiness();
+
+  if (!forceProbe) {
+    const keys = await listKeys().catch(() => []);
+    const configured = keys.find((key) => key.enabled && key.embeddingModel && key.validationStatus === 'ready');
+    if (configured) {
+      return {
+        ready: true,
+        reason: 'configured_not_live_probed',
+        keyId: configured.id,
+        provider: configured.provider,
+        model: configured.embeddingModel,
+        checkedAt: configured.validatedAt || null,
+      };
+    }
+    return {
+      ready: false,
+      reason: keys.some((key) => key.enabled && key.embeddingModel)
+        ? 'embedding_key_not_validated'
+        : 'embedding_key_not_configured',
+      keyId: '', provider: '', model: '', checkedAt: null,
+    };
+  }
+
+  try {
+    await embeddingVector('OpenSphere semantic search readiness probe', {
+      strict: true,
+      source: 'embedding-readiness',
+    });
+  } catch (error) {
+    if (!embeddingReadiness.checkedAtMs || fresh) {
+      rememberEmbeddingReadiness(false, null, error.message || error);
+    }
+  }
+  return publicEmbeddingReadiness();
+}
+
 // CONSTITUTION-0004 §4.5: Main Shell Baseline Ready requires PostgreSQL/pgvector connectivity and
 // Manual Registry availability. /readyz is the unauthenticated, in-cluster-only probe target the
 // Console DUPA controller's platform-control readiness aggregate consumes as a required
 // component. It must never return 200 on a guess — every component below is a live check, and the
 // response body is structured booleans/reasons only (no secret material, no stack traces).
-async function computeReadiness() {
+async function computeReadiness({ probeSemantic = false } = {}) {
   const components = {
     postgres: false,
     vectorSchema: false,
+    usageLedger: false,
+    runtimeProjection: false,
+    runtimeWatchSchema: false,
+    agentLedger: false,
     manualRegistrySeed: false,
     toolRegistrySeed: false,
   };
@@ -3415,6 +7563,38 @@ async function computeReadiness() {
   }
   if (!components.vectorSchema) {
     return { ready: false, components, reason: 'vector_schema_not_ready' };
+  }
+  try {
+    await ensureUsageLedgerSchema();
+    components.usageLedger = pgUsageLedgerReady === true;
+  } catch {
+    components.usageLedger = false;
+  }
+  if (!components.usageLedger) {
+    return { ready: false, components, reason: 'usage_ledger_not_ready' };
+  }
+  try {
+    const controlSchema = await pool.query(`
+      SELECT
+        to_regclass('oaa.runtime_resource') IS NOT NULL AS runtime_projection,
+        to_regclass('oaa.runtime_event') IS NOT NULL
+          AND to_regclass('oaa.watch_cursor') IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'oaa' AND table_name = 'watch_cursor' AND column_name = 'observer_id'
+          ) AS runtime_watch_schema,
+        to_regclass('oaa.agent_run') IS NOT NULL AND to_regclass('oaa.agent_step') IS NOT NULL AS agent_ledger
+    `);
+    components.runtimeProjection = controlSchema.rows[0]?.runtime_projection === true;
+    components.runtimeWatchSchema = controlSchema.rows[0]?.runtime_watch_schema === true;
+    components.agentLedger = controlSchema.rows[0]?.agent_ledger === true;
+  } catch {
+    components.runtimeProjection = false;
+    components.runtimeWatchSchema = false;
+    components.agentLedger = false;
+  }
+  if (!components.runtimeProjection || !components.runtimeWatchSchema || !components.agentLedger) {
+    return { ready: false, components, reason: 'agent_control_schema_not_ready' };
   }
   const manualRegistrySeedQuery = `
     SELECT count(*)::int AS n
@@ -3462,7 +7642,22 @@ async function computeReadiness() {
   if (!components.toolRegistrySeed) {
     return { ready: false, components, reason: 'tool_registry_seed_not_ready' };
   }
-  return { ready: true, components, reason: null };
+  const semanticSearch = await checkEmbeddingReadiness(probeSemantic).catch(() => ({
+    ready: false,
+    reason: 'embedding_readiness_check_failed',
+    keyId: '', provider: '', model: '', checkedAt: null,
+  }));
+  const runtimeProjection = await runtimeProjectionStatus();
+  return {
+    ready: true,
+    components,
+    capabilities: { lexicalSearch: true, semanticSearch, runtimeProjection },
+    degraded: !semanticSearch.ready || !runtimeProjection.ready,
+    degradedReason: !runtimeProjection.ready
+      ? (runtimeProjection.reason || 'runtime_projection_stale')
+      : (semanticSearch.ready ? null : semanticSearch.reason),
+    reason: null,
+  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -3484,6 +7679,9 @@ const server = http.createServer(async (req, res) => {
         service: 'opensphere-console-oaa-gateway',
         ready: state.ready,
         components: state.components,
+        capabilities: state.capabilities || { lexicalSearch: false, semanticSearch: { ready: false, reason: 'core_not_ready' } },
+        degraded: Boolean(state.degraded),
+        degradedReason: state.degradedReason || null,
         reason: state.reason,
       });
     }
@@ -3493,22 +7691,34 @@ const server = http.createServer(async (req, res) => {
     // requiring the UI to infer it.
     if (url.pathname === '/api/oaa/health') {
       await verifyAuthed(req);
-      const readiness = await computeReadiness().catch(() => ({ ready: false, components: {}, reason: 'readiness_check_failed' }));
+      const readiness = await computeReadiness({ probeSemantic: true }).catch(() => ({ ready: false, components: {}, reason: 'readiness_check_failed' }));
       let hasEnabledLlmKey = false;
       if (readiness.ready) {
         try { await loadEnabledKey(''); hasEnabledLlmKey = true; } catch { hasEnabledLlmKey = false; }
       }
-      const degraded = readiness.ready && !hasEnabledLlmKey;
+      const semanticSearch = readiness.capabilities?.semanticSearch || { ready: false, reason: 'embedding_readiness_unknown' };
+      const runtimeProjection = readiness.capabilities?.runtimeProjection || { ready: false, reason: 'runtime_projection_unknown' };
+      const degraded = readiness.ready && (!hasEnabledLlmKey || !semanticSearch.ready || !runtimeProjection.ready);
       const status = !readiness.ready ? 'not_ready' : (degraded ? 'degraded' : 'ready');
+      const degradedReason = !hasEnabledLlmKey
+        ? 'llm_key_not_configured'
+        : (!runtimeProjection.ready
+          ? (runtimeProjection.reason || 'runtime_projection_stale')
+          : (!semanticSearch.ready ? semanticSearch.reason : null));
       return json(res, 200, {
         service: 'opensphere-console-oaa-gateway',
         version: VERSION,
         namespace: OAA_NAMESPACE,
         ok: true,
         status,
-        readiness: { ready: readiness.ready, components: readiness.components, reason: readiness.reason },
+        readiness: {
+          ready: readiness.ready,
+          components: readiness.components,
+          capabilities: readiness.capabilities,
+          reason: readiness.reason,
+        },
         degraded,
-        degradedReason: degraded ? 'llm_key_not_configured' : null,
+        degradedReason,
         // Compatibility names describe controlled submission availability, not
         // a Kubernetes-write capability.  The Gateway direct-write path stays
         // permanently fail-closed even when this is true.
@@ -3517,15 +7727,42 @@ const server = http.createServer(async (req, res) => {
         mutationGate: { enabled: OAA_ACTION_SUBMISSION_ENABLED, reason: OAA_ACTION_SUBMISSION_ENABLED ? null : 'console_backend_action_submission_disabled' },
         directKubernetesMutationEnabled: false,
         ragEnabled: OAA_RAG_ENABLED,
+        lexicalSearchReady: readiness.ready,
+        semanticSearchReady: Boolean(semanticSearch.ready),
+        semanticSearch,
+        runtimeProjection,
         pgConfigured: pgEnabled(),
         embedDim: OAA_EMBED_DIM,
         allowedNamespaces: OAA_ENV_NAMESPACES,
+        mutationNamespaces: OAA_MUTATION_NAMESPACES,
         scaleMax: OAA_SCALE_MAX,
       });
     }
     if (url.pathname === '/api/oaa/admin/knowledge/stats' && req.method === 'GET') {
       await verifyAdmin(req);
       return json(res, 200, await knowledgeStats());
+    }
+    if (url.pathname === '/api/oaa/admin/usage' && req.method === 'GET') {
+      const actor = await verifyAdmin(req);
+      assertPermission(actor, 'oaa.usage.read');
+      return json(res, 200, await llmUsageDashboard(url.searchParams.get('days') || 30));
+    }
+    if (url.pathname === '/api/oaa/admin/evidence' && req.method === 'GET') {
+      const actor = await verifyAdmin(req);
+      assertPermission(actor, 'oaa.evidence.read');
+      return json(res, 200, await agentEvidenceDashboard(url.searchParams.get('days') || 30, url.searchParams.get('limit') || 25));
+    }
+    if (url.pathname === '/api/oaa/admin/evidence/retention' && req.method === 'POST') {
+      const actor = await verifyAdmin(req);
+      if (!OAA_ACTION_SUBMISSION_ENABLED) assertMutationEnabled(actor, 'oaa.evidence.retention.update');
+      const body = await readBody(req);
+      const result = await setEvidenceRetentionPolicy(actor, body);
+      await recordToolRun(actor, {
+        requestId: randomUUID(), toolId: 'oaa.evidence.retention.update', target: result.target,
+        permissionCode: 'oaa.evidence.manage', reason: body.reason, input: body, status: 'applied', result,
+      });
+      audit(actor, 'oaa-evidence-retention-update', result.target, 'ok', body.reason);
+      return json(res, 200, result);
     }
     if (url.pathname === '/api/oaa/admin/knowledge/seed' && req.method === 'POST') {
       const actor = await verifyAdmin(req);
@@ -3592,6 +7829,93 @@ const server = http.createServer(async (req, res) => {
       assertPermission(actor, 'oaa.system.read');
       const body = req.method === 'POST' ? await readBody(req) : {};
       return json(res, 200, await environmentSnapshot(body, actor));
+    }
+    if (url.pathname === '/api/oaa/tools/control-plane/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'console.git.change');
+      return json(res, 200, await controlPlaneStatus(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/identity/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await identityStatusRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/extensions/security' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await extensionSecurityStatusRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/extensions/inspect' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await extensionImageInspectRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/oaa/tools/notifications/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await notificationStatusRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/oaa/tools/his/observability/config' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await hisObservabilityConfigRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/his/observability/plan' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await hisObservabilityPlanRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/oaa/tools/ceph/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await cephStatusRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/ceph/plan' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await cephPlanRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/oaa/tools/evidence/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.evidence.read');
+      const body = await readBody(req);
+      return json(res, 200, await agentEvidenceDashboard(body.days || 30, body.limit || 25));
+    }
+    if (url.pathname === '/api/oaa/tools/recovery/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await recoveryStatusRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/recovery/plan' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await recoveryPlanRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/oaa/tools/observability/logs' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await observabilityRead(await readBody(req), actor, 'logs'));
+    }
+    if (url.pathname === '/api/oaa/tools/observability/traces' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await observabilityRead(await readBody(req), actor, 'traces'));
+    }
+    if (url.pathname === '/api/oaa/tools/catalog/entities' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
+      return json(res, 200, await catalogEntitySearch(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/oaa/tools/registry' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
+      return json(res, 200, await registryRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/foundation/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
+      return json(res, 200, await foundationStatusRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/k8s/resources' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
+      return json(res, 200, await listKubernetesResources(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/oaa/tools/k8s/resource' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'oaa.system.read');
+      return json(res, 200, await getKubernetesResource(await readBody(req), actor));
     }
     if (url.pathname === '/api/oaa/tools/k8s/pod-logs' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
@@ -3690,18 +8014,43 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+async function initializeGatewayData(attempt = 1) {
+  try {
+    const builtin = await seedBuiltinKnowledge();
+    if (builtin.seeded) console.log(`[oaa-db] seeded ${builtin.documents} docs / ${builtin.chunks} chunks (dim=${OAA_EMBED_DIM})`);
+    else console.log(`[oaa-db] ready (${builtin.reason || 'ok'}, dim=${OAA_EMBED_DIM})`);
+    const manuals = await reconcileBundledManualKnowledge();
+    if (manuals.seeded) console.log(`[oaa-db] seeded bundled manuals ${manuals.documents} docs / ${manuals.chunks} chunks`);
+    else console.log(`[oaa-db] bundled manuals ready (${manuals.reason || 'ok'})`);
+    const registry = await seedToolRegistry();
+    if (registry.seeded) console.log(`[oaa-db] seeded tool registry ${registry.tools} tools / ${registry.bindings} bindings`);
+    else console.log(`[oaa-db] tool registry ready (${registry.reason || 'ok'})`);
+  } catch (error) {
+    if (attempt < 4) {
+      const delayMs = attempt * 2000;
+      console.warn(`[oaa-db] initialization retry ${attempt}/3 in ${delayMs}ms:`, error.message || error);
+      const timer = setTimeout(() => { void initializeGatewayData(attempt + 1); }, delayMs);
+      timer.unref();
+      return;
+    }
+    console.error('[oaa-db] initialization failed after retries:', error.message || error);
+  }
+}
+
 server.listen(PORT, () => {
   console.log(`opensphere-console-oaa-gateway v${VERSION} listening :${PORT} (ns=${OAA_NAMESPACE})`);
-  seedBuiltinKnowledge().then((out) => {
-    if (out.seeded) console.log(`[oaa-db] seeded ${out.documents} docs / ${out.chunks} chunks (dim=${OAA_EMBED_DIM})`);
-    else console.log(`[oaa-db] ready (${out.reason || 'ok'}, dim=${OAA_EMBED_DIM})`);
-  }).catch((e) => console.error('[oaa-db] init failed', e.message || e));
-  seedBundledManualKnowledgeIfEmpty().then((out) => {
-    if (out.seeded) console.log(`[oaa-db] seeded bundled manuals ${out.documents} docs / ${out.chunks} chunks`);
-    else console.log(`[oaa-db] bundled manuals ready (${out.reason || 'ok'})`);
-  }).catch((e) => console.error('[oaa-db] bundled manual seed failed', e.message || e));
-  seedToolRegistry().then((out) => {
-    if (out.seeded) console.log(`[oaa-db] seeded tool registry ${out.tools} tools / ${out.bindings} bindings`);
-    else console.log(`[oaa-db] tool registry ready (${out.reason || 'ok'})`);
-  }).catch((e) => console.error('[oaa-db] tool registry seed failed', e.message || e));
+  void initializeGatewayData();
+  void refreshRuntimeProjection();
+  startRuntimeWatches();
+  const runtimeTimer = setInterval(() => { void refreshRuntimeProjection(); }, OAA_RUNTIME_REFRESH_MS);
+  runtimeTimer.unref();
 });
+
+function stopGateway() {
+  runtimeWatchStopping = true;
+  if (runtimeWatchHeartbeatTimer) clearInterval(runtimeWatchHeartbeatTimer);
+  for (const controller of runtimeWatchControllers) controller.abort();
+  server.close();
+}
+process.on('SIGTERM', stopGateway);
+process.on('SIGINT', stopGateway);

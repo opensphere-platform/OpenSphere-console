@@ -28,7 +28,7 @@ spec:
         - name: shell
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
           # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console@sha256:<digest>로 고정.
-          image: opensphere-console:oaa-panel-v27
+          image: opensphere-console:ceph-automation-v1
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -48,7 +48,8 @@ spec:
                 - -ec
                 - >-
                   grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json &&
-                  grep -q '"version": "0.5.1"' /usr/share/nginx/html/api/cli/index.json &&
+                  grep -q '"version": "0.8.0"' /usr/share/nginx/html/api/cli/index.json &&
+                  grep -q '"algorithm": "Ed25519"' /usr/share/nginx/html/api/cli/index.json &&
                   grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js &&
                   ! grep -Rqs 'os-source-chips' /usr/share/nginx/html/main-*.js &&
                   ! grep -aRqs '/bff/cli' /usr/share/nginx/html/api/cli/opensphere-cli-*

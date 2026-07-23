@@ -12,6 +12,12 @@ import Time16 from '@carbon/icons/es/time/16';
 import OverflowMenuVertical16 from '@carbon/icons/es/overflow-menu--vertical/16';
 import TrashCan16 from '@carbon/icons/es/trash-can/16';
 import Copy16 from '@carbon/icons/es/copy/16';
+import Add16 from '@carbon/icons/es/add/16';
+import WarningAlt16 from '@carbon/icons/es/warning--alt/16';
+import Microphone16 from '@carbon/icons/es/microphone/16';
+import ChevronDown16 from '@carbon/icons/es/chevron--down/16';
+import Model16 from '@carbon/icons/es/model/16';
+import StopFilled16 from '@carbon/icons/es/stop--filled/16';
 
 type OaaRole = 'user' | 'assistant' | 'system';
 interface OaaSource {
@@ -45,6 +51,15 @@ interface OaaSuggestedAction {
   confirmation: string;
   command: string;
 }
+interface OaaUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  source: 'provider' | 'unavailable';
+  recorded: boolean;
+}
 interface OaaMessage {
   id: string;
   role: OaaRole;
@@ -53,6 +68,7 @@ interface OaaMessage {
   sources?: OaaSource[];
   concepts?: OaaConcept[];
   actions?: OaaSuggestedAction[];
+  usage?: OaaUsage;
 }
 interface OaaSession {
   id: string;
@@ -138,6 +154,16 @@ interface OaaSession {
               <div class="oaa-bubble">
                 <div class="oaa-content">{{ m.content }}</div>
                 @if (m.meta) { <div class="oaa-meta">{{ m.meta }}</div> }
+                @if (m.usage; as usage) {
+                  <div class="oaa-token-usage" aria-label="LLM 토큰 사용량">
+                    <span>입력 {{ formatTokenCount(usage.inputTokens) }}</span>
+                    <span>출력 {{ formatTokenCount(usage.outputTokens) }}</span>
+                    @if (usage.cachedInputTokens) { <span>캐시 {{ formatTokenCount(usage.cachedInputTokens) }}</span> }
+                    @if (usage.reasoningTokens) { <span>추론 {{ formatTokenCount(usage.reasoningTokens) }}</span> }
+                    <strong>총 {{ formatTokenCount(usage.totalTokens) }} tokens</strong>
+                    <span [class.oaa-usage-pending]="!usage.recorded">{{ usage.recorded ? 'Supabase 기록됨' : '원장 기록 지연' }}</span>
+                  </div>
+                }
                 @if (m.sources?.length) {
                   <div class="oaa-sources" aria-label="OAA answer sources">
                     <div class="oaa-sources-title">Sources</div>
@@ -191,13 +217,41 @@ interface OaaSession {
             name="oaaPrompt"
             [(ngModel)]="draft"
             [disabled]="busy()"
-            placeholder="@ for objects, / for commands"
+            placeholder="무엇이든 요청하세요"
             rows="3"
             (keydown)="onKeydown($event)"
+            aria-label="OAA 메시지"
           ></textarea>
-          <button class="oaa-send" type="submit" [disabled]="busy() || !draft.trim()" title="Send" aria-label="Send">
-            <os-cicon [icon]="iconSend" [size]="18" />
-          </button>
+          <div class="oaa-compose-bar">
+            <div class="oaa-compose-left">
+              <button class="oaa-compose-tool" type="button" (click)="includeEnvironment.set(!includeEnvironment())" title="환경 컨텍스트 전환" aria-label="환경 컨텍스트 전환">
+                <os-cicon [icon]="iconAdd" [size]="18" />
+              </button>
+              <button class="oaa-context-chip" type="button" [class.oaa-context-on]="includeEnvironment()" (click)="includeEnvironment.set(!includeEnvironment())" [attr.aria-pressed]="includeEnvironment()">
+                <os-cicon [icon]="iconWarning" [size]="14" />
+                {{ includeEnvironment() ? '환경 컨텍스트' : '페이지 컨텍스트' }}
+              </button>
+            </div>
+            <div class="oaa-compose-right">
+              <span class="oaa-model-chip" [title]="modelLabel()">
+                <os-cicon [icon]="iconModel" [size]="14" />
+                {{ activeModel() }}
+                <os-cicon [icon]="iconChevronDown" [size]="14" />
+              </span>
+              <button class="oaa-compose-tool" type="button" [class.oaa-listening]="listening()" (click)="toggleVoiceInput()" title="음성 입력" aria-label="음성 입력">
+                <os-cicon [icon]="iconMicrophone" [size]="17" />
+              </button>
+              @if (busy()) {
+                <button class="oaa-send oaa-stop" type="button" (click)="stopGeneration()" title="응답 중지" aria-label="응답 중지">
+                  <os-cicon [icon]="iconStop" [size]="15" />
+                </button>
+              } @else {
+                <button class="oaa-send" type="submit" [disabled]="!draft.trim()" title="전송 (Enter)" aria-label="전송">
+                  <os-cicon [icon]="iconSend" [size]="17" />
+                </button>
+              }
+            </div>
+          </div>
         </form>
       </aside>
     }
@@ -393,22 +447,6 @@ interface OaaSession {
         border: 1px solid #f0b4b4; background: #fff1f1; color: #9b1c1c;
         border-radius: 6px; font-size: 0.68rem;
       }
-      .oaa-compose {
-        flex: 0 0 auto; display: grid; grid-template-columns: 1fr auto; gap: 0.55rem;
-        padding: 0.75rem; border-top: 1px solid #e2e6ef; background: #fff;
-      }
-      .oaa-compose textarea {
-        width: 100%; min-height: 4.25rem; max-height: 9rem; resize: none;
-        border: 1px solid #ccd4df; border-radius: 6px; padding: 0.6rem 0.65rem;
-        font-size: 0.74rem; line-height: 1.45; color: #1f2733; background: #fff;
-      }
-      .oaa-compose textarea:focus { outline: 2px solid rgba(31, 111, 235, 0.2); border-color: #1f6feb; }
-      .oaa-send {
-        align-self: end; display: inline-flex; align-items: center; justify-content: center;
-        width: 38px; height: 38px; border: 0; border-radius: 6px;
-        background: #1f6feb; color: #fff; cursor: pointer;
-      }
-      .oaa-send:disabled { background: #c9d2df; cursor: not-allowed; }
     `,
   ],
 })
@@ -425,12 +463,20 @@ export class OsOaaAgent implements OnDestroy {
   readonly iconMore = OverflowMenuVertical16;
   readonly iconTrash = TrashCan16;
   readonly iconCopy = Copy16;
+  readonly iconAdd = Add16;
+  readonly iconWarning = WarningAlt16;
+  readonly iconMicrophone = Microphone16;
+  readonly iconChevronDown = ChevronDown16;
+  readonly iconModel = Model16;
+  readonly iconStop = StopFilled16;
   readonly open = signal(false);
   readonly full = signal(false);
   readonly historyOpen = signal(false);
   readonly menuOpen = signal(false);
   readonly renameOpen = signal(false);
   readonly busy = signal(false);
+  readonly listening = signal(false);
+  readonly includeEnvironment = signal(true);
   readonly error = signal('');
   readonly sessions = signal<OaaSession[]>(this.readSessions());
   readonly currentId = signal(this.makeId());
@@ -443,6 +489,13 @@ export class OsOaaAgent implements OnDestroy {
     const last = [...this.messages()].reverse().find((m) => m.role === 'assistant' && m.meta);
     return last?.meta || 'deepseek-v4-flash';
   });
+  readonly activeModel = computed(() => {
+    const meta = this.modelLabel();
+    const parts = meta.split('/').map((part) => part.trim()).filter(Boolean);
+    return parts.length > 1 ? parts[1] : parts[0] || 'deepseek-v4-flash';
+  });
+  private activeRequest: AbortController | null = null;
+  private speechRecognition: any = null;
 
   constructor() {
     window.addEventListener('resize', this.onWindowResize);
@@ -457,6 +510,8 @@ export class OsOaaAgent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.activeRequest?.abort();
+    this.speechRecognition?.abort?.();
     window.removeEventListener('resize', this.onWindowResize);
     document.body.classList.remove('oaa-agent-open', 'oaa-agent-full', 'oaa-agent-resizing');
     document.documentElement.classList.remove('oaa-agent-open', 'oaa-agent-full');
@@ -583,10 +638,40 @@ export class OsOaaAgent implements OnDestroy {
   }
 
   onKeydown(ev: KeyboardEvent): void {
-    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
-      ev.preventDefault();
-      void this.send();
+    if (ev.isComposing || ev.key !== 'Enter' || ev.shiftKey) return;
+    ev.preventDefault();
+    void this.send();
+  }
+
+  toggleVoiceInput(): void {
+    if (this.listening()) {
+      this.speechRecognition?.stop?.();
+      return;
     }
+    const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!Recognition) {
+      this.error.set('이 브라우저는 음성 입력을 지원하지 않습니다.');
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = 'ko-KR';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onstart = () => this.listening.set(true);
+    recognition.onend = () => { this.listening.set(false); this.speechRecognition = null; };
+    recognition.onerror = () => { this.listening.set(false); this.speechRecognition = null; this.error.set('음성 입력을 시작하지 못했습니다.'); };
+    recognition.onresult = (event: any) => {
+      const transcript = String(event?.results?.[0]?.[0]?.transcript || '').trim();
+      if (transcript) this.draft = `${this.draft}${this.draft ? ' ' : ''}${transcript}`;
+    };
+    this.speechRecognition = recognition;
+    recognition.start();
+  }
+
+  stopGeneration(): void {
+    this.activeRequest?.abort();
+    this.activeRequest = null;
+    this.busy.set(false);
   }
 
   /** 유일한 네트워크 호출 지점 — 동일 출처 /api/oaa/chat, AuthService의 id_token을 Bearer로 첨부.
@@ -602,6 +687,8 @@ export class OsOaaAgent implements OnDestroy {
     this.messages.set(next);
     this.saveCurrentSession();
     this.busy.set(true);
+    const request = new AbortController();
+    this.activeRequest = request;
     try {
       const payloadMessages = next
         .filter((m) => m.role !== 'system')
@@ -610,7 +697,16 @@ export class OsOaaAgent implements OnDestroy {
       const r = await fetch('/api/oaa/chat', {
         method: 'POST',
         headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
-        body: JSON.stringify({ keyId: 'deepseek', messages: payloadMessages, context: this.pageContext() }),
+        // keyId를 고정하지 않는다. Gateway가 활성 provider inventory에서 정식 ID
+        // (예: deepseek-main)를 선택하므로 UI와 Secret 이름이 어긋나지 않는다.
+        body: JSON.stringify({
+          messages: payloadMessages,
+          context: this.pageContext(),
+          includeEnvironment: this.includeEnvironment(),
+          source: 'console-oaa-agent',
+          sessionId: this.currentId(),
+        }),
+        signal: request.signal,
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -629,14 +725,16 @@ export class OsOaaAgent implements OnDestroy {
         role: 'assistant',
         content: body.message || '(empty response)',
         meta,
+        usage: this.normalizeUsage(body.usage, body.usageRecorded),
         sources: this.normalizeSources(body.sources),
         concepts: this.normalizeConcepts(body.concepts?.concepts),
         actions: this.normalizeSuggestedActions(body.suggestedActions),
       }]);
       this.saveCurrentSession();
-    } catch (e) {
-      this.error.set('OAA request failed: ' + e);
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') this.error.set('OAA request failed: ' + e);
     } finally {
+      if (this.activeRequest === request) this.activeRequest = null;
       this.busy.set(false);
     }
   }
@@ -657,6 +755,10 @@ export class OsOaaAgent implements OnDestroy {
     const h = Math.floor(min / 60);
     if (h < 24) return `${h}h`;
     return `${Math.floor(h / 24)}d`;
+  }
+
+  formatTokenCount(value: number): string {
+    return new Intl.NumberFormat('ko-KR').format(Math.max(0, Number(value) || 0));
   }
 
   private initialMessages(): OaaMessage[] {
@@ -724,6 +826,21 @@ export class OsOaaAgent implements OnDestroy {
       confirmation: String(raw?.confirmation || 'none'),
       command: String(raw?.command || ''),
     })).filter((a) => a.id && a.command);
+  }
+
+  private normalizeUsage(value: unknown, recorded: unknown): OaaUsage | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const raw = value as Record<string, unknown>;
+    const token = (candidate: unknown) => Math.max(0, Math.floor(Number(candidate) || 0));
+    return {
+      inputTokens: token(raw['inputTokens']),
+      outputTokens: token(raw['outputTokens']),
+      cachedInputTokens: token(raw['cachedInputTokens']),
+      reasoningTokens: token(raw['reasoningTokens']),
+      totalTokens: token(raw['totalTokens']),
+      source: raw['source'] === 'provider' ? 'provider' : 'unavailable',
+      recorded: recorded === true,
+    };
   }
 
   private saveCurrentSession(): void {

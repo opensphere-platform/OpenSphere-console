@@ -16,6 +16,8 @@ on:
       - backend/opensphere-console-backend/**
       - backend/dupa-control/**
       - backend/opensphere-console-oaa-gateway/**
+      - backend/oaa-governed-adapter/**
+      - backend/notification-dispatcher/**
       - backend/os-cli/**
       - backend/supabase/**
       - backend/gitea/**
@@ -47,6 +49,11 @@ jobs:
         with:
           repository: opensphere-platform/OpenSphere-SDK
           path: OpenSphere-SDK
+      - name: Checkout Setup CLI
+        uses: actions/checkout@v4
+        with:
+          repository: opensphere-platform/OpenSphere-Setup-CLI
+          path: OpenSphere-Setup-CLI
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -91,7 +98,7 @@ jobs:
           test "$(go env GOARCH)" = arm64
           test "$(go env CGO_ENABLED)" = 1
           go test ./...
-          go build -trimpath -ldflags="-s -w -X main.version=0.5.1" -o opensphere-cli-darwin-arm64 ./cmd/os
+          go build -trimpath -ldflags="-s -w -X main.version=0.8.0" -o opensphere-cli-darwin-arm64 ./cmd/os
           file opensphere-cli-darwin-arm64 | grep -q 'arm64'
       - name: Upload macOS CLI artifact
         uses: actions/upload-artifact@v4
@@ -113,7 +120,7 @@ jobs:
             context: .
             file: OpenSphere-console/Dockerfile
           - image: opensphere-console-backend
-            context: OpenSphere-console/backend/opensphere-console-backend
+            context: OpenSphere-console/backend
             file: OpenSphere-console/backend/opensphere-console-backend/Dockerfile
           - image: opensphere-console-dupa-controller
             context: OpenSphere-console/backend/dupa-control
@@ -121,9 +128,30 @@ jobs:
           - image: opensphere-console-oaa-gateway
             context: OpenSphere-console/backend/opensphere-console-oaa-gateway
             file: OpenSphere-console/backend/opensphere-console-oaa-gateway/Dockerfile
+          - image: opensphere-oaa-governed-adapter
+            context: OpenSphere-console/backend/oaa-governed-adapter
+            file: OpenSphere-console/backend/oaa-governed-adapter/Dockerfile
+          - image: opensphere-console-notification-dispatcher
+            context: OpenSphere-console/backend/notification-dispatcher
+            file: OpenSphere-console/backend/notification-dispatcher/Dockerfile
           - image: opensphere-console-gitea
             context: OpenSphere-console/backend/gitea/image
             file: OpenSphere-console/backend/gitea/image/Dockerfile
+          - image: opensphere-console-supabase-postgres
+            context: OpenSphere-console/backend/supabase/images/postgres
+            file: OpenSphere-console/backend/supabase/images/postgres/Dockerfile
+          - image: opensphere-console-supabase-auth
+            context: OpenSphere-console/backend/supabase/images/auth
+            file: OpenSphere-console/backend/supabase/images/auth/Dockerfile
+          - image: opensphere-console-supabase-rest
+            context: OpenSphere-console/backend/supabase/images/rest
+            file: OpenSphere-console/backend/supabase/images/rest/Dockerfile
+          - image: opensphere-console-supabase-storage
+            context: OpenSphere-console/backend/supabase/images/storage
+            file: OpenSphere-console/backend/supabase/images/storage/Dockerfile
+          - image: opensphere-console-gitea-postgres
+            context: OpenSphere-console/backend/gitea/postgres-image
+            file: OpenSphere-console/backend/gitea/postgres-image/Dockerfile
     steps:
       - name: Checkout Console
         uses: actions/checkout@v4
@@ -175,6 +203,12 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
+          build-args: |
+            CLI_UPDATE_SIGNING_PROFILE=production
+            CLI_UPDATE_TRUST_ID=${{ vars.CLI_UPDATE_SIGNING_KEY_ID }}
+            CLI_UPDATE_TRUST_PUBLIC=${{ vars.CLI_UPDATE_SIGNING_PUBLIC_KEY }}
+          secrets: |
+            cli_update_signing_key=${{ secrets.CLI_UPDATE_SIGNING_PRIVATE_KEY }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
       - name: Attest published digest provenance
@@ -234,14 +268,28 @@ jobs:
             opensphere-console-backend
             opensphere-console-dupa-controller
             opensphere-console-oaa-gateway
+            opensphere-oaa-governed-adapter
+            opensphere-console-notification-dispatcher
             opensphere-console-gitea
+            opensphere-console-supabase-postgres
+            opensphere-console-supabase-auth
+            opensphere-console-supabase-rest
+            opensphere-console-supabase-storage
+            opensphere-console-gitea-postgres
           )
           component_keys=(
             console
             backend
             dupaController
             oaaGateway
+            oaaGovernedAdapter
+            notificationDispatcher
             gitea
+            supabasePostgres
+            supabaseAuth
+            supabaseRest
+            supabaseStorage
+            giteaPostgres
           )
           declare -A digests
           components='{}'
@@ -289,7 +337,7 @@ jobs:
             > "$RUNNER_TEMP/opensphere-release-bom.json"
 
           jq -e --arg revision "$GITHUB_SHA" \
-            '.sourceRevision == $revision and (.components | length) == 5' \
+            '.sourceRevision == $revision and (.components | length) == 12' \
             "$RUNNER_TEMP/opensphere-release-bom.json" >/dev/null
           echo "anchor-digest=${digests[opensphere-console]}" >> "$GITHUB_OUTPUT"
           echo "release-tag=$release_tag" >> "$GITHUB_OUTPUT"
@@ -324,9 +372,28 @@ jobs:
             opensphere-console-backend
             opensphere-console-dupa-controller
             opensphere-console-oaa-gateway
+            opensphere-oaa-governed-adapter
+            opensphere-console-notification-dispatcher
             opensphere-console-gitea
+            opensphere-console-supabase-postgres
+            opensphere-console-supabase-auth
+            opensphere-console-supabase-rest
+            opensphere-console-supabase-storage
+            opensphere-console-gitea-postgres
           )
-          component_keys=(backend dupaController oaaGateway gitea)
+          component_keys=(
+            backend
+            dupaController
+            oaaGateway
+            oaaGovernedAdapter
+            notificationDispatcher
+            gitea
+            supabasePostgres
+            supabaseAuth
+            supabaseRest
+            supabaseStorage
+            giteaPostgres
+          )
 
           # Non-anchor tags may move first. Setup never samples them; it reads
           # their immutable digests from the signed BOM attached to Console.

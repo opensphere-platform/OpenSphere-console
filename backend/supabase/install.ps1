@@ -7,16 +7,9 @@ param(
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $manifest = Join-Path $here "bootstrap\supabase.yaml"
-$migration1 = Join-Path $here "migrations\0001_console_backbone.sql"
-$migration2 = Join-Path $here "migrations\0002_backend_boundary.sql"
-$migration3 = Join-Path $here "migrations\0003_change_correlation.sql"
-$migration4 = Join-Path $here "migrations\0004_backend_rls.sql"
-$migration5 = Join-Path $here "migrations\0005_oaa_governed_agent.sql"
-$migration6 = Join-Path $here "migrations\0006_cli_identity.sql"
-$migration7 = Join-Path $here "migrations\0007_extension_revocation.sql"
-$migration8 = Join-Path $here "migrations\0008_backend_service_role.sql"
-$migration9 = Join-Path $here "migrations\0009_platform_control_governance.sql"
-$migration10 = Join-Path $here "migrations\0010_change_approval.sql"
+$migrationDirectory = Join-Path $here "migrations"
+$migrations = @(Get-ChildItem -LiteralPath $migrationDirectory -Filter '*.sql' -File | Sort-Object Name)
+if ($migrations.Count -eq 0) { throw "No Supabase migrations found in $migrationDirectory" }
 $kubectlArgs = @()
 if ($KubeContext) { $kubectlArgs += @("--context", $KubeContext) }
 
@@ -87,15 +80,27 @@ if (-not $secretExists) {
   $jwtSecret = New-RandomBase64 48
   $anonKey = New-ServiceJwt $jwtSecret "anon"
   $serviceRoleKey = New-ServiceJwt $jwtSecret "service_role"
-  Invoke-Kubectl @(
-    "-n", $Namespace, "create", "secret", "generic", "opensphere-supabase-secrets",
-    "--from-literal=postgres-password=$postgresPassword",
-    "--from-literal=backend-password=$backendPassword",
-    "--from-literal=oaa-gateway-password=$oaaGatewayPassword",
-    "--from-literal=jwt-secret=$jwtSecret",
-    "--from-literal=anon-key=$anonKey",
-    "--from-literal=service-role-key=$serviceRoleKey"
-  )
+  # Credentials are sent to kubectl on stdin. They never appear in argv,
+  # process listings, shell history, or installer logs.
+  $secretManifest = @{
+    apiVersion = 'v1'
+    kind = 'Secret'
+    metadata = @{
+      name = 'opensphere-supabase-secrets'
+      namespace = $Namespace
+      labels = @{ 'opensphere.io/secret-scope' = 'supabase-server-only' }
+    }
+    type = 'Opaque'
+    stringData = @{
+      'postgres-password' = $postgresPassword
+      'backend-password' = $backendPassword
+      'oaa-gateway-password' = $oaaGatewayPassword
+      'jwt-secret' = $jwtSecret
+      'anon-key' = $anonKey
+      'service-role-key' = $serviceRoleKey
+    }
+  } | ConvertTo-Json -Depth 10 -Compress
+  Invoke-Kubectl @('apply', '-f', '-') $secretManifest
 } else {
   Write-Host "Reusing existing opensphere-supabase-secrets; credentials are not rotated implicitly."
 }
@@ -224,16 +229,10 @@ END
 "@
 
 Invoke-SupabasePsql $roleSql
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration1)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration2)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration3)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration4)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration5)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration6)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration7)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration8)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration9)
-Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration10)
+foreach ($migration in $migrations) {
+  Write-Host "Applying Supabase migration $($migration.Name)"
+  Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration.FullName)
+}
 
 # Reload the two schema-consuming APIs after Console migrations have completed.
 foreach ($workload in @('opensphere-supabase-rest', 'opensphere-supabase-storage')) {

@@ -1,27 +1,32 @@
+ARG CLI_UPDATE_SIGNING_PROFILE=local
+ARG CLI_UPDATE_TRUST_ID=
+ARG CLI_UPDATE_TRUST_PUBLIC=
 FROM docker.io/library/golang@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7c3a92bfcc4e7ed55b18c2 AS build
+ARG CLI_UPDATE_TRUST_ID
+ARG CLI_UPDATE_TRUST_PUBLIC
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
-# Security.framework cannot be cross-compiled safely from Linux. The release
-# workflow supplies an attested, macOS-runner-built artifact; fail closed when
-# it is absent rather than silently restoring the argv-leaking security CLI.
-# The named build context keeps the generated artifact outside source control.
-COPY --from=macos-cli /opensphere-cli-darwin-arm64 /prebuilt/opensphere-cli-darwin-arm64
 # Test natively for each Buildx target; only the downloadable binaries are
 # cross-compiled. This keeps the arm64 image build from executing an amd64 test.
-RUN test -s /prebuilt/opensphere-cli-darwin-arm64 || { echo >&2 'native macOS CLI artifact is missing or empty'; exit 1; }
+# index.json currently publishes Windows and Linux only. A macOS artifact must
+# not be smuggled into /out until it is versioned and declared in that manifest.
 RUN mkdir -p /out && go test ./... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.5.1" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    install -m 0755 /prebuilt/opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64 && \
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.5.1" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 
 # index.json의 크기·SHA-256은 소스에 적힌 과거 값이 아니라 이 빌드에서 나온 정확한
 # 세 바이너리로 다시 생성한다. Console은 이 생성물만 배포한다.
 FROM docker.io/library/node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS manifest
+ARG CLI_UPDATE_SIGNING_PROFILE
+ARG CLI_UPDATE_TRUST_ID
+ARG CLI_UPDATE_TRUST_PUBLIC
 WORKDIR /work
 COPY index.json generate-manifest.mjs ./
 COPY --from=build /out/ /out/
-RUN node generate-manifest.mjs /work/index.json /out /work/index.generated.json
+RUN --mount=type=secret,id=cli_update_signing_key,required=false \
+    node generate-manifest.mjs /work/index.json /out /work/index.generated.json \
+      "$CLI_UPDATE_SIGNING_PROFILE" "$CLI_UPDATE_TRUST_ID" /run/secrets/cli_update_signing_key "$CLI_UPDATE_TRUST_PUBLIC"
 
 FROM docker.io/nginxinc/nginx-unprivileged@sha256:592b23aa79a6e6c08ba4b20f1fff700e1328895705966722608e115d62e52d39
 USER root

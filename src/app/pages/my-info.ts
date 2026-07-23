@@ -22,8 +22,10 @@ interface CliDevice {
   id: string;
   label: string;
   fingerprint: string;
+  status: 'active' | 'revoked';
   createdAt: string;
   lastUsedAt: string | null;
+  revokedAt: string | null;
   lastSessionExpiresAt: string | null;
   user: string;
 }
@@ -135,7 +137,7 @@ interface AuditEvent {
                 <h2>기능</h2>
                 <dl class="kv-list compact">
                   <div><dt>콘솔 로그인</dt><dd>사용 가능</dd></div>
-                  <div><dt>CLI 장치 키</dt><dd>{{ devices().length ? '사용 가능' : '등록 필요' }}</dd></div>
+                  <div><dt>CLI 장치 키</dt><dd>{{ activeDeviceCount() ? '사용 가능' : '등록 필요' }}</dd></div>
                   <div><dt>자동화 API 토큰</dt><dd>사용 가능</dd></div>
                   <div><dt>역할 기반 접근</dt><dd>{{ auth.groups().length ? '적용됨' : '없음' }}</dd></div>
                 </dl>
@@ -237,7 +239,8 @@ interface AuditEvent {
                   <p class="section-lead">대화형 CLI 장치와 비대화형 자동화 토큰을 한곳에서 확인합니다. 비밀 원문은 서버에서 다시 조회할 수 없습니다.</p>
                 </div>
                 <div class="credential-summary" aria-label="자격 증명 요약">
-                  <span class="label label-info">장치 {{ devices().length }}</span>
+                  <span class="label label-success">활성 장치 {{ activeDeviceCount() }}</span>
+                  @if (revokedDeviceCount()) { <span class="label label-light-blue">폐기 이력 {{ revokedDeviceCount() }}</span> }
                   <span class="label label-success">활성 토큰 {{ activeTokenCount() }}</span>
                   @if (expiredTokenCount()) { <span class="label label-warning">만료 {{ expiredTokenCount() }}</span> }
                 </div>
@@ -256,7 +259,7 @@ interface AuditEvent {
                 <div class="section-heading">
                   <div>
                     <h2 id="device-credentials-title">CLI 신뢰 장치</h2>
-                    <p class="section-lead"><code>os login</code>으로 등록한 대화형 장치입니다. 개인 키는 이 서버가 아닌 운영체제 보안 저장소에만 보관됩니다.</p>
+                    <p class="section-lead"><code>os login</code>으로 등록한 활성 장치와 폐기 이력입니다. <code>os logout</code>한 장치는 즉시 인증이 차단되고 폐기됨으로 표시됩니다.</p>
                   </div>
                   <button class="btn btn-sm btn-outline" (click)="loadCredentials()" [disabled]="credentialsLoading()">새로고침</button>
                 </div>
@@ -266,7 +269,7 @@ interface AuditEvent {
                     <input clrInput [(ngModel)]="deviceSearchText" name="device-search" placeholder="장치 이름, ID 또는 지문" />
                   </clr-input-container>
                   <button class="btn btn-sm btn-outline" type="submit">검색</button>
-                  <button class="btn btn-sm btn-link" type="button" (click)="clearDeviceSearch()" [disabled]="!deviceFilter() && !deviceSearchText">초기화</button>
+                  <button class="btn btn-sm btn-link" type="button" (click)="clearDeviceSearch()" [disabled]="!deviceFilter() && !deviceSearchText">검색 초기화</button>
                 </form>
               <div class="credential-grid-scroll" tabindex="0" aria-label="CLI 신뢰 장치 표">
               <clr-datagrid [clrDgLoading]="credentialsLoading()">
@@ -274,16 +277,29 @@ interface AuditEvent {
                 @for (device of filteredDevices(); track device.id) {
                   <clr-dg-row>
                     <clr-dg-cell><strong>{{ device.label }}</strong><div class="os-mono">{{ device.id }}</div></clr-dg-cell>
-                    <clr-dg-cell><span class="label label-success">신뢰됨</span></clr-dg-cell>
+                    <clr-dg-cell>
+                      @if (device.status === 'active') {
+                        <span class="label label-success">신뢰됨</span>
+                      } @else {
+                        <span class="label label-danger">폐기됨</span>
+                        <div class="credential-state-meta">{{ fmt(device.revokedAt) }}</div>
+                      }
+                    </clr-dg-cell>
                     <clr-dg-cell class="os-mono">{{ device.fingerprint }}</clr-dg-cell>
                     <clr-dg-cell>{{ fmt(device.createdAt) }}</clr-dg-cell>
                     <clr-dg-cell>{{ fmt(device.lastUsedAt) }}</clr-dg-cell>
                     <clr-dg-cell>{{ fmt(device.lastSessionExpiresAt) }}</clr-dg-cell>
-                    <clr-dg-cell><button class="btn btn-sm btn-danger-outline" (click)="openCredentialRevoke('device', device.id, device.label)" [disabled]="busy()">신뢰 해제</button></clr-dg-cell>
+                    <clr-dg-cell>
+                      @if (device.status === 'active') {
+                        <button class="btn btn-sm btn-danger-outline" (click)="openCredentialRevoke('device', device.id, device.label)" [disabled]="busy()">신뢰 해제</button>
+                      } @else {
+                        <span class="credential-state-meta">폐기 완료</span>
+                      }
+                    </clr-dg-cell>
                   </clr-dg-row>
                 }
                 <clr-dg-placeholder>{{ deviceFilter() ? '검색 조건과 일치하는 장치가 없습니다' : '등록된 CLI 장치가 없습니다. 터미널에서 os login을 실행하세요.' }}</clr-dg-placeholder>
-                <clr-dg-footer>{{ filteredDevices().length }}개 표시 · 전체 {{ devices().length }}개</clr-dg-footer>
+                <clr-dg-footer>{{ filteredDevices().length }}개 표시 · 활성 {{ activeDeviceCount() }}개 · 폐기 {{ revokedDeviceCount() }}개</clr-dg-footer>
               </clr-datagrid>
               </div>
               </article>
@@ -523,6 +539,7 @@ interface AuditEvent {
       .credential-search { margin: 0; width: 100%; }
       .credential-search input { width: 100%; min-width: 0; }
       .credential-toolbar .btn { margin-bottom: .05rem; }
+      .credential-state-meta { margin-top: .2rem; color: var(--os-muted); font-size: .62rem; white-space: nowrap; }
       .credential-grid-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
       .credential-grid-scroll clr-datagrid { min-width: 58rem; }
       .credential-grid-scroll:focus-visible { outline: 2px solid var(--os-accent); outline-offset: 2px; }
@@ -607,10 +624,12 @@ export class MyInfo {
 
   readonly activeTokenCount = computed(() => this.apiTokens().filter((token) => token.status === 'active').length);
   readonly expiredTokenCount = computed(() => this.apiTokens().filter((token) => token.status === 'expired').length);
+  readonly activeDeviceCount = computed(() => this.devices().filter((device) => device.status === 'active').length);
+  readonly revokedDeviceCount = computed(() => this.devices().filter((device) => device.status === 'revoked').length);
   readonly filteredDevices = computed(() => {
     const query = this.deviceFilter();
     if (!query) return this.devices();
-    return this.devices().filter((device) => [device.label, device.id, device.fingerprint]
+    return this.devices().filter((device) => [device.label, device.id, device.fingerprint, device.status]
       .some((value) => String(value || '').toLocaleLowerCase().includes(query)));
   });
   readonly filteredApiTokens = computed(() => {

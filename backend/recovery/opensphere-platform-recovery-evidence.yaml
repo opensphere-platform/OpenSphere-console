@@ -10,8 +10,12 @@ metadata:
 data:
   recovery-evidence.json: |
     {
-      "schemaVersion": "v1",
+      "schemaVersion": "v2",
       "generatedAt": "2026-07-22T05:51:00Z",
+      "policy": {
+        "maxEvidenceAgeSeconds": 86400,
+        "targetMode": "isolated-non-destructive-drill"
+      },
       "backup": {
         "locationRef": "operator-controlled external recovery vault",
         "supabase": {

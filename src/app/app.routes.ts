@@ -13,6 +13,7 @@ import { AdminOaa } from './pages/admin-oaa';
 import { AdminObservability } from './pages/admin-observability';
 import { AdminPlatformControl } from './pages/admin-platform-control';
 import { AdminNotifications } from './pages/admin-notifications';
+import { AdminNotificationChannels } from './pages/admin-notification-channels';
 import { AdminAudit } from './pages/admin-audit';
 import { AdminCli } from './pages/admin-cli';
 import { AdminLayout } from './pages/admin-layout';
@@ -73,6 +74,7 @@ export const routes: Routes = [
       { path: 'oaa', component: AdminOaa },
       { path: 'observability', component: AdminObservability },
       { path: 'notifications', component: AdminNotifications },
+      { path: 'notification-channels', component: AdminNotificationChannels },
       { path: 'audit', component: AdminAudit },
     ],
   },

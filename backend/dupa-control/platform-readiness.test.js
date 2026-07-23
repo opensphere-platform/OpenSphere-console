@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate } = require('./controller');
+const { condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -70,4 +70,41 @@ test('bootstrap owns the PlatformSupportProfile CRD lifecycle', () => {
   assert.match(crd, /subresources:\s*\n\s*status:/);
   assert.match(setup, /platformsupportprofiles\.platform\.opensphere\.io/);
   assert.match(setup, /platform-support-profile-crd\.yaml/);
+});
+
+test('SecurityPolicy readiness requires a real server dry-run denial from the canonical admission policy', () => {
+  assert.equal(admissionRedTestDenied({ ok: false, status: 422, json: {
+    message: 'ValidatingAdmissionPolicy denied request: opensphere-console must declare Manual UI contract console-help-center-v2',
+  } }), true);
+  assert.equal(admissionRedTestDenied({ ok: false, status: 422, json: { message: 'another policy denied the request' } }), false);
+  assert.equal(admissionRedTestDenied({ ok: true, status: 200, json: {} }), false);
+
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  assert.match(controller, /dryRun=All&fieldManager=opensphere-security-red-test/);
+  assert.match(controller, /mode: 'KubernetesServerDryRun'/);
+  assert.match(controller, /evidenceDigest/);
+  assert.doesNotMatch(controller, /const redTest = false/);
+  assert.match(manifest, /resources: \[validatingadmissionpolicies, validatingadmissionpolicybindings\]/);
+  assert.match(manifest, /resourceNames: \[opensphere-console-manual-ui-contract\]/);
+});
+
+test('PlatformSupportProfile status is a controller-owned projection that changes only with evidence', () => {
+  const prior = {
+    phase: 'Degraded', observedGeneration: 1, lastVerifiedAt: '2026-07-23T00:00:00.000Z', verifiedBy: 'old',
+    conditions: [{ type: 'SecurityPolicy', status: 'True', reason: 'Verified', message: 'verified', lastTransitionTime: '2026-07-22T00:00:00.000Z' }],
+    evidenceRefs: [{ ref: 'live:securitypolicy:0', type: 'SecurityPolicy' }],
+  };
+  const state = {
+    observedAt: '2026-07-23T01:00:00.000Z', phase: 'Degraded',
+    profile: { declared: true, generation: 1, status: prior },
+    capabilities: [{ type: 'SecurityPolicy', status: 'True', reason: 'Verified', message: 'verified', evidence: [{}] }],
+  };
+  const projected = platformVerificationProjection({ username: 'cmars' }, state);
+  assert.equal(projected.verifiedBy, 'cmars');
+  assert.equal(projected.conditions[0].lastTransitionTime, '2026-07-22T00:00:00.000Z');
+  assert.equal(platformVerificationComparable(prior), platformVerificationComparable(projected));
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /reconcilePlatformVerification\(\)/);
+  assert.match(controller, /Promise\.all\(\[reconcile\(\), pollK8sEvents\(\), reconcilePlatformVerification\(\)\]\)/);
 });

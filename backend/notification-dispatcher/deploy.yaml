@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: opensphere-notification-dispatcher, namespace: opensphere-console, labels: { app: opensphere-notification-dispatcher } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: opensphere-notification-dispatcher } }
+  template:
+    metadata: { labels: { app: opensphere-notification-dispatcher } }
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      containers:
+        - name: dispatcher
+          image: opensphere-notification-dispatcher:notification-channel-editor-v1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000" }
+            - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:8090/auth/v1" }
+            - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
+            # Comma-separated exact hosts or wildcards (for example
+            # smtp.example.com,*.mail.example.com). SMTP is deny-by-default.
+            - { name: NOTIFICATION_SMTP_ALLOWED_HOSTS, value: "smtp.gmail.com" }
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: service-role-key } }
+            - name: SUPABASE_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: jwt-secret } }
+            - name: NOTIFICATION_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-notification-runtime, key: encryption-key } }
+            - name: NOTIFICATION_DISPATCHER_TOKEN
+              valueFrom: { secretKeyRef: { name: opensphere-notification-runtime, key: internal-token } }
+          ports: [{ containerPort: 8081 }]
+          readinessProbe: { httpGet: { path: /readyz, port: 8081 }, initialDelaySeconds: 2, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8081 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-notification-dispatcher, namespace: opensphere-console }
+spec:
+  selector: { app: opensphere-notification-dispatcher }
+  ports: [{ name: http, port: 8081, targetPort: 8081 }]

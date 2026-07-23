@@ -68,6 +68,10 @@ rules:
   - { apiGroups: ["platform.opensphere.io"], resources: [platformversions], verbs: [get, list] }
   - { apiGroups: ["networking.k8s.io"], resources: [networkpolicies], verbs: [get, list] }
   - { apiGroups: ["admissionregistration.k8s.io"], resources: [validatingwebhookconfigurations], verbs: [get, list] }
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
+    resourceNames: [opensphere-console-manual-ui-contract]
+    verbs: [get]
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterrolebindings], verbs: [get, list] }
   - { apiGroups: ["observability.opensphere.io"], resources: [observabilitybindings], verbs: [get, list] }
   - { apiGroups: ["authentication.k8s.io"], resources: [tokenreviews], verbs: [create] }
@@ -184,7 +188,7 @@ spec:
         - name: controller
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
           # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console-dupa-controller@sha256:<digest>로 고정.
-          image: opensphere-console-dupa:manage-audit-v9
+          image: opensphere-console-dupa:manage-audit-v12
           imagePullPolicy: IfNotPresent
           env:
             - { name: NAMESPACE, value: opensphere-console }

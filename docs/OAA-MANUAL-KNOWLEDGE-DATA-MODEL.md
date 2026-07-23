@@ -1,7 +1,7 @@
 # OAA Manual Knowledge Data Model
 
-Status: implementation contract v0.3
-Date: 2026-07-22
+Status: implementation contract v0.8
+Date: 2026-07-23
 Scope: OpenSphere AI Agent(OAA), OpenSphere manuals, Supabase PostgreSQL + pgvector, Console control plane
 
 Product ownership: Manual UI, canonical Help Center documents, release seed and lifecycle are owned exclusively by `OpenSphere-console`. OAA Gateway provides the Console-owned durable registry/search execution boundary; it is not a separate Manual product owner. See `MANUAL-OWNERSHIP.md`.
@@ -298,7 +298,10 @@ manual-section:manual:console-docs:platform-control-plane-v2#oaa
 
 ```ts
 interface ManualChunk {
+  id: string;
   documentId: string;
+  documentRevision: string; // SHA-256 of the complete document content
+  active: boolean;
   chunkIndex: number;
   content: string;
   embedding: number[];
@@ -322,7 +325,7 @@ interface ManualChunkMetadata {
   component?: string[];
   tags?: string[];
   embedding: {
-    mode: 'provider' | 'hash';
+    mode: 'provider' | 'lexical';
     provider: string;
     model: string;
     keyId?: string;
@@ -338,6 +341,21 @@ Chunking rule:
 - Never merge unrelated top-level sections.
 - Store citation metadata on every chunk.
 - When two documents conflict, prefer lower `authorityTier`, then newer `version`, then `updated_at`.
+- Never overwrite or delete chunk content that has been used by `retrieval_trace`.
+- Insert updated content under a new `documentRevision`, then atomically switch `active` to the new revision.
+- Lexical fallback uses PostgreSQL `tsvector`; it must never manufacture a hash vector and call it semantic evidence.
+
+### 6.1 Revision and refresh lifecycle
+
+`oaa_knowledge_chunks` is a content-addressed serving projection. A document refresh writes
+`(document_id, document_revision, chunk_index)` rows and marks only that revision active. Older
+revisions remain immutable so an audit can reconstruct the exact evidence used by an earlier answer.
+Removing a release-bound manual retires the document and deactivates its chunks; it does not delete
+rows referenced by evidence.
+
+Unchanged releases update document metadata without re-embedding or rewriting chunk rows. This makes
+two Gateway replicas safe during rolling deployment and prevents a release restart from creating
+duplicate semantic work.
 
 ## 7. Retrieval Contract
 
@@ -347,6 +365,9 @@ Minimal retrieval result:
 
 ```ts
 interface ManualRetrievalHit {
+  documentId: string;
+  chunkId: string;
+  documentRevision: string;
   title: string;
   sourceId: string;
   sourceType: 'manual';
@@ -411,6 +432,10 @@ interface ManualActionBinding {
     | 'scale'
     | 'rotate-secret'
     | 'deploy'
+    | 'apply'
+    | 'delete'
+    | 'update'
+    | 'run'
     | 'rollback'
     | 'ingest-knowledge';
   toolId: string;
@@ -444,9 +469,37 @@ Examples:
 | Read environment snapshot | `oaa.environment.read` | `oaa-gateway` | `read` | `none` |
 | Inspect pods in namespace | `oaa.k8s.pods.list` | `kubernetes-api` | `read` | `none` |
 | Read recent logs | `oaa.k8s.logs.tail` | `kubernetes-api` | `read` | `none` |
+| Query redacted centralized logs | `oaa.observability.logs.query` | `cluster-manager-his-owner-facade` | `read` | `none` |
+| Query sanitized distributed traces | `oaa.observability.traces.query` | `cluster-manager-his-owner-facade` | `read` | `none` |
 | Restart deployment | `oaa.k8s.deployment.restart` | `kubernetes-api` | `medium` | `required` |
 | Scale deployment | `oaa.k8s.deployment.scale` | `kubernetes-api` | `medium` | `required` |
-| Rotate LLM key | `oaa.llm-key.rotate` | `oaa-gateway` | `high` | `two-step` |
+| Inspect an allowlisted Kubernetes resource | `oaa.k8s.resources.list` / `oaa.k8s.resource.get` | `kubernetes-api` | `read` | `none` |
+| Update a workload image by immutable digest | `oaa.k8s.workload.update-image` | `kubernetes-api` | `high` | `required` |
+| Apply an allowlisted desired-state manifest | `oaa.k8s.resource.apply` | `kubernetes-api` | `high` | `required` |
+| Protected resource deletion | `oaa.k8s.resource.delete` | `kubernetes-api` | `critical` | `required` |
+| Run or suspend a CronJob | `oaa.k8s.cronjob.run` / `oaa.k8s.cronjob.suspend` | `kubernetes-api` | `high` | `required` |
+| Inspect all control-plane owners | `oaa.control-plane.status` | `opensphere-api` | `read` | `none` |
+| Search canonical catalog topology | `oaa.catalog.entities.list` | `opensphere-api` | `read` | `none` |
+| Read Foundation owner state | `oaa.foundation.status` | `foundation-owner-facade` | `read` | `none` |
+| Enable/disable a Foundation engine | `oaa.foundation.engine.lifecycle` | `foundation-owner-facade` | `critical` | `required` |
+| Create/release a parameter-free Foundation claim | `oaa.foundation.claim.create` / `oaa.foundation.claim.release` | `foundation-owner-facade` | `high/critical` | `required` |
+| Create/release a typed Samba-AD directory claim | `oaa.foundation.identity-directory.claim.create` / `oaa.foundation.identity-directory.claim.release` | `foundation-owner-facade` | `high/critical` | `required` |
+| Read sanitized Console users and roles | `oaa.identity.status` | `console-identity-owner-facade` | `read` | `none` |
+| Create/enable/disable a Console user | `oaa.identity.user.create` / `oaa.identity.user.enabled` | `console-identity-owner-facade` | `critical` | `required` |
+| Add/remove a canonical Console role | `oaa.identity.role.membership` | `console-identity-owner-facade` | `critical` | `required` |
+| Read Extension revocations / inspect exact digest | `oaa.extension.security.status` / `oaa.extension.image.inspect` | `dupa-extension-security-owner-facade` | `read` | `none` |
+| Revoke an exact-digest Extension image | `oaa.extension.image.revoke` | `dupa-extension-security-owner-facade` | `critical` | `required` |
+| Read sanitized Notification operation state | `oaa.notification.status` | `console-notification-owner-facade` | `read` | `none` |
+| Enable/disable/test a configured channel | `oaa.notification.channel.enabled` / `oaa.notification.channel.test` | `console-notification-owner-facade` | `critical` | `required` |
+| Retry a failed Notification delivery | `oaa.notification.delivery.retry` | `console-notification-owner-facade` | `critical` | `required` |
+| Read/plan HIS Observability configuration | `oaa.his.observability.config` / `oaa.his.observability.plan` | `cluster-manager-his-owner-facade` | `read` | `none` |
+| Apply HIS Observability configuration | `oaa.his.observability.configure` | `cluster-manager-his-owner-facade` | `critical` | `required` |
+| Read/plan external Ceph from a staged import | `oaa.ceph.status` / `oaa.ceph.plan` | `cluster-manager-ceph-owner-facade` | `read` | `none` |
+| Connect/disconnect external Ceph | `oaa.ceph.connect` / `oaa.ceph.disconnect` | `cluster-manager-ceph-owner-facade` | `critical` | `required` |
+| Read correlated agent evidence | `oaa.evidence.status` | `oaa-supabase-evidence-owner` | `read` | `none` |
+| Update retention/legal hold policy | `oaa.evidence.retention.update` | `oaa-supabase-evidence-owner` | `critical` | `required` |
+
+LLM key custody remains a Console-native administration workflow. Raw provider credentials are never accepted as chat/tool arguments and therefore are deliberately absent from the conversational action registry.
 
 OAA must follow this execution rule:
 
@@ -495,11 +548,32 @@ interface OaaToolCapability {
 }
 ```
 
-For MVP, the OAA Gateway can expose this registry from code because the available tools are static and controlled by RBAC. Later it should be stored in PostgreSQL so plugins and service tiers can register their own capabilities.
+The Gateway owns the reviewed capability definitions in code and projects the active registry and action bindings into Supabase. This keeps executable code and RBAC reviewable while making the current capability surface queryable and auditable at runtime.
 
 The first registry entries should cover:
 
 - `oaa.environment.read`
+- `oaa.control-plane.status`
+- `oaa.catalog.entities.list`
+- `oaa.foundation.status`
+- `oaa.foundation.engine.lifecycle`
+- `oaa.foundation.claim.create`
+- `oaa.foundation.claim.release`
+- `oaa.foundation.identity-directory.claim.create`
+- `oaa.foundation.identity-directory.claim.release`
+- `oaa.identity.status`
+- `oaa.identity.user.create`
+- `oaa.identity.user.enabled`
+- `oaa.identity.role.membership`
+- `oaa.extension.security.status`
+- `oaa.extension.image.inspect`
+- `oaa.extension.image.revoke`
+- `oaa.notification.status`
+- `oaa.notification.channel.enabled`
+- `oaa.notification.channel.test`
+- `oaa.notification.delivery.retry`
+- `oaa.evidence.status`
+- `oaa.evidence.retention.update`
 - `oaa.k8s.pods.list`
 - `oaa.k8s.services.list`
 - `oaa.k8s.events.list`
@@ -508,6 +582,16 @@ The first registry entries should cover:
 - `oaa.k8s.deployment.rollout`
 - `oaa.k8s.deployment.restart`
 - `oaa.k8s.deployment.scale`
+- `oaa.k8s.resources.list`
+- `oaa.k8s.resource.get`
+- `oaa.k8s.workload.restart`
+- `oaa.k8s.workload.scale`
+- `oaa.k8s.workload.update-image`
+- `oaa.k8s.workload.rollback-image`
+- `oaa.k8s.resource.apply`
+- `oaa.k8s.resource.delete`
+- `oaa.k8s.cronjob.run`
+- `oaa.k8s.cronjob.suspend`
 - `oaa.knowledge.search`
 - `oaa.knowledge.ingest-manual`
 
@@ -636,6 +720,8 @@ interface ManualChunkMetadata {
 | Column | Manual field |
 |---|---|
 | `document_id` | FK to document |
+| `document_revision` | SHA-256 content revision used by this chunk |
+| `active` | current serving revision selector; historical revisions remain false |
 | `chunk_index` | order in document |
 | `content` | chunk text |
 | `embedding` | provider-generated `vector(1536)`; hash vectors are prohibited in Supabase production mode |
@@ -756,7 +842,11 @@ The Manual Registry seed/canonical docs are authoritative. The legacy standalone
 
 ## 15. Governed Retrieval and Action Execution
 
-OAA is a Console operator tool, not a generic chat panel. Every retrieval is filtered by the caller's current Console permissions and document ACL before vector ranking. Supabase records the resulting evidence in `oaa.retrieval_trace`; the answer must cite the selected document/chunk rather than claim ungrounded system knowledge.
+OAA is a Console operator tool, not a generic chat panel. Every retrieval is filtered by the caller's current Console permissions and document ACL before vector or lexical ranking. Supabase records the selected `document_id`, `chunk_id`, and `document_revision` in append-only `oaa.retrieval_trace`; the answer must cite that evidence rather than claim ungrounded system knowledge.
+
+For provider-backed agent runs, the Gateway creates `agent_run.id` before retrieval. `retrieval_trace.agent_run_id`, `tool_run.agent_run_id`, and `llm_usage_event.agent_run_id` correlate the immutable knowledge revision, read-tool evidence, and provider usage with that run. Prompts, responses, credentials, and raw logs are excluded; only digests and bounded metadata are retained. The Admin Agent Evidence view and `oaa.evidence.status` expose this correlation to authorized administrators.
+
+Retention is also typed evidence data, not a hidden maintenance constant. `evidence_retention_policy` defines 30–3650 days, `retain|export-before-delete`, and legal hold for six evidence streams. Every policy change creates an append-only `evidence_policy_event`. OAA does not expose a purge endpoint: an expired row remains until a reviewed owner maintenance flow has an `evidence_export_receipt` covering it.
 
 Non-read actions follow this control path:
 
@@ -765,16 +855,31 @@ OAA binding
   -> Gateway validates confirmation and caller-supplied reason
   -> Console Backend validates canonical permission and MFA assurance
   -> console.begin_change records an idempotent audited intent
-  -> approved GitOps adapter creates the declared desired-state change
-  -> reconciler applies it and reports result to the same request ID
+  -> approved GitOps declaration is merged in Gitea
+  -> dedicated least-privilege reconciler claims the approved outbox item
+  -> reconciler applies the bound operation and reports observed rollout state to the same request ID
 ```
 
-The Gateway has no Kubernetes write RBAC. A restart or scale capability is therefore a **control-plane submission**, not a `kubectl patch` capability. `oaa.tool_run` records the OAA-side intent evidence and `audit.event` / `console.change_request` are the authoritative management audit trail.
+The Gateway has no Kubernetes write RBAC. Every restart, scale, image update/rollback, manifest apply/delete, and CronJob mutation is therefore a **control-plane submission**, not a direct `kubectl` capability. The separate `oaa-governed-adapter` has only the verb/resource/namespace combinations required by the reviewed contracts: workloads, ConfigMaps, Services, Jobs/CronJobs, Ingresses, NetworkPolicies, HPAs, and PDBs may be reconciled; PVCs may be read/created/patched but not deleted. The adapter cannot read Secrets, mutate Nodes, or alter Kubernetes RBAC. LLM provider Secrets live only in the dedicated `opensphere-oaa-credentials` namespace. The Gateway has read-only custody there and has no Secret access in the Console runtime namespace, so it cannot cross-read Console auth, TLS, Gitea, Supabase, notification, or registry credentials. Raw key material is never returned to the browser or accepted as a conversational tool argument. `oaa.tool_run` records the OAA-side intent evidence and `audit.event` / `console.change_request` remain the authoritative management audit trail.
+
+Operational state is not refreshed by chat prompts alone. The Gateway lists and watches an allowlisted catalog of Kubernetes resource kinds, sanitizes every object before storage, and projects current state to `oaa.runtime_resource`. The catalog includes core workload/network/storage resources and OpenSphere lifecycle resources: `PlatformSupportProfile`, cluster-scoped HIS `ObservabilityBinding`, UI plugin Package/Registration, Foundation Model/Descriptor, Foundation Claim/Binding, and typed IdentityDirectory Claim/Binding. The Binding projection removes the internal query endpoint and retains only capability, readiness, unavailable-capability and evidence-digest metadata. Each watch event is also appended to immutable `oaa.runtime_event`, while replica-aware `oaa.watch_cursor` records stream health and resource versions. Supabase is therefore the durable query/audit projection; the Kubernetes API remains the source of truth.
+
+Release-bound manuals are also reconciled, not seeded only into an empty database. On each Gateway release the bundled manifest compares document checksum and aligned active revision, plus canonical checksums and explicit seed ownership for every concept and relation. Changed definitions are detected even when row counts are unchanged. Removed documents and concepts are retired, removed relations are pruned, and historical document/chunk revisions referenced by retrieval evidence remain intact. This makes Supabase follow reviewed manual releases without turning it into the source authority for live Kubernetes state.
+
+Authenticated control-plane diagnosis adds a second projection class. The Gateway queries Console/DUPA, Main Shell Registry, Cluster Manager HIS/Ceph, Supabase, Gitea, HIS Binding, consumer contracts, notifications, and Extension Host through fixed owner URLs. Sanitized results are stored as `source=owner-api`, `kind=ControlPlaneAuthority`; an append-only event is written only when the stable state digest changes. If an owner API is unavailable, the prior projection may be returned only as `lastKnown` with `stale=true` and its observation time. Supabase never becomes the current authority merely because a cached row exists.
+
+Control-plane reachability is not the complete Agent readiness claim. The `oaa.control-plane.status` result includes `agentControl.fullyOperational`, stable blocker codes, Platform Support conditions, and the required/observed/missing Observability, HIS owner, Ceph owner, and Platform Recovery owner capability sets. Semantic embedding, runtime projection, governed mutation lifecycle, Platform Support, owner reachability, advanced telemetry, recovery execution/evidence promotion, and signed-owner capability publication must all be proven before this field becomes true.
+
+Platform Recovery follows the same owner rule. `oaa.recovery.status` and `oaa.recovery.plan` read a resource-name-scoped recovery evidence ConfigMap through Console Backend and expose only verification booleans, structured checks, evidence age, blockers, and a fixed isolated-drill plan. Vault locations, checksum values, archive bytes, credentials, raw URLs, and scripts are excluded. The current owner advertises only `status-read` and `plan-read`; the Agent must not claim restore execution until a signed owner advertises both `drill-request` and `evidence-promote` behind AAL2, independent Gitea approval, and a durable reconcile receipt.
+
+Owner mutations are a distinct execution class from Kubernetes desired-state changes. Platform readiness, Extension lifecycle, HIS canary/lifecycle/Observability configuration, Ceph connect/disconnect, Foundation engine/Claim lifecycle, Console Identity, and OAA evidence retention accept no operator-supplied URL or arbitrary payload. Each binding resolves to a fixed owner route, validates a closed input catalog, requires an AAL2 administrator, a human reason and exact confirmation, and records a redacted result digest in `oaa.tool_run`. HIS configuration accepts a complete schema whose credential-bearing fields are Kubernetes Secret names/keys only; its confirmation explicitly states public Grafana exposure and data reset. Ceph provider export is staged outside chat in a dedicated one-hour TTL Kubernetes Secret and the OAA contract accepts only `opensphere-ceph-imports/opensphere-ceph-import-<uuid>`. A successful connection consumes the import immediately; expired imports are rejected and removed. The platform-owned Rook operator is never installed or removed by the runtime Agent, including when legacy connection metadata claims prior ownership; the runtime image contains only the external consumer cluster chart. The signed infrastructure-owner release artifact carries the least-privilege Ceph runtime RBAC, while operator and CRD readiness remain separate signed platform prerequisites. Foundation additionally rechecks the Cluster Manager/HIS lifecycle gate and persists an owner audit before mutation. Its Claim API accepts only `identity|data` with no preserve-unknown parameters. Console Identity additionally excludes email/recovery links from status and protects self-disable/self-demotion and last-admin continuity. Kubernetes changes continue through Backend/Gitea/two-person approval/reconciler; owner operations rely on the owning API's durable operation/audit contract.
+
+Secret values, ConfigMap values, Pod environment values, arbitrary annotations, provider credentials, and provider-specific sensitive identifiers are excluded before projection. Catalog rows are declared topology only; they are correlated with live Kubernetes/owner evidence and never treated as runtime truth or a write path.
 
 ### Production cutover checklist
 
-1. Apply Supabase migrations through `0005_oaa_governed_agent.sql` and verify the `oaa` schema, `vector` extension, RLS policies, and constrained `opensphere_oaa_gateway` role.
+1. Apply Supabase migrations through `0022_oaa_recovery_owner_permissions.sql` and verify the `oaa` schema, immutable knowledge revisions, append-only runtime events, replica-aware watch cursors, owner projection indexes/comments, correlated agent/retrieval/tool/provider evidence, retention/legal-hold policies, Extension/Notification/HIS/Ceph/Recovery owner permissions, `vector` extension, RLS policies, and constrained `opensphere_oaa_gateway` role.
 2. Run `scripts/migrate-legacy-knowledge-to-supabase.js --dry-run`, then `--apply` with a real embedding provider. It must re-embed source text; legacy hash vectors must not be copied.
 3. Confirm retrieval ACL tests with at least a viewer, operator, and administrator account; inspect `oaa.retrieval_trace` and answer citations.
-4. Bind each allowed action to a named GitOps repository, branch, manifest path, validation command, approval policy, and reconciler status source. This repository currently has Gitea read inspection only; it does not yet define that write adapter.
-5. Exercise one non-production change end-to-end: intent, approval, Git commit, reconcile, observed result, and immutable audit correlation. Only then enable the action for the production role.
+4. Bind each allowed action to a named GitOps repository, branch, manifest path, validation command, approval policy, and reconciler status source. All Kubernetes mutations use the dedicated `oaa-governed-adapter`; every additional mutation type requires a new reviewed binding, validation contract, and least-privilege RBAC change.
+5. Exercise each new mutation type in non-production: intent, two-person approval, Git commit, reconcile, observed result, and immutable audit correlation. Only then enable that capability for a production role.

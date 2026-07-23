@@ -27,9 +27,10 @@ import (
 	"time"
 )
 
-var version = "0.5.1"
+var version = "0.8.0"
 
 type Config struct {
+	Context     string `json:"context,omitempty"`
 	Profile     string `json:"profile"`
 	PAT         string `json:"-"` // process-memory only: OS_PAT automation token
 	DeviceID    string `json:"deviceId,omitempty"`
@@ -38,6 +39,8 @@ type Config struct {
 	APIURL      string `json:"apiUrl"`
 	IdentityURL string `json:"identityUrl"`
 	ConsoleURL  string `json:"consoleUrl"`
+	Output      string `json:"-"`
+	Command     string `json:"-"`
 }
 
 type CLIContribution struct {
@@ -86,6 +89,7 @@ type ToolManifest struct {
 func defaults() Config {
 	console := env("OS_CONSOLE", "https://localhost:8090")
 	return Config{
+		Context:     "default",
 		Profile:     "admin",
 		PAT:         os.Getenv("OS_PAT"),
 		RegistryURL: env("OS_REGISTRY", console+"/api/v1/registry"),
@@ -131,6 +135,9 @@ func loadConfig() (Config, error) {
 	}
 	if cfg.Profile == "" {
 		cfg.Profile = "admin"
+	}
+	if cfg.Context == "" {
+		cfg.Context = "default"
 	}
 	// Legacy config could contain year-long PAT/idToken fields. They are deliberately
 	// ignored rather than loaded back into memory; `os login` performs one-time device pairing.
@@ -280,49 +287,72 @@ func credentialToken(cfg Config) (string, error) {
 	if strings.TrimSpace(cfg.PAT) != "" {
 		return strings.TrimSpace(cfg.PAT), nil
 	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		token, retry, err := credentialTokenOnce(cfg)
+		if err == nil {
+			return token, nil
+		}
+		lastErr = err
+		if !retry || attempt == 2 {
+			return "", err
+		}
+		sleepFn(time.Duration(150*(attempt+1)) * time.Millisecond)
+	}
+	return "", lastErr
+}
+
+// credentialTokenOnce performs one complete challenge/session exchange. A
+// retry always starts with a fresh challenge so a possibly consumed one-time
+// challenge is never replayed.
+func credentialTokenOnce(cfg Config) (string, bool, error) {
 	if cfg.DeviceID == "" {
-		return "", errors.New("등록된 CLI 디바이스가 없습니다; os login을 실행하세요")
+		return "", false, errors.New("등록된 CLI 디바이스가 없습니다; os login을 실행하세요")
 	}
 	privateDER, err := deviceKeyLoad(cfg.DeviceID)
 	if err != nil {
-		return "", fmt.Errorf("OS 보안 저장소에서 디바이스 키를 읽지 못했습니다: %w", err)
+		return "", false, fmt.Errorf("OS 보안 저장소에서 디바이스 키를 읽지 못했습니다: %w", err)
 	}
 	challengeBody, _ := json.Marshal(map[string]string{"deviceId": cfg.DeviceID})
 	b, status, _, err := rawRequest(http.MethodPost, join(cfg.IdentityURL, "/challenge"), bytes.NewReader(challengeBody), "application/json", "")
 	if err != nil {
-		return "", err
+		return "", true, err
 	}
 	if err := requireOK(b, status); err != nil {
-		return "", err
+		return "", transientAuthStatus(status), err
 	}
 	var challenge struct {
 		ChallengeID string `json:"challengeId"`
 		Nonce       string `json:"nonce"`
 	}
 	if err := json.Unmarshal(b, &challenge); err != nil || challenge.ChallengeID == "" || challenge.Nonce == "" {
-		return "", errors.New("CLI challenge 응답이 올바르지 않습니다")
+		return "", false, errors.New("CLI challenge 응답이 올바르지 않습니다")
 	}
 	signature, err := signDeviceChallenge(privateDER, cfg.DeviceID, challenge.ChallengeID, challenge.Nonce)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	sessionBody, _ := json.Marshal(map[string]string{
 		"deviceId": cfg.DeviceID, "challengeId": challenge.ChallengeID, "nonce": challenge.Nonce, "signature": signature,
 	})
 	b, status, _, err = rawRequest(http.MethodPost, join(cfg.IdentityURL, "/session"), bytes.NewReader(sessionBody), "application/json", "")
 	if err != nil {
-		return "", err
+		return "", true, err
 	}
 	if err := requireOK(b, status); err != nil {
-		return "", err
+		return "", transientAuthStatus(status), err
 	}
 	var session struct {
 		AccessToken string `json:"accessToken"`
 	}
 	if err := json.Unmarshal(b, &session); err != nil || session.AccessToken == "" {
-		return "", errors.New("CLI 단기 세션 응답이 올바르지 않습니다")
+		return "", false, errors.New("CLI 단기 세션 응답이 올바르지 않습니다")
 	}
-	return session.AccessToken, nil
+	return session.AccessToken, false, nil
+}
+
+func transientAuthStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
 func operationID() string {
@@ -353,7 +383,11 @@ func requireOK(b []byte, status int) error {
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(b, &payload); err != nil {
-		return fmt.Errorf("HTTP %d: Console API가 JSON이 아닌 응답을 반환했습니다", status)
+		return &CLIError{Status: status, Code: "NonJSONResponse", Message: "Console API가 JSON이 아닌 응답을 반환했습니다", Hint: "reverse proxy가 오류 페이지나 SPA HTML을 반환하지 않고 JSON API 계약을 지키는지 확인하세요."}
+	}
+	code := ""
+	if value, ok := payload["code"].(string); ok {
+		code = strings.TrimSpace(value)
 	}
 	msg := ""
 	for _, key := range []string{"message", "error", "msg"} {
@@ -365,20 +399,38 @@ func requireOK(b []byte, status int) error {
 	if msg == "" {
 		compact, err := json.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("HTTP %d: Console API 요청이 실패했습니다", status)
+			return &CLIError{Status: status, Code: code, Message: "Console API 요청이 실패했습니다"}
 		}
 		msg = string(compact)
 	}
 	if len(msg) > 500 {
 		msg = msg[:500]
 	}
-	return fmt.Errorf("HTTP %d: %s", status, msg)
+	hint := ""
+	if replacement, ok := payload["replacement"].(string); ok && strings.TrimSpace(replacement) != "" {
+		hint = "대체 경로: " + strings.TrimSpace(replacement)
+	}
+	return &CLIError{Status: status, Code: code, Message: msg, Hint: hint}
 }
 
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	var err error
+	args, output, err := extractGlobalOptions(args)
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		printHelp(out)
 		return nil
+	}
+	if args[0] == "help" {
+		return printCommandHelp(out, args[1:])
+	}
+	if len(args) > 1 && hasHelpFlag(args[1:]) {
+		return printCommandHelp(out, args)
+	}
+	if err := validateNativeCommandOptions(args); err != nil {
+		return err
 	}
 	if args[0] == "version" || args[0] == "--version" {
 		fmt.Fprintf(out, "os %s\n", version)
@@ -390,6 +442,12 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
+	}
+	cfg.Output = output
+	if _, native := nativeCommandDefinition(strings.ToLower(args[0])); native {
+		cfg.Command, _ = nativeRuleFor(args)
+	} else {
+		cfg.Command = strings.ToLower(args[0])
 	}
 	switch args[0] {
 	case "whoami":
@@ -409,7 +467,33 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	case "admin":
 		return admins(cfg, args[1:], out)
 	case "backbone":
-		return backbone(cfg, args[1:], out)
+		return backbone(cfg, args[1:], out, errOut)
+	case "status":
+		return platformStatus(cfg, out)
+	case "health":
+		return doctor(cfg, args[1:], out)
+	case "doctor":
+		return doctor(cfg, args[1:], out)
+	case "describe":
+		return describe(cfg, args[1:], out)
+	case "events":
+		return events(cfg, args[1:], out)
+	case "plan":
+		return planChange(cfg, args[1:], out)
+	case "apply":
+		return applyPlan(cfg, args[1:], out)
+	case "operation":
+		return operations(cfg, args[1:], out)
+	case "rollback":
+		return rollbackChange(cfg, args[1:], out)
+	case "completion":
+		return completion(args[1:], out)
+	case "context":
+		return contexts(cfg, args[1:], out)
+	case "support-bundle":
+		return supportBundle(cfg, args[1:], out)
+	case "update":
+		return selfUpdate(cfg, args[1:], out)
 	case "observability":
 		return observability(cfg, args[1:], out)
 	case "audit":
@@ -457,17 +541,17 @@ func devices(cfg Config, args []string, out io.Writer) error {
 		if err := requireOK(b, status); err != nil {
 			return err
 		}
-		return pretty(out, b)
+		return renderOutput(cfg, out, b)
 	}
 	if args[0] == "revoke" {
 		if len(args) < 2 {
-			return errors.New("사용법: os device revoke <device-id> --reason <사유>")
+			return usageError("사용법: os device revoke <device-id> --reason <사유>")
 		}
 		id := strings.TrimSpace(args[1])
 		flags := parseLongFlags(args[2:])
 		reason := strings.TrimSpace(flags["reason"])
 		if len(reason) < 8 {
-			return errors.New("--reason은 8자 이상의 장치 폐기 사유여야 합니다")
+			return usageError("--reason은 8자 이상의 장치 폐기 사유여야 합니다")
 		}
 		body, _ := json.Marshal(map[string]string{"reason": reason})
 		b, status, err := request(cfg, http.MethodDelete, join(cfg.IdentityURL, "/devices/"+url.PathEscape(id)), bytes.NewReader(body), "application/json")
@@ -486,9 +570,9 @@ func devices(cfg Config, args []string, out io.Writer) error {
 				return err
 			}
 		}
-		return pretty(out, b)
+		return renderOutput(cfg, out, b)
 	}
-	return fmt.Errorf("알 수 없는 device 하위명령: %s", args[0])
+	return usageErrorf("알 수 없는 device 하위명령: %s", args[0])
 }
 
 func login(args []string, in io.Reader, out, errOut io.Writer) error {
@@ -503,7 +587,7 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 	identityURL := fs.String("identity", cfg.IdentityURL, "Supabase Console identity URL")
 	consoleURL := fs.String("console", cfg.ConsoleURL, "Console URL")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return usageError(err.Error())
 	}
 	_ = web // 브라우저 승인이 기본이며 --web은 명시적 alias로 수용한다.
 	if hasArg(args, "--console") {
@@ -517,8 +601,12 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 			*identityURL = join(*consoleURL, "/api/identity/cli")
 		}
 	}
-	if err := validateURL(*consoleURL); err != nil {
-		return err
+	for label, endpoint := range map[string]string{
+		"console": *consoleURL, "registry": *registryURL, "api": *apiURL, "identity": *identityURL,
+	} {
+		if err := validateURL(endpoint); err != nil {
+			return usageErrorf("--%s URL이 올바르지 않습니다: %v", label, err)
+		}
 	}
 	privateDER, publicJwk, err := generateDeviceKey()
 	if err != nil {
@@ -537,7 +625,7 @@ func login(args []string, in io.Reader, out, errOut io.Writer) error {
 	if err := deviceKeyStore(device.ID, privateDER); err != nil {
 		return fmt.Errorf("OS 보안 저장소에 디바이스 키 저장 실패: %w", err)
 	}
-	cfg = Config{Profile: "admin", DeviceID: device.ID, DeviceLabel: device.Label, RegistryURL: *registryURL, APIURL: *apiURL, IdentityURL: *identityURL, ConsoleURL: *consoleURL}
+	cfg = Config{Context: "default", Profile: "admin", DeviceID: device.ID, DeviceLabel: device.Label, RegistryURL: *registryURL, APIURL: *apiURL, IdentityURL: *identityURL, ConsoleURL: *consoleURL}
 	if err := whoami(cfg, io.Discard); err != nil {
 		_ = deviceKeyDelete(device.ID)
 		return fmt.Errorf("등록 디바이스 세션 검증 실패(설정은 저장하지 않음): %w", err)
@@ -654,7 +742,7 @@ func whoami(cfg Config, out io.Writer) error {
 		return errors.New("CLI 디바이스 또는 API token이 비활성·폐기 상태입니다")
 	}
 	if out != io.Discard {
-		return pretty(out, b)
+		return renderOutput(cfg, out, b)
 	}
 	return nil
 }
@@ -685,18 +773,18 @@ func registry(cfg Config, args []string, out io.Writer) error {
 		return err
 	}
 	if *kind == "" {
-		return pretty(out, b)
+		return renderOutput(cfg, out, b)
 	}
 	_ = output // -o는 하위호환을 위해 수용하되 현재 출력은 항상 JSON이다.
 	key := map[string]string{"capability": "capabilities", "plugin": "plugins", "template": "templates"}[*kind]
 	if key == "" {
-		return fmt.Errorf("알 수 없는 kind: %s", *kind)
+		return usageErrorf("알 수 없는 kind: %s", *kind)
 	}
 	selected, err := json.Marshal(map[string]any{"capabilities": reg.Capabilities, "plugins": reg.Plugins, "templates": reg.Templates}[key])
 	if err != nil {
 		return fmt.Errorf("Registry subset could not be encoded: %w", err)
 	}
-	return pretty(out, selected)
+	return renderOutput(cfg, out, selected)
 }
 
 func requireJSONResponse(contentType, subject string) error {
@@ -727,8 +815,6 @@ var resourcePaths = map[string]string{
 	"platformconfigs":       "/apis/config.opensphere.io/v1alpha1/platformconfigs",
 	"platformversion":       "/apis/platform.opensphere.io/v1alpha1/platformversions",
 	"platformversions":      "/apis/platform.opensphere.io/v1alpha1/platformversions",
-	"backboneclaim":         "/apis/backbone.opensphere.io/v1alpha1/backboneclaims",
-	"backboneclaims":        "/apis/backbone.opensphere.io/v1alpha1/backboneclaims",
 	"uipluginpackage":       "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginpackages",
 	"uipluginpackages":      "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginpackages",
 	"uipluginregistration":  "/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginregistrations",
@@ -737,11 +823,18 @@ var resourcePaths = map[string]string{
 
 func getResource(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("사용법: os get <resource> [name] [-o json]")
+		return usageError("사용법: os get <resource> [name] [-o table|json|yaml]")
 	}
-	path := resourcePaths[strings.ToLower(args[0])]
+	resource := strings.ToLower(args[0])
+	if resource == "backboneclaim" || resource == "backboneclaims" {
+		return retiredResourceError("BackboneClaim", "os get consumercontracts")
+	}
+	if resource == "consumercontract" || resource == "consumercontracts" {
+		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/platform/contracts"), nil, out)
+	}
+	path := resourcePaths[resource]
 	if path == "" {
-		return fmt.Errorf("지원하지 않는 resource %q; platformconfig, platformversion, backboneclaim, uipluginpackage를 사용하세요", args[0])
+		return usageErrorf("지원하지 않는 resource %q; consumercontract, platformconfig, platformversion, uipluginpackage를 사용하세요", args[0])
 	}
 	if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		path += "/" + url.PathEscape(args[1])
@@ -751,6 +844,9 @@ func getResource(cfg Config, args []string, out io.Writer) error {
 		return err
 	}
 	if err := requireOK(b, status); err != nil {
+		if status == http.StatusNotFound && (resource == "platformconfig" || resource == "platformconfigs" || resource == "platformversion" || resource == "platformversions") {
+			return withHint(err, "해당 Platform CRD/API가 현재 클러스터에 설치되지 않았습니다. 'os status'와 'os doctor'로 현행 Platform Control 상태를 확인하세요.")
+		}
 		return err
 	}
 	mediaType, _, parseErr := mime.ParseMediaType(contentType)
@@ -761,24 +857,24 @@ func getResource(cfg Config, args []string, out io.Writer) error {
 	if err := json.Unmarshal(b, &document); err != nil {
 		return fmt.Errorf("resource API returned invalid JSON: %w", err)
 	}
-	return pretty(out, b)
+	return renderOutput(cfg, out, b)
 }
 
 func role(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("사용법: os role list | grant <user> <role> --reason <사유> | revoke <user> <role> --reason <사유>")
+		return usageError("사용법: os role list | grant <user> <role> --reason <사유> | revoke <user> <role> --reason <사유>")
 	}
 	switch args[0] {
 	case "list":
 		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/identity"), nil, out)
 	case "grant", "revoke":
 		if len(args) < 3 {
-			return fmt.Errorf("사용법: os role %s <user> <role> --reason <사유>", args[0])
+			return usageErrorf("사용법: os role %s <user> <role> --reason <사유>", args[0])
 		}
 		flags := parseLongFlags(args[3:])
 		reason := strings.TrimSpace(flags["reason"])
 		if len(reason) < 8 {
-			return errors.New("--reason은 8자 이상의 권한 변경 사유여야 합니다")
+			return usageError("--reason은 8자 이상의 권한 변경 사유여야 합니다")
 		}
 		operation := "add"
 		if args[0] == "revoke" {
@@ -786,7 +882,7 @@ func role(cfg Config, args []string, out io.Writer) error {
 		}
 		return jsonCall(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/identity/users/"+url.PathEscape(args[1])+"/group"), map[string]string{"group": args[2], "op": operation, "reason": reason}, out)
 	default:
-		return fmt.Errorf("알 수 없는 role 동작: %s", args[0])
+		return usageErrorf("알 수 없는 role 동작: %s", args[0])
 	}
 }
 
@@ -815,12 +911,12 @@ func jsonCall(cfg Config, method, rawURL string, payload any, out io.Writer) err
 	if mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json") {
 		return fmt.Errorf("서버가 JSON 대신 %s 응답을 반환했습니다: %s", responseContentType, rawURL)
 	}
-	return pretty(out, b)
+	return renderOutput(cfg, out, b)
 }
 
 func tokens(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("사용법: os token list | create --label <이름> --reason <사유> | revoke <jti> --reason <사유>")
+		return usageError("사용법: os token list | create --label <이름> --reason <사유> | revoke <jti> --reason <사유>")
 	}
 	switch args[0] {
 	case "list":
@@ -828,18 +924,33 @@ func tokens(cfg Config, args []string, out io.Writer) error {
 	case "create":
 		flags := parseLongFlags(args[1:])
 		label, reason := strings.TrimSpace(flags["label"]), strings.TrimSpace(flags["reason"])
-		if label == "" || len(reason) < 8 {
-			return errors.New("token create에는 --label과 8자 이상의 --reason이 필요합니다")
+		scope := strings.ToLower(strings.TrimSpace(flags["scope"]))
+		if scope == "" {
+			scope = "read"
 		}
-		return jsonCall(cfg, http.MethodPost, join(cfg.IdentityURL, "/tokens"), map[string]string{"label": label, "reason": reason}, out)
+		if scope != "read" && scope != "change" && scope != "admin" {
+			return usageError("--scope는 read, change, admin 중 하나여야 합니다")
+		}
+		ttl := strings.TrimSpace(flags["ttl"])
+		if ttl == "" {
+			ttl = "24h"
+		}
+		duration, err := time.ParseDuration(ttl)
+		if err != nil || duration < 5*time.Minute || duration > 30*24*time.Hour {
+			return usageError("--ttl은 5m 이상 720h 이하의 duration이어야 합니다")
+		}
+		if label == "" || len(reason) < 8 {
+			return usageError("token create에는 --label과 8자 이상의 --reason이 필요합니다")
+		}
+		return jsonCall(cfg, http.MethodPost, join(cfg.IdentityURL, "/tokens"), map[string]any{"label": label, "reason": reason, "scope": scope, "ttlSeconds": int64(duration / time.Second)}, out)
 	case "revoke":
 		reason := strings.TrimSpace(parseLongFlags(args[2:])["reason"])
 		if len(args) < 2 || len(reason) < 8 {
-			return errors.New("사용법: os token revoke <jti> --reason <8자 이상 사유>")
+			return usageError("사용법: os token revoke <jti> --reason <8자 이상 사유>")
 		}
 		return jsonCall(cfg, http.MethodDelete, join(cfg.IdentityURL, "/tokens/"+url.PathEscape(args[1])), map[string]string{"reason": reason}, out)
 	default:
-		return fmt.Errorf("알 수 없는 token 동작: %s", args[0])
+		return usageErrorf("알 수 없는 token 동작: %s", args[0])
 	}
 }
 
@@ -850,14 +961,14 @@ func admins(cfg Config, args []string, out io.Writer) error {
 	flags := parseLongFlags(args[1:])
 	reason := strings.TrimSpace(flags["reason"])
 	if len(reason) < 8 {
-		return errors.New("관리 쓰기에는 8자 이상의 --reason이 필요합니다")
+		return usageError("관리 쓰기에는 8자 이상의 --reason이 필요합니다")
 	}
 	switch args[0] {
 	case "create":
 		username := strings.TrimSpace(flags["username"])
 		displayName := strings.TrimSpace(flags["display-name"])
 		if username == "" || displayName == "" {
-			return errors.New("사용법: os admin create --username <id> --display-name <이름> [--email <주소>] [--roles a,b] --reason <사유>")
+			return usageError("사용법: os admin create --username <id> --display-name <이름> [--email <주소>] [--roles a,b] --reason <사유>")
 		}
 		roles := []string{}
 		for _, value := range strings.Split(flags["roles"], ",") {
@@ -870,32 +981,32 @@ func admins(cfg Config, args []string, out io.Writer) error {
 		}, out)
 	case "enable", "disable":
 		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
-			return fmt.Errorf("사용법: os admin %s <user-uuid> --reason <사유>", args[0])
+			return usageErrorf("사용법: os admin %s <user-uuid> --reason <사유>", args[0])
 		}
 		return jsonCall(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/identity/users/"+url.PathEscape(args[1])+"/enabled"), map[string]any{"enabled": args[0] == "enable", "reason": reason}, out)
 	case "onboard":
 		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
-			return errors.New("사용법: os admin onboard <user-uuid> --reason <사유>")
+			return usageError("사용법: os admin onboard <user-uuid> --reason <사유>")
 		}
 		return jsonCall(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/identity/users/"+url.PathEscape(args[1])+"/onboarding"), map[string]any{"reason": reason}, out)
 	default:
-		return fmt.Errorf("알 수 없는 admin 동작: %s", args[0])
+		return usageErrorf("알 수 없는 admin 동작: %s", args[0])
 	}
 }
 
-func backbone(cfg Config, args []string, out io.Writer) error {
-	path := "/api/admin/backbone/status"
-	if len(args) > 0 && args[0] == "detail" {
-		flags := parseLongFlags(args[1:])
-		component := strings.TrimSpace(flags["component"])
-		if component == "" {
-			return errors.New("사용법: os backbone detail --component postgres|rustfs|gitea")
-		}
-		path = "/api/admin/backbone/detail?component=" + url.QueryEscape(component)
-	} else if len(args) > 0 && args[0] != "status" {
-		return errors.New("사용법: os backbone status | detail --component <이름>")
+func backbone(cfg Config, args []string, out, errOut io.Writer) error {
+	fmt.Fprintln(errOut, "경고: 'os backbone'은 호환 alias입니다. 신규 자동화는 'os status' 또는 'os describe <component>'를 사용하세요.")
+	if len(args) == 0 || args[0] == "status" {
+		return platformStatus(cfg, out)
 	}
-	return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, path), nil, out)
+	if args[0] != "detail" {
+		return usageError("사용법: os backbone status | detail --component supabase|storage|gitea")
+	}
+	component := strings.TrimSpace(parseLongFlags(args[1:])["component"])
+	if component == "" {
+		return usageError("사용법: os backbone detail --component supabase|storage|gitea")
+	}
+	return describe(cfg, []string{component}, out)
 }
 
 func observability(cfg Config, args []string, out io.Writer) error {
@@ -908,16 +1019,16 @@ func observability(cfg Config, args []string, out io.Writer) error {
 	if args[0] == "query" {
 		expr := strings.TrimSpace(parseLongFlags(args[1:])["expr"])
 		if expr == "" {
-			return errors.New("사용법: os observability query --expr <PromQL>")
+			return usageError("사용법: os observability query --expr <PromQL>")
 		}
 		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/observability/query?expr="+url.QueryEscape(expr)), nil, out)
 	}
-	return errors.New("사용법: os observability status|targets|query")
+	return usageError("사용법: os observability status|targets|query")
 }
 
 func auditLog(cfg Config, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] != "list" {
-		return errors.New("사용법: os audit list")
+		return usageError("사용법: os audit list")
 	}
 	return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/plugins/events"), nil, out)
 }
@@ -928,14 +1039,24 @@ func catalog(cfg Config, args []string, out io.Writer) error {
 		path += "?filter=kind=API"
 	}
 	if len(args) > 0 && args[0] != "list" && args[0] != "apis" {
-		return errors.New("사용법: os catalog list|apis")
+		return usageError("사용법: os catalog list|apis")
 	}
-	return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, path), nil, out)
+	raw, err := jsonBytesCall(cfg, http.MethodGet, join(cfg.ConsoleURL, path), nil)
+	if err != nil {
+		return err
+	}
+	if len(args) > 1 {
+		raw, err = transformJSONList(raw, parseLongFlags(args[1:]))
+		if err != nil {
+			return err
+		}
+	}
+	return renderOutput(cfg, out, raw)
 }
 
 func extensions(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("사용법: os extensions inspect|install|activate|disable|uninstall|rollback|list|bindings|registry|revocations|revoke-image")
+		return usageError("사용법: os extensions inspect|install|activate|disable|uninstall|rollback|list|bindings|registry|revocations|revoke-image")
 	}
 	action := strings.ToLower(args[0])
 	var method, path string
@@ -943,28 +1064,28 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 	switch action {
 	case "inspect":
 		if len(args) != 2 {
-			return errors.New("사용법: os extensions inspect <ghcr-image:edge|candidate|stable|@sha256:digest>")
+			return usageError("사용법: os extensions inspect <ghcr-image:edge|candidate|stable|@sha256:digest>")
 		}
 		method, path, payload = http.MethodPost, "/api/admin/extensions/inspect", map[string]string{"image": args[1]}
 	case "install":
 		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
-			return errors.New("사용법: os extensions install <ghcr-image:edge|candidate|stable|@sha256:digest> --reason <승인 사유>")
+			return usageError("사용법: os extensions install <ghcr-image:edge|candidate|stable|@sha256:digest> --reason <승인 사유>")
 		}
 		flags := parseLongFlags(args[2:])
 		reason := strings.TrimSpace(flags["reason"])
 		if len(reason) < 8 {
-			return errors.New("--reason은 8자 이상의 설치 승인 사유여야 합니다")
+			return usageError("--reason은 8자 이상의 설치 승인 사유여야 합니다")
 		}
 		method, path, payload = http.MethodPost, "/api/admin/extensions/install", map[string]string{"image": args[1], "reason": reason}
 	case "activate", "disable", "uninstall", "rollback":
 		if len(args) != 2 || !validResourceName(args[1]) {
-			return fmt.Errorf("사용법: os extensions %s <module-id>", action)
+			return usageErrorf("사용법: os extensions %s <module-id>", action)
 		}
 		serverAction := map[string]string{"activate": "enable", "disable": "disable", "uninstall": "uninstall", "rollback": "rollback"}[action]
 		method, path, payload = http.MethodPost, "/api/admin/plugins/registrations/"+url.PathEscape(args[1])+"/"+serverAction, map[string]string{}
 	case "list":
 		if len(args) != 1 {
-			return errors.New("사용법: os extensions list")
+			return usageError("사용법: os extensions list")
 		}
 		method, path = http.MethodGet, "/api/admin/plugins/registrations"
 	case "bindings":
@@ -973,7 +1094,7 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 		} else if len(args) == 3 && (args[1] == "enable" || args[1] == "disable") && validResourceName(args[2]) {
 			method, path, payload = http.MethodPost, "/api/admin/bindings/"+url.PathEscape(args[2])+"/"+args[1], map[string]string{}
 		} else {
-			return errors.New("사용법: os extensions bindings list | enable|disable <binding-id>")
+			return usageError("사용법: os extensions bindings list | enable|disable <binding-id>")
 		}
 	case "registry":
 		if len(args) == 1 || args[1] == "status" {
@@ -982,7 +1103,7 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 			flags := parseLongFlags(args[2:])
 			username, reason := strings.TrimSpace(flags["username"]), strings.TrimSpace(flags["reason"])
 			if username == "" || !hasArg(args[2:], "--token-stdin") || len(reason) < 8 {
-				return errors.New("사용법: os extensions registry login --username <GitHub 사용자> --token-stdin --reason <8자 이상 사유>")
+				return usageError("사용법: os extensions registry login --username <GitHub 사용자> --token-stdin --reason <8자 이상 사유>")
 			}
 			secret, err := io.ReadAll(io.LimitReader(os.Stdin, 2049))
 			if err != nil {
@@ -990,35 +1111,35 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 			}
 			tokenValue := strings.TrimSpace(string(secret))
 			if len(tokenValue) < 20 || len(tokenValue) > 1024 || strings.ContainsAny(tokenValue, " \t\r\n") {
-				return errors.New("유효한 package read token을 stdin으로 입력하세요")
+				return usageError("유효한 package read token을 stdin으로 입력하세요")
 			}
 			method, path, payload = http.MethodPut, "/api/admin/extensions/registry-credentials", map[string]string{"username": username, "token": tokenValue, "reason": reason}
 		} else if args[1] == "logout" {
 			reason := strings.TrimSpace(parseLongFlags(args[2:])["reason"])
 			if len(reason) < 8 {
-				return errors.New("사용법: os extensions registry logout --reason <8자 이상 사유>")
+				return usageError("사용법: os extensions registry logout --reason <8자 이상 사유>")
 			}
 			method, path, payload = http.MethodDelete, "/api/admin/extensions/registry-credentials", map[string]string{"reason": reason}
 		} else {
-			return errors.New("사용법: os extensions registry status | login --username <사용자> --token-stdin --reason <사유> | logout --reason <사유>")
+			return usageError("사용법: os extensions registry status | login --username <사용자> --token-stdin --reason <사유> | logout --reason <사유>")
 		}
 	case "revocations":
 		if len(args) != 1 {
-			return errors.New("사용법: os extensions revocations")
+			return usageError("사용법: os extensions revocations")
 		}
 		method, path = http.MethodGet, "/api/admin/extensions/revocations"
 	case "revoke-image":
 		if len(args) < 2 || !strings.Contains(args[1], "@sha256:") {
-			return errors.New("사용법: os extensions revoke-image <repository@sha256:digest> [--replacement <repository@sha256:digest>] --reason <8자 이상 사유>")
+			return usageError("사용법: os extensions revoke-image <repository@sha256:digest> [--replacement <repository@sha256:digest>] --reason <8자 이상 사유>")
 		}
 		flags := parseLongFlags(args[2:])
 		reason := strings.TrimSpace(flags["reason"])
 		if len(reason) < 8 {
-			return errors.New("--reason은 8자 이상의 철회 사유여야 합니다")
+			return usageError("--reason은 8자 이상의 철회 사유여야 합니다")
 		}
 		method, path, payload = http.MethodPost, "/api/admin/extensions/revocations", map[string]string{"image": args[1], "replacementImage": strings.TrimSpace(flags["replacement"]), "reason": reason}
 	default:
-		return fmt.Errorf("알 수 없는 extensions 동작: %s", action)
+		return usageErrorf("알 수 없는 extensions 동작: %s", action)
 	}
 	var body io.Reader
 	contentType := ""
@@ -1033,7 +1154,7 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 	if err := requireOK(b, status); err != nil {
 		return err
 	}
-	return pretty(out, b)
+	return renderOutput(cfg, out, b)
 }
 
 func validResourceName(value string) bool {
@@ -1075,7 +1196,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		}
 	}
 	if contribution == nil {
-		return fmt.Errorf("등록되고 활성화된 CLI Binding namespace가 아닙니다: %s", ns)
+		return usageErrorf("등록되고 활성화된 CLI Binding namespace가 아닙니다: %s", ns)
 	}
 	base := join(cfg.ConsoleURL, contribution.APIBase)
 	manifestURL := join(base, contribution.ManifestPath)
@@ -1090,7 +1211,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	if len(args) == 1 || args[1] == "manifest" {
-		return pretty(out, manifestBytes)
+		return renderOutput(cfg, out, manifestBytes)
 	}
 	var manifest ToolManifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
@@ -1114,7 +1235,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 			available = append(available, tool.Command)
 		}
 		sort.Strings(available)
-		return fmt.Errorf("명령을 찾을 수 없습니다; 사용 가능: %s", strings.Join(available, ", "))
+		return usageErrorf("명령을 찾을 수 없습니다; 사용 가능: %s", strings.Join(available, ", "))
 	}
 	flags := parseLongFlags(args[1:])
 	method := strings.ToUpper(selected.Method)
@@ -1123,7 +1244,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		component := strings.TrimSpace(flags["component"])
 		route, ok := selected.Components[component]
 		if !ok {
-			return errors.New("지원 서비스 명령에는 유효한 --component 값이 필요합니다")
+			return usageError("지원 서비스 명령에는 유효한 --component 값이 필요합니다")
 		}
 		if hasArg(args, "--apply") {
 			method, path = http.MethodPost, route.ApplyPath
@@ -1134,11 +1255,11 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	if len(selected.Operations) > 0 {
 		prefix := toolCommandPrefix(selected.Command, ns)
 		if len(commandWords) <= len(prefix) {
-			return errors.New("GPU bridge 명령에는 operation이 필요합니다")
+			return usageError("GPU bridge 명령에는 operation이 필요합니다")
 		}
 		route, ok := selected.Operations[commandWords[len(prefix)]]
 		if !ok || route.Path == "" {
-			return fmt.Errorf("지원하지 않는 GPU bridge operation: %s", commandWords[len(prefix)])
+			return usageErrorf("지원하지 않는 GPU bridge operation: %s", commandWords[len(prefix)])
 		}
 		path = route.Path
 	}
@@ -1146,7 +1267,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		method = http.MethodGet
 	}
 	if method != http.MethodGet && !hasArg(args, "--preview") && !hasArg(args, "--apply") {
-		return errors.New("write 명령은 --preview 또는 --apply를 명시해야 합니다")
+		return usageError("write 명령은 --preview 또는 --apply를 명시해야 합니다")
 	}
 	target := join(base, path)
 	var body io.Reader
@@ -1171,7 +1292,7 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	_ = errOut
-	return pretty(out, response)
+	return renderOutput(cfg, out, response)
 }
 
 func toolCommandPrefix(command, ns string) []string {
@@ -1216,7 +1337,7 @@ func nonFlagArgs(args []string) []string {
 
 func hasArg(args []string, expected string) bool {
 	for _, arg := range args {
-		if arg == expected {
+		if arg == expected || strings.HasPrefix(arg, expected+"=") {
 			return true
 		}
 	}
@@ -1231,7 +1352,9 @@ func parseLongFlags(args []string) map[string]string {
 		}
 		key := strings.TrimPrefix(args[i], "--")
 		value := "true"
-		if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+		if parts := strings.SplitN(key, "=", 2); len(parts) == 2 {
+			key, value = parts[0], parts[1]
+		} else if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
 			value = args[i+1]
 			i++
 		}
@@ -1241,41 +1364,12 @@ func parseLongFlags(args []string) map[string]string {
 }
 
 func printHelp(out io.Writer) {
-	fmt.Fprintln(out, `os — OpenSphere Console native 관리자 CLI. console==cli: 동일 Registry·API·Supabase RBAC 소비.
-
-  os login [--console URL] [--label DEVICE]   (Supabase 브라우저 세션에서 한 번 승인 → OS 보안 저장소에 디바이스 키 등록)
-  os whoami
-  os logout                                    (서버 디바이스 신뢰 + 로컬 키 동시 폐기)
-  os device list | revoke <device-id> --reason <사유>
-  os token list | create --label <이름> --reason <사유> | revoke <jti> --reason <사유>
-  os admin list | create|enable|disable|onboard ... --reason <사유>
-  os registry [--kind capability|plugin|template] [-o json]
-  os catalog list | apis
-  os backbone status | detail --component <이름>
-  os observability status | targets | query --expr <PromQL>
-  os audit list
-  os extensions inspect <ghcr-image:edge|candidate|stable|@sha256:digest>
-  os extensions install <ghcr-image:edge|candidate|stable|@sha256:digest> --reason <승인 사유>
-  os extensions activate|disable|uninstall|rollback <module-id> | list
-  os extensions bindings list | enable|disable <binding-id>
-  os extensions registry status
-  os extensions registry login --username <GitHub 사용자> --token-stdin --reason <승인 사유>
-  os extensions registry logout --reason <승인 사유>
-  os extensions revocations
-  os extensions revoke-image <repository@sha256:digest> [--replacement <repository@sha256:digest>] --reason <철회 사유>
-  os get <resource> [name] [-o json]
-  os role list | grant|revoke <user> <role> --reason <사유>
-  os <namespace> [명령...] [-o json]
-  os version | help
-
-현재 native 프로파일은 Supabase 사용자·역할을 매 요청 확인하는 admin 디바이스 신뢰 + 15분 서명 세션을 사용한다. 개인키는 config.json에 저장하지 않는다.
-비대화형 자동화는 별도 Supabase 관리 API token(OS_PAT), 향후 workforce는 승인된 CLI Binding으로 분리한다.
-설정 ~/.os/config.json(비밀 없음) · 보안키 Windows DPAPI/macOS Keychain/Linux Secret Service.`)
+	printRootHelp(out)
 }
 
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "오류:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }

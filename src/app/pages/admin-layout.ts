@@ -87,7 +87,8 @@ export class AdminLayout {
     {
       label: '운영 및 증거',
       items: [
-        { label: '알림', route: '/manage/notifications', icon: Notification16 },
+      { label: '알림', route: '/manage/notifications', icon: Notification16 },
+      { label: '외부 채널', route: '/manage/notification-channels', icon: Notification16 },
         { label: '감사 로그', route: '/manage/audit', icon: List16 },
       ],
     },

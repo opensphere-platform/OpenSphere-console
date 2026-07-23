@@ -153,11 +153,155 @@ test('OAA admin uses the Supabase console-admins contract and the shared full-wi
   assert.doesNotMatch(admin, /opensphere-console-admins/);
   assert.match(admin, /OAA Gateway 관리자 역할\(console-admins\)이 필요합니다/);
   assert.match(admin, /class="clr-form-full-width oaa-key-form"/);
-  assert.match(admin, /name="oaa-key-id" autocomplete="off"/);
-  assert.match(admin, /type="password" autocomplete="new-password"/);
+  assert.match(admin, /설정 ID <small>\(자동 생성 · API key 아님\)<\/small>/);
+  assert.doesNotMatch(admin, /name="oaa-key-id"/);
+  assert.match(admin, /id: 'openai-main', provider: 'openai'/);
+  assert.match(admin, /\(ngModelChange\)="onLlmProviderChange\(\$event\)"/);
+  assert.match(admin, /\[type\]="llmSecretVisible\(\) \? 'text' : 'password'"/);
+  assert.match(admin, /autocomplete="new-password"/);
   assert.match(admin, /<div osPanelFooter class="panel-actions">/);
   assert.match(panel, /class="side-panel-footer os-panel-footer"/);
   assert.match(panel, /class="os-panel-content clr-form-full-width"/);
   assert.match(panel, /<ng-content select="\[osPanelFooter\]" \/>/);
   assert.match(styles, /os-panel \.side-panel-body form\.clr-form:not\(\.clr-row\)[\s\S]*max-width: var\(--os-panel-form-max, 48rem\)/);
+});
+
+test('OAA API key visibility is explicit, accessible, and resets at every secret boundary', () => {
+  const admin = read('src', 'app', 'pages', 'admin-oaa.ts');
+
+  assert.match(admin, /readonly llmSecretVisible = signal\(false\)/);
+  assert.match(admin, /aria-label]="llmSecretVisible\(\) \? 'API key 숨기기' : 'API key 표시'"/);
+  assert.match(admin, /aria-pressed]="llmSecretVisible\(\)"/);
+  assert.match(admin, /class="oaa-secret-input-shell"[\s\S]*?id="oaa-key-secret"[\s\S]*?class="oaa-secret-toggle"/);
+  assert.match(admin, /눈동자를 누르면 입력값을 확인할 수 있습니다/);
+  assert.match(admin, /\.oaa-secret-toggle \{[^}]*top: 50%[^}]*transform: translateY\(-50%\)/);
+  assert.match(admin, /toggleLlmSecretVisibility\(\): void/);
+  assert.match(admin, /onLlmProviderChange\(provider: string\): void/);
+  assert.match(admin, /onLlmApiKeyChange\(value: string\): void/);
+  assert.match(admin, /closeKeyPanel\(\): void \{[\s\S]*?this\.llmSecretVisible\.set\(false\)/);
+  assert.match(admin, /finally \{[\s\S]*?this\.llmSecretVisible\.set\(false\)[\s\S]*?apiKey: ''/);
+});
+
+test('OAA Admin distinguishes reachable Gateway health from complete Agent readiness', () => {
+  const admin = read('src', 'app', 'pages', 'admin-oaa.ts');
+
+  assert.match(admin, /interface AgentControlReadiness/);
+  assert.match(admin, /Complete Agent readiness/);
+  assert.match(admin, /control\.agentControl\.blockers/);
+  assert.match(admin, /missingCapabilities\.observability/);
+  assert.match(admin, /missingCapabilities\.hisOwner/);
+  assert.match(admin, /missingCapabilities\.cephOwner/);
+  assert.match(admin, /\/api\/oaa\/tools\/control-plane\/status/);
+  assert.match(admin, /method: 'POST'/);
+});
+
+test('OAA credential writes enter the Console Backend policy and audit boundary, never the read-only Gateway mutation path', () => {
+  const nginx = read('nginx', 'default.conf.template');
+  const backend = read('backend', 'opensphere-console-backend', 'server.js');
+  const backendDeploy = read('backend', 'opensphere-console-backend', 'deploy.yaml');
+  const gateway = read('backend', 'opensphere-console-oaa-gateway', 'server.js');
+  const gatewayDeploy = read('backend', 'opensphere-console-oaa-gateway', 'deploy.yaml');
+  const admin = read('src', 'app', 'pages', 'admin-oaa.ts');
+
+  assert.match(nginx, /location \^~ \/api\/oaa\/admin\/llm-keys[\s\S]*opensphere-console-backend/);
+  assert.match(backend, /verifyConsoleAdmin\(req\)[\s\S]*upsertOaaKey\(actor, await readBody\(req\)\)/);
+  assert.match(backend, /logAudit\(actor, action, input\.id, 'attempt'[\s\S]*k8sRequest\('POST'/);
+  assert.match(backend, /management reason must be at least 8 characters/);
+  assert.match(backend, /probeOaaProviderCredential\(meta, apiKey\)/);
+  assert.match(backend, /oaa-validation-status/);
+  assert.match(backend, /auditRecorded = false/);
+  assert.match(backend, /error\.code >= 400 && error\.code <= 599/);
+  assert.match(backend, /const oaaKeyTestPath[\s\S]*validateStoredOaaKey\(actor, oaaKeyTestPath\[1\]\)/);
+  assert.match(admin, /Provider 검증/);
+  assert.match(admin, /testLlmKey\(k: LlmKey\): Promise<void>/);
+  assert.match(admin, /validationStatus === 'ready'/);
+  assert.match(backendDeploy, /opensphere-console-backend-oaa-credentials/);
+  assert.match(backendDeploy, /resources: \["secrets"\][\s\S]*"create"[\s\S]*"patch"[\s\S]*"delete"/);
+  assert.match(backend, /const OAA_KEY_NAMESPACE = process\.env\.OAA_KEY_NAMESPACE \|\| 'opensphere-oaa-credentials'/);
+  assert.match(backend, /namespaces\/\$\{encodeURIComponent\(OAA_KEY_NAMESPACE\)\}\/secrets/);
+  assert.match(backendDeploy, /name: OAA_KEY_NAMESPACE, value: opensphere-oaa-credentials/);
+  assert.match(backendDeploy, /name: opensphere-console-backend-oaa-credentials, namespace: opensphere-console \}\r?\n+rules: \[\]/);
+  assert.match(backendDeploy, /name: opensphere-console-backend-oaa-credentials, namespace: opensphere-oaa-credentials/);
+  const gatewayConsoleRole = gatewayDeploy.slice(
+    gatewayDeploy.indexOf('kind: Role\nmetadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }'),
+    gatewayDeploy.indexOf('kind: RoleBinding\nmetadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }'),
+  );
+  assert.doesNotMatch(gatewayConsoleRole, /resources: \[secrets\]/);
+  assert.match(gatewayDeploy, /name: opensphere-console-oaa-gateway-credentials, namespace: opensphere-oaa-credentials/);
+  assert.match(gatewayDeploy, /name: OAA_KEY_NAMESPACE, value: opensphere-oaa-credentials/);
+  assert.match(gateway, /const OAA_KEY_NAMESPACE = process\.env\.OAA_KEY_NAMESPACE \|\| 'opensphere-oaa-credentials'/);
+  assert.match(gateway, /namespaces\/\$\{OAA_KEY_NAMESPACE\}\/secrets/);
+  assert.match(gateway, /oaa_direct_mutation_removed_use_console_backend/);
+  assert.match(admin, /llmForm\.reason\.trim\(\)\.length < 8/);
+});
+
+test('OAA chat delegates provider key selection to Gateway instead of hard-coding a stale key id', () => {
+  const agent = read('src', 'app', 'os', 'os-oaa-agent.ts');
+
+  assert.doesNotMatch(agent, /keyId:\s*['"]deepseek['"]/);
+  assert.match(agent, /messages: payloadMessages,[\s\S]*context: this\.pageContext\(\),[\s\S]*includeEnvironment: this\.includeEnvironment\(\),[\s\S]*source: 'console-oaa-agent',[\s\S]*sessionId: this\.currentId\(\)/);
+});
+
+test('OAA provider usage is normalized, persisted to the Supabase ledger, and visible per response and key', () => {
+  const agent = read('src', 'app', 'os', 'os-oaa-agent.ts');
+  const admin = read('src', 'app', 'pages', 'admin-oaa.ts');
+  const gateway = read('backend', 'opensphere-console-oaa-gateway', 'server.js');
+  const migration = read('backend', 'supabase', 'migrations', '0012_oaa_llm_usage_ledger.sql');
+
+  assert.match(gateway, /function normalizeProviderUsage\(raw\)/);
+  assert.match(gateway, /async function recordLlmUsageEvent\(event\)/);
+  assert.match(gateway, /function supportsProviderEmbedding\(key\)/);
+  assert.match(gateway, /return key\.provider === 'openai' \|\| key\.provider === 'custom'/);
+  assert.match(gateway, /INSERT INTO llm_usage_event/);
+  assert.match(gateway, /async function llmUsageDashboard\(days = 30\)/);
+  assert.match(gateway, /\/api\/oaa\/admin\/usage/);
+  assert.match(gateway, /assertPermission\(actor, 'oaa\.usage\.read'\)/);
+  assert.match(gateway, /usageRecorded/);
+  assert.match(agent, /interface OaaUsage/);
+  assert.match(agent, /LLM 토큰 사용량/);
+  assert.match(agent, /Supabase 기록됨/);
+  assert.match(admin, /button clrTabLink \(click\)="ensureUsageLoaded\(\)"\>Usage/);
+  assert.match(admin, /Key별 사용량/);
+  assert.match(admin, /Consumer sources/);
+  assert.match(admin, /usageKey\(k\.id\)/);
+  assert.match(admin, /사용 빈도/);
+  assert.match(admin, /usageGrass/);
+  assert.match(admin, /day\.requests/);
+  assert.match(admin, /data-level/);
+  assert.match(admin, /setUsageRange\(365\)/);
+  assert.match(gateway, /\[1, 7, 30, 90, 365\]/);
+  assert.match(admin, /deepseek:[\s\S]*embeddingModel: ''/);
+  assert.match(migration, /append-only/i);
+  assert.doesNotMatch(migration, /prompt(?:_text|_content)?\s+text|response(?:_text|_content)?\s+text|api_key\s+text/i);
+});
+
+test('OAA Admin correlates agent evidence and governs retention without a purge control', () => {
+  const admin = read('src', 'app', 'pages', 'admin-oaa.ts');
+  const gateway = read('backend', 'opensphere-console-oaa-gateway', 'server.js');
+  const migration = read('backend', 'supabase', 'migrations', '0019_oaa_evidence_correlation_retention.sql');
+
+  assert.match(admin, /Agent Evidence/);
+  assert.match(admin, /Run → retrieval \/ tool \/ provider correlation/);
+  assert.match(admin, /보존·Legal hold 정책/);
+  assert.match(admin, /expectedRetentionConfirm/);
+  assert.match(admin, /\/api\/oaa\/admin\/evidence\/retention/);
+  assert.doesNotMatch(admin, />\s*(?:Purge|삭제 실행)\s*</i);
+  assert.match(gateway, /deletionPerformed: false/);
+  assert.match(migration, /export-before-delete/);
+  assert.match(migration, /evidence_policy_event_append_only/);
+});
+
+test('OAA composer follows the desktop chat interaction contract', () => {
+  const agent = read('src', 'app', 'os', 'os-oaa-agent.ts');
+
+  assert.match(agent, /placeholder="무엇이든 요청하세요"/);
+  assert.match(agent, /class="oaa-compose-bar"/);
+  assert.match(agent, /class="oaa-context-chip"/);
+  assert.match(agent, /class="oaa-model-chip"/);
+  assert.match(agent, /title="전송 \(Enter\)"/);
+  assert.match(agent, /if \(ev\.isComposing \|\| ev\.key !== 'Enter' \|\| ev\.shiftKey\) return/);
+  assert.doesNotMatch(agent, /ev\.ctrlKey \|\| ev\.metaKey/);
+  assert.match(agent, /private activeRequest: AbortController \| null = null/);
+  assert.match(agent, /stopGeneration\(\): void/);
+  assert.match(agent, /toggleVoiceInput\(\): void/);
 });

@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
@@ -214,4 +216,18 @@ test('runtime Registry projects channel status and immutable approval evidence',
   assert.deepEqual(entry.approval, {
     actor: 'cmars', reason: 'approved development install', time: '2026-07-19T00:00:00.000Z',
   });
+});
+
+test('OAA Extension security facade is exact-digest, permission-gated, AAL2, and credential-free', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  const owner = source.slice(source.indexOf("if (p.startsWith('/api/oaa/owner/extensions/'))"), source.indexOf('// ── 인증 게이트'));
+  assert.match(owner, /console\.extension\.security\.read/);
+  assert.match(owner, /console\.extension\.security\.manage/);
+  assert.match(owner, /oaaActor\.assurance !== 'aal2'/);
+  assert.match(owner, /requireClosedOaaExtensionBody/);
+  assert.match(owner, /if \(parsed\.channel\)/);
+  assert.match(owner, /revoke extension image \$\{image\}/);
+  assert.doesNotMatch(owner, /registryToken|password|apiKey|credential\s*:/i);
+  assert.match(source, /permissions: Array\.isArray\(body\.permissions\)/);
+  assert.match(source, /assurance: String\(body\.assurance/);
 });
