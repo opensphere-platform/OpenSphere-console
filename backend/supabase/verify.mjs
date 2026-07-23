@@ -76,6 +76,7 @@ assert.match(cliIdentity, /CREATE TABLE IF NOT EXISTS console\.api_token/);
 assert.match(cliIdentity, /FUNCTION console\.approve_cli_enrollment/);
 assert.match(cliIdentity, /poll_token_hash text NOT NULL/);
 assert.match(cliIdentity, /opensphere_console_backend/);
+assert.match(cliIdentity, /DROP POLICY IF EXISTS console_backend_cli_device/);
 assert.match(extensionRevocation, /CREATE TABLE IF NOT EXISTS console\.image_revocation/);
 assert.match(extensionRevocation, /CREATE TRIGGER image_revocation_append_only/);
 assert.match(extensionRevocation, /REVOKE INSERT, UPDATE, DELETE, TRUNCATE[\s\S]+anon, authenticated/);
@@ -101,6 +102,8 @@ assert.match(notification, /CREATE TABLE IF NOT EXISTS console\.notification_cha
 assert.match(notification, /CREATE TABLE IF NOT EXISTS console\.notification_delivery/);
 assert.match(notification, /opensphere_notification_dispatcher/);
 assert.match(notification, /ENABLE ROW LEVEL SECURITY/);
+assert.match(notification, /DROP POLICY IF EXISTS console_backend_notification_channel/);
+assert.match(notification, /DROP POLICY IF EXISTS dispatcher_notification_control/);
 assert.match(llmUsage, /CREATE TABLE IF NOT EXISTS oaa\.llm_usage_event/);
 assert.match(llmUsage, /request_id uuid NOT NULL UNIQUE/);
 assert.match(llmUsage, /input_tokens bigint NOT NULL DEFAULT 0/);

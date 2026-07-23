@@ -79,6 +79,11 @@ ALTER TABLE console.cli_challenge ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console.cli_session ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console.api_token ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS console_backend_cli_device ON console.cli_device;
+DROP POLICY IF EXISTS console_backend_cli_enrollment ON console.cli_enrollment;
+DROP POLICY IF EXISTS console_backend_cli_challenge ON console.cli_challenge;
+DROP POLICY IF EXISTS console_backend_cli_session ON console.cli_session;
+DROP POLICY IF EXISTS console_backend_api_token ON console.api_token;
 CREATE POLICY console_backend_cli_device ON console.cli_device FOR ALL TO opensphere_console_backend USING (true) WITH CHECK (true);
 CREATE POLICY console_backend_cli_enrollment ON console.cli_enrollment FOR ALL TO opensphere_console_backend USING (true) WITH CHECK (true);
 CREATE POLICY console_backend_cli_challenge ON console.cli_challenge FOR ALL TO opensphere_console_backend USING (true) WITH CHECK (true);
