@@ -78,10 +78,10 @@ metadata:
   name: opensphere-console-ext
   namespace: opensphere-console
 spec:
-  # docker-desktop: LoadBalancer가 localhost:8090에 바인딩
+  # docker-desktop: LoadBalancer가 localhost:1114에 바인딩
   type: LoadBalancer
   selector: { app: opensphere-console }
   ports:
     - name: https
-      port: 8090
+      port: 1114
       targetPort: 8443

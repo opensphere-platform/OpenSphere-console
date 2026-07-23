@@ -87,7 +87,7 @@ type ToolManifest struct {
 }
 
 func defaults() Config {
-	console := env("OS_CONSOLE", "https://localhost:8090")
+	console := env("OS_CONSOLE", "https://localhost:1114")
 	return Config{
 		Context:     "default",
 		Profile:     "admin",

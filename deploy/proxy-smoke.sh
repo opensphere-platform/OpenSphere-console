@@ -1,9 +1,9 @@
 #!/bin/sh
 # OpenSphere Console 프록시 계약 스모크 테스트 (팀장 검토 ⑤ 반영)
 # 셸 nginx의 경로 계약이 암묵 의존이 되지 않도록 배포 후 반드시 실행한다.
-#   사용: ./proxy-smoke.sh [BASE]   (기본 http://localhost:8090)
+#   사용: ./proxy-smoke.sh [BASE]   (기본 http://localhost:1114)
 set -u
-BASE="${1:-http://localhost:8090}"
+BASE="${1:-http://localhost:1114}"
 fail=0
 
 check() { # check <이름> <기대값> <실제값>

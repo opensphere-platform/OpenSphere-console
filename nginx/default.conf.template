@@ -19,7 +19,7 @@ access_log /var/log/nginx/access.log opensphere_json;
 
 server {
     listen 8080;                 # http — in-cluster readiness probe / 내부용
-    listen 8443 ssl;             # https — LoadBalancer 외부 노출(콘솔은 https://localhost:8090)
+    listen 8443 ssl;             # https — LoadBalancer 외부 노출(콘솔은 https://localhost:1114)
     # Console TLS is served from shell-tls. HTTPS keeps the Supabase Auth
     # same-origin session flow stable without a separate browser auth host.
     ssl_certificate     /etc/nginx/certs/tls.crt;
