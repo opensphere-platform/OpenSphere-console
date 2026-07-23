@@ -25,11 +25,11 @@ COPY OpenSphere-console/backend/os-cli/cmd ./cmd
 # amd64 test binary while Buildx is building the arm64 image makes `go test`
 # attempt to execute the wrong architecture. The downloadable artifacts below
 # remain explicitly cross-built and are architecture-independent payloads.
-# macOS is not listed in index.json and therefore no unversioned prebuilt
-# artifact is copied into the Console image.
 RUN mkdir -p /out && go test ./... && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
     CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+COPY --from=macos-cli /opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64
+COPY --from=macos-cli /opensphere-cli-darwin-amd64 /out/opensphere-cli-darwin-amd64
 
 FROM docker.io/library/node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS cli-manifest
 ARG CLI_UPDATE_SIGNING_PROFILE

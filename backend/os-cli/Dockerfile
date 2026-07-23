@@ -9,14 +9,14 @@ COPY go.mod ./
 COPY cmd ./cmd
 # Test natively for each Buildx target; only the downloadable binaries are
 # cross-compiled. This keeps the arm64 image build from executing an amd64 test.
-# index.json currently publishes Windows and Linux only. A macOS artifact must
-# not be smuggled into /out until it is versioned and declared in that manifest.
 RUN mkdir -p /out && go test ./... && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
     CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+COPY --from=macos-cli /opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64
+COPY --from=macos-cli /opensphere-cli-darwin-amd64 /out/opensphere-cli-darwin-amd64
 
 # index.json의 크기·SHA-256은 소스에 적힌 과거 값이 아니라 이 빌드에서 나온 정확한
-# 세 바이너리로 다시 생성한다. Console은 이 생성물만 배포한다.
+# 네 플랫폼 바이너리로 다시 생성한다. Console은 이 생성물만 배포한다.
 FROM docker.io/library/node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS manifest
 ARG CLI_UPDATE_SIGNING_PROFILE
 ARG CLI_UPDATE_TRUST_ID

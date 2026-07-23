@@ -9,6 +9,7 @@ COPY opensphere-console-backend/server.js ./server.js
 COPY opensphere-console-backend/supabase-auth.js ./supabase-auth.js
 COPY opensphere-console-backend/cli-token-policy.js ./cli-token-policy.js
 COPY opensphere-console-backend/notification-api.js ./notification-api.js
+COPY opensphere-console-backend/external-channel-api.js ./external-channel-api.js
 COPY opensphere-console-backend/recovery-owner.js ./recovery-owner.js
 COPY notification-dispatcher/contract.js /app/notification-dispatcher/contract.js
 ENV PORT=8080

@@ -1,6 +1,7 @@
 param(
   [string]$ConsoleUrl = "https://console.opensphere.local",
   [string]$Namespace = "opensphere-console-data",
+  [string]$StorageClass = "",
   [string]$KubeContext = ""
 )
 
@@ -67,6 +68,13 @@ if (-not (Test-Path -LiteralPath $manifest)) { throw "Missing manifest: $manifes
 # intentionally a literal namespace substitution: it cannot alter URLs or
 # user data and makes fresh installs/parallel migrations deterministic.
 $renderedManifest = (Get-Content -Raw -LiteralPath $manifest).Replace("__OPENSPHERE_SUPABASE_NAMESPACE__", $Namespace).Replace("__OPENSPHERE_CONSOLE_URL__", $ConsoleUrl.TrimEnd('/'))
+if ($StorageClass) {
+  $renderedManifest = $renderedManifest.Replace("__OPENSPHERE_STORAGE_CLASS__", $StorageClass)
+} else {
+  # Direct development installs preserve Kubernetes' default StorageClass.
+  # Setup always supplies an explicit, preflight-validated class.
+  $renderedManifest = $renderedManifest -replace "(?m)^\s*storageClassName:\s*__OPENSPHERE_STORAGE_CLASS__\r?\n", ""
+}
 Invoke-Kubectl @("apply", "-f", "-") $renderedManifest
 
 $secretExists = $true
@@ -77,6 +85,8 @@ if (-not $secretExists) {
   $postgresPassword = New-RandomSafePassword 36
   $backendPassword = New-RandomSafePassword 36
   $oaaGatewayPassword = New-RandomSafePassword 36
+  $aiRuntimePassword = New-RandomSafePassword 36
+  $aiPipelinePassword = New-RandomSafePassword 36
   $jwtSecret = New-RandomBase64 48
   $anonKey = New-ServiceJwt $jwtSecret "anon"
   $serviceRoleKey = New-ServiceJwt $jwtSecret "service_role"
@@ -95,9 +105,13 @@ if (-not $secretExists) {
       'postgres-password' = $postgresPassword
       'backend-password' = $backendPassword
       'oaa-gateway-password' = $oaaGatewayPassword
+      'ai-runtime-password' = $aiRuntimePassword
+      'ai-pipeline-password' = $aiPipelinePassword
       'jwt-secret' = $jwtSecret
       'anon-key' = $anonKey
       'service-role-key' = $serviceRoleKey
+      's3-access-key-id' = (New-RandomSafePassword 32)
+      's3-access-key-secret' = (New-RandomSafePassword 64)
     }
   } | ConvertTo-Json -Depth 10 -Compress
   Invoke-Kubectl @('apply', '-f', '-') $secretManifest
@@ -105,15 +119,23 @@ if (-not $secretExists) {
   Write-Host "Reusing existing opensphere-supabase-secrets; credentials are not rotated implicitly."
 }
 
-# OAA receives its own constrained database credential.  It never receives the
-# Supabase owner password, service-role JWT, or Console Backend credential.
-$oaaGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-gateway-password}")
-if (-not $oaaGatewayPasswordB64) {
-  $newOaaGatewayPassword = New-RandomSafePassword 36
-  $oaaGatewayPasswordPatch = @{ stringData = @{ 'oaa-gateway-password' = $newOaaGatewayPassword } } | ConvertTo-Json -Compress
-  Invoke-Kubectl @("-n", $Namespace, "patch", "secret", "opensphere-supabase-secrets", "--type=merge", "-p", $oaaGatewayPasswordPatch)
-  $oaaGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-gateway-password}")
+# Existing installations gain only the missing scoped credentials. Existing
+# values are never rotated implicitly.
+$requiredScopedSecrets = @{
+  'oaa-gateway-password' = 36
+  'ai-runtime-password' = 36
+  'ai-pipeline-password' = 36
+  's3-access-key-id' = 32
+  's3-access-key-secret' = 64
 }
+foreach ($entry in $requiredScopedSecrets.GetEnumerator()) {
+  $encoded = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.$($entry.Key)}")
+  if (-not $encoded) {
+    $patch = @{ stringData = @{ $entry.Key = (New-RandomSafePassword $entry.Value) } } | ConvertTo-Json -Compress
+    Invoke-Kubectl @("-n", $Namespace, "patch", "secret", "opensphere-supabase-secrets", "--type=merge", "-p", $patch)
+  }
+}
+$oaaGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-gateway-password}")
 
 # Kubernetes Secrets are namespace-scoped. Mirror only the two server-side
 # values required by Console Backend; never copy the Postgres owner password.
@@ -148,6 +170,66 @@ data:
 "@
 Invoke-Kubectl @("apply", "-f", "-") $oaaRuntimeSecret
 
+# AI receives two constrained PostgreSQL logins and an RLS-scoped Storage S3
+# session. It never receives the owner password, service-role key, JWT signing
+# secret, or the global S3 protocol access key.
+$aiRuntimePasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.ai-runtime-password}")
+$aiPipelinePasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.ai-pipeline-password}")
+$anonKeyB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.anon-key}")
+$jwtSecret = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($jwtSecretB64))
+$aiStorageSession = New-ServiceJwt $jwtSecret "opensphere_ai_runtime"
+$aiStorageSessionB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($aiStorageSession))
+$storageEndpoint = "http://opensphere-supabase-storage.$Namespace.svc.cluster.local:5000/storage/v1/s3"
+$aiRuntimeSecret = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensphere-supabase-ai-runtime
+  namespace: opensphere-system
+  labels:
+    opensphere.io/secret-scope: ai-runtime-only
+    opensphere.io/authority: supabase
+type: Opaque
+data:
+  password: $aiRuntimePasswordB64
+  secret_key: $anonKeyB64
+  session_token: $aiStorageSessionB64
+stringData:
+  provider: postgres
+  host: opensphere-supabase-postgres.$Namespace.svc.cluster.local
+  port: "5432"
+  database: postgres
+  username: opensphere_ai_runtime
+  sslmode: prefer
+  endpoint: $storageEndpoint
+  bucket: ai-artifacts
+  region: local
+  access_key: opensphere-console
+"@
+Invoke-Kubectl @("apply", "-f", "-") $aiRuntimeSecret
+
+$aiPipelineSecret = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensphere-supabase-ai-pipeline
+  namespace: opensphere-system
+  labels:
+    opensphere.io/secret-scope: ai-pipeline-only
+    opensphere.io/authority: supabase
+type: Opaque
+data:
+  password: $aiPipelinePasswordB64
+stringData:
+  provider: postgres
+  host: opensphere-supabase-postgres.$Namespace.svc.cluster.local
+  port: "5432"
+  database: oah_dspa
+  username: opensphere_ai_pipeline
+  sslmode: prefer
+"@
+Invoke-Kubectl @("apply", "-f", "-") $aiPipelineSecret
+
 # The first apply may leave Pods pending until the Secret exists.  Re-apply,
 # then bring PostgreSQL up before starting the API workloads.  The official
 # Supabase PostgreSQL image creates these service roles without assigning their
@@ -168,6 +250,15 @@ function Invoke-SupabasePsql([string]$Sql) {
   # Supabase owns the database with POSTGRES_USER, not an assumed `postgres`
   # login. This makes fresh installs and later migrations use the same owner.
   Invoke-Kubectl @("-n", $Namespace, "exec", "-i", $pod, "--", "sh", "-ec", 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1') $Sql
+}
+
+function Invoke-SupabaseMigrationPsql([string]$Sql) {
+  # Console migrations also create narrowly-scoped policies on Supabase-owned
+  # storage.objects. The regular POSTGRES_USER is intentionally not that
+  # table's owner, so trusted, release-pinned migrations execute through the
+  # image-provided migration administrator. Runtime services never receive
+  # this credential or role.
+  Invoke-Kubectl @("-n", $Namespace, "exec", "-i", $pod, "--", "sh", "-ec", 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1') $Sql
 }
 
 # Do not create these roles ourselves: their membership and grants are owned by
@@ -202,8 +293,12 @@ Invoke-Kubectl @('-n', $Namespace, 'exec', $storagePod, '--', 'node', '/app/dist
 $backendPassword = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.backend-password}")
 $backendPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($backendPassword))
 $oaaGatewayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($oaaGatewayPasswordB64))
+$aiRuntimePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aiRuntimePasswordB64))
+$aiPipelinePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aiPipelinePasswordB64))
 $escapedBackendPassword = $backendPassword.Replace("'", "''")
 $escapedOaaGatewayPassword = $oaaGatewayPassword.Replace("'", "''")
+$escapedAiRuntimePassword = $aiRuntimePassword.Replace("'", "''")
+$escapedAiPipelinePassword = $aiPipelinePassword.Replace("'", "''")
 
 # Create the constrained runtime role without placing its password in argv or logs.
 $roleSql = @"
@@ -229,12 +324,36 @@ BEGIN
   END IF;
 END
 `$`$;
+DO `$`$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_ai_runtime') THEN
+    CREATE ROLE opensphere_ai_runtime LOGIN PASSWORD '$escapedAiRuntimePassword'
+      NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE opensphere_ai_runtime LOGIN PASSWORD '$escapedAiRuntimePassword'
+      NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+`$`$;
+DO `$`$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_ai_pipeline') THEN
+    CREATE ROLE opensphere_ai_pipeline LOGIN PASSWORD '$escapedAiPipelinePassword'
+      NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE opensphere_ai_pipeline LOGIN PASSWORD '$escapedAiPipelinePassword'
+      NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+`$`$;
+SELECT format('CREATE DATABASE %I OWNER %I', 'oah_dspa', 'opensphere_ai_pipeline')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'oah_dspa')\gexec
 "@
 
 Invoke-SupabasePsql $roleSql
 foreach ($migration in $migrations) {
   Write-Host "Applying Supabase migration $($migration.Name)"
-  Invoke-SupabasePsql (Get-Content -Raw -LiteralPath $migration.FullName)
+  Invoke-SupabaseMigrationPsql (Get-Content -Raw -LiteralPath $migration.FullName)
 }
 
 # Reload the two schema-consuming APIs after Console migrations have completed.

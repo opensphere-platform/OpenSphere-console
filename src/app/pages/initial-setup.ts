@@ -4,10 +4,7 @@ import { ClarityModule } from '@clr/angular';
 import { AuthService } from '../core/auth.service';
 
 interface BeginResponse {
-  state?: 'complete' | 'totp-required';
-  setupId?: string;
-  secret?: string;
-  qrDataUrl?: string;
+  state?: 'complete';
   error?: string;
 }
 
@@ -152,12 +149,15 @@ export class InitialSetup implements OnDestroy {
       });
       const body = await response.json() as BeginResponse;
       if (!response.ok) throw new Error(this.message(body.error));
+      const bootstrapPassword = this.password;
+      await this.auth.login(this.email, bootstrapPassword);
+      if (this.auth.mfaRequired()) throw new Error('새 관리자에 예상하지 않은 기존 MFA factor가 연결되어 있습니다.');
+      const enrollment = await this.auth.beginTotpEnrollment('OpenSphere initial administrator');
       this.password = ''; this.passwordConfirm = '';
-      if (body.state === 'totp-required') {
-        this.setupId.set(body.setupId || ''); this.secret.set(body.secret || ''); this.qrDataUrl.set(body.qrDataUrl || ''); this.step.set('totp');
-      } else {
-        await this.auth.completeInitialSetup();
-      }
+      this.setupId.set(enrollment.factorId);
+      this.secret.set(enrollment.secret);
+      this.qrDataUrl.set(enrollment.qrCode);
+      this.step.set('totp');
     } catch (error) { this.error.set(error instanceof Error ? error.message : String(error)); }
     finally { this.working.set(false); }
   }
@@ -165,12 +165,7 @@ export class InitialSetup implements OnDestroy {
   async finishTotp(): Promise<void> {
     this.error.set(''); this.working.set(true);
     try {
-      const response = await fetch('/api/identity/bootstrap/totp', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ setupId: this.setupId(), code: this.totp })
-      });
-      const body = await response.json() as BeginResponse;
-      if (!response.ok) throw new Error(this.message(body.error));
+      await this.auth.verifyTotpEnrollment(this.setupId(), this.totp);
       await this.auth.completeInitialSetup();
     } catch (error) { this.error.set(error instanceof Error ? error.message : String(error)); }
     finally { this.working.set(false); }

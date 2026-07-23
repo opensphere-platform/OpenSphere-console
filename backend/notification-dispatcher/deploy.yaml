@@ -39,3 +39,53 @@ metadata: { name: opensphere-notification-dispatcher, namespace: opensphere-cons
 spec:
   selector: { app: opensphere-notification-dispatcher }
   ports: [{ name: http, port: 8081, targetPort: 8081 }]
+---
+# Same governed OCI artifact, separate process and trust boundary. This runtime
+# has no Kubernetes service-account token and cannot read notification secrets.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: opensphere-external-channel-executor, namespace: opensphere-console, labels: { app: opensphere-external-channel-executor } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: opensphere-external-channel-executor } }
+  template:
+    metadata: { labels: { app: opensphere-external-channel-executor } }
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      containers:
+        - name: executor
+          image: opensphere-notification-dispatcher:notification-channel-editor-v1
+          imagePullPolicy: IfNotPresent
+          command: ["node", "external-backup-server.js"]
+          env:
+            - { name: PORT, value: "8082" }
+            - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000" }
+            - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:8090/auth/v1" }
+            - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: service-role-key } }
+            - name: SUPABASE_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: jwt-secret } }
+            - name: EXTERNAL_CREDENTIAL_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: credential-encryption-key } }
+            - name: EXTERNAL_BACKUP_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: backup-encryption-key } }
+            - name: EXTERNAL_CHANNEL_EXECUTOR_TOKEN
+              valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: internal-token } }
+          ports: [{ containerPort: 8082 }]
+          readinessProbe: { httpGet: { path: /readyz, port: 8082 }, initialDelaySeconds: 2, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8082 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 20m, memory: 48Mi }
+            limits: { cpu: 300m, memory: 192Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-external-channel-executor, namespace: opensphere-console }
+spec:
+  selector: { app: opensphere-external-channel-executor }
+  ports: [{ name: http, port: 8082, targetPort: 8082 }]

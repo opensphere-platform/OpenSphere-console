@@ -16,6 +16,7 @@ COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 RUN test -s /usr/share/nginx/html/api/cli/index.json \
     && test -x /usr/share/nginx/html/api/cli/opensphere-cli-linux-amd64 \
     && test -x /usr/share/nginx/html/api/cli/opensphere-cli-darwin-arm64 \
+    && test -x /usr/share/nginx/html/api/cli/opensphere-cli-darwin-amd64 \
     && test -x /usr/share/nginx/html/api/cli/opensphere-cli-windows-amd64.exe
 
 USER 101

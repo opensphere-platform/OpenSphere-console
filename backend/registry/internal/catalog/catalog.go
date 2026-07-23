@@ -83,9 +83,6 @@ func Sort(items []Item) {
 // 출처: foundation operands-catalog 의 실 operand. 모두 버전 핀(빈 digest 0).
 func SeedCapabilities() []Item {
 	return []Item{
-		{Kind: KindCapability, Name: "kanidm", DisplayName: "Kanidm (콘솔 IdP)", Version: "1.4.6", Channel: "stable",
-			Image: "docker.io/kanidm/server", ImageDigest: "1.4.6",
-			Description: "🛡️ 콘솔/관리자 break-glass IdP(spine 전용)", Source: "seed"},
 		{Kind: KindCapability, Name: "keycloak", DisplayName: "Keycloak IAM", Version: "24.0.5", Channel: "stable",
 			Image: "quay.io/keycloak/keycloak", ImageDigest: "24.0.5",
 			Requires: []string{"postgresql"}, Description: "👤 사원/사용자 IdP(Workspace)", Source: "seed"},

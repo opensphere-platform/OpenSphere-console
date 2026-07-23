@@ -11,18 +11,23 @@ interface Rule { id: string; name: string; enabled: boolean; priority: number; m
 interface Delivery { id: string; status: string; attempts: number; providerMessageId: string; lastErrorCode: string; updatedAt: string; nextAttemptAt: string; event: { title: string; source: string; severity: string; occurred_at: string } | null; channel: { name: string; provider: string } | null; }
 interface Summary { active: number; healthy: number; degraded: number; failed24h: number; deadLetter: number; paused: boolean; }
 interface PendingAction { title: string; description: string; path: string; reason: string; confirmLabel: string; testRecipient?: string; }
+interface BackupTarget { id: string; name: string; endpoint: string; region: string; bucketName: string; bucketId: string; pathPrefix: string; bucketPrivate: boolean; lifecycleMode: string; serverSideEncryption: string; clientSideEncryption: string; enabled: boolean; healthState: string; credential: { configured: boolean; version: number }; lastTest: { status: string; at: string; errorCode?: string | null } | null; lastBackupAt: string | null; lastRestoreAt: string | null; }
+interface Backup { id: string; targetId: string; targetName: string; objectKey: string; status: string; encryption: string; plaintextDigest: string; sizeBytes: number; entryCounts: Record<string, number>; createdAt: string; completedAt: string | null; errorCode: string | null; }
+interface ExternalSummary { targets: number; readyTargets: number; configuredTargets: number; lastBackup: { status: string; at: string | null } | null; lastRestore: { status: string; at: string | null } | null; }
+interface RestorePreview { restoreId: string; backupId: string; digest: string; backupCreatedAt: string; restoreMode: string; exclusions: string[]; changes: { totals: { incoming: number; additions: number; changes: number; unchanged: number } }; }
 
 const emptyChannel = () => ({ name: '', provider: 'slack' as Provider, target: '', webhookUrl: '', titlePrefix: '', smtpHost: '', smtpPort: 587, smtpSecure: false, smtpFrom: '', smtpRecipients: '', smtpUsername: '', smtpPassword: '', twilioAccountSid: '', twilioServiceSid: '', twilioFrom: '', twilioRecipients: '', twilioToken: '', reason: '' });
 const emptyRule = () => ({ name: '', priority: 100, minSeverity: 'error', sources: '', categories: '', channelIds: [] as string[], dedupWindowSeconds: 600, reason: '' });
+const emptyBackupTarget = () => ({ name: 'Backblaze B2 Console Backup', endpoint: 'https://s3.us-east-005.backblazeb2.com', region: 'us-east-005', bucketName: '', bucketId: '68be7936e6cd8ee39ff5091f', pathPrefix: 'opensphere-console', accessKeyId: '', applicationKey: '', bucketPrivate: true, lifecycleMode: 'keep-all-versions', serverSideEncryption: 'disabled', reason: '' });
 
 @Component({
-  selector: 'os-admin-notification-channels',
+  selector: 'os-admin-external-channels',
   imports: [ClarityModule, FormsModule, OsPageHeader, OsPanel],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="os-page">
-      <os-page-header title="외부 채널" tag="Core·Admin · Outbound delivery" />
-      <div class="manage-page-lead"><p>신뢰된 Console 이벤트를 이메일, SMS, Slack, Discord로 전달합니다. 자격 증명은 저장 후 다시 표시되지 않습니다.</p><span>server-side dispatcher · append-only delivery evidence</span></div>
+      <os-page-header title="외부 채널" tag="Core·Admin · Delivery & encrypted backup" />
+      <div class="manage-page-lead"><p>외부 알림 전달과 Console 구성의 암호화 백업·즉시 복원을 한 관리 표면에서 감독합니다. 알림과 백업은 별도 실행기·DB 역할·암호화 키를 사용합니다.</p><span>Supabase metadata · Backblaze B2 S3 · client-side AES-256-GCM · append-only audit</span></div>
 
       <section class="manage-status-rail" aria-label="외부 채널 전달 상태">
         <div><span>Active</span><strong>{{ summary().active }}</strong><small>발송 가능 채널</small></div>
@@ -30,6 +35,8 @@ const emptyRule = () => ({ name: '', priority: 100, minSeverity: 'error', source
         <div><span>Degraded</span><strong [class.warn]="summary().degraded > 0">{{ summary().degraded }}</strong><small>재시도 또는 설정 점검</small></div>
         <div><span>Failed 24h</span><strong [class.danger]="summary().failed24h > 0">{{ summary().failed24h }}</strong><small>최종 실패</small></div>
         <div><span>Dead letter</span><strong [class.danger]="summary().deadLetter > 0">{{ summary().deadLetter }}</strong><small>수동 조치 필요</small></div>
+        <div><span>Backup targets</span><strong [class.ok]="externalSummary().readyTargets > 0">{{ externalSummary().readyTargets }}/{{ externalSummary().targets }}</strong><small>검증된 외부 저장소</small></div>
+        <div><span>Latest backup</span><strong [class.ok]="externalSummary().lastBackup?.status === 'ready'">{{ externalSummary().lastBackup?.status || 'None' }}</strong><small>{{ fmt(externalSummary().lastBackup?.at || '') }}</small></div>
       </section>
 
       @if (error(); as message) { <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="true" (clrAlertClosedChange)="error.set('')"><clr-alert-item><span class="alert-text">{{ message }}</span></clr-alert-item></clr-alert> }
@@ -80,6 +87,50 @@ const emptyRule = () => ({ name: '', priority: 100, minSeverity: 'error', source
             </clr-datagrid>
           </clr-tab-content>
         </clr-tab>
+        <clr-tab>
+          <button clrTabLink>백업 대상</button>
+          <clr-tab-content>
+            <div class="os-actions"><button class="btn btn-sm btn-primary" (click)="openBackupTargetPanel()">S3 대상 연결</button><button class="btn btn-sm btn-outline" [disabled]="busy()" (click)="load()">새로고침</button><span class="os-sub">Application Key는 별도 실행기가 암호화 보관하며 브라우저·Console Backend로 다시 반환하지 않습니다.</span></div>
+            @if (!backupTargets().length) {
+              <section class="empty-backup">
+                <strong>외부 백업 대상이 아직 연결되지 않았습니다.</strong>
+                <p>Backblaze B2 버킷 이름과 Application Key ID/Application Key를 입력하면 제공된 us-east-005 엔드포인트와 버킷 ID를 사용해 연결 검증을 시작할 수 있습니다.</p>
+                <button class="btn btn-sm btn-primary" (click)="openBackupTargetPanel()">Backblaze B2 연결</button>
+              </section>
+            } @else {
+              <div class="target-grid">
+                @for (target of backupTargets(); track target.id) {
+                  <article class="target-card">
+                    <div class="target-card__head"><div><span class="eyebrow">S3 · Backblaze B2</span><h3>{{ target.name }}</h3></div><span class="label" [class.label-success]="target.healthState === 'Ready'" [class.label-warning]="target.healthState === 'Degraded'" [class.label-danger]="target.healthState === 'Misconfigured'">{{ target.healthState }}</span></div>
+                    <dl><div><dt>Endpoint</dt><dd class="os-mono">{{ target.endpoint }}</dd></div><div><dt>Bucket</dt><dd>{{ target.bucketName }} <span class="os-mono">{{ target.bucketId }}</span></dd></div><div><dt>보존</dt><dd>{{ target.bucketPrivate ? 'Private' : 'Public' }} · {{ target.lifecycleMode }}</dd></div><div><dt>암호화</dt><dd><span class="ok">Client {{ target.clientSideEncryption }}</span> · Server {{ target.serverSideEncryption }}</dd></div><div><dt>자격 증명</dt><dd>{{ target.credential.configured ? 'Configured · v' + target.credential.version : 'Missing' }}</dd></div><div><dt>최근 백업</dt><dd>{{ fmt(target.lastBackupAt || '') }}</dd></div></dl>
+                    <div class="card-actions"><button class="btn btn-sm btn-outline" [disabled]="busy()" (click)="testBackupTarget(target)">연결 테스트</button><button class="btn btn-sm btn-primary" [disabled]="busy() || !target.credential.configured" (click)="backupNow(target)">지금 백업</button></div>
+                  </article>
+                }
+              </div>
+            }
+          </clr-tab-content>
+        </clr-tab>
+        <clr-tab>
+          <button clrTabLink>백업 및 복원</button>
+          <clr-tab-content>
+            <div class="scope-note"><strong>Configuration snapshot 범위</strong><span>RBAC 계약 · plugin metadata · consumer/observability 계약 · 알림 채널/규칙</span><span class="warn">제외: 사용자/세션/비밀번호 · 모든 Secret · 감사/전달 이력 · Gitea 저장소 · Supabase DB/Storage 원본</span></div>
+            <clr-datagrid [clrDgLoading]="loading()">
+              <clr-dg-column>생성 시각</clr-dg-column><clr-dg-column>대상·객체</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>암호화·크기</clr-dg-column><clr-dg-column>구성 항목</clr-dg-column><clr-dg-column>작업</clr-dg-column>
+              @for (backup of backups(); track backup.id) {
+                <clr-dg-row>
+                  <clr-dg-cell class="os-mono">{{ fmt(backup.createdAt) }}</clr-dg-cell>
+                  <clr-dg-cell><strong>{{ backup.targetName || backup.targetId }}</strong><div class="os-mono">{{ backup.objectKey }}</div></clr-dg-cell>
+                  <clr-dg-cell><span class="label" [class.label-success]="backup.status === 'ready'" [class.label-danger]="backup.status === 'failed'">{{ backup.status }}</span>@if (backup.errorCode) { <div class="os-mono">{{ backup.errorCode }}</div> }</clr-dg-cell>
+                  <clr-dg-cell>{{ backup.encryption }}<div class="os-mono">{{ fileSize(backup.sizeBytes) }}</div></clr-dg-cell>
+                  <clr-dg-cell>{{ totalEntries(backup) }} records<div class="os-mono">{{ shortDigest(backup.plaintextDigest) }}</div></clr-dg-cell>
+                  <clr-dg-cell>@if (backup.status === 'ready') { <button class="btn btn-sm btn-link" [disabled]="busy()" (click)="previewRestore(backup)">복원 미리보기</button> }</clr-dg-cell>
+                </clr-dg-row>
+              }
+              <clr-dg-placeholder>생성된 구성 백업이 없습니다.</clr-dg-placeholder>
+              <clr-dg-footer>최근 {{ backups().length }}개 · 버킷 객체는 Console에서 암호화한 뒤 업로드됩니다.</clr-dg-footer>
+            </clr-datagrid>
+          </clr-tab-content>
+        </clr-tab>
       </clr-tabs>
     </div>
 
@@ -119,23 +170,60 @@ const emptyRule = () => ({ name: '', priority: 100, minSeverity: 'error', source
       }
       <div osPanelFooter>@if (pendingAction(); as action) { <button class="btn btn-primary" [disabled]="busy() || action.reason.trim().length < 8 || (action.testRecipient !== undefined && !validEmail(action.testRecipient))" (click)="executePendingAction()">{{ action.confirmLabel }}</button><button class="btn btn-outline" [disabled]="busy()" (click)="cancelPendingAction()">취소</button> }</div>
     </os-panel>
+
+    <os-panel [open]="backupTargetPanelOpen()" title="S3 백업 대상 연결" subtitle="Backblaze B2 · credentials are write-only" (closed)="closePanels()">
+      <div class="panel-callout"><strong>제공된 Backblaze B2 버킷 정보가 적용되어 있습니다.</strong><span>Private · Keep all versions · us-east-005 · Bucket ID 68be7936e6cd8ee39ff5091f</span><span class="warn">Bucket server encryption이 Disabled이므로 모든 snapshot은 업로드 전에 AES-256-GCM으로 암호화됩니다.</span></div>
+      <form clrForm clrLayout="vertical" class="channel-form" autocomplete="off">
+        <clr-input-container><label>연결 이름</label><input clrInput [(ngModel)]="backupTargetForm.name" name="backup-name" /></clr-input-container>
+        <clr-input-container><label>Region</label><input clrInput [(ngModel)]="backupTargetForm.region" name="backup-region" readonly /></clr-input-container>
+        <clr-input-container class="wide"><label>S3 endpoint</label><input clrInput [(ngModel)]="backupTargetForm.endpoint" name="backup-endpoint" readonly /></clr-input-container>
+        <clr-input-container><label>Bucket name</label><input clrInput [(ngModel)]="backupTargetForm.bucketName" name="backup-bucket-name" placeholder="Backblaze 화면의 Bucket Name" /><clr-control-helper>Bucket ID가 아니라 실제 버킷 이름이 필요합니다.</clr-control-helper></clr-input-container>
+        <clr-input-container><label>Bucket ID</label><input clrInput [(ngModel)]="backupTargetForm.bucketId" name="backup-bucket-id" readonly /></clr-input-container>
+        <clr-input-container class="wide"><label>Object prefix</label><input clrInput [(ngModel)]="backupTargetForm.pathPrefix" name="backup-prefix" /></clr-input-container>
+        <clr-input-container><label>Application Key ID</label><input clrInput type="password" [(ngModel)]="backupTargetForm.accessKeyId" name="backup-access-key" autocomplete="new-password" /></clr-input-container>
+        <clr-input-container><label>Application Key</label><input clrInput type="password" [(ngModel)]="backupTargetForm.applicationKey" name="backup-secret-key" autocomplete="new-password" /></clr-input-container>
+        <clr-input-container class="wide"><label>변경 사유</label><input clrInput [(ngModel)]="backupTargetForm.reason" name="backup-reason" placeholder="Console 구성 외부 백업 대상 최초 연결" /><clr-control-helper>최소 8자 · credential 원문은 감사 로그에 기록하지 않습니다.</clr-control-helper></clr-input-container>
+      </form>
+      <div osPanelFooter><button class="btn btn-primary" [disabled]="busy() || !backupTargetForm.bucketName || !backupTargetForm.accessKeyId || !backupTargetForm.applicationKey || backupTargetForm.reason.trim().length < 8" (click)="createBackupTarget()">연결 저장</button><button class="btn btn-outline" [disabled]="busy()" (click)="closePanels()">취소</button></div>
+    </os-panel>
+
+    <os-panel [open]="!!restorePreview()" title="구성 복원 확인" subtitle="AAL2 · digest-bound transactional merge" (closed)="cancelRestore()">
+      @if (restorePreview(); as preview) {
+        <div class="restore-summary"><span>Backup <strong class="os-mono">{{ preview.backupId }}</strong></span><span>생성 {{ fmt(preview.backupCreatedAt) }}</span><span>입력 {{ preview.changes.totals.incoming }} · 추가 {{ preview.changes.totals.additions }} · 변경 {{ preview.changes.totals.changes }} · 동일 {{ preview.changes.totals.unchanged }}</span></div>
+        <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">이 복원은 허용된 구성만 트랜잭션으로 병합합니다. Secret과 운영자 역할 할당은 복원하지 않으며, 새 알림 채널은 자격 증명을 다시 입력할 때까지 비활성 상태입니다.</span></clr-alert-item></clr-alert>
+        <form clrForm clrLayout="vertical" class="channel-form">
+          <clr-input-container class="wide"><label>정확한 확인 문구</label><input clrInput [(ngModel)]="restoreConfirmation" name="restore-confirmation" [placeholder]="'RESTORE ' + preview.backupId" /><clr-control-helper>RESTORE {{ preview.backupId }}</clr-control-helper></clr-input-container>
+          <clr-input-container class="wide"><label>복원 사유</label><input clrInput [(ngModel)]="restoreReason" name="restore-reason" /><clr-control-helper>append-only 감사 로그에 기록됩니다.</clr-control-helper></clr-input-container>
+        </form>
+      }
+      <div osPanelFooter>@if (restorePreview(); as preview) { <button class="btn btn-danger" [disabled]="busy() || restoreConfirmation.trim() !== 'RESTORE ' + preview.backupId || restoreReason.trim().length < 8" (click)="applyRestore()">지금 복원</button><button class="btn btn-outline" [disabled]="busy()" (click)="cancelRestore()">취소</button> }</div>
+    </os-panel>
   `,
   styles: [`
-    .os-actions { display:flex; align-items:center; gap:.5rem; margin:.7rem 0; }.os-sub,.os-mono { color:var(--os-ink-muted); font-size:.68rem; }.os-mono { font-family:var(--os-font-mono,monospace); }.channel-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 .9rem; }.wide { grid-column:1 / -1; } :host ::ng-deep .channel-form .clr-control-container,:host ::ng-deep .channel-form .clr-input-wrapper,:host ::ng-deep .channel-form .clr-select-wrapper { width:100%; } :host ::ng-deep .channel-form input.clr-input,:host ::ng-deep .channel-form select.clr-select { width:100%;max-width:none; } @media (max-width:760px) { .channel-form { grid-template-columns:1fr; }.wide { grid-column:1; } }
+    .os-actions { display:flex; align-items:center; gap:.5rem; margin:.7rem 0; }.os-sub,.os-mono { color:var(--os-ink-muted); font-size:.68rem; }.os-mono { font-family:var(--os-font-mono,monospace); }.channel-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 .9rem; }.wide { grid-column:1 / -1; } :host ::ng-deep .channel-form .clr-control-container,:host ::ng-deep .channel-form .clr-input-wrapper,:host ::ng-deep .channel-form .clr-select-wrapper { width:100%; } :host ::ng-deep .channel-form input.clr-input,:host ::ng-deep .channel-form select.clr-select { width:100%;max-width:none; }.empty-backup,.panel-callout,.scope-note,.restore-summary { border:1px solid var(--os-hairline,#d7dce1);background:var(--os-surface,#fff);padding:1rem;margin:.8rem 0;display:flex;flex-direction:column;gap:.35rem;}.target-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(22rem,1fr));gap:.8rem;margin:.8rem 0}.target-card{border:1px solid var(--os-hairline,#d7dce1);background:var(--os-surface,#fff);padding:1rem}.target-card__head{display:flex;justify-content:space-between;gap:1rem}.target-card h3{margin:.15rem 0 .8rem}.eyebrow{font-size:.6rem;text-transform:uppercase;color:var(--os-ink-muted)}.target-card dl{margin:0}.target-card dl div{display:grid;grid-template-columns:6rem 1fr;padding:.35rem 0;border-top:1px solid var(--os-hairline,#e4e7ea)}.target-card dt{color:var(--os-ink-muted)}.target-card dd{margin:0;overflow-wrap:anywhere}.card-actions{display:flex;gap:.4rem;margin-top:.8rem}.warn{color:var(--cds-alias-status-warning,#a36200)}.ok{color:var(--cds-alias-status-success,#1b7f3b)}.restore-summary{font-size:.75rem}.scope-note{flex-direction:row;align-items:center;flex-wrap:wrap;gap:.8rem}@media (max-width:760px) { .channel-form { grid-template-columns:1fr; }.wide { grid-column:1; }.scope-note{align-items:flex-start;flex-direction:column}.target-grid{grid-template-columns:1fr} }
   `],
 })
-export class AdminNotificationChannels {
+export class AdminExternalChannels {
   private readonly http = inject(HttpService);
   readonly summary = signal<Summary>({ active: 0, healthy: 0, degraded: 0, failed24h: 0, deadLetter: 0, paused: false });
   readonly channels = signal<Channel[]>([]); readonly rules = signal<Rule[]>([]); readonly deliveries = signal<Delivery[]>([]);
+  readonly externalSummary = signal<ExternalSummary>({ targets: 0, readyTargets: 0, configuredTargets: 0, lastBackup: null, lastRestore: null });
+  readonly backupTargets = signal<BackupTarget[]>([]); readonly backups = signal<Backup[]>([]); readonly restorePreview = signal<RestorePreview | null>(null);
   readonly loading = signal(true); readonly busy = signal(false); readonly error = signal('');
-  readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null);
-  channelForm = emptyChannel(); ruleForm = emptyRule();
+  readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly backupTargetPanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null);
+  channelForm = emptyChannel(); ruleForm = emptyRule(); backupTargetForm = emptyBackupTarget(); restoreConfirmation = ''; restoreReason = '운영 구성 복원 실행';
   constructor() { void this.load(); }
-  async load(): Promise<void> { this.loading.set(true); try { const [summary, channels, rules, deliveries] = await Promise.all([this.http.json<Summary>('/api/notifications/summary'), this.http.json<{ items: Channel[] }>('/api/notifications/channels'), this.http.json<{ items: Rule[] }>('/api/notifications/rules'), this.http.json<{ items: Delivery[] }>('/api/notifications/deliveries?limit=100')]); this.summary.set(summary); this.channels.set(channels.items || []); this.rules.set(rules.items || []); this.deliveries.set(deliveries.items || []); } catch (error) { this.error.set(`외부 채널 정보를 불러오지 못했습니다: ${String(error)}`); } finally { this.loading.set(false); } }
+  async load(): Promise<void> { this.loading.set(true); try { const [summary, channels, rules, deliveries, externalSummary, targets, backups] = await Promise.all([this.http.json<Summary>('/api/notifications/summary'), this.http.json<{ items: Channel[] }>('/api/notifications/channels'), this.http.json<{ items: Rule[] }>('/api/notifications/rules'), this.http.json<{ items: Delivery[] }>('/api/notifications/deliveries?limit=100'), this.http.json<ExternalSummary>('/api/external-channels/summary'), this.http.json<{ items: BackupTarget[] }>('/api/external-channels/backup-targets'), this.http.json<{ items: Backup[] }>('/api/external-channels/backups')]); this.summary.set(summary); this.channels.set(channels.items || []); this.rules.set(rules.items || []); this.deliveries.set(deliveries.items || []); this.externalSummary.set(externalSummary); this.backupTargets.set(targets.items || []); this.backups.set(backups.items || []); } catch (error) { this.error.set(`외부 채널 정보를 불러오지 못했습니다: ${String(error)}`); } finally { this.loading.set(false); } }
   openChannelPanel(): void { this.editingChannelId.set(null); this.channelForm = emptyChannel(); this.channelPanelOpen.set(true); }
   openRulePanel(): void { this.ruleForm = emptyRule(); this.rulePanelOpen.set(true); }
-  closePanels(): void { this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.editingChannelId.set(null); }
+  openBackupTargetPanel(): void { this.backupTargetForm = emptyBackupTarget(); this.backupTargetPanelOpen.set(true); }
+  closePanels(): void { this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.backupTargetPanelOpen.set(false); this.editingChannelId.set(null); }
+  async createBackupTarget(): Promise<void> { await this.mutate(async () => { await this.request('/api/external-channels/backup-targets', this.backupTargetForm); this.backupTargetForm.accessKeyId = ''; this.backupTargetForm.applicationKey = ''; this.closePanels(); }); }
+  testBackupTarget(target: BackupTarget): void { this.openPendingAction('S3 연결 테스트', `${target.name} 버킷에 AWS Signature v4로 접근 가능한지 검증합니다.`, `/api/external-channels/backup-targets/${target.id}/test`, '연결 테스트'); }
+  backupNow(target: BackupTarget): void { this.openPendingAction('Console 구성 백업', `${target.name}에 Secret을 제외한 Console 구성 snapshot을 암호화해 업로드합니다.`, `/api/external-channels/backup-targets/${target.id}/backup`, '지금 백업'); }
+  async previewRestore(backup: Backup): Promise<void> { this.busy.set(true); this.error.set(''); try { const response = await this.http.request(`/api/external-channels/backups/${backup.id}/restore-preview`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: '운영 구성 복원 사전 검토' }) }); const output = await response.json().catch(() => ({})); if (!response.ok) throw new Error(output.error || `HTTP ${response.status}`); this.restorePreview.set(output as RestorePreview); this.restoreConfirmation = ''; this.restoreReason = '운영 구성 복원 실행'; } catch (error) { this.error.set(`복원 미리보기를 만들지 못했습니다: ${String(error)}`); } finally { this.busy.set(false); } }
+  cancelRestore(): void { this.restorePreview.set(null); this.restoreConfirmation = ''; }
+  async applyRestore(): Promise<void> { const preview = this.restorePreview(); if (!preview) return; await this.mutate(async () => { await this.request(`/api/external-channels/restores/${preview.restoreId}/apply`, { confirmation: this.restoreConfirmation.trim(), reason: this.restoreReason.trim() }); this.cancelRestore(); }); }
   async createChannel(): Promise<void> { await this.mutate(async () => { const f = this.channelForm; const config = f.provider === 'smtp' ? { host: f.smtpHost, port: Number(f.smtpPort), from: f.smtpFrom, recipients: csv(f.smtpRecipients), titlePrefix: f.titlePrefix } : f.provider === 'twilio' ? { accountSid: f.twilioAccountSid, messagingServiceSid: f.twilioServiceSid, from: f.twilioFrom, recipients: csv(f.twilioRecipients), titlePrefix: f.titlePrefix } : { target: f.target, titlePrefix: f.titlePrefix }; const secret = f.provider === 'smtp' ? { username: f.smtpUsername, password: f.smtpPassword } : f.provider === 'twilio' ? { authToken: f.twilioToken } : { webhookUrl: f.webhookUrl }; const editingId = this.editingChannelId(); await this.request(editingId ? `/api/notifications/channels/${editingId}` : '/api/notifications/channels', { name: f.name, provider: f.provider, config, secret, reason: f.reason }, editingId ? 'PUT' : 'POST'); this.closePanels(); }); }
   async editSmtp(channel: Channel): Promise<void> { this.busy.set(true); this.error.set(''); try { const value = await this.http.json<{ name: string; provider: Provider; config: { host: string; port: number; from: string; recipients: string[]; titlePrefix?: string } }>(`/api/notifications/channels/${channel.id}`); this.channelForm = { ...emptyChannel(), name: value.name, provider: value.provider, smtpHost: value.config.host || '', smtpPort: Number(value.config.port || 587), smtpFrom: value.config.from || '', smtpRecipients: (value.config.recipients || []).join(', '), titlePrefix: value.config.titlePrefix || '' }; this.editingChannelId.set(channel.id); this.channelPanelOpen.set(true); } catch (error) { this.error.set(`SMTP 구성을 불러오지 못했습니다: ${String(error)}`); } finally { this.busy.set(false); } }
   async createRule(): Promise<void> { await this.mutate(async () => { const f = this.ruleForm; await this.request('/api/notifications/rules', { name: f.name, priority: Number(f.priority), minSeverity: f.minSeverity, sources: csv(f.sources), categories: csv(f.categories), channelIds: f.channelIds, dedupWindowSeconds: Number(f.dedupWindowSeconds), reason: f.reason }); this.closePanels(); }); }
@@ -149,6 +237,9 @@ export class AdminNotificationChannels {
   isFailed(status: string): boolean { return status === 'failed' || status === 'dead-letter'; }
   validEmail(value: string): boolean { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(value || '').trim()); }
   fmt(value?: string): string { const date = new Date(value || ''); return Number.isNaN(date.getTime()) ? '—' : date.toISOString().replace('T', ' ').slice(0, 19); }
+  fileSize(value: number): string { if (!value) return '—'; if (value < 1024) return `${value} B`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`; return `${(value / 1024 / 1024).toFixed(1)} MiB`; }
+  totalEntries(backup: Backup): number { return Object.values(backup.entryCounts || {}).reduce((sum, value) => sum + Number(value || 0), 0); }
+  shortDigest(value: string): string { return value ? `${value.slice(0, 18)}…${value.slice(-8)}` : 'digest pending'; }
   private async request(path: string, body: unknown, method = 'POST'): Promise<void> { const response = await this.http.request(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!response.ok) { const out = await response.json().catch(() => ({})); throw new Error(out.error || `HTTP ${response.status}`); } }
   private openPendingAction(title: string, description: string, path: string, confirmLabel: string, testRecipient?: string): void { this.pendingAction.set({ title, description, path, confirmLabel, reason: '운영자 수동 실행', testRecipient }); }
   cancelPendingAction(): void { this.pendingAction.set(null); }

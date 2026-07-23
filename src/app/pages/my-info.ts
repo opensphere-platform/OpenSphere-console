@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
-import { AuthService } from '../core/auth.service';
+import { AuthService, TotpEnrollment } from '../core/auth.service';
 import { HttpService } from '../core/http.service';
 import { PerspectiveService } from '../core/perspective.service';
 import { OsPanel } from '../os/os-panel';
@@ -391,9 +391,36 @@ interface AuditEvent {
               <dl class="kv-list security-list">
                 <div><dt>인증 공급자</dt><dd>Supabase Auth · opensphere-console</dd></div>
                 <div><dt>세션 만료</dt><dd>{{ expText() }}</dd></div>
-                <div><dt>TOTP 정책</dt><dd>{{ authPolicy()?.totpEnabled ? '활성' : '개발 중 비활성' }} <span class="label">{{ authPolicy()?.environment || 'unknown' }}</span></dd></div>
+                <div><dt>현재 인증 보증</dt><dd><span class="label" [class.label-success]="auth.assurance() === 'aal2'">{{ auth.assurance() }}</span> {{ auth.assurance() === 'aal2' ? '비밀번호와 TOTP 검증 완료' : '비밀번호 인증만 완료' }}</dd></div>
+                <div><dt>TOTP 정책</dt><dd>관리자 변경 작업에 필수 <span class="label">Supabase Auth</span></dd></div>
                 <div><dt>브라우저 토큰 보관</dt><dd>sessionStorage · 브라우저 종료 시 삭제</dd></div>
               </dl>
+              <h2>인증 앱</h2>
+              @if (totpEnrollment(); as enrollment) {
+                <p class="section-lead">QR 코드를 인증 앱으로 스캔한 뒤 현재 6자리 코드를 검증해야 등록이 완료됩니다.</p>
+                <div class="mfa-enrollment">
+                  @if (enrollment.qrCode) { <img [src]="enrollment.qrCode" alt="OpenSphere TOTP 등록 QR 코드"> }
+                  <div>
+                    <span class="setup-label">수동 등록 키</span>
+                    <code>{{ enrollment.secret }}</code>
+                    @if (enrollment.uri) { <span class="mfa-uri">{{ enrollment.uri }}</span> }
+                  </div>
+                </div>
+                <form class="mfa-verify" clrForm clrLayout="vertical" (ngSubmit)="verifyTotp()">
+                  <clr-input-container>
+                    <label>6자리 인증 코드</label>
+                    <input clrInput name="totp-code" [(ngModel)]="totpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required>
+                  </clr-input-container>
+                  <button class="btn btn-sm btn-primary" type="submit" [disabled]="busy() || totpCode.length !== 6">TOTP 등록 완료</button>
+                  <button class="btn btn-sm btn-outline" type="button" (click)="cancelTotpEnrollment()" [disabled]="busy()">취소</button>
+                </form>
+              } @else if (auth.assurance() === 'aal2') {
+                <p class="section-lead">현재 세션은 등록된 TOTP factor로 추가 인증을 완료했습니다.</p>
+                <span class="label label-success">보호됨</span>
+              } @else {
+                <p class="section-lead">현재 계정에는 검증된 TOTP가 없습니다. 등록 전에는 설정·자격 증명·선언 변경 작업이 차단됩니다.</p>
+                <button class="btn btn-sm btn-primary" (click)="beginTotpEnrollment()" [disabled]="busy()">인증 앱 등록</button>
+              }
               <h2>비밀번호</h2>
               <p class="section-lead">Supabase Auth의 안전한 회복 링크로 비밀번호를 설정합니다. 다른 MFA 자격 증명은 그대로 유지됩니다.</p>
               <button class="btn btn-sm btn-primary" (click)="openPasswordPanel()" [disabled]="busy()">비밀번호 변경</button>
@@ -526,6 +553,11 @@ interface AuditEvent {
       .kv-list dd { margin: 0; font-size: 0.7rem; color: var(--os-ink); }
       .kv-list.compact { max-width: 34rem; }
       .security-list { max-width: 58rem; }
+      .mfa-enrollment { display: flex; align-items: center; gap: 1rem; margin: .75rem 0; }
+      .mfa-enrollment img { width: 11rem; height: 11rem; border: 1px solid var(--os-hairline); }
+      .mfa-enrollment code { display: block; max-width: 24rem; margin-top: .3rem; padding: .55rem; background: var(--os-surface-1); word-break: break-all; user-select: all; }
+      .mfa-uri { display: block; max-width: 36rem; margin-top: .4rem; color: var(--os-muted); font-size: .62rem; word-break: break-all; }
+      .mfa-verify { max-width: 24rem; margin-bottom: 1.4rem; }
       .tab-section { padding: 1rem 1.4rem 2rem; }
       .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
       .section-heading.separated { border-top: 1px solid var(--os-hairline); margin-top: 1.4rem; padding-top: 1rem; }
@@ -605,11 +637,13 @@ export class MyInfo {
   readonly passwordPanelOpen = signal(false);
   readonly passwordChanged = signal(false);
   readonly passwordError = signal('');
+  readonly totpEnrollment = signal<TotpEnrollment | null>(null);
 
   edit = { displayName: '', email: '', reason: '' };
   tokenLabel = '';
   tokenReason = '';
   revokeReason = '';
+  totpCode = '';
   deviceSearchText = '';
   tokenSearchText = '';
   readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '—';
@@ -725,6 +759,42 @@ export class MyInfo {
     } catch {
       this.authPolicy.set(null);
     }
+  }
+
+  async beginTotpEnrollment(): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
+    this.message.set(null);
+    try {
+      this.totpEnrollment.set(await this.auth.beginTotpEnrollment('OpenSphere Console administrator'));
+      this.totpCode = '';
+    } catch (error) {
+      this.message.set({ type: 'danger', text: `TOTP 등록 시작 실패: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  async verifyTotp(): Promise<void> {
+    const enrollment = this.totpEnrollment();
+    if (!enrollment || this.busy()) return;
+    this.busy.set(true);
+    this.message.set(null);
+    try {
+      await this.auth.verifyTotpEnrollment(enrollment.factorId, this.totpCode);
+      this.totpEnrollment.set(null);
+      this.totpCode = '';
+      this.message.set({ type: 'success', text: 'TOTP 등록과 추가 인증을 완료했습니다. 관리자 변경 작업에 AAL2가 적용됩니다.' });
+    } catch (error) {
+      this.message.set({ type: 'danger', text: `TOTP 검증 실패: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  cancelTotpEnrollment(): void {
+    this.totpEnrollment.set(null);
+    this.totpCode = '';
   }
 
   async loadActivity(): Promise<void> {

@@ -98,18 +98,25 @@ jobs:
           go-version-file: OpenSphere-console/backend/os-cli/go.mod
       - name: Keychain round-trip and macOS CLI build
         working-directory: OpenSphere-console/backend/os-cli
+        env:
+          CLI_UPDATE_TRUST_ID: ${{ vars.CLI_UPDATE_SIGNING_KEY_ID }}
+          CLI_UPDATE_TRUST_PUBLIC: ${{ vars.CLI_UPDATE_SIGNING_PUBLIC_KEY }}
         run: |
           test "$(go env GOOS)" = darwin
           test "$(go env GOARCH)" = arm64
           test "$(go env CGO_ENABLED)" = 1
+          test -n "$CLI_UPDATE_TRUST_ID"
+          test -n "$CLI_UPDATE_TRUST_PUBLIC"
           go test ./...
-          go build -trimpath -ldflags="-s -w -X main.version=0.8.0" -o opensphere-cli-darwin-arm64 ./cmd/os
+          go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=$CLI_UPDATE_TRUST_ID -X main.updateProductionPublicKey=$CLI_UPDATE_TRUST_PUBLIC" -o opensphere-cli-darwin-arm64 ./cmd/os
+          GOARCH=amd64 CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=$CLI_UPDATE_TRUST_ID -X main.updateProductionPublicKey=$CLI_UPDATE_TRUST_PUBLIC" -o opensphere-cli-darwin-amd64 ./cmd/os
           file opensphere-cli-darwin-arm64 | grep -q 'arm64'
+          file opensphere-cli-darwin-amd64 | grep -q 'x86_64'
       - name: Upload macOS CLI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: opensphere-cli-darwin-arm64
-          path: OpenSphere-console/backend/os-cli/opensphere-cli-darwin-arm64
+          name: opensphere-cli-darwin
+          path: OpenSphere-console/backend/os-cli/opensphere-cli-darwin-*
           if-no-files-found: error
           retention-days: 1
 
@@ -171,7 +178,7 @@ jobs:
       - name: Download native macOS CLI artifact
         uses: actions/download-artifact@v4
         with:
-          name: opensphere-cli-darwin-arm64
+          name: opensphere-cli-darwin
           path: ${{ runner.temp }}/opensphere-cli-macos
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3

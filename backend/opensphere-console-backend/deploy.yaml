@@ -111,6 +111,7 @@ spec:
             - { name: SUPABASE_AUTH_URL, value: "http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999" }
             - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:8090/auth/v1" }
             - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
+            - { name: SUPABASE_REQUIRE_AAL2, value: "true" }
             - { name: CONSOLE_PUBLIC_URL, value: "https://localhost:8090" }
             - { name: CLI_SESSION_TTL_SEC, value: "900" }
             - { name: CLI_PAT_TTL_SEC, value: "2592000" }
@@ -144,13 +145,17 @@ spec:
             # Outbound notification credentials are passed once to the internal
             # Dispatcher. The Backend never reads the encrypted secret ledger.
             - { name: NOTIFICATION_DISPATCHER_URL, value: "http://opensphere-notification-dispatcher.opensphere-console.svc.cluster.local:8081" }
-            # Local docker-desktop development has no enrolled TOTP factor.
-            # Production overlays must set this back to "true".
-            - { name: NOTIFICATION_REQUIRE_AAL2, value: "false" }
+            - { name: NOTIFICATION_REQUIRE_AAL2, value: "true" }
             - name: NOTIFICATION_DISPATCHER_TOKEN
               valueFrom: { secretKeyRef: { name: opensphere-notification-runtime, key: internal-token } }
             - name: NOTIFICATION_EVENT_TOKEN
               valueFrom: { secretKeyRef: { name: opensphere-notification-runtime, key: event-token } }
+            # External backup execution is isolated from notification delivery:
+            # separate service, DB role, internal token and encryption keys.
+            - { name: EXTERNAL_CHANNEL_EXECUTOR_URL, value: "http://opensphere-external-channel-executor.opensphere-console.svc.cluster.local:8082" }
+            - { name: EXTERNAL_CHANNEL_REQUIRE_AAL2, value: "true" }
+            - name: EXTERNAL_CHANNEL_EXECUTOR_TOKEN
+              valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: internal-token } }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }

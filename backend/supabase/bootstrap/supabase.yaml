@@ -31,6 +31,7 @@ kind: PersistentVolumeClaim
 metadata: { name: opensphere-supabase-postgres-data, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
 spec:
   accessModes: [ReadWriteOnce]
+  storageClassName: __OPENSPHERE_STORAGE_CLASS__
   resources: { requests: { storage: 20Gi } }
 ---
 apiVersion: v1
@@ -38,6 +39,7 @@ kind: PersistentVolumeClaim
 metadata: { name: opensphere-supabase-storage-data, namespace: __OPENSPHERE_SUPABASE_NAMESPACE__ }
 spec:
   accessModes: [ReadWriteOnce]
+  storageClassName: __OPENSPHERE_STORAGE_CLASS__
   resources: { requests: { storage: 50Gi } }
 ---
 apiVersion: apps/v1
@@ -239,6 +241,10 @@ spec:
               valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: service-role-key } }
             - name: AUTH_JWT_SECRET
               valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: jwt-secret } }
+            - name: S3_PROTOCOL_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: s3-access-key-id } }
+            - name: S3_PROTOCOL_ACCESS_KEY_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: s3-access-key-secret } }
             - name: POSTGRES_PASSWORD
               valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
             - { name: DATABASE_URL, value: "postgres://supabase_storage_admin:$(POSTGRES_PASSWORD)@opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local:5432/postgres" }

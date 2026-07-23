@@ -12,6 +12,41 @@ interface SupabaseSession {
   };
 }
 
+interface SupabaseMfaFactor {
+  id: string;
+  status?: string;
+  factor_type?: string;
+  friendly_name?: string;
+}
+
+interface SupabaseMfaFactors {
+  all?: SupabaseMfaFactor[];
+  totp?: SupabaseMfaFactor[];
+}
+
+interface SupabaseMfaEnrollment extends SupabaseMfaFactor {
+  totp?: {
+    qr_code?: string;
+    secret?: string;
+    uri?: string;
+  };
+}
+
+interface SupabaseAuthError {
+  error?: string;
+  error_code?: string;
+  error_description?: string;
+  msg?: string;
+  message?: string;
+}
+
+export interface TotpEnrollment {
+  factorId: string;
+  qrCode: string;
+  secret: string;
+  uri: string;
+}
+
 /**
  * Console identity authority is Supabase Auth.  Tokens are kept per browser
  * tab and are never exchanged through a parallel identity provider.
@@ -28,11 +63,15 @@ export class AuthService {
   readonly name = signal('');
   readonly subject = signal('');
   readonly tokenExp = signal(0);
+  readonly assurance = signal<'aal1' | 'aal2'>('aal1');
+  readonly mfaRequired = signal(false);
   readonly initError = signal('');
   readonly setupRequired = signal(false);
   readonly setupBusy = signal(false);
   readonly setupDefaults = signal({ username: 'opensphere-admin', displayName: 'OpenSphere Administrator', email: 'admin@opensphere.local' });
   readonly loginRequired = signal(false);
+  private pendingMfaSession: SupabaseSession | null = null;
+  private pendingMfaFactorId = '';
 
   setInitError(error: unknown): void {
     this.initError.set(String(error instanceof Error ? error.message : error || '인증 초기화 실패'));
@@ -66,12 +105,69 @@ export class AuthService {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: email.trim(), password }),
     });
-    const body = await response.json().catch(() => ({})) as SupabaseSession & { msg?: string; message?: string; error_description?: string };
+    const body = await response.json().catch(() => ({})) as SupabaseSession & SupabaseAuthError;
     if (!response.ok) throw new Error(body.error_description || body.msg || body.message || '로그인에 실패했습니다.');
-    if (!this.apply(body)) throw new Error('인증 서비스가 유효한 세션을 반환하지 않았습니다.');
-    this.saveSession(body);
-    await this.refreshAuthorization();
-    this.loginRequired.set(false);
+    if (!body.access_token) throw new Error('인증 서비스가 유효한 세션을 반환하지 않았습니다.');
+
+    if (this.jwtAssurance(body.access_token) !== 'aal2') {
+      const factors = await this.listMfaFactors(body.access_token);
+      const verifiedTotp = this.factorItems(factors)
+        .find((factor) => factor.factor_type === 'totp' && factor.status === 'verified');
+      if (verifiedTotp?.id) {
+        this.pendingMfaSession = body;
+        this.pendingMfaFactorId = verifiedTotp.id;
+        this.mfaRequired.set(true);
+        this.loginRequired.set(true);
+        return;
+      }
+    }
+
+    await this.activateSession(body);
+  }
+
+  async finishMfaLogin(code: string): Promise<void> {
+    const pending = this.pendingMfaSession;
+    const factorId = this.pendingMfaFactorId;
+    if (!pending?.access_token || !factorId) throw new Error('MFA 로그인 세션이 없습니다. 다시 로그인하세요.');
+    const session = await this.challengeAndVerify(factorId, code, pending.access_token);
+    this.pendingMfaSession = null;
+    this.pendingMfaFactorId = '';
+    this.mfaRequired.set(false);
+    await this.activateSession(session);
+  }
+
+  cancelMfaLogin(): void {
+    this.pendingMfaSession = null;
+    this.pendingMfaFactorId = '';
+    this.mfaRequired.set(false);
+    this.clearSession();
+    this.loginRequired.set(true);
+  }
+
+  async beginTotpEnrollment(friendlyName = 'OpenSphere Console'): Promise<TotpEnrollment> {
+    if (!this.accessToken) throw new Error('TOTP 등록을 시작하려면 먼저 로그인해야 합니다.');
+    const factors = await this.listMfaFactors(this.accessToken);
+    const verified = this.factorItems(factors)
+      .find((factor) => factor.factor_type === 'totp' && factor.status === 'verified');
+    if (verified) throw new Error('이미 검증된 TOTP 인증기가 등록되어 있습니다.');
+
+    const enrollment = await this.authJson<SupabaseMfaEnrollment>('/auth/v1/factors', {
+      method: 'POST',
+      body: JSON.stringify({ factor_type: 'totp', friendly_name: friendlyName.slice(0, 64) }),
+    }, this.accessToken);
+    if (!enrollment.id || !enrollment.totp?.secret) throw new Error('Supabase Auth가 TOTP 등록 정보를 반환하지 않았습니다.');
+    return {
+      factorId: enrollment.id,
+      qrCode: enrollment.totp.qr_code || '',
+      secret: enrollment.totp.secret,
+      uri: enrollment.totp.uri || '',
+    };
+  }
+
+  async verifyTotpEnrollment(factorId: string, code: string): Promise<void> {
+    if (!this.accessToken) throw new Error('TOTP 등록 세션이 만료되었습니다. 다시 로그인하세요.');
+    const session = await this.challengeAndVerify(factorId, code, this.accessToken);
+    await this.activateSession(session);
   }
 
   async reAuthenticate(): Promise<void> {
@@ -107,7 +203,7 @@ export class AuthService {
   async completeInitialSetup(): Promise<void> {
     this.setupRequired.set(false);
     this.setupBusy.set(false);
-    this.loginRequired.set(true);
+    this.loginRequired.set(!this.hasValidToken());
   }
 
   private apply(session: SupabaseSession): boolean {
@@ -124,6 +220,7 @@ export class AuthService {
     this.groups.set([]);
     this.roles.set([]);
     this.tokenExp.set(exp);
+    this.assurance.set(this.jwtAssurance(session.access_token));
     return true;
   }
 
@@ -139,7 +236,62 @@ export class AuthService {
   private clearSession(): void {
     this.accessToken = '';
     this.user.set(''); this.groups.set([]); this.roles.set([]); this.email.set(''); this.name.set(''); this.subject.set(''); this.tokenExp.set(0);
+    this.assurance.set('aal1');
+    this.pendingMfaSession = null;
+    this.pendingMfaFactorId = '';
+    this.mfaRequired.set(false);
     try { window.sessionStorage.removeItem(this.sessionKey); } catch { /* storage unavailable */ }
+  }
+
+  private async activateSession(session: SupabaseSession): Promise<void> {
+    if (!this.apply(session)) throw new Error('인증 서비스가 유효한 세션을 반환하지 않았습니다.');
+    this.saveSession(session);
+    await this.refreshAuthorization();
+    this.loginRequired.set(false);
+  }
+
+  private async listMfaFactors(token: string): Promise<SupabaseMfaFactors> {
+    return this.authJson<SupabaseMfaFactors>('/auth/v1/factors', { method: 'GET' }, token);
+  }
+
+  private factorItems(factors: SupabaseMfaFactors): SupabaseMfaFactor[] {
+    const values = [...(factors.all || []), ...(factors.totp || [])];
+    return [...new Map(values.filter((factor) => factor?.id).map((factor) => [factor.id, factor])).values()];
+  }
+
+  private async challengeAndVerify(factorId: string, code: string, token: string): Promise<SupabaseSession> {
+    if (!/^\d{6}$/.test(String(code || '').trim())) throw new Error('현재 6자리 인증 코드를 입력하세요.');
+    const challenge = await this.authJson<{ id?: string }>(`/auth/v1/factors/${encodeURIComponent(factorId)}/challenge`, {
+      method: 'POST',
+      body: '{}',
+    }, token);
+    if (!challenge.id) throw new Error('MFA challenge를 생성하지 못했습니다.');
+    const verified = await this.authJson<SupabaseSession & { session?: SupabaseSession }>(`/auth/v1/factors/${encodeURIComponent(factorId)}/verify`, {
+      method: 'POST',
+      body: JSON.stringify({ challenge_id: challenge.id, code: String(code).trim() }),
+    }, token);
+    const session = verified.session || verified;
+    if (!session.access_token || this.jwtAssurance(session.access_token) !== 'aal2') {
+      throw new Error('Supabase Auth가 AAL2 세션을 반환하지 않았습니다.');
+    }
+    return session;
+  }
+
+  private async authJson<T>(path: string, init: RequestInit, token: string): Promise<T> {
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        ...(init.headers || {}),
+      },
+    });
+    const body = await response.json().catch(() => ({})) as T & SupabaseAuthError;
+    if (!response.ok) {
+      throw new Error(body.error_description || body.msg || body.message || body.error_code || body.error || `Supabase Auth HTTP ${response.status}`);
+    }
+    return body;
   }
 
   /**
@@ -170,4 +322,7 @@ export class AuthService {
 
   private jwtExp(token: string): number { return Number(this.jwtClaim(token, 'exp') || 0); }
   private jwtSubject(token: string): string { return String(this.jwtClaim(token, 'sub') || ''); }
+  private jwtAssurance(token: string): 'aal1' | 'aal2' {
+    return this.jwtClaim(token, 'aal') === 'aal2' ? 'aal2' : 'aal1';
+  }
 }

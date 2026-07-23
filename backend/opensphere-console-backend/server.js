@@ -6,6 +6,7 @@ const { createHmac, createHash, randomBytes, randomUUID, timingSafeEqual, create
 const { createSupabaseVerifier } = require('./supabase-auth');
 const { enforcePatRequestScope, normalizePatScope, validatePatTTL } = require('./cli-token-policy');
 const { createNotificationApi } = require('./notification-api');
+const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
 const { normalizedEvent } = require('../notification-dispatcher/contract');
 
@@ -43,7 +44,11 @@ const SUPABASE_BACKEND_DB_ROLE = process.env.SUPABASE_BACKEND_DB_ROLE || 'opensp
 const SUPABASE_BACKEND_TOKEN_TTL_SEC = Number(process.env.SUPABASE_BACKEND_TOKEN_TTL_SEC || (24 * 60 * 60 * 30));
 const SUPABASE_BACKEND_TOKEN = process.env.SUPABASE_BACKEND_TOKEN || '';
 const AUDIT_READ_LIMIT = Number(process.env.SUPABASE_AUDIT_READ_LIMIT || 200);
-const SUPABASE_REQUIRE_AAL2 = String(process.env.SUPABASE_REQUIRE_AAL2 || 'false').toLowerCase() === 'true';
+// Administrator mutations are MFA-protected by default in every environment.
+// A deployment must opt out explicitly; local bootstrap is handled by the
+// unauthenticated one-shot bootstrap route and is not a reason to weaken the
+// normal Console policy boundary.
+const SUPABASE_REQUIRE_AAL2 = String(process.env.SUPABASE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
@@ -58,6 +63,9 @@ const NOTIFICATION_DISPATCHER_URL = (process.env.NOTIFICATION_DISPATCHER_URL || 
 const NOTIFICATION_DISPATCHER_TOKEN = process.env.NOTIFICATION_DISPATCHER_TOKEN || '';
 const NOTIFICATION_EVENT_TOKEN = process.env.NOTIFICATION_EVENT_TOKEN || '';
 const NOTIFICATION_REQUIRE_AAL2 = String(process.env.NOTIFICATION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
+const EXTERNAL_CHANNEL_EXECUTOR_URL = (process.env.EXTERNAL_CHANNEL_EXECUTOR_URL || 'http://opensphere-external-channel-executor.opensphere-console.svc.cluster.local:8082').replace(/\/$/, '');
+const EXTERNAL_CHANNEL_EXECUTOR_TOKEN = process.env.EXTERNAL_CHANNEL_EXECUTOR_TOKEN || '';
+const EXTERNAL_CHANNEL_REQUIRE_AAL2 = String(process.env.EXTERNAL_CHANNEL_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const OAA_NAMESPACE = process.env.OAA_NAMESPACE || 'opensphere-console';
 const OAA_KEY_NAMESPACE = process.env.OAA_KEY_NAMESPACE || 'opensphere-oaa-credentials';
 const K8S_API = 'https://kubernetes.default.svc';
@@ -317,6 +325,33 @@ async function notificationDispatcherRequest(pathName, body) {
   return parsed;
 }
 
+/**
+ * External backup execution uses a separate internal credential, DB role and
+ * runtime process from notification delivery. The Backend passes plaintext
+ * credentials only once and never receives stored credentials back.
+ */
+async function externalChannelExecutorRequest(pathName, body, timeoutMs = 15000) {
+  if (!EXTERNAL_CHANNEL_EXECUTOR_TOKEN) throw { code: 503, msg: 'external channel executor credential path is not configured' };
+  const response = await fetch(`${EXTERNAL_CHANNEL_EXECUTOR_URL}${pathName}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-external-channel-executor-token': EXTERNAL_CHANNEL_EXECUTOR_TOKEN,
+    },
+    body: JSON.stringify(body || {}),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const raw = await response.text();
+  let parsed = {};
+  try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
+  if (!response.ok) throw {
+    code: response.status === 401 || response.status === 403 ? 502 : response.status,
+    msg: parsed.error || 'external channel executor request failed',
+    externalCode: parsed.code || null,
+  };
+  return parsed;
+}
+
 async function authAdminRequest(pathName, { method = 'GET', body = undefined, timeoutMs = SUPABASE_TIMEOUT_MS, query = '' } = {}) {
   if (!SUPABASE_AUTH_URL) throw { code: 503, msg: 'SUPABASE_AUTH_URL is required' };
   const base = SUPABASE_AUTH_URL.replace(/\/$/, '');
@@ -412,7 +447,11 @@ async function resolveConsoleActor(subject, claims = {}) {
     username: claims.email || subject,
     displayName: operator.display_name || '',
     groups,
-    assurance: 'aal2',
+    // A device key or PAT proves possession of that credential, not that the
+    // user completed a current Supabase second-factor challenge.  CLI step-up
+    // is a separate browser-mediated flow; until then CLI credentials remain
+    // aal1 and cannot satisfy an AAL2-required management operation.
+    assurance: 'aal1',
     authSessionId: claims.jti || null,
     deviceId: claims.device_id || null,
     provider: 'supabase-cli',
@@ -457,18 +496,25 @@ async function verifyManagedCliToken(token) {
 async function verifyActor(req) {
   const actor = await verifyAuthed(req);
   if (!actor.groups || !actor.groups.includes(SUPABASE_BACKEND_ROLE)) throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
-  // Production can require Supabase MFA explicitly.  Do not make a Console
-  // with no enrolled MFA factor permanently unmanageable during bootstrap.
-  if (SUPABASE_REQUIRE_AAL2 && actor.provider === 'supabase' && actor.assurance !== 'aal2') {
+  if (SUPABASE_REQUIRE_AAL2 && actor.assurance !== 'aal2') {
     throw { code: 403, msg: 'admin action requires MFA assurance aal2' };
   }
   return actor;
 }
 
-async function verifyConsoleAdmin(req) {
+function isMutationRequest(req) {
+  return !['GET', 'HEAD', 'OPTIONS'].includes(String(req?.method || 'GET').toUpperCase());
+}
+
+async function verifyConsoleAdmin(req, options = {}) {
   const actor = await verifyAuthed(req);
   if (!actor.groups || !actor.groups.includes(SUPABASE_BACKEND_ROLE)) {
     throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
+  }
+  const requireAal2 = options.requireAal2 === true
+    || (options.requireAal2 !== false && SUPABASE_REQUIRE_AAL2 && isMutationRequest(req));
+  if (requireAal2 && actor.assurance !== 'aal2') {
+    throw { code: 403, msg: 'admin mutation requires MFA assurance aal2' };
   }
   return actor;
 }
@@ -554,10 +600,27 @@ const notificationApi = createNotificationApi({
   dispatcherRequest: notificationDispatcherRequest,
 });
 
+const externalChannelApi = createExternalChannelApi({
+  restRequest,
+  logAudit,
+  managementReason,
+  newOpId,
+  executorRequest: externalChannelExecutorRequest,
+});
+
 async function verifyNotificationAdmin(req) {
   const actor = await verifyConsoleAdmin(req);
   if (NOTIFICATION_REQUIRE_AAL2 && actor.assurance !== 'aal2') {
     throw { code: 403, msg: 'notification configuration requires MFA assurance aal2' };
+  }
+  return actor;
+}
+
+async function verifyExternalChannelAdmin(req) {
+  const actor = await verifyConsoleAdmin(req);
+  requireActorPermission(actor, 'console.backup.restore');
+  if (EXTERNAL_CHANNEL_REQUIRE_AAL2 && isMutationRequest(req) && actor.assurance !== 'aal2') {
+    throw { code: 403, msg: 'external backup mutation requires MFA assurance aal2' };
   }
   return actor;
 }
@@ -2626,6 +2689,50 @@ const server = http.createServer(async (req, res) => {
     if (notificationDeliveryRetry && req.method === 'POST') {
       try { const actor = await verifyNotificationAdmin(req); return json(res, 202, await notificationApi.retryDelivery(actor, notificationDeliveryRetry[1], await readBody(req))); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'notification delivery retry failed' }); }
+    }
+    if (p === '/api/external-channels/summary' && req.method === 'GET') {
+      try { await verifyExternalChannelAdmin(req); return json(res, 200, await externalChannelApi.summary()); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'external channel summary unavailable' }); }
+    }
+    if (p === '/api/external-channels/backup-targets' && req.method === 'GET') {
+      try { await verifyExternalChannelAdmin(req); return json(res, 200, { items: await externalChannelApi.targets() }); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'external backup targets unavailable' }); }
+    }
+    if (p === '/api/external-channels/backup-targets' && req.method === 'POST') {
+      try {
+        const actor = await verifyExternalChannelAdmin(req);
+        return json(res, 201, await externalChannelApi.createTarget(actor, await readBody(req)));
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'external backup target creation failed' }); }
+    }
+    const externalBackupTargetAction = p.match(/^\/api\/external-channels\/backup-targets\/([0-9a-fA-F-]+)\/(test|backup)$/);
+    if (externalBackupTargetAction && req.method === 'POST') {
+      try {
+        const actor = await verifyExternalChannelAdmin(req);
+        const [, id, action] = externalBackupTargetAction;
+        const body = await readBody(req);
+        return json(res, action === 'test' ? 200 : 201,
+          action === 'test'
+            ? await externalChannelApi.test(actor, id, body)
+            : await externalChannelApi.backupNow(actor, id, body));
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'external backup target action failed' }); }
+    }
+    if (p === '/api/external-channels/backups' && req.method === 'GET') {
+      try { await verifyExternalChannelAdmin(req); return json(res, 200, { items: await externalChannelApi.backups() }); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'configuration backups unavailable' }); }
+    }
+    const externalBackupPreview = p.match(/^\/api\/external-channels\/backups\/([0-9a-fA-F-]+)\/restore-preview$/);
+    if (externalBackupPreview && req.method === 'POST') {
+      try {
+        const actor = await verifyExternalChannelAdmin(req);
+        return json(res, 201, await externalChannelApi.previewRestore(actor, externalBackupPreview[1], await readBody(req)));
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'configuration restore preview failed' }); }
+    }
+    const externalRestoreApply = p.match(/^\/api\/external-channels\/restores\/([0-9a-fA-F-]+)\/apply$/);
+    if (externalRestoreApply && req.method === 'POST') {
+      try {
+        const actor = await verifyExternalChannelAdmin(req);
+        return json(res, 200, await externalChannelApi.applyRestore(actor, externalRestoreApply[1], await readBody(req)));
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'configuration restore failed' }); }
     }
     // Gitea deliveries are authenticated by their HMAC signature, not by a
     // browser session. The payload is persisted only as a digest and receipt

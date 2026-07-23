@@ -49,6 +49,12 @@ test('Console and diagnostic CLI images compile the manifest version', async () 
   assert.match(diagnosticDockerfile, versionPattern);
   assert.match(rootDockerfile, /CLI_UPDATE_SIGNING_PROFILE/);
   assert.match(rootDockerfile, /cli_update_signing_key/);
+  assert.match(rootDockerfile, /COPY --from=macos-cli \/opensphere-cli-darwin-arm64/);
+  assert.match(rootDockerfile, /COPY --from=macos-cli \/opensphere-cli-darwin-amd64/);
+  assert.deepEqual(
+    releaseManifest.links.map(({ os, arch }) => `${os}/${arch}`),
+    ['linux/amd64', 'darwin/arm64', 'darwin/amd64', 'windows/amd64']
+  );
 });
 
 test('production manifest signing fails closed without release key material', async () => {
