@@ -837,7 +837,9 @@ async function verifyPlugin(pkg) {
   const mText = await mRes.text();
   // ① manifest digest: 계산해서 승인값(CR)과 '비교' (§B.5)
   if (sha256(mText) !== pkg.spec.manifest.sha256) return { ok: false, reason: 'DigestMismatch' };
-  const manifest = JSON.parse(mText);
+  let manifest;
+  try { manifest = JSON.parse(mText); }
+  catch { return { ok: false, reason: 'ManifestInvalid' }; }
   // ② 서명: trustedKeys[keyId]로 검증 (TrustedKeys CM에서 SPKI 조회)
   const spki = (await loadTrustedKeys())[pkg.spec.trust.keyId];
   if (!spki) return { ok: false, reason: 'UntrustedKey' };
@@ -862,6 +864,11 @@ async function verifyPlugin(pkg) {
   if (manifest.shellCompat !== pkg.spec.shellCompat) return { ok: false, reason: 'ShellCompatDrift' };
   if (JSON.stringify([...(manifest.permissions || [])].sort()) !== JSON.stringify([...(pkg.spec.permissions || [])].sort())) return { ok: false, reason: 'PermissionDrift' };
   if ((manifest.apiBase || '') !== (pkg.spec.api?.basePath || '')) return { ok: false, reason: 'ApiBaseDrift' };
+  const canonicalApiBase = `/api/plugins/${name}`;
+  if (manifest.apiBase && manifest.apiBase.replace(/\/$/, '') !== canonicalApiBase) return { ok: false, reason: 'ApiNamespaceViolation' };
+  if (manifest.contributions.api?.enabled && manifest.contributions.api.basePath?.replace(/\/$/, '') !== canonicalApiBase) {
+    return { ok: false, reason: 'ApiNamespaceViolation' };
+  }
   if (!/^[A-Za-z0-9._-]+\.js$/.test(String(manifest.entry || ''))) return { ok: false, reason: 'InvalidEntryPath' };
   // ⑤ entry digest
   let eRes;
@@ -869,6 +876,23 @@ async function verifyPlugin(pkg) {
   catch { return { ok: false, reason: 'EntryUnreachable' }; }
   if (!eRes.ok) return { ok: false, reason: 'EntryUnreachable' };
   if (sha256(await eRes.text()) !== manifest.entrySha256) return { ok: false, reason: 'EntryDigestMismatch' };
+  // 보조 실행 자산도 signed manifest pin과 대조한다. 미선언 manifest는 전환기 호환으로
+  // 수용하되, 선언된 자산은 하나라도 불일치하면 Ready로 승격하지 않는다.
+  const assetIds = new Set();
+  for (const asset of Array.isArray(manifest.assets) ? manifest.assets : []) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(String(asset?.id || '')) || assetIds.has(asset.id)) return { ok: false, reason: 'InvalidAssetContract' };
+    if (!['module', 'style'].includes(asset.type) || !/^[a-f0-9]{64}$/.test(String(asset.sha256 || ''))) return { ok: false, reason: 'InvalidAssetContract' };
+    assetIds.add(asset.id);
+    let assetUrl;
+    try { assetUrl = new URL(asset.path, `${svc}${manifestPath}`); }
+    catch { return { ok: false, reason: 'InvalidAssetPath' }; }
+    if (assetUrl.origin !== new URL(svc).origin || !assetUrl.pathname.startsWith('/app/')) return { ok: false, reason: 'InvalidAssetPath' };
+    let assetRes;
+    try { assetRes = await fetch(assetUrl, { signal: AbortSignal.timeout(10000) }); }
+    catch { return { ok: false, reason: 'AssetUnreachable' }; }
+    if (!assetRes.ok) return { ok: false, reason: 'AssetUnreachable' };
+    if (sha256(await assetRes.text()) !== asset.sha256) return { ok: false, reason: 'AssetDigestMismatch' };
+  }
   return { ok: true, manifest };
 }
 

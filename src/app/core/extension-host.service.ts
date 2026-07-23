@@ -1,10 +1,9 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
-import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
-import type { PluginPage, NavNode, SearchProvider, Manifest, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
+import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
 export type { PluginPage, NavNode } from '@opensphere/sdk';
 
 /**
@@ -68,6 +67,11 @@ interface RegistryEntry {
   icon?: string; // 1단 아이콘(Carbon 토큰명) — 관리자 오버라이드(spec.nav.icon). 서명 무관.
 }
 
+interface VerifiedAsset {
+  declaration: ManifestAsset;
+  text: string;
+}
+
 export interface ManualContributionDocument {
   id: string;
   title: string;
@@ -89,7 +93,6 @@ export interface ManualContribution {
 @Injectable({ providedIn: 'root' })
 export class ExtensionHostService {
   private auth = inject(AuthService);
-  private http = inject(HttpService);
   private notif = inject(NotificationService);
   private router = inject(Router);
   private activeModules = new Map<string, PluginModule>();
@@ -98,6 +101,7 @@ export class ExtensionHostService {
   private registryFingerprint = '';
   private registryWatch?: number;
   private registryEntries: RegistryEntry[] = [];
+  private assetStyles = new Map<string, Set<HTMLStyleElement>>();
 
   /**
    * PluginHost가 Registry의 비동기 초기 적재를 실제 미등록 상태와 구분할 수 있게 한다.
@@ -160,6 +164,12 @@ export class ExtensionHostService {
    * 셸 이미지·파드는 불변 — registry 변화만으로 메뉴가 증감한다.
    */
   async reload(): Promise<void> {
+    // CustomElementRegistry는 unregister를 지원하지 않는다. 활성 guest를 같은 document에서
+    // 재평가하면 이전 생성자와 새 번들이 섞이므로 registry 변경은 document 경계에서 교체한다.
+    if (this.activeModules.size > 0) {
+      window.location.reload();
+      return;
+    }
     await this.deactivateAll();
     this.pages.set([]);
     this.failures.set([]);
@@ -226,6 +236,16 @@ export class ExtensionHostService {
 			if (JSON.stringify(canonicalValue(manifest.contributions)) !== JSON.stringify(canonicalValue(e.contributions ?? {}))) {
 				throw new Error('manifest contributions가 Registry와 불일치');
 			}
+      const canonicalApiBase = `/api/plugins/${e.id}`;
+      if (manifest.apiBase && manifest.apiBase.replace(/\/$/, '') !== canonicalApiBase) {
+        throw new Error(`manifest apiBase는 canonical namespace '${canonicalApiBase}'여야 함`);
+      }
+      if (manifest.contributions.api.enabled) {
+        if (manifest.contributions.api.basePath?.replace(/\/$/, '') !== canonicalApiBase) {
+          throw new Error(`API contribution basePath는 canonical namespace '${canonicalApiBase}'여야 함`);
+        }
+        if (!manifest.apiBase) throw new Error('활성 API contribution에 apiBase가 없음');
+      }
 
       // ② 출처 서명 (분리 서명, manifest 바이트 전체)
       const spki = trustedKeys[e.keyId];
@@ -257,6 +277,7 @@ export class ExtensionHostService {
       if ((await sha256Hex(code)) !== manifest.entrySha256) {
         throw new Error('번들 무결성 불일치 — manifest 핀과 다름');
       }
+      const verifiedAssets = await this.verifyAssets(e.id, e.manifest, manifest.assets);
       const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
       try {
         mod = await import(/* @vite-ignore */ blobUrl) as PluginModule;
@@ -271,7 +292,7 @@ export class ExtensionHostService {
       }
 
       // ⑦ 최소 권한 ctx
-      const context = this.contextFor(e.id, manifest, perms, hostApiVersion, trustedKeys);
+      const context = this.contextFor(e.id, manifest, perms, hostApiVersion, trustedKeys, verifiedAssets);
       if (typeof mod.activate !== 'function') throw new Error('activate() export 없음 (§9 계약 위반)');
 			if (manifest.manifestVersion === 3 && typeof mod.deactivate !== 'function') {
 				throw new Error('deactivate() export 없음 (Production lifecycle 계약 위반)');
@@ -324,6 +345,8 @@ export class ExtensionHostService {
     this.searchProviders.update((items) => { const { [pluginId]: _search, ...rest } = items; return rest; });
     this.manualContributions.update((items) => { const { [pluginId]: _manual, ...rest } = items; return rest; });
     this.apiBaseByPlugin.update((items) => { const { [pluginId]: _api, ...rest } = items; return rest; });
+    for (const style of this.assetStyles.get(pluginId) ?? []) style.remove();
+    this.assetStyles.delete(pluginId);
     this.notif.clearSource(pluginId);
   }
 
@@ -332,7 +355,14 @@ export class ExtensionHostService {
   }
 
   /** §9 OpenSpherePluginContext 부분집합 — 승인된 권한의 능력만 노출 */
-  private contextFor(pluginId: string, manifest: NormalizedManifest, perms: readonly Capability[], hostApiVersion: string, trustedKeys: Record<string, string>) {
+  private contextFor(
+    pluginId: string,
+    manifest: NormalizedManifest,
+    perms: readonly Capability[],
+    hostApiVersion: string,
+    trustedKeys: Record<string, string>,
+    verifiedAssets: ReadonlyMap<string, VerifiedAsset>,
+  ) {
     const apiFetch = (input: RequestInfo | URL, init?: RequestInit) => this.fetchForPlugin(manifest, input, init);
     const routeBase = `/p/${pluginId}`;
     const currentRoute = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -350,6 +380,38 @@ export class ExtensionHostService {
       if (!child) throw new Error(`승인된 child manifest가 아님: ${manifestUrl}`);
       await this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION);
     };
+    const loadedModules = new Map<string, Promise<unknown>>();
+    const loadModule = (id: string): Promise<unknown> => {
+      const asset = verifiedAssets.get(id);
+      if (!asset || asset.declaration.type !== 'module') throw new Error(`검증된 module asset '${id}' 없음`);
+      let loaded = loadedModules.get(id);
+      if (!loaded) {
+        loaded = (async () => {
+          const url = URL.createObjectURL(new Blob([asset.text], { type: 'text/javascript' }));
+          try {
+            return await import(/* @vite-ignore */ url);
+          } finally {
+            URL.revokeObjectURL(url);
+          }
+        })();
+        loadedModules.set(id, loaded);
+      }
+      return loaded;
+    };
+    const loadStyle = async (id: string): Promise<void> => {
+      const asset = verifiedAssets.get(id);
+      if (!asset || asset.declaration.type !== 'style') throw new Error(`검증된 style asset '${id}' 없음`);
+      const selector = `style[data-opensphere-plugin="${CSS.escape(pluginId)}"][data-opensphere-asset="${CSS.escape(id)}"]`;
+      if (document.head.querySelector(selector)) return;
+      const style = document.createElement('style');
+      style.dataset['openspherePlugin'] = pluginId;
+      style.dataset['opensphereAsset'] = id;
+      style.textContent = asset.text;
+      document.head.appendChild(style);
+      const owned = this.assetStyles.get(pluginId) ?? new Set<HTMLStyleElement>();
+      owned.add(style);
+      this.assetStyles.set(pluginId, owned);
+    };
     return {
       pluginId,
       shellVersion: SHELL_VERSION,
@@ -366,6 +428,7 @@ export class ExtensionHostService {
           return () => subscription.unsubscribe();
         },
       },
+      ...(verifiedAssets.size ? { assets: { loadModule, loadStyle } } : {}),
       ...(perms.includes('api:proxy') ? { api: { baseUrl: manifest.apiBase ?? '', fetch: apiFetch } } : {}),
 			...(perms.includes('identity:read') ? { identity: {
 				username: this.auth.user(),
@@ -436,7 +499,6 @@ export class ExtensionHostService {
                 contribute: (source: ManualContribution) => {
                   const normalized = this.normalizeManualContribution(pluginId, source);
                   this.manualContributions.update((m) => ({ ...m, [pluginId]: normalized }));
-                  void this.syncManualContribution(pluginId, normalized);
                 },
                 clear: () =>
                   this.manualContributions.update((m) => {
@@ -496,7 +558,8 @@ export class ExtensionHostService {
     return {
       sourceId: String(input?.sourceId || `plugin:${pluginId}`).trim() || `plugin:${pluginId}`,
       name: String(input?.name || pluginId).trim() || pluginId,
-      authorityTier: Math.max(2, Math.min(4, Number(input?.authorityTier ?? 3) || 3)),
+      // 런타임 guest 문서는 로컬 UI 표시 전용이다. Canonical/RAG seed 권한은 설치 파이프라인만 갖는다.
+      authorityTier: 4,
       language: input?.language || 'mixed',
       documents: rawDocs
         .filter((doc) => doc && String(doc.id || '').trim() && String(doc.content || '').trim())
@@ -513,46 +576,30 @@ export class ExtensionHostService {
     };
   }
 
-  private async syncManualContribution(pluginId: string, source: ManualContribution): Promise<void> {
-    if (!source.documents.length) return;
-    const token = this.auth.token();
-    if (!token) return;
-    const sourceId = source.sourceId || `plugin:${pluginId}`;
-    try {
-      const res = await this.http.request('/api/oaa/admin/knowledge/manual-seed', {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          schema: 'manual-seed.opensphere.io/v1alpha1',
-          source: {
-            id: sourceId,
-            type: 'plugin',
-            name: source.name || pluginId,
-            authorityTier: source.authorityTier ?? 3,
-            defaultNamespace: 'opensphere',
-            defaultLanguage: source.language || 'mixed',
-            refreshMode: 'release-bound',
-          },
-          documents: source.documents.map((doc) => ({
-            sourceId: `${sourceId}/${doc.id}`,
-            title: doc.title,
-            route: doc.route || `/p/${pluginId}`,
-            sourcePath: doc.sourcePath || `${pluginId}/${doc.id}`,
-            documentType: doc.documentType || 'reference',
-            authorityTier: source.authorityTier ?? 3,
-            component: [pluginId],
-            tags: doc.tags || [],
-            content: doc.content,
-          })),
-        }),
-      });
-      if (!res.ok) console.warn(`[extension-host] manual contribution sync skipped for '${pluginId}': HTTP ${res.status}`);
-    } catch (e) {
-      console.warn(`[extension-host] manual contribution sync skipped for '${pluginId}':`, e);
+  private async verifyAssets(
+    pluginId: string,
+    manifestUrl: string,
+    declarations: readonly ManifestAsset[],
+  ): Promise<ReadonlyMap<string, VerifiedAsset>> {
+    const verified = new Map<string, VerifiedAsset>();
+    const canonicalAssetBase = `/api/plugins/${pluginId}/app/`;
+    for (const declaration of declarations) {
+      if (!/^[a-z][a-z0-9-]{0,63}$/.test(declaration.id) || verified.has(declaration.id)) {
+        throw new Error(`asset id가 유효하지 않거나 중복됨: '${declaration.id}'`);
+      }
+      if (!['module', 'style'].includes(declaration.type)) throw new Error(`asset '${declaration.id}' type이 유효하지 않음`);
+      if (!/^[a-f0-9]{64}$/.test(declaration.sha256)) throw new Error(`asset '${declaration.id}' sha256이 유효하지 않음`);
+      const url = new URL(declaration.path, new URL(manifestUrl, location.origin));
+      if (url.origin !== location.origin || !url.pathname.startsWith(canonicalAssetBase)) {
+        throw new Error(`asset '${declaration.id}'가 canonical app namespace 밖에 있음`);
+      }
+      const response = await fetchWithTimeout(url, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`asset '${declaration.id}' HTTP ${response.status}`);
+      const text = await response.text();
+      if ((await sha256Hex(text)) !== declaration.sha256) throw new Error(`asset '${declaration.id}' 무결성 불일치`);
+      verified.set(declaration.id, { declaration, text });
     }
+    return verified;
   }
 }
 
