@@ -33,10 +33,11 @@ test('browser login and bootstrap complete the Supabase TOTP challenge', () => {
   assert.match(authService, /finishMfaLogin/);
   assert.match(authService, /beginTotpEnrollment/);
   assert.match(authService, /challengeAndVerify/);
+  assert.match(authService, /authJson<SupabaseUser>\('\/auth\/v1\/user', \{ method: 'GET' \}, token\)/);
+  assert.doesNotMatch(authService, /authJson<SupabaseMfaFactors>\('\/auth\/v1\/factors', \{ method: 'GET' \}, token\)/);
   assert.match(authService, /jwtAssurance\(session\.access_token\) !== 'aal2'/);
   assert.match(login, /auth\.mfaRequired\(\)/);
   assert.match(login, /auth\.finishMfaLogin/);
   assert.match(setup, /auth\.beginTotpEnrollment/);
   assert.match(setup, /auth\.verifyTotpEnrollment/);
 });
-

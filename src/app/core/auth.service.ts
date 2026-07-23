@@ -1,22 +1,25 @@
 import { Injectable, signal } from '@angular/core';
 
-interface SupabaseSession {
-  access_token: string;
-  refresh_token: string;
-  expires_at?: number;
-  expires_in?: number;
-  user?: {
-    id?: string;
-    email?: string;
-    user_metadata?: Record<string, unknown>;
-  };
-}
-
 interface SupabaseMfaFactor {
   id: string;
   status?: string;
   factor_type?: string;
   friendly_name?: string;
+}
+
+interface SupabaseUser {
+  id?: string;
+  email?: string;
+  user_metadata?: Record<string, unknown>;
+  factors?: SupabaseMfaFactor[];
+}
+
+interface SupabaseSession {
+  access_token: string;
+  refresh_token: string;
+  expires_at?: number;
+  expires_in?: number;
+  user?: SupabaseUser;
 }
 
 interface SupabaseMfaFactors {
@@ -251,7 +254,14 @@ export class AuthService {
   }
 
   private async listMfaFactors(token: string): Promise<SupabaseMfaFactors> {
-    return this.authJson<SupabaseMfaFactors>('/auth/v1/factors', { method: 'GET' }, token);
+    // GoTrue exposes factor enrollment/challenge operations under /factors,
+    // but the authenticated factor list is part of the /user response.
+    const user = await this.authJson<SupabaseUser>('/auth/v1/user', { method: 'GET' }, token);
+    const all = Array.isArray(user.factors) ? user.factors : [];
+    return {
+      all,
+      totp: all.filter((factor) => factor.factor_type === 'totp'),
+    };
   }
 
   private factorItems(factors: SupabaseMfaFactors): SupabaseMfaFactor[] {
