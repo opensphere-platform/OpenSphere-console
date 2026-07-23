@@ -572,6 +572,14 @@ func TestSelfUpdateCheckAndApplyVerifyManifestArtifact(t *testing.T) {
 	if err := os.WriteFile(currentPath, []byte("old-cli"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	expectedTarget, err := filepath.EvalSymlinks(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedTarget, err = filepath.Abs(expectedTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
 	artifact := []byte("new-verified-cli")
 	digest := sha256.Sum256(artifact)
 	manifest := signTestUpdateManifest(t, updateManifest{
@@ -603,8 +611,11 @@ func TestSelfUpdateCheckAndApplyVerifyManifestArtifact(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		if !bytes.Equal(got, artifact) || target != currentPath || backup != currentPath+".previous" {
-			return false, fmt.Errorf("unexpected staged update")
+		if !bytes.Equal(got, artifact) || target != expectedTarget || backup != expectedTarget+".previous" {
+			return false, fmt.Errorf(
+				"unexpected staged update: artifact=%t target=%q backup=%q",
+				bytes.Equal(got, artifact), target, backup,
+			)
 		}
 		_ = os.Remove(staged)
 		return false, nil

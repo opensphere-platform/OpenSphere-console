@@ -54,6 +54,11 @@ jobs:
         with:
           repository: opensphere-platform/OpenSphere-Setup-CLI
           path: OpenSphere-Setup-CLI
+      - name: Checkout Cluster Manager
+        uses: actions/checkout@v4
+        with:
+          repository: opensphere-platform/OpenSphere-shell-clusterManager
+          path: OpenSphere-shell-clusterManager
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
