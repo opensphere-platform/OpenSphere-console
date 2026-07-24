@@ -139,8 +139,20 @@ function targetInput(row) {
 function credentialInput(value) {
   const accessKeyId = String(value?.accessKeyId || '').trim();
   const applicationKey = String(value?.applicationKey || '').trim();
-  if (accessKeyId.length < 8 || accessKeyId.length > 128) throw { code: 400, msg: 'Backblaze Application Key ID is required' };
-  if (applicationKey.length < 16 || applicationKey.length > 256) throw { code: 400, msg: 'Backblaze Application Key is required' };
+  if (!/^[A-Za-z0-9]{25}$/.test(accessKeyId)) {
+    throw {
+      code: 400,
+      field: 'accessKeyId',
+      msg: 'Backblaze Application Key ID must be the 25-character keyID issued for an S3-compatible application key',
+    };
+  }
+  if (!/^[A-Za-z0-9]{31}$/.test(applicationKey)) {
+    throw {
+      code: 400,
+      field: 'applicationKey',
+      msg: 'Backblaze Application Key must be the 31-character secret shown when the application key is created',
+    };
+  }
   return { accessKeyId, applicationKey };
 }
 
@@ -272,16 +284,47 @@ async function s3Request(args) {
   const response = await fetch(signed.url, signed.options);
   if (!response.ok) {
     const detail = (await response.text()).replace(/\s+/g, ' ').slice(0, 300);
-    throw { code: 502, msg: `S3 ${args.method} failed`, externalCode: `s3-http-${response.status}`, detail };
+    const providerCode = detail.match(/<Code>([^<]+)<\/Code>/)?.[1] || '';
+    const failure = s3Failure(providerCode, response.status);
+    throw {
+      code: 502,
+      msg: failure.message || `S3 ${args.method} failed`,
+      externalCode: providerCode ? `s3-${providerCode}` : `s3-http-${response.status}`,
+      field: failure.field,
+    };
   }
   return response;
+}
+
+function s3Failure(providerCode, status) {
+  if (providerCode === 'InvalidAccessKeyId') {
+    return { field: 'accessKeyId', message: 'Backblaze가 Application Key ID를 올바른 keyID로 인식하지 못했습니다.' };
+  }
+  if (providerCode === 'SignatureDoesNotMatch') {
+    return { field: 'applicationKey', message: 'Backblaze Application Key가 Key ID와 일치하지 않습니다.' };
+  }
+  if (providerCode === 'NoSuchBucket') {
+    return { field: 'bucketName', message: 'Backblaze에서 입력한 Bucket name을 찾을 수 없습니다.' };
+  }
+  if (providerCode === 'AuthorizationHeaderMalformed' || providerCode === 'PermanentRedirect') {
+    return { field: 'region', message: 'Bucket의 Region 또는 S3 endpoint가 일치하지 않습니다.' };
+  }
+  if (providerCode === 'AccessDenied' || status === 403) {
+    return {
+      field: 'accessKeyId',
+      message: 'Application Key에 이 Bucket의 목록·읽기·쓰기 권한이 없습니다.',
+    };
+  }
+  return { field: '', message: '' };
 }
 
 async function testTarget(targetId) {
   const target = await targetFor(targetId);
   const credential = await credentialFor(targetId);
   try {
-    await s3Request({ target, credential, method: 'HEAD' });
+    // A bounded ListObjectsV2 request yields Backblaze's typed XML error body;
+    // HeadBucket commonly returns an empty 403 and cannot identify the field.
+    await s3Request({ target, credential, method: 'GET', query: { 'list-type': 2, 'max-keys': 1 } });
     const at = new Date().toISOString();
     await rest('external_backup_target', {
       method: 'PATCH',
@@ -505,6 +548,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, Number(error?.code) || 500, {
       error: error?.msg || error?.message || 'external backup executor failed',
       ...(error?.externalCode ? { code: error.externalCode } : {}),
+      ...(error?.field ? { field: error.field } : {}),
     });
   }
 });
@@ -516,7 +560,9 @@ if (require.main === module) {
 module.exports = {
   canonicalPath,
   cipherJson,
+  credentialInput,
   decipherJson,
+  s3Failure,
   signedS3Request,
   targetInput,
   server,

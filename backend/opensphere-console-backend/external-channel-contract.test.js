@@ -11,7 +11,9 @@ const {
 } = require('./external-channel-api');
 const {
   cipherJson,
+  credentialInput,
   decipherJson,
+  s3Failure,
   signedS3Request,
   targetInput,
 } = require('../notification-dispatcher/external-backup-server');
@@ -22,6 +24,32 @@ test('external backup and restore audit reasons have no minimum length requireme
   assert.equal(auditReason(''), '');
   assert.equal(auditReason(' 짧음 '), '짧음');
   assert.throws(() => auditReason('a'.repeat(241)), { code: 400 });
+});
+
+test('Backblaze credentials fail on their exact field before a remote action', () => {
+  const valid = {
+    accessKeyId: '00512f95cf4dcf0000000004z',
+    applicationKey: 'K0041ZMxZEop4JkYUJqEei1ZSep14zz',
+  };
+  assert.deepEqual(credentialInput(valid), valid);
+  assert.throws(
+    () => credentialInput({ ...valid, accessKeyId: 'not-a-backblaze-key-id' }),
+    (error) => error?.field === 'accessKeyId',
+  );
+  assert.throws(
+    () => credentialInput({ ...valid, applicationKey: 'wrong-secret' }),
+    (error) => error?.field === 'applicationKey',
+  );
+});
+
+test('Backblaze S3 failures identify the actionable configuration field', () => {
+  assert.deepEqual(s3Failure('InvalidAccessKeyId', 403), {
+    field: 'accessKeyId',
+    message: 'Backblaze가 Application Key ID를 올바른 keyID로 인식하지 못했습니다.',
+  });
+  assert.equal(s3Failure('SignatureDoesNotMatch', 403).field, 'applicationKey');
+  assert.equal(s3Failure('NoSuchBucket', 404).field, 'bucketName');
+  assert.equal(s3Failure('AuthorizationHeaderMalformed', 400).field, 'region');
 });
 
 test('Backblaze target is fixed to the configured HTTPS region and rejects alternate origins', () => {
@@ -126,6 +154,11 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.match(source, /백업 및 복원/);
   assert.match(source, /AES-256-GCM/);
   assert.match(source, /RESTORE /);
+  assert.match(source, /panelError/);
+  assert.match(source, /backupTargetFormValid/);
+  assert.match(source, /Key Name이나 Bucket ID가 아닌 Backblaze의 25자 keyID/);
+  assert.match(source, /\[disabled\]="busy\(\) \|\| !backupTargetFormValid\(\)"/);
+  assert.doesNotMatch(source, /변경을 완료하지 못했습니다/);
   assert.match(routes, /path: 'external-channels'/);
   assert.match(routes, /path: 'notification-channels', redirectTo: 'external-channels'/);
   assert.match(nginx, /location \/api\/external-channels\//);

@@ -349,6 +349,7 @@ async function externalChannelExecutorRequest(pathName, body, timeoutMs = 15000)
     code: response.status === 401 || response.status === 403 ? 502 : response.status,
     msg: parsed.error || 'external channel executor request failed',
     externalCode: parsed.code || null,
+    field: parsed.field || null,
   };
   return parsed;
 }
@@ -2729,7 +2730,12 @@ const server = http.createServer(async (req, res) => {
       try {
         const actor = await verifyExternalChannelAdmin(req);
         return json(res, 201, await externalChannelApi.createTarget(actor, await readBody(req)));
-      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'external backup target creation failed' }); }
+      } catch (e) {
+        return json(res, authErrorStatus(e), {
+          error: e.msg || 'external backup target creation failed',
+          ...(e.field ? { field: e.field } : {}),
+        });
+      }
     }
     const externalBackupTargetAction = p.match(/^\/api\/external-channels\/backup-targets\/([0-9a-fA-F-]+)\/(test|backup)$/);
     if (externalBackupTargetAction && req.method === 'POST') {
@@ -2741,7 +2747,12 @@ const server = http.createServer(async (req, res) => {
           action === 'test'
             ? await externalChannelApi.test(actor, id, body)
             : await externalChannelApi.backupNow(actor, id, body));
-      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'external backup target action failed' }); }
+      } catch (e) {
+        return json(res, authErrorStatus(e), {
+          error: e.msg || 'external backup target action failed',
+          ...(e.field ? { field: e.field } : {}),
+        });
+      }
     }
     if (p === '/api/external-channels/backups' && req.method === 'GET') {
       try { await verifyExternalChannelAdmin(req); return json(res, 200, { items: await externalChannelApi.backups() }); }
