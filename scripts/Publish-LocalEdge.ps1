@@ -10,16 +10,14 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 function Invoke-Checked {
-  param(
-    [Parameter(Mandatory)]
-    [string]$Command,
-    [Parameter(ValueFromRemainingArguments)]
-    [string[]]$Arguments
-  )
-
-  & $Command @Arguments
+  if ($args.Count -lt 1) {
+    throw 'Invoke-Checked requires an executable.'
+  }
+  $executable = [string]$args[0]
+  $arguments = @($args | Select-Object -Skip 1)
+  & $executable @arguments
   if ($LASTEXITCODE -ne 0) {
-    throw "$Command failed with exit code $LASTEXITCODE"
+    throw "$executable failed with exit code $LASTEXITCODE"
   }
 }
 
