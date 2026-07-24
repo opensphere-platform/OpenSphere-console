@@ -125,8 +125,14 @@ class RegistryCredentialCoordinator {
 
   mounted() {
     const credentials = dockerCredentials(this.readFile(this.configPath));
-    const generation = String(this.readFile(this.generationPath) || '').trim();
-    return credentials && generation ? { ...credentials, generation } : null;
+    if (!credentials?.generation) return null;
+    // The credential generation travels with the same projected Secret as the
+    // credential bytes.  The independent ConfigMap projection is an optional
+    // cross-check: an absent or not-yet-created state volume must not turn a
+    // fully converged Secret mount into a permanent propagation failure.
+    const projectedGeneration = String(this.readFile(this.generationPath) || '').trim();
+    if (projectedGeneration && projectedGeneration !== credentials.generation) return null;
+    return { ...credentials, generation: credentials.generation };
   }
 
   async credentials() {

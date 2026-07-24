@@ -97,6 +97,28 @@ test('a stale replica returns retryable propagation rather than a false 401', as
   await assert.rejects(b.credentials(), (error) => error.code === 503 && error.reason === 'RegistryCredentialsPropagating' && error.retryAfter === 1);
 });
 
+test('a replica observes the generation embedded in its Secret when the optional state volume is absent', async () => {
+  const cluster = fakeCluster();
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: { phase: 'configured', generation: 'generation-2', updatedAt: '2026-07-24T00:00:00.000Z' } });
+  const mounts = new Map([
+    ['/mount/controller-a/config.json', dockerConfig('opensphere-platform', 'test-token-not-a-real-secret', 'generation-2')],
+  ]);
+  const a = coordinator(cluster, 'controller-a', mounts);
+  assert.deepEqual(await a.credentials(), { username: 'opensphere-platform', password: 'test-token-not-a-real-secret' });
+  assert.equal((await a.observe()).observed, 'configured:generation-2');
+});
+
+test('a mismatched optional state projection still blocks credential use', async () => {
+  const cluster = fakeCluster();
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: { phase: 'configured', generation: 'generation-2', updatedAt: '2026-07-24T00:00:00.000Z' } });
+  const mounts = new Map([
+    ['/mount/controller-a/config.json', dockerConfig('opensphere-platform', 'test-token-not-a-real-secret', 'generation-2')],
+    ['/state/controller-a/generation', 'generation-1'],
+  ]);
+  const a = coordinator(cluster, 'controller-a', mounts);
+  await assert.rejects(a.credentials(), (error) => error.code === 503 && error.reason === 'RegistryCredentialsPropagating');
+});
+
 test('logout blocks all replica credential use before reporting success', async () => {
   const cluster = fakeCluster();
   const mounts = new Map();
