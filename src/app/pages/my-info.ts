@@ -396,10 +396,19 @@ interface AuditEvent {
                 <div><dt>브라우저 토큰 보관</dt><dd>sessionStorage · 브라우저 종료 시 삭제</dd></div>
               </dl>
               <h2>인증 앱</h2>
+              @if (auth.mfaEnrollmentRequired()) {
+                <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+                  <clr-alert-item><span class="alert-text"><strong>OTP 재등록이 필요합니다.</strong> 관리자가 기존 OTP 연결을 해제했습니다. 아래 QR 코드를 인증 앱으로 스캔하고 6자리 코드를 확인하세요.</span></clr-alert-item>
+                </clr-alert>
+              }
               @if (totpEnrollment(); as enrollment) {
                 <p class="section-lead">Google Authenticator, Microsoft Authenticator, 1Password 같은 인증 앱으로 QR 코드를 스캔한 뒤, 앱에 표시되는 현재 6자리 코드를 입력해야 등록이 완료됩니다.</p>
                 <div class="mfa-enrollment">
-                  @if (enrollment.qrCode) { <img [src]="enrollment.qrCode" alt="OpenSphere TOTP 등록 QR 코드"> }
+                  @if (enrollment.qrCode && !totpQrError()) {
+                    <img [src]="enrollment.qrCode" alt="OpenSphere TOTP 등록 QR 코드" (error)="totpQrError.set(true)">
+                  } @else {
+                    <div class="qr-unavailable" role="status">QR 코드를 표시할 수 없습니다. 인증 앱에서 수동 등록 키를 입력하세요.</div>
+                  }
                   <div>
                     <span class="setup-label">수동 등록 키</span>
                     <code>{{ enrollment.secret }}</code>
@@ -555,6 +564,7 @@ interface AuditEvent {
       .security-list { max-width: 58rem; }
       .mfa-enrollment { display: flex; align-items: center; gap: 1rem; margin: .75rem 0; }
       .mfa-enrollment img { width: 11rem; height: 11rem; border: 1px solid var(--os-hairline); }
+      .qr-unavailable { display: grid; place-items: center; width: 11rem; height: 11rem; padding: 1rem; border: 1px solid var(--os-hairline); color: var(--os-ink-muted); text-align: center; }
       .mfa-enrollment code { display: block; max-width: 24rem; margin-top: .3rem; padding: .55rem; background: var(--os-surface-1); word-break: break-all; user-select: all; }
       .mfa-uri { display: block; max-width: 36rem; margin-top: .4rem; color: var(--os-muted); font-size: .62rem; word-break: break-all; }
       .mfa-verify { max-width: 24rem; margin-bottom: 1.4rem; }
@@ -638,12 +648,14 @@ export class MyInfo {
   readonly passwordChanged = signal(false);
   readonly passwordError = signal('');
   readonly totpEnrollment = signal<TotpEnrollment | null>(null);
+  readonly totpQrError = signal(false);
 
   edit = { displayName: '', email: '', reason: '' };
   tokenLabel = '';
   tokenReason = '';
   revokeReason = '';
   totpCode = '';
+  private forcedTotpEnrollmentStarted = false;
   deviceSearchText = '';
   tokenSearchText = '';
   readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '—';
@@ -677,6 +689,13 @@ export class MyInfo {
     this.route.queryParamMap.subscribe((params) => {
       const requested = params.get('tab') as ProfileTab | null;
       if (requested && this.validTab(requested)) this.tab.set(requested);
+      if (params.get('enroll') === 'totp') {
+        this.tab.set('security');
+        if (!this.forcedTotpEnrollmentStarted) {
+          this.forcedTotpEnrollmentStarted = true;
+          queueMicrotask(() => void this.beginTotpEnrollment());
+        }
+      }
 		const enrollmentId = params.get('cli_enrollment');
       const code = params.get('code');
       if (enrollmentId && code) {
@@ -765,6 +784,7 @@ export class MyInfo {
     if (this.busy()) return;
     this.busy.set(true);
     this.message.set(null);
+    this.totpQrError.set(false);
     try {
       this.totpEnrollment.set(await this.auth.beginTotpEnrollment('OpenSphere Console administrator'));
       this.totpCode = '';
@@ -784,6 +804,7 @@ export class MyInfo {
       await this.auth.verifyTotpEnrollment(enrollment.factorId, this.totpCode);
       this.totpEnrollment.set(null);
       this.totpCode = '';
+      await this.router.navigate([], { relativeTo: this.route, queryParams: { tab: 'security', enroll: null }, queryParamsHandling: 'merge', replaceUrl: true });
       this.message.set({ type: 'success', text: 'TOTP 등록과 추가 인증을 완료했습니다. 관리자 변경 작업에 AAL2가 적용됩니다.' });
     } catch (error) {
       this.message.set({ type: 'danger', text: `TOTP 검증 실패: ${error instanceof Error ? error.message : String(error)}` });

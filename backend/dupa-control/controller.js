@@ -1560,7 +1560,7 @@ async function platformControlReadiness() {
   return {
     ready, required: true,
     supabase, gitea: { ready: gitea }, oaa,
-    reason: ready ? '' : 'Supabase Data & Identity, Gitea Change Control, and OAA readiness are required',
+    reason: ready ? '' : 'Supabase Data & Identity, State Change Authority, and OAA readiness are required',
   };
 }
 function bindingConsumer(binding) {

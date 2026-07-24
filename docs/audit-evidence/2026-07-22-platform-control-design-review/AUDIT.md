@@ -1,7 +1,7 @@
 # Platform Control Plane 디자인 재감사
 
 - 일자: 2026-07-22
-- 범위: `/manage/data-identity`, `/manage/change-control`
+- 범위: `/manage/data-identity`, `/manage/state-changes`
 - 사용자 목표: Console 운영자가 Supabase와 Gitea의 현재 상태, 위험, 변경, 복구 증거와 다음 조치를 한 흐름에서 판단
 - 접근성 목표: 키보드와 보조기술에서도 상태·탭·표·조치 관계가 분명하며 색상만으로 상태를 전달하지 않음
 

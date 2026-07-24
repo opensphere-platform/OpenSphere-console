@@ -403,6 +403,21 @@ function userFromAuthRow(row, fallbackName = 'user') {
   };
 }
 
+function totpFactorsFromAuthRow(row) {
+  return (Array.isArray(row?.factors) ? row.factors : [])
+    .filter((factor) => factor?.id && factor.factor_type === 'totp');
+}
+
+function mfaProjectionFromAuthRow(row) {
+  const totp = totpFactorsFromAuthRow(row);
+  const verified = totp.filter((factor) => factor.status === 'verified');
+  return {
+    totpCount: totp.length,
+    verifiedTotpCount: verified.length,
+    status: verified.length ? 'registered' : 'enrollment-required',
+  };
+}
+
 async function verifyAuthed(req) {
   const auth = req.headers.authorization || '';
   const match = auth.match(/^Bearer\s+(.+)$/i);
@@ -1091,22 +1106,30 @@ async function giteaRequest(pathName, { method = 'GET', body = undefined, header
 }
 
 async function changeRequests() {
-  const [rows, executionRows, outboxRows, approvalRows] = await Promise.all([
+  const [rows, executionRows, outboxRows, approvalRows, operatorRows] = await Promise.all([
     restRequest('change_request', {
-    query: 'select=request_id,action,target,reason,status,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&order=created_at.desc&limit=50',
+    query: 'select=request_id,actor_id,actor_type,action,target,reason,status,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&order=created_at.desc&limit=50',
     }),
     restRequest('change_execution', { query: 'select=request_id,branch,pull_number,pull_url,desired_revision,merge_revision,reconciler,reconciler_status,drift_status,attempt_count,last_error,updated_at' }),
     restRequest('change_outbox', { query: 'select=request_id,status,attempts,next_attempt_at,last_error,updated_at' }),
     restRequest('change_approval', { query: 'select=request_id,approver_id,status,gitea_review_id,created_at,completed_at,error_code&order=created_at.asc' }),
+    restRequest('operator', { query: 'select=user_id,display_name' }),
   ]);
   const execution = new Map((Array.isArray(executionRows) ? executionRows : []).map((row) => [row.request_id, row]));
   const outbox = new Map((Array.isArray(outboxRows) ? outboxRows : []).map((row) => [row.request_id, row]));
+  const operators = new Map((Array.isArray(operatorRows) ? operatorRows : []).map((row) => [row.user_id, row.display_name || row.user_id]));
   const approvals = new Map();
   for (const approval of (Array.isArray(approvalRows) ? approvalRows : [])) {
     const list = approvals.get(approval.request_id) || [];
-    list.push(approval); approvals.set(approval.request_id, list);
+    list.push({ ...approval, approver_display_name: operators.get(approval.approver_id) || approval.approver_id }); approvals.set(approval.request_id, list);
   }
-  return (Array.isArray(rows) ? rows : []).map((row) => ({ ...row, execution: execution.get(row.request_id) || null, outbox: outbox.get(row.request_id) || null, approvals: approvals.get(row.request_id) || [] }));
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    ...row,
+    requester: { id: row.actor_id, type: row.actor_type, displayName: operators.get(row.actor_id) || row.actor_id },
+    execution: execution.get(row.request_id) || null,
+    outbox: outbox.get(row.request_id) || null,
+    approvals: approvals.get(row.request_id) || [],
+  }));
 }
 
 async function consumerContracts() {
@@ -1167,7 +1190,7 @@ async function giteaStatus() {
   if (!GITEA_URL) {
     return {
       meta, configured: false, ready: false, version: '', repositoryCount: null,
-      repositories: [], contracts, receipts, changes, byStatus, recovery, supplyChain: null, reason: 'GITEA_URL is not configured for Console Change Control',
+      repositories: [], contracts, receipts, changes, byStatus, recovery, supplyChain: null, reason: 'GITEA_URL is not configured for State Change Authority',
     };
   }
   try {
@@ -1264,6 +1287,81 @@ const CEPH_PREREQUISITE_TEMPLATE = Object.freeze({
 function changeTemplate(templateId) {
   if (templateId !== CEPH_PREREQUISITE_TEMPLATE.id) throw { code: 404, msg: 'change template not found' };
   return JSON.parse(JSON.stringify(CEPH_PREREQUISITE_TEMPLATE));
+}
+
+function changeTemplateRequestPhase(change, execution, outbox) {
+  if (change?.status === 'applied' || execution?.reconciler_status === 'Applied') return 'Completed';
+  if (change?.status === 'failed' || execution?.reconciler_status === 'Failed'
+    || ['failed', 'dead-letter'].includes(String(outbox?.status || ''))) return 'Failed';
+  if (change?.status === 'unknown' || ['Unknown', 'Drifted'].includes(String(execution?.reconciler_status || ''))) return 'NeedsAttention';
+  if (execution?.reconciler_status === 'Reconciling' || outbox?.status === 'dispatching') return 'Applying';
+  if (change?.status === 'committed' || execution?.reconciler_status === 'Queued' || outbox?.status === 'queued') return 'Queued';
+  if (change?.status === 'authorized') return 'AwaitingApproval';
+  return 'Creating';
+}
+
+function changeTemplateRequestMessage(phase) {
+  return {
+    Creating: '변경 요청을 기록하고 서명된 상태 선언을 준비하고 있습니다.',
+    AwaitingApproval: '설치 요청이 접수되어 두 번째 운영자의 승인을 기다리고 있습니다.',
+    Queued: '승인이 완료되어 전용 적용기의 작업 대기열에 등록되었습니다.',
+    Applying: '전용 적용기가 Consumer Kubernetes에 선행요소를 설치하고 검증하고 있습니다.',
+    Completed: '설치와 실측 검증이 완료되었습니다. Ceph 화면에서 준비상태를 다시 확인하십시오.',
+    Failed: '설치 또는 검증에 실패했습니다. 오류를 확인한 후 새 변경 요청으로 재시도하십시오.',
+    NeedsAttention: '변경 결과를 확정할 수 없거나 선언과 실측 상태가 일치하지 않습니다.',
+  }[phase] || '변경 요청 상태를 확인하고 있습니다.';
+}
+
+async function changeTemplateRequestStatus(templateId) {
+  const template = changeTemplate(templateId);
+  const action = `gitea:${template.action}`;
+  const rows = await restRequest('change_request', {
+    query: `select=request_id,action,target,reason,status,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&target=eq.${encodeURIComponent(template.target)}&action=eq.${encodeURIComponent(action)}&order=created_at.desc&limit=1`,
+  });
+  const change = Array.isArray(rows) ? rows[0] : null;
+  if (!change) return { templateId: template.id, current: null, checkedAt: new Date().toISOString() };
+
+  const requestId = change.request_id;
+  const [executionRows, outboxRows, approvalRows] = await Promise.all([
+    restRequest('change_execution', {
+      query: `select=request_id,branch,pull_number,pull_url,desired_revision,merge_revision,reconciler,reconciler_status,drift_status,attempt_count,last_error,updated_at&request_id=eq.${encodeURIComponent(requestId)}`,
+    }),
+    restRequest('change_outbox', {
+      query: `select=request_id,status,attempts,next_attempt_at,last_error,updated_at&request_id=eq.${encodeURIComponent(requestId)}`,
+    }),
+    restRequest('change_approval', {
+      query: `select=request_id,status,created_at,completed_at,error_code&request_id=eq.${encodeURIComponent(requestId)}&order=created_at.asc`,
+    }),
+  ]);
+  const execution = Array.isArray(executionRows) ? executionRows[0] : null;
+  const outbox = Array.isArray(outboxRows) ? outboxRows[0] : null;
+  const approvals = Array.isArray(approvalRows) ? approvalRows : [];
+  const phase = changeTemplateRequestPhase(change, execution, outbox);
+  const sourceMatch = String(change.reason || '').match(/\s\[source:([a-z0-9-]+)\]$/);
+  const reason = sourceMatch ? String(change.reason).slice(0, sourceMatch.index).trim() : String(change.reason || '');
+  return {
+    templateId: template.id,
+    current: {
+      trackingAvailable: true,
+      requestId,
+      phase,
+      status: change.status,
+      message: changeTemplateRequestMessage(phase),
+      reason,
+      source: sourceMatch?.[1] || '',
+      requestedAt: change.created_at,
+      completedAt: change.completed_at,
+      pullRequest: execution?.pull_number ? { number: execution.pull_number, url: execution.pull_url || null } : null,
+      reconciler: execution?.reconciler || null,
+      reconcilerStatus: execution?.reconciler_status || 'NotScheduled',
+      outboxStatus: outbox?.status || null,
+      attemptCount: Number(execution?.attempt_count || outbox?.attempts || 0),
+      approvalCount: approvals.filter((approval) => approval.status === 'applied').length,
+      lastError: String(execution?.last_error || outbox?.last_error || '').slice(0, 500) || null,
+      checkedAt: new Date().toISOString(),
+    },
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 function validateChangeTemplate(body, declaration) {
@@ -1377,7 +1475,7 @@ async function approveGovernedChange(actor, requestIdValue, body = {}) {
   if (!reason) throw { code: 400, msg: 'approval reason must be at least 8 characters' };
   const [changes, executions] = await Promise.all([
     restRequest('change_request', { query: `select=request_id,actor_id,status,target,git_repo&request_id=eq.${encodeURIComponent(requestId)}` }),
-    restRequest('change_execution', { query: `select=request_id,pull_number,branch&request_id=eq.${encodeURIComponent(requestId)}` }),
+    restRequest('change_execution', { query: `select=request_id,pull_number,branch,reconciler&request_id=eq.${encodeURIComponent(requestId)}` }),
   ]);
   const change = Array.isArray(changes) ? changes[0] : null;
   const execution = Array.isArray(executions) ? executions[0] : null;
@@ -1400,7 +1498,19 @@ async function approveGovernedChange(actor, requestIdValue, body = {}) {
     const merge = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${execution.pull_number}/merge`, {
       method: 'POST', body: { Do: 'merge', delete_branch_after_merge: false },
     });
-    return { requestId, approved: true, merged: Boolean(merge.body?.merged), mergeMessage: String(merge.body?.message || '') || null, pullNumber: execution.pull_number };
+    const pull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${execution.pull_number}`);
+    const merged = pull.body?.state === 'closed' && pull.body?.merged === true;
+    const mergeRevision = String(pull.body?.merge_commit_sha || '').toLowerCase();
+    if (merged && /^[0-9a-f]{40,64}$/.test(mergeRevision)) {
+      await convergeGovernedMerge({
+        requestId,
+        branch: execution.branch,
+        mergeRevision,
+        repository: giteaRepoName(),
+        reconciler: execution.reconciler || GITEA_RECONCILER_NAME,
+      });
+    }
+    return { requestId, approved: true, merged, mergeRevision: merged ? mergeRevision : null, mergeMessage: String(merge.body?.message || '') || null, pullNumber: execution.pull_number };
   } catch (error) {
     await logAudit(actor, 'gitea-change-merge', requestId, 'failed', reason, { requestId, phase: 'approved-awaiting-merge', targetType: 'gitea-pull-request', payloadDigest: toHashHex(canonicalJson({ requestId, error: error?.msg || 'gitea-merge-failed' })) }).catch(() => undefined);
     throw { code: error?.code === 409 ? 409 : 502, msg: 'Gitea review succeeded but merge is pending or failed', detail: String(error?.msg || 'Gitea merge failed').slice(0, 180) };
@@ -1457,11 +1567,50 @@ async function processGiteaWebhook(req) {
     await patchWebhookReceipt(deliveryId, { disposition: 'rejected', error_code: 'merge-signature-unverified' });
     return { duplicate: false, accepted: false, ignored: true, reason: error?.msg || 'merge-signature-unverified' };
   }
-  await restRequest('rpc/record_change_commit', { method: 'POST', body: { p_request_id: execution.request_id, p_git_repo: repository, p_git_ref: GITEA_DEFAULT_BRANCH, p_git_commit_sha: mergeRevision } });
-  await restRequest('change_execution', { method: 'PATCH', query: `request_id=eq.${encodeURIComponent(execution.request_id)}`, body: { merge_revision: mergeRevision, updated_at: new Date().toISOString() }, prefer: 'return=minimal' });
-  await restRequest('rpc/queue_change_reconcile', { method: 'POST', body: { p_request_id: execution.request_id, p_reconciler: execution.reconciler || GITEA_RECONCILER_NAME } });
+  await convergeGovernedMerge({ requestId: execution.request_id, branch, mergeRevision, repository, reconciler: execution.reconciler || GITEA_RECONCILER_NAME, signatureVerified: true });
   await patchWebhookReceipt(deliveryId, { request_id: execution.request_id, disposition: 'accepted', error_code: null });
   return { duplicate: false, accepted: true, requestId: execution.request_id, status: 'committed' };
+}
+
+async function convergeGovernedMerge({ requestId, branch, mergeRevision, repository, reconciler, signatureVerified = false }) {
+  if (!signatureVerified) await assertVerifiedGovernedMerge(mergeRevision);
+  const [changeRows, executionRows] = await Promise.all([
+    restRequest('change_request', { query: `select=request_id,status,git_commit_sha&request_id=eq.${encodeURIComponent(requestId)}` }),
+    restRequest('change_execution', { query: `select=request_id,branch,merge_revision,reconciler&request_id=eq.${encodeURIComponent(requestId)}` }),
+  ]);
+  const change = Array.isArray(changeRows) ? changeRows[0] : null;
+  const execution = Array.isArray(executionRows) ? executionRows[0] : null;
+  if (!change || !execution || execution.branch !== branch) throw { code: 409, msg: 'governed merge does not match its recorded change execution' };
+  if (change.status === 'authorized' || change.status === 'intent' || change.status === 'unknown') {
+    await restRequest('rpc/record_change_commit', { method: 'POST', body: { p_request_id: requestId, p_git_repo: repository, p_git_ref: GITEA_DEFAULT_BRANCH, p_git_commit_sha: mergeRevision } });
+  } else if (!['committed', 'applied', 'failed'].includes(change.status) || change.git_commit_sha !== mergeRevision) {
+    throw { code: 409, msg: 'governed merge conflicts with the recorded change state' };
+  }
+  await restRequest('change_execution', { method: 'PATCH', query: `request_id=eq.${encodeURIComponent(requestId)}`, body: { merge_revision: mergeRevision, updated_at: new Date().toISOString() }, prefer: 'return=minimal' });
+  if (!['applied', 'failed'].includes(change.status)) {
+    await restRequest('rpc/queue_change_reconcile', { method: 'POST', body: { p_request_id: requestId, p_reconciler: reconciler || execution.reconciler || GITEA_RECONCILER_NAME } });
+  }
+  return { requestId, status: change.status === 'authorized' ? 'committed' : change.status, mergeRevision };
+}
+
+async function retryGovernedChange(actor, requestIdValue, body = {}) {
+  requireActorPermission(actor, 'console.git.change');
+  if (GITEA_CHANGE_REQUIRE_AAL2 && actor.assurance !== 'aal2') throw { code: 403, msg: 'governed reconcile retry requires MFA assurance aal2' };
+  const requestId = uuid(requestIdValue);
+  const reason = managementReason(body.reason);
+  if (!reason) throw { code: 400, msg: 'retry reason must be at least 8 characters' };
+  const rows = await restRequest('rpc/retry_change_reconcile', {
+    method: 'POST',
+    body: { p_request_id: requestId, p_actor_id: actor.sub, p_reason: reason },
+  });
+  const queued = Array.isArray(rows) ? rows[0] : rows;
+  await logAudit(actor, 'gitea-change-reconcile-retry', requestId, 'ok', reason, {
+    requestId,
+    phase: 'committed',
+    targetType: 'declarative-change',
+    payloadDigest: toHashHex(canonicalJson({ requestId, outboxId: queued?.id || null, attempts: queued?.attempts || 0 })),
+  });
+  return { requestId, requeued: true, outboxStatus: queued?.status || 'queued', attempts: Number(queued?.attempts || 0) };
 }
 
 function verifyReconcilerCredential(req) {
@@ -1683,9 +1832,21 @@ async function createRecoveryLink(email) {
   if (!email) throw { code: 400, msg: 'email missing' };
   const result = await authAdminRequest('/admin/generate_link', {
     method: 'POST',
-    body: { type: 'recovery', email },
+    body: {
+      type: 'recovery',
+      email,
+      redirect_to: `${CONSOLE_PUBLIC_URL}/auth/recovery`,
+    },
   });
-  return result?.action_link || result?.properties?.action_link || null;
+  const raw = result?.action_link || result?.properties?.action_link || null;
+  if (!raw) return null;
+  const publicBase = new URL(CONSOLE_PUBLIC_URL);
+  const action = new URL(String(raw), `${publicBase.origin}/auth/v1/`);
+  if (action.pathname === '/verify') action.pathname = '/auth/v1/verify';
+  if (action.pathname !== '/auth/v1/verify') throw { code: 502, msg: 'unexpected Supabase recovery action path' };
+  action.protocol = publicBase.protocol;
+  action.host = publicBase.host;
+  return action.toString();
 }
 
 function roleByIdMap(roles) {
@@ -1735,6 +1896,7 @@ async function identityPayload() {
       lastName: last,
       enabled: String(o.status || 'active') === 'active',
       groups: groups.map((g) => ({ id: g.id, name: g.name, path: `/${g.name}` })),
+      mfa: mfaProjectionFromAuthRow(authUser),
     };
   });
 
@@ -2802,12 +2964,17 @@ const server = http.createServer(async (req, res) => {
         await verifyConsoleAdmin(req);
         return json(res, 200, await giteaStatus());
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'Gitea Change Control status unavailable' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'State Change Authority status unavailable' });
       }
     }
     if (p === '/api/platform/contracts' && req.method === 'GET') {
       try { await verifyConsoleAdmin(req); return json(res, 200, { items: await consumerContracts(), checkedAt: new Date().toISOString() }); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'consumer contracts unavailable' }); }
+    }
+    const changeTemplateStatusPath = p.match(/^\/api\/platform\/change-templates\/([a-z0-9-]+)\/status$/);
+    if (changeTemplateStatusPath && req.method === 'GET') {
+      try { await verifyConsoleAdmin(req); return json(res, 200, await changeTemplateRequestStatus(changeTemplateStatusPath[1])); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'change template request status unavailable' }); }
     }
     const changeTemplatePath = p.match(/^\/api\/platform\/change-templates\/([a-z0-9-]+)$/);
     if (changeTemplatePath && req.method === 'GET') {
@@ -2822,6 +2989,11 @@ const server = http.createServer(async (req, res) => {
     if (changeApprovalPath && req.method === 'POST') {
       try { const actor = await verifyConsoleAdmin(req); return json(res, 202, await approveGovernedChange(actor, changeApprovalPath[1], await readBody(req))); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'governed change approval failed' }); }
+    }
+    const changeRetryPath = p.match(/^\/api\/platform\/changes\/([0-9a-fA-F-]+)\/retry$/);
+    if (changeRetryPath && req.method === 'POST') {
+      try { const actor = await verifyConsoleAdmin(req); return json(res, 202, await retryGovernedChange(actor, changeRetryPath[1], await readBody(req))); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'governed change retry failed' }); }
     }
     if (p === '/api/catalog/entities' && req.method === 'GET') {
       try {
@@ -2949,6 +3121,49 @@ const server = http.createServer(async (req, res) => {
       const link = await createRecoveryLink(authUser?.email);
       await logAudit(actor, 'onboarding-link', userId, link ? 'ok' : 'error', reason, { requestId: opId, phase: 'applied', targetType: 'console-identity-user' });
       return json(res, 200, { ok: true, username: userFromAuthRow(authUser, userId).username, onboardingPath: link });
+    }
+
+    const mMfaReset = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/mfa\/reset$/);
+    if (mMfaReset && req.method === 'POST') {
+      let actor;
+      let reason;
+      const userId = mMfaReset[1];
+      const opId = newOpId();
+      try {
+        actor = await verifyActor(req);
+        reason = managementReason((await readBody(req).catch(() => ({}))).reason);
+        if (!reason) return json(res, 400, { error: 'reason은 8자 이상 필수 (IGA)', minimumLength: 8 });
+        await logAudit(actor, 'iga-mfa-reset', userId, 'attempt', reason, { requestId: opId, phase: 'intent', targetType: 'console-identity-user' });
+        if (actor.sub === userId) {
+          await logAudit(actor, 'mfa-reset', userId, 'denied', 'administrator cannot reset their own MFA factor', { requestId: opId, phase: 'applied', targetType: 'console-identity-user' });
+          return json(res, 403, { error: '본인 OTP는 다른 관리자가 연결 해제해야 합니다' });
+        }
+        if (!await getOperatorById(userId)) return json(res, 404, { error: 'person not found' });
+        const authUser = await getAuthUser(userId);
+        if (!authUser) return json(res, 404, { error: 'Supabase Auth user not found' });
+        const factors = totpFactorsFromAuthRow(authUser);
+        for (const factor of factors) {
+          await authAdminRequest(`/admin/users/${userId}/factors/${encodeURIComponent(factor.id)}`, { method: 'DELETE' });
+        }
+        await logAudit(actor, 'mfa-reset', userId, factors.length ? 'ok' : 'ok-noop', reason, {
+          requestId: opId,
+          phase: 'applied',
+          targetType: 'console-identity-user',
+          payloadDigest: toHashHex(canonicalJson({ userId, removedFactorCount: factors.length })),
+        });
+        return json(res, 200, {
+          ok: true,
+          removedFactorCount: factors.length,
+          reloginRequired: factors.length > 0,
+          enrollmentPath: '/me?tab=security&enroll=totp',
+          note: factors.length ? 'TOTP factors removed; active sessions are revoked by Supabase Auth.' : 'No TOTP factor was registered.',
+        });
+      } catch (error) {
+        if (actor && reason) {
+          await logAudit(actor, 'mfa-reset', userId, 'failed', reason, { requestId: opId, phase: 'failed', targetType: 'console-identity-user' }).catch(() => undefined);
+        }
+        return json(res, error?.code || 500, { error: error?.msg || 'OTP 연결 해제 실패' });
+      }
     }
 
     const mAttrs = p.match(/^\/api\/identity\/users\/([0-9a-fA-F-]+)\/attrs$/);

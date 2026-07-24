@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 
 @Component({
@@ -27,6 +28,7 @@ import { AuthService } from '../core/auth.service';
 })
 export class LoginPage {
   readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
   readonly working = signal(false);
   readonly error = signal('');
   email = '';
@@ -34,7 +36,11 @@ export class LoginPage {
   totp = '';
   async submit(): Promise<void> {
     this.error.set(''); this.working.set(true);
-    try { await this.auth.login(this.email, this.password); this.password = ''; }
+    try {
+      await this.auth.login(this.email, this.password);
+      this.password = '';
+      if (this.auth.mfaEnrollmentRequired()) await this.router.navigateByUrl('/me?tab=security&enroll=totp');
+    }
     catch (error) { this.error.set(error instanceof Error ? error.message : String(error)); }
     finally { this.working.set(false); }
   }

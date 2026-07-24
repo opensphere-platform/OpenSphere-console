@@ -144,6 +144,7 @@ spec:
             - { name: GOTRUE_JWT_AUD, value: authenticated }
             - { name: GOTRUE_JWT_DEFAULT_GROUP_NAME, value: authenticated }
             - { name: GOTRUE_JWT_EXP, value: "900" }
+            - { name: GOTRUE_PASSWORD_MIN_LENGTH, value: "12" }
             - name: GOTRUE_JWT_SECRET
               valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: jwt-secret } }
             - { name: GOTRUE_JWT_ISSUER, value: __OPENSPHERE_CONSOLE_URL__/auth/v1 }

@@ -464,7 +464,7 @@ flowchart LR
   "severity": "error",
   "title": "플랫폼 변경 적용 실패",
   "body": "승인된 변경이 적용 단계에서 실패했습니다.",
-  "route": "/manage/change-control?requestId=...",
+  "route": "/manage/state-changes?requestId=...",
   "occurredAt": "2026-07-23T09:00:00Z",
   "labels": {
     "phase": "failed",

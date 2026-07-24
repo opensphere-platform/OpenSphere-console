@@ -20,7 +20,7 @@ function validatePatTTL(value, maximumSeconds) {
 function requiredPatScope(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return 'console-read';
   const pathname = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname;
-  if (/^\/api\/platform\/changes(?:\/[^/]+\/approve)?$/.test(pathname)) return 'console-change';
+  if (/^\/api\/platform\/changes(?:\/[^/]+\/(?:approve|retry))?$/.test(pathname)) return 'console-change';
   return 'console-admin';
 }
 

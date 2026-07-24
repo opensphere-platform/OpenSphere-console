@@ -3,13 +3,16 @@ import { OsShell } from './os/os-shell';
 import { AuthService } from './core/auth.service';
 import { InitialSetup } from './pages/initial-setup';
 import { LoginPage } from './pages/login';
+import { PasswordRecoveryPage } from './pages/password-recovery';
 
 @Component({
   selector: 'app-root',
-  imports: [OsShell, InitialSetup, LoginPage],
+  imports: [OsShell, InitialSetup, LoginPage, PasswordRecoveryPage],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
-    @if (auth.setupRequired()) {
+    @if (auth.passwordRecoveryState() !== 'idle') {
+      <os-password-recovery />
+    } @else if (auth.setupRequired()) {
       <os-initial-setup />
     } @else if (auth.loginRequired()) {
       <os-login />

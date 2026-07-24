@@ -56,7 +56,7 @@ interface SupabaseStatus {
         <os-backend-unavailable feature="Supabase Data & Identity" backend="opensphere-console-backend (/api/identity/supabase/status)"
           hint="Supabase Auth·PostgREST·Storage 상태를 복구한 뒤 다시 확인하세요. Console은 Supabase를 단일 Data & Identity 권위로 사용합니다." [detail]="detail" />
       } @else if (status(); as current) {
-        <div class="page-lead"><p>Self-hosted Supabase가 Console의 인증, 권한, 상태 데이터, 감사 및 객체 저장 권위입니다. Gitea는 선언형 변경의 Git 정본이며 Supabase를 대체하지 않습니다.</p><div class="page-meta"><span>마지막 확인</span><strong>{{ formatDate(current.meta.checkedAt) }}</strong><button class="icon-button" type="button" aria-label="Supabase 상태 새로고침" [disabled]="busy()" (click)="refresh()"><os-cicon [icon]="icons.renew" [size]="16" /></button></div></div>
+        <div class="page-lead"><p>Self-hosted Supabase가 Console의 인증, 권한, 상태 데이터, 감사 및 객체 저장 권위입니다. 상태 변경 관리는 별도의 State Change Authority가 담당하고, Gitea는 검토 가능한 선언을 보관하는 내부 저장소로 사용합니다.</p><div class="page-meta"><span>마지막 확인</span><strong>{{ formatDate(current.meta.checkedAt) }}</strong><button class="icon-button" type="button" aria-label="Supabase 상태 새로고침" [disabled]="busy()" (click)="refresh()"><os-cicon [icon]="icons.renew" [size]="16" /></button></div></div>
         @if (message(); as item) { <clr-alert [clrAlertType]="item.type" [clrAlertClosable]="true" (clrAlertClosedChange)="message.set(null)"><clr-alert-item><span class="alert-text">{{ item.text }}</span></clr-alert-item></clr-alert> }
 
         <section class="status-rail" aria-label="Supabase 운영 상태">
@@ -108,7 +108,7 @@ interface SupabaseStatus {
 
         @if (activeTab() === 'api') {
           <section class="domain-workspace" role="tabpanel" aria-label="API">
-              <section class="os-card"><div class="os-card-h">Console API boundary</div><p>브라우저는 Console Backend를 통해 Supabase 계약을 사용합니다. Back-end 전용 DB 역할과 Gitea 서비스 토큰은 브라우저·OAA·SubShell에 전달되지 않습니다.</p><div class="property"><span>Data API</span><strong>PostgREST + RLS</strong><small>직접 database superuser 경로 없음</small></div><div class="property"><span>Governed change</span><strong>Console → Gitea PR → reconciler receipt</strong><small>승인·서명·웹훅·outbox 상관관계 보존</small></div></section>
+              <section class="os-card"><div class="os-card-h">Console API boundary</div><p>브라우저는 Console Backend를 통해 Supabase 계약을 사용합니다. Back-end 전용 DB 역할과 선언 저장소 서비스 토큰은 브라우저·OAA·SubShell에 전달되지 않습니다.</p><div class="property"><span>Data API</span><strong>PostgREST + RLS</strong><small>직접 database superuser 경로 없음</small></div><div class="property"><span>상태 변경 관리</span><strong>Console → 서명된 상태 선언 → 적용 결과</strong><small>요청·승인·서명·전달·실측 결과의 상관관계 보존</small></div></section>
           </section>
         }
 

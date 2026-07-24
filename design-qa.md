@@ -82,7 +82,7 @@ Date: 2026-07-22 (KST)
 - Exact native-tab comparison: `08-platform-control-v14-reference.png`, `09-change-control-native-tabs.png`
 - Selected terminal workspace: `10-change-control-dr-native-selected.png`
 - Final shared-style comparison: `11-platform-control-shared-tabs.png`, `12-change-control-shared-tabs.png`
-- Runtime: `https://localhost:8090/manage/data-identity` and `https://localhost:8090/manage/change-control`
+- Runtime: `https://localhost:8090/manage/data-identity` and `https://localhost:8090/manage/state-changes`
 
 All runtime captures were produced from the same authenticated Chrome window at 2705×1713. The captures therefore have aligned viewport dimensions and device density. The default Overview state was used for the full-view visual comparison; specialist tabs were verified separately through the accessibility tree and live interaction.
 
@@ -180,7 +180,7 @@ The reference and implementation differ in pixel dimensions, so comparisons were
 
 ## States and interactions verified
 
-- Existing authenticated session persisted across `/manage/platform-control`, `/manage/data-identity`, and `/manage/change-control`.
+- Existing authenticated session persisted across `/manage/platform-control`, `/manage/data-identity`, and `/manage/state-changes`.
 - Operations, Evidence, and Change Journey tabs activated and rendered without route changes or logout.
 - Data & Identity `Security & DR` and Change Control `Change Journey` tabs activated correctly.
 - Live backend data loaded from both `/api/identity/supabase/status` and `/api/platform/gitea/status`.

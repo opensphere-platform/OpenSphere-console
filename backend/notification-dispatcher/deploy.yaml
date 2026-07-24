@@ -11,11 +11,11 @@ spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: dispatcher
-          image: opensphere-notification-dispatcher:notification-channel-editor-v1
+          image: ghcr.io/opensphere-platform/opensphere-console-notification-dispatcher@sha256:2951943bf0fecd4a1e2b2810fcd22ff0dbe19c832ae4c5d6822cd0890afddaa2
           imagePullPolicy: IfNotPresent
           env:
             - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000" }
-            - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:8090/auth/v1" }
+            - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:1114/auth/v1" }
             - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
             # Comma-separated exact hosts or wildcards (for example
             # smtp.example.com,*.mail.example.com). SMTP is deny-by-default.
@@ -55,13 +55,13 @@ spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: executor
-          image: opensphere-notification-dispatcher:notification-channel-editor-v1
+          image: ghcr.io/opensphere-platform/opensphere-console-notification-dispatcher@sha256:2951943bf0fecd4a1e2b2810fcd22ff0dbe19c832ae4c5d6822cd0890afddaa2
           imagePullPolicy: IfNotPresent
           command: ["node", "external-backup-server.js"]
           env:
             - { name: PORT, value: "8082" }
             - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000" }
-            - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:8090/auth/v1" }
+            - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:1114/auth/v1" }
             - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
             - name: SUPABASE_SERVICE_ROLE_KEY
               valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: service-role-key } }

@@ -4,7 +4,7 @@ Date: 2026-07-22 (KST)
 
 ## Finding
 
-`/manage/data-identity` and `/manage/change-control` were implemented with page-local header and metric styling plus Clarity's default tabs, while `/manage/platform-control` used a scoped workspace design system. That split made related Console authority pages look like separate products.
+`/manage/data-identity` and `/manage/state-changes` were implemented with page-local header and metric styling plus Clarity's default tabs, while `/manage/platform-control` used a scoped workspace design system. That split made related Console authority pages look like separate products.
 
 ## Applied correction
 

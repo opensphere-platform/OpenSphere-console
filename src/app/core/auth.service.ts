@@ -1,5 +1,5 @@
 import { Injectable, signal } from '@angular/core';
-import { normalizeTotpQrCode } from './totp-qr';
+import { createTotpQrCode } from './totp-qr';
 
 interface SupabaseMfaFactor {
   id: string;
@@ -44,6 +44,8 @@ interface SupabaseAuthError {
   message?: string;
 }
 
+class SupabaseSessionRejectedError extends Error {}
+
 export interface TotpEnrollment {
   factorId: string;
   qrCode: string;
@@ -69,6 +71,9 @@ export class AuthService {
   readonly tokenExp = signal(0);
   readonly assurance = signal<'aal1' | 'aal2'>('aal1');
   readonly mfaRequired = signal(false);
+  readonly mfaEnrollmentRequired = signal(false);
+  readonly passwordRecoveryState = signal<'idle' | 'ready' | 'completed' | 'error'>('idle');
+  readonly passwordRecoveryMessage = signal('');
   readonly initError = signal('');
   readonly setupRequired = signal(false);
   readonly setupBusy = signal(false);
@@ -76,6 +81,7 @@ export class AuthService {
   readonly loginRequired = signal(false);
   private pendingMfaSession: SupabaseSession | null = null;
   private pendingMfaFactorId = '';
+  private passwordRecoveryToken = '';
 
   setInitError(error: unknown): void {
     this.initError.set(String(error instanceof Error ? error.message : error || '인증 초기화 실패'));
@@ -92,11 +98,27 @@ export class AuthService {
   accountUrl(): string { return '/me?tab=security'; }
 
   async init(): Promise<void> {
+    if (this.consumePasswordRecoveryRedirect()) return;
+    if (window.location.pathname === '/auth/recovery') {
+      this.passwordRecoveryState.set('error');
+      this.passwordRecoveryMessage.set('비밀번호 설정 링크가 없거나 만료되었습니다. 관리자에게 새 링크를 요청하세요.');
+      this.loginRequired.set(false);
+      return;
+    }
     if (await this.refreshInitialSetup()) return;
     const existing = this.loadSession();
     if (existing && this.apply(existing)) {
-      await this.refreshAuthorization();
-      this.loginRequired.set(false);
+      try {
+        await this.refreshAuthorization();
+        this.loginRequired.set(false);
+      } catch (error) {
+        if (!(error instanceof SupabaseSessionRejectedError)) throw error;
+        // A reinstall or signing-key/issuer rotation can leave a locally
+        // unexpired session that the current Supabase authority must reject.
+        // Treat that as an expired browser session, not an auth-service outage.
+        this.clearSession();
+        this.loginRequired.set(true);
+      }
       return;
     }
     this.clearSession();
@@ -104,6 +126,7 @@ export class AuthService {
   }
 
   async login(email: string, password: string): Promise<void> {
+    this.mfaEnrollmentRequired.set(false);
     const response = await fetch('/auth/v1/token?grant_type=password', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -124,6 +147,7 @@ export class AuthService {
         this.loginRequired.set(true);
         return;
       }
+      this.mfaEnrollmentRequired.set(true);
     }
 
     await this.activateSession(body);
@@ -137,6 +161,7 @@ export class AuthService {
     this.pendingMfaSession = null;
     this.pendingMfaFactorId = '';
     this.mfaRequired.set(false);
+    this.mfaEnrollmentRequired.set(false);
     await this.activateSession(session);
   }
 
@@ -155,22 +180,36 @@ export class AuthService {
       .find((factor) => factor.factor_type === 'totp' && factor.status === 'verified');
     if (verified) throw new Error('이미 검증된 TOTP 인증기가 등록되어 있습니다.');
 
+    // A reload or interrupted enrollment leaves an unverified factor behind.
+    // Supabase enforces friendly-name uniqueness, so remove only the current
+    // user's incomplete TOTP factors before issuing a fresh QR. Verified
+    // factors are never touched by this self-service recovery path.
+    const incomplete = this.factorItems(factors)
+      .filter((factor) => factor.factor_type === 'totp' && factor.status === 'unverified');
+    for (const factor of incomplete) {
+      await this.authJson(`/auth/v1/factors/${encodeURIComponent(factor.id)}`, {
+        method: 'DELETE',
+      }, this.accessToken);
+    }
+
     const enrollment = await this.authJson<SupabaseMfaEnrollment>('/auth/v1/factors', {
       method: 'POST',
       body: JSON.stringify({ factor_type: 'totp', friendly_name: friendlyName.slice(0, 64) }),
     }, this.accessToken);
     if (!enrollment.id || !enrollment.totp?.secret) throw new Error('Supabase Auth가 TOTP 등록 정보를 반환하지 않았습니다.');
+    const uri = enrollment.totp.uri || '';
     return {
       factorId: enrollment.id,
-      qrCode: normalizeTotpQrCode(enrollment.totp.qr_code),
+      qrCode: await createTotpQrCode(enrollment.totp.qr_code, uri),
       secret: enrollment.totp.secret,
-      uri: enrollment.totp.uri || '',
+      uri,
     };
   }
 
   async verifyTotpEnrollment(factorId: string, code: string): Promise<void> {
     if (!this.accessToken) throw new Error('TOTP 등록 세션이 만료되었습니다. 다시 로그인하세요.');
     const session = await this.challengeAndVerify(factorId, code, this.accessToken);
+    this.mfaEnrollmentRequired.set(false);
     await this.activateSession(session);
   }
 
@@ -185,6 +224,44 @@ export class AuthService {
     if (token) {
       await fetch('/auth/v1/logout', { method: 'POST', headers: { authorization: `Bearer ${token}` } }).catch(() => undefined);
     }
+    this.loginRequired.set(true);
+  }
+
+  async completePasswordRecovery(password: string, passwordConfirm: string): Promise<void> {
+    if (this.passwordRecoveryState() !== 'ready' || !this.passwordRecoveryToken) {
+      throw new Error('비밀번호 설정 링크가 없거나 만료되었습니다.');
+    }
+    if (password.length < 12) throw new Error('새 비밀번호는 12자 이상이어야 합니다.');
+    if (password !== passwordConfirm) throw new Error('새 비밀번호와 확인 값이 일치하지 않습니다.');
+    const token = this.passwordRecoveryToken;
+    const response = await fetch('/auth/v1/user', {
+      method: 'PUT',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ password }),
+    });
+    const body = await response.json().catch(() => ({})) as SupabaseAuthError;
+    if (!response.ok) {
+      throw new Error(body.error_description || body.msg || body.message || body.error || `Supabase Auth HTTP ${response.status}`);
+    }
+    this.passwordRecoveryToken = '';
+    await fetch('/auth/v1/logout', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+    }).catch(() => undefined);
+    this.passwordRecoveryMessage.set('비밀번호가 설정되었습니다. 새 비밀번호로 로그인하세요.');
+    this.passwordRecoveryState.set('completed');
+  }
+
+  leavePasswordRecovery(): void {
+    this.passwordRecoveryToken = '';
+    this.passwordRecoveryMessage.set('');
+    this.passwordRecoveryState.set('idle');
+    this.clearSession();
+    window.history.replaceState(null, document.title, '/');
     this.loginRequired.set(true);
   }
 
@@ -244,7 +321,40 @@ export class AuthService {
     this.pendingMfaSession = null;
     this.pendingMfaFactorId = '';
     this.mfaRequired.set(false);
+    this.mfaEnrollmentRequired.set(false);
     try { window.sessionStorage.removeItem(this.sessionKey); } catch { /* storage unavailable */ }
+  }
+
+  private consumePasswordRecoveryRedirect(): boolean {
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const query = new URLSearchParams(window.location.search);
+    const type = fragment.get('type') || query.get('type');
+    const error = fragment.get('error_description') || query.get('error_description')
+      || fragment.get('error') || query.get('error');
+    if (type !== 'recovery' && !error) return false;
+
+    this.clearSession();
+    window.history.replaceState(null, document.title, '/auth/recovery');
+    if (error) {
+      this.passwordRecoveryState.set('error');
+      this.passwordRecoveryMessage.set(decodeURIComponent(error.replace(/\+/g, ' ')));
+      this.loginRequired.set(false);
+      return true;
+    }
+
+    const token = fragment.get('access_token') || '';
+    const exp = this.jwtExp(token);
+    if (!token || !exp || exp <= Math.floor(Date.now() / 1000) + 5) {
+      this.passwordRecoveryState.set('error');
+      this.passwordRecoveryMessage.set('비밀번호 설정 링크가 없거나 만료되었습니다. 관리자에게 새 링크를 요청하세요.');
+      this.loginRequired.set(false);
+      return true;
+    }
+    this.passwordRecoveryToken = token;
+    this.passwordRecoveryMessage.set('');
+    this.passwordRecoveryState.set('ready');
+    this.loginRequired.set(false);
+    return true;
   }
 
   private async activateSession(session: SupabaseSession): Promise<void> {
@@ -316,7 +426,11 @@ export class AuthService {
       headers: { authorization: `Bearer ${this.accessToken}`, accept: 'application/json' },
     });
     const body = await response.json().catch(() => ({})) as { groups?: unknown; error?: string };
-    if (!response.ok) throw new Error(body.error || '콘솔 권한을 확인하지 못했습니다.');
+    if (!response.ok) {
+      const message = body.error || '콘솔 권한을 확인하지 못했습니다.';
+      if (response.status === 401) throw new SupabaseSessionRejectedError(message);
+      throw new Error(message);
+    }
     const groups = Array.isArray(body.groups)
       ? body.groups.map((group) => String(group).trim()).filter(Boolean)
       : [];

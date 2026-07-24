@@ -79,7 +79,7 @@ export class AdminLayout {
       items: [
         { label: 'Control Plane', route: '/manage/platform-control', icon: Layers16 },
         { label: 'Data & Identity', route: '/manage/data-identity', icon: UserAdmin16 },
-        { label: 'Change Control', route: '/manage/change-control', icon: List16 },
+        { label: '상태 변경 관리', route: '/manage/state-changes', icon: List16 },
         { label: 'OAA', route: '/manage/oaa', icon: ChatBot16 },
         { label: 'HIS Observability', route: '/manage/observability', icon: Activity16 },
       ],

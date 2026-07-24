@@ -19,6 +19,7 @@ import { AdminCli } from './pages/admin-cli';
 import { AdminLayout } from './pages/admin-layout';
 import { ManualPage } from './pages/manual';
 import { authenticatedGuard } from './core/authenticated.guard';
+import { PasswordRecoveryPage } from './pages/password-recovery';
 
 /**
  * 플러그인 호스트 매처 — `/p/<id>` 그리고 그 아래 임의 깊이의 서브패스(`/p/<id>/a/b/...`)까지 전부
@@ -39,6 +40,7 @@ function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
 }
 
 export const routes: Routes = [
+  { path: 'auth/recovery', component: PasswordRecoveryPage },
   { path: '', component: Landing },
   { path: 'me', component: MyInfo },
   // Manual — Main Shell 네이티브 페이지(subShell/plugin/Consumer 아님). OAA Manual Registry
@@ -62,7 +64,10 @@ export const routes: Routes = [
       { path: 'roles', component: AdminRoles },
       { path: 'platform-control', component: AdminPlatformControl },
       { path: 'data-identity', component: AdminDataIdentity },
-      { path: 'change-control', component: AdminChangeControl },
+      { path: 'state-changes', component: AdminChangeControl },
+      // Permanent compatibility path for existing bookmarks and external
+      // subShell links created before the State Change Authority rename.
+      { path: 'change-control', redirectTo: 'state-changes', pathMatch: 'full' },
       // Platform readiness is now part of the integrated Control Plane view.
       // Preserve controller links and old bookmarks without reviving a parallel page.
       { path: 'platform-readiness', redirectTo: 'platform-control', pathMatch: 'full' },

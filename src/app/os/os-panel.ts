@@ -39,40 +39,43 @@ import { ClarityModule } from '@clr/angular';
         (keydown)="resizeWithKeyboard($event)"
         title="드래그하거나 방향키로 폭 조절"
       ></div>
-    }
-    <clr-side-panel
-      [clrSidePanelOpen]="open"
-      (clrSidePanelOpenChange)="onOpenChange($event)"
-      [clrSidePanelBackdrop]="true"
-      [style.--os-panel-w]="width() + 'px'"
-    >
-      <div class="side-panel-title">
-        <div class="os-panel-title-row">
-          @if (logoSrc) {
-            <span class="os-panel-logo-chip"><img class="os-panel-logo" [src]="logoSrc" alt="" /></span>
-          }
-          <div class="os-panel-title-text">
-            {{ title }}
-            @if (subtitle) {
-              <div class="os-panel-sub">{{ subtitle }}</div>
+      <!-- Clarity의 닫힘 애니메이션이 끝난 overlay/backdrop을 DOM에 남기면
+           다음 행의 관리 버튼 hit-test를 가로챌 수 있다. 닫힐 때 side-panel
+           인스턴스 전체를 폐기하여 매번 깨끗한 포커스 트랩으로 다시 연다. -->
+      <clr-side-panel
+        [clrSidePanelOpen]="open"
+        (clrSidePanelOpenChange)="onOpenChange($event)"
+        [clrSidePanelBackdrop]="true"
+        [style.--os-panel-w]="width() + 'px'"
+      >
+        <div class="side-panel-title">
+          <div class="os-panel-title-row">
+            @if (logoSrc) {
+              <span class="os-panel-logo-chip"><img class="os-panel-logo" [src]="logoSrc" alt="" /></span>
             }
+            <div class="os-panel-title-text">
+              {{ title }}
+              @if (subtitle) {
+                <div class="os-panel-sub">{{ subtitle }}</div>
+              }
+            </div>
+          </div>
+          @if (fullHref) {
+            <a class="os-panel-full" [href]="fullHref" target="_blank" rel="noopener"
+              >전체 페이지로 열기 ↗</a
+            >
+          }
+        </div>
+        <div class="side-panel-body">
+          <div class="os-panel-content clr-form-full-width">
+            <ng-content />
           </div>
         </div>
-        @if (fullHref) {
-          <a class="os-panel-full" [href]="fullHref" target="_blank" rel="noopener"
-            >전체 페이지로 열기 ↗</a
-          >
-        }
-      </div>
-      <div class="side-panel-body">
-        <div class="os-panel-content clr-form-full-width">
-          <ng-content />
+        <div class="side-panel-footer os-panel-footer">
+          <ng-content select="[osPanelFooter]" />
         </div>
-      </div>
-      <div class="side-panel-footer os-panel-footer">
-        <ng-content select="[osPanelFooter]" />
-      </div>
-    </clr-side-panel>
+      </clr-side-panel>
+    }
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [

@@ -25,6 +25,7 @@ test('read, governed-change, and admin requests require increasing PAT authority
   assert.equal(requiredPatScope(request('GET', '/api/catalog/entities')), 'console-read');
   assert.equal(requiredPatScope(request('POST', '/api/platform/changes')), 'console-change');
   assert.equal(requiredPatScope(request('POST', '/api/platform/changes/id/approve')), 'console-change');
+  assert.equal(requiredPatScope(request('POST', '/api/platform/changes/id/retry')), 'console-change');
   assert.equal(requiredPatScope(request('DELETE', '/api/identity/cli/devices/id')), 'console-admin');
   assert.doesNotThrow(() => enforcePatRequestScope(request('GET', '/api/catalog/entities'), actor('console-read')));
   assert.throws(() => enforcePatRequestScope(request('POST', '/api/platform/changes'), actor('console-read')), (error) => error.code === 403);

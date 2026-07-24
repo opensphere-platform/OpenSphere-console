@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@ang
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
+import { AuthService } from '../core/auth.service';
 import { HttpService } from '../core/http.service';
 import { BackendUnavailable } from '../os/backend-unavailable';
 import { OsActionDialog } from '../os/os-action-dialog';
@@ -9,7 +10,7 @@ import { OsCellDef, OsColumn, OsDatagrid } from '../os/os-datagrid';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsPanel } from '../os/os-panel';
 
-interface IdUser { id: string; username: string; email: string; enabled: boolean; displayName: string; groups: string[] }
+interface IdUser { id: string; username: string; email: string; enabled: boolean; displayName: string; groups: string[]; mfa?: { totpCount: number; verifiedTotpCount: number; status: 'registered' | 'enrollment-required' } }
 interface AuditEvent { time?: string; actor?: string; action?: string; target?: string; result?: string }
 
 /** Supabase Auth users projected through the Console's operator/role boundary. */
@@ -37,12 +38,13 @@ interface AuditEvent { time?: string; actor?: string; action?: string; target?: 
           <ng-template osCell="username" let-user><strong>{{ user.username }}</strong></ng-template><ng-template osCell="displayName" let-user>{{ user.displayName || '—' }}</ng-template><ng-template osCell="email" let-user>{{ user.email || '—' }}</ng-template>
           <ng-template osCell="status" let-user><span class="label" [class.label-success]="user.enabled">{{ user.enabled ? '활성' : '비활성' }}</span></ng-template>
           <ng-template osCell="roles" let-user>@for (role of user.groups; track role) { <span class="label label-info">{{ role }}</span> } @empty { <span class="os-sub">—</span> }</ng-template>
+          <ng-template osCell="mfa" let-user><span class="label" [class.label-success]="mfaRegistered(user)" [class.label-warning]="!mfaRegistered(user)">{{ mfaRegistered(user) ? 'OTP 연결됨' : 'OTP 재등록 필요' }}</span></ng-template>
           <ng-template osCell="actions" let-user><button class="btn btn-sm btn-outline" (click)="openDetail(user)" [disabled]="busy()">관리</button></ng-template>
         </os-datagrid>
         <p class="os-sub">역할의 일괄 관리는 <a routerLink="/manage/roles">역할</a>, 전체 변경 이력은 <a routerLink="/manage/audit">감사 로그</a>에서 확인합니다.</p>
       }
 
-      <os-panel [open]="panelOpen()" [title]="panelMode() === 'create' ? '사용자 생성' : (selectedUser()?.username || '사용자 관리')" [subtitle]="'Supabase Auth · Console roles'" (closed)="closePanel()">
+      <os-panel [open]="panelOpen()" [title]="panelTitle()" [subtitle]="panelSubtitle()" (closed)="closePanel()">
         @if (panelMode() === 'create') {
           <p class="os-sub">Supabase Auth 계정을 만들고 선택한 Console 역할을 부여합니다. 회복 링크는 비밀번호 설정을 위해 한 번만 사용합니다.</p>
           <form clrForm clrLayout="vertical">
@@ -56,15 +58,18 @@ interface AuditEvent { time?: string; actor?: string; action?: string; target?: 
         }
         @if (panelMode() === 'detail' && selectedUser(); as user) {
           <h4 class="detail-h">속성</h4><form clrForm clrLayout="vertical"><clr-input-container><label>표시이름</label><input clrInput [(ngModel)]="attrs.displayName" name="edit-name" [disabled]="busy()"></clr-input-container><clr-input-container><label>이메일</label><input clrInput type="email" [(ngModel)]="attrs.email" name="edit-email" [disabled]="busy()"></clr-input-container></form>
-          <div class="panel-actions"><button class="btn btn-sm btn-primary" (click)="saveAttrs(user)" [disabled]="busy() || !attrs.displayName.trim()">속성 저장</button><button class="btn btn-sm" [class.btn-danger-outline]="user.enabled" [class.btn-outline]="!user.enabled" (click)="setEnabled(user, !user.enabled)" [disabled]="busy()">{{ user.enabled ? '비활성' : '활성' }}</button><button class="btn btn-sm btn-link" (click)="recovery(user)" [disabled]="busy()">회복 링크</button></div>
+          <div class="panel-actions"><button class="btn btn-sm btn-primary" (click)="saveAttrs(user)" [disabled]="busy() || !attrs.displayName.trim()">속성 저장</button><button class="btn btn-sm" [class.btn-danger-outline]="user.enabled" [class.btn-outline]="!user.enabled" (click)="setEnabled(user, !user.enabled)" [disabled]="busy()">{{ user.enabled ? '비활성' : '활성' }}</button>@if (isSelf(user)) { <a class="btn btn-sm btn-link" routerLink="/me" [queryParams]="{ tab: 'security' }">내 PW 변경</a> } @else { <button class="btn btn-sm btn-link" (click)="recovery(user)" [disabled]="busy()">초기 PW 설정/재설정 링크</button> }</div>
+          <h4 class="detail-h">OTP 보안</h4>
+          <p class="os-sub">{{ mfaRegistered(user) ? '검증된 OTP가 연결되어 있습니다.' : '검증된 OTP가 없습니다. 다음 로그인에서 QR 기반 재등록이 유도됩니다.' }}</p>
+          <div class="panel-actions">@if (mfaRegistered(user) && !isSelf(user)) { <button class="btn btn-sm btn-danger-outline" (click)="resetTotp(user)" [disabled]="busy()">OTP 연결 해제</button> } @else if (mfaRegistered(user)) { <span class="os-sub">본인 OTP는 다른 관리자가 연결 해제해야 합니다.</span> } @else { <span class="label label-warning">재등록 필요</span> }</div>
           <h4 class="detail-h">역할</h4><clr-checkbox-container>@for (role of consoleRoles; track role.group) { <clr-checkbox-wrapper><input type="checkbox" clrCheckbox [name]="'edit-role-' + role.group" [(ngModel)]="roleSelection[role.group]" [disabled]="busy()"><label>{{ role.label }}</label></clr-checkbox-wrapper> }</clr-checkbox-container>
           <div class="panel-actions"><button class="btn btn-sm btn-primary" (click)="saveRoles(user)" [disabled]="busy()">역할 저장</button></div>
           <h4 class="detail-h">최근 이력</h4><clr-datagrid [clrDgLoading]="auditBusy()"><clr-dg-column>시각</clr-dg-column><clr-dg-column>행위자</clr-dg-column><clr-dg-column>동작</clr-dg-column><clr-dg-column>결과</clr-dg-column>@for (event of userAudit(); track $index) { <clr-dg-row><clr-dg-cell>{{ event.time }}</clr-dg-cell><clr-dg-cell>{{ event.actor }}</clr-dg-cell><clr-dg-cell><code>{{ event.action }}</code></clr-dg-cell><clr-dg-cell>{{ event.result }}</clr-dg-cell></clr-dg-row> }<clr-dg-placeholder>관련 이력이 없습니다.</clr-dg-placeholder></clr-datagrid>
           <div class="panel-actions"><button class="btn btn-outline" (click)="closePanel()">닫기</button></div>
         }
-        @if (recoveryUrl(); as recovery) { <div class="recovery"><strong>회복 링크</strong><pre>{{ recovery }}</pre><button class="btn btn-sm btn-primary" (click)="copy(recovery)">링크 복사</button></div> }
+        @if (recoveryUrl(); as recovery) { <div class="recovery"><strong>초기 PW 설정/재설정 링크</strong><pre>{{ recovery }}</pre><button class="btn btn-sm btn-primary" (click)="copy(recovery)">링크 복사</button></div> }
       </os-panel>
-      <os-action-dialog [open]="reasonOpen()" [title]="reasonTitle()" [message]="reasonMessage()" [confirmLabel]="reasonConfirm()" [danger]="reasonDanger()" [busy]="busy()" [reasonRequired]="true" (confirmed)="confirmReason($event)" (cancelled)="closeReason()" />
+      <os-action-dialog [open]="reasonOpen()" [title]="reasonTitle()" [message]="reasonMessage()" [confirmLabel]="reasonConfirm()" [danger]="reasonDanger()" [busy]="busy()" [error]="actionError()" [reasonRequired]="true" (confirmed)="confirmReason($event)" (cancelled)="closeReason()" />
     </div>
   `,
   styles: [`
@@ -73,10 +78,12 @@ interface AuditEvent { time?: string; actor?: string; action?: string; target?: 
 })
 export class ConsoleAdmins implements OnInit {
   private readonly http = inject(HttpService);
-  readonly userCols: OsColumn[] = [{ key: 'username', label: '사용자명' }, { key: 'displayName', label: '표시이름' }, { key: 'email', label: '이메일' }, { key: 'status', label: '상태' }, { key: 'roles', label: '역할' }, { key: 'actions', label: '동작' }];
+  readonly auth = inject(AuthService);
+  readonly userCols: OsColumn[] = [{ key: 'username', label: '사용자명' }, { key: 'displayName', label: '표시이름' }, { key: 'email', label: '이메일' }, { key: 'status', label: '상태' }, { key: 'roles', label: '역할' }, { key: 'mfa', label: 'OTP' }, { key: 'actions', label: '동작' }];
   readonly users = signal<IdUser[]>([]); readonly loading = signal(true); readonly busy = signal(false); readonly down = signal(''); readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   readonly panelOpen = signal(false); readonly panelMode = signal<'create' | 'detail'>('create'); readonly selectedUser = signal<IdUser | null>(null); readonly recoveryUrl = signal(''); readonly userAudit = signal<AuditEvent[]>([]); readonly auditBusy = signal(false);
   readonly reasonOpen = signal(false); readonly reasonTitle = signal('변경 확인'); readonly reasonMessage = signal(''); readonly reasonConfirm = signal('적용'); readonly reasonDanger = signal(false);
+  readonly actionError = signal('');
   readonly consoleRoles = [{ group: 'console-admins', label: '관리자' }, { group: 'console-operators', label: '운영자' }, { group: 'console-viewers', label: '뷰어' }];
   draft = { username: '', displayName: '', email: '', reason: '' }; attrs = { displayName: '', email: '' }; roleSelection: Record<string, boolean> = {};
   private pendingAction: ((reason: string) => Promise<void>) | null = null;
@@ -85,11 +92,15 @@ export class ConsoleAdmins implements OnInit {
   validDraft(): boolean { return !!this.draft.username.trim() && !!this.draft.displayName.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(this.draft.email.trim()) && this.draft.reason.trim().length >= 8; }
   openCreate(): void { this.draft = { username: '', displayName: '', email: '', reason: '' }; this.roleSelection = {}; this.recoveryUrl.set(''); this.panelMode.set('create'); this.panelOpen.set(true); }
   openDetail(user: IdUser): void { this.selectedUser.set(user); this.attrs = { displayName: user.displayName, email: user.email }; this.roleSelection = Object.fromEntries(this.consoleRoles.map((role) => [role.group, user.groups.includes(role.group)])); this.recoveryUrl.set(''); this.panelMode.set('detail'); this.panelOpen.set(true); void this.loadAudit(user); }
-  closePanel(): void { this.panelOpen.set(false); this.selectedUser.set(null); this.recoveryUrl.set(''); }
+  closePanel(): void { this.panelOpen.set(false); this.selectedUser.set(null); this.recoveryUrl.set(''); this.reasonOpen.set(false); this.actionError.set(''); this.pendingAction = null; }
 
   activeUsers(): number { return this.users().filter((user) => user.enabled).length; }
   disabledUsers(): number { return this.users().filter((user) => !user.enabled).length; }
   roleMemberCount(role: string): number { return this.users().filter((user) => user.groups.includes(role)).length; }
+  mfaRegistered(user: IdUser): boolean { return Number(user.mfa?.verifiedTotpCount || 0) > 0; }
+  isSelf(user: IdUser): boolean { return user.id === this.auth.subject(); }
+  panelTitle(): string { const user = this.selectedUser(); return this.panelMode() === 'create' ? '사용자 생성' : (user ? `${user.displayName || user.username} (${user.username})` : '사용자 관리'); }
+  panelSubtitle(): string { const user = this.selectedUser(); return user && this.panelMode() === 'detail' ? `${user.email} · Supabase Auth · Console roles` : 'Supabase Auth · Console roles'; }
 
   async loadIdentity(): Promise<void> {
     this.loading.set(true); this.down.set('');
@@ -101,13 +112,25 @@ export class ConsoleAdmins implements OnInit {
     } catch (error) { this.down.set(`Supabase identity 조회 실패: ${String(error)}`); }
     finally { this.loading.set(false); }
   }
-  private openReason(title: string, message: string, confirm: string, danger: boolean, action: (reason: string) => Promise<void>): void { this.reasonTitle.set(title); this.reasonMessage.set(message); this.reasonConfirm.set(confirm); this.reasonDanger.set(danger); this.pendingAction = action; this.reasonOpen.set(true); }
-  closeReason(): void { if (!this.busy()) { this.reasonOpen.set(false); this.pendingAction = null; } }
-  async confirmReason(reason: string): Promise<void> { const action = this.pendingAction; if (!action) return; this.reasonOpen.set(false); this.pendingAction = null; await action(reason); }
+  private openReason(title: string, message: string, confirm: string, danger: boolean, action: (reason: string) => Promise<void>): void { this.reasonTitle.set(title); this.reasonMessage.set(message); this.reasonConfirm.set(confirm); this.reasonDanger.set(danger); this.actionError.set(''); this.pendingAction = action; this.reasonOpen.set(true); }
+  closeReason(): void { if (!this.busy()) { this.reasonOpen.set(false); this.actionError.set(''); this.pendingAction = null; } }
+  async confirmReason(reason: string): Promise<void> {
+    const action = this.pendingAction;
+    if (!action) return;
+    this.actionError.set('');
+    try {
+      await action(reason);
+      this.reasonOpen.set(false);
+      this.pendingAction = null;
+    } catch (error) {
+      this.actionError.set(`관리 작업 실패: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   async createUser(): Promise<void> { if (!this.validDraft()) return; this.busy.set(true); try { const roles = this.consoleRoles.filter((role) => this.roleSelection[role.group]).map((role) => role.group); const response = await this.http.request('/api/identity/users', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...this.draft, username: this.draft.username.trim(), displayName: this.draft.displayName.trim(), email: this.draft.email.trim(), roles }) }); const body = await response.json().catch(() => ({})) as { error?: string; onboardingPath?: string }; if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.recoveryUrl.set(body.onboardingPath ? new URL(body.onboardingPath, window.location.origin).toString() : ''); this.msg.set({ type: 'success', text: 'Supabase Console 계정을 생성했습니다.' }); await this.loadIdentity(); } catch (error) { this.msg.set({ type: 'danger', text: `계정 생성 실패: ${String(error)}` }); } finally { this.busy.set(false); } }
   saveAttrs(user: IdUser): void { const displayName = this.attrs.displayName.trim(); const email = this.attrs.email.trim(); if (!displayName || !email) return; this.openReason('사용자 속성 변경', `${user.username} 사용자의 Supabase 프로필을 변경합니다.`, '저장', false, (reason) => this.write(`/api/identity/users/${user.id}/attrs`, { displayName, email, reason }, '속성을 갱신했습니다.')); }
   setEnabled(user: IdUser, enabled: boolean): void { this.openReason(`계정 ${enabled ? '활성화' : '비활성화'}`, `${user.username} 계정을 ${enabled ? '활성화' : '비활성화'}합니다.`, enabled ? '활성화' : '비활성화', !enabled, (reason) => this.write(`/api/identity/users/${user.id}/enabled`, { enabled, reason }, '계정 상태를 변경했습니다.')); }
-  recovery(user: IdUser): void { this.openReason('회복 링크 발급', `${user.username}의 Supabase 비밀번호 회복 링크를 발급합니다.`, '발급', false, async (reason) => { const response = await this.http.request(`/api/identity/users/${user.id}/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }) }); const body = await response.json().catch(() => ({})) as { error?: string; onboardingPath?: string }; if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.recoveryUrl.set(body.onboardingPath ? new URL(body.onboardingPath, window.location.origin).toString() : ''); this.msg.set({ type: 'success', text: '회복 링크를 발급했습니다.' }); }); }
+  recovery(user: IdUser): void { this.openReason('초기 PW 설정/재설정 링크 발급', `${user.username}의 Supabase 초기 PW 설정 또는 재설정 링크를 발급합니다. 기존 PW 로그인 없이 일회성 링크로 새 PW를 지정합니다.`, '발급', false, async (reason) => { const response = await this.http.request(`/api/identity/users/${user.id}/onboarding`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }) }); const body = await response.json().catch(() => ({})) as { error?: string; onboardingPath?: string }; if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.recoveryUrl.set(body.onboardingPath ? new URL(body.onboardingPath, window.location.origin).toString() : ''); this.msg.set({ type: 'success', text: '초기 PW 설정/재설정 링크를 발급했습니다.' }); }); }
+  resetTotp(user: IdUser): void { this.openReason('OTP 연결 강제 해제', `${user.username}의 검증된 OTP를 모두 연결 해제합니다. 활성 세션은 종료되며 다음 로그인에서 QR 기반 OTP 재등록이 요구됩니다.`, 'OTP 해제', true, async (reason) => { const response = await this.http.request(`/api/identity/users/${user.id}/mfa/reset`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }) }); const body = await response.json().catch(() => ({})) as { error?: string; removedFactorCount?: number }; if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); this.msg.set({ type: 'success', text: `OTP 연결을 해제했습니다(${body.removedFactorCount || 0}개). 대상 사용자는 다음 로그인에서 QR로 OTP를 다시 등록해야 합니다.` }); this.closePanel(); await this.loadIdentity(); }); }
   saveRoles(user: IdUser): void { const desired = this.consoleRoles.filter((role) => this.roleSelection[role.group]).map((role) => role.group); const add = desired.filter((role) => !user.groups.includes(role)); const remove = user.groups.filter((role) => this.consoleRoles.some((candidate) => candidate.group === role) && !desired.includes(role)); if (!add.length && !remove.length) return; this.openReason('사용자 역할 변경', `${user.username}의 Supabase Console 역할을 변경합니다.`, '저장', true, async (reason) => { for (const group of add) await this.write(`/api/identity/users/${user.id}/group`, { op: 'add', group, reason }, '', false); for (const group of remove) await this.write(`/api/identity/users/${user.id}/group`, { op: 'remove', group, reason }, '', false); this.msg.set({ type: 'success', text: '역할을 갱신했습니다.' }); await this.loadIdentity(); }); }
   private async write(path: string, payload: unknown, success: string, refresh = true): Promise<void> { this.busy.set(true); try { const response = await this.http.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }); const body = await response.json().catch(() => ({})) as { error?: string }; if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); if (success) this.msg.set({ type: 'success', text: success }); if (refresh) await this.loadIdentity(); } finally { this.busy.set(false); } }
   private async loadAudit(user: IdUser): Promise<void> { this.auditBusy.set(true); try { const response = await this.http.request('/api/identity/audit'); const body = await response.json().catch(() => ({})) as { items?: AuditEvent[] }; this.userAudit.set((body.items || []).filter((event) => (event.target || '').includes(user.id) || (event.target || '').includes(user.username) || event.actor === user.id).slice(0, 50)); } finally { this.auditBusy.set(false); } }

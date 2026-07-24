@@ -220,7 +220,7 @@ spec:
           # Canonical GHCR repo pinned by digest, never a mutable tag. Setup replaces the
           # __OAA_GATEWAY_IMAGE_DIGEST__ token with the release-pinned sha256 digest from the BOM
           # before this manifest is applied (NAMING-STANDARD §1/§4/§6).
-          image: opensphere-console-oaa-gateway:oaa-agent-v47
+          image: ghcr.io/opensphere-platform/opensphere-console-oaa-gateway@sha256:b560fddd320feceaa531f67df1143a2ec85a10a4071ccf1a1cd430f6c1cc3d98
           imagePullPolicy: IfNotPresent
           env:
             - { name: APP_VERSION, value: "0.38.0-recovery-owner-read-plan" }

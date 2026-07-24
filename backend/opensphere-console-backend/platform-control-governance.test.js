@@ -9,6 +9,7 @@ const server = read('opensphere-console-backend/server.js');
 const deploy = read('opensphere-console-backend/deploy.yaml');
 const governance = read('supabase/migrations/0009_platform_control_governance.sql');
 const approvals = read('supabase/migrations/0010_change_approval.sql');
+const reconcileRetry = read('supabase/migrations/0028_change_reconcile_retry.sql');
 const gitea = read('gitea/bootstrap/gitea.yaml');
 const bootstrap = read('gitea/bootstrap/control-plane-bootstrap.ps1');
 const recoveryOwner = read('opensphere-console-backend/recovery-owner.js');
@@ -51,6 +52,10 @@ test('Ceph prerequisite requests are immutable templates assigned to a dedicated
   assert.match(server, /ceph-prerequisite-reconciler/);
   assert.match(server, /reconciler is outside the configured allowlist/);
   assert.match(server, /reconcile receipt identity does not match the assigned consumer reconciler/);
+  assert.match(server, /changeTemplateRequestStatus/);
+  assert.match(server, /changeTemplateRequestPhase/);
+  assert.match(server, /AwaitingApproval/);
+  assert.match(server, /changeTemplateStatusPath/);
 });
 
 test('rollback proposals retain their source request in the reviewed Gitea declaration', () => {
@@ -66,6 +71,26 @@ test('two-person approval is enforced in both backend and database', () => {
   assert.match(approvals, /change creator cannot approve their own request/);
   assert.match(approvals, /length\(btrim\(p_reason\)\) < 8/i);
   assert.match(server, /authToken: GITEA_REVIEW_TOKEN/);
+});
+
+test('failed reconcile retry is governed, audited, and preserves prior attempts', () => {
+  assert.match(server, /async function retryGovernedChange/);
+  assert.match(server, /governed reconcile retry requires MFA assurance aal2/);
+  assert.match(server, /rpc\/retry_change_reconcile/);
+  assert.match(server, /\/api\\\/platform\\\/changes\\\/\(\[0-9a-fA-F-\]\+\)\\\/retry/);
+  assert.match(reconcileRetry, /only failed changes can be retried/);
+  assert.match(reconcileRetry, /merge_revision IS NULL/);
+  assert.match(reconcileRetry, /status = 'queued'/);
+  assert.match(reconcileRetry, /'change-reconcile-retry'/);
+  assert.doesNotMatch(reconcileRetry, /attempts\s*=\s*0/i);
+  assert.doesNotMatch(reconcileRetry, /GRANT EXECUTE[\s\S]*(anon|authenticated)/i);
+});
+
+test('approval completion converges authoritative merged PR state without relying only on webhook delivery', () => {
+  const approval = server.slice(server.indexOf('async function approveGovernedChange'), server.indexOf('async function webhookReceipt'));
+  assert.match(approval, /pull\.body\?\.state === 'closed' && pull\.body\?\.merged === true/);
+  assert.match(approval, /await convergeGovernedMerge/);
+  assert.match(server, /async function convergeGovernedMerge/);
 });
 
 test('OAA mutations are typed, exact-confirmed, digest-pinned, and never direct', () => {

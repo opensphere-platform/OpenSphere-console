@@ -11,11 +11,14 @@ test('Console management exposes Supabase, Gitea and HIS as distinct authorities
   const layout = read('src', 'app', 'pages', 'admin-layout.ts');
   assert.match(routes, /path: 'platform-control'/);
   assert.match(routes, /path: 'data-identity'/);
-  assert.match(routes, /path: 'change-control'/);
+  assert.match(routes, /path: 'state-changes'/);
+  assert.match(routes, /path: 'change-control', redirectTo: 'state-changes'/);
   assert.match(routes, /path: 'observability'/);
   assert.match(routes, /path: 'backbone', redirectTo: 'data-identity'/);
   assert.match(layout, /플랫폼 제어/);
   assert.match(layout, /HIS Observability/);
+  assert.match(layout, /route: '\/manage\/state-changes'/);
+  assert.doesNotMatch(layout, /route: '\/manage\/change-control'/);
   assert.doesNotMatch(layout, /routerLink="\/manage\/backbone"/);
 });
 
@@ -42,21 +45,36 @@ test('all Console management surfaces share task context, status and filtering c
   assert.doesNotMatch(extensions, /routerLink="\/manage\/platform-readiness"/);
 });
 
+test('Console administrator actions keep failures visible in the action dialog', () => {
+  const admins = read('src', 'app', 'pages', 'console-admins.ts');
+  const actionDialog = read('src', 'app', 'os', 'os-action-dialog.ts');
+  assert.match(admins, /\[error\]="actionError\(\)"/);
+  assert.match(admins, /관리 작업 실패:/);
+  assert.match(admins, /this\.reasonOpen\.set\(false\);[\s\S]{0,120}this\.pendingAction = null;[\s\S]{0,120}catch \(error\)/);
+  assert.match(admins, /panelSubtitle\(\)/);
+  assert.match(admins, /user\.email.*Supabase Auth · Console roles/);
+  assert.match(actionDialog, /@Input\(\) error = ''/);
+  assert.match(actionDialog, /clrAlertType.*danger/);
+});
+
 test('Platform Control presents operations, evidence and journey as correlated task views', () => {
   const control = read('src', 'app', 'pages', 'admin-platform-control.ts');
   const dataIdentity = read('src', 'app', 'pages', 'admin-data-identity.ts');
   const changeControl = read('src', 'app', 'pages', 'admin-change-control.ts');
   assert.match(control, />Operations</);
   assert.match(control, />Evidence</);
-  assert.match(control, />Change Journey</);
-  assert.match(control, /Supabase request → Gitea evidence → Kubernetes receipt/);
+  assert.match(control, />변경 흐름</);
+  assert.match(control, /변경 요청 → 서명된 상태 선언 → Kubernetes 실측 결과/);
   assert.match(control, /HIS Binding/);
   assert.match(control, /NotConfigured/);
   assert.match(dataIdentity, /Recovery evidence/);
   assert.match(dataIdentity, /Insufficient evidence/);
-  assert.match(changeControl, /Change Journey/);
-  assert.match(changeControl, /Signed PR/);
-  assert.match(changeControl, /consumer reconciler/);
+  assert.match(changeControl, /플랫폼 상태 변경 관리/);
+  assert.match(changeControl, /State Change Authority/);
+  assert.match(changeControl, /변경 흐름/);
+  assert.match(changeControl, /서명된 상태 선언/);
+  assert.match(changeControl, /소비자 적용기/);
+  assert.doesNotMatch(changeControl, /title="Change Control"/);
 });
 
 test('DUPA active runtime depends on Supabase audit and never ships legacy data modules', () => {

@@ -53,7 +53,7 @@ reconciler가 등록되기 전에는 변경을 `Applied`로 표시하지 않고 
 |---|---|---|---|
 | 플랫폼 제어 기반 | Overview | `/manage/platform-control` | `Platform Control Plane` |
 | 플랫폼 제어 기반 | Data & Identity | `/manage/data-identity` | `Data & Identity — Supabase` |
-| 플랫폼 제어 기반 | Change Control | `/manage/change-control` | `Change Control — Gitea` |
+| 플랫폼 제어 기반 | 상태 변경 관리 | `/manage/state-changes` | `플랫폼 상태 변경 관리` |
 | 플랫폼 제어 기반 | OAA Gateway | `/manage/oaa` | `OAA Gateway` |
 | 플랫폼 제어 기반 | Observability | `/manage/observability` | `Observability Integration — HIS-provided` |
 
@@ -191,7 +191,7 @@ flowchart LR
 
 ```text
 /manage/data-identity?correlation=<id>
-/manage/change-control?correlation=<id>
+/manage/state-changes?correlation=<id>
 /manage/audit?correlation=<id>
 /manage/oaa?correlation=<id>
 /manage/extensions/<consumer>?correlation=<id>
@@ -249,7 +249,7 @@ flowchart LR
 - Storage object 변경은 Storage API를 사용하고 metadata table을 직접 변경하지 않는다.
 - secret, token, JWT signing key의 원문은 표시하지 않는다.
 
-### 4.3 `/manage/change-control` — Change Control (Gitea)
+### 4.3 `/manage/state-changes` — 플랫폼 상태 변경 관리
 
 | 영역 | 제공 정보 | 데이터 원천 |
 |---|---|---|

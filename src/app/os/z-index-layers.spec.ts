@@ -142,3 +142,12 @@ test('우측 패널 폭 조절 손잡이는 드래그·터치·키보드 조작�
     '조절 가능 영역을 발견할 수 있도록 눈에 보이는 세로 손잡이가 있어야 한다',
   );
 });
+
+test('닫힌 우측 패널은 overlay와 focus trap을 DOM에서 제거해 연속 열기를 막지 않는다', () => {
+  assert.match(
+    osPanelTs,
+    /@if \(open\) \{[\s\S]*<clr-side-panel[\s\S]*<\/clr-side-panel>[\s\S]*\}/,
+    'clr-side-panel 전체가 open 조건 안에 있어 닫힌 overlay/backdrop이 다음 관리 버튼 클릭을 가로채지 않아야 한다',
+  );
+  assert.match(osPanelTs, /다음 행의 관리 버튼 hit-test를 가로챌 수 있다/);
+});

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeTotpQrCode } from './totp-qr.ts';
+import { createTotpQrCode, normalizeTotpQrCode } from './totp-qr.ts';
 
 test('GoTrue raw SVG becomes a browser-safe image data URL', () => {
   const result = normalizeTotpQrCode('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>');
@@ -17,4 +17,17 @@ test('unrelated and executable URL schemes are rejected', () => {
   assert.equal(normalizeTotpQrCode('javascript:alert(1)'), '');
   assert.equal(normalizeTotpQrCode('https://example.com/tracker.png'), '');
   assert.equal(normalizeTotpQrCode(''), '');
+});
+
+test('a missing Supabase QR image is generated locally from its TOTP URI', async () => {
+  const result = await createTotpQrCode(
+    '',
+    'otpauth://totp/localhost%3Aoperator%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=localhost',
+  );
+  assert.match(result, /^data:image\/png;base64,/);
+});
+
+test('QR fallback rejects non-TOTP and secretless URIs', async () => {
+  assert.equal(await createTotpQrCode('', 'https://example.com/qr'), '');
+  assert.equal(await createTotpQrCode('', 'otpauth://totp/localhost%3Aoperator'), '');
 });

@@ -26,6 +26,11 @@ import { ClarityModule } from '@clr/angular';
       <h3 class="modal-title">{{ title }}</h3>
       <div class="modal-body">
         <p>{{ message }}</p>
+        @if (error) {
+          <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="false">
+            <clr-alert-item><span class="alert-text">{{ error }}</span></clr-alert-item>
+          </clr-alert>
+        }
         @if (reasonRequired) {
           <clr-textarea-container>
             <label>{{ reasonLabel }}</label>
@@ -56,6 +61,11 @@ import { ClarityModule } from '@clr/angular';
       </div>
     </clr-modal>
   `,
+  styles: [`
+    clr-textarea-container{display:block;width:100%}
+    textarea[clrTextarea]{box-sizing:border-box;width:100%;min-width:100%;min-height:8rem;resize:vertical}
+    .modal-body p{white-space:pre-line;overflow-wrap:anywhere}
+  `],
   changeDetection: ChangeDetectionStrategy.Eager,
 })
 export class OsActionDialog implements OnChanges {
@@ -65,6 +75,7 @@ export class OsActionDialog implements OnChanges {
   @Input() confirmLabel = '확인';
   @Input() danger = false;
   @Input() busy = false;
+  @Input() error = '';
   @Input() reasonRequired = false;
   @Input() reasonLabel = '변경 사유';
   @Input() minReasonLength = 8;
