@@ -189,10 +189,10 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: controller
-          # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
-          # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console-dupa-controller@sha256:<digest>로 고정.
-          image: opensphere-console-dupa:manage-audit-v12
-          imagePullPolicy: IfNotPresent
+          # edge is released as an immutable GHCR digest. A local override must also
+          # satisfy the managed-workload image-integrity admission policy.
+          image: ghcr.io/opensphere-platform/opensphere-console-dupa-controller@sha256:d9e1c7328f028fdb15a2332a4608d651ed7f29211bde615c2cf83bf40cae4cf4
+          imagePullPolicy: Always
           env:
             - { name: NAMESPACE, value: opensphere-console }
             # Production is fail-closed. Development override requires both values explicitly.
