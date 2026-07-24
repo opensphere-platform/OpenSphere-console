@@ -1,0 +1,71 @@
+{
+  "apiVersion": "release.opensphere.io/v1alpha1",
+  "kind": "ReleaseBuildAuthorityPolicy",
+  "metadata": {
+    "name": "opensphere-release-build-authority",
+    "effectiveFrom": "2026-07-24",
+    "state": "declared"
+  },
+  "spec": {
+    "scope": {
+      "artifacts": [
+        "opensphere-console",
+        "opensphere-setup",
+        "opensphere-os-cli",
+        "subshell-runtime-images",
+        "plugin-runtime-images",
+        "release-bom"
+      ]
+    },
+    "releaseClasses": {
+      "ga": {
+        "tags": [
+          "ga"
+        ],
+        "officialDistribution": true,
+        "allowedBuildAuthorities": [
+          "github-actions"
+        ],
+        "localBuildAllowed": false,
+        "requiredEvidence": [
+          "immutable-digest",
+          "slsa-provenance",
+          "spdx-sbom",
+          "release-bom-attestation"
+        ],
+        "promotion": {
+          "retagPreGaArtifact": false,
+          "rebuildFromSourceInGaWorkflow": true
+        }
+      },
+      "preGa": {
+        "tags": [
+          "edge",
+          "candidate",
+          "stable"
+        ],
+        "officialDistribution": false,
+        "allowedBuildAuthorities": [
+          "localhost",
+          "github-actions"
+        ],
+        "localBuildAllowed": true,
+        "evidenceMode": "advisory",
+        "promotionToGa": {
+          "retagArtifact": false,
+          "sourceRevisionMayBeRebuilt": true
+        }
+      }
+    },
+    "requiredArtifactAnnotations": [
+      "opensphere.io/build-authority",
+      "opensphere.io/release-class",
+      "opensphere.io/ga-eligible"
+    ],
+    "enforcement": {
+      "phase": "declaration-only",
+      "runtimeAdmissionUnchanged": true,
+      "nextPhase": "implement-build-metadata-and-channel-aware-admission"
+    }
+  }
+}

@@ -1,6 +1,8 @@
-# opensphere-release — edge 채널 (최신 개발 빌드)
-# edge → candidate → stable 순서로 채널 승격
-# 채널 승격 = 동일 digest 재태그 (재빌드 금지, opensphere-image-build 규약)
+# opensphere-release — edge 채널 (최신 pre-GA 개발 빌드)
+# edge → candidate → stable 은 pre-GA 검증 경로다.
+# pre-GA 내부 승격은 동일 digest 재태그를 허용한다.
+# ga는 별도 GitHub Actions workflow에서 같은 소스를 재빌드해야 하며
+# pre-GA digest를 ga로 재태깅할 수 없다.
 
 releases:
   - version: "0.1.0-alpha.1"
