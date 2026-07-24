@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
+  auditReason,
   compareSnapshots,
   normalizeTarget,
 } = require('./external-channel-api');
@@ -16,6 +17,12 @@ const {
 } = require('../notification-dispatcher/external-backup-server');
 
 const read = (value) => fs.readFileSync(path.join(__dirname, value), 'utf8');
+
+test('external backup and restore audit reasons have no minimum length requirement', () => {
+  assert.equal(auditReason(''), '');
+  assert.equal(auditReason(' 짧음 '), '짧음');
+  assert.throws(() => auditReason('a'.repeat(241)), { code: 400 });
+});
 
 test('Backblaze target is fixed to the configured HTTPS region and rejects alternate origins', () => {
   const target = normalizeTarget({
@@ -99,6 +106,7 @@ test('restore preview reports additions and changes without destructive deletion
 
 test('migration isolates secrets and restore scope from browser identities', () => {
   const migration = read('../supabase/migrations/0025_external_channels_backup.sql');
+  const reasonPolicy = read('../supabase/migrations/0027_external_channel_reason_policy.sql');
   assert.match(migration, /CREATE ROLE opensphere_external_channel_executor NOLOGIN NOINHERIT/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS console\.external_backup_secret/);
   assert.match(migration, /REVOKE ALL ON FUNCTION console\.external_backup_read_secret\(uuid\) FROM PUBLIC/);
@@ -106,6 +114,8 @@ test('migration isolates secrets and restore scope from browser identities', () 
   assert.match(migration, /FUNCTION console\.restore_configuration_snapshot/);
   assert.match(migration, /allowlisted merge restore/i);
   assert.doesNotMatch(migration, /GRANT SELECT[\s\S]{0,120}external_backup_secret TO opensphere_console_backend/);
+  assert.match(reasonPolicy, /DROP CONSTRAINT IF EXISTS configuration_restore_reason_check/);
+  assert.doesNotMatch(reasonPolicy, /length\s*\(\s*btrim\s*\(\s*reason\s*\)\s*\)\s*>=\s*8/i);
 });
 
 test('External Channels UI and compatibility redirect expose backup and restore', () => {

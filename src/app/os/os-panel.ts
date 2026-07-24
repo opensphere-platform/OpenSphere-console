@@ -26,9 +26,18 @@ import { ClarityModule } from '@clr/angular';
     @if (open) {
       <div
         class="os-panel-grip"
+        [class.is-resizing]="resizing()"
         [style.right.px]="width()"
-        (mousedown)="startResize($event)"
-        title="드래그로 폭 조절"
+        role="separator"
+        aria-label="패널 폭 조절"
+        aria-orientation="vertical"
+        [attr.aria-valuemin]="minimumWidth"
+        [attr.aria-valuemax]="maximumWidth()"
+        [attr.aria-valuenow]="width()"
+        tabindex="0"
+        (pointerdown)="startResize($event)"
+        (keydown)="resizeWithKeyboard($event)"
+        title="드래그하거나 방향키로 폭 조절"
       ></div>
     }
     <clr-side-panel
@@ -87,12 +96,39 @@ import { ClarityModule } from '@clr/angular';
         position: fixed;
         top: var(--os-header-height, 3rem);
         bottom: 0;
-        width: 8px;
+        width: 12px;
+        transform: translateX(50%);
         z-index: var(--os-z-panel-grip, 1060);
         cursor: col-resize;
+        touch-action: none;
+        outline: none;
       }
-      .os-panel-grip:hover {
-        background: rgba(76, 111, 255, 0.35);
+      .os-panel-grip::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 4px;
+        height: 64px;
+        border: 1px solid rgba(55, 73, 110, 0.28);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 1px 5px rgba(20, 33, 61, 0.18);
+        transform: translate(-50%, -50%);
+        transition:
+          background 120ms ease,
+          border-color 120ms ease,
+          width 120ms ease;
+      }
+      .os-panel-grip:hover::after,
+      .os-panel-grip:focus-visible::after,
+      .os-panel-grip.is-resizing::after {
+        width: 6px;
+        border-color: var(--cds-alias-object-interaction-color, #4c6fff);
+        background: var(--cds-alias-object-interaction-color, #4c6fff);
+      }
+      .os-panel-grip:focus-visible {
+        box-shadow: 0 0 0 3px rgba(76, 111, 255, 0.22);
       }
       .os-panel-title-row {
         display: flex;
@@ -157,9 +193,9 @@ export class OsPanel {
   @Input() fullHref = '';
   @Output() closed = new EventEmitter<void>();
 
+  readonly minimumWidth = 420;
   readonly width = signal<number>(this.restoreWidth());
-
-  private resizing = false;
+  readonly resizing = signal(false);
 
   onOpenChange(open: boolean): void {
     if (!open) this.closed.emit();
@@ -172,26 +208,57 @@ export class OsPanel {
     if (this.open) this.closed.emit();
   }
 
-  startResize(ev: MouseEvent): void {
+  startResize(ev: PointerEvent): void {
     ev.preventDefault();
-    this.resizing = true;
-    const move = (e: MouseEvent) => {
-      if (!this.resizing) return;
-      const w = Math.min(Math.max(window.innerWidth - e.clientX, 420), window.innerWidth * 0.92);
-      this.width.set(Math.round(w));
+    this.resizing.set(true);
+    const move = (e: PointerEvent) => {
+      if (!this.resizing()) return;
+      this.width.set(this.clampWidth(window.innerWidth - e.clientX));
     };
     const up = () => {
-      this.resizing = false;
-      sessionStorage.setItem('os-panel-width', String(this.width()));
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
+      this.resizing.set(false);
+      this.rememberWidth();
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
     };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+  }
+
+  resizeWithKeyboard(ev: KeyboardEvent): void {
+    const step = ev.shiftKey ? 64 : 24;
+    let next = this.width();
+    if (ev.key === 'ArrowLeft') next += step;
+    else if (ev.key === 'ArrowRight') next -= step;
+    else if (ev.key === 'Home') next = this.minimumWidth;
+    else if (ev.key === 'End') next = this.maximumWidth();
+    else return;
+    ev.preventDefault();
+    this.width.set(this.clampWidth(next));
+    this.rememberWidth();
+  }
+
+  @HostListener('window:resize')
+  onViewportResize(): void {
+    this.width.set(this.clampWidth(this.width()));
+  }
+
+  maximumWidth(): number {
+    return Math.max(this.minimumWidth, Math.round(window.innerWidth * 0.92));
+  }
+
+  private clampWidth(value: number): number {
+    return Math.round(Math.min(Math.max(value, this.minimumWidth), this.maximumWidth()));
+  }
+
+  private rememberWidth(): void {
+    sessionStorage.setItem('os-panel-width', String(this.width()));
   }
 
   private restoreWidth(): number {
     const saved = Number(sessionStorage.getItem('os-panel-width'));
-    return saved >= 420 ? saved : Math.round(window.innerWidth * 0.72);
+    return this.clampWidth(saved >= this.minimumWidth ? saved : window.innerWidth * 0.72);
   }
 }

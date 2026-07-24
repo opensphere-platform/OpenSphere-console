@@ -12,10 +12,8 @@ function asText(value, label, { min = 0, max = 255, required = false } = {}) {
   return text;
 }
 
-function reasonOrThrow(value, managementReason) {
-  const reason = managementReason(value);
-  if (!reason) throw { code: 400, msg: 'reason must be at least 8 characters' };
-  return reason;
+function auditReason(value) {
+  return asText(value, 'reason', { max: 240 });
 }
 
 function publicChannel(row) {
@@ -62,7 +60,7 @@ function publicRule(row, channelNames) {
   };
 }
 
-function createNotificationApi({ restRequest, logAudit, managementReason, newOpId, dispatcherRequest }) {
+function createNotificationApi({ restRequest, logAudit, newOpId, dispatcherRequest }) {
   async function channels() {
     const rows = await restRequest('notification_channel', { query: 'select=*&deleted_at=is.null&order=name.asc' });
     return rows.map(publicChannel);
@@ -83,7 +81,7 @@ function createNotificationApi({ restRequest, logAudit, managementReason, newOpI
   }
 
   async function createChannel(actor, body) {
-    const reason = reasonOrThrow(body?.reason, managementReason);
+    const reason = auditReason(body?.reason);
     const parsed = channelInput(body);
     const id = newOpId();
     const now = new Date().toISOString();
@@ -107,7 +105,7 @@ function createNotificationApi({ restRequest, logAudit, managementReason, newOpI
   }
 
   async function updateSmtpChannel(actor, id, body) {
-    const reason = reasonOrThrow(body?.reason, managementReason);
+    const reason = auditReason(body?.reason);
     if (String(body?.provider || '').toLowerCase() !== 'smtp') throw { code: 400, msg: 'only SMTP channel configuration can be edited' };
     const row = await dispatcherRequest(`/internal/channels/${id}/configuration`, body);
     await logAudit(actor, 'notification-channel-update', id, 'ok', reason, { requestId: newOpId(), targetType: 'notification-channel' });
@@ -115,7 +113,7 @@ function createNotificationApi({ restRequest, logAudit, managementReason, newOpI
   }
 
   async function setChannelEnabled(actor, id, enabled, body) {
-    const reason = reasonOrThrow(body?.reason, managementReason);
+    const reason = auditReason(body?.reason);
     const rows = await restRequest('notification_channel', { query: `select=*&id=eq.${encodeURIComponent(id)}&deleted_at=is.null` });
     if (!rows[0]) throw { code: 404, msg: 'notification channel not found' };
     if (enabled && !rows[0].credential_configured) throw { code: 409, msg: 'notification credentials are not configured' };
@@ -126,7 +124,7 @@ function createNotificationApi({ restRequest, logAudit, managementReason, newOpI
   }
 
   async function testChannel(actor, id, body) {
-    const reason = reasonOrThrow(body?.reason, managementReason);
+    const reason = auditReason(body?.reason);
     const testRecipient = body?.testRecipient ? emailList([body.testRecipient])[0] : '';
     const row = await dispatcherRequest(`/internal/channels/${id}/test`, testRecipient ? { testRecipient } : {});
     await logAudit(actor, 'notification-channel-test', id, row.accepted ? 'ok' : 'error', reason, { requestId: newOpId(), targetType: 'notification-channel' });
@@ -146,7 +144,7 @@ function createNotificationApi({ restRequest, logAudit, managementReason, newOpI
   }
 
   async function createRule(actor, body) {
-    const reason = reasonOrThrow(body?.reason, managementReason);
+    const reason = auditReason(body?.reason);
     const input = normalizeRule(body);
     const created = await restRequest('notification_rule', { method: 'POST', body: [{ ...input, channelIds: undefined, created_by: actor.sub, updated_by: actor.sub }] });
     const row = created[0];
@@ -170,7 +168,7 @@ function createNotificationApi({ restRequest, logAudit, managementReason, newOpI
   }
 
   async function retryDelivery(actor, id, body) {
-    const reason = reasonOrThrow(body?.reason, managementReason);
+    const reason = auditReason(body?.reason);
     const rows = await restRequest('notification_delivery', { query: `select=id,status,retry_generation&id=eq.${encodeURIComponent(id)}` });
     if (!rows[0]) throw { code: 404, msg: 'notification delivery not found' };
     if (!['failed', 'dead-letter'].includes(rows[0].status)) throw { code: 409, msg: 'only failed deliveries can be retried' };
@@ -182,4 +180,4 @@ function createNotificationApi({ restRequest, logAudit, managementReason, newOpI
   return { channels, createChannel, createRule, deliveries, retryDelivery, rules, setChannelEnabled, smtpChannelConfiguration, summary, testChannel, updateSmtpChannel };
 }
 
-module.exports = { createNotificationApi, normalizeRule, publicChannel };
+module.exports = { auditReason, createNotificationApi, normalizeRule, publicChannel };

@@ -146,7 +146,7 @@ const emptyBackupTarget = () => ({ name: 'Backblaze B2 Console Backup', endpoint
         } @else {
           <clr-input-container><label>Account SID</label><input clrInput [(ngModel)]="channelForm.twilioAccountSid" name="twilio-account" /></clr-input-container><clr-input-container><label>Messaging Service SID</label><input clrInput [(ngModel)]="channelForm.twilioServiceSid" name="twilio-service" /></clr-input-container><clr-input-container><label>From (선택)</label><input clrInput [(ngModel)]="channelForm.twilioFrom" name="twilio-from" placeholder="+821012345678" /></clr-input-container><clr-input-container><label>Recipients</label><input clrInput [(ngModel)]="channelForm.twilioRecipients" name="twilio-recipients" placeholder="+821012345678" /></clr-input-container><clr-input-container class="wide"><label>Auth token</label><input clrInput type="password" [(ngModel)]="channelForm.twilioToken" name="twilio-token" autocomplete="new-password" /></clr-input-container>
         }
-        <clr-input-container class="wide"><label>변경 사유</label><input clrInput [(ngModel)]="channelForm.reason" name="channel-reason" placeholder="운영 알림 채널 최초 연결" /><clr-control-helper>사유는 append-only 감사에 남습니다.</clr-control-helper></clr-input-container>
+        <clr-input-container class="wide"><label>변경 사유 (선택)</label><input clrInput [(ngModel)]="channelForm.reason" name="channel-reason" maxlength="240" placeholder="운영 알림 채널 최초 연결" /><clr-control-helper>입력한 사유는 append-only 감사에 남습니다.</clr-control-helper></clr-input-container>
       </form>
       <div osPanelFooter><button class="btn btn-primary" [disabled]="busy()" (click)="createChannel()">{{ editingChannelId() ? '구성 저장' : '연결 저장' }}</button><button class="btn btn-outline" [disabled]="busy()" (click)="closePanels()">취소</button></div>
     </os-panel>
@@ -155,7 +155,7 @@ const emptyBackupTarget = () => ({ name: 'Backblaze B2 Console Backup', endpoint
       <form clrForm clrLayout="vertical" class="channel-form" autocomplete="off">
         <clr-input-container><label>규칙 이름</label><input clrInput [(ngModel)]="ruleForm.name" name="rule-name" placeholder="Platform error" /></clr-input-container><clr-input-container><label>우선순위</label><input clrInput type="number" [(ngModel)]="ruleForm.priority" name="rule-priority" /></clr-input-container><clr-select-container><label>최소 심각도</label><select clrSelect [(ngModel)]="ruleForm.minSeverity" name="rule-severity"><option value="info">info</option><option value="warning">warning</option><option value="error">error</option><option value="critical">critical</option></select></clr-select-container><clr-input-container><label>Source (쉼표 구분)</label><input clrInput [(ngModel)]="ruleForm.sources" name="rule-sources" placeholder="audit,platform-control" /></clr-input-container><clr-input-container><label>Category (쉼표 구분)</label><input clrInput [(ngModel)]="ruleForm.categories" name="rule-categories" placeholder="declarative-change" /></clr-input-container><clr-input-container><label>Dedup seconds</label><input clrInput type="number" [(ngModel)]="ruleForm.dedupWindowSeconds" name="rule-dedup" /></clr-input-container>
         <clr-checkbox-container class="wide"><label>대상 채널</label>@for (channel of channels(); track channel.id) { <clr-checkbox-wrapper><input type="checkbox" clrCheckbox [checked]="ruleForm.channelIds.includes(channel.id)" (change)="setRuleChannel(channel.id, checkboxChecked($event))" /><label>{{ channel.name }} · {{ providerLabel(channel.provider) }}</label></clr-checkbox-wrapper> }</clr-checkbox-container>
-        <clr-input-container class="wide"><label>변경 사유</label><input clrInput [(ngModel)]="ruleForm.reason" name="rule-reason" placeholder="플랫폼 오류 외부 전파 규칙 추가" /></clr-input-container>
+        <clr-input-container class="wide"><label>변경 사유 (선택)</label><input clrInput [(ngModel)]="ruleForm.reason" name="rule-reason" maxlength="240" placeholder="플랫폼 오류 외부 전파 규칙 추가" /></clr-input-container>
       </form>
       <div osPanelFooter><button class="btn btn-primary" [disabled]="busy()" (click)="createRule()">규칙 저장</button><button class="btn btn-outline" [disabled]="busy()" (click)="closePanels()">취소</button></div>
     </os-panel>
@@ -165,10 +165,10 @@ const emptyBackupTarget = () => ({ name: 'Backblaze B2 Console Backup', endpoint
         <p class="action-description">{{ action.description }}</p>
         <form clrForm clrLayout="vertical">
           @if (action.testRecipient !== undefined) { <clr-input-container><label>테스트 수신 메일 주소</label><input clrInput type="email" [(ngModel)]="action.testRecipient" name="test-recipient" autocomplete="email" placeholder="test@example.com" required /><clr-control-helper>테스트에만 사용되며, 채널의 기본 수신자는 변경하지 않습니다.</clr-control-helper></clr-input-container> }
-          <clr-input-container><label>실행 사유</label><input clrInput [(ngModel)]="action.reason" name="action-reason" minlength="8" maxlength="240" /><clr-control-helper>최소 8자 · append-only 감사 로그에 기록</clr-control-helper></clr-input-container>
+          <clr-input-container><label>실행 사유 (선택)</label><input clrInput [(ngModel)]="action.reason" name="action-reason" maxlength="240" /><clr-control-helper>입력한 사유는 append-only 감사 로그에 기록</clr-control-helper></clr-input-container>
         </form>
       }
-      <div osPanelFooter>@if (pendingAction(); as action) { <button class="btn btn-primary" [disabled]="busy() || action.reason.trim().length < 8 || (action.testRecipient !== undefined && !validEmail(action.testRecipient))" (click)="executePendingAction()">{{ action.confirmLabel }}</button><button class="btn btn-outline" [disabled]="busy()" (click)="cancelPendingAction()">취소</button> }</div>
+      <div osPanelFooter>@if (pendingAction(); as action) { <button class="btn btn-primary" [disabled]="busy() || (action.testRecipient !== undefined && !validEmail(action.testRecipient))" (click)="executePendingAction()">{{ action.confirmLabel }}</button><button class="btn btn-outline" [disabled]="busy()" (click)="cancelPendingAction()">취소</button> }</div>
     </os-panel>
 
     <os-panel [open]="backupTargetPanelOpen()" title="S3 백업 대상 연결" subtitle="Backblaze B2 · credentials are write-only" (closed)="closePanels()">
@@ -182,9 +182,9 @@ const emptyBackupTarget = () => ({ name: 'Backblaze B2 Console Backup', endpoint
         <clr-input-container class="wide"><label>Object prefix</label><input clrInput [(ngModel)]="backupTargetForm.pathPrefix" name="backup-prefix" /></clr-input-container>
         <clr-input-container><label>Application Key ID</label><input clrInput type="password" [(ngModel)]="backupTargetForm.accessKeyId" name="backup-access-key" autocomplete="new-password" /></clr-input-container>
         <clr-input-container><label>Application Key</label><input clrInput type="password" [(ngModel)]="backupTargetForm.applicationKey" name="backup-secret-key" autocomplete="new-password" /></clr-input-container>
-        <clr-input-container class="wide"><label>변경 사유</label><input clrInput [(ngModel)]="backupTargetForm.reason" name="backup-reason" placeholder="Console 구성 외부 백업 대상 최초 연결" /><clr-control-helper>최소 8자 · credential 원문은 감사 로그에 기록하지 않습니다.</clr-control-helper></clr-input-container>
+        <clr-input-container class="wide"><label>변경 사유 (선택)</label><input clrInput [(ngModel)]="backupTargetForm.reason" name="backup-reason" maxlength="240" placeholder="Console 구성 외부 백업 대상 최초 연결" /><clr-control-helper>credential 원문은 감사 로그에 기록하지 않습니다.</clr-control-helper></clr-input-container>
       </form>
-      <div osPanelFooter><button class="btn btn-primary" [disabled]="busy() || !backupTargetForm.bucketName || !backupTargetForm.accessKeyId || !backupTargetForm.applicationKey || backupTargetForm.reason.trim().length < 8" (click)="createBackupTarget()">연결 저장</button><button class="btn btn-outline" [disabled]="busy()" (click)="closePanels()">취소</button></div>
+      <div osPanelFooter><button class="btn btn-primary" [disabled]="busy() || !backupTargetForm.bucketName || !backupTargetForm.accessKeyId || !backupTargetForm.applicationKey" (click)="createBackupTarget()">연결 저장</button><button class="btn btn-outline" [disabled]="busy()" (click)="closePanels()">취소</button></div>
     </os-panel>
 
     <os-panel [open]="!!restorePreview()" title="구성 복원 확인" subtitle="AAL2 · digest-bound transactional merge" (closed)="cancelRestore()">
@@ -193,10 +193,10 @@ const emptyBackupTarget = () => ({ name: 'Backblaze B2 Console Backup', endpoint
         <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">이 복원은 허용된 구성만 트랜잭션으로 병합합니다. Secret과 운영자 역할 할당은 복원하지 않으며, 새 알림 채널은 자격 증명을 다시 입력할 때까지 비활성 상태입니다.</span></clr-alert-item></clr-alert>
         <form clrForm clrLayout="vertical" class="channel-form">
           <clr-input-container class="wide"><label>정확한 확인 문구</label><input clrInput [(ngModel)]="restoreConfirmation" name="restore-confirmation" [placeholder]="'RESTORE ' + preview.backupId" /><clr-control-helper>RESTORE {{ preview.backupId }}</clr-control-helper></clr-input-container>
-          <clr-input-container class="wide"><label>복원 사유</label><input clrInput [(ngModel)]="restoreReason" name="restore-reason" /><clr-control-helper>append-only 감사 로그에 기록됩니다.</clr-control-helper></clr-input-container>
+          <clr-input-container class="wide"><label>복원 사유 (선택)</label><input clrInput [(ngModel)]="restoreReason" name="restore-reason" maxlength="240" /><clr-control-helper>입력한 사유는 append-only 감사 로그에 기록됩니다.</clr-control-helper></clr-input-container>
         </form>
       }
-      <div osPanelFooter>@if (restorePreview(); as preview) { <button class="btn btn-danger" [disabled]="busy() || restoreConfirmation.trim() !== 'RESTORE ' + preview.backupId || restoreReason.trim().length < 8" (click)="applyRestore()">지금 복원</button><button class="btn btn-outline" [disabled]="busy()" (click)="cancelRestore()">취소</button> }</div>
+      <div osPanelFooter>@if (restorePreview(); as preview) { <button class="btn btn-danger" [disabled]="busy() || restoreConfirmation.trim() !== 'RESTORE ' + preview.backupId" (click)="applyRestore()">지금 복원</button><button class="btn btn-outline" [disabled]="busy()" (click)="cancelRestore()">취소</button> }</div>
     </os-panel>
   `,
   styles: [`

@@ -9,10 +9,8 @@ function text(value, label, { min = 0, max = 255, required = false } = {}) {
   return output;
 }
 
-function reason(value, managementReason) {
-  const output = managementReason(value);
-  if (!output) throw { code: 400, msg: 'reason must be at least 8 characters' };
-  return output;
+function auditReason(value) {
+  return text(value, 'reason', { max: 240 });
 }
 
 function normalizeTarget(input) {
@@ -167,7 +165,6 @@ function compareSnapshots(current, incoming) {
 function createExternalChannelApi({
   restRequest,
   logAudit,
-  managementReason,
   newOpId,
   executorRequest,
 }) {
@@ -305,7 +302,7 @@ function createExternalChannelApi({
   }
 
   async function createTarget(actor, body) {
-    const changeReason = reason(body?.reason, managementReason);
+    const changeReason = auditReason(body?.reason);
     const parsed = normalizeTarget(body);
     const id = newOpId();
     const now = new Date().toISOString();
@@ -336,7 +333,7 @@ function createExternalChannelApi({
   }
 
   async function test(actor, id, body) {
-    const changeReason = reason(body?.reason, managementReason);
+    const changeReason = auditReason(body?.reason);
     const output = await executorRequest(`/internal/targets/${id}/test`, {});
     await logAudit(actor, 'external-backup-target-test', id, output.ready ? 'ok' : 'failed', changeReason, {
       requestId: newOpId(),
@@ -355,7 +352,7 @@ function createExternalChannelApi({
   }
 
   async function backupNow(actor, id, body) {
-    const changeReason = reason(body?.reason, managementReason);
+    const changeReason = auditReason(body?.reason);
     const targetRows = await restRequest('external_backup_target', {
       query: `select=*&id=eq.${encodeURIComponent(id)}&deleted_at=is.null`,
     });
@@ -400,7 +397,7 @@ function createExternalChannelApi({
   }
 
   async function previewRestore(actor, backupId, body) {
-    const restoreReason = reason(body?.reason, managementReason);
+    const restoreReason = auditReason(body?.reason);
     const [downloaded, current] = await Promise.all([
       readSnapshot(backupId),
       captureConfiguration(actor),
@@ -431,7 +428,7 @@ function createExternalChannelApi({
   }
 
   async function applyRestore(actor, restoreId, body) {
-    const restoreReason = reason(body?.reason, managementReason);
+    const restoreReason = auditReason(body?.reason);
     const restoreRows = await restRequest('configuration_restore', {
       query: `select=*&id=eq.${encodeURIComponent(restoreId)}`,
     });
@@ -500,6 +497,7 @@ function createExternalChannelApi({
 }
 
 module.exports = {
+  auditReason,
   compareSnapshots,
   createExternalChannelApi,
   normalizeTarget,

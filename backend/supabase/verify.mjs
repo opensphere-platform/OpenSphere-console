@@ -31,6 +31,7 @@ const cephPrerequisiteConsumer = read('migrations', '0023_ceph_prerequisite_cons
 const aiConsumerContract = read('migrations', '0024_ai_consumer_contract.sql');
 const externalChannelsBackup = read('migrations', '0025_external_channels_backup.sql');
 const migrationLedger = read('migrations', '0026_schema_migration_ledger.sql');
+const externalChannelReasonPolicy = read('migrations', '0027_external_channel_reason_policy.sql');
 const installer = read('install.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
@@ -114,6 +115,8 @@ assert.match(notification, /opensphere_notification_dispatcher/);
 assert.match(notification, /ENABLE ROW LEVEL SECURITY/);
 assert.match(notification, /DROP POLICY IF EXISTS console_backend_notification_channel/);
 assert.match(notification, /DROP POLICY IF EXISTS dispatcher_notification_control/);
+assert.match(externalChannelReasonPolicy, /DROP CONSTRAINT IF EXISTS configuration_restore_reason_check/);
+assert.doesNotMatch(externalChannelReasonPolicy, /length\s*\(\s*btrim\s*\(\s*reason\s*\)\s*\)\s*>=\s*8/i);
 assert.match(llmUsage, /CREATE TABLE IF NOT EXISTS oaa\.llm_usage_event/);
 assert.match(llmUsage, /request_id uuid NOT NULL UNIQUE/);
 assert.match(llmUsage, /input_tokens bigint NOT NULL DEFAULT 0/);

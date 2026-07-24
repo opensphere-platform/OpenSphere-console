@@ -4,7 +4,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { normalizeRule, publicChannel } = require('./notification-api');
+const { auditReason, normalizeRule, publicChannel } = require('./notification-api');
+
+test('external notification audit reasons have no minimum length requirement', () => {
+  assert.equal(auditReason(''), '');
+  assert.equal(auditReason(' 짧음 '), '짧음');
+  assert.throws(() => auditReason('a'.repeat(241)), { code: 400 });
+});
 
 test('notification admin API never returns stored provider config or credentials', () => {
   const value = publicChannel({
@@ -32,6 +38,7 @@ test('Console UI uses an audited side-panel action instead of browser prompt dia
   assert.match(source, /testRecipient/);
   assert.match(source, /editSmtp/);
   assert.match(source, /기존 자격 증명을 유지합니다/);
+  assert.doesNotMatch(source, /minlength="8"|length < 8|최소 8자/);
   assert.doesNotMatch(source, /window\.prompt|window\.confirm/);
 });
 
