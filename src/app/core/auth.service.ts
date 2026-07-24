@@ -1,4 +1,5 @@
 import { Injectable, signal } from '@angular/core';
+import { normalizeTotpQrCode } from './totp-qr';
 
 interface SupabaseMfaFactor {
   id: string;
@@ -161,7 +162,7 @@ export class AuthService {
     if (!enrollment.id || !enrollment.totp?.secret) throw new Error('Supabase Auth가 TOTP 등록 정보를 반환하지 않았습니다.');
     return {
       factorId: enrollment.id,
-      qrCode: enrollment.totp.qr_code || '',
+      qrCode: normalizeTotpQrCode(enrollment.totp.qr_code),
       secret: enrollment.totp.secret,
       uri: enrollment.totp.uri || '',
     };

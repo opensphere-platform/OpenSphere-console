@@ -65,13 +65,17 @@ interface BeginResponse {
           <div class="setup-copy">
             <p class="eyebrow">SECURITY</p>
             <h1 id="setup-title">인증 앱을 연결합니다</h1>
-            <p>QR 코드를 인증 앱으로 스캔하고 현재 6자리 코드를 입력하세요.</p>
+            <p>Google Authenticator, Microsoft Authenticator, 1Password 같은 인증 앱으로 QR 코드를 스캔하세요. 앱에 표시되는 현재 6자리 코드를 아래에 입력합니다.</p>
           </div>
           @if (error()) {
             <div class="alert alert-danger" role="alert"><div class="alert-items"><div class="alert-item static"><span class="alert-text">{{ error() }}</span></div></div></div>
           }
           <div class="totp-layout">
-            <img [src]="qrDataUrl()" alt="OpenSphere 관리자 TOTP 등록 QR 코드">
+            @if (qrDataUrl()) {
+              <img [src]="qrDataUrl()" alt="OpenSphere 관리자 TOTP 등록 QR 코드">
+            } @else {
+              <div class="qr-unavailable" role="status">QR 코드를 표시할 수 없습니다. 인증 앱에서 수동 등록 키를 입력하세요.</div>
+            }
             <div><span class="setup-label">수동 등록 키</span><code>{{ secret() }}</code></div>
           </div>
           <form clrForm clrLayout="vertical" (ngSubmit)="finishTotp()">
@@ -112,6 +116,7 @@ interface BeginResponse {
     .setup-context span { color: var(--os-ink-muted); font-size: 1.05rem; }
     .totp-layout { display: flex; align-items: center; gap: var(--os-6); margin: var(--os-6) 0; }
     .totp-layout img { width: 12rem; height: 12rem; border: 1px solid var(--os-hairline); }
+    .qr-unavailable { display: grid; place-items: center; width: 12rem; height: 12rem; padding: 1rem; border: 1px solid var(--os-hairline); color: var(--os-ink-muted); text-align: center; }
     .totp-layout code { display: block; max-width: 15rem; margin-top: .5rem; padding: .75rem; background: var(--os-surface-1); word-break: break-all; user-select: all; }
     .setup-label { color: var(--os-ink-muted); font-size: .75rem; }
     @media (max-width: 56rem) { .setup-shell { grid-template-columns: 1fr; } .setup-context { display: none; } .setup-card { padding: 2rem clamp(1.5rem, 8vw, 4rem); } }

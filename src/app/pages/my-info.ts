@@ -397,7 +397,7 @@ interface AuditEvent {
               </dl>
               <h2>인증 앱</h2>
               @if (totpEnrollment(); as enrollment) {
-                <p class="section-lead">QR 코드를 인증 앱으로 스캔한 뒤 현재 6자리 코드를 검증해야 등록이 완료됩니다.</p>
+                <p class="section-lead">Google Authenticator, Microsoft Authenticator, 1Password 같은 인증 앱으로 QR 코드를 스캔한 뒤, 앱에 표시되는 현재 6자리 코드를 입력해야 등록이 완료됩니다.</p>
                 <div class="mfa-enrollment">
                   @if (enrollment.qrCode) { <img [src]="enrollment.qrCode" alt="OpenSphere TOTP 등록 QR 코드"> }
                   <div>
