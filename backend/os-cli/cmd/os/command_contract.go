@@ -61,6 +61,7 @@ var commandDefinitions = []commandDefinition{
 	{Name: "context", Summary: "로컬 Console context 사본·전환 관리", Usage: []string{"os context current|list", "os context save <name> (사본만 저장)", "os context use <name>", "os context delete <name> --yes"}, Options: []string{"--yes"}},
 	{Name: "support-bundle", Summary: "비밀을 제거한 진단 bundle 생성", Usage: []string{"os support-bundle --file bundle.json [--force]"}, Options: []string{"--file PATH", "--force"}},
 	{Name: "update", Summary: "동일 Console의 서명된 CLI release로 업데이트", Usage: []string{"os update [--check|--status] [--force]"}, Options: []string{"--check", "--status", "--force"}},
+	{Name: "platform", Summary: "GHCR 채널의 서명된 Platform release 확인·계획·적용", Usage: []string{"os platform update check --channel edge|candidate|stable [--context NAME]", "os platform update plan --channel edge|candidate|stable [--context NAME]", "os platform update apply <plan-id> [--context NAME]"}, Options: []string{"--channel edge|candidate|stable", "--context NAME", "--registry-username GITHUB_LOGIN", "--registry-token-stdin"}},
 	{Name: "completion", Summary: "shell completion 생성", Usage: []string{"os completion powershell|bash|zsh"}},
 	{Name: "version", Summary: "CLI 버전 출력", Usage: []string{"os version"}},
 	{Name: "backbone", Summary: "status/describe 호환 별칭", Usage: []string{"os backbone status", "os backbone detail --component supabase|storage|gitea"}, Options: []string{"--component NAME"}},
@@ -143,6 +144,11 @@ var nativeOptionRules = map[string]map[string]bool{
 	"context delete":              {"yes": false},
 	"support-bundle":              {"file": true, "force": false},
 	"update":                      {"check": false, "status": false, "force": false},
+	"platform":                    {},
+	"platform update":             {},
+	"platform update check":       {"channel": true, "context": true, "registry-username": true, "registry-token-stdin": false},
+	"platform update plan":        {"channel": true, "context": true, "registry-username": true, "registry-token-stdin": false},
+	"platform update apply":       {"context": true, "registry-username": true, "registry-token-stdin": false},
 	"completion":                  {},
 	"version":                     {},
 	"backbone":                    {},
@@ -154,6 +160,7 @@ var nativeArityRules = map[string]commandArity{
 	"login": {0, 0}, "whoami": {0, 0}, "logout": {0, 0}, "status": {0, 0}, "health": {0, 0}, "doctor": {0, 0},
 	"describe": {1, 1}, "events": {0, 0}, "registry": {0, 0}, "get": {1, 2}, "plan": {0, 0}, "plan list": {0, 0}, "plan show": {1, 1}, "plan delete": {1, 1}, "apply": {1, 1},
 	"rollback": {1, 1}, "support-bundle": {0, 0}, "update": {0, 0}, "completion": {1, 1}, "version": {0, 0},
+	"platform": {2, 2}, "platform update": {1, 1}, "platform update check": {0, 0}, "platform update plan": {0, 0}, "platform update apply": {1, 1},
 	"device": {0, 1}, "device list": {0, 0}, "device revoke": {1, 1},
 	"token": {1, 1}, "token list": {0, 0}, "token create": {0, 0}, "token revoke": {1, 1},
 	"admin": {0, 1}, "admin list": {0, 0}, "admin create": {0, 0}, "admin enable": {1, 1}, "admin disable": {1, 1}, "admin onboard": {1, 1},
@@ -326,6 +333,32 @@ func validateNativeOptionValue(name, value string) error {
 		case "capability", "plugin", "template":
 		default:
 			return usageError("--kind는 capability, plugin, template 중 하나여야 합니다")
+		}
+	case "channel":
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "edge", "candidate", "stable":
+		default:
+			return usageError("--channel은 edge, candidate, stable 중 하나여야 합니다")
+		}
+	case "context":
+		value = strings.TrimSpace(value)
+		if len(value) < 1 || len(value) > 253 {
+			return usageError("--context는 1..253자 Kubernetes context여야 합니다")
+		}
+		for _, r := range value {
+			if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && !strings.ContainsRune("._:@/-", r) {
+				return usageError("--context는 영문자·숫자와 ._:@/-만 사용할 수 있습니다")
+			}
+		}
+	case "registry-username":
+		value = strings.TrimSpace(value)
+		if len(value) < 1 || len(value) > 39 {
+			return usageError("--registry-username은 1..39자 GitHub 사용자명이어야 합니다")
+		}
+		for index, r := range value {
+			if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && (r != '-' || index == 0) {
+				return usageError("--registry-username은 영문자·숫자로 시작하고 하이픈만 추가로 사용할 수 있습니다")
+			}
 		}
 	}
 	return nil

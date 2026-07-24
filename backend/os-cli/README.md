@@ -48,6 +48,9 @@ os context list
 os support-bundle --file support.json
 os update --check
 os update
+os platform update check --channel edge
+os platform update plan --channel edge
+os platform update apply <plan-id>
 ```
 
 목록형 `catalog`, `events`, `operation list`는 공통으로 `--filter key=value`,
@@ -110,3 +113,40 @@ Windows에서는 현재 프로세스가 종료된 뒤 숨김 helper가 교체하
 Linux/macOS는 같은 디렉터리에서 atomic rename으로 교체하며,
 실패하면 기존 바이너리 복원을 시도한다. `OS_INSECURE_SKIP_TLS_VERIFY=1`은 로컬 개발용이며
 운영 self-update에서는 사용하지 않는다.
+
+## Platform update
+
+`os update`와 Platform update는 기준과 범위가 다르다. `os update`는 현재 Console이
+제공하는 CLI manifest만 확인하고 `os.exe` 하나를 갱신한다. 반면 아래 명령은
+`edge|candidate|stable` GHCR 채널의 서명된 Release BOM을 Setup CLI의 기존
+provenance·SBOM 검증 경로로 해석하고, 클러스터의
+`opensphere-installation-lock/release.json`과 release digest를 비교한다.
+
+```powershell
+os platform update check --channel edge -o json
+os platform update plan --channel edge -o json
+os platform update apply <plan-id> -o json
+```
+
+`check`는 읽기 전용이다. `plan`은 확인된 target release lock과 현재 cluster digest를
+`~/.os/platform-update-plans` 아래의 SHA-256 봉인 plan으로 저장한다. `apply`는 plan 생성
+이후 cluster digest가 바뀌지 않았는지 다시 확인한 뒤 `opensphere-setup upgrade`의
+검증·prefetch·rollback 트랜잭션을 실행하고, 완료 후 설치 잠금이 target digest와 같은지
+재검증한다. Setup CLI와 `kubectl`이 PATH에 있어야 한다. Kubernetes context를 고정하려면
+세 명령 모두 같은 `--context <name>`을 사용한다.
+
+비공개 GHCR package에 명시적 read-only credential이 필요한 경우 token을 인자나 파일에
+기록하지 않고 stdin으로만 전달한다.
+
+```powershell
+$githubUser = gh api user --jq .login
+gh auth token |
+  os platform update check --channel edge `
+    --registry-username $githubUser `
+    --registry-token-stdin
+```
+
+`plan`과 `apply`에도 같은 두 registry 옵션을 사용할 수 있다. Release 검증은 구성요소별
+attestation과 SBOM을 확인하므로 단순 tag 조회보다 오래 걸릴 수 있다. Platform 적용이
+끝나면 Setup CLI가 새 Console-native `os`도 설치하므로 새 PowerShell에서
+`os version`과 `os update --check`로 최종 상태를 확인한다.

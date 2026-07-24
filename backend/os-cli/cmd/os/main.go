@@ -509,6 +509,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return supportBundle(cfg, args[1:], out)
 	case "update":
 		return selfUpdate(cfg, args[1:], out)
+	case "platform":
+		return platformUpdate(cfg, args[1:], in, out)
 	case "observability":
 		return observability(cfg, args[1:], out)
 	case "audit":
