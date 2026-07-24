@@ -43,3 +43,12 @@ test('browser login and bootstrap complete the Supabase TOTP challenge', () => {
   assert.match(setup, /auth\.beginTotpEnrollment/);
   assert.match(setup, /auth\.verifyTotpEnrollment/);
 });
+
+test('browser sessions rotate the GoTrue refresh token before access-token expiry', () => {
+  assert.match(authService, /grant_type=refresh_token/);
+  assert.match(authService, /JSON\.stringify\(\{ refresh_token: session\.refresh_token \}\)/);
+  assert.match(authService, /scheduleSessionRefresh\(session\)/);
+  assert.match(authService, /exp - Math\.floor\(Date\.now\(\) \/ 1000\) - 60/);
+  assert.match(authService, /previousAssurance === 'aal2'[\s\S]*jwtAssurance\(body\.access_token\) !== 'aal2'/);
+  assert.match(authService, /if \(existing\.refresh_token\)[\s\S]*await this\.refreshSession\(existing\)/);
+});

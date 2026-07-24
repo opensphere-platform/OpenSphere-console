@@ -1,5 +1,5 @@
 /* ── OpenSphere 디자인 토큰 (shadow root 내부 — 셸과 동일 팔레트) ── */
-:host {
+polyon-kubernetes-console {
   /* 브랜드 */
   --os-brand-900: #0b1530;
   --os-brand-700: #16224d;
@@ -67,6 +67,43 @@
    풀블리드(1단 레일·헤더 밀착)는 호스트(plugin-host.ts :host 마진 상쇄)가 담당 → subShell은 마진 불필요. */
 .os-shell { display: grid; grid-template-columns: 12rem minmax(0, 1fr); min-height: 100%; }
 
+/* Narrow RCC workspace: the Main Shell already reserves its primary rail.
+   Stack the Kubernetes secondary navigation above the resource content so a
+   phone never receives a 12rem nav plus an unusable ~60px content column. */
+@media (max-width: 760px) {
+  .os-shell { grid-template-columns: minmax(0, 1fr); }
+  .cm-nav {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: 45vh;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--os-border);
+  }
+  .os-content {
+    min-height: 0;
+    padding: 0.75rem 0.8rem 1.25rem;
+  }
+  .cc-crumbs {
+    margin: -0.75rem -0.8rem 0.75rem;
+    padding: 0.4rem 0.8rem;
+  }
+  .os-title-row { align-items: flex-start; flex-wrap: wrap; }
+  .os-search {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+  .os-wrap { padding: 12px 0; }
+  .os-ov-cards { gap: 8px; }
+  .os-ov-gcard { flex-basis: 100%; min-width: 0; }
+  .os-bar-lbl { flex-basis: 90px; }
+  .os-drawer { width: 100% !important; }
+  .os-drawer-handle { display: none; }
+}
+
 /* 보조 내비(2단)는 컴포넌트 인라인 styles의 .cm-* 규칙이 담당(표준 = OpenSphere AI Hub). */
 .os-tree-ic { width: 16px; height: 16px; fill: currentColor; flex: 0 0 auto; opacity: 0.85; }
 
@@ -86,7 +123,7 @@
 .os-ov-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
 @media (max-width: 900px) { .os-ov-grid { grid-template-columns: 1fr; } }
 .os-ov-cardh { cursor: pointer; }
-.card .label { margin: 3px 4px 3px 0; }
+polyon-kubernetes-console .card .label { margin: 3px 4px 3px 0; }
 .os-ov-sech { font-size: 0.9rem; font-weight: 500; color: var(--os-text-sec); margin: 16px 0 8px; }
 
 /* 게이지 카드(도넛) */
@@ -226,8 +263,8 @@
    Clarity는 헤더 셀(.datagrid-column-title)에만 align-items:center를 주고 데이터 행 셀 컨테이너
    (.datagrid-scrolling-cells)에는 안 줘서, 배지처럼 높이 큰 셀이 있으면 평셀 내용이 위로 쏠린다.
    → Clarity가 헤더에 쓰는 바로 그 패턴을 데이터 셀 컨테이너에도 일관 적용(배지 변형 없음, hack 아님). */
-.datagrid-scrolling-cells,
-.datagrid-row-sticky { align-items: center; }
+polyon-kubernetes-console .datagrid-scrolling-cells,
+polyon-kubernetes-console .datagrid-row-sticky { align-items: center; }
 
 /* overview: refresh button push-right utility */
 .os-ml-auto { margin-left: auto; }

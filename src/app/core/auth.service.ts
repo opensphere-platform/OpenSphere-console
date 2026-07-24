@@ -76,6 +76,8 @@ export class AuthService {
   readonly loginRequired = signal(false);
   private pendingMfaSession: SupabaseSession | null = null;
   private pendingMfaFactorId = '';
+  private refreshTimer: number | null = null;
+  private refreshInFlight: Promise<void> | null = null;
 
   setInitError(error: unknown): void {
     this.initError.set(String(error instanceof Error ? error.message : error || '인증 초기화 실패'));
@@ -94,10 +96,20 @@ export class AuthService {
   async init(): Promise<void> {
     if (await this.refreshInitialSetup()) return;
     const existing = this.loadSession();
-    if (existing && this.apply(existing)) {
-      await this.refreshAuthorization();
-      this.loginRequired.set(false);
-      return;
+    if (existing) {
+      const exp = Number(existing.expires_at || this.jwtExp(existing.access_token) || 0);
+      if (existing.access_token && exp > Math.floor(Date.now() / 1000) + 60) {
+        await this.activateSession(existing);
+        return;
+      }
+      if (existing.refresh_token) {
+        try {
+          await this.refreshSession(existing);
+          return;
+        } catch {
+          // A rejected/rotated refresh token must fall through to a clean login.
+        }
+      }
     }
     this.clearSession();
     this.loginRequired.set(true);
@@ -250,6 +262,10 @@ export class AuthService {
   }
 
   private clearSession(): void {
+    if (this.refreshTimer !== null) {
+      window.clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
     this.accessToken = '';
     this.user.set(''); this.groups.set([]); this.roles.set([]); this.email.set(''); this.name.set(''); this.subject.set(''); this.tokenExp.set(0);
     this.assurance.set('aal1');
@@ -262,8 +278,75 @@ export class AuthService {
   private async activateSession(session: SupabaseSession): Promise<void> {
     if (!this.apply(session)) throw new Error('인증 서비스가 유효한 세션을 반환하지 않았습니다.');
     this.saveSession(session);
+    this.scheduleSessionRefresh(session);
     await this.refreshAuthorization();
     this.loginRequired.set(false);
+  }
+
+  /**
+   * GoTrue access tokens intentionally have a short lifetime. Keep the
+   * per-tab session alive with the rotating refresh token instead of letting
+   * every resource page fail with "token expired" after the first expiry.
+   */
+  private async refreshSession(session = this.loadSession()): Promise<void> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    if (!session?.refresh_token) throw new Error('세션 갱신 토큰이 없습니다.');
+
+    const previousAssurance = session.access_token ? this.jwtAssurance(session.access_token) : 'aal1';
+    const request = (async () => {
+      const response = await fetch('/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ refresh_token: session.refresh_token }),
+      });
+      const body = await response.json().catch(() => ({})) as SupabaseSession & SupabaseAuthError;
+      if (!response.ok) {
+        throw new Error(body.error_description || body.msg || body.message || body.error_code || body.error || '세션 갱신에 실패했습니다.');
+      }
+      if (!body.access_token || !body.refresh_token) {
+        throw new Error('인증 서비스가 갱신된 세션을 반환하지 않았습니다.');
+      }
+      if (previousAssurance === 'aal2' && this.jwtAssurance(body.access_token) !== 'aal2') {
+        throw new Error('갱신된 세션의 MFA 보증 수준이 낮아졌습니다.');
+      }
+      await this.activateSession(body);
+    })();
+
+    this.refreshInFlight = request;
+    try {
+      await request;
+    } finally {
+      if (this.refreshInFlight === request) this.refreshInFlight = null;
+    }
+  }
+
+  private scheduleSessionRefresh(session: SupabaseSession): void {
+    if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
+    this.refreshTimer = null;
+    if (!session.refresh_token) return;
+
+    const exp = Number(session.expires_at || this.jwtExp(session.access_token) || 0);
+    const delayMs = Math.max(1_000, (exp - Math.floor(Date.now() / 1000) - 60) * 1_000);
+    this.refreshTimer = window.setTimeout(() => {
+      this.refreshTimer = null;
+      void this.refreshSession().catch(() => this.handleRefreshFailure());
+    }, delayMs);
+  }
+
+  private handleRefreshFailure(): void {
+    if (this.hasValidToken(0)) {
+      const secondsLeft = Math.max(1, this.tokenExp() - Math.floor(Date.now() / 1000));
+      const retryMs = Math.min(10_000, Math.max(1_000, Math.floor(secondsLeft * 500)));
+      this.refreshTimer = window.setTimeout(() => {
+        this.refreshTimer = null;
+        void this.refreshSession().catch(() => this.handleRefreshFailure());
+      }, retryMs);
+      return;
+    }
+    this.clearSession();
+    this.initError.set('로그인 세션을 갱신하지 못했습니다. 다시 로그인하세요.');
+    this.loginRequired.set(true);
   }
 
   private async listMfaFactors(token: string): Promise<SupabaseMfaFactors> {

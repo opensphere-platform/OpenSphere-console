@@ -526,7 +526,8 @@ async function verifyConsoleAdmin(req, options = {}) {
 }
 
 async function verifyControlCenterReader(req, controlCenterId) {
-  const actor = await verifyConsoleAdmin(req, { requireAal2: false });
+  const actor = await verifyAuthed(req);
+  requireActorPermission(actor, 'console.kubernetes.read');
   const now = new Date().toISOString();
   const rows = await restRequest('operator_control_center', {
     query: [

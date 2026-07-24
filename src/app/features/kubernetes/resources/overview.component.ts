@@ -203,11 +203,15 @@ export class OverviewComponent implements OnInit {
   loadAll(): void {
     this.loaded.set(false);
     this.error.set(null);
-    const safe = (p: string) => this.k8s.list(p).pipe(catchError(() => of({ items: [] as any[] })));
     forkJoin({
-      nodes: safe('/api/v1/nodes'), namespaces: safe('/api/v1/namespaces'), pods: safe('/api/v1/pods'),
-      deploys: safe('/apis/apps/v1/deployments'), statefulsets: safe('/apis/apps/v1/statefulsets'),
-      daemonsets: safe('/apis/apps/v1/daemonsets'), services: safe('/api/v1/services'), events: safe('/api/v1/events'),
+      nodes: this.k8s.list('/api/v1/nodes'),
+      namespaces: this.k8s.list('/api/v1/namespaces'),
+      pods: this.k8s.list('/api/v1/pods'),
+      deploys: this.k8s.list('/apis/apps/v1/deployments'),
+      statefulsets: this.k8s.list('/apis/apps/v1/statefulsets'),
+      daemonsets: this.k8s.list('/apis/apps/v1/daemonsets'),
+      services: this.k8s.list('/api/v1/services'),
+      events: this.k8s.list('/api/v1/events'),
       metrics: this.k8s.list('/apis/metrics.k8s.io/v1beta1/nodes').pipe(catchError(() => of(null))),
     }).subscribe({
       next: r => {

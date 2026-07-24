@@ -6,7 +6,8 @@ import { NAV_ICON } from './nav-icons';
 import { OverviewComponent } from './resources/overview.component';
 import { K8sService } from './core/k8s.service';
 
-// ShadowDom 인캡슐레이션 → 컴포넌트와 Clarity CSS가 shadow root에 격리(자체완결, 셸 CSS 영향 0).
+// None 인캡슐레이션 → Clarity의 전역 테마를 유지하면서 동적 자식 리소스에도
+// Cluster Manager 공통 스타일을 전달한다. 디자인 토큰은 컴포넌트 호스트에만 둔다.
 // 인덱스 = Cluster Overview. 사이드바 = 표준 2단 보조 내비(.cc-secondbar, /containers/overview 템플릿).
 // 관리 관점(Kubernetes / Ceph / HIS): 서로 다른 운영 책임을 하나의 메뉴 트리로 섞지 않는다.
 // KubeVirt는 Kubernetes 관점 안에서 capability-gate로 노출한다.
@@ -14,7 +15,7 @@ import { K8sService } from './core/k8s.service';
   selector: 'polyon-kubernetes-console',
   standalone: true,
   imports: [CommonModule, ClarityModule, OverviewComponent],
-  encapsulation: ViewEncapsulation.Emulated,
+  encapsulation: ViewEncapsulation.None,
   styleUrls: ['./kubernetes-console-page.css'],
   styles: [`
     /* ── 표준 2단 보조 내비 — OpenSphere AI Hub(/p/ai) 방식: Clarity clr-vertical-nav, 흰 배경, 왼쪽 blue bar active ── */

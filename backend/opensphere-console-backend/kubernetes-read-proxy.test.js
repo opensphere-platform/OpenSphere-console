@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const { resolve } = require('node:path');
 const { createKubernetesReadProxy, parseKubernetesReadRequest } = require('./kubernetes-read-proxy');
 
 const allowed = new Set(['cc2']);
@@ -104,4 +106,27 @@ test('proxy denies every mutation before contacting Kubernetes', async () => {
   }, response);
   assert.equal(response.status, 405);
   assert.equal(fetched, false);
+});
+
+test('RCC reader authorization uses the canonical Kubernetes read permission', () => {
+  const server = readFileSync(resolve(__dirname, 'server.js'), 'utf8');
+  const reader = server.match(/async function verifyControlCenterReader[\s\S]*?\n}/)?.[0] || '';
+  assert.match(reader, /verifyAuthed\(req\)/);
+  assert.match(reader, /requireActorPermission\(actor, 'console\.kubernetes\.read'\)/);
+  assert.doesNotMatch(reader, /verifyConsoleAdmin/);
+});
+
+test('RCC Kubernetes UI shares scoped host styles with resource views and reports required read failures', () => {
+  const page = readFileSync(resolve(__dirname, '../../src/app/features/kubernetes/kubernetes-console-page.ts'), 'utf8');
+  const styles = readFileSync(resolve(__dirname, '../../src/app/features/kubernetes/kubernetes-console-page.css'), 'utf8');
+  const overview = readFileSync(resolve(__dirname, '../../src/app/features/kubernetes/resources/overview.component.ts'), 'utf8');
+  assert.match(page, /encapsulation:\s*ViewEncapsulation\.None/);
+  assert.match(styles, /^polyon-kubernetes-console\s*\{/m);
+  assert.doesNotMatch(styles, /^:host\s*\{/m);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.os-shell\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.cm-nav\s*\{[\s\S]*?width: 100% !important/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.os-drawer\s*\{\s*width: 100% !important/);
+  assert.doesNotMatch(overview, /const safe = .*catchError/);
+  assert.match(overview, /nodes:\s*this\.k8s\.list\('\/api\/v1\/nodes'\)/);
+  assert.match(overview, /metrics:.*catchError\(\(\) => of\(null\)\)/);
 });
