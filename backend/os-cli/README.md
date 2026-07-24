@@ -48,6 +48,7 @@ os context list
 os support-bundle --file support.json
 os update --check
 os update
+os extensions install opensphere-shell-template:edge --reason "approved template install"
 os platform update check --channel edge
 os platform update plan --channel edge
 os platform update apply <plan-id>
@@ -62,6 +63,13 @@ os platform update apply <plan-id>
 `os backbone`은 기존 스크립트를 위한 경고형 alias일 뿐이며 폐기된
 `/api/admin/backbone/*`를 호출하지 않는다. `BackboneClaim`도 복원하지 않고 현행
 `Consumer Contract` 권위로 안내한다.
+
+`os extensions install`의 image에 registry/owner 경로가 없으면
+`ghcr.io/opensphere-platform/`을 기본 prefix로 사용한다. 따라서
+`opensphere-shell-template:edge`는
+`ghcr.io/opensphere-platform/opensphere-shell-template:edge`로 전달된다.
+`ghcr.io/another-owner/custom-template:edge`처럼 registry/owner를 명시하면 입력을
+변경하지 않고 그대로 전달하며, 최종 허용 여부는 Extension 공급망 정책이 판단한다.
 
 ## 승인형 변경
 

@@ -168,6 +168,9 @@ func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T)
 		if payload["client"] != "cli:os" {
 			t.Fatalf("install provenance must identify the native CLI: %#v", payload)
 		}
+		if payload["image"] != "ghcr.io/opensphere-platform/opensphere-shell-template:edge" {
+			t.Fatalf("default GHCR namespace was not expanded: %#v", payload)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if requests < 3 {
 			w.Header().Set("Retry-After", "1")
@@ -186,11 +189,38 @@ func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T)
 	cfg := defaults()
 	cfg.PAT, cfg.ConsoleURL = "test-token", server.URL
 	var out bytes.Buffer
-	if err := extensions(cfg, []string{"install", "ghcr.io/opensphere-platform/opensphere-shell-template:edge", "--reason", "approved extension install"}, &out); err != nil {
+	if err := extensions(cfg, []string{"install", "opensphere-shell-template:edge", "--reason", "approved extension install"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if requests != 3 || len(sleeps) != 2 || sleeps[0] != time.Second || sleeps[1] != time.Second {
 		t.Fatalf("expected bounded Retry-After retry, requests=%d sleeps=%v", requests, sleeps)
+	}
+}
+
+func TestExtensionInstallImageDefaultAndExplicitRepository(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{"opensphere-shell-template:edge", "ghcr.io/opensphere-platform/opensphere-shell-template:edge"},
+		{"opensphere-shell-template@" + digest, "ghcr.io/opensphere-platform/opensphere-shell-template@" + digest},
+		{"ghcr.io/another-owner/custom-template:edge", "ghcr.io/another-owner/custom-template:edge"},
+		{"registry.example.test/team/custom-template:stable", "registry.example.test/team/custom-template:stable"},
+		{"another-owner/custom-template:candidate", "another-owner/custom-template:candidate"},
+	} {
+		got, err := normalizeExtensionInstallImage(test.input)
+		if err != nil {
+			t.Fatalf("%q: %v", test.input, err)
+		}
+		if got != test.want {
+			t.Fatalf("%q normalized to %q, want %q", test.input, got, test.want)
+		}
+	}
+	for _, invalid := range []string{"", "  ", "repo:edge extra"} {
+		if _, err := normalizeExtensionInstallImage(invalid); err == nil {
+			t.Fatalf("invalid image %q must fail", invalid)
+		}
 	}
 }
 

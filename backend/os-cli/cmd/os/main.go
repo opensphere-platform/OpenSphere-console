@@ -1086,14 +1086,18 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 		method, path, payload = http.MethodPost, "/api/admin/extensions/inspect", map[string]string{"image": args[1]}
 	case "install":
 		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
-			return usageError("사용법: os extensions install <ghcr-image:edge|candidate|stable|@sha256:digest> --reason <승인 사유>")
+			return usageError("사용법: os extensions install <repository:edge|candidate|stable|@sha256:digest> --reason <승인 사유> (기본: ghcr.io/opensphere-platform/)")
 		}
 		flags := parseLongFlags(args[2:])
 		reason := strings.TrimSpace(flags["reason"])
 		if len(reason) < 8 {
 			return usageError("--reason은 8자 이상의 설치 승인 사유여야 합니다")
 		}
-		method, path, payload = http.MethodPost, "/api/admin/extensions/install", map[string]string{"image": args[1], "reason": reason, "client": "cli:os"}
+		image, err := normalizeExtensionInstallImage(args[1])
+		if err != nil {
+			return err
+		}
+		method, path, payload = http.MethodPost, "/api/admin/extensions/install", map[string]string{"image": image, "reason": reason, "client": "cli:os"}
 	case "activate", "disable", "uninstall", "rollback":
 		if len(args) != 2 || !validResourceName(args[1]) {
 			return usageErrorf("사용법: os extensions %s <module-id>", action)
@@ -1184,6 +1188,21 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 		return err
 	}
 	return renderOutput(cfg, out, b)
+}
+
+const defaultExtensionImagePrefix = "ghcr.io/opensphere-platform/"
+
+func normalizeExtensionInstallImage(value string) (string, error) {
+	image := strings.TrimSpace(value)
+	if image == "" || strings.ContainsAny(image, " \t\r\n") {
+		return "", usageError("extension image는 비어 있거나 공백을 포함할 수 없습니다")
+	}
+	// A single repository segment uses the governed OpenSphere GHCR namespace.
+	// Any explicit registry/owner path is authoritative and is never rewritten.
+	if !strings.Contains(image, "/") {
+		return defaultExtensionImagePrefix + image, nil
+	}
+	return image, nil
 }
 
 // A credential-generation transition is safe to repeat for reads/installs:
