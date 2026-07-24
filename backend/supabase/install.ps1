@@ -401,7 +401,7 @@ foreach ($migration in $migrations) {
   $checksum = (Get-FileHash -LiteralPath $migration.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
   $recordedChecksum = Get-SupabaseMigrationChecksum $migrationId
   if ($recordedChecksum -and $recordedChecksum -ne $checksum) {
-    throw "Migration checksum drift for $migrationId: live=$recordedChecksum release=$checksum"
+    throw "Migration checksum drift for ${migrationId}: live=$recordedChecksum release=$checksum"
   }
   if ($recordedChecksum -eq $checksum) {
     Write-Host "Supabase migration $migrationId already attested"
