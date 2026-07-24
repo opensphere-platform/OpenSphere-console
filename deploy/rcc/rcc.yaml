@@ -1,0 +1,334 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: polyon-rcc
+  labels:
+    app.kubernetes.io/part-of: polyon-rcc
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: polyon-rcc-backend
+  namespace: polyon-rcc
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: polyon-rcc-cc2-reader
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+      - limitranges
+      - events
+      - serviceaccounts
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses", "networkpolicies"]
+    verbs: ["get", "list"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "csidrivers", "csinodes", "csistoragecapacities", "volumeattachments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: polyon-rcc-cc2-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: polyon-rcc-cc2-reader
+subjects:
+  - kind: ServiceAccount
+    name: polyon-rcc-backend
+    namespace: polyon-rcc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polyon-rcc-backend
+  namespace: polyon-rcc
+  labels:
+    app.kubernetes.io/name: polyon-rcc-backend
+    app.kubernetes.io/part-of: polyon-rcc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: polyon-rcc-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: polyon-rcc-backend
+        app.kubernetes.io/part-of: polyon-rcc
+    spec:
+      serviceAccountName: polyon-rcc-backend
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: api
+          image: __POLYON_RCC_BACKEND_IMAGE__
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: APP_VERSION, value: "0.1.0-cc2" }
+            - { name: AUTH_PROVIDER, value: supabase }
+            - { name: CONTROL_CENTER_IDS, value: cc2 }
+            - { name: KUBERNETES_READ_TIMEOUT_MS, value: "10000" }
+            - { name: KUBERNETES_READ_MAX_BYTES, value: "8388608" }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - { name: SUPABASE_AUTH_URL, value: "http://polyon-supabase-auth.polyon-rcc-data.svc.cluster.local:9999" }
+            - { name: SUPABASE_AUTH_ISSUER, value: "https://rcc.cc2.opl.io.kr/auth/v1" }
+            - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
+            - { name: SUPABASE_REQUIRE_AAL2, value: "true" }
+            - { name: SUPABASE_BACKEND_DB_ROLE, value: opensphere_console_backend }
+            - { name: SUPABASE_REST_URL, value: "http://polyon-supabase-rest.polyon-rcc-data.svc.cluster.local:3000" }
+            - { name: SUPABASE_STORAGE_URL, value: "http://polyon-supabase-storage.polyon-rcc-data.svc.cluster.local:5000" }
+            - { name: CONSOLE_PUBLIC_URL, value: "https://rcc.cc2.opl.io.kr" }
+            - { name: GITEA_URL, value: "http://polyon-gitea.polyon-rcc-change.svc.cluster.local:3000" }
+            - { name: GITEA_ORGANIZATION, value: polyon }
+            - { name: GITEA_REPOSITORY, value: cc2-config }
+            - { name: GITEA_DEFAULT_BRANCH, value: main }
+            - name: SUPABASE_JWT_SECRET
+              valueFrom:
+                secretKeyRef: { name: polyon-supabase-runtime, key: jwt-secret }
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef: { name: polyon-supabase-runtime, key: service-role-key }
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef: { name: polyon-gitea-control-plane, key: token, optional: true }
+            - name: GITEA_REVIEW_TOKEN
+              valueFrom:
+                secretKeyRef: { name: polyon-gitea-control-plane, key: review-token, optional: true }
+            - name: GITEA_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef: { name: polyon-gitea-control-plane, key: webhook-secret, optional: true }
+            - name: RECONCILER_RECEIPT_TOKEN
+              valueFrom:
+                secretKeyRef: { name: polyon-gitea-control-plane, key: reconciler-token, optional: true }
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 3
+            failureThreshold: 40
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polyon-rcc-backend
+  namespace: polyon-rcc
+spec:
+  selector:
+    app.kubernetes.io/name: polyon-rcc-backend
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polyon-rcc-web
+  namespace: polyon-rcc
+  labels:
+    app.kubernetes.io/name: polyon-rcc-web
+    app.kubernetes.io/part-of: polyon-rcc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: polyon-rcc-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: polyon-rcc-web
+        app.kubernetes.io/part-of: polyon-rcc
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: web
+          image: __POLYON_RCC_WEB_IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 3
+            failureThreshold: 40
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 25m, memory: 48Mi }
+            limits: { cpu: 300m, memory: 192Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+            runAsNonRoot: true
+          volumeMounts:
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+            - { name: nginx-run, mountPath: /var/run }
+            - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
+            - { name: nginx-tmp, mountPath: /tmp }
+      volumes:
+        - { name: nginx-cache, emptyDir: {} }
+        - { name: nginx-run, emptyDir: {} }
+        - { name: nginx-conf, emptyDir: {} }
+        - { name: nginx-tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polyon-rcc-web
+  namespace: polyon-rcc
+spec:
+  selector:
+    app.kubernetes.io/name: polyon-rcc-web
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: polyon-rcc
+  namespace: polyon-rcc
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - rcc.cc2.opl.io.kr
+  rules:
+    - host: rcc.cc2.opl.io.kr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: polyon-rcc-web
+                port: { name: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: polyon-rcc-default-deny-ingress
+  namespace: polyon-rcc
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: polyon-rcc-web-ingress
+  namespace: polyon-rcc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: polyon-rcc-web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: polyon-rcc-backend-ingress
+  namespace: polyon-rcc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: polyon-rcc-backend
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: polyon-rcc-web
+      ports:
+        - { protocol: TCP, port: 8080 }

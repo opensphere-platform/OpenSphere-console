@@ -11,7 +11,10 @@ COPY opensphere-console-backend/cli-token-policy.js ./cli-token-policy.js
 COPY opensphere-console-backend/notification-api.js ./notification-api.js
 COPY opensphere-console-backend/external-channel-api.js ./external-channel-api.js
 COPY opensphere-console-backend/recovery-owner.js ./recovery-owner.js
+COPY opensphere-console-backend/kubernetes-read-proxy.js ./kubernetes-read-proxy.js
 COPY notification-dispatcher/contract.js /app/notification-dispatcher/contract.js
+RUN chown -R 1001:1001 /app \
+    && chmod -R u=rwX,go=rX /app
 ENV PORT=8080
 EXPOSE 8080
 USER 1001

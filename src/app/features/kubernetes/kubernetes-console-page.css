@@ -1,0 +1,247 @@
+/* ── OpenSphere 디자인 토큰 (shadow root 내부 — 셸과 동일 팔레트) ── */
+:host {
+  /* 브랜드 */
+  --os-brand-900: #0b1530;
+  --os-brand-700: #16224d;
+  --os-brand-500: #4c6fff;
+  --os-brand-300: #8fa6ff;
+  --os-accent:    #00bfa5;
+  --os-surface:   #f6f7fb;
+  --os-ink:       #1b2438;
+  --os-muted:     #667193;
+
+  /* Clarity 토큰(버튼/링크 — 자식 페이지에서 사용) */
+  --clr-btn-primary-bg-color: var(--os-brand-500);
+  --clr-btn-primary-hover-bg-color: #3a5af0;
+  --clr-link-color: var(--os-brand-500);
+  --clr-link-hover-color: #3a5af0;
+
+  /* 시맨틱 별칭 */
+  --os-border:    #d4d8e0;
+  --os-bg:        #ffffff;
+  --os-bg-subtle: #fafbfd;
+  --os-text:      var(--os-ink);
+  --os-text-sec:  #4a5568;
+  --os-text-dim:  var(--os-muted);
+  --os-active-bg: rgba(76, 111, 255, 0.10);
+  --os-active-border: var(--os-brand-500);
+  --os-danger:    #c21d00;
+  --os-warn:      #e67e22;
+  --os-success:   #2ecc71;
+  --os-dark-bg:     #1b2b34;
+  --os-dark-bg2:    #16242b;
+  --os-dark-bg3:    #0f1a1f;
+  --os-dark-border: #0c1418;
+  --os-dark-border2:#33474f;
+  --os-dark-text:   #d6e2e8;
+  --os-dark-dim:    #9bb3bd;
+  --os-dark-link:   #7fb6cc;
+  --os-dark-cur:    #ffb454;
+  --os-track:       #e3e8ef;
+  --os-gauge-mem:   #8e44ad;
+  --os-gauge-node:  #16a3b8;
+
+  /* Clarity의 h1/h2/h3(--clr-h1~h3-font-family → --clr-display-font → 이 토큰)가 Metropolis를 하드 참조 —
+     :host font-family 상속만으로는 heading에 안 먹힘(명시적 규칙이 상속을 항상 이김). 토큰 자체를 재정의. */
+  --clr-metropolis-font-family: var(--os-font, "IBM Plex Sans", "IBM Plex Sans KR", Metropolis, 'Avenir Next', 'Helvetica Neue', Arial, sans-serif);
+  --cds-alias-typography-font-family: var(--clr-metropolis-font-family);
+  --cds-alias-typography-header-font-family: var(--clr-metropolis-font-family);
+
+  display: block;
+  height: 100%;
+  /* 상속 누수 차단(셸 body line-height 20px 등) → Clarity 기본. var(--os-font)로 콘솔 IBM Plex 토큰 상속
+     (다른 subShell 정렬 — clusterManager만 Plex 미적용이었던 것을 수정, standalone은 Metropolis 폴백). */
+  line-height: 1.428571429;
+  font-family: var(--os-font, "IBM Plex Sans", "IBM Plex Sans KR", Metropolis, 'Avenir Next', 'Helvetica Neue', Arial, sans-serif);
+  font-size: 0.875rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--os-ink);
+}
+
+/* 레이아웃: 좌측 2단 보조 내비 + 우측 콘텐츠.
+   표준 템플릿(/containers/overview .cc-frame)과 동일하게 콘솔 콘텐츠 패딩(1.5rem)을 음수 마진으로 상쇄 →
+   메인 셸 1단 레일에 2단이 밀착(풀블리드, 좌/우/상/하 여백 제거). */
+/* 레이아웃 — AI Hub(/p/ai) 표준: 좌 12rem 2단(clr-vertical-nav) + 우 본문 그리드.
+   풀블리드(1단 레일·헤더 밀착)는 호스트(plugin-host.ts :host 마진 상쇄)가 담당 → subShell은 마진 불필요. */
+.os-shell { display: grid; grid-template-columns: 12rem minmax(0, 1fr); min-height: 100%; }
+
+/* 보조 내비(2단)는 컴포넌트 인라인 styles의 .cm-* 규칙이 담당(표준 = OpenSphere AI Hub). */
+.os-tree-ic { width: 16px; height: 16px; fill: currentColor; flex: 0 0 auto; opacity: 0.85; }
+
+/* Overview 카드 */
+.os-ov-cards { display: flex; flex-wrap: wrap; gap: 12px; margin: 4px 0 16px; }
+.os-ov-card {
+  flex: 1 1 150px; min-width: 150px; background: var(--os-bg); border: 1px solid var(--os-border); border-radius: 4px;
+  padding: 14px 16px; cursor: pointer; transition: box-shadow 0.12s, border-color 0.12s; position: relative;
+}
+.os-ov-card:hover { border-color: var(--os-brand-500); box-shadow: 0 2px 10px rgba(0,0,0,0.10); }
+.os-ov-card:focus { outline: none; box-shadow: 0 0 0 2px rgba(76,111,255,0.35); }
+.os-ov-ic { width: 22px; height: 22px; fill: var(--os-brand-500); opacity: 0.85; }
+.os-ov-num { font-size: 1.9rem; font-weight: 300; color: var(--os-ink); line-height: 1.1; margin-top: 6px; }
+.os-ov-num.os-ov-bad { color: var(--os-danger); }
+.os-ov-den { font-size: 1rem; color: var(--os-muted); }
+.os-ov-lbl { font-size: 0.78rem; color: var(--os-text-sec); margin-top: 2px; }
+.os-ov-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+@media (max-width: 900px) { .os-ov-grid { grid-template-columns: 1fr; } }
+.os-ov-cardh { cursor: pointer; }
+.card .label { margin: 3px 4px 3px 0; }
+.os-ov-sech { font-size: 0.9rem; font-weight: 500; color: var(--os-text-sec); margin: 16px 0 8px; }
+
+/* 게이지 카드(도넛) */
+.os-ov-gcard { flex: 1 1 180px; min-width: 180px; background: var(--os-bg); border: 1px solid var(--os-border); border-radius: 4px; padding: 12px 16px 8px; cursor: pointer; transition: box-shadow 0.12s, border-color 0.12s; }
+.os-ov-gcard:hover { border-color: var(--os-brand-500); box-shadow: 0 2px 10px rgba(0,0,0,0.10); }
+.os-ov-gcard:focus { outline: none; box-shadow: 0 0 0 2px rgba(76,111,255,0.35); }
+.os-ov-gh { font-size: 0.84rem; font-weight: 600; color: var(--os-ink); }
+.os-ov-gsub { font-size: 0.72rem; color: var(--os-muted); margin-bottom: 4px; }
+.os-gauge { width: 110px; height: 110px; display: block; margin: 0 auto; }
+.os-gtrack { fill: none; stroke: var(--os-track); stroke-width: 14; }
+.os-gval { fill: none; stroke-width: 14; stroke-linecap: round; }
+.os-gtxt { fill: var(--os-ink); font-size: 22px; font-weight: 300; text-anchor: middle; }
+.os-gsmall { fill: var(--os-muted); font-size: 10px; text-anchor: middle; }
+
+/* 도넛 + 범례 */
+.os-ov-donutblock { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.os-ov-legend { font-size: 0.8rem; color: var(--os-ink); }
+.os-ov-legend > div { margin: 4px 0; }
+.os-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+
+/* 가로 막대 차트 */
+.os-bar-row { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 0.78rem; }
+.os-bar-lbl { flex: 0 0 130px; color: var(--os-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.os-bar-track { flex: 1 1 auto; height: 14px; background: var(--os-surface); border-radius: 3px; overflow: hidden; }
+.os-bar-track > i { display: block; height: 100%; border-radius: 3px; min-width: 2px; transition: width 0.2s; }
+.os-bar-val { flex: 0 0 auto; color: var(--os-text-sec); min-width: 36px; text-align: right; }
+/* 본문 — overview 공통 배경 토큰(규약: 모든 /overview 동일 배경). CSS 변수는 ShadowDom도 상속하므로
+   콘솔 :root의 --os-overview-bg가 그대로 적용. 상/좌 간격 없음(호스트가 패딩 상쇄). */
+.os-content {
+  min-width: 0; min-height: 100vh; overflow: auto; position: relative;
+  padding: 1.1rem 1.4rem 2rem;
+  background: var(--os-overview-bg, var(--clr-global-app-background, #f6f7fb));
+}
+
+/* 우측 슬라이드 오버 상세 드로어 */
+.os-drawer {
+  position: absolute; top: 0; right: 0; height: 100%; display: flex;
+  background: var(--os-bg); border-left: 1px solid var(--os-border); box-shadow: -6px 0 18px rgba(0,0,0,0.18);
+  z-index: 901;
+}
+.os-drawer-handle { flex: 0 0 6px; cursor: col-resize; background: transparent; }
+.os-drawer-handle:hover { background: var(--os-brand-500); opacity: 0.4; }
+.os-drawer-main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+.os-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid var(--os-border); background: var(--os-bg-subtle); }
+.os-drawer-title { font-weight: 500; color: var(--os-text-sec); font-size: 0.85rem; }
+.os-drawer-ctrls { display: flex; align-items: center; gap: 2px; }
+.os-drawer-ctrls .os-iconbtn { color: var(--os-text-sec); }
+.os-drawer-body { flex: 1 1 auto; overflow: auto; padding: 14px 16px; }
+
+.os-wrap { padding: 16px 20px; }
+.os-title-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.os-h2 { margin: 0; font-weight: 400; color: var(--os-text-sec); }
+.os-sub { color: var(--os-muted); font-size: 0.8rem; }
+/* utility class for resource-detail namespace line spacing */
+.os-sub-mb { color: var(--os-muted); font-size: 0.8rem; margin-bottom: 8px; }
+.os-muted { color: var(--os-muted); }
+.os-search { margin-left: auto; padding: 4px 10px; border: 1px solid var(--os-border); border-radius: 4px; font-size: 0.8rem; min-width: 260px; }
+.os-search:focus { outline: none; border-color: var(--os-brand-500); }
+
+/* 다중선택 패싯 툴바 + 자체완결 팝오버 */
+.os-facets { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.os-facet { position: relative; }
+.os-facet-trigger { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--os-border); border-radius: 4px; font-size: 0.8rem; color: var(--os-ink); background: var(--os-bg); cursor: pointer; user-select: none; }
+.os-facet-trigger:hover { border-color: var(--os-brand-500); }
+.os-facet-trigger.is-open { border-color: var(--os-brand-500); background: var(--os-active-bg); }
+.os-facet-trigger:focus { outline: none; box-shadow: 0 0 0 2px rgba(76,111,255,0.35); }
+.os-facet-caret { font-size: 0.6rem; color: var(--os-text-sec); }
+.os-facet .badge { margin: 0; }
+.os-filter-popover { position: absolute; top: calc(100% + 4px); left: 0; z-index: 902; background: var(--os-bg); border: 1px solid var(--os-border); border-radius: 3px; box-shadow: 0 6px 16px rgba(0,0,0,0.15); padding: 8px 12px; min-width: 200px; max-height: 320px; overflow-y: auto; }
+.os-filter-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 6px; margin-bottom: 4px; border-bottom: 1px solid var(--os-border); font-size: 0.72rem; color: var(--os-text-sec); }
+.os-filter-popover label { display: flex; align-items: center; gap: 8px; margin: 5px 0; cursor: pointer; font-size: 0.8rem; color: var(--os-ink); white-space: nowrap; }
+.os-filter-popover input[type='checkbox'] { cursor: pointer; margin: 0; }
+.os-facet-clearall { margin-left: 4px; }
+.os-link { color: var(--os-brand-500); cursor: pointer; text-decoration: none; }
+.os-link:hover { text-decoration: underline; }
+
+/* 상세/액션 */
+.os-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+.os-card { background: var(--os-bg); border: 1px solid var(--os-border); border-radius: 3px; margin: 12px 0; }
+.os-card-h { padding: 8px 14px; border-bottom: 1px solid var(--os-border); font-weight: 500; color: var(--os-text-sec); font-size: 0.85rem; }
+.os-yaml { margin: 0; padding: 12px 14px; font-family: var(--os-font-mono, 'Courier New', monospace); font-size: 0.72rem; line-height: 1.45; white-space: pre; overflow: auto; max-height: 460px; color: var(--os-ink); }
+.os-editor { width: 100%; min-height: 360px; border: 0; border-top: 1px solid var(--os-border); padding: 12px 14px; font-family: var(--os-font-mono, 'Courier New', monospace); font-size: 0.72rem; line-height: 1.45; resize: vertical; box-sizing: border-box; }
+.os-num { width: 90px; padding: 4px 6px; border: 1px solid var(--os-border); border-radius: 3px; margin-left: 8px; }
+
+/* 아이콘 액션 버튼 (인라인 SVG) */
+.os-iconbtn { border: 0; background: transparent; cursor: pointer; padding: 5px; border-radius: 3px; display: inline-flex; color: var(--os-brand-500); }
+.os-iconbtn:hover { background: rgba(76,111,255,0.10); }
+.os-iconbtn-danger { color: var(--os-danger); }
+.os-iconbtn-danger:hover { background: rgba(194,29,0,0.10); }
+.os-ic { width: 18px; height: 18px; fill: currentColor; display: block; }
+
+/* Pod 로그 패널 */
+.os-logs-h { display: flex; align-items: center; justify-content: space-between; }
+.os-logs-ctrls { display: flex; align-items: center; gap: 6px; }
+.os-logs-ctrls select { padding: 2px 4px; border: 1px solid var(--os-border); border-radius: 3px; font-size: 0.72rem; }
+.os-wrap-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; color: var(--os-text-sec); cursor: pointer; }
+
+/* CodeMirror 공용 에디터 셸 (YAML 뷰/편집·로그). CM 자체 스타일은 shadow root에 주입됨. */
+.cm-shell { border-top: 1px solid var(--os-border); }
+.cm-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--os-surface); border-bottom: 1px solid var(--os-border); }
+.cm-shell.cm-dark .cm-toolbar { background: var(--os-dark-bg2); border-bottom-color: var(--os-dark-border); }
+.cm-shell.cm-dark .cm-toolbar .os-iconbtn { color: var(--os-dark-link); }
+.cm-shell.cm-dark .cm-toolbar .os-wrap-toggle { color: var(--os-dark-dim); }
+.cm-spacer { flex: 1 1 auto; }
+.cm-host { overflow: hidden; resize: vertical; min-height: 120px; }
+.cm-host .cm-editor { height: 100%; }
+.cm-host .cm-editor.cm-focused { outline: none; }
+
+/* 로그 뷰어 (ANSI 색상 + 검색 하이라이트 + 줄바꿈 토글) — 다크, 자체완결 */
+.lv-shell { border-top: 1px solid var(--os-dark-border); }
+.lv-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--os-dark-bg2); border-bottom: 1px solid var(--os-dark-border); }
+.lv-toolbar > .os-ic { width: 15px; height: 15px; fill: var(--os-dark-link); flex: 0 0 auto; }
+.lv-toolbar .os-iconbtn { color: var(--os-dark-link); }
+.lv-toolbar .os-iconbtn[disabled] { opacity: 0.35; cursor: default; }
+.lv-toolbar .os-wrap-toggle { color: var(--os-dark-dim); }
+.lv-search { flex: 0 1 280px; padding: 3px 8px; border: 1px solid var(--os-dark-border2); border-radius: 4px; background: var(--os-dark-bg3); color: var(--os-dark-text); font-size: 0.78rem; }
+.lv-search:focus { outline: none; border-color: var(--os-dark-link); }
+.lv-count { font-size: 0.72rem; color: var(--os-dark-dim); min-width: 46px; }
+.lv-body { overflow: auto; resize: vertical; min-height: 160px; background: var(--os-dark-bg); color: var(--os-dark-text); font-family: var(--os-font-mono, 'SF Mono', 'Courier New', monospace); font-size: 0.74rem; line-height: 1.5; padding: 8px 12px; tab-size: 2; }
+.lv-line { white-space: pre; min-height: 1.1em; }
+.lv-body.wrap .lv-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.lv-hl { background: rgba(255,221,0,0.25); border-radius: 2px; }
+.lv-cur { background: var(--os-dark-cur); color: var(--os-dark-bg); border-radius: 2px; }
+
+/* ANSI 16색(다크 배경 가독 보정) — 터미널 컬러는 표준 ANSI 팔레트로 고정, 토큰 불가 */
+.a-black { color: #5c6b73; } .a-red { color: #ff6b6b; } .a-green { color: #5fd75f; } .a-yellow { color: #e5c07b; }
+.a-blue { color: #61afef; } .a-magenta { color: #d670d6; } .a-cyan { color: #56b6c2; } .a-white { color: #d6e2e8; }
+.a-br-black { color: #7f8c93; } .a-br-red { color: #ff8787; } .a-br-green { color: #87ff87; } .a-br-yellow { color: #ffd787; }
+.a-br-blue { color: #87b6ff; } .a-br-magenta { color: #ff87ff; } .a-br-cyan { color: #87ffff; } .a-br-white { color: #ffffff; }
+.a-b { font-weight: 700; } .a-d { opacity: 0.65; }
+
+/* exec 터미널 — resize:vertical 그립 + ResizeObserver로 xterm fit 재계산 */
+.os-term { height: 420px; min-height: 160px; background: var(--os-dark-bg); padding: 6px 8px; overflow: hidden; resize: vertical; }
+.os-term .xterm { height: 100%; }
+
+/* [OpenSphere] 데이터 셀 수직중앙 정렬.
+   Clarity는 헤더 셀(.datagrid-column-title)에만 align-items:center를 주고 데이터 행 셀 컨테이너
+   (.datagrid-scrolling-cells)에는 안 줘서, 배지처럼 높이 큰 셀이 있으면 평셀 내용이 위로 쏠린다.
+   → Clarity가 헤더에 쓰는 바로 그 패턴을 데이터 셀 컨테이너에도 일관 적용(배지 변형 없음, hack 아님). */
+.datagrid-scrolling-cells,
+.datagrid-row-sticky { align-items: center; }
+
+/* overview: refresh button push-right utility */
+.os-ml-auto { margin-left: auto; }
+/* overview: workload summary text below bar chart */
+.os-wl-summary { margin-top: 8px; font-size: 0.72rem; }
+
+/* 게이지 SVG stroke 색상 — attr 바인딩 대신 CSS class로 토큰 적용 */
+.os-gval-cpu   { stroke: var(--os-brand-500, #4c6fff); }
+.os-gval-mem   { stroke: var(--os-gauge-mem,  #8e44ad); }
+.os-gval-pods  { stroke: var(--os-accent,     #00bfa5); }
+.os-gval-nodes { stroke: var(--os-gauge-node, #16a3b8); }
+
+/* C5 — PVC reclaimPolicy 가시화 배지(데이터 영속성). */
+.os-pvrp { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.7rem; padding: 0.45rem 0.7rem; border: 1px solid var(--os-border); border-radius: 4px; background: var(--os-bg-subtle); font-size: 0.8rem; }
+.os-pvrp-warn { border-color: #e6a700; background: rgba(241,194,27,0.08); }
+.os-pvrp-k { color: var(--os-text-sec); font-weight: 600; }
+.os-pvrp-hint { color: var(--os-muted); }

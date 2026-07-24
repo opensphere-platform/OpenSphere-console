@@ -1,5 +1,5 @@
 import { Routes, UrlMatchResult, UrlSegment } from '@angular/router';
-import { Landing } from './pages/landing';
+import { RccOverviewPage } from './pages/rcc-overview';
 import { Catalog } from './pages/catalog';
 import { Apis } from './pages/apis';
 import { PluginHost } from './pages/plugin-host';
@@ -19,6 +19,17 @@ import { AdminCli } from './pages/admin-cli';
 import { AdminLayout } from './pages/admin-layout';
 import { ManualPage } from './pages/manual';
 import { authenticatedGuard } from './core/authenticated.guard';
+import { KubernetesConsolePage } from './features/kubernetes/kubernetes-console-page';
+
+function kubernetesConsoleMatcher(segments: UrlSegment[]): UrlMatchResult | null {
+  if (
+    segments.length < 3
+    || segments[0].path !== 'cc'
+    || !/^[a-z0-9-]+$/.test(segments[1].path)
+    || segments[2].path !== 'kubernetes'
+  ) return null;
+  return { consumed: segments, posParams: { ccId: segments[1] } };
+}
 
 /**
  * 플러그인 호스트 매처 — `/p/<id>` 그리고 그 아래 임의 깊이의 서브패스(`/p/<id>/a/b/...`)까지 전부
@@ -39,8 +50,13 @@ function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
 }
 
 export const routes: Routes = [
-  { path: '', component: Landing },
+  { path: '', component: RccOverviewPage, canActivate: [authenticatedGuard] },
   { path: 'me', component: MyInfo },
+  {
+    matcher: kubernetesConsoleMatcher,
+    component: KubernetesConsolePage,
+    canActivate: [authenticatedGuard],
+  },
   // Manual — Main Shell 네이티브 페이지(subShell/plugin/Consumer 아님). OAA Manual Registry
   // (/api/manual/*)를 ManualService로 직접 소비. 딥링크 `/manual?doc=<sourceId>`.
   { path: 'manual', component: ManualPage, canActivate: [authenticatedGuard] },

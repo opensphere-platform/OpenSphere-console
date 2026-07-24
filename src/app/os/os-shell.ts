@@ -62,10 +62,10 @@ interface NavBand {
           <os-cicon [icon]="iconMenu" [size]="20" />
         </button>
         <div class="branding">
-          <a routerLink="/" class="nav-link os-brand" title="OpenSphere">
+          <a routerLink="/" class="nav-link os-brand" title="PolyON Region Control Center">
             <img class="os-brand-logo" src="/brand/triangles-logo.svg" alt="" aria-hidden="true" />
             <span class="os-brand-name">TRIANGLES</span>
-            <span class="os-brand-product">OpenSphere</span>
+            <span class="os-brand-product">PolyON RCC</span>
           </a>
         </div>
         <os-search />
@@ -401,7 +401,14 @@ export class OsShell {
 
   /** native Core 항목 — 실제 셸 컴포넌트(규칙 부합, 밴드 고정). 그 외 밴드/항목은 전부 등록(DUPA) 기반.
    *  ADR-UI-003 §3.3: 빈 '예정' 밴드(운영/전달/지능 placeholder)는 더 이상 하드코딩하지 않는다. */
-  private static readonly NATIVE: NavBand[] = [];
+  private static readonly NATIVE: NavBand[] = [
+    {
+      band: '운영 Operate',
+      items: [
+        { path: '/cc/cc2/kubernetes', label: 'CC2 Kubernetes' },
+      ],
+    },
+  ];
 
   /** 알려진 밴드 정렬 순서 — 콘텐츠가 있는 밴드만 이 순서로 노출. 미지 밴드는 뒤에 append. */
   private static readonly BAND_ORDER = ['운영 Operate', '구축 Build', '전달 Deliver', '지능 Intelligence'];

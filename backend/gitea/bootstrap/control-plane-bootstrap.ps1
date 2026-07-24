@@ -6,6 +6,8 @@ param(
   [string]$ServiceAccount = 'opensphere-control',
   [string]$ReviewServiceAccount = 'opensphere-review',
   [string]$SecretName = 'opensphere-gitea-control-plane',
+  [string]$GiteaAppLabel = 'opensphere-gitea',
+  [string]$HookTarget = 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080/api/platform/gitea/webhook',
   [string]$KubeContext = ''
 )
 
@@ -23,6 +25,12 @@ foreach ($value in @($Organization, $Repository, $ServiceAccount, $ReviewService
   if ($value -notmatch '^[a-z0-9][a-z0-9-]{1,62}$') {
     throw "Gitea bootstrap identifier is invalid: $value"
   }
+}
+if ($GiteaAppLabel -notmatch '^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$') {
+  throw "Gitea app label is invalid: $GiteaAppLabel"
+}
+if (-not [Uri]::IsWellFormedUriString($HookTarget, [UriKind]::Absolute)) {
+  throw "Gitea webhook target is invalid: $HookTarget"
 }
 $kubectlArgs = @()
 if ($KubeContext) { $kubectlArgs += @('--context', $KubeContext) }
@@ -63,7 +71,7 @@ function Read-SecretValue([string]$Key) {
   return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
 }
 
-$giteaPod = (& kubectl @kubectlArgs -n $GiteaNamespace get pod -l app=opensphere-gitea -o 'jsonpath={.items[0].metadata.name}')
+$giteaPod = (& kubectl @kubectlArgs -n $GiteaNamespace get pod -l "app=$GiteaAppLabel" -o 'jsonpath={.items[0].metadata.name}')
 if (-not $giteaPod) { throw "Gitea pod not found in $GiteaNamespace" }
 
 $token = Read-SecretValue 'token'
@@ -178,13 +186,12 @@ if (-not $mainProtection) {
   Invoke-GiteaRequest 'PATCH' "/api/v1/repos/$Organization/$Repository/branch_protections/main" $protectionPayload
 }
 
-$hookTarget = 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080/api/platform/gitea/webhook'
 $hooksCommand = "wget -qO- --header 'Authorization: token $token' 'http://127.0.0.1:3000/api/v1/repos/$Organization/$Repository/hooks'"
 $hooksJson = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$hooksCommand`n#"
 $hooks = @()
 if ($hooksJson) { $hooks = @($hooksJson | ConvertFrom-Json) }
-if (-not ($hooks | Where-Object { $_.config.url -eq $hookTarget })) {
-  Invoke-GiteaPost "/api/v1/repos/$Organization/$Repository/hooks" @{ type = 'gitea'; active = $true; events = @('pull_request'); config = @{ url = $hookTarget; content_type = 'json'; secret = $webhookSecret } }
+if (-not ($hooks | Where-Object { $_.config.url -eq $HookTarget })) {
+  Invoke-GiteaPost "/api/v1/repos/$Organization/$Repository/hooks" @{ type = 'gitea'; active = $true; events = @('pull_request'); config = @{ url = $HookTarget; content_type = 'json'; secret = $webhookSecret } }
 }
 
 Write-Host "Gitea Platform Control bootstrap ready: $Organization/$Repository (private)"

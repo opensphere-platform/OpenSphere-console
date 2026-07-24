@@ -80,6 +80,21 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    # PolyON RCC — authenticated, audited, read-only Kubernetes access.
+    # The Backend validates the Supabase session and replaces the browser
+    # credential with its bounded in-cluster ServiceAccount token.
+    location ^~ /api/control-centers/ {
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+        proxy_read_timeout 30s;
+    }
+
     # OAA credential administration is a Console Backend policy/audit write.
     # Keep this more-specific location ahead of the read-only Gateway proxy so
     # create/rotate/delete never enter the Gateway's forbidden mutation path.

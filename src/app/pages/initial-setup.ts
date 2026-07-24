@@ -17,7 +17,7 @@ interface BeginResponse {
       <section class="setup-card" aria-labelledby="setup-title">
         <header class="setup-brand">
           <img src="/brand/triangles-logo.svg" alt="" aria-hidden="true">
-          <div><strong>TRIANGLES</strong><span>OpenSphere</span></div>
+          <div><strong>PolyON</strong><span>Region Control Center</span></div>
         </header>
 
         @if (auth.setupBusy()) {
@@ -31,7 +31,7 @@ interface BeginResponse {
           <div class="setup-copy">
             <p class="eyebrow">INITIAL CONFIGURATION</p>
             <h1 id="setup-title">최초 관리자를 구성합니다</h1>
-            <p>이 계정이 OpenSphere Console의 첫 번째 최고 관리자가 됩니다. 완료 후 바로 로그인할 수 있습니다.</p>
+            <p>이 계정이 PolyON RCC의 첫 번째 최고 관리자가 됩니다. 완료 후 바로 로그인할 수 있습니다.</p>
           </div>
           @if (error()) {
             <div class="alert alert-danger" role="alert"><div class="alert-items"><div class="alert-item static"><span class="alert-text">{{ error() }}</span></div></div></div>
@@ -72,7 +72,7 @@ interface BeginResponse {
           }
           <div class="totp-layout">
             @if (qrDataUrl()) {
-              <img [src]="qrDataUrl()" alt="OpenSphere 관리자 TOTP 등록 QR 코드">
+              <img [src]="qrDataUrl()" alt="PolyON RCC 관리자 TOTP 등록 QR 코드">
             } @else {
               <div class="qr-unavailable" role="status">QR 코드를 표시할 수 없습니다. 인증 앱에서 수동 등록 키를 입력하세요.</div>
             }
@@ -87,8 +87,8 @@ interface BeginResponse {
           </form>
         }
       </section>
-      <aside class="setup-context" aria-label="OpenSphere 소개">
-        <div><p>Welcome to</p><h2>OpenSphere</h2><span>Kubernetes 운영을 위한 통합 관리 Console</span></div>
+      <aside class="setup-context" aria-label="PolyON RCC 소개">
+        <div><p>Welcome to</p><h2>PolyON RCC</h2><span>CC1·CC2 Kubernetes 운영을 위한 통합 관리 Console</span></div>
       </aside>
     </main>
   `,
@@ -157,7 +157,7 @@ export class InitialSetup implements OnDestroy {
       const bootstrapPassword = this.password;
       await this.auth.login(this.email, bootstrapPassword);
       if (this.auth.mfaRequired()) throw new Error('새 관리자에 예상하지 않은 기존 MFA factor가 연결되어 있습니다.');
-      const enrollment = await this.auth.beginTotpEnrollment('OpenSphere initial administrator');
+      const enrollment = await this.auth.beginTotpEnrollment('PolyON RCC initial administrator');
       this.password = ''; this.passwordConfirm = '';
       this.setupId.set(enrollment.factorId);
       this.secret.set(enrollment.secret);

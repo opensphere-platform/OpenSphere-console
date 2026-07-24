@@ -8,6 +8,7 @@ const { enforcePatRequestScope, normalizePatScope, validatePatTTL } = require('.
 const { createNotificationApi } = require('./notification-api');
 const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
+const { createKubernetesReadProxy } = require('./kubernetes-read-proxy');
 const { normalizedEvent } = require('../notification-dispatcher/contract');
 
 const MAX_BODY = 256 * 1024; // prevent unbounded in-memory request buffering
@@ -70,6 +71,10 @@ const EXTERNAL_CHANNEL_REQUIRE_AAL2 = String(process.env.EXTERNAL_CHANNEL_REQUIR
 const OAA_NAMESPACE = process.env.OAA_NAMESPACE || 'opensphere-console';
 const OAA_KEY_NAMESPACE = process.env.OAA_KEY_NAMESPACE || 'opensphere-oaa-credentials';
 const K8S_API = 'https://kubernetes.default.svc';
+const CONTROL_CENTER_IDS = (process.env.CONTROL_CENTER_IDS || 'cc2')
+  .split(',').map((value) => value.trim()).filter(Boolean);
+const KUBERNETES_READ_TIMEOUT_MS = Number(process.env.KUBERNETES_READ_TIMEOUT_MS || 10_000);
+const KUBERNETES_READ_MAX_BYTES = Number(process.env.KUBERNETES_READ_MAX_BYTES || 8 * 1024 * 1024);
 const OAA_KEY_LABEL = 'opensphere.io/oaa-llm-key';
 const OAA_PART_LABEL = 'opensphere.io/part-of';
 const OAA_KEY_ID_RE = /^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$/;
@@ -520,6 +525,23 @@ async function verifyConsoleAdmin(req, options = {}) {
   return actor;
 }
 
+async function verifyControlCenterReader(req, controlCenterId) {
+  const actor = await verifyConsoleAdmin(req, { requireAal2: false });
+  const now = new Date().toISOString();
+  const rows = await restRequest('operator_control_center', {
+    query: [
+      `user_id=eq.${encodeURIComponent(actor.sub)}`,
+      `control_center_id=eq.${encodeURIComponent(controlCenterId)}`,
+      'select=access_level,expires_at',
+    ].join('&'),
+  });
+  const assignment = Array.isArray(rows) ? rows[0] : null;
+  if (!assignment || (assignment.expires_at && assignment.expires_at <= now)) {
+    throw { code: 403, msg: `operator is not assigned to control center ${controlCenterId}` };
+  }
+  return actor;
+}
+
 async function verifyOaaIdentityOwner(req, options = {}) {
   const actor = await verifyAuthed(req);
   if (!actor.groups?.includes(SUPABASE_BACKEND_ROLE)) throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
@@ -592,6 +614,25 @@ function projectedSessionGroups(actor) {
   }
   return [...groups];
 }
+
+const kubernetesReadProxy = createKubernetesReadProxy({
+  apiServer: K8S_API,
+  allowedControlCenters: CONTROL_CENTER_IDS,
+  timeoutMs: KUBERNETES_READ_TIMEOUT_MS,
+  maxBytes: KUBERNETES_READ_MAX_BYTES,
+  verify: verifyControlCenterReader,
+  audit: (actor, event) => logAudit(
+    actor,
+    'rcc.kubernetes.read',
+    `${event.controlCenterId}:${event.path}`.slice(0, 300),
+    `http-${event.status}`,
+    'RCC read-only Kubernetes inspection',
+    {
+      targetType: 'kubernetes-resource',
+      payloadDigest: toHashHex(JSON.stringify(event)),
+    },
+  ),
+});
 
 const notificationApi = createNotificationApi({
   restRequest,
@@ -1671,6 +1712,18 @@ async function bootstrapInitialOperator(body) {
       body: [{ user_id: created.id, role_id: adminRole.id, granted_by: null, reason: 'initial Supabase Console bootstrap' }],
       prefer: 'return=minimal,resolution=merge-duplicates',
     });
+    await restRequest('operator_control_center', {
+      method: 'POST',
+      query: 'on_conflict=user_id,control_center_id',
+      body: CONTROL_CENTER_IDS.map((controlCenterId) => ({
+        user_id: created.id,
+        control_center_id: controlCenterId,
+        access_level: 'admin',
+        granted_by: null,
+        reason: 'initial RCC administrator bootstrap',
+      })),
+      prefer: 'return=minimal,resolution=merge-duplicates',
+    });
     return { state: 'complete', userId: created.id };
   } catch (error) {
     await authAdminRequest(`/admin/users/${created.id}`, { method: 'DELETE' }).catch(() => undefined);
@@ -2445,6 +2498,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/metrics') {
       res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
       return res.end(metricsText());
+    }
+    if (p.startsWith('/api/control-centers/')) {
+      return kubernetesReadProxy(req, res);
     }
     if (p === '/api/identity/bootstrap/status' && req.method === 'GET') {
       return json(res, 200, await bootstrapStatus());

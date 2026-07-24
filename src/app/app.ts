@@ -15,7 +15,7 @@ import { LoginPage } from './pages/login';
       <os-login />
     } @else if (auth.initError(); as error) {
       <main class="os-bootstrap-error" role="alert">
-        <h1>OpenSphere Console</h1>
+        <h1>PolyON Region Control Center</h1>
         <p>인증 서비스를 초기화하지 못했습니다.</p>
         <pre>{{ error }}</pre>
         <button type="button" (click)="retry()">다시 시도</button>

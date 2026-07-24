@@ -15,13 +15,42 @@ apiVersion: v1
 kind: ServiceAccount
 metadata: { name: opensphere-console-backend, namespace: opensphere-console }
 ---
-# catalog: CRD·deployment read (cluster)
+# RCC catalog and read-only Kubernetes inventory.  Secrets and mutation verbs
+# are intentionally absent; the HTTP boundary separately rejects every
+# non-GET/HEAD request and sensitive subresource path.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: { name: opensphere-console-backend }
 rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+      - limitranges
+      - events
+      - serviceaccounts
+    verbs: ["get", "list"]
+  - { apiGroups: ["apps"], resources: ["deployments", "replicasets", "statefulsets", "daemonsets"], verbs: ["get", "list"] }
+  - { apiGroups: ["batch"], resources: ["jobs", "cronjobs"], verbs: ["get", "list"] }
+  - { apiGroups: ["autoscaling"], resources: ["horizontalpodautoscalers"], verbs: ["get", "list"] }
+  - { apiGroups: ["policy"], resources: ["poddisruptionbudgets"], verbs: ["get", "list"] }
+  - { apiGroups: ["networking.k8s.io"], resources: ["ingresses", "ingressclasses", "networkpolicies"], verbs: ["get", "list"] }
+  - { apiGroups: ["discovery.k8s.io"], resources: ["endpointslices"], verbs: ["get", "list"] }
+  - { apiGroups: ["scheduling.k8s.io"], resources: ["priorityclasses"], verbs: ["get", "list"] }
+  - { apiGroups: ["node.k8s.io"], resources: ["runtimeclasses"], verbs: ["get", "list"] }
+  - { apiGroups: ["coordination.k8s.io"], resources: ["leases"], verbs: ["get", "list"] }
+  - { apiGroups: ["storage.k8s.io"], resources: ["storageclasses", "csidrivers", "csinodes", "csistoragecapacities", "volumeattachments"], verbs: ["get", "list"] }
   - { apiGroups: ["apiextensions.k8s.io"], resources: ["customresourcedefinitions"], verbs: ["get", "list"] }
-  - { apiGroups: ["apps"], resources: ["deployments"], verbs: ["get", "list"] }
+  - { apiGroups: ["rbac.authorization.k8s.io"], resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"], verbs: ["get", "list"] }
+  - { apiGroups: ["metrics.k8s.io"], resources: ["nodes", "pods"], verbs: ["get", "list"] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -115,6 +144,9 @@ spec:
             - { name: DUPA_CONTROL_URL, value: "http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080" }
             # ADR-006 canonical runtime mode.
             - { name: AUTH_PROVIDER, value: supabase }
+            - { name: CONTROL_CENTER_IDS, value: "cc2" }
+            - { name: KUBERNETES_READ_TIMEOUT_MS, value: "10000" }
+            - { name: KUBERNETES_READ_MAX_BYTES, value: "8388608" }
             - { name: SUPABASE_AUTH_URL, value: "http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999" }
             - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:8090/auth/v1" }
             - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }

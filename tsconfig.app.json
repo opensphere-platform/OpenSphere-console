@@ -7,7 +7,17 @@
     "types": []
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.spec.ts"],
+  "exclude": [
+    "src/**/*.spec.ts",
+    "src/app/features/kubernetes/resources/ceph.component.ts",
+    "src/app/features/kubernetes/resources/his.component.ts",
+    "src/app/features/kubernetes/resources/mon-*.component.ts",
+    "src/app/features/kubernetes/resources/mtv-*.component.ts",
+    "src/app/features/kubernetes/resources/volumesnapshot*.component.ts",
+    "src/app/features/kubernetes/resources/virtualmachines.component.ts",
+    "src/app/features/kubernetes/resources/vm-*.component.ts",
+    "src/app/features/kubernetes/shared/terminal.component.ts"
+  ],
   "angularCompilerOptions": {
     "extendedDiagnostics": {
       "checks": {

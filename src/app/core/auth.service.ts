@@ -72,7 +72,7 @@ export class AuthService {
   readonly initError = signal('');
   readonly setupRequired = signal(false);
   readonly setupBusy = signal(false);
-  readonly setupDefaults = signal({ username: 'opensphere-admin', displayName: 'OpenSphere Administrator', email: 'admin@opensphere.local' });
+  readonly setupDefaults = signal({ username: 'polyon-admin', displayName: 'PolyON RCC Administrator', email: 'admin@opl.io.kr' });
   readonly loginRequired = signal(false);
   private pendingMfaSession: SupabaseSession | null = null;
   private pendingMfaFactorId = '';
@@ -148,7 +148,7 @@ export class AuthService {
     this.loginRequired.set(true);
   }
 
-  async beginTotpEnrollment(friendlyName = 'OpenSphere Console'): Promise<TotpEnrollment> {
+  async beginTotpEnrollment(friendlyName = 'PolyON RCC'): Promise<TotpEnrollment> {
     if (!this.accessToken) throw new Error('TOTP 등록을 시작하려면 먼저 로그인해야 합니다.');
     const factors = await this.listMfaFactors(this.accessToken);
     const verified = this.factorItems(factors)
@@ -196,9 +196,9 @@ export class AuthService {
     this.setupRequired.set(body.state === 'required' || body.state === 'busy');
     if (body.state === 'required') {
       this.setupDefaults.set({
-        username: body.username || 'opensphere-admin',
-        displayName: body.displayName || 'OpenSphere Administrator',
-        email: body.email || 'admin@opensphere.local',
+        username: body.username || 'polyon-admin',
+        displayName: body.displayName || 'PolyON RCC Administrator',
+        email: body.email || 'admin@opl.io.kr',
       });
     }
     return this.setupRequired();

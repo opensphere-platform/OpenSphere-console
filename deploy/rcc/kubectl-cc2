@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# OpenSSH transmits one remote command string rather than an argv vector.
+# Quote every kubectl argument explicitly so JSONPath, shell snippets and SQL
+# cannot be split or reinterpreted by the remote login shell.
+printf -v quoted_args '%q ' "$@"
+exec ssh -o BatchMode=yes cc2-k3s "sudo k3s kubectl ${quoted_args}"
