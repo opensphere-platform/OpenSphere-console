@@ -151,9 +151,21 @@ export class AuthService {
   async beginTotpEnrollment(friendlyName = 'PolyON RCC'): Promise<TotpEnrollment> {
     if (!this.accessToken) throw new Error('TOTP 등록을 시작하려면 먼저 로그인해야 합니다.');
     const factors = await this.listMfaFactors(this.accessToken);
-    const verified = this.factorItems(factors)
+    const factorItems = this.factorItems(factors);
+    const verified = factorItems
       .find((factor) => factor.factor_type === 'totp' && factor.status === 'verified');
     if (verified) throw new Error('이미 검증된 TOTP 인증기가 등록되어 있습니다.');
+
+    // Enrollment secrets are returned only once. If setup was interrupted
+    // after GoTrue created a factor, discard that unusable unverified factor
+    // through the authenticated user API before issuing a fresh QR code.
+    for (const factor of factorItems.filter(
+      (item) => item.factor_type === 'totp' && item.status === 'unverified',
+    )) {
+      await this.authJson(`/auth/v1/factors/${encodeURIComponent(factor.id)}`, {
+        method: 'DELETE',
+      }, this.accessToken);
+    }
 
     const enrollment = await this.authJson<SupabaseMfaEnrollment>('/auth/v1/factors', {
       method: 'POST',

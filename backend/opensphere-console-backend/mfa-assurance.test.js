@@ -35,6 +35,8 @@ test('browser login and bootstrap complete the Supabase TOTP challenge', () => {
   assert.match(authService, /challengeAndVerify/);
   assert.match(authService, /authJson<SupabaseUser>\('\/auth\/v1\/user', \{ method: 'GET' \}, token\)/);
   assert.doesNotMatch(authService, /authJson<SupabaseMfaFactors>\('\/auth\/v1\/factors', \{ method: 'GET' \}, token\)/);
+  assert.match(authService, /item\.factor_type === 'totp' && item\.status === 'unverified'/);
+  assert.match(authService, /`\/auth\/v1\/factors\/\$\{encodeURIComponent\(factor\.id\)\}`[\s\S]*method: 'DELETE'/);
   assert.match(authService, /jwtAssurance\(session\.access_token\) !== 'aal2'/);
   assert.match(login, /auth\.mfaRequired\(\)/);
   assert.match(login, /auth\.finishMfaLogin/);
