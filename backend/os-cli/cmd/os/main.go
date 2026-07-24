@@ -1091,7 +1091,7 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 		if len(reason) < 8 {
 			return usageError("--reason은 8자 이상의 설치 승인 사유여야 합니다")
 		}
-		method, path, payload = http.MethodPost, "/api/admin/extensions/install", map[string]string{"image": args[1], "reason": reason}
+		method, path, payload = http.MethodPost, "/api/admin/extensions/install", map[string]string{"image": args[1], "reason": reason, "client": "cli:os"}
 	case "activate", "disable", "uninstall", "rollback":
 		if len(args) != 2 || !validResourceName(args[1]) {
 			return usageErrorf("사용법: os extensions %s <module-id>", action)

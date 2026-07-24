@@ -14,7 +14,6 @@ import {
   Registration,
   AuditEvent,
   Binding,
-  ExtensionInspection,
   RegistryCredentialStatus,
   ImageRevocation,
   IntegrationStatus,
@@ -88,7 +87,7 @@ interface TreeNode {
     <clr-accordion class="management-actions">
       <clr-accordion-panel>
         <clr-accordion-title>관리 작업</clr-accordion-title>
-        <clr-accordion-description>설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
+        <clr-accordion-description>CLI 설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
         <clr-accordion-content *clrIfExpanded>
     <section class="registry-access" aria-labelledby="registry-access-title">
       <div class="registry-access-head">
@@ -158,40 +157,10 @@ interface TreeNode {
     </section>
 
     <section class="oci-install" aria-labelledby="oci-install-title">
-      <h2 id="oci-install-title">OCI 이미지로 설치</h2>
-      <p class="os-sub">OpenSphere GHCR 이미지의 SDK 계약·서명·권한 프로필을 먼저 검증합니다. 채널(edge/candidate/stable)은 설치 전에 불변 digest로 해석되며, 메뉴 활성화는 별도 승인입니다.</p>
-      <div class="clr-form-control">
-        <label for="extension-image" class="clr-control-label">OCI image address</label>
-        <div class="clr-control-container"><div class="clr-input-wrapper">
-          <input id="extension-image" #imageRef class="clr-input" size="90" placeholder="ghcr.io/opensphere-platform/opensphere-shell-foundation:edge" />
-        </div></div>
-      </div>
-      <div class="clr-form-control">
-        <label for="extension-reason" class="clr-control-label">Approval reason</label>
-        <div class="clr-control-container"><div class="clr-input-wrapper">
-          <input id="extension-reason" #reasonRef class="clr-input" size="60" placeholder="설치 목적과 승인 근거(8자 이상)" />
-        </div></div>
-      </div>
-      <button class="btn btn-outline" (click)="inspectImage(imageRef.value)">검증</button>
-      <button class="btn btn-primary" [disabled]="!inspection() || inspection()?.requestedImage !== imageRef.value.trim()" (click)="installImage(imageRef.value, reasonRef.value)">설치</button>
-      @if (inspection(); as plan) {
-        <div class="inspection-plan" role="status">
-          <strong>{{ plan.descriptor.displayName }} {{ plan.descriptor.version }}</strong>
-          <span class="label label-success">Descriptor {{ plan.verification.descriptor }}</span>
-          <span class="label label-success">Signature {{ plan.verification.signature }}</span>
-          <span class="label label-success">Provenance {{ plan.verification.provenance }}</span>
-          <span class="label label-success">SBOM {{ plan.verification.sbom }}</span>
-          <span class="label">{{ plan.descriptor.permissionProfile }}</span>
-          @if (plan.channel) { <span class="label label-info">{{ plan.channel }} → digest</span> }
-          <span class="os-mono">{{ plan.image }}</span>
-          <span class="os-mono">{{ plan.verification.platforms.join(', ') }}</span>
-          @if (plan.registryCredentialsRequired) { <span class="label label-info">Private pull credential</span> }
-          <span class="os-mono">{{ plan.descriptor.permissions.join(', ') }}</span>
-        </div>
-        @if (foundationActivationLocked(plan.descriptor.id)) {
-          <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">Foundation은 Ready 상태까지 사전 설치할 수 있습니다. 메뉴 활성화는 Platform Support Profile Ready 이후에 허용됩니다. <a routerLink="/manage/platform-control">Control Plane에서 준비 상태 확인</a></span></clr-alert-item></clr-alert>
-        }
-      }
+      <h2 id="oci-install-title">설치는 Console native CLI에서 진행</h2>
+      <p class="os-sub">브라우저는 설치 요청을 만들지 않습니다. 서명·권한·provenance 검증과 설치 근거는 <code>os</code> CLI가 같은 인증·감사 경계에서 기록합니다.</p>
+      <pre class="os-mono">os extensions inspect ghcr.io/opensphere-platform/&lt;module&gt;:edge
+os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "승인 사유"</pre>
     </section>
         </clr-accordion-content>
       </clr-accordion-panel>
@@ -287,6 +256,7 @@ interface TreeNode {
             <thead>
               <tr>
                 <th class="left">Extension</th>
+                <th class="left">Artifact · 설치</th>
                 <th>Effective state</th>
                 <th>Workload</th>
                 <th>Global menu</th>
@@ -301,6 +271,11 @@ interface TreeNode {
                   <td class="left">
                     <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
                     <div class="os-mono">{{ r.name }}</div>
+                  </td>
+                  <td class="left">
+                    <strong>{{ extensionKind(r) }} · v{{ artifactVersion(r) }}</strong>
+                    <div class="state-detail">설치 {{ installationTime(r) }} · {{ installationActor(r) }}</div>
+                    <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
                   </td>
                   <td>
                     <span
@@ -332,7 +307,7 @@ interface TreeNode {
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="7" class="os-sub">설치된 Extension 없음 — Catalog 탭에서 설치</td>
+                  <td colspan="8" class="os-sub">설치된 Extension 없음 — <code>os extensions install</code>로 설치</td>
                 </tr>
               }
             </tbody>
@@ -398,9 +373,7 @@ interface TreeNode {
                         <button class="btn btn-sm" (click)="run('disable', c.name)">Disable</button>
                       }
                       @default {
-                        <button class="btn btn-sm btn-primary" (click)="run('install', c.name)">
-                          Install
-                        </button>
+                        <span class="os-sub">설치는 <code>os extensions install</code></span>
                       }
                     }
                     @if (phaseOf(c.name)) {
@@ -588,6 +561,25 @@ interface TreeNode {
         </section>
 
         <clr-accordion class="cc-secondary">
+          <clr-accordion-panel>
+            <clr-accordion-title>Artifact · 설치 근거</clr-accordion-title>
+            <clr-accordion-description>{{ extensionKind(r) }} · v{{ artifactVersion(r) }} · {{ installationActor(r) }}</clr-accordion-description>
+            <clr-accordion-content *clrIfExpanded>
+              <dl class="cc-kv">
+                <dt>종류</dt><dd>{{ extensionKind(r) }}</dd>
+                <dt>현재 버전</dt><dd>{{ artifactVersion(r) }}</dd>
+                <dt>불변 digest</dt><dd class="os-mono cc-break">{{ r.status.currentDigest || '—' }}</dd>
+                <dt>요청 ref · 채널</dt><dd class="os-mono cc-break">{{ r.status.currentRequestedRef || '—' }} · {{ r.status.currentRequestedChannel || 'exact' }}</dd>
+                <dt>Artifact 해석</dt><dd class="os-mono">{{ r.status.currentResolvedAt || '—' }}</dd>
+                <dt>Source · revision</dt><dd class="os-mono cc-break">{{ r.status.currentSource || '—' }} · {{ r.status.currentRevision || '—' }}</dd>
+                <dt>설치 시각</dt><dd class="os-mono">{{ installationTime(r) }}</dd>
+                <dt>설치자</dt><dd>{{ installationActor(r) }} <span class="os-mono">{{ r.installation?.requestedById || '' }}</span></dd>
+                <dt>설치 경로</dt><dd>{{ r.installation?.client || 'legacy registration' }}</dd>
+                <dt>작업 ID</dt><dd class="os-mono cc-break">{{ r.installation?.operationId || '—' }}</dd>
+              </dl>
+            </clr-accordion-content>
+          </clr-accordion-panel>
+
           <clr-accordion-panel>
             <clr-accordion-title>배포·승인 상세</clr-accordion-title>
             <clr-accordion-description>{{ r.status.currentVersion || r.status.observedVersion || '버전 미보고' }}</clr-accordion-description>
@@ -918,7 +910,6 @@ export class AdminPlugins implements OnInit {
   readonly registrations = signal<Registration[]>([]);
   readonly events = signal<AuditEvent[]>([]);
   readonly bindings = signal<Binding[]>([]);
-  readonly inspection = signal<ExtensionInspection | null>(null);
   readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
   readonly revocations = signal<ImageRevocation[]>([]);
   readonly foundationActivationAllowed = signal(false);
@@ -979,6 +970,21 @@ export class AdminPlugins implements OnInit {
   }
   displayName(name: string): string {
     return this.catalog().find((c) => c.name === name)?.displayName || name;
+  }
+  extensionKind(r: Registration): string {
+    return this.catalogItem(r.name)?.kind || 'Extension';
+  }
+  artifactVersion(r: Registration): string {
+    return r.status.currentVersion || r.status.observedVersion || this.catalogItem(r.name)?.version || '—';
+  }
+  installationTime(r: Registration): string {
+    return r.installation?.requestedAt || '기록 없음';
+  }
+  installationActor(r: Registration): string {
+    return r.installation?.requestedBy || r.approval?.requestedBy || '기록 없음';
+  }
+  shortDigest(digest?: string): string {
+    return /^sha256:[a-f0-9]{64}$/.test(digest || '') ? `${digest!.slice(0, 19)}…${digest!.slice(-12)}` : 'digest 미보고';
   }
   private catalogItem(name: string): CatalogItem | undefined {
     return this.catalog().find((c) => c.name === name);
@@ -1162,25 +1168,6 @@ export class AdminPlugins implements OnInit {
     return id === 'foundation' && !this.foundationActivationAllowed();
   }
 
-  async inspectImage(image: string): Promise<void> {
-    this.inspection.set(null);
-    try {
-      const plan = await this.ctl.inspectImage(image.trim());
-      this.inspection.set(plan);
-      this.msg.set({ type: 'success', text: `검증 통과: ${plan.descriptor.id}` });
-    } catch (err) { this.msg.set({ type: 'danger', text: `검증 실패: ${err}` }); }
-  }
-
-  async installImage(image: string, reason: string): Promise<void> {
-    if (!this.inspection() || this.inspection()?.requestedImage !== image.trim()) return;
-    try {
-      const result = await this.ctl.installImage(image.trim(), reason.trim());
-      this.msg.set({ type: 'info', text: `설치 요청됨: ${result.id} — 검증 완료 후 Ready 상태가 됩니다.` });
-      await this.poll(result.id, 'install');
-      await this.refresh();
-    } catch (err) { this.msg.set({ type: 'danger', text: `설치 실패: ${err}` }); }
-  }
-
   countPhase(p: string): number {
     return this.registrations().filter((r) => r.status.phase === p).length;
   }
@@ -1265,7 +1252,7 @@ export class AdminPlugins implements OnInit {
     return t === 'group' ? '' : t;
   }
 
-  async run(action: 'install' | 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+  async run(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
     if (action === 'uninstall') {
       this.pendingUninstall.set(id);
       return;
@@ -1280,7 +1267,7 @@ export class AdminPlugins implements OnInit {
     await this.execute('uninstall', id);
   }
 
-  private async execute(action: 'install' | 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+  private async execute(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
     try {
       await this.ctl[action](id);
       this.msg.set({ type: 'info', text: `${action} 요청됨: ${id} — controller가 조정 중…` });
@@ -1307,7 +1294,7 @@ export class AdminPlugins implements OnInit {
 
   /** desired 상태에 도달할 때까지 짧게 폴링 (설치는 workload ready+검증까지 시간 필요) */
   private async poll(id: string, action: string): Promise<void> {
-    const want = action === 'disable' ? 'Disabled' : action === 'install' ? 'Ready' : 'Activated';
+    const want = action === 'disable' ? 'Disabled' : 'Activated';
     for (let i = 0; i < 40; i++) {
       const regs = await this.ctl.registrations();
       const r = regs.find((x) => x.name === id);

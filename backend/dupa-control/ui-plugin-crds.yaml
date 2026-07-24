@@ -295,6 +295,16 @@ spec:
                   properties:
                     requestedBy: { type: string }
                     reason: { type: string }
+                # 최초 설치 요청의 불변 provenance. 이후 enable/disable/rollback 승인과 분리해
+                # Installed 화면에서 설치일·설치자·CLI 작업 상관관계를 정확히 표시한다.
+                installation:
+                  type: object
+                  properties:
+                    requestedAt: { type: string }
+                    requestedBy: { type: string }
+                    requestedById: { type: string }
+                    client: { type: string, enum: ['cli:os'] }
+                    operationId: { type: string }
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

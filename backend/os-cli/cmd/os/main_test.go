@@ -161,6 +161,13 @@ func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("install payload decode: %v", err)
+		}
+		if payload["client"] != "cli:os" {
+			t.Fatalf("install provenance must identify the native CLI: %#v", payload)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if requests < 3 {
 			w.Header().Set("Retry-After", "1")

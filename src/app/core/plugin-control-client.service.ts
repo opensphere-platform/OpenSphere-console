@@ -16,11 +16,19 @@ export interface CatalogItem {
 }
 export interface Registration {
   name: string; desiredState: string;
+  installation?: {
+    requestedAt?: string; requestedBy?: string; requestedById?: string;
+    client?: 'cli:os'; operationId?: string;
+  };
   status: {
     phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string;
     retryable?: boolean; nextRetryAt?: string; observedGeneration?: number;
     observedVersion?: string; currentVersion?: string; currentDigest?: string;
-    currentRequestedChannel?: string; currentChannelDigest?: string;
+    currentManifestSha256?: string; currentRequestedRef?: string;
+    currentRequestedChannel?: string; currentResolvedAt?: string;
+    currentSource?: string; currentRevision?: string;
+    currentSignatureIdentity?: string; currentEvidenceRefs?: string[];
+    currentChannelDigest?: string;
     channelState?: 'Current' | 'UpdateAvailable' | 'SecurityActionRequired' | 'ChannelUnavailable';
     channelCheckedAt?: string; channelReason?: string;
     host?: { ref?: string; observedApiVersion?: string; phase?: string };
@@ -38,17 +46,9 @@ export interface IntegrationStatus {
   reason?: string; message?: string; retryable?: boolean; nextRetryAt?: string;
   lastTransitionTime?: string; observedVersion?: string;
 }
-export interface AuditEvent { time: string; actor: string; action: string; target: string; result: string; reason: string; }
-export interface ExtensionInspection {
-  image: string;
-  requestedImage: string;
-  channel: 'edge' | 'candidate' | 'stable' | null;
-  resolvedAt: string;
-  source: string;
-  revision: string;
-  registryCredentialsRequired: boolean;
-  descriptor: { id: string; kind: 'subShell' | 'plugin'; displayName: string; version: string; owner: string; permissionProfile: string; permissions: string[] };
-  verification: { registry: string; digest: string; descriptor: string; signature: string; provenance: string; sbom: string; permissionProfile: string; platforms: string[] };
+export interface AuditEvent {
+  time: string; actor: string; actorId?: string; action: string; target: string;
+  result: string; reason: string; opId?: string; source?: string;
 }
 export interface RegistryCredentialStatus {
   registry: 'ghcr.io'; configured: boolean; username?: string; secretName: string; updatedAt?: string;
@@ -85,16 +85,6 @@ export class PluginControlClient {
     if (!r.ok) throw new Error(`bindings HTTP ${r.status}`);
     return (await r.json()).items;
   }
-  inspectImage(image: string): Promise<ExtensionInspection> {
-    return this.http.request('/api/admin/extensions/inspect', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image }),
-    }).then(async (r) => { if (!r.ok) throw new Error(`inspect HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
-  }
-  installImage(image: string, reason: string) {
-    return this.http.request('/api/admin/extensions/install', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, reason }),
-    }).then(async (r) => { if (!r.ok) throw new Error(`install HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
-  }
   registryCredentialStatus(): Promise<RegistryCredentialStatus> {
     return this.http.request('/api/admin/extensions/registry-credentials', { cache: 'no-store' })
       .then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}`); return r.json(); });
@@ -123,12 +113,11 @@ export class PluginControlClient {
     return this.http.request(`/api/admin/bindings/${name}/${action}`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
   }
-  private act(id: string, action: 'install' | 'enable' | 'disable' | 'uninstall', reason?: string) {
+  private act(id: string, action: 'enable' | 'disable' | 'uninstall', reason?: string) {
     return this.http.request(`/api/admin/plugins/registrations/${id}/${action}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason ?? '' }),
     }).then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
   }
-  install(id: string, reason?: string) { return this.act(id, 'install', reason); }
   enable(id: string) { return this.act(id, 'enable'); }
   disable(id: string) { return this.act(id, 'disable'); }
   uninstall(id: string) { return this.act(id, 'uninstall'); }

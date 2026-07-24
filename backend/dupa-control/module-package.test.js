@@ -218,6 +218,16 @@ test('runtime Registry projects channel status and immutable approval evidence',
   });
 });
 
+test('extension installation is native CLI-only and preserves immutable installation provenance', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  const crd = fs.readFileSync(path.join(__dirname, 'ui-plugin-crds.yaml'), 'utf8');
+  assert.match(controller, /body\.client !== 'cli:os'/);
+  assert.match(controller, /cliInstallationProvenance\(actor, opId\)/);
+  assert.match(controller, /installation: x\.spec\.installation/);
+  assert.match(crd, /installation:\s*\n\s*type: object/);
+  assert.match(crd, /client: \{ type: string, enum: \['cli:os'\] \}/);
+});
+
 test('OAA Extension security facade is exact-digest, permission-gated, AAL2, and credential-free', () => {
   const source = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
   const owner = source.slice(source.indexOf("if (p.startsWith('/api/oaa/owner/extensions/'))"), source.indexOf('// ── 인증 게이트'));
