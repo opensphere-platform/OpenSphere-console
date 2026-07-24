@@ -143,6 +143,7 @@ foreach ($package in $packages | Sort-Object name) {
   $deletions = @($versions | Where-Object { -not $retained.Contains($_.name) })
   foreach ($version in $deletions) {
     $versionDeletes.Add([pscustomobject]@{
+      owner = $Owner
       package = $package.name
       encodedPackage = $encoded
       id = [long]$version.id
@@ -190,16 +191,44 @@ foreach ($package in $packageDeletes | Sort-Object name) {
 }
 
 Write-Host '[execute] Deleting versions outside every retained channel graph'
-$deleteIndex = 0
-foreach ($version in $versionDeletes | Sort-Object package, id) {
-  if (($deleteIndex % 50) -eq 0) {
-    Wait-GhApiCapacity
+$orderedDeletes = @($versionDeletes | Sort-Object package, id)
+$batchSize = 50
+for ($offset = 0; $offset -lt $orderedDeletes.Count; $offset += $batchSize) {
+  Wait-GhApiCapacity
+  $last = [Math]::Min($offset + $batchSize - 1, $orderedDeletes.Count - 1)
+  $batch = @($orderedDeletes[$offset..$last])
+  $results = @($batch | ForEach-Object -Parallel {
+    $endpoint = "/users/$($_.owner)/packages/container/$($_.encodedPackage)/versions/$($_.id)"
+    $output = & gh api --method DELETE $endpoint --silent 2>&1
+    $exitCode = $LASTEXITCODE
+    $detail = $output -join "`n"
+    [pscustomobject]@{
+      package = $_.package
+      id = $_.id
+      digest = $_.digest
+      status = if ($exitCode -eq 0) {
+        'deleted'
+      } elseif ($detail -match 'HTTP 404') {
+        'already-absent'
+      } else {
+        'failed'
+      }
+      detail = $detail
+    }
+  } -ThrottleLimit 8)
+
+  $failed = @($results | Where-Object { $_.status -eq 'failed' })
+  if ($failed.Count -gt 0) {
+    $failure = $failed[0]
+    throw "Version deletion failed: $($failure.package) $($failure.id)`n$($failure.detail)"
   }
-  Remove-GhResource `
-    -Endpoint "/users/$Owner/packages/container/$($version.encodedPackage)/versions/$($version.id)" `
-    -Description "version $($version.package) $($version.id)"
-  Write-Host "[deleted-version] $($version.package) $($version.id) $($version.digest)"
-  $deleteIndex += 1
+  foreach ($result in $results | Sort-Object package, id) {
+    if ($result.status -eq 'already-absent') {
+      Write-Host "[already-absent] version $($result.package) $($result.id)"
+    } else {
+      Write-Host "[deleted-version] $($result.package) $($result.id) $($result.digest)"
+    }
+  }
 }
 
 Write-Host '[success] GHCR package cleanup completed.'
