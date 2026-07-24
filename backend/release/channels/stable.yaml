@@ -1,6 +1,7 @@
 # opensphere-release — stable 채널 pre-GA 릴리스 매트릭스
 # stable은 최종 검증 채널이며 공식 배포 등급은 ga만 사용한다.
 # ga는 GitHub Actions에서 재빌드하고 필수 공급망 증거를 발행해야 한다.
+# stable과 ga는 linux/amd64 및 linux/arm64 멀티플랫폼을 모두 게시한다.
 # arch-001: Release Authority — 버전당 단일 권위 페이로드 (불변)
 # OCI 이미지: ghcr.io/opensphere-platform/opensphere-release:<version>@sha256:<digest>
 #

@@ -27,6 +27,19 @@ source repository or release cadence differs from the main Console.
 - `stable` remains a pre-GA validation tag. Only `ga` denotes an official
   distribution.
 
+## Platform build policy
+
+`edge` prioritizes development iteration speed. It contains only the current
+development host's Kubernetes node platform:
+
+- Windows Docker Desktop normally publishes `linux/amd64`.
+- Apple Silicon Docker Desktop normally publishes `linux/arm64`.
+- An `edge` release is installable only on nodes matching that single platform.
+
+`candidate`, `stable`, and `ga` are distribution channels and must publish the
+complete supported multi-platform set: `linux/amd64` and `linux/arm64`.
+Multi-platform publication is intentionally not required for `edge`.
+
 These rules make the trust statement precise: OpenSphere accepts local artifacts
 outside GA, while OpenSphere's GA admission and release process recognizes only
 the artifacts produced by the designated GitHub Actions workflow.
@@ -52,6 +65,8 @@ commit. The next implementation phase must:
 3. keep fail-closed verification for `ga`;
 4. add a dedicated GA rebuild and publication workflow; and
 5. prevent tag mutation or digest reuse from pre-GA into GA.
+6. enforce single host-native platform for `edge` and the complete supported
+   platform set for `candidate`, `stable`, and `ga`.
 
 Until that phase is complete, this document is the accepted target policy, not a
 claim that channel-aware runtime enforcement has already shipped.

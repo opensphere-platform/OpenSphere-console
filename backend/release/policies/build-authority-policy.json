@@ -62,6 +62,33 @@
       "opensphere.io/release-class",
       "opensphere.io/ga-eligible"
     ],
+    "platformPolicy": {
+      "edge": {
+        "mode": "host-native-single",
+        "description": "Build only the current development host's Kubernetes node platform."
+      },
+      "candidate": {
+        "mode": "multi-platform",
+        "requiredPlatforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      },
+      "stable": {
+        "mode": "multi-platform",
+        "requiredPlatforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      },
+      "ga": {
+        "mode": "multi-platform",
+        "requiredPlatforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
     "enforcement": {
       "phase": "declaration-only",
       "runtimeAdmissionUnchanged": true,

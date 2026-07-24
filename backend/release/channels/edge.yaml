@@ -3,6 +3,7 @@
 # pre-GA 내부 승격은 동일 digest 재태그를 허용한다.
 # ga는 별도 GitHub Actions workflow에서 같은 소스를 재빌드해야 하며
 # pre-GA digest를 ga로 재태깅할 수 없다.
+# edge 이미지는 현재 개발 호스트의 Kubernetes node 플랫폼 하나만 빌드한다.
 
 releases:
   - version: "0.1.0-alpha.1"

@@ -2,7 +2,7 @@
 param(
   [string]$Registry = 'ghcr.io/opensphere-platform',
   [string]$SourceRevision = '',
-  [string]$Platforms = 'linux/amd64,linux/arm64',
+  [string]$Platform = '',
   [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git'
 )
 
@@ -65,6 +65,20 @@ if ($SourceRevision -notmatch '^[0-9a-f]{40}$') {
   throw 'SourceRevision must be a full lowercase Git commit.'
 }
 
+if (-not $Platform) {
+  $dockerOs = (& docker info --format '{{.OSType}}').Trim().ToLowerInvariant()
+  $dockerArch = (& docker info --format '{{.Architecture}}').Trim().ToLowerInvariant()
+  $dockerArch = switch ($dockerArch) {
+    'x86_64' { 'amd64' }
+    'aarch64' { 'arm64' }
+    default { $dockerArch }
+  }
+  $Platform = "$dockerOs/$dockerArch"
+}
+if ($Platform -notmatch '^linux/(amd64|arm64)$') {
+  throw "Edge requires exactly one supported host-native platform; received: $Platform"
+}
+
 $dirty = & git -C $repoRoot status --short
 if ($dirty) {
   throw 'The Console worktree must be clean before publishing local edge.'
@@ -94,6 +108,7 @@ Write-Host "[start] Local OpenSphere edge publish"
 Write-Host "[source] $SourceRevision"
 Write-Host "[release] $releaseTag"
 Write-Host "[immutable] $localTag"
+Write-Host "[platform] $Platform"
 Write-Host "[policy] build-authority=localhost, release-class=pre-ga, ga-eligible=false"
 
 Write-Host '[step 01/06] Prepare clean Console and SDK source'
@@ -164,7 +179,7 @@ for ($index = 0; $index -lt $images.Count; $index += 1) {
   Write-Host ("[build {0:d2}/{1:d2}] {2}:{3}" -f ($index + 1), $images.Count, $repository, $localTag)
   $arguments = @(
     'buildx', 'build',
-    '--platform', $Platforms,
+    '--platform', $Platform,
     '--push',
     '--provenance=mode=max',
     '--metadata-file', $metadataFile,
@@ -217,7 +232,7 @@ $bom = [ordered]@{
   buildAuthority = 'localhost'
   releaseClass = 'pre-ga'
   gaEligible = $false
-  supportedPlatforms = @('linux/amd64', 'linux/arm64')
+  supportedPlatforms = @($Platform)
   components = $components
 }
 $bomPath = Join-Path $workspace 'opensphere-local-release-bom.json'
