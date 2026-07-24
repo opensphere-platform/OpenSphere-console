@@ -1,11 +1,11 @@
 {
   "name": "dupa-registry-controller",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "DUPA Admin Control — Supabase audit and Gitea change-control consumer",
   "main": "controller.js",
   "scripts": {
     "start": "node controller.js",
-    "test": "node --test platform-control-plane.test.js module-package.test.js observability-binding.test.js manual-native.test.js oaa-native-ui.test.js release-channel-workflow.test.js release-build-authority-policy.test.js"
+    "test": "node --test platform-control-plane.test.js module-package.test.js observability-binding.test.js manual-native.test.js oaa-native-ui.test.js release-channel-workflow.test.js release-build-authority-policy.test.js registry-credentials-ha.test.js"
   }
 }

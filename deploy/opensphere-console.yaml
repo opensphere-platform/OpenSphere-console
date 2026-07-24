@@ -57,7 +57,7 @@ spec:
                 - -ec
                 - >-
                   grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json &&
-                  grep -q '"version": "0.8.0"' /usr/share/nginx/html/api/cli/index.json &&
+                  grep -q '"version": "0.8.1"' /usr/share/nginx/html/api/cli/index.json &&
                   grep -q '"algorithm": "Ed25519"' /usr/share/nginx/html/api/cli/index.json &&
                   grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js &&
                   ! grep -Rqs 'os-source-chips' /usr/share/nginx/html/main-*.js &&

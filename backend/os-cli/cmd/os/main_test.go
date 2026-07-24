@@ -157,6 +157,48 @@ func TestRequireOKUsesJSONErrorMessage(t *testing.T) {
 	}
 }
 
+func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if requests < 3 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"RegistryCredentialsPropagating","retryAfter":1}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"accepted":true,"id":"shell-template"}`))
+	}))
+	defer server.Close()
+	originalSleep := sleepFn
+	sleeps := []time.Duration{}
+	sleepFn = func(delay time.Duration) { sleeps = append(sleeps, delay) }
+	defer func() { sleepFn = originalSleep }()
+	cfg := defaults()
+	cfg.PAT, cfg.ConsoleURL = "test-token", server.URL
+	var out bytes.Buffer
+	if err := extensions(cfg, []string{"install", "ghcr.io/opensphere-platform/opensphere-shell-template:edge", "--reason", "approved extension install"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 3 || len(sleeps) != 2 || sleeps[0] != time.Second || sleeps[1] != time.Second {
+		t.Fatalf("expected bounded Retry-After retry, requests=%d sleeps=%v", requests, sleeps)
+	}
+}
+
+func TestRegistryPropagationRetryIsNarrowAndBounded(t *testing.T) {
+	if registryCredentialsPropagating([]byte(`{"error":"RegistryAuthFailed"}`)) {
+		t.Fatal("credential rejection must not be retried")
+	}
+	if !registryCredentialsPropagating([]byte(`{"error":"RegistryCredentialsPropagating"}`)) {
+		t.Fatal("documented propagation error must be retryable")
+	}
+	if registryRetryDelay("999", 1) != 400*time.Millisecond || registryRetryDelay("bad", 0) != 200*time.Millisecond {
+		t.Fatal("invalid Retry-After must use the bounded backoff")
+	}
+}
+
 func TestGlobalOutputRenderingAndExitCodes(t *testing.T) {
 	args, output, err := extractGlobalOptions([]string{"catalog", "list", "--output=table"})
 	if err != nil || output != "table" || strings.Join(args, " ") != "catalog list" {

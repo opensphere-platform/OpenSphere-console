@@ -114,8 +114,8 @@ jobs:
           test -n "$CLI_UPDATE_TRUST_ID"
           test -n "$CLI_UPDATE_TRUST_PUBLIC"
           go test ./...
-          go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=$CLI_UPDATE_TRUST_ID -X main.updateProductionPublicKey=$CLI_UPDATE_TRUST_PUBLIC" -o opensphere-cli-darwin-arm64 ./cmd/os
-          GOARCH=amd64 CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=$CLI_UPDATE_TRUST_ID -X main.updateProductionPublicKey=$CLI_UPDATE_TRUST_PUBLIC" -o opensphere-cli-darwin-amd64 ./cmd/os
+          go build -trimpath -ldflags="-s -w -X main.version=0.8.1 -X main.updateProductionKeyID=$CLI_UPDATE_TRUST_ID -X main.updateProductionPublicKey=$CLI_UPDATE_TRUST_PUBLIC" -o opensphere-cli-darwin-arm64 ./cmd/os
+          GOARCH=amd64 CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=0.8.1 -X main.updateProductionKeyID=$CLI_UPDATE_TRUST_ID -X main.updateProductionPublicKey=$CLI_UPDATE_TRUST_PUBLIC" -o opensphere-cli-darwin-amd64 ./cmd/os
           file opensphere-cli-darwin-arm64 | grep -q 'arm64'
           file opensphere-cli-darwin-amd64 | grep -q 'x86_64'
       - name: Upload macOS CLI artifact

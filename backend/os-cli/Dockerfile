@@ -10,8 +10,8 @@ COPY cmd ./cmd
 # Test natively for each Buildx target; only the downloadable binaries are
 # cross-compiled. This keeps the arm64 image build from executing an amd64 test.
 RUN mkdir -p /out && go test ./... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.1 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.1 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 COPY --from=macos-cli /opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64
 COPY --from=macos-cli /opensphere-cli-darwin-amd64 /out/opensphere-cli-darwin-amd64
 

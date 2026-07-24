@@ -12,6 +12,7 @@ RUN apk upgrade --no-cache \
     && npm install --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY controller.js /app/controller.js
+COPY registry-credentials.js /app/registry-credentials.js
 USER 1000:1000
 EXPOSE 8080
 CMD ["node", "/app/controller.js"]

@@ -43,7 +43,7 @@ rules:
     resources: [networkpolicies]
     verbs: [get, list, create, update, patch, delete]
   - apiGroups: [""]
-    resources: [services, serviceaccounts, configmaps, secrets]
+    resources: [services, serviceaccounts, configmaps, secrets, pods]
     verbs: [get, list, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -207,6 +207,8 @@ spec:
             # 모든 Console 권한은 Supabase-backed Console identity service가 단일 검증한다.
             - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
             - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - { name: SUPABASE_REST_URL, value: http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000 }
             - name: SUPABASE_SERVICE_ROLE_KEY
               valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: service-role-key } }
@@ -214,6 +216,9 @@ spec:
             # Optional private GHCR access. Standard kubernetes.io/dockerconfigjson Secret;
             # credentials are consumed as a file and never projected into process environment.
             - { name: opensphere-ghcr, mountPath: /var/run/secrets/opensphere-ghcr, readOnly: true }
+            # Lifecycle generation is non-secret state.  It is projected independently so a
+            # replica can prove its Secret mount is at the same generation before use.
+            - { name: opensphere-ghcr-state, mountPath: /var/run/secrets/opensphere-ghcr-state, readOnly: true }
             - { name: verifier-tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
@@ -231,6 +236,10 @@ spec:
             secretName: opensphere-ghcr-pull
             optional: true
             items: [{ key: .dockerconfigjson, path: config.json }]
+        - name: opensphere-ghcr-state
+          configMap:
+            name: opensphere-ghcr-credential-state
+            optional: true
         - name: verifier-tmp
           emptyDir: { sizeLimit: 64Mi }
 ---

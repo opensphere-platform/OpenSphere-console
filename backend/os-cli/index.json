@@ -4,7 +4,7 @@
   "description": "OpenSphere Console native 관리자 CLI. Supabase 장치 신뢰, 진단, 현행 Platform Control 조회와 승인형 변경 계약을 Console과 공유합니다.",
   "ownership": "console-native",
   "profile": "admin",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "signature": {
     "algorithm": "Ed25519",
     "keyId": "generated-at-build",

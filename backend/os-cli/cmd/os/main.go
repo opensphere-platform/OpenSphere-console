@@ -23,11 +23,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
-var version = "0.8.0"
+var version = "0.8.1"
 
 type Config struct {
 	Context     string `json:"context,omitempty"`
@@ -205,6 +206,15 @@ func request(cfg Config, method, rawURL string, body io.Reader, contentType stri
 	return b, status, err
 }
 
+func requestWithRetryAfter(cfg Config, method, rawURL string, body io.Reader, contentType string) ([]byte, int, string, error) {
+	accessToken, err := credentialToken(cfg)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	b, status, _, retryAfter, requestErr := rawRequestWithRetryAfter(method, rawURL, body, contentType, accessToken)
+	return b, status, retryAfter, requestErr
+}
+
 func requestWithContentType(cfg Config, method, rawURL string, body io.Reader, contentType string) ([]byte, int, string, error) {
 	accessToken, err := credentialToken(cfg)
 	if err != nil {
@@ -214,12 +224,17 @@ func requestWithContentType(cfg Config, method, rawURL string, body io.Reader, c
 }
 
 func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken string) ([]byte, int, string, error) {
+	b, status, contentTypeResponse, _, err := rawRequestWithRetryAfter(method, rawURL, body, contentType, accessToken)
+	return b, status, contentTypeResponse, err
+}
+
+func rawRequestWithRetryAfter(method, rawURL string, body io.Reader, contentType, accessToken string) ([]byte, int, string, string, error) {
 	if err := validateURL(rawURL); err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
 	req, err := http.NewRequest(method, rawURL, body)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
 	if accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+accessToken)
@@ -234,11 +249,11 @@ func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken 
 	}
 	resp, err := client().Do(req)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	return b, resp.StatusCode, resp.Header.Get("Content-Type"), err
+	return b, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Retry-After"), err
 }
 
 type devicePublicJWK struct {
@@ -1147,7 +1162,19 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 		encoded, _ := json.Marshal(payload)
 		body, contentType = bytes.NewReader(encoded), "application/json"
 	}
-	b, status, err := request(cfg, method, join(cfg.ConsoleURL, path), body, contentType)
+	requestURL := join(cfg.ConsoleURL, path)
+	var b []byte
+	var status int
+	var err error
+	if action == "inspect" || action == "install" {
+		var requestBody []byte
+		if payload != nil {
+			requestBody, _ = json.Marshal(payload)
+		}
+		b, status, err = extensionRequestWithPropagationRetry(cfg, method, requestURL, requestBody, contentType)
+	} else {
+		b, status, err = request(cfg, method, requestURL, body, contentType)
+	}
 	if err != nil {
 		return err
 	}
@@ -1155,6 +1182,35 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 		return err
 	}
 	return renderOutput(cfg, out, b)
+}
+
+// A credential-generation transition is safe to repeat for reads/installs:
+// the Controller has not persisted an installation before inspection succeeds.
+// Retry is deliberately bounded and only applies to the explicit 503 contract.
+func extensionRequestWithPropagationRetry(cfg Config, method, rawURL string, payload []byte, contentType string) ([]byte, int, error) {
+	const maxAttempts = 5
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		b, status, retryAfter, err := requestWithRetryAfter(cfg, method, rawURL, bytes.NewReader(payload), contentType)
+		if err != nil || status != http.StatusServiceUnavailable || !registryCredentialsPropagating(b) || attempt == maxAttempts-1 {
+			return b, status, err
+		}
+		sleepFn(registryRetryDelay(retryAfter, attempt))
+	}
+	return nil, 0, errors.New("unreachable registry propagation retry state")
+}
+
+func registryCredentialsPropagating(body []byte) bool {
+	var response struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &response) == nil && response.Error == "RegistryCredentialsPropagating"
+}
+
+func registryRetryDelay(retryAfter string, attempt int) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && seconds > 0 && seconds <= 10 {
+		return time.Duration(seconds) * time.Second
+	}
+	return time.Duration(200*(attempt+1)) * time.Millisecond
 }
 
 func validResourceName(value string) bool {

@@ -10,6 +10,7 @@ const http = require('http');
 const fs = require('fs');
 const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes, randomUUID } = require('crypto');
+const { RegistryCredentialCoordinator } = require('./registry-credentials');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-console';
@@ -973,83 +974,24 @@ function moduleDescriptorIssues(value) {
 function readOptionalFile(path) {
   try { return fs.readFileSync(path, 'utf8').trim(); } catch { return ''; }
 }
-let runtimeGhcrCredentials = null;
-function ghcrCredentials() {
-  // Registry credentials are file-only so the token is not exposed through Pod env inspection.
-  // The optional mount is a standard kubernetes.io/dockerconfigjson imagePullSecret, so the
-  // resolver and Kubernetes pull path share one narrowly scoped read credential.
-  const configPath = process.env.GHCR_DOCKER_CONFIG_FILE || '/var/run/secrets/opensphere-ghcr/config.json';
-  if (runtimeGhcrCredentials) return runtimeGhcrCredentials;
-  const raw = readOptionalFile(configPath);
-  if (!raw) return null;
-  try {
-    const config = JSON.parse(raw);
-    const entry = config?.auths?.['ghcr.io'] || config?.auths?.['https://ghcr.io'];
-    if (!entry) return null;
-    if (entry.username && entry.password) return { username: String(entry.username), password: String(entry.password) };
-    const decoded = Buffer.from(String(entry.auth || ''), 'base64').toString('utf8');
-    const split = decoded.indexOf(':');
-    return split > 0 ? { username: decoded.slice(0, split), password: decoded.slice(split + 1) } : null;
-  } catch { return null; }
-}
-function registryDockerConfig(username, password) {
-  return JSON.stringify({
-    auths: {
-      'ghcr.io': {
-        username,
-        password,
-        auth: Buffer.from(`${username}:${password}`).toString('base64'),
-      },
-    },
-  });
-}
-function dockerConfigUsername(encoded) {
-  try {
-    const config = JSON.parse(Buffer.from(String(encoded || ''), 'base64').toString('utf8'));
-    const entry = config?.auths?.['ghcr.io'] || config?.auths?.['https://ghcr.io'];
-    if (entry?.username) return String(entry.username);
-    const decoded = Buffer.from(String(entry?.auth || ''), 'base64').toString('utf8');
-    return decoded.includes(':') ? decoded.slice(0, decoded.indexOf(':')) : '';
-  } catch { return ''; }
-}
-async function registryCredentialStatus() {
-  const result = await k8s('GET', `/api/v1/namespaces/${NS}/secrets/${GHCR_PULL_SECRET}`);
-  if (result.status === 404) return { registry: 'ghcr.io', configured: false, secretName: GHCR_PULL_SECRET };
-  if (!result.ok) throw Object.assign(new Error(`registry credential status HTTP ${result.status}`), { code: 503, reason: 'RegistryCredentialStoreUnavailable' });
-  const encoded = result.json?.data?.['.dockerconfigjson'];
-  return {
-    registry: 'ghcr.io',
-    configured: result.json?.type === 'kubernetes.io/dockerconfigjson' && Boolean(encoded),
-    username: dockerConfigUsername(encoded),
-    secretName: GHCR_PULL_SECRET,
-    updatedAt: result.json?.metadata?.creationTimestamp || '',
-  };
-}
-async function storeRegistryCredentials(username, password) {
-  const document = registryDockerConfig(username, password);
-  const path = `/api/v1/namespaces/${NS}/secrets/${GHCR_PULL_SECRET}`;
-  const existing = await k8s('GET', path);
-  const body = {
-    apiVersion: 'v1', kind: 'Secret', type: 'kubernetes.io/dockerconfigjson',
-    metadata: {
-      name: GHCR_PULL_SECRET, namespace: NS,
-      labels: { 'app.kubernetes.io/managed-by': 'opensphere-console', 'opensphere.io/purpose': 'registry-read' },
-    },
-    data: { '.dockerconfigjson': Buffer.from(document).toString('base64') },
-  };
-  const result = existing.ok
-    ? await k8s('PATCH', path, { type: body.type, metadata: { labels: body.metadata.labels }, data: body.data })
-    : await k8s('POST', `/api/v1/namespaces/${NS}/secrets`, body);
-  if (!result.ok) throw Object.assign(new Error(`registry credential store HTTP ${result.status}`), { code: 503, reason: 'RegistryCredentialStoreUnavailable' });
-  runtimeGhcrCredentials = { username, password };
-  return { registry: 'ghcr.io', configured: true, username, secretName: GHCR_PULL_SECRET };
-}
-async function deleteRegistryCredentials() {
-  const result = await k8s('DELETE', `/api/v1/namespaces/${NS}/secrets/${GHCR_PULL_SECRET}`);
-  if (!result.ok && result.status !== 404) throw Object.assign(new Error(`registry credential delete HTTP ${result.status}`), { code: 503, reason: 'RegistryCredentialStoreUnavailable' });
-  runtimeGhcrCredentials = null;
-  return { registry: 'ghcr.io', configured: false, secretName: GHCR_PULL_SECRET };
-}
+// GHCR token bytes remain in the projected Secret file only.  The shared
+// ConfigMap lifecycle generation makes every replica reject a stale mount on
+// rotation or logout instead of retaining a process-local token cache.
+const GHCR_DOCKER_CONFIG_FILE = process.env.GHCR_DOCKER_CONFIG_FILE || '/var/run/secrets/opensphere-ghcr/config.json';
+const registryCredentials = new RegistryCredentialCoordinator({
+  k8s,
+  readFile: readOptionalFile,
+  namespace: NS,
+  secretName: GHCR_PULL_SECRET,
+  podName: process.env.POD_NAME || process.env.HOSTNAME || 'unknown-replica',
+  configPath: GHCR_DOCKER_CONFIG_FILE,
+  generationPath: process.env.GHCR_GENERATION_FILE || '/var/run/secrets/opensphere-ghcr-state/generation',
+  controllerLabel: 'opensphere-console-dupa-controller',
+});
+const ghcrCredentials = () => registryCredentials.credentials();
+const registryCredentialStatus = () => registryCredentials.status();
+const storeRegistryCredentials = (username, password) => registryCredentials.store(username, password);
+const deleteRegistryCredentials = () => registryCredentials.remove();
 function parseModuleImageReference(image) {
   const match = ALLOWED_IMAGE.exec(String(image || '').trim());
   if (!match) throw Object.assign(new Error('image must be an opensphere-platform GHCR digest or channel reference'), { code: 400, reason: 'InvalidImageReference' });
@@ -1096,7 +1038,7 @@ async function ghcrFetch(path, accept) {
     response = await fetchWithToken(anonymousToken);
     if (response.ok) return { response, authenticated: false };
   }
-  const credentials = ghcrCredentials();
+  const credentials = await ghcrCredentials();
   if (!credentials) throw Object.assign(new Error('private GHCR package requires configured registry credentials'), { code: 401, reason: 'RegistryCredentialsRequired' });
   const authenticatedToken = await requestToken(credentials);
   if (!authenticatedToken) throw Object.assign(new Error('configured GHCR credentials were rejected'), { code: 401, reason: 'RegistryAuthFailed' });
@@ -1150,11 +1092,11 @@ function attestationArguments(image, repository, predicateType) {
     '--predicate-type', predicateType,
   ];
 }
-function verifyAttestation(image, repository, predicateType, reason) {
+async function verifyAttestation(image, repository, predicateType, reason) {
   const dockerConfigFile = process.env.GHCR_DOCKER_CONFIG_FILE || '/var/run/secrets/opensphere-ghcr/config.json';
   const dockerConfigDir = dockerConfigFile.replace(/[\\/][^\\/]+$/, '') || '.';
+  const credentials = await ghcrCredentials();
   return new Promise((resolve, reject) => {
-    const credentials = ghcrCredentials();
     execFile('gh', attestationArguments(image, repository, predicateType), {
       // gh currently insists that GH_TOKEN is present even with --bundle-from-oci.
       // The sentinel is never sent to GitHub because this path reads the bundle and
@@ -1525,7 +1467,18 @@ async function readBody(req) {
   for await (const c of req) { n += c.length; if (n > MAX_BODY) throw { code: 413, msg: 'payload too large' }; chunks.push(c); }
   const s = Buffer.concat(chunks).toString(); return s ? JSON.parse(s) : {};
 }
-function json(res, code, obj) { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); }
+function json(res, code, obj, headers = {}) { res.writeHead(code, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(obj)); }
+function registryCredentialError(res, error, opId) {
+  const status = Number(error?.code) || 503;
+  const body = { error: error?.reason || 'RegistryCredentialStoreUnavailable', message: error?.message, opId };
+  if (error?.reason === 'RegistryCredentialsPropagating') {
+    body.retryAfter = Number(error.retryAfter) || 1;
+    body.servingReplicas = error.servingReplicas || [];
+    body.observedReplicas = error.observedReplicas || [];
+    return json(res, 503, body, { 'Retry-After': String(body.retryAfter) });
+  }
+  return json(res, status, body);
+}
 
 async function ensureRegistration(pkgName, desiredState, actor, reason) {
   const existing = await getReg(pkgName);
@@ -2398,7 +2351,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/admin/extensions/inspect' && req.method === 'POST') {
       const body = await readBody(req).catch(() => ({}));
       try { return json(res, 200, await inspectModuleImage(body.image)); }
-      catch (e) { return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], revocation: e?.revocation || null, opId }); }
+      catch (e) {
+        if (e?.reason === 'RegistryCredentialsPropagating') return registryCredentialError(res, e, opId);
+        return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], revocation: e?.revocation || null, opId });
+      }
     }
     if (p === '/api/admin/extensions/registry-credentials' && req.method === 'GET') {
       try { return json(res, 200, await registryCredentialStatus()); }
@@ -2418,7 +2374,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, stored);
       } catch (e) {
         await durableAudit(actor, 'registry-credentials-configure', 'ghcr.io', 'error', e?.reason || 'store failed', opId);
-        return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryCredentialStoreUnavailable', message: e?.message, opId });
+        return registryCredentialError(res, e, opId);
       }
     }
     if (p === '/api/admin/extensions/registry-credentials' && req.method === 'DELETE') {
@@ -2431,7 +2387,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, removed);
       } catch (e) {
         await durableAudit(actor, 'registry-credentials-remove', 'ghcr.io', 'error', e?.reason || 'delete failed', opId);
-        return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryCredentialStoreUnavailable', message: e?.message, opId });
+        return registryCredentialError(res, e, opId);
       }
     }
     if (p === '/api/admin/extensions/install' && req.method === 'POST') {
@@ -2466,6 +2422,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 202, { accepted: true, id: pkg.metadata.name, desiredState: 'Installed', image: inspection.image, verification: inspection.verification });
       } catch (e) {
         await durableAudit(actor, 'extension-install', String(body.image || '').slice(0, 160), 'denied', e?.reason || 'InspectionFailed', opId);
+        if (e?.reason === 'RegistryCredentialsPropagating') return registryCredentialError(res, e, opId);
         return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], revocation: e?.revocation || null, opId });
       }
     }
@@ -2654,6 +2611,12 @@ const server = http.createServer(async (req, res) => {
 if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`opensphere-console-dupa-controller listening :${PORT} (ns=${NS})`);
+    // Every serving replica continuously acknowledges only its locally mounted
+    // credential generation.  This is metadata-only; no token leaves the file mount.
+    const observeRegistryCredentials = () => registryCredentials.observe()
+      .catch((e) => console.error('[registry-credentials] observation failed:', e?.reason || e?.message || e));
+    observeRegistryCredentials();
+    setInterval(observeRegistryCredentials, 1000).unref();
     // Supabase is the durable Data & Identity authority.  DUPA retains only
     // its plugin reconciliation/event loop and does not bootstrap CBS claims.
     hydrateAudit().finally(() => {

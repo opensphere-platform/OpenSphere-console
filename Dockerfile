@@ -26,8 +26,8 @@ COPY OpenSphere-console/backend/os-cli/cmd ./cmd
 # attempt to execute the wrong architecture. The downloadable artifacts below
 # remain explicitly cross-built and are architecture-independent payloads.
 RUN mkdir -p /out && go test ./... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.0 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.1 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.1 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 COPY --from=macos-cli /opensphere-cli-darwin-arm64 /out/opensphere-cli-darwin-arm64
 COPY --from=macos-cli /opensphere-cli-darwin-amd64 /out/opensphere-cli-darwin-amd64
 
@@ -53,7 +53,7 @@ COPY --from=cli-manifest /manifest/artifacts/ /usr/share/nginx/html/api/cli/
 COPY OpenSphere-console/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 RUN set -eu; \
     grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json; \
-    grep -q '"version": "0.8.0"' /usr/share/nginx/html/api/cli/index.json; \
+    grep -q '"version": "0.8.1"' /usr/share/nginx/html/api/cli/index.json; \
     grep -q '"algorithm": "Ed25519"' /usr/share/nginx/html/api/cli/index.json; \
     grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js; \
     if grep -aRqs '/bff/cli' /usr/share/nginx/html/api/cli/opensphere-cli-*; then exit 1; fi; \
