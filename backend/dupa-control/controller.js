@@ -1488,7 +1488,10 @@ async function ensureRegistration(pkgName, desiredState, actor, reason) {
     metadata: { name: pkgName, namespace: NS },
     spec: { packageRef: { name: pkgName }, desiredState,
       installPolicy: { createWorkload: true, createProxyRoute: true, exposeInNavigation: true },
-      approval: { requestedBy: actor || 'unknown', reason: approvalReason } },
+      // UIPluginRegistration approval.requestedBy is a CRD string field. Keep
+      // this aligned with the durable audit actor label instead of leaking the
+      // authenticated actor object into the Kubernetes API payload.
+      approval: { requestedBy: auditActorLabel(actor), reason: approvalReason } },
   };
   if (existing.ok) return k8s('PATCH', `${crd('uipluginregistrations')}/${pkgName}`, { spec: { desiredState, approval: body.spec.approval } });
   return k8s('POST', crd('uipluginregistrations'), body);

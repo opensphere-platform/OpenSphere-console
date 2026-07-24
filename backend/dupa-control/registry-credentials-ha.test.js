@@ -163,3 +163,9 @@ test('controller keeps GHCR tokens file-only and mounts only lifecycle metadata 
   assert.match(lifecycle, /RegistryCredentialsPropagating/);
   assert.doesNotMatch(lifecycle, /GHCR_(?:TOKEN|PASSWORD)|process\.env\.[A-Z_]*TOKEN/);
 });
+
+test('registration approval serializes the authenticated actor to the CRD string field', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  assert.match(controller, /approval:\s*\{\s*requestedBy:\s*auditActorLabel\(actor\),\s*reason:\s*approvalReason\s*\}/);
+  assert.doesNotMatch(controller, /approval:\s*\{\s*requestedBy:\s*actor\s*\|\|\s*['"]unknown['"]/);
+});
