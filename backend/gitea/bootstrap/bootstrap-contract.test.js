@@ -37,7 +37,10 @@ test('Gitea change authority keeps signing and control credentials server-side',
     /Write-Host.*\$(?:token|reviewToken|webhookSecret|reconcilerToken|password)/i
   );
   assert.match(manifest, /DEFAULT_TRUST_MODEL, value: collaboratorcommitter/);
-  assert.match(controlPlane, /admin user change-access.*--admin=false/);
+  assert.doesNotMatch(controlPlane, /admin user change-access/);
+  assert.match(controlPlane, /Assert-GiteaUserIsNotAdmin \$ServiceAccount/);
+  assert.match(controlPlane, /Assert-GiteaUserIsNotAdmin \$ReviewServiceAccount/);
+  assert.match(controlPlane, /must not be a site admin/);
   assert.match(controlPlane, /collaborators\/\$ReviewServiceAccount/);
   assert.doesNotMatch(controlPlane, /\$createReviewUser[\s\S]{0,400}--admin/);
   assert.match(controlPlane, /block_admin_merge_override = \$true/);

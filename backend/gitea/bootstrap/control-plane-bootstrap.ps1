@@ -33,6 +33,22 @@ function Invoke-Kubectl([string[]]$Arguments, [string]$InputText = '') {
   if ($LASTEXITCODE -ne 0) { throw "kubectl failed: $($Arguments -join ' ')" }
 }
 
+function Assert-GiteaUserIsNotAdmin([string]$Username) {
+  $users = (& kubectl @kubectlArgs -n $GiteaNamespace exec -c gitea $giteaPod -- gitea --config /etc/gitea/app.ini admin user list)
+  if ($LASTEXITCODE -ne 0) { throw "Unable to verify Gitea service user: $Username" }
+  $userLine = (($users | Out-String) -split '\r?\n' |
+      Where-Object { $_ -match "^\s*\d+\s+$([regex]::Escape($Username))\s" } |
+      Select-Object -First 1)
+  if (-not $userLine) { throw "Gitea service user was not found after bootstrap: $Username" }
+  $columns = @($userLine.Trim() -split '\s+')
+  if ($columns.Count -lt 5 -or $columns[4] -notin @('true', 'false')) {
+    throw "Unable to determine Gitea site-admin state for service user: $Username"
+  }
+  if ($columns[4] -eq 'true') {
+    throw "Gitea service user must not be a site admin: $Username. Remove its site-admin grant through the Gitea admin API, then retry."
+  }
+}
+
 function New-RandomHex([int]$Bytes = 32) {
   $buffer = New-Object byte[] $Bytes
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -89,6 +105,12 @@ if (-not $reviewToken) {
   if ($LASTEXITCODE -ne 0 -or -not $reviewToken) { throw 'Unable to generate the Gitea review token' }
 }
 
+# Gitea 1.26 removed the former access-changing CLI subcommand. Service users
+# are created without `--admin`; verify that invariant explicitly and fail
+# closed if a legacy installation still grants either account site-admin.
+Assert-GiteaUserIsNotAdmin $ServiceAccount
+Assert-GiteaUserIsNotAdmin $ReviewServiceAccount
+
 if (-not $webhookSecret) { $webhookSecret = New-RandomHex 32 }
 if (-not $reconcilerToken) { $reconcilerToken = New-RandomHex 32 }
 
@@ -131,10 +153,6 @@ if (-not (Test-GiteaApi "/api/v1/orgs/$Organization")) {
 if (-not (Test-GiteaApi "/api/v1/repos/$Organization/$Repository")) {
   Invoke-GiteaPost "/api/v1/orgs/$Organization/repos" @{ name = $Repository; description = 'Reviewed OpenSphere Console desired-state declarations'; private = $true; auto_init = $true; default_branch = 'main'; trust_model = 'collaboratorcommitter' }
 }
-# Existing installations may have created the review user as a site admin. The
-# CLI command is idempotent and makes the least-privilege policy explicit.
-$demoteReviewUser = "set -eu`nexec gitea --config /etc/gitea/app.ini admin user change-access --username '$ReviewServiceAccount' --admin=false"
-Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$demoteReviewUser`n#"
 # Grant the reviewer only repository write/review rights; it must not own the
 # organization or have a Console login path.
 Invoke-GiteaRequest 'PUT' "/api/v1/repos/$Organization/$Repository/collaborators/$ReviewServiceAccount" @{ permission = 'write' }
