@@ -3,7 +3,8 @@ param(
   [string]$Registry = 'ghcr.io/opensphere-platform',
   [string]$SourceRevision = '',
   [string]$Platform = '',
-  [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git'
+  [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git',
+  [switch]$UseExistingRegistryLogin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -140,18 +141,22 @@ try {
   & docker rm $containerName 2>$null | Out-Null
 }
 
-Write-Host '[step 03/06] Authenticate to GHCR without printing credentials'
-$token = (& gh auth token).Trim()
-if (-not $token) {
-  throw 'GitHub CLI did not return an authentication token.'
-}
-try {
-  $token | docker login ghcr.io -u opensphere-platform --password-stdin
-  if ($LASTEXITCODE -ne 0) {
-    throw "docker login failed with exit code $LASTEXITCODE"
+Write-Host '[step 03/06] Confirm GHCR authentication mode'
+if ($UseExistingRegistryLogin) {
+  Write-Host '[auth] Reusing the existing Docker credential for ghcr.io'
+} else {
+  $token = (& gh auth token).Trim()
+  if (-not $token) {
+    throw 'GitHub CLI did not return an authentication token.'
   }
-} finally {
-  Remove-Variable token
+  try {
+    $token | docker login ghcr.io -u opensphere-platform --password-stdin
+    if ($LASTEXITCODE -ne 0) {
+      throw "docker login failed with exit code $LASTEXITCODE"
+    }
+  } finally {
+    Remove-Variable token
+  }
 }
 
 $images = @(
@@ -170,7 +175,7 @@ $images = @(
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
 
-Write-Host "[step 04/06] Build and push $($images.Count) multi-platform images"
+Write-Host "[step 04/06] Build and push $($images.Count) host-native images"
 $digests = [ordered]@{}
 for ($index = 0; $index -lt $images.Count; $index += 1) {
   $item = $images[$index]
