@@ -37,7 +37,7 @@ spec:
         - name: shell
           # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
           # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console@sha256:<digest>로 고정.
-          image: ghcr.io/opensphere-platform/opensphere-console@sha256:fa818cf8e55afbc302abd606aa339301fac17ff490b188f5f637530e14659c51
+          image: ghcr.io/opensphere-platform/opensphere-console@sha256:925dcd2a092a243ec1162f04faf7d1984095a8e380b568f4aaf81b61544f32dc
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
