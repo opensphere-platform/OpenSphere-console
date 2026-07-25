@@ -2,28 +2,6 @@ name: Publish Console Edge Images
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - Dockerfile
-      - package.json
-      - package-lock.json
-      - angular.json
-      - tsconfig*.json
-      - public/**
-      - src/**
-      - nginx/**
-      - backend/opensphere-console-backend/**
-      - backend/dupa-control/**
-      - backend/opensphere-console-oaa-gateway/**
-      - backend/oaa-governed-adapter/**
-      - backend/notification-dispatcher/**
-      - backend/os-cli/**
-      - backend/supabase/**
-      - backend/gitea/**
-      - backend/recovery/**
-      - deploy/**
-      - .github/workflows/publish-edge-images.yml
 
 permissions:
   contents: read
@@ -217,9 +195,9 @@ jobs:
           file: ${{ matrix.file }}
           build-contexts: |
             macos-cli=${{ runner.temp }}/opensphere-cli-macos
-          # Setup supports Linux amd64 and arm64 nodes.  The release digest is
-          # a multi-platform index, so each cluster pulls its native manifest.
-          platforms: linux/amd64,linux/arm64
+          # Edge is a local Docker Desktop development channel. It is amd64 only;
+          # source pushes must not invoke this manual fallback workflow.
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -352,7 +330,7 @@ jobs:
             --arg releaseTag "$release_tag" \
             --arg source 'https://github.com/opensphere-platform/OpenSphere-console' \
             --arg sourceRevision "$GITHUB_SHA" \
-            --argjson supportedPlatforms '["linux/amd64", "linux/arm64"]' \
+            --argjson supportedPlatforms '["linux/amd64"]' \
             --argjson components "$components" \
             '{apiVersion: $apiVersion, kind: $kind, channel: $channel, status: $status, releaseTag: $releaseTag,
               source: $source, sourceRevision: $sourceRevision,
