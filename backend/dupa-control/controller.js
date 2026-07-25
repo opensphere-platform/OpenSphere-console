@@ -33,6 +33,10 @@ const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단,
 const MODULE_DESCRIPTOR_LABEL = 'io.opensphere.module.descriptor';
 const MODULE_SIGNATURE_LABEL = 'io.opensphere.module.descriptor.signature';
 const MODULE_KEY_ID_LABEL = 'io.opensphere.module.descriptor.key-id';
+const BUILD_AUTHORITY_LABEL = 'opensphere.io/build-authority';
+const RELEASE_CLASS_LABEL = 'opensphere.io/release-class';
+const GA_ELIGIBLE_LABEL = 'opensphere.io/ga-eligible';
+const EDGE_CHANNEL_LABEL = 'io.opensphere.channel';
 const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1', 'cluster-infrastructure-manager-v1']);
 const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)(?:@sha256:([a-f0-9]{64})|:(edge|candidate|stable))$/;
 const OCI_ACCEPT = [
@@ -1074,12 +1078,37 @@ async function readModuleLabels(repositoryPath, manifest, expectedManifestDigest
     keyId: labels[MODULE_KEY_ID_LABEL],
     source: labels['org.opencontainers.image.source'],
     revision: labels['org.opencontainers.image.revision'] || labels['io.opensphere.source-revision'],
+    buildAuthority: labels[BUILD_AUTHORITY_LABEL],
+    releaseClass: labels[RELEASE_CLASS_LABEL],
+    gaEligible: labels[GA_ELIGIBLE_LABEL],
+    channel: labels[EDGE_CHANNEL_LABEL],
+    imagePlatform: config?.os && config?.architecture ? `${config.os}/${config.architecture}` : '',
     authenticated: configFetched.authenticated,
   };
 }
 function governedSourceRepository(source) {
   const match = /^https:\/\/github\.com\/(opensphere-platform\/[A-Za-z0-9._-]+)$/.exec(String(source || ''));
   return match?.[1] || '';
+}
+function localEdgeMetadataIssues(channel, platformLabels) {
+  const entries = Array.isArray(platformLabels) ? platformLabels : [];
+  const issues = [];
+  if (channel !== 'edge') issues.push('local artifact must resolve from the edge channel');
+  if (entries.length !== 1) issues.push('local edge must contain exactly one runnable platform');
+  const entry = entries[0] || {};
+  const platform = String(entry.imagePlatform || entry.platform || '');
+  if (!['linux/amd64', 'linux/arm64'].includes(platform)) issues.push('local edge platform must be linux/amd64 or linux/arm64');
+  if (String(entry.buildAuthority || '') !== 'localhost') issues.push('local edge build authority must be localhost');
+  if (String(entry.releaseClass || '') !== 'pre-ga') issues.push('local edge release class must be pre-ga');
+  if (String(entry.gaEligible || '') !== 'false') issues.push('local edge must not be GA eligible');
+  if (String(entry.channel || '') !== 'edge') issues.push('local edge image must declare the edge channel');
+  return issues;
+}
+function localEdgeEvidenceRefs(image) {
+  return [
+    `oci:${image}#p256-module-signature`,
+    `oci:${image}#local-edge-build-metadata`,
+  ];
 }
 function attestationArguments(image, repository, predicateType) {
   return [
@@ -1121,6 +1150,23 @@ async function verifySupplyChainAttestations(image, repository) {
   await verifyAttestation(image, repository, ATTESTATION_PREDICATES.sbom, 'ImageSbomInvalid');
   return { provenance: 'Verified', sbom: 'Verified' };
 }
+async function channelPlatformStatus(repositoryPath, manifest, digest, channel) {
+  const children = runnablePlatformManifests(manifest);
+  if (channel !== 'edge') {
+    return Array.isArray(manifest?.manifests)
+      && ['amd64', 'arm64'].every((architecture) => children.some((entry) => entry.platform.architecture === architecture));
+  }
+  if (Array.isArray(manifest?.manifests)) {
+    if (children.length !== 1) return false;
+    const child = children[0];
+    const childManifest = await fetchImageManifest(repositoryPath, child.digest);
+    if (childManifest.digest !== child.digest) return false;
+    const labels = await readModuleLabels(repositoryPath, childManifest.manifest, child.digest);
+    return ['linux/amd64', 'linux/arm64'].includes(labels.imagePlatform || `${child.platform.os}/${child.platform.architecture}`);
+  }
+  const labels = await readModuleLabels(repositoryPath, manifest, digest);
+  return ['linux/amd64', 'linux/arm64'].includes(labels.imagePlatform);
+}
 async function assertImageNotRevoked(repository, digest) {
   const revocation = await findImageRevocation(repository, digest);
   if (revocation) throw Object.assign(new Error(`image digest was revoked: ${revocation.reason}`), { code: 409, reason: 'ImageRevoked', revocation });
@@ -1139,9 +1185,8 @@ async function installedChannelStatus(pkg) {
     if (!channel) return { channelState: 'Current', currentChannelDigest: installedDigest, channelCheckedAt: checkedAt, channelReason: '' };
     const parsed = parseModuleImageReference(`${repository}:${channel}`);
     const current = await fetchImageManifest(parsed.repositoryPath, channel);
-    const channelPlatforms = runnablePlatformManifests(current.manifest).map((entry) => entry.platform.architecture);
-    if (!Array.isArray(current.manifest?.manifests) || !['amd64', 'arm64'].every((architecture) => channelPlatforms.includes(architecture))) {
-      throw Object.assign(new Error('channel image is not a complete amd64/arm64 index'), { reason: 'IncompleteChannelPlatforms' });
+    if (!await channelPlatformStatus(parsed.repositoryPath, current.manifest, current.digest, channel)) {
+      throw Object.assign(new Error(channel === 'edge' ? 'edge image is not a single runnable host-native platform' : 'channel image is not a complete amd64/arm64 index'), { reason: 'IncompleteChannelPlatforms' });
     }
     const channelRevocation = await findImageRevocation(repository, current.digest);
     if (channelRevocation) return {
@@ -1169,7 +1214,7 @@ async function inspectModuleImage(image) {
     if (!children.length) throw Object.assign(new Error('multi-platform image has no supported linux/amd64 or linux/arm64 manifest'), { code: 422, reason: 'UnsupportedImagePlatforms' });
     const architectures = children.map((entry) => entry.platform.architecture);
     if (new Set(architectures).size !== architectures.length) throw Object.assign(new Error('multi-platform image contains duplicate runnable platform manifests'), { code: 422, reason: 'AmbiguousImagePlatforms' });
-    if (parsed.channel && !['amd64', 'arm64'].every((architecture) => architectures.includes(architecture))) {
+    if (parsed.channel && parsed.channel !== 'edge' && !['amd64', 'arm64'].every((architecture) => architectures.includes(architecture))) {
       throw Object.assign(new Error('channel image must publish both linux/amd64 and linux/arm64'), { code: 422, reason: 'IncompleteChannelPlatforms' });
     }
     for (const child of children) {
@@ -1178,16 +1223,17 @@ async function inspectModuleImage(image) {
       if (childManifest.digest !== child.digest) throw Object.assign(new Error('platform manifest digest mismatch'), { code: 422, reason: 'ImageDigestMismatch' });
       const labels = await readModuleLabels(parsed.repositoryPath, childManifest.manifest, child.digest);
       registryCredentialsRequired ||= labels.authenticated === true;
+      if (labels.imagePlatform && labels.imagePlatform !== `${child.platform.os}/${child.platform.architecture}`) throw Object.assign(new Error('platform config differs from OCI index platform'), { code: 422, reason: 'PlatformMetadataDrift' });
       platformLabels.push({
         platform: `${child.platform.os}/${child.platform.architecture}`,
         ...labels,
       });
     }
   } else {
-    if (parsed.channel) throw Object.assign(new Error('channel image must be a linux/amd64 and linux/arm64 OCI index'), { code: 422, reason: 'IncompleteChannelPlatforms' });
+    if (parsed.channel && parsed.channel !== 'edge') throw Object.assign(new Error('channel image must be a linux/amd64 and linux/arm64 OCI index'), { code: 422, reason: 'IncompleteChannelPlatforms' });
     const labels = await readModuleLabels(parsed.repositoryPath, resolved.manifest, resolved.digest);
     registryCredentialsRequired ||= labels.authenticated === true;
-    platformLabels.push({ platform: 'single', ...labels });
+    platformLabels.push({ platform: labels.imagePlatform || 'single', ...labels });
   }
   const [{ descriptorText, signature, keyId }] = platformLabels;
   if (!descriptorText || !signature || !keyId) throw Object.assign(new Error('required OpenSphere OCI labels are missing'), { code: 422, reason: 'ModuleLabelsMissing' });
@@ -1206,9 +1252,23 @@ async function inspectModuleImage(image) {
   if (!sourceRepository || !/^[a-f0-9]{40}$/.test(String(platformLabels[0].revision || ''))) {
     throw Object.assign(new Error('governed source repository or full source revision is missing'), { code: 422, reason: 'ImageSourceInvalid' });
   }
+  const declaredChannel = parsed.channel || String(platformLabels[0].channel || '');
+  if (parsed.channel && platformLabels.some((entry) => entry.channel && entry.channel !== parsed.channel)) {
+    throw Object.assign(new Error('requested channel differs from image channel metadata'), { code: 422, reason: 'ImageChannelDrift' });
+  }
+  const localEdgeClaimed = platformLabels.some((entry) => String(entry.buildAuthority || '') === 'localhost');
+  const localEdgeIssues = localEdgeClaimed ? localEdgeMetadataIssues(declaredChannel, platformLabels) : [];
+  if (localEdgeClaimed && localEdgeIssues.length) {
+    throw Object.assign(new Error(`local edge metadata rejected: ${localEdgeIssues.join('; ')}`), { code: 422, reason: 'LocalEdgeMetadataInvalid', issues: localEdgeIssues });
+  }
+  if (declaredChannel === 'edge' && platformLabels.length !== 1) {
+    throw Object.assign(new Error('edge image must contain exactly one host-native runnable platform'), { code: 422, reason: 'IncompleteChannelPlatforms' });
+  }
   const resolvedImage = `${parsed.repository}@${resolved.digest}`;
   await assertImageNotRevoked(parsed.repository, resolved.digest);
-  const supplyChain = await verifySupplyChainAttestations(resolvedImage, sourceRepository);
+  const supplyChain = localEdgeClaimed
+    ? { provenance: 'LocalEdgeSigned', sbom: 'NotRequiredLocalEdge' }
+    : await verifySupplyChainAttestations(resolvedImage, sourceRepository);
   const resolvedAt = new Date().toISOString();
   return {
     image: resolvedImage,
@@ -1221,6 +1281,7 @@ async function inspectModuleImage(image) {
     revision: platformLabels[0].revision,
     registryCredentialsRequired,
     descriptor,
+    evidenceRefs: localEdgeClaimed ? localEdgeEvidenceRefs(resolvedImage) : [`oci:${resolvedImage}#slsa-provenance`, `oci:${resolvedImage}#spdx-sbom`],
     verification: { registry: 'ghcr.io', digest: 'Verified', descriptor: 'Verified', signature: 'Verified', ...supplyChain, permissionProfile: descriptor.permissionProfile, platforms: platformLabels.map((entry) => entry.platform) },
   };
 }
@@ -1243,7 +1304,9 @@ function packageFromInspection(inspection) {
         revision: inspection.revision,
         signatureIdentity: d.trust.keyId,
         registryCredentialsRequired: inspection.registryCredentialsRequired === true,
-        evidenceRefs: [`oci:${inspection.image}#slsa-provenance`, `oci:${inspection.image}#spdx-sbom`],
+        evidenceRefs: Array.isArray(inspection.evidenceRefs) && inspection.evidenceRefs.length >= 2
+          ? inspection.evidenceRefs
+          : [`oci:${inspection.image}#slsa-provenance`, `oci:${inspection.image}#spdx-sbom`],
       },
       nav: d.nav || { band: d.kind === 'subShell' ? '구축 Build' : 'Extensions', label: d.displayName },
       manifest: d.manifest, trust: d.trust, shellCompat: d.shellCompat, permissions: d.permissions,
@@ -2658,5 +2721,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, verifiedActivatedRegistration, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
 }

@@ -41,7 +41,7 @@ test('pre-GA accepts local builds without making them GA eligible', () => {
   assert.equal(preGa.promotionToGa.sourceRevisionMayBeRebuilt, true);
 });
 
-test('policy covers subShells and records declaration-only enforcement', () => {
+test('policy covers subShells and records the enforced local edge admission boundary', () => {
   assert.ok(policy.spec.scope.artifacts.includes('subshell-runtime-images'));
   assert.ok(policy.spec.scope.artifacts.includes('plugin-runtime-images'));
   assert.deepEqual(policy.spec.requiredArtifactAnnotations, [
@@ -49,7 +49,15 @@ test('policy covers subShells and records declaration-only enforcement', () => {
     'opensphere.io/release-class',
     'opensphere.io/ga-eligible',
   ]);
-  assert.equal(policy.metadata.state, 'declared');
-  assert.equal(policy.spec.enforcement.phase, 'declaration-only');
-  assert.equal(policy.spec.enforcement.runtimeAdmissionUnchanged, true);
+  assert.equal(policy.metadata.state, 'edge-admission-enforced');
+  assert.equal(policy.spec.enforcement.phase, 'edge-channel-aware-admission');
+  assert.equal(policy.spec.enforcement.runtimeAdmissionUnchanged, false);
+  assert.deepEqual(policy.spec.enforcement.localEdge, {
+    channel: 'edge',
+    platformMode: 'host-native-single',
+    requiredBuildAuthority: 'localhost',
+    requiredReleaseClass: 'pre-ga',
+    gaEligible: false,
+    evidence: ['immutable-digest', 'trusted-p256-module-signature', 'local-edge-build-metadata'],
+  });
 });

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -45,6 +45,20 @@ test('binds attestations to an OpenSphere repository main-branch workflow', () =
   assert.ok(args.includes('opensphere-platform/OpenSphere-shell-foundation/.github/workflows/publish-image.yml'));
   assert.ok(args.includes('refs/heads/main'));
   assert.ok(args.includes('--deny-self-hosted-runners'));
+});
+
+test('local edge admits only one signed host-native pre-GA image and records truthful evidence', () => {
+  const localEdge = [{
+    platform: 'linux/amd64', imagePlatform: 'linux/amd64', channel: 'edge',
+    buildAuthority: 'localhost', releaseClass: 'pre-ga', gaEligible: 'false',
+  }];
+  assert.deepEqual(localEdgeMetadataIssues('edge', localEdge), []);
+  assert.ok(localEdgeMetadataIssues('candidate', localEdge).length > 0);
+  assert.ok(localEdgeMetadataIssues('edge', [{ ...localEdge[0], gaEligible: 'true' }]).length > 0);
+  assert.ok(localEdgeMetadataIssues('edge', [...localEdge, localEdge[0]]).length > 0);
+  const refs = localEdgeEvidenceRefs('ghcr.io/opensphere-platform/opensphere-shell-cluster-manager@sha256:' + 'a'.repeat(64));
+  assert.equal(refs.length, 2);
+  assert.ok(refs.every((ref) => !ref.includes('slsa-provenance') && !ref.includes('spdx-sbom')));
 });
 
 test('accepts only OpenSphere digest or governed channel image references', () => {

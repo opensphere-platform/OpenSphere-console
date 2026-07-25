@@ -1,6 +1,6 @@
 # Release build authority policy
 
-Status: Accepted, declaration-only  
+Status: Accepted, edge admission enforced
 Effective date: 2026-07-24  
 Machine-readable authority: `backend/release/policies/build-authority-policy.json`
 
@@ -54,19 +54,23 @@ implemented:
 - `opensphere.io/ga-eligible`: `false` for local/pre-GA output, `true` only after
   the GA workflow completes
 
-## Implementation boundary
+## Implemented edge admission boundary
 
-This decision is recorded before behavior is changed. The current installer,
-controller admission logic, and publishing workflows remain unchanged in this
-commit. The next implementation phase must:
+The Console Extension Controller enforces this policy for local subShell and
+plugin `edge` installs.
 
-1. emit and retain the required build annotations;
-2. allow unsigned/local artifacts only for explicitly selected pre-GA operation;
-3. keep fail-closed verification for `ga`;
-4. add a dedicated GA rebuild and publication workflow; and
-5. prevent tag mutation or digest reuse from pre-GA into GA.
-6. enforce single host-native platform for `edge` and the complete supported
-   platform set for `candidate`, `stable`, and `ga`.
+1. The image must resolve to one immutable digest and one runnable host-native
+   platform (`linux/amd64` or `linux/arm64`).
+2. Its signed module descriptor must pass the trusted P-256 verification and
+   its source revision must be a full governed Git revision.
+3. The image must carry `build-authority=localhost`, `release-class=pre-ga`,
+   `ga-eligible=false`, and the `edge` channel annotation.
+4. Revocation remains fail-closed. The local path records P-256 descriptor and
+   local-edge build metadata evidence; it never mislabels that evidence as a
+   GitHub SLSA provenance or SPDX SBOM attestation.
+5. `candidate` and `stable` retain their complete amd64/arm64 requirement and
+   the existing GitHub attestation verification path.
 
-Until that phase is complete, this document is the accepted target policy, not a
-claim that channel-aware runtime enforcement has already shipped.
+This narrow exception is deliberately unavailable to `ga`, to non-edge
+channels, to multi-platform local images, and to images without the required
+build annotations.

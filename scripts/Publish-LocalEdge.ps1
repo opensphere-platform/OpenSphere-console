@@ -119,7 +119,8 @@ Invoke-Checked git clone --depth 1 --branch main $SdkRepository $sdkCheckout
 Write-Host '[step 02/06] Reuse signed macOS CLI only when CLI source is unchanged'
 $currentEdge = "${Registry}/opensphere-console:edge"
 Invoke-Checked docker pull $currentEdge
-$priorRevision = (& docker image inspect $currentEdge --format '{{ index .Config.Labels "io.opensphere.source-revision" }}').Trim()
+$sourceRevisionTemplate = '{{ index .Config.Labels "io.opensphere.source-revision" }}'
+$priorRevision = (& docker image inspect $currentEdge --format $sourceRevisionTemplate).Trim()
 if ($priorRevision -notmatch '^[0-9a-f]{40}$') {
   throw "Current edge image has no canonical source revision: $currentEdge"
 }

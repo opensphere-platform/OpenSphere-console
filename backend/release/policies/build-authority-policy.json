@@ -4,7 +4,7 @@
   "metadata": {
     "name": "opensphere-release-build-authority",
     "effectiveFrom": "2026-07-24",
-    "state": "declared"
+    "state": "edge-admission-enforced"
   },
   "spec": {
     "scope": {
@@ -90,9 +90,21 @@
       }
     },
     "enforcement": {
-      "phase": "declaration-only",
-      "runtimeAdmissionUnchanged": true,
-      "nextPhase": "implement-build-metadata-and-channel-aware-admission"
+      "phase": "edge-channel-aware-admission",
+      "runtimeAdmissionUnchanged": false,
+      "localEdge": {
+        "channel": "edge",
+        "platformMode": "host-native-single",
+        "requiredBuildAuthority": "localhost",
+        "requiredReleaseClass": "pre-ga",
+        "gaEligible": false,
+        "evidence": [
+          "immutable-digest",
+          "trusted-p256-module-signature",
+          "local-edge-build-metadata"
+        ]
+      },
+      "nextPhase": "candidate-stable-multi-platform-local-admission"
     }
   }
 }

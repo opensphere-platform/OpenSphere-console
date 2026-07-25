@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const workflow = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'publish-edge-images.yml'), 'utf8');
 const angularConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'angular.json'), 'utf8'));
+const localEdgePublisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
 
 test('edge is advanced only after every immutable console component is verified', () => {
   const matrixMetadata = workflow.slice(workflow.indexOf('      - name: Image metadata'), workflow.indexOf('      - name: Build and push'));
@@ -64,6 +65,11 @@ test('edge workflow is manual and its fallback images are amd64 only', () => {
     'opensphere-console-gitea-postgres',
   ]);
   assert.deepEqual(componentKeyBlocks, [releaseComponents, releaseComponents.slice(1)]);
+});
+
+test('Windows local edge publisher preserves the dotted OCI label key as one Docker argument', () => {
+  assert.match(localEdgePublisher, /\$sourceRevisionTemplate = '\{\{ index \.Config\.Labels "io\.opensphere\.source-revision" \}\}'/);
+  assert.match(localEdgePublisher, /docker image inspect \$currentEdge --format \$sourceRevisionTemplate/);
 });
 
 test('public Console edge workflow reads private Setup through a dedicated read-only secret', () => {
