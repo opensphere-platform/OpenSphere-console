@@ -45,6 +45,7 @@ __screenshots__/
 Thumbs.db
 
 # Local build and verification artifacts
+/.codex-tmp/
 /Dockerfile.local
 /Dockerfile.local.dockerignore
 /backend/os-cli/*.exe
