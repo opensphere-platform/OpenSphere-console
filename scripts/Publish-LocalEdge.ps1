@@ -66,6 +66,21 @@ if ($SourceRevision -notmatch '^[0-9a-f]{40}$') {
   throw 'SourceRevision must be a full lowercase Git commit.'
 }
 
+if ($env:OS -ne 'Windows_NT') {
+  throw 'Local edge publishing is supported only from the Windows amd64 Docker Desktop development host.'
+}
+
+$kubeContext = (& kubectl config current-context).Trim()
+if ($kubeContext -ne 'docker-desktop') {
+  throw "Local edge deployment requires Kubernetes context docker-desktop; received: $kubeContext"
+}
+$nodeArchitectures = @(& kubectl get nodes -o 'jsonpath={range .items[*]}{.status.nodeInfo.architecture}{"\n"}{end}') |
+  ForEach-Object { $_ -split "`n" } |
+  Where-Object { $_ }
+if (-not $nodeArchitectures -or ($nodeArchitectures | Where-Object { $_ -ne 'amd64' })) {
+  throw "Every docker-desktop Kubernetes node must be amd64; received: $($nodeArchitectures -join ',')"
+}
+
 if (-not $Platform) {
   $dockerOs = (& docker info --format '{{.OSType}}').Trim().ToLowerInvariant()
   $dockerArch = (& docker info --format '{{.Architecture}}').Trim().ToLowerInvariant()
@@ -76,8 +91,8 @@ if (-not $Platform) {
   }
   $Platform = "$dockerOs/$dockerArch"
 }
-if ($Platform -notmatch '^linux/(amd64|arm64)$') {
-  throw "Edge requires exactly one supported host-native platform; received: $Platform"
+if ($Platform -ne 'linux/amd64') {
+  throw "Windows local edge requires exactly linux/amd64; received: $Platform"
 }
 
 $dirty = & git -C $repoRoot status --short
@@ -193,6 +208,7 @@ for ($index = 0; $index -lt $images.Count; $index += 1) {
     '--label', 'io.opensphere.channel=edge',
     '--label', "io.opensphere.source-revision=$SourceRevision",
     '--label', "io.opensphere.release-tag=$releaseTag",
+    '--label', "org.opencontainers.image.version=$releaseTag",
     '--label', 'opensphere.io/build-authority=localhost',
     '--label', 'opensphere.io/release-class=pre-ga',
     '--label', 'opensphere.io/ga-eligible=false',

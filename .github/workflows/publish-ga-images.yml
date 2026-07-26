@@ -1,4 +1,4 @@
-name: Publish Console Edge Images
+name: Publish Console GA Images
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
   artifact-metadata: write
 
 concurrency:
-  group: console-edge-images
+  group: console-ga-images
   cancel-in-progress: false
 
 jobs:
@@ -177,6 +177,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Calculate official KST version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_epoch="$(git -C OpenSphere-console show -s --format=%ct "$GITHUB_SHA")"
+          release_tag="$(TZ=Asia/Seoul date -d "@$release_epoch" +%Y%m%d%H%M)"
+          [[ "$release_tag" =~ ^[0-9]{12}$ ]]
+          echo "version=$release_tag" >> "$GITHUB_OUTPUT"
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -185,8 +194,13 @@ jobs:
           tags: |
             type=sha,prefix=sha-
           labels: |
-            io.opensphere.channel=edge
+            io.opensphere.channel=ga
             io.opensphere.source-revision=${{ github.sha }}
+            io.opensphere.release-tag=${{ steps.release.outputs.version }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            opensphere.io/build-authority=github-actions
+            opensphere.io/release-class=ga
+            opensphere.io/ga-eligible=true
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
@@ -195,9 +209,9 @@ jobs:
           file: ${{ matrix.file }}
           build-contexts: |
             macos-cli=${{ runner.temp }}/opensphere-cli-macos
-          # Edge is a local Docker Desktop development channel. It is amd64 only;
-          # source pushes must not invoke this manual fallback workflow.
-          platforms: linux/amd64
+          # GA is built only by the approved GitHub workflow with the complete
+          # supported architecture set and supply-chain evidence.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -241,10 +255,10 @@ jobs:
 
   # A channel must represent a complete console release, not whichever matrix
   # member happened to finish first. The matrix publishes only an immutable
-  # source tag; this job advances mutable edge tags after all attestations.
+  # source tag; this job advances mutable GA tags after all attestations.
   # Readers reject any short GHCR tag-propagation window rather than installing
   # a mixed revision.
-  publish-edge:
+  publish-ga:
     needs: [publish]
     runs-on: ubuntu-latest
     steps:
@@ -325,12 +339,12 @@ jobs:
           jq -n \
             --arg apiVersion 'release.opensphere.io/v1alpha1' \
             --arg kind 'OpenSphereReleaseBOM' \
-            --arg channel 'edge' \
+            --arg channel 'ga' \
             --arg status 'Active' \
             --arg releaseTag "$release_tag" \
             --arg source 'https://github.com/opensphere-platform/OpenSphere-console' \
             --arg sourceRevision "$GITHUB_SHA" \
-            --argjson supportedPlatforms '["linux/amd64"]' \
+            --argjson supportedPlatforms '["linux/amd64","linux/arm64"]' \
             --argjson components "$components" \
             '{apiVersion: $apiVersion, kind: $kind, channel: $channel, status: $status, releaseTag: $releaseTag,
               source: $source, sourceRevision: $sourceRevision,
@@ -353,7 +367,7 @@ jobs:
           predicate-path: ${{ runner.temp }}/opensphere-release-bom.json
           push-to-registry: true
 
-      - name: Advance edge with Console anchor last
+      - name: Advance GA with Console anchor last
         env:
           RELEASE_TAG: ${{ steps.release-bom.outputs.release-tag }}
         run: |
@@ -406,25 +420,25 @@ jobs:
             repository="ghcr.io/opensphere-platform/$image"
             digest="$(jq -r --arg key "$key" '.components[$key].image | split("@")[1]' "$bom")"
             publish_immutable_tag "$repository" "$digest"
-            crane tag "$repository@$digest" edge
+            crane tag "$repository@$digest" ga
           done
 
           # This is the atomic publication point. If any earlier step fails,
-          # Console:edge still anchors the previous complete signed BOM.
+          # Console:ga still anchors the previous complete signed BOM.
           anchor_digest="$(jq -r '.components.console.image | split("@")[1]' "$bom")"
           anchor_repository="ghcr.io/opensphere-platform/opensphere-console"
           publish_immutable_tag "$anchor_repository" "$anchor_digest"
-          crane tag "$anchor_repository@$anchor_digest" edge
+          crane tag "$anchor_repository@$anchor_digest" ga
 
           for key in $(jq -r '.components | keys[]' "$bom"); do
             image="$(jq -r --arg key "$key" '.components[$key].repository' "$bom")"
             repository="ghcr.io/opensphere-platform/$image"
             expected="$(jq -r --arg key "$key" '.components[$key].image | split("@")[1]' "$bom")"
             test "$(crane digest "$repository:$RELEASE_TAG")" = "$expected"
-            actual="$(crane digest "$repository:edge")"
+            actual="$(crane digest "$repository:ga")"
             if [[ "$actual" != "$expected" ]]; then
-              echo "$repository:edge resolved to $actual, expected $expected" >&2
+              echo "$repository:ga resolved to $actual, expected $expected" >&2
               exit 1
             fi
-            echo "- \`$image:edge\` → \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- \`$image:ga\` → \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
           done

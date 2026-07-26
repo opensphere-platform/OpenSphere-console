@@ -3,8 +3,9 @@
   "kind": "ReleaseBuildAuthorityPolicy",
   "metadata": {
     "name": "opensphere-release-build-authority",
-    "effectiveFrom": "2026-07-24",
-    "state": "edge-admission-enforced"
+    "effectiveFrom": "2026-07-26",
+    "state": "edge-ga-authority-enforced",
+    "authority": "_DOCS_/01-CONSTITUTION/CONSTITUTION-0005-OCI-IMAGE-CHANNEL-PROMOTION-INSTALLATION-POLICY.md"
   },
   "spec": {
     "scope": {
@@ -18,14 +19,34 @@
       ]
     },
     "releaseClasses": {
+      "edge": {
+        "tags": ["edge"],
+        "officialDistribution": false,
+        "allowedBuildAuthorities": ["localhost"],
+        "localBuildAllowed": true,
+        "requiredHost": "windows-amd64-docker-desktop",
+        "requiredPlatform": "linux/amd64",
+        "requiredPublication": [
+          "ghcr-immutable-digest",
+          "kst-yyyyMMddHHmm-version",
+          "edge-channel-tag"
+        ]
+      },
+      "preGa": {
+        "tags": ["candidate", "stable"],
+        "officialDistribution": false,
+        "allowedBuildAuthorities": ["github-actions"],
+        "localBuildAllowed": false,
+        "evidenceMode": "required",
+        "promotionToGa": {
+          "retagArtifact": false,
+          "sourceRevisionMayBeRebuilt": true
+        }
+      },
       "ga": {
-        "tags": [
-          "ga"
-        ],
+        "tags": ["ga"],
         "officialDistribution": true,
-        "allowedBuildAuthorities": [
-          "github-actions"
-        ],
+        "allowedBuildAuthorities": ["github-actions"],
         "localBuildAllowed": false,
         "requiredEvidence": [
           "immutable-digest",
@@ -37,74 +58,65 @@
           "retagPreGaArtifact": false,
           "rebuildFromSourceInGaWorkflow": true
         }
-      },
-      "preGa": {
-        "tags": [
-          "edge",
-          "candidate",
-          "stable"
-        ],
-        "officialDistribution": false,
-        "allowedBuildAuthorities": [
-          "localhost",
-          "github-actions"
-        ],
-        "localBuildAllowed": true,
-        "evidenceMode": "advisory",
-        "promotionToGa": {
-          "retagArtifact": false,
-          "sourceRevisionMayBeRebuilt": true
-        }
       }
     },
     "requiredArtifactAnnotations": [
       "opensphere.io/build-authority",
       "opensphere.io/release-class",
-      "opensphere.io/ga-eligible"
+      "opensphere.io/ga-eligible",
+      "io.opensphere.release-tag",
+      "org.opencontainers.image.version"
     ],
+    "officialVersion": {
+      "pattern": "^[0-9]{12}$",
+      "format": "yyyyMMddHHmm",
+      "timezone": "Asia/Seoul",
+      "displayField": "artifactVersion",
+      "compatibilityField": "compatibilityVersion",
+      "forbiddenOfficialExamples": ["v0.2.2-edge.2", "0.2.2-edge.2", "latest"]
+    },
     "platformPolicy": {
       "edge": {
-        "mode": "host-native-single",
-        "description": "Build only the current development host's Kubernetes node platform."
+        "mode": "windows-amd64-local-single",
+        "requiredPlatforms": ["linux/amd64"]
       },
       "candidate": {
         "mode": "multi-platform",
-        "requiredPlatforms": [
-          "linux/amd64",
-          "linux/arm64"
-        ]
+        "requiredPlatforms": ["linux/amd64", "linux/arm64"]
       },
       "stable": {
         "mode": "multi-platform",
-        "requiredPlatforms": [
-          "linux/amd64",
-          "linux/arm64"
-        ]
+        "requiredPlatforms": ["linux/amd64", "linux/arm64"]
       },
       "ga": {
         "mode": "multi-platform",
-        "requiredPlatforms": [
-          "linux/amd64",
-          "linux/arm64"
-        ]
+        "requiredPlatforms": ["linux/amd64", "linux/arm64"]
       }
     },
     "enforcement": {
-      "phase": "edge-channel-aware-admission",
+      "phase": "edge-ga-authority-enforced",
       "runtimeAdmissionUnchanged": false,
       "localEdge": {
         "channel": "edge",
-        "platformMode": "host-native-single",
+        "platformMode": "windows-amd64-local-single",
+        "requiredPlatform": "linux/amd64",
+        "requiredHost": "windows-amd64-docker-desktop",
         "requiredBuildAuthority": "localhost",
         "requiredReleaseClass": "pre-ga",
         "gaEligible": false,
         "evidence": [
           "immutable-digest",
           "trusted-p256-module-signature",
-          "local-edge-build-metadata"
+          "local-edge-build-metadata",
+          "ghcr-publication",
+          "kst-yyyyMMddHHmm-version",
+          "edge-channel-tag"
         ]
       },
-      "nextPhase": "candidate-stable-multi-platform-local-admission"
+      "channelUniqueness": {
+        "mapping": "(canonical-image-id, channel) -> exactly-one canonical repository digest",
+        "failClosed": true
+      }
     }
   }
 }
