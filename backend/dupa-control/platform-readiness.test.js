@@ -43,6 +43,31 @@ test('Foundation admission is enforced by API and exposed by Console page', () =
   assert.match(client, /HTTP \$\{r\.status\}\$\{detail/);
 });
 
+test('a PFS plugin stages unconditionally and only its activation waits for the Support Profile', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
+
+  // The admission contract carries the split explicitly, so a client can tell
+  // "may I install?" from "may I turn it on?" instead of inferring it.
+  assert.match(controller, /pfsPluginStageAllowed:\s*true/);
+  assert.match(controller, /pfsPluginActivationAllowed:\s*supportReady/);
+
+  // Installation must not consult the gate. CONSTITUTION-0003 §7.3 forbids
+  // disabling a whole consumer because a collector is missing, and §7.2 holds an
+  // unmet activation dependency as DependencyPending rather than refusing it.
+  const installStart = controller.indexOf("if (p === '/api/admin/extensions/install'");
+  assert.ok(installStart > 0, 'install handler was not located');
+  const installEnd = controller.indexOf('\n    if (p === ', installStart + 1);
+  const install = controller.slice(installStart, installEnd > 0 ? installEnd : undefined);
+  assert.doesNotMatch(install, /return json\(res, 409/, 'installation must not refuse a PFS plugin');
+  assert.match(install, /pfs-plugin-stage/, 'staging a gated plugin must leave durable audit evidence');
+  assert.match(install, /pendingCapabilities/, 'the install response must name what is still missing');
+
+  // The gate moves to activation, in the reconcile loop and on the enable path.
+  assert.match(controller, /\['enable', 'rollback'\]\.includes\(action\)/);
+  assert.match(controller, /reason: 'PlatformSupportProfileIncomplete'/);
+  assert.match(controller, /phase: 'DependencyPending',\s*\n\s*reason: 'PlatformSupportProfileIncomplete'/);
+});
+
 test('Foundation development override is explicit and production fail-closed', () => {
   assert.equal(foundationDevOverrideEnabled({}), false);
   assert.equal(foundationDevOverrideEnabled({ OPENSPHERE_RUNTIME_MODE: 'production', FOUNDATION_ACTIVATION_DEV_OVERRIDE: 'true' }), false);

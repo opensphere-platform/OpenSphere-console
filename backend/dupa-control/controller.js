@@ -1486,6 +1486,13 @@ async function reconcile() {
   await loadTrustedKeys();
   const published = [];
   const regByName = Object.fromEntries(regs.json.items.map((reg) => [reg.metadata.name, reg]));
+  // Support Profile readiness is a whole-platform fact, so it is resolved at most
+  // once per pass and only when a PFS plugin actually asks to be activated.
+  let _readiness;
+  const supportProfileReadiness = async () => {
+    if (_readiness === undefined) _readiness = await platformReadinessStatus();
+    return _readiness;
+  };
 
   for (const reg of regs.json.items) {
     const name = reg.metadata.name;
@@ -1550,6 +1557,24 @@ async function reconcile() {
       if (desired === 'Installed') {
         await updateStatus({ phase: 'Ready', reason: '', retryable: false });
         continue;
+      }
+
+      // A PFS plugin may be installed, verified and staged at any time; only
+      // activation waits for the Platform Support Profile.  CONSTITUTION-0003 §7.2
+      // holds an unmet activation dependency as DependencyPending rather than
+      // refusing the install, and §7.3 forbids disabling a whole consumer because
+      // a collector is absent.  Blocking installation instead left the operator
+      // with a single CLI error and no surface describing what was missing.
+      if (hostRef === FOUNDATION_ID) {
+        const readiness = await supportProfileReadiness();
+        if (!readiness.admission.pfsPluginActivationAllowed) {
+          await updateStatus({
+            phase: 'DependencyPending',
+            reason: 'PlatformSupportProfileIncomplete',
+            retryable: true,
+          });
+          continue;
+        }
       }
 
       // 통과 — registry에 '승인값 전사'(§B.5): manifestSha256/keyId는 controller 계산값이 아니라 CR값
@@ -2199,6 +2224,14 @@ async function platformReadinessStatus() {
       // Compatibility alias for older clients. This gate now means activation,
       // because an immutable, verified workload may be staged before PFS admission.
       foundationInstallAllowed: foundationActivationAllowed,
+      // PFS plugins follow the same stage/activate split as the Foundation
+      // subShell above: an immutable, signature-verified plugin may be installed
+      // and staged so its status surface can report what the platform still
+      // lacks, while activation stays behind the Platform Support Profile.
+      pfsPluginStageAllowed: true,
+      pfsPluginActivationAllowed: supportReady,
+      // Compatibility alias for older clients; like foundationInstallAllowed it
+      // now reports the activation gate, not an installation gate.
       pfsPluginInstallAllowed: supportReady,
       reason: supportReady ? '' : (foundationActivationOverride ? 'DevelopmentOverride' : 'PlatformSupportProfileRequired'),
     },
@@ -2576,20 +2609,20 @@ const server = http.createServer(async (req, res) => {
       try {
         const inspection = await inspectModuleImage(body.image);
         const pkg = packageFromInspection(inspection);
+        // A PFS plugin installs and stages unconditionally; the Platform Support
+        // Profile gates activation, not installation (CONSTITUTION-0003 §7.2/§7.3,
+        // CONSTITUTION-0004 §8.4 — the pre-Established gates cover operand detail,
+        // Claim creation and mutation, and status/remediation surfaces stay open).
+        // Refusing the install left the operator with one CLI error and no surface
+        // naming the missing capability, so the staged registration is now the
+        // thing that reports it.
+        let pendingCapabilities = [];
         if (pkg.spec.hostRef === FOUNDATION_ID) {
-          const readiness = await platformReadinessStatus(req);
-          const currentReg = await getReg(pkg.metadata.name);
-          const verifiedUpdate = currentReg.ok && verifiedActivatedRegistration(currentReg.json);
-          if (!readiness.ready && !verifiedUpdate) {
-            await durableAudit(actor, 'extension-install', pkg.metadata.name, 'denied', 'PlatformSupportProfileRequiredForPfsPlugin', opId);
-            return json(res, 409, {
-              error: 'PlatformSupportProfileRequiredForPfsPlugin',
-              message: 'A new PFS plugin installation requires Platform Support Profile Ready. A verified update is allowed only for an already Activated and Ready plugin.',
-              opId,
-            });
-          }
-          if (!readiness.ready && verifiedUpdate) {
-            await durableAudit(actor, 'pfs-plugin-update-stage', pkg.metadata.name, 'accepted', 'verified Activated release update; new installation gate remains closed', opId);
+          const readiness = await platformReadinessStatus();
+          if (!readiness.admission.pfsPluginActivationAllowed) {
+            pendingCapabilities = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
+            await durableAudit(actor, 'pfs-plugin-stage', pkg.metadata.name, 'accepted',
+              `staged pending Platform Support Profile: ${pendingCapabilities.join(', ') || 'unknown'}`, opId);
           }
         }
         const stored = await upsertPackage(pkg);
@@ -2598,7 +2631,13 @@ const server = http.createServer(async (req, res) => {
         if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
         await durableAudit(actor, 'extension-install', pkg.metadata.name, 'accepted', inspection.image, opId);
         reconcile().catch((e) => console.error('reconcile error', e));
-        return json(res, 202, { accepted: true, id: pkg.metadata.name, desiredState: 'Installed', image: inspection.image, verification: inspection.verification });
+        return json(res, 202, {
+          accepted: true, id: pkg.metadata.name, desiredState: 'Installed',
+          image: inspection.image, verification: inspection.verification,
+          ...(pendingCapabilities.length
+            ? { activation: { allowed: false, reason: 'PlatformSupportProfileIncomplete', pendingCapabilities } }
+            : {}),
+        });
       } catch (e) {
         await durableAudit(actor, 'extension-install', String(body.image || '').slice(0, 160), 'denied', e?.reason || 'InspectionFailed', opId);
         if (e?.reason === 'RegistryCredentialsPropagating') return registryCredentialError(res, e, opId);
@@ -2695,22 +2734,28 @@ const server = http.createServer(async (req, res) => {
           await durableAudit(actor, 'foundation-development-override', id, 'accepted', 'Foundation subShell activation only; PFS plugins remain gated', opId);
         }
       }
-      if (id !== FOUNDATION_ID && ['install', 'enable', 'rollback'].includes(action)) {
+      // Activation is the gate for PFS plugins. Installing and staging one is
+      // always permitted so its status can name what the platform still lacks;
+      // turning it on waits for the Platform Support Profile.
+      if (id !== FOUNDATION_ID && ['enable', 'rollback'].includes(action)) {
         const targetPkg = await getPackage(id);
         if (targetPkg.ok && targetPkg.json?.spec?.hostRef === FOUNDATION_ID) {
-          const readiness = await platformReadinessStatus(req);
+          const readiness = await platformReadinessStatus();
           const targetReg = await getReg(id);
           const verifiedUpdate = action === 'enable' && targetReg.ok && verifiedStagedUpdate(targetReg.json);
-          if (!readiness.ready && !verifiedUpdate) {
+          if (!readiness.admission.pfsPluginActivationAllowed && !verifiedUpdate) {
+            const pending = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
             await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequiredForPfsPlugin', opId);
             return json(res, 409, {
               error: 'PlatformSupportProfileRequiredForPfsPlugin',
-              message: 'PFS plugin lifecycle requires Platform Support Profile Ready. Only activation of a fully verified staged update to an existing plugin is permitted while the gate is closed.',
+              message: 'PFS plugin activation requires Platform Support Profile Ready. The plugin may remain installed and staged; its registration status reports the missing capabilities.',
+              pendingCapabilities: pending,
+              route: '/manage/platform-control',
               opId,
             });
           }
-          if (!readiness.ready && verifiedUpdate) {
-            await durableAudit(actor, 'pfs-plugin-update-activate', id, 'accepted', 'verified staged update; new installation gate remains closed', opId);
+          if (!readiness.admission.pfsPluginActivationAllowed && verifiedUpdate) {
+            await durableAudit(actor, 'pfs-plugin-update-activate', id, 'accepted', 'verified staged update; activation gate remains closed for new plugins', opId);
           }
         }
       }
