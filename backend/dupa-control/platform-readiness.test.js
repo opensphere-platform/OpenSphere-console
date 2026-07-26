@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -13,9 +13,17 @@ test('live condition never infers Ready from a label alone', () => {
   assert.equal(failed.ready, false);
 });
 
-test('deployment readiness requires every desired replica', () => {
-  assert.equal(deploymentReadyResult('n', 'x', { ok: true, json: { spec: { replicas: 2 }, status: { readyReplicas: 1 } } }).ready, false);
-  assert.equal(deploymentReadyResult('n', 'x', { ok: true, json: { spec: { replicas: 2 }, status: { readyReplicas: 2 } } }).ready, true);
+test('deployment readiness requires a fully observed rollout, not ready replicas from the old revision', () => {
+  const converged = {
+    metadata: { generation: 3 },
+    spec: { replicas: 2 },
+    status: { observedGeneration: 3, replicas: 2, updatedReplicas: 2, availableReplicas: 2, readyReplicas: 2 },
+  };
+  assert.equal(deploymentRolloutConverged(converged), true);
+  assert.equal(deploymentRolloutConverged({ ...converged, status: { ...converged.status, observedGeneration: 2 } }), false);
+  assert.equal(deploymentRolloutConverged({ ...converged, status: { ...converged.status, updatedReplicas: 1 } }), false);
+  assert.equal(deploymentRolloutConverged({ ...converged, status: { ...converged.status, replicas: 3 } }), false);
+  assert.equal(deploymentReadyResult('n', 'x', { ok: true, json: converged }).ready, true);
 });
 
 test('HIS status is fail-closed on an unavailable or degraded Cluster Manager response', () => {

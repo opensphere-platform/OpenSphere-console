@@ -249,7 +249,10 @@ spec:
             - { name: opensphere-ghcr-state, mountPath: /var/run/secrets/opensphere-ghcr-state, readOnly: true }
             - { name: verifier-tmp, mountPath: /tmp }
           ports: [{ containerPort: 8080 }]
-          readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
+          # Serving readiness depends on a valid shared extension projection.
+          # /readyz remains the detailed dependency diagnostic and may degrade
+          # without evicting every replica that can still serve the shared LKG.
+          readinessProbe: { httpGet: { path: /serving-readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
           resources:
             requests: { cpu: 50m, memory: 64Mi }

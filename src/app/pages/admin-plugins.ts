@@ -17,6 +17,7 @@ import {
   RegistryCredentialStatus,
   ImageRevocation,
   IntegrationStatus,
+  ExtensionProjectionStatus,
 } from '../core/plugin-control-client.service';
 
 interface EffectiveExtensionState {
@@ -74,14 +75,20 @@ interface TreeNode {
         >
       </clr-alert>
     }
+    @if (dataWarning(); as warning) {
+      <clr-alert clrAlertType="warning" [clrAlertClosable]="false">
+        <clr-alert-item><span class="alert-text">{{ warning }}</span></clr-alert-item>
+      </clr-alert>
+    }
 
     <section class="manage-status-rail" aria-label="Extension 운영 상태">
-      <div><span>Catalog</span><strong>{{ catalog().length }}</strong><small>서명된 패키지</small></div>
-      <div><span>Usable</span><strong class="ok">{{ countUsable() }}</strong><small>현재 세션에서 사용 가능</small></div>
-      <div><span>Waiting</span><strong>{{ countWaiting() }}</strong><small>선행조건·적재 대기</small></div>
-      <div><span>Disabled</span><strong class="neutral">{{ countDisabled() }}</strong><small>운영 제외</small></div>
-      <div><span>Failed</span><strong [class.danger]="countFailed() > 0">{{ countFailed() }}</strong><small>실제 UI·연동 실패</small></div>
-      <div><span>Bindings</span><strong>{{ bindings().length }}</strong><small>headless channels</small></div>
+      <div><span>Catalog</span><strong>{{ catalogMetric() }}</strong><small>검증된 패키지</small></div>
+      <div><span>Published</span><strong>{{ registrationMetric('published') }}</strong><small>서버 Registry 게시</small></div>
+      <div><span>Usable</span><strong class="ok">{{ registrationMetric('usable') }}</strong><small>현재 세션에서 사용 가능</small></div>
+      <div><span>Pending</span><strong>{{ registrationMetric('pending') }}</strong><small>설치·활성화 진행</small></div>
+      <div><span>Disabled</span><strong class="neutral">{{ registrationMetric('disabled') }}</strong><small>운영 제외</small></div>
+      <div><span>Failed</span><strong [class.danger]="failedCount() > 0">{{ registrationMetric('failed') }}</strong><small>UI 적재 실패 포함</small></div>
+      <div><span>Projection</span><strong [class.warn]="projectionStatus()?.state === 'stale'">{{ projectionLabel() }}</strong><small>공유 상태 스냅샷</small></div>
     </section>
 
     <clr-accordion class="management-actions">
@@ -952,6 +959,11 @@ export class AdminPlugins implements OnInit {
   readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
   readonly revocations = signal<ImageRevocation[]>([]);
   readonly foundationActivationAllowed = signal(false);
+  readonly catalogLoaded = signal(false);
+  readonly registrationsLoaded = signal(false);
+  readonly bindingsLoaded = signal(false);
+  readonly projectionStatus = signal<ExtensionProjectionStatus | null>(null);
+  readonly dataWarning = signal<string | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   readonly pendingUninstall = signal<string | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
@@ -1122,11 +1134,15 @@ export class AdminPlugins implements OnInit {
       if (this.ext.loadState() === 'loading') {
         return { label: 'UI 적재 중', detail: menu.reason, tone: 'warning' };
       }
-      return { label: 'UI 등록 실패', detail: menu.reason, tone: 'danger' };
+      return {
+        label: 'UI 활성화 실패',
+        detail: `서버에는 ${phase === 'Activated' ? '게시됐지만' : '준비됐지만'} 현재 브라우저 세션에서 페이지를 등록하지 못했습니다. ${menu.reason}`,
+        tone: 'danger',
+      };
     }
     const pending = rows.filter((x) => x.status.phase === 'DependencyPending');
     if (pending.length) return { label: `${phase} · 연동 대기`, detail: pending.map((x) => x.label).join(', '), tone: 'warning' };
-    return { label: phase === 'Activated' ? 'Activated · 연동 완료' : 'Ready · 활성화 대기', detail: this.integrationSummary(r), tone: phase === 'Activated' ? 'success' : 'warning' };
+    return { label: phase === 'Activated' ? '사용 가능' : '게시 대기', detail: this.integrationSummary(r), tone: phase === 'Activated' ? 'success' : 'warning' };
   }
   statusLayers(r: Registration): StatusLayer[] {
     const verification = r.status.verification;
@@ -1138,9 +1154,9 @@ export class AdminPlugins implements OnInit {
     return [
       { label: '1. Artifact', value: verified ? 'Verified' : verificationValues.length ? '확인 필요' : '미보고', detail: 'manifest · signature · digest · permission', tone: verified ? 'success' : 'warning' },
       { label: '2. Workload', value: workload, detail: 'Pod · Service · health', tone: workload === 'Ready' ? 'success' : workload === 'Degraded' || workload === 'NotReady' ? 'danger' : 'warning' },
-      { label: '3. Registration', value: r.status.phase || '미보고', detail: r.status.reason || 'DUPA lifecycle', tone: r.status.phase === 'Activated' || r.status.phase === 'Ready' ? 'success' : r.status.phase === 'Failed' ? 'danger' : 'warning' },
+      { label: '3. Server publication', value: r.status.phase === 'Activated' ? 'Registry 게시됨' : (r.status.phase || '미보고'), detail: r.status.reason || '서버가 검증된 항목을 Registry에 게시한 상태', tone: r.status.phase === 'Activated' || r.status.phase === 'Ready' ? 'success' : r.status.phase === 'Failed' ? 'danger' : 'warning' },
       { label: '4. Console integration', value: integrationIssue ? '확인 필요' : this.integrationSummary(r), detail: 'page · API · manual · search · observability', tone: integrationIssue ? 'danger' : 'success' },
-      { label: '5. User visibility', value: menu.label, detail: menu.reason, tone: menu.visible ? 'success' : 'warning' },
+      { label: '5. Browser availability', value: menu.label, detail: menu.reason, tone: menu.visible ? 'success' : (r.status.phase === 'Activated' ? 'danger' : 'warning') },
     ];
   }
   /** 검증 실패 사유(reason) 한글 설명. */
@@ -1150,6 +1166,7 @@ export class AdminPlugins implements OnInit {
       UntrustedKey: '신뢰하지 않는 서명 키(keyId)',
       DigestMismatch: 'manifest 해시(sha256) 불일치',
       EntryDigestMismatch: '엔트리(plugin.js) 해시 불일치',
+      NonClosedModuleArtifact: '브라우저 Blob 실행 계약을 위반한 분할 모듈(relative import/chunk)이 남아 있음',
       ShellCompatDrift: 'shellCompat 범위 불일치',
       ManifestUnreachable: 'manifest 접근 불가(파드/서비스)',
       EntryUnreachable: '엔트리 파일 접근 불가',
@@ -1185,6 +1202,7 @@ export class AdminPlugins implements OnInit {
     { label: '서명 검증 (P-256)', fail: ['SignatureInvalid'] },
     { label: 'shellCompat 호환', fail: ['ShellCompatDrift'] },
     { label: '엔트리(plugin.js) 해시', fail: ['EntryUnreachable', 'EntryDigestMismatch'] },
+    { label: '단일 ESM 산출물 계약', fail: ['NonClosedModuleArtifact'] },
     { label: 'Console 레지스트리 등록' },
   ];
   steps(): { label: string; state: 'done' | 'fail' | 'pending' | 'active' }[] {
@@ -1211,25 +1229,49 @@ export class AdminPlugins implements OnInit {
   }
 
   async refresh(): Promise<void> {
-    try {
-      const [c, r, e, b, readiness, registry, revocations] = await Promise.all([
-        this.ctl.catalog(),
-        this.ctl.registrations(),
-        this.ctl.events(),
-        this.ctl.bindings(),
-        this.readinessApi.status().catch(() => null),
-        this.ctl.registryCredentialStatus().catch(() => null),
-        this.ctl.revocations().catch(() => []),
-      ]);
-      this.catalog.set(c);
-      this.registrations.set(r);
-      this.events.set(e);
-      this.bindings.set(b);
-      this.foundationActivationAllowed.set(readiness?.admission.foundationActivationAllowed === true);
-      this.registryStatus.set(registry);
-      this.revocations.set(revocations);
-    } catch (err) {
-      this.msg.set({ type: 'danger', text: String(err) });
+    const names = ['Catalog', 'Registration', '감사 이력', 'Binding', '플랫폼 준비 상태', 'Registry 자격증명', 'Digest 철회'];
+    const results = await Promise.allSettled([
+      this.ctl.catalogSnapshot(),
+      this.ctl.registrationsSnapshot(),
+      this.ctl.events(),
+      this.ctl.bindings(),
+      this.readinessApi.status(),
+      this.ctl.registryCredentialStatus(),
+      this.ctl.revocations(),
+    ]);
+    const issues: string[] = [];
+    const [catalog, registrations, events, bindings, readiness, registry, revocations] = results;
+    if (catalog.status === 'fulfilled') {
+      this.catalog.set(catalog.value.items);
+      this.catalogLoaded.set(true);
+      this.projectionStatus.set(catalog.value.projection);
+    } else issues.push(names[0]);
+    if (registrations.status === 'fulfilled') {
+      this.registrations.set(registrations.value.items);
+      this.registrationsLoaded.set(true);
+      this.projectionStatus.set(registrations.value.projection);
+    } else issues.push(names[1]);
+    if (events.status === 'fulfilled') this.events.set(events.value); else issues.push(names[2]);
+    if (bindings.status === 'fulfilled') {
+      this.bindings.set(bindings.value);
+      this.bindingsLoaded.set(true);
+    } else issues.push(names[3]);
+    if (readiness.status === 'fulfilled') this.foundationActivationAllowed.set(readiness.value.admission.foundationActivationAllowed === true);
+    else issues.push(names[4]);
+    if (registry.status === 'fulfilled') this.registryStatus.set(registry.value); else issues.push(names[5]);
+    if (revocations.status === 'fulfilled') this.revocations.set(revocations.value); else issues.push(names[6]);
+
+    if (issues.length) {
+      const retained = this.catalogLoaded() || this.registrationsLoaded();
+      if (retained && (catalog.status === 'rejected' || registrations.status === 'rejected')) {
+        const previous = this.projectionStatus();
+        this.projectionStatus.set({ ...(previous || { ready: true }), state: 'stale', reason: 'ControlApiUnavailable' });
+      }
+      this.dataWarning.set(`${issues.join(', ')} 조회 실패 — ${retained ? '마지막 정상 값을 유지합니다.' : '유효한 상태 스냅샷이 아직 없습니다. 0건으로 간주하지 않습니다.'}`);
+    } else if (this.projectionStatus()?.state === 'stale') {
+      this.dataWarning.set(`공유 Extension 스냅샷이 오래되었습니다. 마지막 정상 값(${this.projectionStatus()?.observedAt || '시각 미보고'})을 표시합니다.`);
+    } else {
+      this.dataWarning.set(null);
     }
   }
 
@@ -1260,8 +1302,27 @@ export class AdminPlugins implements OnInit {
     return id === 'foundation' && !this.foundationActivationAllowed();
   }
 
-  countPhase(p: string): number {
-    return this.registrations().filter((r) => r.status.phase === p).length;
+  catalogMetric(): string {
+    return this.catalogLoaded() ? String(this.catalog().length) : '—';
+  }
+
+  failedCount(): number {
+    return this.registrations().filter((registration) => this.effectiveState(registration).tone === 'danger').length;
+  }
+
+  registrationMetric(metric: 'published' | 'usable' | 'pending' | 'disabled' | 'failed'): string {
+    if (!this.registrationsLoaded()) return '—';
+    const registrations = this.registrations();
+    if (metric === 'published') return String(registrations.filter((r) => r.status.phase === 'Activated').length);
+    if (metric === 'usable') return String(registrations.filter((r) => r.status.phase === 'Activated' && this.menuState(r).visible && this.effectiveState(r).tone === 'success').length);
+    if (metric === 'disabled') return String(registrations.filter((r) => r.status.phase === 'Disabled').length);
+    if (metric === 'failed') return String(this.failedCount());
+    return String(registrations.filter((r) => !['Activated', 'Disabled', 'Failed'].includes(r.status.phase || '') && this.effectiveState(r).tone !== 'danger').length);
+  }
+
+  projectionLabel(): string {
+    const state = this.projectionStatus()?.state;
+    return state === 'live' ? 'Live' : state === 'stale' ? 'Stale' : '—';
   }
   countUsable(): number {
     return this.registrations().filter((r) => this.effectiveState(r).tone === 'success').length;

@@ -76,3 +76,8 @@ test('policy records all admission metadata required by the controller', () => {
   assert.equal(policy.spec.enforcement.localEdge.requiredBuildAuthority, 'localhost');
   assert.equal(policy.spec.enforcement.localEdge.gaEligible, false);
 });
+
+test('local edge tag promotion preserves the exact single-platform manifest digest', () => {
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+  assert.match(publisher, /imagetools create --prefer-index=false --tag \$target/);
+});

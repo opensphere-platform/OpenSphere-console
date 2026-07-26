@@ -11,21 +11,21 @@ const fs = require('fs');
 const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes, randomUUID } = require('crypto');
 const { RegistryCredentialCoordinator } = require('./registry-credentials');
+const { ExtensionProjectionCoordinator } = require('./extension-projection');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-console';
 const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
-// The kubelet injects the API server ClusterIP, and the in-cluster CA lists that
-// address in its SANs.  Resolving `kubernetes.default.svc` instead costs three
-// failed search-domain lookups per call (ndots:5) — measured at 187ms versus 6ms
-// against the injected address, and it intermittently fails with EAI_AGAIN.
-// This process is single-threaded, so those lookups starve the /readyz handler
-// and the 1s readiness probe flaps the pod out of the Service.  The DNS name
-// stays as the fallback for environments that do not inject the variables; the
-// `cluster.local.` FQDN is not usable because the trailing dot breaks SNI.
-const API = process.env.KUBERNETES_SERVICE_HOST
-  ? `https://${process.env.KUBERNETES_SERVICE_HOST.includes(':') ? `[${process.env.KUBERNETES_SERVICE_HOST}]` : process.env.KUBERNETES_SERVICE_HOST}:${process.env.KUBERNETES_SERVICE_PORT || 443}`
-  : 'https://kubernetes.default.svc';
+function kubernetesApiBase(env = process.env) {
+  const rawHost = String(env.KUBERNETES_SERVICE_HOST || 'kubernetes.default.svc').trim();
+  const host = rawHost.includes(':') && !rawHost.startsWith('[') ? `[${rawHost}]` : rawHost;
+  const port = String(env.KUBERNETES_SERVICE_PORT_HTTPS || env.KUBERNETES_SERVICE_PORT || '443').trim();
+  return `https://${host}:${port}`;
+}
+// The kubelet injects the API server ClusterIP, which avoids DNS search-domain
+// retries starving the controller readiness probe. The DNS name remains the
+// fallback for environments that do not inject service variables.
+const API = kubernetesApiBase();
 const GROUP = 'plugins.opensphere.io';
 const V = 'v1alpha1';
 const PLATFORM_GROUP = 'platform.opensphere.io';
@@ -254,14 +254,30 @@ async function hydrateAudit() {
 }
 // ── K8s REST 헬퍼 ─────────────────────────────────────────────
 async function k8s(method, path, body) {
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token()}`,
-      'content-type': method === 'PATCH' ? 'application/merge-patch+json' : 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const attempts = method === 'GET' ? 2 : 1;
+  let res;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      res = await fetch(`${API}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          'content-type': method === 'PATCH' ? 'application/merge-patch+json' : 'application/json',
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.status < 500 || attempt === attempts) break;
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) {
+        throw Object.assign(new Error(`Kubernetes API ${method} ${path} unavailable`), {
+          code: 503, reason: 'KubernetesApiUnavailable', cause: lastError,
+        });
+      }
+    }
+  }
   const text = await res.text();
   let parsed = null;
   if (text) {
@@ -278,13 +294,17 @@ async function k8s(method, path, body) {
 }
 // 비-JSON(파드 로그 등 text/plain) 응답용 — k8s()는 항상 JSON.parse라 로그에 못 씀.
 async function k8sText(path) {
-  const res = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${token()}` } });
+  const res = await fetch(`${API}${path}`, {
+    headers: { Authorization: `Bearer ${token()}` },
+    signal: AbortSignal.timeout(5000),
+  });
   const text = await res.text();
   return { ok: res.ok, status: res.status, text };
 }
 const crd = (plural) => `/apis/${GROUP}/${V}/namespaces/${NS}/${plural}`;
 const listPackages = () => k8s('GET', crd('uipluginpackages'));
 const listRegs = () => k8s('GET', crd('uipluginregistrations'));
+const extensionProjection = new ExtensionProjectionCoordinator({ k8s, namespace: NS });
 // ADR-UI-003 §3.1: scope=main-shell-* 라벨 = shell-pinned core 표면(패키징은 plugin이나 분류는 core) → 제거/비활성 불가.
 const isCorePkg = (pkg) => (pkg?.metadata?.labels?.['opensphere.io/scope'] || '').startsWith('main-shell');
 const getPackage = (n) => k8s('GET', `${crd('uipluginpackages')}/${n}`);
@@ -856,7 +876,7 @@ async function deleteWorkload(pkg) {
 }
 async function workloadReady(name) {
   const d = await k8s('GET', `/apis/apps/v1/namespaces/${NS}/deployments/${name}`);
-  return d.ok && (d.json.status?.availableReplicas ?? 0) >= 1;
+  return d.ok && deploymentRolloutConverged(d.json);
 }
 
 // ── 검증 (controller 설치 시점 — 셸 로드 시점과 동일 규칙, 이중 검증 §B.1) ──
@@ -864,6 +884,20 @@ async function workloadReady(name) {
 // RFC1123 라벨만 허용 — CR이 임의 호스트명을 주입해 controller가 엉뚱한 svc로 fetch하는 것 차단.
 const SAFE_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 function safeName(n) { return typeof n === 'string' && SAFE_NAME.test(n); }
+function moduleDependencySpecifiers(source) {
+  const specifiers = new Set();
+  const text = String(source || '');
+  // Keep these patterns statement-shaped. A broad `import\s*` expression can
+  // cross minified strings and falsely reject a valid multi-megabyte bundle.
+  const sideEffect = /(?:^|[;}\r\n])\s*import[ \t]*(['"])([^'"\r\n]+)\1/g;
+  const from = /(?:^|[;}\r\n])\s*(?:import|export)[ \t]+[^;\r\n]*?[ \t]+from[ \t]*(['"])([^'"\r\n]+)\1/g;
+  const dynamic = /\bimport[ \t]*\([ \t]*(['"])([^'"\r\n]+)\1[ \t]*\)/g;
+  for (const expression of [sideEffect, from, dynamic]) {
+    let match;
+    while ((match = expression.exec(text))) specifiers.add(match[2]);
+  }
+  return [...specifiers];
+}
 async function verifyPlugin(pkg) {
   const name = pkg.metadata.name;
   if (!safeName(name)) return { ok: false, reason: 'InvalidPluginName' };
@@ -915,7 +949,12 @@ async function verifyPlugin(pkg) {
   try { eRes = await fetch(`${svc}/plugins/${manifest.entry}`, { signal: AbortSignal.timeout(10000) }); }
   catch { return { ok: false, reason: 'EntryUnreachable' }; }
   if (!eRes.ok) return { ok: false, reason: 'EntryUnreachable' };
-  if (sha256(await eRes.text()) !== manifest.entrySha256) return { ok: false, reason: 'EntryDigestMismatch' };
+  const entryText = await eRes.text();
+  if (sha256(entryText) !== manifest.entrySha256) return { ok: false, reason: 'EntryDigestMismatch' };
+  // The browser Host verifies the entry and executes it from a Blob URL. Relative
+  // and external module specifiers therefore cannot be resolved safely. A valid
+  // OpenSphere UI artifact is one closed, self-contained ESM file.
+  if (moduleDependencySpecifiers(entryText).length) return { ok: false, reason: 'NonClosedModuleArtifact' };
   // 보조 실행 자산도 signed manifest pin과 대조한다. 미선언 manifest는 전환기 호환으로
   // 수용하되, 선언된 자산은 하나라도 불일치하면 Ready로 승격하지 않는다.
   const assetIds = new Set();
@@ -931,7 +970,11 @@ async function verifyPlugin(pkg) {
     try { assetRes = await fetch(assetUrl, { signal: AbortSignal.timeout(10000) }); }
     catch { return { ok: false, reason: 'AssetUnreachable' }; }
     if (!assetRes.ok) return { ok: false, reason: 'AssetUnreachable' };
-    if (sha256(await assetRes.text()) !== asset.sha256) return { ok: false, reason: 'AssetDigestMismatch' };
+    const assetText = await assetRes.text();
+    if (sha256(assetText) !== asset.sha256) return { ok: false, reason: 'AssetDigestMismatch' };
+    if (asset.type === 'module' && moduleDependencySpecifiers(assetText).length) {
+      return { ok: false, reason: 'NonClosedModuleArtifact' };
+    }
   }
   return { ok: true, manifest };
 }
@@ -1478,6 +1521,41 @@ function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}) 
     icon: pkg.spec.nav?.icon || '',
   };
 }
+function catalogProjectionItems(items) {
+  return (items || []).map((pkg) => ({
+    name: pkg.metadata.name,
+    core: isCorePkg(pkg),
+    scope: pkg.metadata.labels?.['opensphere.io/scope'] || null,
+    ...pkg.spec,
+  }));
+}
+function registrationProjectionItems(items) {
+  return (items || []).map((x) => {
+    const desiredState = x.spec?.desiredState || '';
+    const workloadPhase = x.status?.workload?.phase || '';
+    const health = ['Installed', 'Enabled'].includes(desiredState)
+      ? (workloadPhase === 'Ready' ? 'Ready' : 'NotReady')
+      : 'N/A';
+    return {
+      name: x.metadata.name,
+      desiredState,
+      status: x.status || {},
+      approval: x.spec?.approval,
+      installation: x.spec.installation || {
+        requestedAt: x.metadata?.creationTimestamp || '',
+        requestedBy: x.spec?.approval?.requestedBy || '',
+        requestedById: '', client: '', operationId: '',
+      },
+      health,
+    };
+  });
+}
+function applyExtensionProjection(snapshot) {
+  if (!snapshot) return;
+  publishedPlugins = snapshot.registry.plugins.map((plugin) => ({ ...plugin }));
+  publishedPluginCount = publishedPlugins.length;
+  proxyAllow = new Set(publishedPlugins.map((plugin) => plugin.id).filter((id) => !RESERVED_PROXY_SERVICE_IDS.has(id)));
+}
 async function reconcile() {
   const [pkgs, regs] = await Promise.all([listPackages(), listRegs()]);
   if (!pkgs.ok || !regs.ok) return;
@@ -1603,11 +1681,36 @@ async function reconcile() {
     }
   }
   const nextPublishedPlugins = published.map((plugin) => ({ ...plugin, available: true }));
+  // Status writes above can change every registration. Read them once more so
+  // Registry, Catalog and Admin status are committed as one versioned snapshot.
+  const refreshedRegs = await listRegs();
+  const registrationItems = registrationProjectionItems(refreshedRegs.ok ? refreshedRegs.json?.items : regs.json?.items);
+  try {
+    const snapshot = await extensionProjection.persist({
+      version: 1,
+      observedAt: new Date().toISOString(),
+      registry: {
+        version: 3,
+        trustedKeys: { ...(_trustedKeys || {}) },
+        capabilities: [],
+        plugins: nextPublishedPlugins,
+        templates: [],
+      },
+      catalog: { items: catalogProjectionItems(pkgs.json?.items) },
+      registrations: { items: registrationItems },
+    });
+    applyExtensionProjection(snapshot);
+  } catch (error) {
+    // Serving stays on the previous shared LKG; an update failure must not
+    // publish a process-local state that other replicas cannot observe.
+    console.error('[extension-projection] persist failed:', error?.reason || error?.message || error);
+    applyExtensionProjection(extensionProjection.current());
+  }
   // 재감사 P1-2: proxy allowlist = '검증 성공 + 활성(published)' id + enabled CLIDownload 서비스 id만.
   //   (모든 UIPluginPackage 이름이 아니라) → Failed/Disabled/미검증 package는 자동 제외(403).
   //   reconcile 성공분으로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성).
   // F-3: published plugin id 중 예약된 native 서비스 id(os-cli)와 충돌하는 것도 방어적으로 제외.
-  const allow = new Set(published.map((p) => p.id).filter((id) => !RESERVED_PROXY_SERVICE_IDS.has(id)));
+  const allow = new Set(publishedPlugins.map((p) => p.id).filter((id) => !RESERVED_PROXY_SERVICE_IDS.has(id)));
   try {
     const cds = await listCliDownloads();
     for (const cd of cds.json?.items || []) {
@@ -1918,12 +2021,34 @@ const requiredProfileSpec = Object.freeze({
 function condition(type, ready, reason, message, evidence = []) {
   return { type, status: ready ? 'True' : 'False', ready, reason, message, evidence };
 }
+function deploymentRolloutConverged(deployment) {
+  const desired = Number(deployment?.spec?.replicas ?? 1);
+  const generation = Number(deployment?.metadata?.generation || 0);
+  const observed = Number(deployment?.status?.observedGeneration || 0);
+  const replicas = Number(deployment?.status?.replicas || 0);
+  const updated = Number(deployment?.status?.updatedReplicas || 0);
+  const available = Number(deployment?.status?.availableReplicas || 0);
+  const ready = Number(deployment?.status?.readyReplicas || 0);
+  return desired > 0
+    && observed >= generation
+    && replicas === desired
+    && updated === desired
+    && available === desired
+    && ready === desired;
+}
 function deploymentReadyResult(ns, name, resource) {
   if (!resource?.ok) return { name, namespace: ns, ready: false, reason: `Deployment HTTP ${resource?.status || 0}` };
   const d = resource.json || {};
   const desired = Number(d.spec?.replicas ?? 1);
   const ready = Number(d.status?.readyReplicas || 0);
-  return { name, namespace: ns, ready: desired > 0 && ready >= desired, detail: `${ready}/${desired} ready` };
+  const updated = Number(d.status?.updatedReplicas || 0);
+  const observed = Number(d.status?.observedGeneration || 0);
+  return {
+    name,
+    namespace: ns,
+    ready: deploymentRolloutConverged(d),
+    detail: `${ready}/${desired} ready · ${updated}/${desired} updated · generation ${observed}/${Number(d.metadata?.generation || 0)}`,
+  };
 }
 
 function requireOaaOwnerPermission(actor, permission) {
@@ -2360,17 +2485,17 @@ const server = http.createServer(async (req, res) => {
       const state = await platformControlReadiness();
       return json(res, state.ready ? 200 : 503, state);
     }
+    if (p === '/serving-readyz') {
+      const state = extensionProjection.servingStatus();
+      return json(res, state.ready ? 200 : 503, state);
+    }
     if (p === '/metrics') { res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }); return res.end(metricsText()); }
     // Main Shell native Registry. The controller already owns the verified, activated
     // projection, so a separate registry workload would duplicate authority.
     if (p === '/api/v1/registry' && req.method === 'GET') {
-      return json(res, 200, {
-        version: 3,
-        trustedKeys: await loadTrustedKeys(),
-        capabilities: [],
-        plugins: publishedPlugins,
-        templates: []
-      });
+      const snapshot = extensionProjection.current();
+      if (!snapshot) return json(res, 503, { error: 'ExtensionProjectionUnavailable', message: 'No valid Registry projection has been observed.' });
+      return json(res, 200, { ...snapshot.registry, projection: extensionProjection.servingStatus() });
     }
     // Console-native os CLI resource plane. It is deliberately read-only and
     // closed to four product CRD families; this is not a general Kubernetes proxy.
@@ -2660,26 +2785,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/admin/plugins/catalog') {
-      const pkgs = await listPackages();
-      return json(res, 200, { items: (pkgs.json?.items || []).map((x) => ({ name: x.metadata.name, core: isCorePkg(x), scope: x.metadata.labels?.['opensphere.io/scope'] || null, ...x.spec })) });
+      const snapshot = extensionProjection.current();
+      if (!snapshot) return json(res, 503, { error: 'ExtensionProjectionUnavailable', message: 'No valid Catalog projection has been observed.' });
+      return json(res, 200, { ...snapshot.catalog, projection: extensionProjection.servingStatus() });
     }
     if (p === '/api/admin/plugins/registrations') {
-      const regs = await listRegs();
-      // P2-2 증분: 활성 플러그인의 워크로드 health를 함께 노출(Admin UI lifecycle 가시성).
-      const items = await Promise.all((regs.json?.items || []).map(async (x) => {
-        const nm = x.metadata.name;
-        const health = ['Installed', 'Enabled'].includes(x.spec.desiredState) ? (await workloadReady(nm) ? 'Ready' : 'NotReady') : 'N/A';
-        return {
-          name: nm, desiredState: x.spec.desiredState, status: x.status || {}, approval: x.spec.approval,
-          installation: x.spec.installation || {
-            requestedAt: x.metadata?.creationTimestamp || '',
-            requestedBy: x.spec?.approval?.requestedBy || '',
-            requestedById: '', client: '', operationId: '',
-          },
-          health,
-        };
-      }));
-      return json(res, 200, { items });
+      const snapshot = extensionProjection.current();
+      if (!snapshot) return json(res, 503, { error: 'ExtensionProjectionUnavailable', message: 'No valid Registration projection has been observed.' });
+      return json(res, 200, { ...snapshot.registrations, projection: extensionProjection.servingStatus() });
     }
     if (p === '/api/admin/plugins/events') {
       // Supabase audit.event is the one durable notification source.  The
@@ -2872,7 +2985,13 @@ if (require.main === module) {
     setInterval(observeRegistryCredentials, 1000).unref();
     // Supabase is the durable Data & Identity authority.  DUPA retains only
     // its plugin reconciliation/event loop and does not bootstrap CBS claims.
-    hydrateAudit().finally(() => {
+    extensionProjection.hydrate()
+      .then((snapshot) => {
+        applyExtensionProjection(snapshot);
+        if (snapshot) console.log(`[extension-projection] hydrated ${snapshot.registry.plugins.length} plugins observedAt=${snapshot.observedAt}`);
+      })
+      .catch((e) => console.error('[extension-projection] hydrate failed:', e?.reason || e?.message || e))
+      .finally(() => hydrateAudit()).finally(() => {
       const loop = () => Promise.all([reconcile(), pollK8sEvents(), reconcilePlatformVerification()])
         .catch((e) => console.error('loop error', e))
         .finally(() => setTimeout(loop, 15000));
@@ -2881,5 +3000,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
 }

@@ -50,7 +50,10 @@ function Set-RemoteTag {
     throw "Immutable tag collision: $target is $existing, expected $Digest"
   }
   if ($existing -ne $Digest) {
-    Invoke-Checked docker buildx imagetools create --tag $target "${Repository}@${Digest}"
+    # A single-platform local edge digest must remain the tag digest. Without
+    # --prefer-index=false Buildx wraps it in a new OCI index and silently
+    # violates the immutable digest recorded in the release BOM.
+    Invoke-Checked docker buildx imagetools create --prefer-index=false --tag $target "${Repository}@${Digest}"
   }
   $actual = Get-RemoteDigest -Reference $target
   if ($actual -ne $Digest) {

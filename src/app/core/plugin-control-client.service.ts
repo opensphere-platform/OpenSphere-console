@@ -64,6 +64,17 @@ export interface RegistryCredentialStatus {
 export interface ImageRevocation {
   repository: string; digest: string; replacementDigest?: string; revokedAt: string; actor: string; reason: string;
 }
+export interface ExtensionProjectionStatus {
+  ready: boolean;
+  state: 'live' | 'stale' | 'unavailable';
+  observedAt?: string;
+  ageSeconds?: number;
+  reason?: string;
+}
+export interface ExtensionProjectionResult<T> {
+  items: T[];
+  projection: ExtensionProjectionStatus;
+}
 // Binding — 비-UI 콘솔 확장(CLIDownload 등). UI plugin(UIPluginPackage)과 별개 kind. 콘솔이 '선언'을 인식·노출.
 export interface BindingLink { os?: string; arch?: string; text: string; href: string; }
 export interface Binding { kind: string; name: string; displayName: string; description?: string; enabled?: boolean; links: BindingLink[]; }
@@ -72,15 +83,21 @@ export interface Binding { kind: string; name: string; displayName: string; desc
 export class PluginControlClient {
   private http = inject(HttpService);
 
-  async catalog(): Promise<CatalogItem[]> {
+  async catalogSnapshot(): Promise<ExtensionProjectionResult<CatalogItem>> {
     const r = await this.http.request('/api/admin/plugins/catalog', { cache: 'no-store' });
     if (!r.ok) throw new Error(`catalog HTTP ${r.status}`);
-    return (await r.json()).items;
+    return r.json();
   }
-  async registrations(): Promise<Registration[]> {
+  async catalog(): Promise<CatalogItem[]> {
+    return (await this.catalogSnapshot()).items;
+  }
+  async registrationsSnapshot(): Promise<ExtensionProjectionResult<Registration>> {
     const r = await this.http.request('/api/admin/plugins/registrations', { cache: 'no-store' });
     if (!r.ok) throw new Error(`registrations HTTP ${r.status}`);
-    return (await r.json()).items;
+    return r.json();
+  }
+  async registrations(): Promise<Registration[]> {
+    return (await this.registrationsSnapshot()).items;
   }
   async events(): Promise<AuditEvent[]> {
     const r = await this.http.request('/api/admin/plugins/events', { cache: 'no-store' });
