@@ -39,10 +39,11 @@ server {
     # - script-src blob: → Extension Host가 '검증된 바이트'(sha256+ECDSA)만 Blob URL로 import하는 경로
     # - style-src 'unsafe-inline' → Angular 컴포넌트 스타일 주입 방식상 필요
     # - connect-src ${OS_AUTH_ORIGIN} → OIDC discovery/token/logout + self proxy/WebSocket
+    # - frame-src https://ceph.triangles.com → Cluster Manager의 read-only Ceph Grafana 화면
     # 감사 P1-1: 'unsafe-eval' 제거(콘솔/플러그인은 eval 미사용 — src 내 eval/new Function 0건). worker-src도
     #   'self' blob:로 축소(data: 제거). eval이 필요한 흡수 대형앱(Headlamp 등)은 별도 격리 CSP zone으로
     #   분리해 도입할 것(전역 약화 금지).
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN} https://ceph.triangles.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
     add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
@@ -326,7 +327,7 @@ server {
     # 새 해시 자산을 참조(구 index 캐시로 인한 'Failed to load module script' 빈 화면 방지).
     # add_header는 자식 location에서 부모를 '대체'하므로 CSP/nosniff를 여기서 다시 선언한다.
     location = /index.html {
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN} https://ceph.triangles.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
         add_header X-Content-Type-Options nosniff always;
         add_header Referrer-Policy no-referrer always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
