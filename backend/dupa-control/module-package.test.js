@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs } = require('./controller');
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -12,6 +12,17 @@ const descriptor = {
   manifest: { path: '/plugins/ui-shell.manifest.json', sha256: 'a'.repeat(64), signaturePath: '/plugins/ui-shell.manifest.json.sig' }, trust: { keyId: 'opensphere-plugins-v1' }, api: { basePath: '/api/plugins/cluster-manager' },
   contributions: { page: { enabled: true }, navigation: { ...off, mode: 'none' }, api: { enabled: true, basePath: '/api/plugins/cluster-manager' }, cli: off, manual: { ...off, mode: 'none' }, search: { ...off, mode: 'none' }, notification: { ...off, frontend: false, backend: false }, observability: { ...off, logs: false, metrics: false, traces: false } },
 };
+
+test('canonical subShell repository does not duplicate a shell-prefixed module id', () => {
+  assert.equal(
+    canonicalModuleRepository({ kind: 'subShell', id: 'shell-template' }),
+    'ghcr.io/opensphere-platform/opensphere-shell-template',
+  );
+  assert.equal(
+    canonicalModuleRepository({ kind: 'subShell', id: 'foundation' }),
+    'ghcr.io/opensphere-platform/opensphere-shell-foundation',
+  );
+});
 
 test('accepts SDK module package and materializes digest-pinned package', () => {
   assert.deepEqual(moduleDescriptorIssues(descriptor), []);
