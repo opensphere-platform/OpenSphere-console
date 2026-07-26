@@ -178,13 +178,449 @@ rules:
   - { apiGroups: [snapshot.storage.k8s.io], resources: [volumesnapshots], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [ceph.rook.io, csi.ceph.io], resources: ["*"], verbs: [get, list, watch, create, update, patch, delete] }
 ---
+# AI domain subShell profile. cluster observer를 상속하지 않고 module rbac.yaml이 선언한
+# read/write 집합만 부여한다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opensphere-module-ai-domain-operator-v1
+  labels:
+    opensphere.io/managed-by: dupa
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - nodes
+      - namespaces
+      - pods
+      - pods/log
+      - services
+      - configmaps
+      - events
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - storage.k8s.io
+    resources:
+      - storageclasses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - authorization.k8s.io
+    resources:
+      - selfsubjectaccessreviews
+    verbs:
+      - create
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - operators.coreos.com
+    resources:
+      - operatorgroups
+      - subscriptions
+      - installplans
+      - clusterserviceversions
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - orchestrator.ai.opensphere.io
+    resources:
+      - aiagents
+      - promptlibraries
+      - toolclaims
+      - agenttracepolicies
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ai.foundation.opensphere.io
+    resources:
+      - llmrouteclaims
+      - vectorretrievalclaims
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - kubeflow.org
+    resources:
+      - notebooks
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - serving.kserve.io
+    resources:
+      - servingruntimes
+      - clusterservingruntimes
+      - inferenceservices
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - modelregistry.opendatahub.io
+    resources:
+      - modelregistries
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - trustyai.opendatahub.io
+    resources:
+      - trustyaiservices
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - kueue.x-k8s.io
+    resources:
+      - workloads
+      - clusterqueues
+      - localqueues
+      - resourceflavors
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ray.io
+    resources:
+      - rayclusters
+      - rayjobs
+      - rayservices
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - tekton.dev
+    resources:
+      - pipelines
+      - pipelineruns
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - datasciencepipelinesapplications.opendatahub.io
+    resources:
+      - datasciencepipelinesapplications
+      - datasciencepipelinesapplications/api
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - datasciencecluster.opendatahub.io
+    resources:
+      - datascienceclusters
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - backbone.opensphere.io
+    resources:
+      - backboneclaims
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ai.opensphere.io
+    resources:
+      - aitrainingstacks
+      - workbenchclaims
+      - dataconnectionclaims
+      - computebackendclaims
+      - datasetclaims
+      - trainingjobclaims
+      - modelpromotionclaims
+      - inferenceclaims
+      - pipelineclaims
+      - pipelinerunclaims
+      - experimentclaims
+      - executionclaims
+      - artifactclaims
+      - monitoringtargets
+      - distributedworkloadclaims
+      - openspherecomponentcatalogs
+      - openspherecomponentversions
+      - openspheresubscriptions
+      - opensphereinstallplans
+      - openspheredatascienceclusters
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - eval.ai.opensphere.io
+    resources:
+      - evaluationpolicies
+      - evaluationjobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - events
+    verbs:
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - ''
+    resources:
+      - services
+      - persistentvolumeclaims
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - kubeflow.org
+    resources:
+      - notebooks
+    verbs:
+      - update
+      - patch
+  - apiGroups:
+      - serving.kserve.io
+    resources:
+      - inferenceservices
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ray.io
+    resources:
+      - rayjobs
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - tekton.dev
+    resources:
+      - pipelineruns
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - datasciencepipelinesapplications.opendatahub.io
+    resources:
+      - datasciencepipelinesapplications
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - networkpolicies
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - orchestrator.ai.opensphere.io
+    resources:
+      - aiagents
+      - promptlibraries
+      - toolclaims
+      - agenttracepolicies
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - orchestrator.ai.opensphere.io
+    resources:
+      - aiagents/status
+      - promptlibraries/status
+      - toolclaims/status
+      - agenttracepolicies/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - ai.foundation.opensphere.io
+    resources:
+      - llmrouteclaims
+      - vectorretrievalclaims
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ai.foundation.opensphere.io
+    resources:
+      - llmrouteclaims/status
+      - vectorretrievalclaims/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - ai.opensphere.io
+    resources:
+      - aitrainingstacks
+      - workbenchclaims
+      - dataconnectionclaims
+      - computebackendclaims
+      - datasetclaims
+      - trainingjobclaims
+      - modelpromotionclaims
+      - inferenceclaims
+      - pipelineclaims
+      - pipelinerunclaims
+      - experimentclaims
+      - executionclaims
+      - artifactclaims
+      - monitoringtargets
+      - distributedworkloadclaims
+      - openspheresubscriptions
+      - opensphereinstallplans
+      - openspheredatascienceclusters
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ai.opensphere.io
+    resources:
+      - workbenchclaims/status
+      - dataconnectionclaims/status
+      - computebackendclaims/status
+      - datasetclaims/status
+      - trainingjobclaims/status
+      - pipelineclaims/status
+      - pipelinerunclaims/status
+      - experimentclaims/status
+      - executionclaims/status
+      - artifactclaims/status
+      - inferenceclaims/status
+      - modelpromotionclaims/status
+      - monitoringtargets/status
+      - distributedworkloadclaims/status
+      - openspheresubscriptions/status
+      - opensphereinstallplans/status
+      - openspheredatascienceclusters/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - backbone.opensphere.io
+    resources:
+      - backboneclaims
+    verbs:
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - eval.ai.opensphere.io
+    resources:
+      - evaluationpolicies
+      - evaluationjobs
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - eval.ai.opensphere.io
+    resources:
+      - evaluationpolicies/status
+      - evaluationjobs/status
+    verbs:
+      - get
+      - update
+      - patch
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: { name: dupa-module-profile-installer }
 rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [clusterroles]
-    resourceNames: [opensphere-module-cluster-observer-v1, opensphere-module-cluster-infrastructure-manager-v1]
+    resourceNames: [opensphere-module-cluster-observer-v1, opensphere-module-cluster-infrastructure-manager-v1, opensphere-module-ai-domain-operator-v1]
     verbs: [get, bind]
   - { apiGroups: [rbac.authorization.k8s.io], resources: [clusterrolebindings], verbs: [get, list, create, patch, delete] }
 ---
