@@ -288,6 +288,24 @@ function verifiedActivatedRegistration(reg) {
     && status.verification?.permissions === 'Approved'
     && /^sha256:[a-f0-9]{64}$/.test(String(status.currentDigest || ''));
 }
+function verifiedProxyTarget(pkg, reg) {
+  const packageDigest = String(pkg?.spec?.image?.digest || '');
+  const packageManifest = String(pkg?.spec?.manifest?.sha256 || '');
+  return pkg?.metadata?.name === reg?.metadata?.name
+    && verifiedActivatedRegistration(reg)
+    && packageDigest === String(reg?.status?.currentDigest || '')
+    && packageManifest === String(reg?.status?.currentManifestSha256 || '');
+}
+async function proxyAuthorizationFromSharedState(id) {
+  if (!safeName(id) || RESERVED_PROXY_SERVICE_IDS.has(id)) return false;
+  try {
+    const [pkg, reg] = await Promise.all([getPackage(id), getReg(id)]);
+    return pkg.ok && reg.ok && verifiedProxyTarget(pkg.json, reg.json);
+  } catch (error) {
+    console.error(`[proxy-authz] shared-state lookup failed for '${id}':`, error?.message || error);
+    return false;
+  }
+}
 function verifiedStagedUpdate(reg) {
   const status = reg?.status || {};
   const currentDigest = String(status.currentDigest || '');
@@ -1479,8 +1497,7 @@ async function reconcile() {
       await updateStatus({ phase: 'Failed', reason, retryable: retryableReason(reason) });
     }
   }
-  publishedPlugins = published.map((plugin) => ({ ...plugin, available: true }));
-  publishedPluginCount = publishedPlugins.length;
+  const nextPublishedPlugins = published.map((plugin) => ({ ...plugin, available: true }));
   // 재감사 P1-2: proxy allowlist = '검증 성공 + 활성(published)' id + enabled CLIDownload 서비스 id만.
   //   (모든 UIPluginPackage 이름이 아니라) → Failed/Disabled/미검증 package는 자동 제외(403).
   //   reconcile 성공분으로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성).
@@ -1502,7 +1519,12 @@ async function reconcile() {
       }
     }
   } catch { /* binding scan best-effort */ }
+  // Registry와 proxy authz는 같은 런타임 스냅샷이다. authz를 먼저 열고 Registry를
+  // 게시하면 활성화 시 403 창이 없고, 비활성화 시에는 Registry 제거보다 먼저
+  // fail-closed 된다. 두 대입 사이에는 await가 없어 단일 replica 안에서 원자적이다.
   proxyAllow = allow;
+  publishedPlugins = nextPublishedPlugins;
+  publishedPluginCount = publishedPlugins.length;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -2261,7 +2283,14 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/internal/proxy-authz') {
       const id = req.headers['x-plugin-id'] || '';
       // F-3: 예약된 native 서비스 id는 allowlist 상태와 무관하게 항상 403(이중 방어).
-      const permitted = proxyAllow.has(id) && !RESERVED_PROXY_SERVICE_IDS.has(id);
+      let permitted = proxyAllow.has(id) && !RESERVED_PROXY_SERVICE_IDS.has(id);
+      if (!permitted) {
+        // Controller replica마다 reconcile 완료 시점이 다를 수 있다. 로컬 캐시 miss를
+        // 곧바로 403으로 확정하지 않고 Kubernetes의 Package+Registration 검증 상태를
+        // 공유 권위로 한 번 확인한다. exact digest/manifest까지 일치해야만 허용한다.
+        permitted = await proxyAuthorizationFromSharedState(id);
+        if (permitted) console.warn(`[proxy-authz] '${id}' authorized from shared Kubernetes state after local projection miss`);
+      }
       res.writeHead(permitted ? 204 : 403); return res.end();
     }
 
@@ -2721,5 +2750,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
 }

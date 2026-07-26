@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { validContributions, validCapabilities, integrationStatuses } = require('./controller.js');
+const { validContributions, validCapabilities, integrationStatuses, verifiedProxyTarget } = require('./controller.js');
 
 const contributions = {
   page: { enabled: true },
@@ -65,5 +65,39 @@ test('verified Installed workloads may publish audit events without entering the
   assert.match(controller, /desiredState === 'Installed'/);
   assert.match(controller, /status\.verification\?\.signature === 'Verified'/);
   assert.match(controller, /verifyWorkloadToken\(req, pluginId, \{ allowVerifiedInstalled: true \}\)/);
-  assert.match(controller, /const permitted = proxyAllow\.has\(id\) && !RESERVED_PROXY_SERVICE_IDS\.has\(id\)/);
+  assert.match(controller, /await proxyAuthorizationFromSharedState\(id\)/);
+});
+
+test('proxy authorization requires one verified Package and Registration release', () => {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const manifestSha256 = 'b'.repeat(64);
+  const pkg = {
+    metadata: { name: 'shell-template' },
+    spec: { image: { digest }, manifest: { sha256: manifestSha256 } },
+  };
+  const reg = {
+    metadata: { name: 'shell-template' },
+    spec: { desiredState: 'Enabled' },
+    status: {
+      phase: 'Activated',
+      currentDigest: digest,
+      currentManifestSha256: manifestSha256,
+      workload: { phase: 'Ready' },
+      verification: {
+        manifest: 'Verified', signature: 'Verified',
+        entryDigest: 'Verified', permissions: 'Approved',
+      },
+    },
+  };
+  assert.equal(verifiedProxyTarget(pkg, reg), true);
+  assert.equal(verifiedProxyTarget(pkg, { ...reg, spec: { desiredState: 'Disabled' } }), false);
+  assert.equal(verifiedProxyTarget(pkg, {
+    ...reg,
+    status: { ...reg.status, currentDigest: `sha256:${'c'.repeat(64)}` },
+  }), false);
+});
+
+test('Registry and proxy allowlist publish from one atomic runtime snapshot', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  assert.match(controller, /proxyAllow = allow;\s+publishedPlugins = nextPublishedPlugins;/);
 });

@@ -77,10 +77,10 @@ interface TreeNode {
 
     <section class="manage-status-rail" aria-label="Extension 운영 상태">
       <div><span>Catalog</span><strong>{{ catalog().length }}</strong><small>서명된 패키지</small></div>
-      <div><span>Active</span><strong class="ok">{{ countPhase('Activated') }}</strong><small>메뉴·workload 활성</small></div>
-      <div><span>Ready</span><strong>{{ countPhase('Ready') }}</strong><small>활성화 대기</small></div>
-      <div><span>Disabled</span><strong class="neutral">{{ countPhase('Disabled') }}</strong><small>운영 제외</small></div>
-      <div><span>Failed</span><strong [class.danger]="countPhase('Failed') > 0">{{ countPhase('Failed') }}</strong><small>검토 필요</small></div>
+      <div><span>Usable</span><strong class="ok">{{ countUsable() }}</strong><small>현재 세션에서 사용 가능</small></div>
+      <div><span>Waiting</span><strong>{{ countWaiting() }}</strong><small>선행조건·적재 대기</small></div>
+      <div><span>Disabled</span><strong class="neutral">{{ countDisabled() }}</strong><small>운영 제외</small></div>
+      <div><span>Failed</span><strong [class.danger]="countFailed() > 0">{{ countFailed() }}</strong><small>실제 UI·연동 실패</small></div>
       <div><span>Bindings</span><strong>{{ bindings().length }}</strong><small>headless channels</small></div>
     </section>
 
@@ -206,7 +206,12 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                       @if (c.phase === 'Activated') {
                         <button class="btn btn-sm" (click)="run('disable', c.id)">Disable</button>
                       } @else {
-                        <button class="btn btn-sm btn-success-outline" (click)="run('enable', c.id)">
+                        <button
+                          class="btn btn-sm btn-success-outline"
+                          [disabled]="foundationActivationLocked(c.id)"
+                          [title]="foundationActivationLocked(c.id) ? 'Platform Support Profile Ready 필요' : ''"
+                          (click)="run('enable', c.id)"
+                        >
                           Enable
                         </button>
                       }
@@ -298,6 +303,8 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                     } @else {
                       <button
                         class="btn btn-sm btn-success-outline"
+                        [disabled]="foundationActivationLocked(r.name)"
+                        [title]="foundationActivationLocked(r.name) ? 'Platform Support Profile Ready 필요' : ''"
                         (click)="run('enable', r.name)"
                       >
                         Enable
@@ -364,6 +371,8 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                       @case ('Disabled') {
                         <button
                           class="btn btn-sm btn-success-outline"
+                          [disabled]="foundationActivationLocked(c.name)"
+                          [title]="foundationActivationLocked(c.name) ? 'Platform Support Profile Ready 필요' : ''"
                           (click)="run('enable', c.name)"
                         >
                           Enable
@@ -632,7 +641,14 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
           @if (r.status.phase === 'Activated') {
             <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
           } @else {
-            <button class="btn btn-sm btn-success-outline" (click)="run('enable', r.name)">Enable (재검증)</button>
+            <button
+              class="btn btn-sm btn-success-outline"
+              [disabled]="foundationActivationLocked(r.name)"
+              [title]="foundationActivationLocked(r.name) ? 'Platform Support Profile Ready 필요' : ''"
+              (click)="run('enable', r.name)"
+            >
+              Enable (재검증)
+            </button>
           }
           <button class="btn btn-sm btn-danger-outline" (click)="run('uninstall', r.name)">Uninstall</button>
         </div>
@@ -1037,17 +1053,37 @@ export class AdminPlugins implements OnInit {
     const phase = r.status.phase || 'Unknown';
     const rows = this.integrationRows(r);
     const failed = rows.filter((x) => ['Failed', 'Degraded'].includes(x.status.phase));
+    if (r.desiredState === 'Disabled' || phase === 'Disabled') {
+      return { label: '비활성', detail: '운영자가 Console 노출을 중지했습니다. 워크로드 보존 여부는 설치 정책을 따릅니다.', tone: 'neutral' };
+    }
     if (phase === 'Failed' || failed.length) {
       return { label: phase === 'Failed' ? '실패' : '연동 저하', detail: r.status.reason || failed.map((x) => x.label).join(', '), tone: 'danger' };
     }
-    if (phase === 'Disabled') return { label: '비활성', detail: '워크로드는 유지되지만 Console에서 비활성화됨', tone: 'neutral' };
     if (!['Activated', 'Ready'].includes(phase)) {
       return { label: phase, detail: r.status.reason || '설치·검증 진행 상태', tone: phase === 'Degraded' ? 'danger' : 'warning' };
+    }
+    if (r.name === 'foundation' && phase === 'Ready' && this.foundationActivationLocked(r.name)) {
+      return {
+        label: 'Ready · 활성화 대기',
+        detail: 'Platform Support Profile이 Ready가 되면 활성화할 수 있습니다.',
+        tone: 'warning',
+      };
+    }
+    const hostFailure = this.ext.failures().find((item) => item.id === r.name);
+    if (hostFailure) {
+      return {
+        label: 'UI 적재 실패',
+        detail: hostFailure.error,
+        tone: 'danger',
+      };
     }
     const menu = this.menuState(r);
     const isSubShell = this.catalogItem(r.name)?.kind === 'subShell';
     if (isSubShell && !menu.visible) {
-      return { label: `${phase} · 메뉴 미노출`, detail: menu.reason, tone: 'warning' };
+      if (this.ext.loadState() === 'loading') {
+        return { label: 'UI 적재 중', detail: menu.reason, tone: 'warning' };
+      }
+      return { label: 'UI 등록 실패', detail: menu.reason, tone: 'danger' };
     }
     const pending = rows.filter((x) => x.status.phase === 'DependencyPending');
     if (pending.length) return { label: `${phase} · 연동 대기`, detail: pending.map((x) => x.label).join(', '), tone: 'warning' };
@@ -1171,6 +1207,18 @@ export class AdminPlugins implements OnInit {
   countPhase(p: string): number {
     return this.registrations().filter((r) => r.status.phase === p).length;
   }
+  countUsable(): number {
+    return this.registrations().filter((r) => this.effectiveState(r).tone === 'success').length;
+  }
+  countWaiting(): number {
+    return this.registrations().filter((r) => this.effectiveState(r).tone === 'warning').length;
+  }
+  countDisabled(): number {
+    return this.registrations().filter((r) => r.desiredState === 'Disabled' || r.status.phase === 'Disabled').length;
+  }
+  countFailed(): number {
+    return this.registrations().filter((r) => this.effectiveState(r).tone === 'danger').length;
+  }
 
   /** catalog 항목의 현재 설치 상태(Enabled/Disabled/Failed) — registration이 없으면 null(미설치).
    *  Catalog 탭이 이걸로 상태별 액션(Install/Enable/Disable/Uninstall)을 직접 노출한다. */
@@ -1253,6 +1301,13 @@ export class AdminPlugins implements OnInit {
   }
 
   async run(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+    if (action === 'enable' && this.foundationActivationLocked(id)) {
+      this.msg.set({
+        type: 'info',
+        text: 'Foundation 활성화 대기: Platform Support Profile Ready가 필요합니다. 플랫폼 제어에서 선행 조건과 4개 검증 증거를 확인하세요.',
+      });
+      return;
+    }
     if (action === 'uninstall') {
       this.pendingUninstall.set(id);
       return;

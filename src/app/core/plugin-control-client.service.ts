@@ -116,7 +116,19 @@ export class PluginControlClient {
   private act(id: string, action: 'enable' | 'disable' | 'uninstall', reason?: string) {
     return this.http.request(`/api/admin/plugins/registrations/${id}/${action}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason ?? '' }),
-    }).then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
+    }).then(async (r) => {
+      if (!r.ok) {
+        let detail = '';
+        try {
+          const body = await r.json() as { message?: unknown; error?: unknown };
+          detail = String(body.message || body.error || '').trim();
+        } catch {
+          // HTTP status remains useful when an intermediary returns a non-JSON error.
+        }
+        throw new Error(`${action} HTTP ${r.status}${detail ? `: ${detail}` : ''}`);
+      }
+      return r.json();
+    });
   }
   enable(id: string) { return this.act(id, 'enable'); }
   disable(id: string) { return this.act(id, 'disable'); }

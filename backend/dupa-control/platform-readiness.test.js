@@ -27,6 +27,8 @@ test('HIS status is fail-closed on an unavailable or degraded Cluster Manager re
 test('Foundation admission is enforced by API and exposed by Console page', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   const page = read('src', 'app', 'pages', 'admin-platform-readiness.ts');
+  const extensions = read('src', 'app', 'pages', 'admin-plugins.ts');
+  const client = read('src', 'app', 'core', 'plugin-control-client.service.ts');
   assert.match(controller, /PlatformSupportProfileRequired/);
   assert.match(controller, /id === FOUNDATION_ID && action === 'enable'/);
   assert.match(controller, /PlatformSupportProfileRequiredForPfsPlugin/);
@@ -34,6 +36,11 @@ test('Foundation admission is enforced by API and exposed by Console page', () =
   assert.match(controller, /const domainAdmissionReady = pfsEstablished && supportReady/);
   assert.match(page, /PFS ADMISSION/);
   assert.match(page, /\/p\/cluster-manager\/his\/his/);
+  assert.ok((extensions.match(/\[disabled\]="foundationActivationLocked\(/g) || []).length >= 5);
+  assert.match(extensions, /Ready · 활성화 대기/);
+  assert.match(extensions, /action === 'enable' && this\.foundationActivationLocked\(id\)/);
+  assert.match(client, /body\.message \|\| body\.error/);
+  assert.match(client, /HTTP \$\{r\.status\}\$\{detail/);
 });
 
 test('Foundation development override is explicit and production fail-closed', () => {
