@@ -57,6 +57,34 @@ subjects:
     name: opensphere-console-dupa-controller
     namespace: opensphere-console
 ---
+# The canonical admission red-test proves the CronJob image-integrity policy by
+# replaying the backup CronJob through a server dry-run.  Kubernetes charges a
+# dry-run PUT against the `update` verb, and this workload lives outside the
+# Console namespace, so the evidence path needs its own binding.  Both verbs are
+# pinned to the single red-test subject: the controller can reach no other
+# CronJob, and it only ever issues the request with `dryRun=All`.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dupa-security-red-test-cronjob
+  namespace: opensphere-console-data
+rules:
+  - apiGroups: ["batch"]
+    resources: [cronjobs]
+    resourceNames: [opensphere-supabase-recovery-backup]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dupa-security-red-test-cronjob
+  namespace: opensphere-console-data
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: dupa-security-red-test-cronjob }
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-dupa-controller
+    namespace: opensphere-console
+---
 # Console-wide evidence is read-only.  Runtime mutation is constrained to the
 # namespace Role above; no data-stack installer or claim reconciler exists.
 apiVersion: rbac.authorization.k8s.io/v1
