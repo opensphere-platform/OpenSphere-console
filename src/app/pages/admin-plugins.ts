@@ -215,8 +215,8 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                       } @else {
                         <button
                           class="btn btn-sm btn-success-outline"
-                          [disabled]="foundationActivationLocked(c.id)"
-                          [title]="foundationActivationLocked(c.id) ? 'Platform Support Profile Ready 필요' : ''"
+                          [disabled]="activationLocked(c.id)"
+                          [title]="activationLockReason(c.id) || ''"
                           (click)="run('enable', c.id)"
                         >
                           Enable
@@ -310,8 +310,8 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                     } @else {
                       <button
                         class="btn btn-sm btn-success-outline"
-                        [disabled]="foundationActivationLocked(r.name)"
-                        [title]="foundationActivationLocked(r.name) ? 'Platform Support Profile Ready 필요' : ''"
+                        [disabled]="activationLocked(r.name)"
+                        [title]="activationLockReason(r.name) || ''"
                         (click)="run('enable', r.name)"
                       >
                         Enable
@@ -373,13 +373,13 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                         <button class="btn btn-sm" (click)="run('disable', c.name)">Disable</button>
                       }
                       @case ('Ready') {
-                        <button class="btn btn-sm btn-success-outline" [disabled]="foundationActivationLocked(c.name)" [title]="foundationActivationLocked(c.name) ? 'Platform Support Profile Ready 필요' : ''" (click)="run('enable', c.name)">Activate</button>
+                        <button class="btn btn-sm btn-success-outline" [disabled]="activationLocked(c.name)" [title]="activationLockReason(c.name) || ''" (click)="run('enable', c.name)">Activate</button>
                       }
                       @case ('Disabled') {
                         <button
                           class="btn btn-sm btn-success-outline"
-                          [disabled]="foundationActivationLocked(c.name)"
-                          [title]="foundationActivationLocked(c.name) ? 'Platform Support Profile Ready 필요' : ''"
+                          [disabled]="activationLocked(c.name)"
+                          [title]="activationLockReason(c.name) || ''"
                           (click)="run('enable', c.name)"
                         >
                           Enable
@@ -668,8 +668,8 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
           } @else {
             <button
               class="btn btn-sm btn-success-outline"
-              [disabled]="foundationActivationLocked(r.name)"
-              [title]="foundationActivationLocked(r.name) ? 'Platform Support Profile Ready 필요' : ''"
+              [disabled]="activationLocked(r.name)"
+              [title]="activationLockReason(r.name) || ''"
               (click)="run('enable', r.name)"
             >
               Enable (재검증)
@@ -1113,10 +1113,10 @@ export class AdminPlugins implements OnInit {
     if (!['Activated', 'Ready'].includes(phase)) {
       return { label: phase, detail: r.status.reason || '설치·검증 진행 상태', tone: phase === 'Degraded' ? 'danger' : 'warning' };
     }
-    if (r.name === 'foundation' && phase === 'Ready' && this.foundationActivationLocked(r.name)) {
+    if (phase === 'Ready' && this.activationLocked(r.name)) {
       return {
         label: 'Ready · 활성화 대기',
-        detail: 'Platform Support Profile이 Ready가 되면 활성화할 수 있습니다.',
+        detail: this.activationLockReason(r.name) || 'Platform Support Profile이 Ready가 되면 활성화할 수 있습니다.',
         tone: 'warning',
       };
     }
@@ -1302,6 +1302,27 @@ export class AdminPlugins implements OnInit {
     return id === 'foundation' && !this.foundationActivationAllowed();
   }
 
+  /**
+   * 활성화가 잠긴 이유 — 잠기지 않았으면 null.
+   * Foundation subShell과, 설치는 됐지만 Platform Support Profile을 기다리는 PFS
+   * plugin을 함께 다룬다. 후자는 controller가 registration status.admission에
+   * 실어 보내므로 화면이 미충족 capability를 그대로 이름으로 말할 수 있다.
+   */
+  activationLockReason(id?: string | null): string | null {
+    if (this.foundationActivationLocked(id)) {
+      return 'Foundation 활성화는 Platform Support Profile Ready가 필요합니다.';
+    }
+    const admission = this.registrations().find((r) => r.name === id)?.status?.admission;
+    if (!admission || admission.activationAllowed !== false) return null;
+    const pending = (admission.pendingCapabilities || []).map((c) => this.capabilityText(c));
+    return pending.length
+      ? `Platform Support Profile 미충족 — ${pending.join(', ')}`
+      : 'Platform Support Profile Ready가 필요합니다.';
+  }
+  activationLocked(id?: string | null): boolean {
+    return this.activationLockReason(id) !== null;
+  }
+
   catalogMetric(): string {
     return this.catalogLoaded() ? String(this.catalog().length) : '—';
   }
@@ -1418,11 +1439,12 @@ export class AdminPlugins implements OnInit {
   }
 
   async run(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
-    if (action === 'enable' && this.foundationActivationLocked(id)) {
-      this.msg.set({
-        type: 'info',
-        text: 'Foundation 활성화 대기: Platform Support Profile Ready가 필요합니다. 플랫폼 제어에서 선행 조건과 4개 검증 증거를 확인하세요.',
-      });
+    // The API is the gate; this only keeps the page from firing a request whose
+    // refusal is already known, and it names the same missing capabilities the
+    // button's tooltip does.
+    const lock = action === 'enable' ? this.activationLockReason(id) : null;
+    if (lock) {
+      this.msg.set({ type: 'info', text: `활성화 대기 — ${lock} 플랫폼 제어에서 선행 조건과 4개 검증 증거를 확인하세요.` });
       return;
     }
     if (action === 'uninstall') {

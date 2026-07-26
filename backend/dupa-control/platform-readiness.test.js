@@ -44,9 +44,19 @@ test('Foundation admission is enforced by API and exposed by Console page', () =
   assert.match(controller, /const domainAdmissionReady = pfsEstablished && supportReady/);
   assert.match(page, /PFS ADMISSION/);
   assert.match(page, /\/p\/cluster-manager\/his\/his/);
-  assert.ok((extensions.match(/\[disabled\]="foundationActivationLocked\(/g) || []).length >= 5);
+  // Every activation control is bound to the same lock, and the lock covers both
+  // the Foundation subShell and a staged PFS plugin. Offering a button whose
+  // refusal is already known was a real defect: enable returned 409 from a
+  // control the page had left enabled.
+  assert.ok((extensions.match(/\[disabled\]="activationLocked\(/g) || []).length >= 5);
+  assert.equal(
+    (extensions.match(/\[disabled\]="activationLocked\(/g) || []).length,
+    (extensions.match(/\[title\]="activationLockReason\(/g) || []).length,
+    'every disabled activation control must explain itself',
+  );
   assert.match(extensions, /Ready · 활성화 대기/);
-  assert.match(extensions, /action === 'enable' && this\.foundationActivationLocked\(id\)/);
+  assert.match(extensions, /activationLockReason\(id\)/);
+  assert.match(extensions, /admission\.activationAllowed !== false/);
   assert.match(client, /body\.message \|\| body\.error/);
   assert.match(client, /HTTP \$\{r\.status\}\$\{detail/);
 });
