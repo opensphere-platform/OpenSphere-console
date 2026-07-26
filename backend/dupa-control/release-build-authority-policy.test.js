@@ -61,3 +61,8 @@ test('policy covers subShells and records the enforced local edge admission boun
     evidence: ['immutable-digest', 'trusted-p256-module-signature', 'local-edge-build-metadata'],
   });
 });
+
+test('local edge tag promotion preserves the exact single-platform manifest digest', () => {
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+  assert.match(publisher, /imagetools create --prefer-index=false --tag \$target/);
+});
