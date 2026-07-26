@@ -1554,35 +1554,49 @@ async function reconcile() {
       const v = await verifyPlugin(pkg);
       if (!v.ok) { await updateStatus({ phase: 'Failed', reason: v.reason, retryable: retryableReason(v.reason) }); continue; }
 
-      if (desired === 'Installed') {
-        await updateStatus({ phase: 'Ready', reason: '', retryable: false });
-        continue;
-      }
-
       // A PFS plugin may be installed, verified and staged at any time; only
       // activation waits for the Platform Support Profile.  CONSTITUTION-0003 §7.2
       // holds an unmet activation dependency as DependencyPending rather than
       // refusing the install, and §7.3 forbids disabling a whole consumer because
-      // a collector is absent.  Blocking installation instead left the operator
-      // with a single CLI error and no surface describing what was missing.
+      // a collector is absent.  The verdict is written onto the registration —
+      // both while staged and while pending — so the operator reads the remaining
+      // work off the resource instead of inferring it from a refusal.
+      let admission;
       if (hostRef === FOUNDATION_ID) {
         const readiness = await supportProfileReadiness();
-        if (!readiness.admission.pfsPluginActivationAllowed) {
-          await updateStatus({
-            phase: 'DependencyPending',
-            reason: 'PlatformSupportProfileIncomplete',
-            retryable: true,
-          });
-          continue;
-        }
+        const capabilities = readiness.capabilities || [];
+        const activationAllowed = readiness.admission.pfsPluginActivationAllowed === true;
+        admission = {
+          activationAllowed,
+          reason: activationAllowed ? '' : 'PlatformSupportProfileIncomplete',
+          pendingCapabilities: capabilities.filter((c) => !c.ready).map((c) => String(c.type)),
+          satisfiedCapabilities: capabilities.filter((c) => c.ready).map((c) => String(c.type)),
+          route: '/manage/platform-control',
+          checkedAt: new Date().toISOString(),
+        };
+      }
+      const withAdmission = (status) => (admission ? { ...status, admission } : status);
+
+      if (desired === 'Installed') {
+        await updateStatus(withAdmission({ phase: 'Ready', reason: '', retryable: false }));
+        continue;
+      }
+
+      if (admission && !admission.activationAllowed) {
+        await updateStatus(withAdmission({
+          phase: 'DependencyPending',
+          reason: 'PlatformSupportProfileIncomplete',
+          retryable: true,
+        }));
+        continue;
       }
 
       // 통과 — registry에 '승인값 전사'(§B.5): manifestSha256/keyId는 controller 계산값이 아니라 CR값
       const manifestUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/ui-shell.manifest.json`;
       const sigUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/${(pkg.spec.manifest.signaturePath || 'ui-shell.manifest.json.sig').split('/').pop()}`;
       published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence));
-      if (!stableRelease) await updateStatus({ phase: 'Ready', reason: '', manifestUrl, retryable: false });
-      await updateStatus({ phase: 'Activated', reason: '', manifestUrl, retryable: false });
+      if (!stableRelease) await updateStatus(withAdmission({ phase: 'Ready', reason: '', manifestUrl, retryable: false }));
+      await updateStatus(withAdmission({ phase: 'Activated', reason: '', manifestUrl, retryable: false }));
     } catch (e) {
       const reason = e?.reason || String(e).slice(0, 120);
       await updateStatus({ phase: 'Failed', reason, retryable: retryableReason(reason) });

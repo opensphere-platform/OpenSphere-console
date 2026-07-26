@@ -369,6 +369,24 @@ spec:
                   type: object
                   properties:
                     phase: { type: string, enum: [Pending, Ready, Degraded, Removed] }
+                # An installed consumer whose activation still waits on a platform
+                # capability reports exactly what is missing here, so the operator
+                # reads the remaining work off the resource instead of inferring it
+                # from a refusal.  CONSTITUTION-0004 §8.4 keeps status and
+                # remediation surfaces open before Established.
+                admission:
+                  type: object
+                  properties:
+                    activationAllowed: { type: boolean }
+                    reason: { type: string }
+                    pendingCapabilities:
+                      type: array
+                      items: { type: string }
+                    satisfiedCapabilities:
+                      type: array
+                      items: { type: string }
+                    route: { type: string }
+                    checkedAt: { type: string }
                 verification:
                   type: object
                   properties:

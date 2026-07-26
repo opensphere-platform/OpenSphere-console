@@ -37,6 +37,13 @@ export interface Registration {
     verification?: {
       manifest?: string; signature?: string; entryDigest?: string; permissions?: string;
     };
+    // An installed consumer whose activation still waits on a platform capability
+    // reports what is missing here, so the page can name the remaining work.
+    admission?: {
+      activationAllowed?: boolean; reason?: string;
+      pendingCapabilities?: string[]; satisfiedCapabilities?: string[];
+      route?: string; checkedAt?: string;
+    };
     integrations?: Record<string, IntegrationStatus>;
   };
   approval?: { requestedBy?: string; reason?: string };

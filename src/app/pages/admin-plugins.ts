@@ -537,6 +537,22 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
           </div>
         }
 
+        @if (r.status.admission && !r.status.admission.activationAllowed) {
+          <div class="cc-admission">
+            <strong>활성화 대기 — Platform Support Profile {{ satisfiedCount(r) }}/{{ totalCount(r) }} 충족</strong>
+            <p>설치와 검증은 끝났습니다. 아래 capability가 준비되면 활성화할 수 있습니다.</p>
+            <ul class="cc-admission-list">
+              @for (capability of r.status.admission.pendingCapabilities || []; track capability) {
+                <li><span class="label label-warning">필요</span> {{ capabilityText(capability) }}</li>
+              }
+              @for (capability of r.status.admission.satisfiedCapabilities || []; track capability) {
+                <li><span class="label label-success">충족</span> {{ capabilityText(capability) }}</li>
+              }
+            </ul>
+            <a class="btn btn-sm btn-primary" [href]="r.status.admission.route || '/manage/platform-control'">Platform Support Profile 열기</a>
+          </div>
+        }
+
         <div class="cc-layers" aria-label="Extension 상태 계층">
           @for (layer of statusLayers(r); track layer.label) {
             <div class="cc-layer cc-layer-{{ layer.tone }}">
@@ -851,6 +867,11 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
       .cc-state-warning { background: rgba(255, 183, 0, 0.09); }
       .cc-reason { margin: 0 0 0.9rem; padding: 0.6rem 0.75rem; border-left: 3px solid var(--os-error); background: rgba(218, 30, 40, 0.06); font-size: 0.82rem; }
       .cc-reason strong { display: block; color: var(--os-error); margin-bottom: 0.15rem; }
+      .cc-admission { margin: 0 0 0.9rem; padding: 0.6rem 0.75rem; border-left: 3px solid var(--os-warning); background: rgba(240, 171, 0, 0.08); font-size: 0.82rem; }
+      .cc-admission strong { display: block; margin-bottom: 0.15rem; }
+      .cc-admission p { margin: 0 0 0.4rem; color: var(--os-text-sec); }
+      .cc-admission-list { list-style: none; margin: 0 0 0.5rem; padding: 0; display: grid; gap: 0.2rem; }
+      .cc-admission-list li { display: flex; align-items: center; gap: 0.4rem; }
       .cc-kv { display: grid; grid-template-columns: 6rem 1fr; gap: 0.35rem 0.6rem; margin: 0.6rem 0 1rem; font-size: 0.8rem; }
       .cc-kv dt { color: var(--os-ink-muted); }
       .cc-kv dd { margin: 0; color: var(--os-ink); }
@@ -1136,6 +1157,23 @@ export class AdminPlugins implements OnInit {
       PermissionProfileDrift: 'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름',
     };
     return reason ? (m[reason] ?? reason) : '';
+  }
+
+  /** Platform Support Profile capability 이름을 운영자 문구로. 미지 값은 원문을 보존한다. */
+  private readonly CAPABILITY_TEXT: Record<string, string> = {
+    Delivery: 'Delivery — 선언형 배포 경로(GitOps)',
+    Observability: 'Observability — 텔레메트리 수집·조회',
+    BackupRestore: 'Backup/Restore — 백업과 복구 리허설 증거',
+    SecurityPolicy: 'Security/Policy — 격리·admission·최소권한',
+  };
+  capabilityText(capability: string): string {
+    return this.CAPABILITY_TEXT[capability] || capability;
+  }
+  satisfiedCount(r: Registration): number {
+    return (r.status.admission?.satisfiedCapabilities || []).length;
+  }
+  totalCount(r: Registration): number {
+    return this.satisfiedCount(r) + (r.status.admission?.pendingCapabilities || []).length;
   }
 
   /** DUPA 설치/검증 파이프라인 단계(controller verifyPlugin 순서). reason으로 실패 지점 도출. */
