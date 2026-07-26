@@ -49,12 +49,35 @@ test('Console and diagnostic CLI images compile the manifest version', async () 
   assert.match(diagnosticDockerfile, versionPattern);
   assert.match(rootDockerfile, /CLI_UPDATE_SIGNING_PROFILE/);
   assert.match(rootDockerfile, /cli_update_signing_key/);
-  assert.match(rootDockerfile, /COPY --from=macos-cli \/opensphere-cli-darwin-arm64/);
-  assert.match(rootDockerfile, /COPY --from=macos-cli \/opensphere-cli-darwin-amd64/);
   assert.deepEqual(
     releaseManifest.links.map(({ os, arch }) => `${os}/${arch}`),
     ['linux/amd64', 'darwin/arm64', 'darwin/amd64', 'windows/amd64']
   );
+});
+
+test('the macOS CLI is an optional build input that a release turns back into a requirement', async () => {
+  const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
+  const workflow = await readFile(new URL('../../.github/workflows/publish-ga-images.yml', import.meta.url), 'utf8');
+  const publisher = await readFile(new URL('../../scripts/Publish-LocalEdge.ps1', import.meta.url), 'utf8');
+
+  // Defaulting to an empty context is what lets a Windows host build the Console
+  // at all; darwin needs cgo against Security.framework and cannot be produced
+  // here. The copy must therefore be conditional, never a hard COPY --from.
+  assert.match(rootDockerfile, /ARG CLI_DARWIN_CONTEXT=cli-darwin-absent/);
+  assert.match(rootDockerfile, /ARG CLI_REQUIRE_DARWIN=false/);
+  assert.match(rootDockerfile, /FROM scratch AS cli-darwin-absent/);
+  assert.doesNotMatch(rootDockerfile, /COPY --from=macos-cli/, 'the macOS context must not be mandatory');
+  assert.match(rootDockerfile, /if \[ "\$\{CLI_REQUIRE_DARWIN\}" = "true" \]/, 'a release must still fail without darwin');
+
+  // GA re-arms the requirement, so a release can never ship the reduced set.
+  assert.match(workflow, /CLI_DARWIN_CONTEXT=macos-cli/);
+  assert.match(workflow, /CLI_REQUIRE_DARWIN=true/);
+
+  // The local edge publisher no longer recycles darwin binaries out of the
+  // previous image, so an unrelated backend/os-cli commit cannot block it.
+  assert.doesNotMatch(publisher, /--build-context/);
+  assert.doesNotMatch(publisher, /opensphere-cli-darwin/);
+  assert.doesNotMatch(publisher, /backend\/os-cli changed/);
 });
 
 test('production manifest signing fails closed without release key material', async () => {
@@ -105,6 +128,46 @@ test('release manifest generation fails when a declared artifact is missing', as
     const input = join(dir, 'index.json');
     await writeFile(input, JSON.stringify({ links: [{ href: '/api/cli/missing' }] }));
     await assert.rejects(() => generateManifest(input, dir, join(dir, 'output.json')), /ENOENT/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a build without the macOS toolchain publishes what it produced and names what it omitted', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'opensphere-cli-manifest-'));
+  try {
+    const input = join(dir, 'index.json');
+    await writeFile(join(dir, 'opensphere-cli-linux-amd64'), 'linux');
+    await writeFile(input, JSON.stringify({
+      name: 'os', version: '1.0.0', links: [
+        { os: 'linux', arch: 'amd64', href: '/api/cli/opensphere-cli-linux-amd64' },
+        { os: 'darwin', arch: 'arm64', href: '/api/cli/opensphere-cli-darwin-arm64' },
+      ],
+    }));
+
+    // The default stays fail-closed so a release cannot lose a platform silently.
+    await assert.rejects(() => generateManifest(input, dir, join(dir, 'strict.json')), /ENOENT/);
+
+    const manifest = await generateManifest(input, dir, join(dir, 'edge.json'), { omitMissing: true });
+    assert.deepEqual(manifest.links.map((l) => `${l.os}/${l.arch}`), ['linux/amd64']);
+    assert.deepEqual(manifest.omittedPlatforms, ['darwin/arm64']);
+    // The signature must cover the reduced set, not the declared catalogue.
+    assert.equal(manifest.signature.algorithm, 'Ed25519');
+    assert.doesNotMatch(canonicalUpdatePayload(manifest), /darwin/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a build that produced no declared artifact fails even when omission is allowed', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'opensphere-cli-manifest-'));
+  try {
+    const input = join(dir, 'index.json');
+    await writeFile(input, JSON.stringify({ links: [{ os: 'linux', arch: 'amd64', href: '/api/cli/absent' }] }));
+    await assert.rejects(
+      () => generateManifest(input, dir, join(dir, 'output.json'), { omitMissing: true }),
+      /no declared CLI artifact was produced/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

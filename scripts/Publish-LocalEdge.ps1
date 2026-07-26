@@ -115,13 +115,12 @@ $platformRoot = Split-Path $repoRoot -Parent
 $workspace = Join-Path $platformRoot ".codex-tmp\local-edge-$($SourceRevision.Substring(0, 12))"
 $consoleCheckout = Join-Path $workspace 'OpenSphere-console'
 $sdkCheckout = Join-Path $workspace 'OpenSphere-SDK'
-$macosCli = Join-Path $workspace 'macos-cli'
 $metadataRoot = Join-Path $workspace 'metadata'
 
 if (Test-Path -LiteralPath $workspace) {
   throw "Local edge workspace already exists: $workspace"
 }
-New-Item -ItemType Directory -Path $workspace, $macosCli, $metadataRoot | Out-Null
+New-Item -ItemType Directory -Path $workspace, $metadataRoot | Out-Null
 
 Write-Host "[start] Local OpenSphere edge publish"
 Write-Host "[source] $SourceRevision"
@@ -134,31 +133,15 @@ Write-Host '[step 01/06] Prepare clean Console and SDK source'
 Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRevision
 Invoke-Checked git clone --depth 1 --branch main $SdkRepository $sdkCheckout
 
-Write-Host '[step 02/06] Reuse signed macOS CLI only when CLI source is unchanged'
-$currentEdge = "${Registry}/opensphere-console:edge"
-Invoke-Checked docker pull $currentEdge
-$sourceRevisionTemplate = '{{ index .Config.Labels "io.opensphere.source-revision" }}'
-$priorRevision = (& docker image inspect $currentEdge --format $sourceRevisionTemplate).Trim()
-if ($priorRevision -notmatch '^[0-9a-f]{40}$') {
-  throw "Current edge image has no canonical source revision: $currentEdge"
-}
-& git -C $repoRoot cat-file -e "${priorRevision}^{commit}" 2>$null
-if ($LASTEXITCODE -ne 0) {
-  Invoke-Checked git -C $repoRoot fetch github $priorRevision
-}
-& git -C $repoRoot diff --quiet $priorRevision $SourceRevision -- backend/os-cli
-if ($LASTEXITCODE -ne 0) {
-  throw 'backend/os-cli changed; Windows local publishing requires newly signed macOS CLI artifacts from a macOS builder.'
-}
-
-$containerName = "opensphere-local-edge-cli-$PID"
-try {
-  Invoke-Checked docker create --name $containerName $currentEdge
-  Invoke-Checked docker cp "${containerName}:/usr/share/nginx/html/api/cli/opensphere-cli-darwin-arm64" (Join-Path $macosCli 'opensphere-cli-darwin-arm64')
-  Invoke-Checked docker cp "${containerName}:/usr/share/nginx/html/api/cli/opensphere-cli-darwin-amd64" (Join-Path $macosCli 'opensphere-cli-darwin-amd64')
-} finally {
-  & docker rm $containerName 2>$null | Out-Null
-}
+Write-Host '[step 02/06] Declare the CLI platforms this host can build'
+# The macOS CLI reaches the Keychain through cgo against Security.framework, so it
+# is compiled natively by the GA workflow and no Windows host can produce it.
+# Recycling the darwin binaries out of the previous edge image made every Console
+# change depend on backend/os-cli being untouched, and an unrelated CLI commit
+# blocked a frontend fix from reaching docker-desktop. Edge now builds the
+# platforms this host owns and the generated CLI manifest names the ones it
+# omitted, so nothing claims a macOS artifact that was never rebuilt.
+Write-Host '[cli] linux/amd64 and windows/amd64 are cross-built here; darwin is release-only'
 
 Write-Host '[step 03/06] Confirm GHCR authentication mode'
 if ($UseExistingRegistryLogin) {
@@ -215,7 +198,6 @@ for ($index = 0; $index -lt $images.Count; $index += 1) {
     '--label', 'opensphere.io/build-authority=localhost',
     '--label', 'opensphere.io/release-class=pre-ga',
     '--label', 'opensphere.io/ga-eligible=false',
-    '--build-context', "macos-cli=$macosCli",
     '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local',
     '--file', $item.File,
     $item.Context

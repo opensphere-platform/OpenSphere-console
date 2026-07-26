@@ -220,6 +220,11 @@ jobs:
             CLI_UPDATE_SIGNING_PROFILE=production
             CLI_UPDATE_TRUST_ID=${{ vars.CLI_UPDATE_SIGNING_KEY_ID }}
             CLI_UPDATE_TRUST_PUBLIC=${{ vars.CLI_UPDATE_SIGNING_PUBLIC_KEY }}
+            # GA must ship every declared CLI platform. This turns the optional
+            # macOS context into a hard requirement, so a release can never
+            # publish the reduced artifact set a local edge build may produce.
+            CLI_DARWIN_CONTEXT=macos-cli
+            CLI_REQUIRE_DARWIN=true
           secrets: |
             "cli_update_signing_key=${{ secrets.CLI_UPDATE_SIGNING_PRIVATE_KEY }}"
           cache-from: type=gha,scope=${{ matrix.image }}
