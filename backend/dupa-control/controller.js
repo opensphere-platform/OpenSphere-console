@@ -850,7 +850,7 @@ async function deleteWorkload(pkg) {
 }
 async function workloadReady(name) {
   const d = await k8s('GET', `/apis/apps/v1/namespaces/${NS}/deployments/${name}`);
-  return d.ok && (d.json.status?.availableReplicas ?? 0) >= 1;
+  return d.ok && deploymentRolloutConverged(d.json);
 }
 
 // ── 검증 (controller 설치 시점 — 셸 로드 시점과 동일 규칙, 이중 검증 §B.1) ──
@@ -1901,12 +1901,34 @@ const requiredProfileSpec = Object.freeze({
 function condition(type, ready, reason, message, evidence = []) {
   return { type, status: ready ? 'True' : 'False', ready, reason, message, evidence };
 }
+function deploymentRolloutConverged(deployment) {
+  const desired = Number(deployment?.spec?.replicas ?? 1);
+  const generation = Number(deployment?.metadata?.generation || 0);
+  const observed = Number(deployment?.status?.observedGeneration || 0);
+  const replicas = Number(deployment?.status?.replicas || 0);
+  const updated = Number(deployment?.status?.updatedReplicas || 0);
+  const available = Number(deployment?.status?.availableReplicas || 0);
+  const ready = Number(deployment?.status?.readyReplicas || 0);
+  return desired > 0
+    && observed >= generation
+    && replicas === desired
+    && updated === desired
+    && available === desired
+    && ready === desired;
+}
 function deploymentReadyResult(ns, name, resource) {
   if (!resource?.ok) return { name, namespace: ns, ready: false, reason: `Deployment HTTP ${resource?.status || 0}` };
   const d = resource.json || {};
   const desired = Number(d.spec?.replicas ?? 1);
   const ready = Number(d.status?.readyReplicas || 0);
-  return { name, namespace: ns, ready: desired > 0 && ready >= desired, detail: `${ready}/${desired} ready` };
+  const updated = Number(d.status?.updatedReplicas || 0);
+  const observed = Number(d.status?.observedGeneration || 0);
+  return {
+    name,
+    namespace: ns,
+    ready: deploymentRolloutConverged(d),
+    detail: `${ready}/${desired} ready · ${updated}/${desired} updated · generation ${observed}/${Number(d.metadata?.generation || 0)}`,
+  };
 }
 
 function requireOaaOwnerPermission(actor, permission) {
@@ -2825,5 +2847,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
 }
