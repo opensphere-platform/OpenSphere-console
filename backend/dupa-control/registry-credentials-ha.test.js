@@ -63,15 +63,21 @@ function project(cluster, mounts, podName) {
   mounts.set(`/state/${podName}/generation`, generation);
 }
 
-test('login waits for controller B and then both replicas use the same mounted generation', async () => {
+test('login returns propagation state without waiting for projected Secret convergence', async () => {
   const cluster = fakeCluster();
   const mounts = new Map();
   const b = coordinator(cluster, 'controller-b', mounts);
-  const a = coordinator(cluster, 'controller-a', mounts, {
-    sleep: async () => { project(cluster, mounts, 'controller-a'); project(cluster, mounts, 'controller-b'); await b.observe(); },
-  });
+  const a = coordinator(cluster, 'controller-a', mounts);
   const stored = await a.store('opensphere-platform', 'test-token-not-a-real-secret');
-  assert.equal(stored.converged, true);
+  assert.equal(stored.converged, false);
+  assert.equal(stored.phase, 'propagating');
+  project(cluster, mounts, 'controller-a');
+  project(cluster, mounts, 'controller-b');
+  await b.observe();
+  const status = await a.status();
+  assert.equal(status.converged, true);
+  assert.equal(status.configured, true);
+  assert.equal(status.phase, 'configured');
   assert.deepEqual(await a.credentials(), { username: 'opensphere-platform', password: 'test-token-not-a-real-secret' });
   assert.deepEqual(await b.credentials(), { username: 'opensphere-platform', password: 'test-token-not-a-real-secret' });
   const metadata = JSON.stringify([...cluster.state.configMaps.values()]);
@@ -97,6 +103,15 @@ test('a stale replica returns retryable propagation rather than a false 401', as
   await assert.rejects(b.credentials(), (error) => error.code === 503 && error.reason === 'RegistryCredentialsPropagating' && error.retryAfter === 1);
 });
 
+test('an empty credential store is a converged revoked state', async () => {
+  const cluster = fakeCluster();
+  const a = coordinator(cluster, 'controller-a', new Map());
+  const status = await a.status();
+  assert.equal(status.configured, false);
+  assert.equal(status.converged, true);
+  assert.equal(status.phase, 'revoked');
+});
+
 test('a replica observes the generation embedded in its Secret when the optional state volume is absent', async () => {
   const cluster = fakeCluster();
   cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: { phase: 'configured', generation: 'generation-2', updatedAt: '2026-07-24T00:00:00.000Z' } });
@@ -119,7 +134,7 @@ test('a mismatched optional state projection still blocks credential use', async
   await assert.rejects(a.credentials(), (error) => error.code === 503 && error.reason === 'RegistryCredentialsPropagating');
 });
 
-test('logout blocks all replica credential use before reporting success', async () => {
+test('logout blocks credential use immediately and reports propagation until all replicas observe revocation', async () => {
   const cluster = fakeCluster();
   const mounts = new Map();
   cluster.state.secret = {
@@ -134,9 +149,15 @@ test('logout blocks all replica credential use before reporting success', async 
   });
   assert.equal((await a.credentials()).password, 'old-token');
   const removed = await a.remove();
-  assert.equal(removed.converged, true);
+  assert.equal(removed.converged, false);
+  assert.equal(removed.phase, 'propagating');
   assert.equal(await a.credentials(), null);
   assert.equal(await b.credentials(), null);
+  await b.observe();
+  const status = await a.status();
+  assert.equal(status.converged, true);
+  assert.equal(status.phase, 'revoked');
+  assert.equal(status.configured, false);
 });
 
 test('rolling update does not claim convergence while a newly serving replica is unobserved', async () => {
@@ -161,6 +182,8 @@ test('controller keeps GHCR tokens file-only and mounts only lifecycle metadata 
   assert.match(deployment, /name: POD_NAME/);
   assert.match(deployment, /name: opensphere-ghcr-state/);
   assert.match(lifecycle, /RegistryCredentialsPropagating/);
+  assert.match(controller, /json\(res,\s*stored\.converged\s*\?\s*200\s*:\s*202,\s*stored\)/);
+  assert.match(controller, /json\(res,\s*removed\.converged\s*\?\s*200\s*:\s*202,\s*removed\)/);
   assert.doesNotMatch(lifecycle, /GHCR_(?:TOKEN|PASSWORD)|process\.env\.[A-Z_]*TOKEN/);
 });
 

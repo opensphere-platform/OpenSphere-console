@@ -2549,7 +2549,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const stored = await storeRegistryCredentials(username, registryToken);
         await durableAudit(actor, 'registry-credentials-configure', 'ghcr.io', 'accepted', reason, opId);
-        return json(res, 200, stored);
+        return json(res, stored.converged ? 200 : 202, stored);
       } catch (e) {
         await durableAudit(actor, 'registry-credentials-configure', 'ghcr.io', 'error', e?.reason || 'store failed', opId);
         return registryCredentialError(res, e, opId);
@@ -2562,7 +2562,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const removed = await deleteRegistryCredentials();
         await durableAudit(actor, 'registry-credentials-remove', 'ghcr.io', 'accepted', reason, opId);
-        return json(res, 200, removed);
+        return json(res, removed.converged ? 200 : 202, removed);
       } catch (e) {
         await durableAudit(actor, 'registry-credentials-remove', 'ghcr.io', 'error', e?.reason || 'delete failed', opId);
         return registryCredentialError(res, e, opId);

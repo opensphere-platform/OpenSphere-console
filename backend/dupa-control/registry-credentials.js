@@ -175,15 +175,26 @@ class RegistryCredentialCoordinator {
     const deadline = Date.now() + this.waitTimeoutMs;
     let last = { servingReplicas: [], observedReplicas: [] };
     while (Date.now() <= deadline) {
-      await this.observe();
-      const [pods, observations] = await Promise.all([this.servingPodNames(), this.configMap(OBSERVATIONS_NAME)]);
-      const data = observations?.data || {};
-      const observed = pods.filter((name) => data[name] === expected);
-      last = { servingReplicas: pods, observedReplicas: observed };
-      if (pods.length > 0 && observed.length === pods.length) return { converged: true, ...last };
+      last = await this.convergenceStatus(phase, generation);
+      if (last.converged) return last;
       await this.sleep(this.pollMs);
     }
     throw Object.assign(propagationError(), { ...last, generation, phase });
+  }
+
+  async convergenceStatus(phase, generation) {
+    const expected = `${phase}:${generation}`;
+    await this.observe();
+    const [pods, observations] = await Promise.all([
+      this.servingPodNames(), this.configMap(OBSERVATIONS_NAME),
+    ]);
+    const data = observations?.data || {};
+    const observed = pods.filter((name) => data[name] === expected);
+    return {
+      converged: pods.length > 0 && observed.length === pods.length,
+      servingReplicas: pods,
+      observedReplicas: observed,
+    };
   }
 
   async status() {
@@ -194,14 +205,23 @@ class RegistryCredentialCoordinator {
     const encoded = secret.json?.data?.['.dockerconfigjson'];
     const config = encoded ? Buffer.from(encoded, 'base64').toString('utf8') : '';
     const credentials = dockerCredentials(config);
+    let convergence = { converged: false, servingReplicas: [], observedReplicas: [] };
+    if (state.generation && (state.phase === 'configured' || state.phase === 'revoked')) {
+      convergence = await this.convergenceStatus(state.phase, state.generation);
+    } else if (state.phase === 'revoked' && secret.status === 404) {
+      convergence = { converged: true, servingReplicas: [], observedReplicas: [] };
+    }
+    const configured = state.phase === 'configured' && secret.ok && Boolean(credentials) && convergence.converged;
     return {
       registry: 'ghcr.io',
-      configured: state.phase === 'configured' && secret.ok && Boolean(credentials),
+      configured,
       ...(credentials ? { username: credentials.username } : {}),
       secretName: this.secretName,
       updatedAt: state.updatedAt,
       credentialGeneration: state.generation || undefined,
-      phase: state.phase,
+      phase: convergence.converged ? state.phase : 'propagating',
+      targetPhase: state.phase,
+      ...convergence,
     };
   }
 
@@ -227,8 +247,18 @@ class RegistryCredentialCoordinator {
       : await this.k8s('POST', `/api/v1/namespaces/${this.namespace}/secrets`, body);
     if (!result.ok) throw storeError(`registry credential store HTTP ${result.status}`);
     await this.writeState('configured', generation, updatedAt);
-    const convergence = await this.convergence('configured', generation);
-    return { registry: 'ghcr.io', configured: true, username, secretName: this.secretName, updatedAt, credentialGeneration: generation, ...convergence };
+    const convergence = await this.convergenceStatus('configured', generation);
+    return {
+      registry: 'ghcr.io',
+      configured: convergence.converged,
+      username,
+      secretName: this.secretName,
+      updatedAt,
+      credentialGeneration: generation,
+      phase: convergence.converged ? 'configured' : 'propagating',
+      targetPhase: 'configured',
+      ...convergence,
+    };
   }
 
   async remove() {
@@ -239,8 +269,17 @@ class RegistryCredentialCoordinator {
     const result = await this.k8s('DELETE', secretPath(this.namespace, this.secretName));
     if (!result.ok && result.status !== 404) throw storeError(`registry credential delete HTTP ${result.status}`);
     await this.writeState('revoked', generation, updatedAt);
-    const convergence = await this.convergence('revoked', generation);
-    return { registry: 'ghcr.io', configured: false, secretName: this.secretName, updatedAt, credentialGeneration: generation, ...convergence };
+    const convergence = await this.convergenceStatus('revoked', generation);
+    return {
+      registry: 'ghcr.io',
+      configured: false,
+      secretName: this.secretName,
+      updatedAt,
+      credentialGeneration: generation,
+      phase: convergence.converged ? 'revoked' : 'propagating',
+      targetPhase: 'revoked',
+      ...convergence,
+    };
   }
 }
 

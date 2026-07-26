@@ -1181,6 +1181,10 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 	} else {
 		b, status, err = request(cfg, method, requestURL, body, contentType)
 	}
+	if err == nil && status == http.StatusAccepted && action == "registry" && len(args) > 1 &&
+		(args[1] == "login" || args[1] == "logout") {
+		b, status, err = waitForRegistryCredentialTransition(cfg, args[1] == "login")
+	}
 	if err != nil {
 		return err
 	}
@@ -1232,6 +1236,61 @@ func registryRetryDelay(retryAfter string, attempt int) time.Duration {
 		return time.Duration(seconds) * time.Second
 	}
 	return time.Duration(200*(attempt+1)) * time.Millisecond
+}
+
+func waitForRegistryCredentialTransition(cfg Config, expectConfigured bool) ([]byte, int, error) {
+	const maxAttempts = 90
+	statusURL := join(cfg.ConsoleURL, "/api/admin/extensions/registry-credentials")
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		b, status, retryAfter, err := requestWithRetryAfter(cfg, http.MethodGet, statusURL, nil, "")
+		if err != nil {
+			return nil, 0, err
+		}
+		if status >= 200 && status < 300 {
+			complete, pending := registryCredentialTransitionState(b, expectConfigured)
+			if complete || !pending {
+				return b, status, nil
+			}
+		} else if status != http.StatusServiceUnavailable || !registryCredentialsPropagating(b) {
+			return b, status, nil
+		}
+		if attempt == maxAttempts-1 {
+			break
+		}
+		sleepFn(registryTransitionPollDelay(retryAfter))
+	}
+	return nil, 0, errors.New("registry credential 변경은 접수됐지만 replica 전파가 90초 안에 완료되지 않았습니다; 'os extensions registry status -o json'으로 상태를 확인하세요")
+}
+
+func registryTransitionPollDelay(retryAfter string) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && seconds > 0 && seconds <= 10 {
+		return time.Duration(seconds) * time.Second
+	}
+	return time.Second
+}
+
+func registryCredentialTransitionState(body []byte, expectConfigured bool) (bool, bool) {
+	var state struct {
+		Configured  bool   `json:"configured"`
+		Converged   bool   `json:"converged"`
+		Phase       string `json:"phase"`
+		TargetPhase string `json:"targetPhase"`
+	}
+	if json.Unmarshal(body, &state) != nil {
+		return false, false
+	}
+	if expectConfigured {
+		if state.Configured && state.Phase == "configured" {
+			return true, false
+		}
+		return false, state.Phase == "propagating" || state.Phase == "configuring" ||
+			(!state.Converged && state.TargetPhase == "configured")
+	}
+	if !state.Configured && state.Phase == "revoked" {
+		return true, false
+	}
+	return false, state.Phase == "propagating" || state.Phase == "revoking" ||
+		(!state.Converged && state.TargetPhase == "revoked")
 }
 
 func validResourceName(value string) bool {

@@ -236,6 +236,50 @@ func TestRegistryPropagationRetryIsNarrowAndBounded(t *testing.T) {
 	}
 }
 
+func TestRegistryCredentialAcceptedTransitionPollsStatusWithoutReplayingMutation(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/api/admin/extensions/registry-credentials" {
+			t.Fatalf("poll must use credential status GET only: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{"configured":false,"converged":false,"phase":"propagating","targetPhase":"configured"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"configured":true,"converged":true,"phase":"configured","targetPhase":"configured"}`))
+	}))
+	defer server.Close()
+	originalSleep := sleepFn
+	sleeps := []time.Duration{}
+	sleepFn = func(delay time.Duration) { sleeps = append(sleeps, delay) }
+	defer func() { sleepFn = originalSleep }()
+	cfg := defaults()
+	cfg.PAT, cfg.ConsoleURL = "test-token", server.URL
+	body, status, err := waitForRegistryCredentialTransition(cfg, true)
+	if err != nil || status != http.StatusOK || requests != 2 || len(sleeps) != 1 {
+		t.Fatalf("credential status polling failed: status=%d requests=%d sleeps=%v err=%v", status, requests, sleeps, err)
+	}
+	complete, pending := registryCredentialTransitionState(body, true)
+	if !complete || pending {
+		t.Fatalf("final configured response was not recognized: %s", body)
+	}
+}
+
+func TestRegistryCredentialTransitionStateKeepsLogoutFailClosed(t *testing.T) {
+	if complete, pending := registryCredentialTransitionState(
+		[]byte(`{"configured":false,"converged":false,"phase":"propagating","targetPhase":"revoked"}`), false,
+	); complete || !pending {
+		t.Fatal("logout propagation must remain pending")
+	}
+	if complete, pending := registryCredentialTransitionState(
+		[]byte(`{"configured":false,"converged":true,"phase":"revoked","targetPhase":"revoked"}`), false,
+	); !complete || pending {
+		t.Fatal("converged logout must complete")
+	}
+}
+
 func TestGlobalOutputRenderingAndExitCodes(t *testing.T) {
 	args, output, err := extractGlobalOptions([]string{"catalog", "list", "--output=table"})
 	if err != nil || output != "table" || strings.Join(args, " ") != "catalog list" {
