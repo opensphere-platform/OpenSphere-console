@@ -3,79 +3,57 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const workflow = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'publish-edge-images.yml'), 'utf8');
-const angularConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'angular.json'), 'utf8'));
-const localEdgePublisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+const consoleRoot = path.join(__dirname, '..', '..');
+const gaWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workflows', 'publish-ga-images.yml'), 'utf8');
+const angularConfig = JSON.parse(fs.readFileSync(path.join(consoleRoot, 'angular.json'), 'utf8'));
+const localEdgePublisher = fs.readFileSync(path.join(consoleRoot, 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
 
-test('edge is advanced only after every immutable console component is verified', () => {
-  const matrixMetadata = workflow.slice(workflow.indexOf('      - name: Image metadata'), workflow.indexOf('      - name: Build and push'));
-  assert.match(matrixMetadata, /type=sha,prefix=sha-/);
-  assert.doesNotMatch(matrixMetadata, /type=raw,value=edge/);
-  assert.match(workflow, /publish-edge:\s*\n\s+needs: \[publish\]/);
-  assert.match(workflow, /source_tag="sha-\$\{GITHUB_SHA:0:7\}"/);
-  assert.match(workflow, /Do not move any channel tag until every immutable component was/);
-  assert.match(workflow, /bom="\$RUNNER_TEMP\/opensphere-release-bom\.json"/);
-  assert.match(workflow, /digest="\$\(jq -r --arg key "\$key" '\.components\[\$key\]\.image \| split\("@\"\)\[1\]' "\$bom"\)"/);
-  assert.match(workflow, /crane tag "\$repository@\$digest" edge/);
-  assert.match(workflow, /crane tag "\$anchor_repository@\$anchor_digest" edge/);
+test('GA is rebuilt by a manual GitHub workflow and never publishes edge', () => {
+  assert.match(gaWorkflow, /^\s*workflow_dispatch:\s*$/m);
+  assert.doesNotMatch(gaWorkflow, /^  push:/m);
+  assert.match(gaWorkflow, /platforms: linux\/amd64,linux\/arm64/);
+  assert.match(gaWorkflow, /io\.opensphere\.channel=ga/);
+  assert.match(gaWorkflow, /opensphere\.io\/build-authority=github-actions/);
+  assert.match(gaWorkflow, /opensphere\.io\/release-class=ga/);
+  assert.match(gaWorkflow, /opensphere\.io\/ga-eligible=true/);
+  assert.match(gaWorkflow, /org\.opencontainers\.image\.version=\$\{\{ steps\.release\.outputs\.version \}\}/);
+  assert.doesNotMatch(gaWorkflow, /crane tag [^\n]+ edge/);
+  assert.match(gaWorkflow, /crane tag "\$repository@\$digest" ga/);
+  assert.match(gaWorkflow, /crane tag "\$anchor_repository@\$anchor_digest" ga/);
 });
 
-test('edge workflow is manual and its fallback images are amd64 only', () => {
-  assert.match(workflow, /^\s*workflow_dispatch:\s*$/m);
-  assert.doesNotMatch(workflow, /^  push:/m);
-  assert.match(workflow, /platforms: linux\/amd64/);
-  assert.doesNotMatch(workflow, /platforms: linux\/amd64,linux\/arm64/);
-  assert.match(workflow, /--argjson supportedPlatforms '\["linux\/amd64"\]'/);
-  assert.doesNotMatch(workflow, /opensphere-cbs-/);
-  assert.match(workflow, /image: opensphere-console-gitea/);
-  assert.match(workflow, /context: OpenSphere-console\/backend\/gitea\/image/);
-  assert.match(workflow, /image: opensphere-oaa-governed-adapter/);
-  const componentKeyBlocks = [...workflow.matchAll(/component_keys=\(\s*([\s\S]*?)\s*\)/g)]
-    .map((match) => match[1].trim().split(/\s+/));
-  const releaseComponents = [
-    'console',
-    'backend',
-    'dupaController',
-    'oaaGateway',
-    'oaaGovernedAdapter',
-    'notificationDispatcher',
-    'recovery',
-    'gitea',
-    'supabasePostgres',
-    'supabaseAuth',
-    'supabaseRest',
-    'supabaseStorage',
-    'giteaPostgres',
-  ];
-  const publishedImages = [...workflow.matchAll(/^\s+- image: ([a-z0-9-]+)$/gm)]
-    .map((match) => match[1]);
-  assert.deepEqual(publishedImages, [
-    'opensphere-console',
-    'opensphere-console-backend',
-    'opensphere-console-dupa-controller',
-    'opensphere-console-oaa-gateway',
-    'opensphere-oaa-governed-adapter',
-    'opensphere-console-notification-dispatcher',
-    'opensphere-console-recovery',
-    'opensphere-console-gitea',
-    'opensphere-console-supabase-postgres',
-    'opensphere-console-supabase-auth',
-    'opensphere-console-supabase-rest',
-    'opensphere-console-supabase-storage',
-    'opensphere-console-gitea-postgres',
-  ]);
-  assert.deepEqual(componentKeyBlocks, [releaseComponents, releaseComponents.slice(1)]);
+test('GA channel moves only after a complete immutable Console BOM is prepared', () => {
+  assert.match(gaWorkflow, /publish-ga:\s*\n\s+needs: \[publish\]/);
+  assert.match(gaWorkflow, /source_tag="sha-\$\{GITHUB_SHA:0:7\}"/);
+  assert.match(gaWorkflow, /release_tag="\$\(TZ=Asia\/Seoul date -d "@\$release_epoch" \+%Y%m%d%H%M\)"/);
+  assert.match(gaWorkflow, /bom="\$RUNNER_TEMP\/opensphere-release-bom\.json"/);
+  assert.match(gaWorkflow, /Do not move any channel tag until every immutable component was/);
+  assert.match(gaWorkflow, /--argjson supportedPlatforms '\["linux\/amd64","linux\/arm64"\]'/);
+  assert.match(gaWorkflow, /Advance GA with Console anchor last/);
 });
 
-test('Windows local edge publisher preserves the dotted OCI label key as one Docker argument', () => {
-  assert.match(localEdgePublisher, /\$sourceRevisionTemplate = '\{\{ index \.Config\.Labels "io\.opensphere\.source-revision" \}\}'/);
-  assert.match(localEdgePublisher, /docker image inspect \$currentEdge --format \$sourceRevisionTemplate/);
+test('Windows local edge publisher is host-native, GHCR-backed, and KST-versioned', () => {
+  assert.match(localEdgePublisher, /\$env:OS -ne 'Windows_NT'/);
+  assert.match(localEdgePublisher, /\$kubeContext -ne 'docker-desktop'/);
+  assert.match(localEdgePublisher, /\$Platform -ne 'linux\/amd64'/);
+  assert.match(localEdgePublisher, /--platform', \$Platform/);
+  assert.match(localEdgePublisher, /--push/);
+  assert.match(localEdgePublisher, /io\.opensphere\.channel=edge/);
+  assert.match(localEdgePublisher, /io\.opensphere\.release-tag=\$releaseTag/);
+  assert.match(localEdgePublisher, /org\.opencontainers\.image\.version=\$releaseTag/);
+  assert.match(localEdgePublisher, /opensphere\.io\/build-authority=localhost/);
+  assert.match(localEdgePublisher, /Set-RemoteTag -Repository .* -Tag \$releaseTag -Immutable/);
+  assert.match(localEdgePublisher, /Set-RemoteTag -Repository .* -Tag edge/);
 });
 
-test('public Console edge workflow reads private Setup through a dedicated read-only secret', () => {
-  const checkout = workflow.slice(
-    workflow.indexOf('      - name: Require private Setup read credential'),
-    workflow.indexOf('      - name: Checkout Cluster Manager'),
+test('retag-only promotion workflow is absent because channel identity is immutable image metadata', () => {
+  assert.equal(fs.existsSync(path.join(consoleRoot, '.github', 'workflows', 'promote-image-channel.yml')), false);
+});
+
+test('public Console GA workflow reads private Setup through a dedicated read-only secret', () => {
+  const checkout = gaWorkflow.slice(
+    gaWorkflow.indexOf('      - name: Require private Setup read credential'),
+    gaWorkflow.indexOf('      - name: Checkout Cluster Manager'),
   );
   assert.match(checkout, /SETUP_REPOSITORY_SSH_KEY/);
   assert.match(checkout, /ssh-key: \$\{\{ secrets\.SETUP_REPOSITORY_SSH_KEY \}\}/);

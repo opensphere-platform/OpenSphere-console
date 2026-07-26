@@ -23,7 +23,8 @@ export interface Registration {
   status: {
     phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string;
     retryable?: boolean; nextRetryAt?: string; observedGeneration?: number;
-    observedVersion?: string; currentVersion?: string; currentDigest?: string;
+    observedVersion?: string; currentVersion?: string; currentCompatibilityVersion?: string;
+    currentBuildAuthority?: 'localhost' | 'github-actions'; currentDigest?: string;
     currentManifestSha256?: string; currentRequestedRef?: string;
     currentRequestedChannel?: string; currentResolvedAt?: string;
     currentSource?: string; currentRevision?: string;

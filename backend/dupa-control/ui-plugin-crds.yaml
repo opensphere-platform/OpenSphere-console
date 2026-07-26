@@ -69,13 +69,15 @@ spec:
                 # The workload still consumes only image.repository@image.digest.
                 resolution:
                   type: object
-                  required: [requestedRef, requestedChannel, resolvedDigest, resolvedAt, artifactVersion, signatureIdentity, registryCredentialsRequired, evidenceRefs]
+                  required: [requestedRef, requestedChannel, resolvedDigest, resolvedAt, artifactVersion, compatibilityVersion, buildAuthority, signatureIdentity, registryCredentialsRequired, evidenceRefs]
                   properties:
                     requestedRef: { type: string }
-                    requestedChannel: { type: string, enum: ["", edge, candidate, stable] }
+                    requestedChannel: { type: string, enum: ["", edge, candidate, stable, ga] }
                     resolvedDigest: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
                     resolvedAt: { type: string, format: date-time }
-                    artifactVersion: { type: string }
+                    artifactVersion: { type: string, pattern: '^[0-9]{12}$' }
+                    compatibilityVersion: { type: string, pattern: '^[0-9]+\.[0-9]+\.[0-9]+$' }
+                    buildAuthority: { type: string, enum: [localhost, github-actions] }
                     source: { type: string }
                     revision: { type: string, pattern: '^(|[a-f0-9]{40})$' }
                     signatureIdentity: { type: string }
@@ -324,8 +326,10 @@ spec:
                 currentDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
                 currentManifestSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
                 currentVersion: { type: string }
+                currentCompatibilityVersion: { type: string }
+                currentBuildAuthority: { type: string, enum: ["", localhost, github-actions] }
                 currentRequestedRef: { type: string }
-                currentRequestedChannel: { type: string, enum: ["", edge, candidate, stable] }
+                currentRequestedChannel: { type: string, enum: ["", edge, candidate, stable, ga] }
                 currentResolvedAt: { type: string }
                 currentSource: { type: string }
                 currentRevision: { type: string, pattern: '^(|[a-f0-9]{40})$' }
@@ -343,8 +347,10 @@ spec:
                 previousDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
                 previousManifestSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
                 previousVersion: { type: string }
+                previousCompatibilityVersion: { type: string }
+                previousBuildAuthority: { type: string, enum: ["", localhost, github-actions] }
                 previousRequestedRef: { type: string }
-                previousRequestedChannel: { type: string, enum: ["", edge, candidate, stable] }
+                previousRequestedChannel: { type: string, enum: ["", edge, candidate, stable, ga] }
                 previousResolvedAt: { type: string }
                 previousSource: { type: string }
                 previousRevision: { type: string, pattern: '^(|[a-f0-9]{40})$' }

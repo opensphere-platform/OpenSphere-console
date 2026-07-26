@@ -37,8 +37,10 @@ const BUILD_AUTHORITY_LABEL = 'opensphere.io/build-authority';
 const RELEASE_CLASS_LABEL = 'opensphere.io/release-class';
 const GA_ELIGIBLE_LABEL = 'opensphere.io/ga-eligible';
 const EDGE_CHANNEL_LABEL = 'io.opensphere.channel';
+const RELEASE_TAG_LABEL = 'io.opensphere.release-tag';
+const OCI_VERSION_LABEL = 'org.opencontainers.image.version';
 const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1', 'cluster-infrastructure-manager-v1']);
-const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)(?:@sha256:([a-f0-9]{64})|:(edge|candidate|stable))$/;
+const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)(?:@sha256:([a-f0-9]{64})|:(edge|candidate|stable|ga))$/;
 const OCI_ACCEPT = [
   'application/vnd.oci.image.index.v1+json',
   'application/vnd.docker.distribution.manifest.list.v2+json',
@@ -378,8 +380,9 @@ async function setStatus(name, status, reg, pkg) {
   const hostPending = phase === 'DependencyPending' && status.reason === 'HostPending';
   const currentDigest = String(pkg?.spec?.image?.digest || '');
   const currentManifestSha256 = String(pkg?.spec?.manifest?.sha256 || '');
-  const currentVersion = String(pkg?.spec?.version || '');
   const resolution = pkg?.spec?.resolution || {};
+  const currentVersion = String(resolution.artifactVersion || '');
+  const currentCompatibilityVersion = String(resolution.compatibilityVersion || pkg?.spec?.version || '');
   const releaseChanged = Boolean(reg?.status?.currentDigest && reg.status.currentDigest !== currentDigest);
   return k8s('PATCH', `${crd('uipluginregistrations')}/${name}/status`, { status: {
     ...status,
@@ -388,6 +391,8 @@ async function setStatus(name, status, reg, pkg) {
     currentDigest,
     currentManifestSha256,
     currentVersion,
+    currentCompatibilityVersion,
+    currentBuildAuthority: String(resolution.buildAuthority || ''),
     currentRequestedRef: String(resolution.requestedRef || ''),
     currentRequestedChannel: String(resolution.requestedChannel || ''),
     currentResolvedAt: String(resolution.resolvedAt || ''),
@@ -399,6 +404,8 @@ async function setStatus(name, status, reg, pkg) {
     previousDigest: releaseChanged ? String(reg.status.currentDigest) : String(reg?.status?.previousDigest || ''),
     previousManifestSha256: releaseChanged ? String(reg.status.currentManifestSha256 || '') : String(reg?.status?.previousManifestSha256 || ''),
     previousVersion: releaseChanged ? String(reg.status.currentVersion || reg.status.observedVersion || '') : String(reg?.status?.previousVersion || ''),
+    previousCompatibilityVersion: releaseChanged ? String(reg.status.currentCompatibilityVersion || '') : String(reg?.status?.previousCompatibilityVersion || ''),
+    previousBuildAuthority: releaseChanged ? String(reg.status.currentBuildAuthority || '') : String(reg?.status?.previousBuildAuthority || ''),
     previousRequestedRef: releaseChanged ? String(reg.status.currentRequestedRef || '') : String(reg?.status?.previousRequestedRef || ''),
     previousRequestedChannel: releaseChanged ? String(reg.status.currentRequestedChannel || '') : String(reg?.status?.previousRequestedChannel || ''),
     previousResolvedAt: releaseChanged ? String(reg.status.currentResolvedAt || '') : String(reg?.status?.previousResolvedAt || ''),
@@ -945,7 +952,7 @@ function moduleDescriptorIssues(value) {
   if (value.schemaVersion !== 1) add('UnsupportedSchema', 'schemaVersion', 'schemaVersion must be 1');
   if (!safeName(value.id)) add('InvalidId', 'id', 'id must be an RFC1123 DNS label');
   if (!['subShell', 'plugin'].includes(value.kind)) add('InvalidKind', 'kind', 'kind must be subShell or plugin');
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(String(value.version || ''))) add('InvalidVersion', 'version', 'semantic version required');
+  if (!/^\d+\.\d+\.\d+$/.test(String(value.version || ''))) add('InvalidVersion', 'version', 'compatibility version must be plain semantic version without channel suffix');
   for (const key of ['displayName', 'owner', 'description', 'hostRef', 'hostCompat', 'shellCompat', 'sdkVersion']) if (!String(value[key] || '').trim()) add('Required', key, `${key} is required`);
   if (!safeName(value.hostRef)) add('InvalidHostRef', 'hostRef', 'hostRef must be an RFC1123 DNS label');
   if (!Array.isArray(value.permissions) || value.permissions.some((p) => !KNOWN_CAPABILITIES.has(p))) add('UnknownCapability', 'permissions', 'permissions must use the closed host capability set');
@@ -1100,6 +1107,8 @@ async function readModuleLabels(repositoryPath, manifest, expectedManifestDigest
     releaseClass: labels[RELEASE_CLASS_LABEL],
     gaEligible: labels[GA_ELIGIBLE_LABEL],
     channel: labels[EDGE_CHANNEL_LABEL],
+    releaseTag: labels[RELEASE_TAG_LABEL],
+    ociVersion: labels[OCI_VERSION_LABEL],
     imagePlatform: config?.os && config?.architecture ? `${config.os}/${config.architecture}` : '',
     authenticated: configFetched.authenticated,
   };
@@ -1115,12 +1124,21 @@ function localEdgeMetadataIssues(channel, platformLabels) {
   if (entries.length !== 1) issues.push('local edge must contain exactly one runnable platform');
   const entry = entries[0] || {};
   const platform = String(entry.imagePlatform || entry.platform || '');
-  if (!['linux/amd64', 'linux/arm64'].includes(platform)) issues.push('local edge platform must be linux/amd64 or linux/arm64');
+  if (platform !== 'linux/amd64') issues.push('Windows local edge platform must be exactly linux/amd64');
   if (String(entry.buildAuthority || '') !== 'localhost') issues.push('local edge build authority must be localhost');
   if (String(entry.releaseClass || '') !== 'pre-ga') issues.push('local edge release class must be pre-ga');
   if (String(entry.gaEligible || '') !== 'false') issues.push('local edge must not be GA eligible');
   if (String(entry.channel || '') !== 'edge') issues.push('local edge image must declare the edge channel');
+  if (!/^[0-9]{12}$/.test(String(entry.releaseTag || ''))) issues.push('local edge release tag must be KST yyyyMMddHHmm');
+  if (String(entry.ociVersion || '') !== String(entry.releaseTag || '')) issues.push('OCI version must equal the KST release tag');
   return issues;
+}
+function canonicalModuleRepository(descriptor) {
+  const id = String(descriptor?.id || '').trim();
+  if (!id) return '';
+  if (descriptor?.kind === 'subShell') return `ghcr.io/opensphere-platform/opensphere-shell-${id}`;
+  if (descriptor?.kind === 'plugin') return `ghcr.io/opensphere-platform/opensphere-plugin-${id}`;
+  return '';
 }
 function localEdgeEvidenceRefs(image) {
   return [
@@ -1180,10 +1198,10 @@ async function channelPlatformStatus(repositoryPath, manifest, digest, channel) 
     const childManifest = await fetchImageManifest(repositoryPath, child.digest);
     if (childManifest.digest !== child.digest) return false;
     const labels = await readModuleLabels(repositoryPath, childManifest.manifest, child.digest);
-    return ['linux/amd64', 'linux/arm64'].includes(labels.imagePlatform || `${child.platform.os}/${child.platform.architecture}`);
+    return (labels.imagePlatform || `${child.platform.os}/${child.platform.architecture}`) === 'linux/amd64';
   }
   const labels = await readModuleLabels(repositoryPath, manifest, digest);
-  return ['linux/amd64', 'linux/arm64'].includes(labels.imagePlatform);
+  return labels.imagePlatform === 'linux/amd64';
 }
 async function assertImageNotRevoked(repository, digest) {
   const revocation = await findImageRevocation(repository, digest);
@@ -1255,13 +1273,29 @@ async function inspectModuleImage(image) {
   }
   const [{ descriptorText, signature, keyId }] = platformLabels;
   if (!descriptorText || !signature || !keyId) throw Object.assign(new Error('required OpenSphere OCI labels are missing'), { code: 422, reason: 'ModuleLabelsMissing' });
-  if (platformLabels.some((entry) => entry.descriptorText !== descriptorText || entry.signature !== signature || entry.keyId !== keyId || entry.source !== platformLabels[0].source || entry.revision !== platformLabels[0].revision)) {
+  if (platformLabels.some((entry) => entry.descriptorText !== descriptorText || entry.signature !== signature || entry.keyId !== keyId || entry.source !== platformLabels[0].source || entry.revision !== platformLabels[0].revision || entry.releaseTag !== platformLabels[0].releaseTag || entry.ociVersion !== platformLabels[0].ociVersion)) {
     throw Object.assign(new Error('OpenSphere module labels differ across supported platforms'), { code: 422, reason: 'PlatformModuleMetadataDrift' });
+  }
+  const releaseTag = String(platformLabels[0].releaseTag || '');
+  if (!/^[0-9]{12}$/.test(releaseTag)) {
+    throw Object.assign(new Error('official artifact version must be the KST yyyyMMddHHmm release tag'), { code: 422, reason: 'InvalidArtifactVersion' });
+  }
+  if (String(platformLabels[0].ociVersion || '') !== releaseTag) {
+    throw Object.assign(new Error('org.opencontainers.image.version must equal io.opensphere.release-tag'), { code: 422, reason: 'ArtifactVersionDrift' });
   }
   let descriptor;
   try { descriptor = JSON.parse(descriptorText); } catch { throw Object.assign(new Error('module descriptor is not JSON'), { code: 422, reason: 'InvalidDescriptor' }); }
   const issues = moduleDescriptorIssues(descriptor);
   if (issues.length) throw Object.assign(new Error('module descriptor validation failed'), { code: 422, reason: 'DescriptorRejected', issues });
+  const canonicalRepository = canonicalModuleRepository(descriptor);
+  if (!canonicalRepository || canonicalRepository !== parsed.repository) {
+    throw Object.assign(new Error(`module ${descriptor.id} must be published only in its canonical repository ${canonicalRepository || '(undefined)'}`), {
+      code: 422,
+      reason: 'NonCanonicalImageRepository',
+      expectedRepository: canonicalRepository,
+      actualRepository: parsed.repository,
+    });
+  }
   if (keyId !== descriptor.trust.keyId) throw Object.assign(new Error('descriptor key id drift'), { code: 422, reason: 'KeyIdDrift' });
   const trustedKey = (await loadTrustedKeys())[keyId];
   if (!trustedKey) throw Object.assign(new Error('module signing key is not trusted'), { code: 422, reason: 'UntrustedKey' });
@@ -1274,7 +1308,19 @@ async function inspectModuleImage(image) {
   if (parsed.channel && platformLabels.some((entry) => entry.channel && entry.channel !== parsed.channel)) {
     throw Object.assign(new Error('requested channel differs from image channel metadata'), { code: 422, reason: 'ImageChannelDrift' });
   }
-  const localEdgeClaimed = platformLabels.some((entry) => String(entry.buildAuthority || '') === 'localhost');
+  const buildAuthority = String(platformLabels[0].buildAuthority || '');
+  const releaseClass = String(platformLabels[0].releaseClass || '');
+  const gaEligible = String(platformLabels[0].gaEligible || '');
+  const localEdgeClaimed = buildAuthority === 'localhost';
+  if (declaredChannel === 'edge' && !localEdgeClaimed) {
+    throw Object.assign(new Error('edge channel accepts only Windows Docker Desktop localhost builds'), { code: 422, reason: 'EdgeBuildAuthorityInvalid' });
+  }
+  if (declaredChannel === 'ga' && (buildAuthority !== 'github-actions' || releaseClass !== 'ga' || gaEligible !== 'true')) {
+    throw Object.assign(new Error('GA channel requires the GitHub Actions GA workflow and GA-eligible metadata'), { code: 422, reason: 'GaBuildAuthorityInvalid' });
+  }
+  if (['candidate', 'stable'].includes(declaredChannel) && (buildAuthority !== 'github-actions' || releaseClass !== 'pre-ga' || gaEligible !== 'false')) {
+    throw Object.assign(new Error('candidate/stable channels require GitHub Actions pre-GA metadata'), { code: 422, reason: 'PreGaBuildAuthorityInvalid' });
+  }
   const localEdgeIssues = localEdgeClaimed ? localEdgeMetadataIssues(declaredChannel, platformLabels) : [];
   if (localEdgeClaimed && localEdgeIssues.length) {
     throw Object.assign(new Error(`local edge metadata rejected: ${localEdgeIssues.join('; ')}`), { code: 422, reason: 'LocalEdgeMetadataInvalid', issues: localEdgeIssues });
@@ -1291,12 +1337,14 @@ async function inspectModuleImage(image) {
   return {
     image: resolvedImage,
     requestedImage: String(image || '').trim(),
-    channel: parsed.channel,
+    channel: declaredChannel,
     repository: parsed.repository,
     digest: resolved.digest,
     resolvedAt,
     source: platformLabels[0].source,
     revision: platformLabels[0].revision,
+    releaseTag,
+    buildAuthority: platformLabels[0].buildAuthority,
     registryCredentialsRequired,
     descriptor,
     evidenceRefs: localEdgeClaimed ? localEdgeEvidenceRefs(resolvedImage) : [`oci:${resolvedImage}#slsa-provenance`, `oci:${resolvedImage}#spdx-sbom`],
@@ -1317,7 +1365,9 @@ function packageFromInspection(inspection) {
         requestedChannel: inspection.channel || '',
         resolvedDigest: inspection.digest,
         resolvedAt: inspection.resolvedAt,
-        artifactVersion: d.version,
+        artifactVersion: inspection.releaseTag,
+        compatibilityVersion: d.version,
+        buildAuthority: inspection.buildAuthority || '',
         source: inspection.source,
         revision: inspection.revision,
         signatureIdentity: d.trust.keyId,
@@ -1396,7 +1446,9 @@ function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}) 
     requestedChannel: pkg.spec.resolution?.requestedChannel || '',
     installedDigest: pkg.spec.image?.digest || '',
     resolvedAt: pkg.spec.resolution?.resolvedAt || '',
-    artifactVersion: pkg.spec.resolution?.artifactVersion || pkg.spec.version || '',
+    artifactVersion: pkg.spec.resolution?.artifactVersion || '',
+    compatibilityVersion: pkg.spec.resolution?.compatibilityVersion || pkg.spec.version || '',
+    buildAuthority: pkg.spec.resolution?.buildAuthority || '',
     sourceRevision: pkg.spec.resolution?.revision || '',
     evidenceRefs: pkg.spec.resolution?.evidenceRefs || [],
     currentChannelDigest: channel.currentChannelDigest || reg.status?.currentChannelDigest || '',
@@ -2662,6 +2714,8 @@ const server = http.createServer(async (req, res) => {
         const previousDigest = String(rr.json?.status?.previousDigest || '');
         const previousManifestSha256 = String(rr.json?.status?.previousManifestSha256 || '');
         const previousVersion = String(rr.json?.status?.previousVersion || '');
+        const previousCompatibilityVersion = String(rr.json?.status?.previousCompatibilityVersion || '');
+        const previousBuildAuthority = String(rr.json?.status?.previousBuildAuthority || '');
         const previousRequestedRef = String(rr.json?.status?.previousRequestedRef || '');
         const previousRequestedChannel = String(rr.json?.status?.previousRequestedChannel || '');
         const previousSource = String(rr.json?.status?.previousSource || '');
@@ -2669,14 +2723,16 @@ const server = http.createServer(async (req, res) => {
         const previousSignatureIdentity = String(rr.json?.status?.previousSignatureIdentity || '');
         const previousEvidenceRefs = Array.isArray(rr.json?.status?.previousEvidenceRefs) ? rr.json.status.previousEvidenceRefs.map(String) : [];
         const previousRegistryCredentialsRequired = rr.json?.status?.previousRegistryCredentialsRequired === true;
-        if (!/^sha256:[a-f0-9]{64}$/.test(previousDigest) || !/^[a-f0-9]{64}$/.test(previousManifestSha256) || !previousVersion
+        if (!/^sha256:[a-f0-9]{64}$/.test(previousDigest) || !/^[a-f0-9]{64}$/.test(previousManifestSha256)
+          || !/^[0-9]{12}$/.test(previousVersion) || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(previousCompatibilityVersion)
+          || !['localhost', 'github-actions'].includes(previousBuildAuthority)
           || !previousRequestedRef || !governedSourceRepository(previousSource) || !/^[a-f0-9]{40}$/.test(previousRevision)
           || !previousSignatureIdentity || previousEvidenceRefs.length < 2) {
           await durableAudit(actor, action, id, 'denied', 'verified previous release evidence is unavailable', opId);
           return json(res, 409, { error: 'verified previous release evidence is unavailable', opId });
         }
         const pr = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: {
-          version: previousVersion,
+          version: previousCompatibilityVersion,
           image: { digest: previousDigest },
           manifest: { sha256: previousManifestSha256 },
           resolution: {
@@ -2685,6 +2741,8 @@ const server = http.createServer(async (req, res) => {
             resolvedDigest: previousDigest,
             resolvedAt: new Date().toISOString(),
             artifactVersion: previousVersion,
+            compatibilityVersion: previousCompatibilityVersion,
+            buildAuthority: previousBuildAuthority,
             source: previousSource,
             revision: previousRevision,
             signatureIdentity: previousSignatureIdentity,

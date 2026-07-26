@@ -24,12 +24,18 @@ test('accepts SDK module package and materializes digest-pinned package', () => 
     channel: 'edge', resolvedAt: '2026-07-19T00:00:00.000Z',
     source: 'https://github.com/opensphere-platform/OpenSphere-shell-clusterManager',
     revision: 'c'.repeat(40),
+    releaseTag: '202607261430',
+    buildAuthority: 'localhost',
     registryCredentialsRequired: true,
     image: `ghcr.io/opensphere-platform/opensphere-shell-cluster-manager@${digest}`,
+    evidenceRefs: [`oci:test#p256-module-signature`, `oci:test#local-edge-build-metadata`],
   });
   assert.equal(pkg.spec.permissionProfile, 'cluster-observer-v1');
   assert.equal(pkg.spec.image.repository, 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager');
   assert.equal(pkg.spec.resolution.requestedChannel, 'edge');
+  assert.equal(pkg.spec.resolution.artifactVersion, '202607261430');
+  assert.equal(pkg.spec.resolution.compatibilityVersion, '1.0.0');
+  assert.equal(pkg.spec.resolution.buildAuthority, 'localhost');
   assert.equal(pkg.spec.resolution.resolvedDigest, digest);
   assert.equal(pkg.spec.resolution.registryCredentialsRequired, true);
   assert.equal(pkg.spec.resolution.evidenceRefs.length, 2);
@@ -51,6 +57,7 @@ test('local edge admits only one signed host-native pre-GA image and records tru
   const localEdge = [{
     platform: 'linux/amd64', imagePlatform: 'linux/amd64', channel: 'edge',
     buildAuthority: 'localhost', releaseClass: 'pre-ga', gaEligible: 'false',
+    releaseTag: '202607261430', ociVersion: '202607261430',
   }];
   assert.deepEqual(localEdgeMetadataIssues('edge', localEdge), []);
   assert.ok(localEdgeMetadataIssues('candidate', localEdge).length > 0);
@@ -69,7 +76,7 @@ test('accepts only OpenSphere digest or governed channel image references', () =
     reference: `sha256:${digest}`,
     channel: null,
   });
-  for (const channel of ['edge', 'candidate', 'stable']) {
+  for (const channel of ['edge', 'candidate', 'stable', 'ga']) {
     assert.equal(parseModuleImageReference(`ghcr.io/opensphere-platform/opensphere-shell-foundation:${channel}`).channel, channel);
   }
   for (const invalid of [

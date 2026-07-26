@@ -278,7 +278,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                     <div class="os-mono">{{ r.name }}</div>
                   </td>
                   <td class="left">
-                    <strong>{{ extensionKind(r) }} · v{{ artifactVersion(r) }}</strong>
+                    <strong>{{ extensionKind(r) }} · {{ artifactVersion(r) }}</strong>
                     <div class="state-detail">설치 {{ installationTime(r) }} · {{ installationActor(r) }}</div>
                     <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
                   </td>
@@ -329,7 +329,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
             <thead>
               <tr>
                 <th class="left">Package</th>
-                <th>Version</th>
+                <th>호환 버전</th>
                 <th>Owner</th>
                 <th>State</th>
                 <th>Permissions</th>
@@ -342,7 +342,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                   <td class="left">
                     {{ c.displayName }} <span class="os-mono">({{ c.name }})</span>
                   </td>
-                  <td>{{ c.version }}</td>
+                  <td>{{ compatibilityValue(c.version) }}</td>
                   <td>{{ c.owner }}</td>
                   <td>
                     @if (phaseOf(c.name); as ph) {
@@ -553,7 +553,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
             <span class="label">{{ integrationSummary(r) }}</span>
           </div>
           <table class="table table-compact">
-            <thead><tr><th class="left">기능</th><th>상태</th><th class="left">근거</th><th>버전</th></tr></thead>
+            <thead><tr><th class="left">기능</th><th>상태</th><th class="left">근거</th><th>호환 버전</th></tr></thead>
             <tbody>
               @for (item of integrationRows(r); track item.key) {
                 <tr>
@@ -572,11 +572,13 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
         <clr-accordion class="cc-secondary">
           <clr-accordion-panel>
             <clr-accordion-title>Artifact · 설치 근거</clr-accordion-title>
-            <clr-accordion-description>{{ extensionKind(r) }} · v{{ artifactVersion(r) }} · {{ installationActor(r) }}</clr-accordion-description>
+            <clr-accordion-description>{{ extensionKind(r) }} · {{ artifactVersion(r) }} · {{ installationActor(r) }}</clr-accordion-description>
             <clr-accordion-content *clrIfExpanded>
               <dl class="cc-kv">
                 <dt>종류</dt><dd>{{ extensionKind(r) }}</dd>
-                <dt>현재 버전</dt><dd>{{ artifactVersion(r) }}</dd>
+                <dt>공식 버전</dt><dd>{{ artifactVersion(r) }}</dd>
+                <dt>호환 버전</dt><dd>{{ compatibilityVersion(r) }}</dd>
+                <dt>빌드 권위</dt><dd>{{ buildAuthorityLabel(r.status.currentBuildAuthority) }}</dd>
                 <dt>불변 digest</dt><dd class="os-mono cc-break">{{ r.status.currentDigest || '—' }}</dd>
                 <dt>요청 ref · 채널</dt><dd class="os-mono cc-break">{{ r.status.currentRequestedRef || '—' }} · {{ r.status.currentRequestedChannel || 'exact' }}</dd>
                 <dt>Artifact 해석</dt><dd class="os-mono">{{ r.status.currentResolvedAt || '—' }}</dd>
@@ -981,8 +983,11 @@ export class AdminPlugins implements OnInit {
     const n = this.selected();
     const item = n ? this.catalogItem(n) : undefined;
     const registration = n ? this.registrations().find((r) => r.name === n) : undefined;
-    const version = registration?.status.currentVersion || registration?.status.observedVersion || item?.version;
-    return [item?.kind || 'Extension', n, version ? `v${version}` : ''].filter(Boolean).join(' · ');
+    const reportedArtifactVersion = registration?.status.currentVersion || registration?.status.observedVersion;
+    const versionLabel = reportedArtifactVersion && registration
+      ? `공식 ${this.artifactVersion(registration)}`
+      : item?.version ? `호환 ${this.compatibilityValue(item.version)}` : '';
+    return [item?.kind || 'Extension', n, versionLabel].filter(Boolean).join(' · ');
   }
   displayName(name: string): string {
     return this.catalog().find((c) => c.name === name)?.displayName || name;
@@ -991,7 +996,20 @@ export class AdminPlugins implements OnInit {
     return this.catalogItem(r.name)?.kind || 'Extension';
   }
   artifactVersion(r: Registration): string {
-    return r.status.currentVersion || r.status.observedVersion || this.catalogItem(r.name)?.version || '—';
+    const version = r.status.currentVersion || r.status.observedVersion || '';
+    return !version ? '—' : /^[0-9]{12}$/.test(version) ? version : `규칙 위반 · ${version}`;
+  }
+  compatibilityVersion(r: Registration): string {
+    const version = r.status.currentCompatibilityVersion || this.catalogItem(r.name)?.version || '';
+    return this.compatibilityValue(version);
+  }
+  compatibilityValue(version?: string): string {
+    return !version ? '—' : /^\d+\.\d+\.\d+$/.test(version) ? version : `규칙 위반 · ${version}`;
+  }
+  buildAuthorityLabel(authority?: string): string {
+    if (authority === 'localhost') return 'Local Windows/amd64';
+    if (authority === 'github-actions') return 'GitHub Actions';
+    return '—';
   }
   installationTime(r: Registration): string {
     return r.installation?.requestedAt || '기록 없음';
