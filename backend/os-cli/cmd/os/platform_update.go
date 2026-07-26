@@ -259,12 +259,12 @@ func applyPlatformUpdatePlan(cfg Config, id string, flags map[string]string, cre
 func platformUpdateTarget(flags map[string]string) (string, string, error) {
 	channel := strings.ToLower(strings.TrimSpace(flags["channel"]))
 	if channel == "" {
-		return "", "", usageError("--channel edge|candidate|stable을 명시해야 합니다")
+		return "", "", usageError("--channel edge|candidate|stable|ga를 명시해야 합니다")
 	}
 	switch channel {
-	case "edge", "candidate", "stable":
+	case "edge", "candidate", "stable", "ga":
 	default:
-		return "", "", usageError("--channel은 edge, candidate, stable 중 하나여야 합니다")
+		return "", "", usageError("--channel은 edge, candidate, stable, ga 중 하나여야 합니다")
 	}
 	return channel, strings.TrimSpace(flags["context"]), nil
 }
@@ -454,7 +454,7 @@ func parsePlatformReleaseDocument(raw []byte) (platformReleaseDocument, error) {
 	if !validPlatformDigest(lock.ReleaseDigest) {
 		return platformReleaseDocument{}, errors.New("release lock digest가 유효한 sha256 값이 아닙니다")
 	}
-	if lock.Channel != "edge" && lock.Channel != "candidate" && lock.Channel != "stable" {
+	if lock.Channel != "edge" && lock.Channel != "candidate" && lock.Channel != "stable" && lock.Channel != "ga" {
 		return platformReleaseDocument{}, errors.New("release lock channel이 유효하지 않습니다")
 	}
 	if len(lock.SourceRevision) != 40 {
@@ -541,7 +541,7 @@ func loadPlatformUpdatePlan(id string) (platformUpdatePlan, error) {
 	if plan.APIVersion != platformUpdatePlanAPIVersion || plan.Kind != platformUpdatePlanKind || savedID != id {
 		return platformUpdatePlan{}, errors.New("지원하지 않거나 손상된 platform update plan입니다")
 	}
-	if plan.Channel != "edge" && plan.Channel != "candidate" && plan.Channel != "stable" {
+	if plan.Channel != "edge" && plan.Channel != "candidate" && plan.Channel != "stable" && plan.Channel != "ga" {
 		return platformUpdatePlan{}, errors.New("platform update plan channel이 유효하지 않습니다")
 	}
 	if plan.Context != "" {

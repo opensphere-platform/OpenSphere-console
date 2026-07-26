@@ -1081,12 +1081,12 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 	switch action {
 	case "inspect":
 		if len(args) != 2 {
-			return usageError("사용법: os extensions inspect <ghcr-image:edge|candidate|stable|@sha256:digest>")
+			return usageError("사용법: os extensions inspect <ghcr-image:edge|candidate|stable|ga|@sha256:digest>")
 		}
 		method, path, payload = http.MethodPost, "/api/admin/extensions/inspect", map[string]string{"image": args[1]}
 	case "install":
 		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
-			return usageError("사용법: os extensions install <repository:edge|candidate|stable|@sha256:digest> --reason <승인 사유> (기본: ghcr.io/opensphere-platform/)")
+			return usageError("사용법: os extensions install <repository:edge|candidate|stable|ga|@sha256:digest> --reason <승인 사유> (기본: ghcr.io/opensphere-platform/)")
 		}
 		flags := parseLongFlags(args[2:])
 		reason := strings.TrimSpace(flags["reason"])

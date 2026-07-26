@@ -53,7 +53,7 @@ var commandDefinitions = []commandDefinition{
 	{Name: "role", Summary: "역할 조회·부여·회수", Usage: []string{"os role list", "os role grant|revoke <user> <role> --reason TEXT"}, Options: []string{"--reason TEXT"}},
 	{Name: "observability", Summary: "HIS 상태·target·PromQL 조회", Usage: []string{"os observability status|targets", "os observability query --expr PROMQL"}, Options: []string{"--expr PROMQL"}},
 	{Name: "audit", Summary: "감사 이벤트 조회", Usage: []string{"os audit list"}},
-	{Name: "extensions", Summary: "확장 패키지와 Binding 관리", Usage: []string{"os extensions install <repository:channel|@sha256:digest> --reason TEXT", "  기본 repository prefix: ghcr.io/opensphere-platform/", "os extensions inspect|activate|disable|uninstall|rollback|list ...", "os extensions bindings list|enable|disable ...", "os extensions registry status|login|logout ...", "os extensions revocations|revoke-image ..."}, Options: []string{"--reason TEXT", "--username NAME", "--token-stdin", "--replacement IMAGE"}},
+	{Name: "extensions", Summary: "확장 패키지와 Binding 관리", Usage: []string{"os extensions install <repository:edge|candidate|stable|ga|@sha256:digest> --reason TEXT", "  기본 repository prefix: ghcr.io/opensphere-platform/", "os extensions inspect|activate|disable|uninstall|rollback|list ...", "os extensions bindings list|enable|disable ...", "os extensions registry status|login|logout ...", "os extensions revocations|revoke-image ..."}, Options: []string{"--reason TEXT", "--username NAME", "--token-stdin", "--replacement IMAGE"}},
 	{Name: "plan", Summary: "검토 가능한 변경 plan 생성·조회·정리", Usage: []string{"os plan --consumer ID [--action apply|configure|rollback] [--target TARGET] --file desired.json --reason TEXT", "os plan list", "os plan show <plan-id>", "os plan delete <plan-id> --yes"}, Options: []string{"--consumer ID", "--action ACTION", "--target TARGET", "--file PATH", "--reason TEXT", "--offline", "--yes"}},
 	{Name: "apply", Summary: "검증된 변경 plan 제출", Usage: []string{"os apply <plan-id|plan-file> [--wait] [--timeout 5m]"}, Options: []string{"--wait", "--timeout DURATION"}},
 	{Name: "operation", Summary: "변경 operation 조회·감시·승인", Usage: []string{"os operation list [--filter key=value] [--sort-by key] [--desc] [--limit N]", "os operation get|watch <request-id> [--timeout DURATION]", "os operation approve <request-id> --reason TEXT"}, Options: []string{"--filter key=value", "--sort-by key", "--desc", "--limit N", "--timeout DURATION", "--reason TEXT"}},
@@ -61,7 +61,7 @@ var commandDefinitions = []commandDefinition{
 	{Name: "context", Summary: "로컬 Console context 사본·전환 관리", Usage: []string{"os context current|list", "os context save <name> (사본만 저장)", "os context use <name>", "os context delete <name> --yes"}, Options: []string{"--yes"}},
 	{Name: "support-bundle", Summary: "비밀을 제거한 진단 bundle 생성", Usage: []string{"os support-bundle --file bundle.json [--force]"}, Options: []string{"--file PATH", "--force"}},
 	{Name: "update", Summary: "동일 Console의 서명된 CLI release로 업데이트", Usage: []string{"os update [--check|--status] [--force]"}, Options: []string{"--check", "--status", "--force"}},
-	{Name: "platform", Summary: "GHCR 채널의 서명된 Platform release 확인·계획·적용", Usage: []string{"os platform update check --channel edge|candidate|stable [--context NAME]", "os platform update plan --channel edge|candidate|stable [--context NAME]", "os platform update apply <plan-id> [--context NAME]"}, Options: []string{"--channel edge|candidate|stable", "--context NAME", "--registry-username GITHUB_LOGIN", "--registry-token-stdin"}},
+	{Name: "platform", Summary: "GHCR 채널의 서명된 Platform release 확인·계획·적용", Usage: []string{"os platform update check --channel edge|candidate|stable|ga [--context NAME]", "os platform update plan --channel edge|candidate|stable|ga [--context NAME]", "os platform update apply <plan-id> [--context NAME]"}, Options: []string{"--channel edge|candidate|stable|ga", "--context NAME", "--registry-username GITHUB_LOGIN", "--registry-token-stdin"}},
 	{Name: "completion", Summary: "shell completion 생성", Usage: []string{"os completion powershell|bash|zsh"}},
 	{Name: "version", Summary: "CLI 버전 출력", Usage: []string{"os version"}},
 	{Name: "backbone", Summary: "status/describe 호환 별칭", Usage: []string{"os backbone status", "os backbone detail --component supabase|storage|gitea"}, Options: []string{"--component NAME"}},
@@ -336,9 +336,9 @@ func validateNativeOptionValue(name, value string) error {
 		}
 	case "channel":
 		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "edge", "candidate", "stable":
+		case "edge", "candidate", "stable", "ga":
 		default:
-			return usageError("--channel은 edge, candidate, stable 중 하나여야 합니다")
+			return usageError("--channel은 edge, candidate, stable, ga 중 하나여야 합니다")
 		}
 	case "context":
 		value = strings.TrimSpace(value)
