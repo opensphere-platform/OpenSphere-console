@@ -55,7 +55,6 @@ metadata:
     app.kubernetes.io/name: beszel-hub
     app.kubernetes.io/part-of: opensphere-console
 spec:
-  clusterIP: None
   selector:
     app.kubernetes.io/name: beszel-hub
   ports:
@@ -197,17 +196,25 @@ spec:
                 -H "Authorization: ${ADMIN_TOKEN}" \
                 -H 'content-type: application/json' \
                 --data "{\"email\":\"${READER_EMAIL}\",\"password\":\"${READER_PASSWORD}\",\"passwordConfirm\":\"${READER_PASSWORD}\",\"verified\":true,\"role\":\"readonly\"}" \
-                >/dev/null || true
+                >/dev/null 2>&1 || true
 
               USER_AUTH="$(curl -fsS "${HUB_URL}/api/collections/users/auth-with-password" \
                 -H 'content-type: application/json' \
                 --data "{\"identity\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\"}")"
               USER_TOKEN="$(printf '%s' "${USER_AUTH}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
-              [ -n "${USER_TOKEN}" ]
+              USER_ID="$(printf '%s' "${USER_AUTH}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+              [ -n "${USER_TOKEN}" ] && [ -n "${USER_ID}" ]
 
               SETTINGS="$(curl -fsS "${HUB_URL}/api/collections/user_settings/records?perPage=1" \
                 -H "Authorization: ${USER_TOKEN}")"
-              SETTINGS_ID="$(printf '%s' "${SETTINGS}" | sed -n 's/.*"items":\[{"id":"\([^"]*\)".*/\1/p')"
+              SETTINGS_ID="$(printf '%s' "${SETTINGS}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+              if [ -z "${SETTINGS_ID}" ]; then
+                SETTINGS="$(curl -fsS "${HUB_URL}/api/collections/user_settings/records" \
+                  -H "Authorization: ${USER_TOKEN}" \
+                  -H 'content-type: application/json' \
+                  --data "{\"user\":\"${USER_ID}\"}")"
+                SETTINGS_ID="$(printf '%s' "${SETTINGS}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+              fi
               [ -n "${SETTINGS_ID}" ]
               WEBHOOK_URL="generic+http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080/api/internal/monitoring/beszel/events?template=json&@x-opensphere-beszel-token=${WEBHOOK_TOKEN}"
               curl -fsS -X PATCH "${HUB_URL}/api/collections/user_settings/records/${SETTINGS_ID}" \
@@ -260,8 +267,6 @@ spec:
         app.kubernetes.io/name: beszel-agent
         app.kubernetes.io/part-of: opensphere-console
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       automountServiceAccountToken: false
       tolerations:
         - { key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }

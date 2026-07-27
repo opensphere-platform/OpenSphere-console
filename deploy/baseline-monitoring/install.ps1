@@ -82,6 +82,13 @@ if (-not $secretExists) {
   }
 }
 
+$hubClusterIp = (& kubectl --context $KubectlContext -n opensphere-monitoring get service beszel-hub -o 'jsonpath={.spec.clusterIP}' 2>$null)
+if ($LASTEXITCODE -eq 0 -and $hubClusterIp -eq 'None') {
+  Write-Host 'Replacing legacy headless Beszel Hub Service with a routable ClusterIP Service.'
+  Invoke-Kubectl -Arguments @('-n', 'opensphere-monitoring', 'delete', 'service', 'beszel-hub')
+}
+
+Invoke-Kubectl -Arguments @('-n', 'opensphere-monitoring', 'delete', 'job', 'beszel-bootstrap-v0187', '--ignore-not-found=true')
 Invoke-Kubectl -Arguments @('apply', '-f', $Manifest)
 
 # Mirror only the reader credential into the Console Backend namespace.
@@ -116,5 +123,7 @@ if (-not $publicKey -or $publicKey -eq 'bootstrap-pending') {
 
 Invoke-Kubectl -Arguments @('-n', 'opensphere-monitoring', 'rollout', 'restart', 'daemonset/beszel-agent')
 Invoke-Kubectl -Arguments @('-n', 'opensphere-monitoring', 'rollout', 'status', 'daemonset/beszel-agent', '--timeout=5m')
+Invoke-Kubectl -Arguments @('-n', 'opensphere-console', 'rollout', 'restart', 'deployment/opensphere-console-backend')
+Invoke-Kubectl -Arguments @('-n', 'opensphere-console', 'rollout', 'status', 'deployment/opensphere-console-backend', '--timeout=5m')
 
 Write-Host 'Baseline Infrastructure Monitoring is ready.'
