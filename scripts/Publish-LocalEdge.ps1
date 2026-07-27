@@ -77,9 +77,13 @@ $kubeContext = (& kubectl config current-context).Trim()
 if ($kubeContext -ne 'docker-desktop') {
   throw "Local edge deployment requires Kubernetes context docker-desktop; received: $kubeContext"
 }
-$nodeArchitectures = @(& kubectl get nodes -o 'jsonpath={range .items[*]}{.status.nodeInfo.architecture}{"\n"}{end}') |
-  ForEach-Object { $_ -split "`n" } |
-  Where-Object { $_ }
+$nodeInventory = & kubectl get nodes -o json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) {
+  throw "kubectl get nodes failed with exit code $LASTEXITCODE"
+}
+$nodeArchitectures = @($nodeInventory.items | ForEach-Object {
+  [string]$_.status.nodeInfo.architecture
+}) | Where-Object { $_ }
 if (-not $nodeArchitectures -or ($nodeArchitectures | Where-Object { $_ -ne 'amd64' })) {
   throw "Every docker-desktop Kubernetes node must be amd64; received: $($nodeArchitectures -join ',')"
 }
