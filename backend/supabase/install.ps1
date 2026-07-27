@@ -3,6 +3,11 @@ param(
   [string]$Namespace = "opensphere-console-data",
   [string]$StorageClass = "",
   [string]$KubeContext = "",
+  # Existing release-pinned installations must not be reconciled from the
+  # bootstrap manifest because that source intentionally names upstream images.
+  # In this mode the installer verifies the runtime objects, then performs only
+  # Secret completion, role maintenance and append-only migrations.
+  [switch]$ExistingInstallation,
   # Every release installer is invoked from an immutable Setup CLI lock.  The
   # source revision is persisted with each migration so a live database can be
   # tied back to the reviewed source, not just to a filename on an operator PC.
@@ -83,7 +88,25 @@ if ($StorageClass) {
   # Setup always supplies an explicit, preflight-validated class.
   $renderedManifest = $renderedManifest -replace "(?m)^\s*storageClassName:\s*__OPENSPHERE_STORAGE_CLASS__\r?\n", ""
 }
-Invoke-Kubectl @("apply", "-f", "-") $renderedManifest
+if ($ExistingInstallation) {
+  foreach ($resource in @(
+    'namespace/' + $Namespace,
+    'statefulset/opensphere-supabase-postgres',
+    'deployment/opensphere-supabase-auth',
+    'deployment/opensphere-supabase-rest',
+    'deployment/opensphere-supabase-storage',
+    'secret/opensphere-supabase-secrets'
+  )) {
+    if ($resource.StartsWith('namespace/')) {
+      Invoke-Kubectl @('get', $resource)
+    } else {
+      Invoke-Kubectl @('-n', $Namespace, 'get', $resource)
+    }
+  }
+  Write-Host 'Existing Supabase installation verified; bootstrap workload reconciliation skipped.'
+} else {
+  Invoke-Kubectl @("apply", "-f", "-") $renderedManifest
+}
 
 $secretExists = $true
 & kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets *> $null
@@ -252,7 +275,9 @@ Invoke-Kubectl @("apply", "-f", "-") $aiPipelineSecret
 # passwords.  Auth, REST, and Storage all deliberately use the owner password
 # from the namespace secret, so assigning it here is a mandatory bootstrap
 # step, not a best-effort repair after those workloads have started.
-Invoke-Kubectl @("apply", "-f", "-") $renderedManifest
+if (-not $ExistingInstallation) {
+  Invoke-Kubectl @("apply", "-f", "-") $renderedManifest
+}
 Invoke-Kubectl @("-n", $Namespace, "rollout", "status", "statefulset/opensphere-supabase-postgres", "--timeout=10m")
 
 $postgresPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.postgres-password}")
