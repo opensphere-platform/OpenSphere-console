@@ -15,6 +15,10 @@
 - 호스트 네트워크, DNS, NTP와 인증서
 - 컨테이너 런타임과 kubelet 전제
 
+## 관련 문서
+
+- RCC Linux Host Control (Stage 1–4 + 운영 기능 단위) — Region Control Center에서 Linux 호스트 상태를 읽는 에이전트, API(Application Programming Interface), 보안 경계와 설치·운영 절차. Beszel 시계열 관측, 서비스 재시작·재부팅(Stage 2), 패키지·커널 업데이트(Stage 3), 네트워크·스토리지 변경과 이미지 기반 OS 업데이트(Stage 4), Fail2ban SSH 보호의 준비·활성화·탐지·차단·해제를 포함합니다. 화면은 요약·관측·보안·유지보수·구성·이력의 운영 도메인으로 구성되고, 터미널 없이 요청·검토·확인·추적합니다. 높은 위험 작업의 2인 승인은 화면에서도 그대로 요구됩니다.
+
 ## 운영 시작
 
 먼저 호스트의 준비 상태를 확인한 뒤 Cluster Perspective로 이동합니다. OpenSphere는 기존 Kubernetes 위에 설치되므로 호스트 자체를 임의 변경하지 않고, HIS 계약으로 확인 가능한 상태와 필요한 조치만 제시합니다.

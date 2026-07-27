@@ -1,9 +1,11 @@
 import { Injectable, computed, inject } from '@angular/core';
 import { ExtensionHostService } from './extension-host.service';
+import { ControlCenterContextService } from './control-center-context.service';
 import { PerspectiveService } from './perspective.service';
 import { ApiService, CatalogEntity } from './api.service';
 import { ManualService } from './manual.service';
 import { SearchResult, SearchProvider } from './search.types';
+import { navigationForPlugin, routeForPlugin } from './perspectives';
 
 export type { SearchResult, SearchProvider } from './search.types';
 
@@ -32,6 +34,7 @@ export interface SearchSections {
 @Injectable({ providedIn: 'root' })
 export class SearchService {
   private ext = inject(ExtensionHostService);
+  private controlCenter = inject(ControlCenterContextService);
   private psp = inject(PerspectiveService);
   private api = inject(ApiService);
   private manual = inject(ManualService);
@@ -60,7 +63,11 @@ export class SearchService {
 
   /** 정적 셸 페이지 인덱스 */
   private readonly STATIC: SearchResult[] = [
-    { label: '홈 · Perspectives', sublabel: '셸 홈', path: '/', kind: 'page' },
+    { label: '홈', sublabel: 'PolyON RCC', path: '/', kind: 'page' },
+    { label: 'Backbone Service Stack', sublabel: '관리 · BBSS 가용성', path: '/manage/bbss', kind: 'page' },
+    { label: 'BBSS Supabase', sublabel: '관리 · Data & Identity 기반', path: '/manage/bbss/supabase', kind: 'page' },
+    { label: 'BBSS Gitea', sublabel: '관리 · Declarative Change 기반', path: '/manage/bbss/gitea', kind: 'page' },
+    { label: 'BBSS Beszel', sublabel: '관리 · Host Time-series 기반', path: '/manage/bbss/beszel', kind: 'page' },
     { label: 'Developer Catalog', sublabel: '관리 · 자산 및 확장', path: '/manage/catalog', kind: 'page' },
     { label: 'APIs', sublabel: '관리 · 자산 및 확장', path: '/manage/apis', kind: 'page' },
     { label: 'Console CLI', sublabel: '관리 · 자산 및 확장', path: '/manage/cli', kind: 'page' },
@@ -72,9 +79,15 @@ export class SearchService {
   /** 즉시 로컬 인덱스(정적 + 동적 플러그인 페이지 + 워크스페이스) — "이동" 표면 */
   readonly index = computed<SearchResult[]>(() => [
     ...this.STATIC,
-    ...this.ext.pages().map((p) => ({
-      label: p.title, sublabel: `플러그인 · ${p.navBand}`, path: `/p/${p.id}`, kind: 'plugin' as const,
-    })),
+    ...this.ext.pages().map((p) => {
+      const target = navigationForPlugin(p, this.controlCenter.id());
+      return {
+        label: target.label,
+        sublabel: `${target.band} · 확장 기능`,
+        path: target.path,
+        kind: 'plugin' as const,
+      };
+    }),
     ...this.psp.allowedWorkspaces().map((w) => ({
       label: `${w.label} Workspace`, sublabel: w.desc, path: '/', kind: 'workspace' as const,
     })),
@@ -138,7 +151,7 @@ export class SearchService {
         out.push({
           label: doc.title || doc.id,
           sublabel: [source.name || pluginId, doc.documentType || 'manual', doc.sourcePath || 'runtime contribution'].filter(Boolean).join(' · '),
-          path: doc.route || `/p/${pluginId}`,
+          path: doc.route || routeForPlugin(pluginId, this.controlCenter.id()),
           kind: 'result',
           source: `manual:${pluginId}`,
         });

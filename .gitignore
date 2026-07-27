@@ -2,9 +2,14 @@
 
 # Compiled output
 /dist
+/dist-plugins
 /tmp
 /out-tsc
 /bazel-out
+
+# subShell signing key material must never be committed
+*.p256.pem
+rcc-plugin-signing-key*.pem
 
 # Node
 /node_modules
@@ -58,3 +63,7 @@ Thumbs.db
 
 # Retired CBS sources must not return through a local archive copy.
 /archive/
+
+# Crash journal the mutation sweep uses to restore a source it was interrupted
+# while mutating. Present only between an aborted run and the next one.
+/.stage4-sweep-restore.json

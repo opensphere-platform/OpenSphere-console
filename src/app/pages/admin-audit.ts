@@ -107,9 +107,12 @@ export class AdminAudit {
 
   async load(): Promise<void> {
     this.loading.set(true);
+    this.error.set('');
     try {
       const r = await this.http.request('/api/identity/audit');
       if (r.status === 401 || r.status === 403) {
+        this.events.set([]);
+        this.loadedAt.set('');
         this.error.set('감사 로그 조회는 console-admins 역할이 필요합니다.');
         return;
       }
@@ -118,6 +121,8 @@ export class AdminAudit {
       this.events.set(Array.isArray(j.items) ? j.items : []);
       this.loadedAt.set(new Date().toISOString());
     } catch (e) {
+      this.events.set([]);
+      this.loadedAt.set('');
       this.error.set(`감사 로그를 불러오지 못했습니다: ${String(e)}`);
     } finally {
       this.loading.set(false);

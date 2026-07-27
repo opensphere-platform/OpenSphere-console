@@ -101,6 +101,11 @@ ALTER TABLE console.external_backup_secret ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console.configuration_backup ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console.configuration_restore ENABLE ROW LEVEL SECURITY;
 
+-- 0002 grants future console tables to the Backend by default. Backup
+-- credentials remain executor-only through the SECURITY DEFINER RPCs below.
+REVOKE ALL ON console.external_backup_secret
+  FROM PUBLIC, anon, authenticated, opensphere_console_backend, opensphere_external_channel_executor;
+
 DROP POLICY IF EXISTS console_backend_external_backup_target ON console.external_backup_target;
 CREATE POLICY console_backend_external_backup_target ON console.external_backup_target
   FOR ALL TO opensphere_console_backend USING (true) WITH CHECK (true);

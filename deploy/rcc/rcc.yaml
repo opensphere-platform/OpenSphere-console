@@ -15,6 +15,17 @@ metadata:
   namespace: polyon-rcc
 automountServiceAccountToken: true
 ---
+# The write-capable identity for node maintenance. It is deliberately a
+# different ServiceAccount from the Console backend so the token that can cordon
+# a node is never mounted into the process that handles browser sessions,
+# Kubernetes reads and agent payloads.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: polyon-rcc-maintenance
+  namespace: polyon-rcc
+automountServiceAccountToken: true
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -89,6 +100,56 @@ subjects:
     name: polyon-rcc-backend
     namespace: polyon-rcc
 ---
+# Stage 2 node maintenance. Deliberately a SEPARATE role from the reader above
+# so the additional write verbs are visible and auditable on their own, and can
+# be unbound without touching read access.
+#
+# This is the complete set the cordon/drain/uncordon coordinator needs and
+# nothing more. It cannot read Secrets, edit or create workloads, exec into
+# containers, or serve as a general Kubernetes proxy.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: polyon-rcc-cc2-maintenance
+rules:
+  # Cordon and uncordon are a patch of node.spec.unschedulable.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "patch"]
+  # Deciding what would be evicted, and observing the result.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Drain must go through the eviction API so PodDisruptionBudgets are honoured.
+  # `create` on pods/eviction does NOT grant `create` on pods.
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  # Preflight reads budgets to refuse a drain that would violate one.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: polyon-rcc-cc2-maintenance
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: polyon-rcc-cc2-maintenance
+subjects:
+  # Bound to the maintenance ServiceAccount ONLY. The Console backend must
+  # never hold a token that can cordon a node or evict a pod: it is the process
+  # that terminates browser sessions and parses agent payloads, and a flaw there
+  # would otherwise reach the whole cluster.
+  - kind: ServiceAccount
+    name: polyon-rcc-maintenance
+    namespace: polyon-rcc
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -113,6 +174,11 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
+        # Secret volumes are owned by root; without fsGroup the 1001 process
+        # cannot read the agent key document at all. fsGroup makes the kubelet
+        # set group ownership to 1001 so a group-read-only mode is sufficient.
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: api
@@ -137,6 +203,27 @@ spec:
             - { name: GITEA_ORGANIZATION, value: polyon }
             - { name: GITEA_REPOSITORY, value: cc2-config }
             - { name: GITEA_DEFAULT_BRANCH, value: main }
+            # Linux host agent key document. The backend reads it once at start
+            # and refuses the heartbeat route entirely when it is absent or
+            # malformed, so an unenrolled cluster cannot accept host reports.
+            - { name: RCC_AGENT_KEYS_FILE, value: /etc/rcc/agent-keys/agent-keys.json }
+            # Server-side, read-only Beszel integration. The browser receives
+            # projected metrics only; the PocketBase credential stays in this
+            # backend-only Secret volume and must authenticate with role
+            # `readonly` or the adapter refuses to start.
+            - { name: RCC_BESZEL_URL, value: "https://beszel.cc2.opl.io.kr" }
+            - { name: RCC_BESZEL_CONFIG_FILE, value: /etc/rcc/beszel/config.json }
+            - { name: RCC_BESZEL_TIMEOUT_MS, value: "8000" }
+            # BBSS live availability reads only these three owned namespaces.
+            # The API projects bounded health/capacity evidence and exposes no
+            # Secret, raw Kubernetes object or mutable operation.
+            - { name: BBSS_SUPABASE_NAMESPACE, value: polyon-rcc-data }
+            - { name: BBSS_GITEA_NAMESPACE, value: polyon-rcc-change }
+            - { name: BBSS_BESZEL_NAMESPACE, value: beszel-system }
+            # Node maintenance is delegated over a signed internal call. The
+            # backend holds this shared key, never a Kubernetes write token.
+            - { name: RCC_MAINTENANCE_URL, value: "http://polyon-rcc-maintenance.polyon-rcc.svc.cluster.local:8080" }
+            - { name: RCC_MAINTENANCE_KEY_FILE, value: /etc/rcc/maintenance/internal-key }
             - name: SUPABASE_JWT_SECRET
               valueFrom:
                 secretKeyRef: { name: polyon-supabase-runtime, key: jwt-secret }
@@ -176,6 +263,32 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: rcc-agent-keys, mountPath: /etc/rcc/agent-keys, readOnly: true }
+            - { name: rcc-beszel-reader, mountPath: /etc/rcc/beszel, readOnly: true }
+            - { name: rcc-maintenance-key, mountPath: /etc/rcc/maintenance, readOnly: true }
+      volumes:
+        # Optional so the control center starts before any host is enrolled.
+        # Without it the host read APIs still work and heartbeat stays closed.
+        - name: rcc-maintenance-key
+          secret:
+            secretName: polyon-rcc-maintenance-key
+            optional: true
+            defaultMode: 288
+        - name: rcc-agent-keys
+          secret:
+            secretName: polyon-rcc-agent-keys
+            optional: true
+            # Decimal on purpose: 288 == 0o440 (owner+group read, no write, no
+            # exec). A leading-zero literal is octal under YAML 1.1 and decimal
+            # under YAML 1.2, so the ambiguity is avoided entirely.
+            defaultMode: 288
+        - name: rcc-beszel-reader
+          secret:
+            secretName: polyon-rcc-beszel-reader
+            optional: true
+            # 288 == 0o440. The backend validates this file again before use.
+            defaultMode: 288
 ---
 apiVersion: v1
 kind: Service
@@ -262,6 +375,127 @@ spec:
     app.kubernetes.io/name: polyon-rcc-web
   ports:
     - { name: http, port: 8080, targetPort: http }
+---
+# Node maintenance service.
+#
+# Small on purpose: no browser surface, no Supabase access, no agent surface,
+# four internal endpoints. It is the only workload holding Kubernetes write
+# verbs, and it accepts only HMAC-signed calls from the backend.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polyon-rcc-maintenance
+  namespace: polyon-rcc
+  labels:
+    app.kubernetes.io/name: polyon-rcc-maintenance
+    app.kubernetes.io/part-of: polyon-rcc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: polyon-rcc-maintenance
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: polyon-rcc-maintenance
+        app.kubernetes.io/part-of: polyon-rcc
+    spec:
+      serviceAccountName: polyon-rcc-maintenance
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: maintenance
+          image: __POLYON_RCC_BACKEND_IMAGE__
+          imagePullPolicy: IfNotPresent
+          command: ["node", "/app/rcc-maintenance/server.js"]
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: RCC_MAINTENANCE_KEY_FILE, value: /etc/rcc/maintenance/internal-key }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            # Where etcd actually runs. This cannot be discovered reliably and
+            # guessing it wrong is how a cluster loses quorum, so it is left
+            # undeclared: a control-plane reboot is refused until an operator
+            # sets "stacked" or "external" for this specific cluster.
+            - { name: RCC_ETCD_TOPOLOGY, value: "" }
+            # What to do with pods a drain cannot move. Each is a declared
+            # operational decision; anything undeclared refuses the reboot.
+            # DaemonSet and static pods are restarted in place by their
+            # controller and the kubelet, which is why they are accepted here.
+            - { name: RCC_DRAIN_DAEMONSET_PODS, value: leave-in-place }
+            - { name: RCC_DRAIN_STATIC_PODS, value: leave-in-place }
+            # emptyDir contents do not survive the move. Losing them is not a
+            # decision this platform makes on an operator's behalf.
+            - { name: RCC_DRAIN_EMPTYDIR_DATA, value: refuse }
+            # How long to wait for pods to actually leave and for their
+            # replacements to become Ready before giving up and refusing.
+            - { name: RCC_DRAIN_TIMEOUT_MS, value: "120000" }
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /internal/maintenance/healthz, port: http }
+            periodSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            httpGet: { path: /internal/maintenance/healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /internal/maintenance/healthz, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 192Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: rcc-maintenance-key, mountPath: /etc/rcc/maintenance, readOnly: true }
+      volumes:
+        - name: rcc-maintenance-key
+          secret:
+            secretName: polyon-rcc-maintenance-key
+            optional: true
+            # 288 == 0o440 (owner+group read only), decimal to avoid the
+            # YAML 1.1 vs 1.2 octal ambiguity.
+            defaultMode: 288
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polyon-rcc-maintenance
+  namespace: polyon-rcc
+spec:
+  selector:
+    app.kubernetes.io/name: polyon-rcc-maintenance
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+# Only the Console backend may reach the maintenance service. Nothing else in
+# the cluster, and nothing outside it, can ask it to cordon or evict.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: polyon-rcc-maintenance-ingress
+  namespace: polyon-rcc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: polyon-rcc-maintenance
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: polyon-rcc-backend
+      ports:
+        - { protocol: TCP, port: 8080 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

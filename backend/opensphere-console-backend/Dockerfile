@@ -12,7 +12,23 @@ COPY opensphere-console-backend/notification-api.js ./notification-api.js
 COPY opensphere-console-backend/external-channel-api.js ./external-channel-api.js
 COPY opensphere-console-backend/recovery-owner.js ./recovery-owner.js
 COPY opensphere-console-backend/kubernetes-read-proxy.js ./kubernetes-read-proxy.js
+COPY opensphere-console-backend/agent-signature.js ./agent-signature.js
+COPY opensphere-console-backend/host-api.js ./host-api.js
+COPY opensphere-console-backend/beszel-metrics-api.js ./beszel-metrics-api.js
+COPY opensphere-console-backend/bbss-status.js ./bbss-status.js
+COPY opensphere-console-backend/admin-overview-status.js ./admin-overview-status.js
+COPY opensphere-console-backend/manual-api.js ./manual-api.js
+COPY opensphere-console-backend/operation-api.js ./operation-api.js
+COPY opensphere-console-backend/maintenance-coordinator.js ./maintenance-coordinator.js
+COPY opensphere-console-backend/maintenance-client.js ./maintenance-client.js
+# The maintenance service shares this image but runs as a different workload
+# with a different ServiceAccount and a different command.
+COPY rcc-maintenance/server.js /app/rcc-maintenance/server.js
 COPY notification-dispatcher/contract.js /app/notification-dispatcher/contract.js
+# Manual content is served read-only from this generated seed. It is a build
+# artifact of `npm run manual:seed`, not a runtime dependency on the gateway.
+COPY opensphere-console-oaa-gateway/manual-seeds/opensphere-core-manuals.json \
+     /app/opensphere-console-oaa-gateway/manual-seeds/opensphere-core-manuals.json
 RUN chown -R 1001:1001 /app \
     && chmod -R u=rwX,go=rX /app
 ENV PORT=8080

@@ -15,8 +15,29 @@ COPY --from=console-src public ./public
 COPY --from=console-src src ./src
 RUN npm run build -- --configuration production
 
+# Signed subShell packaging. The private key is supplied as a BuildKit secret
+# and never enters the image, a layer or the repository. Without it no registry
+# is produced, so the shell starts with zero plugins instead of loading anything
+# unsigned.
+COPY --from=console-src backend/dupa-control/controller.js ./backend/dupa-control/controller.js
+COPY --from=console-src deploy/rcc/subshells ./deploy/rcc/subshells
+# The expected public-key fingerprint is deliberately a build ARG, not a secret:
+# it is public data, and recording it in image history is useful provenance.
+# Only the private key is a secret.
+ARG RCC_PLUGIN_SIGNING_KEY_SPKI_SHA256=""
+RUN --mount=type=secret,id=rcc_plugin_signing_key \
+    mkdir -p dist-plugins \
+    && if [ -s /run/secrets/rcc_plugin_signing_key ]; then \
+         RCC_PLUGIN_SIGNING_KEY=/run/secrets/rcc_plugin_signing_key \
+         RCC_PLUGIN_SIGNING_KEY_SPKI_SHA256="$RCC_PLUGIN_SIGNING_KEY_SPKI_SHA256" \
+         node scripts/build-plugin-registry.mjs --out dist-plugins; \
+       else \
+         echo "[plugin-registry] no signing key supplied; shipping without a plugin registry (fail-closed)"; \
+       fi
+
 FROM docker.io/nginxinc/nginx-unprivileged@sha256:592b23aa79a6e6c08ba4b20f1fff700e1328895705966722608e115d62e52d39
 COPY --from=build /app/PolyON-RegionControlCenter/dist/opensphere-console/browser /usr/share/nginx/html
+COPY --from=build /app/PolyON-RegionControlCenter/dist-plugins /usr/share/nginx/html/plugins
 COPY --from=console-src nginx/rcc.conf.template /etc/nginx/templates/default.conf.template
 USER root
 RUN chown -R 101:101 /usr/share/nginx/html /etc/nginx/templates \

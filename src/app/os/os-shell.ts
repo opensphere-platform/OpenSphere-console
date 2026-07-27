@@ -17,9 +17,10 @@ import Settings16 from '@carbon/icons/es/settings/16';
 import ChevronLeft16 from '@carbon/icons/es/chevron--left/16';
 import ChevronRight16 from '@carbon/icons/es/chevron--right/16';
 import { AuthService } from '../core/auth.service';
+import { ControlCenterContextService } from '../core/control-center-context.service';
 import { ExtensionHostService, NavNode } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
-import { routeForPlugin } from '../core/perspectives';
+import { canonicalNavBand, navigationForPlugin } from '../core/perspectives';
 import { OsNavNode } from './os-nav-node';
 import { OsSearch } from './os-search';
 import { OsNotifications } from './os-notifications';
@@ -29,6 +30,7 @@ interface NavItem {
   path: string;
   label: string;
   plugin?: boolean;
+  pluginId?: string;
 }
 interface NavBand {
   band: string;
@@ -70,7 +72,7 @@ interface NavBand {
         </div>
         <os-search />
         <div class="header-actions">
-          <a class="os-header-manual" routerLink="/manual" routerLinkActive="active" title="Manual" aria-label="Manual">
+          <a class="os-header-manual" routerLink="/manual" routerLinkActive="active" title="매뉴얼" aria-label="매뉴얼">
             <os-cicon [icon]="iconManual" [size]="18" />
           </a>
           <os-oaa-agent />
@@ -84,9 +86,9 @@ interface NavBand {
             <clr-dropdown-menu *clrIfOpen clrPosition="bottom-right">
               <div class="os-account-id">{{ auth.user() }}</div>
               <div class="dropdown-divider"></div>
-              <a clrDropdownItem routerLink="/me">Account profile</a>
+              <a clrDropdownItem routerLink="/me">내 정보</a>
               <div class="dropdown-divider"></div>
-              <button clrDropdownItem (click)="auth.logout()">Log out</button>
+              <button clrDropdownItem (click)="auth.logout()">로그아웃</button>
             </clr-dropdown-menu>
           </clr-dropdown>
         </div>
@@ -104,7 +106,7 @@ interface NavBand {
             routerLink="/"
             routerLinkActive="active"
             [routerLinkActiveOptions]="{ exact: true }"
-            ><os-cicon clrVerticalNavIcon [icon]="iconHome" [size]="20" />홈 · Perspectives</a
+            ><os-cicon clrVerticalNavIcon [icon]="iconHome" [size]="20" />홈</a
           >
           @for (band of bands(); track band.band) {
             <div class="os-band-label">{{ band.band }}</div>
@@ -116,9 +118,6 @@ interface NavBand {
                   <os-cicon clrVerticalNavIcon [icon]="iconFor(item)" [size]="20" />
                 }
                 {{ item.label }}
-                @if (item.plugin) {
-                  <span class="badge os-plugin-badge">plugin</span>
-                }
               </a>
             }
             <!-- 플러그인이 기여한 재귀 메뉴 트리(임의 깊이·동적) — DUPA nav 기여 -->
@@ -191,10 +190,6 @@ interface NavBand {
       .os-thin {
         font-weight: 200;
         opacity: 0.85;
-      }
-      .os-plugin-badge {
-        margin-left: 0.3rem;
-        opacity: 0.8;
       }
       /* 우측 액션 영역 — 절대중앙 검색과 무관하게 오른쪽 끝으로. */
       .header-actions {
@@ -354,6 +349,7 @@ export class OsShell {
   readonly auth = inject(AuthService);
   readonly psp = inject(PerspectiveService);
   private ext = inject(ExtensionHostService);
+  private controlCenter = inject(ControlCenterContextService);
   private iconLib = inject(IconLibraryService);
 
   /** 아바타 이니셜 — 사용자명 첫 글자(대문자). */
@@ -377,7 +373,7 @@ export class OsShell {
   pluginSvg(item: NavItem): string | null {
     const path = item.path || '';
     if (!(item.plugin || path.startsWith('/p/'))) return null;
-    const id = path.replace(/^\/p\//, '').split(/[/?#]/)[0];
+    const id = item.pluginId ?? path.replace(/^\/p\//, '').split(/[/?#]/)[0];
     const tok = this.ext.pluginIcons()[id];
     if (!tok || iconByToken(tok)) return null; // 미지정·큐레이션은 os-cicon(즉시)
     return this.iconLib.getSvg(tok); // 미로딩이면 백그라운드 로딩 + null → 로딩 후 재렌더
@@ -388,7 +384,7 @@ export class OsShell {
     const p = path.toLowerCase();
     // 플러그인: 관리자 지정 아이콘(registry의 spec.nav.icon 토큰) — 큐레이션 디스크립터(즉시). 비큐레이션은 pluginSvg가 처리.
     if (p.startsWith('/p/') || item.plugin) {
-      const id = path.replace(/^\/p\//, '').split(/[/?#]/)[0];
+      const id = item.pluginId ?? path.replace(/^\/p\//, '').split(/[/?#]/)[0];
       return iconByToken(this.ext.pluginIcons()[id]) ?? Application16;
     }
     if (p.includes('container')) return Kubernetes16;
@@ -401,39 +397,38 @@ export class OsShell {
 
   /** native Core 항목 — 실제 셸 컴포넌트(규칙 부합, 밴드 고정). 그 외 밴드/항목은 전부 등록(DUPA) 기반.
    *  ADR-UI-003 §3.3: 빈 '예정' 밴드(운영/전달/지능 placeholder)는 더 이상 하드코딩하지 않는다. */
-  private static readonly NATIVE: NavBand[] = [
-    {
-      band: '운영 Operate',
-      items: [
-        { path: '/cc/cc2/kubernetes', label: 'CC2 Kubernetes' },
-      ],
-    },
-  ];
-
   /** 알려진 밴드 정렬 순서 — 콘텐츠가 있는 밴드만 이 순서로 노출. 미지 밴드는 뒤에 append. */
-  private static readonly BAND_ORDER = ['운영 Operate', '구축 Build', '전달 Deliver', '지능 Intelligence'];
+  private static readonly BAND_ORDER = ['운영', '구축', '전달', '지능'];
 
   /** nav 밴드 = native Core 항목 + 등록 플러그인(navBand)에서 **동적 수집**(§10 내비 등록).
    *  ADR-UI-003 §3.3: 콘텐츠 없는 밴드는 렌더하지 않는다(phantom 밴드 라벨 제거).
    *  nav 트리를 기여한 플러그인은 평면 항목 대신 트리로 렌더(중복 방지). */
   readonly bands = computed<NavBand[]>(() => {
     const trees = this.ext.navTrees();
+    const controlCenterId = this.controlCenter.id();
     // 역할(그룹) 기반 가시성: 허용 워크스페이스(PerspectiveService.decide)의 밴드만 노출.
-    // 비관리자는 '운영 Operate'(워크스페이스 A) 밴드를 보지 못한다 → 관리/운영 perspective 숨김.
+    // 비관리자는 '운영'(워크스페이스 A) 밴드를 보지 못한다 → 관리/운영 perspective 숨김.
     const allowedBands = new Set(this.psp.allowedWorkspaces().flatMap((w) => w.bands));
     const aclBands = new Set(this.psp.all.flatMap((w) => w.bands)); // ACL에 정의된 밴드(역할 게이트 대상)
 
     // 밴드 → 항목 수집(하드코딩 빈 밴드 없음 — native + 등록 플러그인에서만)
-    const byBand = new Map<string, NavItem[]>();
-    for (const nb of OsShell.NATIVE) byBand.set(nb.band, [...nb.items]);
+    const byBand = new Map<string, NavItem[]>([
+      ['운영', [{ path: `/cc/${controlCenterId}/kubernetes`, label: 'Kubernetes' }]],
+    ]);
     for (const p of this.ext.pages()) {
+      const target = navigationForPlugin(p, controlCenterId);
       if (trees[p.id]) {
-        if (!byBand.has(p.navBand)) byBand.set(p.navBand, []); // 트리만 기여하는 밴드도 등장
+        if (!byBand.has(target.band)) byBand.set(target.band, []); // 트리만 기여하는 밴드도 등장
         continue;
       }
-      const arr = byBand.get(p.navBand) ?? [];
-      arr.push({ path: routeForPlugin(p.id), label: p.title, plugin: true });
-      byBand.set(p.navBand, arr);
+      const arr = byBand.get(target.band) ?? [];
+      arr.push({
+        path: target.path,
+        label: target.label,
+        plugin: true,
+        pluginId: target.pluginId,
+      });
+      byBand.set(target.band, arr);
     }
 
     // 정렬(알려진 순서 우선) → 역할 게이트 → 빈 밴드 제거
@@ -452,7 +447,7 @@ export class OsShell {
     const trees = this.ext.navTrees();
     return this.ext
       .pages()
-      .filter((p) => p.navBand === band && trees[p.id])
+      .filter((p) => canonicalNavBand(p.navBand) === band && trees[p.id])
       .flatMap((p) => trees[p.id]);
   }
 }

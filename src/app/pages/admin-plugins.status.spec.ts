@@ -10,7 +10,13 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(path.join(here, 'admin-plugins.ts'), 'utf8');
 
 test('Extension 상세가 다섯 상태 계층과 integration matrix를 제공한다', () => {
-  for (const label of ['1. Artifact', '2. Workload', '3. Registration', '4. Console integration', '5. User visibility']) {
+  for (const label of [
+    '1. Artifact',
+    '2. Workload',
+    '3. Registration',
+    '4. Console integration',
+    '5. User visibility',
+  ]) {
     assert.ok(source.includes(label), `${label} 계층이 필요하다`);
   }
   assert.ok(source.includes('Console 연동 상태'));
@@ -41,5 +47,8 @@ test('상세 패널 제목이 Extension 이름·종류·ID·버전을 명시한�
 });
 
 test('권한 프로파일 드리프트를 관리자가 이해할 수 있는 문장으로 설명한다', () => {
-  assert.ok(source.includes("PermissionProfileDrift: 'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름'"));
+  assert.match(
+    source,
+    /PermissionProfileDrift:\s*'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름'/,
+  );
 });

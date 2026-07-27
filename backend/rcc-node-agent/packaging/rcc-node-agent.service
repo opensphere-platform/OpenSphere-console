@@ -1,0 +1,70 @@
+[Unit]
+Description=PolyON RCC node agent (read-only host reporter)
+Documentation=https://rcc.cc2.opl.io.kr/manual
+# Deliberately not bound to kubelet: the agent must keep reporting while the
+# node's Kubernetes runtime is unhealthy.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rcc-node-agent --config /etc/rcc-node-agent/agent.json
+Restart=always
+RestartSec=10s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+
+User=root
+Group=root
+
+# Stage 2 privilege boundary.
+#
+# The agent runs as root because the three typed operations genuinely need it:
+#   journal.query   reads the full system journal
+#   service.restart calls systemctl restart on an allowlisted unit
+#   host.reboot     calls systemctl reboot
+#
+# Everything else is taken away. The sandbox below is what makes root here much
+# narrower than ordinary root: the filesystem is read-only apart from the
+# agent's own state directory, capabilities are reduced to CAP_SYS_BOOT, and
+# the agent still exposes no listening socket.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# @reboot is NOT removed: host.reboot is a declared operation. Everything else
+# that could change the machine out of band still is.
+SystemCallFilter=~@privileged @resources @mount @swap @module @obsolete
+# CAP_SYS_BOOT is the single capability the reboot operation needs. Without an
+# explicit set here the unit would otherwise keep full root capabilities.
+CapabilityBoundingSet=CAP_SYS_BOOT
+AmbientCapabilities=
+ReadOnlyPaths=/etc/rcc-node-agent
+# Durable operation state. This is the only path the agent may write.
+StateDirectory=rcc-node-agent
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/rcc-node-agent
+
+MemoryMax=128M
+CPUQuota=20%
+TasksMax=32
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

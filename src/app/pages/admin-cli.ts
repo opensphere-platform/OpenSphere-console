@@ -41,6 +41,7 @@ interface CliManifest {
         <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="false">
           <clr-alert-item><span class="alert-text">{{ message }}</span></clr-alert-item>
         </clr-alert>
+        <button class="btn btn-sm btn-outline" [disabled]="loading()" (click)="load()">다시 시도</button>
       }
 
       @if (manifest(); as cli) {
@@ -100,7 +101,7 @@ interface CliManifest {
             </span>
           </clr-alert-item>
         </clr-alert>
-      } @else if (!error()) {
+      } @else if (loading()) {
         <span class="spinner spinner-sm" aria-label="CLI manifest 불러오는 중"></span>
       }
     </div>
@@ -120,6 +121,7 @@ export class AdminCli {
   private readonly http = inject(HttpService);
   readonly manifest = signal<CliManifest | null>(null);
   readonly error = signal('');
+  readonly loading = signal(false);
   readonly copied = signal(false);
   readonly origin = window.location.origin;
 
@@ -128,12 +130,17 @@ export class AdminCli {
   }
 
   async load(): Promise<void> {
+    this.loading.set(true);
+    this.error.set('');
     try {
       const manifest = await this.http.json<CliManifest>('/api/cli/index.json', { cache: 'no-store' });
       if (manifest.ownership !== 'console-native' || manifest.profile !== 'admin') throw new Error('CLI ownership contract mismatch');
       this.manifest.set(manifest);
     } catch (error) {
+      this.manifest.set(null);
       this.error.set(`CLI manifest를 불러오지 못했습니다: ${String(error)}`);
+    } finally {
+      this.loading.set(false);
     }
   }
 

@@ -1,0 +1,142 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: beszel-hub
+  namespace: beszel-system
+  labels:
+    app.kubernetes.io/name: beszel-hub
+    app.kubernetes.io/part-of: his-observability
+    polyon.io/authority-owner: his
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beszel-hub
+  namespace: beszel-system
+  labels:
+    app.kubernetes.io/name: beszel-hub
+    app.kubernetes.io/component: supplemental-host-diagnostics
+    app.kubernetes.io/part-of: his-observability
+    app.kubernetes.io/version: "0.18.7"
+    polyon.io/authority-owner: his
+spec:
+  replicas: 1
+  # PocketBase uses SQLite and this PVC is ReadWriteOnce. A rolling update
+  # would briefly create two writers or deadlock on the attachment.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: beszel-hub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: beszel-hub
+        app.kubernetes.io/component: supplemental-host-diagnostics
+        app.kubernetes.io/part-of: his-observability
+        polyon.io/authority-owner: his
+    spec:
+      serviceAccountName: beszel-hub
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: hub
+          image: docker.io/henrygd/beszel@sha256:a849ad80814b6a1a3be665304dcace5d4854b3bed7bde4dd1227e8ce1b82d477
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --http=0.0.0.0:8090
+            - --encryptionEnv=BESZEL_PB_ENCRYPTION_KEY
+          env:
+            - name: BESZEL_PB_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: beszel-hub-encryption
+                  key: pb-encryption-key
+                  optional: false
+            # These two keys exist only for first boot. The bootstrap Secret is
+            # deleted and the Deployment restarted after the first user is
+            # verified; optional references keep later restarts valid.
+            - name: BESZEL_HUB_USER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: beszel-hub-bootstrap
+                  key: user-email
+                  optional: true
+            - name: BESZEL_HUB_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: beszel-hub-bootstrap
+                  key: user-password
+                  optional: true
+            - { name: BESZEL_HUB_APP_URL, value: "https://beszel.cc2.opl.io.kr" }
+            - { name: BESZEL_HUB_CHECK_UPDATES, value: "false" }
+            - { name: BESZEL_HUB_CONTAINER_DETAILS, value: "false" }
+            - { name: BESZEL_HUB_SHARE_ALL_SYSTEMS, value: "false" }
+            - { name: BESZEL_HUB_USER_CREATION, value: "false" }
+            - { name: GOMEMLIMIT, value: "384MiB" }
+          ports:
+            - { name: http, containerPort: 8090, protocol: TCP }
+          startupProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 3
+            failureThreshold: 40
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 2
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: data, mountPath: /beszel_data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: beszel-hub-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: beszel-hub
+  namespace: beszel-system
+  labels:
+    app.kubernetes.io/name: beszel-hub
+    app.kubernetes.io/part-of: his-observability
+    polyon.io/authority-owner: his
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: beszel-hub
+  ports:
+    - { name: http, port: 8090, targetPort: http, protocol: TCP }

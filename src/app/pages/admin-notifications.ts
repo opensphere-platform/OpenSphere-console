@@ -18,17 +18,99 @@ import { NotificationService, OsNotification, OsSeverity } from '../core/notific
   template: `
     <div class="os-page">
       <os-page-header title="알림" tag="Core·Admin · 셸 단일 인박스(audit bus + subShell 발행)" />
-      <div class="manage-page-lead"><p>헤더 벨과 동일한 단일 인박스입니다. Console audit bus와 subShell의 <code>ctx.notify</code> 이벤트를 한곳에서 확인하고 관련 화면으로 이동할 수 있습니다.</p><span>persistent inbox · 최대 {{ notif.items().length }}</span></div>
+      <div class="manage-page-lead">
+        <p>
+          헤더 벨과 동일한 단일 인박스입니다. Console audit bus와 subShell의
+          <code>ctx.notify</code> 이벤트를 한곳에서 확인하고 관련 화면으로 이동할 수 있습니다.
+        </p>
+        <span>persistent inbox · 최대 {{ notif.items().length }}</span>
+      </div>
+      @if (notif.sourceHealth() === 'degraded') {
+        <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+          <clr-alert-item>
+            <span class="alert-text">
+              감사 이벤트 원천을 확인할 수 없습니다. 현재 건수를 전체 알림 0건으로 해석하지 마세요.
+              {{ notif.sourceError() }}
+            </span>
+          </clr-alert-item>
+        </clr-alert>
+      }
       <section class="manage-status-rail" aria-label="알림 상태">
-        <div><span>Total</span><strong>{{ notif.items().length }}</strong><small>현재 인박스 범위</small></div>
-        <div><span>Unread</span><strong [class.warn]="notif.unread() > 0">{{ notif.unread() }}</strong><small>확인 필요</small></div>
-        <div><span>Errors</span><strong [class.danger]="severityCount('error') > 0">{{ severityCount('error') }}</strong><small>실패·차단 이벤트</small></div>
-        <div><span>Warnings</span><strong [class.warn]="severityCount('warning') > 0">{{ severityCount('warning') }}</strong><small>주의 이벤트</small></div>
-        <div><span>Sources</span><strong>{{ sourceCount() }}</strong><small>발행 권위</small></div>
+        <div>
+          <span>Total</span><strong>{{ notif.items().length }}</strong
+          ><small>현재 인박스 범위</small>
+        </div>
+        <div>
+          <span>Unread</span><strong [class.warn]="notif.unread() > 0">{{ notif.unread() }}</strong
+          ><small>확인 필요</small>
+        </div>
+        <div>
+          <span>Errors</span
+          ><strong [class.danger]="severityCount('error') > 0">{{ severityCount('error') }}</strong
+          ><small>실패·차단 이벤트</small>
+        </div>
+        <div>
+          <span>Warnings</span
+          ><strong [class.warn]="severityCount('warning') > 0">{{
+            severityCount('warning')
+          }}</strong
+          ><small>주의 이벤트</small>
+        </div>
+        <div>
+          <span>Sources</span><strong>{{ sourceCount() }}</strong
+          ><small>발행 권위</small>
+        </div>
+        <div>
+          <span>Source state</span
+          ><strong
+            [class.ok]="notif.sourceHealth() === 'ready'"
+            [class.warn]="notif.sourceHealth() !== 'ready'"
+            >{{ sourceStateLabel() }}</strong
+          ><small>DUPA audit bus</small>
+        </div>
       </section>
       <div class="manage-toolbar">
-        <div class="manage-toolbar-group"><button class="manage-filter-button" [class.active]="viewFilter() === 'all'" (click)="viewFilter.set('all')">전체</button><button class="manage-filter-button" [class.active]="viewFilter() === 'unread'" (click)="viewFilter.set('unread')">안읽음</button><button class="manage-filter-button" [class.active]="viewFilter() === 'attention'" (click)="viewFilter.set('attention')">주의 이상</button><label class="clr-sr-only" for="notification-search">알림 검색</label><input id="notification-search" class="manage-search" type="search" placeholder="제목·소스·분류 검색" [value]="query()" (input)="query.set(inputValue($event))" /></div>
-        <div class="manage-toolbar-group"><span class="manage-toolbar-copy"><small>{{ filteredItems().length }}건 표시</small></span><button class="btn btn-sm btn-outline" (click)="notif.refresh()">새로고침</button><button class="btn btn-sm btn-outline" [disabled]="!notif.unread()" (click)="notif.markAllRead()">모두 읽음</button></div>
+        <div class="manage-toolbar-group">
+          <button
+            class="manage-filter-button"
+            [class.active]="viewFilter() === 'all'"
+            (click)="viewFilter.set('all')"
+          >
+            전체</button
+          ><button
+            class="manage-filter-button"
+            [class.active]="viewFilter() === 'unread'"
+            (click)="viewFilter.set('unread')"
+          >
+            안읽음</button
+          ><button
+            class="manage-filter-button"
+            [class.active]="viewFilter() === 'attention'"
+            (click)="viewFilter.set('attention')"
+          >
+            주의 이상</button
+          ><label class="clr-sr-only" for="notification-search">알림 검색</label
+          ><input
+            id="notification-search"
+            class="manage-search"
+            type="search"
+            placeholder="제목·소스·분류 검색"
+            [value]="query()"
+            (input)="query.set(inputValue($event))"
+          />
+        </div>
+        <div class="manage-toolbar-group">
+          <span class="manage-toolbar-copy"
+            ><small>{{ filteredItems().length }}건 표시</small></span
+          ><button class="btn btn-sm btn-outline" (click)="notif.refresh()">새로고침</button
+          ><button
+            class="btn btn-sm btn-outline"
+            [disabled]="!notif.unread()"
+            (click)="notif.markAllRead()"
+          >
+            모두 읽음
+          </button>
+        </div>
       </div>
 
       <clr-datagrid>
@@ -51,16 +133,26 @@ import { NotificationService, OsNotification, OsSeverity } from '../core/notific
               <button class="action-item" (click)="go(n, $event)">이동</button>
             </clr-dg-action-overflow>
           }
-          <clr-dg-cell><span class="label" [ngClass]="sevClass(n.severity)">{{ sevLabel(n.severity) }}</span></clr-dg-cell>
+          <clr-dg-cell
+            ><span class="label" [ngClass]="sevClass(n.severity)">{{
+              sevLabel(n.severity)
+            }}</span></clr-dg-cell
+          >
           <clr-dg-cell>{{ n.source }}</clr-dg-cell>
           <clr-dg-cell>{{ n.category || '—' }}</clr-dg-cell>
           <clr-dg-cell>{{ n.title }}</clr-dg-cell>
           <clr-dg-cell>{{ fmt(n.time) }}</clr-dg-cell>
-          <clr-dg-cell><span class="label" [ngClass]="n.read ? '' : 'label-info'">{{ n.read ? '읽음' : '안읽음' }}</span></clr-dg-cell>
+          <clr-dg-cell
+            ><span class="label" [ngClass]="n.read ? '' : 'label-info'">{{
+              n.read ? '읽음' : '안읽음'
+            }}</span></clr-dg-cell
+          >
         </clr-dg-row>
         <clr-dg-placeholder>알림이 없습니다</clr-dg-placeholder>
         <clr-dg-footer>
-          <clr-dg-pagination #pg [clrDgPageSize]="15">{{ pg.firstItem + 1 }}-{{ pg.lastItem + 1 }} / {{ pg.totalItems }}</clr-dg-pagination>
+          <clr-dg-pagination #pg [clrDgPageSize]="15"
+            >{{ pg.firstItem + 1 }}-{{ pg.lastItem + 1 }} / {{ pg.totalItems }}</clr-dg-pagination
+          >
         </clr-dg-footer>
       </clr-datagrid>
 
@@ -74,7 +166,9 @@ import { NotificationService, OsNotification, OsSeverity } from '../core/notific
           <section class="os-notification-detail" aria-label="알림 상세 정보">
             <div class="os-detail-summary">
               <span class="label" [ngClass]="sevClass(n.severity)">{{ sevLabel(n.severity) }}</span>
-              <span class="label" [ngClass]="n.read ? '' : 'label-info'">{{ n.read ? '읽음' : '안읽음' }}</span>
+              <span class="label" [ngClass]="n.read ? '' : 'label-info'">{{
+                n.read ? '읽음' : '안읽음'
+              }}</span>
             </div>
             @if (n.detail) {
               <p class="os-detail-message">{{ n.detail }}</p>
@@ -82,7 +176,10 @@ import { NotificationService, OsNotification, OsSeverity } from '../core/notific
             <table class="table table-compact table-vertical os-detail-table">
               <tbody>
                 @for (r of detailRows(n); track r.k) {
-                  <tr><th class="left">{{ r.k }}</th><td class="left">{{ r.v }}</td></tr>
+                  <tr>
+                    <th class="left">{{ r.k }}</th>
+                    <td class="left">{{ r.v }}</td>
+                  </tr>
                 }
               </tbody>
             </table>
@@ -94,16 +191,42 @@ import { NotificationService, OsNotification, OsSeverity } from '../core/notific
       </os-panel>
     </div>
   `,
-  styles: [`
-    .os-notification-row { cursor: pointer; }
-    .os-notification-row:focus-visible { outline: 2px solid var(--cds-alias-object-interaction-color, #0072a3); outline-offset: -2px; }
-    .os-notification-detail { padding: 0.25rem 0 1rem; }
-    .os-detail-summary { display: flex; gap: 0.4rem; margin-bottom: 1rem; }
-    .os-detail-message { margin: 0 0 1rem; padding: 0.8rem; border-left: 3px solid var(--cds-alias-object-interaction-color, #0072a3); background: var(--cds-alias-object-container-background-tint, #f1f6f8); white-space: pre-wrap; }
-    .os-detail-table { margin: 0 0 1rem; width: 100%; }
-    .os-detail-table th { width: 11rem; }
-    .os-detail-table td { overflow-wrap: anywhere; }
-  `],
+  styles: [
+    `
+      .os-notification-row {
+        cursor: pointer;
+      }
+      .os-notification-row:focus-visible {
+        outline: 2px solid var(--cds-alias-object-interaction-color, #0072a3);
+        outline-offset: -2px;
+      }
+      .os-notification-detail {
+        padding: 0.25rem 0 1rem;
+      }
+      .os-detail-summary {
+        display: flex;
+        gap: 0.4rem;
+        margin-bottom: 1rem;
+      }
+      .os-detail-message {
+        margin: 0 0 1rem;
+        padding: 0.8rem;
+        border-left: 3px solid var(--cds-alias-object-interaction-color, #0072a3);
+        background: var(--cds-alias-object-container-background-tint, #f1f6f8);
+        white-space: pre-wrap;
+      }
+      .os-detail-table {
+        margin: 0 0 1rem;
+        width: 100%;
+      }
+      .os-detail-table th {
+        width: 11rem;
+      }
+      .os-detail-table td {
+        overflow-wrap: anywhere;
+      }
+    `,
+  ],
 })
 export class AdminNotifications {
   readonly notif = inject(NotificationService);
@@ -113,21 +236,52 @@ export class AdminNotifications {
   readonly filteredItems = computed(() => {
     const query = this.query().trim().toLowerCase();
     return this.notif.items().filter((item) => {
-      const matchesView = this.viewFilter() === 'all' || (this.viewFilter() === 'unread' ? !item.read : item.severity === 'warning' || item.severity === 'error');
-      const matchesQuery = !query || [item.title, item.detail, item.source, item.category, item.topic].some((value) => String(value || '').toLowerCase().includes(query));
+      const matchesView =
+        this.viewFilter() === 'all' ||
+        (this.viewFilter() === 'unread'
+          ? !item.read
+          : item.severity === 'warning' || item.severity === 'error');
+      const matchesQuery =
+        !query ||
+        [item.title, item.detail, item.source, item.category, item.topic].some((value) =>
+          String(value || '')
+            .toLowerCase()
+            .includes(query),
+        );
       return matchesView && matchesQuery;
     });
   });
   private router = inject(Router);
 
-  constructor() { this.notif.start(); this.notif.refresh(); }
+  constructor() {
+    this.notif.start();
+    this.notif.refresh();
+  }
 
-  severityCount(severity: OsSeverity): number { return this.notif.items().filter((item) => item.severity === severity).length; }
-  sourceCount(): number { return new Set(this.notif.items().map((item) => item.source)).size; }
-  inputValue(event: Event): string { return (event.target as HTMLInputElement).value; }
+  severityCount(severity: OsSeverity): number {
+    return this.notif.items().filter((item) => item.severity === severity).length;
+  }
+  sourceCount(): number {
+    return new Set(this.notif.items().map((item) => item.source)).size;
+  }
+  sourceStateLabel(): string {
+    return ({ checking: '확인 중', ready: '정상', degraded: '저하' } as const)[
+      this.notif.sourceHealth()
+    ];
+  }
+  inputValue(event: Event): string {
+    return (event.target as HTMLInputElement).value;
+  }
 
   sevClass(s: OsSeverity): string {
-    return { info: 'label-info', success: 'label-success', warning: 'label-warning', error: 'label-danger' }[s] || '';
+    return (
+      {
+        info: 'label-info',
+        success: 'label-success',
+        warning: 'label-warning',
+        error: 'label-danger',
+      }[s] || ''
+    );
   }
   sevLabel(s: OsSeverity): string {
     return { info: '정보', success: '성공', warning: '경고', error: '오류' }[s] || s;

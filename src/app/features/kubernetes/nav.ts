@@ -45,7 +45,7 @@ export interface NavGroup { group: string; items: NavItem[]; view?: ManagementVi
 
 export const NAV: NavGroup[] = [
   {
-    group: 'Workloads',
+    group: '워크로드',
     items: [
       { id: 'pods', label: 'Pods', component: PodComponent },
       { id: 'deployments', label: 'Deployments', component: DeploymentComponent },
@@ -61,7 +61,7 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    group: 'Network',
+    group: '네트워크',
     items: [
       { id: 'services', label: 'Services', component: ServiceComponent },
       { id: 'ingresses', label: 'Ingresses', component: IngressComponent },
@@ -72,7 +72,7 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    group: 'Config & Storage',
+    group: '구성 및 스토리지',
     items: [
       { id: 'configmaps', label: 'ConfigMaps', component: ConfigMapComponent },
       { id: 'resourcequotas', label: 'Resource Quotas', component: ResourceQuotaComponent },
@@ -83,7 +83,7 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    group: 'Cluster',
+    group: '클러스터',
     items: [
       { id: 'nodes', label: 'Nodes', component: NodesComponent },
       { id: 'node-workloads', label: 'Node Workloads', component: NodeWorkloadsComponent },
@@ -96,7 +96,7 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    group: 'Access',
+    group: '접근 제어',
     items: [
       { id: 'roles', label: 'Roles', component: RoleComponent },
       { id: 'rolebindings', label: 'Role Bindings', component: RoleBindingComponent },

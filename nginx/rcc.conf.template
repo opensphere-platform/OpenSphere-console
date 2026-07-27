@@ -51,6 +51,73 @@ server {
         proxy_set_header X-OS-Correlation-ID $rcc_correlation_id;
     }
 
+    # Manual reader API. Without this prefix these paths fall through to the SPA
+    # `location /` and return index.html, so the Manual UI receives HTML where it
+    # expects JSON and every document silently fails to load.
+    location ^~ /api/manual/ {
+        set $backend polyon-rcc-backend.polyon-rcc.svc.cluster.local;
+        proxy_pass http://$backend:8080$request_uri;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-OS-Correlation-ID $rcc_correlation_id;
+    }
+
+    # Canonical DUPA plugin API namespace. The backend authorises every request
+    # per permission; nginx only routes.
+    location ^~ /api/plugins/ {
+        set $backend polyon-rcc-backend.polyon-rcc.svc.cluster.local;
+        proxy_pass http://$backend:8080$request_uri;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-OS-Correlation-ID $rcc_correlation_id;
+    }
+
+    # Registry v3 document, baked into the image by scripts/build-plugin-registry.mjs.
+    # It carries only digest pins and public keys; the shell still verifies the
+    # manifest digest and its detached P-256 signature before executing anything.
+    # When the image is built without a signing key this file is absent and the
+    # 404 makes the shell start with zero plugins, which is the intended
+    # fail-closed outcome rather than an unsigned load.
+    location = /api/v1/registry {
+        alias /usr/share/nginx/html/plugins/registry.json;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options nosniff always;
+        # nginx's add_header directives are inherited only when a level defines
+        # none of its own. Any location that adds one drops every header from
+        # the server block, so the whole set is restated here rather than left
+        # to inheritance.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+        add_header Referrer-Policy no-referrer always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+        add_header X-OS-Correlation-ID $rcc_correlation_id always;
+    }
+
+    # Signed plugin assets: manifest, detached signature and entry bundle. Never
+    # cached, because a stale bundle would fail its digest pin and disable the
+    # feature until the cache expired.
+    location ^~ /plugins/ {
+        try_files $uri =404;
+        default_type application/octet-stream;
+        types {
+            application/json json;
+            text/javascript  js;
+            text/plain       sig;
+        }
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options nosniff always;
+        # nginx's add_header directives are inherited only when a level defines
+        # none of its own. Any location that adds one drops every header from
+        # the server block, so the whole set is restated here rather than left
+        # to inheritance.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+        add_header Referrer-Policy no-referrer always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+        add_header X-OS-Correlation-ID $rcc_correlation_id always;
+    }
+
     location /api/identity {
         set $backend polyon-rcc-backend.polyon-rcc.svc.cluster.local;
         proxy_pass http://$backend:8080;
@@ -89,15 +156,50 @@ server {
         proxy_request_buffering off;
     }
 
+    # Catch-all for every remaining API path. Without it an unrouted prefix
+    # falls through to `location /` and returns index.html with HTTP 200, so a
+    # client parsing JSON fails on HTML and the real cause is invisible.
+    #
+    # nginx selects the LONGEST matching prefix, so this never shadows the
+    # specific routes above: `= /api/v1/registry` is an exact match, and
+    # `/api/manual/`, `/api/plugins/`, `/api/control-centers/`, `/api/identity`
+    # and `/api/platform/` are all longer prefixes. Unknown API paths reach the
+    # backend and receive its JSON 404.
+    location ^~ /api/ {
+        set $backend polyon-rcc-backend.polyon-rcc.svc.cluster.local;
+        proxy_pass http://$backend:8080$request_uri;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-OS-Correlation-ID $rcc_correlation_id;
+    }
+
     location ~* "-[A-Za-z0-9]{8,}\.(?:js|css)$" {
         try_files $uri =404;
         expires 1y;
         add_header Cache-Control "public, immutable";
         add_header X-Content-Type-Options nosniff always;
+        # nginx's add_header directives are inherited only when a level defines
+        # none of its own. Any location that adds one drops every header from
+        # the server block, so the whole set is restated here rather than left
+        # to inheritance.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+        add_header Referrer-Policy no-referrer always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+        add_header X-OS-Correlation-ID $rcc_correlation_id always;
     }
 
     location = /index.html {
         add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options nosniff always;
+        # nginx's add_header directives are inherited only when a level defines
+        # none of its own. Any location that adds one drops every header from
+        # the server block, so the whole set is restated here rather than left
+        # to inheritance.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+        add_header Referrer-Policy no-referrer always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+        add_header X-OS-Correlation-ID $rcc_correlation_id always;
         try_files $uri =404;
     }
 

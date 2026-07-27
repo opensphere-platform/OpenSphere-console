@@ -58,14 +58,6 @@ function isHealthy(type: string, o: any): boolean {
   }
 }
 
-export interface PlatformStatus {
-  meta: { service: string; version: string; servedBy: string; time: string };
-  platformConfigs: { name: string; spec: Record<string, any>; status: Record<string, any> }[];
-  platformVersions: { name: string; spec: Record<string, any>; status: Record<string, any> }[];
-  hostRequirements: { name: string; spec: Record<string, any>; status: Record<string, any> }[];
-  observabilityStacks: { name: string; spec: Record<string, any>; status: Record<string, any> }[];
-}
-
 @Injectable({ providedIn: 'root' })
 export class ApiService {
   private http = inject(HttpService);
@@ -109,11 +101,5 @@ export class ApiService {
       }
     }
     return out;
-  }
-
-  async platformStatus(): Promise<PlatformStatus> {
-    const res = await this.http.request('/api/status/api/status');
-    if (!res.ok) throw new Error(`status: HTTP ${res.status}`);
-    return res.json();
   }
 }

@@ -41,6 +41,19 @@ test('Console Shell proxies notification administration to the Console Backend',
   assert.match(nginx, /opensphere-console-backend\.opensphere-console\.svc\.cluster\.local/);
 });
 
+test('notification inbox reads Console audit without changing the plugin event contract', () => {
+  const client = fs.readFileSync(path.join(__dirname, '../../src/app/core/plugin-control-client.service.ts'), 'utf8');
+  const inbox = fs.readFileSync(path.join(__dirname, '../../src/app/core/notification.service.ts'), 'utf8');
+  const pluginEvents = client.slice(client.indexOf('async events()'), client.indexOf('async auditEvents()'));
+  const auditEvents = client.slice(client.indexOf('async auditEvents()'), client.indexOf('async bindings()'));
+
+  assert.match(pluginEvents, /\/api\/admin\/plugins\/events/);
+  assert.match(auditEvents, /\/api\/identity\/audit/);
+  assert.match(inbox, /this\.control\.auditEvents\(\)/);
+  assert.match(inbox, /실제 정본은 DUPA 런타임이 아니라 Supabase audit\.event/);
+  assert.match(inbox, /기존 읽음 상태\(localStorage\)와 알림 ID를 보존/);
+});
+
 test('notification migration isolates ciphertext and dispatcher-only RPCs', () => {
   const migration = fs.readFileSync(path.join(__dirname, '../supabase/migrations/0011_notification_delivery.sql'), 'utf8');
   assert.match(migration, /CREATE TABLE IF NOT EXISTS console\.notification_secret/);
@@ -50,6 +63,7 @@ test('notification migration isolates ciphertext and dispatcher-only RPCs', () =
   assert.match(migration, /GRANT opensphere_notification_dispatcher TO authenticator/);
   assert.match(migration, /dispatcher_notification_channel_update/);
   assert.match(migration, /GRANT UPDATE ON console\.notification_channel TO opensphere_notification_dispatcher/);
+  assert.match(migration, /REVOKE ALL ON console\.notification_secret[\s\S]+opensphere_console_backend[\s\S]+opensphere_notification_dispatcher/);
 });
 
 test('OAA notification owner facade is sanitized, permission-gated, AAL2, and closed-schema', () => {

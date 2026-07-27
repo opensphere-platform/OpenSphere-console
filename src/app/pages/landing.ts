@@ -1,8 +1,9 @@
 import { Component, ChangeDetectionStrategy, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ExtensionHostService } from '../core/extension-host.service';
+import { ControlCenterContextService } from '../core/control-center-context.service';
 import { PerspectiveService } from '../core/perspective.service';
-import { routeForPlugin } from '../core/perspectives';
+import { navigationForPlugin, routeForPlugin } from '../core/perspectives';
 
 interface Card {
   path: string;
@@ -187,11 +188,13 @@ const PERSPECTIVES: PerspectiveDef[] = [
 })
 export class Landing {
   private ext = inject(ExtensionHostService);
+  private controlCenter = inject(ControlCenterContextService);
   private psp = inject(PerspectiveService);
 
   /** ① native Core Console 기능 — admin 카드는 운영관리자에게만 노출. */
   readonly coreCards = computed<Card[]>(() => {
     const base: Card[] = [
+      { path: '/manage', title: '관리 개요', sub: '노드 상태 · 운영 요약' },
       { path: '/manage/catalog', title: 'Developer Catalog', sub: '관리 · 자산 및 확장' },
       { path: '/manage/apis', title: 'APIs', sub: '관리 · 자산 및 확장' },
       { path: '/me', title: '내 정보', sub: 'My Info' },
@@ -208,7 +211,10 @@ export class Landing {
 
   /** ② 등록된 DUPA 확장 — 레지스트리 기반. */
   readonly extCards = computed<Card[]>(() =>
-    this.ext.pages().map((p) => ({ path: routeForPlugin(p.id), title: p.title, sub: p.navBand })),
+    this.ext.pages().map((p) => {
+      const target = navigationForPlugin(p, this.controlCenter.id());
+      return { path: target.path, title: target.label, sub: target.band };
+    }),
   );
 
   /**
@@ -220,7 +226,7 @@ export class Landing {
     return PERSPECTIVES.map((p) => ({
       ...p,
       live: p.pluginId !== null && registered.has(p.pluginId),
-      path: p.pluginId ? routeForPlugin(p.pluginId) : '',
+      path: p.pluginId ? routeForPlugin(p.pluginId, this.controlCenter.id()) : '',
     }));
   });
 }

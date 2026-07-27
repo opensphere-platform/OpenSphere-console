@@ -98,7 +98,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
         <div class="operations-layout" role="tabpanel">
           <div class="authority-columns">
             <section class="authority-panel">
-              <header><div><os-cicon [icon]="icons.database" [size]="18" /><span><strong>Data & Identity · Supabase</strong><small>Console data authority</small></span></div><a routerLink="/manage/data-identity">상세 관리</a></header>
+              <div class="section-header"><div><os-cicon [icon]="icons.database" [size]="18" /><span><strong>Data & Identity · Supabase</strong><small>Console data authority</small></span></div><a routerLink="/manage/data-identity">상세 관리</a></div>
               @if (supabase(); as data) {
                 <div class="compact-grid">
                   @for (service of data.components; track service.key) {
@@ -118,7 +118,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
             </section>
 
             <section class="authority-panel">
-              <header><div><os-cicon [icon]="icons.commit" [size]="18" /><span><strong>Declarative Change · Gitea</strong><small>Desired-state authority</small></span></div><a routerLink="/manage/change-control">상세 관리</a></header>
+              <div class="section-header"><div><os-cicon [icon]="icons.commit" [size]="18" /><span><strong>Declarative Change · Gitea</strong><small>Desired-state authority</small></span></div><a routerLink="/manage/change-control">상세 관리</a></div>
               @if (gitea(); as changeState) {
                 <dl class="property-list">
                   <div><dt>Repository</dt><dd>{{ changeState.supplyChain?.repository || 'inventory unavailable' }}</dd></div>
@@ -143,7 +143,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
           </div>
 
           <aside class="risk-inspector" aria-label="위험 및 증거 인스펙터">
-            <header><os-cicon [icon]="icons.security" [size]="18" /><strong>Risk & evidence</strong></header>
+            <div class="section-header"><os-cicon [icon]="icons.security" [size]="18" /><strong>Risk & evidence</strong></div>
             @if (primaryRisk(); as risk) {
               <div class="risk-callout" [class.risk-danger]="risk.tone === 'danger'">
                 <span>Current risk</span><strong><os-cicon [icon]="icons.warning" [size]="16" />{{ risk.title }}</strong><p>{{ risk.detail }}</p><button class="btn btn-primary btn-sm" type="button" (click)="risk.action()">{{ risk.actionLabel }}</button>
@@ -154,7 +154,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
           </aside>
 
           <section class="timeline-panel">
-            <header><div><os-cicon [icon]="icons.flow" [size]="18" /><span><strong>Recent governed activity</strong><small>Supabase request → Gitea evidence → Kubernetes receipt</small></span></div><button type="button" (click)="activeTab.set('journey')">Open journey</button></header>
+            <div class="section-header"><div><os-cicon [icon]="icons.flow" [size]="18" /><span><strong>Recent governed activity</strong><small>Supabase request → Gitea evidence → Kubernetes receipt</small></span></div><button type="button" (click)="activeTab.set('journey')">Open journey</button></div>
             <div class="table-scroll"><table><thead><tr><th>Time</th><th>Request</th><th>Target</th><th>Gitea PR / commit</th><th>Outbox</th><th>Reconcile / observed</th><th>Status</th></tr></thead><tbody>
               @for (change of recentChanges(); track change.request_id) { <tr><td>{{ relativeTime(change.created_at) }}</td><td><code>{{ shortId(change.request_id) }}</code></td><td><strong>{{ change.action }}</strong><small>{{ change.target }}</small></td><td>{{ change.execution?.pull_number ? 'PR #' + change.execution?.pull_number : 'Awaiting PR' }}<small>{{ shortId(change.execution?.merge_revision || change.execution?.desired_revision || '') || '—' }}</small></td><td>{{ change.outbox?.status || 'Not queued' }}<small>attempts {{ change.outbox?.attempts || 0 }}</small></td><td>{{ change.execution?.reconciler_status || 'Awaiting consumer' }}<small>{{ change.k8s_operation_id || 'receipt 없음' }}</small></td><td><span [class]="statusClass(changeVerdict(change))">{{ changeVerdict(change) }}</span></td></tr> }
               @empty { <tr><td colspan="7"><div class="table-empty"><strong>Governed change가 아직 없습니다.</strong><span>변경이 생성되면 request ID를 기준으로 Supabase 감사, Gitea PR/commit과 Kubernetes receipt가 이곳에 연결됩니다.</span><a routerLink="/manage/change-control">첫 선언형 변경 만들기</a></div></td></tr> }
@@ -166,13 +166,13 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
       @if (activeTab() === 'evidence') {
         <div class="evidence-workspace" role="tabpanel">
           <aside class="evidence-nav">
-            <header><strong>Authority</strong><small>{{ filteredEvidence().length }} evidence items</small></header>
+            <div class="section-header"><strong>Authority</strong><small>{{ filteredEvidence().length }} evidence items</small></div>
             @for (filter of evidenceFilters; track filter.key) { <button type="button" [class.active]="evidenceFilter() === filter.key" (click)="setEvidenceFilter(filter.key)"><span><os-cicon [icon]="filter.icon" [size]="16" />{{ filter.label }}</span><strong>{{ evidenceCount(filter.key) }}</strong></button> }
             <div class="state-legend"><strong>State legend</strong><span class="ok">Verified</span><span class="warn">Attention required</span><span class="danger">Failed</span><span class="neutral">Not configured</span><span class="waiting">Awaiting consumer</span></div>
           </aside>
 
           <section class="evidence-canvas">
-            <header><div><span>Selected scope</span><strong>{{ evidenceFilterLabel() }}</strong></div><div class="evidence-summary"><span>Coverage<strong>{{ verifiedEvidenceCount() }}/{{ evidenceRows().length }}</strong></span><span>Attention<strong>{{ attentionEvidenceCount() }}</strong></span><span>Freshness<strong>{{ relativeTime(lastChecked()) }}</strong></span></div><button class="btn btn-outline btn-sm" type="button" (click)="refresh()">Run evidence review</button></header>
+            <div class="section-header"><div><span>Selected scope</span><strong>{{ evidenceFilterLabel() }}</strong></div><div class="evidence-summary"><span>Coverage<strong>{{ verifiedEvidenceCount() }}/{{ evidenceRows().length }}</strong></span><span>Attention<strong>{{ attentionEvidenceCount() }}</strong></span><span>Freshness<strong>{{ relativeTime(lastChecked()) }}</strong></span></div><button class="btn btn-outline btn-sm" type="button" (click)="refresh()">Run evidence review</button></div>
             <div class="table-scroll"><table class="evidence-table"><thead><tr><th>Evidence ID</th><th>Source</th><th>Assertion</th><th>Expected</th><th>Observed</th><th>Time</th><th>Verdict</th></tr></thead><tbody>
               @for (row of filteredEvidence(); track row.id) { <tr [class.selected]="selectedEvidence()?.id === row.id"><td><button type="button" (click)="selectedEvidenceId.set(row.id)"><code>{{ shortId(row.id) }}</code></button></td><td>{{ row.source }}</td><td><strong>{{ row.assertion }}</strong><small>{{ row.detail }}</small></td><td>{{ row.expected }}</td><td [class]="statusClass(row.verdict)">{{ row.observed }}</td><td>{{ formatTime(row.time) }}</td><td><span [class]="statusClass(row.verdict)">{{ row.verdict }}</span></td></tr> }
               @empty { <tr><td colspan="7"><div class="table-empty"><strong>이 범위에 기록된 증거가 없습니다.</strong><span>빈 상태는 Verified가 아닙니다. 연결 또는 검증 작업을 완료한 뒤 다시 확인하세요.</span></div></td></tr> }
@@ -180,7 +180,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
           </section>
 
           <aside class="evidence-inspector">
-            <header><os-cicon [icon]="icons.evidence" [size]="18" /><strong>Selected evidence</strong></header>
+            <div class="section-header"><os-cicon [icon]="icons.evidence" [size]="18" /><strong>Selected evidence</strong></div>
             @if (selectedEvidence(); as item) {
               <div class="evidence-verdict"><code>{{ item.id }}</code><strong [class]="statusClass(item.verdict)">{{ item.verdict }}</strong></div>
               <dl class="detail-list"><div><dt>Authority</dt><dd>{{ item.source }}</dd></div><div><dt>Assertion</dt><dd>{{ item.assertion }}</dd></div><div><dt>Expected</dt><dd>{{ item.expected }}</dd></div><div><dt>Observed</dt><dd>{{ item.observed }}</dd></div><div><dt>Checked</dt><dd>{{ formatDate(item.time) }}</dd></div><div><dt>Correlation</dt><dd><code>{{ item.correlation || 'not available' }}</code></dd></div></dl>
@@ -196,7 +196,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
           <section class="next-action"><div><os-cicon [icon]="icons.pending" [size]="18" /><span><small>Next governed action</small><strong>{{ journeyNextAction() }}</strong></span></div><p>{{ journeyNextDetail() }}</p><a routerLink="/manage/change-control" class="btn btn-primary btn-sm">Change Control 열기</a></section>
           <div class="journey-main">
             <section class="journey-board">
-              <header><div><span>Correlation ID</span><code>{{ selectedChange()?.request_id || 'no active request' }}</code></div><div><span>Elapsed</span><strong>{{ selectedChange() ? relativeTime(selectedChange()?.created_at || null) : '—' }}</strong></div><span [class]="statusClass(selectedChange() ? changeVerdict(selectedChange()!) : 'Awaiting first change')">{{ selectedChange() ? changeVerdict(selectedChange()!) : 'Awaiting first change' }}</span></header>
+              <div class="section-header"><div><span>Correlation ID</span><code>{{ selectedChange()?.request_id || 'no active request' }}</code></div><div><span>Elapsed</span><strong>{{ selectedChange() ? relativeTime(selectedChange()?.created_at || null) : '—' }}</strong></div><span [class]="statusClass(selectedChange() ? changeVerdict(selectedChange()!) : 'Awaiting first change')">{{ selectedChange() ? changeVerdict(selectedChange()!) : 'Awaiting first change' }}</span></div>
               <div class="stage-head">@for (stage of stageLabels; track stage) { <span>{{ stage }}</span> }</div>
               @for (lane of journeyLanes; track lane) {
                 <div class="journey-lane"><div class="lane-label"><strong>{{ lane }}</strong><small>{{ laneDescription(lane) }}</small></div><div class="lane-track">
@@ -206,14 +206,14 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
               <footer><span><os-cicon [icon]="icons.check" [size]="14" />Verified step</span><span><os-cicon [icon]="icons.pending" [size]="14" />Current / waiting</span><span><os-cicon [icon]="icons.warning" [size]="14" />Failed or attention</span></footer>
             </section>
             <aside class="journey-inspector">
-              <header><strong>Request & policy</strong></header>
+              <div class="section-header"><strong>Request & policy</strong></div>
               @if (selectedChange(); as selected) {
                 <dl class="detail-list"><div><dt>Request</dt><dd><code>{{ shortId(selected.request_id) }}</code></dd></div><div><dt>Target</dt><dd>{{ selected.action }} · {{ selected.target }}</dd></div><div><dt>Repository</dt><dd>{{ selected.git_repo || gitea()?.supplyChain?.repository || '—' }}</dd></div><div><dt>PR</dt><dd>{{ selected.execution?.pull_number ? '#' + selected.execution?.pull_number : 'Awaiting PR' }}</dd></div><div><dt>Signature</dt><dd [class]="statusClass(gitea()?.supplyChain?.signedCommitsRequired ? 'Required' : 'Missing')">{{ gitea()?.supplyChain?.signedCommitsRequired ? 'Required' : 'Not enforced' }}</dd></div><div><dt>Approval</dt><dd>{{ selected.approvals.length }}/{{ gitea()?.supplyChain?.requiredApprovals || 1 }}</dd></div><div><dt>Outbox</dt><dd>{{ selected.outbox?.status || 'Not queued' }}</dd></div><div><dt>Reconciler</dt><dd>{{ selected.execution?.reconciler_status || 'Awaiting consumer' }}</dd></div></dl>
               } @else { <div class="panel-empty">첫 선언형 변경이 생성되면 요청부터 observed state까지의 증거를 표시합니다.</div> }
               <div class="policy-gates"><h3>Policy gates</h3><span>Protected main<strong>{{ gitea()?.supplyChain?.protected ? 'Enforced' : 'Missing' }}</strong></span><span>Direct push<strong>{{ gitea()?.supplyChain?.directPushEnabled ? 'Allowed' : 'Denied' }}</strong></span><span>Signed commits<strong>{{ gitea()?.supplyChain?.signedCommitsRequired ? 'Required' : 'Missing' }}</strong></span><span>Approvals<strong>{{ gitea()?.supplyChain?.requiredApprovals ?? '—' }}</strong></span></div>
             </aside>
           </div>
-          <section class="journey-list"><header><strong>Recent change requests</strong><small>행을 선택하면 위 여정과 증거가 함께 갱신됩니다.</small></header><div class="table-scroll"><table><thead><tr><th>Request / time</th><th>Status</th><th>Target</th><th>PR / commit</th><th>Approval</th><th>Outbox</th><th>Reconcile / observed</th><th>Drift</th></tr></thead><tbody>
+          <section class="journey-list"><div class="section-header"><strong>Recent change requests</strong><small>행을 선택하면 위 여정과 증거가 함께 갱신됩니다.</small></div><div class="table-scroll"><table><thead><tr><th>Request / time</th><th>Status</th><th>Target</th><th>PR / commit</th><th>Approval</th><th>Outbox</th><th>Reconcile / observed</th><th>Drift</th></tr></thead><tbody>
             @for (change of recentChanges(); track change.request_id) { <tr [class.selected]="selectedChange()?.request_id === change.request_id"><td><button type="button" (click)="selectedChangeId.set(change.request_id)"><code>{{ shortId(change.request_id) }}</code></button><small>{{ formatDate(change.created_at) }}</small></td><td><span [class]="statusClass(changeVerdict(change))">{{ changeVerdict(change) }}</span></td><td>{{ change.target }}</td><td>{{ change.execution?.pull_number ? '#' + change.execution?.pull_number : '—' }}<small>{{ shortId(change.execution?.merge_revision || '') || 'no merge' }}</small></td><td>{{ change.approvals.length }}/{{ gitea()?.supplyChain?.requiredApprovals || 1 }}</td><td>{{ change.outbox?.status || 'Not queued' }}</td><td>{{ change.execution?.reconciler_status || 'Awaiting consumer' }}<small>{{ change.k8s_operation_id || 'receipt 없음' }}</small></td><td>{{ change.execution?.drift_status || 'Unknown' }}</td></tr> }
             @empty { <tr><td colspan="8"><div class="table-empty"><strong>추적할 변경 요청이 없습니다.</strong><span>빈 상태는 오류가 아니지만 변경 체인이 검증되었다는 뜻도 아닙니다.</span></div></td></tr> }
           </tbody></table></div></section>
@@ -273,8 +273,20 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
     if (!silent) this.busy.set(true);
     const load = async <T>(path: string): Promise<T> => { const response = await this.http.request(path, { cache: 'no-store' }); if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json() as Promise<T>; };
     const [supabase, gitea] = await Promise.allSettled([load<SupabaseStatus>('/api/identity/supabase/status'), load<ChangeControlState>('/api/platform/gitea/status')]);
-    if (supabase.status === 'fulfilled') { this.supabase.set(supabase.value); this.supabaseDown.set(''); } else { this.supabaseDown.set(String(supabase.reason)); }
-    if (gitea.status === 'fulfilled') { this.gitea.set(gitea.value); this.giteaDown.set(''); } else { this.giteaDown.set(String(gitea.reason)); }
+    if (supabase.status === 'fulfilled') {
+      this.supabase.set(supabase.value);
+      this.supabaseDown.set('');
+    } else {
+      this.supabase.set(null);
+      this.supabaseDown.set(String(supabase.reason));
+    }
+    if (gitea.status === 'fulfilled') {
+      this.gitea.set(gitea.value);
+      this.giteaDown.set('');
+    } else {
+      this.gitea.set(null);
+      this.giteaDown.set(String(gitea.reason));
+    }
     this.busy.set(false);
   }
 

@@ -31,6 +31,8 @@ const cephPrerequisiteConsumer = read('migrations', '0023_ceph_prerequisite_cons
 const aiConsumerContract = read('migrations', '0024_ai_consumer_contract.sql');
 const externalChannelsBackup = read('migrations', '0025_external_channels_backup.sql');
 const migrationLedger = read('migrations', '0026_schema_migration_ledger.sql');
+const linuxHostAuthority = read('migrations', '0027_linux_host_authority.sql');
+const rccBaseline = fs.readFileSync(path.join(here, '..', '..', 'deploy', 'rcc', 'supabase-baseline.sql'), 'utf8');
 const installer = read('install.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
@@ -178,6 +180,64 @@ assert.match(migrationLedger, /sha256 text NOT NULL/);
 assert.match(migrationLedger, /source_revision text NOT NULL/);
 assert.match(migrationLedger, /schema_migration_append_only/);
 assert.match(migrationLedger, /REVOKE ALL ON TABLE console\.schema_migration FROM PUBLIC/);
+
+// Linux host authority: the host surface must stay read-only and secret-free.
+for (const [label, sql] of [['0027 migration', linuxHostAuthority], ['rcc baseline', rccBaseline]]) {
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS console\.host \(/, label);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS console\.host_snapshot \(/, label);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS console\.host_operation \(/, label);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS console\.host_operation_event \(/, label);
+  assert.match(sql, /agent_key_id text NOT NULL CHECK \(agent_key_id ~/, label);
+  // Agent signing material must never gain a column.
+  assert.doesNotMatch(sql, /console\.host[\s\S]*?\n\s+agent_secret\b/, label);
+  assert.doesNotMatch(sql, /\n\s+(agent_secret|shared_secret|hmac_secret|secret)\s+(text|bytea)/, label);
+  assert.match(sql, /host_control_mode text NOT NULL DEFAULT 'read-only'/, label);
+  assert.match(sql, /host_control_mode IN \('read-only', 'governed-write'\)/, label);
+  assert.match(sql, /FUNCTION console\.host_operation_transition_allowed/, label);
+  assert.match(sql, /host_operation_state_machine/, label);
+  assert.match(sql, /ENABLE ALWAYS TRIGGER host_operation_state_machine/, label);
+  assert.match(sql, /read-only host_control_mode; dispatch is refused/, label);
+  assert.match(sql, /host operation identity is immutable/, label);
+  // A host operation must not be able to name one control center while its host
+  // belongs to another; the composite foreign key is what forbids it.
+  assert.match(sql, /ADD CONSTRAINT host_id_control_center_key UNIQUE \(id, control_center_id\)/, label);
+  assert.match(
+    sql,
+    /FOREIGN KEY \(host_uuid, control_center_id\)\s*\n\s*REFERENCES console\.host \(id, control_center_id\)/,
+    label,
+  );
+  // A standalone host reference on host_operation would re-open the divergence.
+  assert.doesNotMatch(
+    sql,
+    /host_uuid uuid NOT NULL REFERENCES console\.host\(id\)/,
+    `${label}: host_operation must bind host and control center together, not separately`,
+  );
+  // Reviewed content must be frozen so approve-then-edit cannot change what runs.
+  assert.match(sql, /reviewed host operation content is immutable/, label);
+  assert.match(
+    sql,
+    /\(OLD\.status <> 'requested' OR NEW\.status <> 'requested'\)\s*\n\s*AND \(NEW\.parameters IS DISTINCT FROM OLD\.parameters/,
+    label,
+  );
+  assert.match(sql, /console\.host_operation_event is append-only/, label);
+  assert.match(sql, /ENABLE ALWAYS TRIGGER host_operation_event_append_only/, label);
+  assert.match(sql, /ALTER TABLE console\.host ENABLE ROW LEVEL SECURITY/, label);
+  assert.match(sql, /ALTER TABLE console\.host_snapshot ENABLE ROW LEVEL SECURITY/, label);
+  assert.match(sql, /ALTER TABLE console\.host_operation ENABLE ROW LEVEL SECURITY/, label);
+  assert.match(sql, /ALTER TABLE console\.host_operation_event ENABLE ROW LEVEL SECURITY/, label);
+  assert.match(sql, /CREATE POLICY host_read_assigned ON console\.host FOR SELECT TO authenticated/, label);
+  assert.match(sql, /REVOKE INSERT, UPDATE, DELETE ON console\.host, console\.host_snapshot, console\.host_operation,\s*\n\s*console\.host_operation_event FROM anon, authenticated/, label);
+  assert.match(sql, /REVOKE UPDATE, DELETE, TRUNCATE ON console\.host_operation_event FROM opensphere_console_backend/, label);
+  assert.match(sql, /'console\.hosts\.read', 'low'/, label);
+  assert.match(sql, /'console\.hosts\.operate', 'high'/, label);
+  assert.match(sql, /r\.code IN \('console-operators', 'console-viewers'\)/, label);
+}
+// Stage 1: only administrators hold the operate permission.
+assert.doesNotMatch(
+  linuxHostAuthority,
+  /ON p\.code = 'console\.hosts\.operate'\s*\nWHERE r\.code IN \('console-operators'/,
+);
+
 assert.match(nginx, /location \^~ \/auth\/v1\//);
 assert.match(nginx, /opensphere-supabase-auth\.opensphere-console-data\.svc\.cluster\.local/);
 assert.match(nginx, /location \^~ \/storage\/v1\//);

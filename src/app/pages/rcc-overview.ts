@@ -23,8 +23,11 @@ import { ClarityModule } from '@clr/angular';
                 <h3>CC2</h3>
                 <span class="label label-success">연결 대상</span>
               </div>
-              <p>CC2 Kubernetes 리소스·상태·이벤트·로그를 읽기 전용으로 조회합니다.</p>
-              <a class="btn btn-sm btn-primary" routerLink="/cc/cc2/kubernetes">Kubernetes 열기</a>
+              <p>CC2 Kubernetes와 Linux 호스트 상태를 한 지역 문맥에서 조회합니다.</p>
+              <div class="card-actions">
+                <a class="btn btn-sm btn-primary" routerLink="/cc/cc2/kubernetes">Kubernetes</a>
+                <a class="btn btn-sm btn-outline" routerLink="/cc/cc2/hosts">Linux 호스트</a>
+              </div>
             </div>
           </article>
 
@@ -63,6 +66,7 @@ import { ClarityModule } from '@clr/angular';
     .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
     .card-title-row h3 { margin: 0; font-size: 1.15rem; }
     .card p { min-height: 2.8rem; color: var(--os-ink-muted); }
+    .card-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
     .is-disabled { opacity: .68; }
     .contracts { max-width: 64rem; margin-top: 2rem; padding: 1rem 1.25rem; border: 1px solid var(--os-hairline); background: #fff; }
     .contracts h2 { margin-top: 0; }

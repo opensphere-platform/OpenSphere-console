@@ -66,16 +66,16 @@ import { K8sService } from './core/k8s.service';
   template: `
     <div class="os-shell">
       <!-- 표준 2단 보조 내비 — AI Hub(/p/ai) 방식: Clarity clr-vertical-nav(흰 배경, 12rem, 왼쪽 blue bar) -->
-      <clr-vertical-nav class="cm-nav" [clrVerticalNavCollapsible]="false" aria-label="Cluster Manager 보조 내비">
+      <clr-vertical-nav class="cm-nav" [clrVerticalNavCollapsible]="false" aria-label="Kubernetes 보조 메뉴">
         <!-- 브랜드 -->
         <div class="cm-brand">
           <strong>{{ controlCenterId().toUpperCase() }} Kubernetes</strong>
-          <span class="label label-info">Read only</span>
+          <span class="label label-info">읽기 전용</span>
         </div>
 
         <a clrVerticalNavLink [class.active]="active().id === 'overview'"
            (click)="select(OVERVIEW)" (keydown.enter)="select(OVERVIEW)">
-          Overview
+          개요
         </a>
 
         <!-- 현재 스코프 그룹(filteredNav) — clr-vertical-nav-group -->
@@ -113,7 +113,7 @@ export class KubernetesConsolePage implements OnDestroy {
   private readonly onPopState = () => this.applyUrlState();
   readonly controlCenterId = signal(this.currentControlCenterId());
 
-  readonly OVERVIEW: NavItem = { id: 'overview', label: 'Overview', component: OverviewComponent };
+  readonly OVERVIEW: NavItem = { id: 'overview', label: '개요', component: OverviewComponent };
   readonly active = signal<NavItem>(this.OVERVIEW);
   /** 펼쳐진 섹션(기본: 전부 접힘) */
   readonly expanded = signal<Set<string>>(new Set());

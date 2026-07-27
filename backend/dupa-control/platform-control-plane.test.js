@@ -9,13 +9,19 @@ const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 test('Console management exposes Supabase, Gitea and HIS as distinct authorities', () => {
   const routes = read('src', 'app', 'app.routes.ts');
   const layout = read('src', 'app', 'pages', 'admin-layout.ts');
+  const bbss = read('src', 'app', 'pages', 'admin-bbss.ts');
+  assert.match(routes, /path: 'bbss'/);
   assert.match(routes, /path: 'platform-control'/);
   assert.match(routes, /path: 'data-identity'/);
   assert.match(routes, /path: 'change-control'/);
   assert.match(routes, /path: 'observability'/);
   assert.match(routes, /path: 'backbone', redirectTo: 'data-identity'/);
   assert.match(layout, /플랫폼 제어/);
+  assert.match(layout, /Backbone Service Stack/);
   assert.match(layout, /HIS Observability/);
+  assert.match(bbss, /rcc\.bbss\.status\/v1/);
+  assert.match(bbss, /현재 상태와 운영 복원력을 분리/);
+  assert.match(bbss, /처리량이 아직 저장되지 않는 항목은 0이 아니라 미구성/);
   assert.doesNotMatch(layout, /routerLink="\/manage\/backbone"/);
 });
 

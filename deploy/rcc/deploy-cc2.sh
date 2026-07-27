@@ -6,6 +6,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 project_root="$(cd "$repo/.." && pwd)"
 sdk="$project_root/OpenSphere-SDK"
+local_kubectl="${KUBECTL_CLIENT:-kubectl}"
 target_host="cc2-k3s"
 domain="rcc.cc2.opl.io.kr"
 data_namespace="polyon-rcc-data"
@@ -14,8 +15,96 @@ app_namespace="polyon-rcc"
 tag="$(git -C "$repo" rev-parse --short=12 HEAD)-$(date -u +%Y%m%d%H%M%S)"
 web_image="docker.io/library/polyon-rcc-web:${tag}"
 backend_image="docker.io/library/polyon-rcc-backend:${tag}"
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/polyon-rcc-cc2.XXXXXX")"
 remote_archive="/tmp/polyon-rcc-images-${tag}.tar"
+
+# ── subShell signing preflight ────────────────────────────────────────────────
+# The approved Linux host-control surface only exists as the signed
+# linux-host-manager subShell. Deploying without the signing key produces an
+# image with no plugin registry, and the feature silently disappears from a
+# control center that is supposed to have it.
+#
+# Nothing above this point creates files, contacts the registry, the target host
+# or the cluster, and no trap is installed yet. The preflight therefore runs
+# before the first mutation of any kind, so a rejected key leaves both the
+# workstation and CC2 untouched.
+#
+# RCC_DISABLE_LINUX_HOST_MANAGER=1 deliberately ships the control center WITHOUT
+# the Linux host manager. It does not relax any signature check — nothing
+# unsigned is ever loaded — it simply omits the feature. It is off by default
+# and is NOT the normal CC2 path.
+preflight_signing_key() {
+  local key="${RCC_PLUGIN_SIGNING_KEY:-}"
+  if [[ -z "$key" ]]; then
+    if [[ "${RCC_DISABLE_LINUX_HOST_MANAGER:-0}" == "1" ]]; then
+      echo "WARNING: RCC_DISABLE_LINUX_HOST_MANAGER=1 — deploying WITHOUT the linux-host-manager subShell." >&2
+      echo "         No plugin registry is produced and /cc/<ccId>/hosts will report" >&2
+      echo "         the feature as not registered. Nothing unsigned is loaded." >&2
+      plugin_signing_key=/dev/null
+      return 0
+    fi
+    cat >&2 <<'ERR'
+RCC_PLUGIN_SIGNING_KEY is not set.
+
+The approved Linux host-control feature ships only as the signed
+linux-host-manager subShell. Building without the key would deploy a control
+center with that feature missing, so this deployment stops before any change.
+
+  RCC_PLUGIN_SIGNING_KEY=/secure/path/rcc-plugins-p256.pem \
+  RCC_PLUGIN_SIGNING_KEY_SPKI_SHA256=<expected public key fingerprint> \
+  ./deploy/rcc/deploy-cc2.sh
+
+The key must be an ECDSA P-256 private key held outside this repository. It is
+passed to the build as a BuildKit secret and never stored in the image.
+
+To deploy deliberately without this feature, set RCC_DISABLE_LINUX_HOST_MANAGER=1.
+ERR
+    exit 1
+  fi
+
+  # Curve, identity and descriptor cross-checks live in one shared module so the
+  # build cannot accept a key the deployment rejected. The expected public-key
+  # fingerprint is mandatory: trust.keyId is only a label and proves nothing
+  # about which private key was supplied.
+  node "$repo/scripts/plugin-signing-key.mjs" --verify || exit 1
+
+  plugin_signing_key="$key"
+}
+
+preflight_signing_key
+
+# CC2's Linux host page is not complete without the Beszel-backed metrics
+# source. Validate the server-only reader document before the first mutation,
+# exactly as the signing key is validated above. The live adapter will repeat
+# these checks and additionally prove that the account's Beszel role is
+# `readonly`.
+preflight_beszel_reader() {
+  local config="${RCC_BESZEL_READER_CONFIG:-}"
+  case "$config" in
+    /*) ;;
+    *)
+      echo "RCC_BESZEL_READER_CONFIG must be the absolute path to the provisioned Beszel readonly config.json." >&2
+      exit 1
+      ;;
+  esac
+  command -v "$local_kubectl" >/dev/null 2>&1 || {
+    echo "A local kubectl client is required to stream the Beszel reader Secret." >&2
+    exit 1
+  }
+  node - "$repo/backend/opensphere-console-backend/beszel-metrics-api.js" "$config" <<'NODE'
+const { loadBeszelReaderConfig } = require(process.argv[2]);
+const config = loadBeszelReaderConfig(process.argv[3]);
+const expected = config.systems['cc2/cmars-oci-cc-02-4x24'];
+if (expected !== 'CMARS-OCI-CC-02-4X24') {
+  throw new Error('Beszel reader config does not bind the CC2 RCC host to the reviewed Beszel system');
+}
+NODE
+  beszel_reader_config="$config"
+}
+
+preflight_beszel_reader
+
+# ── first mutation happens below this line ────────────────────────────────────
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/polyon-rcc-cc2.XXXXXX")"
 
 cleanup() {
   if [[ "$tmp" == *"/polyon-rcc-cc2."* && -d "$tmp" ]]; then
@@ -54,10 +143,16 @@ NODE
 }
 
 echo "[1/8] Build immutable local arm64 RCC images"
+# The signing key was validated by preflight_signing_key() before any mutation.
+# The private key is passed as a BuildKit secret and never stored in the image;
+# the expected public-key fingerprint is a build arg, because it is public data
+# and recording it in image history is useful provenance.
 docker buildx build \
   --platform linux/arm64 \
   --build-context "console-src=$repo" \
   --build-context "sdk-src=$sdk" \
+  --secret "id=rcc_plugin_signing_key,src=$plugin_signing_key" \
+  --build-arg "RCC_PLUGIN_SIGNING_KEY_SPKI_SHA256=${RCC_PLUGIN_SIGNING_KEY_SPKI_SHA256:-}" \
   --file "$here/Dockerfile.web" \
   --tag "$web_image" \
   --load \
@@ -315,6 +410,9 @@ PATH="$tmp/bin:$PATH" pwsh -NoProfile -File "$repo/backend/gitea/bootstrap/contr
   -HookTarget "http://polyon-rcc-backend.${app_namespace}.svc.cluster.local:8080/api/platform/gitea/webhook"
 
 echo "[5/8] Apply RCC web, backend, RBAC and HTTPS ingress"
+"$local_kubectl" -n "$app_namespace" create secret generic polyon-rcc-beszel-reader \
+  --from-file=config.json="$beszel_reader_config" \
+  --dry-run=client -o yaml | k apply -f -
 sed \
   -e "s#__POLYON_RCC_WEB_IMAGE__#${web_image}#g" \
   -e "s#__POLYON_RCC_BACKEND_IMAGE__#${backend_image}#g" \

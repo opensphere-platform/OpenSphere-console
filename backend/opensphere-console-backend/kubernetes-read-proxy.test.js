@@ -110,10 +110,25 @@ test('proxy denies every mutation before contacting Kubernetes', async () => {
 
 test('RCC reader authorization uses the canonical Kubernetes read permission', () => {
   const server = readFileSync(resolve(__dirname, 'server.js'), 'utf8');
+  // The Kubernetes and Linux host readers share one assignment check so a new
+  // control-center surface cannot quietly skip authentication or scoping.
   const reader = server.match(/async function verifyControlCenterReader[\s\S]*?\n}/)?.[0] || '';
-  assert.match(reader, /verifyAuthed\(req\)/);
-  assert.match(reader, /requireActorPermission\(actor, 'console\.kubernetes\.read'\)/);
+  assert.match(reader, /verifyControlCenterAssignment\(req, controlCenterId, 'console\.kubernetes\.read'\)/);
   assert.doesNotMatch(reader, /verifyConsoleAdmin/);
+
+  const shared = server.match(/async function verifyControlCenterAssignment[\s\S]*?\n}/)?.[0] || '';
+  assert.match(shared, /verifyAuthed\(req\)/);
+  assert.match(shared, /requireActorPermission\(actor, permission\)/);
+  assert.match(shared, /operator_control_center/);
+  assert.match(shared, /expires_at/);
+  assert.doesNotMatch(shared, /verifyConsoleAdmin/);
+});
+
+test('RCC host reader requires its own permission, not the Kubernetes one', () => {
+  const server = readFileSync(resolve(__dirname, 'server.js'), 'utf8');
+  const reader = server.match(/async function verifyHostReader[\s\S]*?\n}/)?.[0] || '';
+  assert.match(reader, /verifyControlCenterAssignment\(req, controlCenterId, 'console\.hosts\.read'\)/);
+  assert.doesNotMatch(reader, /console\.kubernetes\.read/);
 });
 
 test('RCC Kubernetes UI shares scoped host styles with resource views and reports required read failures', () => {

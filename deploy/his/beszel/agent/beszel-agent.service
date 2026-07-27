@@ -1,0 +1,44 @@
+[Unit]
+Description=Beszel supplemental host diagnostics agent
+Documentation=https://beszel.dev/guide/agent-installation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=beszel
+Group=beszel
+EnvironmentFile=/etc/beszel-agent/agent.env
+ExecStartPre=/usr/bin/test -s /etc/beszel-agent/key
+ExecStartPre=/usr/bin/test -s /etc/beszel-agent/token
+ExecStart=/usr/local/lib/beszel-agent/0.18.7/beszel-agent
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+StateDirectory=beszel-agent
+StateDirectoryMode=0750
+UMask=0027
+
+# The agent reads ordinary host metrics and opens one outbound WebSocket. It
+# has no SSH listener, no runtime socket and no authority to change the host.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/beszel-agent
+
+[Install]
+WantedBy=multi-user.target

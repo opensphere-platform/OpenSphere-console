@@ -101,6 +101,7 @@ test('migration isolates secrets and restore scope from browser identities', () 
   const migration = read('../supabase/migrations/0025_external_channels_backup.sql');
   assert.match(migration, /CREATE ROLE opensphere_external_channel_executor NOLOGIN NOINHERIT/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS console\.external_backup_secret/);
+  assert.match(migration, /REVOKE ALL ON console\.external_backup_secret[\s\S]+opensphere_console_backend[\s\S]+opensphere_external_channel_executor/);
   assert.match(migration, /REVOKE ALL ON FUNCTION console\.external_backup_read_secret\(uuid\) FROM PUBLIC/);
   assert.match(migration, /GRANT EXECUTE ON FUNCTION console\.external_backup_read_secret\(uuid\)[\s\S]+opensphere_external_channel_executor/);
   assert.match(migration, /FUNCTION console\.restore_configuration_snapshot/);

@@ -1,0 +1,66 @@
+# Beszel is deliberately published on a separate origin. It does not share the
+# RCC application path, session, database, API or RBAC.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: beszel-hub
+  namespace: beszel-system
+  labels:
+    app.kubernetes.io/name: beszel-hub
+    app.kubernetes.io/part-of: his-observability
+    polyon.io/authority-owner: his
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [beszel.cc2.opl.io.kr]
+  rules:
+    - host: beszel.cc2.opl.io.kr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: beszel-hub
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: beszel-default-deny
+  namespace: beszel-system
+  labels:
+    polyon.io/authority-owner: his
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Browser HTTPS and the agent's outbound WebSocket both terminate at Traefik.
+# The Hub accepts no direct node, pod or public ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: beszel-hub-ingress-from-traefik
+  namespace: beszel-system
+  labels:
+    polyon.io/authority-owner: his
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: beszel-hub
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - { protocol: TCP, port: 8090 }

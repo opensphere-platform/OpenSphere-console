@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: beszel-system
+  labels:
+    app.kubernetes.io/part-of: his-observability
+    polyon.io/authority-owner: his
+    polyon.io/signal-role: supplemental-host-diagnostics
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+---
+# The K3s local-path provisioner normally deletes a volume with its claim.
+# Beszel's SQLite data instead uses a dedicated Retain class so an ordinary
+# uninstall cannot silently remove its history. This still is not a backup:
+# the volume remains on the single CC2 node.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: beszel-local-retain
+  labels:
+    app.kubernetes.io/part-of: his-observability
+    polyon.io/authority-owner: his
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: beszel-hub-data
+  namespace: beszel-system
+  labels:
+    app.kubernetes.io/name: beszel-hub
+    app.kubernetes.io/part-of: his-observability
+    polyon.io/authority-owner: his
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: beszel-local-retain
+  resources:
+    requests:
+      storage: 5Gi

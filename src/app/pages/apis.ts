@@ -24,133 +24,178 @@ import { OsPageHeader } from '../os/os-page-header';
   imports: [ClarityModule, FormsModule, OsDatagrid, OsPanel, BackendUnavailable, OsPageHeader],
   template: `
     <div class="os-page">
-    <os-page-header title="APIs" tag="RHDH headless · API inventory" />
-    <div class="manage-page-lead"><p>조직의 API 계약을 headless Catalog에서 조회합니다. 시스템·소유자·수명주기별로 좁히고, 선택한 항목에서 OpenAPI 정의와 관계를 확인할 수 있습니다.</p><span>kind=API · REST only</span></div>
+      <os-page-header title="APIs" tag="RHDH headless · API inventory" />
+      <div class="manage-page-lead">
+        <p>
+          조직의 API 계약을 headless Catalog에서 조회합니다. 시스템·소유자·수명주기별로 좁히고,
+          선택한 항목에서 OpenAPI 정의와 관계를 확인할 수 있습니다.
+        </p>
+        <span>kind=API · REST only</span>
+      </div>
 
-    <section class="manage-status-rail" aria-label="API 인벤토리 요약">
-      <div><span>Registered APIs</span><strong>{{ rows().length }}</strong><small>Catalog kind=API</small></div>
-      <div><span>Systems</span><strong>{{ values('system').length }}</strong><small>연결된 시스템</small></div>
-      <div><span>Owners</span><strong>{{ values('owner').length }}</strong><small>명시된 소유자</small></div>
-      <div><span>Lifecycle</span><strong>{{ values('lifecycle').length }}</strong><small>선언된 단계</small></div>
-      <div><span>Visible now</span><strong>{{ filtered().length }}</strong><small>현재 필터 결과</small></div>
-    </section>
+      <section class="manage-status-rail" aria-label="API 인벤토리 요약">
+        <div>
+          <span>Registered APIs</span><strong>{{ rows().length }}</strong
+          ><small>Catalog kind=API</small>
+        </div>
+        <div>
+          <span>Systems</span><strong>{{ values('system').length }}</strong
+          ><small>연결된 시스템</small>
+        </div>
+        <div>
+          <span>Owners</span><strong>{{ values('owner').length }}</strong
+          ><small>명시된 소유자</small>
+        </div>
+        <div>
+          <span>Lifecycle</span><strong>{{ values('lifecycle').length }}</strong
+          ><small>선언된 단계</small>
+        </div>
+        <div>
+          <span>Visible now</span><strong>{{ filtered().length }}</strong
+          ><small>현재 필터 결과</small>
+        </div>
+      </section>
 
-    @if (forbidden()) {
-      <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
-        <clr-alert-item><span class="alert-text">API 인벤토리를 조회할 권한이 없습니다.</span></clr-alert-item>
-      </clr-alert>
-    } @else if (error()) {
-      <os-backend-unavailable
-        feature="APIs"
-        backend="opensphere-catalog / rhdh-self 엔진 (kind=API)"
-        hint="카탈로그 백엔드 operand를 배포하면 자동 복구됩니다."
-        [detail]="error()"
-      />
-    } @else {
-      <div class="manage-toolbar"><div class="manage-toolbar-copy"><strong>API 탐색</strong><small>검색과 구조화 필터를 함께 적용합니다.</small></div><div class="manage-toolbar-group"><label class="clr-sr-only" for="api-search">API 검색</label><input id="api-search" class="manage-search" type="search" placeholder="이름·시스템·설명 검색" [value]="query()" (input)="query.set(inputValue($event))" /><button class="btn btn-sm btn-outline" [disabled]="loading()" (click)="refresh()">새로고침</button></div></div>
-      <form clrForm clrLayout="vertical" class="clr-row os-filters">
-        <div class="clr-col-auto">
-          <clr-select-container>
-            <label>Type</label>
-            <select clrSelect name="ftype" [ngModel]="fType()" (ngModelChange)="fType.set($event)">
-              <option value="">전체</option>
-              @for (v of values('type'); track v) {
-                <option [value]="v">{{ v }}</option>
-              }
-            </select>
-          </clr-select-container>
+      @if (forbidden()) {
+        <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+          <clr-alert-item
+            ><span class="alert-text">API 인벤토리를 조회할 권한이 없습니다.</span></clr-alert-item
+          >
+        </clr-alert>
+      } @else if (error()) {
+        <os-backend-unavailable
+          feature="APIs"
+          backend="opensphere-catalog / rhdh-self 엔진 (kind=API)"
+          hint="카탈로그 백엔드 operand를 배포하면 자동 복구됩니다."
+          [detail]="error()"
+        />
+      } @else {
+        <div class="manage-toolbar">
+          <div class="manage-toolbar-copy">
+            <strong>API 탐색</strong><small>검색과 구조화 필터를 함께 적용합니다.</small>
+          </div>
+          <div class="manage-toolbar-group">
+            <label class="clr-sr-only" for="api-search">API 검색</label
+            ><input
+              id="api-search"
+              class="manage-search"
+              type="search"
+              placeholder="이름·시스템·설명 검색"
+              [value]="query()"
+              (input)="query.set(inputValue($event))"
+            /><button class="btn btn-sm btn-outline" [disabled]="loading()" (click)="refresh()">
+              새로고침
+            </button>
+          </div>
         </div>
-        <div class="clr-col-auto">
-          <clr-select-container>
-            <label>Owner</label>
-            <select
-              clrSelect
-              name="fowner"
-              [ngModel]="fOwner()"
-              (ngModelChange)="fOwner.set($event)"
-            >
-              <option value="">전체</option>
-              @for (v of values('owner'); track v) {
-                <option [value]="v">{{ v }}</option>
-              }
-            </select>
-          </clr-select-container>
-        </div>
-        <div class="clr-col-auto">
-          <clr-select-container>
-            <label>Lifecycle</label>
-            <select
-              clrSelect
-              name="flifecycle"
-              [ngModel]="fLifecycle()"
-              (ngModelChange)="fLifecycle.set($event)"
-            >
-              <option value="">전체</option>
-              @for (v of values('lifecycle'); track v) {
-                <option [value]="v">{{ v }}</option>
-              }
-            </select>
-          </clr-select-container>
-        </div>
-        <div class="clr-col os-count">{{ filtered().length }} / {{ rows().length }} 건</div>
-      </form>
-      <os-datagrid
-        [columns]="columns"
-        [rows]="filtered()"
-        [loading]="loading()"
-        empty="검색 또는 필터 조건에 맞는 API가 없습니다"
-        [selected]="selected()"
-        (rowClick)="openQuickview($event)"
-      />
-    }
-
-    <os-panel
-      [open]="!!selected()"
-      [title]="titleOf(selected())"
-      [subtitle]="ref(selected())"
-      (closed)="closeQuickview()"
-    >
-      @if (selected(); as e) {
-        <table class="table os-kv">
-          <tbody>
-            <tr>
-              <td>System</td>
-              <td>{{ specOf(e, 'system') }}</td>
-            </tr>
-            <tr>
-              <td>Owner</td>
-              <td>{{ specOf(e, 'owner') }}</td>
-            </tr>
-            <tr>
-              <td>Type</td>
-              <td>{{ specOf(e, 'type') }}</td>
-            </tr>
-            <tr>
-              <td>Lifecycle</td>
-              <td>{{ specOf(e, 'lifecycle') }}</td>
-            </tr>
-            <tr>
-              <td>Description</td>
-              <td>{{ e.metadata.description ?? '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
-        @if (e.relations?.length) {
-          <h3 class="os-h3">Relations</h3>
-          <ul class="os-rel">
-            @for (r of e.relations; track $index) {
-              <li>
-                <span class="badge">{{ r.type }}</span> {{ r.targetRef }}
-              </li>
-            }
-          </ul>
-        }
-        @if (definition(e); as def) {
-          <h3 class="os-h3">Definition (OpenAPI)</h3>
-          <pre class="os-code">{{ def }}</pre>
-        }
+        <form clrForm clrLayout="vertical" class="clr-row os-filters">
+          <div class="clr-col-auto">
+            <clr-select-container>
+              <label>Type</label>
+              <select
+                clrSelect
+                name="ftype"
+                [ngModel]="fType()"
+                (ngModelChange)="fType.set($event)"
+              >
+                <option value="">전체</option>
+                @for (v of values('type'); track v) {
+                  <option [value]="v">{{ v }}</option>
+                }
+              </select>
+            </clr-select-container>
+          </div>
+          <div class="clr-col-auto">
+            <clr-select-container>
+              <label>Owner</label>
+              <select
+                clrSelect
+                name="fowner"
+                [ngModel]="fOwner()"
+                (ngModelChange)="fOwner.set($event)"
+              >
+                <option value="">전체</option>
+                @for (v of values('owner'); track v) {
+                  <option [value]="v">{{ v }}</option>
+                }
+              </select>
+            </clr-select-container>
+          </div>
+          <div class="clr-col-auto">
+            <clr-select-container>
+              <label>Lifecycle</label>
+              <select
+                clrSelect
+                name="flifecycle"
+                [ngModel]="fLifecycle()"
+                (ngModelChange)="fLifecycle.set($event)"
+              >
+                <option value="">전체</option>
+                @for (v of values('lifecycle'); track v) {
+                  <option [value]="v">{{ v }}</option>
+                }
+              </select>
+            </clr-select-container>
+          </div>
+          <div class="clr-col os-count">{{ filtered().length }} / {{ rows().length }} 건</div>
+        </form>
+        <os-datagrid
+          [columns]="columns"
+          [rows]="filtered()"
+          [loading]="loading()"
+          empty="검색 또는 필터 조건에 맞는 API가 없습니다"
+          [selected]="selected()"
+          (rowClick)="openQuickview($event)"
+        />
       }
-    </os-panel>
+
+      <os-panel
+        [open]="!!selected()"
+        [title]="titleOf(selected())"
+        [subtitle]="ref(selected())"
+        (closed)="closeQuickview()"
+      >
+        @if (selected(); as e) {
+          <table class="table os-kv">
+            <tbody>
+              <tr>
+                <td>System</td>
+                <td>{{ specOf(e, 'system') }}</td>
+              </tr>
+              <tr>
+                <td>Owner</td>
+                <td>{{ specOf(e, 'owner') }}</td>
+              </tr>
+              <tr>
+                <td>Type</td>
+                <td>{{ specOf(e, 'type') }}</td>
+              </tr>
+              <tr>
+                <td>Lifecycle</td>
+                <td>{{ specOf(e, 'lifecycle') }}</td>
+              </tr>
+              <tr>
+                <td>Description</td>
+                <td>{{ e.metadata.description ?? '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+          @if (e.relations?.length) {
+            <h3 class="os-h3">Relations</h3>
+            <ul class="os-rel">
+              @for (r of e.relations; track $index) {
+                <li>
+                  <span class="badge">{{ r.type }}</span> {{ r.targetRef }}
+                </li>
+              }
+            </ul>
+          }
+          @if (definition(e); as def) {
+            <h3 class="os-h3">Definition (OpenAPI)</h3>
+            <pre class="os-code">{{ def }}</pre>
+          }
+        }
+      </os-panel>
     </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
@@ -230,7 +275,18 @@ export class Apis implements OnInit {
   readonly filtered = computed(() =>
     this.rows().filter(
       (e) =>
-        (!this.query().trim() || [e.metadata.name, e.metadata.description, this.specOf(e, 'system'), this.specOf(e, 'owner'), this.specOf(e, 'type')].some((value) => String(value || '').toLowerCase().includes(this.query().trim().toLowerCase()))) &&
+        (!this.query().trim() ||
+          [
+            e.metadata.name,
+            e.metadata.description,
+            this.specOf(e, 'system'),
+            this.specOf(e, 'owner'),
+            this.specOf(e, 'type'),
+          ].some((value) =>
+            String(value || '')
+              .toLowerCase()
+              .includes(this.query().trim().toLowerCase()),
+          )) &&
         (!this.fType() || this.specOf(e, 'type') === this.fType()) &&
         (!this.fOwner() || this.specOf(e, 'owner') === this.fOwner()) &&
         (!this.fLifecycle() || this.specOf(e, 'lifecycle') === this.fLifecycle()),
@@ -247,10 +303,14 @@ export class Apis implements OnInit {
   }
 
   async refresh(): Promise<void> {
-    this.loading.set(true); this.error.set(''); this.forbidden.set(false);
+    this.loading.set(true);
+    this.error.set('');
+    this.forbidden.set(false);
     try {
       this.rows.set(await this.api.apiEntities());
     } catch (e) {
+      this.rows.set([]);
+      this.selected.set(null);
       const message = String(e);
       if (/HTTP (401|403)\b/.test(message)) this.forbidden.set(true);
       else this.error.set(message);
@@ -259,7 +319,9 @@ export class Apis implements OnInit {
     }
   }
 
-  inputValue(event: Event): string { return (event.target as HTMLInputElement).value; }
+  inputValue(event: Event): string {
+    return (event.target as HTMLInputElement).value;
+  }
 
   values(key: string): string[] {
     return [

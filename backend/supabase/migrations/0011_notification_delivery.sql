@@ -182,6 +182,12 @@ ALTER TABLE console.notification_secret ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console.notification_callback_receipt ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console.notification_delivery_control ENABLE ROW LEVEL SECURITY;
 
+-- 0002 grants future console tables to the Backend by default. Ciphertext is
+-- intentionally worker-only through the SECURITY DEFINER RPCs below, so
+-- explicitly remove every direct table privilege after creation.
+REVOKE ALL ON console.notification_secret
+  FROM PUBLIC, anon, authenticated, opensphere_console_backend, opensphere_notification_dispatcher;
+
 DROP POLICY IF EXISTS console_backend_notification_channel ON console.notification_channel;
 DROP POLICY IF EXISTS console_backend_notification_rule ON console.notification_rule;
 DROP POLICY IF EXISTS console_backend_notification_rule_channel ON console.notification_rule_channel;

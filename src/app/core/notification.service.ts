@@ -28,16 +28,20 @@ export interface OsNotification {
 }
 
 /** 발행 입력 — id·source·read는 셸이 채운다(time은 생략 시 now) */
-export type NotifyInput = Omit<OsNotification, 'id' | 'source' | 'time' | 'read'> & { time?: string };
+export type NotifyInput = Omit<OsNotification, 'id' | 'source' | 'time' | 'read'> & {
+  time?: string;
+};
 
 const LS_SEEN = 'os.notif.seen';
+// 기존 읽음 상태(localStorage)와 알림 ID를 보존하기 위한 안정 키다.
+// 실제 정본은 DUPA 런타임이 아니라 Supabase audit.event이다.
 const AUDIT_SOURCE = 'dupa-audit';
 const INPROC = 'inproc';
 const TOAST_TTL_MS = 6000;
 
 /**
  * 셸 레벨 알림 인박스. 소스(멀티):
- *   - 'dupa-audit'    : DUPA 컨트롤러 audit 폴링(install/enable/disable) — 콘솔-네이티브, 현행.
+ *   - 'dupa-audit'    : Supabase audit.event 폴링. 이름은 기존 읽음 상태 호환을 위해 유지.
  *   - 'inproc'        : subShell in-page 발행(ctx.notify.publish) — 같은 JS 컨텍스트.
  *   - 'k8s'/'alertmanager' 등 : 향후 mergeSource로 합류(OKD 렌즈).
  * ⚠️ Novu는 워크스페이스(사원) 전용 — 콘솔 인박스 소스 아님(ADR-UI-002 D1).
@@ -54,6 +58,9 @@ export class NotificationService {
   /** 토스트(일시, 자동 소멸) */
   readonly toasts = signal<OsNotification[]>([]);
   readonly unread = computed<number>(() => this.items().filter((n) => !n.read).length);
+  /** Durable audit source availability is separate from an empty inbox. */
+  readonly sourceHealth = signal<'checking' | 'ready' | 'degraded'>('checking');
+  readonly sourceError = signal('');
 
   private seen = new Set<string>(this.restoreSeen());
   private timer?: ReturnType<typeof setInterval>;
@@ -65,11 +72,11 @@ export class NotificationService {
     this.timer = setInterval(() => this.refresh(), 20000);
   }
 
-  /** DUPA 컨트롤러 audit 폴링 → 'dupa-audit' 소스로 합산(콘솔-네이티브). */
+  /** Supabase audit.event 폴링 → 기존 'dupa-audit' 안정 키로 합산. */
   async refresh(): Promise<void> {
     try {
-      const events = await this.control.events();
-      // 컨트롤러 audit bus는 멀티소스: 플러그인 lifecycle + subShell 백엔드 발행(P1) + (향후 K8s/Alertmanager).
+      const events = await this.control.auditEvents();
+      // 감사 정본은 멀티소스: 플러그인 lifecycle + subShell 백엔드 발행(P1) + 관리 작업.
       // action으로 분기 — lifecycle만 'dupa-audit'·"플러그인 X", 그 외는 발행 source 그대로.
       const LIFECYCLE = new Set(['install', 'enable', 'disable', 'uninstall']);
       const items: OsNotification[] = events.map((e) => {
@@ -85,12 +92,22 @@ export class NotificationService {
           title: lifecycle ? `플러그인 ${e.action} — ${e.target}` : `${e.action} — ${e.target}`,
           detail: `${e.actor} · ${e.result}${e.reason ? ' · ' + e.reason : ''}`,
           read: this.seen.has(id),
-          meta: { actor: e.actor || '', action: e.action || '', target: e.target || '', result: e.result || '', reason: e.reason || '' },
+          meta: {
+            actor: e.actor || '',
+            action: e.action || '',
+            target: e.target || '',
+            result: e.result || '',
+            reason: e.reason || '',
+          },
         };
       });
       this.mergeSource(AUDIT_SOURCE, items);
-    } catch {
-      /* 소스 불가 시 조용히 유지 */
+      this.sourceHealth.set('ready');
+      this.sourceError.set('');
+    } catch (error) {
+      // Never represent an unavailable source as a trustworthy zero-event inbox.
+      this.sourceHealth.set('degraded');
+      this.sourceError.set(`Supabase 감사 이벤트 원천 조회 실패: ${String(error)}`);
     }
   }
 

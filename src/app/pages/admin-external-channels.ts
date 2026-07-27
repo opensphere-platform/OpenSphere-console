@@ -30,17 +30,17 @@ const emptyBackupTarget = () => ({ name: 'Backblaze B2 Console Backup', endpoint
       <div class="manage-page-lead"><p>외부 알림 전달과 Console 구성의 암호화 백업·즉시 복원을 한 관리 표면에서 감독합니다. 알림과 백업은 별도 실행기·DB 역할·암호화 키를 사용합니다.</p><span>Supabase metadata · Backblaze B2 S3 · client-side AES-256-GCM · append-only audit</span></div>
 
       <section class="manage-status-rail" aria-label="외부 채널 전달 상태">
-        <div><span>Active</span><strong>{{ summary().active }}</strong><small>발송 가능 채널</small></div>
-        <div><span>Healthy</span><strong class="ok">{{ summary().healthy }}</strong><small>최근 수락·테스트 정상</small></div>
-        <div><span>Degraded</span><strong [class.warn]="summary().degraded > 0">{{ summary().degraded }}</strong><small>재시도 또는 설정 점검</small></div>
-        <div><span>Failed 24h</span><strong [class.danger]="summary().failed24h > 0">{{ summary().failed24h }}</strong><small>최종 실패</small></div>
-        <div><span>Dead letter</span><strong [class.danger]="summary().deadLetter > 0">{{ summary().deadLetter }}</strong><small>수동 조치 필요</small></div>
-        <div><span>Backup targets</span><strong [class.ok]="externalSummary().readyTargets > 0">{{ externalSummary().readyTargets }}/{{ externalSummary().targets }}</strong><small>검증된 외부 저장소</small></div>
-        <div><span>Latest backup</span><strong [class.ok]="externalSummary().lastBackup?.status === 'ready'">{{ externalSummary().lastBackup?.status || 'None' }}</strong><small>{{ fmt(externalSummary().lastBackup?.at || '') }}</small></div>
+        <div><span>Active</span><strong>{{ notificationSummaryLoaded() ? summary().active : '—' }}</strong><small>발송 가능 채널</small></div>
+        <div><span>Healthy</span><strong class="ok">{{ notificationSummaryLoaded() ? summary().healthy : '—' }}</strong><small>최근 수락·테스트 정상</small></div>
+        <div><span>Degraded</span><strong [class.warn]="notificationSummaryLoaded() && summary().degraded > 0">{{ notificationSummaryLoaded() ? summary().degraded : '—' }}</strong><small>재시도 또는 설정 점검</small></div>
+        <div><span>Failed 24h</span><strong [class.danger]="notificationSummaryLoaded() && summary().failed24h > 0">{{ notificationSummaryLoaded() ? summary().failed24h : '—' }}</strong><small>최종 실패</small></div>
+        <div><span>Dead letter</span><strong [class.danger]="notificationSummaryLoaded() && summary().deadLetter > 0">{{ notificationSummaryLoaded() ? summary().deadLetter : '—' }}</strong><small>수동 조치 필요</small></div>
+        <div><span>Backup targets</span><strong [class.ok]="backupSummaryLoaded() && externalSummary().readyTargets > 0">{{ backupSummaryLoaded() ? externalSummary().readyTargets + '/' + externalSummary().targets : '—' }}</strong><small>검증된 외부 저장소</small></div>
+        <div><span>Latest backup</span><strong [class.ok]="backupSummaryLoaded() && externalSummary().lastBackup?.status === 'ready'">{{ backupSummaryLoaded() ? (externalSummary().lastBackup?.status || 'None') : '—' }}</strong><small>{{ backupSummaryLoaded() ? fmt(externalSummary().lastBackup?.at || '') : '미수집' }}</small></div>
       </section>
 
       @if (error(); as message) { <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="true" (clrAlertClosedChange)="error.set('')"><clr-alert-item><span class="alert-text">{{ message }}</span></clr-alert-item></clr-alert> }
-      @if (summary().paused) { <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">전체 외부 발송이 일시중지되어 있습니다. 전달 이력은 보존되지만 새 event는 발송되지 않습니다.</span></clr-alert-item></clr-alert> }
+      @if (notificationSummaryLoaded() && summary().paused) { <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">전체 외부 발송이 일시중지되어 있습니다. 전달 이력은 보존되지만 새 event는 발송되지 않습니다.</span></clr-alert-item></clr-alert> }
 
       <clr-tabs>
         <clr-tab>
@@ -210,10 +210,45 @@ export class AdminExternalChannels {
   readonly externalSummary = signal<ExternalSummary>({ targets: 0, readyTargets: 0, configuredTargets: 0, lastBackup: null, lastRestore: null });
   readonly backupTargets = signal<BackupTarget[]>([]); readonly backups = signal<Backup[]>([]); readonly restorePreview = signal<RestorePreview | null>(null);
   readonly loading = signal(true); readonly busy = signal(false); readonly error = signal('');
+  readonly notificationSummaryLoaded = signal(false); readonly backupSummaryLoaded = signal(false);
   readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly backupTargetPanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null);
   channelForm = emptyChannel(); ruleForm = emptyRule(); backupTargetForm = emptyBackupTarget(); restoreConfirmation = ''; restoreReason = '운영 구성 복원 실행';
   constructor() { void this.load(); }
-  async load(): Promise<void> { this.loading.set(true); try { const [summary, channels, rules, deliveries, externalSummary, targets, backups] = await Promise.all([this.http.json<Summary>('/api/notifications/summary'), this.http.json<{ items: Channel[] }>('/api/notifications/channels'), this.http.json<{ items: Rule[] }>('/api/notifications/rules'), this.http.json<{ items: Delivery[] }>('/api/notifications/deliveries?limit=100'), this.http.json<ExternalSummary>('/api/external-channels/summary'), this.http.json<{ items: BackupTarget[] }>('/api/external-channels/backup-targets'), this.http.json<{ items: Backup[] }>('/api/external-channels/backups')]); this.summary.set(summary); this.channels.set(channels.items || []); this.rules.set(rules.items || []); this.deliveries.set(deliveries.items || []); this.externalSummary.set(externalSummary); this.backupTargets.set(targets.items || []); this.backups.set(backups.items || []); } catch (error) { this.error.set(`외부 채널 정보를 불러오지 못했습니다: ${String(error)}`); } finally { this.loading.set(false); } }
+  async load(): Promise<void> {
+    this.loading.set(true);
+    this.error.set('');
+    this.notificationSummaryLoaded.set(false);
+    this.backupSummaryLoaded.set(false);
+    this.channels.set([]);
+    this.rules.set([]);
+    this.deliveries.set([]);
+    this.backupTargets.set([]);
+    this.backups.set([]);
+    const sources: ReadonlyArray<readonly [string, () => Promise<void>]> = [
+      ['알림 요약', async () => {
+        this.summary.set(await this.http.json<Summary>('/api/notifications/summary'));
+        this.notificationSummaryLoaded.set(true);
+      }],
+      ['알림 채널', async () => this.channels.set((await this.http.json<{ items: Channel[] }>('/api/notifications/channels')).items || [])],
+      ['알림 규칙', async () => this.rules.set((await this.http.json<{ items: Rule[] }>('/api/notifications/rules')).items || [])],
+      ['전달 이력', async () => this.deliveries.set((await this.http.json<{ items: Delivery[] }>('/api/notifications/deliveries?limit=100')).items || [])],
+      ['외부 채널 요약', async () => {
+        this.externalSummary.set(await this.http.json<ExternalSummary>('/api/external-channels/summary'));
+        this.backupSummaryLoaded.set(true);
+      }],
+      ['백업 대상', async () => this.backupTargets.set((await this.http.json<{ items: BackupTarget[] }>('/api/external-channels/backup-targets')).items || [])],
+      ['백업 이력', async () => this.backups.set((await this.http.json<{ items: Backup[] }>('/api/external-channels/backups')).items || [])],
+    ];
+    try {
+      const results = await Promise.allSettled(sources.map(([, read]) => read()));
+      const failures = results.flatMap((result, index) =>
+        result.status === 'rejected' ? [`${sources[index][0]}: ${String(result.reason)}`] : [],
+      );
+      if (failures.length) this.error.set(`일부 외부 채널 정보를 불러오지 못했습니다. ${failures.join(' · ')}`);
+    } finally {
+      this.loading.set(false);
+    }
+  }
   openChannelPanel(): void { this.editingChannelId.set(null); this.channelForm = emptyChannel(); this.channelPanelOpen.set(true); }
   openRulePanel(): void { this.ruleForm = emptyRule(); this.rulePanelOpen.set(true); }
   openBackupTargetPanel(): void { this.backupTargetForm = emptyBackupTarget(); this.backupTargetPanelOpen.set(true); }

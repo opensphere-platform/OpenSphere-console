@@ -34,7 +34,7 @@ interface IdentityPayload { users?: IdentityUser[]; groups?: { name: string; des
         </section>
         @if (msg(); as item) { <clr-alert [clrAlertType]="item.type" [clrAlertClosable]="true" (clrAlertClosedChange)="msg.set(null)"><clr-alert-item><span class="alert-text">{{ item.text }}</span></clr-alert-item></clr-alert> }
         <div class="manage-toolbar"><div class="manage-toolbar-copy"><strong>역할 구성</strong><small>부여·회수는 8자 이상의 감사 사유와 함께 기록됩니다.</small></div><button class="btn btn-sm btn-outline" [disabled]="busy()" (click)="refresh()">새로고침</button></div>
-        <os-datagrid [columns]="roleCols" [rows]="roles()" empty="Supabase 역할 조회 중…">
+        <os-datagrid [columns]="roleCols" [rows]="roles()" [loading]="busy()" empty="정의된 Supabase 역할이 없습니다">
           <ng-template osCell="role" let-role><strong>{{ role.label }}</strong><br><span class="os-mono">{{ role.group }}</span></ng-template>
           <ng-template osCell="desc" let-role>{{ role.desc }}</ng-template>
           <ng-template osCell="members" let-role>@for (member of role.members; track member) { <span class="label label-info">{{ usernameFor(member) }}</span> } @empty { <span class="os-sub">(없음)</span> }</ng-template>
@@ -83,9 +83,17 @@ export class AdminRoles implements OnInit {
   closePanel(): void { this.panelOpen.set(false); this.selectedRole.set(null); this.addUser = ''; this.changeReason = ''; }
 
   async refresh(): Promise<void> {
+    this.busy.set(true);
+    this.down.set('');
     try {
       const response = await this.http.request('/api/identity');
-      if (response.status === 401 || response.status === 403) { this.msg.set({ type: 'danger', text: 'console-admins 역할이 필요합니다.' }); return; }
+      if (response.status === 401 || response.status === 403) {
+        this.roles.set([]);
+        this.users.set([]);
+        this.selectedRole.set(null);
+        this.msg.set({ type: 'danger', text: 'console-admins 역할이 필요합니다.' });
+        return;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json() as IdentityPayload;
       const users = (payload.users || []).map((user) => ({ ...user, groups: Array.isArray(user.groups) ? user.groups : [] }));
@@ -94,7 +102,14 @@ export class AdminRoles implements OnInit {
       const selected = this.selectedRole();
       if (selected) this.selectedRole.set(this.roles().find((role) => role.group === selected.group) || null);
       this.down.set('');
-    } catch (error) { this.down.set(`역할 조회 실패: ${String(error)}`); }
+    } catch (error) {
+      this.roles.set([]);
+      this.users.set([]);
+      this.selectedRole.set(null);
+      this.down.set(`역할 조회 실패: ${String(error)}`);
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   async grant(): Promise<void> { const role = this.selectedRole(); if (!role || !this.addUser || this.changeReason.trim().length < 8) return; await this.mutate('add', this.addUser, role.group); this.addUser = ''; }

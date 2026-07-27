@@ -5,22 +5,89 @@ const { createHash } = require('crypto');
 const scriptDir = __dirname;
 const gatewayRoot = path.resolve(scriptDir, '..');
 const consoleRoot = path.resolve(gatewayRoot, '..', '..');
-const platformRoot = path.resolve(consoleRoot, '..');
 const outPath = path.join(gatewayRoot, 'manual-seeds', 'opensphere-core-manuals.json');
+
+function fail(lines) {
+  console.error('[manual-seed] refusing to write a seed:');
+  for (const line of lines) console.error(`  ${line}`);
+  process.exit(1);
+}
+
+/**
+ * Platform documents sit beside the Console checkout in the release layout.
+ * That default is preserved; OPENSPHERE_PLATFORM_ROOT only overrides it for
+ * workspaces where the sibling directory is not the platform repository.
+ *
+ * The override is validated rather than trusted: a root without the platform
+ * document tree is refused outright, because silently resolving into an empty
+ * directory would publish a manual missing its authority documents.
+ */
+function resolvePlatformRoot() {
+  const override = process.env.OPENSPHERE_PLATFORM_ROOT;
+  if (!override) return path.resolve(consoleRoot, '..');
+  const resolved = path.resolve(override);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    fail([`OPENSPHERE_PLATFORM_ROOT='${override}' is not an existing directory`]);
+  }
+  if (!fs.existsSync(path.join(resolved, '_DOCS_'))) {
+    fail([
+      `OPENSPHERE_PLATFORM_ROOT='${resolved}' has no _DOCS_ directory`,
+      'Point it at the OpenSphere platform repository that owns the constitution and plane documents.',
+    ]);
+  }
+  return resolved;
+}
+
+const platformRoot = resolvePlatformRoot();
 
 function resolveSourcePath(relPath) {
   const normalized = relPath.replace(/\\/g, '/');
   // The release repository is commonly checked out as `OpenSphere-console`,
   // while local worktrees have a generated directory name. Resolve Console
   // docs from the actual current checkout in both cases.
-  if (normalized.startsWith('OpenSphere-console/')) {
-    return path.join(consoleRoot, normalized.slice('OpenSphere-console/'.length));
+  const fromConsole = normalized.startsWith('OpenSphere-console/');
+  const root = fromConsole ? consoleRoot : platformRoot;
+  const rest = fromConsole ? normalized.slice('OpenSphere-console/'.length) : normalized;
+  const full = path.resolve(root, rest);
+  // A declared path must never escape the root it is resolved against.
+  if (full !== root && !full.startsWith(`${root}${path.sep}`)) {
+    fail([`source path '${relPath}' escapes its root '${root}'`]);
   }
-  return path.join(platformRoot, normalized);
+  return full;
+}
+
+// Every missing source is collected so one run reports the whole gap rather
+// than failing a document at a time.
+const missingSources = [];
+
+// Console documents live in this repository; platform documents live upstream.
+// `--console-only` regenerates the former and carries the latter forward from
+// the seed already on disk, so a Console change can be published from a
+// checkout that does not have the platform repository beside it.
+//
+// It never invents platform content: an entry with no previous text is still a
+// hard failure, because a seed that quietly dropped an authority document would
+// only be noticed by a reader who already knew what should have been there.
+const consoleOnly = process.argv.includes('--console-only');
+const previousDocuments = new Map();
+if (consoleOnly && fs.existsSync(outPath)) {
+  try {
+    for (const entry of JSON.parse(fs.readFileSync(outPath, 'utf8')).documents || []) {
+      previousDocuments.set(entry.sourcePath, entry);
+    }
+  } catch (error) {
+    fail([`--console-only needs a readable existing seed at ${outPath}: ${error.message}`]);
+  }
 }
 
 function readText(relPath) {
   const full = resolveSourcePath(relPath);
+  if (!fs.existsSync(full)) {
+    const carried = consoleOnly ? previousDocuments.get(relPath.replace(/\\/g, '/')) : null;
+    if (carried?.content) return { full, content: carried.content, carried: true };
+    missingSources.push({ relPath, full });
+    return { full, content: '' };
+  }
   const content = fs.readFileSync(full, 'utf8')
     .replace(/\r\n/g, '\n')
     .replace(/\u0000/g, '')
@@ -32,11 +99,24 @@ function hash(content) {
   return createHash('sha256').update(content).digest('hex');
 }
 
+/** The document's own H1, normalised to the ASCII the seed uses elsewhere. */
+function headingOf(content, sourceId) {
+  const match = /^#\s+(.+?)\s*$/m.exec(content);
+  if (!match) throw new Error(`${sourceId} has no H1 to take its title from`);
+  return match[1].replace(/[\u2010-\u2015]/g, '-');
+}
+
 function doc(input) {
-  const { content } = readText(input.path);
+  const { content, carried } = readText(input.path);
+  if (carried) carriedForward.push(input.sourceId);
   return {
     sourceId: input.sourceId,
-    title: input.title,
+    // A title repeated here is a title that rots: the document says which
+    // stages it covers in its own H1, and a seed that disagrees is served to
+    // operators as the document's name. `title: true` means "take it from the
+    // document"; an explicit string still wins for the upstream platform
+    // documents, whose headings are not written for a navigation band.
+    title: input.title === true ? headingOf(content, input.sourceId) : input.title,
     version: input.version || '2026-07-04',
     sourcePath: input.path.replace(/\\/g, '/'),
     documentType: input.documentType || 'reference',
@@ -51,6 +131,8 @@ function doc(input) {
     content,
   };
 }
+
+const carriedForward = [];
 
 const documents = [
   doc({
@@ -263,6 +345,19 @@ const documents = [
     tags: ['help-center', 'perspective-home', 'manual-band-operate', 'order-01'],
   }),
   doc({
+    sourceId: 'help-center/os-level-linux-host-control',
+    title: true,
+    path: 'OpenSphere-console/docs/manual/OS-LEVEL-LINUX-HOST-CONTROL.md',
+    documentType: 'guide', authorityTier: 2,
+    perspective: ['os-level'], plane: ['p0-host-substrate', 'p1-control'],
+    component: ['host', 'operating-system', 'rcc', 'rcc-node-agent', 'linux-host-manager'],
+    audience: ['admin', 'operator'],
+    tags: ['help-center', 'manual-band-operate', 'rcc', 'linux-host', 'host-agent',
+      'stage-1', 'stage-2', 'stage-3', 'stage-4', 'governed-operations', 'maintenance',
+      'package-update', 'kernel-update', 'maintenance-window',
+      'network-configure', 'storage-mount', 'filesystem-grow', 'immutable-os'],
+  }),
+  doc({
     sourceId: 'help-center/perspective-02-k8s-cluster-ceph',
     title: '2. K8s Cluster + Ceph',
     path: 'OpenSphere-console/docs/manual/02-K8S-CLUSTER-CEPH.md',
@@ -462,24 +557,96 @@ relations.push({
   sourceId: 'console-docs/oaa-manual-knowledge-data-model',
 });
 
+/**
+ * The bundle's identity, taken from what is actually in it.
+ *
+ * This was `new Date().toISOString()`. The seed is a committed artifact, so a
+ * wall-clock stamp meant every rebuild produced a diff that claimed something
+ * had changed when nothing had — and, worse, made a re-run indistinguishable
+ * from a real edit. Hashing the payload means the version moves if and only if
+ * the bundle moves, so two runs over identical inputs are byte-for-byte equal.
+ *
+ * The whole payload is hashed, `source` included. That was not always safe:
+ * `source.basePath` used to be the absolute path of the platform checkout, so
+ * hashing it would have made two developers holding identical content produce
+ * different versions — the same defect in another costume. It is now a name
+ * rather than a location, which is what lets the digest cover everything the
+ * file contains except the digest itself.
+ */
+function bundleVersion(payload) {
+  return `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`;
+}
+
+/**
+ * The newest date any document in the bundle declares.
+ *
+ * The manual API gives this to every document that carries no date of its own,
+ * the console renders it as a date, and the source list takes a lexicographic
+ * maximum of it. The bundle version used to serve that purpose and can no
+ * longer, because a digest is not a date — so the date is stated outright
+ * instead of being inferred from something that is no longer one.
+ */
+function newestDeclaredDate(entries) {
+  const dates = entries.map((entry) => entry.version).filter((v) => /^\d{4}-\d{2}-\d{2}$/.test(v)).sort();
+  if (!dates.length) fail(['no document declares a dated version, so the seed has no update date']);
+  return dates[dates.length - 1];
+}
+
+const source = {
+  id: 'opensphere-core-manuals',
+  type: 'repo',
+  name: 'OpenSphere Core Manuals',
+  // Named, not located. Every document carries a `sourcePath` already relative
+  // to the platform checkout — `_DOCS_/...` for platform documents and
+  // `OpenSphere-console/...` for this repository's — so the absolute path added
+  // nothing a reader needs and was the one field here that described the
+  // machine rather than the content. Committing it pinned a shared artifact to
+  // one developer's home directory and would have differed for anyone else
+  // regenerating the seed.
+  basePath: 'opensphere-platform-root',
+  authorityTier: 1,
+  defaultNamespace: 'opensphere',
+  defaultLanguage: 'mixed',
+  refreshMode: 'release-bound',
+};
+
 const manifest = {
   schema: 'manual-seed.opensphere.io/v1alpha1',
-  version: new Date().toISOString(),
-  source: {
-    id: 'opensphere-core-manuals',
-    type: 'repo',
-    name: 'OpenSphere Core Manuals',
-    basePath: platformRoot,
-    authorityTier: 1,
-    defaultNamespace: 'opensphere',
-    defaultLanguage: 'mixed',
-    refreshMode: 'release-bound',
-  },
+  version: bundleVersion({ source, documents, concepts, relations }),
+  updatedAt: newestDeclaredDate(documents),
+  source,
   documents,
   concepts,
   relations,
 };
 
+// Fail closed. A seed written with absent sources would silently drop authority
+// documents from the published manual, and the loss would only be visible to a
+// reader who already knew what should have been there.
+if (missingSources.length) {
+  fail([
+    `${missingSources.length} declared source document(s) are missing:`,
+    ...missingSources.map((entry) => `  - ${entry.relPath}  (looked in ${entry.full})`),
+    '',
+    `platform root: ${platformRoot}`,
+    `console root:  ${consoleRoot}`,
+    'Set OPENSPHERE_PLATFORM_ROOT to the platform repository, or remove the stale entries',
+    'from this script if those documents were retired upstream.',
+  ]);
+}
+
+const emptyDocuments = documents.filter((entry) => !entry.content.trim());
+if (emptyDocuments.length) {
+  fail([
+    'these documents resolved to empty content:',
+    ...emptyDocuments.map((entry) => `  - ${entry.sourceId} (${entry.sourcePath})`),
+  ]);
+}
+
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
 fs.writeFileSync(outPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 console.log(`Wrote ${documents.length} manual documents, ${concepts.length} concepts, ${relations.length} relations to ${outPath}`);
+if (carriedForward.length) {
+  console.log(`Carried ${carriedForward.length} platform document(s) forward unchanged (--console-only):`);
+  for (const sourceId of carriedForward) console.log(`  - ${sourceId}`);
+}

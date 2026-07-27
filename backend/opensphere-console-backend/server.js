@@ -9,6 +9,26 @@ const { createNotificationApi } = require('./notification-api');
 const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
 const { createKubernetesReadProxy } = require('./kubernetes-read-proxy');
+const { createHostApi, PLUGIN_API_NAMESPACE: HOST_PLUGIN_API_NAMESPACE } = require('./host-api');
+const {
+  createBeszelMetricsApi,
+  createBeszelClient,
+  loadBeszelReaderConfig,
+} = require('./beszel-metrics-api');
+const {
+  safeText: safeBbssText,
+  summarizeNamespace,
+  buildBbssStatus,
+} = require('./bbss-status');
+const {
+  HOST_LIMIT: ADMIN_OVERVIEW_HOST_LIMIT,
+  METRIC_BINDING_LIMIT: ADMIN_OVERVIEW_METRIC_LIMIT,
+  buildAdminOverview,
+} = require('./admin-overview-status');
+const { createManualApi, MANUAL_ROUTE_PREFIX } = require('./manual-api');
+const { createOperationApi } = require('./operation-api');
+const { createMaintenanceServiceClient } = require('./maintenance-client');
+const { parseAgentKeyDocument, createAgentKeyResolver } = require('./agent-signature');
 const { normalizedEvent } = require('../notification-dispatcher/contract');
 
 const MAX_BODY = 256 * 1024; // prevent unbounded in-memory request buffering
@@ -75,6 +95,14 @@ const CONTROL_CENTER_IDS = (process.env.CONTROL_CENTER_IDS || 'cc2')
   .split(',').map((value) => value.trim()).filter(Boolean);
 const KUBERNETES_READ_TIMEOUT_MS = Number(process.env.KUBERNETES_READ_TIMEOUT_MS || 10_000);
 const KUBERNETES_READ_MAX_BYTES = Number(process.env.KUBERNETES_READ_MAX_BYTES || 8 * 1024 * 1024);
+const RCC_AGENT_KEYS_FILE = process.env.RCC_AGENT_KEYS_FILE || '';
+const RCC_BESZEL_URL = process.env.RCC_BESZEL_URL || '';
+const RCC_BESZEL_CONFIG_FILE = process.env.RCC_BESZEL_CONFIG_FILE || '';
+const BBSS_SUPABASE_NAMESPACE = process.env.BBSS_SUPABASE_NAMESPACE || 'polyon-rcc-data';
+const BBSS_GITEA_NAMESPACE = process.env.BBSS_GITEA_NAMESPACE || 'polyon-rcc-change';
+const BBSS_BESZEL_NAMESPACE = process.env.BBSS_BESZEL_NAMESPACE || 'beszel-system';
+const RCC_MANUAL_SEED_FILE = process.env.RCC_MANUAL_SEED_FILE
+  || path.join(__dirname, '..', 'opensphere-console-oaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json');
 const OAA_KEY_LABEL = 'opensphere.io/oaa-llm-key';
 const OAA_PART_LABEL = 'opensphere.io/part-of';
 const OAA_KEY_ID_RE = /^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$/;
@@ -274,6 +302,26 @@ function normalizeQuery(query) {
   return params.toString();
 }
 
+// PostgREST and Gitea are both in-cluster and trusted, but `response.text()`
+// buffers whatever they send before anything can look at the length, so a
+// wedged or compromised one would exhaust this process's memory before any
+// limit could apply. 8 MiB is far above any legitimate console page.
+const MAX_UPSTREAM_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+/** Reads a response body under a byte cap, or null if it exceeds it. */
+async function readBounded(response, limit) {
+  if (!response.body) return '';
+  const decoder = new TextDecoder();
+  let text = '';
+  let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > limit) return null;
+    text += decoder.decode(chunk, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 async function restRequest(resource, {
   method = 'GET',
   query = '',
@@ -292,7 +340,8 @@ async function restRequest(resource, {
   };
   if (body !== undefined) options.body = JSON.stringify(body);
   const response = await fetch(url, options);
-  const text = await response.text();
+  const text = await readBounded(response, MAX_UPSTREAM_RESPONSE_BYTES);
+  if (text === null) throw { code: 502, msg: `Supabase REST ${resource} response too large` };
   const parse = () => {
     if (!text) return [];
     try {
@@ -499,6 +548,22 @@ async function verifyManagedCliToken(token) {
   return resolveConsoleActor(claims.sub, { ...claims, scope: record.scope || claims.scope || (claims.typ === 'pat' ? 'console-admin' : null) });
 }
 
+/**
+ * Assurance gate for high-risk host operations.
+ *
+ * Requesting or approving a restart or reboot is exactly the kind of action
+ * MFA exists for, so it is required independently of the generic mutation rule.
+ */
+function requireAal2(actor) {
+  // Deliberately NOT gated on SUPABASE_REQUIRE_AAL2. Requesting, approving or
+  // rejecting a service restart or a host reboot is precisely the class of
+  // action multi-factor exists for, so it is required even in a deployment that
+  // relaxes the generic mutation rule.
+  if (actor?.assurance !== 'aal2') {
+    throw { code: 403, msg: 'this host operation requires MFA assurance aal2' };
+  }
+}
+
 async function verifyActor(req) {
   const actor = await verifyAuthed(req);
   if (!actor.groups || !actor.groups.includes(SUPABASE_BACKEND_ROLE)) throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
@@ -525,9 +590,9 @@ async function verifyConsoleAdmin(req, options = {}) {
   return actor;
 }
 
-async function verifyControlCenterReader(req, controlCenterId) {
+async function verifyControlCenterAssignment(req, controlCenterId, permission) {
   const actor = await verifyAuthed(req);
-  requireActorPermission(actor, 'console.kubernetes.read');
+  requireActorPermission(actor, permission);
   const now = new Date().toISOString();
   const rows = await restRequest('operator_control_center', {
     query: [
@@ -541,6 +606,14 @@ async function verifyControlCenterReader(req, controlCenterId) {
     throw { code: 403, msg: `operator is not assigned to control center ${controlCenterId}` };
   }
   return actor;
+}
+
+async function verifyControlCenterReader(req, controlCenterId) {
+  return verifyControlCenterAssignment(req, controlCenterId, 'console.kubernetes.read');
+}
+
+async function verifyHostReader(req, controlCenterId) {
+  return verifyControlCenterAssignment(req, controlCenterId, 'console.hosts.read');
 }
 
 async function verifyOaaIdentityOwner(req, options = {}) {
@@ -634,6 +707,165 @@ const kubernetesReadProxy = createKubernetesReadProxy({
     },
   ),
 });
+
+/**
+ * Agent key material is loaded from a root-owned file mounted by the platform,
+ * never from the database. Without it the heartbeat endpoint fails closed with
+ * 503 rather than accepting unsigned reports.
+ */
+function loadAgentKeyResolver() {
+  if (!RCC_AGENT_KEYS_FILE) return null;
+  try {
+    const keys = parseAgentKeyDocument(fs.readFileSync(RCC_AGENT_KEYS_FILE, 'utf8'));
+    // Count only: key ids and material never reach the log.
+    console.log(JSON.stringify({ level: 'info', msg: 'rcc agent key document loaded', keys: keys.size }));
+    return createAgentKeyResolver(keys);
+  } catch (error) {
+    console.error(JSON.stringify({ level: 'error', msg: 'rcc agent key document rejected', reason: error?.message || 'unreadable' }));
+    return null;
+  }
+}
+
+const hostApi = createHostApi({
+  restRequest,
+  verifyReader: verifyHostReader,
+  audit: (actor, event) => logAudit(
+    actor,
+    event.action,
+    String(event.target || event.controlCenterId).slice(0, 300),
+    'allowed',
+    'RCC read-only Linux host inspection',
+    {
+      targetType: 'linux-host',
+      payloadDigest: toHashHex(JSON.stringify(event)),
+    },
+  ),
+  allowedControlCenters: CONTROL_CENTER_IDS,
+  resolveAgentKey: loadAgentKeyResolver(),
+  readRawBody,
+});
+
+/**
+ * Beszel is a read-only host telemetry source, never an RCC authority.
+ *
+ * Configuration is optional at process startup so another control center can
+ * run without Beszel. When absent or invalid, only the metrics endpoint fails
+ * closed; host inventory, governed operations and readiness remain available.
+ * The adapter itself additionally refuses any Beszel account whose live role
+ * is not exactly `readonly`.
+ */
+function loadBeszelMetricsSource() {
+  if (!RCC_BESZEL_URL || !RCC_BESZEL_CONFIG_FILE) {
+    console.log(JSON.stringify({
+      level: 'info',
+      msg: 'Beszel metrics source not configured; host metrics endpoint will remain unavailable',
+    }));
+    return null;
+  }
+  try {
+    const config = loadBeszelReaderConfig(RCC_BESZEL_CONFIG_FILE);
+    const client = createBeszelClient({
+      baseUrl: RCC_BESZEL_URL,
+      config,
+      timeoutMs: process.env.RCC_BESZEL_TIMEOUT_MS || 8000,
+    });
+    console.log(JSON.stringify({
+      level: 'info',
+      msg: 'Beszel readonly metrics adapter configured',
+      bindings: Object.keys(config.systems).length,
+    }));
+    return Object.freeze({
+      client,
+      bindings: Object.freeze(Object.entries(config.systems).map(([binding, name]) =>
+        Object.freeze({ binding, name }))),
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'error',
+      msg: 'Beszel metrics configuration rejected',
+      reason: error?.message || 'unreadable',
+    }));
+    return null;
+  }
+}
+
+const beszelMetricsSource = loadBeszelMetricsSource();
+
+const beszelMetricsApi = createBeszelMetricsApi({
+  restRequest,
+  verifyReader: verifyHostReader,
+  audit: (actor, event) => logAudit(
+    actor,
+    event.action,
+    `${event.controlCenterId}:${event.hostId}`.slice(0, 300),
+    'allowed',
+    'RCC read-only Beszel host metrics inspection',
+    {
+      targetType: 'linux-host-metrics',
+      payloadDigest: toHashHex(JSON.stringify(event)),
+    },
+  ),
+  allowedControlCenters: CONTROL_CENTER_IDS,
+  client: beszelMetricsSource?.client || null,
+});
+
+// Stage 2 governed typed host operations.
+//
+// The backend deliberately holds NO Kubernetes credential that can cordon a
+// node or evict a pod. Node maintenance is delegated to a separately
+// credentialed service over a signed internal call, so a flaw in this process
+// — which terminates browser sessions and parses agent payloads — cannot reach
+// the cluster with write verbs. Without that service, a reboot is refused
+// rather than attempted unprepared.
+function loadMaintenanceCoordinator() {
+  const client = createMaintenanceServiceClient({ logger: (line) => console.log(line) });
+  if (!client) {
+    console.log(JSON.stringify({
+      level: 'info',
+      msg: 'maintenance service not configured; host reboots will be refused',
+    }));
+    return null;
+  }
+  console.log(JSON.stringify({ level: 'info', msg: 'maintenance service client ready' }));
+  return client;
+}
+
+const operationApi = createOperationApi({
+  restRequest,
+  verifyOperator: verifyControlCenterAssignment,
+  requirePermission: requireActorPermission,
+  requireAssurance: requireAal2,
+  audit: (actor, event) => logAudit(
+    actor,
+    event.action,
+    String(event.target || '').slice(0, 300),
+    'allowed',
+    event.reason || 'RCC governed host operation',
+    { targetType: 'linux-host-operation', payloadDigest: toHashHex(JSON.stringify(event)) },
+  ),
+  allowedControlCenters: CONTROL_CENTER_IDS,
+  resolveAgentKey: loadAgentKeyResolver(),
+  readRawBody,
+  maintenance: loadMaintenanceCoordinator(),
+  logger: (line) => console.log(line),
+});
+
+// Manual reader for the RCC minimal deployment. The OAA Gateway owns the full
+// knowledge plane elsewhere; here the same four read endpoints are served from
+// the release-generated seed so /manual works without a second control plane.
+const manualApi = createManualApi({
+  seedPath: RCC_MANUAL_SEED_FILE,
+  verifyReader: verifyAuthed,
+  audit: (actor, event) => logAudit(
+    actor,
+    event.action,
+    String(event.target || '').slice(0, 300),
+    'allowed',
+    'RCC read-only manual document read',
+    { targetType: 'manual-document' },
+  ),
+});
+console.log(JSON.stringify({ level: 'info', msg: 'rcc manual registry', ...manualApi.stats() }));
 
 const notificationApi = createNotificationApi({
   restRequest,
@@ -1124,7 +1356,8 @@ async function giteaRequest(pathName, { method = 'GET', body = undefined, header
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(GITEA_TIMEOUT_MS),
   });
-  const text = await response.text();
+  const text = await readBounded(response, MAX_UPSTREAM_RESPONSE_BYTES);
+  if (text === null) throw { code: 502, msg: `Gitea API ${pathName} response too large` };
   let parsedBody = null;
   try { parsedBody = text ? JSON.parse(text) : null; } catch { parsedBody = null; }
   if (!response.ok) throw { code: response.status, msg: `Gitea API ${pathName} failed`, detail: text.slice(0, 160) };
@@ -1245,6 +1478,347 @@ async function giteaStatus() {
       repositories: [], contracts, receipts, changes, byStatus, recovery, supplyChain: null, managementReady: false, reason: error?.msg || String(error),
     };
   }
+}
+
+/**
+ * BBSS needs the Gitea engine's availability even when the broader governed
+ * change projection is degraded. `giteaStatus()` intentionally joins
+ * Supabase-backed change history, but a failure in that dependent projection
+ * must not turn a reachable Gitea API into a false outage.
+ */
+async function bbssGiteaStatus() {
+  const integrated = await captureBbssEvidence('Governed change projection', giteaStatus);
+  if (integrated.ok) {
+    const owner = integrated.value;
+    const managementReady = owner?.managementReady === true;
+    const apiState = owner?.ready === true ? 'Healthy' : 'Unavailable';
+    return {
+      ...owner,
+      state: apiState === 'Healthy' && !managementReady ? 'Degraded' : apiState,
+      checks: [
+        {
+          id: 'gitea-api',
+          name: 'Gitea API',
+          state: apiState,
+          detail: owner?.ready ? `Gitea ${safeBbssText(owner.version, 64) || 'version available'}` : safeBbssText(owner?.reason || 'not ready', 160),
+        },
+        {
+          id: 'governed-change',
+          name: 'Governed change projection',
+          state: managementReady ? 'Healthy' : 'Degraded',
+          detail: managementReady ? 'Repository and webhook authority ready' : safeBbssText(owner?.reason || 'management integration incomplete', 160),
+        },
+      ],
+      warnings: owner?.reason ? [safeBbssText(owner.reason, 180)] : [],
+    };
+  }
+
+  if (!GITEA_URL) {
+    return {
+      configured: false,
+      ready: false,
+      state: 'NotConfigured',
+      version: '',
+      repositoryCount: null,
+      repositories: [],
+      checks: [],
+      warnings: [integrated.error],
+      reason: 'GITEA_URL is not configured',
+    };
+  }
+
+  // Prove the engine directly after the integrated projection failed. These
+  // are the same bounded owner API reads used by Change Control; no alternate
+  // credential, write path or browser-to-Gitea route is introduced.
+  const [version, repositories] = await Promise.all([
+    giteaRequest('/api/v1/version'),
+    GITEA_TOKEN
+      ? giteaRequest(`/api/v1/orgs/${encodeURIComponent(GITEA_ORGANIZATION)}/repos?limit=50&page=1`)
+      : Promise.resolve(null),
+  ]);
+  const repositoryCount = repositories
+    ? Number(repositories.headers.get('x-total-count')
+      || (Array.isArray(repositories.body) ? repositories.body.length : 0))
+    : null;
+  return {
+    meta: { source: 'gitea', checkedAt: new Date().toISOString() },
+    configured: true,
+    ready: true,
+    state: 'Degraded',
+    version: safeBbssText(version.body?.version, 64),
+    repositoryCount,
+    repositories: Array.isArray(repositories?.body) ? repositories.body.map(giteaRepositoryView) : [],
+    // The integrated projection failed before it could prove the governed
+    // change rows. Null means "not collected"; empty collections would lie by
+    // rendering as a measured zero in the BBSS view.
+    receipts: null,
+    byStatus: null,
+    checks: [
+      {
+        id: 'gitea-api',
+        name: 'Gitea API',
+        state: 'Healthy',
+        detail: `Gitea ${safeBbssText(version.body?.version, 64) || 'version available'}`,
+      },
+      {
+        id: 'governed-change',
+        name: 'Governed change projection',
+        state: 'Degraded',
+        detail: safeBbssText(integrated.error, 180),
+      },
+    ],
+    warnings: [safeBbssText(integrated.error, 180)],
+    reason: safeBbssText(integrated.error, 180),
+  };
+}
+
+async function captureBbssEvidence(label, reader) {
+  try {
+    return { ok: true, value: await reader() };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `${label}: ${safeBbssText(error?.msg || error?.message || 'unavailable', 180)}`,
+    };
+  }
+}
+
+async function bbssKubernetesList(apiPath) {
+  const response = await k8sRequest('GET', apiPath);
+  if (!response.ok) {
+    throw new Error(`${apiPath} HTTP ${response.status}`);
+  }
+  if (!Array.isArray(response.body?.items)) {
+    throw new Error(`${apiPath} returned an invalid list`);
+  }
+  return response.body.items;
+}
+
+async function bbssNamespaceEvidence(namespace) {
+  const encoded = encodeURIComponent(namespace);
+  const readers = [
+    ['deployments', () => bbssKubernetesList(`/apis/apps/v1/namespaces/${encoded}/deployments`)],
+    ['statefulsets', () => bbssKubernetesList(`/apis/apps/v1/namespaces/${encoded}/statefulsets`)],
+    ['pods', () => bbssKubernetesList(`/api/v1/namespaces/${encoded}/pods`)],
+    ['pvcs', () => bbssKubernetesList(`/api/v1/namespaces/${encoded}/persistentvolumeclaims`)],
+    ['pdbs', () => bbssKubernetesList(`/apis/policy/v1/namespaces/${encoded}/poddisruptionbudgets`)],
+    ['podMetrics', () => bbssKubernetesList(`/apis/metrics.k8s.io/v1beta1/namespaces/${encoded}/pods`)],
+  ];
+  const captured = await Promise.all(readers.map(([label, reader]) => captureBbssEvidence(label, reader)));
+  const values = Object.fromEntries(readers.map(([label], index) => [
+    label,
+    captured[index].ok ? captured[index].value : [],
+  ]));
+  return summarizeNamespace({
+    namespace,
+    ...values,
+    errors: captured.filter((result) => !result.ok).map((result) => result.error),
+    observedAt: new Date().toISOString(),
+  });
+}
+
+async function bbssBeszelStatus() {
+  const observedAt = new Date().toISOString();
+  if (!beszelMetricsSource?.client) {
+    return {
+      configured: false,
+      observedAt,
+      systems: [],
+      reason: 'Beszel readonly source is not configured',
+    };
+  }
+  const bindings = beszelMetricsSource.bindings
+    .map((entry) => {
+      const [controlCenterId, hostId, ...extra] = String(entry.binding || '').split('/');
+      return { ...entry, controlCenterId, hostId, valid: Boolean(controlCenterId && hostId && !extra.length) };
+    })
+    .filter((entry) => entry.valid && CONTROL_CENTER_IDS.includes(entry.controlCenterId))
+    .slice(0, 20);
+  const results = await Promise.all(bindings.map(async (entry) => {
+    try {
+      const metrics = await beszelMetricsSource.client.fetchMetrics({
+        controlCenterId: entry.controlCenterId,
+        hostId: entry.hostId,
+        range: '1h',
+      });
+      return {
+        binding: entry.binding,
+        name: metrics.system.name,
+        status: metrics.system.status,
+        freshness: metrics.system.freshness,
+        latestAgeSeconds: metrics.system.latestAgeSeconds,
+        gapCount: metrics.gapCount,
+        latest: metrics.latest,
+        agentVersion: metrics.source.agentVersion || null,
+      };
+    } catch (error) {
+      return {
+        binding: entry.binding,
+        name: entry.name,
+        status: 'unknown',
+        freshness: 'stale',
+        latestAgeSeconds: null,
+        gapCount: 0,
+        latest: null,
+        error: safeBbssText(error?.message || 'Beszel query unavailable', 160),
+      };
+    }
+  }));
+  return {
+    configured: true,
+    observedAt,
+    systems: results,
+    reason: bindings.length ? '' : 'No Beszel binding matches this RCC control center',
+  };
+}
+
+async function bbssTelemetryEvidence() {
+  const [crds, deployments, statefulsets] = await Promise.all([
+    captureBbssEvidence('observability CRDs', () =>
+      bbssKubernetesList('/apis/apiextensions.k8s.io/v1/customresourcedefinitions')),
+    captureBbssEvidence('observability deployments', () =>
+      bbssKubernetesList('/apis/apps/v1/deployments')),
+    captureBbssEvidence('observability statefulsets', () =>
+      bbssKubernetesList('/apis/apps/v1/statefulsets')),
+  ]);
+  const crdItems = crds.ok ? crds.value : [];
+  const workloadItems = [
+    ...(deployments.ok ? deployments.value : []),
+    ...(statefulsets.ok ? statefulsets.value : []),
+  ].filter((workload) =>
+    /(prometheus|alertmanager|grafana|loki|tempo)/i.test(String(workload?.metadata?.name || '')));
+  const hasPrometheusCrd = crdItems.some((item) =>
+    item?.metadata?.name === 'prometheuses.monitoring.coreos.com');
+  const readyWorkloads = workloadItems.filter((workload) => {
+    const desired = Number(workload?.spec?.replicas || 0);
+    return desired > 0 && Number(workload?.status?.readyReplicas || 0) >= desired;
+  });
+  if (!hasPrometheusCrd && !workloadItems.length) {
+    return {
+      state: 'NotConfigured',
+      reason: 'Prometheus-compatible HIS stack and monitoring CRDs are not installed',
+      workloads: [],
+    };
+  }
+  const state = hasPrometheusCrd && readyWorkloads.length ? 'Healthy' : 'Degraded';
+  return {
+    state,
+    reason: state === 'Healthy'
+      ? `${readyWorkloads.length} observability workload(s) ready`
+      : 'Observability resources exist but a ready Prometheus-compatible store was not proven',
+    workloads: workloadItems.map((workload) => ({
+      namespace: safeBbssText(workload?.metadata?.namespace, 128),
+      name: safeBbssText(workload?.metadata?.name, 128),
+      ready: Number(workload?.status?.readyReplicas || 0),
+      desired: Number(workload?.spec?.replicas || 0),
+    })),
+  };
+}
+
+async function bbssStatus() {
+  const [
+    supabase,
+    gitea,
+    beszel,
+    supabaseRuntime,
+    giteaRuntime,
+    beszelRuntime,
+    telemetry,
+    recovery,
+  ] = await Promise.all([
+    captureBbssEvidence('Supabase owner API', supabaseStatus),
+    captureBbssEvidence('Gitea owner API', bbssGiteaStatus),
+    captureBbssEvidence('Beszel readonly API', bbssBeszelStatus),
+    bbssNamespaceEvidence(BBSS_SUPABASE_NAMESPACE),
+    bbssNamespaceEvidence(BBSS_GITEA_NAMESPACE),
+    bbssNamespaceEvidence(BBSS_BESZEL_NAMESPACE),
+    bbssTelemetryEvidence(),
+    recoveryEvidence(),
+  ]);
+  return buildBbssStatus({
+    supabase,
+    gitea,
+    beszel,
+    namespaces: {
+      supabase: supabaseRuntime,
+      gitea: giteaRuntime,
+      beszel: beszelRuntime,
+    },
+    telemetry,
+    recovery,
+    generatedAt: new Date().toISOString(),
+  });
+}
+
+const ADMIN_OVERVIEW_HOST_SELECT = [
+  'id',
+  'host_id',
+  'display_name',
+  'control_center_id',
+  'status',
+  'labels',
+  'enrolled_at',
+  'host_snapshot(schema_version,agent_version,collected_at,received_at,payload)',
+].join(',');
+
+/**
+ * Real `/manage` fleet projection.
+ *
+ * Host availability comes from the latest signed RCC agent snapshot stored in
+ * Supabase. Resource history comes from the already-provisioned read-only
+ * Beszel adapter. The browser receives neither upstream credential nor raw
+ * PocketBase/Supabase rows.
+ */
+async function adminOverviewStatus() {
+  const controlCenters = CONTROL_CENTER_IDS
+    .filter((controlCenterId) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(controlCenterId));
+  if (!controlCenters.length) throw new Error('no valid RCC control center is configured');
+
+  const hostRows = await restRequest('host', {
+    query: [
+      `control_center_id=in.(${controlCenters.join(',')})`,
+      'status=in.(pending,active)',
+      `select=${ADMIN_OVERVIEW_HOST_SELECT}`,
+      'order=control_center_id.asc,host_id.asc',
+      `limit=${ADMIN_OVERVIEW_HOST_LIMIT + 1}`,
+    ].join('&'),
+  });
+  const found = Array.isArray(hostRows) ? hostRows : [];
+  const visibleHosts = found.slice(0, ADMIN_OVERVIEW_HOST_LIMIT);
+  const knownBindings = new Set(visibleHosts.map((host) =>
+    `${safeBbssText(host?.control_center_id, 63)}/${safeBbssText(host?.host_id, 63)}`));
+  const matchingBindings = (beszelMetricsSource?.bindings || [])
+    .filter((entry) => knownBindings.has(String(entry.binding || '')));
+  const selectedBindings = matchingBindings.slice(0, ADMIN_OVERVIEW_METRIC_LIMIT);
+  const metrics = await Promise.all(selectedBindings.map(async (entry) => {
+    try {
+      return {
+        binding: entry.binding,
+        ok: true,
+        value: await beszelMetricsSource.client.fetchMetrics({
+          controlCenterId: entry.binding.split('/')[0],
+          hostId: entry.binding.split('/')[1],
+          range: '24h',
+        }),
+      };
+    } catch (error) {
+      return {
+        binding: entry.binding,
+        ok: false,
+        error: safeBbssText(error?.message || 'Beszel metrics unavailable', 160),
+      };
+    }
+  }));
+
+  return buildAdminOverview({
+    hostRows: visibleHosts,
+    hostTruncated: found.length > ADMIN_OVERVIEW_HOST_LIMIT,
+    metrics,
+    metricsConfigured: Boolean(beszelMetricsSource?.client),
+    metricBindings: matchingBindings.map((entry) => entry.binding),
+    metricBindingsTruncated: matchingBindings.length > ADMIN_OVERVIEW_METRIC_LIMIT,
+    generatedAt: new Date().toISOString(),
+  });
 }
 
 function uuid(value, label = 'request id') {
@@ -2485,9 +3059,19 @@ async function revokeCliToken(actor, id, reason) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const p = url.pathname;
   _httpReqs++;
+  let url;
+  try {
+    // A fixed base, not the Host header. An empty or malformed Host makes
+    // `http://${host}` an invalid URL, and this line runs before the try that
+    // catches everything else: the rejected promise would take the process down
+    // on one unauthenticated request. The header is not used for routing
+    // anywhere, so there is nothing to lose by not trusting it here.
+    url = new URL(req.url, 'http://rcc.invalid');
+  } catch {
+    return json(res, 400, { error: 'malformed request target' });
+  }
+  const p = url.pathname;
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
     if (p === '/readyz') {
@@ -2501,7 +3085,23 @@ const server = http.createServer(async (req, res) => {
       return res.end(metricsText());
     }
     if (p.startsWith('/api/control-centers/')) {
+      // Operation routes are claimed first, then host routes; anything neither
+      // owns falls through to the unchanged Kubernetes read proxy.
+      if (await operationApi.handle(req, res)) return undefined;
+      if (await hostApi.handle(req, res)) return undefined;
       return kubernetesReadProxy(req, res);
+    }
+    if (p.startsWith(MANUAL_ROUTE_PREFIX)) {
+      if (await manualApi.handle(req, res)) return undefined;
+      return json(res, 404, { error: 'unknown manual route' });
+    }
+    if (p.startsWith(`${HOST_PLUGIN_API_NAMESPACE}/`)) {
+      // Canonical DUPA namespace for the linux-host-manager subShell. Only the
+      // operator routes answer here; agent endpoints are refused by the parser.
+      if (await beszelMetricsApi.handle(req, res)) return undefined;
+      if (await operationApi.handle(req, res)) return undefined;
+      if (await hostApi.handle(req, res)) return undefined;
+      return json(res, 404, { error: 'unknown plugin route' });
     }
     if (p === '/api/identity/bootstrap/status' && req.method === 'GET') {
       return json(res, 200, await bootstrapStatus());
@@ -2851,6 +3451,22 @@ const server = http.createServer(async (req, res) => {
         return json(res, authErrorStatus(e), { error: e.msg || 'Gitea Change Control status unavailable' });
       }
     }
+    if (p === '/api/admin/bbss/status' && req.method === 'GET') {
+      try {
+        await verifyConsoleAdmin(req);
+        return json(res, 200, await bbssStatus());
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'BBSS status unavailable' });
+      }
+    }
+    if (p === '/api/admin/overview' && req.method === 'GET') {
+      try {
+        await verifyConsoleAdmin(req);
+        return json(res, 200, await adminOverviewStatus());
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'management overview unavailable' });
+      }
+    }
     if (p === '/api/platform/contracts' && req.method === 'GET') {
       try { await verifyConsoleAdmin(req); return json(res, 200, { items: await consumerContracts(), checkedAt: new Date().toISOString() }); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'consumer contracts unavailable' }); }
@@ -3068,6 +3684,10 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(404); return res.end('plugin not found');
     }
 
+    // Any unmatched API path answers in JSON. Nginx routes every /api/ prefix
+    // here rather than to the SPA, so a client that hits a wrong path gets a
+    // machine-readable 404 instead of an HTML page it will fail to parse.
+    if (p.startsWith('/api/')) return json(res, 404, { error: 'unknown api route', path: p.slice(0, 200) });
     res.writeHead(404); return res.end('not found');
   } catch (e) {
     console.error('[err]', e);

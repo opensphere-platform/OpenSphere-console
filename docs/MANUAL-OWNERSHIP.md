@@ -55,6 +55,18 @@ readiness가 없는 구형 매니페스트의 재적용을 거부한다. 계약 
 
 1. `docs/manual/*.md` 또는 상위 권위 문서를 수정한다.
 2. `npm run manual:seed`로 릴리스 seed를 재생성한다.
+
+   기본값은 릴리스 배치(Console 체크아웃의 상위 디렉터리)를 그대로 사용한다. 워크스페이스 배치가 다르면
+   `OPENSPHERE_PLATFORM_ROOT`로 플랫폼 저장소를 명시한다.
+
+   ```sh
+   OPENSPHERE_PLATFORM_ROOT=/path/to/OpenSphere-Platform npm run manual:seed
+   ```
+
+   생성기는 fail-closed다. root가 없거나 `_DOCS_`를 갖지 않으면, 선언된 소스 문서가 하나라도 없으면,
+   또는 어떤 문서가 빈 내용으로 해석되면 seed를 쓰지 않고 누락 목록과 함께 종료한다. 소스가 사라진 상태로
+   seed를 갱신하면 권위 문서가 조용히 사라지기 때문이다. 상위 문서가 실제로 폐기됐다면 생성기의 항목을
+   명시적으로 제거해야 한다.
 3. Manual 회귀 테스트와 Console production build를 통과시킨다.
 4. Console 및 Console-owned OAA Gateway 이미지를 동일 release 단위로 배포한다.
 5. 브라우저에서 `/manual`, 검색, 문서 리더와 OAA citation을 검증한다.

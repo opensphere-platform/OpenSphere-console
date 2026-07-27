@@ -1,0 +1,62 @@
+{
+  "manifestVersion": 3,
+  "id": "linux-host-manager",
+  "kind": "subShell",
+  "name": "Linux Host Manager",
+  "version": "0.2.0",
+  "hostRef": "main",
+  "hostApiVersion": "1.0.0",
+  "hostCompat": ">=1.0.0 <2.0.0",
+  "shellCompat": ">=0.2.0 <0.9.0",
+  "sdkVersion": "0.2.0",
+  "designSystem": "clarity",
+  "renderMode": "esm",
+  "entry": "entry.js",
+  "entrySha256": "b326df8054ef90c631dfe8aeaef0abb3edcabd150f3aff67e776828c97468732",
+  "permissions": [
+    "page:register",
+    "api:proxy"
+  ],
+  "apiBase": "/api/plugins/linux-host-manager",
+  "contributions": {
+    "page": {
+      "enabled": true
+    },
+    "navigation": {
+      "enabled": false,
+      "mode": "none",
+      "reason": "the Main Shell owns the RCC control-center navigation band"
+    },
+    "api": {
+      "enabled": true,
+      "basePath": "/api/plugins/linux-host-manager"
+    },
+    "cli": {
+      "enabled": false,
+      "reason": "backend/os-cli remains the Console administration CLI and is not extended by host control"
+    },
+    "manual": {
+      "enabled": false,
+      "mode": "none",
+      "reason": "host documentation ships in the OpenSphere core manual seed, not as a runtime contribution"
+    },
+    "search": {
+      "enabled": false,
+      "mode": "none",
+      "reason": "Stage 1 exposes no searchable host corpus"
+    },
+    "notification": {
+      "enabled": false,
+      "frontend": false,
+      "backend": false,
+      "reason": "Stage 1 raises no host alerts"
+    },
+    "observability": {
+      "enabled": false,
+      "logs": false,
+      "metrics": false,
+      "traces": false,
+      "reason": "host time-series are read through the RCC Beszel adapter; this static subShell publishes no scrape endpoint"
+    }
+  }
+}

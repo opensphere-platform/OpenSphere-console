@@ -10,10 +10,10 @@ export interface Workspace {
 }
 
 export const WORKSPACES: Workspace[] = [
-  { id: 'A', label: '운영', desc: 'Console · 운영/관리', bands: ['운영 Operate'] },
-  { id: 'B', label: '협업', desc: 'Workplace · 개발/협업', bands: ['구축 Build'] },
-  { id: 'C', label: '업무', desc: 'Business · ERP/업무', bands: ['전달 Deliver'] },
-  { id: 'D', label: '지능', desc: 'Intelligence · AI', bands: ['지능 Intelligence'] },
+  { id: 'A', label: '운영', desc: 'Console · 운영/관리', bands: ['운영'] },
+  { id: 'B', label: '협업', desc: 'Workplace · 개발/협업', bands: ['구축'] },
+  { id: 'C', label: '업무', desc: 'Business · ERP/업무', bands: ['전달'] },
+  { id: 'D', label: '지능', desc: 'Intelligence · AI', bands: ['지능'] },
 ];
 
 const LS_KEY = 'os.activeWorkspace';

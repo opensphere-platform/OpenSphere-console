@@ -38,7 +38,16 @@ export interface IntegrationStatus {
   reason?: string; message?: string; retryable?: boolean; nextRetryAt?: string;
   lastTransitionTime?: string; observedVersion?: string;
 }
-export interface AuditEvent { time: string; actor: string; action: string; target: string; result: string; reason: string; }
+export interface AuditEvent {
+  time: string;
+  actor: string;
+  action: string;
+  target: string;
+  result: string;
+  reason: string;
+  requestId?: string;
+  correlationId?: string;
+}
 export interface ExtensionInspection {
   image: string;
   requestedImage: string;
@@ -77,6 +86,12 @@ export class PluginControlClient {
   async events(): Promise<AuditEvent[]> {
     const r = await this.http.request('/api/admin/plugins/events', { cache: 'no-store' });
     if (!r.ok) throw new Error(`events HTTP ${r.status}`);
+    return (await r.json()).items;
+  }
+  /** Console-wide durable audit authority; independent of the optional DUPA runtime. */
+  async auditEvents(): Promise<AuditEvent[]> {
+    const r = await this.http.request('/api/identity/audit', { cache: 'no-store' });
+    if (!r.ok) throw new Error(`audit events HTTP ${r.status}`);
     return (await r.json()).items;
   }
   /** headless 바인딩(CLIDownload 등) — UI plugin과 별개 채널. controller /api/admin/bindings. */

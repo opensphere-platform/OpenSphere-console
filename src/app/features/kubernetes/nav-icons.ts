@@ -32,11 +32,11 @@ export const NAV_ICON: Record<string, string> = {
   overview: P.dashboard,
   fallback: P.doc,
   // sections
-  'sec:Workloads': P.apps,
-  'sec:Network': P.share,
-  'sec:Config & Storage': P.storage,
-  'sec:Cluster': P.server,
-  'sec:Access': P.shield,
+  'sec:워크로드': P.apps,
+  'sec:네트워크': P.share,
+  'sec:구성 및 스토리지': P.storage,
+  'sec:클러스터': P.server,
+  'sec:접근 제어': P.shield,
   // Workloads
   pods: P.cube, deployments: P.rocket, replicasets: P.apps, statefulsets: P.storage,
   daemonsets: P.layers, jobs: P.task, cronjobs: P.clock, jobsets: P.task,

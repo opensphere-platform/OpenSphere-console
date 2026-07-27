@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "id": "linux-host-manager",
+  "kind": "subShell",
+  "displayName": "Linux Host Manager",
+  "version": "0.2.0",
+  "owner": "opensphere-platform",
+  "description": "Linux host status, Beszel time-series metrics and governed operations for RCC",
+  "hostRef": "main",
+  "hostApiVersion": "1.0.0",
+  "hostCompat": ">=1.0.0 <2.0.0",
+  "shellCompat": ">=0.2.0 <0.9.0",
+  "sdkVersion": "0.2.0",
+  "permissions": [
+    "page:register",
+    "api:proxy"
+  ],
+  "permissionProfile": "none",
+  "runtime": {
+    "port": 8080,
+    "healthPath": "/healthz",
+    "serviceAccountName": "opensphere-linux-host-manager",
+    "resources": {
+      "cpuRequest": "25m",
+      "memoryRequest": "64Mi",
+      "cpuLimit": "200m",
+      "memoryLimit": "256Mi"
+    },
+    "security": {
+      "automountServiceAccountToken": false,
+      "runAsNonRoot": true,
+      "readOnlyRootFilesystem": true,
+      "runAsUser": 10001,
+      "runAsGroup": 10001,
+      "seccompProfile": "RuntimeDefault"
+    },
+    "availability": {
+      "replicas": 2,
+      "minAvailable": 1
+    },
+    "networkPolicy": {
+      "enabled": true
+    },
+    "observability": {
+      "metricsPath": "/metrics",
+      "logs": {
+        "format": "json",
+        "schema": "opensphere.v1",
+        "stream": "stdout"
+      },
+      "traces": {
+        "propagation": "w3c",
+        "responseHeaders": true
+      }
+    }
+  },
+  "api": {
+    "basePath": "/api/plugins/linux-host-manager"
+  },
+  "manifest": {
+    "path": "/plugins/ui-shell.manifest.json",
+    "sha256": "3ec022580e96785a58490fbad3e164b922df39629b1aaaf20623b02dc74eae72",
+    "signaturePath": "/plugins/ui-shell.manifest.json.sig"
+  },
+  "trust": {
+    "keyId": "opensphere-plugins-v1"
+  },
+  "contributions": {
+    "page": {
+      "enabled": true
+    },
+    "navigation": {
+      "enabled": false,
+      "mode": "none",
+      "reason": "the Main Shell owns the RCC control-center navigation band"
+    },
+    "api": {
+      "enabled": true,
+      "basePath": "/api/plugins/linux-host-manager"
+    },
+    "cli": {
+      "enabled": false,
+      "reason": "backend/os-cli remains the Console administration CLI and is not extended by host control"
+    },
+    "manual": {
+      "enabled": false,
+      "mode": "none",
+      "reason": "host documentation ships in the OpenSphere core manual seed, not as a runtime contribution"
+    },
+    "search": {
+      "enabled": false,
+      "mode": "none",
+      "reason": "Stage 1 exposes no searchable host corpus"
+    },
+    "notification": {
+      "enabled": false,
+      "frontend": false,
+      "backend": false,
+      "reason": "Stage 1 raises no host alerts"
+    },
+    "observability": {
+      "enabled": false,
+      "logs": false,
+      "metrics": false,
+      "traces": false,
+      "reason": "host time-series are read through the RCC Beszel adapter; this static subShell publishes no scrape endpoint"
+    }
+  }
+}
