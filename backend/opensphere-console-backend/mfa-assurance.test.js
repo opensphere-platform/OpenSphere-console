@@ -10,8 +10,10 @@ const backend = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 const deploy = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
 const notificationDeploy = fs.readFileSync(path.join(root, 'backend/notification-dispatcher/deploy.yaml'), 'utf8');
 const authService = fs.readFileSync(path.join(root, 'src/app/core/auth.service.ts'), 'utf8');
+const httpService = fs.readFileSync(path.join(root, 'src/app/core/http.service.ts'), 'utf8');
 const browserSession = fs.readFileSync(path.join(__dirname, 'browser-session.js'), 'utf8');
 const login = fs.readFileSync(path.join(root, 'src/app/pages/login.ts'), 'utf8');
+const nginx = fs.readFileSync(path.join(root, 'nginx/default.conf.template'), 'utf8');
 const setup = fs.readFileSync(path.join(root, 'src/app/pages/initial-setup.ts'), 'utf8');
 const myInfo = fs.readFileSync(path.join(root, 'src/app/pages/my-info.ts'), 'utf8');
 const consoleAdmins = fs.readFileSync(path.join(root, 'src/app/pages/console-admins.ts'), 'utf8');
@@ -107,6 +109,27 @@ test('a stale browser session is discarded and routed to login instead of surfac
   assert.match(authService, /this\.clearIdentity\(\);\s*this\.loginRequired\.set\(true\)/);
   assert.match(browserSession, /browser session refresh credential was rejected/);
   assert.match(browserSession, /revokeTokenFamily/);
+});
+
+test('login keeps the established card design and adds only the requested session duration option', () => {
+  assert.doesNotMatch(login, /ClarityModule|clrForm|clr-input-container|clr-select-container/);
+  assert.match(login, /border-radius:\.6rem;box-shadow:/);
+  assert.match(login, /name="session-duration"/);
+  assert.match(login, /브라우저를 닫을 때까지/);
+  assert.match(login, /8시간/);
+  assert.match(login, /24시간/);
+  assert.match(login, /7일 · 신뢰하는 개인 장치/);
+});
+
+test('browser admin requests resolve the HttpOnly session at the Console enforcement point', () => {
+  assert.match(backend, /async function proxyAdminControlRequest/);
+  assert.match(backend, /browserSessions\.authenticate\(req\)/);
+  assert.match(backend, /authorization = `Bearer \$\{session\.accessToken\}`/);
+  assert.match(backend, /p\.startsWith\('\/api\/admin\/'\) && p !== '\/api\/admin\/events'/);
+  assert.match(nginx, /location = \/api\/admin\/events \{[\s\S]*?\$dupa_controller_upstream/);
+  assert.match(nginx, /location \/api\/admin\/ \{[\s\S]*?\$console_backend_upstream/);
+  assert.match(httpService, /shouldReauthenticateAfterUnauthorized/);
+  assert.doesNotMatch(httpService, /void this\.auth\.reAuthenticate\(\)/);
 });
 
 test('all deployed Supabase JWT consumers use the public Auth issuer', () => {

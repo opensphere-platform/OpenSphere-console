@@ -277,6 +277,22 @@ export class AuthService {
     this.loginRequired.set(true);
   }
 
+  async shouldReauthenticateAfterUnauthorized(): Promise<boolean> {
+    try {
+      await this.refreshAuthorization();
+      this.loginRequired.set(false);
+      return false;
+    } catch (error) {
+      // A 401 from the identity authority is the only authoritative proof that
+      // the opaque browser session ended. A downstream service 401 or a
+      // temporary identity outage must not erase a still-valid login.
+      if (this.statusOf(error) !== 401) return false;
+      this.clearIdentity();
+      this.loginRequired.set(true);
+      return true;
+    }
+  }
+
   async logout(): Promise<void> {
     await this.api('/api/identity/session', { method: 'DELETE' }).catch(() => undefined);
     this.clearIdentity();

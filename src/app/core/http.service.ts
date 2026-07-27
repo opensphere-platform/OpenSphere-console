@@ -36,16 +36,11 @@ export class HttpService {
     try {
       const response = await fetch(target, { ...init, headers, signal: controller.signal });
       if (response.ok) this.auth.touchSession();
-      // A freshly reinstalled Console can rotate its Supabase signing key. A token from
-      // the previous installation can still be locally unexpired while every
-      // server correctly rejects it. HTTP 401 is therefore authoritative: do
-      // not gate reauthentication on the client-side exp claim.
-      // UX stability: calling reAuthenticate() on every 401 causes permission errors
-      // to look like logout. Keep token state and only force interactive
-      // re-login when the local token is actually expired.
+      // A downstream 401 is not proof that the browser session ended. Confirm
+      // the opaque cookie with the identity authority before showing login;
+      // service routing or permission failures must not erase a valid session.
       if (response.status === 401 && this.auth.subject()) {
-        this.reauthRequired.set(true);
-        void this.auth.reAuthenticate();
+        this.reauthRequired.set(await this.auth.shouldReauthenticateAfterUnauthorized());
       }
       if (response.status === 428 && this.auth.subject()) {
         this.auth.requestStepUp();

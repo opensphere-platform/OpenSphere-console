@@ -1,77 +1,50 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { ClarityModule } from '@clr/angular';
 import { AuthService, SessionDuration } from '../core/auth.service';
 
 @Component({
   selector: 'os-login',
-  imports: [FormsModule, ClarityModule],
+  imports: [FormsModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <main>
-      <section aria-labelledby="login-title">
-        <header>
-          <p class="eyebrow">OPENSPHERE CONSOLE</p>
-          <h1 id="login-title">{{ auth.mfaRequired() ? '추가 인증' : '로그인' }}</h1>
-          <p>{{ auth.mfaRequired() ? '인증 앱의 현재 6자리 코드를 입력하세요.' : 'Console 운영자 계정으로 로그인하세요.' }}</p>
-        </header>
-      @if (error()) {
-        <clr-alert [clrAlertType]="'danger'" [clrAlertClosable]="false">
-          <clr-alert-item><span class="alert-text">{{ error() }}</span></clr-alert-item>
-        </clr-alert>
-      }
+    <main><section aria-labelledby="login-title">
+      <p class="eyebrow">OPENSPHERE CONSOLE</p>
+      <h1 id="login-title">{{ auth.mfaRequired() ? '추가 인증' : '로그인' }}</h1>
+      <p>{{ auth.mfaRequired() ? '인증 앱의 현재 6자리 코드를 입력하세요.' : 'Console 운영자 계정으로 로그인하세요.' }}</p>
+      @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
       @if (!auth.mfaRequired()) {
-        <form clrForm clrLayout="vertical" (ngSubmit)="submit()">
-          <clr-input-container>
-            <label>이메일</label>
-            <input clrInput name="email" type="email" [(ngModel)]="email" autocomplete="username" required>
-          </clr-input-container>
-          <clr-password-container>
-            <label>비밀번호</label>
-            <input clrPassword name="password" type="password" [(ngModel)]="password" autocomplete="current-password" required>
-          </clr-password-container>
-          <clr-select-container>
-            <label>로그인 유지 기간</label>
-            <select clrSelect name="session-duration" [(ngModel)]="duration">
+        <form (ngSubmit)="submit()">
+          <label>이메일
+            <input name="email" type="email" [(ngModel)]="email" autocomplete="username" required>
+          </label>
+          <label>비밀번호
+            <input name="password" type="password" [(ngModel)]="password" autocomplete="current-password" required>
+          </label>
+          <label>세션 유지 시간
+            <select name="session-duration" [(ngModel)]="duration">
               <option value="browser">브라우저를 닫을 때까지</option>
               <option value="8h">8시간</option>
               <option value="24h">24시간</option>
               <option value="7d">7일 · 신뢰하는 개인 장치</option>
             </select>
-            <clr-control-helper>{{ durationHelp() }}</clr-control-helper>
-          </clr-select-container>
-          <p class="security-note">30분 동안 활동이 없으면 선택한 유지 기간과 관계없이 다시 로그인해야 합니다.</p>
-          <button class="btn btn-primary submit" type="submit" [disabled]="working()">{{ working() ? '로그인 중…' : '로그인' }}</button>
+            <small>{{ durationHelp() }}</small>
+          </label>
+          <p class="security-note">30분 동안 활동이 없으면 선택한 시간과 관계없이 다시 로그인해야 합니다.</p>
+          <button type="submit" [disabled]="working()">{{ working() ? '로그인 중…' : '로그인' }}</button>
         </form>
       } @else {
-        <form clrForm clrLayout="vertical" (ngSubmit)="submitMfa()">
-          <clr-input-container>
-            <label>인증 코드</label>
-            <input clrInput name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" [(ngModel)]="totp" required autofocus>
-          </clr-input-container>
-          <button class="btn btn-primary submit" type="submit" [disabled]="working() || totp.length !== 6">{{ working() ? '확인 중…' : '확인' }}</button>
-          <button class="btn btn-outline submit" type="button" (click)="cancelMfa()" [disabled]="working()">다른 계정으로 로그인</button>
+        <form (ngSubmit)="submitMfa()">
+          <label>인증 코드
+            <input name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" [(ngModel)]="totp" required autofocus>
+          </label>
+          <button type="submit" [disabled]="working() || totp.length !== 6">{{ working() ? '확인 중…' : '확인' }}</button>
+          <button class="secondary" type="button" (click)="cancelMfa()" [disabled]="working()">다른 계정으로 로그인</button>
         </form>
       }
-    </section>
-    </main>
+    </section></main>
   `,
-  styles: [`
-    :host{display:block;min-height:100vh;background:var(--os-surface-1);font-family:var(--os-font)}
-    main{min-height:100vh;display:grid;place-items:center;padding:var(--os-6)}
-    section{inline-size:min(28rem,100%);padding:var(--os-7);background:var(--os-canvas);border:1px solid var(--os-hairline)}
-    header{margin-block-end:var(--os-5)}
-    h1{margin:var(--os-2) 0 var(--os-3);font-size:1.75rem;line-height:1.25}
-    header>p:last-child{margin:0;color:var(--os-ink-muted)}
-    .eyebrow{margin:0;color:var(--os-accent);font-size:.75rem;font-weight:700;letter-spacing:.08em}
-    form{margin-block-start:var(--os-5)}
-    clr-input-container,clr-password-container,clr-select-container{inline-size:100%}
-    .security-note{margin:var(--os-5) 0 0;color:var(--os-ink-muted);font-size:.875rem;line-height:1.5}
-    .submit{inline-size:100%;margin:var(--os-4) 0 0}
-    clr-alert{display:block;margin-block-end:var(--os-5)}
-    @media (max-width:32rem){main{padding:var(--os-4)}section{padding:var(--os-6)}}
-  `],
+  styles: [`main{min-height:100vh;display:grid;place-items:center;background:#f4f6fa;font-family:system-ui,sans-serif}section{width:min(26rem,calc(100vw - 3rem));padding:2.5rem;background:#fff;border:1px solid #d9e0ea;border-radius:.6rem;box-shadow:0 1rem 3rem #18243c14}h1{margin:.2rem 0 1rem}.eyebrow{color:#2468d4;font-size:.75rem;font-weight:700;letter-spacing:.08em}label{display:grid;gap:.4rem;margin:1rem 0;font-size:.9rem}input,select{box-sizing:border-box;width:100%;padding:.7rem;border:1px solid #aeb9c8;border-radius:.25rem;background:#fff;color:#172033;font:inherit}select{cursor:pointer}small,.security-note{color:#5f6b7a;font-size:.78rem;line-height:1.45}.security-note{margin:.25rem 0 0}button{margin-top:.75rem;width:100%;padding:.75rem;background:#0f62fe;color:#fff;border:0;border-radius:.25rem;font:inherit;cursor:pointer}.secondary{background:transparent;color:#315b8a;border:1px solid #aeb9c8}.error{padding:.75rem;color:#a2191f;background:#fff1f1;border:1px solid #f0b8b8}`],
 })
 export class LoginPage {
   readonly auth = inject(AuthService);

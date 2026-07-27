@@ -1903,6 +1903,55 @@ async function readBody(req) {
   try { return JSON.parse(s); } catch { throw { code: 400, msg: 'invalid json body' }; }
 }
 
+async function proxyAdminControlRequest(req, res, url) {
+  let authorization = String(req.headers.authorization || '');
+  if (authorization) {
+    // CLI/PAT requests retain their bearer credential, but are verified at the
+    // Console enforcement point before the request reaches DUPA.
+    await verifyAuthed(req);
+  } else {
+    // Browser credentials never return to JavaScript. Resolve the opaque
+    // HttpOnly cookie server-side and forward only the short-lived Supabase
+    // access token. authenticate(req) also enforces Origin + CSRF on mutations.
+    if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+    const session = await browserSessions.authenticate(req);
+    authorization = `Bearer ${session.accessToken}`;
+  }
+
+  const method = String(req.method || 'GET').toUpperCase();
+  const hasBody = !['GET', 'HEAD'].includes(method);
+  const body = hasBody ? await readRawBody(req) : undefined;
+  const headers = {
+    authorization,
+    accept: String(req.headers.accept || 'application/json'),
+    'x-os-correlation-id': String(req.headers['x-os-correlation-id'] || newOpId()),
+  };
+  if (req.headers['content-type']) headers['content-type'] = String(req.headers['content-type']);
+  if (req.headers['x-os-idempotency-key']) headers['x-os-idempotency-key'] = String(req.headers['x-os-idempotency-key']);
+
+  let response;
+  try {
+    response = await fetch(`${DUPA_CONTROL_URL}${url.pathname}${url.search}`, {
+      method,
+      headers,
+      body: hasBody && body.length ? body : undefined,
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw { code: 503, msg: 'DUPA control service unavailable' };
+  }
+
+  const payload = Buffer.from(await response.arrayBuffer());
+  const responseHeaders = {};
+  for (const name of ['content-type', 'cache-control', 'content-disposition', 'etag', 'retry-after', 'x-os-correlation-id']) {
+    const value = response.headers.get(name);
+    if (value) responseHeaders[name] = value;
+  }
+  res.writeHead(response.status, responseHeaders);
+  if (method === 'HEAD') return res.end();
+  return res.end(payload);
+}
+
 function json(res, code, obj, headers = {}) {
   res.writeHead(code, { 'content-type': 'application/json', ...headers });
   res.end(JSON.stringify(obj));
@@ -2800,6 +2849,13 @@ const server = http.createServer(async (req, res) => {
     if (p === '/metrics') {
       res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
       return res.end(metricsText());
+    }
+    if (p.startsWith('/api/admin/') && p !== '/api/admin/events') {
+      try {
+        return await proxyAdminControlRequest(req, res, url);
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Console admin control request failed' });
+      }
     }
     if (p === '/api/identity/bootstrap/status' && req.method === 'GET') {
       return json(res, 200, await bootstrapStatus());
