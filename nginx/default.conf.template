@@ -1,7 +1,8 @@
 # OpenSphere Console nginx — 셸이 유일한 관문(dynamic-ui §11):
 # 브라우저는 엔진(rhdh-self)이나 기능 컨테이너를 직접 호출하지 않는다.
-# 브라우저 토큰은 같은 origin의 Host API가 Authorization 헤더로 전달하며,
-# 신뢰 가능한 identity 헤더는 각 백엔드가 검증된 토큰으로부터 다시 구성한다.
+# 브라우저는 HttpOnly opaque session만 보유한다. 같은 origin의 Host API가
+# 내부 auth_request에서 세션을 검증한 뒤 short-lived bearer만 workload에 전달하며,
+# 신뢰 가능한 identity는 각 백엔드가 그 검증된 bearer로부터 다시 구성한다.
 
 # WebSocket 업그레이드용(흡수앱의 exec/터미널·로그 스트리밍·watch). conf.d는 http{} 내부 →
 # map은 여기(server 밖)에 둔다. Upgrade 헤더 있을 때만 Connection: upgrade(일반 API는 영향 없음).
@@ -307,7 +308,10 @@ server {
     #   (controller 장애 시 fail-closed: 플러그인 프록시 일시 차단 — 가용성보다 경계 우선.)
     location ~ ^/api/plugins/([a-z0-9-]+)/(.*)$ {
         set $plugin_id $1;
+        set $plugin_original_method $request_method;
+        set $plugin_original_uri $request_uri;
         auth_request /_plugin_authz;
+        auth_request_set $plugin_authorization $upstream_http_x_os_plugin_authorization;
         resolver 10.96.0.10 valid=10s;
         set $plugin_upstream $1.${OS_PLUGIN_NAMESPACE}.svc.cluster.local;
         proxy_pass http://$plugin_upstream:8080/$2$is_args$args;
@@ -324,20 +328,34 @@ server {
         proxy_set_header X-OpenSphere-Groups "";
         proxy_set_header X-OpenSphere-Actor "";
         proxy_set_header X-OS-Id-Token "";
-        proxy_set_header Authorization $http_authorization;
+        # Plugin workload는 opaque Console session cookie를 절대 보지 않는다.
+        # 내부 auth_request가 검증·교환한 short-lived bearer만 수신한다.
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization $plugin_authorization;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
 
-    # P0-2 allowlist 검사 서브리퀘스트(내부 전용). controller가 plugin id 등록 여부로 204/403 반환.
+    # P0-2 + browser-session mediation(내부 전용).
+    # Console Backend가 Package/Registration allowlist와 사용자 세션/CSRF를 함께 검증하고
+    # short-lived bearer를 응답 헤더로 돌려준다. 이 응답은 auth_request 변수로만 소비되며
+    # 브라우저 JavaScript나 plugin workload에는 opaque session cookie가 전달되지 않는다.
     location = /_plugin_authz {
         internal;
-        set $dupa_authz_upstream opensphere-console-dupa-controller.opensphere-console.svc.cluster.local;
-        proxy_pass http://$dupa_authz_upstream:8080/api/internal/proxy-authz;
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080/api/internal/plugin-proxy-authz;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Plugin-Id $plugin_id;
+        proxy_set_header X-OS-Internal-Authz-Subrequest "plugin-proxy-v1";
+        proxy_set_header X-OS-Original-Method $plugin_original_method;
+        proxy_set_header X-OS-Original-URI $plugin_original_uri;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header X-OS-CSRF-Token $http_x_os_csrf_token;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
     # 해시드 자산(main-<hash>.js 등)은 내용 불변 → 장기 immutable 캐시

@@ -10,6 +10,7 @@ const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
 const { normalizedEvent } = require('../notification-dispatcher/contract');
 const { createBrowserSessionManager } = require('./browser-session');
+const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 
 const MAX_BODY = 256 * 1024; // prevent unbounded in-memory request buffering
@@ -1952,6 +1953,25 @@ async function proxyAdminControlRequest(req, res, url) {
   return res.end(payload);
 }
 
+async function pluginProxyReleaseAllowed(pluginId, correlationId) {
+  let response;
+  try {
+    response = await fetch(`${DUPA_CONTROL_URL}/api/internal/proxy-authz`, {
+      method: 'GET',
+      headers: {
+        'x-plugin-id': pluginId,
+        'x-os-correlation-id': correlationId || newOpId(),
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    throw { code: 503, msg: 'extension release authorization service unavailable' };
+  }
+  if (response.status === 204) return true;
+  if (response.status === 403) return false;
+  throw { code: 503, msg: `extension release authorization failed (HTTP ${response.status})` };
+}
+
 function json(res, code, obj, headers = {}) {
   res.writeHead(code, { 'content-type': 'application/json', ...headers });
   res.end(JSON.stringify(obj));
@@ -2849,6 +2869,27 @@ const server = http.createServer(async (req, res) => {
     if (p === '/metrics') {
       res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
       return res.end(metricsText());
+    }
+    if (p === '/api/internal/plugin-proxy-authz' && req.method === 'GET') {
+      try {
+        const result = await authorizePluginProxyRequest(req, {
+          allowPlugin: (pluginId) => pluginProxyReleaseAllowed(pluginId, req.headers['x-os-correlation-id']),
+          authenticateBrowser: (forwarded) => {
+            if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+            return browserSessions.authenticate(forwarded);
+          },
+          verifyBearer: (forwarded) => verifyAuthed(forwarded),
+        });
+        res.writeHead(204, {
+          'cache-control': 'no-store',
+          'x-os-plugin-authorization': result.authorization,
+        });
+        return res.end();
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'plugin proxy authorization failed' }, {
+          'cache-control': 'no-store',
+        });
+      }
     }
     if (p.startsWith('/api/admin/') && p !== '/api/admin/events') {
       try {
