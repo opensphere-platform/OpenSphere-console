@@ -168,18 +168,18 @@ const LOGOS = {
             <small>사용자가 도달 가능한 기반 서비스</small>
           </div>
           <div>
-            <span>정상 운영 Gate</span>
+            <span>현재 서비스 정상</span>
             <strong>{{ healthyCount() }}/{{ services().length }}</strong>
-            <small>권위·연결·신선도 모두 충족</small>
+            <small>권위 API와 현재 연결 상태</small>
           </div>
           <div>
-            <span>주의 또는 수집 지연</span>
-            <strong [class.warn]="attentionCount() > 0">{{ attentionCount() }}</strong>
-            <small>Degraded · Stale</small>
+            <span>운영 Gate 주의</span>
+            <strong [class.warn]="operationalAttentionCount() > 0">{{ operationalAttentionCount() }}</strong>
+            <small>복구·공급망·신선도</small>
           </div>
           <div>
             <span>사용 불가·미구성</span>
-            <strong [class.danger]="unavailableCount() > 0">{{ unavailableCount() }}</strong>
+            <strong [class.danger]="blockedCount() > 0">{{ blockedCount() }}</strong>
             <small>운영자가 조치할 항목</small>
           </div>
         </section>
@@ -310,18 +310,6 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
   readonly availableCount = computed(() => this.services().filter((item) =>
     item.state !== 'Unavailable' && item.state !== 'NotConfigured').length);
   readonly healthyCount = computed(() => this.services().filter((item) => item.state === 'Healthy').length);
-  readonly attentionCount = computed(() => this.services().filter((item) =>
-    item.state === 'Degraded' || item.state === 'Stale').length);
-  readonly unavailableCount = computed(() => this.services().filter((item) =>
-    item.state === 'Unavailable' || item.state === 'NotConfigured').length);
-  readonly overallState = computed<FoundationState>(() => {
-    const states = this.services().map((item) => item.state);
-    if (states.includes('Unavailable')) return 'Unavailable';
-    if (states.includes('NotConfigured')) return 'NotConfigured';
-    if (states.includes('Degraded')) return 'Degraded';
-    if (states.includes('Stale')) return 'Stale';
-    return states.length ? 'Healthy' : 'Unavailable';
-  });
   readonly gates = computed(() => {
     const current = this.snapshot();
     const supabase = current?.supabase.value;
@@ -358,6 +346,18 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
           : monitoring?.reasons?.join(' · ') || '노드 시계열의 최신 근거를 확인할 수 없습니다.',
       },
     ];
+  });
+  readonly operationalAttentionCount = computed(() => this.gates().filter((item) =>
+    item.state === 'Degraded' || item.state === 'Stale').length);
+  readonly blockedCount = computed(() => [...this.services(), ...this.gates()].filter((item) =>
+    item.state === 'Unavailable' || item.state === 'NotConfigured').length);
+  readonly overallState = computed<FoundationState>(() => {
+    const states = [...this.services(), ...this.gates()].map((item) => item.state);
+    if (states.includes('Unavailable')) return 'Unavailable';
+    if (states.includes('NotConfigured')) return 'NotConfigured';
+    if (states.includes('Degraded')) return 'Degraded';
+    if (states.includes('Stale')) return 'Stale';
+    return states.length ? 'Healthy' : 'Unavailable';
   });
 
   async ngOnInit(): Promise<void> {

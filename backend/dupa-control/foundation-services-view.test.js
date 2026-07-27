@@ -26,6 +26,9 @@ test('Console foundation services keep role-oriented scope and CC compatibility 
   assert.match(page, /현재 가용성과 장기 운영 준비도를 분리/);
   assert.match(page, /수집되지 않은 값은 0이 아닌 미구성/);
   assert.match(page, /공통 운영 Gate/);
+  assert.match(page, /현재 서비스 정상/);
+  assert.match(page, /운영 Gate 주의/);
+  assert.match(page, /\[\.\.\.this\.services\(\), \.\.\.this\.gates\(\)\]/);
   assert.match(page, /데이터 출처 계약/);
   assert.match(page, /제품 이름보다 서비스 역할을 우선/);
   assert.match(page, /route: '\/manage\/data-identity'/);
