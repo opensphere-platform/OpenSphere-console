@@ -142,11 +142,11 @@ CREATE POLICY console_backend_infrastructure_node_binding ON console.infrastruct
   USING (true)
   WITH CHECK (true);
 
-INSERT INTO console.permission(code, description)
+INSERT INTO console.permission(code, risk_level)
 VALUES
-  ('console.infrastructure.read', 'Read baseline node and Kubernetes observations'),
-  ('console.infrastructure.manage', 'Manage baseline infrastructure observation settings')
-ON CONFLICT (code) DO UPDATE SET description = EXCLUDED.description;
+  ('console.infrastructure.read', 'medium'),
+  ('console.infrastructure.manage', 'high')
+ON CONFLICT (code) DO UPDATE SET risk_level = EXCLUDED.risk_level;
 
 INSERT INTO console.role_permission(role_id, permission_id)
 SELECT r.id, p.id
