@@ -198,11 +198,25 @@ interface ChartView {
                   <div><h2>노드 OS 관측</h2><p class="os-sub">Agent가 보고한 현재 사용률과 Kubernetes Node 결합 상태입니다.</p></div>
                 </div>
                 <div class="grid-scroll" tabindex="0" aria-label="노드 OS 관측 표">
-                  <clr-datagrid>
-                    <clr-dg-column>노드</clr-dg-column><clr-dg-column>연결</clr-dg-column><clr-dg-column>CPU</clr-dg-column><clr-dg-column>메모리</clr-dg-column><clr-dg-column>디스크</clr-dg-column><clr-dg-column>Kubernetes</clr-dg-column><clr-dg-column>관측 시각</clr-dg-column><clr-dg-column>추세</clr-dg-column>
+                  <clr-datagrid clrDetailExpandableAriaLabel="노드 메트릭 상세">
+                    <clr-dg-column>노드</clr-dg-column><clr-dg-column>연결</clr-dg-column><clr-dg-column>CPU</clr-dg-column><clr-dg-column>메모리</clr-dg-column><clr-dg-column>디스크</clr-dg-column><clr-dg-column>Kubernetes</clr-dg-column><clr-dg-column>관측 시각</clr-dg-column>
                     @for (node of nodes()?.items || []; track node.id) {
-                      <clr-dg-row [class.selected-row]="selectedNode()?.id === node.id">
-                        <clr-dg-cell><strong>{{ node.name }}</strong><div class="node-meta">{{ node.os || 'OS 정보 없음' }} · Agent {{ node.agentVersion || '—' }}</div></clr-dg-cell>
+                      <clr-dg-row
+                        [clrDgItem]="node"
+                        [clrDgExpanded]="selectedNode()?.id === node.id"
+                        [clrDgDetailOpenLabel]="node.name + ' 메트릭 펼치기'"
+                        [clrDgDetailCloseLabel]="node.name + ' 메트릭 접기'"
+                        (clrDgExpandedChange)="setNodeExpanded(node, $event)"
+                      >
+                        <clr-dg-cell>
+                          <button
+                            type="button"
+                            class="node-trigger"
+                            [attr.aria-expanded]="selectedNode()?.id === node.id"
+                            (click)="toggleNode(node)"
+                          >{{ node.name }}</button>
+                          <div class="node-meta">{{ node.os || 'OS 정보 없음' }} · Agent {{ node.agentVersion || '—' }}</div>
+                        </clr-dg-cell>
                         <clr-dg-cell><span class="label" [class.label-success]="node.status === 'up'" [class.label-danger]="node.status === 'down'">{{ statusLabel(node.status) }}</span></clr-dg-cell>
                         <clr-dg-cell>{{ percent(node.cpuPercent) }}</clr-dg-cell>
                         <clr-dg-cell>{{ percent(node.memoryPercent) }}</clr-dg-cell>
@@ -219,44 +233,45 @@ interface ChartView {
                           }
                         </clr-dg-cell>
                         <clr-dg-cell>{{ fmt(node.observedAt) }}</clr-dg-cell>
-                        <clr-dg-cell><button class="btn btn-sm btn-link" (click)="selectNode(node)">보기</button></clr-dg-cell>
+                        <clr-dg-row-detail *clrIfExpanded>
+                          <section class="node-detail" [attr.aria-label]="node.name + ' 메트릭 상세'">
+                            <div class="section-heading detail-heading">
+                              <div>
+                                <h2>{{ node.name }} 메트릭</h2>
+                                <p class="os-sub">Beszel 계층형 보존값 · {{ series()?.resolution || '조회 중' }} 해상도</p>
+                              </div>
+                              <clr-select-container class="range-select">
+                                <label>조회 기간</label>
+                                <select clrSelect [(ngModel)]="range" (change)="loadSeries()">
+                                  <option value="1h">최근 1시간</option><option value="12h">최근 12시간</option><option value="24h">최근 24시간</option><option value="7d">최근 7일</option><option value="30d">최근 30일</option>
+                                </select>
+                              </clr-select-container>
+                            </div>
+                            @if (seriesLoading()) {
+                              <div class="loading-block"><span class="spinner spinner-md"></span><span>{{ node.name }} 시계열을 불러오는 중입니다.</span></div>
+                            } @else if (seriesError()) {
+                              <clr-alert clrAlertType="danger" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">{{ seriesError() }}</span></clr-alert-item></clr-alert>
+                            } @else if (series(); as chart) {
+                              <div class="chart-grid">
+                                @for (view of charts(); track view.id) {
+                                  <article class="chart-panel">
+                                    <div class="chart-heading">
+                                      <div><h3>{{ view.title }}</h3><p>{{ view.description }}</p></div>
+                                      <span>IBM Carbon Charts</span>
+                                    </div>
+                                    <ibm-line-chart [data]="view.data" [options]="view.options" />
+                                  </article>
+                                }
+                              </div>
+                            }
+                          </section>
+                        </clr-dg-row-detail>
                       </clr-dg-row>
                     }
                     <clr-dg-placeholder>관측 중인 노드가 없습니다. Agent bootstrap과 Hub 연결을 확인하십시오.</clr-dg-placeholder>
                     <clr-dg-footer>{{ nodes()?.items?.length || 0 }}개 노드</clr-dg-footer>
                   </clr-datagrid>
                 </div>
-
-                @if (selectedNode(); as node) {
-                  <section class="series-section" aria-labelledby="series-title">
-                    <div class="section-heading">
-                      <div><h2 id="series-title">{{ node.name }} 시계열</h2><p class="os-sub">Beszel 계층형 보존값 · {{ series()?.resolution || '조회 중' }} 해상도</p></div>
-                      <clr-select-container class="range-select">
-                        <label>조회 기간</label>
-                        <select clrSelect [(ngModel)]="range" (change)="loadSeries()">
-                          <option value="1h">최근 1시간</option><option value="12h">최근 12시간</option><option value="24h">최근 24시간</option><option value="7d">최근 7일</option><option value="30d">최근 30일</option>
-                        </select>
-                      </clr-select-container>
-                    </div>
-                    @if (seriesLoading()) {
-                      <div class="loading-block"><span class="spinner spinner-md"></span><span>노드 시계열을 불러오는 중입니다.</span></div>
-                    } @else if (seriesError()) {
-                      <clr-alert clrAlertType="danger" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">{{ seriesError() }}</span></clr-alert-item></clr-alert>
-                    } @else if (series(); as chart) {
-                      <div class="chart-grid">
-                        @for (view of charts(); track view.id) {
-                          <article class="chart-panel">
-                            <div class="chart-heading">
-                              <div><h3>{{ view.title }}</h3><p>{{ view.description }}</p></div>
-                              <span>IBM Carbon Charts</span>
-                            </div>
-                            <ibm-line-chart [data]="view.data" [options]="view.options" />
-                          </article>
-                        }
-                      </div>
-                    }
-                  </section>
-                }
               </section>
             </clr-tab-content>
           </clr-tab>
@@ -368,8 +383,9 @@ interface ChartView {
     .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:0}.facts div{padding:var(--os-5);border-bottom:1px solid var(--os-hairline)}.facts dt{color:var(--os-ink-muted);font-size:.65rem}.facts dd{margin:var(--os-2) 0 0;font-size:.8rem;font-weight:600}
     .scope-list{list-style:none;margin:0;padding:0}.scope-list li{display:grid;grid-template-columns:minmax(8rem,.7fr) minmax(0,1.3fr);gap:var(--os-5);padding:var(--os-5);border-bottom:1px solid var(--os-hairline);font-size:.7rem}.scope-list span{color:var(--os-ink-muted)}
     .tab-section{padding:var(--os-5) 0 var(--os-7);min-width:0}.tab-section h2{margin:.3rem 0 .5rem;font-size:1rem}.section-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--os-5);flex-wrap:wrap}
-    .grid-scroll{max-width:100%;overflow-x:auto}.grid-scroll clr-datagrid{min-width:70rem}.node-meta{margin-top:var(--os-2);color:var(--os-ink-muted);font-size:.62rem}.selected-row{background:var(--os-accent-subtle)}
-    .series-section{margin-top:var(--os-6);padding-top:var(--os-5);border-top:1px solid var(--os-hairline)}.range-select{margin:0;min-width:10rem}
+    .grid-scroll{max-width:100%;overflow-x:auto}.grid-scroll clr-datagrid{min-width:70rem}.node-meta{margin-top:var(--os-2);color:var(--os-ink-muted);font-size:.62rem}
+    .node-trigger{appearance:none;border:0;background:transparent;padding:0;color:var(--os-accent);font:inherit;font-weight:600;text-align:left;cursor:pointer}.node-trigger:hover{text-decoration:underline}.node-trigger:focus-visible{outline:2px solid var(--os-accent);outline-offset:2px}
+    .node-detail{width:100%;min-width:0;padding:var(--os-5);background:var(--os-surface-subtle)}.detail-heading{padding-bottom:var(--os-4);border-bottom:1px solid var(--os-hairline)}.detail-heading h2{margin:0;font-size:.9rem}.range-select{margin:0;min-width:10rem}
     .chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--os-5);margin-top:var(--os-5)}.chart-panel{min-width:0;border:1px solid var(--os-hairline);background:var(--os-canvas)}.chart-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--os-4);padding:var(--os-4) var(--os-5);border-bottom:1px solid var(--os-hairline)}.chart-heading h3{margin:0;font-size:.78rem}.chart-heading p{margin:.15rem 0 0;color:var(--os-ink-muted);font-size:.62rem}.chart-heading>span{color:var(--os-accent);font-size:.56rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase}.chart-panel ibm-line-chart{display:block;min-height:15rem}.loading-block{display:flex;align-items:center;justify-content:center;gap:var(--os-4);min-height:10rem;color:var(--os-ink-muted)}
     .os-mono{font-family:var(--os-font-mono);font-size:.62rem;word-break:break-all}.separated{margin-top:var(--os-7)!important;padding-top:var(--os-5);border-top:1px solid var(--os-hairline)}.health-rail{grid-template-columns:repeat(4,minmax(0,1fr))}
     @media(max-width:70rem){.status-rail{grid-template-columns:repeat(3,minmax(0,1fr))}.status-rail>div:nth-child(3){border-inline-end:0}.overview-grid{grid-template-columns:1fr}}
@@ -391,6 +407,7 @@ export class AdminInfrastructureMonitoring implements OnInit, OnDestroy {
   readonly seriesError = signal('');
   range: Range = '24h';
   private timer: ReturnType<typeof setInterval> | null = null;
+  private seriesRequest = 0;
 
   readonly kubernetesNodes = computed(() => (this.nodes()?.items || [])
     .map((item) => item.kubernetes)
@@ -429,15 +446,42 @@ export class AdminInfrastructureMonitoring implements OnInit, OnDestroy {
   }
 
   selectTab(tab: MonitoringTab): void { this.tab.set(tab); }
-  async selectNode(node: MonitoredNode): Promise<void> { this.selectedNode.set(node); await this.loadSeries(); }
+  toggleNode(node: MonitoredNode): void {
+    this.setNodeExpanded(node, this.selectedNode()?.id !== node.id);
+  }
+
+  setNodeExpanded(node: MonitoredNode, expanded: boolean): void {
+    if (!expanded) {
+      if (this.selectedNode()?.id !== node.id) return;
+      this.seriesRequest += 1;
+      this.selectedNode.set(null);
+      this.series.set(null);
+      this.seriesError.set('');
+      this.seriesLoading.set(false);
+      return;
+    }
+    if (this.selectedNode()?.id === node.id) return;
+    this.selectedNode.set(node);
+    this.series.set(null);
+    this.seriesError.set('');
+    void this.loadSeries();
+  }
 
   async loadSeries(): Promise<void> {
     const node = this.selectedNode();
     if (!node) return;
+    const request = ++this.seriesRequest;
     this.seriesLoading.set(true); this.seriesError.set('');
-    try { this.series.set(await this.get<Series>(`/api/monitoring/baseline/v1/nodes/${encodeURIComponent(node.id)}/series?range=${this.range}`)); }
-    catch (error) { this.seriesError.set(error instanceof Error ? error.message : String(error)); }
-    finally { this.seriesLoading.set(false); }
+    try {
+      const result = await this.get<Series>(`/api/monitoring/baseline/v1/nodes/${encodeURIComponent(node.id)}/series?range=${this.range}`);
+      if (request === this.seriesRequest && this.selectedNode()?.id === node.id) this.series.set(result);
+    } catch (error) {
+      if (request === this.seriesRequest && this.selectedNode()?.id === node.id) {
+        this.seriesError.set(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (request === this.seriesRequest) this.seriesLoading.set(false);
+    }
   }
 
   monitorFor(name: string): MonitoredNode | null { return (this.nodes()?.items || []).find((item) => item.kubernetes?.name === name) || null; }

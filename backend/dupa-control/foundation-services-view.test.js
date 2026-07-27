@@ -44,6 +44,11 @@ test('Beszel detail uses Carbon Charts and preserves gaps as missing values', ()
 
   assert.match(page, /LineChartComponent/);
   assert.match(page, /<ibm-line-chart/);
+  assert.match(page, /<clr-dg-row-detail \*clrIfExpanded>/);
+  assert.match(page, /\[clrDgExpanded\]="selectedNode\(\)\?\.id === node\.id"/);
+  assert.match(page, /\(clrDgExpandedChange\)="setNodeExpanded\(node, \$event\)"/);
+  assert.doesNotMatch(page, /<clr-dg-column>추세<\/clr-dg-column>/);
+  assert.match(page, /request === this\.seriesRequest && this\.selectedNode\(\)\?\.id === node\.id/);
   assert.match(page, /ScaleTypes\.TIME/);
   assert.match(page, /ChartTheme\.WHITE/);
   assert.match(page, /IBM Carbon Charts/);
