@@ -28,6 +28,7 @@ export const SHELL_VERSION = '0.3.6';
 // 닫힌 집합 검증은 isKnownCapability().
 
 export interface PluginFailure { id: string; error: string; }
+export type PluginLoadState = 'loading' | 'ready' | 'failed';
 export const HOST_API_VERSION = '1.0.0';
 const FETCH_TIMEOUT_MS = 15000;
 
@@ -109,6 +110,11 @@ export class ExtensionHostService {
    * 잠깐 나타나는 상태를 설치 실패로 오인하지 않도록 명시적인 lifecycle을 제공한다.
    */
   readonly loadState = signal<'idle' | 'loading' | 'ready'>('idle');
+  /**
+   * 전역 Registry 적재 상태와 별도로 각 Consumer의 실제 lifecycle을 보존한다.
+   * PluginHost는 이 값을 사용해 다른 Extension의 적재를 현재 route의 상태로 오인하지 않는다.
+   */
+  readonly pluginLoadStates = signal<Record<string, PluginLoadState>>({});
   readonly pages = signal<PluginPage[]>([]);
   readonly failures = signal<PluginFailure[]>([]);
   /** 플러그인별 기여 내비 트리(nav:contribute) — pluginId → 재귀 NavNode[] */
@@ -178,6 +184,7 @@ export class ExtensionHostService {
     this.manualContributions.set({});
     this.pluginIcons.set({});
     this.apiBaseByPlugin.set({});
+    this.pluginLoadStates.set({});
     await this.load();
   }
 
@@ -204,9 +211,11 @@ export class ExtensionHostService {
     let mod: PluginModule | undefined;
     if (this.loadingIds.has(e.id)) {
       this.failures.update((f) => [...f, { id: e.id, error: 'Host Contract cycle detected' }]);
+      this.setPluginLoadState(e.id, 'failed');
       return;
     }
     this.loadingIds.add(e.id);
+    this.setPluginLoadState(e.id, 'loading');
     try {
       const hostRef = e.hostRef ?? 'main';
       const componentKind = e.componentKind ?? e.kind;
@@ -307,14 +316,24 @@ export class ExtensionHostService {
       }
       await mod.activate(context);
       this.activeModules.set(e.id, mod);
+      this.setPluginLoadState(e.id, 'ready');
       console.info(`[extension-host] plugin '${e.id}' 검증 통과(무결성·서명·호환·권한) 후 활성화`);
     } catch (err) {
       try { await mod?.deactivate?.(); } catch (cleanupError) { console.warn(`[extension-host] plugin '${e.id}' cleanup 실패:`, cleanupError); }
       console.warn(`[extension-host] plugin '${e.id}' 제외:`, err);
       this.failures.update((f) => [...f, { id: e.id, error: String(err) }]);
+      this.setPluginLoadState(e.id, 'failed');
     } finally {
       this.loadingIds.delete(e.id);
     }
+  }
+
+  pluginLoadState(pluginId: string): PluginLoadState | undefined {
+    return this.pluginLoadStates()[pluginId];
+  }
+
+  private setPluginLoadState(pluginId: string, state: PluginLoadState): void {
+    this.pluginLoadStates.update((states) => ({ ...states, [pluginId]: state }));
   }
 
 	private fingerprint(entries: RegistryEntry[], trustedKeys: Record<string, string>): string {

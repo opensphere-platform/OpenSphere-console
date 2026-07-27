@@ -32,7 +32,7 @@ test('HIS mutation is independently permissioned, AAL2-bound, and explicitly con
   assert.match(source, /configure HIS observability public=\$\{config\.grafana\.exposureMode === 'PublicIngress'\} data-reset=\$\{Boolean\(resetData\)\}/);
   assert.match(source, /owner control-plane action requires MFA assurance aal2/);
   assert.match(clusterManagerSource, /OAA_HIS_MANAGE_PERMISSION/);
-  assert.match(clusterManagerSource, /HIS OAA 변경은 AAL2 재인증/);
+  assert.match(clusterManagerSource, /HISS OAA 변경은 AAL2 재인증/);
   assert.match(clusterManagerSource, /configurationPlan\.requiresDataReset !== body\.resetData/);
 });
 

@@ -46,13 +46,20 @@ import { ExtensionHostService } from '../core/extension-host.service';
       }
       <div #host [style.display]="runtimeError() ? 'none' : 'block'"></div>
     } @else if (loading()) {
-      <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false">
-        <clr-alert-item>
-          <span class="alert-text">
-            플러그인 '{{ id() }}'의 서명·권한·호환성을 확인하고 실행 모듈을 적재하고 있습니다.
-          </span>
-        </clr-alert-item>
-      </clr-alert>
+      <section
+        class="plugin-loading-surface"
+        role="status"
+        [attr.aria-label]="'확장 화면을 준비하는 중'"
+      >
+        <div class="plugin-loading-heading skeleton-block"></div>
+        <div class="plugin-loading-summary skeleton-block"></div>
+        <div class="plugin-loading-cards" aria-hidden="true">
+          <div class="plugin-loading-card skeleton-block"></div>
+          <div class="plugin-loading-card skeleton-block"></div>
+          <div class="plugin-loading-card skeleton-block"></div>
+        </div>
+        <div class="plugin-loading-content skeleton-block" aria-hidden="true"></div>
+      </section>
     } @else {
       <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
         <clr-alert-item>
@@ -79,6 +86,60 @@ import { ExtensionHostService } from '../core/extension-host.service';
         min-height: calc(100% + 3rem);
       }
       .alert-actions { margin-top: 0.4rem; }
+      .plugin-loading-surface {
+        box-sizing: border-box;
+        min-height: calc(100vh - 3.5rem);
+        padding: 1.5rem;
+        overflow: hidden;
+        background: var(--cds-global-color-construction-50, #fafafa);
+      }
+      .skeleton-block {
+        position: relative;
+        overflow: hidden;
+        border-radius: 0.125rem;
+        background: var(--cds-global-color-construction-200, #e8e8e8);
+      }
+      .skeleton-block::after {
+        position: absolute;
+        inset: 0;
+        content: '';
+        transform: translateX(-100%);
+        background: linear-gradient(
+          90deg,
+          transparent,
+          color-mix(in srgb, var(--cds-global-color-construction-50, #fafafa) 75%, transparent),
+          transparent
+        );
+        animation: plugin-loading-sweep 1.2s ease-in-out infinite;
+      }
+      .plugin-loading-heading {
+        width: min(20rem, 45%);
+        height: 1.5rem;
+        margin-bottom: 0.75rem;
+      }
+      .plugin-loading-summary {
+        width: min(34rem, 72%);
+        height: 0.75rem;
+        margin-bottom: 1.5rem;
+      }
+      .plugin-loading-cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+      .plugin-loading-card { height: 8.5rem; }
+      .plugin-loading-content { min-height: 18rem; }
+      @keyframes plugin-loading-sweep {
+        100% { transform: translateX(100%); }
+      }
+      @media (max-width: 52rem) {
+        .plugin-loading-cards { grid-template-columns: 1fr; }
+        .plugin-loading-card { height: 5rem; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .skeleton-block::after { animation: none; }
+      }
     `,
   ],
 })
@@ -96,7 +157,10 @@ export class PluginHost {
   );
   readonly page = computed(() => this.ext.pages().find((p) => p.id === this.id()) ?? null);
   readonly failure = computed(() => this.ext.failures().find((f) => f.id === this.id()) ?? null);
-  readonly loading = computed(() => this.ext.loadState() === 'loading');
+  readonly loading = computed(() => {
+    const pluginState = this.ext.pluginLoadState(this.id());
+    return pluginState === 'loading' || (pluginState === undefined && this.ext.loadState() === 'loading');
+  });
   readonly runtimeError = signal<string>('');
 
   private host = viewChild<ElementRef<HTMLElement>>('host');

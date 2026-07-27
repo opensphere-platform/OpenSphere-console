@@ -16,6 +16,10 @@ test('Extension Host reports initial loading and defines child plugins before th
   assert.match(extensionHost, /readonly loadState = signal<'idle' \| 'loading' \| 'ready'>\('idle'\)/);
   assert.match(extensionHost, /this\.loadState\.set\('loading'\)/);
   assert.match(extensionHost, /finally \{\s*this\.loadState\.set\('ready'\)/);
+  assert.match(extensionHost, /readonly pluginLoadStates = signal<Record<string, PluginLoadState>>\(\{\}\)/);
+  assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'loading'\)/);
+  assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'ready'\)/);
+  assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'failed'\)/);
 
   const childLoad = extensionHost.indexOf("if (manifest.kind === 'subShell')");
   const parentActivate = extensionHost.indexOf('await mod.activate(context)', childLoad);
@@ -23,5 +27,11 @@ test('Extension Host reports initial loading and defines child plugins before th
   assert.ok(parentActivate > childLoad, 'children must load before the parent registers its page');
 
   assert.match(pluginHost, /@else if \(loading\(\)\)/);
-  assert.match(pluginHost, /this\.ext\.loadState\(\) === 'loading'/);
+  assert.match(pluginHost, /this\.ext\.pluginLoadState\(this\.id\(\)\)/);
+  assert.match(pluginHost, /class="plugin-loading-surface"/);
+  assert.doesNotMatch(
+    pluginHost,
+    /서명·권한·호환성을 확인하고 실행 모듈을 적재하고 있습니다/,
+    'normal Extension loading must not be rendered as a top-level alert message',
+  );
 });

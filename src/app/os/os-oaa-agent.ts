@@ -82,7 +82,8 @@ interface OaaSession {
  * os-oaa-agent — Console-native global OAA(OpenSphere AI Agent) 우측 도크 패널.
  * 헤더에서 토글되는 셸 소유 컴포넌트다(route/plugin/subShell/Registry 항목이 아님).
  * 안전 렌더링만 사용(텍스트 바인딩, innerHTML 없음) — 답변·출처·개념 메타데이터는 항상 문자열로 표시한다.
- * 동일 출처 `/api/oaa/chat`만 호출하며, 인증은 AuthService의 id_token(Bearer)로 처리한다.
+ * 동일 출처 `/api/oaa/chat`만 HttpService로 호출하며, 인증은 Console Backend의 불투명
+ * HttpOnly 세션과 CSRF 정책을 따른다. 브라우저 JavaScript가 bearer token을 직접 조립하지 않는다.
  * API 키는 이 컴포넌트에 저장·표시되지 않는다(키 관리는 /manage 백본 관리 화면의 서버측 책임).
  * 제안 행동(suggestedActions)은 입력창에 명령을 채워 넣을 뿐 — Kubernetes를 직접 변경하는 우회 경로가 아니다.
  * 실제 비-read 실행은 게이트웨이(서버) 단계에서 확인/감사 후에만 이루어지며, Cluster Manager Activated +
@@ -676,8 +677,8 @@ export class OsOaaAgent implements OnDestroy {
     this.busy.set(false);
   }
 
-  /** 유일한 네트워크 호출 지점 — 동일 출처 /api/oaa/chat, AuthService의 id_token을 Bearer로 첨부.
-   *  API 키는 여기서 절대 다루지 않는다(게이트웨이가 서버측에서 보관·주입). */
+  /** 유일한 네트워크 호출 지점 — 동일 출처 /api/oaa/chat을 공통 HttpService로 호출한다.
+   *  API 키와 bearer token은 여기서 절대 다루지 않는다(서버측 세션·게이트웨이 경계가 소유). */
   async send(ev?: Event): Promise<void> {
     ev?.preventDefault();
     const text = this.draft.trim();

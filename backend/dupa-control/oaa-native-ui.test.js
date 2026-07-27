@@ -6,7 +6,7 @@ const path = require('node:path');
 // Focused static contract: the OAA (OpenSphere AI Agent) global chat panel is a Console-native
 // shell surface — not a route, plugin, subShell, or Registry entry. It is toggled from the
 // header alongside Manual and notifications, calls only the same-origin /api/oaa/chat endpoint
-// using the AuthService bearer token already used elsewhere in the shell, never stores/displays
+// through the shared HttpService opaque-session/CSRF policy, never stores/displays
 // API key material, renders answer/source/concept text safely (no innerHTML), and never offers a
 // direct UI path to execute Kubernetes mutations (suggested actions are proposals only).
 
@@ -40,19 +40,21 @@ test('os-shell.ts wires os-oaa-agent into the header next to Manual and notifica
   assert.doesNotMatch(navNodeBlock, /os-oaa-agent/);
 });
 
-test('os-oaa-agent.ts calls only the same-origin /api/oaa/chat endpoint with the shared AuthService bearer token', () => {
+test('os-oaa-agent.ts calls only the same-origin /api/oaa/chat endpoint through the shared HttpService session policy', () => {
   const agent = read('src', 'app', 'os', 'os-oaa-agent.ts');
-  const auth = read('src', 'app', 'core', 'auth.service.ts');
+  const http = read('src', 'app', 'core', 'http.service.ts');
 
-  assert.match(agent, /import\s*\{\s*AuthService\s*\}\s*from\s*'\.\.\/core\/auth\.service'/);
-  assert.match(agent, /private auth = inject\(AuthService\)/);
-  assert.match(agent, /fetch\('\/api\/oaa\/chat',/);
-  assert.match(agent, /authorization:\s*'Bearer '\s*\+\s*\(this\.auth\.token\(\)\s*\|\|\s*''\)/);
-  // Only one fetch()/network call site in the whole component — the chat endpoint.
+  assert.match(agent, /import\s*\{\s*HttpService\s*\}\s*from\s*'\.\.\/core\/http\.service'/);
+  assert.match(agent, /private http = inject\(HttpService\)/);
+  assert.match(agent, /this\.http\.request\('\/api\/oaa\/chat',/);
+  assert.doesNotMatch(agent, /authorization:\s*['"`]Bearer/i);
+  // The component owns no raw fetch call; the shared policy is the only network boundary.
   const fetchCalls = agent.match(/fetch\(/g) || [];
-  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls.length, 0);
   assert.doesNotMatch(agent, /https?:\/\//);
-  assert.match(auth, /token\(\):\s*string/);
+  assert.match(http, /private sameOrigin\(input: RequestInfo \| URL\)/);
+  assert.match(http, /headers\.delete\('Authorization'\)/);
+  assert.match(http, /X-OS-CSRF-Token/);
 });
 
 test('os-oaa-agent.ts never stores or displays raw API key material', () => {
