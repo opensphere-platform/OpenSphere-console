@@ -123,6 +123,20 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    # Console-owned baseline observation APIs. Beszel credentials and its
+    # PocketBase endpoint stay server-side; browsers receive only the
+    # permission-checked, normalized read model from Console Backend.
+    location /api/monitoring/baseline/ {
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
     # Outbound notification channel administration. Keep this same-origin so
     # the Console Backend can verify the Supabase bearer token and enforce the
     # MFA/admin boundary; the Shell never calls the Dispatcher directly.

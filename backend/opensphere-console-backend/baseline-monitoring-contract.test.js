@@ -47,3 +47,12 @@ test('node correlation persists Kubernetes UID and Beszel machine fingerprint as
   assert.match(adapter, /bindingStore\.ensure/);
   assert.match(adapter, /identity = evidence\?\.state === 'verified' \? 'verified' : 'rejected'/);
 });
+
+test('Console nginx routes baseline monitoring reads to the authenticated Backend boundary', () => {
+  const nginx = read('nginx/default.conf.template');
+  assert.match(nginx, /location \/api\/monitoring\/baseline\/ \{/);
+  assert.match(
+    nginx,
+    /location \/api\/monitoring\/baseline\/ \{[\s\S]*proxy_pass http:\/\/\$console_backend_upstream:8080\$request_uri/,
+  );
+});

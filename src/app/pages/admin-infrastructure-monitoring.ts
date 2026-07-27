@@ -436,6 +436,10 @@ export class AdminInfrastructureMonitoring implements OnInit, OnDestroy {
 
   private async get<T>(url: string): Promise<T> {
     const response = await this.http.request(url, { cache: 'no-store' });
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('application/json')) {
+      throw new Error(`Infrastructure Monitoring API가 JSON 대신 ${contentType || '알 수 없는 형식'}을 반환했습니다.`);
+    }
     const body = await response.json().catch(() => ({})) as T & { error?: string };
     if (!response.ok) throw new Error(body.error || `Infrastructure Monitoring HTTP ${response.status}`);
     return body;
