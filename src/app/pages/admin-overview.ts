@@ -32,10 +32,10 @@ interface OverviewSection {
       <div class="overview-sections">
         @for (section of sections; track section.label) {
           <section class="overview-section" [attr.aria-labelledby]="'manage-' + $index">
-            <header>
+            <div class="overview-section-heading">
               <h2 [id]="'manage-' + $index">{{ section.label }}</h2>
               <p>{{ section.description }}</p>
-            </header>
+            </div>
             <ul>
               @for (item of section.links; track item.route) {
                 <li>
@@ -80,7 +80,7 @@ interface OverviewSection {
         border-right: 1px solid var(--os-hairline);
         border-bottom: 1px solid var(--os-hairline);
       }
-      .overview-section header {
+      .overview-section-heading {
         min-height: 4rem;
       }
       .overview-section h2,
@@ -90,7 +90,7 @@ interface OverviewSection {
         font-size: 1rem;
         font-weight: 600;
       }
-      .overview-section header p,
+      .overview-section-heading p,
       .extension-entry p {
         margin: 0.3rem 0 0;
         color: var(--os-ink-muted);
