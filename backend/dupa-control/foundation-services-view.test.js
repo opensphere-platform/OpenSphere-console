@@ -51,7 +51,7 @@ test('Beszel detail uses Carbon Charts and preserves gaps as missing values', ()
   assert.match(page, /request === this\.seriesRequest && this\.selectedNode\(\)\?\.id === node\.id/);
   assert.match(page, /ScaleTypes\.TIME/);
   assert.match(page, /ChartTheme\.WHITE/);
-  assert.match(page, /IBM Carbon Charts/);
+  assert.doesNotMatch(page, /IBM Carbon Charts/);
   assert.match(page, /Network throughput/);
   assert.match(page, /Disk I\/O/);
   assert.match(page, /value: value === null \|\| !Number\.isFinite\(value\) \? null : value/);
