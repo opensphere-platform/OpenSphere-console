@@ -97,6 +97,13 @@ test('normalizes Beszel v0.18.7 compact system and stats fields', () => {
   const stats = normalizeStats({ created: 'now', stats: { cpu: 21, mp: 43, dp: 65, ns: 1.5, nr: 2.5 } });
   assert.equal(stats.networkSentMb, 1.5);
   assert.equal(stats.networkReceivedMb, 2.5);
+  assert.equal(stats.networkSentBytesPerSecond, 1.5 * 1024 * 1024);
+  assert.equal(stats.networkReceivedBytesPerSecond, 2.5 * 1024 * 1024);
+  const currentStats = normalizeStats({ created: 'now', stats: { dio: [1024, 2048], b: [4096, 8192] } });
+  assert.equal(currentStats.diskReadBytesPerSecond, 1024);
+  assert.equal(currentStats.diskWriteBytesPerSecond, 2048);
+  assert.equal(currentStats.networkSentBytesPerSecond, 4096);
+  assert.equal(currentStats.networkReceivedBytesPerSecond, 8192);
 });
 
 test('combines Beszel node time-series authority with Kubernetes live state', async () => {

@@ -44,6 +44,12 @@ function normalizeSystem(row) {
 
 function normalizeStats(record) {
   const stats = record?.stats && typeof record.stats === 'object' ? record.stats : {};
+  const diskIo = Array.isArray(stats.dio)
+    ? [number(stats.dio[0]), number(stats.dio[1])]
+    : [number(stats.dr), number(stats.dw)].map((value) => value === null ? null : value * 1024 * 1024);
+  const network = Array.isArray(stats.b)
+    ? [number(stats.b[0]), number(stats.b[1])]
+    : [number(stats.ns), number(stats.nr)].map((value) => value === null ? null : value * 1024 * 1024);
   return {
     at: record?.created || null,
     cpuPercent: number(stats.cpu),
@@ -57,6 +63,10 @@ function normalizeStats(record) {
     diskWriteMb: number(stats.dw),
     networkSentMb: number(stats.ns),
     networkReceivedMb: number(stats.nr),
+    diskReadBytesPerSecond: diskIo[0],
+    diskWriteBytesPerSecond: diskIo[1],
+    networkSentBytesPerSecond: network[0],
+    networkReceivedBytesPerSecond: network[1],
     loadAverage: Array.isArray(stats.la) ? stats.la.slice(0, 3).map(number) : [],
   };
 }

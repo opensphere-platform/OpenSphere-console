@@ -1,9 +1,16 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ClarityModule } from '@clr/angular';
+import {
+  ChartTabularData,
+  ChartTheme,
+  LegendPositions,
+  LineChartComponent,
+  LineChartOptions,
+  ScaleTypes,
+} from '@carbon/charts-angular';
 import { HttpService } from '../core/http.service';
 import { BackendUnavailable } from '../os/backend-unavailable';
-import { MetricLineChart } from '../os/metric-line-chart';
 import { OsPageHeader } from '../os/os-page-header';
 
 type MonitoringTab = 'overview' | 'nodes' | 'kubernetes' | 'alerts' | 'health';
@@ -69,6 +76,10 @@ interface SeriesPoint {
   cpuPercent: number | null;
   memoryPercent: number | null;
   diskPercent: number | null;
+  diskReadBytesPerSecond: number | null;
+  diskWriteBytesPerSecond: number | null;
+  networkSentBytesPerSecond: number | null;
+  networkReceivedBytesPerSecond: number | null;
   loadAverage: Array<number | null>;
 }
 
@@ -100,9 +111,17 @@ interface DataHealth {
   reasons: string[];
 }
 
+interface ChartView {
+  id: string;
+  title: string;
+  description: string;
+  data: ChartTabularData;
+  options: LineChartOptions;
+}
+
 @Component({
   selector: 'os-admin-infrastructure-monitoring',
-  imports: [ClarityModule, FormsModule, BackendUnavailable, MetricLineChart, OsPageHeader],
+  imports: [ClarityModule, FormsModule, BackendUnavailable, LineChartComponent, OsPageHeader],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="os-page monitoring-page">
@@ -225,10 +244,15 @@ interface DataHealth {
                       <clr-alert clrAlertType="danger" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">{{ seriesError() }}</span></clr-alert-item></clr-alert>
                     } @else if (series(); as chart) {
                       <div class="chart-grid">
-                        <os-metric-line-chart label="CPU" [values]="metric(chart, 'cpuPercent')" />
-                        <os-metric-line-chart label="메모리" [values]="metric(chart, 'memoryPercent')" />
-                        <os-metric-line-chart label="디스크" [values]="metric(chart, 'diskPercent')" />
-                        <os-metric-line-chart label="Load average (1m)" [values]="loadMetric(chart)" unit="" />
+                        @for (view of charts(); track view.id) {
+                          <article class="chart-panel">
+                            <div class="chart-heading">
+                              <div><h3>{{ view.title }}</h3><p>{{ view.description }}</p></div>
+                              <span>IBM Carbon Charts</span>
+                            </div>
+                            <ibm-line-chart [data]="view.data" [options]="view.options" />
+                          </article>
+                        }
                       </div>
                     }
                   </section>
@@ -346,7 +370,7 @@ interface DataHealth {
     .tab-section{padding:var(--os-5) 0 var(--os-7);min-width:0}.tab-section h2{margin:.3rem 0 .5rem;font-size:1rem}.section-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--os-5);flex-wrap:wrap}
     .grid-scroll{max-width:100%;overflow-x:auto}.grid-scroll clr-datagrid{min-width:70rem}.node-meta{margin-top:var(--os-2);color:var(--os-ink-muted);font-size:.62rem}.selected-row{background:var(--os-accent-subtle)}
     .series-section{margin-top:var(--os-6);padding-top:var(--os-5);border-top:1px solid var(--os-hairline)}.range-select{margin:0;min-width:10rem}
-    .chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--os-5);margin-top:var(--os-5)}.loading-block{display:flex;align-items:center;justify-content:center;gap:var(--os-4);min-height:10rem;color:var(--os-ink-muted)}
+    .chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--os-5);margin-top:var(--os-5)}.chart-panel{min-width:0;border:1px solid var(--os-hairline);background:var(--os-canvas)}.chart-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--os-4);padding:var(--os-4) var(--os-5);border-bottom:1px solid var(--os-hairline)}.chart-heading h3{margin:0;font-size:.78rem}.chart-heading p{margin:.15rem 0 0;color:var(--os-ink-muted);font-size:.62rem}.chart-heading>span{color:var(--os-accent);font-size:.56rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase}.chart-panel ibm-line-chart{display:block;min-height:15rem}.loading-block{display:flex;align-items:center;justify-content:center;gap:var(--os-4);min-height:10rem;color:var(--os-ink-muted)}
     .os-mono{font-family:var(--os-font-mono);font-size:.62rem;word-break:break-all}.separated{margin-top:var(--os-7)!important;padding-top:var(--os-5);border-top:1px solid var(--os-hairline)}.health-rail{grid-template-columns:repeat(4,minmax(0,1fr))}
     @media(max-width:70rem){.status-rail{grid-template-columns:repeat(3,minmax(0,1fr))}.status-rail>div:nth-child(3){border-inline-end:0}.overview-grid{grid-template-columns:1fr}}
     @media(max-width:48rem){.status-rail,.health-rail,.chart-grid,.facts{grid-template-columns:1fr}.status-rail>div{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.status-rail>div:last-child{border-bottom:0}.scope-list li{grid-template-columns:1fr;gap:var(--os-2)}}
@@ -373,6 +397,7 @@ export class AdminInfrastructureMonitoring implements OnInit, OnDestroy {
     .filter((item): item is KubernetesNode => Boolean(item))
     .filter((item, index, all) => all.findIndex((candidate) => candidate.uid === item.uid) === index));
   readonly triggeredAlerts = computed(() => (this.alerts()?.active || []).filter((item) => item.triggered).length);
+  readonly charts = computed(() => this.buildCharts(this.series()?.points || []));
   readonly staleMessage = computed(() => {
     const stale = [this.overview(), this.nodes(), this.alerts()].find((item) => item?.freshness === 'stale');
     return stale?.upstreamError || '';
@@ -415,8 +440,6 @@ export class AdminInfrastructureMonitoring implements OnInit, OnDestroy {
     finally { this.seriesLoading.set(false); }
   }
 
-  metric(series: Series, key: 'cpuPercent' | 'memoryPercent' | 'diskPercent'): Array<number | null> { return series.points.map((point) => point[key]); }
-  loadMetric(series: Series): Array<number | null> { return series.points.map((point) => point.loadAverage?.[0] ?? null); }
   monitorFor(name: string): MonitoredNode | null { return (this.nodes()?.items || []).find((item) => item.kubernetes?.name === name) || null; }
   nodeName(id: string): string { return (this.nodes()?.items || []).find((item) => item.id === id)?.name || id; }
   percent(value: number | null): string { return value === null ? '—' : `${value.toFixed(0)}%`; }
@@ -443,5 +466,137 @@ export class AdminInfrastructureMonitoring implements OnInit, OnDestroy {
     const body = await response.json().catch(() => ({})) as T & { error?: string };
     if (!response.ok) throw new Error(body.error || `Infrastructure Monitoring HTTP ${response.status}`);
     return body;
+  }
+
+  private buildCharts(points: SeriesPoint[]): ChartView[] {
+    if (!points.length) return [];
+    type PointKey = 'cpuPercent' | 'memoryPercent' | 'diskPercent'
+      | 'diskReadBytesPerSecond' | 'diskWriteBytesPerSecond'
+      | 'networkSentBytesPerSecond' | 'networkReceivedBytesPerSecond'
+      | 'load1' | 'load5' | 'load15';
+    const normalized = points.map((point) => ({
+      ...point,
+      load1: point.loadAverage?.[0] ?? null,
+      load5: point.loadAverage?.[1] ?? null,
+      load15: point.loadAverage?.[2] ?? null,
+    }));
+    const definitions: Array<{
+      id: string;
+      title: string;
+      description: string;
+      unit: '%' | 'B/s' | 'load';
+      fixedMax?: number;
+      fields: Array<{ key: PointKey; label: string; color: string }>;
+    }> = [
+      {
+        id: 'utilization',
+        title: 'CPU · Memory · Disk',
+        description: '노드 자원 사용률',
+        unit: '%',
+        fixedMax: 100,
+        fields: [
+          { key: 'cpuPercent', label: 'CPU', color: '#0f62fe' },
+          { key: 'memoryPercent', label: 'Memory', color: '#8a3ffc' },
+          { key: 'diskPercent', label: 'Disk', color: '#198038' },
+        ],
+      },
+      {
+        id: 'network',
+        title: 'Network throughput',
+        description: '노드 송·수신 처리량',
+        unit: 'B/s',
+        fields: [
+          { key: 'networkSentBytesPerSecond', label: 'Send', color: '#1192e8' },
+          { key: 'networkReceivedBytesPerSecond', label: 'Receive', color: '#005d5d' },
+        ],
+      },
+      {
+        id: 'disk-io',
+        title: 'Disk I/O',
+        description: '노드 디스크 읽기·쓰기 처리량',
+        unit: 'B/s',
+        fields: [
+          { key: 'diskReadBytesPerSecond', label: 'Read', color: '#fa4d56' },
+          { key: 'diskWriteBytesPerSecond', label: 'Write', color: '#9f1853' },
+        ],
+      },
+      {
+        id: 'load',
+        title: 'Load average',
+        description: '노드 1·5·15분 부하 평균',
+        unit: 'load',
+        fields: [
+          { key: 'load1', label: '1m', color: '#6929c4' },
+          { key: 'load5', label: '5m', color: '#009d9a' },
+          { key: 'load15', label: '15m', color: '#ee5396' },
+        ],
+      },
+    ];
+
+    return definitions.map((definition) => {
+      const data: ChartTabularData = [];
+      for (const field of definition.fields) {
+        for (const point of normalized) {
+          const date = point.at ? new Date(point.at) : null;
+          if (!date || Number.isNaN(date.getTime())) continue;
+          const value = point[field.key];
+          data.push({
+            group: field.label,
+            date,
+            value: value === null || !Number.isFinite(value) ? null : value,
+          });
+        }
+      }
+      const formatValue = definition.unit === '%'
+        ? (value: unknown) => `${Number(value).toFixed(0)}%`
+        : definition.unit === 'B/s'
+          ? (value: unknown) => this.formatRate(Number(value))
+          : (value: unknown) => Number(value).toFixed(2);
+      const options: LineChartOptions = {
+        chartId: `infrastructure-${definition.id}`,
+        theme: ChartTheme.WHITE,
+        height: '15rem',
+        resizable: true,
+        animations: false,
+        accessibility: { svgAriaLabel: `${definition.title} Beszel 시계열` },
+        data: { groupMapsTo: 'group' },
+        axes: {
+          bottom: {
+            title: '시간',
+            mapsTo: 'date',
+            scaleType: ScaleTypes.TIME,
+            ticks: { number: 5 },
+          },
+          left: {
+            title: definition.unit,
+            mapsTo: 'value',
+            scaleType: ScaleTypes.LINEAR,
+            includeZero: true,
+            ...(definition.fixedMax ? { domain: [0, definition.fixedMax] } : {}),
+            ticks: { number: 5, formatter: (value: number | Date) => formatValue(value) },
+          },
+        },
+        legend: {
+          enabled: true,
+          clickable: false,
+          position: LegendPositions.TOP,
+          order: definition.fields.map((field) => field.label),
+        },
+        color: { scale: Object.fromEntries(definition.fields.map((field) => [field.label, field.color])) },
+        points: { enabled: true, filled: true, radius: 2 },
+        tooltip: { enabled: true, groupLabel: '지표', valueFormatter: (value) => formatValue(value) },
+        toolbar: { enabled: false },
+      };
+      return { id: definition.id, title: definition.title, description: definition.description, data, options };
+    });
+  }
+
+  private formatRate(value: number): string {
+    if (!Number.isFinite(value)) return '—';
+    const units = ['B/s', 'KiB/s', 'MiB/s', 'GiB/s'];
+    let current = Math.max(0, value);
+    let index = 0;
+    while (current >= 1024 && index < units.length - 1) { current /= 1024; index += 1; }
+    return `${current.toFixed(index ? 1 : 0)} ${units[index]}`;
   }
 }

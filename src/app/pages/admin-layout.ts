@@ -142,6 +142,17 @@ export class AdminLayout {
   readonly expanded = signal<Record<string, boolean>>({});
   readonly groups: AdminGroup[] = [
     {
+      id: 'foundation',
+      label: 'Console 기반 서비스',
+      icon: Layers16,
+      items: [
+        { label: '개요', route: '/manage/foundation-services' },
+        { label: 'Data & Identity', route: '/manage/data-identity' },
+        { label: '선언형 상태 변경', route: '/manage/state-changes' },
+        { label: 'Infrastructure Monitoring', route: '/manage/infrastructure-monitoring' },
+      ],
+    },
+    {
       id: 'assets',
       label: '개발 자산',
       icon: Catalog16,
@@ -166,10 +177,7 @@ export class AdminLayout {
       icon: Layers16,
       items: [
         { label: 'Control Plane', route: '/manage/platform-control' },
-        { label: 'Data & Identity', route: '/manage/data-identity' },
-        { label: '상태 변경 관리', route: '/manage/state-changes' },
         { label: 'OAA', route: '/manage/oaa' },
-        { label: '인프라 모니터링', route: '/manage/infrastructure-monitoring' },
         { label: 'HIS Observability', route: '/manage/observability' },
       ],
     },
