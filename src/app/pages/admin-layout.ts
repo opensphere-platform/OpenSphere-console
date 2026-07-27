@@ -1,27 +1,32 @@
-import { Component, ChangeDetectionStrategy, inject } from '@angular/core';
-import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { Component, ChangeDetectionStrategy, inject, signal } from '@angular/core';
+import { NavigationEnd, Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
+import { filter } from 'rxjs';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CarbonIcon } from '../os/carbon-icon';
 import UserAdmin16 from '@carbon/icons/es/user--admin/16';
 import Application16 from '@carbon/icons/es/application/16';
-import UserMultiple16 from '@carbon/icons/es/user--multiple/16';
 import Catalog16 from '@carbon/icons/es/catalog/16';
-import Api16 from '@carbon/icons/es/api/16';
 import Layers16 from '@carbon/icons/es/layers/16';
-import ChatBot16 from '@carbon/icons/es/chat-bot/16';
 import Activity16 from '@carbon/icons/es/activity/16';
-import Notification16 from '@carbon/icons/es/notification/16';
-import Terminal16 from '@carbon/icons/es/terminal/16';
-import List16 from '@carbon/icons/es/list/16';
-import ChartLine16 from '@carbon/icons/es/chart--line/16';
+import Home16 from '@carbon/icons/es/home/16';
 
-interface AdminItem { label: string; route: string; icon: any }
-interface AdminGroup { label: string; items: AdminItem[] }
+interface AdminItem {
+  label: string;
+  route: string;
+}
+interface AdminGroup {
+  id: string;
+  label: string;
+  icon: any;
+  items: AdminItem[];
+}
 
 /**
  * AdminLayout — "콘솔 관리" 섹션 레이아웃 (Model A: 1단 진입 → 2단 보조메뉴 + 콘텐츠).
  * 2단 메뉴 표준 = OpenSphere AI Hub 방식(전역 .cm-nav: Clarity clr-vertical-nav, 흰 배경, 왼쪽 blue bar active).
- * 관리 대상의 성격에 따라 자산·신원·기반·운영 트리로 묶는다.
+ * /manage 개요와 Extensions는 독립 링크, 나머지는 책임 영역별 Clarity tree로 묶는다.
+ * 아이콘은 Clarity Vertical Nav 규칙에 따라 최상위 항목에만 표시한다.
  */
 @Component({
   selector: 'os-admin-layout',
@@ -29,98 +34,180 @@ interface AdminGroup { label: string; items: AdminItem[] }
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="cc-frame">
-      <clr-vertical-nav class="cm-nav" [clrVerticalNavCollapsible]="false" aria-label="콘솔 관리 보조 내비">
+      <clr-vertical-nav
+        class="cm-nav manage-nav"
+        [clrVerticalNavCollapsible]="false"
+        aria-label="콘솔 관리 보조 내비"
+      >
         <div class="cm-brand"><strong>콘솔 관리</strong></div>
+
+        <a
+          clrVerticalNavLink
+          routerLink="/manage"
+          routerLinkActive="active"
+          [routerLinkActiveOptions]="{ exact: true }"
+          ariaCurrentWhenActive="page"
+        >
+          <os-cicon clrVerticalNavIcon [icon]="overviewIcon" [size]="16" />개요
+        </a>
+
+        <a
+          clrVerticalNavLink
+          [routerLink]="extensionItem.route"
+          routerLinkActive="active"
+          ariaCurrentWhenActive="page"
+        >
+          <os-cicon clrVerticalNavIcon [icon]="extensionItem.icon" [size]="16" />{{
+            extensionItem.label
+          }}
+        </a>
+
+        <div class="nav-divider manage-extension-divider" role="separator"></div>
         @for (group of groups; track group.label) {
-          <section class="cm-tree-group" [attr.aria-label]="group.label">
-            <div class="cm-tree-label">{{ group.label }}</div>
-            @for (item of group.items; track item.route) {
-              <a clrVerticalNavLink class="cm-tree-item" [routerLink]="item.route" routerLinkActive="active">
-                <os-cicon clrVerticalNavIcon [icon]="item.icon" [size]="16" />{{ item.label }}
-              </a>
-            }
-          </section>
+          <clr-vertical-nav-group
+            routerLinkActive="active"
+            [clrVerticalNavGroupExpanded]="isExpanded(group.id)"
+            (clrVerticalNavGroupExpandedChange)="setExpanded(group.id, $event)"
+          >
+            <os-cicon clrVerticalNavIcon [icon]="group.icon" [size]="16" />{{ group.label }}
+            <clr-vertical-nav-group-children>
+              @for (item of group.items; track item.route) {
+                <a
+                  clrVerticalNavLink
+                  [routerLink]="item.route"
+                  routerLinkActive="active"
+                  ariaCurrentWhenActive="page"
+                >
+                  {{ item.label }}
+                </a>
+              }
+            </clr-vertical-nav-group-children>
+          </clr-vertical-nav-group>
         }
       </clr-vertical-nav>
-      <div class="cm-mobile-nav">
-        <label for="console-management-section">콘솔 관리 메뉴</label>
-        <select id="console-management-section" (change)="navigate($event)">
-          <option value="">이동할 관리 화면 선택</option>
-          @for (group of groups; track group.label) {
-            <optgroup [label]="group.label">
-              @for (item of group.items; track item.route) {
-                <option [value]="item.route">{{ item.label }}</option>
-              }
-            </optgroup>
-          }
-        </select>
-      </div>
       <div class="cc-content"><router-outlet /></div>
     </div>
   `,
   styles: [
     `
-      /* 풀블리드(1단 레일·헤더 밀착) — 네이티브 라우트라 페이지가 콘솔 패딩 상쇄. AI 표준 그리드 12rem|1fr. */
-      .cc-frame { display: grid; grid-template-columns: 12rem minmax(0, 1fr); margin: -1.5rem; min-height: calc(100% + 3rem); overflow-x: hidden; }
+      /* 풀블리드(1단 레일·헤더 밀착) — Clarity 기본 vertical-nav 폭(15rem)을 보존한다. */
+      .cc-frame {
+        display: grid;
+        grid-template-columns: 15rem minmax(0, 1fr);
+        margin: -1.5rem;
+        min-height: calc(100% + 3rem);
+        overflow-x: hidden;
+      }
       /* 콘텐츠 — 섹션 공통 배경 토큰 + 패딩. (.cm-nav 스타일은 전역 styles.scss) */
-      .cc-content { min-width: 0; overflow-x: hidden; padding: 1.5rem 2rem; color: var(--os-ink); background: var(--os-overview-bg); }
-      .cm-tree-group { display: block; margin: 0; padding: 0; }
-      .cm-tree-label { padding: .8rem .85rem .25rem; color: var(--os-ink-subtle); font-size: .58rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-      .cm-tree-item { padding-left: 1rem; }
-      .cm-mobile-nav { display: none; }
-      @media (max-width: 64rem) {
-        .cc-frame { grid-template-columns: minmax(0, 1fr); }
-        .cm-nav { display: none; }
-        .cm-mobile-nav { display: flex; align-items: center; gap: var(--os-4); min-width: 0; padding: var(--os-4) var(--os-5); border-bottom: 1px solid var(--os-hairline); background: var(--os-canvas); }
-        .cm-mobile-nav label { flex: 0 0 auto; font-size: .68rem; font-weight: 600; }
-        .cm-mobile-nav select { min-width: 0; width: min(24rem, 100%); height: 1.8rem; border: 1px solid var(--os-hairline-strong); background: var(--os-canvas); color: var(--os-ink); font: inherit; }
-        .cc-content { padding: 1rem 1.25rem 1.5rem; }
+      .cc-content {
+        min-width: 0;
+        overflow-x: hidden;
+        padding: 1.5rem 2rem;
+        color: var(--os-ink);
+        background: var(--os-overview-bg);
+      }
+      .manage-extension-divider {
+        margin: 0.45rem 0.75rem;
+      }
+      .manage-nav {
+        width: 100%;
+        min-width: 0;
+      }
+      @media (max-width: 56rem) {
+        .cc-frame {
+          grid-template-columns: minmax(0, 1fr);
+          overflow: visible;
+        }
+        .manage-nav {
+          max-height: 42vh;
+          overflow-y: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--os-hairline);
+        }
+        .cc-content {
+          padding: 1rem;
+        }
       }
     `,
   ],
 })
 export class AdminLayout {
   private readonly router = inject(Router);
+  readonly overviewIcon = Home16;
+  readonly extensionItem = {
+    label: 'Extensions',
+    route: '/manage/extensions',
+    icon: Application16,
+  };
+  readonly expanded = signal<Record<string, boolean>>({});
   readonly groups: AdminGroup[] = [
     {
-      label: '자산 및 확장',
+      id: 'assets',
+      label: '개발 자산',
+      icon: Catalog16,
       items: [
-        { label: 'Developer Catalog', route: '/manage/catalog', icon: Catalog16 },
-        { label: 'APIs', route: '/manage/apis', icon: Api16 },
-        { label: 'Console CLI', route: '/manage/cli', icon: Terminal16 },
-        { label: 'Extensions', route: '/manage/extensions', icon: Application16 },
+        { label: 'Developer Catalog', route: '/manage/catalog' },
+        { label: 'APIs', route: '/manage/apis' },
+        { label: 'Console CLI', route: '/manage/cli' },
       ],
     },
     {
+      id: 'access',
       label: '신원 및 접근',
+      icon: UserAdmin16,
       items: [
-        { label: '콘솔 관리자', route: '/manage/console-admins', icon: UserAdmin16 },
-        { label: '역할', route: '/manage/roles', icon: UserMultiple16 },
+        { label: '콘솔 관리자', route: '/manage/console-admins' },
+        { label: '역할', route: '/manage/roles' },
       ],
     },
     {
+      id: 'platform',
       label: '플랫폼 제어',
+      icon: Layers16,
       items: [
-        { label: 'Control Plane', route: '/manage/platform-control', icon: Layers16 },
-        { label: 'Data & Identity', route: '/manage/data-identity', icon: UserAdmin16 },
-        { label: '상태 변경 관리', route: '/manage/state-changes', icon: List16 },
-        { label: 'OAA', route: '/manage/oaa', icon: ChatBot16 },
-        { label: '인프라 모니터링', route: '/manage/infrastructure-monitoring', icon: ChartLine16 },
-        { label: 'HIS Observability', route: '/manage/observability', icon: Activity16 },
+        { label: 'Control Plane', route: '/manage/platform-control' },
+        { label: 'Data & Identity', route: '/manage/data-identity' },
+        { label: '상태 변경 관리', route: '/manage/state-changes' },
+        { label: 'OAA', route: '/manage/oaa' },
+        { label: '인프라 모니터링', route: '/manage/infrastructure-monitoring' },
+        { label: 'HIS Observability', route: '/manage/observability' },
       ],
     },
     {
+      id: 'operations',
       label: '운영 및 증거',
+      icon: Activity16,
       items: [
-      { label: '알림', route: '/manage/notifications', icon: Notification16 },
-      { label: '외부 채널', route: '/manage/external-channels', icon: Notification16 },
-        { label: '감사 로그', route: '/manage/audit', icon: List16 },
+        { label: '알림', route: '/manage/notifications' },
+        { label: '외부 채널', route: '/manage/external-channels' },
+        { label: '감사 로그', route: '/manage/audit' },
       ],
     },
   ];
 
-  navigate(event: Event): void {
-    const route = (event.target as HTMLSelectElement | null)?.value || '';
-    if (route.startsWith('/manage/')) void this.router.navigateByUrl(route);
+  constructor() {
+    this.expandRouteGroup(this.router.url);
+    this.router.events
+      .pipe(
+        filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+        takeUntilDestroyed(),
+      )
+      .subscribe((event) => this.expandRouteGroup(event.urlAfterRedirects));
+  }
+
+  isExpanded(id: string): boolean {
+    return !!this.expanded()[id];
+  }
+
+  setExpanded(id: string, expanded: boolean): void {
+    this.expanded.update((state) => ({ ...state, [id]: expanded }));
+  }
+
+  private expandRouteGroup(route: string): void {
+    const path = route.split(/[?#]/, 1)[0];
+    const active = this.groups.find((group) =>
+      group.items.some((item) => path === item.route || path.startsWith(`${item.route}/`)),
+    );
+    if (active) this.setExpanded(active.id, true);
   }
 }

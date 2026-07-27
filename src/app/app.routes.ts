@@ -18,6 +18,7 @@ import { AdminExternalChannels } from './pages/admin-external-channels';
 import { AdminAudit } from './pages/admin-audit';
 import { AdminCli } from './pages/admin-cli';
 import { AdminLayout } from './pages/admin-layout';
+import { AdminOverview } from './pages/admin-overview';
 import { ManualPage } from './pages/manual';
 import { authenticatedGuard } from './core/authenticated.guard';
 import { PasswordRecoveryPage } from './pages/password-recovery';
@@ -56,7 +57,7 @@ export const routes: Routes = [
     component: AdminLayout,
     canActivate: [authenticatedGuard],
     children: [
-      { path: '', redirectTo: 'catalog', pathMatch: 'full' },
+      { path: '', component: AdminOverview, pathMatch: 'full' },
       { path: 'catalog', component: Catalog },
       { path: 'apis', component: Apis },
       { path: 'cli', component: AdminCli },

@@ -22,6 +22,28 @@ test('Console management exposes Supabase, Gitea and HIS as distinct authorities
   assert.doesNotMatch(layout, /routerLink="\/manage\/backbone"/);
 });
 
+test('Console management uses Clarity mixed tree navigation with direct overview and Extensions links', () => {
+  const routes = read('src', 'app', 'app.routes.ts');
+  const layout = read('src', 'app', 'pages', 'admin-layout.ts');
+  const overview = read('src', 'app', 'pages', 'admin-overview.ts');
+  assert.match(routes, /path: '', component: AdminOverview, pathMatch: 'full'/);
+  assert.doesNotMatch(routes, /path: '', redirectTo: 'catalog'/);
+  assert.match(layout, /routerLink="\/manage"/);
+  assert.match(layout, /clr-vertical-nav-group/);
+  assert.match(layout, /clr-vertical-nav-group-children/);
+  assert.match(
+    layout,
+    /extensionItem = \{[\s\S]{0,120}label: 'Extensions',[\s\S]{0,80}route: '\/manage\/extensions'/,
+  );
+  const treeGroups = layout.slice(
+    layout.indexOf('readonly groups:'),
+    layout.indexOf('constructor()'),
+  );
+  assert.doesNotMatch(treeGroups, /route: '\/manage\/extensions'/);
+  assert.match(overview, /title="콘솔 관리" tag="Overview · Core Admin"/);
+  assert.match(overview, /routerLink="\/manage\/extensions"/);
+});
+
 test('all Console management surfaces share task context, status and filtering conventions', () => {
   const styles = read('src', 'styles.scss');
   const catalog = read('src', 'app', 'pages', 'catalog.ts');

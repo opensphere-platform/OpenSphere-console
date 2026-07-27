@@ -275,6 +275,13 @@ body code, body kbd, body pre, body samp, .os-mono { font-family: var(--os-font-
   background: rgba(76, 111, 255, 0.10);
   box-shadow: inset 3px 0 0 var(--os-accent);
 }
+.manage-nav .nav-group.active > .nav-group-trigger {
+  color: var(--os-ink);
+  font-weight: 600;
+}
+.manage-nav .nav-group.active > .nav-group-trigger os-cicon {
+  color: var(--os-accent);
+}
 
 /* 페이지 템플릿 — 셸 네이티브 페이지 공통(섹션 제목·테이블 토큰화). os-page-header와 함께 일관성 강제. */
 .os-page > h2,
