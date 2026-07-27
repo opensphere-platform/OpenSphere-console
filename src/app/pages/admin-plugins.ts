@@ -60,8 +60,8 @@ interface TreeNode {
   imports: [RouterLink, ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
-      <os-page-header title="Console Extensions" tag="Admin Control">
-        <p>UI 플러그인(UIPluginPackage) + headless 바인딩(CLIDownload) 통합 인식·관리 — 셸 리빌드 없이</p>
+      <os-page-header title="Console Extensions" tag="Core Runtime">
+        <p>subShell과 plugin의 사용자 설정, 현재 서비스, 서명 검증, 워크로드와 Console 연결을 한곳에서 관리합니다.</p>
       </os-page-header>
 
     @if (msg(); as m) {
@@ -82,13 +82,12 @@ interface TreeNode {
     }
 
     <section class="manage-status-rail" aria-label="Extension 운영 상태">
-      <div><span>Catalog</span><strong>{{ catalogMetric() }}</strong><small>검증된 패키지</small></div>
-      <div><span>Published</span><strong>{{ registrationMetric('published') }}</strong><small>서버 Registry 게시</small></div>
-      <div><span>Usable</span><strong class="ok">{{ registrationMetric('usable') }}</strong><small>현재 세션에서 사용 가능</small></div>
-      <div><span>Pending</span><strong>{{ registrationMetric('pending') }}</strong><small>설치·활성화 진행</small></div>
-      <div><span>Disabled</span><strong class="neutral">{{ registrationMetric('disabled') }}</strong><small>운영 제외</small></div>
-      <div><span>Failed</span><strong [class.danger]="failedCount() > 0">{{ registrationMetric('failed') }}</strong><small>UI 적재 실패 포함</small></div>
-      <div><span>Projection</span><strong [class.warn]="projectionStatus()?.state === 'stale'">{{ projectionLabel() }}</strong><small>공유 상태 스냅샷</small></div>
+      <div><span>설치됨</span><strong>{{ registrationMetric('installed') }}</strong><small>Registration 보유</small></div>
+      <div><span>서비스 중</span><strong class="ok">{{ registrationMetric('serving') }}</strong><small>메뉴와 페이지 사용 가능</small></div>
+      <div><span>조치 필요</span><strong [class.danger]="failedCount() > 0">{{ registrationMetric('action') }}</strong><small>원인과 복구 절차 확인</small></div>
+      <div><span>처리 중</span><strong>{{ registrationMetric('pending') }}</strong><small>설치·검증·의존성 대기</small></div>
+      <div><span>사용자 비활성</span><strong class="neutral">{{ registrationMetric('disabled') }}</strong><small>명시적으로 중지됨</small></div>
+      <div><span>상태 동기화</span><strong [class.warn]="projectionStatus()?.state === 'stale'">{{ projectionLabel() }}</strong><small>공유 Registry projection</small></div>
     </section>
 
     <clr-accordion class="management-actions">
@@ -175,6 +174,94 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
 
     <clr-tabs>
       <clr-tab>
+        <button clrTabLink>서비스 상태</button>
+        <clr-tab-content>
+          <div class="status-guide">
+            <strong>상태 읽는 법</strong>
+            <span><i class="status-dot success"></i>사용자 설정대로 서비스 중</span>
+            <span><i class="status-dot warning"></i>서비스 유지 또는 처리 대기</span>
+            <span><i class="status-dot danger"></i>서비스 차단 — 운영자 조치 필요</span>
+          </div>
+          <div class="extension-table-wrap">
+          <table class="table extension-table">
+            <thead>
+              <tr>
+                <th class="left">Extension</th>
+                <th>사용자 설정</th>
+                <th>현재 서비스</th>
+                <th>실행 상태</th>
+                <th>검증·업데이트</th>
+                <th class="left">버전·채널</th>
+                <th>Console 연결</th>
+                <th>작업</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of registrations(); track r.name) {
+                <tr>
+                  <td class="left">
+                    <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
+                    <div class="state-detail">{{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span></div>
+                  </td>
+                  <td>
+                    <span class="label" [class.label-success]="r.desiredState === 'Enabled'" [class.label-warning]="r.desiredState === 'Installed'">{{ desiredStateLabel(r) }}</span>
+                    <div class="state-detail">{{ desiredStateDetail(r) }}</div>
+                  </td>
+                  <td>
+                    <span
+                      class="label"
+                      [class.label-success]="effectiveState(r).tone === 'success'"
+                      [class.label-warning]="effectiveState(r).tone === 'warning'"
+                      [class.label-danger]="effectiveState(r).tone === 'danger'"
+                      >{{ effectiveState(r).label }}</span
+                    >
+                    <div class="state-detail">{{ effectiveState(r).detail }}</div>
+                  </td>
+                  <td>
+                    <span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span>
+                    <div class="state-detail">Pod · Service</div>
+                  </td>
+                  <td>
+                    <span class="label" [class.label-success]="verificationGate(r).tone === 'success'" [class.label-warning]="verificationGate(r).tone === 'warning'" [class.label-danger]="verificationGate(r).tone === 'danger'">{{ verificationGate(r).label }}</span>
+                    <div class="state-detail">{{ verificationGate(r).detail }}</div>
+                  </td>
+                  <td class="left">
+                    <strong>{{ artifactVersion(r) }}</strong>
+                    <div class="state-detail">{{ r.status.currentRequestedChannel || 'exact' }} · {{ buildAuthorityLabel(r.status.currentBuildAuthority) }}</div>
+                    <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
+                  </td>
+                  <td>
+                    <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
+                    <div class="state-detail">{{ integrationSummary(r) }}</div>
+                  </td>
+                  <td>
+                    <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
+                    @if (r.desiredState === 'Enabled') {
+                      <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
+                    } @else {
+                      <button
+                        class="btn btn-sm btn-success-outline"
+                        [disabled]="activationLocked(r.name)"
+                        [title]="activationLockReason(r.name) || ''"
+                        (click)="run('enable', r.name)"
+                      >
+                        Enable
+                      </button>
+                    }
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="8" class="os-sub">설치된 Extension 없음 — <code>os extensions install</code>로 설치</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          </div>
+        </clr-tab-content>
+      </clr-tab>
+
+      <clr-tab>
         <button clrTabLink>구성도 Topology</button>
         <clr-tab-content>
           <p class="os-sub">
@@ -210,7 +297,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                       >
                     }
                     @if (c.actionable && c.phase) {
-                      @if (c.phase === 'Activated') {
+                      @if (desiredStateByName(c.id) === 'Enabled') {
                         <button class="btn btn-sm" (click)="run('disable', c.id)">Disable</button>
                       } @else {
                         <button
@@ -252,80 +339,6 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
             ⚠️ kind/hostRef가 데이터에 들어오기 전까지(§2.7 실현·§5.2) 위계는 scope·core·nav
             신호로 도출됩니다. hostRef가 채워지면 plugin이 정확히 host 아래로 중첩됩니다.
           </p>
-        </clr-tab-content>
-      </clr-tab>
-
-      <clr-tab>
-        <button clrTabLink>Installed</button>
-        <clr-tab-content>
-          <div class="status-guide">
-            <strong>상태 읽는 법</strong>
-            <span><i class="status-dot success"></i>서비스와 Console 연동 완료</span>
-            <span><i class="status-dot warning"></i>실행 중이지만 메뉴 등 일부 연동 미노출</span>
-            <span><i class="status-dot danger"></i>실패 또는 성능 저하</span>
-          </div>
-          <table class="table">
-            <thead>
-              <tr>
-                <th class="left">Extension</th>
-                <th class="left">Artifact · 설치</th>
-                <th>Effective state</th>
-                <th>Workload</th>
-                <th>Global menu</th>
-                <th>Integrations</th>
-                <th>Channel</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (r of registrations(); track r.name) {
-                <tr>
-                  <td class="left">
-                    <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
-                    <div class="os-mono">{{ r.name }}</div>
-                  </td>
-                  <td class="left">
-                    <strong>{{ extensionKind(r) }} · {{ artifactVersion(r) }}</strong>
-                    <div class="state-detail">설치 {{ installationTime(r) }} · {{ installationActor(r) }}</div>
-                    <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
-                  </td>
-                  <td>
-                    <span
-                      class="label"
-                      [class.label-success]="effectiveState(r).tone === 'success'"
-                      [class.label-warning]="effectiveState(r).tone === 'warning'"
-                      [class.label-danger]="effectiveState(r).tone === 'danger'"
-                      >{{ effectiveState(r).label }}</span
-                    >
-                    <div class="state-detail">{{ effectiveState(r).detail }}</div>
-                  </td>
-                  <td><span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span></td>
-                  <td><span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span><div class="state-detail">{{ menuState(r).reason }}</div></td>
-                  <td>{{ integrationSummary(r) }}</td>
-                  <td><span class="label" [class.label-success]="r.status.channelState === 'Current'" [class.label-danger]="r.status.channelState === 'SecurityActionRequired'">{{ r.status.currentRequestedChannel || 'exact' }} · {{ r.status.channelState || '—' }}</span></td>
-                  <td>
-                    <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
-                    @if (r.status.phase === 'Activated') {
-                      <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
-                    } @else {
-                      <button
-                        class="btn btn-sm btn-success-outline"
-                        [disabled]="activationLocked(r.name)"
-                        [title]="activationLockReason(r.name) || ''"
-                        (click)="run('enable', r.name)"
-                      >
-                        Enable
-                      </button>
-                    }
-                  </td>
-                </tr>
-              } @empty {
-                <tr>
-                  <td colspan="8" class="os-sub">설치된 Extension 없음 — <code>os extensions install</code>로 설치</td>
-                </tr>
-              }
-            </tbody>
-          </table>
         </clr-tab-content>
       </clr-tab>
 
@@ -521,12 +534,12 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
             <strong>{{ effectiveState(r).label }}</strong>
             <p>{{ effectiveState(r).detail }}</p>
           </div>
-          <span class="cc-desired">목표: {{ r.desiredState }}</span>
+          <span class="cc-desired">사용자 설정: {{ desiredStateLabel(r) }}</span>
         </div>
 
         @if (!menuState(r).visible) {
           <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
-            <clr-alert-item><span class="alert-text"><strong>메뉴 미노출</strong> — {{ menuState(r).reason }}. Extension은 실행 중일 수 있지만 전역 메뉴에는 표시되지 않습니다.</span></clr-alert-item>
+            <clr-alert-item><span class="alert-text"><strong>페이지 서비스 차단</strong> — {{ menuState(r).reason }}. 사용자 설정은 {{ desiredStateLabel(r) }} 상태로 유지됩니다.</span></clr-alert-item>
           </clr-alert>
         }
 
@@ -539,8 +552,9 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
 
         @if (r.status.phase === 'Failed' && r.status.reason) {
           <div class="cc-reason">
-            <strong>사유</strong>
+            <strong>현재 원인</strong>
             <div>{{ reasonText(r.status.reason) }} <span class="os-mono">({{ r.status.reason }})</span></div>
+            <p>{{ remediationText(r.status.reason) }}</p>
           </div>
         }
 
@@ -663,7 +677,10 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
         </clr-accordion>
 
         <div class="cc-actions" aria-label="Extension lifecycle actions">
-          @if (r.status.phase === 'Activated') {
+          @if (r.desiredState === 'Enabled') {
+            @if (r.status.phase === 'Failed') {
+              <button class="btn btn-sm btn-primary" (click)="run('enable', r.name)">검증 다시 시도</button>
+            }
             <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
           } @else {
             <button
@@ -672,14 +689,14 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
               [title]="activationLockReason(r.name) || ''"
               (click)="run('enable', r.name)"
             >
-              Enable (재검증)
+              Enable
             </button>
           }
           <button class="btn btn-sm btn-danger-outline" (click)="run('uninstall', r.name)">Uninstall</button>
         </div>
 
         @if (r.status.phase === 'Failed') {
-          <p class="os-sub">서명 검증 실패 시 nav에 노출되지 않습니다(보안 게이트). 유효 서명으로 재배포 후 Enable(재검증)하세요.</p>
+          <p class="os-sub">검증을 우회하지 않습니다. 신뢰키·digest·서명 원인을 복구한 뒤 “검증 다시 시도”를 실행하면 기존 Enabled 설정으로 자동 수렴합니다.</p>
         }
       </os-panel>
     }
@@ -769,6 +786,9 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
       }
       .status-guide strong { color: var(--os-ink); }
       .status-guide span { display: inline-flex; align-items: center; gap: 0.25rem; }
+      .extension-table-wrap { width: 100%; overflow-x: auto; }
+      .extension-table { min-width: 76rem; }
+      .extension-table td { vertical-align: top; }
       .status-dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; display: inline-block; }
       .status-dot.success { background: var(--os-success); }
       .status-dot.warning { background: var(--os-warning); }
@@ -874,6 +894,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
       .cc-state-warning { background: rgba(255, 183, 0, 0.09); }
       .cc-reason { margin: 0 0 0.9rem; padding: 0.6rem 0.75rem; border-left: 3px solid var(--os-error); background: rgba(218, 30, 40, 0.06); font-size: 0.82rem; }
       .cc-reason strong { display: block; color: var(--os-error); margin-bottom: 0.15rem; }
+      .cc-reason p { margin: 0.35rem 0 0; color: var(--os-ink-muted); line-height: 1.45; }
       .cc-admission { margin: 0 0 0.9rem; padding: 0.6rem 0.75rem; border-left: 3px solid var(--os-warning); background: rgba(240, 171, 0, 0.08); font-size: 0.82rem; }
       .cc-admission strong { display: block; margin-bottom: 0.15rem; }
       .cc-admission p { margin: 0 0 0.4rem; color: var(--os-text-sec); }
@@ -888,7 +909,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
 
       .cc-layers {
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 0.45rem;
         margin: 0.7rem 0 1rem;
       }
@@ -1050,6 +1071,21 @@ export class AdminPlugins implements OnInit {
   installationActor(r: Registration): string {
     return r.installation?.requestedBy || r.approval?.requestedBy || '기록 없음';
   }
+  desiredStateLabel(r: Registration): string {
+    const labels: Record<string, string> = {
+      Enabled: '활성 유지',
+      Installed: '설치됨 · 미활성',
+      Disabled: '사용자 비활성',
+      Uninstalled: '제거 요청',
+    };
+    return labels[r.desiredState] || r.desiredState || '미보고';
+  }
+  desiredStateDetail(r: Registration): string {
+    if (r.desiredState === 'Enabled') return '명시적 비활성 요청 없음';
+    if (r.desiredState === 'Disabled') return '운영자가 메뉴·페이지를 중지함';
+    if (r.desiredState === 'Installed') return '검증 후 활성화 대기';
+    return r.approval?.reason || '설정 기록 확인 필요';
+  }
   shortDigest(digest?: string): string {
     return /^sha256:[a-f0-9]{64}$/.test(digest || '') ? `${digest!.slice(0, 19)}…${digest!.slice(-12)}` : 'digest 미보고';
   }
@@ -1075,6 +1111,7 @@ export class AdminPlugins implements OnInit {
   integrationSummary(r: Registration): string {
     const rows = this.integrationRows(r);
     if (!rows.length) return '상태 미보고';
+    if (r.status.phase === 'Failed') return '상위 검증 게이트 대기';
     const ready = rows.filter((x) => x.status.phase === 'Ready').length;
     const issues = rows.filter((x) => ['Failed', 'Degraded', 'DependencyPending'].includes(x.status.phase)).length;
     const disabled = rows.filter((x) => x.status.phase === 'Disabled').length;
@@ -1089,7 +1126,8 @@ export class AdminPlugins implements OnInit {
     const failure = this.ext.failures().find((item) => item.id === r.name);
     if (failure) return { visible: false, label: 'Host 적재 실패', reason: failure.error };
     if (this.ext.loadState() === 'loading') return { visible: false, label: 'Host 적재 중', reason: 'Extension Host가 검증·등록하는 중' };
-    if (r.status.phase !== 'Activated') return { visible: false, label: '메뉴 미노출', reason: `Registration ${r.status.phase || '미보고'} 상태` };
+    if (r.status.phase === 'Failed') return { visible: false, label: '서비스 차단', reason: this.reasonText(r.status.reason) || '보안 검증 실패' };
+    if (r.status.phase !== 'Activated') return { visible: false, label: '서비스 대기', reason: `Registration ${r.status.phase || '미보고'} 상태` };
     if (!this.catalogItem(r.name)?.nav) return { visible: false, label: '메뉴 미선언', reason: 'UIPluginPackage spec.nav가 없음' };
     return { visible: false, label: '메뉴 미노출', reason: 'Activated이지만 Extension Host pages registry에 적재되지 않음' };
   }
@@ -1100,6 +1138,9 @@ export class AdminPlugins implements OnInit {
     const r = this.registrations().find((item) => item.name === name);
     return r ? this.effectiveState(r) : { label: '미설치', detail: 'Registration 없음', tone: 'neutral' };
   }
+  desiredStateByName(name: string): string {
+    return this.registrations().find((item) => item.name === name)?.desiredState || '';
+  }
   effectiveState(r: Registration): EffectiveExtensionState {
     const phase = r.status.phase || 'Unknown';
     const rows = this.integrationRows(r);
@@ -1107,8 +1148,19 @@ export class AdminPlugins implements OnInit {
     if (r.desiredState === 'Disabled' || phase === 'Disabled') {
       return { label: '비활성', detail: '운영자가 Console 노출을 중지했습니다. 워크로드 보존 여부는 설치 정책을 따릅니다.', tone: 'neutral' };
     }
+    if (r.status.serving?.phase === 'LastKnownGood') {
+      return {
+        label: '기존 검증본 서비스',
+        detail: `일시적인 ${this.reasonText(r.status.revalidation?.reason || r.status.serving.reason) || '재검증 대기'} 동안 마지막 정상 버전을 유지합니다.`,
+        tone: 'warning',
+      };
+    }
     if (phase === 'Failed' || failed.length) {
-      return { label: phase === 'Failed' ? '실패' : '연동 저하', detail: r.status.reason || failed.map((x) => x.label).join(', '), tone: 'danger' };
+      return {
+        label: phase === 'Failed' ? '서비스 차단' : '연동 저하',
+        detail: phase === 'Failed' ? this.reasonText(r.status.reason) : failed.map((x) => x.label).join(', '),
+        tone: 'danger',
+      };
     }
     if (!['Activated', 'Ready'].includes(phase)) {
       return { label: phase, detail: r.status.reason || '설치·검증 진행 상태', tone: phase === 'Degraded' ? 'danger' : 'warning' };
@@ -1144,19 +1196,37 @@ export class AdminPlugins implements OnInit {
     if (pending.length) return { label: `${phase} · 연동 대기`, detail: pending.map((x) => x.label).join(', '), tone: 'warning' };
     return { label: phase === 'Activated' ? '사용 가능' : '게시 대기', detail: this.integrationSummary(r), tone: phase === 'Activated' ? 'success' : 'warning' };
   }
+  verificationGate(r: Registration): EffectiveExtensionState {
+    if (r.status.serving?.phase === 'LastKnownGood') {
+      return {
+        label: '재검증 대기',
+        detail: this.reasonText(r.status.revalidation?.reason || r.status.serving.reason) || '마지막 정상 버전 유지',
+        tone: 'warning',
+      };
+    }
+    if (r.status.phase === 'Failed') {
+      return {
+        label: '검증 차단',
+        detail: this.reasonText(r.status.reason) || r.status.reason || '원인 확인 필요',
+        tone: 'danger',
+      };
+    }
+    const verification = Object.values(r.status.verification || {});
+    const passed = verification.length > 0 && verification.every((value) => value === 'Verified' || value === 'Approved');
+    if (passed) return { label: '검증 통과', detail: r.status.channelState || 'exact digest', tone: 'success' };
+    return { label: '검증 중', detail: r.status.reason || r.status.phase || '상태 대기', tone: 'warning' };
+  }
   statusLayers(r: Registration): StatusLayer[] {
     const verification = r.status.verification;
     const verificationValues = verification ? Object.values(verification) : [];
     const verified = verificationValues.length > 0 && verificationValues.every((v) => v === 'Verified' || v === 'Approved');
     const workload = this.workloadPhase(r);
     const menu = this.menuState(r);
-    const integrationIssue = this.integrationRows(r).some((x) => ['Failed', 'Degraded', 'DependencyPending'].includes(x.status.phase));
     return [
-      { label: '1. Artifact', value: verified ? 'Verified' : verificationValues.length ? '확인 필요' : '미보고', detail: 'manifest · signature · digest · permission', tone: verified ? 'success' : 'warning' },
-      { label: '2. Workload', value: workload, detail: 'Pod · Service · health', tone: workload === 'Ready' ? 'success' : workload === 'Degraded' || workload === 'NotReady' ? 'danger' : 'warning' },
-      { label: '3. Server publication', value: r.status.phase === 'Activated' ? 'Registry 게시됨' : (r.status.phase || '미보고'), detail: r.status.reason || '서버가 검증된 항목을 Registry에 게시한 상태', tone: r.status.phase === 'Activated' || r.status.phase === 'Ready' ? 'success' : r.status.phase === 'Failed' ? 'danger' : 'warning' },
-      { label: '4. Console integration', value: integrationIssue ? '확인 필요' : this.integrationSummary(r), detail: 'page · API · manual · search · observability', tone: integrationIssue ? 'danger' : 'success' },
-      { label: '5. Browser availability', value: menu.label, detail: menu.reason, tone: menu.visible ? 'success' : (r.status.phase === 'Activated' ? 'danger' : 'warning') },
+      { label: '사용자 설정', value: this.desiredStateLabel(r), detail: this.desiredStateDetail(r), tone: r.desiredState === 'Enabled' ? 'success' : 'neutral' },
+      { label: 'Artifact 검증', value: this.verificationGate(r).label, detail: this.verificationGate(r).detail, tone: this.verificationGate(r).tone },
+      { label: '워크로드', value: workload, detail: '실제 Pod · Service readiness', tone: workload === 'Ready' ? 'success' : workload === 'Degraded' || workload === 'NotReady' ? 'danger' : 'warning' },
+      { label: '페이지 서비스', value: menu.label, detail: menu.reason, tone: menu.visible ? 'success' : r.status.phase === 'Failed' ? 'danger' : 'warning' },
     ];
   }
   /** 검증 실패 사유(reason) 한글 설명. */
@@ -1174,6 +1244,18 @@ export class AdminPlugins implements OnInit {
       PermissionProfileDrift: 'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름',
     };
     return reason ? (m[reason] ?? reason) : '';
+  }
+  remediationText(reason?: string): string {
+    const actions: Record<string, string> = {
+      UntrustedKey: '개발 클러스터 trust store에 해당 공개키를 복구한 뒤 재검증합니다. 개인키나 검증 우회는 사용하지 않습니다.',
+      SignatureInvalid: '게시된 descriptor와 서명키가 같은 release에서 생성됐는지 확인하고 새 immutable 버전으로 다시 게시합니다.',
+      DigestMismatch: 'Package가 승인한 manifest digest와 workload가 제공하는 파일을 대조하고 새 digest로 다시 배포합니다.',
+      EntryDigestMismatch: 'signed manifest의 entry hash와 실제 bundle을 일치시킨 뒤 새 버전으로 게시합니다.',
+      ManifestUnreachable: 'Service와 Pod readiness를 확인합니다. 같은 검증본이면 메뉴는 마지막 정상 상태로 유지됩니다.',
+      EntryUnreachable: 'Extension Service의 정적 파일 경로를 확인합니다. 같은 검증본이면 메뉴는 마지막 정상 상태로 유지됩니다.',
+      WorkloadNotReady: 'Deployment event와 readiness probe를 확인한 뒤 자동 재시도를 기다립니다.',
+    };
+    return reason ? (actions[reason] || '상세 검증 단계와 Controller 이벤트를 확인한 뒤 원인을 복구하고 재검증합니다.') : '';
   }
 
   /** Platform Support Profile capability 이름을 운영자 문구로. 미지 값은 원문을 보존한다. */
@@ -1331,13 +1413,13 @@ export class AdminPlugins implements OnInit {
     return this.registrations().filter((registration) => this.effectiveState(registration).tone === 'danger').length;
   }
 
-  registrationMetric(metric: 'published' | 'usable' | 'pending' | 'disabled' | 'failed'): string {
+  registrationMetric(metric: 'installed' | 'serving' | 'action' | 'pending' | 'disabled'): string {
     if (!this.registrationsLoaded()) return '—';
     const registrations = this.registrations();
-    if (metric === 'published') return String(registrations.filter((r) => r.status.phase === 'Activated').length);
-    if (metric === 'usable') return String(registrations.filter((r) => r.status.phase === 'Activated' && this.menuState(r).visible && this.effectiveState(r).tone === 'success').length);
+    if (metric === 'installed') return String(registrations.length);
+    if (metric === 'serving') return String(registrations.filter((r) => r.desiredState === 'Enabled' && this.menuState(r).visible).length);
     if (metric === 'disabled') return String(registrations.filter((r) => r.status.phase === 'Disabled').length);
-    if (metric === 'failed') return String(this.failedCount());
+    if (metric === 'action') return String(this.failedCount());
     return String(registrations.filter((r) => !['Activated', 'Disabled', 'Failed'].includes(r.status.phase || '') && this.effectiveState(r).tone !== 'danger').length);
   }
 

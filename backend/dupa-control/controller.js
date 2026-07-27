@@ -369,7 +369,7 @@ const CLI_RESOURCE_PATHS = [
   /^\/apis\/plugins\.opensphere\.io\/v1alpha1\/namespaces\/opensphere-console\/uiplugin(?:packages|registrations)(?:\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)?$/,
 ];
 const allowedCLIResourcePath = (path) => CLI_RESOURCE_PATHS.some((pattern) => pattern.test(path));
-function integrationStatuses(pkg, phase, retryable, now) {
+function integrationStatuses(pkg, phase, retryable, now, rootReason = '') {
   if (!pkg?.spec?.contributions) return {};
   const c = pkg.spec.contributions;
   const declarations = {
@@ -386,14 +386,18 @@ function integrationStatuses(pkg, phase, retryable, now) {
   };
   return Object.fromEntries(Object.entries(declarations).map(([name, declaration]) => {
     const enabled = declaration?.enabled === true;
+    // A failed artifact/admission gate means integrations were not evaluated;
+    // it does not mean ten independent integrations all failed.  Preserve the
+    // single root cause and report each enabled contribution as blocked/pending.
     const integrationPhase = !enabled ? 'Disabled'
       : ['Ready', 'Activated'].includes(phase) ? 'Ready'
-        : phase === 'Failed' ? 'Failed'
-          : phase === 'Degraded' ? 'Degraded' : 'DependencyPending';
+        : phase === 'Degraded' ? 'Degraded' : 'DependencyPending';
     return [name, {
       phase: integrationPhase,
-      reason: enabled ? '' : String(declaration?.reason || 'not supported'),
-      message: enabled ? `integration ${integrationPhase.toLowerCase()}` : 'integration disabled by contract',
+      reason: enabled ? String(rootReason || '') : String(declaration?.reason || 'not supported'),
+      message: enabled
+        ? (rootReason ? `waiting for root gate: ${rootReason}` : `integration ${integrationPhase.toLowerCase()}`)
+        : 'integration disabled by contract',
       retryable: enabled && Boolean(retryable),
       nextRetryAt: enabled && retryable ? new Date(Date.now() + 15000).toISOString() : '',
       lastTransitionTime: now,
@@ -407,6 +411,9 @@ async function setStatus(name, status, reg, pkg) {
   const retryable = Boolean(status.retryable);
   const verified = ['Ready', 'Activated', 'Degraded'].includes(phase);
   const failed = phase === 'Failed';
+  const workloadReportedReady = status.workloadReady === true;
+  const reportedStatus = { ...status };
+  delete reportedStatus.workloadReady;
   const hostPending = phase === 'DependencyPending' && status.reason === 'HostPending';
   const currentDigest = String(pkg?.spec?.image?.digest || '');
   const currentManifestSha256 = String(pkg?.spec?.manifest?.sha256 || '');
@@ -415,7 +422,7 @@ async function setStatus(name, status, reg, pkg) {
   const currentCompatibilityVersion = String(resolution.compatibilityVersion || pkg?.spec?.version || '');
   const releaseChanged = Boolean(reg?.status?.currentDigest && reg.status.currentDigest !== currentDigest);
   return k8s('PATCH', `${crd('uipluginregistrations')}/${name}/status`, { status: {
-    ...status,
+    ...reportedStatus,
     observedGeneration: Number(reg?.metadata?.generation || 0),
     observedVersion: currentVersion,
     currentDigest,
@@ -451,14 +458,28 @@ async function setStatus(name, status, reg, pkg) {
       observedApiVersion: String(pkg?.spec?.hostApiVersion || ''),
       phase: hostPending ? 'DependencyPending' : failed && /Host/.test(String(status.reason || '')) ? 'Incompatible' : 'Compatible',
     },
-    workload: { phase: ['Ready', 'Activated', 'Degraded', 'Disabled'].includes(phase) ? 'Ready' : phase === 'Uninstalling' ? 'Removed' : failed ? 'Degraded' : 'Pending' },
+    workload: {
+      phase: workloadReportedReady || ['Ready', 'Activated', 'Degraded', 'Disabled'].includes(phase)
+        ? 'Ready'
+        : phase === 'Uninstalling' ? 'Removed' : failed ? 'Degraded' : 'Pending'
+    },
     verification: {
       manifest: verified ? 'Verified' : failed ? 'Failed' : 'Pending',
       signature: verified ? 'Verified' : failed ? 'Failed' : 'Pending',
       entryDigest: verified ? 'Verified' : failed ? 'Failed' : 'Pending',
       permissions: verified ? 'Approved' : failed ? 'Failed' : 'Pending',
     },
-    integrations: integrationStatuses(pkg, phase, retryable, now),
+    integrations: integrationStatuses(pkg, phase, retryable, now, failed ? String(status.reason || '') : ''),
+    serving: status.serving || {
+      phase: ['Ready', 'Activated', 'Degraded'].includes(phase) ? 'Current' : 'Unavailable',
+      reason: failed ? String(status.reason || '') : '',
+      observedAt: now,
+    },
+    revalidation: status.revalidation || {
+      phase: verified ? 'Passed' : failed ? 'Failed' : 'Pending',
+      reason: failed ? String(status.reason || '') : '',
+      observedAt: now,
+    },
     lastTransitionTime: now,
   } });
 }
@@ -1578,6 +1599,15 @@ function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}) 
     icon: pkg.spec.nav?.icon || '',
   };
 }
+function retainableLastKnownGood(prior, pkg, reg, reason) {
+  return Boolean(
+    prior
+    && reg?.spec?.desiredState === 'Enabled'
+    && retryableReason(reason)
+    && prior.installedDigest === pkg?.spec?.image?.digest
+    && prior.manifestSha256 === pkg?.spec?.manifest?.sha256
+  );
+}
 function catalogProjectionItems(items) {
   return (items || []).map((pkg) => ({
     name: pkg.metadata.name,
@@ -1616,6 +1646,9 @@ function applyExtensionProjection(snapshot) {
 async function reconcile() {
   const [pkgs, regs] = await Promise.all([listPackages(), listRegs()]);
   if (!pkgs.ok || !regs.ok) return;
+  const priorPublishedByName = Object.fromEntries(
+    (extensionProjection.current()?.registry?.plugins || []).map((plugin) => [plugin.id, plugin])
+  );
   const pkgByName = Object.fromEntries(pkgs.json.items.map((p) => [p.metadata.name, p]));
   _trustedKeys = null; // 매 reconcile마다 신뢰키 재로드
   await loadTrustedKeys();
@@ -1687,7 +1720,43 @@ async function reconcile() {
 
       if (!stableRelease) await updateStatus({ phase: 'Verifying', reason: '', retryable: false });
       const v = await verifyPlugin(pkg);
-      if (!v.ok) { await updateStatus({ phase: 'Failed', reason: v.reason, retryable: retryableReason(v.reason) }); continue; }
+      if (!v.ok) {
+        const prior = priorPublishedByName[name];
+        if (retainableLastKnownGood(prior, pkg, reg, v.reason)) {
+          published.push({
+            ...prior,
+            available: true,
+            servingMode: 'LastKnownGood',
+            servingReason: v.reason,
+          });
+          await updateStatus({
+            phase: 'Activated',
+            reason: '',
+            retryable: true,
+            workloadReady: true,
+            serving: {
+              phase: 'LastKnownGood',
+              reason: v.reason,
+              observedAt: new Date().toISOString(),
+            },
+            revalidation: {
+              phase: 'Pending',
+              reason: v.reason,
+              observedAt: new Date().toISOString(),
+            },
+          });
+          continue;
+        }
+        // The Deployment has already converged. A trust/manifest gate failure is
+        // an artifact serving failure, not a Pod health failure.
+        await updateStatus({
+          phase: 'Failed',
+          reason: v.reason,
+          retryable: retryableReason(v.reason),
+          workloadReady: true,
+        });
+        continue;
+      }
 
       // A PFS plugin may be installed, verified and staged at any time; only
       // activation waits for the Platform Support Profile.  CONSTITUTION-0003 §7.2
@@ -3057,5 +3126,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
 }

@@ -394,6 +394,18 @@ spec:
                     signature: { type: string, enum: [Pending, Verified, Failed] }
                     entryDigest: { type: string, enum: [Pending, Verified, Failed] }
                     permissions: { type: string, enum: [Pending, Approved, Failed] }
+                serving:
+                  type: object
+                  properties:
+                    phase: { type: string, enum: [Current, LastKnownGood, Unavailable] }
+                    reason: { type: string }
+                    observedAt: { type: string }
+                revalidation:
+                  type: object
+                  properties:
+                    phase: { type: string, enum: [Pending, Passed, Failed] }
+                    reason: { type: string }
+                    observedAt: { type: string }
                 integrations:
                   type: object
                   additionalProperties:

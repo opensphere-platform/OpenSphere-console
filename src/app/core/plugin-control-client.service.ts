@@ -37,6 +37,14 @@ export interface Registration {
     verification?: {
       manifest?: string; signature?: string; entryDigest?: string; permissions?: string;
     };
+    serving?: {
+      phase?: 'Current' | 'LastKnownGood' | 'Unavailable' | string;
+      reason?: string; observedAt?: string;
+    };
+    revalidation?: {
+      phase?: 'Pending' | 'Passed' | 'Failed' | string;
+      reason?: string; observedAt?: string;
+    };
     // An installed consumer whose activation still waits on a platform capability
     // reports what is missing here, so the page can name the remaining work.
     admission?: {
