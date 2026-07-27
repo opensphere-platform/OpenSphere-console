@@ -33,6 +33,7 @@ test('Supabase verifier joins live operator and role state', async () => {
   const actor = await verifier(token(secret));
   assert.equal(actor.provider, 'supabase');
   assert.equal(actor.assurance, 'aal2');
+  assert.equal(actor.credentialRevision, 2);
   assert.deepEqual(actor.groups, ['console-admins']);
   assert.deepEqual(actor.permissions, ['oaa.knowledge.read', 'oaa.system.read']);
 });

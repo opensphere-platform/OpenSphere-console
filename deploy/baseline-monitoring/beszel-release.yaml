@@ -1,0 +1,351 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opensphere-monitoring
+  labels:
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/authority: baseline-observation
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: beszel-bootstrap
+  namespace: opensphere-monitoring
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: beszel-bootstrap
+  namespace: opensphere-monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["beszel-agent-public-key"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: beszel-bootstrap
+  namespace: opensphere-monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: beszel-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: beszel-bootstrap
+    namespace: opensphere-monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: beszel-agent-public-key
+  namespace: opensphere-monitoring
+data:
+  key: "bootstrap-pending"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: beszel-hub
+  namespace: opensphere-monitoring
+  labels:
+    app.kubernetes.io/name: beszel-hub
+    app.kubernetes.io/part-of: opensphere-console
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: beszel-hub
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: beszel-hub
+  namespace: opensphere-monitoring
+  labels:
+    app.kubernetes.io/name: beszel-hub
+    app.kubernetes.io/version: "0.18.7"
+    app.kubernetes.io/part-of: opensphere-console
+spec:
+  serviceName: beszel-hub
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: beszel-hub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: beszel-hub
+        app.kubernetes.io/part-of: opensphere-console
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: hub
+          image: henrygd/beszel@sha256:a849ad80814b6a1a3be665304dcace5d4854b3bed7bde4dd1227e8ce1b82d477
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: BESZEL_HUB_USER_EMAIL
+              valueFrom: { secretKeyRef: { name: beszel-runtime, key: admin-email } }
+            - name: BESZEL_HUB_USER_PASSWORD
+              valueFrom: { secretKeyRef: { name: beszel-runtime, key: admin-password } }
+            - { name: BESZEL_HUB_SHARE_ALL_SYSTEMS, value: "true" }
+            - { name: BESZEL_HUB_CHECK_UPDATES, value: "false" }
+            - { name: BESZEL_HUB_USER_CREATION, value: "false" }
+            - { name: BESZEL_HUB_APP_URL, value: "http://beszel-hub.opensphere-monitoring.svc.cluster.local:8090" }
+          ports:
+            - { name: http, containerPort: 8090 }
+          volumeMounts:
+            - { name: data, mountPath: /beszel_data }
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: beszel-hub
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 10Gi }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: beszel-bootstrap-v0187
+  namespace: opensphere-monitoring
+  labels:
+    app.kubernetes.io/name: beszel-bootstrap
+    app.kubernetes.io/part-of: opensphere-console
+spec:
+  backoffLimit: 8
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: beszel-bootstrap
+        app.kubernetes.io/part-of: opensphere-console
+    spec:
+      serviceAccountName: beszel-bootstrap
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: configure
+          image: curlimages/curl@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: HUB_URL, value: "http://beszel-hub.opensphere-monitoring.svc.cluster.local:8090" }
+            - name: ADMIN_EMAIL
+              valueFrom: { secretKeyRef: { name: beszel-runtime, key: admin-email } }
+            - name: ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: beszel-runtime, key: admin-password } }
+            - name: READER_EMAIL
+              valueFrom: { secretKeyRef: { name: beszel-runtime, key: reader-email } }
+            - name: READER_PASSWORD
+              valueFrom: { secretKeyRef: { name: beszel-runtime, key: reader-password } }
+            - name: AGENT_TOKEN
+              valueFrom: { secretKeyRef: { name: beszel-runtime, key: agent-token } }
+            - name: WEBHOOK_TOKEN
+              valueFrom: { secretKeyRef: { name: beszel-runtime, key: webhook-token } }
+            - { name: K8S_API, value: "https://kubernetes.default.svc" }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              for attempt in $(seq 1 60); do
+                curl -fsS "${HUB_URL}/api/health" >/dev/null && break
+                [ "${attempt}" -eq 60 ] && exit 1
+                sleep 2
+              done
+
+              ADMIN_AUTH="$(curl -fsS "${HUB_URL}/api/collections/_superusers/auth-with-password" \
+                -H 'content-type: application/json' \
+                --data "{\"identity\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\"}")"
+              ADMIN_TOKEN="$(printf '%s' "${ADMIN_AUTH}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+              [ -n "${ADMIN_TOKEN}" ]
+
+              curl -fsS "${HUB_URL}/api/collections/users/records" \
+                -H "Authorization: ${ADMIN_TOKEN}" \
+                -H 'content-type: application/json' \
+                --data "{\"email\":\"${READER_EMAIL}\",\"password\":\"${READER_PASSWORD}\",\"passwordConfirm\":\"${READER_PASSWORD}\",\"verified\":true,\"role\":\"readonly\"}" \
+                >/dev/null || true
+
+              USER_AUTH="$(curl -fsS "${HUB_URL}/api/collections/users/auth-with-password" \
+                -H 'content-type: application/json' \
+                --data "{\"identity\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\"}")"
+              USER_TOKEN="$(printf '%s' "${USER_AUTH}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+              [ -n "${USER_TOKEN}" ]
+
+              SETTINGS="$(curl -fsS "${HUB_URL}/api/collections/user_settings/records?perPage=1" \
+                -H "Authorization: ${USER_TOKEN}")"
+              SETTINGS_ID="$(printf '%s' "${SETTINGS}" | sed -n 's/.*"items":\[{"id":"\([^"]*\)".*/\1/p')"
+              [ -n "${SETTINGS_ID}" ]
+              WEBHOOK_URL="generic+http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080/api/internal/monitoring/beszel/events?template=json&@x-opensphere-beszel-token=${WEBHOOK_TOKEN}"
+              curl -fsS -X PATCH "${HUB_URL}/api/collections/user_settings/records/${SETTINGS_ID}" \
+                -H "Authorization: ${USER_TOKEN}" \
+                -H 'content-type: application/json' \
+                --data "{\"settings\":{\"emails\":[],\"webhooks\":[\"${WEBHOOK_URL}\"]}}" >/dev/null
+
+              curl -fsS "${HUB_URL}/api/beszel/universal-token?enable=1&permanent=1&token=${AGENT_TOKEN}" \
+                -H "Authorization: ${USER_TOKEN}" >/dev/null
+
+              INFO="$(curl -fsS "${HUB_URL}/api/beszel/info" -H "Authorization: ${USER_TOKEN}")"
+              PUBLIC_KEY="$(printf '%s' "${INFO}" | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')"
+              [ -n "${PUBLIC_KEY}" ]
+              SA_TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              PATCH="$(printf '{"data":{"key":"%s"}}' "${PUBLIC_KEY}")"
+              curl -fsS --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+                -X PATCH "${K8S_API}/api/v1/namespaces/opensphere-monitoring/configmaps/beszel-agent-public-key" \
+                -H "Authorization: Bearer ${SA_TOKEN}" \
+                -H 'content-type: application/merge-patch+json' \
+                --data "${PATCH}" >/dev/null
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: beszel-agent
+  namespace: opensphere-monitoring
+  labels:
+    app.kubernetes.io/name: beszel-agent
+    app.kubernetes.io/version: "0.18.7"
+    app.kubernetes.io/part-of: opensphere-console
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: beszel-agent
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: beszel-agent
+        app.kubernetes.io/part-of: opensphere-console
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      tolerations:
+        - { key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }
+        - { key: node-role.kubernetes.io/master, operator: Exists, effect: NoSchedule }
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: agent
+          image: henrygd/beszel-agent@sha256:8874e2c53f9de5e063a6a80d6b617e20fa593ac5dc4eb4c6ce1f912f510f38f8
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: BESZEL_AGENT_HUB_URL, value: "http://beszel-hub.opensphere-monitoring.svc.cluster.local:8090" }
+            - { name: BESZEL_AGENT_DISABLE_SSH, value: "true" }
+            - { name: BESZEL_AGENT_KEY_FILE, value: "/run/opensphere-beszel/key" }
+            - { name: BESZEL_AGENT_TOKEN_FILE, value: "/run/opensphere-beszel/token" }
+            - { name: BESZEL_AGENT_DATA_DIR, value: "/var/lib/beszel-agent" }
+            - name: BESZEL_AGENT_SYSTEM_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            - { name: HOST_PROC, value: "/host/proc" }
+            - { name: HOST_SYS, value: "/host/sys" }
+            - { name: HOST_ETC, value: "/host/etc" }
+            - { name: BESZEL_AGENT_FILESYSTEM, value: "/host/root" }
+            - { name: BESZEL_AGENT_SKIP_SYSTEMD, value: "true" }
+          volumeMounts:
+            - { name: public-key, mountPath: /run/opensphere-beszel/key, subPath: key, readOnly: true }
+            - { name: credentials, mountPath: /run/opensphere-beszel/token, subPath: agent-token, readOnly: true }
+            - { name: agent-state, mountPath: /var/lib/beszel-agent }
+            - { name: host-proc, mountPath: /host/proc, readOnly: true }
+            - { name: host-sys, mountPath: /host/sys, readOnly: true }
+            - { name: host-etc, mountPath: /host/etc, readOnly: true }
+            - { name: host-root, mountPath: /host/root, readOnly: true }
+          readinessProbe:
+            exec: { command: ["/agent", "health"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["/agent", "health"] }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - { name: public-key, configMap: { name: beszel-agent-public-key } }
+        - { name: credentials, secret: { secretName: beszel-runtime } }
+        - name: agent-state
+          hostPath: { path: /var/lib/opensphere/beszel-agent, type: DirectoryOrCreate }
+        - name: host-proc
+          hostPath: { path: /proc, type: Directory }
+        - name: host-sys
+          hostPath: { path: /sys, type: Directory }
+        - name: host-etc
+          hostPath: { path: /etc, type: Directory }
+        - name: host-root
+          hostPath: { path: /, type: Directory }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: beszel-hub
+  namespace: opensphere-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: beszel-hub
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: ["beszel-agent", "beszel-bootstrap"]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opensphere-console
+          podSelector:
+            matchLabels:
+              app: opensphere-console-backend
+      ports:
+        - { protocol: TCP, port: 8090 }

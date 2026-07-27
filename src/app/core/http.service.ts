@@ -15,8 +15,6 @@ export class HttpService {
     headers.delete('X-OpenSphere-Actor');
 		headers.delete('X-OS-Id-Token');
 		headers.delete('Authorization');
-    const token = this.auth.token();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
 		const correlationId = headers.get('X-OS-Correlation-ID');
 		if (!correlationId || !/^[A-Za-z0-9._:-]{1,128}$/.test(correlationId)) {
 			headers.set('X-OS-Correlation-ID', crypto.randomUUID());
@@ -25,6 +23,10 @@ export class HttpService {
 		if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-Idempotency-Key')) {
 			headers.set('X-OS-Idempotency-Key', crypto.randomUUID());
 		}
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-CSRF-Token')) {
+      const csrf = this.cookieValue('__Host-opensphere_csrf');
+      if (csrf) headers.set('X-OS-CSRF-Token', csrf);
+    }
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     if (init.signal) {
@@ -33,6 +35,7 @@ export class HttpService {
     }
     try {
       const response = await fetch(target, { ...init, headers, signal: controller.signal });
+      if (response.ok) this.auth.touchSession();
       // A freshly reinstalled Console can rotate its Supabase signing key. A token from
       // the previous installation can still be locally unexpired while every
       // server correctly rejects it. HTTP 401 is therefore authoritative: do
@@ -40,11 +43,12 @@ export class HttpService {
       // UX stability: calling reAuthenticate() on every 401 causes permission errors
       // to look like logout. Keep token state and only force interactive
       // re-login when the local token is actually expired.
-      if (response.status === 401 && token) {
+      if (response.status === 401 && this.auth.subject()) {
         this.reauthRequired.set(true);
-        if (this.auth.isTokenExpired()) {
-          void this.auth.reAuthenticate();
-        }
+        void this.auth.reAuthenticate();
+      }
+      if (response.status === 428 && this.auth.subject()) {
+        this.auth.requestStepUp();
       }
       return response;
     } finally {
@@ -62,5 +66,11 @@ export class HttpService {
     const target = input instanceof Request ? new URL(input.url) : new URL(String(input), window.location.origin);
     if (target.origin !== window.location.origin) throw new Error('cross-origin API request blocked by Console HTTP policy');
     return input instanceof Request ? input : target;
+  }
+
+  private cookieValue(name: string): string {
+    const prefix = `${name}=`;
+    const item = document.cookie.split(';').map((value) => value.trim()).find((value) => value.startsWith(prefix));
+    return item ? decodeURIComponent(item.slice(prefix.length)) : '';
   }
 }

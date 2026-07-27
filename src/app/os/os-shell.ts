@@ -24,6 +24,7 @@ import { OsNavNode } from './os-nav-node';
 import { OsSearch } from './os-search';
 import { OsNotifications } from './os-notifications';
 import { OsOaaAgent } from './os-oaa-agent';
+import { OsSessionStepUp } from './os-session-step-up';
 
 interface NavItem {
   path: string;
@@ -51,11 +52,13 @@ interface NavBand {
     OsSearch,
     OsNotifications,
     OsOaaAgent,
+    OsSessionStepUp,
     CarbonIcon,
     OsRawIcon,
   ],
   template: `
     <a class="os-skip-link" href="#main-content">본문으로 건너뛰기</a>
+    <os-session-step-up />
     <div class="main-container">
       <header class="header">
         <button class="os-hamburger" (click)="navCollapsed.set(!navCollapsed())" title="메뉴 접기/펼치기" aria-label="메뉴 토글">

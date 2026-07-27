@@ -1,5 +1,4 @@
 import { Injectable, inject } from '@angular/core';
-import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 
 export interface ManualSource {
@@ -79,11 +78,10 @@ export interface ManualDocumentDetail {
 
 @Injectable({ providedIn: 'root' })
 export class ManualService {
-  private auth = inject(AuthService);
   private http = inject(HttpService);
 
   private authHeaders(): Record<string, string> {
-    return { authorization: 'Bearer ' + (this.auth.token() || '') };
+    return {};
   }
 
   private async getJson<T>(url: string): Promise<T> {

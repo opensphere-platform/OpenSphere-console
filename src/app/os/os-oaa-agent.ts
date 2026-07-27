@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from './carbon-icon';
 import { AuthService } from '../core/auth.service';
+import { HttpService } from '../core/http.service';
 import Send16 from '@carbon/icons/es/send/16';
 import Close16 from '@carbon/icons/es/close/16';
 import Restart16 from '@carbon/icons/es/restart/16';
@@ -452,6 +453,7 @@ interface OaaSession {
 })
 export class OsOaaAgent implements OnDestroy {
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   // sessionStorage only — chat transcripts are not persisted beyond the current browser tab.
   private readonly storageKey = 'opensphere.oaa.sessions';
   readonly iconSend = Send16;
@@ -694,9 +696,9 @@ export class OsOaaAgent implements OnDestroy {
         .filter((m) => m.role !== 'system')
         .slice(-12)
         .map((m) => ({ role: m.role, content: m.content }));
-      const r = await fetch('/api/oaa/chat', {
+      const r = await this.http.request('/api/oaa/chat', {
         method: 'POST',
-        headers: { authorization: 'Bearer ' + (this.auth.token() || ''), 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         // keyId를 고정하지 않는다. Gateway가 활성 provider inventory에서 정식 ID
         // (예: deepseek-main)를 선택하므로 UI와 Secret 이름이 어긋나지 않는다.
         body: JSON.stringify({

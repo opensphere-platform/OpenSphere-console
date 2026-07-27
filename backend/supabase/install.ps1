@@ -118,6 +118,7 @@ if (-not $secretExists) {
       'jwt-secret' = $jwtSecret
       'anon-key' = $anonKey
       'service-role-key' = $serviceRoleKey
+      'browser-session-key' = (New-RandomBase64 32)
       's3-access-key-id' = (New-RandomSafePassword 32)
       's3-access-key-secret' = (New-RandomSafePassword 64)
     }
@@ -143,6 +144,12 @@ foreach ($entry in $requiredScopedSecrets.GetEnumerator()) {
     Invoke-Kubectl @("-n", $Namespace, "patch", "secret", "opensphere-supabase-secrets", "--type=merge", "-p", $patch)
   }
 }
+$browserSessionKeyB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.browser-session-key}")
+if (-not $browserSessionKeyB64) {
+  $patch = @{ stringData = @{ 'browser-session-key' = (New-RandomBase64 32) } } | ConvertTo-Json -Compress
+  Invoke-Kubectl @("-n", $Namespace, "patch", "secret", "opensphere-supabase-secrets", "--type=merge", "-p", $patch)
+  $browserSessionKeyB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.browser-session-key}")
+}
 $oaaGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-gateway-password}")
 
 # Kubernetes Secrets are namespace-scoped. Mirror only the two server-side
@@ -161,6 +168,7 @@ type: Opaque
 data:
   jwt-secret: $jwtSecretB64
   service-role-key: $serviceRoleKeyB64
+  browser-session-key: $browserSessionKeyB64
 "@
 Invoke-Kubectl @("apply", "-f", "-") $runtimeSecret
 

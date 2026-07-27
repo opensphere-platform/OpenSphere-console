@@ -9,6 +9,8 @@ const { createNotificationApi } = require('./notification-api');
 const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
 const { normalizedEvent } = require('../notification-dispatcher/contract');
+const { createBrowserSessionManager } = require('./browser-session');
+const { createBaselineMonitoring } = require('./baseline-monitoring');
 
 const MAX_BODY = 256 * 1024; // prevent unbounded in-memory request buffering
 const newOpId = () => randomUUID();
@@ -26,6 +28,11 @@ const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_STORAGE_URL = process.env.SUPABASE_STORAGE_URL || 'http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000';
 const SUPABASE_TIMEOUT_MS = Number(process.env.SUPABASE_TIMEOUT_MS || 3000);
+const BROWSER_SESSION_ENCRYPTION_KEY = process.env.BROWSER_SESSION_ENCRYPTION_KEY || '';
+const BESZEL_URL = process.env.BESZEL_URL || '';
+const BESZEL_READER_EMAIL = process.env.BESZEL_READER_EMAIL || '';
+const BESZEL_READER_PASSWORD = process.env.BESZEL_READER_PASSWORD || '';
+const BESZEL_WEBHOOK_TOKEN = process.env.BESZEL_WEBHOOK_TOKEN || '';
 const GITEA_URL = (process.env.GITEA_URL || '').replace(/\/$/, '');
 const GITEA_TOKEN = process.env.GITEA_TOKEN || '';
 const GITEA_REVIEW_TOKEN = process.env.GITEA_REVIEW_TOKEN || '';
@@ -102,6 +109,8 @@ const CONSOLE_ROLE_GROUPS = new Set(
 );
 const AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'supabase';
 let verifySupabaseToken = null;
+let browserSessions = null;
+let baselineMonitoring = null;
 if (AUTH_PROVIDER === 'supabase' || AUTH_PROVIDER === 'dual') {
   try {
     verifySupabaseToken = createSupabaseVerifier({
@@ -387,6 +396,140 @@ async function authAdminRequest(pathName, { method = 'GET', body = undefined, ti
   return parse();
 }
 
+async function authUserRequest(pathName, {
+  method = 'GET',
+  body = undefined,
+  token = '',
+  timeoutMs = SUPABASE_TIMEOUT_MS,
+  query = '',
+} = {}) {
+  if (!SUPABASE_AUTH_URL) throw { code: 503, msg: 'SUPABASE_AUTH_URL is required' };
+  const base = SUPABASE_AUTH_URL.replace(/\/$/, '');
+  const url = new URL(`${base}${pathName}`);
+  if (query && typeof query === 'string' && query.trim()) {
+    url.search = query.startsWith('?') ? query.slice(1) : query;
+  }
+  const headers = {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    accept: 'application/json',
+    'content-type': 'application/json',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await response.text();
+  let parsed = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
+  if (!response.ok) {
+    throw {
+      code: response.status,
+      msg: parsed.error_description || parsed.msg || parsed.message || parsed.error || `Supabase Auth ${pathName} failed`,
+    };
+  }
+  return parsed;
+}
+
+try {
+  if (verifySupabaseToken && BROWSER_SESSION_ENCRYPTION_KEY) {
+    browserSessions = createBrowserSessionManager({
+      restRequest,
+      verifyToken: verifySupabaseToken,
+      authRequest: authUserRequest,
+      encryptionKey: BROWSER_SESSION_ENCRYPTION_KEY,
+      publicOrigin: new URL(CONSOLE_PUBLIC_URL).origin,
+    });
+  } else {
+    console.warn('[auth] Browser session broker is disabled: verifier or encryption key unavailable');
+  }
+} catch (error) {
+  console.error('[auth] Browser session broker initialization failed:', error?.message || error);
+}
+
+async function ensureInfrastructureNodeBinding(candidate) {
+  const rows = await restRequest('infrastructure_node_binding', {
+    query: 'select=kubernetes_node_uid,kubernetes_node_name,beszel_system_id,beszel_machine_fingerprint,binding_state,first_observed_at,last_observed_at',
+  });
+  const byNode = (Array.isArray(rows) ? rows : []).find((row) => row.kubernetes_node_uid === candidate.kubernetesNodeUid);
+  const bySystem = (Array.isArray(rows) ? rows : []).find((row) => row.beszel_system_id === candidate.beszelSystemId);
+  const existing = byNode || bySystem || null;
+  const exact = existing
+    && existing.kubernetes_node_uid === candidate.kubernetesNodeUid
+    && existing.beszel_system_id === candidate.beszelSystemId
+    && existing.beszel_machine_fingerprint === candidate.beszelMachineFingerprint
+    && existing.binding_state === 'verified';
+  if (existing && !exact) {
+    return {
+      state: 'rejected',
+      mode: 'durable',
+      reason: byNode && bySystem && byNode !== bySystem
+        ? 'node UID and monitoring system are already bound to different identities'
+        : 'stored Node UID, system ID, or machine fingerprint does not match',
+      kubernetesNodeUid: candidate.kubernetesNodeUid,
+      beszelSystemId: candidate.beszelSystemId,
+      fingerprintDigest: `sha256:${toHashHex(candidate.beszelMachineFingerprint)}`,
+    };
+  }
+  if (exact) {
+    await restRequest('infrastructure_node_binding', {
+      method: 'PATCH',
+      query: `kubernetes_node_uid=eq.${encodeURIComponent(candidate.kubernetesNodeUid)}`,
+      body: {
+        kubernetes_node_name: candidate.kubernetesNodeName,
+        last_observed_at: candidate.observedAt,
+      },
+      prefer: 'return=minimal',
+    });
+  } else {
+    try {
+      await restRequest('infrastructure_node_binding', {
+        method: 'POST',
+        body: [{
+          kubernetes_node_uid: candidate.kubernetesNodeUid,
+          kubernetes_node_name: candidate.kubernetesNodeName,
+          beszel_system_id: candidate.beszelSystemId,
+          beszel_machine_fingerprint: candidate.beszelMachineFingerprint,
+          binding_state: 'verified',
+          first_observed_at: candidate.observedAt,
+          last_observed_at: candidate.observedAt,
+          metadata: { establishedBy: 'baseline-monitoring-adapter-v1', hostnameRole: 'discovery-hint-only' },
+        }],
+        prefer: 'return=minimal',
+      });
+    } catch (error) {
+      // A concurrent observation may have established the same unique binding.
+      // Re-evaluate once; never overwrite a conflicting identity.
+      const after = await restRequest('infrastructure_node_binding', {
+        query: 'select=kubernetes_node_uid,beszel_system_id,beszel_machine_fingerprint,binding_state',
+      });
+      const match = (Array.isArray(after) ? after : []).find((row) =>
+        row.kubernetes_node_uid === candidate.kubernetesNodeUid
+        && row.beszel_system_id === candidate.beszelSystemId
+        && row.beszel_machine_fingerprint === candidate.beszelMachineFingerprint
+        && row.binding_state === 'verified');
+      if (!match) throw error;
+    }
+  }
+  return {
+    state: 'verified',
+    mode: 'durable',
+    kubernetesNodeUid: candidate.kubernetesNodeUid,
+    beszelSystemId: candidate.beszelSystemId,
+    fingerprintDigest: `sha256:${toHashHex(candidate.beszelMachineFingerprint)}`,
+  };
+}
+
+baselineMonitoring = createBaselineMonitoring({
+  baseUrl: BESZEL_URL,
+  email: BESZEL_READER_EMAIL,
+  password: BESZEL_READER_PASSWORD,
+  kubernetesGet: k8sGet,
+  bindingStore: { ensure: ensureInfrastructureNodeBinding },
+});
+
 function inClause(values) {
   return `(${values.filter(Boolean).map((v) => `"${String(v)}"`).join(',')})`;
 }
@@ -421,7 +564,10 @@ function mfaProjectionFromAuthRow(row) {
 async function verifyAuthed(req) {
   const auth = req.headers.authorization || '';
   const match = auth.match(/^Bearer\s+(.+)$/i);
-  if (!match) throw { code: 401, msg: 'no bearer token' };
+  if (!match) {
+    if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+    return (await browserSessions.authenticate(req)).actor;
+  }
   // CLI credentials have a dedicated issuer/key, but resolve their subject and
   // current roles from the same Supabase projection as browser sessions.
   let unverifiedClaims = null;
@@ -523,6 +669,20 @@ function isMutationRequest(req) {
   return !['GET', 'HEAD', 'OPTIONS'].includes(String(req?.method || 'GET').toUpperCase());
 }
 
+function requireRecentAal2(actor, operation = 'admin mutation') {
+  const reauthenticatedAt = Date.parse(actor?.lastReauthenticatedAt || '');
+  const recent = actor?.assurance === 'aal2'
+    && Number.isFinite(reauthenticatedAt)
+    && Date.now() - reauthenticatedAt <= 5 * 60 * 1000;
+  if (!recent) {
+    throw {
+      code: 428,
+      errorCode: 'recent_aal2_required',
+      msg: `${operation} requires MFA assurance aal2 verified within the last 5 minutes`,
+    };
+  }
+}
+
 async function verifyConsoleAdmin(req, options = {}) {
   const actor = await verifyAuthed(req);
   if (!actor.groups || !actor.groups.includes(SUPABASE_BACKEND_ROLE)) {
@@ -530,9 +690,7 @@ async function verifyConsoleAdmin(req, options = {}) {
   }
   const requireAal2 = options.requireAal2 === true
     || (options.requireAal2 !== false && SUPABASE_REQUIRE_AAL2 && isMutationRequest(req));
-  if (requireAal2 && actor.assurance !== 'aal2') {
-    throw { code: 403, msg: 'admin mutation requires MFA assurance aal2' };
-  }
+  if (requireAal2) requireRecentAal2(actor, 'admin mutation');
   return actor;
 }
 
@@ -543,9 +701,7 @@ async function verifyOaaIdentityOwner(req, options = {}) {
   // Inventory reads are permission-gated and PII-minimized. Mutations never
   // receive the optional non-MFA bootstrap exception used by the interactive
   // Console during first-install recovery.
-  if (options.requireAal2 === true && actor.assurance !== 'aal2') {
-    throw { code: 403, msg: 'OAA identity owner action requires MFA assurance aal2' };
-  }
+  if (options.requireAal2 === true) requireRecentAal2(actor, 'OAA identity owner action');
   return actor;
 }
 
@@ -730,9 +886,7 @@ async function oaaNotificationOwnerAction(actor, rawBody) {
   throw { code: 400, msg: 'OAA notification action must be set-channel-enabled, test-channel, or retry-delivery' };
 }
 
-async function publishNotificationEvent(req, body) {
-  const supplied = String(req.headers['x-opensphere-notification-token'] || '');
-  if (!NOTIFICATION_EVENT_TOKEN || !safeEqual(supplied, NOTIFICATION_EVENT_TOKEN)) throw { code: 401, msg: 'notification producer authentication failed' };
+async function insertNotificationEvent(req, body) {
   const event = normalizedEvent(body);
   const rows = await restRequest('notification_event', {
     method: 'POST',
@@ -752,6 +906,43 @@ async function publishNotificationEvent(req, body) {
     }],
   });
   return { accepted: true, id: rows[0]?.id || null };
+}
+
+async function publishNotificationEvent(req, body) {
+  const supplied = String(req.headers['x-opensphere-notification-token'] || '');
+  if (!NOTIFICATION_EVENT_TOKEN || !safeEqual(supplied, NOTIFICATION_EVENT_TOKEN)) throw { code: 401, msg: 'notification producer authentication failed' };
+  return insertNotificationEvent(req, body);
+}
+
+async function publishBeszelNotificationEvent(req, body) {
+  const supplied = String(req.headers['x-opensphere-beszel-token'] || '');
+  if (!BESZEL_WEBHOOK_TOKEN || !safeEqual(supplied, BESZEL_WEBHOOK_TOKEN)) {
+    throw { code: 401, msg: 'Beszel alert producer authentication failed' };
+  }
+  const title = String(body?.title || 'Infrastructure monitoring alert').trim().slice(0, 240);
+  const message = String(body?.message || '').trim().slice(0, 4000);
+  const transition = /\b(resolved|recovered|recovery|restored|up)\b/i.test(`${title} ${message}`)
+    ? 'resolved'
+    : 'triggered';
+  const observedAt = new Date().toISOString();
+  const minuteBucket = observedAt.slice(0, 16);
+  const sourceId = toHashHex(`${title}\n${message}\n${transition}\n${minuteBucket}`);
+  return insertNotificationEvent(req, {
+    sourceType: 'baseline-monitoring',
+    sourceId: `beszel:${sourceId}`,
+    source: 'Infrastructure Monitoring',
+    category: 'node',
+    severity: transition === 'resolved' ? 'success' : 'warning',
+    title,
+    body: message,
+    route: '/manage/infrastructure-monitoring?tab=alerts',
+    labels: {
+      provider: 'beszel',
+      transition,
+      contract: 'generic-webhook-v1',
+    },
+    occurredAt: observedAt,
+  });
 }
 
 const OAA_ACTION_POLICY = Object.freeze({
@@ -1712,8 +1903,8 @@ async function readBody(req) {
   try { return JSON.parse(s); } catch { throw { code: 400, msg: 'invalid json body' }; }
 }
 
-function json(res, code, obj) {
-  res.writeHead(code, { 'content-type': 'application/json' });
+function json(res, code, obj, headers = {}) {
+  res.writeHead(code, { 'content-type': 'application/json', ...headers });
   res.end(JSON.stringify(obj));
 }
 
@@ -1926,6 +2117,7 @@ function k8sAuth() {
 function k8sGet(p2) {
   return fetch(`${'https://kubernetes.default.svc'}${p2}`, {
     ...k8sAuth(),
+    signal: AbortSignal.timeout(5000),
   }).then(async (r) => {
     if (!r.ok) throw new Error(`${p2} HTTP ${r.status}`);
     return r.json();
@@ -2615,6 +2807,165 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/identity/bootstrap' && req.method === 'POST') {
       return json(res, 201, await bootstrapInitialOperator(await readBody(req)));
     }
+    if (p === '/api/identity/session/adopt' && req.method === 'POST') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        const body = await readBody(req);
+        const adopted = await browserSessions.adoptLegacy(req, {
+          refreshToken: body.refreshToken,
+        });
+        return json(res, 200, {
+          mfaRequired: adopted.mfaRequired,
+          session: adopted.session,
+        }, { 'set-cookie': adopted.cookies });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Legacy browser session adoption failed' });
+      }
+    }
+    if (p === '/api/monitoring/baseline/v1/overview' && req.method === 'GET') {
+      try {
+        const actor = await verifyAuthed(req);
+        requireActorPermission(actor, 'console.infrastructure.read');
+        return json(res, 200, await baselineMonitoring.overview());
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Baseline monitoring overview unavailable' });
+      }
+    }
+    if (p === '/api/monitoring/baseline/v1/nodes' && req.method === 'GET') {
+      try {
+        const actor = await verifyAuthed(req);
+        requireActorPermission(actor, 'console.infrastructure.read');
+        return json(res, 200, await baselineMonitoring.nodes());
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Baseline monitoring nodes unavailable' });
+      }
+    }
+    const baselineSeriesPath = p.match(/^\/api\/monitoring\/baseline\/v1\/nodes\/([a-z0-9]{15})\/series$/);
+    if (baselineSeriesPath && req.method === 'GET') {
+      try {
+        const actor = await verifyAuthed(req);
+        requireActorPermission(actor, 'console.infrastructure.read');
+        return json(res, 200, await baselineMonitoring.series(baselineSeriesPath[1], url.searchParams.get('range') || '24h'));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Baseline monitoring series unavailable' });
+      }
+    }
+    if (p === '/api/monitoring/baseline/v1/alerts' && req.method === 'GET') {
+      try {
+        const actor = await verifyAuthed(req);
+        requireActorPermission(actor, 'console.infrastructure.read');
+        return json(res, 200, await baselineMonitoring.alerts());
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Baseline monitoring alerts unavailable' });
+      }
+    }
+    if (p === '/api/monitoring/baseline/v1/data-health' && req.method === 'GET') {
+      try {
+        const actor = await verifyAuthed(req);
+        requireActorPermission(actor, 'console.infrastructure.read');
+        return json(res, 200, await baselineMonitoring.dataHealth());
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Baseline monitoring data health unavailable' });
+      }
+    }
+    if (p === '/api/identity/session/login' && req.method === 'POST') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        const created = await browserSessions.create(req, await readBody(req));
+        return json(res, 200, {
+          csrfToken: created.csrfToken,
+          mfaRequired: created.mfaRequired,
+          mfaEnrollmentRequired: created.mfaEnrollmentRequired,
+          session: created.session,
+        }, { 'set-cookie': created.cookies });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Console login failed' });
+      }
+    }
+    if (p === '/api/identity/session/mfa' && req.method === 'POST') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        return json(res, 200, await browserSessions.completeMfa(req, (await readBody(req)).code));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Console MFA verification failed' });
+      }
+    }
+    if (p === '/api/identity/session/step-up' && req.method === 'POST') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        return json(res, 200, await browserSessions.stepUp(req, (await readBody(req)).code));
+      } catch (e) {
+        return json(res, authErrorStatus(e), {
+          error: e.msg || 'Console MFA step-up failed',
+          code: e.errorCode || undefined,
+        });
+      }
+    }
+    if (p === '/api/identity/session/totp/enrollment' && req.method === 'POST') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        return json(res, 201, await browserSessions.beginTotp(req, (await readBody(req)).friendlyName));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'TOTP enrollment failed' });
+      }
+    }
+    if (p === '/api/identity/session/totp/verification' && req.method === 'POST') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        const body = await readBody(req);
+        return json(res, 200, await browserSessions.verifyTotp(req, body.factorId, body.code));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'TOTP verification failed' });
+      }
+    }
+    if (p === '/api/identity/session' && req.method === 'DELETE') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        await browserSessions.revoke(req, null, 'user logout');
+        return json(res, 200, { ok: true }, { 'set-cookie': browserSessions.clearCookies() });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Console logout failed' }, {
+          'set-cookie': browserSessions ? browserSessions.clearCookies() : [],
+        });
+      }
+    }
+    if (p === '/api/identity/sessions' && req.method === 'GET') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        const result = await browserSessions.list(req);
+        return json(res, 200, { items: result.items });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Browser session inventory unavailable' });
+      }
+    }
+    if (p === '/api/identity/session/events' && req.method === 'GET') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        const result = await browserSessions.events(req, url.searchParams.get('limit'));
+        return json(res, 200, { items: result.items });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Browser session history unavailable' });
+      }
+    }
+    if (p === '/api/identity/sessions' && req.method === 'DELETE') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        await browserSessions.revokeAll(req);
+        return json(res, 200, { ok: true }, { 'set-cookie': browserSessions.clearCookies() });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Browser session revocation failed' });
+      }
+    }
+    const browserSessionPath = p.match(/^\/api\/identity\/sessions\/([0-9a-fA-F-]+)$/);
+    if (browserSessionPath && req.method === 'DELETE') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        const revoked = await browserSessions.revoke(req, browserSessionPath[1], 'user revoked session');
+        return json(res, 200, { ok: true }, revoked.current ? { 'set-cookie': browserSessions.clearCookies() } : {});
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Browser session revocation failed' });
+      }
+    }
     // Supabase-owned OS CLI device flow.  The create/poll pair carries no
     // browser credential; browser approval always re-verifies the Supabase
     // session and atomically binds the device to that Console subject.
@@ -2693,13 +3044,25 @@ const server = http.createServer(async (req, res) => {
     // entry point from the same authority that protects management APIs.
     if (p === '/api/identity/session' && req.method === 'GET') {
       try {
-        const actor = await verifyAuthed(req);
+        let actor;
+        let currentSession = null;
+        if (!req.headers.authorization && browserSessions) {
+          const result = await browserSessions.list(req);
+          actor = result.auth.actor;
+          currentSession = result.items.find((item) => item.current) || null;
+        } else {
+          actor = await verifyAuthed(req);
+        }
+        const identity = userFromAuthRow(await getAuthUser(actor.sub), actor.displayName || actor.username || actor.sub);
         return json(res, 200, {
           subject: actor.sub,
-          username: actor.username,
+          username: identity.username || actor.username,
+          email: identity.email,
+          displayName: actor.displayName || identity.displayName,
           groups: projectedSessionGroups(actor),
           permissions: actor.permissions || [],
           assurance: actor.assurance,
+          session: currentSession,
         });
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' });
@@ -2827,6 +3190,10 @@ const server = http.createServer(async (req, res) => {
     }
     // Notification events are server-to-server only. Browser and plugin UI
     // signals never enter the outbound delivery queue directly.
+    if (p === '/api/internal/monitoring/beszel/events' && req.method === 'POST') {
+      try { return json(res, 202, await publishBeszelNotificationEvent(req, await readBody(req))); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'Beszel monitoring event rejected' }); }
+    }
     if (p === '/api/internal/notifications/events' && req.method === 'POST') {
       try { return json(res, 202, await publishNotificationEvent(req, await readBody(req))); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'notification event rejected' }); }

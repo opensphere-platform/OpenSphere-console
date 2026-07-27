@@ -125,7 +125,7 @@ test('OAA identity owner is permission-gated, mutation-AAL2, PII-minimized, and 
   const status = server.slice(server.indexOf('async function oaaIdentityStatus'), server.indexOf('async function oaaIdentityOwnerAction'));
   const action = server.slice(server.indexOf('async function oaaIdentityOwnerAction'), server.indexOf('async function cliEnrollmentCreate'));
   assert.match(verify, /console\.identity\.manage/);
-  assert.match(verify, /options\.requireAal2 === true && actor\.assurance !== 'aal2'/);
+  assert.match(verify, /options\.requireAal2 === true\) requireRecentAal2/);
   assert.match(action, /requireClosedOaaIdentityBody/);
   assert.match(action, /requireExactOaaConfirmation/);
   assert.doesNotMatch(action, /createRecoveryLink|action_link|onboardingPath/);

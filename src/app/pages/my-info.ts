@@ -347,22 +347,33 @@ interface AuditEvent {
               <article class="credential-section" aria-labelledby="session-credential-title">
                 <div class="section-heading">
                   <div>
-                    <h2 id="session-credential-title">현재 Console 세션</h2>
-                    <p class="section-lead">브라우저 로그인 자격은 내보내거나 다운로드할 수 없습니다. Console이 현재 탭에서만 안전하게 사용합니다.</p>
+                    <h2 id="session-credential-title">Console 로그인 세션</h2>
+                    <p class="section-lead">현재 계정으로 로그인된 브라우저를 확인하고 분실하거나 더 이상 사용하지 않는 세션을 즉시 종료합니다. Supabase 토큰 원문은 브라우저에 제공되지 않습니다.</p>
                   </div>
+                  <button class="btn btn-sm btn-danger-outline" (click)="revokeAllSessions()" [disabled]="busy() || !auth.browserSessions().length">모든 세션 종료</button>
                 </div>
-                <div class="credential-grid-scroll" tabindex="0" aria-label="현재 Console 세션 표">
-                <clr-datagrid>
-                  <clr-dg-column>자격</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>인증 방식</clr-dg-column><clr-dg-column>만료</clr-dg-column><clr-dg-column>보관</clr-dg-column><clr-dg-column>내보내기</clr-dg-column>
-                  <clr-dg-row>
-                    <clr-dg-cell><strong>OpenSphere Console 세션</strong><div class="os-mono">{{ auth.subject() || auth.user() }}</div></clr-dg-cell>
-                    <clr-dg-cell><span class="label" [class.label-success]="!auth.isTokenExpired()">{{ auth.isTokenExpired() ? '만료' : '활성' }}</span></clr-dg-cell>
-                    <clr-dg-cell>Supabase Auth · Console RBAC</clr-dg-cell>
-                    <clr-dg-cell>{{ expText() }}</clr-dg-cell>
-                    <clr-dg-cell>sessionStorage · 현재 탭</clr-dg-cell>
-                    <clr-dg-cell><span class="label">내보내기 금지</span></clr-dg-cell>
-                  </clr-dg-row>
-                  <clr-dg-footer>1개 브라우저 세션</clr-dg-footer>
+                <div class="credential-grid-scroll" tabindex="0" aria-label="Console 로그인 세션 표">
+                <clr-datagrid [clrDgLoading]="credentialsLoading()">
+                  <clr-dg-column>세션</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>로그인 유지</clr-dg-column><clr-dg-column>마지막 활동</clr-dg-column><clr-dg-column>자동 로그아웃</clr-dg-column><clr-dg-column>최대 만료</clr-dg-column><clr-dg-column>동작</clr-dg-column>
+                  @for (session of auth.browserSessions(); track session.id) {
+                    <clr-dg-row>
+                      <clr-dg-cell>
+                        <strong>{{ session.current ? '현재 브라우저' : '다른 브라우저' }}</strong>
+                        <div class="os-mono">{{ session.id }}</div>
+                      </clr-dg-cell>
+                      <clr-dg-cell>
+                        <span class="label" [class.label-success]="session.status === 'active'">{{ session.status === 'active' ? '활성' : '추가 인증 대기' }}</span>
+                        @if (session.current) { <span class="label label-info">현재</span> }
+                      </clr-dg-cell>
+                      <clr-dg-cell>{{ persistenceLabel(session.persistence) }}</clr-dg-cell>
+                      <clr-dg-cell>{{ fmt(session.lastSeenAt) }}</clr-dg-cell>
+                      <clr-dg-cell>{{ fmt(session.idleExpiresAt) }}</clr-dg-cell>
+                      <clr-dg-cell>{{ fmt(session.absoluteExpiresAt) }}</clr-dg-cell>
+                      <clr-dg-cell><button class="btn btn-sm btn-danger-outline" (click)="revokeSession(session.id)" [disabled]="busy()">세션 종료</button></clr-dg-cell>
+                    </clr-dg-row>
+                  }
+                  <clr-dg-placeholder>활성 브라우저 세션을 불러오지 못했거나 세션이 없습니다</clr-dg-placeholder>
+                  <clr-dg-footer>{{ auth.browserSessions().length }}개 브라우저 세션 · 유휴 제한 30분</clr-dg-footer>
                 </clr-datagrid>
                 </div>
               </article>
@@ -393,8 +404,25 @@ interface AuditEvent {
                 <div><dt>세션 만료</dt><dd>{{ expText() }}</dd></div>
                 <div><dt>현재 인증 보증</dt><dd><span class="label" [class.label-success]="auth.assurance() === 'aal2'">{{ auth.assurance() }}</span> {{ auth.assurance() === 'aal2' ? '비밀번호와 TOTP 검증 완료' : '비밀번호 인증만 완료' }}</dd></div>
                 <div><dt>TOTP 정책</dt><dd>관리자 변경 작업에 필수 <span class="label">Supabase Auth</span></dd></div>
-                <div><dt>브라우저 토큰 보관</dt><dd>sessionStorage · 브라우저 종료 시 삭제</dd></div>
+                <div><dt>브라우저 자격 보관</dt><dd>Secure HttpOnly 불투명 세션 쿠키 · Supabase 토큰은 Backend 암호화 보관</dd></div>
+                <div><dt>로그인 유지 정책</dt><dd>{{ persistenceLabel(auth.currentSession()?.persistence || '8h') }} · 유휴 30분 제한</dd></div>
               </dl>
+              <h2>최근 세션 보안 이력</h2>
+              <div class="credential-grid-scroll" tabindex="0" aria-label="최근 세션 보안 이력">
+                <clr-datagrid>
+                  <clr-dg-column>시각</clr-dg-column><clr-dg-column>동작</clr-dg-column><clr-dg-column>결과</clr-dg-column><clr-dg-column>세션</clr-dg-column>
+                  @for (event of auth.sessionEvents(); track event.id) {
+                    <clr-dg-row>
+                      <clr-dg-cell>{{ fmt(event.occurred_at) }}</clr-dg-cell>
+                      <clr-dg-cell>{{ sessionEventLabel(event.event) }}</clr-dg-cell>
+                      <clr-dg-cell><span class="label" [class.label-success]="event.result === 'ok'" [class.label-warning]="event.result === 'pending'" [class.label-danger]="event.result === 'rejected' || event.result === 'error'">{{ event.result }}</span></clr-dg-cell>
+                      <clr-dg-cell class="os-mono">{{ event.session_id || '정리됨' }}</clr-dg-cell>
+                    </clr-dg-row>
+                  }
+                  <clr-dg-placeholder>기록된 세션 보안 이벤트가 없습니다.</clr-dg-placeholder>
+                  <clr-dg-footer>최근 {{ auth.sessionEvents().length }}건 · 원문 IP와 토큰은 기록하지 않음</clr-dg-footer>
+                </clr-datagrid>
+              </div>
               <h2>인증 앱</h2>
               @if (auth.mfaEnrollmentRequired()) {
                 <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
@@ -714,7 +742,7 @@ export class MyInfo {
   }
 
   async refresh(): Promise<void> {
-    await Promise.all([this.loadIdentity(), this.loadCredentials(), this.loadAuthPolicy(), this.loadActivity()]);
+    await Promise.all([this.loadIdentity(), this.loadCredentials(), this.auth.loadBrowserSessions(), this.auth.loadSessionEvents(), this.loadAuthPolicy(), this.loadActivity()]);
   }
 
   private async loadIdentity(): Promise<void> {
@@ -743,6 +771,7 @@ export class MyInfo {
       const tokenBody = (await tokenResponse.json()) as { pats?: ApiToken[] };
       this.devices.set(deviceBody.devices ?? []);
       this.apiTokens.set(tokenBody.pats ?? []);
+      await this.auth.loadBrowserSessions();
     } catch (error) {
       this.devices.set([]);
       this.apiTokens.set([]);
@@ -777,6 +806,53 @@ export class MyInfo {
       this.authPolicy.set(null);
     } catch {
       this.authPolicy.set(null);
+    }
+  }
+
+  sessionEventLabel(value: string): string {
+    return ({
+      login: '로그인',
+      refresh: '세션 갱신',
+      lock: '유휴 잠금',
+      unlock: '잠금 해제',
+      step_up: '다중 인증 재확인',
+      logout: '로그아웃',
+      revoke: '세션 종료',
+      revoke_all: '모든 세션 종료',
+      reuse_detected: '갱신 자격 재사용 탐지',
+    } as Record<string, string>)[value] || value;
+  }
+
+  persistenceLabel(value: string): string {
+    switch (value) {
+      case 'browser': return '브라우저 종료 시';
+      case '24h': return '24시간';
+      case '7d': return '7일';
+      default: return '8시간';
+    }
+  }
+
+  async revokeSession(id: string): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
+    try {
+      await this.auth.revokeBrowserSession(id);
+      this.message.set({ type: 'success', text: '선택한 브라우저 세션을 종료했습니다.' });
+    } catch (error) {
+      this.message.set({ type: 'danger', text: `세션 종료 실패: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  async revokeAllSessions(): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
+    try {
+      await this.auth.revokeAllBrowserSessions();
+    } catch (error) {
+      this.message.set({ type: 'danger', text: `전체 세션 종료 실패: ${error instanceof Error ? error.message : String(error)}` });
+      this.busy.set(false);
     }
   }
 

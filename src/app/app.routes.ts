@@ -11,6 +11,7 @@ import { AdminDataIdentity } from './pages/admin-data-identity';
 import { AdminChangeControl } from './pages/admin-change-control';
 import { AdminOaa } from './pages/admin-oaa';
 import { AdminObservability } from './pages/admin-observability';
+import { AdminInfrastructureMonitoring } from './pages/admin-infrastructure-monitoring';
 import { AdminPlatformControl } from './pages/admin-platform-control';
 import { AdminNotifications } from './pages/admin-notifications';
 import { AdminExternalChannels } from './pages/admin-external-channels';
@@ -77,6 +78,7 @@ export const routes: Routes = [
       // OAA Core is Main Shell native; its data/audit authority is Supabase and
       // every applied operation follows the Gitea declarative change chain.
       { path: 'oaa', component: AdminOaa },
+      { path: 'infrastructure-monitoring', component: AdminInfrastructureMonitoring },
       { path: 'observability', component: AdminObservability },
       { path: 'notifications', component: AdminNotifications },
       { path: 'external-channels', component: AdminExternalChannels },

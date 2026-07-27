@@ -532,14 +532,17 @@ export class ExtensionHostService {
 		headers.delete('x-os-id-token');
 		headers.delete('x-opensphere-user');
 		headers.delete('x-opensphere-actor');
-    const token = this.auth.token();
-    if (token) headers.set('authorization', `Bearer ${token}`);
 		const correlationId = headers.get('X-OS-Correlation-ID');
 		if (!correlationId || !/^[A-Za-z0-9._:-]{1,128}$/.test(correlationId)) headers.set('X-OS-Correlation-ID', crypto.randomUUID());
 		const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
 		if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-Idempotency-Key')) {
 			headers.set('X-OS-Idempotency-Key', crypto.randomUUID());
 		}
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-CSRF-Token')) {
+      const prefix = '__Host-opensphere_csrf=';
+      const value = document.cookie.split(';').map((item) => item.trim()).find((item) => item.startsWith(prefix));
+      if (value) headers.set('X-OS-CSRF-Token', decodeURIComponent(value.slice(prefix.length)));
+    }
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 15000);
     if (init.signal) {

@@ -32,6 +32,7 @@ const aiConsumerContract = read('migrations', '0024_ai_consumer_contract.sql');
 const externalChannelsBackup = read('migrations', '0025_external_channels_backup.sql');
 const migrationLedger = read('migrations', '0026_schema_migration_ledger.sql');
 const externalChannelReasonPolicy = read('migrations', '0027_external_channel_reason_policy.sql');
+const browserSessionAndMonitoring = read('migrations', '0029_browser_session_and_baseline_monitoring.sql');
 const installer = read('install.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
@@ -117,6 +118,19 @@ assert.match(notification, /DROP POLICY IF EXISTS console_backend_notification_c
 assert.match(notification, /DROP POLICY IF EXISTS dispatcher_notification_control/);
 assert.match(externalChannelReasonPolicy, /DROP CONSTRAINT IF EXISTS configuration_restore_reason_check/);
 assert.doesNotMatch(externalChannelReasonPolicy, /length\s*\(\s*btrim\s*\(\s*reason\s*\)\s*\)\s*>=\s*8/i);
+assert.match(browserSessionAndMonitoring, /CREATE TABLE IF NOT EXISTS console\.browser_session/);
+assert.match(browserSessionAndMonitoring, /access_token_ciphertext text NOT NULL/);
+assert.match(browserSessionAndMonitoring, /refresh_token_ciphertext text NOT NULL/);
+assert.match(browserSessionAndMonitoring, /persistence IN \('browser', '8h', '24h', '7d'\)/);
+assert.match(browserSessionAndMonitoring, /ALTER TABLE console\.browser_session FORCE ROW LEVEL SECURITY/);
+assert.match(browserSessionAndMonitoring, /REVOKE ALL ON TABLE console\.browser_session FROM PUBLIC, anon, authenticated, service_role/);
+assert.match(browserSessionAndMonitoring, /CREATE TABLE IF NOT EXISTS console\.session_event/);
+assert.match(browserSessionAndMonitoring, /CREATE TABLE IF NOT EXISTS console\.infrastructure_node_binding/);
+assert.match(browserSessionAndMonitoring, /beszel_machine_fingerprint text NOT NULL/);
+assert.match(browserSessionAndMonitoring, /console\.infrastructure\.read/);
+assert.match(browserSessionAndMonitoring, /console\.infrastructure\.manage/);
+assert.match(installer, /browser-session-key/);
+assert.match(installer, /New-RandomBase64 32/);
 assert.match(llmUsage, /CREATE TABLE IF NOT EXISTS oaa\.llm_usage_event/);
 assert.match(llmUsage, /request_id uuid NOT NULL UNIQUE/);
 assert.match(llmUsage, /input_tokens bigint NOT NULL DEFAULT 0/);

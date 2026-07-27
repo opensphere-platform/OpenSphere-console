@@ -1,5 +1,5 @@
-import { Component, ChangeDetectionStrategy } from '@angular/core';
-import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { Component, ChangeDetectionStrategy, inject } from '@angular/core';
+import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from '../os/carbon-icon';
 import UserAdmin16 from '@carbon/icons/es/user--admin/16';
@@ -13,6 +13,7 @@ import Activity16 from '@carbon/icons/es/activity/16';
 import Notification16 from '@carbon/icons/es/notification/16';
 import Terminal16 from '@carbon/icons/es/terminal/16';
 import List16 from '@carbon/icons/es/list/16';
+import ChartLine16 from '@carbon/icons/es/chart--line/16';
 
 interface AdminItem { label: string; route: string; icon: any }
 interface AdminGroup { label: string; items: AdminItem[] }
@@ -41,6 +42,19 @@ interface AdminGroup { label: string; items: AdminItem[] }
           </section>
         }
       </clr-vertical-nav>
+      <div class="cm-mobile-nav">
+        <label for="console-management-section">콘솔 관리 메뉴</label>
+        <select id="console-management-section" (change)="navigate($event)">
+          <option value="">이동할 관리 화면 선택</option>
+          @for (group of groups; track group.label) {
+            <optgroup [label]="group.label">
+              @for (item of group.items; track item.route) {
+                <option [value]="item.route">{{ item.label }}</option>
+              }
+            </optgroup>
+          }
+        </select>
+      </div>
       <div class="cc-content"><router-outlet /></div>
     </div>
   `,
@@ -53,10 +67,20 @@ interface AdminGroup { label: string; items: AdminItem[] }
       .cm-tree-group { display: block; margin: 0; padding: 0; }
       .cm-tree-label { padding: .8rem .85rem .25rem; color: var(--os-ink-subtle); font-size: .58rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
       .cm-tree-item { padding-left: 1rem; }
+      .cm-mobile-nav { display: none; }
+      @media (max-width: 64rem) {
+        .cc-frame { grid-template-columns: minmax(0, 1fr); }
+        .cm-nav { display: none; }
+        .cm-mobile-nav { display: flex; align-items: center; gap: var(--os-4); min-width: 0; padding: var(--os-4) var(--os-5); border-bottom: 1px solid var(--os-hairline); background: var(--os-canvas); }
+        .cm-mobile-nav label { flex: 0 0 auto; font-size: .68rem; font-weight: 600; }
+        .cm-mobile-nav select { min-width: 0; width: min(24rem, 100%); height: 1.8rem; border: 1px solid var(--os-hairline-strong); background: var(--os-canvas); color: var(--os-ink); font: inherit; }
+        .cc-content { padding: 1rem 1.25rem 1.5rem; }
+      }
     `,
   ],
 })
 export class AdminLayout {
+  private readonly router = inject(Router);
   readonly groups: AdminGroup[] = [
     {
       label: '자산 및 확장',
@@ -81,6 +105,7 @@ export class AdminLayout {
         { label: 'Data & Identity', route: '/manage/data-identity', icon: UserAdmin16 },
         { label: '상태 변경 관리', route: '/manage/state-changes', icon: List16 },
         { label: 'OAA', route: '/manage/oaa', icon: ChatBot16 },
+        { label: '인프라 모니터링', route: '/manage/infrastructure-monitoring', icon: ChartLine16 },
         { label: 'HIS Observability', route: '/manage/observability', icon: Activity16 },
       ],
     },
@@ -93,4 +118,9 @@ export class AdminLayout {
       ],
     },
   ];
+
+  navigate(event: Event): void {
+    const route = (event.target as HTMLSelectElement | null)?.value || '';
+    if (route.startsWith('/manage/')) void this.router.navigateByUrl(route);
+  }
 }

@@ -21,7 +21,8 @@ kind: ClusterRole
 metadata: { name: opensphere-console-backend }
 rules:
   - { apiGroups: ["apiextensions.k8s.io"], resources: ["customresourcedefinitions"], verbs: ["get", "list"] }
-  - { apiGroups: ["apps"], resources: ["deployments"], verbs: ["get", "list"] }
+  - { apiGroups: [""], resources: ["nodes", "pods", "namespaces"], verbs: ["get", "list"] }
+  - { apiGroups: ["apps"], resources: ["deployments", "statefulsets", "daemonsets"], verbs: ["get", "list"] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -127,6 +128,13 @@ spec:
             - { name: SUPABASE_BACKEND_DB_ROLE, value: opensphere_console_backend }
             - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000" }
             - { name: SUPABASE_STORAGE_URL, value: "http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000" }
+            - { name: BESZEL_URL, value: "http://beszel-hub.opensphere-monitoring.svc.cluster.local:8090" }
+            - name: BESZEL_READER_EMAIL
+              valueFrom: { secretKeyRef: { name: opensphere-baseline-monitoring-reader, key: email, optional: true } }
+            - name: BESZEL_READER_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-baseline-monitoring-reader, key: password, optional: true } }
+            - name: BESZEL_WEBHOOK_TOKEN
+              valueFrom: { secretKeyRef: { name: opensphere-baseline-monitoring-reader, key: webhook-token, optional: true } }
             # Declarative Change Authority. Values are projected only into the
             # Console Backend; browser, OAA and Gitea repository contents never
             # receive this scoped token or the webhook/reconciler credentials.
@@ -150,6 +158,8 @@ spec:
               valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: jwt-secret } }
             - name: SUPABASE_SERVICE_ROLE_KEY
               valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: service-role-key } }
+            - name: BROWSER_SESSION_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: browser-session-key } }
             # Outbound notification credentials are passed once to the internal
             # Dispatcher. The Backend never reads the encrypted secret ledger.
             - { name: NOTIFICATION_DISPATCHER_URL, value: "http://opensphere-notification-dispatcher.opensphere-console.svc.cluster.local:8081" }

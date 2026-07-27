@@ -54,7 +54,7 @@ test('Supabase CLI trust is RLS protected and enrollment approval is atomic', ()
 });
 
 test('Console readiness rejects stale BFF CLI artifacts', () => {
-  assert.match(deployment, /"version": "0\.8\.0"/);
+  assert.match(deployment, /"version": "0\.8\.1"/);
   assert.match(deployment, /! grep -aRqs '\/bff\/cli'/);
   assert.match(deployment, /Authentication uses \/api\/identity\/cli\//);
 });

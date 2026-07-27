@@ -10,6 +10,7 @@ const backend = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 const deploy = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
 const notificationDeploy = fs.readFileSync(path.join(root, 'backend/notification-dispatcher/deploy.yaml'), 'utf8');
 const authService = fs.readFileSync(path.join(root, 'src/app/core/auth.service.ts'), 'utf8');
+const browserSession = fs.readFileSync(path.join(__dirname, 'browser-session.js'), 'utf8');
 const login = fs.readFileSync(path.join(root, 'src/app/pages/login.ts'), 'utf8');
 const setup = fs.readFileSync(path.join(root, 'src/app/pages/initial-setup.ts'), 'utf8');
 const myInfo = fs.readFileSync(path.join(root, 'src/app/pages/my-info.ts'), 'utf8');
@@ -22,7 +23,8 @@ const supabaseManifest = fs.readFileSync(path.join(root, 'backend/supabase/boots
 test('administrator mutations require a real AAL2 session by default', () => {
   assert.match(backend, /SUPABASE_REQUIRE_AAL2 \|\| 'true'/);
   assert.match(backend, /SUPABASE_REQUIRE_AAL2 && isMutationRequest\(req\)/);
-  assert.match(backend, /admin mutation requires MFA assurance aal2/);
+  assert.match(backend, /requires MFA assurance aal2 verified within the last 5 minutes/);
+  assert.match(backend, /requireRecentAal2/);
   assert.match(deploy, /name: SUPABASE_REQUIRE_AAL2, value: "true"/);
   assert.match(deploy, /name: NOTIFICATION_REQUIRE_AAL2, value: "true"/);
 });
@@ -39,10 +41,11 @@ test('CLI sessions and PATs cannot manufacture Supabase AAL2 assurance', () => {
 test('browser login and bootstrap complete the Supabase TOTP challenge', () => {
   assert.match(authService, /finishMfaLogin/);
   assert.match(authService, /beginTotpEnrollment/);
-  assert.match(authService, /challengeAndVerify/);
-  assert.match(authService, /authJson<SupabaseUser>\('\/auth\/v1\/user', \{ method: 'GET' \}, token\)/);
-  assert.doesNotMatch(authService, /authJson<SupabaseMfaFactors>\('\/auth\/v1\/factors', \{ method: 'GET' \}, token\)/);
-  assert.match(authService, /jwtAssurance\(session\.access_token\) !== 'aal2'/);
+  assert.match(authService, /\/api\/identity\/session\/mfa/);
+  assert.match(authService, /\/api\/identity\/session\/totp\/enrollment/);
+  assert.match(browserSession, /\/factors\/\$\{encodeURIComponent\(factorState\.verifiedTotp\.id\)\}\/challenge/);
+  assert.match(browserSession, /claims\.assurance !== 'aal2'/);
+  assert.doesNotMatch(authService, /\/auth\/v1\/factors/);
   assert.match(login, /auth\.mfaRequired\(\)/);
   assert.match(login, /auth\.finishMfaLogin/);
   assert.match(setup, /auth\.beginTotpEnrollment/);
@@ -68,9 +71,9 @@ test('users without a verified TOTP are routed to QR enrollment after login', ()
   assert.match(myInfo, /queueMicrotask\(\(\) => void this\.beginTotpEnrollment\(\)\)/);
   assert.match(myInfo, /OpenSphere TOTP 등록 QR 코드/);
   assert.match(myInfo, /OTP 재등록이 필요합니다/);
-  assert.match(authService, /factor\.factor_type === 'totp' && factor\.status === 'unverified'/);
-  assert.match(authService, /method: 'DELETE'/);
-  assert.match(authService, /factors are never touched/);
+  assert.match(browserSession, /factor_type === 'totp' && item\.status === 'unverified'/);
+  assert.match(browserSession, /method: 'DELETE'/);
+  assert.match(browserSession, /verified TOTP factor is already registered/);
 });
 
 test('password change is exposed as self-service or a cross-operator recovery link', () => {
@@ -99,11 +102,11 @@ test('initial-password and recovery links open a public password form without an
   assert.match(supabaseManifest, /GOTRUE_PASSWORD_MIN_LENGTH, value: "12"/);
 });
 
-test('a stale browser JWT is discarded and routed to login instead of surfacing bad iss as an outage', () => {
-  assert.match(authService, /class SupabaseSessionRejectedError extends Error/);
-  assert.match(authService, /response\.status === 401/);
-  assert.match(authService, /error instanceof SupabaseSessionRejectedError/);
-  assert.match(authService, /this\.clearSession\(\);\s*this\.loginRequired\.set\(true\)/);
+test('a stale browser session is discarded and routed to login instead of surfacing an outage', () => {
+  assert.match(authService, /this\.statusOf\(error\) === 401/);
+  assert.match(authService, /this\.clearIdentity\(\);\s*this\.loginRequired\.set\(true\)/);
+  assert.match(browserSession, /browser session refresh credential was rejected/);
+  assert.match(browserSession, /revokeTokenFamily/);
 });
 
 test('all deployed Supabase JWT consumers use the public Auth issuer', () => {

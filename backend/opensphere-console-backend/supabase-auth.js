@@ -110,6 +110,7 @@ function createSupabaseVerifier(config = {}) {
       assurance: claims.aal || 'aal1',
       authSessionId: claims.session_id || null,
       provider: 'supabase',
+      credentialRevision: Number(operator.credential_revision || 0),
     };
   };
 }
