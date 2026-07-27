@@ -90,7 +90,7 @@ if ($StorageClass) {
 }
 if ($ExistingInstallation) {
   foreach ($resource in @(
-    'namespace/' + $Namespace,
+    "namespace/$Namespace",
     'statefulset/opensphere-supabase-postgres',
     'deployment/opensphere-supabase-auth',
     'deployment/opensphere-supabase-rest',
