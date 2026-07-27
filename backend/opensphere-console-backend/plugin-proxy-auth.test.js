@@ -139,3 +139,11 @@ test('nginx keeps the opaque browser cookie out of plugin workloads', () => {
     /proxy_set_header Authorization \$http_authorization;/,
   );
 });
+
+test('Console Backend runtime image contains the plugin authorization mediator', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
+  assert.match(
+    dockerfile,
+    /COPY opensphere-console-backend\/plugin-proxy-auth\.js \.\/plugin-proxy-auth\.js/,
+  );
+});
