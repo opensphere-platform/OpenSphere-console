@@ -25,8 +25,19 @@ function Invoke-Checked {
 function Get-RemoteDigest {
   param([Parameter(Mandatory)][string]$Reference)
 
-  $output = & docker buildx imagetools inspect $Reference 2>$null
-  if ($LASTEXITCODE -ne 0) {
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    # A missing tag is the expected first-publication state. Windows
+    # PowerShell can promote native stderr to a terminating ErrorRecord while
+    # the script-wide preference is Stop, so inspect it under Continue and
+    # decide from the native exit code below.
+    $ErrorActionPreference = 'Continue'
+    $output = & docker buildx imagetools inspect $Reference 2>$null
+    $inspectExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  if ($inspectExitCode -ne 0) {
     return $null
   }
   $line = $output | Where-Object { $_ -match '^Digest:\s+(sha256:[0-9a-f]{64})$' } | Select-Object -First 1
