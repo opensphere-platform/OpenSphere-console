@@ -41,3 +41,12 @@ test('Argo CD installation is version- and digest-pinned, and its evidence reade
   assert.match(rbac, /resources: \[applications, appprojects\]/);
   assert.doesNotMatch(rbac, /opensphere-platform-delivery-evidence-reader[\s\S]{0,900}verbs: \[(?:[^\]]*create|[^\]]*update|[^\]]*patch|[^\]]*delete)/);
 });
+
+test('Gitea admits only the Argo repo-server required for the governed Git source', () => {
+  const ingress = argocd('gitea-argocd-repo-server-ingress.yaml');
+  assert.match(ingress, /namespace: opensphere-console-change/);
+  assert.match(ingress, /kubernetes\.io\/metadata\.name: argocd/);
+  assert.match(ingress, /app\.kubernetes\.io\/name: argocd-repo-server/);
+  assert.match(ingress, /port: 3000/);
+  assert.doesNotMatch(ingress, /namespaceSelector:\s*\{\}/);
+});

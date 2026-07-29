@@ -5,6 +5,7 @@ kind: Kustomization
 # tags are publication references only and are never used by Kubernetes.
 resources:
   - opensphere-console-dupa-controller.yaml
+  - argocd/gitea-argocd-repo-server-ingress.yaml
 
 images:
   - name: ghcr.io/opensphere-platform/opensphere-console-dupa-controller

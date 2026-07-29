@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opensphere-gitea-argocd-repo-server-ingress
+  namespace: opensphere-console-change
+  labels:
+    app.kubernetes.io/part-of: opensphere-platform-delivery
+    opensphere.io/managed-by: platform-delivery
+spec:
+  podSelector:
+    matchLabels:
+      app: opensphere-gitea
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: argocd
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-repo-server
+      ports:
+        - protocol: TCP
+          port: 3000
