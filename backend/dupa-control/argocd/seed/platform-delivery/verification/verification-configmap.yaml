@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensphere-platform-delivery-verification
+  namespace: opensphere-platform-delivery
+  labels:
+    app.kubernetes.io/part-of: opensphere-platform-delivery
+    opensphere.io/managed-by: argocd
+data:
+  contract: "OpenSphere Platform Delivery verification"
+  ownership: "Git -> Argo CD -> Kubernetes"

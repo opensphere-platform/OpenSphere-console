@@ -114,6 +114,37 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-co
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
 ---
+# Delivery evidence is strictly namespaced and read-only.  This avoids turning
+# the Console controller into a second Argo CD administrator while still
+# proving the exact control-plane and Application that own GitOps delivery.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-platform-delivery-evidence-reader
+  namespace: argocd
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: [applications, appprojects]
+    resourceNames: [opensphere-platform-delivery-verify, opensphere-platform-delivery]
+    verbs: [get]
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    resourceNames: [argocd-repo-server, argocd-server, argocd-applicationset-controller]
+    verbs: [get]
+  - apiGroups: ["apps"]
+    resources: [statefulsets]
+    resourceNames: [argocd-application-controller]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-platform-delivery-evidence-reader
+  namespace: argocd
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-platform-delivery-evidence-reader }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
+---
 # 승인된 module permission profile은 설치 시 고정 생성한다. Controller가 ClusterRole을 생성하지 않아
 # Kubernetes privilege-escalation admission 경계를 우회하지 않는다.
 apiVersion: rbac.authorization.k8s.io/v1

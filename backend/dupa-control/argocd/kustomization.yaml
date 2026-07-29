@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The upstream manifest is fixed to a released source revision.  Every runtime
+# image is rewritten to a manifest-list digest below; never apply `stable`.
+resources:
+  - namespace.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.2/manifests/install.yaml
+  - platform-delivery-project.yaml
+  - platform-delivery-application.yaml
+
+images:
+  - name: quay.io/argoproj/argocd
+    newName: quay.io/argoproj/argocd
+    digest: sha256:c612d570cb6d6ff29afb72932c1bfe98a1ecc234df50f8ea4873fb7066e760fc
+  - name: ghcr.io/dexidp/dex
+    newName: ghcr.io/dexidp/dex
+    digest: sha256:b8469881d3cb3a73001506f0d3aaefecb9c45d2311c1e0f405d8ac538316c59d
+  - name: public.ecr.aws/docker/library/redis
+    newName: docker.io/library/redis
+    digest: sha256:08ad0b1d280850169a790dba1393ff7a90aef951fc19632cf4d3ce4f78e679ba

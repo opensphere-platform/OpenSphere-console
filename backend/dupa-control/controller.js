@@ -31,6 +31,17 @@ const V = 'v1alpha1';
 const PLATFORM_GROUP = 'platform.opensphere.io';
 const PLATFORM_PROFILE_NAME = 'default';
 const PLATFORM_PROFILE_PATH = `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles/${PLATFORM_PROFILE_NAME}`;
+// Platform Delivery is GitOps only when the live Argo CD control plane has
+// reconciled the canonical OpenSphere declaration.  Gitea reachability and an
+// immutable package inventory are useful supporting evidence, but neither is
+// a substitute for a converged desired-state application.
+const ARGOCD_GROUP = 'argoproj.io';
+const ARGOCD_NAMESPACE = process.env.ARGOCD_NAMESPACE || 'argocd';
+const ARGOCD_DELIVERY_PROJECT = process.env.ARGOCD_DELIVERY_PROJECT || 'opensphere-platform-delivery';
+const ARGOCD_DELIVERY_APPLICATION = process.env.ARGOCD_DELIVERY_APPLICATION || 'opensphere-platform-delivery-verify';
+const ARGOCD_DELIVERY_REPOSITORY = process.env.ARGOCD_DELIVERY_REPOSITORY || 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000/opensphere/platform-declarations.git';
+const ARGOCD_DELIVERY_PATH = process.env.ARGOCD_DELIVERY_PATH || 'platform-delivery/verification';
+const ARGOCD_DELIVERY_REVISION = process.env.ARGOCD_DELIVERY_REVISION || 'main';
 function foundationDevOverrideEnabled(env = process.env) {
   return env.OPENSPHERE_RUNTIME_MODE === 'development'
     && String(env.FOUNDATION_ACTIVATION_DEV_OVERRIDE || '').toLowerCase() === 'true';
@@ -2404,7 +2415,7 @@ async function securityPolicyEvidence() {
   };
 }
 async function deliveryEvidence() {
-  const [gitea, packages, regs] = await Promise.all([giteaHealth(), listPackages(), listRegs()]);
+  const [gitea, packages, regs, argocd] = await Promise.all([giteaHealth(), listPackages(), listRegs(), argocdDeliveryEvidence()]);
   const pkgs = packages.json?.items || [];
   const registrations = regs.json?.items || [];
   const immutable = pkgs.every((p) => /^sha256:[a-f0-9]{64}$/.test(p.spec?.image?.digest || ''));
@@ -2413,8 +2424,81 @@ async function deliveryEvidence() {
       && r.status?.verification?.signature === 'Verified'
       && r.status?.verification?.manifest === 'Verified'));
   const failed = registrations.filter((r) => ['Failed', 'Degraded'].includes(r.status?.phase)).map((r) => r.metadata?.name);
-  const ready = gitea && packages.ok && regs.ok && immutable && verified && failed.length === 0;
-  return { ready, gitea, immutable, verified, failed, packageCount: pkgs.length, reason: ready ? '' : 'GitOps, immutable digest, signature, and drift evidence are required' };
+  const ready = gitea && packages.ok && regs.ok && immutable && verified && failed.length === 0 && argocd.ready;
+  return {
+    ready, gitea, immutable, verified, failed, packageCount: pkgs.length, argocd,
+    reason: ready ? '' : (argocd.reason || 'Argo CD, immutable digest, signature, and drift evidence are required'),
+  };
+}
+function normalizedGitRepository(value) {
+  return String(value || '').trim().replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
+}
+function argocdApplicationEvidence(application, expected = {}) {
+  const config = {
+    project: expected.project || ARGOCD_DELIVERY_PROJECT,
+    repository: expected.repository || ARGOCD_DELIVERY_REPOSITORY,
+    path: expected.path || ARGOCD_DELIVERY_PATH,
+    revision: expected.revision || ARGOCD_DELIVERY_REVISION,
+  };
+  const spec = application?.spec || {};
+  const status = application?.status || {};
+  const source = spec.source || {};
+  const revision = String(status.sync?.revision || status.operationState?.syncResult?.revision || '').toLowerCase();
+  const sourceVerified = normalizedGitRepository(source.repoURL) === normalizedGitRepository(config.repository)
+    && String(source.path || '').replace(/^\/+|\/+$/g, '') === config.path
+    && String(source.targetRevision || '') === config.revision;
+  const destinationVerified = spec.destination?.server === 'https://kubernetes.default.svc'
+    && spec.destination?.namespace === 'opensphere-platform-delivery';
+  const synced = status.sync?.status === 'Synced';
+  const healthy = status.health?.status === 'Healthy';
+  const revisionPinned = /^[a-f0-9]{40,64}$/.test(revision);
+  const automated = spec.syncPolicy?.automated?.prune === true && spec.syncPolicy?.automated?.selfHeal === true;
+  const ready = spec.project === config.project && sourceVerified && destinationVerified && synced && healthy && revisionPinned && automated;
+  const reason = ready ? ''
+    : !sourceVerified ? 'canonical OpenSphere Git source/path/revision is not bound to the delivery Application'
+      : !destinationVerified ? 'delivery Application destination is not the OpenSphere platform-delivery namespace'
+        : !automated ? 'delivery Application must enforce automated prune and self-heal'
+          : !synced ? `Argo CD Application sync state is ${status.sync?.status || 'Unknown'}`
+            : !healthy ? `Argo CD Application health is ${status.health?.status || 'Unknown'}`
+              : !revisionPinned ? 'Argo CD has not reported a resolved Git commit SHA'
+                : `Argo CD Application project is ${spec.project || 'unset'}`;
+  return {
+    ready, sourceVerified, destinationVerified, synced, healthy, revisionPinned, automated,
+    project: spec.project || '', syncStatus: status.sync?.status || 'Unknown', healthStatus: status.health?.status || 'Unknown',
+    revision, source: { repoURL: source.repoURL || '', path: source.path || '', targetRevision: source.targetRevision || '' }, reason,
+  };
+}
+async function argocdDeliveryEvidence() {
+  const namespacedApi = `/apis/${ARGOCD_GROUP}/${V}/namespaces/${ARGOCD_NAMESPACE}`;
+  const [application, project, controller, repoServer, server, applicationSet] = await Promise.all([
+    k8s('GET', `${namespacedApi}/applications/${ARGOCD_DELIVERY_APPLICATION}`),
+    k8s('GET', `${namespacedApi}/appprojects/${ARGOCD_DELIVERY_PROJECT}`),
+    k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/statefulsets/argocd-application-controller`),
+    k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-repo-server`),
+    k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-server`),
+    k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-applicationset-controller`),
+  ]);
+  const workloads = [
+    ['argocd-application-controller', controller],
+    ['argocd-repo-server', repoServer],
+    ['argocd-server', server],
+    ['argocd-applicationset-controller', applicationSet],
+  ].map(([name, result]) => ({ name, ...deploymentReadyResult(ARGOCD_NAMESPACE, name, result) }));
+  const app = argocdApplicationEvidence(application.json);
+  const crdReady = application.status !== 404 && project.status !== 404;
+  const controlPlaneReady = workloads.every((item) => item.ready);
+  const ready = crdReady && application.ok && project.ok && controlPlaneReady && app.ready;
+  let reason = '';
+  if (!crdReady) reason = 'Argo CD Application and AppProject CRDs are not installed';
+  else if (!application.ok) reason = `canonical Argo CD Application is unavailable (HTTP ${application.status})`;
+  else if (!project.ok) reason = `Argo CD delivery AppProject is unavailable (HTTP ${project.status})`;
+  else if (!controlPlaneReady) reason = `Argo CD control-plane workload is not Ready: ${workloads.find((item) => !item.ready)?.name || 'unknown'}`;
+  else reason = app.reason;
+  return {
+    ready, crdReady, applicationApi: { ok: application.ok, status: application.status },
+    projectApi: { ok: project.ok, status: project.status }, workloads, application: app,
+    reason: ready ? '' : reason,
+  };
 }
 async function observabilityProfileEvidence() {
   const binding = await observabilityBinding();
@@ -3126,5 +3210,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable };
 }
