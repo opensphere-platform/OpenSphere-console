@@ -365,7 +365,6 @@ spec:
                 foundationUpgradeAuthorization:
                   nullable: true
                   type: object
-                  additionalProperties: false
                   required:
                     - kind
                     - fromDigest
