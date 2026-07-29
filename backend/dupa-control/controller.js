@@ -396,7 +396,6 @@ function verifiedFoundationStagedUpdate(reg, now = Date.now()) {
   const status = reg?.status || {};
   const authorization = status.foundationUpgradeAuthorization || {};
   const requestedAt = Date.parse(String(authorization.requestedAt || ''));
-  const authorizationAge = Number(now) - requestedAt;
   return authorization.kind === FOUNDATION_UPGRADE_AUTHORIZATION_KIND
     && authorization.fromDigest === status.previousDigest
     && authorization.fromManifestSha256 === status.previousManifestSha256
@@ -406,8 +405,44 @@ function verifiedFoundationStagedUpdate(reg, now = Date.now()) {
     && authorization.requestedBy.length > 0
     && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
     && Number.isFinite(requestedAt)
-    && authorizationAge >= 0
-    && authorizationAge <= 30 * 60 * 1000;
+    // This is durable, controller-owned evidence bound to one exact
+    // fromDigest -> toDigest transition.  Expiring it after an arbitrary wall
+    // clock interval made a successful rollout permanently unactivatable when
+    // the install and enable requests raced the reconciler.  It remains valid
+    // until the exact transition is activated and the controller consumes it.
+    && requestedAt <= Number(now) + (5 * 60 * 1000);
+}
+function verifiedFoundationUpdateAuthorization(reg, pkg, now = Date.now()) {
+  if (verifiedFoundationStagedUpdate(reg, now)) {
+    return !pkg || (
+      pkg?.metadata?.name === FOUNDATION_ID
+      && pkg?.spec?.image?.digest === reg.status.foundationUpgradeAuthorization.toDigest
+      && pkg?.spec?.manifest?.sha256 === reg.status.foundationUpgradeAuthorization.toManifestSha256
+    );
+  }
+  const status = reg?.status || {};
+  const authorization = status.foundationUpgradeAuthorization || {};
+  const requestedAt = Date.parse(String(authorization.requestedAt || ''));
+  const originStillServing = ['Installed', 'Enabled'].includes(reg?.spec?.desiredState)
+    && status.phase === 'Activated'
+    && status.workload?.phase === 'Ready'
+    && status.verification?.manifest === 'Verified'
+    && status.verification?.signature === 'Verified'
+    && status.verification?.entryDigest === 'Verified'
+    && status.verification?.permissions === 'Approved'
+    && status.currentDigest === authorization.fromDigest
+    && status.currentManifestSha256 === authorization.fromManifestSha256;
+  return originStillServing
+    && authorization.kind === FOUNDATION_UPGRADE_AUTHORIZATION_KIND
+    && pkg?.metadata?.name === FOUNDATION_ID
+    && pkg?.spec?.image?.digest === authorization.toDigest
+    && pkg?.spec?.manifest?.sha256 === authorization.toManifestSha256
+    && authorization.toDigest !== authorization.fromDigest
+    && typeof authorization.requestedBy === 'string'
+    && authorization.requestedBy.length > 0
+    && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
+    && Number.isFinite(requestedAt)
+    && requestedAt <= Number(now) + (5 * 60 * 1000);
 }
 // CLIDownload (console.opensphere.io, cluster-scoped) — headless 비-UI 콘솔 바인딩. UIPluginPackage(UI 게스트)와 별개 kind.
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
@@ -1814,6 +1849,28 @@ async function reconcile() {
         continue;
       }
 
+      // Foundation activation is enforced by the reconciler as well as the
+      // request API.  A verified update may be queued before the new workload
+      // has reached Ready; the controller rechecks the exact, controller-owned
+      // fromDigest -> toDigest authorization after artifact verification and
+      // consumes it only after the new release is Activated.
+      let foundationUpdateActivation = false;
+      if (name === FOUNDATION_ID && desired === 'Enabled') {
+        const readiness = await supportProfileReadiness();
+        const activationAllowed = readiness.admission.foundationActivationAllowed === true;
+        const currentReleaseAlreadyActivated = stableRelease && verifiedActivatedRegistration(reg);
+        foundationUpdateActivation = !currentReleaseAlreadyActivated
+          && verifiedFoundationUpdateAuthorization(reg, pkg);
+        if (!activationAllowed && !currentReleaseAlreadyActivated && !foundationUpdateActivation) {
+          await updateStatus({
+            phase: 'DependencyPending',
+            reason: 'PlatformSupportProfileIncomplete',
+            retryable: true,
+          });
+          continue;
+        }
+      }
+
       // A PFS plugin may be installed, verified and staged at any time; only
       // activation waits for the Platform Support Profile.  CONSTITUTION-0003 §7.2
       // holds an unmet activation dependency as DependencyPending rather than
@@ -1857,6 +1914,13 @@ async function reconcile() {
       published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence));
       if (!stableRelease) await updateStatus(withAdmission({ phase: 'Ready', reason: '', manifestUrl, retryable: false }));
       await updateStatus(withAdmission({ phase: 'Activated', reason: '', manifestUrl, retryable: false }));
+      if (foundationUpdateActivation) {
+        const consumed = await setFoundationUpgradeAuthorization(null);
+        if (!consumed.ok) {
+          console.error('[foundation-update] activated exact update but could not consume authorization status:',
+            consumed.status, JSON.stringify(consumed.json || {}).slice(0, 200));
+        }
+      }
     } catch (e) {
       const reason = e?.reason || String(e).slice(0, 120);
       await updateStatus({ phase: 'Failed', reason, retryable: retryableReason(reason) });
@@ -3169,8 +3233,9 @@ const server = http.createServer(async (req, res) => {
       if (action === 'install') return json(res, 403, { error: 'CliInstallationRequired', message: 'use os extensions install', opId });
       if (id === FOUNDATION_ID && action === 'enable') {
         const readiness = await platformReadinessStatus(req);
-        const targetReg = await getReg(id);
-        foundationVerifiedUpdate = targetReg.ok && verifiedFoundationStagedUpdate(targetReg.json);
+        const [targetReg, targetPkg] = await Promise.all([getReg(id), getPackage(id)]);
+        foundationVerifiedUpdate = targetReg.ok && targetPkg.ok
+          && verifiedFoundationUpdateAuthorization(targetReg.json, targetPkg.json);
         if (!readiness.admission.foundationActivationAllowed && !foundationVerifiedUpdate) {
           await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequired', opId);
           return json(res, 409, {
@@ -3179,19 +3244,9 @@ const server = http.createServer(async (req, res) => {
             readiness: { phase: readiness.phase, prerequisites: readiness.prerequisites, capabilities: readiness.capabilities }, opId,
           });
         }
-        if (foundationVerifiedUpdate) {
-          const authorizationConsumed = await setFoundationUpgradeAuthorization(null);
-          if (!authorizationConsumed.ok) {
-            await durableAudit(actor, 'foundation-verified-update-activate', id, 'denied',
-              'UpgradeAuthorizationConsumeFailed', opId);
-            return json(res, authorizationConsumed.status >= 500 ? 502 : authorizationConsumed.status, {
-              error: 'UpgradeAuthorizationConsumeFailed', status: authorizationConsumed.status, opId,
-            });
-          }
-        }
         if (!readiness.admission.foundationActivationAllowed && foundationVerifiedUpdate) {
           await durableAudit(actor, 'foundation-verified-update-activate', id, 'accepted',
-            'controller-attested update from a verified Activated release; new Foundation activation gate remains closed', opId);
+            'exact update activation queued; reconciler will verify and consume the Activated-origin authorization', opId);
         }
         if (readiness.admission.foundationActivationOverride) {
           await durableAudit(actor, 'foundation-development-override', id, 'accepted', 'Foundation subShell activation only; PFS plugins remain gated', opId);
@@ -3336,5 +3391,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable };
 }

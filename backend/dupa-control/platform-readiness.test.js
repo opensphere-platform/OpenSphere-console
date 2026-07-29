@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -161,7 +161,43 @@ test('closed readiness gate permits a Foundation update only with controller-own
     ...staged,
     status: { ...staged.status, foundationUpgradeAuthorization: { ...authorization, fromDigest: `sha256:${'f'.repeat(64)}` } },
   }, Date.parse('2026-07-29T02:10:00.000Z')), false);
-  assert.equal(verifiedFoundationStagedUpdate(staged, Date.parse('2026-07-29T02:31:00.000Z')), false);
+  assert.equal(
+    verifiedFoundationStagedUpdate(staged, Date.parse('2026-07-30T02:31:00.000Z')),
+    true,
+    'exact controller-owned update evidence remains durable until activation consumes it',
+  );
+  const pendingReconcile = {
+    spec: { desiredState: 'Installed' },
+    status: {
+      ...activeReg.status,
+      foundationUpgradeAuthorization: authorization,
+    },
+  };
+  assert.equal(
+    verifiedFoundationUpdateAuthorization(
+      pendingReconcile, targetPkg, Date.parse('2026-07-30T02:31:00.000Z'),
+    ),
+    true,
+    'enable may be queued before the reconciler has projected the target release as Ready',
+  );
+  assert.equal(
+    verifiedFoundationUpdateAuthorization(
+      { ...pendingReconcile, spec: { desiredState: 'Enabled' } },
+      targetPkg,
+      Date.parse('2026-07-30T02:31:00.000Z'),
+    ),
+    true,
+    'the reconciler revalidates the same authorization after desiredState becomes Enabled',
+  );
+  assert.equal(
+    verifiedFoundationUpdateAuthorization(
+      pendingReconcile,
+      { ...targetPkg, spec: { ...targetPkg.spec, image: { digest: `sha256:${'f'.repeat(64)}` } } },
+      Date.parse('2026-07-30T02:31:00.000Z'),
+    ),
+    false,
+    'authorization cannot be reused for another target digest',
+  );
   assert.equal(foundationUpgradeAuthorization(currentPkg, {
     ...activeReg, spec: { desiredState: 'Installed' }, status: { ...activeReg.status, phase: 'Ready' },
   }, targetPkg, { username: 'cmars' }, `os-${'e'.repeat(24)}`), null);
@@ -169,9 +205,10 @@ test('closed readiness gate permits a Foundation update only with controller-own
   const controller = read('backend', 'dupa-control', 'controller.js');
   const crd = read('backend', 'dupa-control', 'ui-plugin-crds.yaml');
   assert.match(controller, /setFoundationUpgradeAuthorization\(foundationAuthorization\)/);
-  assert.match(controller, /foundationVerifiedUpdate = targetReg\.ok && verifiedFoundationStagedUpdate/);
-  assert.match(controller, /authorizationConsumed = await setFoundationUpgradeAuthorization\(null\)/);
-  assert.match(controller, /UpgradeAuthorizationConsumeFailed/);
+  assert.match(controller, /foundationVerifiedUpdate = targetReg\.ok && targetPkg\.ok/);
+  assert.match(controller, /verifiedFoundationUpdateAuthorization\(targetReg\.json, targetPkg\.json\)/);
+  assert.match(controller, /foundationUpdateActivation = !currentReleaseAlreadyActivated/);
+  assert.match(controller, /consumed = await setFoundationUpgradeAuthorization\(null\)/);
   assert.match(controller, /foundation-verified-update-activate/);
   assert.match(crd, /foundationUpgradeAuthorization:/);
   assert.match(crd, /VerifiedActivatedFoundationUpdate\/v1/);
