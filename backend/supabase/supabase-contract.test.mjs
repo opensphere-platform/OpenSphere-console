@@ -30,5 +30,7 @@ test('Console release source contains every current Setup migration contract', (
 
   assert.match(cephRuntime, /opensphere\.ceph\.rook-prerequisite\/v2/);
   assert.match(foundationBootstrap, /opensphere\.foundation\.bootstrap\/v1/);
+  assert.match(foundationBootstrap, /'console-native'/);
+  assert.doesNotMatch(foundationBootstrap, /'platform'/);
   assert.match(foundationBootstrap, /browserWrite":false/);
 });

@@ -9,7 +9,7 @@ INSERT INTO console.consumer_contract (
 ) VALUES (
   'foundation-bootstrap',
   'Platform Foundation Service Stack Bootstrap',
-  'platform',
+  'console-native',
   ARRAY['console','audit'],
   ARRAY[]::text[],
   'opensphere/platform-declarations',
