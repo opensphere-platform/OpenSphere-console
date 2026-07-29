@@ -50,3 +50,12 @@ test('Gitea admits only the Argo repo-server required for the governed Git sourc
   assert.match(ingress, /port: 3000/);
   assert.doesNotMatch(ingress, /namespaceSelector:\s*\{\}/);
 });
+
+test('Argo CD receives a distinct read-only Gitea repository credential', () => {
+  const bootstrap = fs.readFileSync(path.resolve(__dirname, '..', 'gitea', 'bootstrap', 'register-argocd-repository-access.ps1'), 'utf8');
+  assert.match(bootstrap, /--scopes 'read:repository'/);
+  assert.match(bootstrap, /argocd\.argoproj\.io\/secret-type' = 'repository'/);
+  assert.match(bootstrap, /opensphere-platform-declarations-repository/);
+  assert.doesNotMatch(bootstrap, /read:repository,write:repository/);
+  assert.doesNotMatch(bootstrap, /Write-Host.*\$token/);
+});

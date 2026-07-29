@@ -13,7 +13,10 @@ This directory establishes the runtime proof required by the Console
 `kustomization.yaml` pins the Argo CD 3.4.2 upstream source and all of its
 runtime images by digest.  It intentionally does not contain Gitea credentials.
 Those credentials are generated per cluster and must stay in the `argocd`
-namespace as a labelled `repo-creds` Secret.
+namespace as the labelled `repository` Secret
+`opensphere-platform-declarations-repository`.  Use
+`backend/gitea/bootstrap/register-argocd-repository-access.ps1`; it creates a
+new `read:repository` Gitea token and never copies the Console's write token.
 
 The source files for the first verification Application are in `seed/`.  They
 must enter `opensphere/platform-declarations` through the established signed
