@@ -13,6 +13,7 @@ import { HttpService } from '../core/http.service';
 import { CarbonIcon } from '../os/carbon-icon';
 import { OsPageHeader } from '../os/os-page-header';
 import { AdminPlatformReadiness } from './admin-platform-readiness';
+import { PlatformReadinessService, PlatformReadinessStatus } from '../core/platform-readiness.service';
 
 type ControlTab = 'operations' | 'readiness' | 'evidence' | 'journey';
 type EvidenceFilter = 'all' | 'supabase' | 'gitea' | 'runtime';
@@ -73,10 +74,11 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
         <div class="page-meta"><span>마지막 확인</span><strong>{{ formatDate(lastChecked()) }}</strong><button class="icon-button" type="button" aria-label="상태 새로고침" [disabled]="busy()" (click)="refresh()"><os-cicon [icon]="icons.renew" [size]="16" /></button></div>
       </div>
 
-      @if (supabaseDown() || giteaDown()) {
+      @if (supabaseDown() || giteaDown() || readinessDown()) {
         <div class="source-alerts" role="status">
           @if (supabaseDown()) { <p><strong>Supabase status unavailable</strong><span>{{ supabaseDown() }}</span></p> }
           @if (giteaDown()) { <p><strong>State Change Authority unavailable</strong><span>{{ giteaDown() }}</span></p> }
+          @if (readinessDown()) { <p><strong>Platform readiness unavailable</strong><span>{{ readinessDown() }}</span></p> }
         </div>
       }
 
@@ -239,8 +241,10 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   readonly selectedChangeId = signal('');
   readonly supabase = signal<SupabaseStatus | null>(null);
   readonly gitea = signal<ChangeControlState | null>(null);
+  readonly readiness = signal<PlatformReadinessStatus | null>(null);
   readonly supabaseDown = signal('');
   readonly giteaDown = signal('');
+  readonly readinessDown = signal('');
   readonly busy = signal(false);
   readonly evidenceFilters = [
     { key: 'all' as const, label: 'All evidence', icon: DocumentSecurity16 },
@@ -251,7 +255,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   readonly stageLabels = ['Request', 'Audit', 'Signed PR', 'Approval', 'Merge', 'Outbox', 'Observed'];
   readonly journeyLanes: JourneyStep['source'][] = ['Supabase', 'Gitea', 'Kubernetes'];
 
-  readonly lastChecked = computed(() => this.latestTime(this.supabase()?.meta.checkedAt, this.gitea()?.meta.checkedAt));
+  readonly lastChecked = computed(() => this.latestTime(this.supabase()?.meta.checkedAt, this.gitea()?.meta.checkedAt, this.readiness()?.observedAt));
   readonly serviceCount = computed(() => (this.supabase()?.components.length || 0) + (this.gitea() ? 1 : 0));
   readonly readyServiceCount = computed(() => (this.supabase()?.components.filter((item) => item.ready).length || 0) + (this.gitea()?.ready ? 1 : 0));
   readonly inFlight = computed(() => { const value = this.gitea(); return value ? (value.byStatus['intent'] || 0) + (value.byStatus['authorized'] || 0) + (value.byStatus['committed'] || 0) : 0; });
@@ -273,6 +277,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
 
   private readonly http = inject(HttpService);
   private readonly route = inject(ActivatedRoute);
+  private readonly readinessService = inject(PlatformReadinessService);
   private timer: ReturnType<typeof setInterval> | null = null;
 
   async ngOnInit(): Promise<void> {
@@ -289,9 +294,14 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   async refresh(silent = false): Promise<void> {
     if (!silent) this.busy.set(true);
     const load = async <T>(path: string): Promise<T> => { const response = await this.http.request(path, { cache: 'no-store' }); if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json() as Promise<T>; };
-    const [supabase, gitea] = await Promise.allSettled([load<SupabaseStatus>('/api/identity/supabase/status'), load<ChangeControlState>('/api/platform/gitea/status')]);
+    const [supabase, gitea, readiness] = await Promise.allSettled([
+      load<SupabaseStatus>('/api/identity/supabase/status'),
+      load<ChangeControlState>('/api/platform/gitea/status'),
+      this.readinessService.status(),
+    ]);
     if (supabase.status === 'fulfilled') { this.supabase.set(supabase.value); this.supabaseDown.set(''); } else { this.supabaseDown.set(String(supabase.reason)); }
     if (gitea.status === 'fulfilled') { this.gitea.set(gitea.value); this.giteaDown.set(''); } else { this.giteaDown.set(String(gitea.reason)); }
+    if (readiness.status === 'fulfilled') { this.readiness.set(readiness.value); this.readinessDown.set(''); } else { this.readiness.set(null); this.readinessDown.set(String(readiness.reason)); }
     this.busy.set(false);
   }
 
@@ -321,14 +331,19 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   recoverySummary(): string { const rows = this.evidenceRows().filter((item) => /Recovery|restore/i.test(item.source + item.assertion)); const attention = rows.filter((item) => item.verdict !== 'Verified').length; return attention ? `${attention} checks need review` : (rows.length ? `${rows.length} checks verified` : 'evidence 없음'); }
   private unitNeedsAttention(unit: RecoveryUnit): boolean { if (/attention|insufficient|failed|unknown/i.test(unit.state)) return true; if (unit.checks?.some((check) => check.verdict !== 'Verified')) return true; return unit.assertions.some((assertion) => /^(restored object files|users|repositories)=0$/i.test(assertion.trim())); }
   driftVerdict(): string { const changes = this.gitea()?.changes || []; if (changes.some((item) => /drift|failed/i.test(item.execution?.drift_status || '') || item.status === 'failed')) return 'Attention'; if (!changes.length) return 'No evidence'; return changes.every((item) => /none|clean|in_sync|no.?drift/i.test(item.execution?.drift_status || '')) ? 'None' : 'Unknown'; }
-  hisBinding(): string { const bindings = this.supabase()?.integrations.map((item) => item.observability?.phase).filter(Boolean) || []; return bindings.some((item) => item === 'Bound') ? 'Bound' : 'NotConfigured'; }
+  hisBinding(): string {
+    const binding = this.readiness()?.prerequisites.find((item) => item.key === 'his-binding');
+    if (!binding) return 'Unavailable';
+    if (binding.ready) return 'Connected';
+    return /not configured|not found|does not exist|unavailable/i.test(binding.detail) ? 'NotConfigured' : 'Degraded';
+  }
   latestChangeLabel(value: ChangeControlState): string { const latest = value.changes[0]; return latest ? `${this.shortId(latest.request_id)} · ${this.changeVerdict(latest)}` : 'No governed change yet'; }
   changeVerdict(change: ChangeRequest): Verdict { if (change.status === 'failed' || change.execution?.last_error || change.outbox?.last_error) return 'Failed'; if (change.status === 'applied' && change.k8s_operation_id) return 'Verified'; if (['committed', 'authorized'].includes(change.status) || /await|pending|queued/i.test(change.execution?.reconciler_status || change.outbox?.status || '')) return 'Awaiting consumer'; return change.status === 'intent' ? 'Attention required' : 'Awaiting consumer'; }
 
   primaryRisk(): { tone: 'warning' | 'danger'; title: string; detail: string; actionLabel: string; action: () => void } {
     if (this.recoveryVerdict() !== 'Verified') return { tone: 'warning', title: 'Recovery evidence incomplete', detail: this.recoverySummary() + '. 복원 결과와 기대값을 확인해야 합니다.', actionLabel: 'Review evidence', action: () => this.openRecoveryEvidence() };
     if (!this.gitea()?.managementReady) return { tone: 'danger', title: 'Gitea management path unavailable', detail: this.gitea()?.reason || '변경 생성·승인 경로를 사용할 수 없습니다.', actionLabel: 'Open journey', action: () => this.activeTab.set('journey') };
-    if (this.hisBinding() !== 'Bound') return { tone: 'warning', title: 'HIS Binding not configured', detail: 'Console은 telemetry를 추정하거나 Prometheus를 생성하지 않습니다.', actionLabel: 'Review binding', action: () => this.activeTab.set('evidence') };
+    if (this.hisBinding() !== 'Connected') return { tone: 'warning', title: 'HIS Binding not configured', detail: 'Console은 telemetry를 추정하거나 Prometheus를 생성하지 않습니다.', actionLabel: 'Review binding', action: () => this.activeTab.set('evidence') };
     return { tone: 'warning', title: 'No active platform risk', detail: '현재 읽은 증거 범위에서 즉시 조치가 필요한 항목이 없습니다.', actionLabel: 'Review evidence', action: () => this.activeTab.set('evidence') };
   }
   openRecoveryEvidence(): void { this.evidenceFilter.set('supabase'); this.activeTab.set('evidence'); const row = this.evidenceRows().find((item) => item.verdict !== 'Verified' && /restore|Recovery/i.test(item.source + item.assertion)); if (row) this.selectedEvidenceId.set(row.id); }

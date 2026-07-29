@@ -98,6 +98,10 @@ test('Platform Control presents support readiness, operations, evidence and jour
   assert.match(control, /변경 요청 → 서명된 상태 선언 → Kubernetes 실측 결과/);
   assert.match(control, /HIS Binding/);
   assert.match(control, /NotConfigured/);
+  assert.match(control, /PlatformReadinessService/);
+  assert.match(control, /this\.readinessService\.status\(\)/);
+  assert.match(control, /this\.readiness\(\)\?\.prerequisites\.find\(\(item\) => item\.key === 'his-binding'\)/);
+  assert.doesNotMatch(control, /hisBinding\(\): string \{ const bindings = this\.supabase\(\)\?\.integrations/);
   assert.match(dataIdentity, /Recovery evidence/);
   assert.match(dataIdentity, /Insufficient evidence/);
   assert.match(changeControl, /플랫폼 상태 변경 관리/);
