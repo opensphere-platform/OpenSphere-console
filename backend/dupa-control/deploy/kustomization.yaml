@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Local edge release declaration.  Deployment consumes the exact GHCR digest;
+# tags are publication references only and are never used by Kubernetes.
+resources:
+  - ../opensphere-console-dupa-controller.yaml
+
+images:
+  - name: ghcr.io/opensphere-platform/opensphere-console-dupa-controller
+    newName: ghcr.io/opensphere-platform/opensphere-console-dupa-controller
+    digest: sha256:0c0dedf4428685d47f6b1dbb8d56f66bf71adcb5e45442fbb90a8ad23730e09c
