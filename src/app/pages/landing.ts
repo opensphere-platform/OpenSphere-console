@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
 import { routeForPlugin } from '../core/perspectives';
+import { SERVICE_REALIZATION_LAYERS } from '../architecture/service-realization.model';
 
 interface IndexLink {
   path: string;
@@ -17,18 +18,6 @@ interface PerspectiveDef {
   band: string;
   question: string;
   pluginId: string;
-}
-
-interface LayerDef {
-  num: number;
-  name: string;
-  short: string;
-  scope: string;
-  role: string;
-  requires: string;
-  establishes: string;
-  evidence: string;
-  objects: string[];
 }
 
 /**
@@ -47,80 +36,6 @@ const PERSPECTIVES: PerspectiveDef[] = [
   { num: 8, name: 'Customer', korean: '고객', band: 'Deliver', question: '고객에게 어떤 경험을 제공하는가', pluginId: 'customer' },
   { num: 9, name: 'External Web Service', korean: '대외 서비스', band: 'Deliver', question: '외부 서비스는 어떻게 안전하게 노출되는가', pluginId: 'edge' },
   { num: 10, name: 'Website', korean: '웹사이트', band: 'Deliver', question: '조직의 얼굴을 어떻게 운영하는가', pluginId: 'website' },
-];
-
-/**
- * The vertical axis is persistent operational structure, not a temporary
- * installer timeline. Each upper layer consumes a contract and evidence from
- * the layer below it.
- */
-const LAYERS: LayerDef[] = [
-  {
-    num: 6,
-    name: 'Domain Service Layer',
-    short: 'Domain Service',
-    scope: 'Perspective-owned value',
-    role: '직원·고객·개발자에게 실제 업무와 제품 경험을 제공한다.',
-    requires: 'L5 PFSS의 소비 계약과 admission',
-    establishes: '도메인 서비스, 업무 흐름, 사용자 가치',
-    evidence: '사용자 여정, SLO, 도메인별 운영 증거',
-    objects: ['Developer', 'Workspace', 'Customer Services', 'External Web', 'Website'],
-  },
-  {
-    num: 5,
-    name: 'Platform Foundation Layer',
-    short: 'Platform Foundation',
-    scope: 'Shared service capability',
-    role: '모든 Perspective가 공통으로 소비하는 PFSS capability를 제공한다.',
-    requires: 'L4 Platform Support Profile Ready',
-    establishes: '공유 identity·data·communication·AI·observability·recovery 계약',
-    evidence: 'Model·Claim·Binding, 보호된 I/O, consumer contract',
-    objects: ['PFSS', 'Identity', 'Data', 'Communication', 'AI Substrate', 'Observability', 'Backup / Restore'],
-  },
-  {
-    num: 4,
-    name: 'Platform Support Layer',
-    short: 'Platform Support',
-    scope: 'Cross-perspective safety',
-    role: '상위 서비스를 반복 가능하게 배포하고 관측·복구·통제할 수 있게 한다.',
-    requires: 'L3 control authority와 HIS preflight',
-    establishes: 'Delivery·Observability·Backup/Restore·Security/Policy 안전망',
-    evidence: 'sync·rollback, telemetry, recovery drill, admission red test',
-    objects: ['Argo CD', 'Crossplane', 'Shared Observability', 'Recovery Control', 'Security / Policy'],
-  },
-  {
-    num: 3,
-    name: 'Platform Control Layer',
-    short: 'Platform Control',
-    scope: 'Control and operational authority',
-    role: '설치·활성화·정책·진단·감사의 단일 관리 권위를 제공한다.',
-    requires: 'L2 Console Backbone Ready',
-    establishes: '검증된 Registry, lifecycle control, HIS 운영 표면',
-    evidence: '서명 검증, 활성화 상태, CLI parity, append-only audit',
-    objects: ['Main Shell', 'DUPA / Registry', 'Cluster Manager', 'OAA Core', 'Policy Gate'],
-  },
-  {
-    num: 2,
-    name: 'Console Backbone Layer',
-    short: 'Console Backbone',
-    scope: 'Durable console authority',
-    role: 'Console의 신원·상태·선언형 변경·감사 이력을 내구 저장한다.',
-    requires: 'L1의 최소 Console bootstrap 기반',
-    establishes: '운영자 신원, durable state, declarative change authority',
-    evidence: 'login·role 회수, DB append/read, Git commit/revert',
-    objects: ['Supabase Data & Identity', 'Gitea State Change Authority', 'Durable Audit', 'Object History'],
-  },
-  {
-    num: 1,
-    name: 'Host Infrastructure Layer',
-    short: 'Host Infrastructure',
-    scope: 'Host-provided substrate',
-    role: 'OpenSphere와 모든 서비스가 실행되는 호스트 기반을 제공한다.',
-    requires: 'Kubernetes API에 연결 가능한 물리·가상 인프라',
-    establishes: 'compute·network·name resolution·ingress·storage 실행 기반',
-    evidence: 'API, CNI, DNS, Ingress, CSI, metrics와 snapshot 실측',
-    objects: ['Kubernetes API', 'CNI / DNS / Ingress', 'CSI / Storage', 'Host Metrics', 'Volume Snapshot'],
-  },
 ];
 
 @Component({
@@ -186,7 +101,7 @@ const LAYERS: LayerDef[] = [
             <p class="eyebrow">10P × 6L model</p>
             <h2 id="model-title">OpenSphere Service Realization Map</h2>
           </div>
-          <p>아래에서 위로 기반이 축적됩니다. 각 Layer의 가로 폭은 10개 Perspective 전체를 지원한다는 뜻입니다.</p>
+          <p>구조는 아래에서 위로 축적되며, 설립 순서는 L1 bootstrap에서 L3를 거쳐 L1 HIS를 실증하는 feedback을 포함합니다.</p>
         </div>
 
         <div class="model-scroll" tabindex="0" aria-label="10 Perspectives and 6 Layers architecture map">
@@ -220,17 +135,17 @@ const LAYERS: LayerDef[] = [
               </tr>
             </thead>
             <tbody>
-              @for (layer of layers; track layer.num) {
+              @for (layer of layers; track layer.id) {
                 <tr>
                   <th class="layer-heading" scope="row">
-                    <span>L{{ layer.num }}</span>
+                    <span>L{{ layer.ordinal }}</span>
                     <strong>{{ layer.short }}</strong>
-                    <small>{{ layer.scope }}</small>
+                    <small>{{ layer.id }} · {{ layer.scope }}</small>
                   </th>
-                  <td class="layer-track" [class]="'layer-track layer-' + layer.num" colspan="10">
+                  <td class="layer-track" [class]="'layer-track layer-' + layer.ordinal" colspan="10">
                     <div class="layer-overview">
                       <div>
-                        <span class="layer-kicker">L{{ layer.num }} · {{ layer.scope }}</span>
+                        <span class="layer-kicker">{{ layer.id }} · {{ layer.scope }}</span>
                         <h3>{{ layer.name }}</h3>
                         <p>{{ layer.role }}</p>
                       </div>
@@ -253,6 +168,10 @@ const LAYERS: LayerDef[] = [
                         <dt>Ready evidence</dt>
                         <dd>{{ layer.evidence }}</dd>
                       </div>
+                      <div>
+                        <dt>Lifecycle authority</dt>
+                        <dd>{{ layer.authority }}</dd>
+                      </div>
                     </dl>
                   </td>
                 </tr>
@@ -273,7 +192,7 @@ const LAYERS: LayerDef[] = [
           <article>
             <span>01</span>
             <h3>Layer는 설치 단계가 아닙니다</h3>
-            <p>설립 후에도 계속 존재하며 상위 서비스의 운영·업그레이드·삭제·재설치를 지지합니다.</p>
+            <p>지속되는 운영 구조이며, bootstrap은 L1→L2→L3 뒤 L1 HIS를 실증하는 feedback을 가집니다.</p>
           </article>
           <article>
             <span>02</span>
@@ -282,8 +201,8 @@ const LAYERS: LayerDef[] = [
           </article>
           <article>
             <span>03</span>
-            <h3>한 객체의 권위는 하나입니다</h3>
-            <p>여러 Perspective에 노출될 수 있지만 설치·운영 lifecycle을 소유하는 주 Layer는 하나입니다.</p>
+            <h3>한 객체의 lifecycle owner는 하나입니다</h3>
+            <p>여러 Perspective에 노출되고 하위 Layer에서 증거를 얻더라도 설치·변경·삭제를 소유하는 주 Layer는 하나입니다.</p>
           </article>
         </div>
       </section>
@@ -551,7 +470,7 @@ const LAYERS: LayerDef[] = [
       }
       .layer-contract {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         margin: 0;
         border-top: 1px solid var(--os-hairline);
         background: rgba(255, 255, 255, 0.93);
@@ -638,7 +557,7 @@ export class Landing {
   private ext = inject(ExtensionHostService);
   private psp = inject(PerspectiveService);
 
-  readonly layers = LAYERS;
+  readonly layers = SERVICE_REALIZATION_LAYERS;
 
   readonly coreCards = computed<IndexLink[]>(() => {
     const base: IndexLink[] = [

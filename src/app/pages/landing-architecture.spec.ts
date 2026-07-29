@@ -3,14 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./landing.ts', import.meta.url), 'utf8');
+const realizationModel = fs.readFileSync(
+  new URL('../architecture/service-realization.model.ts', import.meta.url),
+  'utf8',
+);
 const shell = fs.readFileSync(new URL('../os/os-shell.ts', import.meta.url), 'utf8');
 const search = fs.readFileSync(new URL('../core/search.service.ts', import.meta.url), 'utf8');
 
 const perspectiveStart = source.indexOf('const PERSPECTIVES');
-const layerStart = source.indexOf('const LAYERS');
 const componentStart = source.indexOf('@Component');
-const perspectiveModel = source.slice(perspectiveStart, layerStart);
-const layerModel = source.slice(layerStart, componentStart);
+const perspectiveModel = source.slice(perspectiveStart, componentStart);
 
 test('main index defines exactly ten horizontal Perspectives', () => {
   assert.equal((perspectiveModel.match(/\{ num: \d+/g) || []).length, 10);
@@ -20,7 +22,7 @@ test('main index defines exactly ten horizontal Perspectives', () => {
 });
 
 test('main index defines exactly six vertical Service Realization Layers', () => {
-  assert.equal((layerModel.match(/\n\s+num: \d,/g) || []).length, 6);
+  assert.equal((realizationModel.match(/id: 'SRL-L\d'/g) || []).length, 6);
   for (const name of [
     'Host Infrastructure Layer',
     'Console Backbone Layer',
@@ -29,15 +31,15 @@ test('main index defines exactly six vertical Service Realization Layers', () =>
     'Platform Foundation Layer',
     'Domain Service Layer',
   ]) {
-    assert.match(layerModel, new RegExp(name));
+    assert.match(realizationModel, new RegExp(name));
   }
   assert.match(source, /Vertical realization structure/);
 });
 
 test('Main Shell is a Platform Control object instead of Perspective zero', () => {
-  const platformControl = layerModel.slice(
-    layerModel.indexOf("name: 'Platform Control Layer'"),
-    layerModel.indexOf("name: 'Console Backbone Layer'"),
+  const platformControl = realizationModel.slice(
+    realizationModel.indexOf("name: 'Platform Control Layer'"),
+    realizationModel.indexOf("name: 'Console Backbone Layer'"),
   );
   assert.match(platformControl, /'Main Shell'/);
   assert.doesNotMatch(perspectiveModel, /Main Shell/);
@@ -48,9 +50,22 @@ test('architecture index teaches coordinates, contracts, and evidence', () => {
   assert.match(source, /Requires/);
   assert.match(source, /Establishes/);
   assert.match(source, /Ready evidence/);
+  assert.match(source, /Lifecycle authority/);
   assert.match(source, /존재는 Ready의 증거가 아닙니다/);
   assert.match(source, /OpenSphere Ten-Perspective and Six-Layer/);
   assert.match(source, /Service Realization Architecture/);
+});
+
+test('layer model distinguishes persistent structure from bootstrap establishment order', () => {
+  assert.match(realizationModel, /SERVICE_REALIZATION_ESTABLISHMENT_SEQUENCE/);
+  assert.match(
+    realizationModel,
+    /'SRL-L1\.Bootstrap'[\s\S]+'SRL-L3\.MainShellAndClusterManagerReady'[\s\S]+'SRL-L1\.HISPreflightReady'/,
+  );
+  assert.match(realizationModel, /failurePolicy:/);
+  assert.match(realizationModel, /authority:/);
+  assert.match(realizationModel, /Observability Runtime & Control/);
+  assert.match(realizationModel, /Observability Binding/);
 });
 
 test('architecture sections do not inherit the global Console header height', () => {
