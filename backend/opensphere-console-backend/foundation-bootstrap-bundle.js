@@ -6,6 +6,11 @@ const {
   FOUNDATION_BOOTSTRAP_CATALOG_SHA256,
 } = require('./foundation-bootstrap-contract');
 
+const OTEL_UPSTREAM_REFERENCE =
+  'docker.io/otel/opentelemetry-collector-contrib@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029';
+const OTEL_OFFICIAL_MIRROR_REFERENCE =
+  'ghcr.io/opensphere-platform/mirror/opentelemetry-collector-contrib@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029';
+
 // Gzip-compressed, LF-normalized closed Foundation bootstrap catalog.
 // Source: OpenSphere-shell-foundation/deploy/{foundation-contracts,
 // identity-directory-contracts,control-plane-rbac,control-plane,
@@ -69,7 +74,10 @@ function sha256(text) {
 }
 
 function embeddedCatalogYaml() {
-  const base = gunzipSync(Buffer.from(FOUNDATION_BOOTSTRAP_BUNDLE_GZIP_BASE64, 'base64')).toString('utf8').trimEnd();
+  const base = gunzipSync(Buffer.from(FOUNDATION_BOOTSTRAP_BUNDLE_GZIP_BASE64, 'base64'))
+    .toString('utf8')
+    .trimEnd()
+    .replaceAll(OTEL_UPSTREAM_REFERENCE, OTEL_OFFICIAL_MIRROR_REFERENCE);
   return `${base}\n---\n${FOUNDATION_BOOTSTRAP_CANARY_YAML.trim()}\n`;
 }
 

@@ -57,26 +57,26 @@ test('embedded Foundation catalog has fixed identities and digest-pinned workloa
   assert.ok(images.every((image) => /@sha256:[a-f0-9]{64}$/.test(image)));
 });
 
-test('Foundation supply-chain preflight fails before apply when an operand lacks an official immutable mirror', () => {
+test('Foundation supply-chain preflight accepts only official immutable mirrors', () => {
   const catalog = loadFoundationBootstrapCatalog();
   const status = catalogSupplyChainStatus(catalog);
-  assert.equal(status.ready, false);
+  assert.equal(status.ready, true);
   assert.equal(status.checkedImages, 8);
-  assert.equal(status.blockers.length, 1);
-  assert.match(status.blockers[0].image, /^docker\.io\/otel\/opentelemetry-collector-contrib@sha256:/);
-  assert.throws(() => assertCatalogSupplyChain(catalog), /official immutable GHCR mirror/);
-  const repaired = catalog.map((resource) => (
+  assert.equal(status.blockers.length, 0);
+  assert.equal(assertCatalogSupplyChain(catalog).ready, true);
+  const regressed = catalog.map((resource) => (
     resource.kind === 'Deployment'
       ? {
         ...resource,
         document: resource.document.replace(
-          /docker\.io\/otel\/opentelemetry-collector-contrib@sha256:[a-f0-9]{64}/,
-          'ghcr.io/opensphere-platform/mirror/opentelemetry-collector-contrib@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          /ghcr\.io\/opensphere-platform\/mirror\/opentelemetry-collector-contrib@sha256:[a-f0-9]{64}/,
+          'docker.io/otel/opentelemetry-collector-contrib@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         ),
       }
       : resource
   ));
-  assert.equal(catalogSupplyChainStatus(repaired).ready, true);
+  assert.equal(catalogSupplyChainStatus(regressed).ready, false);
+  assert.throws(() => assertCatalogSupplyChain(regressed), /official immutable GHCR mirror/);
 });
 
 test('catalog validation rejects identity substitution and mutable images', () => {

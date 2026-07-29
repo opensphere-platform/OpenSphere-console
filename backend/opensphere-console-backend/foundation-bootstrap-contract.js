@@ -6,8 +6,8 @@ const FOUNDATION_BOOTSTRAP_RECONCILER = 'foundation-bootstrap-reconciler';
 const FOUNDATION_BOOTSTRAP_CONSUMER = 'foundation-bootstrap';
 const FOUNDATION_BOOTSTRAP_TEMPLATE_ID = 'foundation-control-plane-bootstrap';
 const FOUNDATION_BOOTSTRAP_TARGET = 'foundation-control-plane/v1alpha1';
-const FOUNDATION_BOOTSTRAP_CATALOG_VERSION = '20260728.2';
-const FOUNDATION_BOOTSTRAP_CATALOG_SHA256 = '792be5a85d64581379284b0bd72e168f7d2b050d1580b040253578af1bd43a5d';
+const FOUNDATION_BOOTSTRAP_CATALOG_VERSION = '20260729.1';
+const FOUNDATION_BOOTSTRAP_CATALOG_SHA256 = '9dbc0bd1ae6568a89fa4e5d7dc92bf3a98dc28b5dd522cf6be99a777f0888335';
 
 const FOUNDATION_BOOTSTRAP_DESIRED_STATE = Object.freeze({
   contract: 'opensphere.foundation.bootstrap/v1',
