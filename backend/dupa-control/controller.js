@@ -392,15 +392,20 @@ function foundationUpgradeAuthorization(currentPkg, currentReg, targetPkg, actor
   };
 }
 function verifiedFoundationStagedUpdate(reg, now = Date.now()) {
-  if (!verifiedStagedUpdate(reg)) return false;
   const status = reg?.status || {};
   const authorization = status.foundationUpgradeAuthorization || {};
   const requestedAt = Date.parse(String(authorization.requestedAt || ''));
-  return authorization.kind === FOUNDATION_UPGRADE_AUTHORIZATION_KIND
+  const currentDigest = String(status.currentDigest || '');
+  const previousDigest = String(status.previousDigest || '');
+  return ['Installed', 'Enabled'].includes(reg?.spec?.desiredState)
+    && authorization.kind === FOUNDATION_UPGRADE_AUTHORIZATION_KIND
     && authorization.fromDigest === status.previousDigest
     && authorization.fromManifestSha256 === status.previousManifestSha256
     && authorization.toDigest === status.currentDigest
     && authorization.toManifestSha256 === status.currentManifestSha256
+    && /^sha256:[a-f0-9]{64}$/.test(currentDigest)
+    && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
+    && currentDigest !== previousDigest
     && typeof authorization.requestedBy === 'string'
     && authorization.requestedBy.length > 0
     && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
@@ -410,6 +415,10 @@ function verifiedFoundationStagedUpdate(reg, now = Date.now()) {
     // clock interval made a successful rollout permanently unactivatable when
     // the install and enable requests raced the reconciler.  It remains valid
     // until the exact transition is activated and the controller consumes it.
+    // The API changes desiredState to Enabled before the next reconcile. During
+    // that pass phase may also move through Ready or DependencyPending, so those
+    // transient fields cannot be part of this durable authorization check. The
+    // reconciler still verifies the workload and artifact before publishing.
     && requestedAt <= Number(now) + (5 * 60 * 1000);
 }
 function verifiedFoundationUpdateAuthorization(reg, pkg, now = Date.now()) {

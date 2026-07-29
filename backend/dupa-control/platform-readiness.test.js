@@ -166,6 +166,33 @@ test('closed readiness gate permits a Foundation update only with controller-own
     true,
     'exact controller-owned update evidence remains durable until activation consumes it',
   );
+  assert.equal(
+    verifiedFoundationUpdateAuthorization(
+      { ...staged, spec: { desiredState: 'Enabled' } },
+      targetPkg,
+      Date.parse('2026-07-30T02:31:00.000Z'),
+    ),
+    true,
+    'the API desiredState transition must not invalidate an already verified target release',
+  );
+  assert.equal(
+    verifiedFoundationUpdateAuthorization(
+      {
+        ...staged,
+        spec: { desiredState: 'Enabled' },
+        status: {
+          ...staged.status,
+          phase: 'DependencyPending',
+          workload: { phase: 'Pending' },
+          verification: { manifest: 'Pending', signature: 'Pending', entryDigest: 'Pending', permissions: 'Pending' },
+        },
+      },
+      targetPkg,
+      Date.parse('2026-07-30T02:31:00.000Z'),
+    ),
+    true,
+    'a transient failed gate projection must remain recoverable by the exact durable authorization',
+  );
   const pendingReconcile = {
     spec: { desiredState: 'Installed' },
     status: {
