@@ -12,6 +12,7 @@ const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes, randomUUID } = require('crypto');
 const { RegistryCredentialCoordinator } = require('./registry-credentials');
 const { ExtensionProjectionCoordinator } = require('./extension-projection');
+const { foundationEstablishmentProjection } = require('./foundation-establishment');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-console';
@@ -2572,6 +2573,26 @@ async function readPlatformProfile() {
   if (!r.ok) return { declared: false, crdReady: false, resource: null, reason: `PlatformSupportProfile HTTP ${r.status}` };
   return { declared: true, crdReady: true, resource: r.json };
 }
+async function foundationEstablishmentStatus(supportReady, registration) {
+  const [bootstrapOwner, crds, controlPlane, models, descriptors, bindings] = await Promise.all([
+    k8s('GET', '/apis/apps/v1/namespaces/opensphere-console/deployments/foundation-bootstrap-reconciler'),
+    k8s('GET', '/apis/apiextensions.k8s.io/v1/customresourcedefinitions'),
+    k8s('GET', '/apis/apps/v1/namespaces/opensphere-system/deployments/foundation-control-plane'),
+    k8s('GET', '/apis/foundation.opensphere.io/v1alpha1/foundationmodels'),
+    k8s('GET', '/apis/foundation.opensphere.io/v1alpha1/foundationmoduledescriptors'),
+    k8s('GET', '/apis/foundation.opensphere.io/v1alpha1/foundationbindings'),
+  ]);
+  return foundationEstablishmentProjection({
+    supportReady,
+    shellReady: verifiedActivatedRegistration(registration),
+    bootstrapOwner,
+    crds,
+    controlPlane,
+    models,
+    descriptors,
+    bindings,
+  });
+}
 async function platformReadinessStatus() {
   const [platformControl, mainShell, clusterManager, profile, delivery, observability, backupRestore, securityPolicy, regs] = await Promise.all([
     platformControlReadiness(), mainShellBaselineStatus(), clusterManagerActivationStatus(),
@@ -2600,15 +2621,31 @@ async function platformReadinessStatus() {
   const foundationActivationOverride = !supportReady && FOUNDATION_ACTIVATION_DEV_OVERRIDE;
   const foundationActivationAllowed = supportReady || foundationActivationOverride;
   const foundationReg = (regs.json?.items || []).find((x) => x.metadata?.name === FOUNDATION_ID);
-  const pfsEstablished = foundationReg?.status?.phase === 'Activated';
-  const domainAdmissionReady = pfsEstablished && supportReady;
+  const pfs = await foundationEstablishmentStatus(supportReady, foundationReg);
+  const domainAdmissionReady = pfs.established && supportReady;
   const profilePhase = !profile.crdReady ? 'Blocked' : !profile.declared ? 'NotDeclared'
     : !prerequisitesReady ? 'Blocked' : supportReady ? 'Ready' : 'Degraded';
   const lifecycle = [
     ...prerequisites.map((x) => ({ ...x, state: x.ready ? 'Ready' : 'Blocked' })),
     { key: 'support-profile', label: 'Platform Support Profile Ready', ready: supportReady, state: profilePhase, detail: profile.declared ? `${capabilities.filter((x) => x.ready).length}/4 capability evidence verified` : 'Profile preflight has not been declared', route: '/manage/platform-control' },
-    { key: 'pfs', label: 'PFS Established', ready: pfsEstablished, state: pfsEstablished ? 'Ready' : (foundationActivationAllowed ? 'Available' : (foundationReg?.status?.phase === 'Ready' ? 'Staged' : 'Locked')), detail: pfsEstablished ? (supportReady ? 'Foundation activated' : 'Foundation activated by development override; PFS plugins remain locked') : (supportReady ? 'Foundation activation is unlocked' : (foundationActivationOverride ? 'Development override permits Foundation subShell activation only' : (foundationReg?.status?.phase === 'Ready' ? 'Foundation is staged; activation waits for Platform Support Profile Ready' : 'Foundation may be staged, but activation waits for Platform Support Profile Ready'))), route: foundationActivationAllowed ? '/manage/extensions' : '/manage/platform-control' },
-    { key: 'domain', label: 'Domain subShell Admission', ready: domainAdmissionReady, state: domainAdmissionReady ? 'Available' : 'Locked', detail: domainAdmissionReady ? 'Domain subShell admission available' : (pfsEstablished ? 'Development override does not unlock Domain subShell admission' : 'PFS must be established first'), route: domainAdmissionReady ? '/manage/extensions' : '/manage/platform-control' },
+    {
+      key: 'pfs',
+      label: 'PFS Established',
+      ready: pfs.established,
+      state: pfs.phase,
+      detail: pfs.established
+        ? 'Foundation contracts, control plane and Claim→Binding protection proof are live'
+        : (pfs.blockers[0]?.detail || 'Foundation establishment evidence is incomplete'),
+      route: pfs.shellReady ? '/p/foundation' : (foundationActivationAllowed ? '/manage/extensions' : '/manage/platform-control'),
+    },
+    {
+      key: 'domain',
+      label: 'Domain subShell Admission',
+      ready: domainAdmissionReady,
+      state: domainAdmissionReady ? 'Available' : 'Locked',
+      detail: domainAdmissionReady ? 'Domain subShell admission available' : 'PFS live establishment proof is required first',
+      route: domainAdmissionReady ? '/manage/extensions' : '/manage/platform-control',
+    },
   ];
   return {
     apiVersion: `${PLATFORM_GROUP}/${V}`, kind: 'PlatformReadinessStatus', observedAt: new Date().toISOString(),
@@ -2633,7 +2670,11 @@ async function platformReadinessStatus() {
       pfsPluginInstallAllowed: supportReady,
       reason: supportReady ? '' : (foundationActivationOverride ? 'DevelopmentOverride' : 'PlatformSupportProfileRequired'),
     },
-    pfs: { established: pfsEstablished, phase: foundationReg?.status?.phase || 'NotInstalled' },
+    pfs: {
+      ...pfs,
+      extensionPhase: foundationReg?.status?.phase || 'NotInstalled',
+      extensionDesiredState: foundationReg?.spec?.desiredState || 'Absent',
+    },
   };
 }
 async function declarePlatformProfile(actor, reason) {

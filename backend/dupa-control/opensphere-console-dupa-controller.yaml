@@ -105,6 +105,22 @@ rules:
     verbs: [get]
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterrolebindings], verbs: [get, list] }
   - { apiGroups: ["observability.opensphere.io"], resources: [observabilitybindings], verbs: [get, list] }
+  # PFS establishment is a live read projection. The DUPA controller never
+  # creates or mutates Foundation contracts; the Foundation control plane owns
+  # their status and consumer-protect finalizers.
+  - apiGroups: ["foundation.opensphere.io"]
+    resources:
+      - foundationmodels
+      - foundationmoduledescriptors
+      - foundationclaims
+      - foundationbindings
+      - identitydirectoryclaims
+      - identitydirectorybindings
+    verbs: [get, list, watch]
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    resourceNames: [foundation-control-plane]
+    verbs: [get]
   - { apiGroups: ["authentication.k8s.io"], resources: [tokenreviews], verbs: [create] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1

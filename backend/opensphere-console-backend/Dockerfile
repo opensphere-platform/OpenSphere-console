@@ -14,6 +14,9 @@ COPY opensphere-console-backend/baseline-monitoring.js ./baseline-monitoring.js
 COPY opensphere-console-backend/notification-api.js ./notification-api.js
 COPY opensphere-console-backend/external-channel-api.js ./external-channel-api.js
 COPY opensphere-console-backend/recovery-owner.js ./recovery-owner.js
+COPY opensphere-console-backend/foundation-bootstrap-contract.js ./foundation-bootstrap-contract.js
+COPY opensphere-console-backend/foundation-bootstrap-bundle.js ./foundation-bootstrap-bundle.js
+COPY opensphere-console-backend/foundation-bootstrap-reconciler.js ./foundation-bootstrap-reconciler.js
 COPY notification-dispatcher/contract.js /app/notification-dispatcher/contract.js
 ENV PORT=8080
 EXPOSE 8080

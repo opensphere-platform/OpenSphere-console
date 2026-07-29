@@ -41,7 +41,9 @@ test('Foundation admission is enforced by API and exposed by Console page', () =
   assert.match(controller, /id === FOUNDATION_ID && action === 'enable'/);
   assert.match(controller, /PlatformSupportProfileRequiredForPfsPlugin/);
   assert.match(controller, /foundation-development-override/);
-  assert.match(controller, /const domainAdmissionReady = pfsEstablished && supportReady/);
+  assert.match(controller, /const pfs = await foundationEstablishmentStatus\(supportReady, foundationReg\)/);
+  assert.match(controller, /const domainAdmissionReady = pfs\.established && supportReady/);
+  assert.doesNotMatch(controller, /const pfsEstablished = foundationReg\?\.status\?\.phase === 'Activated'/);
   assert.match(page, /PFS ADMISSION/);
   assert.match(page, /\/p\/cluster-manager\/his\/his/);
   // Every activation control is bound to the same lock, and the lock covers both

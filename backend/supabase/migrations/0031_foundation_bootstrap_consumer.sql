@@ -20,8 +20,8 @@ INSERT INTO console.consumer_contract (
   '{
     "authority":"Gitea reviewed fixed catalog + Kubernetes observed receipt",
     "contract":"opensphere.foundation.bootstrap/v1",
-    "catalogVersion":"20260728.1",
-    "catalogSha256":"213d48cd7ddf6b67bfc718cfb8975309a65c8e6f65bbe3f5afdc29625d5cd070",
+    "catalogVersion":"20260728.2",
+    "catalogSha256":"792be5a85d64581379284b0bd72e168f7d2b050d1580b040253578af1bd43a5d",
     "requires":"PlatformSupportProfile/default Ready",
     "browserWrite":false
   }'::jsonb

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Input, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
@@ -21,9 +21,11 @@ import {
   imports: [FormsModule, RouterLink, ClarityModule, OsPageHeader, BackendUnavailable],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
-    <os-page-header title="플랫폼 준비 상태" tag="Platform Support Profile · Console native">
-      <p>CBS와 Main Shell, Cluster Manager, HIS의 실제 상태를 검증하고 PFS 설치 허용 여부를 결정합니다.</p>
-    </os-page-header>
+    @if (!embedded) {
+      <os-page-header title="플랫폼 준비 상태" tag="Platform Support Profile · Console native">
+        <p>CBS와 Main Shell, Cluster Manager, HIS의 실제 상태를 검증하고 PFS 설치 허용 여부를 결정합니다.</p>
+      </os-page-header>
+    }
 
     @if (error() && !state()) {
       <os-backend-unavailable
@@ -192,6 +194,7 @@ import {
   `],
 })
 export class AdminPlatformReadiness implements OnInit {
+  @Input() embedded = false;
   private api = inject(PlatformReadinessService);
   readonly state = signal<PlatformReadinessStatus | null>(null);
   readonly busy = signal(false);
