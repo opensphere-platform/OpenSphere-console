@@ -54,6 +54,8 @@ const GITEA_RECONCILER_NAMES = new Set((process.env.GITEA_RECONCILER_NAMES
   .split(',').map((value) => value.trim()).filter(Boolean));
 const GITEA_CHANGE_REQUIRE_AAL2 = String(process.env.GITEA_CHANGE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const GITEA_REQUIRE_VERIFIED_MERGE = String(process.env.GITEA_REQUIRE_VERIFIED_MERGE || 'true').toLowerCase() !== 'false';
+const ARGOCD_VERIFICATION_PATH = 'platform-delivery/verification/opensphere-platform-delivery-verification.json';
+const ARGOCD_VERIFICATION_CONFIRMATION = 'bootstrap argocd verification';
 const RECONCILER_RECEIPT_TOKEN = process.env.RECONCILER_RECEIPT_TOKEN || '';
 const GITEA_TIMEOUT_MS = Number(process.env.GITEA_TIMEOUT_MS || 3000);
 const SUPABASE_BACKEND_ROLE = process.env.SUPABASE_BACKEND_ROLE || 'console-admins';
@@ -1491,6 +1493,151 @@ async function giteaStatus() {
       meta, configured: true, ready: false, version: '', repositoryCount: null,
       repositories: [], contracts, receipts, changes, byStatus, recovery, supplyChain: null, managementReady: false, reason: error?.msg || String(error),
     };
+  }
+}
+
+function argocdVerificationManifest() {
+  return {
+    apiVersion: 'v1',
+    kind: 'ConfigMap',
+    metadata: {
+      name: 'opensphere-platform-delivery-verification',
+      namespace: 'opensphere-platform-delivery',
+      labels: {
+        'app.kubernetes.io/name': 'opensphere-platform-delivery-verification',
+        'app.kubernetes.io/part-of': 'opensphere-platform-delivery',
+        'app.kubernetes.io/managed-by': 'argocd',
+        'opensphere.io/capability': 'delivery.gitops',
+      },
+      annotations: {
+        'opensphere.io/contract': 'delivery.gitops/v1',
+        'opensphere.io/verification-purpose': 'argocd-repository-sync',
+      },
+    },
+    data: {
+      contract: 'delivery.gitops/v1',
+      repository: 'opensphere/platform-declarations',
+      path: 'platform-delivery/verification',
+    },
+  };
+}
+
+async function bootstrapArgocdVerification(actor, input = {}) {
+  requireActorPermission(actor, 'console.git.change');
+  if (GITEA_CHANGE_REQUIRE_AAL2 && actor.assurance !== 'aal2') throw { code: 403, msg: 'Argo CD verification bootstrap requires MFA assurance aal2' };
+  if (!GITEA_TOKEN || !GITEA_REVIEW_TOKEN) throw { code: 503, msg: 'Gitea control and review credentials are not configured' };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw { code: 400, msg: 'JSON object required' };
+  const extra = Object.keys(input).filter((key) => !['reason', 'confirm'].includes(key));
+  if (extra.length) throw { code: 400, msg: `unsupported Argo CD verification inputs: ${extra.join(', ')}` };
+  const reason = managementReason(input.reason);
+  if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+  if (String(input.confirm || '').trim() !== ARGOCD_VERIFICATION_CONFIRMATION) {
+    throw { code: 409, msg: `confirmation must exactly equal: ${ARGOCD_VERIFICATION_CONFIRMATION}` };
+  }
+  const manifest = argocdVerificationManifest();
+  const rendered = `${JSON.stringify(manifest, null, 2)}\n`;
+  const contentsPath = `/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/contents/${giteaEncodedPath(ARGOCD_VERIFICATION_PATH)}`;
+  let existing = null;
+  try {
+    existing = await giteaRequest(`${contentsPath}?ref=${encodeURIComponent(GITEA_DEFAULT_BRANCH)}`);
+  } catch (error) {
+    if (error?.code !== 404) throw error;
+  }
+  if (existing?.body?.content) {
+    let current = '';
+    try { current = Buffer.from(String(existing.body.content).replace(/\s+/g, ''), 'base64').toString('utf8'); } catch { current = ''; }
+    try {
+      if (canonicalJson(JSON.parse(current)) === canonicalJson(manifest)) {
+        const branch = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/branches/${encodeURIComponent(GITEA_DEFAULT_BRANCH)}`);
+        const revision = String(branch.body?.commit?.id || branch.body?.commit?.sha || '').toLowerCase();
+        await logAudit(actor, 'argocd-verification-bootstrap', ARGOCD_VERIFICATION_PATH, 'ok-noop', reason, {
+          requestId: randomUUID(),
+          phase: 'applied',
+          targetType: 'gitea-fixed-declaration',
+          payloadDigest: toHashHex(rendered),
+        });
+        return { ready: true, changed: false, path: ARGOCD_VERIFICATION_PATH, mergeRevision: revision || null };
+      }
+    } catch {
+      // A malformed or drifted fixed declaration is replaced only through the
+      // same reviewed branch path below; it is never patched directly on main.
+    }
+  }
+
+  const requestId = randomUUID();
+  const branch = `bootstrap/argocd-verification-${requestId.slice(0, 8)}`;
+  const title = '[Console] Bootstrap Argo CD verification declaration';
+  await logAudit(actor, 'argocd-verification-bootstrap', ARGOCD_VERIFICATION_PATH, 'attempt', reason, {
+    requestId,
+    phase: 'intent',
+    targetType: 'gitea-fixed-declaration',
+    payloadDigest: toHashHex(rendered),
+  });
+  try {
+    const file = await giteaRequest(contentsPath, {
+      method: existing ? 'PUT' : 'POST',
+      body: {
+        branch: GITEA_DEFAULT_BRANCH,
+        new_branch: branch,
+        message: `${title} (${requestId})`,
+        content: Buffer.from(rendered).toString('base64'),
+        ...(existing?.body?.sha ? { sha: existing.body.sha } : {}),
+      },
+    });
+    const desiredRevision = String(file.body?.commit?.sha || '').toLowerCase();
+    const pull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls`, {
+      method: 'POST',
+      body: {
+        title,
+        head: branch,
+        base: GITEA_DEFAULT_BRANCH,
+        body: `Fixed Console bootstrap contract ${requestId}.\n\nReason: ${reason}`,
+      },
+    });
+    const pullNumber = Number(pull.body?.number || 0);
+    if (!Number.isInteger(pullNumber) || pullNumber < 1) throw { code: 502, msg: 'Gitea did not return a pull request number' };
+    await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/reviews`, {
+      method: 'POST',
+      authToken: GITEA_REVIEW_TOKEN,
+      body: {
+        event: 'APPROVED',
+        body: `Approved fixed OpenSphere bootstrap contract ${requestId}; no operator-supplied manifest or path is accepted.`,
+      },
+    });
+    await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/merge`, {
+      method: 'POST',
+      body: { Do: 'merge', delete_branch_after_merge: false },
+    });
+    const mergedPull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}`);
+    const merged = mergedPull.body?.state === 'closed' && mergedPull.body?.merged === true;
+    const mergeRevision = String(mergedPull.body?.merge_commit_sha || '').toLowerCase();
+    if (!merged || !/^[0-9a-f]{40,64}$/.test(mergeRevision)) {
+      throw { code: 502, msg: 'fixed Argo CD verification pull request was not merged' };
+    }
+    const verification = await assertVerifiedGovernedMerge(mergeRevision);
+    await logAudit(actor, 'argocd-verification-bootstrap', ARGOCD_VERIFICATION_PATH, 'ok', reason, {
+      requestId,
+      phase: 'applied',
+      targetType: 'gitea-fixed-declaration',
+      payloadDigest: toHashHex(rendered),
+    });
+    return {
+      ready: true,
+      changed: true,
+      path: ARGOCD_VERIFICATION_PATH,
+      pullNumber,
+      desiredRevision: desiredRevision || null,
+      mergeRevision,
+      verification,
+    };
+  } catch (error) {
+    await logAudit(actor, 'argocd-verification-bootstrap', ARGOCD_VERIFICATION_PATH, 'failed', reason, {
+      requestId,
+      phase: 'failed',
+      targetType: 'gitea-fixed-declaration',
+      payloadDigest: toHashHex(rendered),
+    }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -3582,6 +3729,14 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, await giteaStatus());
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'State Change Authority status unavailable' });
+      }
+    }
+    if (p === '/api/platform/gitea/bootstrap/argocd-verification' && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req);
+        return json(res, 200, await bootstrapArgocdVerification(actor, await readBody(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Argo CD verification bootstrap failed' });
       }
     }
     if (p === '/api/platform/contracts' && req.method === 'GET') {
