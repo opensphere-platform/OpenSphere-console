@@ -53,6 +53,13 @@ test('architecture index teaches coordinates, contracts, and evidence', () => {
   assert.match(source, /Service Realization Architecture/);
 });
 
+test('architecture sections do not inherit the global Console header height', () => {
+  assert.doesNotMatch(source, /<header class="architecture-hero"/);
+  assert.doesNotMatch(source, /<header class="section-heading"/);
+  assert.match(source, /<section class="architecture-hero"/);
+  assert.match(source, /class="service-group-heading"/);
+});
+
 test('Perspective navigation remains Registry-derived and phantom-route free', () => {
   assert.match(source, /new Set\(this\.ext\.pages\(\)\.map/);
   assert.match(source, /routeForPlugin\(perspective\.pluginId\)/);

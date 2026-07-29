@@ -129,10 +129,10 @@ const LAYERS: LayerDef[] = [
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
-      <header class="architecture-hero">
+      <section class="architecture-hero" aria-labelledby="architecture-title">
         <div>
           <p class="eyebrow">OpenSphere architecture index</p>
-          <h1>
+          <h1 id="architecture-title">
             OpenSphere Ten-Perspective and Six-Layer
             <span>Service Realization Architecture</span>
           </h1>
@@ -154,7 +154,7 @@ const LAYERS: LayerDef[] = [
             <small>Vertical realization structure</small>
           </div>
         </div>
-      </header>
+      </section>
 
       <section class="axis-definitions" aria-label="Architecture axes">
         <article>
@@ -181,13 +181,13 @@ const LAYERS: LayerDef[] = [
       </section>
 
       <section class="model-section" aria-labelledby="model-title">
-        <header class="section-heading">
+        <div class="section-heading">
           <div>
             <p class="eyebrow">10P × 6L model</p>
             <h2 id="model-title">OpenSphere Service Realization Map</h2>
           </div>
           <p>아래에서 위로 기반이 축적됩니다. 각 Layer의 가로 폭은 10개 Perspective 전체를 지원한다는 뜻입니다.</p>
-        </header>
+        </div>
 
         <div class="model-scroll" tabindex="0" aria-label="10 Perspectives and 6 Layers architecture map">
           <table class="realization-map">
@@ -263,12 +263,12 @@ const LAYERS: LayerDef[] = [
       </section>
 
       <section class="model-rules" aria-labelledby="rules-title">
-        <header class="section-heading">
+        <div class="section-heading">
           <div>
             <p class="eyebrow">Reading rules</p>
             <h2 id="rules-title">이 모델을 읽는 세 가지 원칙</h2>
           </div>
-        </header>
+        </div>
         <div>
           <article>
             <span>01</span>
@@ -289,22 +289,22 @@ const LAYERS: LayerDef[] = [
       </section>
 
       <section class="service-index" aria-labelledby="service-index-title">
-        <header class="section-heading">
+        <div class="section-heading">
           <div>
             <p class="eyebrow">Current implementation</p>
             <h2 id="service-index-title">Operational Service Index</h2>
           </div>
           <p>구조 모델과 현재 실행 가능한 Console 진입점을 분리해 표시합니다.</p>
-        </header>
+        </div>
         <div class="service-index-grid">
           <article>
-            <header>
+            <div class="service-group-heading">
               <div>
                 <span>Native</span>
                 <h3>Console control surfaces</h3>
               </div>
               <strong>{{ coreCards().length }}</strong>
-            </header>
+            </div>
             <div class="service-links">
               @for (item of coreCards(); track item.path) {
                 <a [routerLink]="item.path">
@@ -315,13 +315,13 @@ const LAYERS: LayerDef[] = [
             </div>
           </article>
           <article>
-            <header>
+            <div class="service-group-heading">
               <div>
                 <span>DUPA Registry</span>
                 <h3>Registered service surfaces</h3>
               </div>
               <strong>{{ extCards().length }}</strong>
-            </header>
+            </div>
             @if (extCards().length) {
               <div class="service-links">
                 @for (item of extCards(); track item.path) {
@@ -354,7 +354,7 @@ const LAYERS: LayerDef[] = [
       .model-section,
       .model-rules,
       .service-index {
-        width: min(100%, 96rem);
+        width: 100%;
       }
       .architecture-hero {
         display: grid;
@@ -375,7 +375,7 @@ const LAYERS: LayerDef[] = [
       .architecture-hero h1 {
         max-width: 64rem;
         margin: 0;
-        font-size: clamp(2rem, 3.5vw, 3.45rem);
+        font-size: clamp(1.75rem, 2.8vw, 2.5rem);
         font-weight: 300;
         letter-spacing: -0.035em;
         line-height: 1.06;
@@ -576,7 +576,7 @@ const LAYERS: LayerDef[] = [
 
       .service-index-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .service-index-grid > article:first-child { border-right: 1px solid var(--os-hairline); }
-      .service-index-grid article > header {
+      .service-group-heading {
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -585,9 +585,9 @@ const LAYERS: LayerDef[] = [
         border-bottom: 1px solid var(--os-hairline);
         background: var(--os-surface-1);
       }
-      .service-index-grid header span { color: var(--os-ink-muted); font-size: 0.5rem; text-transform: uppercase; }
+      .service-group-heading span { color: var(--os-ink-muted); font-size: 0.5rem; text-transform: uppercase; }
       .service-index-grid h3 { margin: 0.12rem 0 0; font-size: 0.72rem; }
-      .service-index-grid header > strong { color: var(--os-accent); font-size: 1.35rem; font-weight: 300; }
+      .service-group-heading > strong { color: var(--os-accent); font-size: 1.35rem; font-weight: 300; }
       .service-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .service-links a {
         display: grid;
