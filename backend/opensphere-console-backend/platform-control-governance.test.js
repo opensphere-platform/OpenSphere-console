@@ -172,3 +172,23 @@ test('Gitea supply-chain policy requires signed commits and server-only signing 
   assert.match(bootstrap, /Invoke-GiteaRequest 'PATCH'/);
   assert.match(server, /merged commit signature is not verified/);
 });
+
+test('Argo CD verification bootstrap is a fixed reviewed declaration and accepts no repository inputs', () => {
+  const bootstrapAction = server.slice(
+    server.indexOf('async function bootstrapArgocdVerification'),
+    server.indexOf('function uuid('),
+  );
+  assert.match(server, /platform-delivery\/verification\/opensphere-platform-delivery-verification\.json/);
+  assert.match(server, /bootstrap argocd verification/);
+  assert.match(bootstrapAction, /console\.git\.change/);
+  assert.match(bootstrapAction, /MFA assurance aal2/);
+  assert.match(bootstrapAction, /\['reason', 'confirm'\]/);
+  assert.match(bootstrapAction, /authToken: GITEA_REVIEW_TOKEN/);
+  assert.match(bootstrapAction, /assertVerifiedGovernedMerge\(mergeRevision\)/);
+  assert.ok(
+    bootstrapAction.indexOf("'attempt'") < bootstrapAction.indexOf("method: existing ? 'PUT' : 'POST'"),
+    'durable intent audit must precede the Gitea write',
+  );
+  assert.doesNotMatch(bootstrapAction, /input\.(?:path|repository|manifest|content|branch|url)/);
+  assert.match(server, /\/api\/platform\/gitea\/bootstrap\/argocd-verification/);
+});
