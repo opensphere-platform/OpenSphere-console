@@ -75,6 +75,14 @@ test('architecture sections do not inherit the global Console header height', ()
   assert.match(source, /class="service-group-heading"/);
 });
 
+test('architecture body copy uses the enlarged readability step', () => {
+  assert.match(source, /\.hero-lead[\s\S]{0,180}font-size: 1rem/);
+  assert.match(source, /\.axis-definitions p[\s\S]{0,180}font-size: 0\.74rem/);
+  assert.match(source, /\.layer-overview p[\s\S]{0,180}font-size: 0\.68rem/);
+  assert.match(source, /\.layer-contract dd[\s\S]{0,180}font-size: 0\.62rem/);
+  assert.match(source, /\.model-rules p[\s\S]{0,180}font-size: 0\.68rem/);
+});
+
 test('Perspective navigation remains Registry-derived and phantom-route free', () => {
   assert.match(source, /new Set\(this\.ext\.pages\(\)\.map/);
   assert.match(source, /routeForPlugin\(perspective\.pluginId\)/);

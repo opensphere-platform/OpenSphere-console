@@ -309,7 +309,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
         max-width: 55rem;
         margin: 1rem 0 0;
         color: var(--os-ink-muted);
-        font-size: 0.9rem;
+        font-size: 1rem;
         line-height: 1.65;
       }
       .model-equation {
@@ -323,7 +323,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
       .model-equation > div { display: grid; gap: 0.15rem; padding: 1rem 1.15rem; }
       .model-equation strong { color: var(--os-accent); font-size: 2.25rem; font-weight: 300; line-height: 1; }
       .model-equation span { font-size: 0.76rem; font-weight: 650; }
-      .model-equation small { color: var(--os-ink-muted); font-size: 0.56rem; }
+      .model-equation small { color: var(--os-ink-muted); font-size: 0.62rem; }
       .model-equation b { color: var(--os-ink-muted); font-size: 1.4rem; font-weight: 300; }
 
       .axis-definitions {
@@ -355,7 +355,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
       .axis-mark-horizontal { border-color: var(--os-accent); }
       .axis-mark-vertical { border-color: #8a3ffc; }
       .axis-definitions h2 { margin: 0; font-size: 0.82rem; font-weight: 650; }
-      .axis-definitions p { margin: 0.45rem 0 0; color: var(--os-ink-muted); font-size: 0.66rem; line-height: 1.55; }
+      .axis-definitions p { margin: 0.45rem 0 0; color: var(--os-ink-muted); font-size: 0.74rem; line-height: 1.58; }
       .coordinate-rule { background: var(--os-surface-1); }
 
       .model-section,
@@ -369,7 +369,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
         margin-bottom: 0.65rem;
       }
       .section-heading h2 { margin: 0; font-size: 1.15rem; font-weight: 500; }
-      .section-heading > p { max-width: 38rem; margin: 0; color: var(--os-ink-muted); font-size: 0.66rem; line-height: 1.5; text-align: right; }
+      .section-heading > p { max-width: 38rem; margin: 0; color: var(--os-ink-muted); font-size: 0.74rem; line-height: 1.55; text-align: right; }
 
       .model-scroll {
         overflow-x: auto;
@@ -397,7 +397,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
         vertical-align: bottom;
       }
       .axis-corner span,
-      .axis-corner small { display: block; color: #c6c6c6; font-size: 0.55rem; font-weight: 400; }
+      .axis-corner small { display: block; color: #c6c6c6; font-size: 0.61rem; font-weight: 400; }
       .axis-corner strong { display: block; margin: 0.25rem 0; font-size: 0.72rem; }
       .perspective-column { width: 7.3rem; padding: 0; background: var(--os-surface-1); vertical-align: top; }
       .perspective-column a,
@@ -414,8 +414,8 @@ const PERSPECTIVES: PerspectiveDef[] = [
       .perspective-column a:hover { background: var(--os-accent-subtle); }
       .perspective-column span { color: var(--os-accent); font-family: var(--os-font-mono); font-size: 0.57rem; }
       .perspective-column strong { margin-top: 0.45rem; font-size: 0.64rem; line-height: 1.25; }
-      .perspective-column small { margin-top: 0.2rem; color: var(--os-ink-muted); font-size: 0.52rem; line-height: 1.35; }
-      .perspective-column em { align-self: end; margin-top: auto; padding-top: 0.55rem; color: var(--os-ink-muted); font-size: 0.5rem; font-style: normal; }
+      .perspective-column small { margin-top: 0.2rem; color: var(--os-ink-muted); font-size: 0.58rem; line-height: 1.4; }
+      .perspective-column em { align-self: end; margin-top: auto; padding-top: 0.55rem; color: var(--os-ink-muted); font-size: 0.56rem; font-style: normal; }
       .perspective-column a em { color: var(--os-success); font-weight: 650; }
 
       .layer-heading {
@@ -436,7 +436,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
         font-size: 0.58rem;
       }
       .layer-heading strong { display: block; margin-top: 0.55rem; font-size: 0.72rem; }
-      .layer-heading small { display: block; margin-top: 0.15rem; color: var(--os-ink-muted); font-size: 0.53rem; line-height: 1.35; }
+      .layer-heading small { display: block; margin-top: 0.15rem; color: var(--os-ink-muted); font-size: 0.59rem; line-height: 1.4; }
       .layer-track {
         padding: 0;
         background-color: var(--os-canvas);
@@ -459,14 +459,14 @@ const PERSPECTIVES: PerspectiveDef[] = [
       }
       .layer-kicker { color: var(--os-ink-muted); font-size: 0.52rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
       .layer-overview h3 { margin: 0.2rem 0 0; font-size: 0.78rem; font-weight: 650; }
-      .layer-overview p { margin: 0.3rem 0 0; color: var(--os-ink-muted); font-size: 0.61rem; line-height: 1.45; }
+      .layer-overview p { margin: 0.3rem 0 0; color: var(--os-ink-muted); font-size: 0.68rem; line-height: 1.5; }
       .object-list { display: flex; flex-wrap: wrap; align-content: start; gap: 0.3rem; }
       .object-list span {
         padding: 0.22rem 0.4rem;
         border: 1px solid var(--os-hairline);
         background: var(--os-surface-1);
         color: var(--os-ink-muted);
-        font-size: 0.54rem;
+        font-size: 0.6rem;
       }
       .layer-contract {
         display: grid;
@@ -478,7 +478,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
       .layer-contract div { min-width: 0; padding: 0.55rem 0.7rem; border-right: 1px solid var(--os-hairline); }
       .layer-contract div:last-child { border-right: 0; }
       .layer-contract dt { color: var(--os-ink-muted); font-size: 0.5rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-      .layer-contract dd { margin: 0.18rem 0 0; color: var(--os-ink); font-size: 0.55rem; line-height: 1.4; }
+      .layer-contract dd { margin: 0.18rem 0 0; color: var(--os-ink); font-size: 0.62rem; line-height: 1.48; }
 
       .model-rules > div,
       .service-index-grid {
@@ -491,7 +491,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
       .model-rules article:last-child { border-right: 0; }
       .model-rules article > span { color: var(--os-accent); font-family: var(--os-font-mono); font-size: 0.58rem; }
       .model-rules h3 { margin: 0.75rem 0 0; font-size: 0.72rem; }
-      .model-rules p { margin: 0.35rem 0 0; color: var(--os-ink-muted); font-size: 0.61rem; line-height: 1.5; }
+      .model-rules p { margin: 0.35rem 0 0; color: var(--os-ink-muted); font-size: 0.68rem; line-height: 1.55; }
 
       .service-index-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .service-index-grid > article:first-child { border-right: 1px solid var(--os-hairline); }
@@ -520,8 +520,8 @@ const PERSPECTIVES: PerspectiveDef[] = [
       .service-links a:nth-child(2n) { border-right: 0; }
       .service-links a:hover { box-shadow: inset 3px 0 0 var(--os-accent); background: var(--os-accent-subtle); }
       .service-links span { font-size: 0.65rem; font-weight: 650; }
-      .service-links small { margin-top: 0.15rem; color: var(--os-ink-muted); font-size: 0.53rem; }
-      .empty-state { margin: 0; padding: 1rem; color: var(--os-ink-muted); font-size: 0.62rem; }
+      .service-links small { margin-top: 0.15rem; color: var(--os-ink-muted); font-size: 0.59rem; line-height: 1.4; }
+      .empty-state { margin: 0; padding: 1rem; color: var(--os-ink-muted); font-size: 0.69rem; }
 
       @media screen and (max-width: 76rem) {
         .architecture-hero { grid-template-columns: 1fr; }
