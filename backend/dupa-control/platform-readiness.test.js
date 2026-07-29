@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -111,6 +111,68 @@ test('closed readiness gate permits only a verified update of an existing PFS pl
     ...verified, phase: 'Ready', previousDigest: verified.currentDigest,
   } }), false);
   assert.equal(verifiedStagedUpdate({ spec: { desiredState: 'Installed' }, status: { ...verified, phase: 'Ready' } }), false);
+});
+
+test('closed readiness gate permits a Foundation update only with controller-owned Activated-origin evidence', () => {
+  const fromDigest = `sha256:${'a'.repeat(64)}`;
+  const toDigest = `sha256:${'b'.repeat(64)}`;
+  const fromManifestSha256 = 'c'.repeat(64);
+  const toManifestSha256 = 'd'.repeat(64);
+  const currentPkg = {
+    metadata: { name: 'foundation' },
+    spec: { image: { digest: fromDigest }, manifest: { sha256: fromManifestSha256 } },
+  };
+  const activeReg = {
+    spec: { desiredState: 'Enabled' },
+    status: {
+      phase: 'Activated',
+      workload: { phase: 'Ready' },
+      verification: { manifest: 'Verified', signature: 'Verified', entryDigest: 'Verified', permissions: 'Approved' },
+      currentDigest: fromDigest,
+      currentManifestSha256: fromManifestSha256,
+      currentVersion: '202607291100',
+    },
+  };
+  const targetPkg = {
+    metadata: { name: 'foundation' },
+    spec: { image: { digest: toDigest }, manifest: { sha256: toManifestSha256 } },
+  };
+  const authorization = foundationUpgradeAuthorization(
+    currentPkg, activeReg, targetPkg, { username: 'cmars' }, `os-${'e'.repeat(24)}`, '2026-07-29T02:00:00.000Z',
+  );
+  assert.ok(authorization);
+  const staged = {
+    spec: { desiredState: 'Installed' },
+    status: {
+      phase: 'Ready',
+      workload: { phase: 'Ready' },
+      verification: { manifest: 'Verified', signature: 'Verified', entryDigest: 'Verified', permissions: 'Approved' },
+      currentDigest: toDigest,
+      currentManifestSha256: toManifestSha256,
+      previousDigest: fromDigest,
+      previousManifestSha256: fromManifestSha256,
+      foundationUpgradeAuthorization: authorization,
+    },
+  };
+  assert.equal(verifiedFoundationStagedUpdate(staged, Date.parse('2026-07-29T02:10:00.000Z')), true);
+  assert.equal(verifiedFoundationStagedUpdate({
+    ...staged,
+    status: { ...staged.status, foundationUpgradeAuthorization: { ...authorization, fromDigest: `sha256:${'f'.repeat(64)}` } },
+  }, Date.parse('2026-07-29T02:10:00.000Z')), false);
+  assert.equal(verifiedFoundationStagedUpdate(staged, Date.parse('2026-07-29T02:31:00.000Z')), false);
+  assert.equal(foundationUpgradeAuthorization(currentPkg, {
+    ...activeReg, spec: { desiredState: 'Installed' }, status: { ...activeReg.status, phase: 'Ready' },
+  }, targetPkg, { username: 'cmars' }, `os-${'e'.repeat(24)}`), null);
+
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const crd = read('backend', 'dupa-control', 'ui-plugin-crds.yaml');
+  assert.match(controller, /setFoundationUpgradeAuthorization\(foundationAuthorization\)/);
+  assert.match(controller, /foundationVerifiedUpdate = targetReg\.ok && verifiedFoundationStagedUpdate/);
+  assert.match(controller, /authorizationConsumed = await setFoundationUpgradeAuthorization\(null\)/);
+  assert.match(controller, /UpgradeAuthorizationConsumeFailed/);
+  assert.match(controller, /foundation-verified-update-activate/);
+  assert.match(crd, /foundationUpgradeAuthorization:/);
+  assert.match(crd, /VerifiedActivatedFoundationUpdate\/v1/);
 });
 
 test('bootstrap owns the PlatformSupportProfile CRD lifecycle', () => {

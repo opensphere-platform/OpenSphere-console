@@ -364,6 +364,50 @@ function verifiedStagedUpdate(reg) {
     && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
     && currentDigest !== previousDigest;
 }
+const FOUNDATION_UPGRADE_AUTHORIZATION_KIND = 'VerifiedActivatedFoundationUpdate/v1';
+function foundationUpgradeAuthorization(currentPkg, currentReg, targetPkg, actor, opId, requestedAt = new Date().toISOString()) {
+  if (currentPkg?.metadata?.name !== FOUNDATION_ID || targetPkg?.metadata?.name !== FOUNDATION_ID) return null;
+  if (!verifiedActivatedRegistration(currentReg)) return null;
+  const status = currentReg.status || {};
+  const fromDigest = String(status.currentDigest || '');
+  const fromManifestSha256 = String(status.currentManifestSha256 || '');
+  const toDigest = String(targetPkg?.spec?.image?.digest || '');
+  const toManifestSha256 = String(targetPkg?.spec?.manifest?.sha256 || '');
+  if (String(currentPkg?.spec?.image?.digest || '') !== fromDigest
+    || String(currentPkg?.spec?.manifest?.sha256 || '') !== fromManifestSha256
+    || !/^sha256:[a-f0-9]{64}$/.test(toDigest)
+    || !/^[a-f0-9]{64}$/.test(toManifestSha256)
+    || toDigest === fromDigest) return null;
+  return {
+    kind: FOUNDATION_UPGRADE_AUTHORIZATION_KIND,
+    fromDigest,
+    fromManifestSha256,
+    fromVersion: String(status.currentVersion || status.observedVersion || ''),
+    toDigest,
+    toManifestSha256,
+    requestedBy: auditActorLabel(actor),
+    operationId: String(opId || ''),
+    requestedAt: String(requestedAt || ''),
+  };
+}
+function verifiedFoundationStagedUpdate(reg, now = Date.now()) {
+  if (!verifiedStagedUpdate(reg)) return false;
+  const status = reg?.status || {};
+  const authorization = status.foundationUpgradeAuthorization || {};
+  const requestedAt = Date.parse(String(authorization.requestedAt || ''));
+  const authorizationAge = Number(now) - requestedAt;
+  return authorization.kind === FOUNDATION_UPGRADE_AUTHORIZATION_KIND
+    && authorization.fromDigest === status.previousDigest
+    && authorization.fromManifestSha256 === status.previousManifestSha256
+    && authorization.toDigest === status.currentDigest
+    && authorization.toManifestSha256 === status.currentManifestSha256
+    && typeof authorization.requestedBy === 'string'
+    && authorization.requestedBy.length > 0
+    && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
+    && Number.isFinite(requestedAt)
+    && authorizationAge >= 0
+    && authorizationAge <= 30 * 60 * 1000;
+}
 // CLIDownload (console.opensphere.io, cluster-scoped) — headless 비-UI 콘솔 바인딩. UIPluginPackage(UI 게스트)와 별개 kind.
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
 const CONSOLE_GROUP = 'console.opensphere.io';
@@ -1943,6 +1987,11 @@ async function ensureRegistration(pkgName, desiredState, actor, reason, installa
   }
   return k8s('POST', crd('uipluginregistrations'), body);
 }
+async function setFoundationUpgradeAuthorization(authorization) {
+  return k8s('PATCH', `${crd('uipluginregistrations')}/${FOUNDATION_ID}/status`, {
+    status: { foundationUpgradeAuthorization: authorization || null },
+  });
+}
 
 // ── Console Gitea declarative-change authority health ──────────────────────
 const GITEA_URL = process.env.GITEA_URL || 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000';
@@ -2958,6 +3007,13 @@ const server = http.createServer(async (req, res) => {
       try {
         const inspection = await inspectModuleImage(body.image);
         const pkg = packageFromInspection(inspection);
+        let foundationAuthorization = null;
+        if (pkg.metadata.name === FOUNDATION_ID) {
+          const [currentPkg, currentReg] = await Promise.all([getPackage(FOUNDATION_ID), getReg(FOUNDATION_ID)]);
+          if (currentPkg.ok && currentReg.ok) {
+            foundationAuthorization = foundationUpgradeAuthorization(currentPkg.json, currentReg.json, pkg, actor, opId);
+          }
+        }
         // A PFS plugin installs and stages unconditionally; the Platform Support
         // Profile gates activation, not installation (CONSTITUTION-0003 §7.2/§7.3,
         // CONSTITUTION-0004 §8.4 — the pre-Established gates cover operand detail,
@@ -2978,6 +3034,18 @@ const server = http.createServer(async (req, res) => {
         if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, { error: 'PackageStoreFailed', status: stored.status, opId });
         const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, cliInstallationProvenance(actor, opId));
         if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
+        if (pkg.metadata.name === FOUNDATION_ID) {
+          const authorizationStored = await setFoundationUpgradeAuthorization(foundationAuthorization);
+          if (!authorizationStored.ok) {
+            await durableAudit(actor, 'foundation-update-stage', pkg.metadata.name, 'denied', 'UpgradeAuthorizationStatusWriteFailed', opId);
+            return json(res, authorizationStored.status >= 500 ? 502 : authorizationStored.status, {
+              error: 'UpgradeAuthorizationStatusWriteFailed', status: authorizationStored.status, opId,
+            });
+          }
+          await durableAudit(actor, 'foundation-update-stage', pkg.metadata.name,
+            foundationAuthorization ? 'accepted' : 'staged',
+            foundationAuthorization ? `${foundationAuthorization.fromDigest}->${foundationAuthorization.toDigest}` : 'no verified activated origin', opId);
+        }
         await durableAudit(actor, 'extension-install', pkg.metadata.name, 'accepted', inspection.image, opId);
         reconcile().catch((e) => console.error('reconcile error', e));
         return json(res, 202, {
@@ -3056,16 +3124,33 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall|rollback)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
+      let foundationVerifiedUpdate = false;
       if (action === 'install') return json(res, 403, { error: 'CliInstallationRequired', message: 'use os extensions install', opId });
       if (id === FOUNDATION_ID && action === 'enable') {
         const readiness = await platformReadinessStatus(req);
-        if (!readiness.admission.foundationActivationAllowed) {
+        const targetReg = await getReg(id);
+        foundationVerifiedUpdate = targetReg.ok && verifiedFoundationStagedUpdate(targetReg.json);
+        if (!readiness.admission.foundationActivationAllowed && !foundationVerifiedUpdate) {
           await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequired', opId);
           return json(res, 409, {
             error: 'PlatformSupportProfileRequired',
             message: 'Foundation activation requires Platform Support Profile Ready; staging as Installed/Ready is allowed',
             readiness: { phase: readiness.phase, prerequisites: readiness.prerequisites, capabilities: readiness.capabilities }, opId,
           });
+        }
+        if (foundationVerifiedUpdate) {
+          const authorizationConsumed = await setFoundationUpgradeAuthorization(null);
+          if (!authorizationConsumed.ok) {
+            await durableAudit(actor, 'foundation-verified-update-activate', id, 'denied',
+              'UpgradeAuthorizationConsumeFailed', opId);
+            return json(res, authorizationConsumed.status >= 500 ? 502 : authorizationConsumed.status, {
+              error: 'UpgradeAuthorizationConsumeFailed', status: authorizationConsumed.status, opId,
+            });
+          }
+        }
+        if (!readiness.admission.foundationActivationAllowed && foundationVerifiedUpdate) {
+          await durableAudit(actor, 'foundation-verified-update-activate', id, 'accepted',
+            'controller-attested update from a verified Activated release; new Foundation activation gate remains closed', opId);
         }
         if (readiness.admission.foundationActivationOverride) {
           await durableAudit(actor, 'foundation-development-override', id, 'accepted', 'Foundation subShell activation only; PFS plugins remain gated', opId);
@@ -3210,5 +3295,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable };
 }
