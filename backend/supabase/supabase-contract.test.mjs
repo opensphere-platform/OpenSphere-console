@@ -27,10 +27,24 @@ test('Console release source contains every current Setup migration contract', (
     path.join(here, 'migrations', '0031_foundation_bootstrap_consumer.sql'),
     'utf8'
   );
+  const foundationContract = readFileSync(
+    path.join(here, '..', 'opensphere-console-backend', 'foundation-bootstrap-contract.js'),
+    'utf8'
+  );
+  const catalogVersion = foundationContract.match(
+    /FOUNDATION_BOOTSTRAP_CATALOG_VERSION = '([^']+)'/
+  )?.[1];
+  const catalogSha256 = foundationContract.match(
+    /FOUNDATION_BOOTSTRAP_CATALOG_SHA256 = '([a-f0-9]{64})'/
+  )?.[1];
 
   assert.match(cephRuntime, /opensphere\.ceph\.rook-prerequisite\/v2/);
   assert.match(foundationBootstrap, /opensphere\.foundation\.bootstrap\/v1/);
   assert.match(foundationBootstrap, /'console-native'/);
   assert.doesNotMatch(foundationBootstrap, /'platform'/);
+  assert.ok(catalogVersion);
+  assert.ok(catalogSha256);
+  assert.match(foundationBootstrap, new RegExp(`"catalogVersion":"${catalogVersion}"`));
+  assert.match(foundationBootstrap, new RegExp(`"catalogSha256":"${catalogSha256}"`));
   assert.match(foundationBootstrap, /browserWrite":false/);
 });
