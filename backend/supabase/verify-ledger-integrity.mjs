@@ -85,14 +85,13 @@ function main() {
     }
     psql(PREP);
 
-    // 0031 은 현재 check 제약 위반으로 적용되지 않는다(foundation-bootstrap, 별건).
-    // 원장 무결성 검증에는 불필요하므로 건너뛰되 조용히 넘기지 않고 이유를 찍는다.
-    const skip = new Set(['0031_foundation_bootstrap_consumer.sql']);
+    // 전부 순서대로 적용한다. 하나라도 실패하면 여기서 멈춘다 —
+    // 배포 설치기(Invoke-SupabaseMigrationPsql)도 ON_ERROR_STOP 으로 같은 동작을 하므로,
+    // 이 하네스가 통과하지 못하는 마이그레이션 집합은 배포도 통과하지 못한다.
     for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
-      if (skip.has(file)) { console.log(`  · ${file} 건너뜀 (별건 결함으로 적용 불가)`); continue; }
       psql(readFileSync(path.join(MIGRATIONS, file), 'utf8'));
     }
-    console.log('  ✓ 마이그레이션 적용 완료\n');
+    console.log('  ✓ 마이그레이션 전량 적용 완료 (건너뛴 것 없음)\n');
 
     // ── 1. 서버가 사슬을 채우는가 ────────────────────────────────────────────
     psql(`INSERT INTO audit.event (request_id, correlation_id, actor_type, action, target_type, target_id, reason, phase, result, event_hash)
