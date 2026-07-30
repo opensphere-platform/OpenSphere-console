@@ -4,7 +4,12 @@
 # build inputs instead of tools discovered from an operator workstation.
 FROM registry.k8s.io/kubectl@sha256:d08f476d04d0e30f426f06bc6ff6c38913aaa4591943046b77e2f74a72d3611c AS kubectl
 
-FROM docker.io/library/node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
+FROM docker.io/library/node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS node-runtime
+
+# Platform Release executes the pinned Setup source, whose public runtime
+# contract requires PowerShell 7. Keep that interpreter in the immutable
+# executor image so upgrade and rollback never depend on a workstation tool.
+FROM mcr.microsoft.com/powershell@sha256:a6beeddb2fcf45547c9099fba091ce231e51aa374fe62ecc182f7c28b69a6cbf
 ARG TARGETARCH
 ARG SETUP_SOURCE_REVISION
 RUN test -n "${SETUP_SOURCE_REVISION}" \
@@ -19,9 +24,13 @@ RUN test -n "${SETUP_SOURCE_REVISION}" \
     && tar -xzf /tmp/gh.tar.gz -C /tmp \
     && cp "/tmp/gh_2.96.0_linux_${TARGETARCH}/bin/gh" /usr/local/bin/gh \
     && chmod 0555 /usr/local/bin/gh \
-    && rm -rf /tmp/gh.tar.gz "/tmp/gh_2.96.0_linux_${TARGETARCH}" \
-      /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+    && rm -rf /tmp/gh.tar.gz "/tmp/gh_2.96.0_linux_${TARGETARCH}"
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+RUN node --version \
+    && pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()' \
+    && gh --version \
+    && kubectl version --client
 LABEL io.opensphere.setup-source-revision="${SETUP_SOURCE_REVISION}"
 WORKDIR /app/opensphere-console-backend
 # Build with `docker build -f opensphere-console-backend/Dockerfile .` from
@@ -49,4 +58,5 @@ COPY notification-dispatcher/contract.js /app/notification-dispatcher/contract.j
 ENV PORT=8080
 EXPOSE 8080
 USER 1001
+ENTRYPOINT []
 CMD ["node", "/app/opensphere-console-backend/server.js"]
