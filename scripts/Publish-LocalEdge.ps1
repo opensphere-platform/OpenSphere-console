@@ -4,6 +4,22 @@ param(
   [string]$SourceRevision = '',
   [string]$Platform = '',
   [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git',
+  [ValidateSet(
+    'console',
+    'backend',
+    'dupaController',
+    'oaaGateway',
+    'oaaGovernedAdapter',
+    'notificationDispatcher',
+    'recovery',
+    'gitea',
+    'supabasePostgres',
+    'supabaseAuth',
+    'supabaseRest',
+    'supabaseStorage',
+    'giteaPostgres'
+  )]
+  [string[]]$Components = @(),
   [switch]$UseExistingRegistryLogin
 )
 
@@ -176,7 +192,7 @@ if ($UseExistingRegistryLogin) {
   }
 }
 
-$images = @(
+$allImages = @(
   [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $workspace; File = (Join-Path $consoleCheckout 'Dockerfile') },
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile') },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
@@ -191,8 +207,18 @@ $images = @(
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
+$partialPublication = $Components.Count -gt 0
+$images = if ($partialPublication) {
+  @($allImages | Where-Object { $_.Key -in $Components })
+} else {
+  $allImages
+}
+if ($images.Count -ne ($partialPublication ? $Components.Count : $allImages.Count)) {
+  throw 'Component selection did not resolve to one unique canonical image per requested key.'
+}
 
 Write-Host "[step 04/06] Build and push $($images.Count) host-native images"
+Write-Host "[scope] $($images.Key -join ', ')"
 $digests = [ordered]@{}
 for ($index = 0; $index -lt $images.Count; $index += 1) {
   $item = $images[$index]
@@ -244,7 +270,8 @@ foreach ($item in $images) {
 }
 $bom = [ordered]@{
   apiVersion = 'release.opensphere.io/v1alpha1'
-  kind = 'OpenSphereReleaseBOM'
+  kind = $partialPublication ? 'OpenSphereEdgeComponentPublication' : 'OpenSphereReleaseBOM'
+  publicationScope = $partialPublication ? 'ComponentSet' : 'CompleteConsoleRelease'
   channel = 'edge'
   status = 'Active'
   releaseTag = $releaseTag
@@ -257,10 +284,10 @@ $bom = [ordered]@{
   supportedPlatforms = @($Platform)
   components = $components
 }
-$bomPath = Join-Path $workspace 'opensphere-local-release-bom.json'
+$bomPath = Join-Path $workspace ($partialPublication ? 'opensphere-local-component-publication.json' : 'opensphere-local-release-bom.json')
 $bom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bomPath -Encoding utf8
 
-Write-Host '[step 06/06] Advance edge atomically with Console anchor last'
+Write-Host '[step 06/06] Advance selected edge tags with Console anchor last when present'
 foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
   Set-RemoteTag -Repository "$Registry/$($item.Image)" -Digest $digests[$item.Key] -Tag edge
 }
@@ -277,5 +304,7 @@ foreach ($item in $images) {
 Write-Host '[success] Local edge publish completed'
 Write-Host "[release] $releaseTag"
 Write-Host "[immutable] $localTag"
-Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
+if ($digests.Contains('console')) {
+  Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
+}
 Write-Host "[bom] $bomPath"
