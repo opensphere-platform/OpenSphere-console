@@ -732,7 +732,7 @@ spec:
         - name: controller
           # edge is released as an immutable GHCR digest. A local override must also
           # satisfy the managed-workload image-integrity admission policy.
-          image: ghcr.io/opensphere-platform/opensphere-console-dupa-controller@sha256:d13ef2af8263ba4a48b1ca60290262aa8662c48cd288f64380bd906065599ca8
+          image: ghcr.io/opensphere-platform/opensphere-console-dupa-controller@sha256:39662c05ca37574e6d7f2932480f96f8203b7b32b226bda9c85960862035fad9
           imagePullPolicy: Always
           env:
             - { name: NAMESPACE, value: opensphere-console }
