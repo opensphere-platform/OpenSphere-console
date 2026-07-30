@@ -40,7 +40,7 @@ export const SERVICE_REALIZATION_LAYERS: readonly ServiceRealizationLayer[] = [
     requires: 'SRL-L5 capability binding과 domain admission',
     establishes: '도메인 서비스, 업무 흐름, 사용자 가치',
     evidence: '사용자 여정, SLO, 도메인별 운영·복구 증거',
-    authority: '각 Perspective의 owning subShell',
+    authority: '각 Perspective의 owning domain runtime과 workforce identity binding',
     failurePolicy: '공유 capability를 복제하지 않고 소비 계약이 닫히면 domain write를 차단한다.',
     objects: ['Developer', 'Workspace', 'Customer Services', 'External Web', 'Website'],
   },
@@ -98,7 +98,7 @@ export const SERVICE_REALIZATION_LAYERS: readonly ServiceRealizationLayer[] = [
     evidence: '서명·digest 검증, activation, CLI parity, audited write와 rollback',
     authority: 'Main Shell control plane; runtime truth는 Kubernetes API',
     failurePolicy: 'Backbone 또는 audit 불가 시 관리 write를 차단하고 복구용 read-only 표면만 유지한다.',
-    objects: ['Main Shell', 'DUPA / Registry', 'Cluster Manager', 'OAA Core', 'Policy Gate'],
+    objects: ['Main Shell', 'DUPA / Registry', 'Cluster Manager', 'Beszel Diagnostics', 'OAA Core', 'Policy Gate'],
   },
   {
     id: 'SRL-L2',

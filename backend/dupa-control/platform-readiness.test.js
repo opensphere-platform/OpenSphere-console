@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -27,9 +27,18 @@ test('deployment readiness requires a fully observed rollout, not ready replicas
 });
 
 test('HIS status is fail-closed on an unavailable or degraded Cluster Manager response', () => {
+  const status = (state) => ({
+    schema: 'his-status.opensphere.io/v1alpha1',
+    stack: 'HIS',
+    state,
+    checkedAt: new Date().toISOString(),
+    items: [],
+    summary: { coreTotal: 0, coreReady: 0 },
+  });
   assert.equal(normalizeHisStatus({ ok: false, status: 502, body: null }).ready, false);
-  assert.equal(normalizeHisStatus({ ok: true, status: 200, body: { state: 'Degraded' } }).ready, false);
-  assert.equal(normalizeHisStatus({ ok: true, status: 200, body: { state: 'Ready' } }).ready, true);
+  assert.equal(normalizeHisStatus({ ok: true, status: 200, body: status('Degraded') }).ready, false);
+  assert.equal(normalizeHisStatus({ ok: true, status: 200, body: status('Ready') }).ready, true);
+  assert.equal(normalizeHisStatus({ ok: true, status: 200, body: { ...status('Ready'), checkedAt: '2020-01-01T00:00:00.000Z' } }).ready, false);
 });
 
 test('Foundation admission is enforced by API and exposed by Console page', () => {
@@ -115,7 +124,7 @@ test('closed readiness gate permits only a verified update of an existing PFS pl
   assert.equal(verifiedStagedUpdate({ spec: { desiredState: 'Installed' }, status: { ...verified, phase: 'Ready' } }), false);
 });
 
-test('closed readiness gate permits a Foundation update only with controller-owned Activated-origin evidence', () => {
+test('Foundation update evidence is exact-transition and expires without bypassing readiness', () => {
   const fromDigest = `sha256:${'a'.repeat(64)}`;
   const toDigest = `sha256:${'b'.repeat(64)}`;
   const fromManifestSha256 = 'c'.repeat(64);
@@ -163,8 +172,8 @@ test('closed readiness gate permits a Foundation update only with controller-own
   }, Date.parse('2026-07-29T02:10:00.000Z')), false);
   assert.equal(
     verifiedFoundationStagedUpdate(staged, Date.parse('2026-07-30T02:31:00.000Z')),
-    true,
-    'exact controller-owned update evidence remains durable until activation consumes it',
+    false,
+    'exact controller-owned update evidence must expire instead of becoming a permanent bypass token',
   );
   assert.equal(
     verifiedFoundationUpdateAuthorization(
@@ -172,8 +181,8 @@ test('closed readiness gate permits a Foundation update only with controller-own
       targetPkg,
       Date.parse('2026-07-30T02:31:00.000Z'),
     ),
-    true,
-    'the API desiredState transition must not invalidate an already verified target release',
+    false,
+    'expired authorization cannot be revived by the desiredState transition',
   );
   assert.equal(
     verifiedFoundationUpdateAuthorization(
@@ -188,10 +197,10 @@ test('closed readiness gate permits a Foundation update only with controller-own
         },
       },
       targetPkg,
-      Date.parse('2026-07-30T02:31:00.000Z'),
+      Date.parse('2026-07-29T02:10:00.000Z'),
     ),
     true,
-    'a transient failed gate projection must remain recoverable by the exact durable authorization',
+    'a transient projection may preserve fresh exact-transition evidence, but the admission gate still applies',
   );
   const pendingReconcile = {
     spec: { desiredState: 'Installed' },
@@ -202,16 +211,15 @@ test('closed readiness gate permits a Foundation update only with controller-own
   };
   assert.equal(
     verifiedFoundationUpdateAuthorization(
-      pendingReconcile, targetPkg, Date.parse('2026-07-30T02:31:00.000Z'),
+      pendingReconcile, targetPkg, Date.parse('2026-07-29T02:10:00.000Z'),
     ),
     true,
     'enable may be queued before the reconciler has projected the target release as Ready',
   );
   assert.equal(
     verifiedFoundationUpdateAuthorization(
-      { ...pendingReconcile, spec: { desiredState: 'Enabled' } },
-      targetPkg,
-      Date.parse('2026-07-30T02:31:00.000Z'),
+      { ...pendingReconcile, spec: { desiredState: 'Enabled' } }, targetPkg,
+      Date.parse('2026-07-29T02:10:00.000Z'),
     ),
     true,
     'the reconciler revalidates the same authorization after desiredState becomes Enabled',
@@ -220,7 +228,7 @@ test('closed readiness gate permits a Foundation update only with controller-own
     verifiedFoundationUpdateAuthorization(
       pendingReconcile,
       { ...targetPkg, spec: { ...targetPkg.spec, image: { digest: `sha256:${'f'.repeat(64)}` } } },
-      Date.parse('2026-07-30T02:31:00.000Z'),
+      Date.parse('2026-07-29T02:10:00.000Z'),
     ),
     false,
     'authorization cannot be reused for another target digest',
@@ -232,13 +240,66 @@ test('closed readiness gate permits a Foundation update only with controller-own
   const controller = read('backend', 'dupa-control', 'controller.js');
   const crd = read('backend', 'dupa-control', 'ui-plugin-crds.yaml');
   assert.match(controller, /setFoundationUpgradeAuthorization\(foundationAuthorization\)/);
-  assert.match(controller, /foundationVerifiedUpdate = targetReg\.ok && targetPkg\.ok/);
-  assert.match(controller, /verifiedFoundationUpdateAuthorization\(targetReg\.json, targetPkg\.json\)/);
-  assert.match(controller, /foundationUpdateActivation = !currentReleaseAlreadyActivated/);
+  assert.doesNotMatch(controller, /foundationVerifiedUpdate/);
+  assert.doesNotMatch(controller, /!activationAllowed && !currentReleaseAlreadyActivated && !foundationUpdate/);
   assert.match(controller, /consumed = await setFoundationUpgradeAuthorization\(null\)/);
-  assert.match(controller, /foundation-verified-update-activate/);
+  assert.doesNotMatch(controller, /foundation-verified-update-activate/);
+  assert.match(controller, /FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS/);
   assert.match(crd, /foundationUpgradeAuthorization:/);
   assert.match(crd, /VerifiedActivatedFoundationUpdate\/v1/);
+});
+
+test('known L6 domain subShells are fail-closed behind live PFS admission', () => {
+  for (const id of ['developer', 'workspace', 'customer', 'edge', 'website']) {
+    assert.equal(requiresDomainAdmission({ metadata: { name: id }, spec: { kind: 'subShell', hostRef: 'main' } }), true);
+  }
+  assert.equal(requiresDomainAdmission({ metadata: { name: 'cluster-manager' }, spec: { kind: 'subShell', hostRef: 'main' } }), false);
+  assert.equal(requiresDomainAdmission({ metadata: { name: 'developer' }, spec: { kind: 'plugin', hostRef: 'main' } }), false);
+
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /domainActivationAllowed:\s*domainAdmissionReady/);
+  assert.match(controller, /else if \(requiresDomainAdmission\(pkg\)\)/);
+  assert.match(controller, /else if \(targetPkg\.ok && requiresDomainAdmission\(targetPkg\.json\)\)/);
+  assert.match(controller, /error: 'DomainAdmissionLocked'/);
+  assert.match(controller, /phase: 'DependencyPending',\s*\n\s*reason: admission\.reason/);
+});
+
+test('recovery evidence has a bounded freshness gate', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /RECOVERY_EVIDENCE_MAX_AGE_MS/);
+  assert.match(controller, /value\.maxEvidenceAgeSeconds/);
+  assert.match(controller, /const ready = evidenceFresh && archiveVerified && restored/);
+  assert.match(controller, /expiresAt:/);
+});
+
+test('selected Crossplane adapter is part of live Delivery readiness', () => {
+  const missing = { ok: false, status: 404, json: {} };
+  assert.deepEqual(crossplaneProviderProjection({
+    deployment: missing, provider: missing, providerConfig: missing,
+  }), { selected: false, ready: true, state: 'NotSelected', reason: '' });
+
+  const deployment = {
+    ok: true, status: 200, json: {
+      metadata: { generation: 2 },
+      spec: { replicas: 1 },
+      status: { observedGeneration: 2, replicas: 1, updatedReplicas: 1, availableReplicas: 1, readyReplicas: 1 },
+    },
+  };
+  const provider = { ok: true, status: 200, json: { status: { conditions: [
+    { type: 'Healthy', status: 'True' }, { type: 'Installed', status: 'True' },
+  ] } } };
+  const providerConfig = { ok: true, status: 200, json: { spec: { credentials: { source: 'InjectedIdentity' } } } };
+  assert.equal(crossplaneProviderProjection({ deployment, provider, providerConfig }).ready, true);
+  assert.equal(crossplaneProviderProjection({
+    deployment, provider: { ...provider, json: { status: { conditions: [{ type: 'Installed', status: 'True' }] } } }, providerConfig,
+  }).ready, false);
+
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  assert.match(controller, /argocd\.ready && crossplane\.ready/);
+  assert.match(manifest, /name: opensphere-crossplane-evidence-reader/);
+  assert.match(manifest, /resourceNames: \[crossplane-contrib-provider-helm\]/);
+  assert.match(manifest, /resourceNames: \[default\]/);
 });
 
 test('bootstrap owns the PlatformSupportProfile CRD lifecycle', () => {

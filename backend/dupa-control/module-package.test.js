@@ -128,6 +128,28 @@ test('HIS manager profile is rejected: Console modules cannot own HIS lifecycle'
   assert.ok(moduleDescriptorIssues(his).some((issue) => issue.code === 'UnknownPermissionProfile'));
 });
 
+test('permission profile downgrade, disable, and uninstall revoke stale cluster bindings', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  const permissionStart = controller.indexOf('async function revokePermissionBindings');
+  const permissionEnd = controller.indexOf('async function applyWorkload', permissionStart);
+  const permissionFlow = controller.slice(permissionStart, permissionEnd);
+  assert.match(permissionFlow, /for \(const profile of Object\.keys\(PERMISSION_PROFILE_ROLES\)\)/);
+  assert.match(permissionFlow, /if \(profile === keepProfile\) continue/);
+  assert.match(permissionFlow, /await revokePermissionBindings\(pkg\.metadata\.name\)/);
+  assert.match(permissionFlow, /await revokePermissionBindings\(pkg\.metadata\.name, profile\)/);
+
+  const disabledStart = controller.indexOf("if (desired === 'Disabled')");
+  const disabledEnd = controller.indexOf("if (channelEvidence.channelState", disabledStart);
+  assert.match(controller.slice(disabledStart, disabledEnd), /await revokePermissionBindings\(pkg\.metadata\.name\)/);
+
+  const uninstallStart = controller.indexOf('async function deleteWorkload');
+  const uninstallEnd = controller.indexOf('async function workloadReady', uninstallStart);
+  assert.match(controller.slice(uninstallStart, uninstallEnd), /await revokePermissionBindings\(pkg\.metadata\.name\)/);
+
+  const manifest = fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8');
+  assert.match(manifest, /resources: \[clusterrolebindings\], verbs: \[get, list, create, patch, delete\]/);
+});
+
 test('infrastructure manager adds only consumer-side storage integration writes', () => {
   const infrastructure = structuredClone(descriptor);
   infrastructure.permissionProfile = 'cluster-infrastructure-manager-v1';

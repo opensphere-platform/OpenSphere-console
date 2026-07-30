@@ -32,6 +32,17 @@ const V = 'v1alpha1';
 const PLATFORM_GROUP = 'platform.opensphere.io';
 const PLATFORM_PROFILE_NAME = 'default';
 const PLATFORM_PROFILE_PATH = `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles/${PLATFORM_PROFILE_NAME}`;
+const HIS_STATUS_URL = process.env.HIS_STATUS_URL
+  || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/his/internal/status';
+const HIS_STATUS_MAX_AGE_MS = Math.max(15000, Math.min(Number(process.env.HIS_STATUS_MAX_AGE_MS || 60000), 300000));
+const FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS = Math.max(
+  5 * 60 * 1000,
+  Math.min(Number(process.env.FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS || (60 * 60 * 1000)), 24 * 60 * 60 * 1000),
+);
+const RECOVERY_EVIDENCE_MAX_AGE_MS = Math.max(
+  5 * 60 * 1000,
+  Math.min(Number(process.env.RECOVERY_EVIDENCE_MAX_AGE_MS || (24 * 60 * 60 * 1000)), 7 * 24 * 60 * 60 * 1000),
+);
 // Platform Delivery is GitOps only when the live Argo CD control plane has
 // reconciled the canonical OpenSphere declaration.  Gitea reachability and an
 // immutable package inventory are useful supporting evidence, but neither is
@@ -43,6 +54,8 @@ const ARGOCD_DELIVERY_APPLICATION = process.env.ARGOCD_DELIVERY_APPLICATION || '
 const ARGOCD_DELIVERY_REPOSITORY = process.env.ARGOCD_DELIVERY_REPOSITORY || 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000/opensphere/platform-declarations.git';
 const ARGOCD_DELIVERY_PATH = process.env.ARGOCD_DELIVERY_PATH || 'platform-delivery/verification';
 const ARGOCD_DELIVERY_REVISION = process.env.ARGOCD_DELIVERY_REVISION || 'main';
+const CROSSPLANE_NAMESPACE = process.env.CROSSPLANE_NAMESPACE || 'crossplane-system';
+const CROSSPLANE_PROVIDER = process.env.CROSSPLANE_PROVIDER || 'crossplane-contrib-provider-helm';
 function foundationDevOverrideEnabled(env = process.env) {
   return env.OPENSPHERE_RUNTIME_MODE === 'development'
     && String(env.FOUNDATION_ACTIVATION_DEV_OVERRIDE || '').toLowerCase() === 'true';
@@ -410,16 +423,10 @@ function verifiedFoundationStagedUpdate(reg, now = Date.now()) {
     && authorization.requestedBy.length > 0
     && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
     && Number.isFinite(requestedAt)
-    // This is durable, controller-owned evidence bound to one exact
-    // fromDigest -> toDigest transition.  Expiring it after an arbitrary wall
-    // clock interval made a successful rollout permanently unactivatable when
-    // the install and enable requests raced the reconciler.  It remains valid
-    // until the exact transition is activated and the controller consumes it.
-    // The API changes desiredState to Enabled before the next reconcile. During
-    // that pass phase may also move through Ready or DependencyPending, so those
-    // transient fields cannot be part of this durable authorization check. The
-    // reconciler still verifies the workload and artifact before publishing.
-    && requestedAt <= Number(now) + (5 * 60 * 1000);
+    // Upgrade authorization is exact-transition evidence, not a permanent
+    // bypass token. It expires even if reconciliation never consumes it.
+    && requestedAt <= Number(now) + (5 * 60 * 1000)
+    && Number(now) - requestedAt <= FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS;
 }
 function verifiedFoundationUpdateAuthorization(reg, pkg, now = Date.now()) {
   if (verifiedFoundationStagedUpdate(reg, now)) {
@@ -451,7 +458,8 @@ function verifiedFoundationUpdateAuthorization(reg, pkg, now = Date.now()) {
     && authorization.requestedBy.length > 0
     && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
     && Number.isFinite(requestedAt)
-    && requestedAt <= Number(now) + (5 * 60 * 1000);
+    && requestedAt <= Number(now) + (5 * 60 * 1000)
+    && Number(now) - requestedAt <= FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS;
 }
 // CLIDownload (console.opensphere.io, cluster-scoped) — headless 비-UI 콘솔 바인딩. UIPluginPackage(UI 게스트)와 별개 kind.
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
@@ -975,10 +983,24 @@ function permissionBindingManifest(pkg, saName, profile) {
     subjects: [{ kind: 'ServiceAccount', name: saName, namespace: NS }],
   };
 }
+function permissionBindingName(pluginId, profile) {
+  const suffix = profile === 'cluster-observer-v1' ? 'observer-v1' : profile;
+  return `opensphere-module-${pluginId}-${suffix}`;
+}
+async function revokePermissionBindings(pluginId, keepProfile = '') {
+  for (const profile of Object.keys(PERMISSION_PROFILE_ROLES)) {
+    if (profile === keepProfile) continue;
+    const name = permissionBindingName(pluginId, profile);
+    await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${name}`, `ClusterRoleBinding/${name}`);
+  }
+}
 async function applyPermissionProfile(pkg, saName) {
   const profile = pkg.spec.permissionProfile || 'none';
   if (!APPROVED_PERMISSION_PROFILES.has(profile)) throw Object.assign(new Error('unapproved permission profile'), { reason: 'UnknownPermissionProfile' });
-  if (profile === 'none') return;
+  if (profile === 'none') {
+    await revokePermissionBindings(pkg.metadata.name);
+    return;
+  }
   const rolePath = '/apis/rbac.authorization.k8s.io/v1/clusterroles';
   const roleManifest = PERMISSION_PROFILE_ROLES[profile];
   if (!roleManifest) throw Object.assign(new Error('unapproved permission profile'), { reason: 'UnknownPermissionProfile' });
@@ -988,6 +1010,7 @@ async function applyPermissionProfile(pkg, saName) {
   if (JSON.stringify(canonical(existingRole.json?.rules || [])) !== JSON.stringify(canonical(expectedRole.rules))) {
     throw Object.assign(new Error('pre-provisioned permission profile drifted'), { reason: 'PermissionProfileDrift' });
   }
+  await revokePermissionBindings(pkg.metadata.name, profile);
   const binding = permissionBindingManifest(pkg, saName, profile);
   const bindingPath = '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings';
   const existingBinding = await k8s('GET', `${bindingPath}/${binding.metadata.name}`);
@@ -1049,7 +1072,7 @@ async function deleteWorkload(pkg) {
   await deleteManagedResource(`/apis/autoscaling/v2/namespaces/${NS}/horizontalpodautoscalers/${name}`, `HorizontalPodAutoscaler/${name}`);
   await deleteManagedResource(`/apis/networking.k8s.io/v1/namespaces/${NS}/networkpolicies/${name}`, `NetworkPolicy/${name}`);
   const sa = pluginServiceAccount(pkg);
-  await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/opensphere-module-${pkg.metadata.name}-observer-v1`, `ClusterRoleBinding/${name}`);
+  await revokePermissionBindings(pkg.metadata.name);
   if (sa.managed) await deleteManagedResource(`/api/v1/namespaces/${NS}/serviceaccounts/${sa.name}`, `ServiceAccount/${sa.name}`);
 }
 async function workloadReady(name) {
@@ -1784,7 +1807,9 @@ async function reconcile() {
         continue;
       }
       if (desired === 'Disabled') {
-        // workload 유지, registry에서만 제외 (메뉴/route 소멸)
+        // workload는 유지하되 cluster-scoped 권한은 즉시 회수한다. 다시
+        // Enabled가 되면 applyPermissionProfile이 현재 승인 profile만 복원한다.
+        await revokePermissionBindings(pkg.metadata.name);
         await updateStatus({ phase: 'Disabled', reason: '' });
         continue;
       }
@@ -1859,18 +1884,16 @@ async function reconcile() {
       }
 
       // Foundation activation is enforced by the reconciler as well as the
-      // request API.  A verified update may be queued before the new workload
-      // has reached Ready; the controller rechecks the exact, controller-owned
-      // fromDigest -> toDigest authorization after artifact verification and
-      // consumes it only after the new release is Activated.
-      let foundationUpdateActivation = false;
+      // request API. An update authorization proves the exact transition only;
+      // it never substitutes for the current Platform Support Profile.
+      let foundationUpdateAuthorizationConsumed = false;
       if (name === FOUNDATION_ID && desired === 'Enabled') {
         const readiness = await supportProfileReadiness();
         const activationAllowed = readiness.admission.foundationActivationAllowed === true;
         const currentReleaseAlreadyActivated = stableRelease && verifiedActivatedRegistration(reg);
-        foundationUpdateActivation = !currentReleaseAlreadyActivated
+        foundationUpdateAuthorizationConsumed = !currentReleaseAlreadyActivated
           && verifiedFoundationUpdateAuthorization(reg, pkg);
-        if (!activationAllowed && !currentReleaseAlreadyActivated && !foundationUpdateActivation) {
+        if (!activationAllowed && !currentReleaseAlreadyActivated) {
           await updateStatus({
             phase: 'DependencyPending',
             reason: 'PlatformSupportProfileIncomplete',
@@ -1900,6 +1923,17 @@ async function reconcile() {
           route: '/manage/platform-control',
           checkedAt: new Date().toISOString(),
         };
+      } else if (requiresDomainAdmission(pkg)) {
+        const readiness = await platformReadinessStatus();
+        const activationAllowed = readiness.admission.domainActivationAllowed === true;
+        admission = {
+          activationAllowed,
+          reason: activationAllowed ? '' : 'DomainAdmissionLocked',
+          pendingCapabilities: activationAllowed ? [] : ['PFSEstablished', 'PlatformSupportProfile'],
+          satisfiedCapabilities: activationAllowed ? ['PFSEstablished', 'PlatformSupportProfile'] : [],
+          route: '/manage/platform-control',
+          checkedAt: new Date().toISOString(),
+        };
       }
       const withAdmission = (status) => (admission ? { ...status, admission } : status);
 
@@ -1911,7 +1945,7 @@ async function reconcile() {
       if (admission && !admission.activationAllowed) {
         await updateStatus(withAdmission({
           phase: 'DependencyPending',
-          reason: 'PlatformSupportProfileIncomplete',
+          reason: admission.reason,
           retryable: true,
         }));
         continue;
@@ -1923,7 +1957,7 @@ async function reconcile() {
       published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence));
       if (!stableRelease) await updateStatus(withAdmission({ phase: 'Ready', reason: '', manifestUrl, retryable: false }));
       await updateStatus(withAdmission({ phase: 'Activated', reason: '', manifestUrl, retryable: false }));
-      if (foundationUpdateActivation) {
+      if (foundationUpdateAuthorizationConsumed) {
         const consumed = await setFoundationUpgradeAuthorization(null);
         if (!consumed.ok) {
           console.error('[foundation-update] activated exact update but could not consume authorization status:',
@@ -2266,9 +2300,15 @@ async function observabilityTemplateQuery(template, range) {
 
 // ── Platform Readiness (CONSTITUTION-0004 §7~§8) ───────────────────────────
 // PlatformSupportProfile is a Main Shell-owned, machine-readable admission gate. It is not a
-// fourth service stack and it does not install or administer HIS. HIS capability
-// is evidenced exclusively by the HIS-issued ObservabilityBinding consumed above.
+// fourth service stack and it does not install or administer HIS. SRL-L1 HIS
+// readiness comes only from the authenticated Cluster Manager projection.
+// ObservabilityBinding remains an SRL-L4 telemetry capability and is never a
+// substitute for the complete HIS preflight.
 const FOUNDATION_ID = 'foundation';
+const DOMAIN_SHELL_IDS = new Set(['developer', 'workspace', 'customer', 'edge', 'website']);
+function requiresDomainAdmission(pkg) {
+  return pkg?.spec?.kind === 'subShell' && DOMAIN_SHELL_IDS.has(String(pkg?.metadata?.name || ''));
+}
 const requiredProfileSpec = Object.freeze({
   hostRequirements: { clusterManager: true, his: true },
   delivery: { required: true },
@@ -2344,12 +2384,49 @@ function oaaExtensionInspectionProjection(inspection) {
 }
 function normalizeHisStatus(response) {
   const body = response?.body || response?.json || {};
-  const ready = response?.ok === true && body.state === 'Ready';
+  const checkedAtMs = Date.parse(body.checkedAt || '');
+  const ageMs = Number.isFinite(checkedAtMs) ? Math.max(0, Date.now() - checkedAtMs) : Number.POSITIVE_INFINITY;
+  const contractValid = body.schema === 'his-status.opensphere.io/v1alpha1'
+    && body.stack === 'HIS'
+    && ['Ready', 'Degraded', 'Blocked'].includes(body.state)
+    && Array.isArray(body.items)
+    && body.summary && Number.isFinite(Number(body.summary.coreTotal));
+  const fresh = ageMs <= HIS_STATUS_MAX_AGE_MS;
+  const ready = response?.ok === true && contractValid && fresh && body.state === 'Ready';
+  const blockers = Array.isArray(body.items)
+    ? body.items
+      .filter((item) => item?.contributesToHisReadiness !== false && item?.effectiveRequired && item?.check?.state !== 'Ready')
+      .map((item) => ({ id: item.id, state: item.check?.state || 'Unknown', reason: item.check?.reason || 'Unknown' }))
+    : [];
+  let reason = '';
+  if (response?.ok !== true) reason = `Cluster Manager HIS status HTTP ${response?.status || 0}`;
+  else if (!contractValid) reason = 'Cluster Manager HIS status contract is invalid';
+  else if (!fresh) reason = `Cluster Manager HIS status is stale (${Math.floor(ageMs / 1000)}s old)`;
+  else if (body.state !== 'Ready') reason = `HIS ${body.state}: ${blockers.map((item) => `${item.id}/${item.reason}`).join(', ') || 'required capability incomplete'}`;
   return {
     ready,
     state: body.state || (response?.ok ? 'Unknown' : 'Unavailable'),
-    reason: ready ? '' : (body.reason || body.message || `Cluster Manager HIS status HTTP ${response?.status || 0}`),
+    reason: ready ? '' : reason,
+    checkedAt: body.checkedAt || '',
+    fresh,
+    contractValid,
+    ageSeconds: Number.isFinite(ageMs) ? Math.floor(ageMs / 1000) : null,
+    summary: body.summary || null,
+    blockers,
   };
+}
+async function hisPreflightEvidence(fetchImpl = fetch) {
+  let response;
+  try {
+    response = await fetchImpl(HIS_STATUS_URL, {
+      headers: { Authorization: `Bearer ${token()}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(45000),
+    });
+  } catch (error) {
+    return normalizeHisStatus({ ok: false, status: 503, body: { message: String(error?.message || error) } });
+  }
+  const body = await response.json().catch(() => ({}));
+  return normalizeHisStatus({ ok: response.ok, status: response.status, body });
 }
 async function mainShellBaselineStatus() {
   const targets = [
@@ -2386,17 +2463,28 @@ async function backupRestoreEvidence() {
   catch { value = {}; }
   const backup = value.backup || {};
   const restore = value.restore || {};
+  const generatedAt = Date.parse(String(value.generatedAt || ''));
+  const requestedMaxAgeMs = Number(value.maxEvidenceAgeSeconds || 0) * 1000;
+  const maxAgeMs = Number.isFinite(requestedMaxAgeMs) && requestedMaxAgeMs > 0
+    ? Math.min(requestedMaxAgeMs, RECOVERY_EVIDENCE_MAX_AGE_MS)
+    : RECOVERY_EVIDENCE_MAX_AGE_MS;
+  const evidenceFresh = Number.isFinite(generatedAt)
+    && generatedAt <= Date.now() + (5 * 60 * 1000)
+    && Date.now() - generatedAt <= maxAgeMs;
   const archiveVerified = [backup.supabase?.database, backup.supabase?.storage, backup.gitea]
     .every((item) => item?.verified === true && /^[a-f0-9]{64}$/i.test(String(item.sha256 || '')));
   const restored = [restore.supabase, restore.storage, restore.gitea]
     .every((item) => item?.state === 'Verified');
-  const ready = archiveVerified && restored;
+  const ready = evidenceFresh && archiveVerified && restored;
   return {
     ready, source: 'Supabase+Gitea recovery evidence', targetConfigured: archiveVerified,
-    scheduled: false, lastBackupAt: value.generatedAt || '',
+    scheduled: false, lastBackupAt: value.generatedAt || '', evidenceFresh,
+    expiresAt: Number.isFinite(generatedAt) ? new Date(generatedAt + maxAgeMs).toISOString() : '',
     lastRestoreDrillAt: restore.supabase?.verifiedAt || '',
     decommissionApproved: value.decommission?.approved === true,
-    reason: ready ? '' : 'verified Supabase, Storage, and Gitea restore drills are required',
+    reason: ready ? '' : (!evidenceFresh
+      ? 'recovery evidence is missing, expired, or has an invalid generatedAt'
+      : 'verified Supabase, Storage, and Gitea restore drills are required'),
   };
 }
 
@@ -2538,7 +2626,9 @@ async function securityPolicyEvidence() {
   };
 }
 async function deliveryEvidence() {
-  const [gitea, packages, regs, argocd] = await Promise.all([giteaHealth(), listPackages(), listRegs(), argocdDeliveryEvidence()]);
+  const [gitea, packages, regs, argocd, crossplane] = await Promise.all([
+    giteaHealth(), listPackages(), listRegs(), argocdDeliveryEvidence(), crossplaneAdapterEvidence(),
+  ]);
   const pkgs = packages.json?.items || [];
   const registrations = regs.json?.items || [];
   const immutable = pkgs.every((p) => /^sha256:[a-f0-9]{64}$/.test(p.spec?.image?.digest || ''));
@@ -2547,11 +2637,46 @@ async function deliveryEvidence() {
       && r.status?.verification?.signature === 'Verified'
       && r.status?.verification?.manifest === 'Verified'));
   const failed = registrations.filter((r) => ['Failed', 'Degraded'].includes(r.status?.phase)).map((r) => r.metadata?.name);
-  const ready = gitea && packages.ok && regs.ok && immutable && verified && failed.length === 0 && argocd.ready;
+  const ready = gitea && packages.ok && regs.ok && immutable && verified
+    && failed.length === 0 && argocd.ready && crossplane.ready;
   return {
-    ready, gitea, immutable, verified, failed, packageCount: pkgs.length, argocd,
-    reason: ready ? '' : (argocd.reason || 'Argo CD, immutable digest, signature, and drift evidence are required'),
+    ready, gitea, immutable, verified, failed, packageCount: pkgs.length, argocd, crossplane,
+    reason: ready ? '' : (argocd.reason || crossplane.reason || 'Argo CD, immutable digest, signature, and drift evidence are required'),
   };
+}
+function crossplaneProviderProjection({ deployment, provider, providerConfig }) {
+  const selected = [deployment, provider, providerConfig].some((result) => result?.status !== 404);
+  if (!selected) return { selected: false, ready: true, state: 'NotSelected', reason: '' };
+  const workload = deploymentReadyResult(CROSSPLANE_NAMESPACE, 'crossplane', deployment);
+  const conditions = provider?.json?.status?.conditions || [];
+  const healthy = conditions.some((condition) => condition.type === 'Healthy' && condition.status === 'True');
+  const installed = conditions.some((condition) => condition.type === 'Installed' && condition.status === 'True');
+  const injectedIdentity = providerConfig?.json?.spec?.credentials?.source === 'InjectedIdentity';
+  const ready = workload.ready && provider?.ok === true && providerConfig?.ok === true
+    && healthy && installed && injectedIdentity;
+  let reason = '';
+  if (!workload.ready) reason = `Crossplane control-plane workload is not Ready: ${workload.reason || workload.detail || 'unknown'}`;
+  else if (provider?.ok !== true) reason = `approved Crossplane Provider is unavailable (HTTP ${provider?.status || 0})`;
+  else if (!healthy || !installed) reason = 'approved Crossplane Provider is not Installed and Healthy';
+  else if (providerConfig?.ok !== true) reason = `Crossplane ProviderConfig/default is unavailable (HTTP ${providerConfig?.status || 0})`;
+  else if (!injectedIdentity) reason = 'Crossplane ProviderConfig/default must use InjectedIdentity';
+  return {
+    selected: true,
+    ready,
+    state: ready ? 'Ready' : 'Degraded',
+    workload,
+    provider: { name: CROSSPLANE_PROVIDER, healthy, installed },
+    providerConfig: { name: 'default', injectedIdentity },
+    reason,
+  };
+}
+async function crossplaneAdapterEvidence() {
+  const [deployment, provider, providerConfig] = await Promise.all([
+    k8s('GET', `/apis/apps/v1/namespaces/${CROSSPLANE_NAMESPACE}/deployments/crossplane`),
+    k8s('GET', `/apis/pkg.crossplane.io/v1/providers/${CROSSPLANE_PROVIDER}`),
+    k8s('GET', '/apis/helm.crossplane.io/v1beta1/providerconfigs/default'),
+  ]);
+  return crossplaneProviderProjection({ deployment, provider, providerConfig });
 }
 function normalizedGitRepository(value) {
   return String(value || '').trim().replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
@@ -2667,16 +2792,12 @@ async function foundationEstablishmentStatus(supportReady, registration) {
   });
 }
 async function platformReadinessStatus() {
-  const [platformControl, mainShell, clusterManager, profile, delivery, observability, backupRestore, securityPolicy, regs] = await Promise.all([
+  const [platformControl, mainShell, clusterManager, his, profile, delivery, observability, backupRestore, securityPolicy, regs] = await Promise.all([
     platformControlReadiness(), mainShellBaselineStatus(), clusterManagerActivationStatus(),
+    hisPreflightEvidence(),
     readPlatformProfile(), deliveryEvidence(),
     observabilityProfileEvidence(), backupRestoreEvidence(), securityPolicyEvidence(), listRegs(),
   ]);
-  const his = {
-    ready: observability.stackReady,
-    state: observability.mode,
-    reason: observability.reason,
-  };
   const capabilities = [
     condition('Delivery', delivery.ready, delivery.ready ? 'Verified' : 'DeliveryEvidenceMissing', delivery.reason || 'GitOps delivery evidence verified', [delivery]),
     condition('Observability', observability.ready, observability.ready ? 'Verified' : 'TelemetryEvidenceMissing', observability.reason || 'Live telemetry verified', [observability]),
@@ -2687,7 +2808,7 @@ async function platformReadinessStatus() {
     { key: 'platform-control', label: 'Platform Control Ready', ready: platformControl.ready, detail: platformControl.ready ? 'Supabase · Gitea · OAA ready' : platformControl.reason, route: '/manage/platform-control' },
     { key: 'main-shell', label: 'Main Shell Baseline Ready', ready: mainShell.ready, detail: mainShell.ready ? 'Console native baseline ready' : 'Console/Auth/Backend/DUPA/OAA workload incomplete', route: '/manage/observability' },
     { key: 'cluster-manager', label: 'Cluster Manager Activated', ready: clusterManager.ready, detail: `${clusterManager.phase} · workload ${clusterManager.workload}`, route: '/manage/extensions' },
-    { key: 'his-binding', label: 'HIS Observability Binding Connected', ready: his.ready, detail: his.ready ? 'HIS issued a live Console binding' : (his.reason || his.state), route: '/manage/observability' },
+    { key: 'his-preflight', label: 'HIS Preflight Ready', ready: his.ready, detail: his.ready ? `SRL-L1 ${his.summary?.coreReady || 0}/${his.summary?.coreTotal || 0} core Ready · checked ${his.checkedAt}` : (his.reason || his.state), route: '/p/cluster-manager/his/his' },
   ];
   const prerequisitesReady = prerequisites.every((x) => x.ready);
   const supportReady = profile.declared && prerequisitesReady && capabilities.every((x) => x.ready);
@@ -2738,6 +2859,8 @@ async function platformReadinessStatus() {
       // lacks, while activation stays behind the Platform Support Profile.
       pfsPluginStageAllowed: true,
       pfsPluginActivationAllowed: supportReady,
+      domainStageAllowed: true,
+      domainActivationAllowed: domainAdmissionReady,
       // Compatibility alias for older clients; like foundationInstallAllowed it
       // now reports the activation gate, not an installation gate.
       pfsPluginInstallAllowed: supportReady,
@@ -3136,12 +3259,22 @@ const server = http.createServer(async (req, res) => {
         // naming the missing capability, so the staged registration is now the
         // thing that reports it.
         let pendingCapabilities = [];
+        let activationReason = '';
         if (pkg.spec.hostRef === FOUNDATION_ID) {
           const readiness = await platformReadinessStatus();
           if (!readiness.admission.pfsPluginActivationAllowed) {
+            activationReason = 'PlatformSupportProfileIncomplete';
             pendingCapabilities = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
             await durableAudit(actor, 'pfs-plugin-stage', pkg.metadata.name, 'accepted',
               `staged pending Platform Support Profile: ${pendingCapabilities.join(', ') || 'unknown'}`, opId);
+          }
+        } else if (requiresDomainAdmission(pkg)) {
+          const readiness = await platformReadinessStatus();
+          if (!readiness.admission.domainActivationAllowed) {
+            activationReason = 'DomainAdmissionLocked';
+            pendingCapabilities = ['PFSEstablished', 'PlatformSupportProfile'];
+            await durableAudit(actor, 'domain-shell-stage', pkg.metadata.name, 'accepted',
+              'staged pending PFS establishment and Platform Support Profile', opId);
           }
         }
         const stored = await upsertPackage(pkg);
@@ -3166,7 +3299,7 @@ const server = http.createServer(async (req, res) => {
           accepted: true, id: pkg.metadata.name, desiredState: 'Installed',
           image: inspection.image, verification: inspection.verification,
           ...(pendingCapabilities.length
-            ? { activation: { allowed: false, reason: 'PlatformSupportProfileIncomplete', pendingCapabilities } }
+            ? { activation: { allowed: false, reason: activationReason, pendingCapabilities } }
             : {}),
         });
       } catch (e) {
@@ -3238,24 +3371,16 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall|rollback)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
-      let foundationVerifiedUpdate = false;
       if (action === 'install') return json(res, 403, { error: 'CliInstallationRequired', message: 'use os extensions install', opId });
       if (id === FOUNDATION_ID && action === 'enable') {
         const readiness = await platformReadinessStatus(req);
-        const [targetReg, targetPkg] = await Promise.all([getReg(id), getPackage(id)]);
-        foundationVerifiedUpdate = targetReg.ok && targetPkg.ok
-          && verifiedFoundationUpdateAuthorization(targetReg.json, targetPkg.json);
-        if (!readiness.admission.foundationActivationAllowed && !foundationVerifiedUpdate) {
+        if (!readiness.admission.foundationActivationAllowed) {
           await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequired', opId);
           return json(res, 409, {
             error: 'PlatformSupportProfileRequired',
             message: 'Foundation activation requires Platform Support Profile Ready; staging as Installed/Ready is allowed',
             readiness: { phase: readiness.phase, prerequisites: readiness.prerequisites, capabilities: readiness.capabilities }, opId,
           });
-        }
-        if (!readiness.admission.foundationActivationAllowed && foundationVerifiedUpdate) {
-          await durableAudit(actor, 'foundation-verified-update-activate', id, 'accepted',
-            'exact update activation queued; reconciler will verify and consume the Activated-origin authorization', opId);
         }
         if (readiness.admission.foundationActivationOverride) {
           await durableAudit(actor, 'foundation-development-override', id, 'accepted', 'Foundation subShell activation only; PFS plugins remain gated', opId);
@@ -3268,9 +3393,7 @@ const server = http.createServer(async (req, res) => {
         const targetPkg = await getPackage(id);
         if (targetPkg.ok && targetPkg.json?.spec?.hostRef === FOUNDATION_ID) {
           const readiness = await platformReadinessStatus();
-          const targetReg = await getReg(id);
-          const verifiedUpdate = action === 'enable' && targetReg.ok && verifiedStagedUpdate(targetReg.json);
-          if (!readiness.admission.pfsPluginActivationAllowed && !verifiedUpdate) {
+          if (!readiness.admission.pfsPluginActivationAllowed) {
             const pending = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
             await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequiredForPfsPlugin', opId);
             return json(res, 409, {
@@ -3281,8 +3404,17 @@ const server = http.createServer(async (req, res) => {
               opId,
             });
           }
-          if (!readiness.admission.pfsPluginActivationAllowed && verifiedUpdate) {
-            await durableAudit(actor, 'pfs-plugin-update-activate', id, 'accepted', 'verified staged update; activation gate remains closed for new plugins', opId);
+        } else if (targetPkg.ok && requiresDomainAdmission(targetPkg.json)) {
+          const readiness = await platformReadinessStatus();
+          if (!readiness.admission.domainActivationAllowed) {
+            await durableAudit(actor, action, id, 'denied', 'DomainAdmissionLocked', opId);
+            return json(res, 409, {
+              error: 'DomainAdmissionLocked',
+              message: 'Domain subShell activation requires live PFS establishment and Platform Support Profile Ready. The subShell may remain installed and staged.',
+              pendingCapabilities: ['PFSEstablished', 'PlatformSupportProfile'],
+              route: '/manage/platform-control',
+              opId,
+            });
           }
         }
       }
@@ -3400,5 +3532,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable };
 }

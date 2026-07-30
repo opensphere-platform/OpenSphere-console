@@ -105,6 +105,14 @@ rules:
     verbs: [get]
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterrolebindings], verbs: [get, list] }
   - { apiGroups: ["observability.opensphere.io"], resources: [observabilitybindings], verbs: [get, list] }
+  - apiGroups: ["pkg.crossplane.io"]
+    resources: [providers]
+    resourceNames: [crossplane-contrib-provider-helm]
+    verbs: [get]
+  - apiGroups: ["helm.crossplane.io"]
+    resources: [providerconfigs]
+    resourceNames: [default]
+    verbs: [get]
   # PFS establishment is a live read projection. The DUPA controller never
   # creates or mutates Foundation contracts; the Foundation control plane owns
   # their status and consumer-protect finalizers.
@@ -158,6 +166,28 @@ metadata:
   name: opensphere-platform-delivery-evidence-reader
   namespace: argocd
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-platform-delivery-evidence-reader }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
+---
+# Crossplane is an optional SRL-L4 adapter. Once selected, its fixed control
+# plane and approved Provider become part of Delivery readiness.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-crossplane-evidence-reader
+  namespace: crossplane-system
+rules:
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    resourceNames: [crossplane]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-crossplane-evidence-reader
+  namespace: crossplane-system
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-crossplane-evidence-reader }
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
 ---
@@ -718,6 +748,10 @@ spec:
             # 모든 Console 권한은 Supabase-backed Console identity service가 단일 검증한다.
             - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
             - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
+            - { name: HIS_STATUS_URL, value: http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/his/internal/status }
+            - { name: HIS_STATUS_MAX_AGE_MS, value: "60000" }
+            - { name: FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS, value: "3600000" }
+            - { name: RECOVERY_EVIDENCE_MAX_AGE_MS, value: "86400000" }
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - { name: SUPABASE_REST_URL, value: http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000 }
