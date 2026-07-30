@@ -71,6 +71,75 @@ function mustReject(sql, label) {
   console.log(`  ✓ ${label} — 거부됨`);
 }
 
+/**
+ * 결재 판정이 원장에 결속되는가.
+ *
+ * 제품 주장은 "3년 뒤에도 누가 왜 승인했는지 남는다" 이다. 그 주장이 참이려면
+ * 의도(누가·왜)와 **결과**(효력을 발휘했는가) 둘 다 원장에 있어야 한다.
+ * 0033 이전에는 결과가 원장 밖 테이블에만 있었다.
+ */
+function verifyApprovalBinding() {
+  console.log('\n결재 판정의 원장 결속 (0010 + 0033)');
+
+  // 요청자와 승인자 두 사람. 자기결재 금지를 확인하려면 서로 다른 신원이 필요하다.
+  psql(`INSERT INTO auth.users (id, email) VALUES
+      ('11111111-1111-4111-8111-111111111111','requester@test'),
+      ('22222222-2222-4222-8222-222222222222','approver@test');
+    INSERT INTO console.operator (user_id, display_name) VALUES
+      ('11111111-1111-4111-8111-111111111111','요청자'),
+      ('22222222-2222-4222-8222-222222222222','승인자');`);
+
+  const REQ = '33333333-3333-4333-8333-333333333333';
+  psql(`SELECT console.begin_change('${REQ}','idem-approval-0033','human',
+      '11111111-1111-4111-8111-111111111111','plugin.enable','registration/developer',
+      '결재 결속 검증용 변경', NULL);
+    UPDATE console.change_request SET status='authorized' WHERE request_id='${REQ}';`);
+
+  // ① 자기결재는 거부되어야 한다.
+  let selfBlocked = false;
+  try {
+    psql(`SELECT console.begin_change_approval('${REQ}','11111111-1111-4111-8111-111111111111','본인이 스스로 승인 시도');`);
+  } catch (err) { selfBlocked = /cannot approve their own request/.test(String(err.stderr || err.message)); }
+  assert.ok(selfBlocked, '자기결재가 통과했다 — 두 사람 원칙이 깨졌다');
+  console.log('  ✓ 요청자 본인의 승인이 거부된다');
+
+  // ② 사유 없는 승인은 거부되어야 한다(원장에 남길 reason 이 비면 안 된다).
+  let reasonRequired = false;
+  try {
+    psql(`SELECT console.begin_change_approval('${REQ}','22222222-2222-4222-8222-222222222222','짧음');`);
+  } catch (err) { reasonRequired = /approval reason is required/.test(String(err.stderr || err.message)); }
+  assert.ok(reasonRequired, '사유 없이 승인이 통과했다');
+  console.log('  ✓ 사유 없는 승인이 거부된다');
+
+  // ③ 승인 의도가 원장에 남는가.
+  psql(`SELECT console.begin_change_approval('${REQ}','22222222-2222-4222-8222-222222222222','예산 확인 후 승인합니다');`);
+  const intent = psql(`SELECT action || '|' || phase || '|' || actor_type || '|' || actor_id || '|' || reason
+    FROM audit.event WHERE correlation_id='${REQ}' AND action='change-approval';`).trim();
+  assert.equal(intent,
+    'change-approval|authorized|human|22222222-2222-4222-8222-222222222222|예산 확인 후 승인합니다',
+    '승인 의도가 원장에 기대한 형태로 남지 않았다');
+  console.log('  ✓ 승인 의도가 원장에 남는다 — 행위자·사유 포함');
+
+  // ④ 승인 **결과**가 원장에 남는가. 0033 이전에는 이 행이 없었다.
+  psql(`SELECT console.record_change_approval_result('${REQ}','22222222-2222-4222-8222-222222222222',true,4242,NULL);`);
+  const outcome = psql(`SELECT phase || '|' || result || '|' || reason
+    FROM audit.event WHERE correlation_id='${REQ}' AND action='change-approval-result';`).trim();
+  assert.equal(outcome, 'applied|approval-applied|예산 확인 후 승인합니다 [gitea-review:4242]',
+    `승인 결과가 원장에 남지 않았다 (실제: ${outcome || '(행 없음)'})`);
+  console.log('  ✓ 승인 결과가 원장에 남는다 — phase=applied, gitea 리뷰 id 포함');
+
+  // ⑤ 의도와 결과가 같은 correlation 으로 한 사슬에 이어지는가.
+  const trail = psql(`SELECT string_agg(action || ':' || phase, ' -> ' ORDER BY seq)
+    FROM audit.event WHERE correlation_id='${REQ}';`).trim();
+  assert.match(trail, /change-approval:authorized -> change-approval-result:applied$/,
+    `상관 추적이 의도→결과로 이어지지 않는다 (실제: ${trail})`);
+  console.log(`  ✓ 한 correlation 으로 이어진다 — ${trail}`);
+
+  assert.equal(psql('SELECT count(*) FROM audit.verify_event_chain();').trim(), '0',
+    '결재 기록을 추가한 뒤 사슬이 깨졌다');
+  console.log('  ✓ 결재 기록 추가 후에도 사슬 무결');
+}
+
 function main() {
   console.log('원장 무결성 검증 (arch-002 L2-7)\n');
 
@@ -117,12 +186,18 @@ function main() {
       '클라이언트가 보낸 prev_hash 가 그대로 저장됐다 — 위조된 링크를 받아들인다');
     console.log('  ✓ 클라이언트가 보낸 prev_hash 를 서버 값으로 덮는다');
 
-    // ── 4. 사슬이 실제로 변조를 탐지하는가 ──────────────────────────────────
-    // 최악의 공격자(테이블 소유자)가 트리거를 내리고 중간 행을 지운 상황.
+    // ── 4. 결재 판정이 원장에 결속되는가 ────────────────────────────────────
+    verifyApprovalBinding();
+
+    // ── 5. 사슬이 실제로 변조를 탐지하는가 ──────────────────────────────────
+    // ⚠ 이 검사는 사슬을 **의도적으로 깨뜨린다.** 반드시 마지막에 둔다 —
+    //    앞선 검사들이 무결한 사슬을 전제로 하기 때문이다.
+    //    최악의 공격자(테이블 소유자)가 트리거를 내리고 중간 행을 지운 상황을 만든다.
+    console.log('\n변조 탐지 (사슬을 의도적으로 깨뜨린다)');
     psql(`ALTER TABLE audit.event DISABLE TRIGGER audit_event_append_only;
           DELETE FROM audit.event WHERE action='t.two';
           ALTER TABLE audit.event ENABLE ALWAYS TRIGGER audit_event_append_only;`);
-    const breaks = psql('SELECT seq || \'|\' || expected_prev || \'|\' || actual_prev FROM audit.verify_event_chain();').trim();
+    const breaks = psql(`SELECT seq || '|' || expected_prev || '|' || actual_prev FROM audit.verify_event_chain();`).trim();
     assert.equal(breaks, '3|h1|h2', `사슬 파손이 탐지되지 않았다 (실제: ${breaks || '(없음)'})`);
     console.log('  ✓ 행이 사라지면 verify_event_chain() 이 그 지점을 지목한다 — seq 3, 기대 h1, 실제 h2');
 
