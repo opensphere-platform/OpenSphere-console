@@ -313,7 +313,9 @@ foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
   Set-RemoteTag -Repository "$Registry/$($item.Image)" -Digest $digests[$item.Key] -Tag edge
 }
 $console = $images | Where-Object { $_.Key -eq 'console' }
-Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+if ($console) {
+  Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+}
 
 foreach ($item in $images) {
   $actual = Get-RemoteDigest -Reference "$Registry/$($item.Image):edge"
