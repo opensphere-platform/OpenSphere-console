@@ -90,6 +90,11 @@ test('Platform Release executor classifies a missing runtime before governed exe
   );
 });
 
+test('local edge publisher preserves a one-component selection as an array', () => {
+  const publisher = fs.readFileSync(path.join(directory, '../../scripts/Publish-LocalEdge.ps1'), 'utf8');
+  assert.match(publisher, /\$images\s*=\s*@\(if\s*\(\$partialPublication\)/);
+});
+
 function desiredState() {
   return {
     contract: 'opensphere.platform.release/v1',

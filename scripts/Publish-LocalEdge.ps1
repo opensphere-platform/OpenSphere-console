@@ -231,11 +231,11 @@ $allImages = @(
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
 $partialPublication = $Components.Count -gt 0
-$images = if ($partialPublication) {
-  @($allImages | Where-Object { $_.Key -in $Components })
-} else {
-  $allImages
-}
+$images = @(if ($partialPublication) {
+    $allImages | Where-Object { $_.Key -in $Components }
+  } else {
+    $allImages
+  })
 if ($images.Count -ne ($partialPublication ? $Components.Count : $allImages.Count)) {
   throw 'Component selection did not resolve to one unique canonical image per requested key.'
 }
