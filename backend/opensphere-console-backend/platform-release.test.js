@@ -19,6 +19,11 @@ const {
   validateGovernedManifest,
   executorJob,
 } = require('./platform-release-reconciler');
+const {
+  ExecutorRuntimeUnavailable,
+  RUNTIME_PROBES,
+  verifyExecutorRuntime,
+} = require('./platform-release-runtime');
 
 const directory = __dirname;
 const revision = 'a'.repeat(40);
@@ -55,6 +60,35 @@ function releaseLock() {
   lock.releaseDigest = calculateReleaseDigest(lock);
   return lock;
 }
+
+test('Platform Release executor preflights every bundled runtime before mutation', () => {
+  const calls = [];
+  const inventory = verifyExecutorRuntime((command, args, options) => {
+    calls.push({ command, args, options });
+    return `${args.includes('--output=json') ? '{"clientVersion":"v1.36.1"}' : 'v-test'}\n`;
+  });
+
+  assert.deepEqual(Object.keys(inventory), RUNTIME_PROBES.map(({ tool }) => tool));
+  assert.equal(calls.length, RUNTIME_PROBES.length);
+  assert.ok(calls.every(({ options }) => options.timeout === 15000));
+});
+
+test('Platform Release executor classifies a missing runtime before governed execution', () => {
+  assert.throws(
+    () => verifyExecutorRuntime((command) => {
+      if (command === 'pwsh') {
+        const error = new Error('spawnSync pwsh ENOENT');
+        error.code = 'ENOENT';
+        throw error;
+      }
+      return 'available';
+    }),
+    (error) => error instanceof ExecutorRuntimeUnavailable
+      && error.code === 'ExecutorRuntimeUnavailable'
+      && error.evidence?.stage === 'runtime-preflight'
+      && error.evidence?.tool === 'pwsh',
+  );
+});
 
 function desiredState() {
   return {

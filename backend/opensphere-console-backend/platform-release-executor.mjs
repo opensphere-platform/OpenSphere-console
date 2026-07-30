@@ -14,6 +14,7 @@ const {
   PLATFORM_RELEASE_TARGET,
   validatePlatformReleaseDesiredState,
 } = require('./platform-release-contract.js');
+const { verifyExecutorRuntime } = require('./platform-release-runtime.js');
 
 const BACKEND_URL = (process.env.CONSOLE_BACKEND_URL
   || 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
@@ -149,6 +150,7 @@ async function sendReceipt({ succeeded, result, desiredRevision, appliedRevision
 }
 
 async function main() {
+  const runtime = verifyExecutorRuntime();
   const desired = await loadDesiredState();
   const current = readInstallationLock();
   if (!current || current.releaseDigest !== desired.previousReleaseDigest) {
@@ -180,6 +182,7 @@ async function main() {
       changed: result.changed,
       podCount: result.evidence?.podCount ?? null,
       serviceCount: result.evidence?.serviceCount ?? null,
+      runtime,
       rollbackContract: 'Setup upgrade restores the previously verified release on failed target verification',
     },
   });
@@ -204,7 +207,8 @@ try {
     appliedRevision: observedSourceRevision,
     evidence: {
       stage: 'failed',
-      errorCode: 'platform-release-execution-failed',
+      errorCode: error?.code || 'platform-release-execution-failed',
+      runtimePreflight: error?.evidence || null,
       expectedPreviousReleaseDigest: EXPECTED_PREVIOUS_RELEASE_DIGEST || null,
       observedReleaseDigest,
       rollbackObserved: observedReleaseDigest === EXPECTED_PREVIOUS_RELEASE_DIGEST,

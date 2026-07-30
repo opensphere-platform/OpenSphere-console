@@ -68,6 +68,7 @@ COPY opensphere-console-backend/foundation-bootstrap-bundle.js ./foundation-boot
 COPY opensphere-console-backend/foundation-bootstrap-reconciler.js ./foundation-bootstrap-reconciler.js
 COPY opensphere-console-backend/platform-release-contract.js ./platform-release-contract.js
 COPY opensphere-console-backend/platform-release-reconciler.js ./platform-release-reconciler.js
+COPY opensphere-console-backend/platform-release-runtime.js ./platform-release-runtime.js
 COPY opensphere-console-backend/platform-release-executor.mjs ./platform-release-executor.mjs
 COPY --from=setup-cli src /app/opensphere-setup-cli/src
 COPY --from=setup-cli package.json /app/opensphere-setup-cli/package.json
