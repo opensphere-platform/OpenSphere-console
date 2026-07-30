@@ -65,7 +65,12 @@ test('runtime inventory is broad but sanitizes configuration values', () => {
   for (const kind of ['node', 'persistentvolumeclaim', 'job', 'cronjob', 'ingress', 'horizontalpodautoscaler', 'customresourcedefinition', 'observabilitybinding', 'platformsupportprofile', 'uipluginregistration', 'foundationmodel', 'identitydirectorybinding']) assert.ok(RUNTIME_RESOURCE_KINDS.includes(kind));
   const binding = sanitizeKubernetesObject('observabilitybinding', {
     metadata: { name: 'opensphere-console' },
-    spec: { owner: 'HIS', consumerRef: { kind: 'Deployment', namespace: 'opensphere-console', name: 'opensphere-console' }, requestedCapabilities: ['metrics', 'logs', 'traces', 'otlp'] },
+    spec: {
+      owner: 'PlatformSupport',
+      providerRef: { apiVersion: 'platform.opensphere.io/v1alpha1', kind: 'PlatformSupportProfile', name: 'default', capability: 'observability' },
+      consumerRef: { kind: 'Deployment', namespace: 'opensphere-console', name: 'opensphere-console' },
+      requestedCapabilities: ['metrics', 'logs', 'traces', 'otlp'],
+    },
     status: { phase: 'Connected', capabilities: ['metrics'], contract: { queryEndpoint: 'http://internal.example', queryTemplates: { up: 'sum(up)' } }, evidence: { unavailableCapabilities: ['logs', 'traces', 'otlp'], digest: `sha256:${'a'.repeat(64)}` } },
   });
   assert.equal(binding.phase, 'Connected');
@@ -140,6 +145,7 @@ test('agent automatic loop exposes reads while mutations remain governed', () =>
     '/api/v1/registry',
     '/api/catalog/entities',
     '/api/his/status',
+    '/api/platform-support/oaa/capabilities',
     '/api/ceph/status',
     '/api/foundation/oaa/status',
   ]) assert.ok(gateway.includes(ownerPath), `missing owner facade ${ownerPath}`);
@@ -157,7 +163,9 @@ test('owner lifecycle actions use fixed typed facades with fail-closed inputs an
     'oaa.extension.lifecycle',
     'oaa.his.validate',
     'oaa.his.lifecycle',
-    'oaa.his.observability.configure',
+    'oaa.platform.support.observability.validate',
+    'oaa.platform.support.observability.lifecycle',
+    'oaa.platform.support.observability.configure',
     'oaa.ceph.connect',
     'oaa.ceph.disconnect',
     'oaa.foundation.engine.lifecycle',
@@ -180,6 +188,8 @@ test('owner lifecycle actions use fixed typed facades with fail-closed inputs an
   assert.match(ownerAction, /\/api\/admin\/plugins\/registrations\//);
   assert.match(ownerAction, /\/api\/his\/validate/);
   assert.match(ownerAction, /`\/api\/his\/\$\{action\}`/);
+  assert.match(ownerAction, /\/api\/platform-support\/validate/);
+  assert.match(ownerAction, /`\/api\/platform-support\/\$\{action\}`/);
   assert.match(ownerAction, /\/api\/ceph\/oaa\/connect/);
   assert.match(ownerAction, /\/api\/ceph\/oaa\/disconnect/);
   assert.match(ownerAction, /\/api\/foundation\/oaa\/engines\/lifecycle/);
@@ -194,11 +204,15 @@ test('owner lifecycle actions use fixed typed facades with fail-closed inputs an
   assert.match(ownerAction, /UUID_RE/);
   assert.doesNotMatch(ownerAction, /inputs\.(?:url|path|endpoint|baseUrl)/);
   assert.match(gateway, /OAA_OWNER_ACTION_TOOL_IDS\.has\(binding\.toolId\)/);
-  assert.match(gateway, /allowHisRecovery: \['oaa\.his\.validate', 'oaa\.his\.lifecycle', 'oaa\.his\.observability\.configure'\]\.includes\(binding\.toolId\)/);
+  assert.match(gateway, /allowHisRecovery: \['oaa\.his\.validate', 'oaa\.his\.lifecycle'\]\.includes\(binding\.toolId\)/);
   assert.match(gateway, /options\.allowHisRecovery === true && lifecycle\.clusterManagerActivated/);
+  assert.match(gateway, /allowPlatformSupportRecovery: \[[\s\S]*'oaa\.platform\.support\.observability\.validate',[\s\S]*'oaa\.platform\.support\.observability\.lifecycle',[\s\S]*'oaa\.platform\.support\.observability\.configure',[\s\S]*\]\.includes\(binding\.toolId\)/);
+  assert.match(gateway, /options\.allowPlatformSupportRecovery === true && lifecycle\.clusterManagerActivated/);
+  assert.match(gateway, /const OAA_HIS_VALIDATION_IDS = Object\.freeze\(\['cluster-network', 'cluster-dns', 'storage', 'csi-snapshot'\]\)/);
+  assert.match(gateway, /const OAA_HIS_MANAGED_IDS = Object\.freeze\(\['ingress-nginx', 'cert-manager', 'metrics-server'\]\)/);
   assert.match(gateway, /allowCephRecovery: \['oaa\.ceph\.connect', 'oaa\.ceph\.disconnect'\]\.includes\(binding\.toolId\)/);
   assert.match(gateway, /options\.allowCephRecovery === true && lifecycle\.clusterManagerActivated/);
-  assert.match(gateway, /lifecycle\.clusterManagerActivated && \(hisRecoveryTools\.has\(tool\.id\) \|\| cephRecoveryTools\.has\(tool\.id\)\)/);
+  assert.match(gateway, /lifecycle\.clusterManagerActivated && \(hisRecoveryTools\.has\(tool\.id\) \|\| platformSupportRecoveryTools\.has\(tool\.id\) \|\| cephRecoveryTools\.has\(tool\.id\)\)/);
   assert.match(gateway, /options\.allowConsoleRecovery === true && OAA_ACTION_SUBMISSION_ENABLED/);
   assert.match(gateway, /consoleRecoveryTools\.has\(tool\.id\)/);
   assert.match(gateway, /status: 'applied'/);

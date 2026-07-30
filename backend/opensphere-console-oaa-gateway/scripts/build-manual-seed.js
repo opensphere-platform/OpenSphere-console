@@ -5,7 +5,17 @@ const { createHash } = require('crypto');
 const scriptDir = __dirname;
 const gatewayRoot = path.resolve(scriptDir, '..');
 const consoleRoot = path.resolve(gatewayRoot, '..', '..');
-const platformRoot = path.resolve(consoleRoot, '..');
+function findPlatformRoot(start) {
+  let current = path.resolve(start);
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (fs.existsSync(path.join(current, '_DOCS_'))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  throw new Error(`OpenSphere platform root containing _DOCS_ was not found from ${start}`);
+}
+const platformRoot = findPlatformRoot(consoleRoot);
 const outPath = path.join(gatewayRoot, 'manual-seeds', 'opensphere-core-manuals.json');
 
 function resolveSourcePath(relPath) {
@@ -120,6 +130,18 @@ const documents = [
     tags: ['constitution', 'three-service-stacks', 'his', 'cbs', 'pfs', 'bootstrap', 'support-profile'],
   }),
   doc({
+    sourceId: 'opensphere-docs/six-layer-service-realization',
+    title: 'OpenSphere Ten-Perspective and Six-Layer Service Realization Architecture',
+    version: '1.1.0',
+    path: '_DOCS_/20-아키텍처/arch-002-six-layer-service-realization-architecture.md',
+    documentType: 'architecture',
+    authorityTier: 1,
+    perspective: ['main-shell', 'base-substrate', 'cluster-manager', 'foundation'],
+    plane: ['p0-host-substrate', 'p1-control', 'p2-foundation', 'p6-experience'],
+    component: ['srl-l1', 'srl-l2', 'srl-l3', 'srl-l4', 'srl-l5', 'srl-l6', 'his', 'platform-support', 'pfs'],
+    tags: ['architecture', 'six-layer', 'service-realization', 'authority', 'admission', 'evidence'],
+  }),
+  doc({
     sourceId: 'opensphere-docs/p1-control',
     title: 'P1 Control',
     path: '_DOCS_/02-평면설계/P1-control.md',
@@ -195,18 +217,6 @@ const documents = [
     plane: ['p7-access-edge'],
     component: ['edge', 'ingress', 'tls'],
     tags: ['plane', 'p7'],
-  }),
-  doc({
-    sourceId: 'console-docs/platform-control-plane-v2',
-    title: 'OpenSphere Console Platform Control Plane V2',
-    version: '2026-07-22',
-    path: 'OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md',
-    documentType: 'architecture',
-    authorityTier: 1,
-    perspective: ['main-shell', 'ai-level'],
-    plane: ['p1-control', 'p4-intelligence', 'p6-experience'],
-    component: ['supabase', 'gitea', 'observability-binding', 'oaa-gateway'],
-    tags: ['platform-control-plane', 'supabase', 'gitea', 'his-binding', 'oaa'],
   }),
   doc({
     sourceId: 'console-docs/oaa-control-plane-assessment',

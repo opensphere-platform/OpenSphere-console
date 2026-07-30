@@ -60,7 +60,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
 /**
  * Cross-authority operations workspace. Supabase and Gitea remain separate
  * sources of truth; this view correlates their read-only status without
- * manufacturing HIS telemetry or treating an unobserved change as complete.
+ * manufacturing Platform Support telemetry or treating an unobserved change as complete.
  */
 @Component({
   selector: 'os-admin-platform-control',
@@ -88,7 +88,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
         <div class="rail-cell"><span>상태 변경</span><strong>{{ inFlight() }}</strong><small>요청 · 승인 · 적용 대기</small></div>
         <div class="rail-cell"><span>Runtime drift</span><strong [class]="statusClass(driftVerdict())">{{ driftVerdict() }}</strong><small>Kubernetes observed truth</small></div>
         <div class="rail-cell"><span>Recovery evidence</span><strong [class]="statusClass(recoveryVerdict())"><os-cicon [icon]="recoveryVerdict() === 'Verified' ? icons.check : icons.warning" [size]="14" />{{ recoveryVerdict() }}</strong><small>{{ recoverySummary() }}</small></div>
-        <div class="rail-cell"><span>HIS Binding</span><strong [class]="statusClass(hisBinding())">{{ hisBinding() }}</strong><small>HIS 소유 telemetry</small></div>
+        <div class="rail-cell"><span>Support Binding</span><strong [class]="statusClass(supportBinding())">{{ supportBinding() }}</strong><small>SRL-L4 telemetry</small></div>
       </section>
 
       <nav class="workspace-tabs" role="tablist" aria-label="Platform Control 관점">
@@ -154,7 +154,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
               </div>
             }
             <div class="inspector-section"><h3>Sources of truth</h3><dl><div><dt>Data & identity</dt><dd>Supabase</dd></div><div><dt>상태 선언</dt><dd>선언 저장소 (Gitea)</dd></div><div><dt>Runtime truth</dt><dd>Kubernetes observed state</dd></div></dl></div>
-            <div class="inspector-section"><h3>Connection state</h3><dl><div><dt>Supabase</dt><dd [class]="statusClass(supabase() ? 'Connected' : 'Unavailable')">{{ supabase() ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>State Change Authority</dt><dd [class]="statusClass(gitea()?.ready ? 'Connected' : 'Unavailable')">{{ gitea()?.ready ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>HIS Binding</dt><dd [class]="statusClass(hisBinding())">{{ hisBinding() }}</dd></div></dl></div>
+            <div class="inspector-section"><h3>Connection state</h3><dl><div><dt>Supabase</dt><dd [class]="statusClass(supabase() ? 'Connected' : 'Unavailable')">{{ supabase() ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>State Change Authority</dt><dd [class]="statusClass(gitea()?.ready ? 'Connected' : 'Unavailable')">{{ gitea()?.ready ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>Support Binding</dt><dd [class]="statusClass(supportBinding())">{{ supportBinding() }}</dd></div></dl></div>
           </aside>
 
           <section class="timeline-panel">
@@ -331,7 +331,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   recoverySummary(): string { const rows = this.evidenceRows().filter((item) => /Recovery|restore/i.test(item.source + item.assertion)); const attention = rows.filter((item) => item.verdict !== 'Verified').length; return attention ? `${attention} checks need review` : (rows.length ? `${rows.length} checks verified` : 'evidence 없음'); }
   private unitNeedsAttention(unit: RecoveryUnit): boolean { if (/attention|insufficient|failed|unknown/i.test(unit.state)) return true; if (unit.checks?.some((check) => check.verdict !== 'Verified')) return true; return unit.assertions.some((assertion) => /^(restored object files|users|repositories)=0$/i.test(assertion.trim())); }
   driftVerdict(): string { const changes = this.gitea()?.changes || []; if (changes.some((item) => /drift|failed/i.test(item.execution?.drift_status || '') || item.status === 'failed')) return 'Attention'; if (!changes.length) return 'No evidence'; return changes.every((item) => /none|clean|in_sync|no.?drift/i.test(item.execution?.drift_status || '')) ? 'None' : 'Unknown'; }
-  hisBinding(): string {
+  supportBinding(): string {
     const binding = this.readiness()?.prerequisites.find((item) => item.key === 'his-binding');
     if (!binding) return 'Unavailable';
     if (binding.ready) return 'Connected';
@@ -343,7 +343,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   primaryRisk(): { tone: 'warning' | 'danger'; title: string; detail: string; actionLabel: string; action: () => void } {
     if (this.recoveryVerdict() !== 'Verified') return { tone: 'warning', title: 'Recovery evidence incomplete', detail: this.recoverySummary() + '. 복원 결과와 기대값을 확인해야 합니다.', actionLabel: 'Review evidence', action: () => this.openRecoveryEvidence() };
     if (!this.gitea()?.managementReady) return { tone: 'danger', title: 'Gitea management path unavailable', detail: this.gitea()?.reason || '변경 생성·승인 경로를 사용할 수 없습니다.', actionLabel: 'Open journey', action: () => this.activeTab.set('journey') };
-    if (this.hisBinding() !== 'Connected') return { tone: 'warning', title: 'HIS Binding not configured', detail: 'Console은 telemetry를 추정하거나 Prometheus를 생성하지 않습니다.', actionLabel: 'Review binding', action: () => this.activeTab.set('evidence') };
+    if (this.supportBinding() !== 'Connected') return { tone: 'warning', title: 'Platform Support Binding not configured', detail: 'Console은 telemetry를 추정하거나 Prometheus를 생성하지 않습니다.', actionLabel: 'Review binding', action: () => this.activeTab.set('evidence') };
     return { tone: 'warning', title: 'No active platform risk', detail: '현재 읽은 증거 범위에서 즉시 조치가 필요한 항목이 없습니다.', actionLabel: 'Review evidence', action: () => this.activeTab.set('evidence') };
   }
   openRecoveryEvidence(): void { this.evidenceFilter.set('supabase'); this.activeTab.set('evidence'); const row = this.evidenceRows().find((item) => item.verdict !== 'Verified' && /restore|Recovery/i.test(item.source + item.assertion)); if (row) this.selectedEvidenceId.set(row.id); }
@@ -375,7 +375,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
     }
     for (const contract of this.gitea()?.contracts || []) {
       const phase = contract.observability?.phase || 'NotConfigured';
-      rows.push({ id: `runtime-${contract.consumer_id}`, authority: 'runtime', source: 'HIS Binding', assertion: `${contract.display_name || contract.consumer_id} telemetry binding`, expected: 'Bound when HIS provides telemetry', observed: phase, time: contract.observability?.observed_at || null, verdict: phase === 'Bound' ? 'Verified' : 'Not configured', detail: contract.observability?.binding_name || 'Console does not create Prometheus', correlation: contract.consumer_id });
+      rows.push({ id: `runtime-${contract.consumer_id}`, authority: 'runtime', source: 'Platform Support Binding', assertion: `${contract.display_name || contract.consumer_id} telemetry binding`, expected: 'Bound when Platform Support provides telemetry', observed: phase, time: contract.observability?.observed_at || null, verdict: phase === 'Bound' ? 'Verified' : 'Not configured', detail: contract.observability?.binding_name || 'Console does not create Prometheus', correlation: contract.consumer_id });
     }
     for (const change of (this.gitea()?.changes || []).slice(0, 10)) {
       rows.push({ id: `change-${change.request_id}`, authority: change.status === 'applied' ? 'runtime' : 'gitea', source: change.status === 'applied' ? 'Kubernetes Receipt' : 'State Change Authority', assertion: `${change.action} ${change.target}`, expected: 'observed receipt', observed: change.execution?.reconciler_status || change.status, time: change.completed_at || change.execution?.updated_at || change.created_at, verdict: this.changeVerdict(change), detail: change.execution?.pull_number ? `PR #${change.execution.pull_number}` : 'PR not created', correlation: change.request_id });

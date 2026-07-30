@@ -191,7 +191,7 @@ test('OAA Admin distinguishes reachable Gateway health from complete Agent readi
   assert.match(admin, /Complete Agent readiness/);
   assert.match(admin, /control\.agentControl\.blockers/);
   assert.match(admin, /missingCapabilities\.observability/);
-  assert.match(admin, /missingCapabilities\.hisOwner/);
+  assert.match(admin, /missingCapabilities\.platformSupportOwner/);
   assert.match(admin, /missingCapabilities\.cephOwner/);
   assert.match(admin, /\/api\/oaa\/tools\/control-plane\/status/);
   assert.match(admin, /method: 'POST'/);

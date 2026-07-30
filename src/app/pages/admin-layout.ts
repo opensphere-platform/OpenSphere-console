@@ -179,7 +179,7 @@ export class AdminLayout {
         { label: 'Control Plane', route: '/manage/platform-control' },
         { label: 'Platform Release', route: '/manage/platform-release' },
         { label: 'OAA', route: '/manage/oaa' },
-        { label: 'HIS Observability', route: '/manage/observability' },
+        { label: 'Shared Observability', route: '/manage/observability' },
       ],
     },
     {

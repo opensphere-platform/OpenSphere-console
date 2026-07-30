@@ -2,11 +2,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint } = require('./controller');
+const { bindingCapabilities, bindingConsumer, bindingAuthority, bindingContract, bindingPhase, safeBindingEndpoint } = require('./controller');
 
-test('HIS Binding contract classifies the Console consumer without direct Prometheus discovery', () => {
+test('Platform Support Binding contract classifies the Console consumer without direct Prometheus discovery', () => {
   const binding = {
-    metadata: { name: 'console', namespace: 'his', labels: { 'opensphere.io/consumer': 'opensphere-console' } },
+    metadata: { name: 'console', labels: { 'opensphere.io/consumer': 'opensphere-console' } },
+    spec: {
+      owner: 'PlatformSupport',
+      providerRef: {
+        apiVersion: 'platform.opensphere.io/v1alpha1',
+        kind: 'PlatformSupportProfile',
+        name: 'default',
+        capability: 'observability',
+      },
+    },
     status: {
       phase: 'Connected', observedAt: '2026-07-22T00:00:00Z', capabilities: ['metrics', 'logs'],
       contract: { queryEndpoint: 'https://his-observability.example/api/v1', queryTemplates: { console_up: 'up{job="console"}' } },
@@ -14,9 +23,25 @@ test('HIS Binding contract classifies the Console consumer without direct Promet
   };
   assert.deepEqual(bindingCapabilities(binding.status.capabilities), ['metrics', 'logs']);
   assert.equal(bindingConsumer(binding), 'opensphere-console');
+  assert.equal(bindingAuthority(binding).valid, true);
   assert.equal(bindingPhase(binding), 'Connected');
   assert.equal(bindingContract(binding).endpoint, 'https://his-observability.example/api/v1');
   assert.equal(safeBindingEndpoint(bindingContract(binding).endpoint), 'https://his-observability.example/api/v1');
+});
+
+test('legacy HIS ownership and an unbound provider are rejected as authority', () => {
+  assert.equal(bindingAuthority({ spec: { owner: 'HIS' } }).valid, false);
+  assert.equal(bindingAuthority({
+    spec: {
+      owner: 'PlatformSupport',
+      providerRef: {
+        apiVersion: 'platform.opensphere.io/v1alpha1',
+        kind: 'PlatformSupportProfile',
+        name: 'other',
+        capability: 'observability',
+      },
+    },
+  }).valid, false);
 });
 
 test('Console controller has no ServiceMonitor writer or direct Prometheus target/query path', () => {
@@ -53,4 +78,15 @@ test('active Console sources do not retain CBS telemetry installers or namespace
   }
 
   for (const root of activeRoots) visit(path.join(platformRoot, root));
+});
+
+test('Shared Observability permissions are separated from HIS permissions', () => {
+  const migration = fs.readFileSync(
+    path.join(__dirname, '..', 'supabase', 'migrations', '0034_platform_support_observability_permissions.sql'),
+    'utf8',
+  );
+  assert.match(migration, /console\.platform\.support\.read/);
+  assert.match(migration, /console\.platform\.support\.manage/);
+  assert.match(migration, /WHERE role\.code = 'console-admins'/);
+  assert.match(migration, /WHERE role\.code = 'console-operators'/);
 });

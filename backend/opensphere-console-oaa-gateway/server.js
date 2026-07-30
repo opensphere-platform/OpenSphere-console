@@ -80,8 +80,9 @@ const OAA_DELETE_RESOURCE_KINDS = Object.freeze([
   'configmap', 'service', 'deployment', 'statefulset', 'daemonset', 'job', 'cronjob',
   'ingress', 'networkpolicy', 'horizontalpodautoscaler', 'poddisruptionbudget',
 ]);
-const OAA_HIS_VALIDATION_IDS = Object.freeze(['cluster-network', 'cluster-dns', 'kube-prometheus-stack', 'storage', 'csi-snapshot']);
-const OAA_HIS_MANAGED_IDS = Object.freeze(['ingress-nginx', 'cert-manager', 'metrics-server', 'kube-prometheus-stack']);
+const OAA_HIS_VALIDATION_IDS = Object.freeze(['cluster-network', 'cluster-dns', 'storage', 'csi-snapshot']);
+const OAA_HIS_MANAGED_IDS = Object.freeze(['ingress-nginx', 'cert-manager', 'metrics-server']);
+const OAA_PLATFORM_SUPPORT_OBSERVABILITY_ID = 'kube-prometheus-stack';
 const OAA_HIS_LIFECYCLE_ACTIONS = Object.freeze(['install', 'upgrade', 'recover', 'rollback', 'uninstall']);
 const OAA_EXTENSION_LIFECYCLE_ACTIONS = Object.freeze(['install', 'enable', 'disable', 'uninstall', 'rollback']);
 const OAA_FOUNDATION_ENGINES = Object.freeze(['keycloak', 'samba', 'postgres', 'psmdb', 'valkey', 'opensearch', 'rustfs']);
@@ -102,7 +103,9 @@ const OAA_OWNER_ACTION_TOOL_IDS = new Set([
   'oaa.notification.delivery.retry',
   'oaa.his.validate',
   'oaa.his.lifecycle',
-  'oaa.his.observability.configure',
+  'oaa.platform.support.observability.validate',
+  'oaa.platform.support.observability.lifecycle',
+  'oaa.platform.support.observability.configure',
   'oaa.ceph.connect',
   'oaa.ceph.disconnect',
   'oaa.foundation.engine.lifecycle',
@@ -3335,7 +3338,7 @@ function controlToolsSystemMessage() {
       `Tool manifest schema: ${manifest.schema}. Tool IDs: ${manifest.tools.map((t) => t.id).join(', ')}.`,
       `Action binding schema: ${bindings.schema}. Action binding IDs: ${bindings.bindings.map((b) => b.id).join(', ')}.`,
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/oaa/tools/k8s/*.',
-      'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HIS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
+      'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, Platform Support ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
       'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HIS is telemetry authority.',
       'Platform recovery status is structured evidence, not proof that a restore executor exists. The current owner supports sanitized status and isolated-drill planning only; never claim that backup restore can be executed unless drill-request and evidence-promote capabilities are both advertised.',
       'The provider may call only the permission-filtered read tools supplied with this request. Treat their returned data as current evidence and cite what was actually observed.',
@@ -3848,38 +3851,62 @@ function oaaActionBindings() {
       citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
-      id: 'manual-action:opensphere:his-observability-config',
+      id: 'manual-action:opensphere:platform-support-observability-config',
       namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
-      title: 'Read the current managed HIS Observability configuration', intent: 'inspect-his-observability-config',
-      toolId: 'oaa.his.observability.config', controlPlane: 'cluster-manager-his-owner-facade',
+      title: 'Read the current managed Platform Support Observability configuration', intent: 'inspect-platform-support-observability-config',
+      toolId: 'oaa.platform.support.observability.config', controlPlane: 'cluster-manager-platform-support-owner-facade',
       riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
-      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:his:read'] },
-      audit: { eventType: 'his-observability-config-read', targetTemplate: 'HIS/kube-prometheus-stack' },
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:platform-support:read'] },
+      audit: { eventType: 'platform-support-observability-config-read', targetTemplate: 'PlatformSupport/SharedObservability' },
       citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
-      id: 'manual-action:opensphere:his-observability-plan',
+      id: 'manual-action:opensphere:platform-support-observability-plan',
       namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
-      title: 'Plan a closed-schema HIS Observability configuration change', intent: 'plan-his-observability',
-      toolId: 'oaa.his.observability.plan', controlPlane: 'cluster-manager-his-owner-facade',
+      title: 'Plan a closed-schema Platform Support Observability configuration change', intent: 'plan-platform-support-observability',
+      toolId: 'oaa.platform.support.observability.plan', controlPlane: 'cluster-manager-platform-support-owner-facade',
       riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({ config: 'complete SecretRef-only Observability configuration' }),
-      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:his:read'] },
-      audit: { eventType: 'his-observability-plan', targetTemplate: 'HIS/kube-prometheus-stack' },
+      permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:platform-support:read'] },
+      audit: { eventType: 'platform-support-observability-plan', targetTemplate: 'PlatformSupport/SharedObservability' },
       citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
-      id: 'manual-action:opensphere:his-observability-configure',
+      id: 'manual-action:opensphere:platform-support-observability-configure',
       namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
-      title: 'Apply a planned HIS Observability configuration', intent: 'configure-his-observability',
-      toolId: 'oaa.his.observability.configure', controlPlane: 'cluster-manager-his-owner-facade',
-      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure HIS observability public=<public> data-reset=<resetData>',
-      requiredInputs: bindingInput({ config: 'complete SecretRef-only Observability configuration', resetData: 'boolean matching the owner plan', reason: 'human management reason (8+ chars)', confirm: 'configure HIS observability public=<public> data-reset=<resetData>' }),
-      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:his:manage'] },
-      audit: { eventType: 'his-observability-configure', targetTemplate: 'HIS/kube-prometheus-stack' },
+      title: 'Apply a planned Platform Support Observability configuration', intent: 'configure-platform-support-observability',
+      toolId: 'oaa.platform.support.observability.configure', controlPlane: 'cluster-manager-platform-support-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure platform-support observability public=<public> data-reset=<resetData>',
+      requiredInputs: bindingInput({ config: 'complete SecretRef-only Observability configuration', resetData: 'boolean matching the owner plan', reason: 'human management reason (8+ chars)', confirm: 'configure platform-support observability public=<public> data-reset=<resetData>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:platform-support:manage'] },
+      audit: { eventType: 'platform-support-observability-configure', targetTemplate: 'PlatformSupport/SharedObservability' },
       citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:platform-support-observability-validate',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/six-layer-service-realization',
+      sectionId: 'manual-section:opensphere-docs/six-layer-service-realization#srl-l4-platform-support-runtime',
+      title: 'Run the Shared Observability synthetic validation', intent: 'validate-platform-support-observability',
+      toolId: 'oaa.platform.support.observability.validate', controlPlane: 'cluster-manager-platform-support-owner-facade',
+      riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'validate platform-support observability',
+      requiredInputs: bindingInput({ reason: 'human management reason (8+ chars)', confirm: 'validate platform-support observability' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:platform-support:manage'] },
+      audit: { eventType: 'platform-support-observability-validation', targetTemplate: 'PlatformSupport/SharedObservability' },
+      citations: [{ sourceId: 'opensphere-docs/six-layer-service-realization', sourcePath: '_DOCS_/20-아키텍처/arch-002-six-layer-service-realization-architecture.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:platform-support-observability-lifecycle',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/six-layer-service-realization',
+      sectionId: 'manual-section:opensphere-docs/six-layer-service-realization#srl-l4-platform-support-runtime',
+      title: 'Operate the Shared Observability lifecycle', intent: 'manage-platform-support-observability',
+      toolId: 'oaa.platform.support.observability.lifecycle', controlPlane: 'cluster-manager-platform-support-owner-facade',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> platform-support observability<revisionSuffix>',
+      requiredInputs: bindingInput({ action: OAA_HIS_LIFECYCLE_ACTIONS.join(' | '), revision: 'required for rollback', reason: 'human management reason (8+ chars)', confirm: '<action> platform-support observability [to revision <revision>]' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:platform-support:manage'] },
+      audit: { eventType: 'platform-support-observability-lifecycle', targetTemplate: 'PlatformSupport/SharedObservability' },
+      citations: [{ sourceId: 'opensphere-docs/six-layer-service-realization', sourcePath: '_DOCS_/20-아키텍처/arch-002-six-layer-service-realization-architecture.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:his-validate',
@@ -4352,33 +4379,57 @@ function oaaToolManifest() {
         auditEventType: 'notification-delivery-retry',
       },
       {
-        id: 'oaa.his.observability.config',
-        name: 'Read the current managed HIS Observability configuration',
+        id: 'oaa.platform.support.observability.config',
+        name: 'Read the current managed Platform Support Observability configuration',
         channel: 'owner-control-plane', readOnly: true,
-        endpoint: toolEndpoint('POST', '/api/oaa/tools/his/observability/config'),
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/platform-support/observability/config'),
         riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
-        auditEventType: 'his-observability-config-read',
+        auditEventType: 'platform-support-observability-config-read',
       },
       {
-        id: 'oaa.his.observability.plan',
-        name: 'Plan a complete SecretRef-only HIS Observability configuration',
+        id: 'oaa.platform.support.observability.plan',
+        name: 'Plan a complete SecretRef-only Platform Support Observability configuration',
         channel: 'owner-control-plane', readOnly: true,
-        endpoint: toolEndpoint('POST', '/api/oaa/tools/his/observability/plan'),
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/platform-support/observability/plan'),
         riskLevel: 'read', confirmation: 'none',
-        inputSchema: schemaObject({ config: hisObservabilityConfigSchema() }),
-        auditEventType: 'his-observability-plan',
+        inputSchema: schemaObject({ config: platformSupportObservabilityConfigSchema() }),
+        auditEventType: 'platform-support-observability-plan',
       },
       {
-        id: 'oaa.his.observability.configure',
-        name: 'Apply a planned HIS Observability configuration through its owner',
+        id: 'oaa.platform.support.observability.configure',
+        name: 'Apply a planned Platform Support Observability configuration through its owner',
         channel: 'owner-control-plane', readOnly: false,
         endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
-        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure HIS observability public=<public> data-reset=<resetData>',
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure platform-support observability public=<public> data-reset=<resetData>',
         inputSchema: schemaObject({
-          config: hisObservabilityConfigSchema(), resetData: { type: 'boolean' },
+          config: platformSupportObservabilityConfigSchema(), resetData: { type: 'boolean' },
           confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
         }),
-        auditEventType: 'his-observability-configure',
+        auditEventType: 'platform-support-observability-configure',
+      },
+      {
+        id: 'oaa.platform.support.observability.validate',
+        name: 'Run the Shared Observability synthetic validation through its Platform Support owner',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'validate platform-support observability',
+        inputSchema: schemaObject({
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'platform-support-observability-validation',
+      },
+      {
+        id: 'oaa.platform.support.observability.lifecycle',
+        name: 'Operate the Shared Observability lifecycle through its Platform Support owner',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> platform-support observability<revisionSuffix>',
+        inputSchema: schemaObject({
+          action: { type: 'string', enum: OAA_HIS_LIFECYCLE_ACTIONS },
+          revision: { type: 'integer', minimum: 1, required: false },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'platform-support-observability-lifecycle',
       },
       {
         id: 'oaa.his.validate',
@@ -4926,9 +4977,11 @@ const TOOL_PERMISSION = {
   'oaa.notification.delivery.retry': 'console.notification.manage',
   'oaa.his.validate': 'oaa.action.execute.high',
   'oaa.his.lifecycle': 'oaa.action.execute.high',
-  'oaa.his.observability.config': 'console.his.read',
-  'oaa.his.observability.plan': 'console.his.read',
-  'oaa.his.observability.configure': 'console.his.manage',
+  'oaa.platform.support.observability.config': 'console.platform.support.read',
+  'oaa.platform.support.observability.plan': 'console.platform.support.read',
+  'oaa.platform.support.observability.validate': 'console.platform.support.manage',
+  'oaa.platform.support.observability.lifecycle': 'console.platform.support.manage',
+  'oaa.platform.support.observability.configure': 'console.platform.support.manage',
   'oaa.ceph.status': 'console.ceph.read',
   'oaa.ceph.plan': 'console.ceph.read',
   'oaa.ceph.connect': 'console.ceph.manage',
@@ -4955,6 +5008,7 @@ function filterToolManifestForActor(manifest, actor) {
 const lifecycleGateCache = new Map();
 const observabilityCapabilityCache = new Map();
 const hisOwnerCapabilityCache = new Map();
+const platformSupportOwnerCapabilityCache = new Map();
 const cephOwnerCapabilityCache = new Map();
 const recoveryOwnerCapabilityCache = new Map();
 
@@ -4991,6 +5045,30 @@ async function oaaHisOwnerCapabilities(actor) {
     } catch { /* fail closed: an old or unavailable owner exposes no advanced HIS controls */ }
   }
   hisOwnerCapabilityCache.set(subject, { checkedAt: Date.now(), capabilities });
+  return capabilities;
+}
+
+async function oaaPlatformSupportOwnerCapabilities(actor) {
+  const subject = String(actor?.subject || 'unknown');
+  const cached = platformSupportOwnerCapabilityCache.get(subject);
+  if (cached && Date.now() - cached.checkedAt < 15000) return cached.capabilities;
+  let capabilities = new Set();
+  if (hasPermission(actor, 'console.platform.support.read')) {
+    try {
+      // The dedicated SRL-L4 owner facade is currently packaged with Cluster
+      // Manager, but its capability namespace and RBAC are not HIS authority.
+      const response = await fetch(`${CLUSTER_MANAGER_URL}/api/platform-support/oaa/capabilities`, {
+        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body.apiVersion === 'opensphere.io/oaa-platform-support-owner/v1') {
+        capabilities = new Set((body.capabilities || [])
+          .map((value) => String(value))
+          .filter((value) => value.startsWith('observability-')));
+      }
+    } catch { /* fail closed: unavailable packaged owner exposes no SRL-L4 controls */ }
+  }
+  platformSupportOwnerCapabilityCache.set(subject, { checkedAt: Date.now(), capabilities });
   return capabilities;
 }
 
@@ -5078,6 +5156,7 @@ async function requireOaaMutationLifecycle(actor, options = {}) {
     return { ...lifecycle, recoveryGate: 'notification-owner-independent' };
   }
   if (options.allowHisRecovery === true && lifecycle.clusterManagerActivated) return { ...lifecycle, recoveryGate: 'cluster-manager-activated' };
+  if (options.allowPlatformSupportRecovery === true && lifecycle.clusterManagerActivated) return { ...lifecycle, recoveryGate: 'platform-support-owner-packaged-by-cluster-manager' };
   if (options.allowCephRecovery === true && lifecycle.clusterManagerActivated) return { ...lifecycle, recoveryGate: 'cluster-manager-activated' };
   if (!lifecycle.ready) throw { code: lifecycle.reason === 'lifecycle_authority_unavailable' ? 503 : 409, msg: `OAA mutation gate closed: ${lifecycle.reason}` };
   return lifecycle;
@@ -5085,10 +5164,15 @@ async function requireOaaMutationLifecycle(actor, options = {}) {
 
 async function gatedToolManifestForActor(actor) {
   const manifest = await gatedToolManifestFromStore();
-  const [lifecycle, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
-    oaaMutationLifecycle(actor), oaaObservabilityCapabilities(actor), oaaHisOwnerCapabilities(actor), oaaCephOwnerCapabilities(actor), oaaRecoveryOwnerCapabilities(actor),
+  const [lifecycle, observabilityCapabilities, hisOwnerCapabilities, platformSupportOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
+    oaaMutationLifecycle(actor), oaaObservabilityCapabilities(actor), oaaHisOwnerCapabilities(actor), oaaPlatformSupportOwnerCapabilities(actor), oaaCephOwnerCapabilities(actor), oaaRecoveryOwnerCapabilities(actor),
   ]);
-  const hisRecoveryTools = new Set(['oaa.his.validate', 'oaa.his.lifecycle', 'oaa.his.observability.configure']);
+  const hisRecoveryTools = new Set(['oaa.his.validate', 'oaa.his.lifecycle']);
+  const platformSupportRecoveryTools = new Set([
+    'oaa.platform.support.observability.validate',
+    'oaa.platform.support.observability.lifecycle',
+    'oaa.platform.support.observability.configure',
+  ]);
   const cephRecoveryTools = new Set(['oaa.ceph.connect', 'oaa.ceph.disconnect']);
   const consoleRecoveryTools = new Set(['oaa.identity.user.create', 'oaa.identity.user.enabled', 'oaa.identity.role.membership']);
   const evidenceControlTools = new Set(['oaa.evidence.retention.update']);
@@ -5101,15 +5185,17 @@ async function gatedToolManifestForActor(actor) {
     tools: (manifest.tools || []).filter((tool) => tool.readOnly === true || tool.id === 'oaa.knowledge.ingest-manual'
       || consoleRecoveryTools.has(tool.id) || evidenceControlTools.has(tool.id)
       || extensionSecurityTools.has(tool.id) || notificationControlTools.has(tool.id)
-      || (lifecycle.clusterManagerActivated && (hisRecoveryTools.has(tool.id) || cephRecoveryTools.has(tool.id)))),
+      || (lifecycle.clusterManagerActivated && (hisRecoveryTools.has(tool.id) || platformSupportRecoveryTools.has(tool.id) || cephRecoveryTools.has(tool.id)))),
   };
   const capabilityGated = {
     ...lifecycleGated,
     tools: (lifecycleGated.tools || []).filter((tool) => tool.id !== 'oaa.observability.logs.query' || observabilityCapabilities.has('logs'))
       .filter((tool) => tool.id !== 'oaa.observability.traces.query' || observabilityCapabilities.has('traces'))
-      .filter((tool) => tool.id !== 'oaa.his.observability.config' || hisOwnerCapabilities.has('observability-config-read'))
-      .filter((tool) => tool.id !== 'oaa.his.observability.plan' || hisOwnerCapabilities.has('observability-plan'))
-      .filter((tool) => tool.id !== 'oaa.his.observability.configure' || hisOwnerCapabilities.has('observability-configure'))
+      .filter((tool) => tool.id !== 'oaa.platform.support.observability.config' || platformSupportOwnerCapabilities.has('observability-config-read'))
+      .filter((tool) => tool.id !== 'oaa.platform.support.observability.plan' || platformSupportOwnerCapabilities.has('observability-plan'))
+      .filter((tool) => tool.id !== 'oaa.platform.support.observability.validate' || platformSupportOwnerCapabilities.has('observability-validate'))
+      .filter((tool) => tool.id !== 'oaa.platform.support.observability.lifecycle' || platformSupportOwnerCapabilities.has('observability-lifecycle'))
+      .filter((tool) => tool.id !== 'oaa.platform.support.observability.configure' || platformSupportOwnerCapabilities.has('observability-configure'))
       .filter((tool) => tool.id !== 'oaa.ceph.status' || cephOwnerCapabilities.has('status-read'))
       .filter((tool) => tool.id !== 'oaa.ceph.plan' || cephOwnerCapabilities.has('plan-from-import'))
       .filter((tool) => tool.id !== 'oaa.ceph.connect' || cephOwnerCapabilities.has('connect-from-import'))
@@ -5121,6 +5207,7 @@ async function gatedToolManifestForActor(actor) {
     ...filterToolManifestForActor(capabilityGated, actor), lifecycle,
     observabilityCapabilities: [...observabilityCapabilities].sort(),
     hisOwnerCapabilities: [...hisOwnerCapabilities].sort(),
+    platformSupportOwnerCapabilities: [...platformSupportOwnerCapabilities].sort(),
     cephOwnerCapabilities: [...cephOwnerCapabilities].sort(),
     recoveryOwnerCapabilities: [...recoveryOwnerCapabilities].sort(),
   };
@@ -5139,7 +5226,7 @@ async function gatedActionBindingsForActor(actor) {
   };
 }
 
-function hisObservabilityConfigSchema() {
+function platformSupportObservabilityConfigSchema() {
   const closed = (properties) => ({ type: 'object', additionalProperties: false, properties, required: Object.keys(properties) });
   const boundedName = { type: 'string', maxLength: 253 };
   const storage = { type: 'string', pattern: '^[1-9][0-9]*(Mi|Gi|Ti)$' };
@@ -5179,7 +5266,7 @@ function hisObservabilityConfigSchema() {
   });
 }
 
-function sampleHisObservabilityConfig() {
+function samplePlatformSupportObservabilityConfig() {
   return {
     schemaVersion: 1,
     prometheus: { retention: '7d', storageClassName: '', storageSize: '20Gi', remoteWrite: { enabled: false, url: '', secretName: '', secretKey: 'token' } },
@@ -5246,11 +5333,12 @@ function actionCommandForBinding(binding, query = '') {
   }
   if (binding.toolId === 'oaa.notification.channel.test') inputs.channelId = '00000000-0000-4000-8000-000000000000';
   if (binding.toolId === 'oaa.notification.delivery.retry') inputs.deliveryId = '00000000-0000-4000-8000-000000000000';
-  if (['oaa.his.observability.plan', 'oaa.his.observability.configure'].includes(binding.toolId)) inputs.config = sampleHisObservabilityConfig();
-  if (binding.toolId === 'oaa.his.observability.configure') inputs.resetData = false;
+  if (['oaa.platform.support.observability.plan', 'oaa.platform.support.observability.configure'].includes(binding.toolId)) inputs.config = samplePlatformSupportObservabilityConfig();
+  if (binding.toolId === 'oaa.platform.support.observability.configure') inputs.resetData = false;
+  if (binding.toolId === 'oaa.platform.support.observability.lifecycle') inputs.action = 'upgrade';
   if (binding.toolId === 'oaa.his.validate') inputs.id = 'cluster-network';
   if (binding.toolId === 'oaa.his.lifecycle') {
-    inputs.id = 'kube-prometheus-stack'; inputs.action = 'upgrade';
+    inputs.id = 'ingress-nginx'; inputs.action = 'upgrade';
   }
   if (binding.toolId === 'oaa.ceph.plan' || binding.toolId === 'oaa.ceph.connect') {
     inputs.importRef = 'opensphere-ceph-imports/opensphere-ceph-import-00000000-0000-4000-8000-000000000000';
@@ -5429,7 +5517,12 @@ async function executeActionBinding(body = {}, actor = null) {
       };
     }
     await requireOaaMutationLifecycle(actor, {
-      allowHisRecovery: ['oaa.his.validate', 'oaa.his.lifecycle', 'oaa.his.observability.configure'].includes(binding.toolId),
+      allowHisRecovery: ['oaa.his.validate', 'oaa.his.lifecycle'].includes(binding.toolId),
+      allowPlatformSupportRecovery: [
+        'oaa.platform.support.observability.validate',
+        'oaa.platform.support.observability.lifecycle',
+        'oaa.platform.support.observability.configure',
+      ].includes(binding.toolId),
       allowCephRecovery: ['oaa.ceph.connect', 'oaa.ceph.disconnect'].includes(binding.toolId),
       allowConsoleRecovery: ['oaa.identity.user.create', 'oaa.identity.user.enabled', 'oaa.identity.role.membership'].includes(binding.toolId),
       allowEvidenceControl: binding.toolId === 'oaa.evidence.retention.update',
@@ -5537,11 +5630,11 @@ async function executeActionBinding(body = {}, actor = null) {
     case 'oaa.notification.status':
       result = await notificationStatusRead(inputs, actor);
       break;
-    case 'oaa.his.observability.config':
-      result = await hisObservabilityConfigRead(actor);
+    case 'oaa.platform.support.observability.config':
+      result = await platformSupportObservabilityConfigRead(actor);
       break;
-    case 'oaa.his.observability.plan':
-      result = await hisObservabilityPlanRead(inputs, actor);
+    case 'oaa.platform.support.observability.plan':
+      result = await platformSupportObservabilityPlanRead(inputs, actor);
       break;
     case 'oaa.ceph.status':
       result = await cephStatusRead(actor);
@@ -5973,7 +6066,7 @@ function actionSuggestionsSystemMessage(actions) {
 
 const AGENT_MAX_TOOL_ROUNDS = 6;
 
-function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisOwnerCapabilities = new Set(), cephOwnerCapabilities = new Set(), recoveryOwnerCapabilities = new Set()) {
+function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisOwnerCapabilities = new Set(), platformSupportOwnerCapabilities = new Set(), cephOwnerCapabilities = new Set(), recoveryOwnerCapabilities = new Set()) {
   const tools = [];
   const add = (permission, name, description, properties = {}, required = []) => {
     if (!hasPermission(actor, permission)) return;
@@ -6062,12 +6155,12 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
       component: { type: 'string', enum: OAA_RECOVERY_COMPONENTS },
     }, ['component']);
   }
-  if (hisOwnerCapabilities.has('observability-config-read')) {
-    add('console.his.read', 'get_his_observability_config', 'Read the current complete managed HIS Observability configuration and owner policy. Secret values are never returned.', {});
+  if (platformSupportOwnerCapabilities.has('observability-config-read')) {
+    add('console.platform.support.read', 'get_platform_support_observability_config', 'Read the current complete managed Platform Support Shared Observability configuration and owner policy. Secret values are never returned.', {});
   }
-  if (hisOwnerCapabilities.has('observability-plan')) {
-    add('console.his.read', 'plan_his_observability_config', 'Plan a complete closed-schema HIS Observability configuration and return live blockers, warnings, storage effects, and whether data reset is required. Only SecretRef names are accepted.', {
-      config: hisObservabilityConfigSchema(),
+  if (platformSupportOwnerCapabilities.has('observability-plan')) {
+    add('console.platform.support.read', 'plan_platform_support_observability_config', 'Plan a complete closed-schema Platform Support Shared Observability configuration and return live blockers, warnings, storage effects, and whether data reset is required. Only SecretRef names are accepted.', {
+      config: platformSupportObservabilityConfigSchema(),
     }, ['config']);
   }
   if (cephOwnerCapabilities.has('status-read')) {
@@ -6291,7 +6384,7 @@ function ownerConfigString(value, label, maximum = 253) {
   return value;
 }
 
-function normalizeHisObservabilityOwnerConfig(value) {
+function normalizePlatformSupportObservabilityConfig(value) {
   const source = requireExactOwnerObject(value, ['schemaVersion', 'prometheus', 'alertmanager', 'grafana', 'telemetry'], 'config');
   if (source.schemaVersion !== 1) throw { code: 400, msg: 'config.schemaVersion must be 1' };
   const prometheus = requireExactOwnerObject(source.prometheus, ['retention', 'storageClassName', 'storageSize', 'remoteWrite'], 'config.prometheus');
@@ -6341,27 +6434,27 @@ function normalizeHisObservabilityOwnerConfig(value) {
   };
 }
 
-function hisObservabilityConfirmation(config, resetData) {
-  return `configure HIS observability public=${config.grafana.exposureMode === 'PublicIngress'} data-reset=${Boolean(resetData)}`;
+function platformSupportObservabilityConfirmation(config, resetData) {
+  return `configure platform-support observability public=${config.grafana.exposureMode === 'PublicIngress'} data-reset=${Boolean(resetData)}`;
 }
 
-async function hisObservabilityConfigRead(actor) {
-  assertPermission(actor, 'console.his.read');
-  if (!(await oaaHisOwnerCapabilities(actor)).has('observability-config-read')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability config owner capability' };
-  const projection = redactProjection(await clusterManagerGet('/api/his/oaa/observability/config', actor));
-  audit(actor, 'his-observability-config-read', 'HIS/kube-prometheus-stack', 'ok', projection.source || 'managed configuration');
+async function platformSupportObservabilityConfigRead(actor) {
+  assertPermission(actor, 'console.platform.support.read');
+  if (!(await oaaPlatformSupportOwnerCapabilities(actor)).has('observability-config-read')) throw { code: 409, msg: 'signed Platform Support owner does not expose the Shared Observability config capability' };
+  const projection = redactProjection(await clusterManagerGet('/api/platform-support/oaa/observability/config', actor));
+  audit(actor, 'platform-support-observability-config-read', 'PlatformSupport/SharedObservability', 'ok', projection.source || 'managed configuration');
   return projection;
 }
 
-async function hisObservabilityPlanRead(inputs, actor) {
-  assertPermission(actor, 'console.his.read');
-  if (!(await oaaHisOwnerCapabilities(actor)).has('observability-plan')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability plan owner capability' };
+async function platformSupportObservabilityPlanRead(inputs, actor) {
+  assertPermission(actor, 'console.platform.support.read');
+  if (!(await oaaPlatformSupportOwnerCapabilities(actor)).has('observability-plan')) throw { code: 409, msg: 'signed Platform Support owner does not expose the Shared Observability plan capability' };
   requireClosedOwnerInputs(inputs, ['config']);
-  const config = normalizeHisObservabilityOwnerConfig(inputs.config);
+  const config = normalizePlatformSupportObservabilityConfig(inputs.config);
   const projection = redactProjection(await fixedOwnerPost(
-    CLUSTER_MANAGER_URL, '/api/his/oaa/observability/plan', actor, { config }, 'Cluster Manager HIS', 120000,
+    CLUSTER_MANAGER_URL, '/api/platform-support/oaa/observability/plan', actor, { config }, 'Cluster Manager packaged Platform Support owner', 120000,
   ));
-  audit(actor, 'his-observability-plan', 'HIS/kube-prometheus-stack', 'ok', `${projection.changes?.length || 0} changes / ${projection.blockers?.length || 0} blockers`);
+  audit(actor, 'platform-support-observability-plan', 'PlatformSupport/SharedObservability', 'ok', `${projection.changes?.length || 0} changes / ${projection.blockers?.length || 0} blockers`);
   return projection;
 }
 
@@ -6533,16 +6626,49 @@ async function executeOwnerControlAction(toolId, inputs, actor) {
     requireConfirm(inputs.confirm, expected);
     owner = 'Cluster Manager HIS'; target = `HIS/${id}`;
     response = await fixedOwnerPost(CLUSTER_MANAGER_URL, `/api/his/${action}`, actor, payload, owner);
-  } else if (toolId === 'oaa.his.observability.configure') {
-    requireClosedOwnerInputs(inputs, ['config', 'resetData', 'confirm', 'reason']);
-    const ownerCapabilities = await oaaHisOwnerCapabilities(actor);
-    if (!ownerCapabilities.has('observability-configure')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability owner capability' };
-    if (typeof inputs.resetData !== 'boolean') throw { code: 400, msg: 'resetData must be boolean' };
-    const config = normalizeHisObservabilityOwnerConfig(inputs.config);
-    const expected = hisObservabilityConfirmation(config, inputs.resetData);
+  } else if (toolId === 'oaa.platform.support.observability.validate') {
+    requireClosedOwnerInputs(inputs, ['confirm', 'reason']);
+    assertPermission(actor, 'console.platform.support.manage');
+    const ownerCapabilities = await oaaPlatformSupportOwnerCapabilities(actor);
+    if (!ownerCapabilities.has('observability-validate')) throw { code: 409, msg: 'signed Platform Support owner does not expose the Shared Observability validation capability' };
+    requireConfirm(inputs.confirm, 'validate platform-support observability');
+    owner = 'Cluster Manager packaged Platform Support owner'; target = 'PlatformSupport/SharedObservability';
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/platform-support/validate', actor, {
+      id: OAA_PLATFORM_SUPPORT_OBSERVABILITY_ID, reason,
+    }, owner, 600000);
+  } else if (toolId === 'oaa.platform.support.observability.lifecycle') {
+    requireClosedOwnerInputs(inputs, ['action', 'revision', 'confirm', 'reason']);
+    assertPermission(actor, 'console.platform.support.manage');
+    const ownerCapabilities = await oaaPlatformSupportOwnerCapabilities(actor);
+    if (!ownerCapabilities.has('observability-lifecycle')) throw { code: 409, msg: 'signed Platform Support owner does not expose the Shared Observability lifecycle capability' };
+    const action = String(inputs.action || '').trim().toLowerCase();
+    if (!OAA_HIS_LIFECYCLE_ACTIONS.includes(action)) throw { code: 400, msg: 'Platform Support action is outside the closed lifecycle contract' };
+    const payload = { id: OAA_PLATFORM_SUPPORT_OBSERVABILITY_ID, reason };
+    let expected = `${action} platform-support observability`;
+    if (action === 'rollback') {
+      const revision = Number(inputs.revision);
+      if (!Number.isInteger(revision) || revision < 1) throw { code: 400, msg: 'rollback revision must be a positive integer' };
+      payload.revision = revision;
+      payload.confirm = `${OAA_PLATFORM_SUPPORT_OBSERVABILITY_ID}:${revision}`;
+      expected += ` to revision ${revision}`;
+    } else {
+      if (inputs.revision !== undefined) throw { code: 400, msg: 'revision is accepted only for Platform Support rollback' };
+      if (action === 'uninstall') payload.confirm = OAA_PLATFORM_SUPPORT_OBSERVABILITY_ID;
+    }
     requireConfirm(inputs.confirm, expected);
-    owner = 'Cluster Manager HIS'; target = 'HIS/kube-prometheus-stack';
-    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/his/oaa/observability/configure', actor, {
+    owner = 'Cluster Manager packaged Platform Support owner'; target = 'PlatformSupport/SharedObservability';
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, `/api/platform-support/${action}`, actor, payload, owner, 900000);
+  } else if (toolId === 'oaa.platform.support.observability.configure') {
+    requireClosedOwnerInputs(inputs, ['config', 'resetData', 'confirm', 'reason']);
+    assertPermission(actor, 'console.platform.support.manage');
+    const ownerCapabilities = await oaaPlatformSupportOwnerCapabilities(actor);
+    if (!ownerCapabilities.has('observability-configure')) throw { code: 409, msg: 'signed Platform Support owner does not expose the Shared Observability owner capability' };
+    if (typeof inputs.resetData !== 'boolean') throw { code: 400, msg: 'resetData must be boolean' };
+    const config = normalizePlatformSupportObservabilityConfig(inputs.config);
+    const expected = platformSupportObservabilityConfirmation(config, inputs.resetData);
+    requireConfirm(inputs.confirm, expected);
+    owner = 'Cluster Manager packaged Platform Support owner'; target = 'PlatformSupport/SharedObservability';
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/platform-support/oaa/observability/configure', actor, {
       config, resetData: inputs.resetData, confirm: inputs.confirm, reason,
     }, owner, 600000);
   } else if (toolId === 'oaa.ceph.connect') {
@@ -6613,7 +6739,7 @@ async function settledControlPlaneComponent(owner, request) {
 function ownerProjectionName(owner) {
   const names = {
     'Console lifecycle / DUPA': 'console-lifecycle',
-    'HIS ObservabilityBinding': 'his-observability-binding',
+    'Platform Support ObservabilityBinding': 'platform-support-observability-binding',
     'Cluster Manager HIS preflight': 'cluster-manager-his',
     'Cluster Manager Ceph integration': 'cluster-manager-ceph',
     'Supabase Data & Identity': 'supabase-data-identity',
@@ -6727,10 +6853,10 @@ async function projectOwnerControlPlaneStatus(entries, observedAt) {
 async function controlPlaneStatus(actor) {
   assertPermission(actor, 'console.git.change');
   const checkedAt = new Date().toISOString();
-  const [entries, coreReadiness, mutationLifecycle, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities, llmConfigured] = await Promise.all([
+  const [entries, coreReadiness, mutationLifecycle, observabilityCapabilities, hisOwnerCapabilities, platformSupportOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities, llmConfigured] = await Promise.all([
     Promise.all([
       settledControlPlaneComponent('Console lifecycle / DUPA', () => dupaGet('/api/admin/platform-readiness/status', actor)),
-      settledControlPlaneComponent('HIS ObservabilityBinding', () => dupaGet('/api/admin/observability/status', actor)),
+      settledControlPlaneComponent('Platform Support ObservabilityBinding', () => dupaGet('/api/admin/observability/status', actor)),
       settledControlPlaneComponent('Cluster Manager HIS preflight', () => clusterManagerGet('/api/his/status', actor)),
       settledControlPlaneComponent('Cluster Manager Ceph integration', () => clusterManagerGet('/api/ceph/status', actor)),
       settledControlPlaneComponent('Supabase Data & Identity', () => backendGet('/api/identity/supabase/status', actor)),
@@ -6746,6 +6872,7 @@ async function controlPlaneStatus(actor) {
     oaaMutationLifecycle(actor),
     oaaObservabilityCapabilities(actor),
     oaaHisOwnerCapabilities(actor),
+    oaaPlatformSupportOwnerCapabilities(actor),
     oaaCephOwnerCapabilities(actor),
     oaaRecoveryOwnerCapabilities(actor),
     loadEnabledKey('').then(() => true).catch(() => false),
@@ -6769,6 +6896,7 @@ async function controlPlaneStatus(actor) {
     ownerApisUnavailable: unavailable,
     observabilityCapabilities,
     hisOwnerCapabilities,
+    platformSupportOwnerCapabilities,
     cephOwnerCapabilities,
     recoveryOwnerCapabilities,
   });
@@ -6778,7 +6906,7 @@ async function controlPlaneStatus(actor) {
     action: 'control-plane-status',
     checkedAt,
     authorityModel: {
-      dataAndIdentity: 'Supabase', declarations: 'Gitea', runtime: 'Kubernetes', telemetry: 'HIS', lifecycle: 'Console/Cluster Manager/PFS owner facades',
+      dataAndIdentity: 'Supabase', declarations: 'Gitea', runtime: 'Kubernetes', telemetry: 'Platform Support', lifecycle: 'Console/Cluster Manager/Foundation owner facades',
     },
     ready: unavailable.length === 0,
     fullyOperational: agentControl.fullyOperational,
@@ -6956,13 +7084,13 @@ async function executeAgentTool(name, args, actor, context = {}) {
       permissionCode = 'console.recovery.read';
       result = await recoveryPlanRead(input, actor);
       break;
-    case 'get_his_observability_config':
-      permissionCode = 'console.his.read';
-      result = await hisObservabilityConfigRead(actor);
+    case 'get_platform_support_observability_config':
+      permissionCode = 'console.platform.support.read';
+      result = await platformSupportObservabilityConfigRead(actor);
       break;
-    case 'plan_his_observability_config':
-      permissionCode = 'console.his.read';
-      result = await hisObservabilityPlanRead(input, actor);
+    case 'plan_platform_support_observability_config':
+      permissionCode = 'console.platform.support.read';
+      result = await platformSupportObservabilityPlanRead(input, actor);
       break;
     case 'get_ceph_status':
       permissionCode = 'console.ceph.read';
@@ -7126,10 +7254,10 @@ async function chatCompletion(body, actor) {
   }
   if (systemMessages.length) messages = [...systemMessages, ...baseMessages];
   const maxTokens = Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024));
-  const [observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
-    oaaObservabilityCapabilities(actor), oaaHisOwnerCapabilities(actor), oaaCephOwnerCapabilities(actor), oaaRecoveryOwnerCapabilities(actor),
+  const [observabilityCapabilities, hisOwnerCapabilities, platformSupportOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
+    oaaObservabilityCapabilities(actor), oaaHisOwnerCapabilities(actor), oaaPlatformSupportOwnerCapabilities(actor), oaaCephOwnerCapabilities(actor), oaaRecoveryOwnerCapabilities(actor),
   ]);
-  const tools = agentToolDefinitions(actor, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities);
+  const tools = agentToolDefinitions(actor, observabilityCapabilities, hisOwnerCapabilities, platformSupportOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities);
   const usage = normalizeProviderUsage(null);
   let usageRecorded = true;
   let data = {};
@@ -7946,14 +8074,14 @@ const server = http.createServer(async (req, res) => {
       const actor = await verifyAuthed(req);
       return json(res, 200, await notificationStatusRead(await readBody(req), actor));
     }
-    if (url.pathname === '/api/oaa/tools/his/observability/config' && req.method === 'POST') {
+    if (url.pathname === '/api/oaa/tools/platform-support/observability/config' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
       requireClosedOwnerInputs(await readBody(req), []);
-      return json(res, 200, await hisObservabilityConfigRead(actor));
+      return json(res, 200, await platformSupportObservabilityConfigRead(actor));
     }
-    if (url.pathname === '/api/oaa/tools/his/observability/plan' && req.method === 'POST') {
+    if (url.pathname === '/api/oaa/tools/platform-support/observability/plan' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
-      return json(res, 200, await hisObservabilityPlanRead(await readBody(req), actor));
+      return json(res, 200, await platformSupportObservabilityPlanRead(await readBody(req), actor));
     }
     if (url.pathname === '/api/oaa/tools/ceph/status' && req.method === 'POST') {
       const actor = await verifyAuthed(req);

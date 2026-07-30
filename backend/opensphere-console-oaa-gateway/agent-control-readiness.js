@@ -1,5 +1,11 @@
 const REQUIRED_OBSERVABILITY_CAPABILITIES = Object.freeze(['metrics', 'alerting', 'dashboards', 'logs', 'traces', 'otlp']);
-const REQUIRED_HIS_OWNER_CAPABILITIES = Object.freeze(['observability-config-read', 'observability-plan', 'observability-configure']);
+const REQUIRED_PLATFORM_SUPPORT_OWNER_CAPABILITIES = Object.freeze([
+  'observability-config-read',
+  'observability-plan',
+  'observability-configure',
+  'observability-validate',
+  'observability-lifecycle',
+]);
 const REQUIRED_CEPH_OWNER_CAPABILITIES = Object.freeze(['status-read', 'plan-from-import', 'connect-from-import', 'disconnect']);
 const REQUIRED_RECOVERY_OWNER_CAPABILITIES = Object.freeze(['status-read', 'plan-read', 'drill-request', 'evidence-promote']);
 
@@ -20,7 +26,7 @@ function buildAgentControlReadiness(input = {}) {
   const platformReadiness = input.platformReadiness || { ready: false, phase: 'Unknown' };
   const missing = {
     observability: missingCapabilities(REQUIRED_OBSERVABILITY_CAPABILITIES, input.observabilityCapabilities),
-    hisOwner: missingCapabilities(REQUIRED_HIS_OWNER_CAPABILITIES, input.hisOwnerCapabilities),
+    platformSupportOwner: missingCapabilities(REQUIRED_PLATFORM_SUPPORT_OWNER_CAPABILITIES, input.platformSupportOwnerCapabilities),
     cephOwner: missingCapabilities(REQUIRED_CEPH_OWNER_CAPABILITIES, input.cephOwnerCapabilities),
     recoveryOwner: missingCapabilities(REQUIRED_RECOVERY_OWNER_CAPABILITIES, input.recoveryOwnerCapabilities),
   };
@@ -36,7 +42,7 @@ function buildAgentControlReadiness(input = {}) {
   }
   if (Array.isArray(input.ownerApisUnavailable) && input.ownerApisUnavailable.length) blockers.push('owner_api_unavailable');
   if (missing.observability.length) blockers.push('observability_capability_incomplete');
-  if (missing.hisOwner.length) blockers.push('his_owner_capability_incomplete');
+  if (missing.platformSupportOwner.length) blockers.push('platform_support_owner_capability_incomplete');
   if (missing.cephOwner.length) blockers.push('ceph_owner_capability_incomplete');
   if (missing.recoveryOwner.length) blockers.push('recovery_owner_capability_incomplete');
 
@@ -64,13 +70,13 @@ function buildAgentControlReadiness(input = {}) {
     ownerApis: { ready: !(input.ownerApisUnavailable || []).length, unavailable: input.ownerApisUnavailable || [] },
     requiredCapabilities: {
       observability: REQUIRED_OBSERVABILITY_CAPABILITIES,
-      hisOwner: REQUIRED_HIS_OWNER_CAPABILITIES,
+      platformSupportOwner: REQUIRED_PLATFORM_SUPPORT_OWNER_CAPABILITIES,
       cephOwner: REQUIRED_CEPH_OWNER_CAPABILITIES,
       recoveryOwner: REQUIRED_RECOVERY_OWNER_CAPABILITIES,
     },
     observedCapabilities: {
       observability: [...normalizedSet(input.observabilityCapabilities)].sort(),
-      hisOwner: [...normalizedSet(input.hisOwnerCapabilities)].sort(),
+      platformSupportOwner: [...normalizedSet(input.platformSupportOwnerCapabilities)].sort(),
       cephOwner: [...normalizedSet(input.cephOwnerCapabilities)].sort(),
       recoveryOwner: [...normalizedSet(input.recoveryOwnerCapabilities)].sort(),
     },
@@ -80,7 +86,7 @@ function buildAgentControlReadiness(input = {}) {
 
 module.exports = {
   REQUIRED_CEPH_OWNER_CAPABILITIES,
-  REQUIRED_HIS_OWNER_CAPABILITIES,
+  REQUIRED_PLATFORM_SUPPORT_OWNER_CAPABILITIES,
   REQUIRED_OBSERVABILITY_CAPABILITIES,
   REQUIRED_RECOVERY_OWNER_CAPABILITIES,
   buildAgentControlReadiness,

@@ -16,7 +16,7 @@ test('Console management exposes Supabase, Gitea and HIS as distinct authorities
   assert.match(routes, /path: 'observability'/);
   assert.match(routes, /path: 'backbone', redirectTo: 'data-identity'/);
   assert.match(layout, /플랫폼 제어/);
-  assert.match(layout, /HIS Observability/);
+  assert.match(layout, /Shared Observability/);
   assert.match(layout, /route: '\/manage\/state-changes'/);
   assert.doesNotMatch(layout, /route: '\/manage\/change-control'/);
   assert.doesNotMatch(layout, /routerLink="\/manage\/backbone"/);
@@ -96,7 +96,7 @@ test('Platform Control presents support readiness, operations, evidence and jour
   assert.match(readiness, /@Input\(\) embedded = false/);
   assert.match(readiness, /PlatformSupportProfile 사전 점검/);
   assert.match(control, /변경 요청 → 서명된 상태 선언 → Kubernetes 실측 결과/);
-  assert.match(control, /HIS Binding/);
+  assert.match(control, /Platform Support Binding/);
   assert.match(control, /NotConfigured/);
   assert.match(control, /PlatformReadinessService/);
   assert.match(control, /this\.readinessService\.status\(\)/);
@@ -127,7 +127,7 @@ test('DUPA active runtime depends on Supabase audit and never ships legacy data 
   assert.doesNotMatch(deployment, /BACKBONE_PG_|BACKBONE_S3_/);
 });
 
-test('OAA runs in the Console namespace and HIS remains the telemetry owner', () => {
+test('OAA runs in the Console namespace and Platform Support remains the telemetry owner', () => {
   const gateway = read('backend', 'opensphere-console-oaa-gateway', 'server.js');
   const nginx = read('nginx', 'default.conf.template');
   const plan = read('docs', 'PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md');

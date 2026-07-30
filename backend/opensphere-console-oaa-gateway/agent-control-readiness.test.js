@@ -15,7 +15,7 @@ const complete = {
   platformReadiness: { ready: true, phase: 'Ready', capabilities: [] },
   ownerApisUnavailable: [],
   observabilityCapabilities: ['metrics', 'alerting', 'dashboards', 'logs', 'traces', 'otlp'],
-  hisOwnerCapabilities: ['observability-config-read', 'observability-plan', 'observability-configure'],
+  platformSupportOwnerCapabilities: ['observability-config-read', 'observability-plan', 'observability-configure', 'observability-validate', 'observability-lifecycle'],
   cephOwnerCapabilities: ['status-read', 'plan-from-import', 'connect-from-import', 'disconnect'],
   recoveryOwnerCapabilities: ['status-read', 'plan-read', 'drill-request', 'evidence-promote'],
 };
@@ -24,7 +24,7 @@ test('agent readiness is complete only when every control and knowledge gate is 
   const result = buildAgentControlReadiness(complete);
   assert.equal(result.fullyOperational, true);
   assert.deepEqual(result.blockers, []);
-  assert.deepEqual(result.missingCapabilities, { observability: [], hisOwner: [], cephOwner: [], recoveryOwner: [] });
+  assert.deepEqual(result.missingCapabilities, { observability: [], platformSupportOwner: [], cephOwner: [], recoveryOwner: [] });
 });
 
 test('reachable owner APIs cannot hide missing signed capabilities or degraded support', () => {
@@ -39,7 +39,7 @@ test('reachable owner APIs cannot hide missing signed capabilities or degraded s
     },
     platformReadiness: { ready: false, phase: 'Degraded', capabilities: [{ type: 'BackupRestore', ready: false, reason: 'RestoreEvidenceMissing' }] },
     observabilityCapabilities: ['metrics', 'alerting', 'dashboards'],
-    hisOwnerCapabilities: [],
+    platformSupportOwnerCapabilities: [],
     cephOwnerCapabilities: ['status-read'],
     recoveryOwnerCapabilities: ['status-read', 'plan-read'],
   });
@@ -48,8 +48,15 @@ test('reachable owner APIs cannot hide missing signed capabilities or degraded s
   assert.ok(result.blockers.includes('platform_support_degraded'));
   assert.ok(result.blockers.includes('platform_support_backuprestore_not_ready'));
   assert.ok(result.blockers.includes('observability_capability_incomplete'));
+  assert.ok(result.blockers.includes('platform_support_owner_capability_incomplete'));
   assert.deepEqual(result.missingCapabilities.observability, ['logs', 'traces', 'otlp']);
-  assert.deepEqual(result.missingCapabilities.hisOwner, ['observability-config-read', 'observability-plan', 'observability-configure']);
+  assert.deepEqual(result.missingCapabilities.platformSupportOwner, [
+    'observability-config-read',
+    'observability-plan',
+    'observability-configure',
+    'observability-validate',
+    'observability-lifecycle',
+  ]);
   assert.deepEqual(result.missingCapabilities.cephOwner, ['plan-from-import', 'connect-from-import', 'disconnect']);
   assert.deepEqual(result.missingCapabilities.recoveryOwner, ['drill-request', 'evidence-promote']);
   assert.ok(result.blockers.includes('recovery_owner_capability_incomplete'));

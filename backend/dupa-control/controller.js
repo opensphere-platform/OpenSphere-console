@@ -2164,11 +2164,12 @@ async function oaaGatewayReadiness() {
     return { ready: false, components: null, reason: 'oaa_gateway_unreachable' };
   }
 }
-// ── Observability: HIS Binding consumer only ───────────────────────────────
-// Prometheus/Grafana/Alertmanager are HIS-owned.  The Console may read an
-// HIS-issued ObservabilityBinding and relay only contract-approved templates;
-// it never discovers a monitoring namespace, writes ServiceMonitor resources,
-// or accepts arbitrary PromQL from a browser.
+// ── Observability: Platform Support Binding consumer only ─────────────────
+// OpenSphere-installed Prometheus/Grafana/Alertmanager are SRL-L4 Platform
+// Support runtime, not SRL-L1 HIS.  Console reads a PlatformSupport-owned
+// ObservabilityBinding and relays only contract-approved templates; it never
+// discovers a monitoring namespace, writes ServiceMonitor resources, or
+// accepts arbitrary PromQL from a browser.
 const OBSERVABILITY_GROUP = 'observability.opensphere.io';
 const OBSERVABILITY_BINDINGS_PATH = `/apis/${OBSERVABILITY_GROUP}/${V}/observabilitybindings`;
 const OBSERVABILITY_CONSUMERS = new Set(['console', 'opensphere-console']);
@@ -2199,6 +2200,24 @@ function bindingConsumer(binding) {
 }
 function consoleBinding(items) {
   return (items || []).find((binding) => OBSERVABILITY_CONSUMERS.has(bindingConsumer(binding))) || null;
+}
+function bindingAuthority(binding) {
+  const provider = binding?.spec?.providerRef || {};
+  const valid = binding?.spec?.owner === 'PlatformSupport'
+    && provider.apiVersion === 'platform.opensphere.io/v1alpha1'
+    && provider.kind === 'PlatformSupportProfile'
+    && provider.name === 'default'
+    && provider.capability === 'observability';
+  return {
+    valid,
+    owner: String(binding?.spec?.owner || ''),
+    providerRef: {
+      apiVersion: String(provider.apiVersion || ''),
+      kind: String(provider.kind || ''),
+      name: String(provider.name || ''),
+      capability: String(provider.capability || ''),
+    },
+  };
 }
 function bindingContract(binding) {
   const status = binding.status || {};
@@ -2247,17 +2266,26 @@ function boundQueryUrl(endpoint, range) {
 async function observabilityBinding() {
   const result = await k8s('GET', OBSERVABILITY_BINDINGS_PATH);
   if (result.status === 404) return {
-    mode: 'NotConfigured', ready: false, owner: 'HIS', bindingApi: 'Unavailable', capabilities: [],
-    reason: 'HIS ObservabilityBinding API is not configured for this cluster', binding: null,
+    mode: 'NotConfigured', ready: false, owner: 'PlatformSupport', bindingApi: 'Unavailable', capabilities: [],
+    reason: 'Platform Support ObservabilityBinding API is not configured for this cluster', binding: null,
   };
   if (!result.ok) return {
-    mode: 'Degraded', ready: false, owner: 'HIS', bindingApi: `HTTP ${result.status}`, capabilities: [],
+    mode: 'Degraded', ready: false, owner: 'PlatformSupport', bindingApi: `HTTP ${result.status}`, capabilities: [],
     reason: `ObservabilityBinding read failed (HTTP ${result.status})`, binding: null,
   };
   const binding = consoleBinding(result.json?.items);
   if (!binding) return {
-    mode: 'NotConfigured', ready: false, owner: 'HIS', bindingApi: 'Available', capabilities: [],
-    reason: 'No HIS ObservabilityBinding has been issued to opensphere-console', binding: null,
+    mode: 'NotConfigured', ready: false, owner: 'PlatformSupport', bindingApi: 'Available', capabilities: [],
+    reason: 'No Platform Support ObservabilityBinding has been issued to opensphere-console', binding: null,
+  };
+  const authority = bindingAuthority(binding);
+  if (!authority.valid) return {
+    mode: 'Degraded', ready: false, owner: 'PlatformSupport', bindingApi: 'Available', capabilities: [],
+    reason: 'ObservabilityBinding authority mismatch: PlatformSupport/default observability provider is required',
+    binding: {
+      name: binding.metadata?.name || '', namespace: binding.metadata?.namespace || '',
+      phase: 'Degraded', observedAt: binding.status?.observedAt || '', templates: [],
+    },
   };
   const contract = bindingContract(binding);
   const phase = bindingPhase(binding);
@@ -2267,10 +2295,10 @@ async function observabilityBinding() {
   const mode = connected ? 'Connected' : phase === 'Degraded' ? 'Degraded' : 'Pending';
   const missing = [!metrics && 'metrics capability', !endpoint && 'query endpoint'].filter(Boolean).join(', ');
   return {
-    mode, ready: connected, owner: 'HIS', bindingApi: 'Available', capabilities: contract.capabilities,
+    mode, ready: connected, owner: 'PlatformSupport', bindingApi: 'Available', capabilities: contract.capabilities,
     reason: connected ? '' : (phase === 'Degraded'
-      ? String(binding.status?.message || binding.status?.reason || 'HIS Binding is degraded')
-      : `HIS Binding is not usable: ${missing || 'connection is pending'}`),
+      ? String(binding.status?.message || binding.status?.reason || 'Platform Support Binding is degraded')
+      : `Platform Support Binding is not usable: ${missing || 'connection is pending'}`),
     binding: {
       name: binding.metadata?.name || '', namespace: binding.metadata?.namespace || '', phase,
       observedAt: contract.observedAt, templates: Object.keys(contract.templates),
@@ -2294,21 +2322,21 @@ async function observabilityStatus() {
   // The Binding endpoint is intentionally never sent to the browser.
   const { _contract, ...publicBinding } = binding;
   return {
-    owner: 'HIS', mode: publicBinding.mode, ready: publicBinding.ready,
+    owner: 'PlatformSupport', mode: publicBinding.mode, ready: publicBinding.ready,
     binding: publicBinding.binding, bindingApi: publicBinding.bindingApi,
     capabilities: publicBinding.capabilities, reason: publicBinding.reason,
     directEvidence, telemetry: publicBinding.ready
-      ? { enabled: true, source: 'HIS ObservabilityBinding' }
+      ? { enabled: true, source: 'Platform Support ObservabilityBinding' }
       : { enabled: false, source: 'direct Console evidence only' },
   };
 }
 async function observabilityTargets() {
   const binding = await observabilityBinding();
   return {
-    owner: 'HIS', mode: binding.mode, reachable: binding.ready,
+    owner: 'PlatformSupport', mode: binding.mode, reachable: binding.ready,
     active: [],
     reason: binding.ready
-      ? 'Target inventory is not exposed unless HIS publishes an approved target template'
+      ? 'Target inventory is not exposed unless Platform Support publishes an approved target template'
       : binding.reason,
   };
 }
@@ -2316,9 +2344,9 @@ async function observabilityTemplateQuery(template, range) {
   const binding = await observabilityBinding();
   if (!binding.ready) return { ok: false, code: 'ObservabilityBindingUnavailable', hint: binding.reason };
   const expr = binding._contract.templates[String(template || '')];
-  if (typeof expr !== 'string' || !expr.trim()) return { ok: false, code: 'TemplateUnavailable', hint: 'The requested query is not approved by HIS Binding' };
+  if (typeof expr !== 'string' || !expr.trim()) return { ok: false, code: 'TemplateUnavailable', hint: 'The requested query is not approved by Platform Support Binding' };
   const url = boundQueryUrl(binding._contract.endpoint, range);
-  if (!url) return { ok: false, code: 'InvalidBindingEndpoint', hint: 'HIS Binding query endpoint is invalid' };
+  if (!url) return { ok: false, code: 'InvalidBindingEndpoint', hint: 'Platform Support Binding query endpoint is invalid' };
   url.searchParams.set('query', expr);
   if (range) {
     const end = Math.floor(Date.now() / 1000);
@@ -2332,11 +2360,11 @@ async function observabilityTemplateQuery(template, range) {
       headers: { Authorization: `Bearer ${token()}`, accept: 'application/json' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!response.ok) return { ok: false, code: 'HISQueryFailed', hint: `HIS query endpoint HTTP ${response.status}` };
+    if (!response.ok) return { ok: false, code: 'PlatformSupportQueryFailed', hint: `Platform Support query endpoint HTTP ${response.status}` };
     const body = await response.json();
     return { ok: true, resultType: body.data?.resultType || '', result: body.data?.result || [] };
   } catch (error) {
-    return { ok: false, code: 'HISQueryFailed', hint: String(error?.message || error).slice(0, 120) };
+    return { ok: false, code: 'PlatformSupportQueryFailed', hint: String(error?.message || error).slice(0, 120) };
   }
 }
 
@@ -2804,7 +2832,7 @@ async function observabilityProfileEvidence() {
   return {
     ready, stackReady: binding.ready, telemetry,
     mode: binding.mode, binding: binding.binding,
-    reason: ready ? '' : (binding.reason || 'A Connected HIS ObservabilityBinding with metrics, logs, traces, and OTLP is required'),
+    reason: ready ? '' : (binding.reason || 'A Connected Platform Support ObservabilityBinding with metrics, logs, traces, and OTLP is required'),
   };
 }
 async function readPlatformProfile() {
@@ -2979,8 +3007,9 @@ async function reconcilePlatformVerification() {
 }
 
 // ── /metrics (Prometheus exposition, dependency-free; never browser-routed) ──
-// HIS may scrape this only after accepting the Console telemetry descriptor and
-// issuing an ObservabilityBinding. Console code does not create the scrape rule.
+// Platform Support may scrape this only after accepting the Console telemetry
+// descriptor and issuing an ObservabilityBinding. Console code does not create
+// the scrape rule.
 let _httpReqs = 0;
 function metricsText() {
   const mu = process.memoryUsage();
@@ -3591,5 +3620,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable, persistEventBeforeSeen };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, bindingCapabilities, bindingConsumer, bindingAuthority, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable, persistEventBeforeSeen };
 }

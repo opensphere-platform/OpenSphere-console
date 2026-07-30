@@ -245,7 +245,7 @@ const LOGOS = {
             <div><dt>Data &amp; Identity 현재 상태</dt><dd>Supabase owner API · RLS-backed projection</dd></div>
             <div><dt>선언형 변경 현재 상태</dt><dd>State Change Authority · Gitea owner API · Kubernetes receipt</dd></div>
             <div><dt>노드 OS 시계열</dt><dd>Beszel read-only adapter · Kubernetes Node correlation</dd></div>
-            <div><dt>애플리케이션 관측</dt><dd>HIS Observability · 별도 SLO, trace, 장기보존 계약</dd></div>
+            <div><dt>애플리케이션 관측</dt><dd>Platform Support Shared Observability · 별도 SLO, trace, 장기보존 계약</dd></div>
             <div><dt>감사 정본</dt><dd>Supabase append-only audit projection</dd></div>
           </dl>
         </section>

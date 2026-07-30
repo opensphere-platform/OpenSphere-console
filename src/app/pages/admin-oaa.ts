@@ -37,7 +37,7 @@ interface AgentControlReadiness {
   apiVersion: string;
   fullyOperational: boolean;
   blockers: string[];
-  missingCapabilities: { observability: string[]; hisOwner: string[]; cephOwner: string[]; recoveryOwner?: string[] };
+  missingCapabilities: { observability: string[]; platformSupportOwner: string[]; cephOwner: string[]; recoveryOwner?: string[] };
   platformSupport: { ready: boolean; phase: string };
 }
 interface OaaControlPlaneStatus {
@@ -346,7 +346,7 @@ interface OaaActionBindingManifest {
                   }
                   <div class="oaa-capability-gaps">
                     <span>Observability missing <strong>{{ control.agentControl.missingCapabilities.observability.join(', ') || 'none' }}</strong></span>
-                    <span>HIS owner missing <strong>{{ control.agentControl.missingCapabilities.hisOwner.join(', ') || 'none' }}</strong></span>
+                    <span>Platform Support owner missing <strong>{{ control.agentControl.missingCapabilities.platformSupportOwner.join(', ') || 'none' }}</strong></span>
                     <span>Ceph owner missing <strong>{{ control.agentControl.missingCapabilities.cephOwner.join(', ') || 'none' }}</strong></span>
                     <span>Recovery owner missing <strong>{{ control.agentControl.missingCapabilities.recoveryOwner?.join(', ') || 'none' }}</strong></span>
                   </div>

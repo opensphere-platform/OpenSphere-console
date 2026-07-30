@@ -23,7 +23,7 @@ interface BindingRef {
 }
 
 interface ObservabilityState {
-  owner: 'HIS';
+  owner: 'PlatformSupport';
   mode: 'NotConfigured' | 'Pending' | 'Connected' | 'Degraded';
   ready: boolean;
   binding: BindingRef | null;
@@ -35,10 +35,11 @@ interface ObservabilityState {
 }
 
 /**
- * Console Observability is intentionally an HIS Binding consumer.  This page
- * never discovers a Prometheus service, configures HIS, or renders synthetic
- * metrics while a binding is absent.  Direct Console deployment evidence is
- * still valuable before HIS is connected, but is not represented as telemetry.
+ * Console Observability is intentionally an SRL-L4 Platform Support Binding
+ * consumer.  This page never discovers a Prometheus service, changes the
+ * runtime, or renders synthetic metrics while a binding is absent.  Direct
+ * Console deployment evidence is still valuable before the binding is
+ * connected, but is not represented as telemetry or HIS readiness.
  */
 @Component({
   selector: 'os-admin-observability',
@@ -46,55 +47,57 @@ interface ObservabilityState {
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="os-page">
-      <os-page-header title="Observability Integration" tag="HIS Binding · Read-only consumer" />
+      <os-page-header title="Observability Integration" tag="Platform Support Binding · Read-only consumer" />
 
       @if (down(); as detail) {
         <os-backend-unavailable
-          feature="HIS Observability Binding"
+          feature="Platform Support Observability Binding"
           backend="opensphere-console-dupa-controller (/api/admin/observability/status)"
-          hint="Console 제어 API와 HIS Binding 읽기 권한을 확인하세요. Console은 Prometheus 또는 Grafana를 설치·탐색하지 않습니다."
+          hint="Console 제어 API와 Platform Support Binding 읽기 권한을 확인하세요. Console은 Prometheus 또는 Grafana를 설치·탐색하지 않습니다."
           [detail]="detail"
         />
       } @else if (state(); as current) {
         <p class="os-sub">
-          관측성의 소유자는 <strong>HIS</strong>입니다. Console은 HIS가 발급한 <code>ObservabilityBinding</code>만 읽어 지표·SLO·경보 표시를 활성화합니다.
+          OpenSphere가 설치한 공유 관측 runtime은 <strong>SRL-L4 Platform Support</strong>가 소유합니다.
+          Console은 <code>PlatformSupportProfile/default</code>에 결속된 <code>ObservabilityBinding</code>만 읽어
+          지표·SLO·경보 표시를 활성화합니다. 이 계약은 HIS Ready를 대신하지 않습니다.
         </p>
 
         <div class="os-actions">
           <button class="btn btn-outline" [disabled]="busy()" (click)="refresh()">새로고침</button>
           @if (busy()) { <span class="spinner spinner-inline"></span> }
-          <a class="btn btn-sm btn-link" routerLink="/p/cluster-manager/his/his">HIS 관리로 이동</a>
+          <a class="btn btn-sm btn-link" routerLink="/p/cluster-manager/his/his">Shared Observability 관리로 이동</a>
         </div>
 
         @if (current.mode === 'Connected') {
-          <clr-alert clrAlertType="success" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">HIS Binding 연결됨 — 승인된 관측 데이터만 Console에 표시할 수 있습니다.</span></clr-alert-item></clr-alert>
+          <clr-alert clrAlertType="success" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">Platform Support Binding 연결됨 — 승인된 관측 데이터만 Console에 표시할 수 있습니다.</span></clr-alert-item></clr-alert>
         } @else if (current.mode === 'NotConfigured') {
-          <clr-alert clrAlertType="info" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">HIS Binding이 아직 없습니다. Console은 아래 직접 증거만 표시하며 메트릭·SLO·경보는 표시하지 않습니다.</span></clr-alert-item></clr-alert>
+          <clr-alert clrAlertType="info" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">Platform Support Binding이 아직 없습니다. Console은 아래 직접 증거만 표시하며 메트릭·SLO·경보는 표시하지 않습니다.</span></clr-alert-item></clr-alert>
         } @else if (current.mode === 'Pending') {
-          <clr-alert clrAlertType="warning" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">HIS Binding이 준비 중입니다. 완료 전까지 telemetry-dependent 운영 게이트는 충족되지 않습니다.</span></clr-alert-item></clr-alert>
+          <clr-alert clrAlertType="warning" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">Platform Support Binding이 준비 중입니다. 완료 전까지 telemetry-dependent 운영 게이트는 충족되지 않습니다.</span></clr-alert-item></clr-alert>
         } @else {
-          <clr-alert clrAlertType="danger" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">HIS Binding이 저하되었습니다. 마지막 관측 계약을 신뢰 가능한 Ready 상태로 표시하지 않습니다.</span></clr-alert-item></clr-alert>
+          <clr-alert clrAlertType="danger" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">Platform Support Binding이 저하되었습니다. 마지막 관측 계약을 신뢰 가능한 Ready 상태로 표시하지 않습니다.</span></clr-alert-item></clr-alert>
         }
 
         <section class="manage-status-rail" aria-label="Observability 계약 상태">
           <div><span>Authority owner</span><strong>{{ current.owner }}</strong><small>Console은 read-only consumer</small></div>
           <div><span>Binding</span><strong [class.ok]="current.mode === 'Connected'" [class.warn]="current.mode === 'Pending' || current.mode === 'Degraded'" [class.neutral]="current.mode === 'NotConfigured'">{{ current.mode }}</strong><small>{{ current.bindingApi }}</small></div>
           <div><span>Telemetry</span><strong [class.ok]="current.telemetry.enabled" [class.neutral]="!current.telemetry.enabled">{{ current.telemetry.enabled ? 'Enabled' : 'Not enabled' }}</strong><small>{{ current.telemetry.source }}</small></div>
-          <div><span>Capabilities</span><strong>{{ current.capabilities.length }}/{{ capabilityList.length }}</strong><small>HIS 계약상 제공</small></div>
+          <div><span>Capabilities</span><strong>{{ current.capabilities.length }}/{{ capabilityList.length }}</strong><small>Platform Support 계약상 제공</small></div>
           <div><span>Direct evidence</span><strong>{{ readyEvidence(current) }}/{{ current.directEvidence.length }}</strong><small>Console 가용성만 확인</small></div>
         </section>
 
         <section class="os-card">
-          <div class="os-card-h">HIS ObservabilityBinding</div>
+          <div class="os-card-h">Platform Support ObservabilityBinding</div>
           @if (current.binding; as binding) {
             <dl class="binding-grid">
               <div><dt>이름</dt><dd><code>{{ binding.namespace }}/{{ binding.name }}</code></dd></div>
-              <div><dt>HIS 상태</dt><dd><span class="label" [class.label-success]="current.ready" [class.label-warning]="!current.ready">{{ binding.phase }}</span></dd></div>
-              <div><dt>관측 시각</dt><dd>{{ binding.observedAt || 'HIS가 아직 보고하지 않음' }}</dd></div>
+              <div><dt>지원 runtime 상태</dt><dd><span class="label" [class.label-success]="current.ready" [class.label-warning]="!current.ready">{{ binding.phase }}</span></dd></div>
+              <div><dt>관측 시각</dt><dd>{{ binding.observedAt || 'Platform Support가 아직 보고하지 않음' }}</dd></div>
               <div><dt>승인된 질의 템플릿</dt><dd>{{ binding.templates.length ? binding.templates.join(', ') : '없음' }}</dd></div>
             </dl>
           } @else {
-            <p class="empty">Binding 없음 — HIS 또는 Cluster Manager에서 Console 소비자용 Binding을 발급해야 합니다.</p>
+            <p class="empty">Binding 없음 — Platform Support owner가 Console 소비자용 Binding을 발급해야 합니다.</p>
           }
           <p class="os-sub">{{ current.reason || 'Binding 계약이 유효합니다.' }}</p>
         </section>
@@ -108,7 +111,7 @@ interface ObservabilityState {
               </span>
             }
           </div>
-          <p class="os-sub">이 목록은 HIS Binding의 명시적 capability만 반영합니다. Console이 Prometheus/Grafana 상태를 추측하거나 직접 발견하지 않습니다.</p>
+          <p class="os-sub">이 목록은 Platform Support Binding의 명시적 capability만 반영합니다. Console이 Prometheus/Grafana 상태를 추측하거나 직접 발견하지 않습니다.</p>
         </section>
 
         <section class="os-card">
@@ -171,11 +174,11 @@ export class AdminObservability implements OnInit, OnDestroy {
     if (!silent) this.busy.set(true);
     try {
       const response = await this.http.request('/api/admin/observability/status', { cache: 'no-store' });
-      if (!response.ok) { this.down.set(`HIS Binding status HTTP ${response.status}`); return; }
+      if (!response.ok) { this.down.set(`Platform Support Binding status HTTP ${response.status}`); return; }
       this.state.set(await response.json() as ObservabilityState);
       this.down.set('');
     } catch (error) {
-      this.down.set(`HIS Binding 상태 조회 실패: ${String(error)}`);
+      this.down.set(`Platform Support Binding 상태 조회 실패: ${String(error)}`);
     } finally {
       if (!silent) this.busy.set(false);
     }

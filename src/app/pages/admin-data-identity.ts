@@ -86,7 +86,7 @@ interface SupabaseStatus {
                 <ng-template osCell="status" let-component><span class="label" [class.label-success]="component.ready" [class.label-warning]="!component.ready">{{ component.ready ? 'Ready' : 'Unavailable' }}</span></ng-template>
                 <ng-template osCell="detail" let-component><span class="os-mono">{{ component.detail }}</span></ng-template>
               </os-datagrid>
-              <div class="visibility-grid" aria-label="Supabase 가시성 범위"><section><span>Identity boundary</span><strong>{{ current.auth.authority }}</strong><small>{{ current.auth.sessionModel }}</small></section><section><span>Database boundary</span><strong>{{ current.database.authority }}</strong><small>{{ current.database.rls.state }} · {{ current.database.rls.evidence }}</small></section><section><span>Consumer coverage</span><strong>{{ current.integrations.length }} contracts</strong><small>{{ boundIntegrations(current) }} HIS bindings · 나머지는 NotConfigured</small></section></div>
+              <div class="visibility-grid" aria-label="Supabase 가시성 범위"><section><span>Identity boundary</span><strong>{{ current.auth.authority }}</strong><small>{{ current.auth.sessionModel }}</small></section><section><span>Database boundary</span><strong>{{ current.database.authority }}</strong><small>{{ current.database.rls.state }} · {{ current.database.rls.evidence }}</small></section><section><span>Consumer coverage</span><strong>{{ current.integrations.length }} contracts</strong><small>{{ boundIntegrations(current) }} Platform Support bindings · 나머지는 NotConfigured</small></section></div>
               <p class="os-sub">상태 데이터는 Supabase에서, 선언형 변경 원문·diff·review·commit은 Gitea에서 조회합니다. Kubernetes는 두 시스템의 실제 반영 결과만 보고합니다.</p>
             </div></section>
         }
@@ -165,9 +165,9 @@ interface SupabaseStatus {
               <os-datagrid [columns]="integrationColumns" [rows]="current.integrations" empty="등록된 Console consumer contract가 없습니다.">
                 <ng-template osCell="consumer" let-item><strong>{{ item.displayName || item.consumerId }}</strong><small class="os-mono">{{ item.consumerId }}</small></ng-template>
                 <ng-template osCell="data" let-item><span>{{ join(item.schemas) || '—' }}</span><small>{{ join(item.buckets) || 'Storage 미사용' }}</small></ng-template>
-                <ng-template osCell="binding" let-item><span class="label" [class.label-success]="item.observability?.phase === 'Bound'" [class.label-warning]="item.observability?.phase !== 'Bound'">{{ item.observability?.phase || 'NotConfigured' }}</span><small>{{ item.observability?.binding || 'HIS Binding 없음' }}</small></ng-template>
+                <ng-template osCell="binding" let-item><span class="label" [class.label-success]="item.observability?.phase === 'Bound'" [class.label-warning]="item.observability?.phase !== 'Bound'">{{ item.observability?.phase || 'NotConfigured' }}</span><small>{{ item.observability?.binding || 'Platform Support Binding 없음' }}</small></ng-template>
               </os-datagrid>
-              <p class="os-sub">HIS Binding이 <strong>Bound</strong>일 때만 telemetry freshness를 Console에 표시합니다. Binding이 없으면 Console이 Prometheus를 새로 만들거나 metric을 추정하지 않고 <strong>NotConfigured</strong>으로 반응합니다.</p>
+              <p class="os-sub">Platform Support Binding이 <strong>Bound</strong>일 때만 telemetry freshness를 Console에 표시합니다. Binding이 없으면 Console이 Prometheus를 새로 만들거나 metric을 추정하지 않고 <strong>NotConfigured</strong>로 반응합니다.</p>
           </section>
         }
       }
@@ -188,7 +188,7 @@ export class AdminDataIdentity implements OnInit, OnDestroy {
   readonly componentColumns: OsColumn[] = [{ key: 'name', label: 'Supabase 서비스' }, { key: 'responsibility', label: 'Console 책임' }, { key: 'status', label: '상태' }, { key: 'detail', label: '증거' }];
   readonly roleColumns: OsColumn[] = [{ key: 'code', label: '역할' }, { key: 'description', label: '설명' }];
   readonly bucketColumns: OsColumn[] = [{ key: 'name', label: 'Bucket' }, { key: 'public', label: '공개 범위' }, { key: 'limit', label: '파일 한도' }];
-  readonly integrationColumns: OsColumn[] = [{ key: 'consumer', label: 'Consumer' }, { key: 'status', label: '계약 상태' }, { key: 'data', label: 'Supabase 경계' }, { key: 'binding', label: 'HIS Binding' }];
+  readonly integrationColumns: OsColumn[] = [{ key: 'consumer', label: 'Consumer' }, { key: 'status', label: '계약 상태' }, { key: 'data', label: 'Supabase 경계' }, { key: 'binding', label: 'Support Binding' }];
   readonly status = signal<SupabaseStatus | null>(null); readonly down = signal(''); readonly busy = signal(false); readonly message = signal<{ type: 'danger' | 'info'; text: string } | null>(null);
   readonly ready = computed(() => this.status()?.components.every((component) => component.ready) ?? false);
   private readonly http = inject(HttpService); private timer: ReturnType<typeof setInterval> | null = null;
