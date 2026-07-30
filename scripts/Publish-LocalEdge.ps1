@@ -4,6 +4,7 @@ param(
   [string]$SourceRevision = '',
   [string]$Platform = '',
   [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git',
+  [string]$SetupRepository = 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git',
   [ValidateSet(
     'console',
     'backend',
@@ -146,6 +147,7 @@ $platformRoot = Split-Path $repoRoot -Parent
 $workspace = Join-Path $platformRoot ".codex-tmp\local-edge-$($SourceRevision.Substring(0, 12))"
 $consoleCheckout = Join-Path $workspace 'OpenSphere-console'
 $sdkCheckout = Join-Path $workspace 'OpenSphere-SDK'
+$setupCheckout = Join-Path $workspace 'OpenSphere-Setup-CLI'
 $metadataRoot = Join-Path $workspace 'metadata'
 
 if (Test-Path -LiteralPath $workspace) {
@@ -160,9 +162,19 @@ Write-Host "[immutable] $localTag"
 Write-Host "[platform] $Platform"
 Write-Host "[policy] build-authority=localhost, release-class=pre-ga, ga-eligible=false"
 
-Write-Host '[step 01/06] Prepare clean Console and SDK source'
+Write-Host '[step 01/06] Prepare clean Console, SDK and governed Setup source'
 Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRevision
 Invoke-Checked git clone --depth 1 --branch main $SdkRepository $sdkCheckout
+$backendSelected = $Components.Count -eq 0 -or $Components -contains 'backend'
+$setupSourceRevision = ''
+if ($backendSelected) {
+  Invoke-Checked git clone --depth 1 --branch main $SetupRepository $setupCheckout
+  $setupSourceRevision = (& git -C $setupCheckout rev-parse HEAD).Trim()
+  if ($setupSourceRevision -notmatch '^[0-9a-f]{40}$') {
+    throw 'SetupSourceRevision must resolve to a full lowercase Git commit.'
+  }
+  Write-Host "[setup] $setupSourceRevision"
+}
 
 Write-Host '[step 02/06] Declare the CLI platforms this host can build'
 # The macOS CLI reaches the Keychain through cgo against Security.framework, so it
@@ -194,7 +206,7 @@ if ($UseExistingRegistryLogin) {
 
 $allImages = @(
   [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $workspace; File = (Join-Path $consoleCheckout 'Dockerfile') },
-  [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile') },
+  [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'); SetupContext = $setupCheckout },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'oaaGateway'; Image = 'opensphere-console-oaa-gateway'; Context = (Join-Path $consoleCheckout 'backend\opensphere-console-oaa-gateway'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-oaa-gateway\Dockerfile') },
   [ordered]@{ Key = 'oaaGovernedAdapter'; Image = 'opensphere-oaa-governed-adapter'; Context = (Join-Path $consoleCheckout 'backend\oaa-governed-adapter'); File = (Join-Path $consoleCheckout 'backend\oaa-governed-adapter\Dockerfile') },
@@ -241,8 +253,17 @@ for ($index = 0; $index -lt $images.Count; $index += 1) {
     '--label', 'opensphere.io/ga-eligible=false',
     '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local',
     '--file', $item.File,
-    $item.Context
   )
+  if ($item.Key -eq 'backend') {
+    if (-not $setupSourceRevision -or -not (Test-Path -LiteralPath $item.SetupContext)) {
+      throw 'Backend build requires the clean governed Setup CLI context.'
+    }
+    $arguments += @(
+      '--build-context', "setup-cli=$($item.SetupContext)",
+      '--build-arg', "SETUP_SOURCE_REVISION=$setupSourceRevision"
+    )
+  }
+  $arguments += $item.Context
   Invoke-Checked docker @arguments
   $metadata = Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json
   $digest = $metadata.'containerimage.digest'

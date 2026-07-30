@@ -12,6 +12,7 @@ import { AdminChangeControl } from './pages/admin-change-control';
 import { AdminOaa } from './pages/admin-oaa';
 import { AdminObservability } from './pages/admin-observability';
 import { AdminPlatformControl } from './pages/admin-platform-control';
+import { AdminPlatformRelease } from './pages/admin-platform-release';
 import { AdminNotifications } from './pages/admin-notifications';
 import { AdminExternalChannels } from './pages/admin-external-channels';
 import { AdminAudit } from './pages/admin-audit';
@@ -72,6 +73,7 @@ export const routes: Routes = [
       // single-host BBSS product model.
       { path: 'bbss', redirectTo: 'foundation-services', pathMatch: 'full' },
       { path: 'platform-control', component: AdminPlatformControl },
+      { path: 'platform-release', component: AdminPlatformRelease },
       { path: 'data-identity', component: AdminDataIdentity },
       { path: 'state-changes', component: AdminChangeControl },
       // Permanent compatibility path for existing bookmarks and external

@@ -75,7 +75,13 @@ test('the macOS CLI is an optional build input that a release turns back into a 
 
   // The local edge publisher no longer recycles darwin binaries out of the
   // previous image, so an unrelated backend/os-cli commit cannot block it.
-  assert.doesNotMatch(publisher, /--build-context/);
+  // The only named context it may add is the clean, revision-recorded Setup
+  // checkout consumed by the backend Platform Release executor.
+  assert.doesNotMatch(publisher, /--build-context[^\r\n]*darwin/i);
+  assert.match(publisher, /git clone --depth 1 --branch main \$SetupRepository \$setupCheckout/);
+  assert.match(publisher, /'--build-context', "setup-cli=\$\(\$item\.SetupContext\)"/);
+  assert.match(publisher, /'--build-arg', "SETUP_SOURCE_REVISION=\$setupSourceRevision"/);
+  assert.doesNotMatch(publisher, /setup-cli=https?:\/\//i);
   assert.doesNotMatch(publisher, /opensphere-cli-darwin/);
   assert.doesNotMatch(publisher, /backend\/os-cli changed/);
 });
