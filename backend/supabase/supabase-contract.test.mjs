@@ -27,9 +27,17 @@ test('Console release source contains every current Setup migration contract', (
     path.join(here, 'migrations', '0031_foundation_bootstrap_consumer.sql'),
     'utf8'
   );
+  const auditLedger = readFileSync(
+    path.join(here, 'migrations', '0032_audit_event_ledger_chain.sql'),
+    'utf8'
+  );
   assert.match(cephRuntime, /opensphere\.ceph\.rook-prerequisite\/v2/);
   assert.match(foundationBootstrap, /opensphere\.foundation\.bootstrap\/v1/);
   assert.match(foundationBootstrap, /'console-native'/);
   assert.doesNotMatch(foundationBootstrap, /'platform'/);
   assert.match(foundationBootstrap, /browserWrite":false/);
+  assert.match(auditLedger, /chain_sequence bigint/);
+  assert.match(auditLedger, /ledger_hash text/);
+  assert.match(auditLedger, /ENABLE ALWAYS TRIGGER audit_event_assign_ledger_chain/);
+  assert.match(auditLedger, /ENABLE ALWAYS TRIGGER audit_event_reject_truncate/);
 });

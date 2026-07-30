@@ -33,6 +33,7 @@ const externalChannelsBackup = read('migrations', '0025_external_channels_backup
 const migrationLedger = read('migrations', '0026_schema_migration_ledger.sql');
 const externalChannelReasonPolicy = read('migrations', '0027_external_channel_reason_policy.sql');
 const browserSessionAndMonitoring = read('migrations', '0029_browser_session_and_baseline_monitoring.sql');
+const auditEventLedgerChain = read('migrations', '0032_audit_event_ledger_chain.sql');
 const installer = read('install.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
@@ -198,6 +199,14 @@ assert.match(migrationLedger, /sha256 text NOT NULL/);
 assert.match(migrationLedger, /source_revision text NOT NULL/);
 assert.match(migrationLedger, /schema_migration_append_only/);
 assert.match(migrationLedger, /REVOKE ALL ON TABLE console\.schema_migration FROM PUBLIC/);
+assert.match(auditEventLedgerChain, /LOCK TABLE audit\.event IN ACCESS EXCLUSIVE MODE/);
+assert.match(auditEventLedgerChain, /audit\.compute_event_ledger_hash/);
+assert.match(auditEventLedgerChain, /pg_advisory_xact_lock/);
+assert.match(auditEventLedgerChain, /CREATE TRIGGER audit_event_assign_ledger_chain/);
+assert.match(auditEventLedgerChain, /BEFORE TRUNCATE ON audit\.event/);
+assert.match(auditEventLedgerChain, /FOR EACH STATEMENT EXECUTE FUNCTION audit\.reject_event_truncate/);
+assert.match(auditEventLedgerChain, /CREATE OR REPLACE FUNCTION audit\.verify_event_ledger_chain/);
+assert.match(auditEventLedgerChain, /REVOKE UPDATE, DELETE, TRUNCATE ON audit\.event/);
 assert.match(nginx, /location \^~ \/auth\/v1\//);
 assert.match(nginx, /opensphere-supabase-auth\.opensphere-console-data\.svc\.cluster\.local/);
 assert.match(nginx, /location \^~ \/storage\/v1\//);
