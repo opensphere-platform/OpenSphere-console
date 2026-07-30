@@ -309,6 +309,21 @@ function Get-SupabaseMigrationChecksum([string]$MigrationId) {
   return (($output | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | Select-Object -Last 1)
 }
 
+function Get-CanonicalMigrationChecksum([string]$Path) {
+  # Git may materialize the same reviewed SQL with LF on Linux and CRLF on
+  # Windows. The migration ledger must attest source content, not the checkout
+  # platform's newline convention. Canonical UTF-8/LF also matches the hashes
+  # produced by the Linux release and Setup paths.
+  $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n").Replace("`r", "`n")
+  $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
+  $sha256 = [Security.Cryptography.SHA256]::Create()
+  try {
+    return ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $sha256.Dispose()
+  }
+}
+
 # Do not create these roles ourselves: their membership and grants are owned by
 # the Supabase PostgreSQL image.  A missing role means the image contract has
 # changed, and the installer must fail closed rather than invent a weaker role.
@@ -431,7 +446,7 @@ GRANT SELECT ON TABLE console.schema_migration TO opensphere_console_backend;
 Invoke-SupabaseMigrationPsql $migrationLedgerBootstrap
 foreach ($migration in $migrations) {
   $migrationId = [IO.Path]::GetFileNameWithoutExtension($migration.Name)
-  $checksum = (Get-FileHash -LiteralPath $migration.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+  $checksum = Get-CanonicalMigrationChecksum $migration.FullName
   $recordedChecksum = Get-SupabaseMigrationChecksum $migrationId
   if ($recordedChecksum -and $recordedChecksum -ne $checksum) {
     throw "Migration checksum drift for ${migrationId}: live=$recordedChecksum release=$checksum"
