@@ -51,6 +51,8 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   assert.match(localEdgePublisher, /\$partialPublication = \$Components\.Count -gt 0/);
   assert.match(localEdgePublisher, /Where-Object \{ \$_.Key -in \$Components \}/);
   assert.match(localEdgePublisher, /OpenSphereEdgeComponentPublication/);
+  assert.match(localEdgePublisher, /\$componentEvidence = \[ordered\]@\{\}/);
+  assert.doesNotMatch(localEdgePublisher, /\$components = \[ordered\]@\{\}/i);
   assert.match(localEdgePublisher, /Advance selected edge tags with Console anchor last when present/);
 });
 
