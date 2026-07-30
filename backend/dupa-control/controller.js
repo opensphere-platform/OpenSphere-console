@@ -2102,12 +2102,14 @@ function registryCredentialError(res, error, opId) {
   return json(res, status, body);
 }
 
-function cliInstallationProvenance(actor, opId) {
+function installationProvenance(actor, opId) {
   return {
     requestedAt: new Date().toISOString(),
     requestedBy: auditActorLabel(actor),
     requestedById: auditActorId(actor) || '',
-    client: 'cli:os',
+    // Browser and CLI use the same authenticated Console API/PEP.  The
+    // request body cannot self-assert a privileged client identity.
+    client: 'console-api',
     operationId: opId,
   };
 }
@@ -2128,7 +2130,7 @@ async function ensureRegistration(pkgName, desiredState, actor, reason, installa
   };
   if (existing.ok) {
     const spec = { desiredState, approval: body.spec.approval };
-    // 기존 Registration에는 최초 설치 provenance가 없을 수 있다. CLI 설치가 이를 한 번
+    // 기존 Registration에는 최초 설치 provenance가 없을 수 있다. Console API 설치가 이를 한 번
     // 보강하되, 이미 기록된 설치 근거는 이후 lifecycle 동작으로 덮어쓰지 않는다.
     if (installation && !existing.json?.spec?.installation) spec.installation = installation;
     return k8s('PATCH', `${crd('uipluginregistrations')}/${pkgName}`, { spec });
@@ -3279,7 +3281,6 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/admin/extensions/install' && req.method === 'POST') {
       const body = await readBody(req).catch(() => ({}));
       const reason = String(body.reason || '').trim();
-      if (body.client !== 'cli:os') return json(res, 403, { error: 'CliInstallationRequired', message: 'use os extensions install', opId });
       if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'installation reason must be at least 8 characters', opId });
       try {
         const inspection = await inspectModuleImage(body.image);
@@ -3319,7 +3320,7 @@ const server = http.createServer(async (req, res) => {
         }
         const stored = await upsertPackage(pkg);
         if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, { error: 'PackageStoreFailed', status: stored.status, opId });
-        const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, cliInstallationProvenance(actor, opId));
+        const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, installationProvenance(actor, opId));
         if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
         if (pkg.metadata.name === FOUNDATION_ID) {
           const authorizationStored = await setFoundationUpgradeAuthorization(foundationAuthorization);
@@ -3411,7 +3412,6 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall|rollback)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
-      if (action === 'install') return json(res, 403, { error: 'CliInstallationRequired', message: 'use os extensions install', opId });
       if (id === FOUNDATION_ID && action === 'enable') {
         const readiness = await platformReadinessStatus(req);
         if (!readiness.admission.foundationActivationAllowed) {
@@ -3518,8 +3518,26 @@ const server = http.createServer(async (req, res) => {
         return json(res, 202, { accepted: true, id, desiredState: 'Enabled', digest: previousDigest, version: previousVersion });
       }
       const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || '').trim();
+      if (action === 'install') {
+        if (reason.length < 8) {
+          return json(res, 400, {
+            error: 'ApprovalReasonRequired',
+            message: 'installation reason must be at least 8 characters',
+            opId,
+          });
+        }
+        const pkg = await getPackage(id);
+        if (!pkg.ok) return json(res, pkg.status === 404 ? 404 : 502, { error: 'PackageUnavailable', status: pkg.status, opId });
+      }
       const desired = action === 'install' ? 'Installed' : action === 'enable' ? 'Enabled' : action === 'disable' ? 'Disabled' : 'Uninstalled';
-      const r = await ensureRegistration(id, desired, actor, body.reason);
+      const r = await ensureRegistration(
+        id,
+        desired,
+        actor,
+        reason,
+        action === 'install' ? installationProvenance(actor, opId) : undefined,
+      );
       if (!r.ok) { console.error(`[err] op=${opId} ${action} ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, action, id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
       await durableAudit(actor, action, id, 'accepted', '', opId);
       reconcile().catch((e) => console.error('reconcile error', e)); // 비동기 조정

@@ -93,7 +93,7 @@ interface TreeNode {
     <clr-accordion class="management-actions">
       <clr-accordion-panel>
         <clr-accordion-title>관리 작업</clr-accordion-title>
-        <clr-accordion-description>CLI 설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
+        <clr-accordion-description>Extension 설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
         <clr-accordion-content *clrIfExpanded>
     <section class="registry-access" aria-labelledby="registry-access-title">
       <div class="registry-access-head">
@@ -162,11 +162,36 @@ interface TreeNode {
       }
     </section>
 
-    <section class="oci-install" aria-labelledby="oci-install-title">
-      <h2 id="oci-install-title">설치는 Console native CLI에서 진행</h2>
-      <p class="os-sub">브라우저는 설치 요청을 만들지 않습니다. 서명·권한·provenance 검증과 설치 근거는 <code>os</code> CLI가 같은 인증·감사 경계에서 기록합니다.</p>
-      <pre class="os-mono">os extensions inspect ghcr.io/opensphere-platform/&lt;module&gt;:edge
-os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "승인 사유"</pre>
+    <section class="registry-access oci-install" aria-labelledby="oci-install-title">
+      <div class="registry-access-head">
+        <div>
+          <h2 id="oci-install-title">Extension 설치</h2>
+          <p class="os-sub">최고 관리자가 Console에서 OCI release를 검사하고 설치합니다. GUI와 <code>os</code> CLI는 동일한 AAL2·서명·권한·감사 정책 경로를 사용하며, 설치 후 활성화는 Layer 선행 조건이 별도로 결정합니다.</p>
+        </div>
+        <span class="label" [class.label-info]="installing()">{{ installing() ? '검사·설치 중' : 'AAL2 필요' }}</span>
+      </div>
+      <div class="registry-access-form">
+        <div class="clr-form-control">
+          <label for="install-image" class="clr-control-label">OCI image</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper">
+            <input id="install-image" #installImageRef class="clr-input" size="70" placeholder="ghcr.io/opensphere-platform/opensphere-...:edge 또는 &#64;sha256:..." />
+          </div></div>
+        </div>
+        <div class="clr-form-control">
+          <label for="install-reason" class="clr-control-label">Approval reason</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper">
+            <input id="install-reason" #installReason class="clr-input" placeholder="설치 승인 사유(8자 이상)" />
+          </div></div>
+        </div>
+        <button
+          class="btn btn-primary"
+          [disabled]="installing() || !installImageRef.value.trim().startsWith('ghcr.io/opensphere-platform/') || installReason.value.trim().length < 8"
+          (click)="installExtension(installImageRef.value, installReason.value)"
+        >
+          {{ installing() ? '검사·설치 중…' : '검사 후 설치' }}
+        </button>
+      </div>
+      <p class="os-sub">자동화가 필요하면 <code>os extensions install &lt;image&gt; --reason "&lt;사유&gt;"</code>를 사용할 수 있으며 판정과 감사 결과는 같습니다.</p>
     </section>
         </clr-accordion-content>
       </clr-accordion-panel>
@@ -252,7 +277,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="8" class="os-sub">설치된 Extension 없음 — <code>os extensions install</code>로 설치</td>
+                  <td colspan="8" class="os-sub">설치된 Extension 없음 — 위 관리 작업의 “Extension 설치”에서 OCI release를 설치하세요.</td>
                 </tr>
               }
             </tbody>
@@ -402,7 +427,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                         <button class="btn btn-sm" (click)="run('disable', c.name)">Disable</button>
                       }
                       @default {
-                        <span class="os-sub">설치는 <code>os extensions install</code></span>
+                        <span class="os-sub">위 “Extension 설치”에서 OCI release 지정</span>
                       }
                     }
                     @if (phaseOf(c.name)) {
@@ -979,6 +1004,7 @@ export class AdminPlugins implements OnInit {
   readonly bindings = signal<Binding[]>([]);
   readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
   readonly revocations = signal<ImageRevocation[]>([]);
+  readonly installing = signal(false);
   readonly foundationActivationAllowed = signal(false);
   readonly catalogLoaded = signal(false);
   readonly registrationsLoaded = signal(false);
@@ -1362,6 +1388,23 @@ export class AdminPlugins implements OnInit {
       this.registryStatus.set(await this.ctl.configureRegistryCredentials(username.trim(), token.trim(), reason.trim()));
       this.msg.set({ type: 'success', text: 'Private GHCR read credential이 저장되었습니다. 토큰 값은 다시 표시되지 않습니다.' });
     } catch (err) { this.msg.set({ type: 'danger', text: `GHCR 자격증명 저장 실패: ${err}` }); }
+  }
+
+  async installExtension(image: string, reason: string): Promise<void> {
+    if (this.installing()) return;
+    this.installing.set(true);
+    try {
+      const result = await this.ctl.install(image.trim(), reason.trim());
+      const waiting = result.activation?.allowed === false
+        ? ` 활성화는 ${result.activation.pendingCapabilities.join(', ') || result.activation.reason} 충족까지 대기합니다.`
+        : '';
+      this.msg.set({ type: 'success', text: `${result.id} 설치가 접수되었습니다.${waiting}` });
+      await this.refresh();
+    } catch (err) {
+      this.msg.set({ type: 'danger', text: `Extension 설치 실패: ${err}` });
+    } finally {
+      this.installing.set(false);
+    }
   }
 
   async removeRegistryCredentials(reason: string): Promise<void> {

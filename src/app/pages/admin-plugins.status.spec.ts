@@ -4,13 +4,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-// 회귀 계약: Registration phase=Activated를 메뉴 노출 완료로 오인시키지 않는다.
-// Admin은 workload/registration/integration/user visibility를 독립적으로 확인해야 한다.
+// 회귀 계약: Registration phase=Activated를 페이지 서비스 완료로 오인시키지 않는다.
+// Admin은 desired state/artifact/workload/page service와 integration을 독립적으로 확인해야 한다.
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(path.join(here, 'admin-plugins.ts'), 'utf8');
 
-test('Extension 상세가 다섯 상태 계층과 integration matrix를 제공한다', () => {
-  for (const label of ['1. Artifact', '2. Workload', '3. Registration', '4. Console integration', '5. User visibility']) {
+test('Extension 상세가 네 진실 계층과 integration matrix를 제공한다', () => {
+  for (const label of ['사용자 설정', 'Artifact 검증', '워크로드', '페이지 서비스']) {
     assert.ok(source.includes(label), `${label} 계층이 필요하다`);
   }
   assert.ok(source.includes('Console 연동 상태'));
@@ -18,7 +18,8 @@ test('Extension 상세가 다섯 상태 계층과 integration matrix를 제공�
 });
 
 test('Activated와 메뉴 미노출을 동시에 명시할 수 있다', () => {
-  assert.ok(source.includes('`${phase} · 메뉴 미노출`'));
+  assert.ok(source.includes("return { visible: false, label: '메뉴 미노출'"));
+  assert.ok(source.includes("label: 'UI 활성화 실패'"));
   assert.ok(source.includes('메뉴 미노출'));
   assert.ok(source.includes('menuState(r)'));
 });
@@ -40,12 +41,14 @@ test('상세 패널 제목이 Extension 이름·종류·ID·버전을 명시한�
   assert.ok(source.includes("item?.kind || 'Extension'"));
 });
 
-test('Installed 목록과 상세 패널이 artifact 및 CLI 설치 provenance를 함께 제공한다', () => {
+test('Installed 목록과 상세 패널이 artifact 및 Console API 설치 provenance를 함께 제공한다', () => {
   for (const text of ['Artifact · 설치', 'currentDigest', 'installationTime(r)', 'installationActor(r)', '설치 경로', '작업 ID']) {
     assert.ok(source.includes(text), `${text} 설치 근거가 필요하다`);
   }
+  assert.ok(source.includes('Extension 설치'));
+  assert.ok(source.includes('installExtension('));
+  assert.ok(source.includes('검사 후 설치'));
   assert.ok(source.includes('os extensions install'));
-  assert.ok(!source.includes('(click)="run(\'install\''), '브라우저가 설치 action을 노출하면 안 된다');
 });
 
 test('권한 프로파일 드리프트를 관리자가 이해할 수 있는 문장으로 설명한다', () => {

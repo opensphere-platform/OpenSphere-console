@@ -18,7 +18,7 @@ export interface Registration {
   name: string; desiredState: string;
   installation?: {
     requestedAt?: string; requestedBy?: string; requestedById?: string;
-    client?: 'cli:os'; operationId?: string;
+    client?: 'console-api' | 'cli:os'; operationId?: string;
   };
   status: {
     phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string;
@@ -71,6 +71,13 @@ export interface RegistryCredentialStatus {
 }
 export interface ImageRevocation {
   repository: string; digest: string; replacementDigest?: string; revokedAt: string; actor: string; reason: string;
+}
+export interface ExtensionInstallResult {
+  accepted: boolean;
+  id: string;
+  desiredState: 'Installed';
+  image: string;
+  activation?: { allowed: false; reason: string; pendingCapabilities: string[] };
 }
 export interface ExtensionProjectionStatus {
   ready: boolean;
@@ -141,12 +148,26 @@ export class PluginControlClient {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason }),
     }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return (await r.json()).item; });
   }
+  install(image: string, reason: string): Promise<ExtensionInstallResult> {
+    return this.http.request('/api/admin/extensions/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ image, reason }),
+    }).then(async (r) => {
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const detail = String(body.message || body.error || '').trim();
+        throw new Error(`install HTTP ${r.status}${detail ? `: ${detail}` : ''}`);
+      }
+      return body as ExtensionInstallResult;
+    });
+  }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
   bindingAction(name: string, action: 'enable' | 'disable') {
     return this.http.request(`/api/admin/bindings/${name}/${action}`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
   }
-  private act(id: string, action: 'enable' | 'disable' | 'uninstall', reason?: string) {
+  private act(id: string, action: 'install' | 'enable' | 'disable' | 'uninstall', reason?: string) {
     return this.http.request(`/api/admin/plugins/registrations/${id}/${action}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason ?? '' }),
     }).then(async (r) => {
@@ -163,6 +184,7 @@ export class PluginControlClient {
       return r.json();
     });
   }
+  installRegistration(id: string, reason: string) { return this.act(id, 'install', reason); }
   enable(id: string) { return this.act(id, 'enable'); }
   disable(id: string) { return this.act(id, 'disable'); }
   uninstall(id: string) { return this.act(id, 'uninstall'); }
