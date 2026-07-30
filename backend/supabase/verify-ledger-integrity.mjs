@@ -140,6 +140,61 @@ function verifyApprovalBinding() {
   console.log('  ✓ 결재 기록 추가 후에도 사슬 무결');
 }
 
+/**
+ * 에이전트 행위가 사람과 같은 원장에 결속되는가.
+ *
+ * 제품 주장은 "에이전트가 판단 앞에서 멈춘다" 이다. 멈췄다는 사실이 감사 원장 밖에 있으면
+ * 사후에 확인할 수 없으므로 주장이 성립하지 않는다. 0034 이전에는 oaa.* 어느 테이블도
+ * audit.event 에 쓰지 않았다.
+ */
+function verifyAgentBinding() {
+  console.log('\n에이전트 행위의 원장 결속 (0034)');
+
+  const OPERATOR = '22222222-2222-4222-8222-222222222222';   // 위임한 운영자
+  const REQ_OK = '44444444-4444-4444-8444-444444444444';
+  const REQ_BLOCK = '55555555-5555-4555-8555-555555555555';
+
+  const before = Number(psql(`SELECT count(*) FROM audit.event WHERE actor_type='service';`).trim());
+
+  // ① 성공한 도구 실행이 원장에 남는가.
+  psql(`INSERT INTO oaa.tool_run
+      (request_id, actor_id, tool_id, target, permission_code, reason, status, result_digest, completed_at)
+    VALUES ('${REQ_OK}','${OPERATOR}','catalog.read','registration/developer',
+      'oaa.system.read','카탈로그 조회','applied','sha256:${'a'.repeat(64)}', now());`);
+  const applied = psql(`SELECT action || '|' || actor_type || '|' || phase || '|' || result || '|' || reason
+    FROM audit.event WHERE correlation_id='${REQ_OK}';`).trim();
+  assert.equal(applied,
+    'agent.tool.catalog.read|service|applied|agent-tool-applied|카탈로그 조회 [permission:oaa.system.read]',
+    `에이전트 실행이 원장에 기대한 형태로 남지 않았다 (실제: ${applied || '(행 없음)'})`);
+  console.log('  ✓ 에이전트 도구 실행이 원장에 남는다 — actor_type=service, 권한 코드 포함');
+
+  // ② **차단된** 실행이 원장에 남는가. 이것이 이 단계의 핵심이다.
+  psql(`INSERT INTO oaa.tool_run
+      (request_id, actor_id, tool_id, target, permission_code, reason, status, completed_at)
+    VALUES ('${REQ_BLOCK}','${OPERATOR}','change.approve','request/33333333-3333-4333-8333-333333333333',
+      'oaa.action.execute.high','에이전트는 결재할 수 없습니다','blocked', now());`);
+  const blocked = psql(`SELECT phase || '|' || result || '|' || reason
+    FROM audit.event WHERE correlation_id='${REQ_BLOCK}';`).trim();
+  assert.equal(blocked,
+    'failed|agent-tool-blocked|에이전트는 결재할 수 없습니다 [permission:oaa.action.execute.high]',
+    `정책이 막은 사실이 원장에 남지 않았다 (실제: ${blocked || '(행 없음)'})`);
+  console.log('  ✓ 정책이 막은 사실이 원장에 남는다 — result=agent-tool-blocked');
+
+  // ③ 중간 상태는 원장을 오염시키지 않는다.
+  psql(`INSERT INTO oaa.tool_run (request_id, actor_id, tool_id, target, permission_code, status)
+    VALUES ('66666666-6666-4666-8666-666666666666','${OPERATOR}','x.y','t','oaa.chat.use','intent');`);
+  assert.equal(psql(`SELECT count(*) FROM audit.event WHERE correlation_id='66666666-6666-4666-8666-666666666666';`).trim(),
+    '0', '중간 상태(intent)가 원장에 새어 들어갔다');
+  console.log('  ✓ 중간 상태(intent)는 원장에 남지 않는다');
+
+  const after = Number(psql(`SELECT count(*) FROM audit.event WHERE actor_type='service';`).trim());
+  assert.equal(after - before, 2, `service 행위자 기록 수가 기대와 다르다 (${after - before})`);
+
+  assert.equal(psql('SELECT count(*) FROM audit.verify_event_chain();').trim(), '0',
+    '에이전트 기록을 추가한 뒤 사슬이 깨졌다');
+  console.log('  ✓ 에이전트 기록 추가 후에도 사슬 무결');
+}
+
 function main() {
   console.log('원장 무결성 검증 (arch-002 L2-7)\n');
 
@@ -188,6 +243,9 @@ function main() {
 
     // ── 4. 결재 판정이 원장에 결속되는가 ────────────────────────────────────
     verifyApprovalBinding();
+
+    // ── 5. 에이전트 행위가 같은 원장에 결속되는가 ───────────────────────────
+    verifyAgentBinding();
 
     // ── 5. 사슬이 실제로 변조를 탐지하는가 ──────────────────────────────────
     // ⚠ 이 검사는 사슬을 **의도적으로 깨뜨린다.** 반드시 마지막에 둔다 —
