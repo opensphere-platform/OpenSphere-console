@@ -15,6 +15,7 @@ COPY controller.js /app/controller.js
 COPY registry-credentials.js /app/registry-credentials.js
 COPY extension-projection.js /app/extension-projection.js
 COPY foundation-establishment.js /app/foundation-establishment.js
+COPY extension-install-operation.js /app/extension-install-operation.js
 USER 1000:1000
 EXPOSE 8080
 CMD ["node", "/app/controller.js"]

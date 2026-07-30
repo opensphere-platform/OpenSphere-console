@@ -53,6 +53,8 @@ test('Console controller has no ServiceMonitor writer or direct Prometheus targe
   assert.doesNotMatch(rbac, /monitoring\.coreos\.com/);
   assert.doesNotMatch(rbac, /cluster-his-manager-v1/);
   assert.match(rbac, /resources: \[observabilitybindings\]/);
+  assert.doesNotMatch(source, /Observability is HIS-owned|HIS query template required/);
+  assert.match(source, /Shared Observability runtime\/control belongs to SRL-L4 Platform Support/);
 });
 
 test('active Console sources do not retain CBS telemetry installers or namespace dependencies', () => {

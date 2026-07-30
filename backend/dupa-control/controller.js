@@ -13,6 +13,12 @@ const { createHash, createPublicKey, verify, randomBytes, randomUUID } = require
 const { RegistryCredentialCoordinator } = require('./registry-credentials');
 const { ExtensionProjectionCoordinator } = require('./extension-projection');
 const { foundationEstablishmentProjection } = require('./foundation-establishment');
+const {
+  evaluateInstallOperation,
+  installOperationAnnotations,
+  installRequestDigest,
+  normalizeInstallOperationKey,
+} = require('./extension-install-operation');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-console';
@@ -421,7 +427,7 @@ function verifiedFoundationStagedUpdate(reg, now = Date.now()) {
     && currentDigest !== previousDigest
     && typeof authorization.requestedBy === 'string'
     && authorization.requestedBy.length > 0
-    && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
+    && /^[A-Za-z0-9._:-]{8,200}$/.test(String(authorization.operationId || ''))
     && Number.isFinite(requestedAt)
     // Upgrade authorization is exact-transition evidence, not a permanent
     // bypass token. It expires even if reconciliation never consumes it.
@@ -456,7 +462,7 @@ function verifiedFoundationUpdateAuthorization(reg, pkg, now = Date.now()) {
     && authorization.toDigest !== authorization.fromDigest
     && typeof authorization.requestedBy === 'string'
     && authorization.requestedBy.length > 0
-    && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
+    && /^[A-Za-z0-9._:-]{8,200}$/.test(String(authorization.operationId || ''))
     && Number.isFinite(requestedAt)
     && requestedAt <= Number(now) + (5 * 60 * 1000)
     && Number(now) - requestedAt <= FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS;
@@ -1644,7 +1650,20 @@ function packageFromInspection(inspection) {
 }
 async function upsertPackage(pkg) {
   const existing = await getPackage(pkg.metadata.name);
-  return existing.ok ? k8s('PATCH', `${crd('uipluginpackages')}/${pkg.metadata.name}`, { metadata: { labels: pkg.metadata.labels }, spec: pkg.spec }) : k8s('POST', crd('uipluginpackages'), pkg);
+  const patch = {
+    metadata: {
+      labels: pkg.metadata.labels,
+      ...(pkg.metadata.annotations ? { annotations: pkg.metadata.annotations } : {}),
+    },
+    spec: pkg.spec,
+  };
+  if (existing.ok) return k8s('PATCH', `${crd('uipluginpackages')}/${pkg.metadata.name}`, patch);
+  const created = await k8s('POST', crd('uipluginpackages'), pkg);
+  // Two replicas can receive the same replay-safe request after the proxy
+  // loses a response. A create race is convergence, not a failed install.
+  return created.status === 409
+    ? k8s('PATCH', `${crd('uipluginpackages')}/${pkg.metadata.name}`, patch)
+    : created;
 }
 function validContributions(contributions) {
   const required = ['page', 'navigation', 'api', 'cli', 'manual', 'search', 'notification', 'observability'];
@@ -2114,12 +2133,16 @@ function installationProvenance(actor, opId) {
   };
 }
 
-async function ensureRegistration(pkgName, desiredState, actor, reason, installation) {
+async function ensureRegistration(pkgName, desiredState, actor, reason, installation, operationAnnotations) {
   const existing = await getReg(pkgName);
   const approvalReason = String(reason || existing.json?.spec?.approval?.reason || '');
   const body = {
     apiVersion: `${GROUP}/${V}`, kind: 'UIPluginRegistration',
-    metadata: { name: pkgName, namespace: NS },
+    metadata: {
+      name: pkgName,
+      namespace: NS,
+      ...(operationAnnotations ? { annotations: operationAnnotations } : {}),
+    },
     spec: { packageRef: { name: pkgName }, desiredState,
       installPolicy: { createWorkload: true, createProxyRoute: true, exposeInNavigation: true },
       // UIPluginRegistration approval.requestedBy is a CRD string field. Keep
@@ -2133,9 +2156,18 @@ async function ensureRegistration(pkgName, desiredState, actor, reason, installa
     // 기존 Registration에는 최초 설치 provenance가 없을 수 있다. Console API 설치가 이를 한 번
     // 보강하되, 이미 기록된 설치 근거는 이후 lifecycle 동작으로 덮어쓰지 않는다.
     if (installation && !existing.json?.spec?.installation) spec.installation = installation;
-    return k8s('PATCH', `${crd('uipluginregistrations')}/${pkgName}`, { spec });
+    return k8s('PATCH', `${crd('uipluginregistrations')}/${pkgName}`, {
+      ...(operationAnnotations ? { metadata: { annotations: operationAnnotations } } : {}),
+      spec,
+    });
   }
-  return k8s('POST', crd('uipluginregistrations'), body);
+  const created = await k8s('POST', crd('uipluginregistrations'), body);
+  return created.status === 409
+    ? k8s('PATCH', `${crd('uipluginregistrations')}/${pkgName}`, {
+      ...(operationAnnotations ? { metadata: { annotations: operationAnnotations } } : {}),
+      spec: body.spec,
+    })
+    : created;
 }
 async function setFoundationUpgradeAuthorization(authorization) {
   return k8s('PATCH', `${crd('uipluginregistrations')}/${FOUNDATION_ID}/status`, {
@@ -3226,18 +3258,19 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await platformReadinessStatus(req));
     }
 
-    // Observability is HIS-owned. The Console consumes only a read-only Binding;
-    // arbitrary PromQL and target discovery are intentionally not exposed.
+    // Shared Observability runtime/control belongs to SRL-L4 Platform Support.
+    // Console is a read-only Binding consumer; neither this projection nor
+    // Beszel can substitute for SRL-L1 HIS readiness.
     if (p === '/api/admin/observability/status' && req.method === 'GET') return json(res, 200, await observabilityStatus());
     if (p === '/api/admin/observability/targets' && req.method === 'GET') return json(res, 200, await observabilityTargets());
     if (p === '/api/admin/observability/query' && req.method === 'GET') {
       const template = url.searchParams.get('template') || '';
-      if (!template || template.length > 120) return json(res, 400, { error: 'HIS query template required', opId });
+      if (!template || template.length > 120) return json(res, 400, { error: 'Platform Support query template required', opId });
       return json(res, 200, await observabilityTemplateQuery(template, null));
     }
     if (p === '/api/admin/observability/query_range' && req.method === 'GET') {
       const template = url.searchParams.get('template') || '';
-      if (!template || template.length > 120) return json(res, 400, { error: 'HIS query template required', opId });
+      if (!template || template.length > 120) return json(res, 400, { error: 'Platform Support query template required', opId });
       return json(res, 200, await observabilityTemplateQuery(template, { minutes: Number(url.searchParams.get('minutes')) || 60, step: Number(url.searchParams.get('step')) || 60 }));
     }
     if (p === '/api/admin/extensions/revocations' && req.method === 'GET') {
@@ -3311,14 +3344,77 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req).catch(() => ({}));
       const reason = String(body.reason || '').trim();
       if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'installation reason must be at least 8 characters', opId });
+      let installOpId;
       try {
+        installOpId = normalizeInstallOperationKey(req.headers['x-os-idempotency-key']);
+      } catch (error) {
+        return json(res, Number(error?.code) || 400, {
+          error: error?.reason || 'IdempotencyKeyRequired',
+          message: error?.message,
+          opId,
+        });
+      }
+      const requestDigest = installRequestDigest({
+        image: body.image,
+        reason,
+        actor: actor.subject || actor.username,
+      });
+      const operationAnnotations = installOperationAnnotations(installOpId, requestDigest);
+      try {
+        const [packagesResult, registrationsResult] = await Promise.all([listPackages(), listRegs()]);
+        if (!packagesResult.ok || !registrationsResult.ok) {
+          throw Object.assign(new Error('extension operation ledger is unavailable'), {
+            code: 503,
+            reason: 'ExtensionOperationLedgerUnavailable',
+          });
+        }
+        const packages = packagesResult.json?.items || [];
+        const registrations = registrationsResult.json?.items || [];
+        const operation = evaluateInstallOperation({
+          packages,
+          registrations,
+          key: installOpId,
+          requestDigest,
+          image: body.image,
+        });
+        if (operation.state === 'conflict') {
+          await durableAudit(actor, 'extension-install', operation.id || String(body.image || '').slice(0, 160),
+            'denied', 'IdempotencyKeyConflict', installOpId);
+          return json(res, 409, {
+            error: 'IdempotencyKeyConflict',
+            message: 'the idempotency key is already bound to another install payload',
+            opId: installOpId,
+          });
+        }
+        if (operation.state === 'replay') {
+          return json(res, 202, {
+            accepted: true,
+            id: operation.id,
+            desiredState: 'Installed',
+            image: String(body.image || '').trim(),
+            idempotentReplay: true,
+            opId: installOpId,
+          });
+        }
+
         const inspection = await inspectModuleImage(body.image);
         const pkg = packageFromInspection(inspection);
+        pkg.metadata.annotations = operationAnnotations;
         let foundationAuthorization = null;
+        let currentFoundationRegistration = null;
         if (pkg.metadata.name === FOUNDATION_ID) {
           const [currentPkg, currentReg] = await Promise.all([getPackage(FOUNDATION_ID), getReg(FOUNDATION_ID)]);
+          currentFoundationRegistration = currentReg.ok ? currentReg.json : null;
           if (currentPkg.ok && currentReg.ok) {
-            foundationAuthorization = foundationUpgradeAuthorization(currentPkg.json, currentReg.json, pkg, actor, opId);
+            foundationAuthorization = foundationUpgradeAuthorization(currentPkg.json, currentReg.json, pkg, actor, installOpId);
+            const prior = currentReg.json?.status?.foundationUpgradeAuthorization;
+            if (!foundationAuthorization
+              && prior?.kind === FOUNDATION_UPGRADE_AUTHORIZATION_KIND
+              && prior.operationId === installOpId
+              && prior.toDigest === pkg.spec.image.digest
+              && prior.toManifestSha256 === pkg.spec.manifest.sha256) {
+              foundationAuthorization = prior;
+            }
           }
         }
         // A PFS plugin installs and stages unconditionally; the Platform Support
@@ -3335,47 +3431,77 @@ const server = http.createServer(async (req, res) => {
           if (!readiness.admission.pfsPluginActivationAllowed) {
             activationReason = 'PlatformSupportProfileIncomplete';
             pendingCapabilities = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
-            await durableAudit(actor, 'pfs-plugin-stage', pkg.metadata.name, 'accepted',
-              `staged pending Platform Support Profile: ${pendingCapabilities.join(', ') || 'unknown'}`, opId);
           }
         } else if (requiresDomainAdmission(pkg)) {
           const readiness = await platformReadinessStatus();
           if (!readiness.admission.domainActivationAllowed) {
             activationReason = 'DomainAdmissionLocked';
             pendingCapabilities = ['PFSEstablished', 'PlatformSupportProfile'];
-            await durableAudit(actor, 'domain-shell-stage', pkg.metadata.name, 'accepted',
-              'staged pending PFS establishment and Platform Support Profile', opId);
+          }
+        }
+        // Persist update authorization before mutating the package. If a
+        // controller process stops after the package write, the same operation
+        // can resume without losing the verified activated origin.
+        if (pkg.metadata.name === FOUNDATION_ID && currentFoundationRegistration) {
+          const authorizationStored = await setFoundationUpgradeAuthorization(foundationAuthorization);
+          if (!authorizationStored.ok) {
+            await durableAudit(actor, 'foundation-update-stage', pkg.metadata.name, 'denied',
+              'UpgradeAuthorizationStatusWriteFailed', installOpId);
+            return json(res, authorizationStored.status >= 500 ? 502 : authorizationStored.status, {
+              error: 'UpgradeAuthorizationStatusWriteFailed',
+              status: authorizationStored.status,
+              opId: installOpId,
+            });
           }
         }
         const stored = await upsertPackage(pkg);
-        if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, { error: 'PackageStoreFailed', status: stored.status, opId });
-        const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, installationProvenance(actor, opId));
-        if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
+        if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, {
+          error: 'PackageStoreFailed', status: stored.status, opId: installOpId,
+        });
+        const registered = await ensureRegistration(
+          pkg.metadata.name,
+          'Installed',
+          actor,
+          reason,
+          installationProvenance(actor, installOpId),
+          operationAnnotations,
+        );
+        if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, {
+          error: 'RegistrationFailed', status: registered.status, opId: installOpId,
+        });
+        if (activationReason === 'PlatformSupportProfileIncomplete') {
+          await durableAudit(actor, 'pfs-plugin-stage', pkg.metadata.name, 'accepted',
+            `staged pending Platform Support Profile: ${pendingCapabilities.join(', ') || 'unknown'}`, installOpId);
+        } else if (activationReason === 'DomainAdmissionLocked') {
+          await durableAudit(actor, 'domain-shell-stage', pkg.metadata.name, 'accepted',
+            'staged pending PFS establishment and Platform Support Profile', installOpId);
+        }
         if (pkg.metadata.name === FOUNDATION_ID) {
-          const authorizationStored = await setFoundationUpgradeAuthorization(foundationAuthorization);
-          if (!authorizationStored.ok) {
-            await durableAudit(actor, 'foundation-update-stage', pkg.metadata.name, 'denied', 'UpgradeAuthorizationStatusWriteFailed', opId);
-            return json(res, authorizationStored.status >= 500 ? 502 : authorizationStored.status, {
-              error: 'UpgradeAuthorizationStatusWriteFailed', status: authorizationStored.status, opId,
-            });
-          }
           await durableAudit(actor, 'foundation-update-stage', pkg.metadata.name,
             foundationAuthorization ? 'accepted' : 'staged',
-            foundationAuthorization ? `${foundationAuthorization.fromDigest}->${foundationAuthorization.toDigest}` : 'no verified activated origin', opId);
+            foundationAuthorization ? `${foundationAuthorization.fromDigest}->${foundationAuthorization.toDigest}` : 'no verified activated origin',
+            installOpId);
         }
-        await durableAudit(actor, 'extension-install', pkg.metadata.name, 'accepted', inspection.image, opId);
+        await durableAudit(actor, 'extension-install', pkg.metadata.name, 'accepted', inspection.image, installOpId);
         reconcile().catch((e) => console.error('reconcile error', e));
         return json(res, 202, {
           accepted: true, id: pkg.metadata.name, desiredState: 'Installed',
-          image: inspection.image, verification: inspection.verification,
+          image: inspection.image, verification: inspection.verification, idempotentReplay: false, opId: installOpId,
           ...(pendingCapabilities.length
             ? { activation: { allowed: false, reason: activationReason, pendingCapabilities } }
             : {}),
         });
       } catch (e) {
-        await durableAudit(actor, 'extension-install', String(body.image || '').slice(0, 160), 'denied', e?.reason || 'InspectionFailed', opId);
-        if (e?.reason === 'RegistryCredentialsPropagating') return registryCredentialError(res, e, opId);
-        return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], revocation: e?.revocation || null, opId });
+        await durableAudit(actor, 'extension-install', String(body.image || '').slice(0, 160),
+          'denied', e?.reason || 'InspectionFailed', installOpId);
+        if (e?.reason === 'RegistryCredentialsPropagating') return registryCredentialError(res, e, installOpId);
+        return json(res, Number(e?.code) || 422, {
+          error: e?.reason || 'InspectionFailed',
+          message: e?.message || 'image inspection failed',
+          issues: e?.issues || [],
+          revocation: e?.revocation || null,
+          opId: installOpId,
+        });
       }
     }
 

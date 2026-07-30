@@ -12,6 +12,7 @@ const { normalizedEvent } = require('../notification-dispatcher/contract');
 const { createBrowserSessionManager } = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
+const { boundedInteger, fetchDupaWithRetry } = require('./dupa-control-proxy');
 const {
   FOUNDATION_BOOTSTRAP_RECONCILER,
   FOUNDATION_BOOTSTRAP_TEMPLATE_ID,
@@ -77,6 +78,16 @@ const AUDIT_READ_LIMIT = Number(process.env.SUPABASE_AUDIT_READ_LIMIT || 200);
 const SUPABASE_REQUIRE_AAL2 = String(process.env.SUPABASE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const boundedTimeoutMs = (value, fallback) => Math.min(300000, Math.max(1000, Number(value) || fallback));
+const DUPA_CONTROL_TIMEOUT_MS = boundedTimeoutMs(process.env.DUPA_CONTROL_TIMEOUT_MS, 15000);
+const DUPA_EXTENSION_OPERATION_TIMEOUT_MS = Math.max(DUPA_CONTROL_TIMEOUT_MS,
+  boundedTimeoutMs(process.env.DUPA_EXTENSION_OPERATION_TIMEOUT_MS, 180000));
+const DUPA_EXTENSION_OPERATION_ATTEMPTS = boundedInteger(
+  process.env.DUPA_EXTENSION_OPERATION_ATTEMPTS,
+  2,
+  1,
+  3,
+);
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
 const CLI_TOKEN_ISSUER = 'opensphere-cli';
 const CLI_TOKEN_AUDIENCE = 'opensphere-cli';
@@ -2291,20 +2302,34 @@ async function proxyAdminControlRequest(req, res, url) {
   if (req.headers['content-type']) headers['content-type'] = String(req.headers['content-type']);
   if (req.headers['x-os-idempotency-key']) headers['x-os-idempotency-key'] = String(req.headers['x-os-idempotency-key']);
 
-  let response;
-  try {
-    response = await fetch(`${DUPA_CONTROL_URL}${url.pathname}${url.search}`, {
-      method,
-      headers,
-      body: hasBody && body.length ? body : undefined,
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch {
-    throw { code: 503, msg: 'DUPA control service unavailable' };
+  // OCI inspection is a bounded multi-hop operation (registry challenge,
+  // manifest/config fetch, signature/trust and revocation checks). It must not
+  // inherit the short interactive API deadline or a healthy DUPA controller is
+  // falsely reported as unavailable while the inspection is still running.
+  const extensionOperation = method === 'POST'
+    && ['/api/admin/extensions/inspect', '/api/admin/extensions/install'].includes(url.pathname);
+  const extensionInstall = method === 'POST' && url.pathname === '/api/admin/extensions/install';
+  const idempotencyKey = String(headers['x-os-idempotency-key'] || '').trim();
+  if (extensionInstall && !/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
+    throw { code: 400, msg: 'extension install requires a valid X-OS-Idempotency-Key' };
   }
+  const timeoutMs = extensionOperation
+    ? DUPA_EXTENSION_OPERATION_TIMEOUT_MS
+    : DUPA_CONTROL_TIMEOUT_MS;
+  const proxied = await fetchDupaWithRetry({
+    url: `${DUPA_CONTROL_URL}${url.pathname}${url.search}`,
+    method,
+    headers,
+    body: hasBody && body.length ? body : undefined,
+    deadlineMs: timeoutMs,
+    // Inspect is read-only. Install is replay-safe because Console requires the
+    // same key/body and DUPA persists the operation fingerprint on both CRs.
+    maxAttempts: extensionOperation ? DUPA_EXTENSION_OPERATION_ATTEMPTS : 1,
+  });
+  const response = proxied.response;
 
   const payload = Buffer.from(await response.arrayBuffer());
-  const responseHeaders = {};
+  const responseHeaders = { 'x-os-upstream-attempts': String(proxied.attempts) };
   for (const name of ['content-type', 'cache-control', 'content-disposition', 'etag', 'retry-after', 'x-os-correlation-id']) {
     const value = response.headers.get(name);
     if (value) responseHeaders[name] = value;

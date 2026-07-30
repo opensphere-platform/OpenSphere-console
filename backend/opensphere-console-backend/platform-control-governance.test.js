@@ -14,6 +14,9 @@ const gitea = read('gitea/bootstrap/gitea.yaml');
 const bootstrap = read('gitea/bootstrap/control-plane-bootstrap.ps1');
 const recoveryOwner = read('opensphere-console-backend/recovery-owner.js');
 const recoveryPermissions = read('supabase/migrations/0022_oaa_recovery_owner_permissions.sql');
+const httpService = read('../src/app/core/http.service.ts');
+const pluginControlClient = read('../src/app/core/plugin-control-client.service.ts');
+const nginx = read('../nginx/default.conf.template');
 
 test('governed change state is Supabase-only and RLS protected', () => {
   for (const table of ['consumer_contract', 'observability_claim', 'change_execution', 'change_outbox', 'gitea_webhook_receipt', 'reconcile_receipt']) {
@@ -196,4 +199,34 @@ test('Argo CD verification bootstrap is a fixed reviewed declaration and accepts
   );
   assert.doesNotMatch(bootstrapAction, /input\.(?:path|repository|manifest|content|branch|url)/);
   assert.match(server, /\/api\/platform\/gitea\/bootstrap\/argocd-verification/);
+});
+
+test('extension OCI inspection has one bounded end-to-end deadline budget', () => {
+  assert.match(server, /DUPA_CONTROL_TIMEOUT_MS[\s\S]*15000/);
+  assert.match(server, /DUPA_EXTENSION_OPERATION_TIMEOUT_MS[\s\S]*180000/);
+  assert.match(server, /Math\.min\(300000, Math\.max\(1000, Number\(value\) \|\| fallback\)\)/);
+  assert.match(
+    server,
+    /\['\/api\/admin\/extensions\/inspect', '\/api\/admin\/extensions\/install'\]\.includes\(url\.pathname\)/,
+  );
+  assert.match(server, /fetchDupaWithRetry/);
+  assert.match(server, /DUPA_EXTENSION_OPERATION_ATTEMPTS/);
+  assert.match(server, /extension install requires a valid X-OS-Idempotency-Key/);
+  assert.match(server, /maxAttempts: extensionOperation \? DUPA_EXTENSION_OPERATION_ATTEMPTS : 1/);
+
+  assert.match(httpService, /export interface OpenSphereRequestInit extends RequestInit/);
+  assert.match(httpService, /const \{ timeoutMs = REQUEST_TIMEOUT_MS, \.\.\.requestInit \} = init/);
+  assert.match(httpService, /Math\.min\(300_000, Math\.max\(1_000, Number\(timeoutMs\) \|\| REQUEST_TIMEOUT_MS\)\)/);
+  assert.match(httpService, /window\.setTimeout\(\(\) => controller\.abort\(\), boundedTimeoutMs\)/);
+  assert.match(pluginControlClient, /EXTENSION_INSTALL_REQUEST_TIMEOUT_MS = 190_000/);
+  assert.match(pluginControlClient, /timeoutMs: EXTENSION_INSTALL_REQUEST_TIMEOUT_MS/);
+
+  const extensionLocation = nginx.slice(
+    nginx.indexOf('location ~ ^/api/admin/extensions/(inspect|install)$'),
+    nginx.indexOf('location /api/admin/ {'),
+  );
+  assert.ok(extensionLocation.length > 0, 'bounded extension operation location is missing');
+  assert.match(extensionLocation, /proxy_send_timeout 185s/);
+  assert.match(extensionLocation, /proxy_read_timeout 185s/);
+  assert.match(extensionLocation, /proxy_pass http:\/\/\$console_backend_upstream:8080\$request_uri/);
 });

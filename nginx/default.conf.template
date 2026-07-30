@@ -199,6 +199,20 @@ server {
     # the policy/CSRF enforcement point. It resolves the opaque HttpOnly browser
     # session and forwards a short-lived verified bearer to DUPA; credentials
     # supplied by the browser are never exposed to JavaScript.
+    location ~ ^/api/admin/extensions/(inspect|install)$ {
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 185s;
+        proxy_read_timeout 185s;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
     location /api/admin/ {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_backend_upstream:8080$request_uri;

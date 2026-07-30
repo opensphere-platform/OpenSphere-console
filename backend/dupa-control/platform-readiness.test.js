@@ -115,7 +115,11 @@ test('a PFS plugin stages unconditionally and only its activation waits for the 
   assert.ok(installStart > 0, 'install handler was not located');
   const installEnd = controller.indexOf('\n    if (p === ', installStart + 1);
   const install = controller.slice(installStart, installEnd > 0 ? installEnd : undefined);
-  assert.doesNotMatch(install, /return json\(res, 409/, 'installation must not refuse a PFS plugin');
+  assert.doesNotMatch(
+    install,
+    /return json\(res, 409, \{\s*error: 'PlatformSupportProfileIncomplete'/,
+    'an incomplete Support Profile must stage rather than refuse a PFS plugin',
+  );
   assert.match(install, /pfs-plugin-stage/, 'staging a gated plugin must leave durable audit evidence');
   assert.match(install, /pendingCapabilities/, 'the install response must name what is still missing');
 
@@ -177,7 +181,7 @@ test('Foundation update evidence is exact-transition and expires without bypassi
     spec: { image: { digest: toDigest }, manifest: { sha256: toManifestSha256 } },
   };
   const authorization = foundationUpgradeAuthorization(
-    currentPkg, activeReg, targetPkg, { username: 'cmars' }, `os-${'e'.repeat(24)}`, '2026-07-29T02:00:00.000Z',
+    currentPkg, activeReg, targetPkg, { username: 'cmars' }, '9c487947-148c-49c6-bae8-b9f412bc455c', '2026-07-29T02:00:00.000Z',
   );
   assert.ok(authorization);
   const staged = {

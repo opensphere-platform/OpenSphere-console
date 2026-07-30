@@ -1,6 +1,8 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpService } from './http.service';
 
+const EXTENSION_INSTALL_REQUEST_TIMEOUT_MS = 190_000;
+
 /** Control API 클라이언트 — Admin UI는 K8s를 직접 안 만지고 이것만 호출(계획서 §8).
  *  사용자 신원은 X-OpenSphere-User로 전달(audit·권한). 셸 nginx가 controller로 프록시. */
 export interface CatalogItem {
@@ -160,6 +162,7 @@ export class PluginControlClient {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ image, reason }),
+      timeoutMs: EXTENSION_INSTALL_REQUEST_TIMEOUT_MS,
     }).then(async (r) => {
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
