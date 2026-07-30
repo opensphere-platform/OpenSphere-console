@@ -36,6 +36,7 @@ const PLATFORM_SUPPORT_PROFILE_PATH =
   '/apis/platform.opensphere.io/v1alpha1/namespaces/opensphere-console/platformsupportprofiles/default';
 const FOUNDATION_CRDS = Object.freeze([
   'foundationmodels.foundation.opensphere.io',
+  'foundationrecoveryevidences.foundation.opensphere.io',
   'foundationmoduledescriptors.foundation.opensphere.io',
   'foundationclaims.foundation.opensphere.io',
   'foundationbindings.foundation.opensphere.io',

@@ -336,6 +336,7 @@ spec:
         || (
           (request.kind.kind == 'CustomResourceDefinition' && object.metadata.name in [
             'foundationmodels.foundation.opensphere.io',
+            'foundationrecoveryevidences.foundation.opensphere.io',
             'foundationmoduledescriptors.foundation.opensphere.io',
             'foundationclaims.foundation.opensphere.io',
             'foundationbindings.foundation.opensphere.io',

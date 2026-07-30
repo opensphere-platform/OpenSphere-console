@@ -41,8 +41,8 @@ test('Foundation bootstrap template is a closed reviewed consumer contract', () 
 
 test('embedded Foundation catalog has fixed identities and digest-pinned workload references', () => {
   const catalog = loadFoundationBootstrapCatalog();
-  assert.equal(catalog.length, 21);
-  assert.equal(catalog.filter((item) => item.kind === 'CustomResourceDefinition').length, 6);
+  assert.equal(catalog.length, 22);
+  assert.equal(catalog.filter((item) => item.kind === 'CustomResourceDefinition').length, 7);
   assert.equal(catalog.filter((item) => item.kind === 'Deployment').length, 1);
   assert.equal(catalog.filter((item) => item.kind === 'FoundationModel').length, 3);
   assert.equal(catalog.filter((item) => item.kind === 'FoundationClaim').length, 1);
@@ -228,6 +228,7 @@ test('Console release wires the Foundation template, dedicated runtime, least-pr
   assert.match(deploy, /name: foundation-bootstrap-closed-catalog/);
   assert.match(deploy, /resources: \["foundationclaims"\][\s\S]{0,80}verbs: \["get", "create", "patch"\]/);
   assert.match(deploy, /resources: \["foundationbindings"\][\s\S]{0,60}verbs: \["get"\]/);
+  assert.match(deploy, /foundationrecoveryevidences\.foundation\.opensphere\.io/);
   assert.match(deploy, /FoundationModel' && object\.metadata\.name in \['identity', 'data', 'observability'\]/);
   assert.match(deploy, /FoundationClaim'[\s\S]{0,180}foundation-bootstrap-observability/);
   assert.match(deploy, /foundation-bootstrap-reconciler may mutate only the signed closed Foundation catalog/);

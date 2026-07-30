@@ -2,6 +2,7 @@
 
 const FOUNDATION_CONTRACT_CRDS = Object.freeze([
   'foundationmodels.foundation.opensphere.io',
+  'foundationrecoveryevidences.foundation.opensphere.io',
   'foundationmoduledescriptors.foundation.opensphere.io',
   'foundationclaims.foundation.opensphere.io',
   'foundationbindings.foundation.opensphere.io',

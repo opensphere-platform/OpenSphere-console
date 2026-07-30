@@ -6,8 +6,8 @@ const FOUNDATION_BOOTSTRAP_RECONCILER = 'foundation-bootstrap-reconciler';
 const FOUNDATION_BOOTSTRAP_CONSUMER = 'foundation-bootstrap';
 const FOUNDATION_BOOTSTRAP_TEMPLATE_ID = 'foundation-control-plane-bootstrap';
 const FOUNDATION_BOOTSTRAP_TARGET = 'foundation-control-plane/v1alpha1';
-const FOUNDATION_BOOTSTRAP_CATALOG_VERSION = '20260730.1';
-const FOUNDATION_BOOTSTRAP_CATALOG_SHA256 = 'a0313d315b6d298334d9d39f5c1f3fdd3e7b2a71db70b1d31887427c3a1a7a27';
+const FOUNDATION_BOOTSTRAP_CATALOG_VERSION = '20260730.2';
+const FOUNDATION_BOOTSTRAP_CATALOG_SHA256 = '0dc524be3a5aeb74129cab29df57e2a36eaf67031d8f5df9b8175a7969f5a75c';
 
 const FOUNDATION_BOOTSTRAP_DESIRED_STATE = Object.freeze({
   contract: 'opensphere.foundation.bootstrap/v1',
@@ -17,7 +17,7 @@ const FOUNDATION_BOOTSTRAP_DESIRED_STATE = Object.freeze({
     fieldManager: FOUNDATION_BOOTSTRAP_RECONCILER,
   }),
   components: Object.freeze([
-    '6 versioned Foundation contract CRDs',
+    '7 versioned Foundation contract CRDs, including fingerprint-bound recovery evidence',
     'foundation-control-plane dedicated ServiceAccount and least-privilege RBAC',
     'foundation-control-plane digest-pinned Deployment',
     'identity and data FoundationModel declarations with every optional engine disabled',
@@ -27,7 +27,7 @@ const FOUNDATION_BOOTSTRAP_DESIRED_STATE = Object.freeze({
   ]),
   verification: Object.freeze([
     'PlatformSupportProfile Ready at observedGeneration',
-    'all 6 Foundation CRDs Established',
+    'all 7 Foundation CRDs Established',
     'deployment/opensphere-system/foundation-control-plane rollout Ready',
     'FoundationModel identity, data and observability declarations Installed',
     'FoundationModuleDescriptor identity declaration present',
