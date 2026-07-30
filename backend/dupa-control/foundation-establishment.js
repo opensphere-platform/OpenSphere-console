@@ -10,6 +10,8 @@ const FOUNDATION_CONTRACT_CRDS = Object.freeze([
 ]);
 
 const CONSUMER_PROTECT_FINALIZER = 'foundation.opensphere.io/consumer-protect';
+const MODEL_EVIDENCE_MAX_AGE_MS = 2 * 60 * 1000;
+const BINDING_EVIDENCE_MAX_AGE_MS = 2 * 60 * 1000;
 
 function crdEstablished(item) {
   return Boolean(item)
@@ -41,10 +43,22 @@ function listItems(result) {
   return result?.ok && Array.isArray(result?.json?.items) ? result.json.items : [];
 }
 
-function validModel(item) {
+function timestampFresh(value, nowMs, maxAgeMs) {
+  const observed = Date.parse(String(value || ''));
+  return Number.isFinite(observed)
+    && observed <= nowMs + (30 * 1000)
+    && nowMs - observed <= maxAgeMs;
+}
+
+function validModel(item, nowMs = Date.now()) {
   const name = String(item?.metadata?.name || '');
   const model = String(item?.spec?.model || '');
-  return name !== '' && name === model && ['Installed', 'Disabled'].includes(String(item?.spec?.desiredState || ''));
+  return name !== ''
+    && name === model
+    && String(item?.spec?.desiredState || '') === 'Installed'
+    && String(item?.status?.phase || '') === 'Installed'
+    && item?.status?.operator?.deployed === true
+    && timestampFresh(item?.status?.observedAt, nowMs, MODEL_EVIDENCE_MAX_AGE_MS);
 }
 
 function validDescriptor(item) {
@@ -52,12 +66,14 @@ function validDescriptor(item) {
     && String(item?.spec?.model || '') === String(item?.metadata?.name || '');
 }
 
-function bindingConnected(item) {
+function bindingConnected(item, nowMs = Date.now()) {
   const phase = String(item?.status?.phase || '');
   const conditions = Array.isArray(item?.status?.conditions) ? item.status.conditions : [];
-  return phase === 'Connected'
+  const connected = phase === 'Connected'
     || conditions.some((condition) => ['Connected', 'Ready'].includes(String(condition?.type || ''))
       && condition?.status === 'True');
+  return connected
+    && timestampFresh(item?.status?.connection?.lastCheck || item?.status?.observedAt, nowMs, BINDING_EVIDENCE_MAX_AGE_MS);
 }
 
 function protectedBinding(item) {
@@ -70,6 +86,7 @@ function evidenceCondition(key, label, ready, state, detail) {
 }
 
 function foundationEstablishmentProjection({
+  now = Date.now(),
   supportReady = false,
   shellReady = false,
   bootstrapOwner = { ok: false, status: 503, json: null },
@@ -97,7 +114,7 @@ function foundationEstablishmentProjection({
   const modelState = responseState(models, 'FoundationModel API is missing');
   const modelItems = listItems(models);
   const modelsReady = modelState.readable && !modelState.missing
-    && modelItems.length > 0 && modelItems.every(validModel);
+    && modelItems.length > 0 && modelItems.every((item) => validModel(item, now));
 
   const descriptorState = responseState(descriptors, 'FoundationModuleDescriptor API is missing');
   const descriptorItems = listItems(descriptors);
@@ -106,7 +123,7 @@ function foundationEstablishmentProjection({
 
   const bindingState = responseState(bindings, 'FoundationBinding API is missing');
   const bindingItems = listItems(bindings);
-  const connected = bindingItems.filter(bindingConnected);
+  const connected = bindingItems.filter((item) => bindingConnected(item, now));
   const protectedConnected = connected.filter(protectedBinding);
   const bindingReady = bindingState.readable && !bindingState.missing && protectedConnected.length > 0;
 
@@ -204,6 +221,8 @@ function foundationEstablishmentProjection({
 module.exports = {
   FOUNDATION_CONTRACT_CRDS,
   CONSUMER_PROTECT_FINALIZER,
+  MODEL_EVIDENCE_MAX_AGE_MS,
+  BINDING_EVIDENCE_MAX_AGE_MS,
   crdEstablished,
   deploymentReady,
   validModel,
