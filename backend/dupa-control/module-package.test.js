@@ -284,6 +284,23 @@ test('extension installation gives Console UI and CLI one governed API and immut
   assert.match(crd, /client: \{ type: string, enum: \['console-api', 'cli:os'\] \}/);
 });
 
+test('destructive Extension lifecycle actions require a durable operator reason and verified rollback evidence', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  const routeStart = controller.indexOf("const m = p.match(/^\\/api\\/admin\\/plugins\\/registrations");
+  const routeEnd = controller.indexOf('// PATCH PluginPackage icon', routeStart);
+  const lifecycle = controller.slice(routeStart, routeEnd);
+
+  assert.match(lifecycle, /\['install', 'uninstall', 'rollback'\]\.includes\(action\)/);
+  assert.match(lifecycle, /reason\.length < 8/);
+  assert.match(lifecycle, /durableAudit\(actor, action, id, 'denied', 'ApprovalReasonRequired', opId\)/);
+  assert.match(lifecycle, /previousManifestSha256/);
+  assert.match(lifecycle, /previousSignatureIdentity/);
+  assert.match(lifecycle, /previousEvidenceRefs/);
+  assert.match(lifecycle, /ensureRegistration\(id, 'Enabled', actor, reason\)/);
+  assert.match(lifecycle, /previousDigest=\$\{previousDigest\}/);
+  assert.doesNotMatch(lifecycle, /rollback to previous verified release/);
+});
+
 test('OAA Extension security facade is exact-digest, permission-gated, AAL2, and credential-free', () => {
   const source = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
   const owner = source.slice(source.indexOf("if (p.startsWith('/api/oaa/owner/extensions/'))"), source.indexOf('// ── 인증 게이트'));

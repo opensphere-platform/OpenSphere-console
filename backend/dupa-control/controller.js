@@ -3412,6 +3412,16 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall|rollback)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
+      const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || '').trim();
+      if (['install', 'uninstall', 'rollback'].includes(action) && reason.length < 8) {
+        await durableAudit(actor, action, id, 'denied', 'ApprovalReasonRequired', opId);
+        return json(res, 400, {
+          error: 'ApprovalReasonRequired',
+          message: `${action} reason must be at least 8 characters`,
+          opId,
+        });
+      }
       if (id === FOUNDATION_ID && action === 'enable') {
         const readiness = await platformReadinessStatus(req);
         if (!readiness.admission.foundationActivationAllowed) {
@@ -3512,21 +3522,12 @@ const server = http.createServer(async (req, res) => {
           await durableAudit(actor, action, id, 'error', `HTTP ${pr.status}`, opId);
           return json(res, pr.status >= 500 ? 502 : pr.status, { error: 'rollback patch failed', status: pr.status, opId });
         }
-        await ensureRegistration(id, 'Enabled', actor, 'rollback to previous verified release');
-        await durableAudit(actor, action, id, 'accepted', previousDigest, opId);
+        await ensureRegistration(id, 'Enabled', actor, reason);
+        await durableAudit(actor, action, id, 'accepted', `${reason}; previousDigest=${previousDigest}`, opId);
         reconcile().catch((e) => console.error('reconcile error', e));
         return json(res, 202, { accepted: true, id, desiredState: 'Enabled', digest: previousDigest, version: previousVersion });
       }
-      const body = await readBody(req).catch(() => ({}));
-      const reason = String(body.reason || '').trim();
       if (action === 'install') {
-        if (reason.length < 8) {
-          return json(res, 400, {
-            error: 'ApprovalReasonRequired',
-            message: 'installation reason must be at least 8 characters',
-            opId,
-          });
-        }
         const pkg = await getPackage(id);
         if (!pkg.ok) return json(res, pkg.status === 404 ? 404 : 502, { error: 'PackageUnavailable', status: pkg.status, opId });
       }

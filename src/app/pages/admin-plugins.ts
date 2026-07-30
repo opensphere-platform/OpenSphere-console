@@ -717,6 +717,14 @@ interface TreeNode {
               Enable
             </button>
           }
+          <button
+            class="btn btn-sm btn-outline"
+            [disabled]="!rollbackAvailable(r)"
+            [title]="rollbackAvailable(r) ? rollbackSummary(r) : '검증된 이전 release 증거가 없습니다.'"
+            (click)="run('rollback', r.name)"
+          >
+            Rollback
+          </button>
           <button class="btn btn-sm btn-danger-outline" (click)="run('uninstall', r.name)">Uninstall</button>
         </div>
 
@@ -732,8 +740,20 @@ interface TreeNode {
       [message]="pendingUninstall() ? pendingUninstall() + '의 메뉴와 워크로드를 제거합니다.' : ''"
       confirmLabel="제거"
       [danger]="true"
-      (confirmed)="confirmUninstall()"
+      [reasonRequired]="true"
+      reasonLabel="제거 승인 사유"
+      (confirmed)="confirmUninstall($event)"
       (cancelled)="pendingUninstall.set(null)"
+    />
+    <os-action-dialog
+      [open]="!!pendingRollback()"
+      title="이전 검증 Release로 롤백"
+      [message]="pendingRollbackRegistration() ? rollbackSummary(pendingRollbackRegistration()!) : ''"
+      confirmLabel="검증 후 롤백"
+      [reasonRequired]="true"
+      reasonLabel="롤백 승인 사유"
+      (confirmed)="confirmRollback($event)"
+      (cancelled)="pendingRollback.set(null)"
     />
     </div>
   `,
@@ -1005,13 +1025,14 @@ export class AdminPlugins implements OnInit {
   readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
   readonly revocations = signal<ImageRevocation[]>([]);
   readonly installing = signal(false);
+  readonly pendingRollback = signal<string | null>(null);
   readonly foundationActivationAllowed = signal(false);
   readonly catalogLoaded = signal(false);
   readonly registrationsLoaded = signal(false);
   readonly bindingsLoaded = signal(false);
   readonly projectionStatus = signal<ExtensionProjectionStatus | null>(null);
   readonly dataWarning = signal<string | null>(null);
-  readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
+  readonly msg = signal<{ type: 'success' | 'danger' | 'warning' | 'info'; text: string } | null>(null);
   readonly pendingUninstall = signal<string | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
@@ -1563,7 +1584,35 @@ export class AdminPlugins implements OnInit {
     return t === 'group' ? '' : t;
   }
 
-  async run(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+  rollbackAvailable(r: Registration): boolean {
+    const previousDigest = String(r.status.previousDigest || '');
+    const currentDigest = String(r.status.currentDigest || '');
+    return /^sha256:[a-f0-9]{64}$/.test(previousDigest)
+      && previousDigest !== currentDigest
+      && /^[a-f0-9]{64}$/.test(String(r.status.previousManifestSha256 || ''))
+      && /^[0-9]{12}$/.test(String(r.status.previousVersion || ''))
+      && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(String(r.status.previousCompatibilityVersion || ''))
+      && ['localhost', 'github-actions'].includes(String(r.status.previousBuildAuthority || ''))
+      && String(r.status.previousRequestedRef || '').length > 0
+      && String(r.status.previousSource || '').length > 0
+      && /^[a-f0-9]{40}$/.test(String(r.status.previousRevision || ''))
+      && String(r.status.previousSignatureIdentity || '').length > 0
+      && (r.status.previousEvidenceRefs || []).length >= 2;
+  }
+
+  rollbackSummary(r: Registration): string {
+    return `${this.displayName(r.name)}을 이전 검증 release로 되돌립니다.\n`
+      + `현재: ${this.artifactVersion(r)} · ${this.shortDigest(r.status.currentDigest)}\n`
+      + `대상: ${r.status.previousVersion || '미보고'} · ${this.shortDigest(r.status.previousDigest)}\n`
+      + `서명·digest·source revision을 서버에서 다시 검증하고 승인 사유를 영구 감사에 기록합니다.`;
+  }
+
+  pendingRollbackRegistration(): Registration | null {
+    const id = this.pendingRollback();
+    return id ? this.registrations().find((registration) => registration.name === id) || null : null;
+  }
+
+  async run(action: 'enable' | 'disable' | 'uninstall' | 'rollback', id: string): Promise<void> {
     // The API is the gate; this only keeps the page from firing a request whose
     // refusal is already known, and it names the same missing capabilities the
     // button's tooltip does.
@@ -1576,19 +1625,38 @@ export class AdminPlugins implements OnInit {
       this.pendingUninstall.set(id);
       return;
     }
+    if (action === 'rollback') {
+      const registration = this.registrations().find((item) => item.name === id);
+      if (!registration || !this.rollbackAvailable(registration)) {
+        this.msg.set({ type: 'warning', text: `${id}에 검증된 이전 release 증거가 없어 롤백할 수 없습니다.` });
+        return;
+      }
+      this.pendingRollback.set(id);
+      return;
+    }
     await this.execute(action, id);
   }
 
-  async confirmUninstall(): Promise<void> {
+  async confirmUninstall(reason: string): Promise<void> {
     const id = this.pendingUninstall();
     if (!id) return;
     this.pendingUninstall.set(null);
-    await this.execute('uninstall', id);
+    await this.execute('uninstall', id, reason);
   }
 
-  private async execute(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+  async confirmRollback(reason: string): Promise<void> {
+    const id = this.pendingRollback();
+    if (!id) return;
+    this.pendingRollback.set(null);
+    await this.execute('rollback', id, reason);
+  }
+
+  private async execute(action: 'enable' | 'disable' | 'uninstall' | 'rollback', id: string, reason = ''): Promise<void> {
     try {
-      await this.ctl[action](id);
+      if (action === 'rollback') await this.ctl.rollback(id, reason);
+      else if (action === 'uninstall') await this.ctl.uninstall(id, reason);
+      else if (action === 'enable') await this.ctl.enable(id);
+      else await this.ctl.disable(id);
       this.msg.set({ type: 'info', text: `${action} 요청됨: ${id} — controller가 조정 중…` });
       // controller reconcile + registry 반영을 잠깐 기다린 뒤 셸 메뉴 reload
       await this.poll(id, action);

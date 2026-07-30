@@ -54,3 +54,23 @@ test('Installed 목록과 상세 패널이 artifact 및 Console API 설치 prove
 test('권한 프로파일 드리프트를 관리자가 이해할 수 있는 문장으로 설명한다', () => {
   assert.ok(source.includes("PermissionProfileDrift: 'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름'"));
 });
+
+test('Console 관리자가 검증된 이전 release로 롤백하고 제거 사유를 남길 수 있다', () => {
+  for (const contract of [
+    "run('rollback', r.name)",
+    'rollbackAvailable(r)',
+    'previousDigest',
+    'previousManifestSha256',
+    'previousRevision',
+    'previousSignatureIdentity',
+    'previousEvidenceRefs',
+    '이전 검증 Release로 롤백',
+    '롤백 승인 사유',
+    '제거 승인 사유',
+    '[reasonRequired]="true"',
+    'confirmRollback($event)',
+    'confirmUninstall($event)',
+  ]) {
+    assert.ok(source.includes(contract), `${contract} Console lifecycle 계약이 필요하다`);
+  }
+});
