@@ -252,7 +252,7 @@ for ($index = 0; $index -lt $images.Count; $index += 1) {
     '--label', 'opensphere.io/release-class=pre-ga',
     '--label', 'opensphere.io/ga-eligible=false',
     '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local',
-    '--file', $item.File,
+    '--file', $item.File
   )
   if ($item.Key -eq 'backend') {
     if (-not $setupSourceRevision -or -not (Test-Path -LiteralPath $item.SetupContext)) {
