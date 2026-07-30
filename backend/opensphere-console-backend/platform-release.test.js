@@ -7,8 +7,10 @@ const path = require('path');
 const {
   COMPONENT_REPOSITORIES,
   REQUIRED_COMPONENTS,
+  buildComponentReleaseLock,
   calculateReleaseDigest,
   validateReleaseLock,
+  validateReleaseTransition,
   validatePlatformReleaseDesiredState,
 } = require('./platform-release-contract');
 const executorImage = `ghcr.io/opensphere-platform/opensphere-console-backend@sha256:${'f'.repeat(64)}`;
@@ -103,6 +105,55 @@ test('Platform Release contract accepts only the complete canonical exact-digest
   assert.throws(() => validateReleaseLock(blockedPromotion), /channel is unsupported/);
 });
 
+test('Console generates an atomic component target from the installed complete lock', () => {
+  const base = releaseLock();
+  const target = buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: {
+      backend: {
+        image: digest('f'),
+        registryCredentialsRequired: false,
+      },
+    },
+  }, new Date('2026-07-30T12:34:56.000Z'));
+  assert.equal(target.releaseScope, 'component');
+  assert.equal(target.baseReleaseDigest, base.releaseDigest);
+  assert.deepEqual(target.changedComponents, ['backend']);
+  assert.equal(target.components.console.image, base.components.console.image);
+  assert.equal(
+    target.components.backend.image,
+    `ghcr.io/opensphere-platform/opensphere-console-backend@${digest('f')}`,
+  );
+  assert.equal(target.components.backend.sourceRevision, 'b'.repeat(40));
+  assert.equal(target.resolvedAt, '2026-07-30T12:34:56.000Z');
+  assert.equal(Object.keys(target.components).length, REQUIRED_COMPONENTS.length);
+  assert.equal(validateReleaseTransition(base, target), target);
+});
+
+test('component target rejects stale bases, hidden changes and non-local promotion', () => {
+  const base = releaseLock();
+  const target = buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: { backend: { image: digest('f') } },
+  });
+
+  const stale = structuredClone(target);
+  stale.baseReleaseDigest = digest('e');
+  stale.releaseDigest = calculateReleaseDigest(stale);
+  assert.throws(() => validateReleaseTransition(base, stale), /installed base release digest/);
+
+  const hidden = structuredClone(target);
+  hidden.components.console.image =
+    `ghcr.io/opensphere-platform/opensphere-console@${digest('e')}`;
+  hidden.releaseDigest = calculateReleaseDigest(hidden);
+  assert.throws(() => validateReleaseTransition(base, hidden), /unlisted component console/);
+
+  const promoted = structuredClone(target);
+  promoted.channel = 'candidate';
+  promoted.releaseDigest = calculateReleaseDigest(promoted);
+  assert.throws(() => validateReleaseLock(promoted), /channel is unsupported|localhost edge/);
+});
+
 test('reviewed Gitea declaration is converted into one closed exact-digest executor Job', () => {
   const requestId = '123e4567-e89b-42d3-a456-426614174000';
   const manifest = {
@@ -145,6 +196,10 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(server, /validatePlatformReleaseDesiredState/);
   assert.match(server, /previousReleaseDigest !== installed\.summary\.releaseDigest/);
   assert.match(server, /\/api\/platform\/releases\/status/);
+  assert.match(server, /\/api\/platform\/releases\/component-target/);
+  assert.match(server, /buildComponentReleaseLock/);
+  assert.match(server, /validateReleaseTransition\(installed\.lock, desiredState\.targetLock\)/);
+  assert.match(server, /requireRecentAal2\(actor, 'Platform Release request'\)/);
   assert.match(server, /platformReleaseRuntimeStatus/);
   assert.match(server, /supportedChannels: \['edge'\]/);
   assert.match(deploy, /name: platform-release-reconciler/);
@@ -161,6 +216,9 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(ui, /local kubeconfig/);
   assert.match(ui, /\/api\/platform\/changes/);
   assert.match(ui, /previousReleaseDigest/);
+  assert.match(ui, /Component Lock 생성/);
+  assert.match(ui, /\/api\/platform\/releases\/component-target/);
+  assert.match(ui, /선택하지 않은 구성요소는 현재 설치 lock에서 그대로 계승/);
   assert.match(ui, /다른 관리자의 교차 승인/);
   assert.match(ui, /this\.status\(\)\?\.execution\.ready/);
   assert.match(ui, /candidate·stable은 통합 복구 drill/);

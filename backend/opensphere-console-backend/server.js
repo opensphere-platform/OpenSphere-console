@@ -21,7 +21,9 @@ const {
   PLATFORM_RELEASE_CONSUMER,
   PLATFORM_RELEASE_RECONCILER,
   PLATFORM_RELEASE_TARGET,
+  buildComponentReleaseLock,
   validatePlatformReleaseDesiredState,
+  validateReleaseTransition,
   releaseSummary,
 } = require('./platform-release-contract');
 
@@ -1863,6 +1865,46 @@ async function platformReleaseStatus() {
   };
 }
 
+async function generatePlatformComponentTarget(actor, body = {}) {
+  requireActorPermission(actor, 'console.git.change');
+  requireRecentAal2(actor, 'Platform Release component target generation');
+  const reason = managementReason(body.reason);
+  if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+  const installed = await installedPlatformRelease();
+  let targetLock;
+  try {
+    targetLock = buildComponentReleaseLock(installed.lock, {
+      sourceRevision: body.sourceRevision,
+      components: body.components,
+    });
+  } catch (error) {
+    throw { code: 400, msg: error.message };
+  }
+  await logAudit(
+    actor,
+    'platform-release-component-target-generate',
+    targetLock.releaseDigest,
+    'ok',
+    reason,
+    {
+      requestId: newOpId(),
+      phase: 'planned',
+      targetType: 'platform-release-lock',
+      payloadDigest: toHashHex(canonicalJson({
+        baseReleaseDigest: targetLock.baseReleaseDigest,
+        changedComponents: targetLock.changedComponents,
+        releaseDigest: targetLock.releaseDigest,
+      })),
+    },
+  );
+  return {
+    targetLock,
+    baseReleaseDigest: installed.summary.releaseDigest,
+    changedComponents: targetLock.changedComponents,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 async function governedChange(actor, body = {}) {
   requireActorPermission(actor, 'console.git.change');
   if (GITEA_CHANGE_REQUIRE_AAL2 && actor.assurance !== 'aal2') throw { code: 403, msg: 'governed Gitea change requires MFA assurance aal2' };
@@ -1879,6 +1921,7 @@ async function governedChange(actor, body = {}) {
   if (!target || target.length > 300 || /[\r\n]/.test(target)) throw { code: 400, msg: 'invalid governed change target' };
   let declaration = validateDeclaration(body.desiredState);
   if (consumerId === PLATFORM_RELEASE_CONSUMER) {
+    requireRecentAal2(actor, 'Platform Release request');
     if (!['apply', 'rollback'].includes(action.toLowerCase()) || target !== PLATFORM_RELEASE_TARGET) {
       throw { code: 400, msg: 'Platform Release permits only apply or rollback for opensphere-platform' };
     }
@@ -1889,6 +1932,8 @@ async function governedChange(actor, body = {}) {
     if (desiredState.previousReleaseDigest !== installed.summary.releaseDigest) {
       throw { code: 409, msg: 'Platform Release request is stale; current installation lock changed' };
     }
+    try { validateReleaseTransition(installed.lock, desiredState.targetLock); }
+    catch (error) { throw { code: 409, msg: error.message }; }
     if (action.toLowerCase() === 'apply'
       && desiredState.targetLock.releaseDigest === installed.summary.releaseDigest) {
       throw { code: 409, msg: 'requested Platform Release is already installed' };
@@ -3762,6 +3807,14 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/platform/releases/status' && req.method === 'GET') {
       try { await verifyConsoleAdmin(req); return json(res, 200, await platformReleaseStatus()); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'Platform Release status unavailable' }); }
+    }
+    if (p === '/api/platform/releases/component-target' && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req, { requireAal2: true });
+        return json(res, 200, await generatePlatformComponentTarget(actor, await readBody(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Platform component release target generation failed' });
+      }
     }
     const changeTemplateStatusPath = p.match(/^\/api\/platform\/change-templates\/([a-z0-9-]+)\/status$/);
     if (changeTemplateStatusPath && req.method === 'GET') {

@@ -8,6 +8,8 @@ const PLATFORM_RELEASE_TARGET = 'opensphere-platform';
 const PLATFORM_RELEASE_CONTRACT = 'opensphere.platform.release/v1';
 const RELEASE_LOCK_API_VERSION = 'release.opensphere.io/v1alpha1';
 const RELEASE_LOCK_KIND = 'OpenSphereReleaseLock';
+const RELEASE_SCOPE_INTEGRATED = 'integrated';
+const RELEASE_SCOPE_COMPONENT = 'component';
 // Setup is the installer authority. Its transactional bootstrap currently
 // permits edge only; candidate/stable remain blocked until the integrated
 // recovery drill is implemented. Accepting those locks here would expose a
@@ -69,6 +71,9 @@ function calculateReleaseDigest(lock) {
     components: lock.components,
     trust: lock.trust,
     ...(lock.releaseBom ? { releaseBom: lock.releaseBom } : {}),
+    ...(lock.releaseScope ? { releaseScope: lock.releaseScope } : {}),
+    ...(lock.baseReleaseDigest ? { baseReleaseDigest: lock.baseReleaseDigest } : {}),
+    ...(lock.changedComponents ? { changedComponents: lock.changedComponents } : {}),
   });
   return `sha256:${createHash('sha256').update(payload).digest('hex')}`;
 }
@@ -85,6 +90,7 @@ function validateReleaseLock(lock) {
   assertClosedObject(lock, [
     'apiVersion', 'kind', 'channel', 'releaseDigest', 'resolvedAt', 'source',
     'sourceRevision', 'trust', 'releaseBom', 'components',
+    'releaseScope', 'baseReleaseDigest', 'changedComponents',
     'provenanceVerifiedAt', 'sbomVerifiedAt',
   ], 'targetLock');
   if (lock.apiVersion !== RELEASE_LOCK_API_VERSION || lock.kind !== RELEASE_LOCK_KIND) {
@@ -123,6 +129,34 @@ function validateReleaseLock(lock) {
   if (signedRelease && lock.releaseBom === undefined) {
     throw new Error('candidate and stable targetLock require a signed Release BOM');
   }
+  const releaseScope = lock.releaseScope || RELEASE_SCOPE_INTEGRATED;
+  if (![RELEASE_SCOPE_INTEGRATED, RELEASE_SCOPE_COMPONENT].includes(releaseScope)) {
+    throw new Error('targetLock releaseScope is unsupported');
+  }
+  if (releaseScope === RELEASE_SCOPE_INTEGRATED
+    && (lock.baseReleaseDigest !== undefined || lock.changedComponents !== undefined)) {
+    throw new Error('integrated targetLock cannot declare a component transition');
+  }
+  if (releaseScope === RELEASE_SCOPE_COMPONENT) {
+    if (!localEdge || lock.channel !== 'edge') {
+      throw new Error('component targetLock requires localhost edge trust');
+    }
+    if (!SHA256_RE.test(String(lock.baseReleaseDigest || ''))) {
+      throw new Error('component targetLock baseReleaseDigest is invalid');
+    }
+    const changed = lock.changedComponents;
+    const canonicalChanged = Array.isArray(changed) ? [...new Set(changed)].sort() : [];
+    if (!Array.isArray(changed)
+      || changed.length === 0
+      || changed.length !== canonicalChanged.length
+      || changed.some((name, index) => name !== canonicalChanged[index])
+      || changed.some((name) => !REQUIRED_COMPONENTS.includes(name))) {
+      throw new Error('component targetLock changedComponents must be a non-empty canonical sorted set');
+    }
+    if (lock.releaseBom !== undefined) {
+      throw new Error('component targetLock cannot claim a signed Release BOM');
+    }
+  }
   assertClosedObject(lock.components, REQUIRED_COMPONENTS, 'targetLock.components');
   const names = Object.keys(lock.components).sort();
   if (names.length !== REQUIRED_COMPONENTS.length
@@ -140,8 +174,17 @@ function validateReleaseLock(lock) {
       || component.repository !== COMPONENT_REPOSITORIES[name]) {
       throw new Error(`targetLock component ${name} is not a canonical exact-digest image`);
     }
-    if (component.sourceRevision !== lock.sourceRevision) {
+    if (!REVISION_RE.test(String(component.sourceRevision || ''))) {
+      throw new Error(`targetLock component ${name} sourceRevision is invalid`);
+    }
+    if (releaseScope === RELEASE_SCOPE_INTEGRATED
+      && component.sourceRevision !== lock.sourceRevision) {
       throw new Error(`targetLock component ${name} sourceRevision differs from the release`);
+    }
+    if (releaseScope === RELEASE_SCOPE_COMPONENT
+      && lock.changedComponents.includes(name)
+      && component.sourceRevision !== lock.sourceRevision) {
+      throw new Error(`targetLock changed component ${name} sourceRevision differs from the component release`);
     }
     if (component.registryCredentialsRequired !== undefined
       && typeof component.registryCredentialsRequired !== 'boolean') {
@@ -156,6 +199,106 @@ function validateReleaseLock(lock) {
     throw new Error('targetLock releaseDigest does not match its component set and trust root');
   }
   return lock;
+}
+
+function sameComponent(left, right) {
+  return canonicalJson(left) === canonicalJson(right);
+}
+
+function validateReleaseTransition(baseLock, targetLock) {
+  const base = validateReleaseLock(baseLock);
+  const target = validateReleaseLock(targetLock);
+  if ((target.releaseScope || RELEASE_SCOPE_INTEGRATED) !== RELEASE_SCOPE_COMPONENT) {
+    return target;
+  }
+  if (target.baseReleaseDigest !== base.releaseDigest) {
+    throw new Error('component targetLock does not name the installed base release digest');
+  }
+  if (target.channel !== base.channel || canonicalJson(target.trust) !== canonicalJson(base.trust)) {
+    throw new Error('component targetLock channel or trust differs from its base release');
+  }
+  const baseNames = Object.keys(base.components).sort();
+  const targetNames = Object.keys(target.components).sort();
+  if (canonicalJson(baseNames) !== canonicalJson(targetNames)) {
+    throw new Error('component targetLock cannot change the installed component set');
+  }
+  const changed = new Set(target.changedComponents);
+  for (const name of targetNames) {
+    const differs = !sameComponent(base.components[name], target.components[name]);
+    if (changed.has(name) && !differs) {
+      throw new Error(`component targetLock changed component ${name} is identical to the base release`);
+    }
+    if (!changed.has(name) && differs) {
+      throw new Error(`component targetLock unlisted component ${name} differs from the base release`);
+    }
+  }
+  return target;
+}
+
+function normalizeComponentImage(name, value) {
+  const repository = COMPONENT_REPOSITORIES[name];
+  const raw = String(value || '').trim();
+  const image = SHA256_RE.test(raw)
+    ? `ghcr.io/opensphere-platform/${repository}@${raw}`
+    : raw;
+  const match = image.match(IMAGE_RE);
+  if (!match || match[1] !== repository) {
+    throw new Error(`component evidence ${name} is not the canonical exact-digest image`);
+  }
+  return image;
+}
+
+function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
+  const base = validateReleaseLock(baseLock);
+  if (base.channel !== 'edge' || canonicalJson(base.trust) !== canonicalJson(LOCAL_EDGE_TRUST)) {
+    throw new Error('component target generation requires an installed localhost edge release');
+  }
+  assertClosedObject(evidence, ['sourceRevision', 'components'], 'componentEvidence');
+  if (!REVISION_RE.test(String(evidence.sourceRevision || ''))) {
+    throw new Error('componentEvidence sourceRevision is invalid');
+  }
+  assertClosedObject(evidence.components, REQUIRED_COMPONENTS, 'componentEvidence.components');
+  const changedComponents = Object.keys(evidence.components).sort();
+  if (changedComponents.length === 0) {
+    throw new Error('componentEvidence must contain at least one changed component');
+  }
+  const components = structuredClone(base.components);
+  for (const name of changedComponents) {
+    if (!REQUIRED_COMPONENTS.includes(name)) {
+      throw new Error(`componentEvidence contains unsupported component ${name}`);
+    }
+    const item = evidence.components[name];
+    assertClosedObject(item, ['image', 'registryCredentialsRequired'], `componentEvidence.components.${name}`);
+    if (item.registryCredentialsRequired !== undefined
+      && typeof item.registryCredentialsRequired !== 'boolean') {
+      throw new Error(`componentEvidence component ${name} registry credential flag is invalid`);
+    }
+    components[name] = {
+      repository: COMPONENT_REPOSITORIES[name],
+      image: normalizeComponentImage(name, item.image),
+      sourceRevision: evidence.sourceRevision,
+      registryCredentialsRequired: item.registryCredentialsRequired
+        ?? base.components[name].registryCredentialsRequired
+        ?? false,
+    };
+  }
+  const target = {
+    apiVersion: RELEASE_LOCK_API_VERSION,
+    kind: RELEASE_LOCK_KIND,
+    channel: 'edge',
+    releaseDigest: '',
+    resolvedAt: now.toISOString(),
+    source: 'https://github.com/opensphere-platform/OpenSphere-console',
+    sourceRevision: evidence.sourceRevision,
+    trust: structuredClone(LOCAL_EDGE_TRUST),
+    releaseScope: RELEASE_SCOPE_COMPONENT,
+    baseReleaseDigest: base.releaseDigest,
+    changedComponents,
+    components,
+  };
+  target.releaseDigest = calculateReleaseDigest(target);
+  validateReleaseTransition(base, target);
+  return target;
 }
 
 function validatePlatformReleaseDesiredState(value) {
@@ -183,6 +326,9 @@ function releaseSummary(lock) {
     componentCount: Object.keys(validated.components).length,
     buildAuthority: validated.trust.buildAuthority || null,
     releaseClass: validated.trust.releaseClass || null,
+    releaseScope: validated.releaseScope || RELEASE_SCOPE_INTEGRATED,
+    baseReleaseDigest: validated.baseReleaseDigest || null,
+    changedComponents: validated.changedComponents || [],
   };
 }
 
@@ -193,9 +339,13 @@ module.exports = {
   PLATFORM_RELEASE_CONTRACT,
   COMPONENT_REPOSITORIES,
   REQUIRED_COMPONENTS,
+  RELEASE_SCOPE_INTEGRATED,
+  RELEASE_SCOPE_COMPONENT,
   canonicalJson,
   calculateReleaseDigest,
+  buildComponentReleaseLock,
   validateReleaseLock,
+  validateReleaseTransition,
   validatePlatformReleaseDesiredState,
   releaseSummary,
 };
