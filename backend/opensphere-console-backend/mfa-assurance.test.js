@@ -124,6 +124,9 @@ test('login keeps the established card design and adds only the requested sessio
 test('browser admin requests resolve the HttpOnly session at the Console enforcement point', () => {
   assert.match(backend, /async function proxyAdminControlRequest/);
   assert.match(backend, /browserSessions\.authenticate\(req\)/);
+  assert.match(backend, /const requireAal2 = isMutationRequest\(req\)/);
+  assert.match(backend, /verifyConsoleAdmin\(req, \{ requireAal2 \}\)/);
+  assert.match(backend, /assertConsoleAdminActor\(session\.actor, \{ requireAal2 \}\)/);
   assert.match(backend, /authorization = `Bearer \$\{session\.accessToken\}`/);
   assert.match(backend, /p\.startsWith\('\/api\/admin\/'\) && p !== '\/api\/admin\/events'/);
   assert.match(nginx, /location = \/api\/admin\/events \{[\s\S]*?\$dupa_controller_upstream/);

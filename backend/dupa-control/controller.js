@@ -2027,7 +2027,36 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── K8s Warning 이벤트를 콘솔 알림 소스로 (ADR-UI-002 §D2 — 클러스터 event 평면, OKD 렌즈) ──
 // 플랫폼 ns(opensphere-*)의 Warning만 audit bus에 합류. dedup(uid). observability operand 불요(K8s 네이티브).
+async function persistEventBeforeSeen({
+  uid,
+  event,
+  seen,
+  pending,
+  order,
+  persist,
+  cap = 2000,
+}) {
+  if (seen.has(uid)) return { persisted: true, duplicate: true };
+  const durableCandidate = pending.get(uid) || event;
+  pending.set(uid, durableCandidate);
+  try {
+    await persist(durableCandidate);
+  } catch (error) {
+    return { persisted: false, error };
+  }
+  pending.delete(uid);
+  seen.add(uid);
+  order.push(uid);
+  while (order.length > cap) {
+    const oldest = order.shift();
+    if (oldest) seen.delete(oldest);
+  }
+  return { persisted: true, duplicate: false };
+}
+
 const seenEvents = new Set();
+const pendingEventAudits = new Map();
+const seenEventOrder = [];
 async function pollK8sEvents() {
   const r = await k8s('GET', '/api/v1/events?fieldSelector=type=Warning&limit=100');
   if (!r.ok) return;
@@ -2036,11 +2065,22 @@ async function pollK8sEvents() {
     if (!ns.startsWith('opensphere')) continue; // 플랫폼 ns만(노이즈 억제)
     const uid = ev.metadata?.uid;
     if (!uid || seenEvents.has(uid)) continue;
-    seenEvents.add(uid);
     const o = ev.involvedObject || {};
-    logAudit('k8s', ev.reason || 'Event', `${o.kind || '?'}/${o.name || '?'}`, 'warning', (ev.message || '').slice(0, 160));
+    const event = pendingEventAudits.get(uid)
+      || logAudit('k8s', ev.reason || 'Event', `${o.kind || '?'}/${o.name || '?'}`, 'warning', (ev.message || '').slice(0, 160), '', { deferPersistence: true });
+    const result = await persistEventBeforeSeen({
+      uid,
+      event,
+      seen: seenEvents,
+      pending: pendingEventAudits,
+      order: seenEventOrder,
+      persist: persistAuditNow,
+    });
+    if (!result.persisted) {
+      console.error('[audit] Kubernetes event insert failed; event remains pending:', String(result.error).slice(0, 160));
+      break;
+    }
   }
-  if (seenEvents.size > 2000) seenEvents.clear(); // 메모리 가드
 }
 
 // ── Control API + registry 서빙 ───────────────────────────────
@@ -3532,5 +3572,5 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable };
+  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence, platformVerificationProjection, platformVerificationComparable, persistEventBeforeSeen };
 }

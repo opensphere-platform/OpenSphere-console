@@ -692,15 +692,18 @@ function requireRecentAal2(actor, operation = 'admin mutation') {
   }
 }
 
-async function verifyConsoleAdmin(req, options = {}) {
-  const actor = await verifyAuthed(req);
+function assertConsoleAdminActor(actor, options = {}) {
   if (!actor.groups || !actor.groups.includes(SUPABASE_BACKEND_ROLE)) {
     throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
   }
+  if (options.requireAal2 === true) requireRecentAal2(actor, 'admin mutation');
+  return actor;
+}
+
+async function verifyConsoleAdmin(req, options = {}) {
   const requireAal2 = options.requireAal2 === true
     || (options.requireAal2 !== false && SUPABASE_REQUIRE_AAL2 && isMutationRequest(req));
-  if (requireAal2) requireRecentAal2(actor, 'admin mutation');
-  return actor;
+  return assertConsoleAdminActor(await verifyAuthed(req), { ...options, requireAal2 });
 }
 
 async function verifyOaaIdentityOwner(req, options = {}) {
@@ -2084,16 +2087,19 @@ async function readBody(req) {
 
 async function proxyAdminControlRequest(req, res, url) {
   let authorization = String(req.headers.authorization || '');
+  const requireAal2 = isMutationRequest(req);
   if (authorization) {
     // CLI/PAT requests retain their bearer credential, but are verified at the
-    // Console enforcement point before the request reaches DUPA.
-    await verifyAuthed(req);
+    // Console enforcement point before the request reaches DUPA.  A bearer
+    // string never substitutes for the current admin role or recent AAL2 proof.
+    await verifyConsoleAdmin(req, { requireAal2 });
   } else {
     // Browser credentials never return to JavaScript. Resolve the opaque
     // HttpOnly cookie server-side and forward only the short-lived Supabase
     // access token. authenticate(req) also enforces Origin + CSRF on mutations.
     if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
     const session = await browserSessions.authenticate(req);
+    assertConsoleAdminActor(session.actor, { requireAal2 });
     authorization = `Bearer ${session.accessToken}`;
   }
 

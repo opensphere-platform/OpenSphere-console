@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, persistEventBeforeSeen } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -11,6 +11,34 @@ test('live condition never infers Ready from a label alone', () => {
   const failed = condition('Observability', false, 'TelemetryEvidenceMissing', 'missing', []);
   assert.equal(failed.status, 'False');
   assert.equal(failed.ready, false);
+});
+
+test('Kubernetes warning evidence is never marked seen before durable audit persistence', async () => {
+  const seen = new Set();
+  const pending = new Map();
+  const order = [];
+  const event = { opId: 'warning-1', action: 'FailedScheduling' };
+  let attempts = 0;
+  const persist = async (candidate) => {
+    attempts += 1;
+    assert.equal(candidate, event);
+    if (attempts === 1) throw new Error('audit authority unavailable');
+  };
+
+  const failed = await persistEventBeforeSeen({
+    uid: 'event-uid-1', event, seen, pending, order, persist,
+  });
+  assert.equal(failed.persisted, false);
+  assert.equal(seen.has('event-uid-1'), false);
+  assert.equal(pending.get('event-uid-1'), event);
+
+  const retried = await persistEventBeforeSeen({
+    uid: 'event-uid-1', event: { different: true }, seen, pending, order, persist,
+  });
+  assert.equal(retried.persisted, true);
+  assert.equal(seen.has('event-uid-1'), true);
+  assert.equal(pending.has('event-uid-1'), false);
+  assert.deepEqual(order, ['event-uid-1']);
 });
 
 test('deployment readiness requires a fully observed rollout, not ready replicas from the old revision', () => {
