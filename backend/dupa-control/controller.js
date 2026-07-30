@@ -15,7 +15,9 @@ const { ExtensionProjectionCoordinator } = require('./extension-projection');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-console';
-const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
+// 기본값은 projected ServiceAccount 경로. env 재정의는 시험에서 실제 경로를 오염시키지 않기 위한 것이며
+// 파일의 다른 설정 상수와 같은 관례를 따른다. 배포 매니페스트는 이 값을 설정하지 않는다.
+const SA = process.env.SA_TOKEN_DIR || '/var/run/secrets/kubernetes.io/serviceaccount';
 function kubernetesApiBase(env = process.env) {
   const rawHost = String(env.KUBERNETES_SERVICE_HOST || 'kubernetes.default.svc').trim();
   const host = rawHost.includes(':') && !rawHost.startsWith('[') ? `[${rawHost}]` : rawHost;
@@ -109,15 +111,33 @@ const AUDIT_CAP = 500;
 const audit = [];
 const auditActorLabel = (actor) => typeof actor === 'object' ? (actor.username || actor.subject || 'system') : (actor || 'system');
 const auditActorId = (actor) => typeof actor === 'object' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(actor.subject || '')) ? actor.subject : null;
+// 지속 실패는 세어서 드러낸다. 감사 실패가 stdout 한 줄로 조용히 지나가면
+// "원장에 남는다" 는 주장이 거짓이 되고, 거짓이 된 사실조차 관측되지 않는다.
+let auditPersistFailures = 0;
+let auditLastFailure = '';
+function noteAuditPersistFailure(err, event) {
+  auditPersistFailures += 1;
+  auditLastFailure = `${new Date().toISOString()} ${String(err).slice(0, 160)}`;
+  console.error(`[audit] durable persist FAILED op=${event?.opId || '?'} action=${event?.action || '?'}:`, String(err).slice(0, 200));
+}
+
+/**
+ * 감사 이벤트를 만든다. **지속(persist)은 하지 않는다.**
+ *
+ * 이 함수는 event 객체를 만들고 프로세스 내 링 버퍼(메트릭 전용)에 넣는 것까지만 한다.
+ * 지속은 반드시 호출자가 `durableAudit()` 또는 `persistAuditNow()` 로 **await** 해야 한다.
+ *
+ * 이전에는 `options.deferPersistence` 가 없으면 `persistAuditNow(e).catch(console.error)` 로
+ * fire-and-forget 했다. 그 분기가 이 파일에서 유일한 fail-open 지점이었고(호출자 1곳 —
+ * K8s Warning 폴러), insert 실패 시 이벤트가 재시도 없이 영구 소실됐다.
+ * 옵션으로 두면 다시 새는 호출이 생기므로 **분기 자체를 제거**한다.
+ * 관리 변경 25곳은 이미 `durableAudit()` 를 쓰고 있어 영향이 없다.
+ */
 function logAudit(actor, action, target, result, reason, opId, options = {}) {
   const e = { time: new Date().toISOString(), opId: opId || newOpId(), source: options.source || 'dupa-controller', actor: auditActorLabel(actor), actorId: auditActorId(actor), action, target, result, reason: reason || '' };
   audit.unshift(e);
   if (audit.length > AUDIT_CAP) audit.pop();
   console.log('[audit] ' + JSON.stringify(e));
-  if (options.deferPersistence) {
-    return e;
-  }
-  persistAuditNow(e).catch((err) => console.error('[audit] Supabase event insert failed:', String(err).slice(0, 120)));
   return e;
 }
 async function persistAuditNow(event) {
@@ -148,8 +168,13 @@ async function persistAuditNow(event) {
   if (!response.ok) throw new Error(`Supabase audit HTTP ${response.status}`);
 }
 async function durableAudit(actor, action, target, result, reason, opId, source = 'dupa-controller') {
-  const event = logAudit(actor, action, target, result, reason, opId, { deferPersistence: true, source });
-  await persistAuditNow(event);
+  const event = logAudit(actor, action, target, result, reason, opId, { source });
+  try {
+    await persistAuditNow(event);
+  } catch (err) {
+    noteAuditPersistFailure(err, event);
+    throw err;           // 호출자가 mutation 을 닫을 수 있도록 그대로 올린다
+  }
   return event;
 }
 function supabaseHeaders(profile) {
@@ -1865,18 +1890,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ── K8s Warning 이벤트를 콘솔 알림 소스로 (ADR-UI-002 §D2 — 클러스터 event 평면, OKD 렌즈) ──
 // 플랫폼 ns(opensphere-*)의 Warning만 audit bus에 합류. dedup(uid). observability operand 불요(K8s 네이티브).
 const seenEvents = new Set();
+// 관측했으나 아직 원장에 못 넣은 이벤트 수. 0 이 아니면 알림 소스가 뒤처져 있다는 뜻이다.
+let _k8sEventsPending = 0;
 async function pollK8sEvents() {
   const r = await k8s('GET', '/api/v1/events?fieldSelector=type=Warning&limit=100');
   if (!r.ok) return;
+  let pending = 0;
   for (const ev of r.json.items || []) {
     const ns = ev.metadata?.namespace || '';
     if (!ns.startsWith('opensphere')) continue; // 플랫폼 ns만(노이즈 억제)
     const uid = ev.metadata?.uid;
     if (!uid || seenEvents.has(uid)) continue;
-    seenEvents.add(uid);
     const o = ev.involvedObject || {};
-    logAudit('k8s', ev.reason || 'Event', `${o.kind || '?'}/${o.name || '?'}`, 'warning', (ev.message || '').slice(0, 160));
+    // ★ 순서가 계약이다. 예전에는 `seenEvents.add(uid)` 가 먼저였고 지속은 fire-and-forget 이어서,
+    //   Supabase insert 가 실패한 이벤트는 "이미 봤다" 로 표시된 채 재시도 없이 영구 소실됐다.
+    //   지속이 성공한 뒤에만 봤다고 표시한다 — 실패하면 다음 폴에서 자연히 재시도된다.
+    try {
+      await durableAudit('k8s', ev.reason || 'Event', `${o.kind || '?'}/${o.name || '?'}`, 'warning', (ev.message || '').slice(0, 160));
+      seenEvents.add(uid);
+    } catch {
+      // noteAuditPersistFailure 가 이미 세고 기록했다. uid 를 표시하지 않아 재시도 대상으로 남는다.
+      // 원장이 살아날 때까지 다음 폴에서 다시 시도한다. 남은 항목은 세어서 메트릭으로 드러낸다.
+      pending = (r.json.items || []).filter((x) => {
+        const u = x.metadata?.uid;
+        return u && !seenEvents.has(u) && String(x.metadata?.namespace || '').startsWith('opensphere');
+      }).length;
+      break;
+    }
   }
+  _k8sEventsPending = pending;
   if (seenEvents.size > 2000) seenEvents.clear(); // 메모리 가드
 }
 
@@ -2589,6 +2631,13 @@ function metricsText() {
     '# HELP dupa_audit_events Current in-memory audit ring size.',
     '# TYPE dupa_audit_events gauge',
     `dupa_audit_events ${audit.length}`,
+    // 감사 지속 실패는 반드시 관측 가능해야 한다. 0 이 아니면 "원장에 남는다" 가 그 순간 거짓이었다는 뜻이다.
+    '# HELP dupa_audit_persist_failures_total Durable audit persistence failures since start.',
+    '# TYPE dupa_audit_persist_failures_total counter',
+    `dupa_audit_persist_failures_total ${auditPersistFailures}`,
+    '# HELP dupa_k8s_events_pending K8s warning events observed but not yet durably recorded.',
+    '# TYPE dupa_k8s_events_pending gauge',
+    `dupa_k8s_events_pending ${_k8sEventsPending}`,
     '# HELP process_resident_memory_bytes Resident memory size in bytes.',
     '# TYPE process_resident_memory_bytes gauge',
     `process_resident_memory_bytes ${mu.rss}`,
@@ -2963,9 +3012,9 @@ const server = http.createServer(async (req, res) => {
       const source = pluginId === 'opensphere-console-backend'
         ? `core:${pluginId}/${clip(b.userActor || 'system', 60)}`
         : 'ext:' + pluginId;
-      const event = logAudit(clip(b.userActor || 'system', 60), clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId, { deferPersistence: true, source });
+      const event = logAudit(clip(b.userActor || 'system', 60), clip(b.action || 'event', 60), clip(b.target || b.title || '', 120), clip(b.result || b.severity || 'info', 30), clip(b.reason || b.detail || '', 200), opId, { source });
       try { await persistAuditNow(event); }
-      catch (e) { console.error(`[audit] durable event persist failed op=${opId}:`, e); return json(res, 503, { error: 'event persistence unavailable', opId }); }
+      catch (e) { noteAuditPersistFailure(e, event); return json(res, 503, { error: 'event persistence unavailable', opId }); }
       return json(res, 202, { accepted: true, source });
     }
 
@@ -3126,5 +3175,9 @@ if (require.main === module) {
   });
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
-  module.exports = { isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+  // 감사 원시요소는 **동작 시험**을 위해 내보낸다. 소스 문자열 정규식으로 계약을 확인하는 것은
+  // 동어반복이라 회귀를 못 잡는다(arch-002 레드팀 감사 패턴 B). 실제로 호출해 확인해야 한다.
+  module.exports = { logAudit, durableAudit, persistAuditNow, pollK8sEvents,
+    auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
+    isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
 }
