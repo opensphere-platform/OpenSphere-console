@@ -2685,7 +2685,10 @@ async function declarePlatformProfile(actor, reason) {
   const body = {
     apiVersion: `${PLATFORM_GROUP}/${V}`, kind: 'PlatformSupportProfile',
     metadata: { name: PLATFORM_PROFILE_NAME, namespace: NS },
-    spec: { ...requiredProfileSpec, approval: { requestedBy: actor, reason, requestedAt: new Date().toISOString() } },
+    // PlatformSupportProfile approval.requestedBy is a CRD string field. The
+    // authenticated request actor is a structured object, so persist the same
+    // stable human-readable label used by audit and UIPluginRegistration.
+    spec: { ...requiredProfileSpec, approval: { requestedBy: auditActorLabel(actor), reason, requestedAt: new Date().toISOString() } },
   };
   if (!current.crdReady) return { ok: false, status: 503, json: { message: current.reason || 'PlatformSupportProfile CRD unavailable' } };
   if (!current.declared) return k8s('POST', `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles`, body);

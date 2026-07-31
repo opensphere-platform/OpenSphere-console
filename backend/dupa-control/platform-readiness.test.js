@@ -177,3 +177,9 @@ test('PlatformSupportProfile status is a controller-owned projection that change
   assert.match(controller, /reconcilePlatformVerification\(\)/);
   assert.match(controller, /Promise\.all\(\[reconcile\(\), pollK8sEvents\(\), reconcilePlatformVerification\(\)\]\)/);
 });
+
+test('PlatformSupportProfile approval persists an actor label, not the authenticated actor object', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /approval:\s*\{\s*requestedBy:\s*auditActorLabel\(actor\),\s*reason,/);
+  assert.doesNotMatch(controller, /approval:\s*\{\s*requestedBy:\s*actor,\s*reason,/);
+});
