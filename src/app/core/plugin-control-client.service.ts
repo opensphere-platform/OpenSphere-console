@@ -18,7 +18,7 @@ export interface Registration {
   name: string; desiredState: string;
   installation?: {
     requestedAt?: string; requestedBy?: string; requestedById?: string;
-    client?: 'cli:os'; operationId?: string;
+    client?: 'cli:os' | 'console:web'; operationId?: string;
   };
   status: {
     phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string;
@@ -141,6 +141,19 @@ export class PluginControlClient {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason }),
     }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return (await r.json()).item; });
   }
+  install(image: string, reason: string, client: 'cli:os' | 'console:web' = 'console:web') {
+    return this.http.request('/api/admin/extensions/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ image: image.trim(), reason: reason.trim(), client }),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { message?: unknown; error?: unknown };
+        throw new Error(`install HTTP ${r.status}: ${String(body.message || body.error || 'request failed')}`);
+      }
+      return r.json();
+    });
+  }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
   bindingAction(name: string, action: 'enable' | 'disable') {
     return this.http.request(`/api/admin/bindings/${name}/${action}`, { method: 'POST' })
@@ -163,9 +176,9 @@ export class PluginControlClient {
       return r.json();
     });
   }
-  enable(id: string) { return this.act(id, 'enable'); }
-  disable(id: string) { return this.act(id, 'disable'); }
-  uninstall(id: string) { return this.act(id, 'uninstall'); }
+  enable(id: string, reason: string) { return this.act(id, 'enable', reason); }
+  disable(id: string, reason: string) { return this.act(id, 'disable', reason); }
+  uninstall(id: string, reason: string) { return this.act(id, 'uninstall', reason); }
   /** 1단 아이콘 지정 — UIPluginPackage spec.nav.icon 패치(Carbon 토큰명). 빈 문자열=기본 아이콘. */
   setIcon(id: string, icon: string) {
     return this.http.request(`/api/admin/plugins/packages/${id}/icon`, {

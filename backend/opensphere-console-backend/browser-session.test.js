@@ -6,7 +6,9 @@ const { createBrowserSessionManager, sha256 } = require('./browser-session');
 
 function harness({ verifiedFactor = false } = {}) {
   let row = null;
+  let authorityOutage = false;
   const restRequest = async (resource, options = {}) => {
+    if (authorityOutage) throw { code: 503, msg: 'Supabase unavailable' };
     assert.equal(resource, 'browser_session');
     if (options.method === 'POST') {
       row = {
@@ -66,7 +68,7 @@ function harness({ verifiedFactor = false } = {}) {
     publicOrigin: 'https://console.example.test',
     now: () => new Date('2026-07-27T00:00:00.000Z'),
   });
-  return { manager, row: () => row };
+  return { manager, row: () => row, setAuthorityOutage: (value) => { authorityOutage = value; } };
 }
 
 function request({ cookie = '', csrf = '', method = 'GET' } = {}) {
@@ -123,6 +125,28 @@ test('authenticates through the opaque cookie and rejects a mutation without CSR
     method: 'POST',
   }));
   assert.equal(accepted.actor.provider, 'supabase-browser-session');
+});
+
+test('keeps only a previously verified GET session during authority outage and fails mutations closed', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+    duration: '8h',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  const cookie = `__Host-opensphere_session=${encodeURIComponent(handle)}`;
+  const live = await h.manager.authenticate(request({ cookie }));
+  assert.equal(live.authorityDegraded, undefined);
+  h.setAuthorityOutage(true);
+  const degraded = await h.manager.authenticate(request({ cookie }));
+  assert.equal(degraded.authorityDegraded, true);
+  assert.equal(degraded.actor.sub, live.actor.sub);
+  assert.equal(h.manager.cachedActorForAccessToken(degraded.accessToken).authorityDegraded, true);
+  await assert.rejects(
+    h.manager.authenticate(request({ cookie, csrf: created.csrfToken, method: 'POST' })),
+    (error) => error.code === 503,
+  );
 });
 
 test('keeps a verified TOTP login pending until an aal2 challenge succeeds', async () => {

@@ -250,14 +250,14 @@ test('runtime Registry projects channel status and immutable approval evidence',
   });
 });
 
-test('extension installation is native CLI-only and preserves immutable installation provenance', () => {
+test('Console and CLI use one installation API and preserve immutable installation provenance', () => {
   const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
   const crd = fs.readFileSync(path.join(__dirname, 'ui-plugin-crds.yaml'), 'utf8');
-  assert.match(controller, /body\.client !== 'cli:os'/);
-  assert.match(controller, /cliInstallationProvenance\(actor, opId\)/);
+  assert.doesNotMatch(controller, /CliInstallationRequired|body\.client !== 'cli:os'/);
+  assert.match(controller, /installationProvenance\(actor, opId, body\.client\)/);
   assert.match(controller, /installation: x\.spec\.installation/);
   assert.match(crd, /installation:\s*\n\s*type: object/);
-  assert.match(crd, /client: \{ type: string, enum: \['cli:os'\] \}/);
+  assert.match(crd, /client: \{ type: string, enum: \['cli:os', 'console:web'\] \}/);
 });
 
 test('OAA Extension security facade is exact-digest, permission-gated, AAL2, and credential-free', () => {

@@ -91,6 +91,15 @@ export interface ManualContribution {
   documents: ManualContributionDocument[];
 }
 
+export interface ManagementInventoryItem {
+  id: string;
+  title: string;
+  navBand: string;
+  icon?: string;
+  desiredState?: string;
+  phase?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class ExtensionHostService {
   private auth = inject(AuthService);
@@ -116,6 +125,9 @@ export class ExtensionHostService {
    */
   readonly pluginLoadStates = signal<Record<string, PluginLoadState>>({});
   readonly pages = signal<PluginPage[]>([]);
+  /** Host-owned projection. Unlike pages, this inventory survives inactive or
+   * degraded serving contributions and never causes guest assets to load. */
+  readonly managementInventory = signal<ManagementInventoryItem[]>([]);
   readonly failures = signal<PluginFailure[]>([]);
   /** 플러그인별 기여 내비 트리(nav:contribute) — pluginId → 재귀 NavNode[] */
   readonly navTrees = signal<Record<string, NavNode[]>>({});
@@ -136,6 +148,7 @@ export class ExtensionHostService {
   async load(): Promise<void> {
     this.startRegistryWatch();
     this.loadState.set('loading');
+    void this.loadManagementInventory();
     try {
       let reg: RegistryV3;
       try {
@@ -152,7 +165,7 @@ export class ExtensionHostService {
       const activePlugins = (reg.plugins ?? []).filter((entry) => entry.available === true);
 			this.registryFingerprint = this.fingerprint(activePlugins, reg.trustedKeys ?? {});
       // 1단 아이콘 맵(registry 전사값). registry에는 Enabled 플러그인만 들어오므로 그대로 사용.
-      this.pluginIcons.set(Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])));
+      this.pluginIcons.update((current) => ({ ...current, ...Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])) }));
       this.registryEntries = activePlugins;
       // Main Shell은 직속 consumer만 활성화한다. subShell의 child는 subShell-scoped host를 통해
       // mountChild()로 활성화되어 위계와 capability 경계를 보존한다.
@@ -170,6 +183,7 @@ export class ExtensionHostService {
    * 셸 이미지·파드는 불변 — registry 변화만으로 메뉴가 증감한다.
    */
   async reload(): Promise<void> {
+    await this.loadManagementInventory();
     // CustomElementRegistry는 unregister를 지원하지 않는다. 활성 guest를 같은 document에서
     // 재평가하면 이전 생성자와 새 번들이 섞이므로 registry 변경은 document 경계에서 교체한다.
     if (this.activeModules.size > 0) {
@@ -186,6 +200,42 @@ export class ExtensionHostService {
     this.apiBaseByPlugin.set({});
     this.pluginLoadStates.set({});
     await this.load();
+  }
+
+  private async loadManagementInventory(): Promise<void> {
+    try {
+      const [catalogResponse, registrationResponse] = await Promise.all([
+        fetchWithTimeout('/api/admin/plugins/catalog', { cache: 'no-store' }),
+        fetchWithTimeout('/api/admin/plugins/registrations', { cache: 'no-store' }),
+      ]);
+      if (!catalogResponse.ok || !registrationResponse.ok) return;
+      const catalog = await catalogResponse.json() as { items?: Array<Record<string, unknown>> };
+      const registrations = await registrationResponse.json() as { items?: Array<Record<string, unknown>> };
+      const registrationByName = new Map((registrations.items || []).map((item) => [String(item['name'] || ''), item]));
+      const items = (catalog.items || []).flatMap((item) => {
+        const id = String(item['name'] || '');
+        if (!id) return [];
+        const nav = item['nav'] && typeof item['nav'] === 'object' ? item['nav'] as Record<string, unknown> : {};
+        const registration = registrationByName.get(id);
+        const status = registration?.['status'] && typeof registration['status'] === 'object'
+          ? registration['status'] as Record<string, unknown> : {};
+        return [{
+          id,
+          title: String(item['displayName'] || id),
+          navBand: String(nav['band'] || '운영 Operate'),
+          icon: String(nav['icon'] || ''),
+          desiredState: String(registration?.['desiredState'] || ''),
+          phase: String(status['phase'] || 'NotInstalled'),
+        }];
+      });
+      this.managementInventory.set(items);
+      this.pluginIcons.update((current) => ({
+        ...Object.fromEntries(items.map((item) => [item.id, item.icon || ''])),
+        ...current,
+      }));
+    } catch (error) {
+      console.warn('[extension-host] management inventory unavailable:', error);
+    }
   }
 
   private startRegistryWatch(): void {

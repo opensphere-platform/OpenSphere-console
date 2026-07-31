@@ -104,11 +104,13 @@ test('initial-password and recovery links open a public password form without an
   assert.match(supabaseManifest, /GOTRUE_PASSWORD_MIN_LENGTH, value: "12"/);
 });
 
-test('a stale browser session is discarded and routed to login instead of surfacing an outage', () => {
-  assert.match(authService, /this\.statusOf\(error\) === 401/);
+test('only an authoritative 401 discards a browser session while dependency outage keeps verified GET access', () => {
+  assert.match(authService, /this\.statusOf\(error\) !== 401/);
   assert.match(authService, /this\.clearIdentity\(\);\s*this\.loginRequired\.set\(true\)/);
   assert.match(browserSession, /browser session refresh credential was rejected/);
   assert.match(browserSession, /revokeTokenFamily/);
+  assert.match(browserSession, /authorityDegraded: true/);
+  assert.match(browserSession, /if \(!readOnly \|\| !cached/);
 });
 
 test('login keeps the established card design and adds only the requested session duration option', () => {

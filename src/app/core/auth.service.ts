@@ -32,6 +32,7 @@ interface SessionProjection {
   permissions?: unknown;
   assurance?: 'aal1' | 'aal2';
   session?: BrowserSession | null;
+  authorityDegraded?: boolean;
   error?: string;
 }
 
@@ -75,6 +76,7 @@ export class AuthService {
   readonly passwordRecoveryState = signal<'idle' | 'ready' | 'completed' | 'error'>('idle');
   readonly passwordRecoveryMessage = signal('');
   readonly initError = signal('');
+  readonly authorityWarning = signal('');
   readonly setupRequired = signal(false);
   readonly setupBusy = signal(false);
   readonly setupDefaults = signal({ username: 'opensphere-admin', displayName: 'OpenSphere Administrator', email: 'admin@opensphere.local' });
@@ -124,19 +126,26 @@ export class AuthService {
       this.loginRequired.set(false);
       return;
     }
-    if (await this.refreshInitialSetup()) return;
     if (await this.adoptLegacySession()) return;
     try {
       await this.refreshAuthorization();
       this.loginRequired.set(false);
+      return;
     } catch (error) {
-      if (this.statusOf(error) === 401) {
-        this.clearIdentity();
-        this.loginRequired.set(true);
-        return;
-      }
-      throw error;
+      if (this.statusOf(error) !== 401) throw error;
     }
+
+    // A missing browser session is the only reason to ask whether first-time
+    // setup is required. Bootstrap status is not a session authority and must
+    // never eject an already authenticated operator from the Shell.
+    this.clearIdentity();
+    try {
+      if (await this.refreshInitialSetup()) return;
+      this.authorityWarning.set('');
+    } catch (error) {
+      this.authorityWarning.set(String(error instanceof Error ? error.message : error));
+    }
+    this.loginRequired.set(true);
   }
 
   private async adoptLegacySession(): Promise<boolean> {
@@ -436,6 +445,7 @@ export class AuthService {
     this.roles.set(groups);
     this.assurance.set(body.assurance === 'aal2' ? 'aal2' : 'aal1');
     this.currentSession.set(body.session || null);
+    this.authorityWarning.set(body.authorityDegraded ? 'Supabase authorization state unavailable; cached read-only session is active.' : '');
     this.tokenExp.set(this.epoch(body.session?.absoluteExpiresAt));
     this.idleExp.set(this.epoch(body.session?.idleExpiresAt));
   }

@@ -11,9 +11,11 @@ import {
 } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute } from '@angular/router';
+import { RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { combineLatest, map } from 'rxjs';
 import { ExtensionHostService } from '../core/extension-host.service';
+import { CatalogItem, PluginControlClient, Registration } from '../core/plugin-control-client.service';
 
 /**
  * 플러그인 호스트 페이지 — §10 라우팅 계약의 셸측 수신부.
@@ -28,7 +30,7 @@ import { ExtensionHostService } from '../core/extension-host.service';
  */
 @Component({
   selector: 'os-plugin-host',
-  imports: [ClarityModule],
+  imports: [ClarityModule, RouterLink],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     @if (page(); as p) {
@@ -60,6 +62,37 @@ import { ExtensionHostService } from '../core/extension-host.service';
         </div>
         <div class="plugin-loading-content skeleton-block" aria-hidden="true"></div>
       </section>
+    } @else if (management(); as item) {
+      <section class="module-management" aria-labelledby="module-management-title">
+        <div class="module-management-heading">
+          <div>
+            <div class="module-management-eyebrow">MODULE MANAGEMENT</div>
+            <h1 id="module-management-title">{{ item.catalog?.displayName || id() }}</h1>
+            <p>제품 화면은 현재 비활성 상태입니다. 이 관리 화면은 설치·활성화 여부와 관계없이 유지됩니다.</p>
+          </div>
+          <a class="btn btn-primary" routerLink="/manage/extensions">Extensions 관리</a>
+        </div>
+        <div class="module-state-grid">
+          <div><span>Installed</span><strong>{{ item.registration ? 'Yes' : 'No' }}</strong></div>
+          <div><span>Activated</span><strong>{{ item.registration?.status?.phase === 'Activated' ? 'Yes' : 'No' }}</strong></div>
+          <div><span>Ready</span><strong>{{ moduleReady(item.registration) ? 'Yes' : 'No' }}</strong></div>
+        </div>
+        <dl>
+          <dt>Current artifact</dt><dd>{{ item.registration?.status?.currentDigest || '설치되지 않음' }}</dd>
+          <dt>Target artifact</dt><dd>{{ item.catalog?.installedDigest || item.catalog?.requestedChannel || '미지정' }}</dd>
+          <dt>Blocker</dt><dd>{{ blocker(item.registration) }}</dd>
+          <dt>Owner</dt><dd>{{ item.catalog?.owner || 'catalog owner 미보고' }}</dd>
+          <dt>해결 route</dt><dd>{{ item.registration?.status?.admission?.route || '/manage/extensions' }}</dd>
+        </dl>
+        <button class="btn btn-outline" type="button" (click)="refreshManagement()">재검사</button>
+      </section>
+    } @else if (managementError()) {
+      <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+        <clr-alert-item>
+          <span class="alert-text">관리 inventory를 읽지 못했습니다. {{ managementError() }}</span>
+          <div class="alert-actions"><button class="btn btn-sm" (click)="refreshManagement()">재검사</button></div>
+        </clr-alert-item>
+      </clr-alert>
     } @else {
       <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
         <clr-alert-item>
@@ -86,6 +119,18 @@ import { ExtensionHostService } from '../core/extension-host.service';
         min-height: calc(100% + 3rem);
       }
       .alert-actions { margin-top: 0.4rem; }
+      .module-management { box-sizing: border-box; min-height: calc(100vh - 3.5rem); padding: 1.5rem; background: var(--cds-global-color-construction-50, #fafafa); }
+      .module-management-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #d9d9d9; }
+      .module-management-heading h1 { margin: .2rem 0; font-size: 1.6rem; }
+      .module-management-heading p { margin: 0; color: #565656; }
+      .module-management-eyebrow { color: #0f62fe; font-size: .72rem; font-weight: 700; letter-spacing: .08em; }
+      .module-state-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin: 1rem 0; }
+      .module-state-grid div { padding: 1rem; border: 1px solid #d9d9d9; background: #fff; }
+      .module-state-grid span { display: block; color: #6f6f6f; font-size: .75rem; }
+      .module-state-grid strong { display: block; margin-top: .3rem; font-size: 1.2rem; }
+      .module-management dl { display: grid; grid-template-columns: 10rem minmax(0, 1fr); max-width: 60rem; margin: 0 0 1rem; border-top: 1px solid #d9d9d9; }
+      .module-management dt, .module-management dd { margin: 0; padding: .65rem; border-bottom: 1px solid #d9d9d9; overflow-wrap: anywhere; }
+      .module-management dt { font-weight: 600; background: #f4f4f4; }
       .plugin-loading-surface {
         box-sizing: border-box;
         min-height: calc(100vh - 3.5rem);
@@ -145,6 +190,7 @@ import { ExtensionHostService } from '../core/extension-host.service';
 })
 export class PluginHost {
   private ext = inject(ExtensionHostService);
+  private control = inject(PluginControlClient);
   private route = inject(ActivatedRoute);
   private destroyRef = inject(DestroyRef);
 
@@ -162,6 +208,9 @@ export class PluginHost {
     return pluginState === 'loading' || (pluginState === undefined && this.ext.loadState() === 'loading');
   });
   readonly runtimeError = signal<string>('');
+  readonly management = signal<{ catalog: CatalogItem | null; registration: Registration | null } | null>(null);
+  readonly managementError = signal('');
+  private managementKey = '';
 
   private host = viewChild<ElementRef<HTMLElement>>('host');
 
@@ -200,6 +249,14 @@ export class PluginHost {
         }
       }
     });
+
+    effect(() => {
+      const id = this.id();
+      const readyForFallback = Boolean(id) && !this.page() && !this.loading();
+      if (!readyForFallback || this.managementKey === id) return;
+      this.managementKey = id;
+      void this.loadManagement(id);
+    });
   }
 
   /**
@@ -223,6 +280,42 @@ export class PluginHost {
       } catch (err) {
         this.runtimeError.set(String((err as Error)?.message || err));
       }
+    }
+  }
+
+  moduleReady(registration: Registration | null): boolean {
+    return registration?.status?.workload?.phase === 'Ready'
+      && registration.status.verification?.manifest === 'Verified'
+      && registration.status.verification?.signature === 'Verified';
+  }
+
+  blocker(registration: Registration | null): string {
+    if (!registration) return 'NotInstalled';
+    return registration.status.admission?.reason || registration.status.reason || '없음';
+  }
+
+  refreshManagement(): void {
+    this.managementKey = '';
+    this.management.set(null);
+    this.managementError.set('');
+    void this.loadManagement(this.id());
+  }
+
+  private async loadManagement(id: string): Promise<void> {
+    if (!id) return;
+    try {
+      const [catalog, registrations] = await Promise.all([
+        this.control.catalogSnapshot(),
+        this.control.registrationsSnapshot(),
+      ]);
+      const catalogItem = catalog.items.find((item) => item.name === id) || null;
+      const registration = registrations.items.find((item) => item.name === id) || null;
+      if (catalogItem || registration) {
+        this.management.set({ catalog: catalogItem, registration });
+        this.managementError.set('');
+      }
+    } catch (error) {
+      this.managementError.set(String(error instanceof Error ? error.message : error));
     }
   }
 }

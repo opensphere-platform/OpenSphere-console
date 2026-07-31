@@ -79,13 +79,22 @@ test('Console administrator actions keep failures visible in the action dialog',
   assert.match(actionDialog, /clrAlertType.*danger/);
 });
 
-test('Platform Control presents operations, evidence and journey as correlated task views', () => {
+test('Platform Control presents support readiness, operations, evidence and journey as correlated task views', () => {
+  const routes = read('src', 'app', 'app.routes.ts');
   const control = read('src', 'app', 'pages', 'admin-platform-control.ts');
+  const readiness = read('src', 'app', 'pages', 'admin-platform-readiness.ts');
   const dataIdentity = read('src', 'app', 'pages', 'admin-data-identity.ts');
   const changeControl = read('src', 'app', 'pages', 'admin-change-control.ts');
+  assert.match(routes, /path: 'platform-readiness', component: AdminPlatformControl, data: \{ controlTab: 'readiness' \}/);
   assert.match(control, />Operations</);
+  assert.match(control, />Support Profile</);
   assert.match(control, />Evidence</);
   assert.match(control, />변경 흐름</);
+  assert.match(control, /os-admin-platform-readiness \[embedded\]="true"/);
+  assert.match(control, /queryParamMap\.get\('tab'\)[\s\S]{0,160}controlTab/);
+  assert.match(control, /requestedTab[\s\S]{0,280}'readiness'/);
+  assert.match(readiness, /@Input\(\) embedded = false/);
+  assert.match(readiness, /PlatformSupportProfile 사전 점검/);
   assert.match(control, /변경 요청 → 서명된 상태 선언 → Kubernetes 실측 결과/);
   assert.match(control, /HIS Binding/);
   assert.match(control, /NotConfigured/);

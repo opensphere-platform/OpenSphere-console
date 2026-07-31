@@ -79,7 +79,7 @@ export const routes: Routes = [
       { path: 'change-control', redirectTo: 'state-changes', pathMatch: 'full' },
       // Platform readiness is now part of the integrated Control Plane view.
       // Preserve controller links and old bookmarks without reviving a parallel page.
-      { path: 'platform-readiness', redirectTo: 'platform-control', pathMatch: 'full' },
+      { path: 'platform-readiness', component: AdminPlatformControl, data: { controlTab: 'readiness' } },
       // Permanent compatibility path. Preserve old bookmarks without exposing
       // the former screen in current Console navigation.
       { path: 'backbone', redirectTo: 'data-identity', pathMatch: 'full' },

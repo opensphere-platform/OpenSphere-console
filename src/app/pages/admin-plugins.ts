@@ -163,10 +163,25 @@ interface TreeNode {
     </section>
 
     <section class="oci-install" aria-labelledby="oci-install-title">
-      <h2 id="oci-install-title">설치는 Console native CLI에서 진행</h2>
-      <p class="os-sub">브라우저는 설치 요청을 만들지 않습니다. 서명·권한·provenance 검증과 설치 근거는 <code>os</code> CLI가 같은 인증·감사 경계에서 기록합니다.</p>
-      <pre class="os-mono">os extensions inspect ghcr.io/opensphere-platform/&lt;module&gt;:edge
-os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "승인 사유"</pre>
+      <h2 id="oci-install-title">Extension 설치</h2>
+      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 최근 MFA 확인과 8자 이상의 사유가 필요합니다.</p>
+      <div class="registry-access-form">
+        <clr-input-container>
+          <label for="extension-image">OCI image</label>
+          <input id="extension-image" #extensionImage clrInput placeholder="ghcr.io/opensphere-platform/opensphere-…:edge" />
+        </clr-input-container>
+        <clr-input-container>
+          <label for="extension-install-reason">설치 사유</label>
+          <input id="extension-install-reason" #extensionInstallReason clrInput minlength="8" placeholder="운영 변경 사유(8자 이상)" />
+        </clr-input-container>
+        <button
+          class="btn btn-primary"
+          [disabled]="!extensionImage.value.trim() || extensionInstallReason.value.trim().length < 8"
+          (click)="installModule(extensionImage.value, extensionInstallReason.value)"
+        >
+          설치
+        </button>
+      </div>
     </section>
         </clr-accordion-content>
       </clr-accordion-panel>
@@ -702,13 +717,14 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
     }
 
     <os-action-dialog
-      [open]="!!pendingUninstall()"
-      title="Extension 제거"
-      [message]="pendingUninstall() ? pendingUninstall() + '의 메뉴와 워크로드를 제거합니다.' : ''"
-      confirmLabel="제거"
-      [danger]="true"
-      (confirmed)="confirmUninstall()"
-      (cancelled)="pendingUninstall.set(null)"
+      [open]="!!pendingAction()"
+      [title]="pendingAction()?.action === 'uninstall' ? 'Extension 제거' : 'Extension 상태 변경'"
+      [message]="pendingAction() ? pendingAction()!.id + '에 ' + pendingAction()!.action + ' 작업을 실행합니다.' : ''"
+      [confirmLabel]="pendingAction()?.action === 'uninstall' ? '제거' : '실행'"
+      [danger]="pendingAction()?.action === 'uninstall'"
+      [reasonRequired]="true"
+      (confirmed)="confirmAction($event)"
+      (cancelled)="pendingAction.set(null)"
     />
     </div>
   `,
@@ -986,7 +1002,7 @@ export class AdminPlugins implements OnInit {
   readonly projectionStatus = signal<ExtensionProjectionStatus | null>(null);
   readonly dataWarning = signal<string | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
-  readonly pendingUninstall = signal<string | null>(null);
+  readonly pendingAction = signal<{ action: 'enable' | 'disable' | 'uninstall'; id: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
 
@@ -1529,23 +1545,19 @@ export class AdminPlugins implements OnInit {
       this.msg.set({ type: 'info', text: `활성화 대기 — ${lock} 플랫폼 제어에서 선행 조건과 4개 검증 증거를 확인하세요.` });
       return;
     }
-    if (action === 'uninstall') {
-      this.pendingUninstall.set(id);
-      return;
-    }
-    await this.execute(action, id);
+    this.pendingAction.set({ action, id });
   }
 
-  async confirmUninstall(): Promise<void> {
-    const id = this.pendingUninstall();
-    if (!id) return;
-    this.pendingUninstall.set(null);
-    await this.execute('uninstall', id);
+  async confirmAction(reason: string): Promise<void> {
+    const pending = this.pendingAction();
+    if (!pending) return;
+    this.pendingAction.set(null);
+    await this.execute(pending.action, pending.id, reason);
   }
 
-  private async execute(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+  private async execute(action: 'enable' | 'disable' | 'uninstall', id: string, reason: string): Promise<void> {
     try {
-      await this.ctl[action](id);
+      await this.ctl[action](id, reason);
       this.msg.set({ type: 'info', text: `${action} 요청됨: ${id} — controller가 조정 중…` });
       // controller reconcile + registry 반영을 잠깐 기다린 뒤 셸 메뉴 reload
       await this.poll(id, action);
@@ -1554,6 +1566,17 @@ export class AdminPlugins implements OnInit {
       this.msg.set({ type: 'success', text: `${action} 완료: ${id}` });
     } catch (err) {
       this.msg.set({ type: 'danger', text: `${action} 실패: ${err}` });
+    }
+  }
+
+  async installModule(image: string, reason: string): Promise<void> {
+    try {
+      const result = await this.ctl.install(image, reason);
+      const id = String((result as { id?: unknown })?.id || image);
+      this.msg.set({ type: 'info', text: `install 요청됨: ${id} — 검증과 workload 조정 중…` });
+      await this.refresh();
+    } catch (error) {
+      this.msg.set({ type: 'danger', text: `install 실패: ${String(error)}` });
     }
   }
 

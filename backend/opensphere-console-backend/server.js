@@ -12,6 +12,11 @@ const { normalizedEvent } = require('../notification-dispatcher/contract');
 const { createBrowserSessionManager } = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
+const {
+  FOUNDATION_BOOTSTRAP_RECONCILER,
+  FOUNDATION_BOOTSTRAP_TEMPLATE_ID,
+  cloneFoundationBootstrapTemplate,
+} = require('./foundation-bootstrap-contract');
 
 const MAX_BODY = 256 * 1024; // prevent unbounded in-memory request buffering
 const newOpId = () => randomUUID();
@@ -42,7 +47,8 @@ const GITEA_REPOSITORY = process.env.GITEA_REPOSITORY || 'platform-declarations'
 const GITEA_DEFAULT_BRANCH = process.env.GITEA_DEFAULT_BRANCH || 'main';
 const GITEA_WEBHOOK_SECRET = process.env.GITEA_WEBHOOK_SECRET || '';
 const GITEA_RECONCILER_NAME = process.env.GITEA_RECONCILER_NAME || 'opensphere-declaration-reconciler';
-const GITEA_RECONCILER_NAMES = new Set((process.env.GITEA_RECONCILER_NAMES || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler`)
+const GITEA_RECONCILER_NAMES = new Set((process.env.GITEA_RECONCILER_NAMES
+  || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler,${FOUNDATION_BOOTSTRAP_RECONCILER}`)
   .split(',').map((value) => value.trim()).filter(Boolean));
 const GITEA_CHANGE_REQUIRE_AAL2 = String(process.env.GITEA_CHANGE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const GITEA_REQUIRE_VERIFIED_MERGE = String(process.env.GITEA_REQUIRE_VERIFIED_MERGE || 'true').toLowerCase() !== 'false';
@@ -1463,7 +1469,7 @@ const CEPH_PREREQUISITE_TEMPLATE = Object.freeze({
   reasonPlaceholder: '외부 Ceph 연결을 위한 Rook CRD·Operator·CSI 설치 사유',
   returnTo: '/p/cluster-manager/ceph/ceph',
   desiredState: Object.freeze({
-    contract: 'opensphere.ceph.rook-prerequisite/v1',
+    contract: 'opensphere.ceph.rook-prerequisite/v2',
     release: Object.freeze({
       name: 'rook-ceph',
       namespace: 'rook-ceph',
@@ -1471,14 +1477,38 @@ const CEPH_PREREQUISITE_TEMPLATE = Object.freeze({
       version: 'v1.20.2',
       sha256: '6e0f10f5ca54e618fb90dd149dc9dfbc8a4932955bff2227b692fb32069daf52',
     }),
-    components: Object.freeze(['crds', 'operator', 'csi', 'runtime-rbac']),
-    verification: Object.freeze(['cephclusters.ceph.rook.io Established', 'deployment/rook-ceph-operator Ready']),
+    runtime: Object.freeze({
+      name: 'opensphere-ceph-runtime',
+      namespace: 'rook-ceph',
+      chart: 'opensphere-ceph-runtime',
+      version: '1.3.0',
+    }),
+    components: Object.freeze(['crds', 'operator', 'csi', 'runtime-rbac', 'data-path-verification-runtime', 'nbd-preparer']),
+    verification: Object.freeze([
+      'cephclusters.ceph.rook.io Established',
+      'all ceph-csi-operator CRDs Established',
+      'deployment/rook-ceph-operator Ready',
+      'deployment/ceph-csi-controller-manager Ready',
+      'drivers.csi.ceph.io/rook-ceph.rbd.csi.ceph.com configured',
+      'namespace/opensphere-ceph-verification Pod Security restricted',
+      'role/opensphere-ceph-verification-runner installed',
+      'networkpolicy/opensphere-ceph-verification-default-deny installed',
+      'daemonset/opensphere-ceph-nbd-preparer Ready on worker nodes',
+    ]),
+    elevatedPrivileges: Object.freeze([
+      'daemonset/opensphere-ceph-nbd-preparer: capabilities SYS_MODULE,MKNOD; hostPath /dev (rw), /sys (ro), /lib/modules (ro); worker nodes only',
+    ]),
   }),
 });
 
 function changeTemplate(templateId) {
-  if (templateId !== CEPH_PREREQUISITE_TEMPLATE.id) throw { code: 404, msg: 'change template not found' };
-  return JSON.parse(JSON.stringify(CEPH_PREREQUISITE_TEMPLATE));
+  if (templateId === CEPH_PREREQUISITE_TEMPLATE.id) {
+    return JSON.parse(JSON.stringify(CEPH_PREREQUISITE_TEMPLATE));
+  }
+  if (templateId === FOUNDATION_BOOTSTRAP_TEMPLATE_ID) {
+    return cloneFoundationBootstrapTemplate();
+  }
+  throw { code: 404, msg: 'change template not found' };
 }
 
 function changeTemplateRequestPhase(change, execution, outbox) {
@@ -1507,8 +1537,9 @@ function changeTemplateRequestMessage(phase) {
 async function changeTemplateRequestStatus(templateId) {
   const template = changeTemplate(templateId);
   const action = `gitea:${template.action}`;
+  const payloadDigest = `sha256:${toHashHex(canonicalJson(template.desiredState))}`;
   const rows = await restRequest('change_request', {
-    query: `select=request_id,action,target,reason,status,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&target=eq.${encodeURIComponent(template.target)}&action=eq.${encodeURIComponent(action)}&order=created_at.desc&limit=1`,
+    query: `select=request_id,action,target,reason,status,payload_digest,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&target=eq.${encodeURIComponent(template.target)}&action=eq.${encodeURIComponent(action)}&payload_digest=eq.${encodeURIComponent(payloadDigest)}&order=created_at.desc&limit=1`,
   });
   const change = Array.isArray(rows) ? rows[0] : null;
   if (!change) return { templateId: template.id, current: null, checkedAt: new Date().toISOString() };
@@ -1906,20 +1937,27 @@ async function readBody(req) {
 
 async function proxyAdminControlRequest(req, res, url) {
   let authorization = String(req.headers.authorization || '');
+  let actor;
   if (authorization) {
     // CLI/PAT requests retain their bearer credential, but are verified at the
     // Console enforcement point before the request reaches DUPA.
-    await verifyAuthed(req);
+    actor = await verifyAuthed(req);
   } else {
     // Browser credentials never return to JavaScript. Resolve the opaque
     // HttpOnly cookie server-side and forward only the short-lived Supabase
     // access token. authenticate(req) also enforces Origin + CSRF on mutations.
     if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
     const session = await browserSessions.authenticate(req);
+    actor = session.actor;
     authorization = `Bearer ${session.accessToken}`;
   }
 
   const method = String(req.method || 'GET').toUpperCase();
+  const lifecycleMutation = method === 'POST' && (
+    url.pathname === '/api/admin/extensions/install'
+    || /^\/api\/admin\/plugins\/registrations\/[a-z0-9-]+\/(?:install|enable|disable|uninstall|rollback)$/.test(url.pathname)
+  );
+  if (lifecycleMutation) requireRecentAal2(actor, 'module lifecycle mutation');
   const hasBody = !['GET', 'HEAD'].includes(method);
   const body = hasBody ? await readRawBody(req) : undefined;
   const headers = {
@@ -2860,6 +2898,14 @@ const server = http.createServer(async (req, res) => {
   _httpReqs++;
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
+    if (p === '/serving-readyz') {
+      return json(res, 200, {
+        ready: true,
+        service: 'opensphere-console-backend',
+        mode: 'read-only-management-surface',
+        version: VERSION,
+      });
+    }
     if (p === '/readyz') {
       try { return json(res, 200, await requireSupabase()); }
       catch {
@@ -3146,11 +3192,30 @@ const server = http.createServer(async (req, res) => {
         if (!req.headers.authorization && browserSessions) {
           const result = await browserSessions.list(req);
           actor = result.auth.actor;
+          if (result.auth.authorityDegraded) actor = { ...actor, authorityDegraded: true };
           currentSession = result.items.find((item) => item.current) || null;
         } else {
-          actor = await verifyAuthed(req);
+          try {
+            actor = await verifyAuthed(req);
+          } catch (error) {
+            const match = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+            const cached = error?.code === 503 && match && browserSessions
+              ? browserSessions.cachedActorForAccessToken(match[1]) : null;
+            if (!cached) throw error;
+            actor = cached;
+          }
         }
-        const identity = userFromAuthRow(await getAuthUser(actor.sub), actor.displayName || actor.username || actor.sub);
+        let identity;
+        try {
+          identity = userFromAuthRow(await getAuthUser(actor.sub), actor.displayName || actor.username || actor.sub);
+        } catch (error) {
+          if (!actor.authorityDegraded) throw error;
+          identity = {
+            username: actor.username || actor.sub,
+            email: actor.username?.includes('@') ? actor.username : '',
+            displayName: actor.displayName || actor.username || actor.sub,
+          };
+        }
         return json(res, 200, {
           subject: actor.sub,
           username: identity.username || actor.username,
@@ -3159,6 +3224,8 @@ const server = http.createServer(async (req, res) => {
           groups: projectedSessionGroups(actor),
           permissions: actor.permissions || [],
           assurance: actor.assurance,
+          lastReauthenticatedAt: actor.lastReauthenticatedAt || null,
+          authorityDegraded: actor.authorityDegraded === true,
           session: currentSession,
         });
       } catch (e) {

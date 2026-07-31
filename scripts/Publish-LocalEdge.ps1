@@ -4,7 +4,9 @@ param(
   [string]$SourceRevision = '',
   [string]$Platform = '',
   [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git',
-  [switch]$UseExistingRegistryLogin
+  [switch]$UseExistingRegistryLogin,
+  [ValidateSet('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
+  [string[]]$Components = @('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -191,6 +193,10 @@ $images = @(
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
+$requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
+$images = @($images | Where-Object { $requestedComponents.Contains($_.Key) })
+if (-not $images.Count) { throw 'At least one Console component must be selected.' }
 
 Write-Host "[step 04/06] Build and push $($images.Count) host-native images"
 $digests = [ordered]@{}
@@ -265,7 +271,9 @@ foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
   Set-RemoteTag -Repository "$Registry/$($item.Image)" -Digest $digests[$item.Key] -Tag edge
 }
 $console = $images | Where-Object { $_.Key -eq 'console' }
-Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+if ($console) {
+  Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+}
 
 foreach ($item in $images) {
   $actual = Get-RemoteDigest -Reference "$Registry/$($item.Image):edge"
@@ -277,5 +285,9 @@ foreach ($item in $images) {
 Write-Host '[success] Local edge publish completed'
 Write-Host "[release] $releaseTag"
 Write-Host "[immutable] $localTag"
-Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
+if ($console) {
+  Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
+} else {
+  Write-Host '[anchor] not selected; component-only edge publication'
+}
 Write-Host "[bom] $bomPath"

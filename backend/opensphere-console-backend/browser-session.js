@@ -65,6 +65,15 @@ function duration(value) {
   return normalized;
 }
 
+function jwtExpiry(token) {
+  try {
+    const payload = JSON.parse(Buffer.from(String(token).split('.')[1] || '', 'base64url').toString('utf8'));
+    return Number(payload.exp || 0) * 1000;
+  } catch {
+    return 0;
+  }
+}
+
 function clientNetworkDigest(req) {
   const raw = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
   if (!raw) return null;
@@ -128,6 +137,11 @@ function createBrowserSessionManager({
     ? encryptionKey
     : Buffer.from(String(encryptionKey || ''), 'base64');
   if (key.length !== 32) throw new Error('BROWSER_SESSION_ENCRYPTION_KEY must decode to exactly 32 bytes');
+  // This is a bounded availability cache, not an identity authority. Entries
+  // exist only after Supabase-backed verification and expire at the earliest of
+  // access-token, idle, and absolute session expiry. They are GET-only.
+  const verifiedByHandle = new Map();
+  const verifiedByAccessToken = new Map();
 
   function requestOriginAllowed(req) {
     const origin = String(req.headers.origin || '');
@@ -328,7 +342,16 @@ function createBrowserSessionManager({
 
   async function authenticate(req, options = {}) {
     const handle = parseCookies(req.headers.cookie)[COOKIE_NAME];
-    const row = await rowForHandle(handle);
+    const handleHash = sha256(handle);
+    let row;
+    try {
+      row = await rowForHandle(handle);
+    } catch (error) {
+      const cached = verifiedByHandle.get(handleHash);
+      const readOnly = ['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || 'GET').toUpperCase());
+      if (!readOnly || !cached || cached.validUntil <= now().getTime()) throw error;
+      return { ...cached.auth, authorityDegraded: true };
+    }
     if (!row || row.status !== 'active') throw { code: 401, msg: 'browser session is not active' };
     const current = now();
     if (Date.parse(row.absolute_expires_at) <= current.getTime()) return expire(row, 'absolute lifetime exceeded');
@@ -379,7 +402,7 @@ function createBrowserSessionManager({
         prefer: 'return=minimal',
       });
     }
-    return {
+    const result = {
       actor: {
         ...claims,
         browserSessionId: row.id,
@@ -391,6 +414,18 @@ function createBrowserSessionManager({
       row: { ...row, last_seen_at: current.toISOString(), idle_expires_at: nextIdle.toISOString() },
       accessToken,
     };
+    const tokenExpiresAt = jwtExpiry(accessToken) || Date.parse(result.row.absolute_expires_at);
+    const validUntil = Math.min(
+      tokenExpiresAt,
+      Date.parse(result.row.idle_expires_at),
+      Date.parse(result.row.absolute_expires_at),
+    );
+    if (Number.isFinite(validUntil) && validUntil > current.getTime()) {
+      const cached = { validUntil, auth: result };
+      verifiedByHandle.set(handleHash, cached);
+      verifiedByAccessToken.set(sha256(accessToken), cached);
+    }
+    return result;
   }
 
   async function completeMfa(req, code) {
@@ -440,6 +475,9 @@ function createBrowserSessionManager({
 
   async function list(req) {
     const auth = await authenticate(req, { requireCsrf: false });
+    if (auth.authorityDegraded) {
+      return { auth, items: [publicSession(auth.row, auth.row.id)] };
+    }
     const rows = await restRequest('browser_session', {
       query: `select=id,status,assurance,persistence,created_at,last_seen_at,idle_expires_at,absolute_expires_at,user_agent_digest&owner_id=eq.${encodeURIComponent(auth.actor.sub)}&status=in.(active,pending_mfa)&order=last_seen_at.desc`,
     });
@@ -607,6 +645,11 @@ function createBrowserSessionManager({
     verifyTotp,
     stepUp,
     events,
+    cachedActorForAccessToken(accessToken) {
+      const cached = verifiedByAccessToken.get(sha256(accessToken));
+      if (!cached || cached.validUntil <= now().getTime()) return null;
+      return { ...cached.auth.actor, authorityDegraded: true };
+    },
     clearCookies,
     cookieName: COOKIE_NAME,
   };
