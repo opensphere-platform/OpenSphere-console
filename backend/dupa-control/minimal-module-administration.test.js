@@ -82,3 +82,8 @@ test('Backend serving readiness and verified-session outage cache are dependency
   assert.match(session, /if \(!readOnly \|\| !cached/);
   assert.match(auth, /Bootstrap status is not a session authority/);
 });
+
+test('DUPA runtime image contains every local controller module', () => {
+  const dockerfile = read('backend', 'dupa-control', 'Dockerfile');
+  assert.match(dockerfile, /COPY foundation-establishment\.js \/app\/foundation-establishment\.js/);
+});
