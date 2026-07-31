@@ -86,11 +86,13 @@ export class AuthService {
   readonly stepUpError = signal('');
   readonly sessionEvents = signal<SessionEvent[]>([]);
   private passwordRecoveryToken = '';
+  private readonly stepUpEvent = 'opensphere:auth-step-up-required';
   private readonly sessionChannel = typeof BroadcastChannel === 'undefined'
     ? null
     : new BroadcastChannel('opensphere.browser-session');
 
   constructor() {
+    window.addEventListener(this.stepUpEvent, () => this.requestStepUp());
     this.sessionChannel?.addEventListener('message', (event) => {
       if (event.data?.type !== 'session-ended') return;
       this.clearIdentity();
