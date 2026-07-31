@@ -1,6 +1,11 @@
 import { Injectable, signal } from '@angular/core';
 import { createTotpQrCode } from './totp-qr';
 
+const SESSION_DURATION_PREFERENCE_KEY = 'opensphere.session.duration.v2';
+const LEGACY_SESSION_DURATION_PREFERENCE_KEY = 'opensphere.session.duration';
+const DEFAULT_SESSION_DURATION: SessionDuration = '24h';
+const ACTIVITY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+
 interface ApiError {
   error?: string;
   error_description?: string;
@@ -87,12 +92,15 @@ export class AuthService {
   readonly sessionEvents = signal<SessionEvent[]>([]);
   private passwordRecoveryToken = '';
   private readonly stepUpEvent = 'opensphere:auth-step-up-required';
+  private lastActivityHeartbeatAt = 0;
+  private activityHeartbeatInFlight = false;
   private readonly sessionChannel = typeof BroadcastChannel === 'undefined'
     ? null
     : new BroadcastChannel('opensphere.browser-session');
 
   constructor() {
     window.addEventListener(this.stepUpEvent, () => this.requestStepUp());
+    this.registerActivityHeartbeat();
     this.sessionChannel?.addEventListener('message', (event) => {
       if (event.data?.type !== 'session-ended') return;
       this.clearIdentity();
@@ -114,11 +122,6 @@ export class AuthService {
 
   isTokenExpired(): boolean { return !this.hasValidToken(); }
   accountUrl(): string { return '/me?tab=security'; }
-
-  touchSession(): void {
-    if (!this.subject() || !this.tokenExp()) return;
-    this.idleExp.set(Math.min(this.tokenExp(), Math.floor(Date.now() / 1000) + 30 * 60));
-  }
 
   async init(): Promise<void> {
     if (this.consumePasswordRecoveryRedirect()) return;
@@ -452,6 +455,48 @@ export class AuthService {
     this.idleExp.set(this.epoch(body.session?.idleExpiresAt));
   }
 
+  private registerActivityHeartbeat(): void {
+    const activity = (event: Event) => {
+      if (!event.isTrusted) return;
+      this.queueActivityHeartbeat();
+    };
+    window.addEventListener('pointerdown', activity, { passive: true });
+    window.addEventListener('keydown', activity);
+    window.addEventListener('touchstart', activity, { passive: true });
+    document.addEventListener('visibilitychange', (event) => {
+      if (document.visibilityState === 'visible') activity(event);
+    });
+  }
+
+  private queueActivityHeartbeat(): void {
+    if (!this.subject() || this.loginRequired() || this.activityHeartbeatInFlight) return;
+    if (Date.now() - this.lastActivityHeartbeatAt < ACTIVITY_HEARTBEAT_INTERVAL_MS) return;
+    void this.sendActivityHeartbeat();
+  }
+
+  private async sendActivityHeartbeat(): Promise<void> {
+    this.activityHeartbeatInFlight = true;
+    try {
+      const body = await this.api<{ session?: BrowserSession }>('/api/identity/session/touch', {
+        method: 'POST',
+        body: '{}',
+      });
+      if (body.session) {
+        this.currentSession.set(body.session);
+        this.tokenExp.set(this.epoch(body.session.absoluteExpiresAt));
+        this.idleExp.set(this.epoch(body.session.idleExpiresAt));
+      }
+      this.lastActivityHeartbeatAt = Date.now();
+    } catch (error) {
+      if (this.statusOf(error) === 401) {
+        this.clearIdentity();
+        this.loginRequired.set(true);
+      }
+    } finally {
+      this.activityHeartbeatInFlight = false;
+    }
+  }
+
   private async api<T = Record<string, unknown>>(path: string, init: RequestInit = {}, csrf = true): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set('accept', 'application/json');
@@ -489,23 +534,30 @@ export class AuthService {
     this.mfaEnrollmentRequired.set(false);
     this.stepUpRequired.set(false);
     this.stepUpError.set('');
+    this.lastActivityHeartbeatAt = 0;
   }
 
   private broadcastSessionEnded(): void {
     this.sessionChannel?.postMessage({ type: 'session-ended', at: new Date().toISOString() });
   }
 
-  private normalizeDuration(value: SessionDuration): SessionDuration {
-    return ['browser', '8h', '24h', '7d'].includes(value) ? value : '8h';
+  private normalizeDuration(value: unknown): SessionDuration {
+    return ['browser', '8h', '24h', '7d'].includes(String(value))
+      ? String(value) as SessionDuration
+      : DEFAULT_SESSION_DURATION;
   }
 
   private loadDurationPreference(): SessionDuration {
-    try { return this.normalizeDuration((localStorage.getItem('opensphere.session.duration') || '8h') as SessionDuration); }
-    catch { return '8h'; }
+    try {
+      const current = localStorage.getItem(SESSION_DURATION_PREFERENCE_KEY);
+      if (current) return this.normalizeDuration(current);
+      const legacy = localStorage.getItem(LEGACY_SESSION_DURATION_PREFERENCE_KEY);
+      return legacy && legacy !== '8h' ? this.normalizeDuration(legacy) : DEFAULT_SESSION_DURATION;
+    } catch { return DEFAULT_SESSION_DURATION; }
   }
 
   private saveDurationPreference(value: SessionDuration): void {
-    try { localStorage.setItem('opensphere.session.duration', value); } catch { /* optional preference */ }
+    try { localStorage.setItem(SESSION_DURATION_PREFERENCE_KEY, value); } catch { /* optional preference */ }
   }
 
   private errorText(body: ApiError, status: number): string {

@@ -11,8 +11,9 @@ const {
 const COOKIE_NAME = '__Host-opensphere_session';
 const IDLE_TTL_MS = 30 * 60 * 1000;
 const PENDING_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_DURATION = '24h';
 const DURATION_MS = Object.freeze({
-  browser: 8 * 60 * 60 * 1000,
+  browser: 24 * 60 * 60 * 1000,
   '8h': 8 * 60 * 60 * 1000,
   '24h': 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
@@ -60,7 +61,7 @@ function decodeSecret(value, key) {
 }
 
 function duration(value) {
-  const normalized = String(value || '8h').trim();
+  const normalized = String(value || DEFAULT_DURATION).trim();
   if (!Object.hasOwn(DURATION_MS, normalized)) throw { code: 400, msg: 'unsupported session duration' };
   return normalized;
 }
@@ -152,6 +153,7 @@ function createBrowserSessionManager({
   publicOrigin,
   idleTtlMs = IDLE_TTL_MS,
   now = () => new Date(),
+  logger = console,
 }) {
   const key = Buffer.isBuffer(encryptionKey)
     ? encryptionKey
@@ -162,6 +164,19 @@ function createBrowserSessionManager({
   // access-token, idle, and absolute session expiry. They are GET-only.
   const verifiedByHandle = new Map();
   const verifiedByAccessToken = new Map();
+  const authorityEventAt = new Map();
+
+  function log(level, event, row = null, result = 'ok', reason = '') {
+    const write = typeof logger?.[level] === 'function' ? logger[level].bind(logger) : logger?.log?.bind(logger);
+    if (!write) return;
+    write(JSON.stringify({
+      component: 'browser-session',
+      event,
+      result,
+      sessionDigest: row?.id ? sha256(row.id).slice(0, 12) : null,
+      reason: reason ? String(reason).slice(0, 160) : undefined,
+    }));
+  }
 
   function requestOriginAllowed(req) {
     const origin = String(req.headers.origin || '');
@@ -182,46 +197,91 @@ function createBrowserSessionManager({
     return Array.isArray(rows) ? rows[0] || null : null;
   }
 
-  async function expire(row, reason = 'expired') {
-    await restRequest('browser_session', {
-      method: 'PATCH',
-      query: `id=eq.${encodeURIComponent(row.id)}&status=in.(active,pending_mfa)`,
-      body: { status: 'expired', revoke_reason: null },
-      prefer: 'return=minimal',
-    }).catch(() => undefined);
+  async function recordEvent(row, event, result = 'ok', metadata = {}) {
+    if (!row?.id || !row?.owner_id) return false;
+    try {
+      await restRequest('session_event', {
+        method: 'POST',
+        body: [{
+          session_id: row.id,
+          owner_id: row.owner_id,
+          event,
+          result,
+          metadata_digest: Object.keys(metadata).length ? sha256(JSON.stringify(metadata)) : null,
+        }],
+        prefer: 'return=minimal',
+      });
+      log(result === 'error' || result === 'rejected' ? 'warn' : 'info', event, row, result);
+      return true;
+    } catch (error) {
+      log('error', 'audit_write_failed', row, 'error', `${event}:status-${errorStatus(error) || 'network'}`);
+      return false;
+    }
+  }
+
+  function expiryEvent(row, currentMs) {
+    if (Date.parse(row.absolute_expires_at) <= currentMs) return 'expired_absolute';
+    if (Date.parse(row.idle_expires_at) <= currentMs) return 'expired_idle';
+    return '';
+  }
+
+  async function markExpired(row, event) {
+    let rows = [];
+    try {
+      rows = await restRequest('browser_session', {
+        method: 'PATCH',
+        query: `id=eq.${encodeURIComponent(row.id)}&status=in.(active,pending_mfa)&select=id`,
+        body: { status: 'expired', revoke_reason: null },
+        prefer: 'return=representation',
+      });
+    } catch (error) {
+      log('error', 'expiry_persist_failed', row, 'error', `status-${errorStatus(error) || 'network'}`);
+      return false;
+    }
+    if (Array.isArray(rows) && rows[0]) {
+      await recordEvent(row, event, 'ok');
+      return true;
+    }
+    return false;
+  }
+
+  async function expire(row, event) {
+    await markExpired(row, event);
+    const reason = event === 'expired_absolute' ? 'absolute lifetime exceeded' : 'idle lifetime exceeded';
     throw { code: 401, msg: `browser session ${reason}` };
   }
 
-  async function recordEvent(row, event, result = 'ok', metadata = {}) {
-    if (!row?.id || !row?.owner_id) return;
-    await restRequest('session_event', {
-      method: 'POST',
-      body: [{
-        session_id: row.id,
-        owner_id: row.owner_id,
-        event,
-        result,
-        metadata_digest: Object.keys(metadata).length ? sha256(JSON.stringify(metadata)) : null,
-      }],
-      prefer: 'return=minimal',
-    }).catch(() => undefined);
+  async function recordAuthorityUnavailable(row, source, error) {
+    const key = row?.id ? `${row.id}:${source}` : '';
+    if (key && now().getTime() - Number(authorityEventAt.get(key) || 0) < 60_000) return;
+    if (key) authorityEventAt.set(key, now().getTime());
+    log('warn', 'authority_unavailable', row, 'error', `${source}:status-${errorStatus(error) || 'network'}`);
+    if (row) await recordEvent(row, 'authority_unavailable', 'error', { source });
   }
 
-  async function revokeTokenFamily(row, reason) {
+  async function persistRefreshRejection(row, reason) {
     const query = row.supabase_session_id
       ? `owner_id=eq.${encodeURIComponent(row.owner_id)}&supabase_session_id=eq.${encodeURIComponent(row.supabase_session_id)}&status=in.(active,pending_mfa)`
       : `id=eq.${encodeURIComponent(row.id)}&status=in.(active,pending_mfa)`;
-    await restRequest('browser_session', {
-      method: 'PATCH',
-      query,
-      body: {
-        status: 'revoked',
-        revoked_at: now().toISOString(),
-        revoke_reason: String(reason || 'refresh credential rejected').slice(0, 256),
-      },
-      prefer: 'return=minimal',
-    }).catch(() => undefined);
-    await recordEvent(row, 'reuse_detected', 'rejected', { reason });
+    try {
+      await restRequest('browser_session', {
+        method: 'PATCH',
+        query,
+        body: {
+          status: 'revoked',
+          revoked_at: now().toISOString(),
+          revoke_reason: String(reason || 'refresh credential rejected').slice(0, 256),
+        },
+        prefer: 'return=minimal',
+      });
+    } catch (error) {
+      await recordAuthorityUnavailable(row, 'refresh-revocation', error);
+      throw {
+        code: 503,
+        msg: 'Refresh rejection could not be persisted; browser session preserved pending authority recovery',
+      };
+    }
+    await recordEvent(row, 'refresh_rejected', 'rejected', { reason });
   }
 
   async function supabase(path, options = {}) {
@@ -265,6 +325,7 @@ function createBrowserSessionManager({
       // proof of credential reuse. Preserve the opaque browser session and let
       // the caller retry after the authority recovers.
       if (authorityUnavailable(error)) {
+        await recordAuthorityUnavailable(row, 'refresh', error);
         throw {
           code: 503,
           msg: 'Supabase session refresh temporarily unavailable; browser session preserved',
@@ -279,7 +340,7 @@ function createBrowserSessionManager({
         if (latest && latest.refresh_token_ciphertext !== previousCiphertext) {
           return claimsFromRow(latest);
         }
-        await revokeTokenFamily(row, 'refresh credential explicitly rejected');
+        await persistRefreshRejection(row, 'refresh credential explicitly rejected');
         throw {
           code: 401,
           msg: 'browser session refresh credential was explicitly rejected; related session family revoked',
@@ -492,13 +553,14 @@ function createBrowserSessionManager({
     } catch (error) {
       const cached = verifiedByHandle.get(handleHash);
       const readOnly = ['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || 'GET').toUpperCase());
+      if (authorityUnavailable(error)) await recordAuthorityUnavailable(cached?.auth?.row || null, 'session-ledger', error);
       if (!readOnly || !cached || cached.validUntil <= now().getTime()) throw error;
       return { ...cached.auth, authorityDegraded: true };
     }
     if (!row || row.status !== 'active') throw { code: 401, msg: 'browser session is not active' };
     const current = now();
-    if (Date.parse(row.absolute_expires_at) <= current.getTime()) return expire(row, 'absolute lifetime exceeded');
-    if (Date.parse(row.idle_expires_at) <= current.getTime()) return expire(row, 'idle lifetime exceeded');
+    const expiredBy = expiryEvent(row, current.getTime());
+    if (expiredBy) return expire(row, expiredBy);
     if (options.requireCsrf !== false && !csrfAllowed(req, row)) throw { code: 403, msg: 'browser session CSRF validation failed' };
 
     let accessToken = decodeSecret(row.access_token_ciphertext, key);
@@ -509,6 +571,7 @@ function createBrowserSessionManager({
       const cached = verifiedByHandle.get(handleHash);
       const readOnly = ['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || 'GET').toUpperCase());
       if (authorityUnavailable(error)) {
+        await recordAuthorityUnavailable(row, 'token-verification', error);
         if (readOnly && cached && cached.validUntil > current.getTime()) {
           return { ...cached.auth, authorityDegraded: true };
         }
@@ -524,15 +587,6 @@ function createBrowserSessionManager({
       claims = rotated.claims;
     }
 
-    const nextIdle = new Date(Math.min(current.getTime() + idleTtlMs, Date.parse(row.absolute_expires_at)));
-    if (current.getTime() - Date.parse(row.last_seen_at) >= 60_000) {
-      await restRequest('browser_session', {
-        method: 'PATCH',
-        query: `id=eq.${encodeURIComponent(row.id)}&status=eq.active`,
-        body: { last_seen_at: current.toISOString(), idle_expires_at: nextIdle.toISOString() },
-        prefer: 'return=minimal',
-      });
-    }
     const result = {
       actor: {
         ...claims,
@@ -542,7 +596,7 @@ function createBrowserSessionManager({
         provider: 'supabase-browser-session',
         credentialRevision: Number(row.credential_revision || 0),
       },
-      row: { ...row, last_seen_at: current.toISOString(), idle_expires_at: nextIdle.toISOString() },
+      row,
       accessToken,
     };
     const tokenExpiresAt = jwtExpiry(accessToken) || Date.parse(result.row.absolute_expires_at);
@@ -559,12 +613,33 @@ function createBrowserSessionManager({
     return result;
   }
 
+  async function touch(req) {
+    const auth = await authenticate(req);
+    const current = now();
+    if (current.getTime() - Date.parse(auth.row.last_seen_at) < 60_000) {
+      return { auth, session: publicSession(auth.row, auth.row.id) };
+    }
+    const idle = new Date(Math.min(
+      current.getTime() + idleTtlMs,
+      Date.parse(auth.row.absolute_expires_at),
+    ));
+    const rows = await restRequest('browser_session', {
+      method: 'PATCH',
+      query: `id=eq.${encodeURIComponent(auth.row.id)}&status=eq.active&select=id,last_seen_at,idle_expires_at`,
+      body: { last_seen_at: current.toISOString(), idle_expires_at: idle.toISOString() },
+      prefer: 'return=representation',
+    });
+    if (!Array.isArray(rows) || !rows[0]) throw { code: 401, msg: 'browser session is not active' };
+    const updated = { ...auth.row, ...rows[0] };
+    return { auth: { ...auth, row: updated }, session: publicSession(updated, updated.id) };
+  }
+
   async function completeMfa(req, code) {
     const handle = parseCookies(req.headers.cookie)[COOKIE_NAME];
     const row = await rowForHandle(handle);
     if (!row || row.status !== 'pending_mfa') throw { code: 401, msg: 'pending MFA session not found' };
     if (!csrfAllowed(req, row)) throw { code: 403, msg: 'browser session CSRF validation failed' };
-    if (Date.parse(row.idle_expires_at) <= now().getTime()) return expire(row, 'MFA challenge expired');
+    if (Date.parse(row.idle_expires_at) <= now().getTime()) return expire(row, 'expired_idle');
     if (!/^\d{6}$/.test(String(code || '').trim())) throw { code: 400, msg: 'current 6-digit authentication code is required' };
     const accessToken = decodeSecret(row.access_token_ciphertext, key);
     const factorState = await factors(accessToken);
@@ -610,9 +685,19 @@ function createBrowserSessionManager({
       return { auth, items: [publicSession(auth.row, auth.row.id)] };
     }
     const rows = await restRequest('browser_session', {
-      query: `select=id,status,assurance,persistence,created_at,last_seen_at,idle_expires_at,absolute_expires_at,user_agent_digest&owner_id=eq.${encodeURIComponent(auth.actor.sub)}&status=in.(active,pending_mfa)&order=last_seen_at.desc`,
+      query: `select=id,owner_id,status,assurance,persistence,created_at,last_seen_at,idle_expires_at,absolute_expires_at,user_agent_digest&owner_id=eq.${encodeURIComponent(auth.actor.sub)}&status=in.(active,pending_mfa)&order=last_seen_at.desc`,
     });
-    return { auth, items: rows.map((row) => publicSession(row, auth.row.id)) };
+    const currentMs = now().getTime();
+    const liveRows = [];
+    for (const row of rows) {
+      const expiredBy = expiryEvent(row, currentMs);
+      if (expiredBy) {
+        await markExpired(row, expiredBy);
+        continue;
+      }
+      liveRows.push(row);
+    }
+    return { auth, items: liveRows.map((row) => publicSession(row, auth.row.id)) };
   }
 
   async function revoke(req, id, reason = 'user logout') {
@@ -767,6 +852,7 @@ function createBrowserSessionManager({
     create,
     adoptLegacy,
     authenticate,
+    touch,
     completeMfa,
     list,
     revoke,

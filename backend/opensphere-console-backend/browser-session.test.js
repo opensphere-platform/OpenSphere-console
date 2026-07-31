@@ -6,6 +6,8 @@ const { createBrowserSessionManager, sha256 } = require('./browser-session');
 
 function harness({ verifiedFactor = false } = {}) {
   let row = null;
+  const additionalRows = [];
+  let currentTime = '2026-07-27T00:00:00.000Z';
   let authorityOutage = false;
   let verifierMode = 'normal';
   let refreshMode = 'success';
@@ -28,14 +30,17 @@ function harness({ verifiedFactor = false } = {}) {
       return [row];
     }
     if (options.method === 'PATCH') {
-      Object.assign(row, options.body);
-      return options.prefer === 'return=representation' ? [{ id: row.id }] : [];
+      const id = decodeURIComponent(String(options.query).match(/id=eq\.([^&]+)/)?.[1] || '');
+      const target = [row, ...additionalRows].find((item) => item?.id === id) || row;
+      if (!target || !['active', 'pending_mfa'].includes(target.status)) return [];
+      Object.assign(target, options.body);
+      return options.prefer === 'return=representation' ? [{ id: target.id, ...options.body }] : [];
     }
     if (String(options.query).includes('handle_hash=eq.')) {
       const expected = String(options.query).match(/handle_hash=eq\.([^&]+)/)?.[1];
       return row && row.handle_hash === expected ? [row] : [];
     }
-    if (String(options.query).includes('owner_id=eq.')) return row ? [row] : [];
+    if (String(options.query).includes('owner_id=eq.')) return row ? [row, ...additionalRows] : [];
     return [];
   };
   const verifyToken = async (token) => {
@@ -89,7 +94,8 @@ function harness({ verifiedFactor = false } = {}) {
     authRequest,
     encryptionKey: Buffer.alloc(32, 7).toString('base64'),
     publicOrigin: 'https://console.example.test',
-    now: () => new Date('2026-07-27T00:00:00.000Z'),
+    now: () => new Date(currentTime),
+    logger: { info() {}, warn() {}, error() {} },
   });
   return {
     manager,
@@ -99,6 +105,8 @@ function harness({ verifiedFactor = false } = {}) {
     setAuthorityOutage: (value) => { authorityOutage = value; },
     setVerifierMode: (value) => { verifierMode = value; },
     setRefreshMode: (value) => { refreshMode = value; },
+    setNow: (value) => { currentTime = value; },
+    addSession: (value) => { additionalRows.push(value); },
   };
 }
 
@@ -135,6 +143,16 @@ test('creates an opaque Secure browser session and encrypts Supabase tokens', as
   assert.equal(h.row().network_digest, sha256('10.10.1'));
 });
 
+test('uses a 24-hour default without removing shorter or trusted-device choices', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+  });
+  assert.equal(created.session.persistence, '24h');
+  assert.equal(created.session.absoluteExpiresAt, '2026-07-28T00:00:00.000Z');
+});
+
 test('authenticates through the opaque cookie and rejects a mutation without CSRF', async () => {
   const h = harness();
   const created = await h.manager.create(request({ method: 'POST' }), {
@@ -156,6 +174,54 @@ test('authenticates through the opaque cookie and rejects a mutation without CSR
     method: 'POST',
   }));
   assert.equal(accepted.actor.provider, 'supabase-browser-session');
+});
+
+test('background authentication does not extend idle time while explicit user activity does', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  const cookie = `__Host-opensphere_session=${encodeURIComponent(handle)}`;
+  const originalIdle = h.row().idle_expires_at;
+  h.setNow('2026-07-27T00:10:00.000Z');
+  await h.manager.authenticate(request({ cookie }));
+  assert.equal(h.row().last_seen_at, '2026-07-27T00:00:00.000Z');
+  assert.equal(h.row().idle_expires_at, originalIdle);
+  const touched = await h.manager.touch(request({
+    cookie,
+    csrf: created.csrfToken,
+    method: 'POST',
+  }));
+  assert.equal(touched.session.lastSeenAt, '2026-07-27T00:10:00.000Z');
+  assert.equal(touched.session.idleExpiresAt, '2026-07-27T00:40:00.000Z');
+});
+
+test('records exact expiry cause and removes stale sessions from active inventory', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  h.addSession({
+    id: '33333333-3333-4333-8333-333333333333',
+    owner_id: h.row().owner_id,
+    status: 'active',
+    assurance: 'aal2',
+    persistence: '8h',
+    created_at: '2026-07-26T00:00:00.000Z',
+    last_seen_at: '2026-07-26T00:10:00.000Z',
+    idle_expires_at: '2026-07-26T00:40:00.000Z',
+    absolute_expires_at: '2026-07-26T08:00:00.000Z',
+    user_agent_digest: null,
+  });
+  const result = await h.manager.list(request({
+    cookie: `__Host-opensphere_session=${encodeURIComponent(handle)}`,
+  }));
+  assert.deepEqual(result.items.map((item) => item.id), [h.row().id]);
+  assert.equal(h.events().some((event) => event.event === 'expired_absolute'), true);
 });
 
 test('keeps only a previously verified GET session during authority outage and fails mutations closed', async () => {
@@ -269,7 +335,7 @@ test('preserves an expired browser session when Supabase refresh has a transient
   );
   assert.equal(h.refreshCalls(), 1);
   assert.equal(h.row().status, 'active');
-  assert.equal(h.events().some((event) => event.event === 'reuse_detected'), false);
+  assert.equal(h.events().some((event) => event.event === 'refresh_rejected'), false);
 });
 
 test('two concurrent refresh callers adopt the peer rotation instead of revoking the session', async () => {
@@ -292,7 +358,7 @@ test('two concurrent refresh callers adopt the peer rotation instead of revoking
   assert.equal(results.every((result) => result.actor.sub === '22222222-2222-4222-8222-222222222222'), true);
   assert.equal(h.refreshCalls(), 2);
   assert.equal(h.row().status, 'active');
-  assert.equal(h.events().some((event) => event.event === 'reuse_detected'), false);
+  assert.equal(h.events().some((event) => event.event === 'refresh_rejected'), false);
 });
 
 test('revokes only after an explicit refresh rejection remains current after peer recheck', async () => {
@@ -312,5 +378,6 @@ test('revokes only after an explicit refresh rejection remains current after pee
     (error) => error.code === 401 && /explicitly rejected/.test(error.msg),
   );
   assert.equal(h.row().status, 'revoked');
-  assert.equal(h.events().some((event) => event.event === 'reuse_detected'), true);
+  assert.equal(h.events().some((event) => event.event === 'refresh_rejected'), true);
+  assert.equal(h.events().some((event) => event.event === 'reuse_detected'), false);
 });

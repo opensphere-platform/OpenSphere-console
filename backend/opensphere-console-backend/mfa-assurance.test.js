@@ -112,9 +112,21 @@ test('only an authoritative 401 discards a browser session while dependency outa
   assert.match(browserSession, /refresh credential was explicitly rejected/);
   assert.match(browserSession, /rowAfterPeerRefresh/);
   assert.match(browserSession, /tokenActuallyExpired/);
-  assert.match(browserSession, /revokeTokenFamily/);
+  assert.match(browserSession, /persistRefreshRejection/);
+  assert.match(browserSession, /refresh_rejected/);
   assert.match(browserSession, /authorityDegraded: true/);
   assert.match(browserSession, /if \(!readOnly \|\| !cached/);
+});
+
+test('session lifetime defaults to 24 hours and idle extension requires real browser activity', () => {
+  assert.match(browserSession, /const DEFAULT_DURATION = '24h'/);
+  assert.match(authService, /const DEFAULT_SESSION_DURATION: SessionDuration = '24h'/);
+  assert.match(authService, /\/api\/identity\/session\/touch/);
+  assert.match(authService, /window\.addEventListener\('pointerdown'/);
+  assert.match(authService, /window\.addEventListener\('keydown'/);
+  assert.doesNotMatch(httpService, /touchSession/);
+  assert.match(backend, /p === '\/api\/identity\/session\/touch'/);
+  assert.match(myInfo, /실제 사용자 활동 기준 유휴 30분 제한/);
 });
 
 test('login keeps the established card design and adds only the requested session duration option', () => {

@@ -23,14 +23,14 @@ import { AuthService, SessionDuration } from '../core/auth.service';
           </label>
           <label>세션 유지 시간
             <select name="session-duration" [(ngModel)]="duration">
+              <option value="24h">24시간 · 권장</option>
               <option value="browser">브라우저를 닫을 때까지</option>
               <option value="8h">8시간</option>
-              <option value="24h">24시간</option>
               <option value="7d">7일 · 신뢰하는 개인 장치</option>
             </select>
             <small>{{ durationHelp() }}</small>
           </label>
-          <p class="security-note">30분 동안 활동이 없으면 선택한 시간과 관계없이 다시 로그인해야 합니다.</p>
+          <p class="security-note">키보드·포인터 활동이 30분 동안 없으면 선택한 시간과 관계없이 다시 로그인해야 합니다. 백그라운드 조회는 활동으로 계산하지 않습니다.</p>
           <button type="submit" [disabled]="working()">{{ working() ? '로그인 중…' : '로그인' }}</button>
         </form>
       } @else {
@@ -82,9 +82,10 @@ export class LoginPage {
   durationHelp(): string {
     switch (this.duration) {
       case 'browser': return '공용 장치에 적합합니다. 브라우저 종료 시 세션 쿠키가 삭제됩니다.';
-      case '24h': return '하루 동안 같은 장치에서 다시 로그인하는 횟수를 줄입니다.';
+      case '8h': return '짧은 운영 교대나 공용 관리 장치에 적합합니다.';
+      case '24h': return '기본 권장값입니다. 하루 동안 같은 장치에서 다시 로그인하는 횟수를 줄입니다.';
       case '7d': return '개인 장치에서만 사용하십시오. 다른 장치의 세션은 내 프로필에서 폐기할 수 있습니다.';
-      default: return '기본 권장값입니다. 업무 시간 동안 유지됩니다.';
+      default: return '세션 유지 시간을 선택하십시오.';
     }
   }
 }

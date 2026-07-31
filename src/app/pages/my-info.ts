@@ -405,7 +405,7 @@ interface AuditEvent {
                 <div><dt>현재 인증 보증</dt><dd><span class="label" [class.label-success]="auth.assurance() === 'aal2'">{{ auth.assurance() }}</span> {{ auth.assurance() === 'aal2' ? '비밀번호와 TOTP 검증 완료' : '비밀번호 인증만 완료' }}</dd></div>
                 <div><dt>TOTP 정책</dt><dd>관리자 변경 작업에 필수 <span class="label">Supabase Auth</span></dd></div>
                 <div><dt>브라우저 자격 보관</dt><dd>Secure HttpOnly 불투명 세션 쿠키 · Supabase 토큰은 Backend 암호화 보관</dd></div>
-                <div><dt>로그인 유지 정책</dt><dd>{{ persistenceLabel(auth.currentSession()?.persistence || '8h') }} · 유휴 30분 제한</dd></div>
+                <div><dt>로그인 유지 정책</dt><dd>{{ persistenceLabel(auth.currentSession()?.persistence || '24h') }} · 실제 사용자 활동 기준 유휴 30분 제한</dd></div>
               </dl>
               <h2>최근 세션 보안 이력</h2>
               <div class="credential-grid-scroll" tabindex="0" aria-label="최근 세션 보안 이력">
@@ -820,6 +820,10 @@ export class MyInfo {
       revoke: '세션 종료',
       revoke_all: '모든 세션 종료',
       reuse_detected: '갱신 자격 재사용 탐지',
+      refresh_rejected: '세션 갱신 거부',
+      expired_idle: '유휴 시간 만료',
+      expired_absolute: '최대 유지 시간 만료',
+      authority_unavailable: '인증 권위 일시 중단',
     } as Record<string, string>)[value] || value;
   }
 

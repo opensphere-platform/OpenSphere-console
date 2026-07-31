@@ -35,7 +35,6 @@ export class HttpService {
     }
     try {
       const response = await fetch(target, { ...init, headers, signal: controller.signal });
-      if (response.ok) this.auth.touchSession();
       // A downstream 401 is not proof that the browser session ended. Confirm
       // the opaque cookie with the identity authority before showing login;
       // service routing or permission failures must not erase a valid session.

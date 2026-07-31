@@ -3098,6 +3098,15 @@ const server = http.createServer(async (req, res) => {
         return json(res, authErrorStatus(e), { error: e.msg || 'Console MFA verification failed' });
       }
     }
+    if (p === '/api/identity/session/touch' && req.method === 'POST') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        const result = await browserSessions.touch(req);
+        return json(res, 200, { session: result.session });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Browser session activity update failed' });
+      }
+    }
     if (p === '/api/identity/session/step-up' && req.method === 'POST') {
       try {
         if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };

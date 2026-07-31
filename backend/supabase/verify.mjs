@@ -34,6 +34,7 @@ const migrationLedger = read('migrations', '0026_schema_migration_ledger.sql');
 const externalChannelReasonPolicy = read('migrations', '0027_external_channel_reason_policy.sql');
 const browserSessionAndMonitoring = read('migrations', '0029_browser_session_and_baseline_monitoring.sql');
 const moduleOperationLedger = read('migrations', '0035_module_operation_ledger.sql');
+const browserSessionExpiryEvidence = read('migrations', '0037_browser_session_expiry_evidence.sql');
 const installer = read('install.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
@@ -130,6 +131,11 @@ assert.match(browserSessionAndMonitoring, /CREATE TABLE IF NOT EXISTS console\.i
 assert.match(browserSessionAndMonitoring, /beszel_machine_fingerprint text NOT NULL/);
 assert.match(browserSessionAndMonitoring, /console\.infrastructure\.read/);
 assert.match(browserSessionAndMonitoring, /console\.infrastructure\.manage/);
+assert.match(browserSessionExpiryEvidence, /DROP CONSTRAINT IF EXISTS session_event_event_check/);
+assert.match(browserSessionExpiryEvidence, /'refresh_rejected'/);
+assert.match(browserSessionExpiryEvidence, /'expired_idle'/);
+assert.match(browserSessionExpiryEvidence, /'expired_absolute'/);
+assert.match(browserSessionExpiryEvidence, /'authority_unavailable'/);
 assert.match(installer, /browser-session-key/);
 assert.match(installer, /New-RandomBase64 32/);
 assert.match(installer, /\[switch\]\$ExistingInstallation/);
