@@ -239,10 +239,10 @@ foreach ($item in $images) {
   Set-RemoteTag -Repository $repository -Digest $digests[$item.Key] -Tag $releaseTag -Immutable
 }
 
-$components = [ordered]@{}
+$componentEvidence = [ordered]@{}
 foreach ($item in $images) {
   $repository = "$Registry/$($item.Image)"
-  $components[$item.Key] = [ordered]@{
+  $componentEvidence[$item.Key] = [ordered]@{
     repository = $item.Image
     image = "${repository}@$($digests[$item.Key])"
     sourceRevision = $SourceRevision
@@ -261,7 +261,7 @@ $bom = [ordered]@{
   releaseClass = 'pre-ga'
   gaEligible = $false
   supportedPlatforms = @($Platform)
-  components = $components
+  components = $componentEvidence
 }
 $bomPath = Join-Path $workspace 'opensphere-local-release-bom.json'
 $bom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bomPath -Encoding utf8

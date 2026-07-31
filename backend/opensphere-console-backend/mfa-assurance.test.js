@@ -107,7 +107,11 @@ test('initial-password and recovery links open a public password form without an
 test('only an authoritative 401 discards a browser session while dependency outage keeps verified GET access', () => {
   assert.match(authService, /this\.statusOf\(error\) !== 401/);
   assert.match(authService, /this\.clearIdentity\(\);\s*this\.loginRequired\.set\(true\)/);
-  assert.match(browserSession, /browser session refresh credential was rejected/);
+  assert.match(browserSession, /Supabase session refresh temporarily unavailable; browser session preserved/);
+  assert.match(browserSession, /if \(\[400, 401\]\.includes\(errorStatus\(error\)\)\)/);
+  assert.match(browserSession, /refresh credential was explicitly rejected/);
+  assert.match(browserSession, /rowAfterPeerRefresh/);
+  assert.match(browserSession, /tokenActuallyExpired/);
   assert.match(browserSession, /revokeTokenFamily/);
   assert.match(browserSession, /authorityDegraded: true/);
   assert.match(browserSession, /if \(!readOnly \|\| !cached/);

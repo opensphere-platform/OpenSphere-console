@@ -107,7 +107,7 @@ interface NavBand {
             routerLink="/"
             routerLinkActive="active"
             [routerLinkActiveOptions]="{ exact: true }"
-            ><os-cicon clrVerticalNavIcon [icon]="iconHome" [size]="20" />홈 · Perspectives</a
+            ><os-cicon clrVerticalNavIcon [icon]="iconHome" [size]="20" />홈 · 10P × 6L</a
           >
           @for (band of bands(); track band.band) {
             <div class="os-band-label">{{ band.band }}</div>

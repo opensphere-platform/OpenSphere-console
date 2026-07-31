@@ -62,7 +62,7 @@ export class SearchService {
 
   /** 정적 셸 페이지 인덱스 */
   private readonly STATIC: SearchResult[] = [
-    { label: '홈 · Perspectives', sublabel: '셸 홈', path: '/', kind: 'page' },
+    { label: '홈 · 10P × 6L', sublabel: '서비스 실현 아키텍처', path: '/', kind: 'page' },
     { label: 'Developer Catalog', sublabel: '관리 · 자산 및 확장', path: '/manage/catalog', kind: 'page' },
     { label: 'APIs', sublabel: '관리 · 자산 및 확장', path: '/manage/apis', kind: 'page' },
     { label: 'Console CLI', sublabel: '관리 · 자산 및 확장', path: '/manage/cli', kind: 'page' },
