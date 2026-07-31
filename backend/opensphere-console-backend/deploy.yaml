@@ -366,7 +366,10 @@ spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: reconciler
-          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:293a8b2d29bb5579bee4b94d9c432b1d843fd79525c5384f89e4ca87a36f0c22
+          # This reconciler shares the Backend image repository but is an
+          # independently verified runtime entry point. Keep its last-known
+          # Ready digest when a browser-session-only Backend release is made.
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:cb68949fe102694e0bdedd083a5357fe3b02ba8e90ea27768f8ffc9cd947b066
           imagePullPolicy: IfNotPresent
           command: ["node", "/app/opensphere-console-backend/foundation-bootstrap-reconciler.js"]
           env:
