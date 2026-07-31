@@ -33,6 +33,7 @@ const externalChannelsBackup = read('migrations', '0025_external_channels_backup
 const migrationLedger = read('migrations', '0026_schema_migration_ledger.sql');
 const externalChannelReasonPolicy = read('migrations', '0027_external_channel_reason_policy.sql');
 const browserSessionAndMonitoring = read('migrations', '0029_browser_session_and_baseline_monitoring.sql');
+const moduleOperationLedger = read('migrations', '0035_module_operation_ledger.sql');
 const installer = read('install.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
@@ -198,6 +199,12 @@ assert.match(migrationLedger, /sha256 text NOT NULL/);
 assert.match(migrationLedger, /source_revision text NOT NULL/);
 assert.match(migrationLedger, /schema_migration_append_only/);
 assert.match(migrationLedger, /REVOKE ALL ON TABLE console\.schema_migration FROM PUBLIC/);
+assert.match(moduleOperationLedger, /CREATE TABLE IF NOT EXISTS console\.module_operation/);
+assert.match(moduleOperationLedger, /idempotency_key text NOT NULL UNIQUE/);
+assert.match(moduleOperationLedger, /target_fingerprint text NOT NULL/);
+assert.match(moduleOperationLedger, /'Queued', 'AwaitingApproval', 'Running', 'Verifying'/);
+assert.match(moduleOperationLedger, /FORCE ROW LEVEL SECURITY/);
+assert.match(moduleOperationLedger, /GRANT SELECT, INSERT, UPDATE ON TABLE console\.module_operation TO opensphere_console_backend/);
 assert.match(nginx, /location \^~ \/auth\/v1\//);
 assert.match(nginx, /opensphere-supabase-auth\.opensphere-console-data\.svc\.cluster\.local/);
 assert.match(nginx, /location \^~ \/storage\/v1\//);

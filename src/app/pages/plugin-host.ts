@@ -308,8 +308,19 @@ export class PluginHost {
         this.control.catalogSnapshot(),
         this.control.registrationsSnapshot(),
       ]);
-      const catalogItem = catalog.items.find((item) => item.name === id) || null;
-      const registration = registrations.items.find((item) => item.name === id) || null;
+      // A child plugin normally renders inside its host subShell
+      // (`/p/foundation/postgres`). If that host cannot be mounted, keep the
+      // same deep link useful by resolving the deepest registered module
+      // segment before falling back to the host id. This is inventory lookup,
+      // not a second routing/source-of-truth model.
+      const routeSegments = this.route.snapshot.url.map((segment) => segment.path);
+      const candidateIds = [...new Set([...routeSegments.slice(2).reverse(), id].filter(Boolean))];
+      const targetId = candidateIds.find((candidate) =>
+        catalog.items.some((item) => item.name === candidate)
+        || registrations.items.some((item) => item.name === candidate),
+      ) || id;
+      const catalogItem = catalog.items.find((item) => item.name === targetId) || null;
+      const registration = registrations.items.find((item) => item.name === targetId) || null;
       if (catalogItem || registration) {
         this.management.set({ catalog: catalogItem, registration });
         this.managementError.set('');

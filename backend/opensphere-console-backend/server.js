@@ -12,6 +12,7 @@ const { normalizedEvent } = require('../notification-dispatcher/contract');
 const { createBrowserSessionManager } = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
+const { createModuleOperationApi } = require('./module-operation-api');
 const {
   FOUNDATION_BOOTSTRAP_RECONCILER,
   FOUNDATION_BOOTSTRAP_TEMPLATE_ID,
@@ -66,6 +67,7 @@ const AUDIT_READ_LIMIT = Number(process.env.SUPABASE_AUDIT_READ_LIMIT || 200);
 const SUPABASE_REQUIRE_AAL2 = String(process.env.SUPABASE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
 const CLI_TOKEN_ISSUER = 'opensphere-cli';
 const CLI_TOKEN_AUDIENCE = 'opensphere-cli';
@@ -764,6 +766,57 @@ async function logAudit(actor, action, target, result, reason, opts = {}) {
   return persisted;
 }
 
+async function authenticateModuleRequest(req, { mutation = false } = {}) {
+  let actor;
+  let authorization = String(req.headers.authorization || '');
+  if (authorization) {
+    actor = await verifyAuthed(req);
+  } else {
+    if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+    const session = await browserSessions.authenticate(req);
+    actor = session.actor;
+    authorization = `Bearer ${session.accessToken}`;
+  }
+  if (!actor.groups?.includes(SUPABASE_BACKEND_ROLE)) {
+    throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
+  }
+  if (mutation) requireRecentAal2(actor, 'module lifecycle mutation');
+  return { actor, authorization };
+}
+
+async function clusterManagerOwnerRequest(pathName, {
+  method = 'GET',
+  authorization,
+  body,
+} = {}) {
+  let response;
+  try {
+    response = await fetch(`${CLUSTER_MANAGER_URL}${pathName}`, {
+      method,
+      headers: {
+        authorization,
+        accept: 'application/json',
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(method === 'GET' ? 8000 : 15000),
+    });
+  } catch {
+    throw { code: 503, errorCode: 'owner_unavailable', msg: 'Shared Observability owner unavailable' };
+  }
+  const text = await response.text();
+  let parsed = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
+  if (!response.ok) {
+    throw {
+      code: response.status,
+      errorCode: `owner_http_${response.status}`,
+      msg: parsed.error || `Shared Observability owner HTTP ${response.status}`,
+    };
+  }
+  return parsed;
+}
+
 function projectedSessionGroups(actor) {
   const groups = new Set(Array.isArray(actor?.groups) ? actor.groups : []);
   if (groups.has(SUPABASE_BACKEND_ROLE)) {
@@ -786,6 +839,14 @@ const externalChannelApi = createExternalChannelApi({
   managementReason,
   newOpId,
   executorRequest: externalChannelExecutorRequest,
+});
+
+const moduleOperationApi = createModuleOperationApi({
+  restRequest,
+  authenticate: authenticateModuleRequest,
+  readBody,
+  ownerRequest: clusterManagerOwnerRequest,
+  logAudit,
 });
 
 async function verifyNotificationAdmin(req) {
@@ -2936,6 +2997,10 @@ const server = http.createServer(async (req, res) => {
           'cache-control': 'no-store',
         });
       }
+    }
+    if (p.startsWith('/api/modules') || p.startsWith('/api/module-operations')) {
+      const handled = await moduleOperationApi.handle(req, res, p, json);
+      if (handled) return;
     }
     if (p.startsWith('/api/admin/') && p !== '/api/admin/events') {
       try {
