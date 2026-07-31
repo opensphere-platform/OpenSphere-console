@@ -2616,8 +2616,11 @@ async function platformReadinessStatus() {
   ];
   const prerequisitesReady = prerequisites.every((x) => x.ready);
   const supportReady = profile.declared && prerequisitesReady && capabilities.every((x) => x.ready);
-  const foundationActivationOverride = !supportReady && FOUNDATION_ACTIVATION_DEV_OVERRIDE;
-  const foundationActivationAllowed = supportReady || foundationActivationOverride;
+  // The Foundation shell is the operator's management surface. Keep that shell
+  // activatable while support evidence is incomplete; Support Profile readiness
+  // gates PFS establishment and hosted services, not access to their repair UI.
+  const foundationActivationOverride = false;
+  const foundationActivationAllowed = true;
   const foundationReg = (regs.json?.items || []).find((x) => x.metadata?.name === FOUNDATION_ID);
   const pfs = await foundationEstablishmentStatus(supportReady, foundationReg).catch((error) => ({
     established: false,
@@ -2658,9 +2661,9 @@ async function platformReadinessStatus() {
       foundationStageAllowed: true,
       foundationActivationAllowed,
       foundationActivationOverride,
-      mode: foundationActivationOverride ? 'DevelopmentOverride' : (supportReady ? 'PlatformSupportProfile' : 'Blocked'),
-      // Compatibility alias for older clients. This gate now means activation,
-      // because an immutable, verified workload may be staged before PFS admission.
+      mode: supportReady ? 'PlatformSupportProfile' : 'ShellManagementOnly',
+      // Foundation shell activation remains available to administrators. PFS
+      // establishment and hosted capability activation stay evidence-gated.
       foundationInstallAllowed: foundationActivationAllowed,
       // PFS plugins follow the same stage/activate split as the Foundation
       // subShell above: an immutable, signature-verified plugin may be installed
@@ -2671,7 +2674,7 @@ async function platformReadinessStatus() {
       // Compatibility alias for older clients; like foundationInstallAllowed it
       // now reports the activation gate, not an installation gate.
       pfsPluginInstallAllowed: supportReady,
-      reason: supportReady ? '' : (foundationActivationOverride ? 'DevelopmentOverride' : 'PlatformSupportProfileRequired'),
+      reason: supportReady ? '' : 'PlatformSupportProfileRequiredForPfsServices',
     },
     pfs: {
       ...pfs,
@@ -3169,16 +3172,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (id === FOUNDATION_ID && action === 'enable') {
         const readiness = await platformReadinessStatus(req);
-        if (!readiness.admission.foundationActivationAllowed) {
-          await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequired', opId);
-          return json(res, 409, {
-            error: 'PlatformSupportProfileRequired',
-            message: 'Foundation activation requires Platform Support Profile Ready; staging as Installed/Ready is allowed',
-            readiness: { phase: readiness.phase, prerequisites: readiness.prerequisites, capabilities: readiness.capabilities }, opId,
-          });
-        }
-        if (readiness.admission.foundationActivationOverride) {
-          await durableAudit(actor, 'foundation-development-override', id, 'accepted', 'Foundation subShell activation only; PFS plugins remain gated', opId);
+        if (!readiness.ready) {
+          await durableAudit(actor, 'foundation-shell-management-activation', id, 'accepted', 'Management shell enabled; PFS establishment and hosted services remain evidence-gated', opId);
         }
       }
       // Activation is the gate for PFS plugins. Installing and staging one is

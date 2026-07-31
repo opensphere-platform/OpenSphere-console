@@ -131,17 +131,13 @@ import {
         </clr-accordion>
       </section>
 
-      <section class="pr-admission" [class.unlocked]="s.admission.foundationActivationAllowed" aria-label="PFS 활성화 게이트">
+      <section class="pr-admission unlocked" aria-label="Foundation Shell 관리와 PFS 서비스 게이트">
         <div>
           <span class="pr-eyebrow">PFS ADMISSION</span>
-          <h2>Foundation 활성화 {{ s.admission.foundationActivationAllowed ? '허용' : '차단' }}</h2>
-          <p>{{ s.admission.foundationActivationOverride ? '개발 예외로 Foundation subShell만 활성화할 수 있습니다. PFS plugin은 계속 잠깁니다.' : (s.admission.foundationActivationAllowed ? 'Extensions에서 사전 설치된 Foundation subShell을 정식 활성화할 수 있습니다.' : 'Foundation은 Ready 상태로 사전 설치할 수 있지만, HIS와 4개 지원 역량 검증 전에는 활성화되지 않습니다.') }}</p>
+          <h2>Foundation Shell 관리 화면 활성화 허용</h2>
+          <p>{{ s.ready ? 'Platform Support Profile이 Ready입니다. PFSS 설립과 하위 서비스 admission을 진행할 수 있습니다.' : '관리 화면은 항상 접근할 수 있습니다. 미충족 증거는 PFSS 내부에서 Degraded로 표시하며, 실제 서비스 설립과 하위 plugin admission만 잠깁니다.' }}</p>
         </div>
-        @if (s.admission.foundationActivationAllowed) {
-          <a class="btn btn-primary" routerLink="/manage/extensions">Foundation 활성화로 이동</a>
-        } @else {
-          <div class="btn-group"><a class="btn" routerLink="/manage/extensions">Foundation 사전 설치</a><a class="btn" routerLink="/p/cluster-manager/his/his">HIS 구성</a></div>
-        }
+        <div class="btn-group"><a class="btn btn-primary" routerLink="/manage/extensions">Foundation Shell 관리</a>@if (!s.ready) { <a class="btn" routerLink="/p/cluster-manager/his/his">HIS 구성</a> }</div>
       </section>
     } @else {
       <div class="progress loop"><progress></progress></div>

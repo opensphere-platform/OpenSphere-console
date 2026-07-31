@@ -31,7 +31,7 @@ export interface PlatformReadinessStatus {
     foundationActivationOverride: boolean;
     foundationInstallAllowed: boolean;
     pfsPluginInstallAllowed: boolean;
-    mode: 'Blocked' | 'PlatformSupportProfile' | 'DevelopmentOverride';
+    mode: 'Blocked' | 'PlatformSupportProfile' | 'DevelopmentOverride' | 'ShellManagementOnly';
     reason: string;
   };
   pfs: { established: boolean; phase: string };

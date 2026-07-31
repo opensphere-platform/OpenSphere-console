@@ -1397,7 +1397,7 @@ export class AdminPlugins implements OnInit {
   }
 
   foundationActivationLocked(id?: string | null): boolean {
-    return id === 'foundation' && !this.foundationActivationAllowed();
+    return false;
   }
 
   /**
@@ -1407,9 +1407,6 @@ export class AdminPlugins implements OnInit {
    * 실어 보내므로 화면이 미충족 capability를 그대로 이름으로 말할 수 있다.
    */
   activationLockReason(id?: string | null): string | null {
-    if (this.foundationActivationLocked(id)) {
-      return 'Foundation 활성화는 Platform Support Profile Ready가 필요합니다.';
-    }
     const admission = this.registrations().find((r) => r.name === id)?.status?.admission;
     if (!admission || admission.activationAllowed !== false) return null;
     const pending = (admission.pendingCapabilities || []).map((c) => this.capabilityText(c));

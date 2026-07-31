@@ -32,7 +32,7 @@ test('HIS status is fail-closed on an unavailable or degraded Cluster Manager re
   assert.equal(normalizeHisStatus({ ok: true, status: 200, body: { state: 'Ready' } }).ready, true);
 });
 
-test('Foundation admission is enforced by API and exposed by Console page', () => {
+test('Foundation management shell stays accessible while PFS services remain evidence-gated', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   const page = read('src', 'app', 'pages', 'admin-platform-readiness.ts');
   const extensions = read('src', 'app', 'pages', 'admin-plugins.ts');
@@ -40,16 +40,20 @@ test('Foundation admission is enforced by API and exposed by Console page', () =
   assert.match(controller, /PlatformSupportProfileRequired/);
   assert.match(controller, /id === FOUNDATION_ID && action === 'enable'/);
   assert.match(controller, /PlatformSupportProfileRequiredForPfsPlugin/);
-  assert.match(controller, /foundation-development-override/);
+  assert.match(controller, /const foundationActivationAllowed = true/);
+  const foundationEnableStart = controller.indexOf("if (id === FOUNDATION_ID && action === 'enable')");
+  const foundationEnableEnd = controller.indexOf('// Activation is the gate for PFS plugins', foundationEnableStart);
+  const foundationEnable = controller.slice(foundationEnableStart, foundationEnableEnd);
+  assert.match(foundationEnable, /foundation-shell-management-activation/);
+  assert.doesNotMatch(foundationEnable, /return json\(res, 409/);
   assert.match(controller, /const pfs = await foundationEstablishmentStatus\(supportReady, foundationReg\)/);
   assert.match(controller, /const domainAdmissionReady = pfs\.established && supportReady/);
   assert.doesNotMatch(controller, /const pfsEstablished = foundationReg\?\.status\?\.phase === 'Activated'/);
   assert.match(page, /PFS ADMISSION/);
+  assert.match(page, /관리 화면은 항상 접근할 수 있습니다/);
   assert.match(page, /\/p\/cluster-manager\/his\/his/);
-  // Every activation control is bound to the same lock, and the lock covers both
-  // the Foundation subShell and a staged PFS plugin. Offering a button whose
-  // refusal is already known was a real defect: enable returned 409 from a
-  // control the page had left enabled.
+  // Hosted PFS plugins remain bound to a visible lock, while the Foundation
+  // management shell itself must never disappear behind that service gate.
   assert.ok((extensions.match(/\[disabled\]="activationLocked\(/g) || []).length >= 5);
   assert.equal(
     (extensions.match(/\[disabled\]="activationLocked\(/g) || []).length,
@@ -57,6 +61,7 @@ test('Foundation admission is enforced by API and exposed by Console page', () =
     'every disabled activation control must explain itself',
   );
   assert.match(extensions, /Ready · 활성화 대기/);
+  assert.match(extensions, /foundationActivationLocked[\s\S]*?return false/);
   assert.match(extensions, /activationLockReason\(id\)/);
   assert.match(extensions, /admission\.activationAllowed !== false/);
   assert.match(client, /body\.message \|\| body\.error/);
