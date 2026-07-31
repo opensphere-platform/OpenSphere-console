@@ -43,6 +43,11 @@ assert.match(installer, /\.Replace\("__OPENSPHERE_SUPABASE_NAMESPACE__", \$Names
 assert.match(installer, /Get-ChildItem[\s\S]+-Filter '\*\.sql'[\s\S]+Sort-Object Name/);
 assert.match(installer, /function Invoke-SupabaseMigrationPsql/);
 assert.match(installer, /supabase_admin -d postgres -v ON_ERROR_STOP=1/);
+assert.match(installer, /function Get-SupabaseMigrationChecksums/);
+assert.match(installer, /Canonical = Get-TextSha256 \$lf/);
+assert.match(installer, /recordedChecksum -notin @\(\$checksums\.Canonical, \$checksums\.Crlf, \$checksums\.Raw\)/);
+assert.match(installer, /if \(-not \$ExistingInstallation\) \{[\s\S]+opensphere-supabase-auth[\s\S]+opensphere-supabase-storage/);
+assert.match(installer, /elseif \(\$appliedMigrationCount -gt 0\)[\s\S]+NOTIFY pgrst, 'reload schema'/);
 assert.match(installer, /\[string\]\$SourceRevision/);
 assert.match(installer, /SourceRevision must be the immutable 40-character release commit SHA/);
 assert.match(installer, /function Get-SupabaseMigrationChecksum/);
