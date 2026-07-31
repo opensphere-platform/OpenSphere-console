@@ -35,9 +35,9 @@ spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: shell
-          # 정본(릴리스): GHCR 이미지(NAMING-STANDARD §1·§4). 로컬 kind는 로컬 태그로 override(kubectl set image / overlay, §5).
-          # push 후 §6 BOM에서 ghcr.io/opensphere-platform/opensphere-console@sha256:<digest>로 고정.
-          image: ghcr.io/opensphere-platform/opensphere-console@sha256:bc64d8475902c03c817c324826112e701a12bcc239e433917b3e23243097bcfe
+          # Edge runtime is pinned to the published component digest; mutable
+          # channel tags are selection pointers and never enter the workload.
+          image: ghcr.io/opensphere-platform/opensphere-console@sha256:a4bfd2cea843c55e26ba096299379388c39f00ae77b0df1199b8a86322ff54c7
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
