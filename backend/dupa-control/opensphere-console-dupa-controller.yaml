@@ -57,6 +57,34 @@ subjects:
     name: opensphere-console-dupa-controller
     namespace: opensphere-console
 ---
+# Platform Delivery evidence is read-only and namespace-scoped. The controller
+# lists the Argo CD runtime workloads and reads only the canonical verification
+# Application; it cannot mutate either runtime or desired state.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dupa-platform-delivery-evidence-reader
+  namespace: argocd
+rules:
+  - apiGroups: ["apps"]
+    resources: [deployments, statefulsets]
+    verbs: [get, list]
+  - apiGroups: ["argoproj.io"]
+    resources: [applications]
+    resourceNames: [opensphere-platform-delivery-verify]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dupa-platform-delivery-evidence-reader
+  namespace: argocd
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: dupa-platform-delivery-evidence-reader }
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-dupa-controller
+    namespace: opensphere-console
+---
 # The canonical admission red-test proves the CronJob image-integrity policy by
 # replaying the backup CronJob through a server dry-run.  Kubernetes charges a
 # dry-run PUT against the `update` verb, and this workload lives outside the

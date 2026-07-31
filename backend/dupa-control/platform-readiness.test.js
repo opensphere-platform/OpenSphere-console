@@ -184,3 +184,11 @@ test('PlatformSupportProfile approval persists an actor label, not the authentic
   assert.match(controller, /approval:\s*\{\s*requestedBy:\s*auditActorLabel\(actor\),\s*reason,/);
   assert.doesNotMatch(controller, /approval:\s*\{\s*requestedBy:\s*actor,\s*reason,/);
 });
+
+test('Delivery evidence reader is namespace-scoped and read-only', () => {
+  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  assert.match(manifest, /name: dupa-platform-delivery-evidence-reader\s+namespace: argocd/);
+  assert.match(manifest, /resources: \[deployments, statefulsets\]\s+verbs: \[get, list\]/);
+  assert.match(manifest, /resourceNames: \[opensphere-platform-delivery-verify\]\s+verbs: \[get\]/);
+  assert.doesNotMatch(manifest, /resourceNames: \[opensphere-platform-delivery-verify\]\s+verbs: \[[^\]]*(?:create|update|patch|delete)/);
+});
