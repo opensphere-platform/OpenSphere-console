@@ -172,6 +172,7 @@ test('PlatformSupportProfile status is a controller-owned projection that change
   const projected = platformVerificationProjection({ username: 'cmars' }, state);
   assert.equal(projected.verifiedBy, 'cmars');
   assert.equal(projected.conditions[0].lastTransitionTime, '2026-07-22T00:00:00.000Z');
+  assert.equal(platformVerificationComparable(null), platformVerificationComparable({}));
   assert.equal(platformVerificationComparable(prior), platformVerificationComparable(projected));
   const controller = read('backend', 'dupa-control', 'controller.js');
   assert.match(controller, /reconcilePlatformVerification\(\)/);

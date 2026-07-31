@@ -2716,11 +2716,12 @@ function platformVerificationProjection(actor, status) {
 }
 
 function platformVerificationComparable(value = {}) {
+  const normalized = value || {};
   return JSON.stringify({
-    phase: value.phase || '',
-    observedGeneration: Number(value.observedGeneration || 0),
-    conditions: (value.conditions || []).map((item) => ({ type: item.type, status: item.status, reason: item.reason, message: item.message })),
-    evidenceRefs: (value.evidenceRefs || []).map((item) => ({ type: item.type || '', ref: item.ref || '' })),
+    phase: normalized.phase || '',
+    observedGeneration: Number(normalized.observedGeneration || 0),
+    conditions: (normalized.conditions || []).map((item) => ({ type: item.type, status: item.status, reason: item.reason, message: item.message })),
+    evidenceRefs: (normalized.evidenceRefs || []).map((item) => ({ type: item.type || '', ref: item.ref || '' })),
   });
 }
 
