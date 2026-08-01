@@ -15,6 +15,8 @@ const {
 } = require('./foundation-bootstrap-contract');
 const {
   FOUNDATION_BOOTSTRAP_CANARY_YAML,
+  FOUNDATION_OTEL_SOURCE_IMAGE,
+  FOUNDATION_OTEL_MIRROR_IMAGE,
   embeddedCatalogDigest,
   loadFoundationBootstrapCatalog,
 } = require('./foundation-bootstrap-bundle');
@@ -57,26 +59,16 @@ test('embedded Foundation catalog has fixed identities and digest-pinned workloa
   assert.ok(images.every((image) => /@sha256:[a-f0-9]{64}$/.test(image)));
 });
 
-test('Foundation supply-chain preflight fails before apply when an operand lacks an official immutable mirror', () => {
+test('Foundation supply-chain preflight accepts only the governed immutable OTEL mirror', () => {
   const catalog = loadFoundationBootstrapCatalog();
   const status = catalogSupplyChainStatus(catalog);
-  assert.equal(status.ready, false);
+  assert.equal(status.ready, true);
   assert.equal(status.checkedImages, 8);
-  assert.equal(status.blockers.length, 1);
-  assert.match(status.blockers[0].image, /^docker\.io\/otel\/opentelemetry-collector-contrib@sha256:/);
-  assert.throws(() => assertCatalogSupplyChain(catalog), /official immutable GHCR mirror/);
-  const repaired = catalog.map((resource) => (
-    resource.kind === 'Deployment'
-      ? {
-        ...resource,
-        document: resource.document.replace(
-          /docker\.io\/otel\/opentelemetry-collector-contrib@sha256:[a-f0-9]{64}/,
-          'ghcr.io/opensphere-platform/mirror/opentelemetry-collector-contrib@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        ),
-      }
-      : resource
-  ));
-  assert.equal(catalogSupplyChainStatus(repaired).ready, true);
+  assert.deepEqual(status.blockers, []);
+  assert.equal(assertCatalogSupplyChain(catalog).ready, true);
+  const deployment = catalog.find((item) => item.kind === 'Deployment');
+  assert.equal(deployment.document.includes(FOUNDATION_OTEL_MIRROR_IMAGE), true);
+  assert.equal(deployment.document.includes(FOUNDATION_OTEL_SOURCE_IMAGE), false);
 });
 
 test('catalog validation rejects identity substitution and mutable images', () => {
