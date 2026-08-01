@@ -46,6 +46,13 @@ test('Windows local edge publisher is host-native, GHCR-backed, and KST-versione
   assert.match(localEdgePublisher, /Set-RemoteTag -Repository .* -Tag edge/);
 });
 
+test('component publication never advances the integrated Console edge anchor', () => {
+  assert.match(localEdgePublisher, /\$partialPublication = \$images\.Count -lt \$canonicalComponentCount/);
+  assert.match(localEdgePublisher, /if \(\$console -and -not \$partialPublication\)/);
+  assert.match(localEdgePublisher, /Partial publication moved the integrated Console edge anchor/);
+  assert.match(localEdgePublisher, /OpenSphereEdgeComponentPublication/);
+});
+
 test('retag-only promotion workflow is absent because channel identity is immutable image metadata', () => {
   assert.equal(fs.existsSync(path.join(consoleRoot, '.github', 'workflows', 'promote-image-channel.yml')), false);
 });

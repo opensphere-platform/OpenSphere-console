@@ -193,10 +193,17 @@ $images = @(
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
+$canonicalComponentCount = $images.Count
 $requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
 $images = @($images | Where-Object { $requestedComponents.Contains($_.Key) })
 if (-not $images.Count) { throw 'At least one Console component must be selected.' }
+$partialPublication = $images.Count -lt $canonicalComponentCount
+$integratedAnchorBefore = if ($partialPublication -and ($images | Where-Object { $_.Key -eq 'console' })) {
+  Get-RemoteDigest -Reference "$Registry/opensphere-console:edge"
+} else {
+  $null
+}
 
 Write-Host "[step 04/06] Build and push $($images.Count) host-native images"
 $digests = [ordered]@{}
@@ -250,7 +257,8 @@ foreach ($item in $images) {
 }
 $bom = [ordered]@{
   apiVersion = 'release.opensphere.io/v1alpha1'
-  kind = 'OpenSphereReleaseBOM'
+  kind = $partialPublication ? 'OpenSphereEdgeComponentPublication' : 'OpenSphereReleaseBOM'
+  publicationScope = $partialPublication ? 'ComponentSet' : 'CompleteConsoleRelease'
   channel = 'edge'
   status = 'Active'
   releaseTag = $releaseTag
@@ -263,30 +271,39 @@ $bom = [ordered]@{
   supportedPlatforms = @($Platform)
   components = $componentEvidence
 }
-$bomPath = Join-Path $workspace 'opensphere-local-release-bom.json'
+$bomPath = Join-Path $workspace ($partialPublication ? 'opensphere-local-component-publication.json' : 'opensphere-local-release-bom.json')
 $bom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bomPath -Encoding utf8
 
-Write-Host '[step 06/06] Advance edge atomically with Console anchor last'
+Write-Host '[step 06/06] Advance selected component tags without moving a partial Console anchor'
 foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
   Set-RemoteTag -Repository "$Registry/$($item.Image)" -Digest $digests[$item.Key] -Tag edge
 }
 $console = $images | Where-Object { $_.Key -eq 'console' }
-if ($console) {
+if ($console -and -not $partialPublication) {
   Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+}
+if ($console -and $partialPublication) {
+  $integratedAnchorAfter = Get-RemoteDigest -Reference "$Registry/opensphere-console:edge"
+  if ($integratedAnchorAfter -ne $integratedAnchorBefore) {
+    throw "Partial publication moved the integrated Console edge anchor: before=$integratedAnchorBefore after=$integratedAnchorAfter"
+  }
 }
 
 foreach ($item in $images) {
-  $actual = Get-RemoteDigest -Reference "$Registry/$($item.Image):edge"
+  $verificationTag = if ($partialPublication -and $item.Key -eq 'console') { $localTag } else { 'edge' }
+  $actual = Get-RemoteDigest -Reference "$Registry/$($item.Image):$verificationTag"
   if ($actual -ne $digests[$item.Key]) {
-    throw "Final edge verification failed for $($item.Image)"
+    throw "Final publication verification failed for $($item.Image):$verificationTag"
   }
 }
 
 Write-Host '[success] Local edge publish completed'
 Write-Host "[release] $releaseTag"
 Write-Host "[immutable] $localTag"
-if ($console) {
+if ($console -and -not $partialPublication) {
   Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
+} elseif ($console) {
+  Write-Host "[anchor] preserved $Registry/opensphere-console@$integratedAnchorBefore"
 } else {
   Write-Host '[anchor] not selected; component-only edge publication'
 }
