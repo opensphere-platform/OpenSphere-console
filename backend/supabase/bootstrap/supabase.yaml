@@ -127,6 +127,23 @@ spec:
     spec:
       serviceAccountName: opensphere-supabase-auth
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      initContainers:
+        - name: wait-for-postgres
+          image: docker.io/supabase/postgres:17.6.1.136
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - >-
+              until PGPASSWORD="$POSTGRES_PASSWORD" psql -h opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local -U supabase_auth_admin -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
       containers:
         - name: auth
           image: docker.io/supabase/gotrue:v2.189.0
@@ -187,6 +204,23 @@ spec:
     spec:
       serviceAccountName: opensphere-supabase-rest
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      initContainers:
+        - name: wait-for-postgres
+          image: docker.io/supabase/postgres:17.6.1.136
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - >-
+              until PGPASSWORD="$POSTGRES_PASSWORD" psql -h opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local -U authenticator -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
       containers:
         - name: rest
           image: docker.io/postgrest/postgrest:v14.12

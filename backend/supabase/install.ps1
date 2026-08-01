@@ -56,6 +56,52 @@ function Set-WorkloadStartupProbe([string]$Workload, [string]$Container, [hashta
   Invoke-Kubectl @('-n', $Namespace, 'patch', $Workload, '--type=strategic', '-p', $patch)
 }
 
+function Set-DatabaseDependentStartupContract(
+  [string]$Workload,
+  [string]$Container,
+  [hashtable]$Probe,
+  [string]$DatabaseRole,
+  [string]$PostgresImage
+) {
+  if ($PostgresImage -notmatch '^ghcr\.io/opensphere-platform/opensphere-console-supabase-postgres@sha256:[a-f0-9]{64}$') {
+    throw "Existing PostgreSQL image is not an exact governed digest: $PostgresImage"
+  }
+  $databaseHost = "opensphere-supabase-postgres.$Namespace.svc.cluster.local"
+  $waitCommand = 'until PGPASSWORD="$POSTGRES_PASSWORD" psql -h ' + $databaseHost + ' -U ' + $DatabaseRole + " -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; do sleep 2; done"
+  $patch = @{
+    spec = @{
+      template = @{
+        spec = @{
+          initContainers = @(@{
+            name = 'wait-for-postgres'
+            image = $PostgresImage
+            imagePullPolicy = 'IfNotPresent'
+            env = @(@{
+              name = 'POSTGRES_PASSWORD'
+              valueFrom = @{ secretKeyRef = @{ name = 'opensphere-supabase-secrets'; key = 'postgres-password' } }
+            })
+            command = @('/bin/sh', '-ec')
+            args = @($waitCommand)
+            resources = @{
+              requests = @{ cpu = '10m'; memory = '32Mi' }
+              limits = @{ cpu = '100m'; memory = '128Mi' }
+            }
+            securityContext = @{
+              allowPrivilegeEscalation = $false
+              capabilities = @{ drop = @('ALL') }
+            }
+          })
+          containers = @(@{
+            name = $Container
+            startupProbe = $Probe
+          })
+        }
+      }
+    }
+  } | ConvertTo-Json -Depth 16 -Compress
+  Invoke-Kubectl @('-n', $Namespace, 'patch', $Workload, '--type=strategic', '-p', $patch)
+}
+
 function New-RandomBase64([int]$Bytes) {
   $buffer = New-Object byte[] $Bytes
   [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
@@ -128,16 +174,17 @@ if ($ExistingInstallation) {
     failureThreshold = 60
     periodSeconds = 5
   }
-  Set-WorkloadStartupProbe 'deployment/opensphere-supabase-auth' 'auth' @{
+  $postgresRuntimeImage = (& kubectl @kubectlArgs -n $Namespace get statefulset opensphere-supabase-postgres -o 'jsonpath={.spec.template.spec.containers[0].image}').Trim()
+  Set-DatabaseDependentStartupContract 'deployment/opensphere-supabase-auth' 'auth' @{
     httpGet = @{ path = '/health'; port = 'http' }
     failureThreshold = 60
     periodSeconds = 5
-  }
-  Set-WorkloadStartupProbe 'deployment/opensphere-supabase-rest' 'rest' @{
+  } 'supabase_auth_admin' $postgresRuntimeImage
+  Set-DatabaseDependentStartupContract 'deployment/opensphere-supabase-rest' 'rest' @{
     httpGet = @{ path = '/live'; port = 'admin' }
     failureThreshold = 60
     periodSeconds = 5
-  }
+  } 'authenticator' $postgresRuntimeImage
   Write-Host 'Existing Supabase installation verified; release-pinned images preserved and startup safety reconciled.'
 } else {
   Invoke-Kubectl @("apply", "-f", "-") $renderedManifest
