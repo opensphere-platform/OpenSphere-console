@@ -1,5 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import { createTotpQrCode } from './totp-qr';
+import { authBootstrapRetryDelay, isRetryableAuthBootstrapStatus } from './auth-bootstrap-recovery';
 
 const SESSION_DURATION_PREFERENCE_KEY = 'opensphere.session.duration.v2';
 const LEGACY_SESSION_DURATION_PREFERENCE_KEY = 'opensphere.session.duration';
@@ -81,6 +82,8 @@ export class AuthService {
   readonly passwordRecoveryState = signal<'idle' | 'ready' | 'completed' | 'error'>('idle');
   readonly passwordRecoveryMessage = signal('');
   readonly initError = signal('');
+  readonly initializing = signal(true);
+  readonly autoRetryPending = signal(false);
   readonly authorityWarning = signal('');
   readonly setupRequired = signal(false);
   readonly setupBusy = signal(false);
@@ -94,6 +97,9 @@ export class AuthService {
   private readonly stepUpEvent = 'opensphere:auth-step-up-required';
   private lastActivityHeartbeatAt = 0;
   private activityHeartbeatInFlight = false;
+  private initializationInFlight = false;
+  private initializationRetryAttempt = 0;
+  private initializationRetryTimer?: number;
   private readonly sessionChannel = typeof BroadcastChannel === 'undefined'
     ? null
     : new BroadcastChannel('opensphere.browser-session');
@@ -110,6 +116,50 @@ export class AuthService {
 
   setInitError(error: unknown): void {
     this.initError.set(String(error instanceof Error ? error.message : error || '인증 초기화 실패'));
+  }
+
+  startInitialization(): void {
+    void this.runInitialization();
+  }
+
+  retryInitializationNow(): void {
+    this.initializationRetryAttempt = 0;
+    this.cancelInitializationRetry();
+    void this.runInitialization();
+  }
+
+  private async runInitialization(): Promise<void> {
+    if (this.initializationInFlight) return;
+    this.initializationInFlight = true;
+    this.cancelInitializationRetry();
+    this.initializing.set(true);
+    this.initError.set('');
+    try {
+      await this.init();
+      this.initializationRetryAttempt = 0;
+    } catch (error) {
+      this.setInitError(error);
+      if (isRetryableAuthBootstrapStatus(this.statusOf(error))) this.scheduleInitializationRetry();
+    } finally {
+      this.initializing.set(false);
+      this.initializationInFlight = false;
+    }
+  }
+
+  private scheduleInitializationRetry(): void {
+    const delay = authBootstrapRetryDelay(this.initializationRetryAttempt++);
+    this.autoRetryPending.set(true);
+    this.initializationRetryTimer = window.setTimeout(() => {
+      this.initializationRetryTimer = undefined;
+      this.autoRetryPending.set(false);
+      void this.runInitialization();
+    }, delay);
+  }
+
+  private cancelInitializationRetry(): void {
+    if (this.initializationRetryTimer !== undefined) window.clearTimeout(this.initializationRetryTimer);
+    this.initializationRetryTimer = undefined;
+    this.autoRetryPending.set(false);
   }
 
   /** @deprecated Browser bearer tokens are intentionally unavailable. */

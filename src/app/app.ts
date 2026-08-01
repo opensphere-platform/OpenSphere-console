@@ -1,9 +1,10 @@
-import { Component, ChangeDetectionStrategy, inject } from '@angular/core';
+import { Component, ChangeDetectionStrategy, effect, inject } from '@angular/core';
 import { OsShell } from './os/os-shell';
 import { AuthService } from './core/auth.service';
 import { InitialSetup } from './pages/initial-setup';
 import { LoginPage } from './pages/login';
 import { PasswordRecoveryPage } from './pages/password-recovery';
+import { ExtensionHostService } from './core/extension-host.service';
 
 @Component({
   selector: 'app-root',
@@ -16,12 +17,18 @@ import { PasswordRecoveryPage } from './pages/password-recovery';
       <os-initial-setup />
     } @else if (auth.loginRequired()) {
       <os-login />
+    } @else if (auth.initializing()) {
+      <main class="os-bootstrap-error" role="status">
+        <h1>OpenSphere Console</h1>
+        <p>인증 서비스를 연결하고 있습니다.</p>
+      </main>
     } @else if (auth.initError(); as error) {
       <main class="os-bootstrap-error" role="alert">
         <h1>OpenSphere Console</h1>
         <p>인증 서비스를 초기화하지 못했습니다.</p>
         <pre>{{ error }}</pre>
-        <button type="button" (click)="retry()">다시 시도</button>
+        @if (auth.autoRetryPending()) { <p>서비스가 준비되면 자동으로 다시 연결합니다.</p> }
+        <button type="button" (click)="retry()">지금 다시 시도</button>
       </main>
     } @else {
       @if (auth.authorityWarning(); as warning) {
@@ -43,8 +50,20 @@ import { PasswordRecoveryPage } from './pages/password-recovery';
 })
 export class App {
   readonly auth = inject(AuthService);
+  private readonly ext = inject(ExtensionHostService);
+  private extensionLoadStarted = false;
+  private readonly loadExtensionsAfterAuthentication = effect(() => {
+    const authorized = Boolean(this.auth.subject())
+      && !this.auth.loginRequired()
+      && !this.auth.initError();
+    if (!authorized || this.extensionLoadStarted || this.ext.loadState() !== 'idle') return;
+    this.extensionLoadStarted = true;
+    void this.ext.load().catch((error) => {
+      console.warn('[extension-host] authenticated bootstrap load failed:', error);
+    });
+  });
+
   retry(): void {
-    this.auth.initError.set('');
-    void this.auth.init().catch((error) => this.auth.setInitError(error));
+    this.auth.retryInitializationNow();
   }
 }
