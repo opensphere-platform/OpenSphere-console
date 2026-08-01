@@ -35,6 +35,9 @@ const externalChannelReasonPolicy = read('migrations', '0027_external_channel_re
 const browserSessionAndMonitoring = read('migrations', '0029_browser_session_and_baseline_monitoring.sql');
 const moduleOperationLedger = read('migrations', '0035_module_operation_ledger.sql');
 const browserSessionExpiryEvidence = read('migrations', '0037_browser_session_expiry_evidence.sql');
+const watchCursorStatusVocabulary = read('migrations', '0038_oaa_watch_cursor_status_vocabulary.sql');
+const storageEntrypoint = read('images', 'storage', 'opensphere-storage-entrypoint.sh');
+const storageDockerfile = read('images', 'storage', 'Dockerfile');
 const installer = read('install.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
@@ -61,6 +64,13 @@ assert.doesNotMatch(installer, /--from-literal/);
 assert.match(manifest, /supabase\/postgres:17\.6\.1\.136/);
 assert.match(manifest, /supabase\/gotrue:v2\.189\.0/);
 assert.match(manifest, /supabase\/storage-api:v1\.60\.4/);
+assert.match(manifest, /OPENSPHERE_STORAGE_DATABASE_HOST/);
+assert.match(manifest, /OPENSPHERE_STORAGE_REST_HOST/);
+assert.match(manifest, /startupProbe:[\s\S]+failureThreshold: 180/);
+assert.match(storageDockerfile, /ENTRYPOINT \["\/usr\/local\/bin\/opensphere-storage-entrypoint\.sh"\]/);
+assert.match(storageEntrypoint, /getent hosts "\$service_host"/);
+assert.match(storageEntrypoint, /nc -z -w 2 "\$service_host" "\$service_port"/);
+assert.match(storageEntrypoint, /exec \/usr\/local\/bin\/docker-entrypoint\.sh "\$@"/);
 assert.match(manifest, /postgrest\/postgrest:v14\.12/);
 assert.doesNotMatch(manifest, /image:\s+[^\n]+:latest\b/);
 assert.doesNotMatch(manifest, /service-role-key[^\n]*value:/);
@@ -141,6 +151,10 @@ assert.match(browserSessionExpiryEvidence, /'refresh_rejected'/);
 assert.match(browserSessionExpiryEvidence, /'expired_idle'/);
 assert.match(browserSessionExpiryEvidence, /'expired_absolute'/);
 assert.match(browserSessionExpiryEvidence, /'authority_unavailable'/);
+assert.match(watchCursorStatusVocabulary, /DROP CONSTRAINT IF EXISTS watch_cursor_status_check/);
+for (const state of ['starting', 'discovery', 'discovery-error', 'watching', 'reconnecting', 'stopped', 'error', 'unsupported']) {
+  assert.match(watchCursorStatusVocabulary, new RegExp(`'${state}'`));
+}
 assert.match(installer, /browser-session-key/);
 assert.match(installer, /New-RandomBase64 32/);
 assert.match(installer, /\[switch\]\$ExistingInstallation/);

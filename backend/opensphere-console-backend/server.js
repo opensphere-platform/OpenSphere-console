@@ -13,6 +13,7 @@ const { createBrowserSessionManager } = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 const { createModuleOperationApi } = require('./module-operation-api');
+const { evaluateDataIdentityReadiness } = require('./data-identity-readiness');
 const {
   FOUNDATION_BOOTSTRAP_RECONCILER,
   FOUNDATION_BOOTSTRAP_TEMPLATE_ID,
@@ -1210,14 +1211,19 @@ async function submitOaaAction(actor, body = {}, authorization = '') {
 }
 
 async function requireSupabase() {
-  const result = await restRequest('operator', {
-    query: 'select=user_id&limit=1',
-    prefer: 'count=exact',
+  const readiness = await evaluateDataIdentityReadiness({
+    readDataAuthority: () => restRequest('operator', {
+      query: 'select=user_id&limit=1',
+      prefer: 'count=exact',
+    }),
+    authUrl: SUPABASE_AUTH_URL,
+    storageUrl: SUPABASE_STORAGE_URL,
+    timeoutMs: SUPABASE_TIMEOUT_MS,
   });
-  if (!Array.isArray(result)) {
-    throw { code: 503, msg: 'Supabase data and identity authority unavailable' };
+  if (!readiness.ready) {
+    throw { code: 503, msg: 'Supabase data and identity authority unavailable', readiness };
   }
-  return { ready: true, service: 'supabase-data-identity', source: 'supabase', version: VERSION };
+  return { ...readiness, service: 'supabase-data-identity', source: 'supabase', version: VERSION };
 }
 
 async function serviceProbe(key, name, url, responsibility) {
@@ -2969,8 +2975,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/readyz') {
       try { return json(res, 200, await requireSupabase()); }
-      catch {
-        return json(res, 503, { ready: false, required: true, error: 'Supabase data and identity authority unavailable' });
+      catch (error) {
+        return json(res, 503, {
+          ready: false,
+          required: true,
+          error: 'Supabase data and identity authority unavailable',
+          components: error?.readiness?.components || [],
+          checkedAt: error?.readiness?.checkedAt || new Date().toISOString(),
+        });
       }
     }
     if (p === '/metrics') {
