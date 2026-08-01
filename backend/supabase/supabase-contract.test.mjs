@@ -19,6 +19,13 @@ test('Supabase installer delimits migration identifiers before punctuation', () 
   assert.doesNotMatch(installer, /Migration checksum drift for \$migrationId:/);
 });
 
+test('Storage startup gate is executable after a Windows checkout', () => {
+  const dockerfile = readFileSync(path.join(here, 'images', 'storage', 'Dockerfile'), 'utf8');
+  assert.match(dockerfile,
+    /RUN sed -i 's\/\\r\$\/\/' \/usr\/local\/bin\/opensphere-storage-entrypoint\.sh/);
+  assert.match(dockerfile, /ENTRYPOINT \["\/usr\/local\/bin\/opensphere-storage-entrypoint\.sh"\]/);
+});
+
 test('released migration history is immutable and numeric prefixes are never reused', () => {
   const lock = JSON.parse(readFileSync(path.join(here, 'migration-history-lock.json'), 'utf8'));
   const migrationDir = path.join(here, 'migrations');
