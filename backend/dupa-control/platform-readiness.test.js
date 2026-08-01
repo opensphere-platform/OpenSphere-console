@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -91,6 +91,39 @@ test('a PFS plugin stages unconditionally and only its activation waits for the 
   assert.match(controller, /\['enable', 'rollback'\]\.includes\(action\)/);
   assert.match(controller, /reason: 'PlatformSupportProfileIncomplete'/);
   assert.match(controller, /phase: 'DependencyPending',\s*\n\s*reason: 'PlatformSupportProfileIncomplete'/);
+});
+
+test('recovery drill evidence is advisory for service activation but remains visible', () => {
+  const admission = platformSupportAdmission(true, true, [
+    { type: 'Delivery', ready: true },
+    { type: 'Observability', ready: true },
+    { type: 'BackupRestore', ready: false, reason: 'RestoreEvidenceMissing' },
+    { type: 'SecurityPolicy', ready: true },
+  ]);
+  assert.equal(admission.ready, true);
+  assert.equal(admission.advisoryReady, false);
+  assert.deepEqual(admission.advisory.map((item) => item.type), ['BackupRestore']);
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /backupRestore:\s*\{ required: false \}/);
+  assert.match(controller, /advisoryCapabilities:/);
+});
+
+test('delivery evidence binds the exact governed Git source and resolved revision', () => {
+  const ready = argocdApplicationEvidence({
+    spec: {
+      project: 'opensphere-platform-delivery',
+      source: {
+        repoURL: 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000/opensphere/platform-declarations.git',
+        path: 'platform-delivery/verification',
+        targetRevision: 'main',
+      },
+      destination: { server: 'https://kubernetes.default.svc', namespace: 'opensphere-platform-delivery' },
+      syncPolicy: { automated: { prune: true, selfHeal: true } },
+    },
+    status: { sync: { status: 'Synced', revision: 'a'.repeat(40) }, health: { status: 'Healthy' } },
+  });
+  assert.equal(ready.ready, true);
+  assert.equal(argocdApplicationEvidence({ ...ready, spec: { source: { path: 'wrong' } } }).ready, false);
 });
 
 test('Foundation development override is explicit and production fail-closed', () => {
@@ -193,7 +226,10 @@ test('PlatformSupportProfile approval persists an actor label, not the authentic
 test('Delivery evidence reader is namespace-scoped and read-only', () => {
   const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
   assert.match(manifest, /name: dupa-platform-delivery-evidence-reader\s+namespace: argocd/);
-  assert.match(manifest, /resources: \[deployments, statefulsets\]\s+verbs: \[get, list\]/);
-  assert.match(manifest, /resourceNames: \[opensphere-platform-delivery-verify\]\s+verbs: \[get\]/);
-  assert.doesNotMatch(manifest, /resourceNames: \[opensphere-platform-delivery-verify\]\s+verbs: \[[^\]]*(?:create|update|patch|delete)/);
+  assert.match(manifest, /resources: \[applications, appprojects\]/);
+  assert.match(manifest, /resourceNames: \[opensphere-platform-delivery-verify, opensphere-platform-delivery\]\s+verbs: \[get\]/);
+  const roleStart = manifest.indexOf('name: dupa-platform-delivery-evidence-reader');
+  const roleEnd = manifest.indexOf('\n---', roleStart);
+  const role = manifest.slice(roleStart, roleEnd);
+  assert.doesNotMatch(role, /verbs: \[[^\]]*(?:create|update|patch|delete)/);
 });

@@ -2225,10 +2225,34 @@ const requiredProfileSpec = Object.freeze({
   hostRequirements: { clusterManager: true, his: true },
   delivery: { required: true },
   observability: { required: true },
-  backupRestore: { required: true },
+  // A recovery drill is mandatory before destructive lifecycle operations and
+  // production admission, but its absence must not remove the Foundation
+  // management surface or block ordinary service establishment.  Keeping this
+  // condition advisory prevents an evidence-retention problem from becoming a
+  // platform outage.
+  backupRestore: { required: false },
   securityPolicy: { required: true },
   optionalCapabilities: [],
 });
+
+const SUPPORT_CAPABILITY_POLICY = Object.freeze({
+  Delivery: { required: requiredProfileSpec.delivery.required },
+  Observability: { required: requiredProfileSpec.observability.required },
+  BackupRestore: { required: requiredProfileSpec.backupRestore.required },
+  SecurityPolicy: { required: requiredProfileSpec.securityPolicy.required },
+});
+
+function platformSupportAdmission(profileDeclared, prerequisitesReady, capabilities = []) {
+  const blocking = capabilities.filter((item) => SUPPORT_CAPABILITY_POLICY[item.type]?.required !== false);
+  const advisory = capabilities.filter((item) => SUPPORT_CAPABILITY_POLICY[item.type]?.required === false);
+  const ready = profileDeclared && prerequisitesReady && blocking.every((item) => item.ready);
+  return {
+    ready,
+    blocking,
+    advisory,
+    advisoryReady: advisory.every((item) => item.ready),
+  };
+}
 
 function condition(type, ready, reason, message, evidence = []) {
   return { type, status: ready ? 'True' : 'False', ready, reason, message, evidence };
@@ -2489,49 +2513,82 @@ async function securityPolicyEvidence() {
     reason: redTest ? '' : (redTestEvidence.find((item) => item.reason)?.reason || 'live admission-policy red-test evidence is missing'),
   };
 }
+const ARGOCD_NAMESPACE = 'argocd';
+const ARGOCD_DELIVERY_APPLICATION = 'opensphere-platform-delivery-verify';
+const ARGOCD_DELIVERY_PROJECT = 'opensphere-platform-delivery';
+const ARGOCD_DELIVERY_REPOSITORY = 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000/opensphere/platform-declarations.git';
+const ARGOCD_DELIVERY_PATH = 'platform-delivery/verification';
+
+function normalizedGitRepository(value) {
+  return String(value || '').trim().replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
+}
+
+function argocdApplicationEvidence(application) {
+  const spec = application?.spec || {};
+  const status = application?.status || {};
+  const source = spec.source || {};
+  const revision = String(status.sync?.revision || status.operationState?.syncResult?.revision || '').toLowerCase();
+  const sourceVerified = normalizedGitRepository(source.repoURL) === normalizedGitRepository(ARGOCD_DELIVERY_REPOSITORY)
+    && String(source.path || '').replace(/^\/+|\/+$/g, '') === ARGOCD_DELIVERY_PATH
+    && String(source.targetRevision || '') === 'main';
+  const destinationVerified = spec.destination?.server === 'https://kubernetes.default.svc'
+    && spec.destination?.namespace === 'opensphere-platform-delivery';
+  const automated = spec.syncPolicy?.automated?.prune === true && spec.syncPolicy?.automated?.selfHeal === true;
+  const synced = status.sync?.status === 'Synced';
+  const healthy = status.health?.status === 'Healthy';
+  const revisionPinned = /^[a-f0-9]{40,64}$/.test(revision);
+  const ready = spec.project === ARGOCD_DELIVERY_PROJECT && sourceVerified && destinationVerified
+    && automated && synced && healthy && revisionPinned;
+  const reason = ready ? ''
+    : !sourceVerified ? 'canonical OpenSphere Git source/path/revision is not bound to the delivery Application'
+      : !destinationVerified ? 'delivery Application destination is not the OpenSphere platform-delivery namespace'
+        : !automated ? 'delivery Application must enforce automated prune and self-heal'
+          : !synced ? `Argo CD Application sync state is ${status.sync?.status || 'Unknown'}`
+            : !healthy ? `Argo CD Application health is ${status.health?.status || 'Unknown'}`
+              : !revisionPinned ? 'Argo CD has not reported a resolved Git commit SHA'
+                : `Argo CD Application project is ${spec.project || 'unset'}`;
+  return {
+    ready, reason, sourceVerified, destinationVerified, automated, synced, healthy, revisionPinned, revision,
+    project: spec.project || '',
+    source: { repoURL: source.repoURL || '', path: source.path || '', targetRevision: source.targetRevision || '' },
+  };
+}
+
 async function deliveryEvidence() {
-  const [gitea, deployments, statefulSets, application] = await Promise.all([
+  const api = `/apis/argoproj.io/${V}/namespaces/${ARGOCD_NAMESPACE}`;
+  const [gitea, application, project, controller, repoServer, server, applicationSet] = await Promise.all([
     giteaHealth(),
-    k8s('GET', '/apis/apps/v1/namespaces/argocd/deployments'),
-    k8s('GET', '/apis/apps/v1/namespaces/argocd/statefulsets'),
-    k8s('GET', '/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/opensphere-platform-delivery-verify'),
+    k8s('GET', `${api}/applications/${ARGOCD_DELIVERY_APPLICATION}`),
+    k8s('GET', `${api}/appprojects/${ARGOCD_DELIVERY_PROJECT}`),
+    k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/statefulsets/argocd-application-controller`),
+    k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-repo-server`),
+    k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-server`),
+    k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-applicationset-controller`),
   ]);
-  const deploymentItems = deployments.json?.items || [];
-  const statefulSetItems = statefulSets.json?.items || [];
-  const runtimeItems = [...deploymentItems, ...statefulSetItems];
-  const runtimeConfigured = runtimeItems.length > 0;
-  const runtimeReady = runtimeConfigured && runtimeItems.every((item) => {
-    if (item.kind === 'StatefulSet') {
-      const desired = Number(item.spec?.replicas || 0);
-      return desired > 0 && Number(item.status?.readyReplicas || 0) === desired
-        && Number(item.status?.observedGeneration || 0) >= Number(item.metadata?.generation || 0);
-    }
-    return deploymentRolloutConverged(item);
-  });
-  const appConfigured = application.ok;
-  const sync = String(application.json?.status?.sync?.status || 'Unknown');
-  const health = String(application.json?.status?.health?.status || 'Unknown');
-  const revision = String(application.json?.status?.sync?.revision || '');
-  const appReady = appConfigured && sync === 'Synced' && health === 'Healthy' && Boolean(revision);
-  const ready = gitea && runtimeReady && appReady;
-  const state = !runtimeConfigured ? 'NotConfigured'
-    : !runtimeReady ? 'RuntimeDegraded'
-      : !appConfigured ? 'ApplicationNotConfigured'
-        : !appReady ? 'SyncDegraded' : 'Ready';
+  const workloads = [
+    deploymentReadyResult(ARGOCD_NAMESPACE, 'argocd-application-controller', controller),
+    deploymentReadyResult(ARGOCD_NAMESPACE, 'argocd-repo-server', repoServer),
+    deploymentReadyResult(ARGOCD_NAMESPACE, 'argocd-server', server),
+    deploymentReadyResult(ARGOCD_NAMESPACE, 'argocd-applicationset-controller', applicationSet),
+  ];
+  const app = argocdApplicationEvidence(application.json);
+  const runtimeReady = workloads.every((item) => item.ready);
+  const ready = gitea && application.ok && project.ok && runtimeReady && app.ready;
   const reason = ready ? ''
     : !gitea ? 'Gitea delivery source is unreachable'
-      : !runtimeConfigured ? 'Argo CD owner/runtime is not configured'
-        : !runtimeReady ? 'Argo CD owner/runtime is not Ready'
-          : !appConfigured ? 'Canonical Argo CD Application is not configured'
-            : `Canonical Application is ${sync}/${health}`;
+      : !application.ok ? `canonical Argo CD Application is unavailable (HTTP ${application.status})`
+        : !project.ok ? `Argo CD delivery AppProject is unavailable (HTTP ${project.status})`
+          : !runtimeReady ? `Argo CD control-plane workload is not Ready: ${workloads.find((item) => !item.ready)?.name || 'unknown'}`
+            : app.reason;
   return {
     ready,
-    state,
+    state: ready ? 'Ready' : application.ok && project.ok && runtimeReady ? 'SyncDegraded' : 'RuntimeDegraded',
     reason,
     gitea,
     owner: 'argocd',
-    runtime: { configured: runtimeConfigured, ready: runtimeReady, components: runtimeItems.map((item) => item.metadata?.name).filter(Boolean) },
-    application: { configured: appConfigured, name: 'opensphere-platform-delivery-verify', sync, health, revision },
+    runtime: { configured: true, ready: runtimeReady, components: workloads },
+    project: { configured: project.ok, name: ARGOCD_DELIVERY_PROJECT },
+    application: { configured: application.ok, name: ARGOCD_DELIVERY_APPLICATION, ...app },
   };
 }
 async function observabilityProfileEvidence() {
@@ -2615,7 +2672,8 @@ async function platformReadinessStatus() {
     { key: 'his-binding', label: 'HIS Observability Binding Connected', ready: his.ready, detail: his.ready ? 'HIS issued a live Console binding' : (his.reason || his.state), route: '/manage/observability' },
   ];
   const prerequisitesReady = prerequisites.every((x) => x.ready);
-  const supportReady = profile.declared && prerequisitesReady && capabilities.every((x) => x.ready);
+  const supportAdmission = platformSupportAdmission(profile.declared, prerequisitesReady, capabilities);
+  const supportReady = supportAdmission.ready;
   // The Foundation shell is the operator's management surface. Keep that shell
   // activatable while support evidence is incomplete; Support Profile readiness
   // gates PFS establishment and hosted services, not access to their repair UI.
@@ -2675,6 +2733,7 @@ async function platformReadinessStatus() {
       // now reports the activation gate, not an installation gate.
       pfsPluginInstallAllowed: supportReady,
       reason: supportReady ? '' : 'PlatformSupportProfileRequiredForPfsServices',
+      advisoryCapabilities: supportAdmission.advisory.map((item) => ({ type: item.type, ready: item.ready, reason: item.reason })),
     },
     pfs: {
       ...pfs,
@@ -3317,5 +3376,5 @@ if (require.main === module) {
   // 감사 원시요소는 **동작 시험**을 위해 내보낸다. 소스 문자열 정규식으로 계약을 확인하는 것은
 // 동어반복이라 회귀를 못 잡는다(arch-002 레드팀 감사 패턴 B). 실제로 호출해 확인해야 한다.
 module.exports = { logAudit, durableAudit, persistAuditNow, pollK8sEvents, auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
-  isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+  isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence };
 }

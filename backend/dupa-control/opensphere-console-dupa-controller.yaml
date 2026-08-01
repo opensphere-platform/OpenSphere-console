@@ -58,8 +58,8 @@ subjects:
     namespace: opensphere-console
 ---
 # Platform Delivery evidence is read-only and namespace-scoped. The controller
-# lists the Argo CD runtime workloads and reads only the canonical verification
-# Application; it cannot mutate either runtime or desired state.
+# reads only the canonical Argo CD runtime, Application and AppProject; it
+# cannot mutate runtime or desired state.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -67,11 +67,16 @@ metadata:
   namespace: argocd
 rules:
   - apiGroups: ["apps"]
-    resources: [deployments, statefulsets]
-    verbs: [get, list]
+    resources: [deployments]
+    resourceNames: [argocd-repo-server, argocd-server, argocd-applicationset-controller]
+    verbs: [get]
+  - apiGroups: ["apps"]
+    resources: [statefulsets]
+    resourceNames: [argocd-application-controller]
+    verbs: [get]
   - apiGroups: ["argoproj.io"]
-    resources: [applications]
-    resourceNames: [opensphere-platform-delivery-verify]
+    resources: [applications, appprojects]
+    resourceNames: [opensphere-platform-delivery-verify, opensphere-platform-delivery]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
