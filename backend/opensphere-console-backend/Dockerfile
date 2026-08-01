@@ -11,6 +11,7 @@ COPY opensphere-console-backend/cli-token-policy.js ./cli-token-policy.js
 COPY opensphere-console-backend/browser-session.js ./browser-session.js
 COPY opensphere-console-backend/plugin-proxy-auth.js ./plugin-proxy-auth.js
 COPY opensphere-console-backend/baseline-monitoring.js ./baseline-monitoring.js
+COPY opensphere-console-backend/data-identity-readiness.js ./data-identity-readiness.js
 COPY opensphere-console-backend/module-operation-api.js ./module-operation-api.js
 COPY opensphere-console-backend/notification-api.js ./notification-api.js
 COPY opensphere-console-backend/external-channel-api.js ./external-channel-api.js

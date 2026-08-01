@@ -2,7 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { evaluateDataIdentityReadiness } = require('./data-identity-readiness');
+
+test('Backend image carries the readiness contract used by server.js', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /COPY opensphere-console-backend\/data-identity-readiness\.js \.\/data-identity-readiness\.js/);
+});
 
 test('data and identity readiness requires Auth, PostgREST data authority, and Storage together', async () => {
   const result = await evaluateDataIdentityReadiness({
