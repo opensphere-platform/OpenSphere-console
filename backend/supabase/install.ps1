@@ -36,6 +36,26 @@ function Invoke-Kubectl([string[]]$Arguments, [string]$InputText = "") {
   if ($LASTEXITCODE -ne 0) { throw "kubectl failed: $($Arguments -join ' ')" }
 }
 
+function Set-WorkloadStartupProbe([string]$Workload, [string]$Container, [hashtable]$Probe) {
+  # Existing installations intentionally retain their release-pinned images,
+  # but startup safety is an operational invariant rather than an image
+  # upgrade. Strategic merge preserves every other Pod-template field and is
+  # idempotent when the expected probe is already present.
+  $patch = @{
+    spec = @{
+      template = @{
+        spec = @{
+          containers = @(@{
+            name = $Container
+            startupProbe = $Probe
+          })
+        }
+      }
+    }
+  } | ConvertTo-Json -Depth 12 -Compress
+  Invoke-Kubectl @('-n', $Namespace, 'patch', $Workload, '--type=strategic', '-p', $patch)
+}
+
 function New-RandomBase64([int]$Bytes) {
   $buffer = New-Object byte[] $Bytes
   [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
@@ -103,7 +123,22 @@ if ($ExistingInstallation) {
       Invoke-Kubectl @('-n', $Namespace, 'get', $resource)
     }
   }
-  Write-Host 'Existing Supabase installation verified; bootstrap workload reconciliation skipped.'
+  Set-WorkloadStartupProbe 'statefulset/opensphere-supabase-postgres' 'postgres' @{
+    exec = @{ command = @('/bin/sh', '-c', 'pg_isready -U postgres -d postgres') }
+    failureThreshold = 60
+    periodSeconds = 5
+  }
+  Set-WorkloadStartupProbe 'deployment/opensphere-supabase-auth' 'auth' @{
+    httpGet = @{ path = '/health'; port = 'http' }
+    failureThreshold = 60
+    periodSeconds = 5
+  }
+  Set-WorkloadStartupProbe 'deployment/opensphere-supabase-rest' 'rest' @{
+    httpGet = @{ path = '/live'; port = 'admin' }
+    failureThreshold = 60
+    periodSeconds = 5
+  }
+  Write-Host 'Existing Supabase installation verified; release-pinned images preserved and startup safety reconciled.'
 } else {
   Invoke-Kubectl @("apply", "-f", "-") $renderedManifest
 }

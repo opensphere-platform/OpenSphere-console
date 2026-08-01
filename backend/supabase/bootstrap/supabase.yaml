@@ -86,6 +86,10 @@ spec:
             exec: { command: ["/bin/sh", "-c", "pg_isready -U postgres -d postgres"] }
             initialDelaySeconds: 10
             periodSeconds: 5
+          startupProbe:
+            exec: { command: ["/bin/sh", "-c", "pg_isready -U postgres -d postgres"] }
+            failureThreshold: 60
+            periodSeconds: 5
           livenessProbe:
             exec: { command: ["/bin/sh", "-c", "pg_isready -U postgres -d postgres"] }
             initialDelaySeconds: 30
@@ -153,6 +157,7 @@ spec:
             - { name: GOTRUE_SECURITY_CAPTCHA_ENABLED, value: "false" }
           ports: [{ name: http, containerPort: 9999 }]
           readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 5, periodSeconds: 5 }
+          startupProbe: { httpGet: { path: /health, port: http }, failureThreshold: 60, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 50m, memory: 96Mi }
@@ -200,6 +205,7 @@ spec:
             - { name: PGRST_DB_MAX_ROWS, value: "1000" }
           ports: [{ name: http, containerPort: 3000 }, { name: admin, containerPort: 3001 }]
           readinessProbe: { httpGet: { path: /ready, port: admin }, initialDelaySeconds: 5, periodSeconds: 5 }
+          startupProbe: { httpGet: { path: /live, port: admin }, failureThreshold: 60, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /live, port: admin }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 50m, memory: 64Mi }
