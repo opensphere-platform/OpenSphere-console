@@ -1,4 +1,4 @@
--- 0033 — 결재 **결과**를 원장에 결속
+-- 0040 — 결재 **결과**를 원장에 결속
 --
 -- 결함: `console.record_change_approval_result` 가 console.change_approval 만 갱신하고
 --   audit.event 에는 아무것도 남기지 않았다. 그래서 원장에는 결재 **의도**만 있고

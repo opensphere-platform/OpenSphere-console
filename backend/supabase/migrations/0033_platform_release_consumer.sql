@@ -1,28 +1,29 @@
 \set ON_ERROR_STOP on
 
--- PFS control-plane establishment is a reviewed declarative consumer. The
--- browser and Foundation subShell cannot apply this contract; only the
--- dedicated, catalog-pinned reconciler can claim its merged requests.
+-- L3 Platform Release is a reviewed Console consumer. The browser and OS CLI
+-- submit the same immutable release-lock declaration; only the dedicated
+-- reconciler may dispatch the upgrade executor and only the executor reports
+-- the observed installation-lock result.
 INSERT INTO console.consumer_contract (
   consumer_id, display_name, owner_kind, supabase_schemas, storage_buckets,
   gitea_repository, gitea_path, reconciler, observability_claim, status, metadata
 ) VALUES (
-  'foundation-bootstrap',
-  'Platform Foundation Service Stack Bootstrap',
+  'platform-release',
+  'OpenSphere Platform Release',
   'console-native',
   ARRAY['console','audit'],
   ARRAY[]::text[],
   'opensphere/platform-declarations',
-  'foundation-bootstrap/',
-  'foundation-bootstrap-reconciler',
-  'foundation-bootstrap',
+  'platform-release/',
+  'platform-release-reconciler',
+  'platform-release',
   'Unknown',
   '{
-    "authority":"Gitea reviewed fixed catalog + Kubernetes observed receipt",
-    "contract":"opensphere.foundation.bootstrap/v1",
-    "catalogVersion":"20260728.2",
-    "catalogSha256":"792be5a85d64581379284b0bd72e168f7d2b050d1580b040253578af1bd43a5d",
-    "requires":"PlatformSupportProfile/default Ready",
+    "authority":"Gitea reviewed exact release lock + isolated Kubernetes executor receipt",
+    "contract":"opensphere.platform.release/v1",
+    "requires":"recent operator AAL2 + two-person approval",
+    "execution":"dedicated Job; no browser, Console Backend, or local kubeconfig apply",
+    "rollback":"transactional Setup verification restores the previous signed release",
     "browserWrite":false
   }'::jsonb
 )
@@ -39,7 +40,7 @@ ON CONFLICT (consumer_id) DO UPDATE SET
   updated_at = clock_timestamp();
 
 INSERT INTO console.observability_claim (consumer_id, requested_capabilities)
-VALUES ('foundation-bootstrap', ARRAY['metrics','logs'])
+VALUES ('platform-release', ARRAY['metrics','logs'])
 ON CONFLICT (consumer_id) DO UPDATE SET
   requested_capabilities = EXCLUDED.requested_capabilities,
   updated_at = clock_timestamp();
