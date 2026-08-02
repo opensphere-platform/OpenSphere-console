@@ -1713,7 +1713,7 @@ const CEPH_PREREQUISITE_TEMPLATE = Object.freeze({
   reasonPlaceholder: '외부 Ceph 연결을 위한 Rook CRD·Operator·CSI 설치 사유',
   returnTo: '/p/cluster-manager/ceph/ceph',
   desiredState: Object.freeze({
-    contract: 'opensphere.ceph.rook-prerequisite/v2',
+    contract: 'opensphere.ceph.rook-prerequisite/v3',
     release: Object.freeze({
       name: 'rook-ceph',
       namespace: 'rook-ceph',
@@ -1725,9 +1725,9 @@ const CEPH_PREREQUISITE_TEMPLATE = Object.freeze({
       name: 'opensphere-ceph-runtime',
       namespace: 'rook-ceph',
       chart: 'opensphere-ceph-runtime',
-      version: '1.3.0',
+      version: '1.4.0',
     }),
-    components: Object.freeze(['crds', 'operator', 'csi', 'runtime-rbac', 'data-path-verification-runtime', 'nbd-preparer']),
+    components: Object.freeze(['crds', 'operator', 'csi', 'runtime-rbac', 'data-path-verification-runtime']),
     verification: Object.freeze([
       'cephclusters.ceph.rook.io Established',
       'all ceph-csi-operator CRDs Established',
@@ -1737,11 +1737,8 @@ const CEPH_PREREQUISITE_TEMPLATE = Object.freeze({
       'namespace/opensphere-ceph-verification Pod Security restricted',
       'role/opensphere-ceph-verification-runner installed',
       'networkpolicy/opensphere-ceph-verification-default-deny installed',
-      'daemonset/opensphere-ceph-nbd-preparer Ready on worker nodes',
     ]),
-    elevatedPrivileges: Object.freeze([
-      'daemonset/opensphere-ceph-nbd-preparer: capabilities SYS_MODULE,MKNOD; hostPath /dev (rw), /sys (ro), /lib/modules (ro); worker nodes only',
-    ]),
+    elevatedPrivileges: Object.freeze([]),
   }),
 });
 

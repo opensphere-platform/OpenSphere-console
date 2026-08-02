@@ -47,10 +47,11 @@ test('Ceph prerequisite requests are immutable templates assigned to a dedicated
   assert.match(server, /CEPH_PREREQUISITE_TEMPLATE/);
   assert.match(server, /ceph-rook-prerequisite/);
   assert.match(server, /rook-ceph\/v1\.20\.2/);
-  assert.match(server, /opensphere\.ceph\.rook-prerequisite\/v2/);
+  assert.match(server, /opensphere\.ceph\.rook-prerequisite\/v3/);
   assert.match(server, /data-path-verification-runtime/);
   assert.match(server, /opensphere-ceph-verification-default-deny/);
-  assert.match(server, /opensphere-ceph-runtime[^]*version: '1\.3\.0'/);
+  assert.match(server, /opensphere-ceph-runtime[^]*version: '1\.4\.0'/);
+  assert.doesNotMatch(server, /nbd-preparer|nbdDevicePreparer/);
   assert.match(server, /6e0f10f5ca54e618fb90dd149dc9dfbc8a4932955bff2227b692fb32069daf52/);
   assert.match(server, /change template fields are immutable/);
   assert.match(server, /ceph-prerequisite-reconciler/);
