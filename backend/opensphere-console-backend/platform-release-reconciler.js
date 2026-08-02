@@ -129,7 +129,11 @@ async function claimWork() {
 
 function executorJob(work, manifest) {
   const desired = validatePlatformReleaseDesiredState(manifest.spec.desiredState);
-  const name = `platform-release-${work.request_id}`;
+  const attempt = Number(work.attempt);
+  if (!Number.isInteger(attempt) || attempt < 1 || attempt > 9999) {
+    throw new Error('claimed Platform Release attempt is invalid');
+  }
+  const name = `platform-release-${work.request_id}-a${attempt}`;
   return {
     apiVersion: 'batch/v1',
     kind: 'Job',
@@ -172,7 +176,7 @@ function executorJob(work, manifest) {
               { name: 'GITEA_PATH', value: GITEA_PATH },
               { name: 'REQUEST_ID', value: work.request_id },
               { name: 'GIT_COMMIT_SHA', value: work.git_commit_sha },
-              { name: 'ATTEMPT', value: String(work.attempt) },
+              { name: 'ATTEMPT', value: String(attempt) },
               { name: 'EXPECTED_PREVIOUS_RELEASE_DIGEST', value: desired.previousReleaseDigest },
               {
                 name: 'GITEA_TOKEN',

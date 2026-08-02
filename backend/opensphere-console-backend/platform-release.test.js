@@ -179,10 +179,16 @@ test('reviewed Gitea declaration is converted into one closed exact-digest execu
   const job = executorJob(work, manifest);
   const container = job.spec.template.spec.containers[0];
   assert.equal(job.spec.template.spec.serviceAccountName, 'platform-release-executor');
+  assert.equal(job.metadata.name, `platform-release-${requestId}-a1`);
+  assert.equal(job.metadata.labels['opensphere.io/request-id'], requestId);
   assert.equal(container.image, executorImage);
   assert.deepEqual(container.command, ['node', '/app/opensphere-console-backend/platform-release-executor.mjs']);
   assert.equal(job.spec.backoffLimit, 0);
   assert.equal(container.env.find((entry) => entry.name === 'EXPECTED_PREVIOUS_RELEASE_DIGEST').value, digest('a'));
+  const retryJob = executorJob({ ...work, attempt: 2 }, manifest);
+  assert.equal(retryJob.metadata.name, `platform-release-${requestId}-a2`);
+  assert.notEqual(retryJob.metadata.name, job.metadata.name);
+  assert.equal(retryJob.metadata.labels['opensphere.io/request-id'], requestId);
   assert.ok(container.env.every((entry) => !/TOKEN/.test(entry.name) || entry.valueFrom));
 });
 
