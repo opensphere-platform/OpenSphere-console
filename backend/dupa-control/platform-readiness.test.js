@@ -138,7 +138,14 @@ test('a PFS plugin stages unconditionally and only its activation waits for the 
   assert.ok(installStart > 0, 'install handler was not located');
   const installEnd = controller.indexOf('\n    if (p === ', installStart + 1);
   const install = controller.slice(installStart, installEnd > 0 ? installEnd : undefined);
-  assert.doesNotMatch(install, /return json\(res, 409/, 'installation must not refuse a PFS plugin');
+  const pfsGateStart = install.indexOf('if (pkg.spec.hostRef === FOUNDATION_ID)');
+  const pfsGateEnd = install.indexOf('} else if (requiresDomainAdmission(pkg))', pfsGateStart);
+  assert.ok(pfsGateStart > 0 && pfsGateEnd > pfsGateStart, 'PFS staging gate was not located');
+  assert.doesNotMatch(
+    install.slice(pfsGateStart, pfsGateEnd),
+    /return json\(/,
+    'an incomplete Support Profile must not refuse PFS plugin installation',
+  );
   assert.match(install, /pfs-plugin-stage/, 'staging a gated plugin must leave durable audit evidence');
   assert.match(install, /pendingCapabilities/, 'the install response must name what is still missing');
 

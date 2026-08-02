@@ -7,6 +7,13 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
+const { extensionInstallTransition } = require('./controller');
+
+const extensionPackage = (kind = 'subShell', hostRef = 'main') => ({
+  metadata: { name: 'cluster-manager' },
+  spec: { kind, hostRef },
+});
+const extensionRegistration = (desiredState) => ({ spec: { desiredState } });
 
 test('management inventory survives inactive serving but never becomes first-level navigation', () => {
   const host = read('src', 'app', 'core', 'extension-host.service.ts');
@@ -74,6 +81,48 @@ test('Console and CLI share lifecycle API with recent AAL2 and durable reason ga
   assert.match(client, /\/api\/admin\/extensions\/install/);
   assert.match(page, /Extension 설치/);
   assert.match(page, /\[reasonRequired\]="true"/);
+});
+
+test('artifact updates preserve operator intent and reject implicit topology replacement', () => {
+  const current = extensionPackage();
+  for (const desiredState of ['Enabled', 'Disabled', 'Installed']) {
+    assert.deepEqual(
+      extensionInstallTransition(current, extensionRegistration(desiredState), extensionPackage()),
+      { allowed: true, operation: 'Update', desiredState, createRegistration: false },
+    );
+  }
+  assert.deepEqual(
+    extensionInstallTransition(current, null, extensionPackage()),
+    { allowed: true, operation: 'Install', desiredState: 'Installed', createRegistration: true },
+  );
+  assert.equal(
+    extensionInstallTransition(current, extensionRegistration('Enabled'), extensionPackage('plugin', 'foundation')).reason,
+    'ExtensionTopologyChangeRequiresReinstall',
+  );
+  assert.deepEqual(
+    extensionInstallTransition(current, extensionRegistration('Uninstalled'), extensionPackage()),
+    { allowed: false, reason: 'ExtensionLifecycleTransitionInProgress' },
+  );
+
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const endpoint = controller.slice(
+    controller.indexOf("if (p === '/api/admin/extensions/install'"),
+    controller.indexOf("if (p === '/api/admin/plugins/catalog')"),
+  );
+  assert.match(endpoint, /if \(transition\.createRegistration\)/);
+  assert.match(endpoint, /operation: transition\.operation/);
+  assert.match(endpoint, /desiredState: transition\.desiredState/);
+});
+
+test('Main Shell and extension APIs share the same MFA-aware command transport', () => {
+  const http = read('src', 'app', 'core', 'http.service.ts');
+  const auth = read('src', 'app', 'core', 'auth.service.ts');
+  const host = read('src', 'app', 'core', 'extension-host.service.ts');
+  assert.match(http, /requestWithStepUp/);
+  assert.match(http, /const headers = new Headers/);
+  assert.match(http, /X-OS-Idempotency-Key/);
+  assert.match(auth, /requestStepUp\(\): Promise<void>/);
+  assert.match(host, /return this\.http\.request\(target/);
 });
 
 test('Backend serving readiness and verified-session outage cache are dependency-isolated', () => {

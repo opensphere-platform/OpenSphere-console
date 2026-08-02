@@ -1,6 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
+import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
@@ -103,6 +104,7 @@ export interface ManagementInventoryItem {
 @Injectable({ providedIn: 'root' })
 export class ExtensionHostService {
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   private notif = inject(NotificationService);
   private router = inject(Router);
   private activeModules = new Map<string, PluginModule>();
@@ -606,33 +608,11 @@ export class ExtensionHostService {
     if (target.origin !== location.origin || !allowedBases.some((allowed) => target.pathname === allowed || target.pathname.startsWith(`${allowed}/`))) {
       throw new Error('plugin API 요청이 승인된 same-origin base 밖에 있음');
     }
+    // Main Shell and every extension share one command transport. This keeps
+    // CSRF, correlation, idempotency, timeout and MFA continuation semantics
+    // identical instead of letting each plugin invent a second control path.
     const headers = new Headers(input instanceof Request ? input.headers : init.headers);
-		headers.delete('authorization');
-		headers.delete('x-os-id-token');
-		headers.delete('x-opensphere-user');
-		headers.delete('x-opensphere-actor');
-		const correlationId = headers.get('X-OS-Correlation-ID');
-		if (!correlationId || !/^[A-Za-z0-9._:-]{1,128}$/.test(correlationId)) headers.set('X-OS-Correlation-ID', crypto.randomUUID());
-		const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-		if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-Idempotency-Key')) {
-			headers.set('X-OS-Idempotency-Key', crypto.randomUUID());
-		}
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-CSRF-Token')) {
-      const prefix = '__Host-opensphere_csrf=';
-      const value = document.cookie.split(';').map((item) => item.trim()).find((item) => item.startsWith(prefix));
-      if (value) headers.set('X-OS-CSRF-Token', decodeURIComponent(value.slice(prefix.length)));
-    }
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 15000);
-    if (init.signal) {
-      if (init.signal.aborted) controller.abort();
-      else init.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
-    try {
-      return await fetchWithTimeout(target, { ...init, headers, signal: controller.signal });
-    } finally {
-      window.clearTimeout(timeout);
-    }
+    return this.http.request(target, { ...init, headers });
   }
 
   private normalizeManualContribution(pluginId: string, input: ManualContribution): ManualContribution {

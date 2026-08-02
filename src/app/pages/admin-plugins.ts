@@ -1408,7 +1408,11 @@ export class AdminPlugins implements OnInit {
       const waiting = result.activation?.allowed === false
         ? ` 활성화는 ${result.activation.pendingCapabilities.join(', ') || result.activation.reason} 충족까지 대기합니다.`
         : '';
-      this.msg.set({ type: 'success', text: `${result.id} 설치가 접수되었습니다.${waiting}` });
+      const operation = result.operation === 'Update' ? '업데이트' : '설치';
+      const intent = result.desiredState === 'Enabled' ? '기존 활성 상태를 유지합니다.'
+        : result.desiredState === 'Disabled' ? '기존 비활성 상태를 유지합니다.'
+          : '검증 후 관리자가 활성화할 수 있습니다.';
+      this.msg.set({ type: 'success', text: `${result.id} ${operation}가 접수되었습니다. ${intent}${waiting}` });
       await this.refresh();
     } catch (err) {
       this.msg.set({ type: 'danger', text: `Extension 설치 실패: ${err}` });
@@ -1652,7 +1656,8 @@ export class AdminPlugins implements OnInit {
     try {
       const result = await this.ctl.install(image, reason);
       const id = String((result as { id?: unknown })?.id || image);
-      this.msg.set({ type: 'info', text: `install 요청됨: ${id} — 검증과 workload 조정 중…` });
+      const operation = result.operation === 'Update' ? 'update' : 'install';
+      this.msg.set({ type: 'info', text: `${operation} 요청됨: ${id} — 관리자 의도 ${result.desiredState}를 보존하며 검증과 workload를 조정 중…` });
       await this.refresh();
     } catch (error) {
       this.msg.set({ type: 'danger', text: `install 실패: ${String(error)}` });

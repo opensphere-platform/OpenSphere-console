@@ -14,6 +14,12 @@ interface ApiError {
   message?: string;
 }
 
+interface StepUpRequest {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (reason: Error) => void;
+}
+
 export type SessionDuration = 'browser' | '8h' | '24h' | '7d';
 
 export interface BrowserSession {
@@ -94,6 +100,7 @@ export class AuthService {
   readonly stepUpError = signal('');
   readonly sessionEvents = signal<SessionEvent[]>([]);
   private passwordRecoveryToken = '';
+  private stepUpRequest?: StepUpRequest;
   private readonly stepUpEvent = 'opensphere:auth-step-up-required';
   private lastActivityHeartbeatAt = 0;
   private activityHeartbeatInFlight = false;
@@ -105,7 +112,7 @@ export class AuthService {
     : new BroadcastChannel('opensphere.browser-session');
 
   constructor() {
-    window.addEventListener(this.stepUpEvent, () => this.requestStepUp());
+    window.addEventListener(this.stepUpEvent, () => { void this.requestStepUp().catch(() => undefined); });
     this.registerActivityHeartbeat();
     this.sessionChannel?.addEventListener('message', (event) => {
       if (event.data?.type !== 'session-ended') return;
@@ -364,14 +371,26 @@ export class AuthService {
     this.broadcastSessionEnded();
   }
 
-  requestStepUp(): void {
+  requestStepUp(): Promise<void> {
+    if (this.stepUpRequest) return this.stepUpRequest.promise;
+    let resolve!: () => void;
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<void>((resolveRequest, rejectRequest) => {
+      resolve = resolveRequest;
+      reject = rejectRequest;
+    });
+    this.stepUpRequest = { promise, resolve, reject };
     this.stepUpError.set('');
     this.stepUpRequired.set(true);
+    return promise;
   }
 
   cancelStepUp(): void {
+    const request = this.stepUpRequest;
+    this.stepUpRequest = undefined;
     this.stepUpError.set('');
     this.stepUpRequired.set(false);
+    request?.reject(new Error('MFA 재확인이 취소되어 원래 작업을 실행하지 않았습니다.'));
   }
 
   async completeStepUp(code: string): Promise<void> {
@@ -383,7 +402,10 @@ export class AuthService {
         body: JSON.stringify({ code: String(code || '').trim() }),
       });
       await this.refreshAuthorization();
+      const request = this.stepUpRequest;
+      this.stepUpRequest = undefined;
       this.stepUpRequired.set(false);
+      request?.resolve();
     } catch (error) {
       this.stepUpError.set(error instanceof Error ? error.message : String(error));
       throw error;
@@ -569,6 +591,8 @@ export class AuthService {
   }
 
   private clearIdentity(): void {
+    const stepUpRequest = this.stepUpRequest;
+    this.stepUpRequest = undefined;
     this.user.set('');
     this.groups.set([]);
     this.roles.set([]);
@@ -584,6 +608,7 @@ export class AuthService {
     this.mfaEnrollmentRequired.set(false);
     this.stepUpRequired.set(false);
     this.stepUpError.set('');
+    stepUpRequest?.reject(new Error('세션이 종료되어 대기 중이던 보안 작업을 실행하지 않았습니다.'));
     this.lastActivityHeartbeatAt = 0;
   }
 

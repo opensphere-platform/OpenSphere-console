@@ -2180,6 +2180,40 @@ function installationProvenance(actor, opId, client) {
   };
 }
 
+const EXTENSION_DESIRED_STATES = new Set(['Installed', 'Enabled', 'Disabled', 'Uninstalled']);
+
+function extensionInstallTransition(currentPkg, currentReg, nextPkg) {
+  const currentTopology = currentPkg ? {
+    kind: String(currentPkg.spec?.kind || ''),
+    hostRef: String(currentPkg.spec?.hostRef || 'main'),
+  } : null;
+  const nextTopology = {
+    kind: String(nextPkg?.spec?.kind || ''),
+    hostRef: String(nextPkg?.spec?.hostRef || 'main'),
+  };
+  if (currentTopology
+    && (currentTopology.kind !== nextTopology.kind || currentTopology.hostRef !== nextTopology.hostRef)) {
+    return {
+      allowed: false,
+      reason: 'ExtensionTopologyChangeRequiresReinstall',
+      currentTopology,
+      nextTopology,
+    };
+  }
+
+  const desiredState = String(currentReg?.spec?.desiredState || '');
+  if (desiredState === 'Uninstalled') {
+    return { allowed: false, reason: 'ExtensionLifecycleTransitionInProgress' };
+  }
+  const existingInstallation = Boolean(currentPkg && currentReg && EXTENSION_DESIRED_STATES.has(desiredState));
+  return {
+    allowed: true,
+    operation: existingInstallation ? 'Update' : 'Install',
+    desiredState: existingInstallation ? desiredState : 'Installed',
+    createRegistration: !existingInstallation,
+  };
+}
+
 async function ensureRegistration(pkgName, desiredState, actor, reason, installation) {
   const existing = await getReg(pkgName);
   const approvalReason = String(reason || existing.json?.spec?.approval?.reason || '');
@@ -3420,11 +3454,41 @@ const server = http.createServer(async (req, res) => {
       try {
         const inspection = await inspectModuleImage(body.image);
         const pkg = packageFromInspection(inspection);
+        const [currentPkgResult, currentRegResult] = await Promise.all([
+          getPackage(pkg.metadata.name),
+          getReg(pkg.metadata.name),
+        ]);
+        if (!currentPkgResult.ok && currentPkgResult.status !== 404) {
+          return json(res, currentPkgResult.status >= 500 ? 502 : currentPkgResult.status, {
+            error: 'CurrentPackageReadFailed', status: currentPkgResult.status, opId,
+          });
+        }
+        if (!currentRegResult.ok && currentRegResult.status !== 404) {
+          return json(res, currentRegResult.status >= 500 ? 502 : currentRegResult.status, {
+            error: 'CurrentRegistrationReadFailed', status: currentRegResult.status, opId,
+          });
+        }
+        const currentPkg = currentPkgResult.ok ? currentPkgResult.json : null;
+        const currentReg = currentRegResult.ok ? currentRegResult.json : null;
+        const transition = extensionInstallTransition(currentPkg, currentReg, pkg);
+        if (!transition.allowed) {
+          await durableAudit(actor, 'extension-update', pkg.metadata.name, 'denied', transition.reason, opId);
+          return json(res, 409, {
+            error: transition.reason,
+            message: transition.reason === 'ExtensionTopologyChangeRequiresReinstall'
+              ? 'kind or hostRef changes require an explicit uninstall followed by a new install'
+              : 'the extension is currently being uninstalled; wait for removal before installing it again',
+            ...(transition.currentTopology ? {
+              currentTopology: transition.currentTopology,
+              nextTopology: transition.nextTopology,
+            } : {}),
+            opId,
+          });
+        }
         let foundationAuthorization = null;
         if (pkg.metadata.name === FOUNDATION_ID) {
-          const [currentPkg, currentReg] = await Promise.all([getPackage(FOUNDATION_ID), getReg(FOUNDATION_ID)]);
-          if (currentPkg.ok && currentReg.ok) {
-            foundationAuthorization = foundationUpgradeAuthorization(currentPkg.json, currentReg.json, pkg, actor, opId);
+          if (currentPkg && currentReg) {
+            foundationAuthorization = foundationUpgradeAuthorization(currentPkg, currentReg, pkg, actor, opId);
           }
         }
         // A PFS plugin installs and stages unconditionally; the Platform Support
@@ -3455,8 +3519,15 @@ const server = http.createServer(async (req, res) => {
         }
         const stored = await upsertPackage(pkg);
         if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, { error: 'PackageStoreFailed', status: stored.status, opId });
-        const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, installationProvenance(actor, opId, body.client));
-        if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
+        // Artifact selection and operator service intent are independent axes.
+        // An update never patches an existing Registration: this makes Enabled
+        // and Disabled durable operator intent and removes the two-object race
+        // that previously deactivated every updated extension. Only a genuinely
+        // new installation creates the staged Installed registration.
+        if (transition.createRegistration) {
+          const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, installationProvenance(actor, opId, body.client));
+          if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
+        }
         if (pkg.metadata.name === FOUNDATION_ID) {
           const authorizationStored = await setFoundationUpgradeAuthorization(foundationAuthorization);
           if (!authorizationStored.ok) {
@@ -3469,10 +3540,12 @@ const server = http.createServer(async (req, res) => {
             foundationAuthorization ? 'accepted' : 'staged',
             foundationAuthorization ? `${foundationAuthorization.fromDigest}->${foundationAuthorization.toDigest}` : 'no verified activated origin', opId);
         }
-        await durableAudit(actor, 'extension-install', pkg.metadata.name, 'accepted', inspection.image, opId);
+        await durableAudit(actor, `extension-${transition.operation.toLowerCase()}`, pkg.metadata.name, 'accepted', `${reason} | ${inspection.image}`, opId);
         reconcile().catch((e) => console.error('reconcile error', e));
         return json(res, 202, {
-          accepted: true, id: pkg.metadata.name, desiredState: 'Installed',
+          accepted: true, id: pkg.metadata.name,
+          operation: transition.operation,
+          desiredState: transition.desiredState,
           image: inspection.image, verification: inspection.verification,
           ...(pendingCapabilities.length
             ? { activation: { allowed: false, reason: activationReason, pendingCapabilities } }
@@ -3722,6 +3795,7 @@ module.exports = {
   governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues,
   localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate,
   foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization,
+  extensionInstallTransition,
   bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint,
   admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence,
   platformVerificationProjection, platformVerificationComparable, platformSupportAdmission,
