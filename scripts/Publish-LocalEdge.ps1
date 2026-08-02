@@ -5,6 +5,7 @@ param(
   [string]$Platform = '',
   [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git',
   [string]$SetupRepository = 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git',
+  [string]$SetupSourcePath = '',
   [switch]$UseExistingRegistryLogin,
   [ValidateSet('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
   [string[]]$Components = @('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
@@ -154,8 +155,18 @@ Invoke-Checked git clone --depth 1 --branch main $SdkRepository $sdkCheckout
 $backendSelected = $Components.Count -eq 0 -or $Components -contains 'backend'
 $setupSourceRevision = ''
 if ($backendSelected) {
-  Invoke-Checked git clone --depth 1 --branch main $SetupRepository $setupCheckout
-  $setupSourceRevision = (& git -C $setupCheckout rev-parse HEAD).Trim()
+  if ($SetupSourcePath) {
+    $resolvedSetupSource = (Resolve-Path -LiteralPath $SetupSourcePath).Path
+    $setupDirty = & git -C $resolvedSetupSource status --short
+    if ($LASTEXITCODE -ne 0 -or $setupDirty) {
+      throw 'SetupSourcePath must be a clean governed Setup CLI Git worktree.'
+    }
+    $setupSourceRevision = (& git -C $resolvedSetupSource rev-parse HEAD).Trim()
+    Invoke-Checked git -C $resolvedSetupSource worktree add --detach $setupCheckout $setupSourceRevision
+  } else {
+    Invoke-Checked git clone --depth 1 --branch main $SetupRepository $setupCheckout
+    $setupSourceRevision = (& git -C $setupCheckout rev-parse HEAD).Trim()
+  }
   if ($setupSourceRevision -notmatch '^[0-9a-f]{40}$') {
     throw 'SetupSourceRevision must resolve to a full lowercase Git commit.'
   }

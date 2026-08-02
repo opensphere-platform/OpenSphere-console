@@ -46,11 +46,19 @@ test('Windows local edge publisher is host-native, GHCR-backed, and KST-versione
   assert.match(localEdgePublisher, /Set-RemoteTag -Repository .* -Tag edge/);
 });
 
-test('component publication never advances the integrated Console edge anchor', () => {
+test('local edge publisher can rebuild only explicitly affected Console components', () => {
+  // No component selector means the governed integrated release. An explicit
+  // selector narrows the publication without weakening the full-release default.
+  assert.match(localEdgePublisher, /\[string\[\]\]\$Components = @\('console', 'backend',/);
   assert.match(localEdgePublisher, /\$partialPublication = \$images\.Count -lt \$canonicalComponentCount/);
-  assert.match(localEdgePublisher, /if \(\$console -and -not \$partialPublication\)/);
-  assert.match(localEdgePublisher, /Partial publication moved the integrated Console edge anchor/);
+  assert.match(localEdgePublisher, /Where-Object \{ \$requestedComponents\.Contains\(\$_.Key\) \}/);
   assert.match(localEdgePublisher, /OpenSphereEdgeComponentPublication/);
+  assert.match(localEdgePublisher, /\$componentEvidence = \[ordered\]@\{\}/);
+  assert.match(localEdgePublisher, /\[string\]\$SetupSourcePath = ''/);
+  assert.match(localEdgePublisher, /SetupSourcePath must be a clean governed Setup CLI Git worktree/);
+  assert.match(localEdgePublisher, /worktree add --detach \$setupCheckout \$setupSourceRevision/);
+  assert.doesNotMatch(localEdgePublisher, /\$components = \[ordered\]@\{\}/i);
+  assert.match(localEdgePublisher, /Advance selected component tags without moving a partial Console anchor/);
 });
 
 test('retag-only promotion workflow is absent because channel identity is immutable image metadata', () => {
