@@ -61,6 +61,7 @@ test('관리 작업 입력 필드는 값 길이에 맞게 넓어지고 좁은 �
   }
   assert.match(source, /registry-access-form \.clr-input \{ box-sizing: border-box; width: 100%; max-width: none; \}/);
   assert.match(source, /registry-access-form--revocation \.clr-form-control:nth-child\(1\) \{ flex: 1\.5 1 34rem; \}/);
+  assert.match(source, /registry-access-form--revocation \.clr-form-control:nth-child\(3\) \{ flex: 1 1 22rem; \}/);
   assert.match(source, /registry-access-form--install \.clr-form-control:nth-child\(1\) \{ flex: 1\.5 1 36rem; \}/);
   assert.doesNotMatch(source, /id="extension-image"[^>]*clrInput/);
   assert.doesNotMatch(source, /id="extension-install-reason"[^>]*clrInput/);

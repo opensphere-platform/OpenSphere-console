@@ -839,7 +839,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       .registry-access-form--credentials .clr-form-control:nth-child(3) { flex: 1.35 1 26rem; }
       .registry-access-form--revocation .clr-form-control:nth-child(1) { flex: 1.5 1 34rem; }
       .registry-access-form--revocation .clr-form-control:nth-child(2) { flex: 1.25 1 30rem; }
-      .registry-access-form--revocation .clr-form-control:nth-child(3) { flex: 0.85 1 22rem; }
+      .registry-access-form--revocation .clr-form-control:nth-child(3) { flex: 1 1 22rem; }
       .registry-access-form--install .clr-form-control:nth-child(1) { flex: 1.5 1 36rem; }
       .registry-access-form--install .clr-form-control:nth-child(2) { flex: 1 1 28rem; }
       .registry-access-form > .btn { flex: 0 0 auto; }
