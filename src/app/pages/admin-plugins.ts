@@ -1,4 +1,5 @@
 import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { OsPageHeader } from '../os/os-page-header';
@@ -8,6 +9,7 @@ import { OsActionDialog } from '../os/os-action-dialog';
 import { IconLibraryService } from '../os/icon-library.service';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PlatformReadinessService } from '../core/platform-readiness.service';
+import { buildExtensionManagementViews } from '../core/extension-view-model';
 import {
   PluginControlClient,
   CatalogItem,
@@ -57,7 +59,7 @@ interface TreeNode {
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [RouterLink, ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
+  imports: [NgTemplateOutlet, RouterLink, ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
       <os-page-header title="Console Extensions" tag="Core Runtime">
@@ -187,92 +189,131 @@ interface TreeNode {
       </clr-accordion-panel>
     </clr-accordion>
 
+    <ng-template #extensionStatusTable let-items let-emptyText="emptyText">
+      <div class="extension-table-wrap">
+        <table class="table extension-table">
+          <thead>
+            <tr>
+              <th class="left">Extension</th>
+              <th class="left">소속 Host</th>
+              <th>사용자 설정</th>
+              <th>현재 서비스</th>
+              <th>실행 상태</th>
+              <th>검증·업데이트</th>
+              <th class="left">버전·채널</th>
+              <th>Console 연결</th>
+              <th>작업</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (r of items; track r.name) {
+              <tr>
+                <td class="left">
+                  <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
+                  <div class="state-detail">{{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span></div>
+                </td>
+                <td class="left">
+                  <strong>{{ extensionParentLabel(r) }}</strong>
+                  <div class="state-detail os-mono">{{ extensionParentRef(r) }}</div>
+                </td>
+                <td>
+                  <span class="label" [class.label-success]="r.desiredState === 'Enabled'" [class.label-warning]="r.desiredState === 'Installed'">{{ desiredStateLabel(r) }}</span>
+                  <div class="state-detail">{{ desiredStateDetail(r) }}</div>
+                </td>
+                <td>
+                  <span
+                    class="label"
+                    [class.label-success]="effectiveState(r).tone === 'success'"
+                    [class.label-warning]="effectiveState(r).tone === 'warning'"
+                    [class.label-danger]="effectiveState(r).tone === 'danger'"
+                    >{{ effectiveState(r).label }}</span
+                  >
+                  <div class="state-detail">{{ effectiveState(r).detail }}</div>
+                </td>
+                <td>
+                  <span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span>
+                  <div class="state-detail">Pod · Service</div>
+                </td>
+                <td>
+                  <span class="label" [class.label-success]="verificationGate(r).tone === 'success'" [class.label-warning]="verificationGate(r).tone === 'warning'" [class.label-danger]="verificationGate(r).tone === 'danger'">{{ verificationGate(r).label }}</span>
+                  <div class="state-detail">{{ verificationGate(r).detail }}</div>
+                </td>
+                <td class="left">
+                  <strong>{{ artifactVersion(r) }}</strong>
+                  <div class="state-detail">{{ r.status.currentRequestedChannel || 'exact' }} · {{ buildAuthorityLabel(r.status.currentBuildAuthority) }}</div>
+                  <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
+                </td>
+                <td>
+                  <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
+                  <div class="state-detail">{{ integrationSummary(r) }}</div>
+                </td>
+                <td>
+                  <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
+                  @if (r.desiredState === 'Enabled') {
+                    <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
+                  } @else {
+                    <button
+                      class="btn btn-sm btn-success-outline"
+                      [disabled]="activationLocked(r.name)"
+                      [title]="activationLockReason(r.name) || ''"
+                      (click)="run('enable', r.name)"
+                    >
+                      Enable
+                    </button>
+                  }
+                </td>
+              </tr>
+            } @empty {
+              <tr><td colspan="9" class="os-sub">{{ emptyText }}</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </ng-template>
+
     <clr-tabs>
       <clr-tab>
-        <button clrTabLink>서비스 상태</button>
+        <button clrTabLink>SubShells <span class="view-count">{{ subShellRegistrations().length }}</span></button>
         <clr-tab-content>
+          <div class="extension-view-intro">
+            <div><span class="view-kicker">FIRST-LEVEL OPERATING SHELLS</span><h2>SubShell 관리</h2></div>
+            <p>Main Shell에 직접 연결되어 1단 메뉴와 독립 운영 영역을 제공하는 subShell만 표시합니다. plugin은 이 view에 포함하지 않습니다.</p>
+          </div>
           <div class="status-guide">
             <strong>상태 읽는 법</strong>
             <span><i class="status-dot success"></i>사용자 설정대로 서비스 중</span>
             <span><i class="status-dot warning"></i>서비스 유지 또는 처리 대기</span>
             <span><i class="status-dot danger"></i>서비스 차단 — 운영자 조치 필요</span>
           </div>
-          <div class="extension-table-wrap">
-          <table class="table extension-table">
-            <thead>
-              <tr>
-                <th class="left">Extension</th>
-                <th>사용자 설정</th>
-                <th>현재 서비스</th>
-                <th>실행 상태</th>
-                <th>검증·업데이트</th>
-                <th class="left">버전·채널</th>
-                <th>Console 연결</th>
-                <th>작업</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (r of registrations(); track r.name) {
-                <tr>
-                  <td class="left">
-                    <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
-                    <div class="state-detail">{{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span></div>
-                  </td>
-                  <td>
-                    <span class="label" [class.label-success]="r.desiredState === 'Enabled'" [class.label-warning]="r.desiredState === 'Installed'">{{ desiredStateLabel(r) }}</span>
-                    <div class="state-detail">{{ desiredStateDetail(r) }}</div>
-                  </td>
-                  <td>
-                    <span
-                      class="label"
-                      [class.label-success]="effectiveState(r).tone === 'success'"
-                      [class.label-warning]="effectiveState(r).tone === 'warning'"
-                      [class.label-danger]="effectiveState(r).tone === 'danger'"
-                      >{{ effectiveState(r).label }}</span
-                    >
-                    <div class="state-detail">{{ effectiveState(r).detail }}</div>
-                  </td>
-                  <td>
-                    <span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span>
-                    <div class="state-detail">Pod · Service</div>
-                  </td>
-                  <td>
-                    <span class="label" [class.label-success]="verificationGate(r).tone === 'success'" [class.label-warning]="verificationGate(r).tone === 'warning'" [class.label-danger]="verificationGate(r).tone === 'danger'">{{ verificationGate(r).label }}</span>
-                    <div class="state-detail">{{ verificationGate(r).detail }}</div>
-                  </td>
-                  <td class="left">
-                    <strong>{{ artifactVersion(r) }}</strong>
-                    <div class="state-detail">{{ r.status.currentRequestedChannel || 'exact' }} · {{ buildAuthorityLabel(r.status.currentBuildAuthority) }}</div>
-                    <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
-                  </td>
-                  <td>
-                    <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
-                    <div class="state-detail">{{ integrationSummary(r) }}</div>
-                  </td>
-                  <td>
-                    <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
-                    @if (r.desiredState === 'Enabled') {
-                      <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
-                    } @else {
-                      <button
-                        class="btn btn-sm btn-success-outline"
-                        [disabled]="activationLocked(r.name)"
-                        [title]="activationLockReason(r.name) || ''"
-                        (click)="run('enable', r.name)"
-                      >
-                        Enable
-                      </button>
-                    }
-                  </td>
-                </tr>
-              } @empty {
-                <tr>
-                  <td colspan="8" class="os-sub">설치된 Extension 없음 — 위 관리 작업의 “Extension 설치”에서 OCI release를 설치하세요.</td>
-                </tr>
-              }
-            </tbody>
-          </table>
+          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: subShellRegistrations(), emptyText: '설치된 subShell이 없습니다.' }" />
+        </clr-tab-content>
+      </clr-tab>
+
+      <clr-tab>
+        <button clrTabLink>Plugins <span class="view-count">{{ pluginRegistrationCount() }}</span></button>
+        <clr-tab-content>
+          <div class="extension-view-intro">
+            <div><span class="view-kicker">HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
+            <p>plugin은 1단 메뉴 객체가 아닙니다. 각 plugin을 소유·호스팅하는 subShell 아래에 묶어 설치·활성화·검증 상태를 관리합니다.</p>
           </div>
+          @for (group of pluginHostGroups(); track group.hostRef) {
+            <section class="plugin-host-group" [attr.aria-label]="group.hostLabel + ' plugins'">
+              <header>
+                <div><span class="view-kicker">HOST</span><h3>{{ group.hostLabel }}</h3></div>
+                <div class="plugin-host-coordinate"><span class="label label-info">subShell</span><code>{{ group.hostRef }}</code><strong>{{ group.items.length }} plugin</strong></div>
+              </header>
+              <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: group.items, emptyText: '이 host에 설치된 plugin이 없습니다.' }" />
+            </section>
+          } @empty {
+            <div class="empty-view">설치된 plugin이 없습니다. plugin은 설치 후 선언된 <code>hostRef</code> 아래에 표시됩니다.</div>
+          }
+          @if (unclassifiedRegistrations().length) {
+            <section class="plugin-host-group contract-warning" aria-label="분류 확인 필요">
+              <header><div><span class="view-kicker">CONTRACT WARNING</span><h3>분류 확인 필요</h3></div></header>
+              <p>Catalog의 kind/hostRef 계약과 연결되지 않은 Registration입니다. subShell이나 plugin 목록에 임의 편입하지 않습니다.</p>
+              <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: unclassifiedRegistrations(), emptyText: '' }" />
+            </section>
+          }
         </clr-tab-content>
       </clr-tab>
 
@@ -820,8 +861,53 @@ interface TreeNode {
       }
       .status-guide strong { color: var(--os-ink); }
       .status-guide span { display: inline-flex; align-items: center; gap: 0.25rem; }
+      .view-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.2rem;
+        margin-left: 0.3rem;
+        padding: 0 0.3rem;
+        border-radius: 0.65rem;
+        background: var(--clr-color-neutral-200, #e8e8e8);
+        font-size: 0.62rem;
+        line-height: 1.2rem;
+      }
+      .extension-view-intro {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 1rem;
+        margin: 0.8rem 0 0.45rem;
+        padding-bottom: 0.55rem;
+        border-bottom: 1px solid var(--os-hairline);
+      }
+      .extension-view-intro h2,
+      .plugin-host-group h3 { margin: 0.15rem 0 0; }
+      .extension-view-intro p { max-width: 52rem; margin: 0; color: var(--os-muted); font-size: 0.72rem; }
+      .view-kicker { color: var(--os-accent); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; }
+      .plugin-host-group {
+        margin: 0.8rem 0 1rem;
+        border: 1px solid var(--os-hairline);
+        border-radius: var(--os-radius);
+        background: var(--os-surface-1);
+      }
+      .plugin-host-group > header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.7rem 0.9rem;
+        border-bottom: 1px solid var(--os-hairline);
+      }
+      .plugin-host-group .extension-table-wrap { padding: 0 0.65rem 0.65rem; }
+      .plugin-host-coordinate { display: flex; align-items: center; gap: 0.45rem; color: var(--os-muted); font-size: 0.68rem; }
+      .plugin-host-coordinate code { color: var(--os-ink); }
+      .empty-view { margin: 0.8rem 0; padding: 1rem; border: 1px dashed var(--os-hairline); color: var(--os-muted); }
+      .contract-warning { border-color: var(--os-warning); }
+      .contract-warning > p { margin: 0.6rem 0.9rem; color: var(--os-muted); font-size: 0.7rem; }
       .extension-table-wrap { width: 100%; overflow-x: auto; }
-      .extension-table { min-width: 76rem; }
+      .extension-table { min-width: 86rem; }
       .extension-table td { vertical-align: top; }
       .status-dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; display: inline-block; }
       .status-dot.success { background: var(--os-success); }
@@ -1025,6 +1111,13 @@ export class AdminPlugins implements OnInit {
   readonly pendingAction = signal<{ action: 'enable' | 'disable' | 'uninstall'; id: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
+  readonly extensionViews = computed(() => buildExtensionManagementViews(this.catalog(), this.registrations()));
+  readonly subShellRegistrations = computed(() => this.extensionViews().subShells);
+  readonly pluginHostGroups = computed(() => this.extensionViews().pluginGroups);
+  readonly unclassifiedRegistrations = computed(() => this.extensionViews().unclassified);
+  readonly pluginRegistrationCount = computed(() =>
+    this.pluginHostGroups().reduce((total, group) => total + group.items.length, 0),
+  );
 
   /** 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 상태(phase/reason 등). */
   readonly selected = signal<string | null>(null);
@@ -1084,6 +1177,14 @@ export class AdminPlugins implements OnInit {
   }
   extensionKind(r: Registration): string {
     return this.catalogItem(r.name)?.kind || 'Extension';
+  }
+  extensionParentRef(r: Registration): string {
+    const item = this.catalogItem(r.name);
+    return item?.kind === 'plugin' ? (item.hostRef || 'main') : 'main';
+  }
+  extensionParentLabel(r: Registration): string {
+    const parentRef = this.extensionParentRef(r);
+    return parentRef === 'main' ? 'OpenSphere Main Shell' : this.displayName(parentRef);
   }
   artifactVersion(r: Registration): string {
     const version = r.status.currentVersion || r.status.observedVersion || '';

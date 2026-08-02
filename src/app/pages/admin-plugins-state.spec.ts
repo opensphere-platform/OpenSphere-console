@@ -29,3 +29,13 @@ test('an unavailable control projection is unknown or stale, never a false zero'
   assert.match(client, /catalogSnapshot/);
   assert.match(client, /registrationsSnapshot/);
 });
+
+test('Extension management separates first-level subShells from host-owned plugins', () => {
+  assert.match(source, /SubShell 관리/);
+  assert.match(source, /Plugin 관리/);
+  assert.match(source, /subShellRegistrations\(\)/);
+  assert.match(source, /pluginHostGroups\(\)/);
+  assert.match(source, /group\.hostRef/);
+  assert.match(source, /plugin은 1단 메뉴 객체가 아닙니다/);
+  assert.doesNotMatch(source, /@for \(r of registrations\(\); track r\.name\)/);
+});
