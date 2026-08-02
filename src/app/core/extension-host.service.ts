@@ -3,6 +3,7 @@ import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
+import { extensionRouteTarget, prioritizeRequestedHost } from './extension-load-order';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
 export type { PluginPage, NavNode } from '@opensphere/sdk';
@@ -178,9 +179,21 @@ export class ExtensionHostService {
       this.registryEntries = activePlugins;
       // Main Shell은 직속 consumer만 활성화한다. subShell의 child는 subShell-scoped host를 통해
       // mountChild()로 활성화되어 위계와 capability 경계를 보존한다.
-      await Promise.all(activePlugins
-        .filter((e) => (e.hostRef ?? 'main') === 'main')
-        .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+      const mainPlugins = activePlugins.filter((e) => (e.hostRef ?? 'main') === 'main');
+      const orderedMainPlugins = prioritizeRequestedHost(mainPlugins, window.location.pathname);
+      const requestedHost = extensionRouteTarget(window.location.pathname).hostId;
+      if (requestedHost && orderedMainPlugins[0]?.id === requestedHost) {
+        // Cold deep links are an administrator-facing management surface. Do
+        // not make the requested product wait behind unrelated subShell
+        // verification; establish it first, then continue normal background
+        // activation of the remaining registry entries.
+        await this.loadOne(orderedMainPlugins[0], reg.trustedKeys ?? {}, HOST_API_VERSION);
+        await Promise.all(orderedMainPlugins.slice(1)
+          .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+      } else {
+        await Promise.all(orderedMainPlugins
+          .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+      }
     } finally {
       this.loadState.set('ready');
     }
@@ -366,18 +379,26 @@ export class ExtensionHostService {
 			if (manifest.manifestVersion === 3 && typeof mod.deactivate !== 'function') {
 				throw new Error('deactivate() export 없음 (Production lifecycle 계약 위반)');
 			}
-      // 부모가 page를 등록하기 전에 승인된 child의 custom element를 먼저 정의한다.
-      // 그렇지 않으면 deep link 첫 렌더에서 Foundation이 정상 Activated child를
-      // "아직 로드되지 않음"으로 오인하는 일시적 경쟁 조건이 발생한다.
-      if (manifest.kind === 'subShell') {
-        await Promise.all(this.registryEntries
-          .filter((child) => (child.hostRef ?? 'main') === e.id)
-          .map((child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION)));
+      const childEntries = manifest.kind === 'subShell'
+        ? this.registryEntries.filter((child) => (child.hostRef ?? 'main') === e.id)
+        : [];
+      const routeTarget = extensionRouteTarget(window.location.pathname);
+      const requestedChild = routeTarget.hostId === e.id
+        ? childEntries.find((child) => child.id === routeTarget.childId)
+        : undefined;
+      // A direct child deep link still defines that child before the parent
+      // mounts, preserving the Foundation outlet contract. A host overview,
+      // however, must not remain blank while every optional child is verified.
+      if (requestedChild) {
+        await this.loadOne(requestedChild, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION);
       }
       await mod.activate(context);
       this.activeModules.set(e.id, mod);
       this.setPluginLoadState(e.id, 'ready');
       console.info(`[extension-host] plugin '${e.id}' 검증 통과(무결성·서명·호환·권한) 후 활성화`);
+      await Promise.all(childEntries
+        .filter((child) => child !== requestedChild)
+        .map((child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION)));
     } catch (err) {
       try { await mod?.deactivate?.(); } catch (cleanupError) { console.warn(`[extension-host] plugin '${e.id}' cleanup 실패:`, cleanupError); }
       console.warn(`[extension-host] plugin '${e.id}' 제외:`, err);

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-test('Extension Host reports initial loading and defines child plugins before the parent page', () => {
+test('Extension Host reports loading, preserves direct child deep links, and does not block host overview on optional children', () => {
   const extensionHost = fs.readFileSync(
     path.join(__dirname, '..', '..', 'src', 'app', 'core', 'extension-host.service.ts'),
     'utf8',
@@ -21,10 +21,14 @@ test('Extension Host reports initial loading and defines child plugins before th
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'ready'\)/);
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'failed'\)/);
 
-  const childLoad = extensionHost.indexOf("if (manifest.kind === 'subShell')");
-  const parentActivate = extensionHost.indexOf('await mod.activate(context)', childLoad);
-  assert.ok(childLoad >= 0, 'subShell child loading block must exist');
-  assert.ok(parentActivate > childLoad, 'children must load before the parent registers its page');
+  const childSelection = extensionHost.indexOf("const childEntries = manifest.kind === 'subShell'");
+  const requestedChildLoad = extensionHost.indexOf('if (requestedChild)', childSelection);
+  const parentActivate = extensionHost.indexOf('await mod.activate(context)', requestedChildLoad);
+  const remainingChildLoad = extensionHost.indexOf('await Promise.all(childEntries', parentActivate);
+  assert.ok(childSelection >= 0, 'subShell child selection block must exist');
+  assert.ok(requestedChildLoad > childSelection, 'a directly requested child must be selected explicitly');
+  assert.ok(parentActivate > requestedChildLoad, 'a directly requested child must load before the parent deep link mounts');
+  assert.ok(remainingChildLoad > parentActivate, 'unrelated children must not block the parent overview page');
 
   assert.match(pluginHost, /@else if \(loading\(\)\)/);
   assert.match(pluginHost, /this\.ext\.pluginLoadState\(this\.id\(\)\)/);
