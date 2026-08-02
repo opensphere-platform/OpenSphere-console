@@ -37,6 +37,7 @@ interface SupabaseStatus {
 interface Approval { approver_id: string; status: string; created_at: string; completed_at: string | null; error_code: string | null; }
 interface ChangeRequest {
   request_id: string; action: string; target: string; reason: string; status: string; git_repo: string | null; git_ref: string | null; git_commit_sha: string | null; k8s_operation_id: string | null; created_at: string; completed_at: string | null;
+  approvalPolicy?: 'owner-mfa' | 'cross-operator';
   execution: { branch: string; pull_number: number | null; pull_url: string | null; desired_revision: string | null; merge_revision: string | null; reconciler: string; reconciler_status: string; drift_status: string; attempt_count: number; last_error: string | null; updated_at: string } | null;
   outbox: { status: string; attempts: number; next_attempt_at: string | null; last_error: string | null; updated_at: string } | null;
   approvals: Approval[];
@@ -402,7 +403,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
       { column: '1', source: 'Supabase', label: 'Request created', evidence: this.shortId(change.request_id), time: change.created_at, state: 'done' },
       { column: '2', source: 'Supabase', label: 'Audit stored', evidence: 'intent correlated', time: change.created_at, state: 'done' },
       { column: '3', source: 'Gitea', label: change.execution?.pull_number ? `Signed PR #${change.execution.pull_number}` : 'Awaiting PR', evidence: this.shortId(change.execution?.desired_revision || ''), time: change.execution?.updated_at || null, state: change.execution?.pull_number ? 'done' : 'current' },
-      { column: '4', source: 'Gitea', label: approved ? 'Second approval' : 'Awaiting approval', evidence: `${change.approvals.length}/${this.gitea()?.supplyChain?.requiredApprovals || 1}`, time: change.approvals.at(-1)?.completed_at || null, state: approved ? 'done' : (failed ? 'failed' : 'waiting') },
+      { column: '4', source: 'Gitea', label: change.approvalPolicy === 'owner-mfa' ? (approved ? 'Owner MFA authorized' : 'Awaiting owner MFA') : (approved ? 'Cross approval' : 'Awaiting approval'), evidence: change.approvalPolicy === 'owner-mfa' ? `${change.approvals.length} authorization` : `${change.approvals.length}/${this.gitea()?.supplyChain?.requiredApprovals || 1}`, time: change.approvals.at(-1)?.completed_at || null, state: approved ? 'done' : (failed ? 'failed' : 'waiting') },
       { column: '5', source: 'Gitea', label: merged ? 'Merge signed' : 'Awaiting merge', evidence: this.shortId(change.execution?.merge_revision || ''), time: change.execution?.updated_at || null, state: merged ? 'done' : 'waiting' },
       { column: '6', source: 'Kubernetes', label: outboxDone ? 'Webhook delivered' : (change.outbox?.status || 'Outbox not queued'), evidence: `attempts ${change.outbox?.attempts || 0}`, time: change.outbox?.updated_at || null, state: failed ? 'failed' : (outboxDone ? 'done' : 'waiting') },
       { column: '7', source: 'Kubernetes', label: change.status === 'applied' && change.k8s_operation_id ? 'Observed' : (change.execution?.reconciler_status || 'Awaiting consumer'), evidence: change.k8s_operation_id || 'receipt 없음', time: change.completed_at, state: failed ? 'failed' : (change.status === 'applied' && change.k8s_operation_id ? 'done' : 'current') },

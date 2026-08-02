@@ -12,6 +12,7 @@ const {
   validateReleaseLock,
   validateReleaseTransition,
   validatePlatformReleaseDesiredState,
+  platformReleaseApprovalPolicy,
 } = require('./platform-release-contract');
 const executorImage = `ghcr.io/opensphere-platform/opensphere-console-backend@sha256:${'f'.repeat(64)}`;
 process.env.EXECUTOR_IMAGE = executorImage;
@@ -154,6 +155,33 @@ test('component target rejects stale bases, hidden changes and non-local promoti
   assert.throws(() => validateReleaseLock(promoted), /channel is unsupported|localhost edge/);
 });
 
+test('only localhost edge component apply uses initiating owner MFA authorization', () => {
+  const base = releaseLock();
+  const component = buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: { backend: { image: digest('f') } },
+  });
+  const state = {
+    contract: 'opensphere.platform.release/v1',
+    previousReleaseDigest: base.releaseDigest,
+    targetLock: component,
+  };
+  assert.deepEqual(platformReleaseApprovalPolicy('apply', state), {
+    mode: 'owner-mfa',
+    requiredHumanApprovals: 0,
+    autoMerge: true,
+    rationale: 'localhost edge component apply is authorized by the initiating owner recent MFA',
+  });
+  assert.equal(platformReleaseApprovalPolicy('rollback', state).mode, 'cross-operator');
+
+  const integrated = releaseLock();
+  assert.equal(platformReleaseApprovalPolicy('apply', {
+    contract: 'opensphere.platform.release/v1',
+    previousReleaseDigest: digest('a'),
+    targetLock: integrated,
+  }).mode, 'cross-operator');
+});
+
 test('reviewed Gitea declaration is converted into one closed exact-digest executor Job', () => {
   const requestId = '123e4567-e89b-42d3-a456-426614174000';
   const manifest = {
@@ -210,6 +238,9 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(server, /requireRecentAal2\(actor, 'Platform Release request'\)/);
   assert.match(server, /platformReleaseRuntimeStatus/);
   assert.match(server, /supportedChannels: \['edge'\]/);
+  assert.match(server, /authorizeLocalEdgeComponentRelease/);
+  assert.match(server, /platform-release-edge-owner-authorization/);
+  assert.match(server, /reconciliationQueued/);
   assert.match(deploy, /name: platform-release-reconciler/);
   assert.match(deploy, /name: platform-release-executor/);
   assert.match(deploy, /kind: ValidatingAdmissionPolicy[\s\S]*platform-release-executor-job-boundary/);
@@ -229,7 +260,9 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(ui, /선택하지 않은 구성요소는 현재 설치 lock에서 그대로 계승/);
   assert.match(ui, /canGenerateComponentTarget\(\): boolean/);
   assert.doesNotMatch(ui, /canGenerateComponentTarget\s*=\s*computed/);
-  assert.match(ui, /다른 관리자의 교차 승인/);
+  assert.match(ui, /최고 관리자의 최근 MFA/);
+  assert.match(ui, /ownerMfaTarget\(\): boolean/);
+  assert.match(ui, /최고 관리자 MFA로 승인·병합/);
   assert.match(ui, /this\.status\(\)\?\.execution\.ready/);
-  assert.match(ui, /candidate·stable은 통합 복구 drill/);
+  assert.match(ui, /component apply는 최고 관리자 MFA 정책/);
 });

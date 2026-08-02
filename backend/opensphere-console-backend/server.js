@@ -24,6 +24,7 @@ const {
   PLATFORM_RELEASE_RECONCILER,
   PLATFORM_RELEASE_TARGET,
   buildComponentReleaseLock,
+  platformReleaseApprovalPolicy,
   validatePlatformReleaseDesiredState,
   validateReleaseTransition,
   releaseSummary,
@@ -1410,13 +1411,19 @@ async function changeRequests() {
     const list = approvals.get(approval.request_id) || [];
     list.push({ ...approval, approver_display_name: operators.get(approval.approver_id) || approval.approver_id }); approvals.set(approval.request_id, list);
   }
-  return (Array.isArray(rows) ? rows : []).map((row) => ({
-    ...row,
-    requester: { id: row.actor_id, type: row.actor_type, displayName: operators.get(row.actor_id) || row.actor_id },
-    execution: execution.get(row.request_id) || null,
-    outbox: outbox.get(row.request_id) || null,
-    approvals: approvals.get(row.request_id) || [],
-  }));
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const requestApprovals = approvals.get(row.request_id) || [];
+    const ownerMfaAuthorized = row.target === PLATFORM_RELEASE_TARGET
+      && requestApprovals.some((approval) => approval.approver_id === row.actor_id);
+    return {
+      ...row,
+      approvalPolicy: ownerMfaAuthorized ? 'owner-mfa' : 'cross-operator',
+      requester: { id: row.actor_id, type: row.actor_type, displayName: operators.get(row.actor_id) || row.actor_id },
+      execution: execution.get(row.request_id) || null,
+      outbox: outbox.get(row.request_id) || null,
+      approvals: requestApprovals,
+    };
+  });
 }
 
 async function consumerContracts() {
@@ -1922,6 +1929,10 @@ async function platformReleaseStatus() {
       observed: 'opensphere-installation-lock + reconcile receipt',
       localKubeconfigExecution: false,
       supportedChannels: ['edge'],
+      approvalPolicy: {
+        localEdgeComponentApply: 'owner-mfa',
+        integratedRollbackAndPromotion: 'cross-operator',
+      },
       blockedChannels: {
         candidate: 'integrated recovery drill required by Setup',
         stable: 'integrated recovery drill required by Setup',
@@ -1998,6 +2009,8 @@ async function governedChange(actor, body = {}) {
   const target = String(body.target || consumerId).trim();
   if (!target || target.length > 300 || /[\r\n]/.test(target)) throw { code: 400, msg: 'invalid governed change target' };
   let declaration = validateDeclaration(body.desiredState);
+  let releaseApprovalPolicy = null;
+  let releaseDesiredState = null;
   if (consumerId === PLATFORM_RELEASE_CONSUMER) {
     requireRecentAal2(actor, 'Platform Release request');
     if (!['apply', 'rollback'].includes(action.toLowerCase()) || target !== PLATFORM_RELEASE_TARGET) {
@@ -2016,6 +2029,8 @@ async function governedChange(actor, body = {}) {
       && desiredState.targetLock.releaseDigest === installed.summary.releaseDigest) {
       throw { code: 409, msg: 'requested Platform Release is already installed' };
     }
+    releaseApprovalPolicy = platformReleaseApprovalPolicy(action, desiredState);
+    releaseDesiredState = desiredState;
     declaration = validateDeclaration(desiredState);
   }
   validateChangeTemplate(body, declaration);
@@ -2042,7 +2057,13 @@ async function governedChange(actor, body = {}) {
   });
   const change = Array.isArray(started) ? started[0] : started;
   if (!change?.request_id) throw { code: 503, msg: 'governed change intent was not persisted' };
-  if (change.request_id !== requestId) return { accepted: true, duplicate: true, requestId: change.request_id, status: change.status };
+  if (change.request_id !== requestId) return {
+    accepted: true,
+    duplicate: true,
+    requestId: change.request_id,
+    status: change.status,
+    approvalPolicy: releaseApprovalPolicy,
+  };
 
   const branch = `control/${requestId}`;
   const sourcePath = String(contract.gitea_path || `${consumerId}/`).replace(/^\/+/, '').replace(/\/+$/, '');
@@ -2083,13 +2104,145 @@ async function governedChange(actor, body = {}) {
       body: { reconciler: contract.reconciler || GITEA_RECONCILER_NAME, updated_at: new Date().toISOString() },
       prefer: 'return=minimal',
     });
-    return {
+    const proposal = {
       accepted: true, requestId, status: 'authorized', branch, rollbackOf,
       pullRequest: { number: pull.body?.number || null, url: pull.body?.html_url || null },
       desiredRevision: desiredRevision || null,
+      approvalPolicy: releaseApprovalPolicy,
     };
+    if (releaseApprovalPolicy?.mode === 'owner-mfa') {
+      try {
+        proposal.autoAuthorization = await authorizeLocalEdgeComponentRelease(actor, {
+          requestId,
+          action,
+          reason,
+          desiredState: releaseDesiredState,
+          branch,
+          pullNumber: Number(pull.body?.number || 0),
+          reconciler: contract.reconciler || GITEA_RECONCILER_NAME,
+        });
+        proposal.status = proposal.autoAuthorization.merged ? 'committed' : 'authorized';
+      } catch (error) {
+        proposal.autoAuthorization = {
+          attempted: true,
+          succeeded: false,
+          error: String(error?.msg || error).slice(0, 300),
+        };
+      }
+    }
+    return proposal;
   } catch (error) {
     await restRequest('rpc/record_change_failure', { method: 'POST', body: { p_request_id: requestId, p_result: 'gitea-proposal-failed', p_error: String(error?.msg || 'Gitea proposal failed').slice(0, 1800) } }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function authorizeLocalEdgeComponentRelease(actor, {
+  requestId, action, reason, desiredState, branch, pullNumber, reconciler,
+}) {
+  const policy = platformReleaseApprovalPolicy(action, desiredState);
+  if (policy.mode !== 'owner-mfa' || policy.autoMerge !== true) {
+    throw { code: 409, msg: 'release is not eligible for owner MFA authorization' };
+  }
+  requireRecentAal2(actor, 'local edge component release authorization');
+  if (!Number.isInteger(pullNumber) || pullNumber < 1) {
+    throw { code: 502, msg: 'Gitea did not return a pull request number' };
+  }
+  await restRequest('change_approval', {
+    method: 'POST',
+    body: {
+      request_id: requestId,
+      approver_id: actor.sub,
+      reason,
+      status: 'intent',
+    },
+    prefer: 'return=minimal',
+  });
+  let reviewId = null;
+  try {
+    const review = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/reviews`, {
+      method: 'POST',
+      authToken: GITEA_REVIEW_TOKEN,
+      body: {
+        event: 'APPROVED',
+        body: `Local edge component release authorized by owner ${actor.sub} with recent MFA; correlation ${requestId}. Reason: ${reason}`,
+      },
+    });
+    reviewId = Number.isInteger(review.body?.id) ? review.body.id : null;
+    await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/merge`, {
+      method: 'POST',
+      body: { Do: 'merge', delete_branch_after_merge: false },
+    });
+    const pull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}`);
+    const merged = pull.body?.state === 'closed' && pull.body?.merged === true;
+    const mergeRevision = String(pull.body?.merge_commit_sha || '').toLowerCase();
+    if (!merged || !/^[0-9a-f]{40,64}$/.test(mergeRevision)) {
+      throw { code: 502, msg: 'owner-authorized local edge pull request was not merged' };
+    }
+    await assertVerifiedGovernedMerge(mergeRevision);
+    await restRequest('change_approval', {
+      method: 'PATCH',
+      query: `request_id=eq.${encodeURIComponent(requestId)}&approver_id=eq.${encodeURIComponent(actor.sub)}`,
+      body: {
+        status: 'applied',
+        gitea_review_id: reviewId,
+        error_code: null,
+        completed_at: new Date().toISOString(),
+      },
+      prefer: 'return=minimal',
+    });
+    await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'owner-mfa-authorized', reason, {
+      requestId,
+      phase: 'authorized',
+      targetType: 'platform-release',
+      payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, mergeRevision, mode: policy.mode })),
+    });
+    let reconciliationError = null;
+    try {
+      await convergeGovernedMerge({
+        requestId,
+        branch,
+        mergeRevision,
+        repository: giteaRepoName(),
+        reconciler: reconciler || PLATFORM_RELEASE_RECONCILER,
+      });
+    } catch (error) {
+      reconciliationError = String(error?.msg || error).slice(0, 300);
+      await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'reconciliation-queue-failed', reason, {
+        requestId,
+        phase: 'authorized',
+        targetType: 'platform-release',
+        payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, mergeRevision, reconciliationError })),
+      }).catch(() => undefined);
+    }
+    return {
+      attempted: true,
+      succeeded: true,
+      mode: policy.mode,
+      merged: true,
+      mergeRevision,
+      pullNumber,
+      reconciliationQueued: !reconciliationError,
+      reconciliationError,
+    };
+  } catch (error) {
+    await restRequest('change_approval', {
+      method: 'PATCH',
+      query: `request_id=eq.${encodeURIComponent(requestId)}&approver_id=eq.${encodeURIComponent(actor.sub)}`,
+      body: {
+        status: 'failed',
+        gitea_review_id: reviewId,
+        error_code: String(error?.msg || 'owner-mfa-authorization-failed').slice(0, 180),
+        completed_at: new Date().toISOString(),
+      },
+      prefer: 'return=minimal',
+    }).catch(() => undefined);
+    await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'failed', reason, {
+      requestId,
+      phase: 'failed',
+      targetType: 'platform-release',
+      payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, error: error?.msg || 'owner-mfa-authorization-failed' })),
+    }).catch(() => undefined);
     throw error;
   }
 }

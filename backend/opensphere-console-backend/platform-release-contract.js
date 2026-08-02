@@ -10,6 +10,8 @@ const RELEASE_LOCK_API_VERSION = 'release.opensphere.io/v1alpha1';
 const RELEASE_LOCK_KIND = 'OpenSphereReleaseLock';
 const RELEASE_SCOPE_INTEGRATED = 'integrated';
 const RELEASE_SCOPE_COMPONENT = 'component';
+const APPROVAL_MODE_OWNER_MFA = 'owner-mfa';
+const APPROVAL_MODE_CROSS_OPERATOR = 'cross-operator';
 // Setup is the installer authority. Its transactional bootstrap currently
 // permits edge only; candidate/stable remain blocked until the integrated
 // recovery drill is implemented. Accepting those locks here would expose a
@@ -316,6 +318,28 @@ function validatePlatformReleaseDesiredState(value) {
   };
 }
 
+function platformReleaseApprovalPolicy(action, desiredState) {
+  const validated = validatePlatformReleaseDesiredState(desiredState);
+  const lock = validated.targetLock;
+  const ownerMfa = String(action || '').toLowerCase() === 'apply'
+    && lock.channel === 'edge'
+    && lock.releaseScope === RELEASE_SCOPE_COMPONENT
+    && canonicalJson(lock.trust) === canonicalJson(LOCAL_EDGE_TRUST);
+  return ownerMfa
+    ? {
+      mode: APPROVAL_MODE_OWNER_MFA,
+      requiredHumanApprovals: 0,
+      autoMerge: true,
+      rationale: 'localhost edge component apply is authorized by the initiating owner recent MFA',
+    }
+    : {
+      mode: APPROVAL_MODE_CROSS_OPERATOR,
+      requiredHumanApprovals: 1,
+      autoMerge: false,
+      rationale: 'integrated, rollback and promoted releases require an independent operator',
+    };
+}
+
 function releaseSummary(lock) {
   const validated = validateReleaseLock(lock);
   return {
@@ -341,11 +365,14 @@ module.exports = {
   REQUIRED_COMPONENTS,
   RELEASE_SCOPE_INTEGRATED,
   RELEASE_SCOPE_COMPONENT,
+  APPROVAL_MODE_OWNER_MFA,
+  APPROVAL_MODE_CROSS_OPERATOR,
   canonicalJson,
   calculateReleaseDigest,
   buildComponentReleaseLock,
   validateReleaseLock,
   validateReleaseTransition,
   validatePlatformReleaseDesiredState,
+  platformReleaseApprovalPolicy,
   releaseSummary,
 };
