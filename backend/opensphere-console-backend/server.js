@@ -1955,7 +1955,10 @@ async function generatePlatformComponentTarget(actor, body = {}) {
     reason,
     {
       requestId: newOpId(),
-      phase: 'planned',
+      // audit.event deliberately uses a closed lifecycle vocabulary. Target
+      // generation records the operator's reviewed intent; `planned` is not a
+      // schema phase and would make PostgREST reject the entire operation.
+      phase: 'intent',
       targetType: 'platform-release-lock',
       payloadDigest: toHashHex(canonicalJson({
         baseReleaseDigest: targetLock.baseReleaseDigest,

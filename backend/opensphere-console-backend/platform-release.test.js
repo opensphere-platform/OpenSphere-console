@@ -204,6 +204,8 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(server, /\/api\/platform\/releases\/status/);
   assert.match(server, /\/api\/platform\/releases\/component-target/);
   assert.match(server, /buildComponentReleaseLock/);
+  assert.match(server, /platform-release-component-target-generate[\s\S]*phase: 'intent'/);
+  assert.doesNotMatch(server, /platform-release-component-target-generate[\s\S]*phase: 'planned'/);
   assert.match(server, /validateReleaseTransition\(installed\.lock, desiredState\.targetLock\)/);
   assert.match(server, /requireRecentAal2\(actor, 'Platform Release request'\)/);
   assert.match(server, /platformReleaseRuntimeStatus/);
