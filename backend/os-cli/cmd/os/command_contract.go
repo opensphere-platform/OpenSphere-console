@@ -61,7 +61,7 @@ var commandDefinitions = []commandDefinition{
 	{Name: "context", Summary: "로컬 Console context 사본·전환 관리", Usage: []string{"os context current|list", "os context save <name> (사본만 저장)", "os context use <name>", "os context delete <name> --yes"}, Options: []string{"--yes"}},
 	{Name: "support-bundle", Summary: "비밀을 제거한 진단 bundle 생성", Usage: []string{"os support-bundle --file bundle.json [--force]"}, Options: []string{"--file PATH", "--force"}},
 	{Name: "update", Summary: "동일 Console의 서명된 CLI release로 업데이트", Usage: []string{"os update [--check|--status] [--force]"}, Options: []string{"--check", "--status", "--force"}},
-	{Name: "platform", Summary: "GHCR 채널의 서명된 Platform release 확인·계획·적용", Usage: []string{"os platform update check --channel edge|candidate|stable|ga [--context NAME]", "os platform update plan --channel edge|candidate|stable|ga [--context NAME]", "os platform update apply <plan-id> [--context NAME]"}, Options: []string{"--channel edge|candidate|stable|ga", "--context NAME", "--registry-username GITHUB_LOGIN", "--registry-token-stdin"}},
+	{Name: "platform", Summary: "검토된 Platform edge release를 Console 거버넌스 경로로 확인·계획·요청", Usage: []string{"os platform update check --lock OpenSphereReleaseLock.json [--channel edge]", "os platform update plan --lock OpenSphereReleaseLock.json [--channel edge]", "os platform update apply <plan-id> --reason TEXT"}, Options: []string{"--lock PATH", "--channel edge", "--reason TEXT"}},
 	{Name: "completion", Summary: "shell completion 생성", Usage: []string{"os completion powershell|bash|zsh"}},
 	{Name: "version", Summary: "CLI 버전 출력", Usage: []string{"os version"}},
 	{Name: "backbone", Summary: "status/describe 호환 별칭", Usage: []string{"os backbone status", "os backbone detail --component supabase|storage|gitea"}, Options: []string{"--component NAME"}},
@@ -146,9 +146,9 @@ var nativeOptionRules = map[string]map[string]bool{
 	"update":                      {"check": false, "status": false, "force": false},
 	"platform":                    {},
 	"platform update":             {},
-	"platform update check":       {"channel": true, "context": true, "registry-username": true, "registry-token-stdin": false},
-	"platform update plan":        {"channel": true, "context": true, "registry-username": true, "registry-token-stdin": false},
-	"platform update apply":       {"context": true, "registry-username": true, "registry-token-stdin": false},
+	"platform update check":       {"lock": true, "channel": true},
+	"platform update plan":        {"lock": true, "channel": true},
+	"platform update apply":       {"reason": true},
 	"completion":                  {},
 	"version":                     {},
 	"backbone":                    {},
@@ -336,9 +336,9 @@ func validateNativeOptionValue(name, value string) error {
 		}
 	case "channel":
 		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "edge", "candidate", "stable", "ga":
+		case "edge":
 		default:
-			return usageError("--channel은 edge, candidate, stable, ga 중 하나여야 합니다")
+			return usageError("--channel은 현재 transactional installer가 지원하는 edge만 사용할 수 있습니다")
 		}
 	case "context":
 		value = strings.TrimSpace(value)

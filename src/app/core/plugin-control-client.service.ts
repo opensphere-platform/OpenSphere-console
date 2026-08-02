@@ -29,6 +29,13 @@ export interface Registration {
     currentRequestedChannel?: string; currentResolvedAt?: string;
     currentSource?: string; currentRevision?: string;
     currentSignatureIdentity?: string; currentEvidenceRefs?: string[];
+    previousDigest?: string; previousManifestSha256?: string;
+    previousVersion?: string; previousCompatibilityVersion?: string;
+    previousBuildAuthority?: 'localhost' | 'github-actions';
+    previousRequestedRef?: string; previousRequestedChannel?: string;
+    previousSource?: string; previousRevision?: string;
+    previousSignatureIdentity?: string; previousEvidenceRefs?: string[];
+    previousRegistryCredentialsRequired?: boolean;
     currentChannelDigest?: string;
     channelState?: 'Current' | 'UpdateAvailable' | 'SecurityActionRequired' | 'ChannelUnavailable';
     channelCheckedAt?: string; channelReason?: string;
@@ -71,6 +78,13 @@ export interface RegistryCredentialStatus {
 }
 export interface ImageRevocation {
   repository: string; digest: string; replacementDigest?: string; revokedAt: string; actor: string; reason: string;
+}
+export interface ExtensionInstallResult {
+  accepted: boolean;
+  id: string;
+  desiredState: 'Installed';
+  image: string;
+  activation?: { allowed: false; reason: string; pendingCapabilities: string[] };
 }
 export interface ExtensionProjectionStatus {
   ready: boolean;
@@ -159,7 +173,7 @@ export class PluginControlClient {
     return this.http.request(`/api/admin/bindings/${name}/${action}`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
   }
-  private act(id: string, action: 'enable' | 'disable' | 'uninstall', reason?: string) {
+  private act(id: string, action: 'install' | 'enable' | 'disable' | 'uninstall' | 'rollback', reason?: string) {
     return this.http.request(`/api/admin/plugins/registrations/${id}/${action}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason ?? '' }),
     }).then(async (r) => {

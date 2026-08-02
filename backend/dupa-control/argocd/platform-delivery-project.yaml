@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: opensphere-platform-delivery
+  namespace: argocd
+  labels:
+    opensphere.io/managed-by: platform-delivery
+spec:
+  description: OpenSphere governed platform-delivery verification path
+  sourceRepos:
+    - http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000/opensphere/platform-declarations.git
+  destinations:
+    - namespace: opensphere-platform-delivery
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+  orphanedResources:
+    warn: true

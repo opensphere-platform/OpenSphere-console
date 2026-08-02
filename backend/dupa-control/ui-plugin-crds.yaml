@@ -298,7 +298,7 @@ spec:
                     requestedBy: { type: string }
                     reason: { type: string }
                 # 최초 설치 요청의 불변 provenance. 이후 enable/disable/rollback 승인과 분리해
-                # Installed 화면에서 설치일·설치자·CLI 작업 상관관계를 정확히 표시한다.
+                # Installed 화면에서 설치일·설치자·Console API 작업 상관관계를 정확히 표시한다.
                 installation:
                   type: object
                   properties:
@@ -359,6 +359,31 @@ spec:
                   type: array
                   items: { type: string }
                 previousRegistryCredentialsRequired: { type: boolean }
+                # Controller가 install 요청 직전의 Enabled/Activated release를
+                # exact digest와 manifest로 검증했을 때만 기록하는 1회성 update 증거.
+                # PlatformSupportProfile이 닫힌 동안 새 Foundation 활성화에는 사용할 수 없다.
+                foundationUpgradeAuthorization:
+                  nullable: true
+                  type: object
+                  required:
+                    - kind
+                    - fromDigest
+                    - fromManifestSha256
+                    - toDigest
+                    - toManifestSha256
+                    - requestedBy
+                    - operationId
+                    - requestedAt
+                  properties:
+                    kind: { type: string, enum: [VerifiedActivatedFoundationUpdate/v1] }
+                    fromDigest: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
+                    fromManifestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                    fromVersion: { type: string }
+                    toDigest: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
+                    toManifestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                    requestedBy: { type: string, minLength: 1 }
+                    operationId: { type: string, pattern: '^os-[a-f0-9]+$' }
+                    requestedAt: { type: string, format: date-time }
                 host:
                   type: object
                   properties:

@@ -8,10 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -46,11 +45,6 @@ type platformReleaseDocument struct {
 	Raw  json.RawMessage
 }
 
-type platformRegistryCredentials struct {
-	Username string
-	Token    string
-}
-
 type platformUpdatePlan struct {
 	APIVersion            string          `json:"apiVersion"`
 	Kind                  string          `json:"kind"`
@@ -81,13 +75,14 @@ type platformUpdateReport struct {
 	PlanPath                string   `json:"planPath,omitempty"`
 	Message                 string   `json:"message"`
 	Transcript              string   `json:"transcript,omitempty"`
+	RequestID               string   `json:"requestId,omitempty"`
+	PullRequest             int      `json:"pullRequest,omitempty"`
 }
 
 var (
-	resolvePlatformReleaseFn       = resolvePlatformRelease
-	readInstalledPlatformReleaseFn = readInstalledPlatformRelease
-	applyPlatformReleaseFn         = applyPlatformRelease
-	platformUpdatePlanDirectoryFn  = platformUpdatePlanDirectory
+	platformUpdatePlanDirectoryFn = platformUpdatePlanDirectory
+	readConsolePlatformReleaseFn  = readConsolePlatformRelease
+	requestPlatformReleaseFn      = requestPlatformRelease
 )
 
 func platformUpdate(cfg Config, args []string, in io.Reader, out io.Writer) error {
@@ -96,86 +91,61 @@ func platformUpdate(cfg Config, args []string, in io.Reader, out io.Writer) erro
 	}
 	action := strings.ToLower(strings.TrimSpace(args[1]))
 	flags := parseLongFlags(args[2:])
-	credentials, err := platformRegistryCredentialsFromInput(flags, in)
-	if err != nil {
-		return err
-	}
 	switch action {
 	case "check":
-		return checkPlatformUpdate(cfg, flags, credentials, out)
+		return checkPlatformUpdate(cfg, flags, out)
 	case "plan":
-		return planPlatformUpdate(cfg, flags, credentials, out)
+		return planPlatformUpdate(cfg, flags, out)
 	case "apply":
 		positionals := nonFlagArgs(args[2:])
 		if len(positionals) != 1 {
-			return usageError("사용법: os platform update apply <plan-id> [--context NAME]")
+			return usageError("사용법: os platform update apply <plan-id> --reason TEXT")
 		}
-		return applyPlatformUpdatePlan(cfg, positionals[0], flags, credentials, out)
+		return applyPlatformUpdatePlan(cfg, positionals[0], flags, out)
 	default:
 		return usageErrorf("알 수 없는 platform update 작업 %q; check, plan, apply 중 하나를 사용하세요", action)
 	}
 }
 
-func platformRegistryCredentialsFromInput(flags map[string]string, in io.Reader) (*platformRegistryCredentials, error) {
-	username := strings.TrimSpace(flags["registry-username"])
-	fromStdin := flags["registry-token-stdin"] == "true"
-	if username == "" && !fromStdin {
-		return nil, nil
+func targetPlatformRelease(flags map[string]string) (platformReleaseDocument, error) {
+	lockPath := strings.TrimSpace(flags["lock"])
+	if lockPath == "" {
+		return platformReleaseDocument{}, usageError("--lock <OpenSphereReleaseLock.json>을 명시해야 합니다")
 	}
-	if username == "" || !fromStdin {
-		return nil, usageError("--registry-username과 --registry-token-stdin은 함께 지정해야 합니다")
-	}
-	raw, err := io.ReadAll(io.LimitReader(in, 4097))
+	target, err := readPlatformReleaseDocument(lockPath)
 	if err != nil {
-		return nil, fmt.Errorf("registry token 읽기 실패: %w", err)
+		return platformReleaseDocument{}, fmt.Errorf("target release lock 검증 실패: %w", err)
 	}
-	if len(raw) > 4096 {
-		return nil, usageError("registry token은 4 KiB를 초과할 수 없습니다")
+	channel := strings.ToLower(strings.TrimSpace(flags["channel"]))
+	if channel != "" && target.Lock.Channel != channel {
+		return platformReleaseDocument{}, usageErrorf("release lock channel %q가 --channel %q와 다릅니다", target.Lock.Channel, channel)
 	}
-	token := strings.TrimSpace(string(raw))
-	if token == "" || strings.ContainsAny(token, " \t\r\n") {
-		return nil, usageError("registry token은 비어 있거나 공백을 포함할 수 없습니다")
-	}
-	return &platformRegistryCredentials{Username: username, Token: token}, nil
+	return target, nil
 }
 
-func checkPlatformUpdate(cfg Config, flags map[string]string, credentials *platformRegistryCredentials, out io.Writer) error {
-	channel, context, err := platformUpdateTarget(flags)
+func checkPlatformUpdate(cfg Config, flags map[string]string, out io.Writer) error {
+	target, err := targetPlatformRelease(flags)
 	if err != nil {
 		return err
 	}
-	current, err := readInstalledPlatformReleaseFn(context)
+	current, err := readConsolePlatformReleaseFn(cfg)
 	if err != nil {
 		return err
 	}
-	available, err := resolvePlatformReleaseFn(channel, credentials)
-	if err != nil {
-		return err
-	}
-	if available.Lock.Channel != channel {
-		return fmt.Errorf("해석된 release channel %q가 요청한 channel %q와 다릅니다", available.Lock.Channel, channel)
-	}
-	report := newPlatformUpdateReport(current.Lock, available.Lock, context)
+	report := newPlatformUpdateReport(current.Lock, target.Lock, "")
 	return renderPlatformUpdateReport(cfg, out, report)
 }
 
-func planPlatformUpdate(cfg Config, flags map[string]string, credentials *platformRegistryCredentials, out io.Writer) error {
-	channel, context, err := platformUpdateTarget(flags)
+func planPlatformUpdate(cfg Config, flags map[string]string, out io.Writer) error {
+	target, err := targetPlatformRelease(flags)
 	if err != nil {
 		return err
 	}
-	current, err := readInstalledPlatformReleaseFn(context)
+	current, err := readConsolePlatformReleaseFn(cfg)
 	if err != nil {
 		return err
 	}
-	available, err := resolvePlatformReleaseFn(channel, credentials)
-	if err != nil {
-		return err
-	}
-	if available.Lock.Channel != channel {
-		return fmt.Errorf("해석된 release channel %q가 요청한 channel %q와 다릅니다", available.Lock.Channel, channel)
-	}
-	report := newPlatformUpdateReport(current.Lock, available.Lock, context)
+	report := newPlatformUpdateReport(current.Lock, target.Lock, "")
 	if !report.UpdateAvailable {
 		return renderPlatformUpdateReport(cfg, out, report)
 	}
@@ -183,14 +153,13 @@ func planPlatformUpdate(cfg Config, flags map[string]string, credentials *platfo
 		APIVersion:            platformUpdatePlanAPIVersion,
 		Kind:                  platformUpdatePlanKind,
 		CreatedAt:             time.Now().UTC().Format(time.RFC3339),
-		Channel:               channel,
-		Context:               context,
+		Channel:               target.Lock.Channel,
 		CurrentReleaseDigest:  current.Lock.ReleaseDigest,
 		CurrentSourceRevision: current.Lock.SourceRevision,
-		TargetReleaseDigest:   available.Lock.ReleaseDigest,
-		TargetSourceRevision:  available.Lock.SourceRevision,
+		TargetReleaseDigest:   target.Lock.ReleaseDigest,
+		TargetSourceRevision:  target.Lock.SourceRevision,
 		ChangedComponents:     append([]string(nil), report.ChangedComponents...),
-		TargetLock:            append(json.RawMessage(nil), available.Raw...),
+		TargetLock:            append(json.RawMessage(nil), target.Raw...),
 	}
 	if err := signPlatformUpdatePlan(&plan); err != nil {
 		return err
@@ -206,16 +175,16 @@ func planPlatformUpdate(cfg Config, flags map[string]string, credentials *platfo
 	return renderPlatformUpdateReport(cfg, out, report)
 }
 
-func applyPlatformUpdatePlan(cfg Config, id string, flags map[string]string, credentials *platformRegistryCredentials, out io.Writer) error {
+func applyPlatformUpdatePlan(cfg Config, id string, flags map[string]string, out io.Writer) error {
+	reason := strings.TrimSpace(flags["reason"])
+	if len(reason) < 8 {
+		return usageError("--reason에는 8자 이상의 운영 승인 사유가 필요합니다")
+	}
 	plan, err := loadPlatformUpdatePlan(id)
 	if err != nil {
 		return err
 	}
-	requestedContext := strings.TrimSpace(flags["context"])
-	if requestedContext != "" && requestedContext != plan.Context {
-		return usageErrorf("plan은 Kubernetes context %q용입니다; 다른 context에는 plan을 다시 생성하세요", displayPlatformContext(plan.Context))
-	}
-	current, err := readInstalledPlatformReleaseFn(plan.Context)
+	current, err := readConsolePlatformReleaseFn(cfg)
 	if err != nil {
 		return err
 	}
@@ -229,7 +198,7 @@ func applyPlatformUpdatePlan(cfg Config, id string, flags map[string]string, cre
 		return errors.New("platform update plan metadata와 target release lock이 일치하지 않습니다; plan을 다시 생성하세요")
 	}
 	if current.Lock.ReleaseDigest == plan.TargetReleaseDigest {
-		report := newPlatformUpdateReport(current.Lock, target.Lock, plan.Context)
+		report := newPlatformUpdateReport(current.Lock, target.Lock, "")
 		report.State = "Current"
 		report.Message = "요청한 Platform release가 이미 설치되어 있습니다."
 		return renderPlatformUpdateReport(cfg, out, report)
@@ -237,36 +206,17 @@ func applyPlatformUpdatePlan(cfg Config, id string, flags map[string]string, cre
 	if current.Lock.ReleaseDigest != plan.CurrentReleaseDigest {
 		return fmt.Errorf("platform update plan이 오래되었습니다: 현재 cluster digest는 %s, plan 기준은 %s입니다; check와 plan을 다시 실행하세요", current.Lock.ReleaseDigest, plan.CurrentReleaseDigest)
 	}
-	transcript, err := applyPlatformReleaseFn(plan.Channel, plan.Context, plan.TargetLock, credentials)
+	requested, err := requestPlatformReleaseFn(cfg, plan, target, reason)
 	if err != nil {
 		return err
 	}
-	installed, err := readInstalledPlatformReleaseFn(plan.Context)
-	if err != nil {
-		return fmt.Errorf("upgrade 후 cluster release lock 확인 실패: %w", err)
-	}
-	if installed.Lock.ReleaseDigest != plan.TargetReleaseDigest {
-		return fmt.Errorf("upgrade 검증 실패: cluster digest %s가 target %s와 다릅니다", installed.Lock.ReleaseDigest, plan.TargetReleaseDigest)
-	}
-	report := newPlatformUpdateReport(installed.Lock, target.Lock, plan.Context)
-	report.State = "Applied"
+	report := newPlatformUpdateReport(current.Lock, target.Lock, "")
+	report.State = "Requested"
 	report.ChangedComponents = append([]string(nil), plan.ChangedComponents...)
-	report.Message = "서명된 Platform release 적용과 설치 잠금 검증을 완료했습니다. Setup이 설치한 새 Console-native CLI는 새 shell에서 'os version'과 'os update --check'로 확인하세요."
-	report.Transcript = limitPlatformTranscript(transcript)
+	report.Message = "Console 변경 요청을 생성했습니다. 요청자와 다른 관리자가 Gitea PR을 승인하면 전용 executor가 공급망 검증·upgrade·실패 시 rollback을 수행합니다."
+	report.RequestID = requested.RequestID
+	report.PullRequest = requested.PullRequest.Number
 	return renderPlatformUpdateReport(cfg, out, report)
-}
-
-func platformUpdateTarget(flags map[string]string) (string, string, error) {
-	channel := strings.ToLower(strings.TrimSpace(flags["channel"]))
-	if channel == "" {
-		return "", "", usageError("--channel edge|candidate|stable|ga를 명시해야 합니다")
-	}
-	switch channel {
-	case "edge", "candidate", "stable", "ga":
-	default:
-		return "", "", usageError("--channel은 edge, candidate, stable, ga 중 하나여야 합니다")
-	}
-	return channel, strings.TrimSpace(flags["context"]), nil
 }
 
 func newPlatformUpdateReport(current, available platformReleaseLock, context string) platformUpdateReport {
@@ -318,112 +268,97 @@ func renderPlatformUpdateReport(cfg Config, out io.Writer, report platformUpdate
 	return renderOutput(cfg, out, raw)
 }
 
-func resolvePlatformRelease(channel string, credentials *platformRegistryCredentials) (platformReleaseDocument, error) {
-	work, err := os.MkdirTemp("", "opensphere-platform-resolve-")
+func readConsolePlatformRelease(cfg Config) (platformReleaseDocument, error) {
+	raw, status, err := request(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/platform/releases/status"), nil, "")
+	if err != nil {
+		return platformReleaseDocument{}, fmt.Errorf("Console Platform Release 상태 조회 실패: %w", err)
+	}
+	if status != http.StatusOK {
+		return platformReleaseDocument{}, platformAPIError(status, raw)
+	}
+	var response struct {
+		Current struct {
+			Channel        string                              `json:"channel"`
+			ReleaseDigest  string                              `json:"releaseDigest"`
+			SourceRevision string                              `json:"sourceRevision"`
+			Components     map[string]platformReleaseComponent `json:"components"`
+		} `json:"current"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return platformReleaseDocument{}, fmt.Errorf("Console Platform Release 응답 파싱 실패: %w", err)
+	}
+	lock := platformReleaseLock{
+		APIVersion:     "release.opensphere.io/v1alpha1",
+		Kind:           platformReleaseLockKind,
+		Channel:        response.Current.Channel,
+		ReleaseDigest:  response.Current.ReleaseDigest,
+		Source:         "https://github.com/opensphere-platform/OpenSphere-console",
+		SourceRevision: response.Current.SourceRevision,
+		Components:     response.Current.Components,
+	}
+	encoded, err := json.Marshal(lock)
 	if err != nil {
 		return platformReleaseDocument{}, err
 	}
-	defer os.RemoveAll(work)
-	lockPath := filepath.Join(work, channel+"-release-lock.json")
-	args := []string{"resolve", "--release", channel, "--lock", lockPath}
-	stdin := platformRegistryArgs(&args, credentials)
-	if _, err := runPlatformCommand("opensphere-setup", args, stdin); err != nil {
-		return platformReleaseDocument{}, fmt.Errorf("GHCR %s 채널 release 해석 실패: %w", channel, err)
-	}
-	return readPlatformReleaseDocument(lockPath)
+	return parsePlatformReleaseDocument(encoded)
 }
 
-func readInstalledPlatformRelease(context string) (platformReleaseDocument, error) {
-	args := make([]string, 0, 10)
-	if context != "" {
-		args = append(args, "--context", context)
-	}
-	args = append(args, "-n", "opensphere-console", "get", "configmap", "opensphere-installation-lock", "-o", "json")
-	raw, err := runPlatformCommand("kubectl", args, nil)
+type platformReleaseRequest struct {
+	RequestID   string `json:"requestId"`
+	PullRequest struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+	} `json:"pullRequest"`
+}
+
+func requestPlatformRelease(cfg Config, plan platformUpdatePlan, target platformReleaseDocument, reason string) (platformReleaseRequest, error) {
+	payload, err := json.Marshal(map[string]any{
+		"consumerId": "platform-release",
+		"action":     "apply",
+		"target":     "opensphere-platform",
+		"reason":     reason,
+		"desiredState": map[string]any{
+			"contract":              "opensphere.platform.release/v1",
+			"previousReleaseDigest": plan.CurrentReleaseDigest,
+			"targetLock":            json.RawMessage(target.Raw),
+		},
+	})
 	if err != nil {
-		return platformReleaseDocument{}, fmt.Errorf("cluster 설치 잠금 조회 실패(context=%s): %w", displayPlatformContext(context), err)
+		return platformReleaseRequest{}, err
 	}
-	var configMap struct {
-		Data map[string]string `json:"data"`
+	raw, status, requestErr := request(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/platform/changes"), bytes.NewReader(payload), "application/json")
+	if requestErr != nil {
+		return platformReleaseRequest{}, fmt.Errorf("Console Platform Release 요청 실패: %w", requestErr)
 	}
-	if err := json.Unmarshal(raw, &configMap); err != nil {
-		return platformReleaseDocument{}, fmt.Errorf("cluster 설치 잠금 ConfigMap 파싱 실패: %w", err)
+	if status != http.StatusAccepted {
+		return platformReleaseRequest{}, platformAPIError(status, raw)
 	}
-	lock := strings.TrimSpace(configMap.Data["release.json"])
-	if lock == "" {
-		return platformReleaseDocument{}, errors.New("opensphere-installation-lock ConfigMap에 release.json이 없습니다")
+	var response platformReleaseRequest
+	if err := json.Unmarshal(raw, &response); err != nil || response.RequestID == "" {
+		return platformReleaseRequest{}, errors.New("Console Platform Release 요청 응답이 올바르지 않습니다")
 	}
-	return parsePlatformReleaseDocument([]byte(lock))
+	return response, nil
 }
 
-func applyPlatformRelease(channel, context string, targetLock json.RawMessage, credentials *platformRegistryCredentials) (string, error) {
-	work, err := os.MkdirTemp("", "opensphere-platform-apply-")
-	if err != nil {
-		return "", err
+func platformAPIError(status int, raw []byte) error {
+	var body struct {
+		Error string `json:"error"`
 	}
-	defer os.RemoveAll(work)
-	lockPath := filepath.Join(work, channel+"-release-lock.json")
-	if err := os.WriteFile(lockPath, append(append([]byte(nil), targetLock...), '\n'), 0o600); err != nil {
-		return "", err
+	_ = json.Unmarshal(raw, &body)
+	message := strings.TrimSpace(body.Error)
+	if message == "" {
+		message = strings.TrimSpace(string(raw))
 	}
-	_ = os.Chmod(lockPath, 0o600)
-	args := []string{"upgrade", "--release", channel, "--lock", lockPath}
-	if context != "" {
-		args = append(args, "--context", context)
+	if len(message) > 500 {
+		message = message[:500]
 	}
-	stdin := platformRegistryArgs(&args, credentials)
-	output, err := runPlatformCommand("opensphere-setup", args, stdin)
-	if err != nil {
-		return "", fmt.Errorf("Platform upgrade 트랜잭션 실패: %w", err)
+	if message == "" {
+		message = http.StatusText(status)
 	}
-	return string(output), nil
-}
-
-func platformRegistryArgs(args *[]string, credentials *platformRegistryCredentials) []byte {
-	if credentials == nil {
-		return nil
+	if status == http.StatusPreconditionRequired {
+		return fmt.Errorf("HTTP %d: %s; 최근 AAL2 확인 후 Console의 Platform Release 화면에서 요청하거나 CLI step-up을 완료하세요", status, message)
 	}
-	*args = append(*args, "--registry-username", credentials.Username, "--registry-token-stdin")
-	return []byte(credentials.Token + "\n")
-}
-
-func runPlatformCommand(name string, args []string, stdin []byte) ([]byte, error) {
-	path, err := findPlatformCommand(name)
-	if err != nil {
-		return nil, err
-	}
-	var command *exec.Cmd
-	extension := strings.ToLower(filepath.Ext(path))
-	if runtime.GOOS == "windows" && (extension == ".cmd" || extension == ".bat") {
-		command = exec.Command(env("ComSpec", "cmd.exe"), append([]string{"/d", "/s", "/c", path}, args...)...)
-	} else {
-		command = exec.Command(path, args...)
-	}
-	if stdin != nil {
-		command.Stdin = bytes.NewReader(stdin)
-	}
-	output, commandErr := command.CombinedOutput()
-	if commandErr != nil {
-		detail := limitPlatformTranscript(string(output))
-		if detail == "" {
-			detail = commandErr.Error()
-		}
-		return nil, fmt.Errorf("%s 실행 실패: %s", name, detail)
-	}
-	return output, nil
-}
-
-func findPlatformCommand(name string) (string, error) {
-	candidates := []string{name}
-	if runtime.GOOS == "windows" {
-		candidates = []string{name + ".exe", name + ".cmd", name + ".bat", name}
-	}
-	for _, candidate := range candidates {
-		if path, err := exec.LookPath(candidate); err == nil {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("%s를 PATH에서 찾을 수 없습니다; OpenSphere Setup CLI와 kubectl을 먼저 설치하세요", name)
+	return fmt.Errorf("HTTP %d: %s", status, message)
 }
 
 func readPlatformReleaseDocument(path string) (platformReleaseDocument, error) {
@@ -454,7 +389,7 @@ func parsePlatformReleaseDocument(raw []byte) (platformReleaseDocument, error) {
 	if !validPlatformDigest(lock.ReleaseDigest) {
 		return platformReleaseDocument{}, errors.New("release lock digest가 유효한 sha256 값이 아닙니다")
 	}
-	if lock.Channel != "edge" && lock.Channel != "candidate" && lock.Channel != "stable" && lock.Channel != "ga" {
+	if lock.Channel != "edge" {
 		return platformReleaseDocument{}, errors.New("release lock channel이 유효하지 않습니다")
 	}
 	if len(lock.SourceRevision) != 40 {
@@ -541,7 +476,7 @@ func loadPlatformUpdatePlan(id string) (platformUpdatePlan, error) {
 	if plan.APIVersion != platformUpdatePlanAPIVersion || plan.Kind != platformUpdatePlanKind || savedID != id {
 		return platformUpdatePlan{}, errors.New("지원하지 않거나 손상된 platform update plan입니다")
 	}
-	if plan.Channel != "edge" && plan.Channel != "candidate" && plan.Channel != "stable" && plan.Channel != "ga" {
+	if plan.Channel != "edge" {
 		return platformUpdatePlan{}, errors.New("platform update plan channel이 유효하지 않습니다")
 	}
 	if plan.Context != "" {

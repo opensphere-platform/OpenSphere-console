@@ -93,7 +93,7 @@ interface TreeNode {
     <clr-accordion class="management-actions">
       <clr-accordion-panel>
         <clr-accordion-title>관리 작업</clr-accordion-title>
-        <clr-accordion-description>CLI 설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
+        <clr-accordion-description>Extension 설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
         <clr-accordion-content *clrIfExpanded>
     <section class="registry-access" aria-labelledby="registry-access-title">
       <div class="registry-access-head">
@@ -267,7 +267,7 @@ interface TreeNode {
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="8" class="os-sub">설치된 Extension 없음 — <code>os extensions install</code>로 설치</td>
+                  <td colspan="8" class="os-sub">설치된 Extension 없음 — 위 관리 작업의 “Extension 설치”에서 OCI release를 설치하세요.</td>
                 </tr>
               }
             </tbody>
@@ -417,7 +417,7 @@ interface TreeNode {
                         <button class="btn btn-sm" (click)="run('disable', c.name)">Disable</button>
                       }
                       @default {
-                        <span class="os-sub">설치는 <code>os extensions install</code></span>
+                        <span class="os-sub">위 “Extension 설치”에서 OCI release 지정</span>
                       }
                     }
                     @if (phaseOf(c.name)) {
@@ -707,6 +707,14 @@ interface TreeNode {
               Enable
             </button>
           }
+          <button
+            class="btn btn-sm btn-outline"
+            [disabled]="!rollbackAvailable(r)"
+            [title]="rollbackAvailable(r) ? rollbackSummary(r) : '검증된 이전 release 증거가 없습니다.'"
+            (click)="run('rollback', r.name)"
+          >
+            Rollback
+          </button>
           <button class="btn btn-sm btn-danger-outline" (click)="run('uninstall', r.name)">Uninstall</button>
         </div>
 
@@ -725,6 +733,16 @@ interface TreeNode {
       [reasonRequired]="true"
       (confirmed)="confirmAction($event)"
       (cancelled)="pendingAction.set(null)"
+    />
+    <os-action-dialog
+      [open]="!!pendingRollback()"
+      title="이전 검증 Release로 롤백"
+      [message]="pendingRollbackRegistration() ? rollbackSummary(pendingRollbackRegistration()!) : ''"
+      confirmLabel="검증 후 롤백"
+      [reasonRequired]="true"
+      reasonLabel="롤백 승인 사유"
+      (confirmed)="confirmRollback($event)"
+      (cancelled)="pendingRollback.set(null)"
     />
     </div>
   `,
@@ -995,6 +1013,8 @@ export class AdminPlugins implements OnInit {
   readonly bindings = signal<Binding[]>([]);
   readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
   readonly revocations = signal<ImageRevocation[]>([]);
+  readonly installing = signal(false);
+  readonly pendingRollback = signal<string | null>(null);
   readonly foundationActivationAllowed = signal(false);
   readonly catalogLoaded = signal(false);
   readonly registrationsLoaded = signal(false);
@@ -1380,6 +1400,23 @@ export class AdminPlugins implements OnInit {
     } catch (err) { this.msg.set({ type: 'danger', text: `GHCR 자격증명 저장 실패: ${err}` }); }
   }
 
+  async installExtension(image: string, reason: string): Promise<void> {
+    if (this.installing()) return;
+    this.installing.set(true);
+    try {
+      const result = await this.ctl.install(image.trim(), reason.trim());
+      const waiting = result.activation?.allowed === false
+        ? ` 활성화는 ${result.activation.pendingCapabilities.join(', ') || result.activation.reason} 충족까지 대기합니다.`
+        : '';
+      this.msg.set({ type: 'success', text: `${result.id} 설치가 접수되었습니다.${waiting}` });
+      await this.refresh();
+    } catch (err) {
+      this.msg.set({ type: 'danger', text: `Extension 설치 실패: ${err}` });
+    } finally {
+      this.installing.set(false);
+    }
+  }
+
   async removeRegistryCredentials(reason: string): Promise<void> {
     try {
       this.registryStatus.set(await this.ctl.removeRegistryCredentials(reason.trim()));
@@ -1533,7 +1570,35 @@ export class AdminPlugins implements OnInit {
     return t === 'group' ? '' : t;
   }
 
-  async run(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+  rollbackAvailable(r: Registration): boolean {
+    const previousDigest = String(r.status.previousDigest || '');
+    const currentDigest = String(r.status.currentDigest || '');
+    return /^sha256:[a-f0-9]{64}$/.test(previousDigest)
+      && previousDigest !== currentDigest
+      && /^[a-f0-9]{64}$/.test(String(r.status.previousManifestSha256 || ''))
+      && /^[0-9]{12}$/.test(String(r.status.previousVersion || ''))
+      && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(String(r.status.previousCompatibilityVersion || ''))
+      && ['localhost', 'github-actions'].includes(String(r.status.previousBuildAuthority || ''))
+      && String(r.status.previousRequestedRef || '').length > 0
+      && String(r.status.previousSource || '').length > 0
+      && /^[a-f0-9]{40}$/.test(String(r.status.previousRevision || ''))
+      && String(r.status.previousSignatureIdentity || '').length > 0
+      && (r.status.previousEvidenceRefs || []).length >= 2;
+  }
+
+  rollbackSummary(r: Registration): string {
+    return `${this.displayName(r.name)}을 이전 검증 release로 되돌립니다.\n`
+      + `현재: ${this.artifactVersion(r)} · ${this.shortDigest(r.status.currentDigest)}\n`
+      + `대상: ${r.status.previousVersion || '미보고'} · ${this.shortDigest(r.status.previousDigest)}\n`
+      + `서명·digest·source revision을 서버에서 다시 검증하고 승인 사유를 영구 감사에 기록합니다.`;
+  }
+
+  pendingRollbackRegistration(): Registration | null {
+    const id = this.pendingRollback();
+    return id ? this.registrations().find((registration) => registration.name === id) || null : null;
+  }
+
+  async run(action: 'enable' | 'disable' | 'uninstall' | 'rollback', id: string): Promise<void> {
     // The API is the gate; this only keeps the page from firing a request whose
     // refusal is already known, and it names the same missing capabilities the
     // button's tooltip does.

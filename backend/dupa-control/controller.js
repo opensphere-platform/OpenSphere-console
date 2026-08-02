@@ -34,6 +34,30 @@ const V = 'v1alpha1';
 const PLATFORM_GROUP = 'platform.opensphere.io';
 const PLATFORM_PROFILE_NAME = 'default';
 const PLATFORM_PROFILE_PATH = `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles/${PLATFORM_PROFILE_NAME}`;
+const HIS_STATUS_URL = process.env.HIS_STATUS_URL
+  || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/his/internal/status';
+const HIS_STATUS_MAX_AGE_MS = Math.max(15000, Math.min(Number(process.env.HIS_STATUS_MAX_AGE_MS || 60000), 300000));
+const FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS = Math.max(
+  5 * 60 * 1000,
+  Math.min(Number(process.env.FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS || (60 * 60 * 1000)), 24 * 60 * 60 * 1000),
+);
+const RECOVERY_EVIDENCE_MAX_AGE_MS = Math.max(
+  5 * 60 * 1000,
+  Math.min(Number(process.env.RECOVERY_EVIDENCE_MAX_AGE_MS || (24 * 60 * 60 * 1000)), 7 * 24 * 60 * 60 * 1000),
+);
+// Platform Delivery is GitOps only when the live Argo CD control plane has
+// reconciled the canonical OpenSphere declaration.  Gitea reachability and an
+// immutable package inventory are useful supporting evidence, but neither is
+// a substitute for a converged desired-state application.
+const ARGOCD_GROUP = 'argoproj.io';
+const ARGOCD_NAMESPACE = process.env.ARGOCD_NAMESPACE || 'argocd';
+const ARGOCD_DELIVERY_PROJECT = process.env.ARGOCD_DELIVERY_PROJECT || 'opensphere-platform-delivery';
+const ARGOCD_DELIVERY_APPLICATION = process.env.ARGOCD_DELIVERY_APPLICATION || 'opensphere-platform-delivery-verify';
+const ARGOCD_DELIVERY_REPOSITORY = process.env.ARGOCD_DELIVERY_REPOSITORY || 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000/opensphere/platform-declarations.git';
+const ARGOCD_DELIVERY_PATH = process.env.ARGOCD_DELIVERY_PATH || 'platform-delivery/verification';
+const ARGOCD_DELIVERY_REVISION = process.env.ARGOCD_DELIVERY_REVISION || 'main';
+const CROSSPLANE_NAMESPACE = process.env.CROSSPLANE_NAMESPACE || 'crossplane-system';
+const CROSSPLANE_PROVIDER = process.env.CROSSPLANE_PROVIDER || 'crossplane-contrib-provider-helm';
 function foundationDevOverrideEnabled(env = process.env) {
   return env.OPENSPHERE_RUNTIME_MODE === 'development'
     && String(env.FOUNDATION_ACTIVATION_DEV_OVERRIDE || '').toLowerCase() === 'true';
@@ -380,6 +404,89 @@ function verifiedStagedUpdate(reg) {
     && /^sha256:[a-f0-9]{64}$/.test(currentDigest)
     && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
     && currentDigest !== previousDigest;
+}
+const FOUNDATION_UPGRADE_AUTHORIZATION_KIND = 'VerifiedActivatedFoundationUpdate/v1';
+function foundationUpgradeAuthorization(currentPkg, currentReg, targetPkg, actor, opId, requestedAt = new Date().toISOString()) {
+  if (currentPkg?.metadata?.name !== FOUNDATION_ID || targetPkg?.metadata?.name !== FOUNDATION_ID) return null;
+  if (!verifiedActivatedRegistration(currentReg)) return null;
+  const status = currentReg.status || {};
+  const fromDigest = String(status.currentDigest || '');
+  const fromManifestSha256 = String(status.currentManifestSha256 || '');
+  const toDigest = String(targetPkg?.spec?.image?.digest || '');
+  const toManifestSha256 = String(targetPkg?.spec?.manifest?.sha256 || '');
+  if (String(currentPkg?.spec?.image?.digest || '') !== fromDigest
+    || String(currentPkg?.spec?.manifest?.sha256 || '') !== fromManifestSha256
+    || !/^sha256:[a-f0-9]{64}$/.test(toDigest)
+    || !/^[a-f0-9]{64}$/.test(toManifestSha256)
+    || toDigest === fromDigest) return null;
+  return {
+    kind: FOUNDATION_UPGRADE_AUTHORIZATION_KIND,
+    fromDigest,
+    fromManifestSha256,
+    fromVersion: String(status.currentVersion || status.observedVersion || ''),
+    toDigest,
+    toManifestSha256,
+    requestedBy: auditActorLabel(actor),
+    operationId: String(opId || ''),
+    requestedAt: String(requestedAt || ''),
+  };
+}
+function verifiedFoundationStagedUpdate(reg, now = Date.now()) {
+  const status = reg?.status || {};
+  const authorization = status.foundationUpgradeAuthorization || {};
+  const requestedAt = Date.parse(String(authorization.requestedAt || ''));
+  const currentDigest = String(status.currentDigest || '');
+  const previousDigest = String(status.previousDigest || '');
+  return ['Installed', 'Enabled'].includes(reg?.spec?.desiredState)
+    && authorization.kind === FOUNDATION_UPGRADE_AUTHORIZATION_KIND
+    && authorization.fromDigest === status.previousDigest
+    && authorization.fromManifestSha256 === status.previousManifestSha256
+    && authorization.toDigest === status.currentDigest
+    && authorization.toManifestSha256 === status.currentManifestSha256
+    && /^sha256:[a-f0-9]{64}$/.test(currentDigest)
+    && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
+    && currentDigest !== previousDigest
+    && typeof authorization.requestedBy === 'string'
+    && authorization.requestedBy.length > 0
+    && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
+    && Number.isFinite(requestedAt)
+    // Upgrade authorization is exact-transition evidence, not a permanent
+    // bypass token. It expires even if reconciliation never consumes it.
+    && requestedAt <= Number(now) + (5 * 60 * 1000)
+    && Number(now) - requestedAt <= FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS;
+}
+function verifiedFoundationUpdateAuthorization(reg, pkg, now = Date.now()) {
+  if (verifiedFoundationStagedUpdate(reg, now)) {
+    return !pkg || (
+      pkg?.metadata?.name === FOUNDATION_ID
+      && pkg?.spec?.image?.digest === reg.status.foundationUpgradeAuthorization.toDigest
+      && pkg?.spec?.manifest?.sha256 === reg.status.foundationUpgradeAuthorization.toManifestSha256
+    );
+  }
+  const status = reg?.status || {};
+  const authorization = status.foundationUpgradeAuthorization || {};
+  const requestedAt = Date.parse(String(authorization.requestedAt || ''));
+  const originStillServing = ['Installed', 'Enabled'].includes(reg?.spec?.desiredState)
+    && status.phase === 'Activated'
+    && status.workload?.phase === 'Ready'
+    && status.verification?.manifest === 'Verified'
+    && status.verification?.signature === 'Verified'
+    && status.verification?.entryDigest === 'Verified'
+    && status.verification?.permissions === 'Approved'
+    && status.currentDigest === authorization.fromDigest
+    && status.currentManifestSha256 === authorization.fromManifestSha256;
+  return originStillServing
+    && authorization.kind === FOUNDATION_UPGRADE_AUTHORIZATION_KIND
+    && pkg?.metadata?.name === FOUNDATION_ID
+    && pkg?.spec?.image?.digest === authorization.toDigest
+    && pkg?.spec?.manifest?.sha256 === authorization.toManifestSha256
+    && authorization.toDigest !== authorization.fromDigest
+    && typeof authorization.requestedBy === 'string'
+    && authorization.requestedBy.length > 0
+    && /^os-[a-f0-9]+$/.test(String(authorization.operationId || ''))
+    && Number.isFinite(requestedAt)
+    && requestedAt <= Number(now) + (5 * 60 * 1000)
+    && Number(now) - requestedAt <= FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS;
 }
 // CLIDownload (console.opensphere.io, cluster-scoped) — headless 비-UI 콘솔 바인딩. UIPluginPackage(UI 게스트)와 별개 kind.
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
@@ -910,10 +1017,24 @@ function permissionBindingManifest(pkg, saName, profile) {
     subjects: [{ kind: 'ServiceAccount', name: saName, namespace: NS }],
   };
 }
+function permissionBindingName(pluginId, profile) {
+  const suffix = profile === 'cluster-observer-v1' ? 'observer-v1' : profile;
+  return `opensphere-module-${pluginId}-${suffix}`;
+}
+async function revokePermissionBindings(pluginId, keepProfile = '') {
+  for (const profile of Object.keys(PERMISSION_PROFILE_ROLES)) {
+    if (profile === keepProfile) continue;
+    const name = permissionBindingName(pluginId, profile);
+    await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${name}`, `ClusterRoleBinding/${name}`);
+  }
+}
 async function applyPermissionProfile(pkg, saName) {
   const profile = pkg.spec.permissionProfile || 'none';
   if (!APPROVED_PERMISSION_PROFILES.has(profile)) throw Object.assign(new Error('unapproved permission profile'), { reason: 'UnknownPermissionProfile' });
-  if (profile === 'none') return;
+  if (profile === 'none') {
+    await revokePermissionBindings(pkg.metadata.name);
+    return;
+  }
   const rolePath = '/apis/rbac.authorization.k8s.io/v1/clusterroles';
   const roleManifest = PERMISSION_PROFILE_ROLES[profile];
   if (!roleManifest) throw Object.assign(new Error('unapproved permission profile'), { reason: 'UnknownPermissionProfile' });
@@ -923,6 +1044,7 @@ async function applyPermissionProfile(pkg, saName) {
   if (JSON.stringify(canonical(existingRole.json?.rules || [])) !== JSON.stringify(canonical(expectedRole.rules))) {
     throw Object.assign(new Error('pre-provisioned permission profile drifted'), { reason: 'PermissionProfileDrift' });
   }
+  await revokePermissionBindings(pkg.metadata.name, profile);
   const binding = permissionBindingManifest(pkg, saName, profile);
   const bindingPath = '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings';
   const existingBinding = await k8s('GET', `${bindingPath}/${binding.metadata.name}`);
@@ -1741,7 +1863,9 @@ async function reconcile() {
         continue;
       }
       if (desired === 'Disabled') {
-        // workload 유지, registry에서만 제외 (메뉴/route 소멸)
+        // workload는 유지하되 cluster-scoped 권한은 즉시 회수한다. 다시
+        // Enabled가 되면 applyPermissionProfile이 현재 승인 profile만 복원한다.
+        await revokePermissionBindings(pkg.metadata.name);
         await updateStatus({ phase: 'Disabled', reason: '' });
         continue;
       }
@@ -1827,6 +1951,26 @@ async function reconcile() {
         continue;
       }
 
+      // Foundation activation is enforced by the reconciler as well as the
+      // request API. An update authorization proves the exact transition only;
+      // it never substitutes for the current Platform Support Profile.
+      let foundationUpdateAuthorizationConsumed = false;
+      if (name === FOUNDATION_ID && desired === 'Enabled') {
+        const readiness = await supportProfileReadiness();
+        const activationAllowed = readiness.admission.foundationActivationAllowed === true;
+        const currentReleaseAlreadyActivated = stableRelease && verifiedActivatedRegistration(reg);
+        foundationUpdateAuthorizationConsumed = !currentReleaseAlreadyActivated
+          && verifiedFoundationUpdateAuthorization(reg, pkg);
+        if (!activationAllowed && !currentReleaseAlreadyActivated) {
+          await updateStatus({
+            phase: 'DependencyPending',
+            reason: 'PlatformSupportProfileIncomplete',
+            retryable: true,
+          });
+          continue;
+        }
+      }
+
       // A PFS plugin may be installed, verified and staged at any time; only
       // activation waits for the Platform Support Profile.  CONSTITUTION-0003 §7.2
       // holds an unmet activation dependency as DependencyPending rather than
@@ -1847,6 +1991,17 @@ async function reconcile() {
           route: '/manage/platform-control',
           checkedAt: new Date().toISOString(),
         };
+      } else if (requiresDomainAdmission(pkg)) {
+        const readiness = await platformReadinessStatus();
+        const activationAllowed = readiness.admission.domainActivationAllowed === true;
+        admission = {
+          activationAllowed,
+          reason: activationAllowed ? '' : 'DomainAdmissionLocked',
+          pendingCapabilities: activationAllowed ? [] : ['PFSEstablished', 'PlatformSupportProfile'],
+          satisfiedCapabilities: activationAllowed ? ['PFSEstablished', 'PlatformSupportProfile'] : [],
+          route: '/manage/platform-control',
+          checkedAt: new Date().toISOString(),
+        };
       }
       const withAdmission = (status) => (admission ? { ...status, admission } : status);
 
@@ -1858,7 +2013,7 @@ async function reconcile() {
       if (admission && !admission.activationAllowed) {
         await updateStatus(withAdmission({
           phase: 'DependencyPending',
-          reason: 'PlatformSupportProfileIncomplete',
+          reason: admission.reason,
           retryable: true,
         }));
         continue;
@@ -1870,6 +2025,13 @@ async function reconcile() {
       published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence));
       if (!stableRelease) await updateStatus(withAdmission({ phase: 'Ready', reason: '', manifestUrl, retryable: false }));
       await updateStatus(withAdmission({ phase: 'Activated', reason: '', manifestUrl, retryable: false }));
+      if (foundationUpdateAuthorizationConsumed) {
+        const consumed = await setFoundationUpgradeAuthorization(null);
+        if (!consumed.ok) {
+          console.error('[foundation-update] activated exact update but could not consume authorization status:',
+            consumed.status, JSON.stringify(consumed.json || {}).slice(0, 200));
+        }
+      }
     } catch (e) {
       const reason = e?.reason || String(e).slice(0, 120);
       await updateStatus({ phase: 'Failed', reason, retryable: retryableReason(reason) });
@@ -1933,6 +2095,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── K8s Warning 이벤트를 콘솔 알림 소스로 (ADR-UI-002 §D2 — 클러스터 event 평면, OKD 렌즈) ──
 // 플랫폼 ns(opensphere-*)의 Warning만 audit bus에 합류. dedup(uid). observability operand 불요(K8s 네이티브).
+async function persistEventBeforeSeen({
+  uid,
+  event,
+  seen,
+  pending,
+  order,
+  persist,
+  cap = 2000,
+}) {
+  if (seen.has(uid)) return { persisted: true, duplicate: true };
+  const durableCandidate = pending.get(uid) || event;
+  pending.set(uid, durableCandidate);
+  try {
+    await persist(durableCandidate);
+  } catch (error) {
+    return { persisted: false, error };
+  }
+  pending.delete(uid);
+  seen.add(uid);
+  order.push(uid);
+  while (order.length > cap) {
+    const oldest = order.shift();
+    if (oldest) seen.delete(oldest);
+  }
+  return { persisted: true, duplicate: false };
+}
+
 const seenEvents = new Set();
 // 관측했으나 아직 원장에 못 넣은 이벤트 수. 0 이 아니면 알림 소스가 뒤처져 있다는 뜻이다.
 let _k8sEventsPending = 0;
@@ -2011,12 +2200,17 @@ async function ensureRegistration(pkgName, desiredState, actor, reason, installa
   };
   if (existing.ok) {
     const spec = { desiredState, approval: body.spec.approval };
-    // 기존 Registration에는 최초 설치 provenance가 없을 수 있다. CLI 설치가 이를 한 번
+    // 기존 Registration에는 최초 설치 provenance가 없을 수 있다. Console API 설치가 이를 한 번
     // 보강하되, 이미 기록된 설치 근거는 이후 lifecycle 동작으로 덮어쓰지 않는다.
     if (installation && !existing.json?.spec?.installation) spec.installation = installation;
     return k8s('PATCH', `${crd('uipluginregistrations')}/${pkgName}`, { spec });
   }
   return k8s('POST', crd('uipluginregistrations'), body);
+}
+async function setFoundationUpgradeAuthorization(authorization) {
+  return k8s('PATCH', `${crd('uipluginregistrations')}/${FOUNDATION_ID}/status`, {
+    status: { foundationUpgradeAuthorization: authorization || null },
+  });
 }
 
 // ── Console Gitea declarative-change authority health ──────────────────────
@@ -2218,9 +2412,15 @@ async function observabilityTemplateQuery(template, range) {
 
 // ── Platform Readiness (CONSTITUTION-0004 §7~§8) ───────────────────────────
 // PlatformSupportProfile is a Main Shell-owned, machine-readable admission gate. It is not a
-// fourth service stack and it does not install or administer HIS. HIS capability
-// is evidenced exclusively by the HIS-issued ObservabilityBinding consumed above.
+// fourth service stack and it does not install or administer HIS. SRL-L1 HIS
+// readiness comes only from the authenticated Cluster Manager projection.
+// ObservabilityBinding remains an SRL-L4 telemetry capability and is never a
+// substitute for the complete HIS preflight.
 const FOUNDATION_ID = 'foundation';
+const DOMAIN_SHELL_IDS = new Set(['developer', 'workspace', 'customer', 'edge', 'website']);
+function requiresDomainAdmission(pkg) {
+  return pkg?.spec?.kind === 'subShell' && DOMAIN_SHELL_IDS.has(String(pkg?.metadata?.name || ''));
+}
 const requiredProfileSpec = Object.freeze({
   hostRequirements: { clusterManager: true, his: true },
   delivery: { required: true },
@@ -2320,12 +2520,49 @@ function oaaExtensionInspectionProjection(inspection) {
 }
 function normalizeHisStatus(response) {
   const body = response?.body || response?.json || {};
-  const ready = response?.ok === true && body.state === 'Ready';
+  const checkedAtMs = Date.parse(body.checkedAt || '');
+  const ageMs = Number.isFinite(checkedAtMs) ? Math.max(0, Date.now() - checkedAtMs) : Number.POSITIVE_INFINITY;
+  const contractValid = body.schema === 'his-status.opensphere.io/v1alpha1'
+    && body.stack === 'HIS'
+    && ['Ready', 'Degraded', 'Blocked'].includes(body.state)
+    && Array.isArray(body.items)
+    && body.summary && Number.isFinite(Number(body.summary.coreTotal));
+  const fresh = ageMs <= HIS_STATUS_MAX_AGE_MS;
+  const ready = response?.ok === true && contractValid && fresh && body.state === 'Ready';
+  const blockers = Array.isArray(body.items)
+    ? body.items
+      .filter((item) => item?.contributesToHisReadiness !== false && item?.effectiveRequired && item?.check?.state !== 'Ready')
+      .map((item) => ({ id: item.id, state: item.check?.state || 'Unknown', reason: item.check?.reason || 'Unknown' }))
+    : [];
+  let reason = '';
+  if (response?.ok !== true) reason = `Cluster Manager HIS status HTTP ${response?.status || 0}`;
+  else if (!contractValid) reason = 'Cluster Manager HIS status contract is invalid';
+  else if (!fresh) reason = `Cluster Manager HIS status is stale (${Math.floor(ageMs / 1000)}s old)`;
+  else if (body.state !== 'Ready') reason = `HIS ${body.state}: ${blockers.map((item) => `${item.id}/${item.reason}`).join(', ') || 'required capability incomplete'}`;
   return {
     ready,
     state: body.state || (response?.ok ? 'Unknown' : 'Unavailable'),
-    reason: ready ? '' : (body.reason || body.message || `Cluster Manager HIS status HTTP ${response?.status || 0}`),
+    reason: ready ? '' : reason,
+    checkedAt: body.checkedAt || '',
+    fresh,
+    contractValid,
+    ageSeconds: Number.isFinite(ageMs) ? Math.floor(ageMs / 1000) : null,
+    summary: body.summary || null,
+    blockers,
   };
+}
+async function hisPreflightEvidence(fetchImpl = fetch) {
+  let response;
+  try {
+    response = await fetchImpl(HIS_STATUS_URL, {
+      headers: { Authorization: `Bearer ${token()}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(45000),
+    });
+  } catch (error) {
+    return normalizeHisStatus({ ok: false, status: 503, body: { message: String(error?.message || error) } });
+  }
+  const body = await response.json().catch(() => ({}));
+  return normalizeHisStatus({ ok: response.ok, status: response.status, body });
 }
 async function mainShellBaselineStatus() {
   const targets = [
@@ -2362,17 +2599,28 @@ async function backupRestoreEvidence() {
   catch { value = {}; }
   const backup = value.backup || {};
   const restore = value.restore || {};
+  const generatedAt = Date.parse(String(value.generatedAt || ''));
+  const requestedMaxAgeMs = Number(value.maxEvidenceAgeSeconds || 0) * 1000;
+  const maxAgeMs = Number.isFinite(requestedMaxAgeMs) && requestedMaxAgeMs > 0
+    ? Math.min(requestedMaxAgeMs, RECOVERY_EVIDENCE_MAX_AGE_MS)
+    : RECOVERY_EVIDENCE_MAX_AGE_MS;
+  const evidenceFresh = Number.isFinite(generatedAt)
+    && generatedAt <= Date.now() + (5 * 60 * 1000)
+    && Date.now() - generatedAt <= maxAgeMs;
   const archiveVerified = [backup.supabase?.database, backup.supabase?.storage, backup.gitea]
     .every((item) => item?.verified === true && /^[a-f0-9]{64}$/i.test(String(item.sha256 || '')));
   const restored = [restore.supabase, restore.storage, restore.gitea]
     .every((item) => item?.state === 'Verified');
-  const ready = archiveVerified && restored;
+  const ready = evidenceFresh && archiveVerified && restored;
   return {
     ready, source: 'Supabase+Gitea recovery evidence', targetConfigured: archiveVerified,
-    scheduled: false, lastBackupAt: value.generatedAt || '',
+    scheduled: false, lastBackupAt: value.generatedAt || '', evidenceFresh,
+    expiresAt: Number.isFinite(generatedAt) ? new Date(generatedAt + maxAgeMs).toISOString() : '',
     lastRestoreDrillAt: restore.supabase?.verifiedAt || '',
     decommissionApproved: value.decommission?.approved === true,
-    reason: ready ? '' : 'verified Supabase, Storage, and Gitea restore drills are required',
+    reason: ready ? '' : (!evidenceFresh
+      ? 'recovery evidence is missing, expired, or has an invalid generatedAt'
+      : 'verified Supabase, Storage, and Gitea restore drills are required'),
   };
 }
 
@@ -2638,6 +2886,7 @@ async function platformReadinessStatus() {
   const probeNames = ['platformControl', 'mainShell', 'clusterManager', 'profile', 'delivery', 'observability', 'backupRestore', 'securityPolicy', 'registrations'];
   const settled = await Promise.allSettled([
     platformControlReadiness(), mainShellBaselineStatus(), clusterManagerActivationStatus(),
+    hisPreflightEvidence(),
     readPlatformProfile(), deliveryEvidence(),
     observabilityProfileEvidence(), backupRestoreEvidence(), securityPolicyEvidence(), listRegs(),
   ]);
@@ -2669,7 +2918,7 @@ async function platformReadinessStatus() {
     { key: 'platform-control', label: 'Platform Control Ready', ready: platformControl.ready, detail: platformControl.ready ? 'Supabase · Gitea · OAA ready' : platformControl.reason, route: '/manage/platform-control' },
     { key: 'main-shell', label: 'Main Shell Baseline Ready', ready: mainShell.ready, detail: mainShell.ready ? 'Console native baseline ready' : 'Console/Auth/Backend/DUPA/OAA workload incomplete', route: '/manage/observability' },
     { key: 'cluster-manager', label: 'Cluster Manager Activated', ready: clusterManager.ready, detail: `${clusterManager.phase} · workload ${clusterManager.workload}`, route: '/manage/extensions' },
-    { key: 'his-binding', label: 'HIS Observability Binding Connected', ready: his.ready, detail: his.ready ? 'HIS issued a live Console binding' : (his.reason || his.state), route: '/manage/observability' },
+    { key: 'his-preflight', label: 'HIS Preflight Ready', ready: his.ready, detail: his.ready ? `SRL-L1 ${his.summary?.coreReady || 0}/${his.summary?.coreTotal || 0} core Ready · checked ${his.checkedAt}` : (his.reason || his.state), route: '/p/cluster-manager/his/his' },
   ];
   const prerequisitesReady = prerequisites.every((x) => x.ready);
   const supportAdmission = platformSupportAdmission(profile.declared, prerequisitesReady, capabilities);
@@ -2729,6 +2978,8 @@ async function platformReadinessStatus() {
       // lacks, while activation stays behind the Platform Support Profile.
       pfsPluginStageAllowed: true,
       pfsPluginActivationAllowed: supportReady,
+      domainStageAllowed: true,
+      domainActivationAllowed: domainAdmissionReady,
       // Compatibility alias for older clients; like foundationInstallAllowed it
       // now reports the activation gate, not an installation gate.
       pfsPluginInstallAllowed: supportReady,
@@ -3123,6 +3374,13 @@ const server = http.createServer(async (req, res) => {
       try {
         const inspection = await inspectModuleImage(body.image);
         const pkg = packageFromInspection(inspection);
+        let foundationAuthorization = null;
+        if (pkg.metadata.name === FOUNDATION_ID) {
+          const [currentPkg, currentReg] = await Promise.all([getPackage(FOUNDATION_ID), getReg(FOUNDATION_ID)]);
+          if (currentPkg.ok && currentReg.ok) {
+            foundationAuthorization = foundationUpgradeAuthorization(currentPkg.json, currentReg.json, pkg, actor, opId);
+          }
+        }
         // A PFS plugin installs and stages unconditionally; the Platform Support
         // Profile gates activation, not installation (CONSTITUTION-0003 §7.2/§7.3,
         // CONSTITUTION-0004 §8.4 — the pre-Established gates cover operand detail,
@@ -3131,25 +3389,47 @@ const server = http.createServer(async (req, res) => {
         // naming the missing capability, so the staged registration is now the
         // thing that reports it.
         let pendingCapabilities = [];
+        let activationReason = '';
         if (pkg.spec.hostRef === FOUNDATION_ID) {
           const readiness = await platformReadinessStatus();
           if (!readiness.admission.pfsPluginActivationAllowed) {
+            activationReason = 'PlatformSupportProfileIncomplete';
             pendingCapabilities = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
             await durableAudit(actor, 'pfs-plugin-stage', pkg.metadata.name, 'accepted',
               `staged pending Platform Support Profile: ${pendingCapabilities.join(', ') || 'unknown'}`, opId);
+          }
+        } else if (requiresDomainAdmission(pkg)) {
+          const readiness = await platformReadinessStatus();
+          if (!readiness.admission.domainActivationAllowed) {
+            activationReason = 'DomainAdmissionLocked';
+            pendingCapabilities = ['PFSEstablished', 'PlatformSupportProfile'];
+            await durableAudit(actor, 'domain-shell-stage', pkg.metadata.name, 'accepted',
+              'staged pending PFS establishment and Platform Support Profile', opId);
           }
         }
         const stored = await upsertPackage(pkg);
         if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, { error: 'PackageStoreFailed', status: stored.status, opId });
         const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, installationProvenance(actor, opId, body.client));
         if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
+        if (pkg.metadata.name === FOUNDATION_ID) {
+          const authorizationStored = await setFoundationUpgradeAuthorization(foundationAuthorization);
+          if (!authorizationStored.ok) {
+            await durableAudit(actor, 'foundation-update-stage', pkg.metadata.name, 'denied', 'UpgradeAuthorizationStatusWriteFailed', opId);
+            return json(res, authorizationStored.status >= 500 ? 502 : authorizationStored.status, {
+              error: 'UpgradeAuthorizationStatusWriteFailed', status: authorizationStored.status, opId,
+            });
+          }
+          await durableAudit(actor, 'foundation-update-stage', pkg.metadata.name,
+            foundationAuthorization ? 'accepted' : 'staged',
+            foundationAuthorization ? `${foundationAuthorization.fromDigest}->${foundationAuthorization.toDigest}` : 'no verified activated origin', opId);
+        }
         await durableAudit(actor, 'extension-install', pkg.metadata.name, 'accepted', inspection.image, opId);
         reconcile().catch((e) => console.error('reconcile error', e));
         return json(res, 202, {
           accepted: true, id: pkg.metadata.name, desiredState: 'Installed',
           image: inspection.image, verification: inspection.verification,
           ...(pendingCapabilities.length
-            ? { activation: { allowed: false, reason: 'PlatformSupportProfileIncomplete', pendingCapabilities } }
+            ? { activation: { allowed: false, reason: activationReason, pendingCapabilities } }
             : {}),
         });
       } catch (e) {
@@ -3242,9 +3522,7 @@ const server = http.createServer(async (req, res) => {
         const targetPkg = await getPackage(id);
         if (targetPkg.ok && targetPkg.json?.spec?.hostRef === FOUNDATION_ID) {
           const readiness = await platformReadinessStatus();
-          const targetReg = await getReg(id);
-          const verifiedUpdate = action === 'enable' && targetReg.ok && verifiedStagedUpdate(targetReg.json);
-          if (!readiness.admission.pfsPluginActivationAllowed && !verifiedUpdate) {
+          if (!readiness.admission.pfsPluginActivationAllowed) {
             const pending = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
             await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequiredForPfsPlugin', opId);
             return json(res, 409, {
@@ -3255,8 +3533,17 @@ const server = http.createServer(async (req, res) => {
               opId,
             });
           }
-          if (!readiness.admission.pfsPluginActivationAllowed && verifiedUpdate) {
-            await durableAudit(actor, 'pfs-plugin-update-activate', id, 'accepted', 'verified staged update; activation gate remains closed for new plugins', opId);
+        } else if (targetPkg.ok && requiresDomainAdmission(targetPkg.json)) {
+          const readiness = await platformReadinessStatus();
+          if (!readiness.admission.domainActivationAllowed) {
+            await durableAudit(actor, action, id, 'denied', 'DomainAdmissionLocked', opId);
+            return json(res, 409, {
+              error: 'DomainAdmissionLocked',
+              message: 'Domain subShell activation requires live PFS establishment and Platform Support Profile Ready. The subShell may remain installed and staged.',
+              pendingCapabilities: ['PFSEstablished', 'PlatformSupportProfile'],
+              route: '/manage/platform-control',
+              opId,
+            });
           }
         }
       }
