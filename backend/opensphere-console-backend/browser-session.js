@@ -613,6 +613,42 @@ function createBrowserSessionManager({
     return result;
   }
 
+  /**
+   * Rejoin a bearer forwarded by an approved owner service with the durable
+   * browser-session assurance record.  A Supabase access token proves AAL2,
+   * but it does not carry the exact time of the most recent factor challenge.
+   * Only the active ledger row that owns the same subject/session and stores
+   * the exact encrypted token may supply last_reauthenticated_at.
+   */
+  async function actorForForwardedAccessToken(accessToken, verifiedActor) {
+    const token = String(accessToken || '');
+    const subject = String(verifiedActor?.sub || '');
+    const authSessionId = String(verifiedActor?.authSessionId || '');
+    if (!token || !subject || !authSessionId) return null;
+
+    const rows = await restRequest('browser_session', {
+      query: `select=*&owner_id=eq.${encodeURIComponent(subject)}&supabase_session_id=eq.${encodeURIComponent(authSessionId)}&status=eq.active&order=last_seen_at.desc&limit=5`,
+    });
+    const current = now().getTime();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (!row || row.status !== 'active' || expiryEvent(row, current)) continue;
+      let storedToken = '';
+      try { storedToken = decodeSecret(row.access_token_ciphertext, key); }
+      catch { continue; }
+      if (!safeEqualHash(sha256(storedToken), token)) continue;
+      if (String(row.assurance || 'aal1') !== String(verifiedActor.assurance || 'aal1')) continue;
+      return {
+        ...verifiedActor,
+        browserSessionId: row.id,
+        authSessionId: row.supabase_session_id || verifiedActor.authSessionId,
+        lastReauthenticatedAt: row.last_reauthenticated_at || null,
+        provider: 'supabase-browser-owner-delegation',
+        credentialRevision: Number(row.credential_revision || verifiedActor.credentialRevision || 0),
+      };
+    }
+    return null;
+  }
+
   async function touch(req) {
     const auth = await authenticate(req);
     const current = now();
@@ -862,6 +898,7 @@ function createBrowserSessionManager({
     verifyTotp,
     stepUp,
     events,
+    actorForForwardedAccessToken,
     cachedActorForAccessToken(accessToken) {
       const cached = verifiedByAccessToken.get(sha256(accessToken));
       if (!cached || cached.validUntil <= now().getTime()) return null;

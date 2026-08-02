@@ -286,6 +286,40 @@ test('refreshes recent aal2 proof through the active browser session without exp
   assert.doesNotMatch(h.row().access_token_ciphertext, /access-aal2/);
 });
 
+test('rehydrates recent aal2 only for the exact token forwarded by an owner service', async () => {
+  const h = harness({ verifiedFactor: true });
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+    duration: '8h',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  const req = request({
+    cookie: `__Host-opensphere_session=${encodeURIComponent(handle)}`,
+    csrf: created.csrfToken,
+    method: 'POST',
+  });
+  await h.manager.completeMfa(req, '123456');
+
+  const verifiedActor = {
+    sub: '22222222-2222-4222-8222-222222222222',
+    username: 'operator@example.com',
+    assurance: 'aal2',
+    authSessionId: 'supabase-session',
+    credentialRevision: 0,
+    groups: ['console-admins'],
+  };
+  const delegated = await h.manager.actorForForwardedAccessToken('access-aal2', verifiedActor);
+  assert.equal(delegated.provider, 'supabase-browser-owner-delegation');
+  assert.equal(delegated.lastReauthenticatedAt, '2026-07-27T00:00:00.000Z');
+  assert.equal(delegated.browserSessionId, h.row().id);
+
+  assert.equal(await h.manager.actorForForwardedAccessToken('access-a', {
+    ...verifiedActor,
+    assurance: 'aal1',
+  }), null);
+});
+
 test('adopts one legacy browser session by rotating its refresh credential once', async () => {
   const h = harness();
   const adopted = await h.manager.adoptLegacy(request({ method: 'POST' }), {

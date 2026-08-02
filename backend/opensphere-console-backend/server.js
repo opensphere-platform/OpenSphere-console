@@ -607,9 +607,17 @@ async function verifyAuthed(req) {
       const claims = b64urlParsePayload(match[1]);
       if (claims?.iss !== SUPABASE_AUTH_ISSUER) throw { code: 401, msg: 'unsupported token issuer' };
     }
-    return verifySupabaseToken(match[1]);
+    const actor = await verifySupabaseToken(match[1]);
+    const delegated = browserSessions
+      ? await browserSessions.actorForForwardedAccessToken(match[1], actor)
+      : null;
+    return delegated || actor;
   }
-  return verifySupabaseToken(match[1]);
+  const actor = await verifySupabaseToken(match[1]);
+  const delegated = browserSessions
+    ? await browserSessions.actorForForwardedAccessToken(match[1], actor)
+    : null;
+  return delegated || actor;
 }
 
 async function resolveConsoleActor(subject, claims = {}) {

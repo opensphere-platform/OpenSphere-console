@@ -153,6 +153,14 @@ test('browser admin requests resolve the HttpOnly session at the Console enforce
   assert.doesNotMatch(httpService, /void this\.auth\.reAuthenticate\(\)/);
 });
 
+test('owner-service bearer delegation preserves recent MFA only through the exact browser-session ledger row', () => {
+  assert.match(backend, /actorForForwardedAccessToken\(match\[1\], actor\)/);
+  assert.match(browserSession, /supabase_session_id=eq\.\$\{encodeURIComponent\(authSessionId\)\}/);
+  assert.match(browserSession, /safeEqualHash\(sha256\(storedToken\), token\)/);
+  assert.match(browserSession, /lastReauthenticatedAt: row\.last_reauthenticated_at \|\| null/);
+  assert.doesNotMatch(browserSession, /lastReauthenticatedAt:\s*new Date\([^\n]*iat/);
+});
+
 test('all deployed Supabase JWT consumers use the public Auth issuer', () => {
   assert.match(deploy, /SUPABASE_AUTH_ISSUER, value: "https:\/\/localhost:1114\/auth\/v1"/);
   assert.match(deploy, /CONSOLE_PUBLIC_URL, value: "https:\/\/localhost:1114"/);
