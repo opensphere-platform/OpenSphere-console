@@ -68,6 +68,43 @@ final result: passed
 
 ---
 
+# Platform Release and Extension administration field sizing — Design QA
+
+Date: 2026-08-02 KST
+
+## Runtime evidence
+
+- Authenticated runtime: `https://localhost:1114/manage/platform-release` and `https://localhost:1114/manage/extensions/subshells`
+- Console source revision: `677a9f75b5e0839beb81095a56cf59489ce29827`
+- Official display version: `202608022258`
+- Exact image: `ghcr.io/opensphere-platform/opensphere-console@sha256:1d956f31ecfe6dc4a1ffc471b1eb54eb6e2f6101f471e10c9d45d79e91afad2d`
+- Governed rollout receipt: PR #14, `Applied` and `Observed`; deployment 2/2 Ready.
+
+## Findings and structural fix
+
+1. The first CSS-only attempt targeted Clarity-generated wrappers across Angular component view-encapsulation boundaries. The rule therefore did not reach the rendered wrapper and the controls remained narrow.
+2. The Release Lock editor now uses a native textarea owned by the page component. Its width and height are applied directly to the rendered element.
+3. The Extension installation fields now use explicit Clarity form DOM owned by the same component. Their flex sizing no longer depends on styling a child component's encapsulated wrapper.
+
+## Measured result
+
+- Platform Release request card: 1255 px wide.
+- Release Lock JSON editor: 1221 px wide and 360 px high; the editor occupies the full 1221 px content track.
+- Extension `OCI image` field: 844 px wide.
+- Extension `설치 사유` field: 643 px wide.
+- Both pages were visually inspected after the exact-digest rollout at a 2132 px browser viewport. No narrow 160–185 px administration control remains in the requested surfaces.
+
+## Verification
+
+- Layout/static regression tests: 15 passed, 0 failed.
+- Production build: passed; existing bundle/style budget and `qrcode` CommonJS warnings remain.
+- Kubernetes rollout: 2/2 updated, ready, and available replicas.
+- Platform Release current source and receipt: `677a9f75b5e0…e29827`, PR #14 `Applied` / `Observed`.
+
+final result: passed
+
+---
+
 # Data & Identity / Change Control consistency — Design QA
 
 Date: 2026-07-22 (KST)
