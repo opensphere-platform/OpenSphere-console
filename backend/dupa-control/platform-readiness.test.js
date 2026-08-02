@@ -79,11 +79,18 @@ test('HIS status is fail-closed on an unavailable or degraded Cluster Manager re
     state,
     checkedAt: new Date().toISOString(),
     items: [],
-    summary: { coreTotal: 0, coreReady: 0 },
+    summary: { coreTotal: 8, coreReady: state === 'Ready' ? 8 : 7, selectedProfilesTotal: 1, selectedProfilesReady: 1 },
+    projection: { authority: 'Cluster Manager HIS', realizationLayer: 'SRL-L1' },
   });
   assert.equal(normalizeHisStatus({ ok: false, status: 502, body: null }).ready, false);
   assert.equal(normalizeHisStatus({ ok: true, status: 200, body: status('Degraded') }).ready, false);
-  assert.equal(normalizeHisStatus({ ok: true, status: 200, body: status('Ready') }).ready, true);
+  const ready = normalizeHisStatus({ ok: true, status: 200, body: status('Ready') });
+  assert.equal(ready.ready, true);
+  assert.equal(ready.contract, 'opensphere.his.readiness-projection/v1');
+  assert.deepEqual(ready.core, { ready: 8, total: 8 });
+  assert.deepEqual(ready.selectedProfiles, { ready: 1, total: 1 });
+  assert.equal(ready.authority, 'Cluster Manager HIS');
+  assert.equal(ready.realizationLayer, 'SRL-L1');
   assert.equal(normalizeHisStatus({ ok: true, status: 200, body: { ...status('Ready'), checkedAt: '2020-01-01T00:00:00.000Z' } }).ready, false);
 });
 
@@ -472,4 +479,11 @@ test('Delivery evidence reader is namespace-scoped and read-only', () => {
   const roleEnd = manifest.indexOf('\n---', roleStart);
   const role = manifest.slice(roleStart, roleEnd);
   assert.doesNotMatch(role, /verbs: \[[^\]]*(?:create|update|patch|delete)/);
+});
+
+test('Platform readiness consumes the named HIS preflight probe instead of rebranding Observability evidence', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /hisPreflight:\s*his, observability/);
+  assert.doesNotMatch(controller, /const his = \{\s*ready: observability\.stackReady/);
+  assert.match(controller, /his\.core\.ready\}\/\$\{his\.core\.total/);
 });

@@ -39,16 +39,16 @@ test('release manifest is hydrated from the exact compiled CLI artifacts', async
   }
 });
 
-test('Console and diagnostic CLI images compile the manifest version', async () => {
+test('the independent CLI artifact image compiles the manifest version', async () => {
   const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
-  const diagnosticDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
+  const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
   const releaseManifest = JSON.parse(await readFile(new URL('./index.json', import.meta.url), 'utf8'));
   const escapedVersion = releaseManifest.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const versionPattern = new RegExp(`main\\.version=${escapedVersion}`);
-  assert.match(rootDockerfile, versionPattern);
-  assert.match(diagnosticDockerfile, versionPattern);
-  assert.match(rootDockerfile, /CLI_UPDATE_SIGNING_PROFILE/);
-  assert.match(rootDockerfile, /cli_update_signing_key/);
+  assert.match(cliDockerfile, versionPattern);
+  assert.match(cliDockerfile, /CLI_UPDATE_SIGNING_PROFILE/);
+  assert.match(cliDockerfile, /cli_update_signing_key/);
+  assert.doesNotMatch(rootDockerfile, /backend\/os-cli|cli-manifest|cli-build|CLI_UPDATE_/);
   assert.deepEqual(
     releaseManifest.links.map(({ os, arch }) => `${os}/${arch}`),
     ['linux/amd64', 'darwin/arm64', 'darwin/amd64', 'windows/amd64']
@@ -57,17 +57,19 @@ test('Console and diagnostic CLI images compile the manifest version', async () 
 
 test('the macOS CLI is an optional build input that a release turns back into a requirement', async () => {
   const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
+  const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
   const workflow = await readFile(new URL('../../.github/workflows/publish-ga-images.yml', import.meta.url), 'utf8');
   const publisher = await readFile(new URL('../../scripts/Publish-LocalEdge.ps1', import.meta.url), 'utf8');
 
   // Defaulting to an empty context is what lets a Windows host build the Console
   // at all; darwin needs cgo against Security.framework and cannot be produced
   // here. The copy must therefore be conditional, never a hard COPY --from.
-  assert.match(rootDockerfile, /ARG CLI_DARWIN_CONTEXT=cli-darwin-absent/);
-  assert.match(rootDockerfile, /ARG CLI_REQUIRE_DARWIN=false/);
-  assert.match(rootDockerfile, /FROM scratch AS cli-darwin-absent/);
-  assert.doesNotMatch(rootDockerfile, /COPY --from=macos-cli/, 'the macOS context must not be mandatory');
-  assert.match(rootDockerfile, /if \[ "\$\{CLI_REQUIRE_DARWIN\}" = "true" \]/, 'a release must still fail without darwin');
+  assert.match(cliDockerfile, /ARG CLI_DARWIN_CONTEXT=cli-darwin-absent/);
+  assert.match(cliDockerfile, /ARG CLI_REQUIRE_DARWIN=false/);
+  assert.match(cliDockerfile, /FROM scratch AS cli-darwin-absent/);
+  assert.doesNotMatch(cliDockerfile, /COPY --from=macos-cli/, 'the macOS context must not be mandatory');
+  assert.match(cliDockerfile, /if \[ "\$\{CLI_REQUIRE_DARWIN\}" = "true" \]/, 'a release must still fail without darwin');
+  assert.doesNotMatch(rootDockerfile, /CLI_DARWIN_CONTEXT|CLI_REQUIRE_DARWIN/);
 
   // GA re-arms the requirement, so a release can never ship the reduced set.
   assert.match(workflow, /CLI_DARWIN_CONTEXT=macos-cli/);
@@ -84,6 +86,25 @@ test('the macOS CLI is an optional build input that a release turns back into a 
   assert.doesNotMatch(publisher, /setup-cli=https?:\/\//i);
   assert.doesNotMatch(publisher, /opensphere-cli-darwin/);
   assert.doesNotMatch(publisher, /backend\/os-cli changed/);
+  assert.match(publisher, /Key = 'cliArtifacts'; Image = 'opensphere-os-cli'/);
+});
+
+test('the shell proxies downloads to the independently ready CLI artifact service', async () => {
+  const nginx = await readFile(new URL('../../nginx/default.conf.template', import.meta.url), 'utf8');
+  const shellManifest = await readFile(new URL('../../deploy/opensphere-console.yaml', import.meta.url), 'utf8');
+  const cliManifest = await readFile(new URL('./deploy.yaml', import.meta.url), 'utf8');
+  const deployer = await readFile(new URL('../../scripts/Deploy-LocalEdgeCliArtifacts.ps1', import.meta.url), 'utf8');
+  assert.match(nginx, /location \/api\/cli\/[\s\S]*proxy_pass http:\/\/os-cli\.opensphere-console\.svc\.cluster\.local:8080\//);
+  assert.match(nginx, /cli_artifact_service_unavailable/);
+  assert.match(nginx, /Console UI remains available/);
+  assert.doesNotMatch(nginx, /location \/api\/cli\/[\s\S]{0,500}try_files \$uri/);
+  assert.doesNotMatch(shellManifest, /\/usr\/share\/nginx\/html\/api\/cli/);
+  assert.match(cliManifest, /image: __OPENSPHERE_OS_CLI_IMAGE__/);
+  assert.match(cliManifest, /readinessProbe: \{ httpGet: \{ path: \/index\.json/);
+  assert.match(deployer, /opensphere-os-cli@sha256:\[a-f0-9\]\{64\}/);
+  assert.match(deployer, /docker buildx imagetools inspect \$Image/);
+  assert.match(deployer, /deployment\/os-cli --timeout=600s/);
+  assert.match(deployer, /if \(\$ready -ne '2\/2'\)/);
 });
 
 test('production manifest signing fails closed without release key material', async () => {

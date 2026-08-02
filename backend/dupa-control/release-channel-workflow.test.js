@@ -54,9 +54,12 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   // No component selector means the governed integrated release. An explicit
   // selector narrows the publication without weakening the full-release default.
   assert.match(localEdgePublisher, /\[string\[\]\]\$Components = @\('console', 'backend',/);
-  assert.match(localEdgePublisher, /\$partialPublication = \$images\.Count -lt \$canonicalComponentCount/);
+  assert.match(localEdgePublisher, /\$canonicalImages = @\(\$allImages \| Where-Object \{ \$_\.Key -ne 'cliArtifacts' \}\)/);
+  assert.match(localEdgePublisher, /\$partialPublication = -not \$integratedPublication/);
   assert.match(localEdgePublisher, /Where-Object \{ \$requestedComponents\.Contains\(\$_.Key\) \}/);
   assert.match(localEdgePublisher, /OpenSphereEdgeComponentPublication/);
+  assert.match(localEdgePublisher, /ValidateSet\('console', 'cliArtifacts', 'backend'/);
+  assert.match(localEdgePublisher, /Key = 'cliArtifacts'; Image = 'opensphere-os-cli'/);
   assert.match(localEdgePublisher, /\$componentEvidence = \[ordered\]@\{\}/);
   assert.match(localEdgePublisher, /\[string\]\$SetupSourcePath = ''/);
   assert.match(localEdgePublisher, /SetupSourcePath must be a clean governed Setup CLI Git worktree/);

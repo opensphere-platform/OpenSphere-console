@@ -57,12 +57,10 @@ spec:
                 - -ec
                 - >-
                   grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json &&
-                  grep -q '"version": "0.8.1"' /usr/share/nginx/html/api/cli/index.json &&
-                  grep -q '"algorithm": "Ed25519"' /usr/share/nginx/html/api/cli/index.json &&
                   grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js &&
-                  ! grep -Rqs 'os-source-chips' /usr/share/nginx/html/main-*.js &&
-                  ! grep -aRqs '/bff/cli' /usr/share/nginx/html/api/cli/opensphere-cli-*
-            # Authentication uses /api/identity/cli/; retired BFF artifacts fail readiness.
+                  ! grep -Rqs 'os-source-chips' /usr/share/nginx/html/main-*.js
+            # CLI artifacts have their own Deployment readiness. Shell readiness
+            # proves only the UI contract, so the two rollouts cannot mask each other.
             initialDelaySeconds: 2
             # Contract checks scan the production bundle. Constrained single-node
             # bootstrap clusters can legitimately need more than five seconds.

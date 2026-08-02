@@ -2466,6 +2466,9 @@ function normalizeHisStatus(response) {
   else if (!fresh) reason = `Cluster Manager HIS status is stale (${Math.floor(ageMs / 1000)}s old)`;
   else if (body.state !== 'Ready') reason = `HIS ${body.state}: ${blockers.map((item) => `${item.id}/${item.reason}`).join(', ') || 'required capability incomplete'}`;
   return {
+    contract: 'opensphere.his.readiness-projection/v1',
+    authority: body.projection?.authority || 'Cluster Manager HIS',
+    realizationLayer: body.projection?.realizationLayer || 'SRL-L1',
     ready,
     state: body.state || (response?.ok ? 'Unknown' : 'Unavailable'),
     reason: ready ? '' : reason,
@@ -2474,6 +2477,14 @@ function normalizeHisStatus(response) {
     contractValid,
     ageSeconds: Number.isFinite(ageMs) ? Math.floor(ageMs / 1000) : null,
     summary: body.summary || null,
+    core: {
+      ready: Number(body.summary?.coreReady || 0),
+      total: Number(body.summary?.coreTotal || 0),
+    },
+    selectedProfiles: {
+      ready: Number(body.summary?.selectedProfilesReady || 0),
+      total: Number(body.summary?.selectedProfilesTotal || 0),
+    },
     blockers,
   };
 }
@@ -2877,13 +2888,8 @@ async function platformReadinessStatus() {
 	const { values, failures: probeFailures } = settledProbeProjection(probes, settled);
 	const {
 		platformControl, mainShell, clusterManager, profile, delivery,
-		observability, backupRestore, securityPolicy, registrations: regs,
+		hisPreflight: his, observability, backupRestore, securityPolicy, registrations: regs,
 	} = values;
-  const his = {
-    ready: observability.stackReady,
-    state: observability.mode,
-    reason: observability.reason,
-  };
   const capabilities = [
     condition('Delivery', delivery.ready, delivery.ready ? 'Verified' : 'DeliveryEvidenceMissing', delivery.reason || 'GitOps delivery evidence verified', [delivery]),
     condition('Observability', observability.ready, observability.ready ? 'Verified' : 'TelemetryEvidenceMissing', observability.reason || 'Live telemetry verified', [observability]),
@@ -2894,7 +2900,7 @@ async function platformReadinessStatus() {
     { key: 'platform-control', label: 'Platform Control Ready', ready: platformControl.ready, detail: platformControl.ready ? 'Supabase · Gitea · OAA ready' : platformControl.reason, route: '/manage/platform-control' },
     { key: 'main-shell', label: 'Main Shell Baseline Ready', ready: mainShell.ready, detail: mainShell.ready ? 'Console native baseline ready' : 'Console/Auth/Backend/DUPA/OAA workload incomplete', route: '/manage/observability' },
     { key: 'cluster-manager', label: 'Cluster Manager Activated', ready: clusterManager.ready, detail: `${clusterManager.phase} · workload ${clusterManager.workload}`, route: '/manage/extensions' },
-    { key: 'his-preflight', label: 'HIS Preflight Ready', ready: his.ready, detail: his.ready ? `SRL-L1 ${his.summary?.coreReady || 0}/${his.summary?.coreTotal || 0} core Ready · checked ${his.checkedAt}` : (his.reason || his.state), route: '/p/cluster-manager/his/his' },
+    { key: 'his-preflight', label: 'HIS Preflight Ready', ready: his.ready, detail: his.ready ? `${his.realizationLayer} ${his.core.ready}/${his.core.total} core Ready · checked ${his.checkedAt}` : (his.reason || his.state), route: '/p/cluster-manager/his/his' },
   ];
   const prerequisitesReady = prerequisites.every((x) => x.ready);
   const supportAdmission = platformSupportAdmission(profile.declared, prerequisitesReady, capabilities);

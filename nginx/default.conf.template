@@ -303,15 +303,20 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # Main Shell native os CLI — artifacts are packaged in the Console image itself.
+    # Main Shell native os CLI. Artifact compilation and rollout are intentionally
+    # independent from the Angular shell; this route only preserves the stable
+    # same-origin download contract exposed to administrators and `os update`.
     location /api/cli/ {
         # /api/cli is artifact delivery only. A retired CLI once posted its login
         # request here and nginx's default HTML 405 leaked into the terminal.
         # Keep the API error contract machine-readable even for stale clients.
         error_page 404 = @cli_artifact_not_found;
+        error_page 502 503 504 = @cli_artifact_unavailable;
         error_page 418 = @cli_method_not_allowed;
         if ($request_method !~ ^(GET|HEAD)$) { return 418; }
-        try_files $uri =404;
+        proxy_intercept_errors on;
+        proxy_pass http://os-cli.opensphere-console.svc.cluster.local:8080/;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
     location @cli_method_not_allowed {
@@ -323,6 +328,12 @@ server {
     location @cli_artifact_not_found {
         default_type application/json;
         return 404 '{"error":"cli_artifact_not_found","message":"The requested CLI artifact does not exist."}';
+    }
+
+    location @cli_artifact_unavailable {
+        default_type application/json;
+        add_header Retry-After "5" always;
+        return 503 '{"error":"cli_artifact_service_unavailable","message":"The CLI artifact service is not ready. Console UI remains available."}';
     }
 
     # 동적 기능 컨테이너 범용 프록시 (manifest v2 apiBase = /api/plugins/<id>).

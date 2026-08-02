@@ -81,3 +81,17 @@ test('local edge tag promotion preserves the exact single-platform manifest dige
   const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
   assert.match(publisher, /imagetools create --prefer-index=false --tag \$target/);
 });
+
+test('local edge promotion has one fail-closed OCI metadata preflight before any channel movement', () => {
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+  const preflight = publisher.indexOf('Assert-LocalEdgeImageMetadata -Repository $repository');
+  const immutable = publisher.indexOf('Write-Host "[step 05/06] Publish immutable date tag');
+  assert.ok(preflight > 0 && immutable > preflight);
+  assert.match(publisher, /docker buildx imagetools inspect --format '\{\{json \.Image\}\}'/);
+  assert.match(publisher, /OCI platform mismatch/);
+  for (const label of [
+    'io.opensphere.channel', 'io.opensphere.source-revision', 'io.opensphere.release-tag',
+    'org.opencontainers.image.version', 'opensphere.io/build-authority',
+    'opensphere.io/release-class', 'opensphere.io/ga-eligible',
+  ]) assert.match(publisher, new RegExp(label.replaceAll('.', '\\.')));
+});
