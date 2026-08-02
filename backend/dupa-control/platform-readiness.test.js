@@ -439,6 +439,8 @@ test('image admission policies deny mutable and off-registry workload references
   assert.match(policy, /resources: \["cronjobs"\]/);
   assert.match(policy, /opensphere-console-data/);
   assert.match(policy, /ghcr\\\\\.io\/opensphere-platform/);
+  assert.match(policy, /\[a-z0-9\._\/-\]\*/);
+  assert.match(policy, /\(:\[A-Za-z0-9_\]/);
   assert.match(policy, /@sha256:\[a-f0-9\]\{64\}/);
   assert.match(policy, /validationActions: \[Deny\]/);
 });

@@ -32,10 +32,10 @@ spec:
   validations:
     - expression: >-
         object.spec.template.spec.containers.all(c,
-          c.image.matches('^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64}$')) &&
+          c.image.matches('^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[a-f0-9]{64}$')) &&
         (!has(object.spec.template.spec.initContainers) ||
           object.spec.template.spec.initContainers.all(c,
-            c.image.matches('^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64}$')))
+            c.image.matches('^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[a-f0-9]{64}$')))
       message: OpenSphere managed workloads require a release-pinned ghcr.io/opensphere-platform image digest
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -72,10 +72,10 @@ spec:
   validations:
     - expression: >-
         object.spec.jobTemplate.spec.template.spec.containers.all(c,
-          c.image.matches('^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64}$')) &&
+          c.image.matches('^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[a-f0-9]{64}$')) &&
         (!has(object.spec.jobTemplate.spec.template.spec.initContainers) ||
           object.spec.jobTemplate.spec.template.spec.initContainers.all(c,
-            c.image.matches('^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64}$')))
+            c.image.matches('^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[a-f0-9]{64}$')))
       message: OpenSphere managed CronJobs require a release-pinned ghcr.io/opensphere-platform image digest
 ---
 apiVersion: admissionregistration.k8s.io/v1
