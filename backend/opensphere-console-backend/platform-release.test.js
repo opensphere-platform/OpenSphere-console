@@ -219,6 +219,8 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(ui, /Component Lock 생성/);
   assert.match(ui, /\/api\/platform\/releases\/component-target/);
   assert.match(ui, /선택하지 않은 구성요소는 현재 설치 lock에서 그대로 계승/);
+  assert.match(ui, /canGenerateComponentTarget\(\): boolean/);
+  assert.doesNotMatch(ui, /canGenerateComponentTarget\s*=\s*computed/);
   assert.match(ui, /다른 관리자의 교차 승인/);
   assert.match(ui, /this\.status\(\)\?\.execution\.ready/);
   assert.match(ui, /candidate·stable은 통합 복구 drill/);

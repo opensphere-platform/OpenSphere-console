@@ -295,11 +295,14 @@ export class AdminPlatformRelease implements OnInit {
   ));
 
   readonly componentDraftNames = computed(() => Object.keys(this.componentDraft()).sort());
-  readonly canGenerateComponentTarget = computed(() => Boolean(
-    /^[a-f0-9]{40}$/.test(this.componentSourceRevision.trim())
-    && this.componentDraftNames().length
-    && !this.builderError(),
-  ));
+
+  canGenerateComponentTarget(): boolean {
+    return Boolean(
+      /^[a-f0-9]{40}$/.test(this.componentSourceRevision.trim())
+      && this.componentDraftNames().length
+      && !this.builderError()
+    );
+  }
 
   async ngOnInit(): Promise<void> { await this.refresh(); }
 
