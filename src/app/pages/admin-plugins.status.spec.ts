@@ -51,6 +51,19 @@ test('Installed 목록과 상세 패널이 artifact 및 Console API 설치 prove
   assert.ok(source.includes('Console과 <code>os</code> CLI'));
 });
 
+test('관리 작업 입력 필드는 값 길이에 맞게 넓어지고 좁은 화면에서는 wrap된다', () => {
+  for (const className of [
+    'registry-access-form--credentials',
+    'registry-access-form--revocation',
+    'registry-access-form--install',
+  ]) {
+    assert.ok(source.includes(className), `${className} 폭 정책이 필요하다`);
+  }
+  assert.match(source, /registry-access-form \.clr-input \{ box-sizing: border-box; width: 100%; max-width: none; \}/);
+  assert.match(source, /registry-access-form--revocation \.clr-form-control:nth-child\(1\) \{ flex: 1\.5 1 34rem; \}/);
+  assert.match(source, /registry-access-form--install clr-input-container:nth-child\(1\) \{ flex: 1\.5 1 36rem; \}/);
+});
+
 test('Console 관리자가 검증된 이전 release로 롤백하고 제거 사유를 남길 수 있다', () => {
   for (const contract of [
     "run('rollback', r.name)",
