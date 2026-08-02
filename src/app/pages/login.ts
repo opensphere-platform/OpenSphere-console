@@ -61,6 +61,7 @@ export class LoginPage {
       await this.auth.login(this.email, this.password, this.duration);
       this.password = '';
       if (this.auth.mfaEnrollmentRequired()) await this.router.navigateByUrl('/me?tab=security&enroll=totp');
+      else if (!this.auth.loginRequired()) await this.router.navigateByUrl(this.auth.consumeNavigationIntent());
     }
     catch (error) { this.error.set(error instanceof Error ? error.message : String(error)); }
     finally { this.working.set(false); }
@@ -68,7 +69,11 @@ export class LoginPage {
 
   async submitMfa(): Promise<void> {
     this.error.set(''); this.working.set(true);
-    try { await this.auth.finishMfaLogin(this.totp); this.totp = ''; }
+    try {
+      await this.auth.finishMfaLogin(this.totp);
+      this.totp = '';
+      await this.router.navigateByUrl(this.auth.consumeNavigationIntent());
+    }
     catch (error) { this.error.set(error instanceof Error ? error.message : String(error)); }
     finally { this.working.set(false); }
   }

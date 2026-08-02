@@ -11,6 +11,8 @@ import {
 const authSource = fs.readFileSync(new URL('./auth.service.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../app.ts', import.meta.url), 'utf8');
 const appConfigSource = fs.readFileSync(new URL('../app.config.ts', import.meta.url), 'utf8');
+const guardSource = fs.readFileSync(new URL('./authenticated.guard.ts', import.meta.url), 'utf8');
+const loginSource = fs.readFileSync(new URL('../pages/login.ts', import.meta.url), 'utf8');
 
 test('재부팅 지연은 빠르게 재시도한 뒤 30초 간격으로 계속 수렴한다', () => {
   assert.deepEqual(AUTH_BOOTSTRAP_RETRY_DELAYS_MS, [1_000, 2_000, 5_000, 10_000, 15_000, 30_000]);
@@ -37,4 +39,13 @@ test('Extension은 인증된 운영자 세션이 확인된 후에만 적재된�
   assert.match(appSource, /!this\.auth\.loginRequired\(\)/);
   assert.match(appSource, /this\.ext\.load\(\)/);
   assert.match(appSource, /자동으로 다시 연결합니다/);
+});
+
+test('인증 bootstrap 동안 deep link navigation을 취소하지 않고 원래 주소를 보존한다', () => {
+  assert.match(guardSource, /await auth\.waitForInitialAuthorization\(\)/);
+  assert.match(guardSource, /auth\.rememberNavigationIntent\(state\.url\)/);
+  assert.match(authSource, /while \(this\.initializing\(\) \|\| this\.autoRetryPending\(\)\)/);
+  assert.match(authSource, /pendingNavigationIntent/);
+  assert.match(loginSource, /this\.auth\.consumeNavigationIntent\(\)/);
+  assert.doesNotMatch(guardSource, /void auth\.reAuthenticate\(\);\s*return false/);
 });

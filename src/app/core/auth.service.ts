@@ -107,6 +107,8 @@ export class AuthService {
   private initializationInFlight = false;
   private initializationRetryAttempt = 0;
   private initializationRetryTimer?: number;
+  private readonly initializationWaiters = new Set<() => void>();
+  private pendingNavigationIntent = '';
   private readonly sessionChannel = typeof BroadcastChannel === 'undefined'
     ? null
     : new BroadcastChannel('opensphere.browser-session');
@@ -150,6 +152,50 @@ export class AuthService {
     } finally {
       this.initializing.set(false);
       this.initializationInFlight = false;
+      this.notifyInitializationWaiters();
+    }
+  }
+
+  /**
+   * Router guards call this during the first browser navigation. A deep link
+   * must wait for the opaque session bootstrap (including transient retries)
+   * instead of being synchronously cancelled and replaced by `/`.
+   */
+  async waitForInitialAuthorization(): Promise<boolean> {
+    while (this.initializing() || this.autoRetryPending()) {
+      await new Promise<void>((resolve) => this.initializationWaiters.add(resolve));
+    }
+    return this.hasValidToken();
+  }
+
+  rememberNavigationIntent(path: string): void {
+    const normalized = this.navigationIntent(path);
+    if (normalized) this.pendingNavigationIntent = normalized;
+  }
+
+  clearNavigationIntent(path?: string): void {
+    if (!path || this.pendingNavigationIntent === this.navigationIntent(path)) this.pendingNavigationIntent = '';
+  }
+
+  consumeNavigationIntent(fallback = '/'): string {
+    const target = this.pendingNavigationIntent || this.navigationIntent(fallback) || '/';
+    this.pendingNavigationIntent = '';
+    return target;
+  }
+
+  private notifyInitializationWaiters(): void {
+    const waiters = [...this.initializationWaiters];
+    this.initializationWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
+
+  private navigationIntent(path: string): string {
+    try {
+      const target = new URL(path || '/', window.location.origin);
+      if (target.origin !== window.location.origin || target.pathname.startsWith('/auth/')) return '';
+      return `${target.pathname}${target.search}${target.hash}`;
+    } catch {
+      return '';
     }
   }
 

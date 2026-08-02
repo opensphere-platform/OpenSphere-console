@@ -62,7 +62,8 @@ export const routes: Routes = [
       { path: 'apis', component: Apis },
       { path: 'cli', component: AdminCli },
       { path: 'console-admins', component: ConsoleAdmins },
-      { path: 'extensions', component: AdminPlugins },
+      { path: 'extensions', redirectTo: 'extensions/subshells', pathMatch: 'full' },
+      { path: 'extensions/:view', component: AdminPlugins },
       { path: 'roles', component: AdminRoles },
       {
         path: 'foundation-services',

@@ -1,6 +1,6 @@
 import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsRawIcon } from '../os/os-raw-icon';
@@ -51,6 +51,9 @@ interface TreeNode {
   children: TreeNode[];
   actionable: boolean;
 }
+
+type ExtensionManagementView = 'subshells' | 'plugins' | 'topology' | 'catalog' | 'audit' | 'bindings';
+const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshells', 'plugins', 'topology', 'catalog', 'audit', 'bindings'];
 
 /**
  * Admin Control Page (계획서 §7) — Catalog/Installed/Audit 탭.
@@ -273,8 +276,8 @@ interface TreeNode {
 
     <clr-tabs>
       <clr-tab>
-        <button clrTabLink>SubShells <span class="view-count">{{ subShellRegistrations().length }}</span></button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('subshells')">SubShells <span class="view-count">{{ subShellRegistrations().length }}</span></button>
+        <clr-tab-content *clrIfActive="activeView() === 'subshells'">
           <div class="extension-view-intro">
             <div><span class="view-kicker">FIRST-LEVEL OPERATING SHELLS</span><h2>SubShell 관리</h2></div>
             <p>Main Shell에 직접 연결되어 1단 메뉴와 독립 운영 영역을 제공하는 subShell만 표시합니다. plugin은 이 view에 포함하지 않습니다.</p>
@@ -290,8 +293,8 @@ interface TreeNode {
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>Plugins <span class="view-count">{{ pluginRegistrationCount() }}</span></button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ pluginRegistrationCount() }}</span></button>
+        <clr-tab-content *clrIfActive="activeView() === 'plugins'">
           <div class="extension-view-intro">
             <div><span class="view-kicker">HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
             <p>plugin은 1단 메뉴 객체가 아닙니다. 각 plugin을 소유·호스팅하는 subShell 아래에 묶어 설치·활성화·검증 상태를 관리합니다.</p>
@@ -318,8 +321,8 @@ interface TreeNode {
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>구성도 Topology</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('topology')">구성도 Topology</button>
+        <clr-tab-content *clrIfActive="activeView() === 'topology'">
           <p class="os-sub">
             shell → plugin 귀속 위계 (§2.7) — console(mainShell)가 subShell·plugin을 호스팅,
             Bindings는 shell 귀속 예외 범주
@@ -399,8 +402,8 @@ interface TreeNode {
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>Catalog</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('catalog')">Catalog</button>
+        <clr-tab-content *clrIfActive="activeView() === 'catalog'">
           <table class="table">
             <thead>
               <tr>
@@ -485,8 +488,8 @@ interface TreeNode {
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>Audit</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('audit')">Audit</button>
+        <clr-tab-content *clrIfActive="activeView() === 'audit'">
           <table class="table">
             <thead>
               <tr>
@@ -517,8 +520,8 @@ interface TreeNode {
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>Bindings</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('bindings')">Bindings</button>
+        <clr-tab-content *clrIfActive="activeView() === 'bindings'">
           <p class="os-sub">
             향후 workforce 인증·권한·명령처럼 Main Shell core 밖의 CLI 확장을 선언하는 채널입니다.
             native <code>os</code>는 이 목록에 포함되지 않습니다.
@@ -1091,7 +1094,10 @@ export class AdminPlugins implements OnInit {
   private ctl = inject(PluginControlClient);
   private ext = inject(ExtensionHostService);
   private readinessApi = inject(PlatformReadinessService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   readonly iconLib = inject(IconLibraryService);
+  readonly activeView = signal<ExtensionManagementView>(this.normalizeView(this.route.snapshot.paramMap.get('view')));
 
   readonly catalog = signal<CatalogItem[]>([]);
   readonly registrations = signal<Registration[]>([]);
@@ -1444,7 +1450,27 @@ export class AdminPlugins implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
+    this.route.paramMap.subscribe((params) => {
+      const requested = params.get('view');
+      const normalized = this.normalizeView(requested);
+      this.activeView.set(normalized);
+      if (requested !== normalized) {
+        void this.router.navigate(['/manage/extensions', normalized], { replaceUrl: true });
+      }
+    });
     await this.refresh();
+  }
+
+  selectView(view: ExtensionManagementView): void {
+    if (this.activeView() === view) return;
+    this.activeView.set(view);
+    void this.router.navigate(['/manage/extensions', view]);
+  }
+
+  private normalizeView(value: string | null): ExtensionManagementView {
+    return EXTENSION_MANAGEMENT_VIEWS.includes(value as ExtensionManagementView)
+      ? value as ExtensionManagementView
+      : 'subshells';
   }
 
   async refresh(): Promise<void> {

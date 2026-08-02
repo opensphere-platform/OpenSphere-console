@@ -4,6 +4,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./admin-plugins.ts', import.meta.url), 'utf8');
 const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts', import.meta.url), 'utf8');
+const routes = fs.readFileSync(new URL('../app.routes.ts', import.meta.url), 'utf8');
 
 test('Extension operations separate user intent, serving state, and verification', () => {
   assert.match(source, /<span>서비스 중<\/span>/);
@@ -38,4 +39,13 @@ test('Extension management separates first-level subShells from host-owned plugi
   assert.match(source, /group\.hostRef/);
   assert.match(source, /plugin은 1단 메뉴 객체가 아닙니다/);
   assert.doesNotMatch(source, /@for \(r of registrations\(\); track r\.name\)/);
+});
+
+test('every Extension management tab has a reloadable canonical route', () => {
+  assert.match(routes, /path: 'extensions', redirectTo: 'extensions\/subshells'/);
+  assert.match(routes, /path: 'extensions\/:view', component: AdminPlugins/);
+  for (const view of ['subshells', 'plugins', 'topology', 'catalog', 'audit', 'bindings']) {
+    assert.match(source, new RegExp(`selectView\\('${view}'\\)`));
+    assert.match(source, new RegExp(`activeView\\(\\) === '${view}'`));
+  }
 });
