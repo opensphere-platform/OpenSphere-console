@@ -8,14 +8,18 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
-test('management inventory survives inactive serving without loading inactive assets', () => {
+test('management inventory survives inactive serving but never becomes first-level navigation', () => {
   const host = read('src', 'app', 'core', 'extension-host.service.ts');
   const page = read('src', 'app', 'pages', 'plugin-host.ts');
   const shell = read('src', 'app', 'os', 'os-shell.ts');
   assert.match(host, /readonly managementInventory = signal<ManagementInventoryItem\[\]>/);
   assert.match(host, /\/api\/admin\/plugins\/catalog/);
   assert.match(host, /\/api\/admin\/plugins\/registrations/);
-  assert.match(shell, /this\.ext\.managementInventory\(\)/);
+  assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
+  assert.match(host, /readonly primarySubShellIds = signal<ReadonlySet<string>>/);
+  assert.match(host, /\(entry\.componentKind \?\? entry\.kind\) === 'subShell'/);
+  assert.match(host, /\(entry\.hostRef \?\? 'main'\) === 'main'/);
+  assert.match(shell, /this\.ext\.pages\(\)\.filter\(\(page\) => this\.ext\.primarySubShellIds\(\)\.has\(page\.id\)\)/);
   assert.match(page, /MODULE MANAGEMENT/);
   assert.match(page, /Installed/);
   assert.match(page, /Activated/);
