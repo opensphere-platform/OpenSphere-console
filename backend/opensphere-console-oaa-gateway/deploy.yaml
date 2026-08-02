@@ -259,7 +259,12 @@ spec:
           # seed and this replica's complete persisted watch-cursor set to be live before this Pod
           # is added to the Service endpoints.
           startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 3, failureThreshold: 40 }
-          readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 5, failureThreshold: 3 }
+          # /readyz performs bounded PostgreSQL/schema/seed checks. During a
+          # host reboot those checks can legitimately exceed the Kubernetes
+          # one-second default while the database cache is warming. Keep the
+          # semantic gate unchanged and prevent transient CPU/I/O pressure from
+          # removing both replicas from Service endpoints.
+          readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 5, timeoutSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10, failureThreshold: 6 }
           resources:
             requests: { cpu: 25m, memory: 64Mi }

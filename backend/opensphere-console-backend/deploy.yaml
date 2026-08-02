@@ -143,7 +143,7 @@ spec:
             - { name: GITEA_REPOSITORY, value: platform-declarations }
             - { name: GITEA_DEFAULT_BRANCH, value: main }
             - { name: GITEA_RECONCILER_NAME, value: oaa-governed-adapter }
-            - { name: GITEA_RECONCILER_NAMES, value: "oaa-governed-adapter,ceph-prerequisite-reconciler,foundation-bootstrap-reconciler" }
+            - { name: GITEA_RECONCILER_NAMES, value: "oaa-governed-adapter,ceph-prerequisite-reconciler,foundation-bootstrap-reconciler,platform-release-reconciler" }
             - { name: GITEA_CHANGE_REQUIRE_AAL2, value: "true" }
             - { name: GITEA_REQUIRE_VERIFIED_MERGE, value: "true" }
             - name: GITEA_TOKEN

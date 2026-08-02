@@ -55,6 +55,8 @@ test('Ceph prerequisite requests are immutable templates assigned to a dedicated
   assert.match(server, /change template fields are immutable/);
   assert.match(server, /ceph-prerequisite-reconciler/);
   assert.match(server, /reconciler is outside the configured allowlist/);
+  assert.match(server, /platform-release-reconciler/);
+  assert.match(deploy, /GITEA_RECONCILER_NAMES[^\n]*platform-release-reconciler/);
   assert.match(server, /reconcile receipt identity does not match the assigned consumer reconciler/);
   assert.match(server, /changeTemplateRequestStatus/);
   assert.match(server, /payload_digest=eq\.\$\{encodeURIComponent\(payloadDigest\)\}/);

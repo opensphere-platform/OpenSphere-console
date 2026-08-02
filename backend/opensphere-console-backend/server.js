@@ -50,7 +50,7 @@ const GITEA_DEFAULT_BRANCH = process.env.GITEA_DEFAULT_BRANCH || 'main';
 const GITEA_WEBHOOK_SECRET = process.env.GITEA_WEBHOOK_SECRET || '';
 const GITEA_RECONCILER_NAME = process.env.GITEA_RECONCILER_NAME || 'opensphere-declaration-reconciler';
 const GITEA_RECONCILER_NAMES = new Set((process.env.GITEA_RECONCILER_NAMES
-  || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler,${FOUNDATION_BOOTSTRAP_RECONCILER}`)
+  || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler,${FOUNDATION_BOOTSTRAP_RECONCILER},platform-release-reconciler`)
   .split(',').map((value) => value.trim()).filter(Boolean));
 const GITEA_CHANGE_REQUIRE_AAL2 = String(process.env.GITEA_CHANGE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const GITEA_REQUIRE_VERIFIED_MERGE = String(process.env.GITEA_REQUIRE_VERIFIED_MERGE || 'true').toLowerCase() !== 'false';

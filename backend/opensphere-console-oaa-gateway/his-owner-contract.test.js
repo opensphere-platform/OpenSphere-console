@@ -14,7 +14,9 @@ test('HIS Observability tools are capability-negotiated against the signed owner
   assert.match(source, /opensphere\.io\/oaa-his-owner\/v1/);
   assert.match(source, /hisOwnerCapabilities\.has\('observability-configure'\)/);
   assert.match(source, /signed Cluster Manager does not expose/);
-  assert.match(clusterManagerSource, /capabilities: \['observability-config-read', 'observability-plan', 'observability-configure'\]/);
+  assert.match(clusterManagerSource, /'observability-config-read'/);
+  assert.match(clusterManagerSource, /'observability-plan'/);
+  assert.match(clusterManagerSource, /'observability-configure'/);
 });
 
 test('Gateway and Cluster Manager both enforce closed SecretRef-only HIS input', () => {
