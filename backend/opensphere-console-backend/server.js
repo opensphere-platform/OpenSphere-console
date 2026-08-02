@@ -2279,27 +2279,23 @@ async function readBody(req) {
 
 async function proxyAdminControlRequest(req, res, url) {
   let authorization = String(req.headers.authorization || '');
-  let actor;
+  const requireAal2 = isMutationRequest(req);
   if (authorization) {
     // CLI/PAT requests retain their bearer credential, but are verified at the
-    // Console enforcement point before the request reaches DUPA.
-    actor = await verifyAuthed(req);
+    // Console enforcement point before the request reaches DUPA. A bearer
+    // string never substitutes for the current admin role or recent AAL2 proof.
+    await verifyConsoleAdmin(req, { requireAal2 });
   } else {
     // Browser credentials never return to JavaScript. Resolve the opaque
     // HttpOnly cookie server-side and forward only the short-lived Supabase
     // access token. authenticate(req) also enforces Origin + CSRF on mutations.
     if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
     const session = await browserSessions.authenticate(req);
-    actor = session.actor;
+    assertConsoleAdminActor(session.actor, { requireAal2 });
     authorization = `Bearer ${session.accessToken}`;
   }
 
   const method = String(req.method || 'GET').toUpperCase();
-  const lifecycleMutation = method === 'POST' && (
-    url.pathname === '/api/admin/extensions/install'
-    || /^\/api\/admin\/plugins\/registrations\/[a-z0-9-]+\/(?:install|enable|disable|uninstall|rollback)$/.test(url.pathname)
-  );
-  if (lifecycleMutation) requireRecentAal2(actor, 'module lifecycle mutation');
   const hasBody = !['GET', 'HEAD'].includes(method);
   const body = hasBody ? await readRawBody(req) : undefined;
   const headers = {

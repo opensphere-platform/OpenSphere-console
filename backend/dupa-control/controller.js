@@ -1005,10 +1005,6 @@ const PERMISSION_PROFILE_ROLES = Object.freeze({
   'cluster-infrastructure-manager-v1': infrastructureManagerClusterRoleManifest,
   'ai-domain-operator-v1': aiDomainOperatorClusterRoleManifest,
 });
-function permissionBindingName(moduleName, profile) {
-  const suffix = profile === 'cluster-observer-v1' ? 'observer-v1' : profile;
-  return `opensphere-module-${moduleName}-${suffix}`;
-}
 function permissionBindingManifest(pkg, saName, profile) {
   return {
     apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding',
@@ -2761,11 +2757,41 @@ async function securityPolicyEvidence() {
     reason: redTest ? '' : (redTestEvidence.find((item) => item.reason)?.reason || 'live admission-policy red-test evidence is missing'),
   };
 }
-const ARGOCD_NAMESPACE = 'argocd';
-const ARGOCD_DELIVERY_APPLICATION = 'opensphere-platform-delivery-verify';
-const ARGOCD_DELIVERY_PROJECT = 'opensphere-platform-delivery';
-const ARGOCD_DELIVERY_REPOSITORY = 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000/opensphere/platform-declarations.git';
-const ARGOCD_DELIVERY_PATH = 'platform-delivery/verification';
+function crossplaneProviderProjection({ deployment, provider, providerConfig }) {
+  const selected = [deployment, provider, providerConfig].some((result) => result?.status !== 404);
+  if (!selected) return { selected: false, ready: true, state: 'NotSelected', reason: '' };
+  const workload = deploymentReadyResult(CROSSPLANE_NAMESPACE, 'crossplane', deployment);
+  const conditions = provider?.json?.status?.conditions || [];
+  const healthy = conditions.some((condition) => condition.type === 'Healthy' && condition.status === 'True');
+  const installed = conditions.some((condition) => condition.type === 'Installed' && condition.status === 'True');
+  const injectedIdentity = providerConfig?.json?.spec?.credentials?.source === 'InjectedIdentity';
+  const ready = workload.ready && provider?.ok === true && providerConfig?.ok === true
+    && healthy && installed && injectedIdentity;
+  let reason = '';
+  if (!workload.ready) reason = `Crossplane control-plane workload is not Ready: ${workload.reason || workload.detail || 'unknown'}`;
+  else if (provider?.ok !== true) reason = `approved Crossplane Provider is unavailable (HTTP ${provider?.status || 0})`;
+  else if (!healthy || !installed) reason = 'approved Crossplane Provider is not Installed and Healthy';
+  else if (providerConfig?.ok !== true) reason = `Crossplane ProviderConfig/default is unavailable (HTTP ${providerConfig?.status || 0})`;
+  else if (!injectedIdentity) reason = 'Crossplane ProviderConfig/default must use InjectedIdentity';
+  return {
+    selected: true,
+    ready,
+    state: ready ? 'Ready' : 'Degraded',
+    workload,
+    provider: { name: CROSSPLANE_PROVIDER, healthy, installed },
+    providerConfig: { name: 'default', injectedIdentity },
+    reason,
+  };
+}
+
+async function crossplaneAdapterEvidence() {
+  const [deployment, provider, providerConfig] = await Promise.all([
+    k8s('GET', `/apis/apps/v1/namespaces/${CROSSPLANE_NAMESPACE}/deployments/crossplane`),
+    k8s('GET', `/apis/pkg.crossplane.io/v1/providers/${CROSSPLANE_PROVIDER}`),
+    k8s('GET', '/apis/helm.crossplane.io/v1beta1/providerconfigs/default'),
+  ]);
+  return crossplaneProviderProjection({ deployment, provider, providerConfig });
+}
 
 function normalizedGitRepository(value) {
   return String(value || '').trim().replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
@@ -2778,7 +2804,7 @@ function argocdApplicationEvidence(application) {
   const revision = String(status.sync?.revision || status.operationState?.syncResult?.revision || '').toLowerCase();
   const sourceVerified = normalizedGitRepository(source.repoURL) === normalizedGitRepository(ARGOCD_DELIVERY_REPOSITORY)
     && String(source.path || '').replace(/^\/+|\/+$/g, '') === ARGOCD_DELIVERY_PATH
-    && String(source.targetRevision || '') === 'main';
+    && String(source.targetRevision || '') === ARGOCD_DELIVERY_REVISION;
   const destinationVerified = spec.destination?.server === 'https://kubernetes.default.svc'
     && spec.destination?.namespace === 'opensphere-platform-delivery';
   const automated = spec.syncPolicy?.automated?.prune === true && spec.syncPolicy?.automated?.selfHeal === true;
@@ -2803,8 +2829,8 @@ function argocdApplicationEvidence(application) {
 }
 
 async function deliveryEvidence() {
-  const api = `/apis/argoproj.io/${V}/namespaces/${ARGOCD_NAMESPACE}`;
-  const [gitea, application, project, controller, repoServer, server, applicationSet] = await Promise.all([
+  const api = `/apis/${ARGOCD_GROUP}/${V}/namespaces/${ARGOCD_NAMESPACE}`;
+  const [gitea, application, project, controller, repoServer, server, applicationSet, crossplane] = await Promise.all([
     giteaHealth(),
     k8s('GET', `${api}/applications/${ARGOCD_DELIVERY_APPLICATION}`),
     k8s('GET', `${api}/appprojects/${ARGOCD_DELIVERY_PROJECT}`),
@@ -2812,6 +2838,7 @@ async function deliveryEvidence() {
     k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-repo-server`),
     k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-server`),
     k8s('GET', `/apis/apps/v1/namespaces/${ARGOCD_NAMESPACE}/deployments/argocd-applicationset-controller`),
+    crossplaneAdapterEvidence(),
   ]);
   const workloads = [
     deploymentReadyResult(ARGOCD_NAMESPACE, 'argocd-application-controller', controller),
@@ -2821,13 +2848,13 @@ async function deliveryEvidence() {
   ];
   const app = argocdApplicationEvidence(application.json);
   const runtimeReady = workloads.every((item) => item.ready);
-  const ready = gitea && application.ok && project.ok && runtimeReady && app.ready;
+  const ready = gitea && application.ok && project.ok && runtimeReady && app.ready && crossplane.ready;
   const reason = ready ? ''
     : !gitea ? 'Gitea delivery source is unreachable'
       : !application.ok ? `canonical Argo CD Application is unavailable (HTTP ${application.status})`
         : !project.ok ? `Argo CD delivery AppProject is unavailable (HTTP ${project.status})`
           : !runtimeReady ? `Argo CD control-plane workload is not Ready: ${workloads.find((item) => !item.ready)?.name || 'unknown'}`
-            : app.reason;
+            : app.reason || crossplane.reason;
   return {
     ready,
     state: ready ? 'Ready' : application.ok && project.ok && runtimeReady ? 'SyncDegraded' : 'RuntimeDegraded',
@@ -2837,6 +2864,7 @@ async function deliveryEvidence() {
     runtime: { configured: true, ready: runtimeReady, components: workloads },
     project: { configured: project.ok, name: ARGOCD_DELIVERY_PROJECT },
     application: { configured: application.ok, name: ARGOCD_DELIVERY_APPLICATION, ...app },
+    crossplane,
   };
 }
 async function observabilityProfileEvidence() {
@@ -3662,6 +3690,23 @@ if (require.main === module) {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
   // 감사 원시요소는 **동작 시험**을 위해 내보낸다. 소스 문자열 정규식으로 계약을 확인하는 것은
 // 동어반복이라 회귀를 못 잡는다(arch-002 레드팀 감사 패턴 B). 실제로 호출해 확인해야 한다.
-module.exports = { logAudit, durableAudit, persistAuditNow, pollK8sEvents, auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
-  isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence };
+module.exports = {
+  logAudit, durableAudit, persistAuditNow, pollK8sEvents,
+  auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
+  isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses,
+  moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems,
+  kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest,
+  networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest,
+  infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry,
+  retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged,
+  deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled,
+  requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests,
+  governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues,
+  localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate,
+  foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization,
+  bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint,
+  admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence,
+  platformVerificationProjection, platformVerificationComparable, platformSupportAdmission,
+  persistEventBeforeSeen,
+};
 }

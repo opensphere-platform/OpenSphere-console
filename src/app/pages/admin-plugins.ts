@@ -1607,6 +1607,15 @@ export class AdminPlugins implements OnInit {
       this.msg.set({ type: 'info', text: `활성화 대기 — ${lock} 플랫폼 제어에서 선행 조건과 4개 검증 증거를 확인하세요.` });
       return;
     }
+    if (action === 'rollback') {
+      const registration = this.registrations().find((item) => item.name === id);
+      if (!registration || !this.rollbackAvailable(registration)) {
+        this.msg.set({ type: 'danger', text: `rollback 실패: ${id}의 검증된 이전 release 증거가 없습니다.` });
+        return;
+      }
+      this.pendingRollback.set(id);
+      return;
+    }
     this.pendingAction.set({ action, id });
   }
 
@@ -1617,9 +1626,17 @@ export class AdminPlugins implements OnInit {
     await this.execute(pending.action, pending.id, reason);
   }
 
-  private async execute(action: 'enable' | 'disable' | 'uninstall', id: string, reason: string): Promise<void> {
+  async confirmRollback(reason: string): Promise<void> {
+    const id = this.pendingRollback();
+    if (!id) return;
+    this.pendingRollback.set(null);
+    await this.execute('rollback', id, reason);
+  }
+
+  private async execute(action: 'enable' | 'disable' | 'uninstall' | 'rollback', id: string, reason: string): Promise<void> {
     try {
-      await this.ctl[action](id, reason);
+      if (action === 'rollback') await this.ctl.rollback(id, reason);
+      else await this.ctl[action](id, reason);
       this.msg.set({ type: 'info', text: `${action} 요청됨: ${id} — controller가 조정 중…` });
       // controller reconcile + registry 반영을 잠깐 기다린 뒤 셸 메뉴 reload
       await this.poll(id, action);

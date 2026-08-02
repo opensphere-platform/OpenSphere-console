@@ -28,10 +28,10 @@ test('Delivery evidence reads only its owner runtime and canonical Application',
   const start = source.indexOf('async function deliveryEvidence()');
   const end = source.indexOf('async function observabilityProfileEvidence()', start);
   const delivery = source.slice(start, end);
-  assert.match(delivery, /namespaces\/argocd\/deployments/);
-  assert.match(delivery, /opensphere-platform-delivery-verify/);
-  assert.match(delivery, /sync === 'Synced'/);
-  assert.match(delivery, /health === 'Healthy'/);
+  assert.match(delivery, /namespaces\/\$\{ARGOCD_NAMESPACE\}\/deployments/);
+  assert.match(delivery, /ARGOCD_DELIVERY_APPLICATION/);
+  assert.match(source, /status\.sync\?\.status === 'Synced'/);
+  assert.match(source, /status\.health\?\.status === 'Healthy'/);
   assert.doesNotMatch(delivery, /listPackages|listRegs|registrations/);
   assert.match(source, /Promise\.allSettled\(\[/);
   assert.match(source, /reason: 'HostPending'[\s\S]{0,260}checkedAt: new Date\(\)\.toISOString\(\)/);
@@ -40,7 +40,7 @@ test('Delivery evidence reads only its owner runtime and canonical Application',
 
 test('module uninstall removes every verified labelled binding and general profiles retain data', () => {
   const source = read('backend', 'dupa-control', 'controller.js');
-  assert.match(source, /function permissionBindingName\(moduleName, profile\)/);
+  assert.match(source, /function permissionBindingName\(pluginId, profile\)/);
   assert.match(source, /labelSelector=\$\{selector\}/);
   assert.match(source, /PermissionBindingOwnershipMismatch/);
   assert.match(source, /subjects\.every\(\(subject\) => subject\.kind === 'ServiceAccount'/);

@@ -204,10 +204,10 @@ $allImages = @(
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
-$canonicalComponentCount = $images.Count
+$canonicalComponentCount = $allImages.Count
 $requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
-$images = @($images | Where-Object { $requestedComponents.Contains($_.Key) })
+$images = @($allImages | Where-Object { $requestedComponents.Contains($_.Key) })
 if (-not $images.Count) { throw 'At least one Console component must be selected.' }
 $partialPublication = $images.Count -lt $canonicalComponentCount
 $integratedAnchorBefore = if ($partialPublication -and ($images | Where-Object { $_.Key -eq 'console' })) {
@@ -239,7 +239,7 @@ for ($index = 0; $index -lt $images.Count; $index += 1) {
     '--label', 'opensphere.io/release-class=pre-ga',
     '--label', 'opensphere.io/ga-eligible=false',
     '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local',
-    '--file', $item.File,
+    '--file', $item.File
   )
   if ($item.Key -eq 'backend') {
     if (-not $setupSourceRevision -or -not (Test-Path -LiteralPath $item.SetupContext)) {

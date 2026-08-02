@@ -144,7 +144,11 @@ test('permission profile downgrade, disable, and uninstall revoke stale cluster 
 
   const uninstallStart = controller.indexOf('async function deleteWorkload');
   const uninstallEnd = controller.indexOf('async function workloadReady', uninstallStart);
-  assert.match(controller.slice(uninstallStart, uninstallEnd), /await revokePermissionBindings\(pkg\.metadata\.name\)/);
+  const uninstallFlow = controller.slice(uninstallStart, uninstallEnd);
+  assert.match(uninstallFlow, /labelSelector=\$\{selector\}/);
+  assert.match(uninstallFlow, /subjects\.every\(\(subject\) => subject\.kind === 'ServiceAccount'/);
+  assert.match(uninstallFlow, /PermissionBindingOwnershipMismatch/);
+  assert.match(uninstallFlow, /deleteManagedResource\(`\$\{bindingPath\}\/\$\{binding\.metadata\.name\}`/);
 
   const manifest = fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8');
   assert.match(manifest, /resources: \[clusterrolebindings\], verbs: \[get, list, create, patch, delete\]/);

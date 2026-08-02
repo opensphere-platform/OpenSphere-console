@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -362,7 +362,7 @@ test('selected Crossplane adapter is part of live Delivery readiness', () => {
 
   const controller = read('backend', 'dupa-control', 'controller.js');
   const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
-  assert.match(controller, /argocd\.ready && crossplane\.ready/);
+  assert.match(controller, /app\.ready && crossplane\.ready/);
   assert.match(manifest, /name: opensphere-crossplane-evidence-reader/);
   assert.match(manifest, /resourceNames: \[crossplane-contrib-provider-helm\]/);
   assert.match(manifest, /resourceNames: \[default\]/);

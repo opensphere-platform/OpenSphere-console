@@ -14,6 +14,7 @@ RUN test -n "${SETUP_SOURCE_REVISION}" \
       arm64) GH_SHA256='06f86ec7103d41993b76cd78072f43595c34aaa56506d971d9860e67140bf909' ;; \
       *) echo "unsupported GitHub CLI architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
+    && apk upgrade --no-cache \
     && wget -q -O /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v2.96.0/gh_2.96.0_linux_${TARGETARCH}.tar.gz" \
     && echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/gh.tar.gz -C /tmp \
@@ -41,6 +42,11 @@ COPY opensphere-console-backend/recovery-owner.js ./recovery-owner.js
 COPY opensphere-console-backend/foundation-bootstrap-contract.js ./foundation-bootstrap-contract.js
 COPY opensphere-console-backend/foundation-bootstrap-bundle.js ./foundation-bootstrap-bundle.js
 COPY opensphere-console-backend/foundation-bootstrap-reconciler.js ./foundation-bootstrap-reconciler.js
+COPY opensphere-console-backend/platform-release-contract.js ./platform-release-contract.js
+COPY opensphere-console-backend/platform-release-reconciler.js ./platform-release-reconciler.js
+COPY opensphere-console-backend/platform-release-executor.mjs ./platform-release-executor.mjs
+COPY --from=setup-cli src /app/opensphere-setup-cli/src
+COPY --from=setup-cli package.json /app/opensphere-setup-cli/package.json
 COPY notification-dispatcher/contract.js /app/notification-dispatcher/contract.js
 ENV PORT=8080
 EXPOSE 8080

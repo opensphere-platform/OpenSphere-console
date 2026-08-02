@@ -13,6 +13,7 @@ import { HttpService } from '../core/http.service';
 import { CarbonIcon } from '../os/carbon-icon';
 import { OsPageHeader } from '../os/os-page-header';
 import { AdminPlatformReadiness } from './admin-platform-readiness';
+import { PlatformReadinessService, PlatformReadinessStatus } from '../core/platform-readiness.service';
 
 type ControlTab = 'operations' | 'readiness' | 'evidence' | 'journey';
 type EvidenceFilter = 'all' | 'supabase' | 'gitea' | 'runtime';
@@ -276,6 +277,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
 
   private readonly http = inject(HttpService);
   private readonly route = inject(ActivatedRoute);
+  private readonly readinessService = inject(PlatformReadinessService);
   private timer: ReturnType<typeof setInterval> | null = null;
 
   async ngOnInit(): Promise<void> {
