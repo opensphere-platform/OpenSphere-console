@@ -1384,7 +1384,6 @@ export class AdminPlugins implements OnInit {
       ManifestUnreachable: 'manifest 접근 불가(파드/서비스)',
       EntryUnreachable: '엔트리 파일 접근 불가',
       SignatureUnreachable: '서명 파일 접근 불가',
-      PermissionProfileDrift: 'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름',
     };
     return reason ? (m[reason] ?? reason) : '';
   }

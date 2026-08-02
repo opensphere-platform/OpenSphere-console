@@ -47,12 +47,8 @@ test('Installed 목록과 상세 패널이 artifact 및 Console API 설치 prove
   }
   assert.ok(source.includes('Extension 설치'));
   assert.ok(source.includes('installExtension('));
-  assert.ok(source.includes('검사 후 설치'));
-  assert.ok(source.includes('os extensions install'));
-});
-
-test('권한 프로파일 드리프트를 관리자가 이해할 수 있는 문장으로 설명한다', () => {
-  assert.ok(source.includes("PermissionProfileDrift: 'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름'"));
+  assert.ok(source.includes('최근 MFA 확인'));
+  assert.ok(source.includes('Console과 <code>os</code> CLI'));
 });
 
 test('Console 관리자가 검증된 이전 release로 롤백하고 제거 사유를 남길 수 있다', () => {
@@ -69,7 +65,7 @@ test('Console 관리자가 검증된 이전 release로 롤백하고 제거 사�
     '제거 승인 사유',
     '[reasonRequired]="true"',
     'confirmRollback($event)',
-    'confirmUninstall($event)',
+    'confirmAction($event)',
   ]) {
     assert.ok(source.includes(contract), `${contract} Console lifecycle 계약이 필요하다`);
   }

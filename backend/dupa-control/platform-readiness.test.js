@@ -473,21 +473,3 @@ test('Delivery evidence reader is namespace-scoped and read-only', () => {
   const role = manifest.slice(roleStart, roleEnd);
   assert.doesNotMatch(role, /verbs: \[[^\]]*(?:create|update|patch|delete)/);
 });
-
-test('cluster infrastructure profile manifest matches the controller least-privilege contract', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
-  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
-  const controllerStart = controller.indexOf('function infrastructureManagerClusterRoleManifest()');
-  const controllerEnd = controller.indexOf('// AI domain subShell profile', controllerStart);
-  const controllerProfile = controller.slice(controllerStart, controllerEnd);
-  const manifestStart = manifest.indexOf('name: opensphere-module-cluster-infrastructure-manager-v1');
-  const manifestEnd = manifest.indexOf('\n---', manifestStart);
-  const manifestProfile = manifest.slice(manifestStart, manifestEnd);
-  for (const profile of [controllerProfile, manifestProfile]) {
-    const normalized = profile.replace(/["']/g, '');
-    assert.match(normalized, /resources: \[volumesnapshots\][^\n]*verbs: \[get, list, watch, create, update, patch\]/);
-    assert.match(normalized, /apiGroups: \[ceph\.rook\.io, csi\.ceph\.io\][^\n]*verbs: \[get, list, watch, create, update, patch\]/);
-    assert.doesNotMatch(normalized, /resources: \[volumesnapshots\][^\n]*delete/);
-    assert.doesNotMatch(normalized, /apiGroups: \[ceph\.rook\.io, csi\.ceph\.io\][^\n]*delete/);
-  }
-});

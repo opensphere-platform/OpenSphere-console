@@ -731,7 +731,7 @@ rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [clusterroles]
     resourceNames: [opensphere-module-cluster-observer-v1, opensphere-module-cluster-infrastructure-manager-v1, opensphere-module-ai-domain-operator-v1]
-    verbs: [get, bind]
+    verbs: [bind]
   - { apiGroups: [rbac.authorization.k8s.io], resources: [clusterrolebindings], verbs: [get, list, create, patch, delete] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1

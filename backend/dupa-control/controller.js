@@ -907,104 +907,6 @@ function telemetryDescriptor(pkg) {
   };
 }
 
-function observerClusterRoleManifest() {
-  return {
-    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole',
-    metadata: { name: 'opensphere-module-cluster-observer-v1', labels: { 'opensphere.io/managed-by': 'dupa' } },
-    rules: [
-      { apiGroups: [''], resources: ['namespaces', 'nodes', 'pods', 'pods/log', 'services', 'endpoints', 'persistentvolumeclaims', 'persistentvolumes', 'events', 'configmaps', 'limitranges', 'resourcequotas', 'serviceaccounts', 'replicationcontrollers'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['apps'], resources: ['deployments', 'daemonsets', 'statefulsets', 'replicasets', 'controllerrevisions'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['batch'], resources: ['jobs', 'cronjobs'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['storage.k8s.io'], resources: ['storageclasses', 'csidrivers', 'csinodes', 'volumeattachments'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['networking.k8s.io'], resources: ['ingresses', 'networkpolicies', 'ingressclasses'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['discovery.k8s.io'], resources: ['endpointslices'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['autoscaling'], resources: ['horizontalpodautoscalers'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['autoscaling.k8s.io'], resources: ['verticalpodautoscalers'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['policy'], resources: ['poddisruptionbudgets'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['scheduling.k8s.io'], resources: ['priorityclasses'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['node.k8s.io'], resources: ['runtimeclasses'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['coordination.k8s.io'], resources: ['leases'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['rbac.authorization.k8s.io'], resources: ['roles', 'rolebindings', 'clusterroles', 'clusterrolebindings'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['apiextensions.k8s.io'], resources: ['customresourcedefinitions'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['metrics.k8s.io'], resources: ['nodes', 'pods'], verbs: ['get', 'list'] },
-      { apiGroups: ['jobset.x-k8s.io'], resources: ['jobsets'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['cert-manager.io'], resources: ['issuers', 'clusterissuers', 'certificates', 'certificaterequests'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['acme.cert-manager.io'], resources: ['challenges', 'orders'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['kubevirt.io', 'subresources.kubevirt.io', 'cdi.kubevirt.io', 'instancetype.kubevirt.io', 'migrations.kubevirt.io', 'snapshot.storage.k8s.io', 'forklift.konveyor.io', 'ceph.rook.io', 'template.openshift.io', 'fleet.opensphere.io', 'cluster.open-cluster-management.io'], resources: ['*'], verbs: ['get', 'list', 'watch'] },
-    ],
-  };
-}
-function infrastructureManagerClusterRoleManifest() {
-  return {
-    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole',
-    metadata: { name: 'opensphere-module-cluster-infrastructure-manager-v1', labels: { 'opensphere.io/managed-by': 'dupa' } },
-    rules: [
-      ...observerClusterRoleManifest().rules,
-      { apiGroups: ['storage.k8s.io'], resources: ['storageclasses'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['snapshot.storage.k8s.io'], resources: ['volumesnapshotclasses'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['snapshot.storage.k8s.io'], resources: ['volumesnapshots'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch'] },
-      { apiGroups: ['ceph.rook.io', 'csi.ceph.io'], resources: ['*'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch'] },
-    ],
-  };
-}
-// AI domain subShell profile. 이 프로필은 cluster observer를 상속하지 않고 module이
-// 자기 rbac.yaml로 선언한 read/write 집합만 그대로 부여한다. AI 도메인 CRD 밖의
-// kubevirt·ceph·rbac 광역 read를 AI subShell에 넘기지 않기 위한 최소권한 경계다.
-function aiDomainOperatorClusterRoleManifest() {
-  return {
-    apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole',
-    metadata: { name: 'opensphere-module-ai-domain-operator-v1', labels: { 'opensphere.io/managed-by': 'dupa' } },
-    rules: [
-      { apiGroups: [''], resources: ['nodes', 'namespaces', 'pods', 'pods/log', 'services', 'configmaps', 'events'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['apps'], resources: ['deployments', 'replicasets', 'statefulsets'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['batch'], resources: ['jobs'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['storage.k8s.io'], resources: ['storageclasses'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['authorization.k8s.io'], resources: ['selfsubjectaccessreviews'], verbs: ['create'] },
-      { apiGroups: ['apiextensions.k8s.io'], resources: ['customresourcedefinitions'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['operators.coreos.com'], resources: ['operatorgroups', 'subscriptions', 'installplans', 'clusterserviceversions'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['orchestrator.ai.opensphere.io'], resources: ['aiagents', 'promptlibraries', 'toolclaims', 'agenttracepolicies'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['ai.foundation.opensphere.io'], resources: ['llmrouteclaims', 'vectorretrievalclaims'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['kubeflow.org'], resources: ['notebooks'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['serving.kserve.io'], resources: ['servingruntimes', 'clusterservingruntimes', 'inferenceservices'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['modelregistry.opendatahub.io'], resources: ['modelregistries'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['trustyai.opendatahub.io'], resources: ['trustyaiservices'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['kueue.x-k8s.io'], resources: ['workloads', 'clusterqueues', 'localqueues', 'resourceflavors'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['ray.io'], resources: ['rayclusters', 'rayjobs', 'rayservices'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['tekton.dev'], resources: ['pipelines', 'pipelineruns'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['datasciencepipelinesapplications.opendatahub.io'], resources: ['datasciencepipelinesapplications', 'datasciencepipelinesapplications/api'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['datasciencecluster.opendatahub.io'], resources: ['datascienceclusters'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['backbone.opensphere.io'], resources: ['backboneclaims'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['ai.opensphere.io'], resources: ['aitrainingstacks', 'workbenchclaims', 'dataconnectionclaims', 'computebackendclaims', 'datasetclaims', 'trainingjobclaims', 'modelpromotionclaims', 'inferenceclaims', 'pipelineclaims', 'pipelinerunclaims', 'experimentclaims', 'executionclaims', 'artifactclaims', 'monitoringtargets', 'distributedworkloadclaims', 'openspherecomponentcatalogs', 'openspherecomponentversions', 'openspheresubscriptions', 'opensphereinstallplans', 'openspheredatascienceclusters'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: ['eval.ai.opensphere.io'], resources: ['evaluationpolicies', 'evaluationjobs'], verbs: ['get', 'list', 'watch'] },
-      { apiGroups: [''], resources: ['events'], verbs: ['create', 'update', 'patch'] },
-      { apiGroups: [''], resources: ['services'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: [''], resources: ['persistentvolumeclaims'], verbs: ['create', 'update', 'patch'] },
-      { apiGroups: ['apps'], resources: ['deployments'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['batch'], resources: ['jobs'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: [''], resources: ['configmaps'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['kubeflow.org'], resources: ['notebooks'], verbs: ['update', 'patch'] },
-      { apiGroups: ['serving.kserve.io'], resources: ['inferenceservices'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['ray.io'], resources: ['rayjobs'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['tekton.dev'], resources: ['pipelineruns'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['datasciencepipelinesapplications.opendatahub.io'], resources: ['datasciencepipelinesapplications'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['networking.k8s.io'], resources: ['networkpolicies'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['orchestrator.ai.opensphere.io'], resources: ['aiagents', 'promptlibraries', 'toolclaims', 'agenttracepolicies'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['orchestrator.ai.opensphere.io'], resources: ['aiagents/status', 'promptlibraries/status', 'toolclaims/status', 'agenttracepolicies/status'], verbs: ['get', 'update', 'patch'] },
-      { apiGroups: ['ai.foundation.opensphere.io'], resources: ['llmrouteclaims', 'vectorretrievalclaims'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['ai.foundation.opensphere.io'], resources: ['llmrouteclaims/status', 'vectorretrievalclaims/status'], verbs: ['get', 'update', 'patch'] },
-      { apiGroups: ['ai.opensphere.io'], resources: ['aitrainingstacks', 'workbenchclaims', 'dataconnectionclaims', 'computebackendclaims', 'datasetclaims', 'trainingjobclaims', 'modelpromotionclaims', 'inferenceclaims', 'pipelineclaims', 'pipelinerunclaims', 'experimentclaims', 'executionclaims', 'artifactclaims', 'monitoringtargets', 'distributedworkloadclaims', 'openspheresubscriptions', 'opensphereinstallplans', 'openspheredatascienceclusters'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['ai.opensphere.io'], resources: ['workbenchclaims/status', 'dataconnectionclaims/status', 'computebackendclaims/status', 'datasetclaims/status', 'trainingjobclaims/status', 'pipelineclaims/status', 'pipelinerunclaims/status', 'experimentclaims/status', 'executionclaims/status', 'artifactclaims/status', 'inferenceclaims/status', 'modelpromotionclaims/status', 'monitoringtargets/status', 'distributedworkloadclaims/status', 'openspheresubscriptions/status', 'opensphereinstallplans/status', 'openspheredatascienceclusters/status'], verbs: ['get', 'update', 'patch'] },
-      { apiGroups: ['backbone.opensphere.io'], resources: ['backboneclaims'], verbs: ['create', 'update', 'patch'] },
-      { apiGroups: ['eval.ai.opensphere.io'], resources: ['evaluationpolicies', 'evaluationjobs'], verbs: ['create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['eval.ai.opensphere.io'], resources: ['evaluationpolicies/status', 'evaluationjobs/status'], verbs: ['get', 'update', 'patch'] },
-    ],
-  };
-}
-const PERMISSION_PROFILE_ROLES = Object.freeze({
-  'cluster-observer-v1': observerClusterRoleManifest,
-  'cluster-infrastructure-manager-v1': infrastructureManagerClusterRoleManifest,
-  'ai-domain-operator-v1': aiDomainOperatorClusterRoleManifest,
-});
 function permissionBindingManifest(pkg, saName, profile) {
   return {
     apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding',
@@ -1018,7 +920,8 @@ function permissionBindingName(pluginId, profile) {
   return `opensphere-module-${pluginId}-${suffix}`;
 }
 async function revokePermissionBindings(pluginId, keepProfile = '') {
-  for (const profile of Object.keys(PERMISSION_PROFILE_ROLES)) {
+  for (const profile of APPROVED_PERMISSION_PROFILES) {
+    if (profile === 'none') continue;
     if (profile === keepProfile) continue;
     const name = permissionBindingName(pluginId, profile);
     await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${name}`, `ClusterRoleBinding/${name}`);
@@ -1031,15 +934,8 @@ async function applyPermissionProfile(pkg, saName) {
     await revokePermissionBindings(pkg.metadata.name);
     return;
   }
-  const rolePath = '/apis/rbac.authorization.k8s.io/v1/clusterroles';
-  const roleManifest = PERMISSION_PROFILE_ROLES[profile];
-  if (!roleManifest) throw Object.assign(new Error('unapproved permission profile'), { reason: 'UnknownPermissionProfile' });
-  const expectedRole = roleManifest();
-  const existingRole = await k8s('GET', `${rolePath}/${expectedRole.metadata.name}`);
-  if (!existingRole.ok) throw Object.assign(new Error('pre-provisioned permission profile is missing'), { reason: 'PermissionProfileMissing' });
-  if (JSON.stringify(canonical(existingRole.json?.rules || [])) !== JSON.stringify(canonical(expectedRole.rules))) {
-    throw Object.assign(new Error('pre-provisioned permission profile drifted'), { reason: 'PermissionProfileDrift' });
-  }
+  // Kubernetes RBAC is the only permission-rule authority. DUPA selects an
+  // approved profile and binds it; it does not duplicate or compare its rules.
   await revokePermissionBindings(pkg.metadata.name, profile);
   const binding = permissionBindingManifest(pkg, saName, profile);
   const bindingPath = '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings';
@@ -3787,8 +3683,7 @@ module.exports = {
   isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses,
   moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems,
   kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest,
-  networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest,
-  infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry,
+  networkPolicyManifest, telemetryDescriptor, publishedPluginEntry,
   retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged,
   deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled,
   requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests,

@@ -52,21 +52,21 @@ test('Delivery evidence reads only its owner runtime and canonical Application',
 
 test('module uninstall removes every verified labelled binding and general profiles retain data', () => {
   const source = read('backend', 'dupa-control', 'controller.js');
+  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
   assert.match(source, /function permissionBindingName\(pluginId, profile\)/);
   assert.match(source, /labelSelector=\$\{selector\}/);
   assert.match(source, /PermissionBindingOwnershipMismatch/);
   assert.match(source, /subjects\.every\(\(subject\) => subject\.kind === 'ServiceAccount'/);
-  const infrastructure = source.slice(
-    source.indexOf('function infrastructureManagerClusterRoleManifest()'),
-    source.indexOf('function aiDomainOperatorClusterRoleManifest()'),
-  );
-  assert.doesNotMatch(infrastructure, /resources: \['volumesnapshots'\][^\n]+delete/);
-  assert.doesNotMatch(infrastructure, /apiGroups: \['ceph\.rook\.io', 'csi\.ceph\.io'\][^\n]+delete/);
-  const ai = source.slice(
-    source.indexOf('function aiDomainOperatorClusterRoleManifest()'),
-    source.indexOf('const PERMISSION_PROFILE_ROLES'),
-  );
-  assert.doesNotMatch(ai, /resources: \['persistentvolumeclaims'\][^\n]+delete/);
+  assert.doesNotMatch(source, /ClusterRoleManifest|PERMISSION_PROFILE_ROLES|PermissionProfileDrift/);
+  assert.match(source, /for \(const profile of APPROVED_PERMISSION_PROFILES\)/);
+  const documents = manifest.split(/\r?\n---\r?\n/);
+  const infrastructure = documents.find((document) => document.includes('kind: ClusterRole')
+    && document.includes('name: opensphere-module-cluster-infrastructure-manager-v1'));
+  assert.doesNotMatch(infrastructure, /resources: \[volumesnapshots\][^\n]+delete/);
+  assert.doesNotMatch(infrastructure, /apiGroups: \[ceph\.rook\.io, csi\.ceph\.io\][^\n]+delete/);
+  const ai = documents.find((document) => document.includes('kind: ClusterRole')
+    && document.includes('name: opensphere-module-ai-domain-operator-v1'));
+  assert.doesNotMatch(ai, /resources: \[persistentvolumeclaims\][^\n]+delete/);
 });
 
 test('Console and CLI share lifecycle API with recent AAL2 and durable reason gates', () => {
