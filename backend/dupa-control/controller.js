@@ -2890,6 +2890,26 @@ async function readPlatformProfile() {
   if (!r.ok) return { declared: false, crdReady: false, resource: null, reason: `PlatformSupportProfile HTTP ${r.status}` };
   return { declared: true, crdReady: true, resource: r.json };
 }
+
+function settledProbeProjection(definitions, settled) {
+  if (!Array.isArray(definitions) || !Array.isArray(settled) || definitions.length !== settled.length) {
+    throw new Error('platform readiness probe definition/result cardinality mismatch');
+  }
+  const values = {};
+  const failures = [];
+  definitions.forEach((definition, index) => {
+    const result = settled[index];
+    if (result.status === 'fulfilled') {
+      values[definition.name] = result.value;
+      return;
+    }
+    const reason = String(result.reason?.message || result.reason || 'probe failed');
+    values[definition.name] = definition.fallback;
+    failures.push({ probe: definition.name, reason });
+  });
+  return { values, failures };
+}
+
 async function foundationEstablishmentStatus(supportReady, registration) {
   const [bootstrapOwner, crds, controlPlane, models, descriptors, bindings] = await Promise.all([
     k8s('GET', '/apis/apps/v1/namespaces/opensphere-console/deployments/foundation-bootstrap-reconciler'),
@@ -2911,26 +2931,24 @@ async function foundationEstablishmentStatus(supportReady, registration) {
   });
 }
 async function platformReadinessStatus() {
-  const probeNames = ['platformControl', 'mainShell', 'clusterManager', 'profile', 'delivery', 'observability', 'backupRestore', 'securityPolicy', 'registrations'];
-  const settled = await Promise.allSettled([
-    platformControlReadiness(), mainShellBaselineStatus(), clusterManagerActivationStatus(),
-    hisPreflightEvidence(),
-    readPlatformProfile(), deliveryEvidence(),
-    observabilityProfileEvidence(), backupRestoreEvidence(), securityPolicyEvidence(), listRegs(),
-  ]);
-  const probeFailures = settled.flatMap((result, index) => result.status === 'rejected'
-    ? [{ probe: probeNames[index], reason: String(result.reason?.message || result.reason || 'probe failed') }]
-    : []);
-  const value = (index, fallback) => settled[index].status === 'fulfilled' ? settled[index].value : fallback;
-  const platformControl = value(0, { ready: false, reason: 'platform control probe failed' });
-  const mainShell = value(1, { ready: false, reason: 'main shell probe failed' });
-  const clusterManager = value(2, { ready: false, phase: 'Unknown', workload: 'Unknown', reason: 'cluster manager probe failed' });
-  const profile = value(3, { declared: false, crdReady: false, resource: null, reason: 'profile probe failed' });
-  const delivery = value(4, { ready: false, state: 'ProbeFailed', reason: 'delivery probe failed' });
-  const observability = value(5, { ready: false, stackReady: false, mode: 'ProbeFailed', reason: 'observability probe failed' });
-  const backupRestore = value(6, { ready: false, reason: 'backup/restore probe failed' });
-  const securityPolicy = value(7, { ready: false, reason: 'security policy probe failed' });
-  const regs = value(8, { ok: false, json: { items: [] } });
+	const probes = [
+		{ name: 'platformControl', promise: platformControlReadiness(), fallback: { ready: false, reason: 'platform control probe failed' } },
+		{ name: 'mainShell', promise: mainShellBaselineStatus(), fallback: { ready: false, reason: 'main shell probe failed' } },
+		{ name: 'clusterManager', promise: clusterManagerActivationStatus(), fallback: { ready: false, phase: 'Unknown', workload: 'Unknown', reason: 'cluster manager probe failed' } },
+		{ name: 'hisPreflight', promise: hisPreflightEvidence(), fallback: { ready: false, reason: 'HIS preflight probe failed' } },
+		{ name: 'profile', promise: readPlatformProfile(), fallback: { declared: false, crdReady: false, resource: null, reason: 'profile probe failed' } },
+		{ name: 'delivery', promise: deliveryEvidence(), fallback: { ready: false, state: 'ProbeFailed', reason: 'delivery probe failed' } },
+		{ name: 'observability', promise: observabilityProfileEvidence(), fallback: { ready: false, stackReady: false, mode: 'ProbeFailed', reason: 'observability probe failed' } },
+		{ name: 'backupRestore', promise: backupRestoreEvidence(), fallback: { ready: false, reason: 'backup/restore probe failed' } },
+		{ name: 'securityPolicy', promise: securityPolicyEvidence(), fallback: { ready: false, reason: 'security policy probe failed' } },
+		{ name: 'registrations', promise: listRegs(), fallback: { ok: false, json: { items: [] } } },
+	];
+	const settled = await Promise.allSettled(probes.map((probe) => probe.promise));
+	const { values, failures: probeFailures } = settledProbeProjection(probes, settled);
+	const {
+		platformControl, mainShell, clusterManager, profile, delivery,
+		observability, backupRestore, securityPolicy, registrations: regs,
+	} = values;
   const his = {
     ready: observability.stackReady,
     state: observability.mode,
@@ -3707,6 +3725,6 @@ module.exports = {
   bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint,
   admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence,
   platformVerificationProjection, platformVerificationComparable, platformSupportAdmission,
-  persistEventBeforeSeen,
+  persistEventBeforeSeen, settledProbeProjection,
 };
 }

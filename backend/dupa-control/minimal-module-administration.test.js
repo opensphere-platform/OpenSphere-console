@@ -33,7 +33,8 @@ test('Delivery evidence reads only its owner runtime and canonical Application',
   assert.match(source, /status\.sync\?\.status === 'Synced'/);
   assert.match(source, /status\.health\?\.status === 'Healthy'/);
   assert.doesNotMatch(delivery, /listPackages|listRegs|registrations/);
-  assert.match(source, /Promise\.allSettled\(\[/);
+  assert.match(source, /Promise\.allSettled\(probes\.map\(\(probe\) => probe\.promise\)\)/);
+  assert.match(source, /settledProbeProjection\(probes, settled\)/);
   assert.match(source, /reason: 'HostPending'[\s\S]{0,260}checkedAt: new Date\(\)\.toISOString\(\)/);
   assert.match(source, /admission: Object\.hasOwn\(status, 'admission'\) \? status\.admission : null/);
 });

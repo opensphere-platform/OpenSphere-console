@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -11,6 +11,24 @@ test('live condition never infers Ready from a label alone', () => {
   const failed = condition('Observability', false, 'TelemetryEvidenceMissing', 'missing', []);
   assert.equal(failed.status, 'False');
   assert.equal(failed.ready, false);
+});
+
+test('platform readiness maps asynchronous results by probe name, never by semantic index', () => {
+  const definitions = [
+    { name: 'profile', fallback: { declared: false } },
+    { name: 'delivery', fallback: { ready: false, reason: 'delivery failed' } },
+    { name: 'observability', fallback: { ready: false, reason: 'observability failed' } },
+  ];
+  const result = settledProbeProjection(definitions, [
+    { status: 'fulfilled', value: { declared: true } },
+    { status: 'rejected', reason: new Error('repository unavailable') },
+    { status: 'fulfilled', value: { ready: true, capabilities: ['metrics'] } },
+  ]);
+  assert.deepEqual(result.values.profile, { declared: true });
+  assert.deepEqual(result.values.delivery, { ready: false, reason: 'delivery failed' });
+  assert.deepEqual(result.values.observability, { ready: true, capabilities: ['metrics'] });
+  assert.deepEqual(result.failures, [{ probe: 'delivery', reason: 'repository unavailable' }]);
+  assert.throws(() => settledProbeProjection(definitions, []), /cardinality mismatch/);
 });
 
 test('Kubernetes warning evidence is never marked seen before durable audit persistence', async () => {
