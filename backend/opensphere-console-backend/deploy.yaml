@@ -120,7 +120,7 @@ spec:
       containers:
         - name: api
           # 실배포 기준: 현재 검증된 로컬 런타임 이미지.
-          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:aa86ded237306277949c843e0f87f8dfd5cf98ed81a03d0549a9d447985f7b9f
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
           imagePullPolicy: IfNotPresent
           env:
             - { name: APP_VERSION, value: "0.8.0-oaa-recovery-owner" }
@@ -384,7 +384,7 @@ spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: reconciler
-          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:34d1b9e5ea5ca37398f82544af954c2d893abae16c0ba3598e0f9cea7d55f032
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
           imagePullPolicy: IfNotPresent
           command: ["node", "/app/opensphere-console-backend/foundation-bootstrap-reconciler.js"]
           env:
@@ -609,7 +609,7 @@ spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: reconciler
-          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:aa86ded237306277949c843e0f87f8dfd5cf98ed81a03d0549a9d447985f7b9f
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
           imagePullPolicy: IfNotPresent
           command: ["node", "/app/opensphere-console-backend/platform-release-reconciler.js"]
           env:
@@ -620,7 +620,7 @@ spec:
             - { name: GITEA_ORGANIZATION, value: opensphere }
             - { name: GITEA_REPOSITORY, value: platform-declarations }
             - { name: GITEA_PATH, value: platform-release }
-            - { name: EXECUTOR_IMAGE, value: "ghcr.io/opensphere-platform/opensphere-console-backend@sha256:aa86ded237306277949c843e0f87f8dfd5cf98ed81a03d0549a9d447985f7b9f" }
+            - { name: EXECUTOR_IMAGE, value: "ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84" }
             - name: GITEA_TOKEN
               valueFrom: { secretKeyRef: { name: opensphere-gitea-control-plane, key: token } }
             - name: RECONCILER_TOKEN
