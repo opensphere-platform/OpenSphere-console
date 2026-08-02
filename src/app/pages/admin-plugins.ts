@@ -171,14 +171,14 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       <h2 id="oci-install-title">Extension 설치</h2>
       <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 최근 MFA 확인과 8자 이상의 사유가 필요합니다.</p>
       <div class="registry-access-form registry-access-form--install">
-        <clr-input-container>
-          <label for="extension-image">OCI image</label>
-          <input id="extension-image" #extensionImage clrInput placeholder="ghcr.io/opensphere-platform/opensphere-…:edge" />
-        </clr-input-container>
-        <clr-input-container>
-          <label for="extension-install-reason">설치 사유</label>
-          <input id="extension-install-reason" #extensionInstallReason clrInput minlength="8" placeholder="운영 변경 사유(8자 이상)" />
-        </clr-input-container>
+        <div class="clr-form-control">
+          <label for="extension-image" class="clr-control-label">OCI image</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="extension-image" #extensionImage class="clr-input" placeholder="ghcr.io/opensphere-platform/opensphere-…:edge" /></div></div>
+        </div>
+        <div class="clr-form-control">
+          <label for="extension-install-reason" class="clr-control-label">설치 사유</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="extension-install-reason" #extensionInstallReason class="clr-input" minlength="8" placeholder="운영 변경 사유(8자 이상)" /></div></div>
+        </div>
         <button
           class="btn btn-primary"
           [disabled]="!extensionImage.value.trim() || extensionInstallReason.value.trim().length < 8"
@@ -830,8 +830,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       .registry-access-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
       .registry-access h2 { margin: 0; font-size: 1rem; }
       .registry-access-form { display: flex; align-items: flex-end; gap: 0.7rem; flex-wrap: wrap; }
-      .registry-access-form .clr-form-control,
-      .registry-access-form clr-input-container { min-width: 0; margin-top: 0.45rem; }
+      .registry-access-form .clr-form-control { min-width: 0; margin-top: 0.45rem; }
       .registry-access-form .clr-control-container,
       .registry-access-form .clr-input-wrapper,
       .registry-access-form .clr-input { box-sizing: border-box; width: 100%; max-width: none; }
@@ -841,8 +840,8 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       .registry-access-form--revocation .clr-form-control:nth-child(1) { flex: 1.5 1 34rem; }
       .registry-access-form--revocation .clr-form-control:nth-child(2) { flex: 1.25 1 30rem; }
       .registry-access-form--revocation .clr-form-control:nth-child(3) { flex: 0.85 1 22rem; }
-      .registry-access-form--install clr-input-container:nth-child(1) { flex: 1.5 1 36rem; }
-      .registry-access-form--install clr-input-container:nth-child(2) { flex: 1 1 28rem; }
+      .registry-access-form--install .clr-form-control:nth-child(1) { flex: 1.5 1 36rem; }
+      .registry-access-form--install .clr-form-control:nth-child(2) { flex: 1 1 28rem; }
       .registry-access-form > .btn { flex: 0 0 auto; }
       .oci-install h2 { margin: 0; font-size: 1rem; }
       .oci-install .clr-form-control { margin-top: 0.45rem; }
