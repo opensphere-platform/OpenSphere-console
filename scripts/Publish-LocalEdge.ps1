@@ -170,6 +170,14 @@ if ($backendSelected) {
   if ($setupSourceRevision -notmatch '^[0-9a-f]{40}$') {
     throw 'SetupSourceRevision must resolve to a full lowercase Git commit.'
   }
+  $setupSourceLockPath = Join-Path $consoleCheckout 'backend\opensphere-console-backend\setup-source.lock'
+  $expectedSetupSourceRevision = (Get-Content -LiteralPath $setupSourceLockPath -Raw).Trim()
+  if ($expectedSetupSourceRevision -notmatch '^[0-9a-f]{40}$') {
+    throw 'The governed Backend setup-source.lock is invalid.'
+  }
+  if ($setupSourceRevision -ne $expectedSetupSourceRevision) {
+    throw "Setup source revision $setupSourceRevision differs from governed lock $expectedSetupSourceRevision."
+  }
   Write-Host "[setup] $setupSourceRevision"
 }
 

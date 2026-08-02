@@ -7,6 +7,10 @@ const consoleRoot = path.join(__dirname, '..', '..');
 const gaWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workflows', 'publish-ga-images.yml'), 'utf8');
 const angularConfig = JSON.parse(fs.readFileSync(path.join(consoleRoot, 'angular.json'), 'utf8'));
 const localEdgePublisher = fs.readFileSync(path.join(consoleRoot, 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+const setupSourceLock = fs.readFileSync(
+  path.join(consoleRoot, 'backend', 'opensphere-console-backend', 'setup-source.lock'),
+  'utf8'
+).trim();
 
 test('GA is rebuilt by a manual GitHub workflow and never publishes edge', () => {
   assert.match(gaWorkflow, /^\s*workflow_dispatch:\s*$/m);
@@ -57,6 +61,9 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   assert.match(localEdgePublisher, /\[string\]\$SetupSourcePath = ''/);
   assert.match(localEdgePublisher, /SetupSourcePath must be a clean governed Setup CLI Git worktree/);
   assert.match(localEdgePublisher, /worktree add --detach \$setupCheckout \$setupSourceRevision/);
+  assert.match(setupSourceLock, /^[a-f0-9]{40}$/);
+  assert.match(localEdgePublisher, /setup-source\.lock/);
+  assert.match(localEdgePublisher, /differs from governed lock/);
   assert.doesNotMatch(localEdgePublisher, /\$components = \[ordered\]@\{\}/i);
   assert.match(localEdgePublisher, /Advance selected component tags without moving a partial Console anchor/);
 });
