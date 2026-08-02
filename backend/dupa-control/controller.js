@@ -406,6 +406,15 @@ function verifiedStagedUpdate(reg) {
     && currentDigest !== previousDigest;
 }
 const FOUNDATION_UPGRADE_AUTHORIZATION_KIND = 'VerifiedActivatedFoundationUpdate/v1';
+function authorizationOperationId(opId) {
+  const value = String(opId || '');
+  if (/^os-[a-f0-9]+$/.test(value)) return value;
+  // Browser requests use a UUID correlation id while the signed upgrade
+  // authorization contract intentionally accepts only an `os-<hex>` id.
+  // Derive a stable contract id instead of rejecting a successful update
+  // after the package and workload were already changed.
+  return `os-${createHash('sha256').update(value).digest('hex').slice(0, 32)}`;
+}
 function foundationUpgradeAuthorization(currentPkg, currentReg, targetPkg, actor, opId, requestedAt = new Date().toISOString()) {
   if (currentPkg?.metadata?.name !== FOUNDATION_ID || targetPkg?.metadata?.name !== FOUNDATION_ID) return null;
   if (!verifiedActivatedRegistration(currentReg)) return null;
@@ -427,7 +436,7 @@ function foundationUpgradeAuthorization(currentPkg, currentReg, targetPkg, actor
     toDigest,
     toManifestSha256,
     requestedBy: auditActorLabel(actor),
-    operationId: String(opId || ''),
+    operationId: authorizationOperationId(opId),
     requestedAt: String(requestedAt || ''),
   };
 }
@@ -3695,7 +3704,7 @@ module.exports = {
   requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests,
   governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues,
   localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate,
-  foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization,
+  authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization,
   extensionInstallTransition,
   bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint,
   admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence,

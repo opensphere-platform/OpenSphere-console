@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -223,6 +223,10 @@ test('closed readiness gate permits only a verified update of an existing PFS pl
 });
 
 test('Foundation update evidence is exact-transition and expires without bypassing readiness', () => {
+  const browserCorrelationId = '8e3844d6-d28e-4099-8099-123456789abc';
+  assert.match(authorizationOperationId(browserCorrelationId), /^os-[a-f0-9]{32}$/);
+  assert.equal(authorizationOperationId(browserCorrelationId), authorizationOperationId(browserCorrelationId));
+  assert.equal(authorizationOperationId(`os-${'a'.repeat(24)}`), `os-${'a'.repeat(24)}`);
   const fromDigest = `sha256:${'a'.repeat(64)}`;
   const toDigest = `sha256:${'b'.repeat(64)}`;
   const fromManifestSha256 = 'c'.repeat(64);
