@@ -144,12 +144,42 @@ class RegistryCredentialCoordinator {
     return { username: mounted.username, password: mounted.password };
   }
 
+  async migrateLegacySecret(state) {
+    if (state.phase !== 'configured' || !state.generation) return false;
+    const secret = await this.k8s('GET', secretPath(this.namespace, this.secretName));
+    if (secret.status === 404) return false;
+    if (!secret.ok) throw storeError(`registry credential migration HTTP ${secret.status}`);
+    const annotationGeneration = String(secret.json?.metadata?.annotations?.[GENERATION_ANNOTATION] || '').trim();
+    if (annotationGeneration !== state.generation) return false;
+    const encoded = secret.json?.data?.['.dockerconfigjson'];
+    const config = encoded ? Buffer.from(encoded, 'base64').toString('utf8') : '';
+    const credentials = dockerCredentials(config);
+    if (!credentials || credentials.generation) return false;
+    const migrated = await this.k8s('PATCH', secretPath(this.namespace, this.secretName), {
+      data: {
+        '.dockerconfigjson': Buffer.from(dockerConfig(
+          credentials.username,
+          credentials.password,
+          state.generation,
+        )).toString('base64'),
+      },
+    });
+    if (!migrated.ok) throw storeError(`registry credential migration HTTP ${migrated.status}`);
+    return true;
+  }
+
   async observe() {
     const state = await this.state();
     let observed = '';
     if (state.generation) {
       if (state.phase === 'configured') {
-        const mounted = this.mounted();
+        let mounted = this.mounted();
+        // Releases predating the HA generation contract stored valid Docker
+        // credentials without embedding their generation in the projected file.
+        // Migrate only when the Secret annotation proves it belongs to this exact
+        // configured state. Projection convergence is still required before use.
+        if (!mounted) await this.migrateLegacySecret(state);
+        mounted = this.mounted();
         if (mounted?.generation === state.generation) observed = `configured:${state.generation}`;
       } else if (state.phase === 'revoked') {
         const secret = await this.k8s('GET', secretPath(this.namespace, this.secretName));

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RegistryCredentialCoordinator, dockerConfig } = require('./registry-credentials');
+const { RegistryCredentialCoordinator, dockerConfig, dockerCredentials } = require('./registry-credentials');
 
 function fakeCluster() {
   const state = { secret: null, configMaps: new Map(), pods: ['controller-a', 'controller-b'] };
@@ -63,6 +63,12 @@ function project(cluster, mounts, podName) {
   mounts.set(`/state/${podName}/generation`, generation);
 }
 
+function legacyDockerConfig(username, password) {
+  const config = JSON.parse(dockerConfig(username, password, 'legacy-generation'));
+  delete config['x-opensphere-credential-generation'];
+  return JSON.stringify(config);
+}
+
 test('login returns propagation state without waiting for projected Secret convergence', async () => {
   const cluster = fakeCluster();
   const mounts = new Map();
@@ -121,6 +127,50 @@ test('a replica observes the generation embedded in its Secret when the optional
   const a = coordinator(cluster, 'controller-a', mounts);
   assert.deepEqual(await a.credentials(), { username: 'opensphere-platform', password: 'test-token-not-a-real-secret' });
   assert.equal((await a.observe()).observed, 'configured:generation-2');
+});
+
+test('a matching annotated legacy Secret is upgraded without token re-entry', async () => {
+  const cluster = fakeCluster();
+  const legacyConfig = legacyDockerConfig('opensphere-platform', 'test-token-not-a-real-secret');
+  cluster.state.secret = {
+    metadata: { annotations: { 'opensphere.io/credential-generation': 'generation-2' } },
+    type: 'kubernetes.io/dockerconfigjson',
+    data: { '.dockerconfigjson': Buffer.from(legacyConfig).toString('base64') },
+  };
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: { phase: 'configured', generation: 'generation-2', updatedAt: '2026-07-24T00:00:00.000Z' } });
+  const mounts = new Map([
+    ['/mount/controller-a/config.json', legacyConfig],
+    ['/state/controller-a/generation', 'generation-2'],
+  ]);
+  const a = coordinator(cluster, 'controller-a', mounts);
+  const first = await a.observe();
+  assert.equal(first.observed, '');
+  const migratedConfig = Buffer.from(cluster.state.secret.data['.dockerconfigjson'], 'base64').toString('utf8');
+  const migrated = dockerCredentials(migratedConfig);
+  assert.equal(migrated.generation, 'generation-2');
+  assert.equal(migrated.username, 'opensphere-platform');
+  assert.equal(migrated.password, 'test-token-not-a-real-secret');
+  project(cluster, mounts, 'controller-a');
+  assert.equal((await a.observe()).observed, 'configured:generation-2');
+});
+
+test('a legacy Secret is not changed when annotation and configured generation differ', async () => {
+  const cluster = fakeCluster();
+  const legacyConfig = legacyDockerConfig('opensphere-platform', 'test-token-not-a-real-secret');
+  const encoded = Buffer.from(legacyConfig).toString('base64');
+  cluster.state.secret = {
+    metadata: { annotations: { 'opensphere.io/credential-generation': 'generation-1' } },
+    type: 'kubernetes.io/dockerconfigjson',
+    data: { '.dockerconfigjson': encoded },
+  };
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: { phase: 'configured', generation: 'generation-2', updatedAt: '2026-07-24T00:00:00.000Z' } });
+  const mounts = new Map([
+    ['/mount/controller-a/config.json', legacyConfig],
+    ['/state/controller-a/generation', 'generation-2'],
+  ]);
+  const a = coordinator(cluster, 'controller-a', mounts);
+  assert.equal((await a.observe()).observed, '');
+  assert.equal(cluster.state.secret.data['.dockerconfigjson'], encoded);
 });
 
 test('a mismatched optional state projection still blocks credential use', async () => {
