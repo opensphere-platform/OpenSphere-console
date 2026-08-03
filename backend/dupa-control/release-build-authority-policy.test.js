@@ -81,3 +81,11 @@ test('local edge tag promotion preserves the exact single-platform manifest dige
   const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
   assert.match(publisher, /imagetools create --prefer-index=false --tag \$target/);
 });
+
+test('local edge publisher supports an explicit component-only release scope', () => {
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+  assert.match(publisher, /\[string\[\]\]\$Components/);
+  assert.match(publisher, /Where-Object \{ \$requestedComponents\.Contains\(\$_.Key\) \}/);
+  assert.match(publisher, /if \(\$console\) \{[\s\S]*Set-RemoteTag[\s\S]*\}/);
+  assert.match(publisher, /component-only edge publication/);
+});
