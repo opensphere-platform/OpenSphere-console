@@ -405,20 +405,20 @@ function verifiedStagedUpdate(reg) {
     && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
     && currentDigest !== previousDigest;
 }
-function verifiedEnabledUpdate(reg) {
+function verifiedEnabledUpdate(reg, pkg, verificationPassed, workloadIsReady) {
   const status = reg?.status || {};
   const currentDigest = String(status.currentDigest || '');
   const previousDigest = String(status.previousDigest || '');
+  const currentManifestSha256 = String(status.currentManifestSha256 || '');
   return reg?.spec?.desiredState === 'Enabled'
-    && ['Ready', 'Activated'].includes(status.phase)
-    && status.workload?.phase === 'Ready'
-    && status.verification?.manifest === 'Verified'
-    && status.verification?.signature === 'Verified'
-    && status.verification?.entryDigest === 'Verified'
-    && status.verification?.permissions === 'Approved'
+    && verificationPassed === true
+    && workloadIsReady === true
     && /^sha256:[a-f0-9]{64}$/.test(currentDigest)
     && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
-    && currentDigest !== previousDigest;
+    && currentDigest !== previousDigest
+    && pkg?.spec?.image?.digest === currentDigest
+    && /^[a-f0-9]{64}$/.test(currentManifestSha256)
+    && pkg?.spec?.manifest?.sha256 === currentManifestSha256;
 }
 const FOUNDATION_UPGRADE_AUTHORIZATION_KIND = 'VerifiedActivatedFoundationUpdate/v1';
 function authorizationOperationId(opId) {
@@ -1902,7 +1902,7 @@ async function reconcile() {
         // but must not take an already-enabled consumer offline during a verified
         // exact-digest update. The API already accepts this staged-update path;
         // the reconciler must preserve the same decision on every later pass.
-        const verifiedUpdate = verifiedEnabledUpdate(reg);
+        const verifiedUpdate = verifiedEnabledUpdate(reg, pkg, v.ok, ready);
         const profileActivationAllowed = readiness.admission.pfsPluginActivationAllowed === true;
         const activationAllowed = profileActivationAllowed || verifiedUpdate;
         admission = {
