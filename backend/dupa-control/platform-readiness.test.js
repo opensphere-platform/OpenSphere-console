@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, verifiedEnabledUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -220,6 +220,21 @@ test('closed readiness gate permits only a verified update of an existing PFS pl
     ...verified, phase: 'Ready', previousDigest: verified.currentDigest,
   } }), false);
   assert.equal(verifiedStagedUpdate({ spec: { desiredState: 'Installed' }, status: { ...verified, phase: 'Ready' } }), false);
+  assert.equal(verifiedEnabledUpdate({ spec: { desiredState: 'Enabled' }, status: {
+    ...verified, phase: 'Ready', previousDigest: `sha256:${'b'.repeat(64)}`,
+  } }), true);
+  assert.equal(verifiedEnabledUpdate({ spec: { desiredState: 'Enabled' }, status: {
+    ...verified, phase: 'Activated', previousDigest: `sha256:${'b'.repeat(64)}`,
+  } }), true);
+  assert.equal(verifiedEnabledUpdate({ spec: { desiredState: 'Enabled' }, status: {
+    ...verified, phase: 'Activated', previousDigest: verified.currentDigest,
+  } }), false);
+  const controllerSource = read('backend', 'dupa-control', 'controller.js');
+  const reconcileStart = controllerSource.indexOf('async function reconcile()');
+  const reconcileEnd = controllerSource.indexOf('function emitSse', reconcileStart);
+  const reconcileSource = controllerSource.slice(reconcileStart, reconcileEnd);
+  assert.match(reconcileSource, /const verifiedUpdate = verifiedEnabledUpdate\(reg\)/);
+  assert.match(reconcileSource, /const activationAllowed = profileActivationAllowed \|\| verifiedUpdate/);
 });
 
 test('Foundation update evidence is exact-transition and expires without bypassing readiness', () => {

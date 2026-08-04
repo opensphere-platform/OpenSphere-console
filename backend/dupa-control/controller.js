@@ -405,6 +405,21 @@ function verifiedStagedUpdate(reg) {
     && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
     && currentDigest !== previousDigest;
 }
+function verifiedEnabledUpdate(reg) {
+  const status = reg?.status || {};
+  const currentDigest = String(status.currentDigest || '');
+  const previousDigest = String(status.previousDigest || '');
+  return reg?.spec?.desiredState === 'Enabled'
+    && ['Ready', 'Activated'].includes(status.phase)
+    && status.workload?.phase === 'Ready'
+    && status.verification?.manifest === 'Verified'
+    && status.verification?.signature === 'Verified'
+    && status.verification?.entryDigest === 'Verified'
+    && status.verification?.permissions === 'Approved'
+    && /^sha256:[a-f0-9]{64}$/.test(currentDigest)
+    && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
+    && currentDigest !== previousDigest;
+}
 const FOUNDATION_UPGRADE_AUTHORIZATION_KIND = 'VerifiedActivatedFoundationUpdate/v1';
 function authorizationOperationId(opId) {
   const value = String(opId || '');
@@ -1883,10 +1898,16 @@ async function reconcile() {
       if (hostRef === FOUNDATION_ID) {
         const readiness = await supportProfileReadiness();
         const capabilities = readiness.capabilities || [];
-        const activationAllowed = readiness.admission.pfsPluginActivationAllowed === true;
+        // A degraded Support Profile blocks the first activation of a PFS plugin,
+        // but must not take an already-enabled consumer offline during a verified
+        // exact-digest update. The API already accepts this staged-update path;
+        // the reconciler must preserve the same decision on every later pass.
+        const verifiedUpdate = verifiedEnabledUpdate(reg);
+        const profileActivationAllowed = readiness.admission.pfsPluginActivationAllowed === true;
+        const activationAllowed = profileActivationAllowed || verifiedUpdate;
         admission = {
           activationAllowed,
-          reason: activationAllowed ? '' : 'PlatformSupportProfileIncomplete',
+          reason: profileActivationAllowed ? '' : (verifiedUpdate ? 'VerifiedUpdateOfExistingActivation' : 'PlatformSupportProfileIncomplete'),
           pendingCapabilities: capabilities.filter((c) => !c.ready).map((c) => String(c.type)),
           satisfiedCapabilities: capabilities.filter((c) => c.ready).map((c) => String(c.type)),
           route: '/manage/platform-control',
@@ -3703,7 +3724,7 @@ module.exports = {
   deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled,
   requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests,
   governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues,
-  localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate,
+  localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, verifiedEnabledUpdate,
   authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization,
   extensionInstallTransition,
   bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint,
