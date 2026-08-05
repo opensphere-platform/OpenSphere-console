@@ -4,11 +4,14 @@ param(
   [string]$SourceRevision = '',
   [string]$Platform = '',
   [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git',
-  [switch]$UseExistingRegistryLogin
+  [switch]$UseExistingRegistryLogin,
+  [ValidateSet('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
+  [string[]]$Components = @('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$componentMode = $PSBoundParameters.ContainsKey('Components')
 
 function Invoke-Checked {
   if ($args.Count -lt 1) {
@@ -191,6 +194,10 @@ $images = @(
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
+$requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
+$images = @($images | Where-Object { $requestedComponents.Contains($_.Key) })
+if (-not $images.Count) { throw 'At least one Console component must be selected.' }
 
 Write-Host "[step 04/06] Build and push $($images.Count) host-native images"
 $digests = [ordered]@{}
@@ -233,39 +240,61 @@ foreach ($item in $images) {
   Set-RemoteTag -Repository $repository -Digest $digests[$item.Key] -Tag $releaseTag -Immutable
 }
 
-$components = [ordered]@{}
+$componentEvidence = [ordered]@{}
 foreach ($item in $images) {
   $repository = "$Registry/$($item.Image)"
-  $components[$item.Key] = [ordered]@{
+  $componentEvidence[$item.Key] = [ordered]@{
     repository = $item.Image
     image = "${repository}@$($digests[$item.Key])"
     sourceRevision = $SourceRevision
   }
 }
-$bom = [ordered]@{
-  apiVersion = 'release.opensphere.io/v1alpha1'
-  kind = 'OpenSphereReleaseBOM'
-  channel = 'edge'
-  status = 'Active'
-  releaseTag = $releaseTag
-  immutableTag = $localTag
-  source = 'https://github.com/opensphere-platform/OpenSphere-console'
-  sourceRevision = $SourceRevision
-  buildAuthority = 'localhost'
-  releaseClass = 'pre-ga'
-  gaEligible = $false
-  supportedPlatforms = @($Platform)
-  components = $components
+$publication = if ($componentMode) {
+  [ordered]@{
+    apiVersion = 'release.opensphere.io/v1alpha1'
+    kind = 'OpenSphereEdgeComponentPublication'
+    releaseScope = 'component'
+    channel = 'edge'
+    releaseTag = $releaseTag
+    immutableTag = $localTag
+    source = 'https://github.com/opensphere-platform/OpenSphere-console'
+    sourceRevision = $SourceRevision
+    buildAuthority = 'localhost'
+    releaseClass = 'pre-ga'
+    gaEligible = $false
+    supportedPlatforms = @($Platform)
+    selectedComponents = @($images | ForEach-Object { $_.Key })
+    components = $componentEvidence
+  }
+} else {
+  [ordered]@{
+    apiVersion = 'release.opensphere.io/v1alpha1'
+    kind = 'OpenSphereReleaseBOM'
+    releaseScope = 'integrated'
+    channel = 'edge'
+    status = 'Active'
+    releaseTag = $releaseTag
+    immutableTag = $localTag
+    source = 'https://github.com/opensphere-platform/OpenSphere-console'
+    sourceRevision = $SourceRevision
+    buildAuthority = 'localhost'
+    releaseClass = 'pre-ga'
+    gaEligible = $false
+    supportedPlatforms = @($Platform)
+    components = $componentEvidence
+  }
 }
-$bomPath = Join-Path $workspace 'opensphere-local-release-bom.json'
-$bom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bomPath -Encoding utf8
+$publicationPath = Join-Path $workspace $(if ($componentMode) { 'opensphere-edge-component-publication.json' } else { 'opensphere-local-release-bom.json' })
+$publication | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $publicationPath -Encoding utf8
 
 Write-Host '[step 06/06] Advance edge atomically with Console anchor last'
 foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
   Set-RemoteTag -Repository "$Registry/$($item.Image)" -Digest $digests[$item.Key] -Tag edge
 }
 $console = $images | Where-Object { $_.Key -eq 'console' }
-Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+if ($console) {
+  Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+}
 
 foreach ($item in $images) {
   $actual = Get-RemoteDigest -Reference "$Registry/$($item.Image):edge"
@@ -277,5 +306,9 @@ foreach ($item in $images) {
 Write-Host '[success] Local edge publish completed'
 Write-Host "[release] $releaseTag"
 Write-Host "[immutable] $localTag"
-Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
-Write-Host "[bom] $bomPath"
+if ($console) {
+  Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
+} else {
+  Write-Host '[anchor] not selected; component-only edge publication'
+}
+Write-Host "[evidence] $publicationPath"
