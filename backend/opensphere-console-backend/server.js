@@ -1779,8 +1779,16 @@ async function changeTemplateRequestStatus(templateId) {
   const template = changeTemplate(templateId);
   const action = `gitea:${template.action}`;
   const payloadDigest = `sha256:${toHashHex(canonicalJson(template.desiredState))}`;
+  // The immutable declaration digest lives in audit.event. change_request is
+  // the mutable state projection and intentionally has no payload_digest.
+  const intentRows = await restRequest('event', {
+    profile: 'audit',
+    query: `select=request_id&target_id=eq.${encodeURIComponent(template.target)}&action=eq.${encodeURIComponent(action)}&payload_digest=eq.${encodeURIComponent(payloadDigest)}&phase=eq.intent&order=occurred_at.desc&limit=1`,
+  });
+  const intent = Array.isArray(intentRows) ? intentRows[0] : null;
+  if (!intent?.request_id) return { templateId: template.id, current: null, checkedAt: new Date().toISOString() };
   const rows = await restRequest('change_request', {
-    query: `select=request_id,action,target,reason,status,payload_digest,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&target=eq.${encodeURIComponent(template.target)}&action=eq.${encodeURIComponent(action)}&payload_digest=eq.${encodeURIComponent(payloadDigest)}&order=created_at.desc&limit=1`,
+    query: `select=request_id,action,target,reason,status,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&request_id=eq.${encodeURIComponent(intent.request_id)}&limit=1`,
   });
   const change = Array.isArray(rows) ? rows[0] : null;
   if (!change) return { templateId: template.id, current: null, checkedAt: new Date().toISOString() };

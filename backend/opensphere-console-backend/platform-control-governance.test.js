@@ -60,7 +60,10 @@ test('Ceph prerequisite requests are immutable templates assigned to a dedicated
   assert.match(deploy, /GITEA_RECONCILER_NAMES[^\n]*platform-release-reconciler/);
   assert.match(server, /reconcile receipt identity does not match the assigned consumer reconciler/);
   assert.match(server, /changeTemplateRequestStatus/);
+  assert.match(server, /restRequest\('event', \{[\s\S]*profile: 'audit'/);
   assert.match(server, /payload_digest=eq\.\$\{encodeURIComponent\(payloadDigest\)\}/);
+  assert.match(server, /restRequest\('change_request', \{[\s\S]*request_id=eq\.\$\{encodeURIComponent\(intent\.request_id\)\}/);
+  assert.doesNotMatch(server, /select=request_id,action,target,reason,status,payload_digest/);
   assert.match(server, /changeTemplateRequestPhase/);
   assert.match(server, /AwaitingApproval/);
   assert.match(server, /changeTemplateStatusPath/);
