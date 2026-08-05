@@ -573,7 +573,7 @@ interface TreeNode {
 
         <div class="cc-primary-actions">
           @if (pageReady(r)) {
-            <a class="btn btn-sm btn-primary" [routerLink]="['/p', r.name]">Extension 페이지 열기</a>
+            <a class="btn btn-sm btn-primary" [routerLink]="extensionPageRoute(r)">Extension 페이지 열기</a>
           }
           <button class="btn btn-sm btn-outline" (click)="refresh()">상태 새로고침</button>
         </div>
@@ -1168,6 +1168,12 @@ export class AdminPlugins implements OnInit {
   effectiveStateByName(name: string): EffectiveExtensionState {
     const r = this.registrations().find((item) => item.name === name);
     return r ? this.effectiveState(r) : { label: '미설치', detail: 'Registration 없음', tone: 'neutral' };
+  }
+
+  extensionPageRoute(r: Registration): string {
+    const hostRef = this.catalogItem(r.name)?.hostRef || 'main';
+    if (hostRef === 'foundation') return `/pfss/${r.name}`;
+    return hostRef === 'main' ? `/p/${r.name}` : `/p/${hostRef}/${r.name}`;
   }
   desiredStateByName(name: string): string {
     return this.registrations().find((item) => item.name === name)?.desiredState || '';

@@ -434,6 +434,9 @@ export class OsShell {
     const servingIds = new Set(this.ext.pages().map((page) => page.id));
     for (const item of this.ext.managementInventory()) {
       if (servingIds.has(item.id)) continue;
+      // Inventory is a management projection, not a flat navigation authority.
+      // PFSS-owned children are reachable only through their host namespace.
+      if ((item.hostRef || 'main') !== 'main') continue;
       const arr = byBand.get(item.navBand) ?? [];
       arr.push({ path: routeForPlugin(item.id), label: item.title, plugin: true });
       byBand.set(item.navBand, arr);

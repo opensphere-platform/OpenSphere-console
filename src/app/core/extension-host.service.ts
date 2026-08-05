@@ -95,6 +95,9 @@ export interface ManagementInventoryItem {
   id: string;
   title: string;
   navBand: string;
+  /** Canonical ownership boundary. Child plugins must not be flattened into Main Shell navigation. */
+  hostRef: string;
+  kind?: 'subShell' | 'plugin';
   icon?: string;
   desiredState?: string;
   phase?: string;
@@ -212,7 +215,7 @@ export class ExtensionHostService {
       const catalog = await catalogResponse.json() as { items?: Array<Record<string, unknown>> };
       const registrations = await registrationResponse.json() as { items?: Array<Record<string, unknown>> };
       const registrationByName = new Map((registrations.items || []).map((item) => [String(item['name'] || ''), item]));
-      const items = (catalog.items || []).flatMap((item) => {
+      const items: ManagementInventoryItem[] = (catalog.items || []).flatMap((item) => {
         const id = String(item['name'] || '');
         if (!id) return [];
         const nav = item['nav'] && typeof item['nav'] === 'object' ? item['nav'] as Record<string, unknown> : {};
@@ -223,6 +226,8 @@ export class ExtensionHostService {
           id,
           title: String(item['displayName'] || id),
           navBand: String(nav['band'] || '운영 Operate'),
+          hostRef: String(item['hostRef'] || 'main'),
+          kind: item['kind'] === 'subShell' ? 'subShell' : 'plugin',
           icon: String(nav['icon'] || ''),
           desiredState: String(registration?.['desiredState'] || ''),
           phase: String(status['phase'] || 'NotInstalled'),
