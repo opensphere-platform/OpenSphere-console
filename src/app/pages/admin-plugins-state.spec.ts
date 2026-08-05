@@ -7,6 +7,7 @@ const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts
 const routes = fs.readFileSync(new URL('../app.routes.ts', import.meta.url), 'utf8');
 const extensionHost = fs.readFileSync(new URL('../core/extension-host.service.ts', import.meta.url), 'utf8');
 const shell = fs.readFileSync(new URL('../os/os-shell.ts', import.meta.url), 'utf8');
+const perspectives = fs.readFileSync(new URL('../core/perspectives.ts', import.meta.url), 'utf8');
 
 test('Extension operations separate user intent, serving state, and verification', () => {
   assert.match(source, /<span>서비스 중<\/span>/);
@@ -34,10 +35,12 @@ test('an unavailable control projection is unknown or stale, never a false zero'
 });
 
 test('PFSS child plugins keep their host ownership across routes and navigation', () => {
+  assert.match(routes, /return childPath \? `\/pfss\/\$\{childPath\}` : '\/pfss\/foundation'/);
   assert.match(routes, /path: 'p\/opensearch', redirectTo: 'pfss\/opensearch'/);
-  assert.match(routes, /path: 'p\/foundation\/opensearch', redirectTo: 'pfss\/opensearch'/);
+  assert.match(routes, /path: 'p\/postgres', redirectTo: 'pfss\/postgres'/);
   assert.match(routes, /matcher: pfssHostMatcher, component: PluginHost, data: \{ pluginId: 'foundation' \}/);
   assert.match(extensionHost, /hostRef: String\(item\['hostRef'\] \|\| 'main'\)/);
   assert.match(shell, /if \(\(item\.hostRef \|\| 'main'\) !== 'main'\) continue/);
   assert.match(source, /if \(hostRef === 'foundation'\) return `\/pfss\/\$\{r\.name\}`/);
+  assert.match(perspectives, /id === 'foundation' \? '\/pfss\/foundation' : `\/p\/\$\{id\}`/);
 });

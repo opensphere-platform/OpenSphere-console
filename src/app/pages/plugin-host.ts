@@ -309,7 +309,7 @@ export class PluginHost {
         this.control.registrationsSnapshot(),
       ]);
       // A child plugin normally renders inside its host subShell
-      // (`/p/foundation/postgres`). If that host cannot be mounted, keep the
+      // (`/pfss/postgres`). If that host cannot be mounted, keep the
       // same deep link useful by resolving the deepest registered module
       // segment before falling back to the host id. This is inventory lookup,
       // not a second routing/source-of-truth model.

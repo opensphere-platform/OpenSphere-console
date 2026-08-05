@@ -2642,7 +2642,7 @@ async function platformReadinessStatus() {
       detail: pfs.established
         ? 'Foundation contracts, control plane and Claim→Binding protection proof are live'
         : (pfs.blockers[0]?.detail || 'Foundation establishment evidence is incomplete'),
-      route: pfs.shellReady ? '/p/foundation' : (foundationActivationAllowed ? '/manage/extensions' : '/manage/platform-control'),
+      route: pfs.shellReady ? '/pfss/foundation' : (foundationActivationAllowed ? '/manage/extensions' : '/manage/platform-control'),
     },
     {
       key: 'domain',
