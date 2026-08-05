@@ -7,6 +7,7 @@ import Pending16 from '@carbon/icons/es/pending/16';
 import Commit16 from '@carbon/icons/es/commit/16';
 import Renew16 from '@carbon/icons/es/renew/16';
 import { ActivatedRoute } from '@angular/router';
+import { AuthService } from '../core/auth.service';
 import { HttpService } from '../core/http.service';
 import { BackendUnavailable } from '../os/backend-unavailable';
 import { CarbonIcon } from '../os/carbon-icon';
@@ -163,6 +164,7 @@ interface ChangeControlState {
         [error]="approvalError()"
         [reasonRequired]="true"
         reasonLabel="이 요청을 승인하는 사유"
+        [assurance]="auth.assurance()"
         (confirmed)="approveSelected($event)"
         (cancelled)="closeApproval()"
       />
@@ -175,6 +177,7 @@ interface ChangeControlState {
         [error]="retryError()"
         [reasonRequired]="true"
         reasonLabel="재적용 사유"
+        [assurance]="auth.assurance()"
         (confirmed)="retrySelected($event)"
         (cancelled)="closeRetry()"
       />
@@ -190,6 +193,7 @@ interface ChangeControlState {
   `],
 })
 export class AdminChangeControl implements OnInit, OnDestroy {
+  readonly auth = inject(AuthService);
   readonly icons = { arrow: ArrowRight16, check: CheckmarkFilled16, warning: WarningAltFilled16, pending: Pending16, commit: Commit16, renew: Renew16 };
   readonly activeTab = signal<'overview' | 'journey' | 'repositories' | 'changes' | 'approval' | 'webhooks' | 'supply-chain' | 'dr-contracts'>('overview');
   readonly state = signal<ChangeControlState | null>(null); readonly down = signal(''); readonly busy = signal(false); readonly submitting = signal(false); readonly approving = signal(''); readonly retrying = signal(''); readonly message = signal<{ type: 'danger' | 'success' | 'warning' | 'info'; text: string } | null>(null);
