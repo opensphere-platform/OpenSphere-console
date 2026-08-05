@@ -168,16 +168,29 @@ interface TreeNode {
       <div class="registry-access-form">
         <clr-input-container>
           <label for="extension-image">OCI image</label>
-          <input id="extension-image" #extensionImage clrInput placeholder="ghcr.io/opensphere-platform/opensphere-…:edge" />
+          <input
+            id="extension-image"
+            clrInput
+            placeholder="ghcr.io/opensphere-platform/opensphere-…:edge"
+            [value]="extensionInstallImage()"
+            (input)="extensionInstallImage.set($any($event.target).value)"
+          />
         </clr-input-container>
         <clr-input-container>
           <label for="extension-install-reason">설치 사유</label>
-          <input id="extension-install-reason" #extensionInstallReason clrInput minlength="8" placeholder="운영 변경 사유(8자 이상)" />
+          <input
+            id="extension-install-reason"
+            clrInput
+            minlength="8"
+            placeholder="운영 변경 사유(8자 이상)"
+            [value]="extensionInstallReason()"
+            (input)="extensionInstallReason.set($any($event.target).value)"
+          />
         </clr-input-container>
         <button
           class="btn btn-primary"
-          [disabled]="!extensionImage.value.trim() || extensionInstallReason.value.trim().length < 8"
-          (click)="installModule(extensionImage.value, extensionInstallReason.value)"
+          [disabled]="!extensionInstallImage().trim() || extensionInstallReason().trim().length < 8"
+          (click)="installModule(extensionInstallImage(), extensionInstallReason())"
         >
           설치
         </button>
@@ -1002,6 +1015,8 @@ export class AdminPlugins implements OnInit {
   readonly projectionStatus = signal<ExtensionProjectionStatus | null>(null);
   readonly dataWarning = signal<string | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
+  readonly extensionInstallImage = signal('');
+  readonly extensionInstallReason = signal('');
   readonly pendingAction = signal<{ action: 'enable' | 'disable' | 'uninstall'; id: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
@@ -1570,6 +1585,8 @@ export class AdminPlugins implements OnInit {
     try {
       const result = await this.ctl.install(image, reason);
       const id = String((result as { id?: unknown })?.id || image);
+      this.extensionInstallImage.set('');
+      this.extensionInstallReason.set('');
       this.msg.set({ type: 'info', text: `install 요청됨: ${id} — 검증과 workload 조정 중…` });
       await this.refresh();
     } catch (error) {
