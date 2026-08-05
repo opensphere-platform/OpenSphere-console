@@ -7,6 +7,7 @@ const path = require('node:path');
 const {
   auditReason,
   compareSnapshots,
+  credentialReplacement,
   normalizeTarget,
 } = require('./external-channel-api');
 const {
@@ -40,6 +41,19 @@ test('Backblaze credentials fail on their exact field before a remote action', (
     () => credentialInput({ ...valid, applicationKey: 'wrong-secret' }),
     (error) => error?.field === 'applicationKey',
   );
+});
+
+test('backup target credential rotation is pairwise and optional only while editing', () => {
+  assert.equal(credentialReplacement({}, { required: false }), null);
+  assert.throws(
+    () => credentialReplacement({ accessKeyId: '00512f95cf4dcf0000000004z' }),
+    (error) => error?.field === 'applicationKey',
+  );
+  assert.throws(
+    () => credentialReplacement({ applicationKey: 'K0041ZMxZEop4JkYUJqEei1ZSep14zz' }),
+    (error) => error?.field === 'accessKeyId',
+  );
+  assert.throws(() => credentialReplacement({}, { required: true }), { code: 400 });
 });
 
 test('Backblaze S3 failures identify the actionable configuration field', () => {
@@ -148,6 +162,7 @@ test('migration isolates secrets and restore scope from browser identities', () 
 
 test('External Channels UI and compatibility redirect expose backup and restore', () => {
   const source = read('../../src/app/pages/admin-external-channels.ts');
+  const server = read('./server.js');
   const routes = read('../../src/app/app.routes.ts');
   const nginx = read('../../nginx/default.conf.template');
   assert.match(source, /백업 대상/);
@@ -156,9 +171,17 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.match(source, /RESTORE /);
   assert.match(source, /panelError/);
   assert.match(source, /backupTargetFormValid/);
+  assert.match(source, /editBackupTarget/);
+  assert.match(source, /toggleBackupTarget/);
+  assert.match(source, /removeBackupTarget/);
+  assert.match(source, /필요한 수만큼 대상을 추가할 수 있습니다/);
+  assert.match(source, /S3 endpoint/);
   assert.match(source, /Key Name이나 Bucket ID가 아닌 Backblaze의 25자 keyID/);
   assert.match(source, /\[disabled\]="busy\(\) \|\| !backupTargetFormValid\(\)"/);
+  assert.doesNotMatch(source, /name="backup-(?:region|endpoint|bucket-id)"[^>]+readonly/);
   assert.doesNotMatch(source, /변경을 완료하지 못했습니다/);
+  assert.match(server, /\['PUT', 'DELETE'\]\.includes\(req\.method\)/);
+  assert.match(server, /\(test\|backup\|enable\|disable\)/);
   assert.match(routes, /path: 'external-channels'/);
   assert.match(routes, /path: 'notification-channels', redirectTo: 'external-channels'/);
   assert.match(nginx, /location \/api\/external-channels\//);

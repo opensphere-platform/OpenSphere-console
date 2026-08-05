@@ -13,6 +13,20 @@ function auditReason(value) {
   return text(value, 'reason', { max: 240 });
 }
 
+function credentialReplacement(input, { required = false } = {}) {
+  const accessKeyId = String(input?.accessKeyId || '').trim();
+  const applicationKey = String(input?.applicationKey || '').trim();
+  if (!accessKeyId && !applicationKey && !required) return null;
+  if (!accessKeyId || !applicationKey) {
+    throw {
+      code: 400,
+      field: !accessKeyId ? 'accessKeyId' : 'applicationKey',
+      msg: 'Application Key ID and Application Key must be entered together',
+    };
+  }
+  return { accessKeyId, applicationKey };
+}
+
 function normalizeTarget(input) {
   const region = text(input?.region || 'us-east-005', 'region', { required: true, min: 3, max: 32 }).toLowerCase();
   if (!/^[a-z0-9-]+$/.test(region)) throw { code: 400, msg: 'invalid S3 region' };
@@ -168,6 +182,23 @@ function createExternalChannelApi({
   newOpId,
   executorRequest,
 }) {
+  async function targetRow(id) {
+    const rows = await restRequest('external_backup_target', {
+      query: `select=*&id=eq.${encodeURIComponent(id)}&deleted_at=is.null`,
+    });
+    if (!rows[0]) throw { code: 404, msg: 'external backup target not found' };
+    return rows[0];
+  }
+
+  async function ensureUniqueTargetName(name, exceptId = '') {
+    const rows = await restRequest('external_backup_target', {
+      query: `select=id&name=eq.${encodeURIComponent(name)}&deleted_at=is.null`,
+    });
+    if (rows.some((row) => row.id !== exceptId)) {
+      throw { code: 409, field: 'name', msg: '같은 연결 이름이 이미 사용 중입니다.' };
+    }
+  }
+
   async function captureConfiguration(actor) {
     const [
       roles,
@@ -304,6 +335,8 @@ function createExternalChannelApi({
   async function createTarget(actor, body) {
     const changeReason = auditReason(body?.reason);
     const parsed = normalizeTarget(body);
+    const credential = credentialReplacement(body, { required: true });
+    await ensureUniqueTargetName(parsed.name);
     const id = newOpId();
     const now = new Date().toISOString();
     await restRequest('external_backup_target', {
@@ -312,8 +345,8 @@ function createExternalChannelApi({
     });
     try {
       await executorRequest(`/internal/targets/${id}/credentials`, {
-        accessKeyId: body?.accessKeyId,
-        applicationKey: body?.applicationKey,
+        accessKeyId: credential.accessKeyId,
+        applicationKey: credential.applicationKey,
       });
     } catch (error) {
       await restRequest('external_backup_target', {
@@ -330,6 +363,121 @@ function createExternalChannelApi({
     });
     const rows = await restRequest('external_backup_target', { query: `select=*&id=eq.${encodeURIComponent(id)}` });
     return publicTarget(rows[0]);
+  }
+
+  async function updateTarget(actor, id, body) {
+    const changeReason = auditReason(body?.reason);
+    const current = await targetRow(id);
+    const parsed = normalizeTarget(body);
+    const credential = credentialReplacement(body);
+    await ensureUniqueTargetName(parsed.name, id);
+    const now = new Date().toISOString();
+    const replacement = {
+      ...parsed,
+      health_state: current.enabled ? 'Degraded' : 'Disabled',
+      last_test_status: null,
+      last_test_at: null,
+      last_error_code: null,
+      updated_by: actor.sub,
+      updated_at: now,
+    };
+    const rollback = {
+      name: current.name,
+      provider: current.provider,
+      vendor: current.vendor,
+      endpoint: current.endpoint,
+      region: current.region,
+      bucket_name: current.bucket_name,
+      bucket_id: current.bucket_id,
+      path_prefix: current.path_prefix,
+      bucket_private: current.bucket_private,
+      lifecycle_mode: current.lifecycle_mode,
+      server_side_encryption: current.server_side_encryption,
+      health_state: current.health_state,
+      last_test_status: current.last_test_status,
+      last_test_at: current.last_test_at,
+      last_error_code: current.last_error_code,
+      updated_by: current.updated_by,
+      updated_at: current.updated_at,
+    };
+    await restRequest('external_backup_target', {
+      method: 'PATCH',
+      query: `id=eq.${encodeURIComponent(id)}&deleted_at=is.null`,
+      body: replacement,
+      prefer: 'return=minimal',
+    });
+    try {
+      if (credential) {
+        await executorRequest(`/internal/targets/${id}/credentials`, credential);
+      }
+    } catch (error) {
+      await restRequest('external_backup_target', {
+        method: 'PATCH',
+        query: `id=eq.${encodeURIComponent(id)}&deleted_at=is.null`,
+        body: rollback,
+        prefer: 'return=minimal',
+      }).catch(() => undefined);
+      throw error;
+    }
+    await logAudit(actor, credential ? 'external-backup-target-update-and-rotate' : 'external-backup-target-update', id, 'ok', changeReason, {
+      requestId: newOpId(),
+      targetType: 'external-backup-target',
+      payloadDigest: rowDigest({ ...parsed, credentialRotated: Boolean(credential) }),
+    });
+    return publicTarget(await targetRow(id));
+  }
+
+  async function setTargetEnabled(actor, id, enabled, body) {
+    const changeReason = auditReason(body?.reason);
+    const current = await targetRow(id);
+    if (Boolean(current.enabled) === enabled) return publicTarget(current);
+    const now = new Date().toISOString();
+    await restRequest('external_backup_target', {
+      method: 'PATCH',
+      query: `id=eq.${encodeURIComponent(id)}&deleted_at=is.null`,
+      body: {
+        enabled,
+        health_state: enabled ? 'Degraded' : 'Disabled',
+        last_error_code: null,
+        updated_by: actor.sub,
+        updated_at: now,
+      },
+      prefer: 'return=minimal',
+    });
+    await logAudit(actor, enabled ? 'external-backup-target-enable' : 'external-backup-target-disable', id, 'ok', changeReason, {
+      requestId: newOpId(),
+      targetType: 'external-backup-target',
+    });
+    return publicTarget(await targetRow(id));
+  }
+
+  async function removeTarget(actor, id, body) {
+    const changeReason = auditReason(body?.reason);
+    const current = await targetRow(id);
+    const expected = `REMOVE ${id}`;
+    if (String(body?.confirmation || '').trim() !== expected) {
+      throw { code: 400, field: 'confirmation', msg: `confirmation must exactly match ${expected}` };
+    }
+    if (current.enabled) {
+      throw { code: 409, msg: '외부 백업 대상을 먼저 중지한 뒤 연결 해제하십시오.' };
+    }
+    const backups = await restRequest('configuration_backup', {
+      query: `select=id&target_id=eq.${encodeURIComponent(id)}&limit=1`,
+    });
+    if (backups.length > 0) {
+      throw { code: 409, msg: '보존된 백업이 있는 대상은 연결 해제할 수 없습니다. 대상은 중지 상태로 유지하십시오.' };
+    }
+    await restRequest('external_backup_target', {
+      method: 'DELETE',
+      query: `id=eq.${encodeURIComponent(id)}`,
+      prefer: 'return=minimal',
+    });
+    await logAudit(actor, 'external-backup-target-remove', id, 'ok', changeReason, {
+      requestId: newOpId(),
+      targetType: 'external-backup-target',
+      payloadDigest: rowDigest({ name: current.name, endpoint: current.endpoint, bucketName: current.bucket_name }),
+    });
+    return { removed: true, id };
   }
 
   async function test(actor, id, body) {
@@ -490,15 +638,19 @@ function createExternalChannelApi({
     backups,
     createTarget,
     previewRestore,
+    removeTarget,
+    setTargetEnabled,
     summary,
     targets,
     test,
+    updateTarget,
   };
 }
 
 module.exports = {
   auditReason,
   compareSnapshots,
+  credentialReplacement,
   createExternalChannelApi,
   normalizeTarget,
   publicTarget,

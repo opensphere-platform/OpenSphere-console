@@ -4000,12 +4000,30 @@ const server = http.createServer(async (req, res) => {
         });
       }
     }
-    const externalBackupTargetAction = p.match(/^\/api\/external-channels\/backup-targets\/([0-9a-fA-F-]+)\/(test|backup)$/);
+    const externalBackupTargetItem = p.match(/^\/api\/external-channels\/backup-targets\/([0-9a-fA-F-]+)$/);
+    if (externalBackupTargetItem && ['PUT', 'DELETE'].includes(req.method)) {
+      try {
+        const actor = await verifyExternalChannelAdmin(req);
+        const body = await readBody(req);
+        return json(res, 200, req.method === 'PUT'
+          ? await externalChannelApi.updateTarget(actor, externalBackupTargetItem[1], body)
+          : await externalChannelApi.removeTarget(actor, externalBackupTargetItem[1], body));
+      } catch (e) {
+        return json(res, authErrorStatus(e), {
+          error: e.msg || 'external backup target mutation failed',
+          ...(e.field ? { field: e.field } : {}),
+        });
+      }
+    }
+    const externalBackupTargetAction = p.match(/^\/api\/external-channels\/backup-targets\/([0-9a-fA-F-]+)\/(test|backup|enable|disable)$/);
     if (externalBackupTargetAction && req.method === 'POST') {
       try {
         const actor = await verifyExternalChannelAdmin(req);
         const [, id, action] = externalBackupTargetAction;
         const body = await readBody(req);
+        if (action === 'enable' || action === 'disable') {
+          return json(res, 200, await externalChannelApi.setTargetEnabled(actor, id, action === 'enable', body));
+        }
         return json(res, action === 'test' ? 200 : 201,
           action === 'test'
             ? await externalChannelApi.test(actor, id, body)
