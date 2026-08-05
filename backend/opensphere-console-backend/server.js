@@ -14,6 +14,11 @@ const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 const { createModuleOperationApi } = require('./module-operation-api');
 const {
+  DEFAULT_INSTALLATION_CONFIG_FILE,
+  moduleLifecycleRequiresRecentAal2,
+  readInstallationPolicy,
+} = require('./module-lifecycle-policy');
+const {
   FOUNDATION_BOOTSTRAP_RECONCILER,
   FOUNDATION_BOOTSTRAP_TEMPLATE_ID,
   cloneFoundationBootstrapTemplate,
@@ -69,6 +74,8 @@ const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 't
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
+const INSTALLATION_CONFIG_FILE = process.env.INSTALLATION_CONFIG_FILE || DEFAULT_INSTALLATION_CONFIG_FILE;
+const INSTALLATION_POLICY = readInstallationPolicy(INSTALLATION_CONFIG_FILE);
 const CLI_TOKEN_ISSUER = 'opensphere-cli';
 const CLI_TOKEN_AUDIENCE = 'opensphere-cli';
 const CLI_JWT_SECRET = process.env.CLI_JWT_SECRET || '';
@@ -766,7 +773,7 @@ async function logAudit(actor, action, target, result, reason, opts = {}) {
   return persisted;
 }
 
-async function authenticateModuleRequest(req, { mutation = false } = {}) {
+async function authenticateModuleRequest(req, { mutation = false, action = '' } = {}) {
   let actor;
   let authorization = String(req.headers.authorization || '');
   if (authorization) {
@@ -780,7 +787,9 @@ async function authenticateModuleRequest(req, { mutation = false } = {}) {
   if (!actor.groups?.includes(SUPABASE_BACKEND_ROLE)) {
     throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
   }
-  if (mutation) requireRecentAal2(actor, 'module lifecycle mutation');
+  if (mutation && moduleLifecycleRequiresRecentAal2(action, INSTALLATION_POLICY, CONSOLE_PUBLIC_URL)) {
+    requireRecentAal2(actor, 'module lifecycle mutation');
+  }
   return { actor, authorization };
 }
 
@@ -2014,11 +2023,17 @@ async function proxyAdminControlRequest(req, res, url) {
   }
 
   const method = String(req.method || 'GET').toUpperCase();
-  const lifecycleMutation = method === 'POST' && (
-    url.pathname === '/api/admin/extensions/install'
-    || /^\/api\/admin\/plugins\/registrations\/[a-z0-9-]+\/(?:install|enable|disable|uninstall|rollback)$/.test(url.pathname)
+  const registrationLifecycle = url.pathname.match(
+    /^\/api\/admin\/plugins\/registrations\/[a-z0-9-]+\/(install|enable|disable|uninstall|rollback)$/,
   );
-  if (lifecycleMutation) requireRecentAal2(actor, 'module lifecycle mutation');
+  const lifecycleAction = url.pathname === '/api/admin/extensions/install'
+    ? 'install'
+    : registrationLifecycle?.[1] || '';
+  if (method === 'POST'
+    && lifecycleAction
+    && moduleLifecycleRequiresRecentAal2(lifecycleAction, INSTALLATION_POLICY, CONSOLE_PUBLIC_URL)) {
+    requireRecentAal2(actor, 'module lifecycle mutation');
+  }
   const hasBody = !['GET', 'HEAD'].includes(method);
   const body = hasBody ? await readRawBody(req) : undefined;
   const headers = {

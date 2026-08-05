@@ -164,7 +164,7 @@ interface TreeNode {
 
     <section class="oci-install" aria-labelledby="oci-install-title">
       <h2 id="oci-install-title">Extension 설치</h2>
-      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 최근 MFA 확인과 8자 이상의 사유가 필요합니다.</p>
+      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 개발용 local edge에서는 설치·업데이트 MFA를 생략하며, 그 외 환경과 다른 lifecycle 작업에는 MFA를 적용합니다. 사유는 항상 8자 이상 필요합니다.</p>
       <div class="registry-access-form">
         <clr-input-container>
           <label for="extension-image">OCI image</label>

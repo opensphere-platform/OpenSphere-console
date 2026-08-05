@@ -31,6 +31,14 @@ test('administrator mutations require a real AAL2 session by default', () => {
   assert.match(deploy, /name: NOTIFICATION_REQUIRE_AAL2, value: "true"/);
 });
 
+test('module install and update MFA exception is derived from the mounted development edge installation lock', () => {
+  assert.match(backend, /readInstallationPolicy\(INSTALLATION_CONFIG_FILE\)/);
+  assert.match(backend, /moduleLifecycleRequiresRecentAal2\(lifecycleAction, INSTALLATION_POLICY, CONSOLE_PUBLIC_URL\)/);
+  assert.match(deploy, /mountPath: \/var\/run\/opensphere-installation/);
+  assert.match(deploy, /name: opensphere-installation-lock/);
+  assert.match(deploy, /optional: true/);
+});
+
 test('CLI sessions and PATs cannot manufacture Supabase AAL2 assurance', () => {
   const actorProjection = backend.slice(
     backend.indexOf('async function resolveConsoleActor'),
