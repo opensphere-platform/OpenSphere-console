@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$componentMode = $PSBoundParameters.ContainsKey('Components')
 
 function Invoke-Checked {
   if ($args.Count -lt 1) {
@@ -248,23 +249,43 @@ foreach ($item in $images) {
     sourceRevision = $SourceRevision
   }
 }
-$bom = [ordered]@{
-  apiVersion = 'release.opensphere.io/v1alpha1'
-  kind = 'OpenSphereReleaseBOM'
-  channel = 'edge'
-  status = 'Active'
-  releaseTag = $releaseTag
-  immutableTag = $localTag
-  source = 'https://github.com/opensphere-platform/OpenSphere-console'
-  sourceRevision = $SourceRevision
-  buildAuthority = 'localhost'
-  releaseClass = 'pre-ga'
-  gaEligible = $false
-  supportedPlatforms = @($Platform)
-  components = $componentEvidence
+$publication = if ($componentMode) {
+  [ordered]@{
+    apiVersion = 'release.opensphere.io/v1alpha1'
+    kind = 'OpenSphereEdgeComponentPublication'
+    releaseScope = 'component'
+    channel = 'edge'
+    releaseTag = $releaseTag
+    immutableTag = $localTag
+    source = 'https://github.com/opensphere-platform/OpenSphere-console'
+    sourceRevision = $SourceRevision
+    buildAuthority = 'localhost'
+    releaseClass = 'pre-ga'
+    gaEligible = $false
+    supportedPlatforms = @($Platform)
+    selectedComponents = @($images | ForEach-Object { $_.Key })
+    components = $componentEvidence
+  }
+} else {
+  [ordered]@{
+    apiVersion = 'release.opensphere.io/v1alpha1'
+    kind = 'OpenSphereReleaseBOM'
+    releaseScope = 'integrated'
+    channel = 'edge'
+    status = 'Active'
+    releaseTag = $releaseTag
+    immutableTag = $localTag
+    source = 'https://github.com/opensphere-platform/OpenSphere-console'
+    sourceRevision = $SourceRevision
+    buildAuthority = 'localhost'
+    releaseClass = 'pre-ga'
+    gaEligible = $false
+    supportedPlatforms = @($Platform)
+    components = $componentEvidence
+  }
 }
-$bomPath = Join-Path $workspace 'opensphere-local-release-bom.json'
-$bom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bomPath -Encoding utf8
+$publicationPath = Join-Path $workspace $(if ($componentMode) { 'opensphere-edge-component-publication.json' } else { 'opensphere-local-release-bom.json' })
+$publication | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $publicationPath -Encoding utf8
 
 Write-Host '[step 06/06] Advance edge atomically with Console anchor last'
 foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
@@ -290,4 +311,4 @@ if ($console) {
 } else {
   Write-Host '[anchor] not selected; component-only edge publication'
 }
-Write-Host "[bom] $bomPath"
+Write-Host "[evidence] $publicationPath"
