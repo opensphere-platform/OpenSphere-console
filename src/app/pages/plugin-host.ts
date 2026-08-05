@@ -314,7 +314,8 @@ export class PluginHost {
       // segment before falling back to the host id. This is inventory lookup,
       // not a second routing/source-of-truth model.
       const routeSegments = this.route.snapshot.url.map((segment) => segment.path);
-      const candidateIds = [...new Set([...routeSegments.slice(2).reverse(), id].filter(Boolean))];
+      const childSegments = routeSegments[0] === 'pfss' ? routeSegments.slice(1) : routeSegments.slice(2);
+      const candidateIds = [...new Set([...childSegments.reverse(), id].filter(Boolean))];
       const targetId = candidateIds.find((candidate) =>
         catalog.items.some((item) => item.name === candidate)
         || registrations.items.some((item) => item.name === candidate),
