@@ -48,7 +48,7 @@ const FOUNDATION_BOOTSTRAP_TEMPLATE = Object.freeze({
   action: 'apply',
   target: FOUNDATION_BOOTSTRAP_TARGET,
   reasonPlaceholder: '검증된 Platform Support Profile 위에 Foundation 계약과 Control Plane을 설립하는 사유',
-  returnTo: '/p/foundation',
+  returnTo: '/pfss/foundation',
   desiredState: FOUNDATION_BOOTSTRAP_DESIRED_STATE,
 });
 
