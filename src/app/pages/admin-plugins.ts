@@ -173,16 +173,29 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       <div class="registry-access-form registry-access-form--install">
         <div class="clr-form-control">
           <label for="extension-image" class="clr-control-label">OCI image</label>
-          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="extension-image" #extensionImage class="clr-input" placeholder="ghcr.io/opensphere-platform/opensphere-…:edge" /></div></div>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input
+            id="extension-image"
+            class="clr-input"
+            placeholder="ghcr.io/opensphere-platform/opensphere-…:edge"
+            [value]="extensionInstallImage()"
+            (input)="extensionInstallImage.set($any($event.target).value)"
+          /></div></div>
         </div>
         <div class="clr-form-control">
           <label for="extension-install-reason" class="clr-control-label">설치 사유</label>
-          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="extension-install-reason" #extensionInstallReason class="clr-input" minlength="8" placeholder="운영 변경 사유(8자 이상)" /></div></div>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input
+            id="extension-install-reason"
+            class="clr-input"
+            minlength="8"
+            placeholder="운영 변경 사유(8자 이상)"
+            [value]="extensionInstallReason()"
+            (input)="extensionInstallReason.set($any($event.target).value)"
+          /></div></div>
         </div>
         <button
           class="btn btn-primary"
-          [disabled]="!extensionImage.value.trim() || extensionInstallReason.value.trim().length < 8"
-          (click)="installModule(extensionImage.value, extensionInstallReason.value)"
+          [disabled]="installing() || !extensionInstallImage().trim() || extensionInstallReason().trim().length < 8"
+          (click)="installModule(extensionInstallImage(), extensionInstallReason())"
         >
           설치
         </button>
@@ -1126,6 +1139,8 @@ export class AdminPlugins implements OnInit {
   readonly projectionStatus = signal<ExtensionProjectionStatus | null>(null);
   readonly dataWarning = signal<string | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
+  readonly extensionInstallImage = signal('');
+  readonly extensionInstallReason = signal('');
   readonly pendingAction = signal<{ action: 'enable' | 'disable' | 'uninstall'; id: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
@@ -1797,14 +1812,20 @@ export class AdminPlugins implements OnInit {
   }
 
   async installModule(image: string, reason: string): Promise<void> {
+    if (this.installing()) return;
+    this.installing.set(true);
     try {
       const result = await this.ctl.install(image, reason);
       const id = String((result as { id?: unknown })?.id || image);
       const operation = result.operation === 'Update' ? 'update' : 'install';
+      this.extensionInstallImage.set('');
+      this.extensionInstallReason.set('');
       this.msg.set({ type: 'info', text: `${operation} 요청됨: ${id} — 관리자 의도 ${result.desiredState}를 보존하며 검증과 workload를 조정 중…` });
       await this.refresh();
     } catch (error) {
       this.msg.set({ type: 'danger', text: `install 실패: ${String(error)}` });
+    } finally {
+      this.installing.set(false);
     }
   }
 
