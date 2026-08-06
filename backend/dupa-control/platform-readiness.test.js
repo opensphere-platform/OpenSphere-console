@@ -86,6 +86,18 @@ test('a PFS plugin stages unconditionally and only its activation waits for the 
   assert.match(controller, /phase: 'DependencyPending',\s*\n\s*reason: 'PlatformSupportProfileIncomplete'/);
 });
 
+test('BackupRestore remains diagnostic evidence but never blocks ordinary PFS activation', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const readinessStart = controller.indexOf('async function platformReadinessStatus()');
+  const readinessEnd = controller.indexOf('async function declarePlatformProfile(', readinessStart);
+  const readiness = controller.slice(readinessStart, readinessEnd);
+
+  assert.match(controller, /backupRestore:\s*\{ required: false \}/);
+  assert.match(readiness, /evidence: \{ platformControl, mainShell, clusterManager, his, backupRestore \}/);
+  assert.doesNotMatch(readiness, /condition\('BackupRestore'/);
+  assert.match(readiness, /pfsPluginActivationAllowed:\s*supportReady/);
+});
+
 test('Foundation development override is explicit and production fail-closed', () => {
   assert.equal(foundationDevOverrideEnabled({}), false);
   assert.equal(foundationDevOverrideEnabled({ OPENSPHERE_RUNTIME_MODE: 'production', FOUNDATION_ACTIVATION_DEV_OVERRIDE: 'true' }), false);
