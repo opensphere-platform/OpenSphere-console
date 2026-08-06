@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { isMainShellPrimaryNavigationOwner } from '../core/extension-navigation-policy.ts';
 
 const source = fs.readFileSync(new URL('./admin-plugins.ts', import.meta.url), 'utf8');
 const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts', import.meta.url), 'utf8');
@@ -40,7 +41,27 @@ test('PFSS child plugins keep their host ownership across routes and navigation'
   assert.match(routes, /path: 'p\/postgres', redirectTo: 'pfss\/postgres'/);
   assert.match(routes, /matcher: pfssHostMatcher, component: PluginHost, data: \{ pluginId: 'foundation' \}/);
   assert.match(extensionHost, /hostRef: String\(item\['hostRef'\] \|\| 'main'\)/);
-  assert.match(shell, /if \(\(item\.hostRef \|\| 'main'\) !== 'main'\) continue/);
+  assert.match(extensionHost, /primarySubShellIds\.set\(new Set\(activePlugins/);
+  assert.match(shell, /this\.ext\.pages\(\)\.filter\(\(page\) => primarySubShellIds\.has\(page\.id\)\)/);
+  assert.doesNotMatch(shell, /for \(const item of this\.ext\.managementInventory\(\)\)/);
   assert.match(source, /if \(hostRef === 'foundation'\) return `\/pfss\/\$\{r\.name\}`/);
   assert.match(perspectives, /id === 'foundation' \? '\/pfss\/foundation' : `\/p\/\$\{id\}`/);
+});
+
+test('Main Shell first-level ownership admits only available direct subShells', () => {
+  assert.equal(isMainShellPrimaryNavigationOwner({
+    id: 'foundation', available: true, kind: 'subShell', hostRef: 'main',
+  }), true);
+  assert.equal(isMainShellPrimaryNavigationOwner({
+    id: 'opensearch', available: true, kind: 'plugin', hostRef: 'foundation',
+  }), false);
+  assert.equal(isMainShellPrimaryNavigationOwner({
+    id: 'main-plugin', available: true, kind: 'plugin', hostRef: 'main',
+  }), false);
+  assert.equal(isMainShellPrimaryNavigationOwner({
+    id: 'nested-shell', available: true, kind: 'subShell', hostRef: 'foundation',
+  }), false);
+  assert.equal(isMainShellPrimaryNavigationOwner({
+    id: 'disabled-shell', available: false, kind: 'subShell', hostRef: 'main',
+  }), false);
 });

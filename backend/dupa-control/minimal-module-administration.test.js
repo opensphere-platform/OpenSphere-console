@@ -8,14 +8,15 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
-test('management inventory survives inactive serving without loading inactive assets', () => {
+test('management inventory survives for administration without becoming Main Shell navigation authority', () => {
   const host = read('src', 'app', 'core', 'extension-host.service.ts');
   const page = read('src', 'app', 'pages', 'plugin-host.ts');
   const shell = read('src', 'app', 'os', 'os-shell.ts');
   assert.match(host, /readonly managementInventory = signal<ManagementInventoryItem\[\]>/);
   assert.match(host, /\/api\/admin\/plugins\/catalog/);
   assert.match(host, /\/api\/admin\/plugins\/registrations/);
-  assert.match(shell, /this\.ext\.managementInventory\(\)/);
+  assert.match(host, /void this\.loadManagementInventory\(\)/);
+  assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
   assert.match(page, /MODULE MANAGEMENT/);
   assert.match(page, /Installed/);
   assert.match(page, /Activated/);

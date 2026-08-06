@@ -1,6 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
+import { isMainShellPrimaryNavigationOwner } from './extension-navigation-policy';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
@@ -131,6 +132,11 @@ export class ExtensionHostService {
   /** Host-owned projection. Unlike pages, this inventory survives inactive or
    * degraded serving contributions and never causes guest assets to load. */
   readonly managementInventory = signal<ManagementInventoryItem[]>([]);
+  /**
+   * Verified Registry owners allowed to appear in Main Shell's first level.
+   * Child plugins may register pages for their host, but never enter this set.
+   */
+  readonly primarySubShellIds = signal<ReadonlySet<string>>(new Set<string>());
   readonly failures = signal<PluginFailure[]>([]);
   /** 플러그인별 기여 내비 트리(nav:contribute) — pluginId → 재귀 NavNode[] */
   readonly navTrees = signal<Record<string, NavNode[]>>({});
@@ -166,6 +172,9 @@ export class ExtensionHostService {
         return;
       }
       const activePlugins = (reg.plugins ?? []).filter((entry) => entry.available === true);
+			this.primarySubShellIds.set(new Set(activePlugins
+				.filter(isMainShellPrimaryNavigationOwner)
+				.map((entry) => entry.id)));
 			this.registryFingerprint = this.fingerprint(activePlugins, reg.trustedKeys ?? {});
       // 1단 아이콘 맵(registry 전사값). registry에는 Enabled 플러그인만 들어오므로 그대로 사용.
       this.pluginIcons.update((current) => ({ ...current, ...Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])) }));
@@ -202,6 +211,7 @@ export class ExtensionHostService {
     this.pluginIcons.set({});
     this.apiBaseByPlugin.set({});
     this.pluginLoadStates.set({});
+    this.primarySubShellIds.set(new Set<string>());
     await this.load();
   }
 
@@ -400,6 +410,8 @@ export class ExtensionHostService {
 				manifestSha256: entry.manifestSha256,
 				signature: entry.signature,
 				keyId: entry.keyId,
+				kind: entry.kind,
+				componentKind: entry.componentKind,
 				hostRef: entry.hostRef,
 				hostCompat: entry.hostCompat,
 				hostApiVersion: entry.hostApiVersion,
