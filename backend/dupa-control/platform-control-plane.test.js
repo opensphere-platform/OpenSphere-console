@@ -80,6 +80,7 @@ test('Console administrator actions keep failures visible in the action dialog',
 });
 
 test('Platform Control presents support readiness, operations, evidence and journey as correlated task views', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
   const routes = read('src', 'app', 'app.routes.ts');
   const control = read('src', 'app', 'pages', 'admin-platform-control.ts');
   const readiness = read('src', 'app', 'pages', 'admin-platform-readiness.ts');
@@ -110,6 +111,8 @@ test('Platform Control presents support readiness, operations, evidence and jour
   assert.match(changeControl, /서명된 상태 선언/);
   assert.match(changeControl, /소비자 적용기/);
   assert.doesNotMatch(changeControl, /title="Change Control"/);
+  assert.match(controller, /route: pfs\.shellReady \? '\/pfss\/foundation'/);
+  assert.doesNotMatch(controller, /route: pfs\.shellReady \? '\/p\/foundation'/);
 });
 
 test('DUPA active runtime depends on Supabase audit and never ships legacy data modules', () => {
