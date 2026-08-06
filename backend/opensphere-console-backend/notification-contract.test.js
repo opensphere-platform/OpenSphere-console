@@ -33,12 +33,13 @@ test('notification rules require a valid severity and at least one channel', () 
 
 test('Console UI uses an audited side-panel action instead of browser prompt dialogs', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/app/pages/admin-external-channels.ts'), 'utf8');
+  const notificationPanels = source.slice(0, source.indexOf('<os-panel class="backup-target-editor"'));
   assert.match(source, /pendingAction/);
   assert.match(source, /테스트 수신 메일 주소/);
   assert.match(source, /testRecipient/);
   assert.match(source, /editSmtp/);
   assert.match(source, /기존 자격 증명을 유지합니다/);
-  assert.doesNotMatch(source, /minlength="8"|length < 8|최소 8자/);
+  assert.doesNotMatch(notificationPanels, /minlength="8"|length < 8|최소 8자/);
   assert.doesNotMatch(source, /window\.prompt|window\.confirm/);
 });
 

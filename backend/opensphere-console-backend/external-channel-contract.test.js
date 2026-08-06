@@ -27,18 +27,18 @@ test('external backup and restore audit reasons have no minimum length requireme
   assert.throws(() => auditReason('a'.repeat(241)), { code: 400 });
 });
 
-test('Backblaze credentials fail on their exact field before a remote action', () => {
+test('S3-compatible credentials accept provider formats and fail on their exact field', () => {
   const valid = {
-    accessKeyId: '00512f95cf4dcf0000000004z',
-    applicationKey: 'K0041ZMxZEop4JkYUJqEei1ZSep14zz',
+    accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+    applicationKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
   };
   assert.deepEqual(credentialInput(valid), valid);
   assert.throws(
-    () => credentialInput({ ...valid, accessKeyId: 'not-a-backblaze-key-id' }),
+    () => credentialInput({ ...valid, accessKeyId: 'x' }),
     (error) => error?.field === 'accessKeyId',
   );
   assert.throws(
-    () => credentialInput({ ...valid, applicationKey: 'wrong-secret' }),
+    () => credentialInput({ ...valid, applicationKey: 'short' }),
     (error) => error?.field === 'applicationKey',
   );
 });
@@ -56,33 +56,38 @@ test('backup target credential rotation is pairwise and optional only while edit
   assert.throws(() => credentialReplacement({}, { required: true }), { code: 400 });
 });
 
-test('Backblaze S3 failures identify the actionable configuration field', () => {
+test('S3-compatible failures identify the actionable configuration field', () => {
   assert.deepEqual(s3Failure('InvalidAccessKeyId', 403), {
     field: 'accessKeyId',
-    message: 'Backblaze가 Application Key ID를 올바른 keyID로 인식하지 못했습니다.',
+    message: 'S3 저장소가 Access key ID를 인식하지 못했습니다.',
   });
   assert.equal(s3Failure('SignatureDoesNotMatch', 403).field, 'applicationKey');
   assert.equal(s3Failure('NoSuchBucket', 404).field, 'bucketName');
   assert.equal(s3Failure('AuthorizationHeaderMalformed', 400).field, 'region');
 });
 
-test('Backblaze target is fixed to the configured HTTPS region and rejects alternate origins', () => {
-  const target = normalizeTarget({
+test('S3 target profiles are helpers while arbitrary valid HTTPS origins remain supported', () => {
+  const backblaze = normalizeTarget({
+    vendor: 'backblaze-b2',
     endpoint: 'https://s3.us-east-005.backblazeb2.com',
     region: 'us-east-005',
     bucketName: 'opensphere-console-backup',
     bucketId: '68be7936e6cd8ee39ff5091f',
   });
-  assert.equal(target.endpoint, 'https://s3.us-east-005.backblazeb2.com');
-  assert.equal(target.bucket_private, true);
-  assert.throws(() => normalizeTarget({
-    endpoint: 'https://127.0.0.1',
-    region: 'us-east-005',
+  assert.equal(backblaze.endpoint, 'https://s3.us-east-005.backblazeb2.com');
+  assert.equal(backblaze.vendor, 'backblaze-b2');
+  assert.equal(backblaze.bucket_private, true);
+  const minio = normalizeTarget({
+    vendor: 'minio',
+    endpoint: 'https://minio.storage.example:9000',
+    region: 'us-east-1',
     bucketName: 'opensphere-console-backup',
-  }), (error) => /endpoint must be/.test(error?.msg || ''));
+  });
+  assert.equal(minio.endpoint, 'https://minio.storage.example:9000');
+  assert.equal(targetInput(minio).vendor, 'minio');
   assert.throws(
-    () => targetInput({ ...target, endpoint: 'http://s3.us-east-005.backblazeb2.com' }),
-    (error) => /exactly match/.test(error?.msg || ''),
+    () => targetInput({ ...minio, endpoint: 'http://minio.storage.example:9000' }),
+    (error) => error?.field === 'endpoint',
   );
 });
 
@@ -148,6 +153,7 @@ test('restore preview reports additions and changes without destructive deletion
 
 test('migration isolates secrets and restore scope from browser identities', () => {
   const migration = read('../supabase/migrations/0025_external_channels_backup.sql');
+  const s3ProfilesMigration = read('../supabase/migrations/0043_external_backup_s3_compatible_profiles.sql');
   const reasonPolicy = read('../supabase/migrations/0027_external_channel_reason_policy.sql');
   assert.match(migration, /CREATE ROLE opensphere_external_channel_executor NOLOGIN NOINHERIT/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS console\.external_backup_secret/);
@@ -158,6 +164,9 @@ test('migration isolates secrets and restore scope from browser identities', () 
   assert.doesNotMatch(migration, /GRANT SELECT[\s\S]{0,120}external_backup_secret TO opensphere_console_backend/);
   assert.match(reasonPolicy, /DROP CONSTRAINT IF EXISTS configuration_restore_reason_check/);
   assert.doesNotMatch(reasonPolicy, /length\s*\(\s*btrim\s*\(\s*reason\s*\)\s*\)\s*>=\s*8/i);
+  assert.match(s3ProfilesMigration, /ALTER COLUMN vendor SET DEFAULT 's3-compatible'/);
+  assert.match(s3ProfilesMigration, /external_backup_target_endpoint_check/);
+  assert.doesNotMatch(s3ProfilesMigration, /vendor\s*=\s*'backblaze-b2'/);
 });
 
 test('External Channels UI and compatibility redirect expose backup and restore', () => {
@@ -176,8 +185,12 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.match(source, /removeBackupTarget/);
   assert.match(source, /필요한 수만큼 대상을 추가할 수 있습니다/);
   assert.match(source, /S3 endpoint/);
-  assert.match(source, /Key Name이나 Bucket ID가 아닌 Backblaze의 25자 keyID/);
-  assert.match(source, /\[disabled\]="busy\(\) \|\| !backupTargetFormValid\(\)"/);
+  for (const profile of ['사용자 지정 S3 호환', 'Amazon S3', 'Backblaze B2', 'Cloudflare R2', 'MinIO', 'Ceph Object Gateway (RGW)']) assert.ok(source.includes(profile));
+  assert.match(source, /backupTargetSubmitAttempted/);
+  assert.match(source, /focusBackupTargetField/);
+  assert.match(source, /\[disabled\]="busy\(\)" \(click\)="saveBackupTarget\(\)"/);
+  assert.doesNotMatch(source, /필수 항목을 입력하면 저장할 수 있습니다/);
+  assert.doesNotMatch(source, /Region과 일치하는 Backblaze HTTPS S3 endpoint만 허용/);
   assert.doesNotMatch(source, /name="backup-(?:region|endpoint|bucket-id)"[^>]+readonly/);
   assert.doesNotMatch(source, /변경을 완료하지 못했습니다/);
   assert.match(server, /\['PUT', 'DELETE'\]\.includes\(req\.method\)/);

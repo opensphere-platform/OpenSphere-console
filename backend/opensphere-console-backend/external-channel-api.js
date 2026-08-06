@@ -21,38 +21,39 @@ function credentialReplacement(input, { required = false } = {}) {
     throw {
       code: 400,
       field: !accessKeyId ? 'accessKeyId' : 'applicationKey',
-      msg: 'Application Key ID and Application Key must be entered together',
+      msg: 'Access key ID and Secret access key must be entered together',
     };
   }
   return { accessKeyId, applicationKey };
 }
 
 function normalizeTarget(input) {
-  const region = text(input?.region || 'us-east-005', 'region', { required: true, min: 3, max: 32 }).toLowerCase();
-  if (!/^[a-z0-9-]+$/.test(region)) throw { code: 400, msg: 'invalid S3 region' };
+  const vendor = text(input?.vendor || 's3-compatible', 'storage profile', { required: true, min: 2, max: 64 }).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9.-]{1,63}$/.test(vendor)) throw { code: 400, field: 'vendor', msg: 'invalid S3 storage profile' };
+  const region = text(input?.region || 'us-east-1', 'region', { required: true, min: 1, max: 64 }).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(region)) throw { code: 400, field: 'region', msg: 'invalid S3 region' };
   let endpoint;
   try { endpoint = new URL(text(input?.endpoint, 'endpoint', { required: true, max: 240 })); }
-  catch { throw { code: 400, msg: 'valid HTTPS endpoint is required' }; }
-  const expectedHost = `s3.${region}.backblazeb2.com`;
+  catch { throw { code: 400, field: 'endpoint', msg: 'valid HTTPS S3 endpoint is required' }; }
   if (
     endpoint.protocol !== 'https:'
-    || endpoint.hostname !== expectedHost
+    || !endpoint.hostname
     || endpoint.username
     || endpoint.password
     || endpoint.search
     || endpoint.hash
     || !['', '/'].includes(endpoint.pathname)
-  ) throw { code: 400, msg: `endpoint must be https://${expectedHost}` };
+  ) throw { code: 400, field: 'endpoint', msg: 'endpoint must be an HTTPS origin without path, query or credentials' };
   const bucketName = text(input?.bucketName, 'bucket name', { required: true, min: 3, max: 63 }).toLowerCase();
-  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucketName)) throw { code: 400, msg: 'invalid S3 bucket name' };
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucketName)) throw { code: 400, field: 'bucketName', msg: 'invalid S3 bucket name' };
   const pathPrefix = text(input?.pathPrefix || 'opensphere-console', 'path prefix', { required: true, max: 200 }).replace(/^\/+|\/+$/g, '');
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(pathPrefix) || /(^|\/)\.\.?(\/|$)/.test(pathPrefix)) {
-    throw { code: 400, msg: 'invalid backup path prefix' };
+    throw { code: 400, field: 'pathPrefix', msg: 'invalid backup path prefix' };
   }
   return {
-    name: text(input?.name || 'Backblaze B2 Console Backup', 'target name', { required: true, min: 2, max: 80 }),
+    name: text(input?.name || 'S3 Console Backup', 'target name', { required: true, min: 2, max: 80 }),
     provider: 's3',
-    vendor: 'backblaze-b2',
+    vendor,
     endpoint: endpoint.origin,
     region,
     bucket_name: bucketName,

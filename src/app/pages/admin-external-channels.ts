@@ -11,7 +11,9 @@ interface Rule { id: string; name: string; enabled: boolean; priority: number; m
 interface Delivery { id: string; status: string; attempts: number; providerMessageId: string; lastErrorCode: string; updatedAt: string; nextAttemptAt: string; event: { title: string; source: string; severity: string; occurred_at: string } | null; channel: { name: string; provider: string } | null; }
 interface Summary { active: number; healthy: number; degraded: number; failed24h: number; deadLetter: number; paused: boolean; }
 interface PendingAction { title: string; description: string; path: string; reason: string; confirmLabel: string; method: 'POST' | 'DELETE'; testRecipient?: string; confirmation: string; requiredConfirmation?: string; danger?: boolean; }
-interface BackupTarget { id: string; name: string; endpoint: string; region: string; bucketName: string; bucketId: string; pathPrefix: string; bucketPrivate: boolean; lifecycleMode: string; serverSideEncryption: string; clientSideEncryption: string; enabled: boolean; healthState: string; credential: { configured: boolean; version: number }; lastTest: { status: string; at: string; errorCode?: string | null } | null; lastBackupAt: string | null; lastRestoreAt: string | null; updatedAt: string; }
+type S3ProfileKey = 's3-compatible' | 'aws-s3' | 'backblaze-b2' | 'cloudflare-r2' | 'minio' | 'ceph-rgw';
+interface S3Profile { value: S3ProfileKey; label: string; region: string; endpoint: string; endpointPlaceholder: string; }
+interface BackupTarget { id: string; name: string; provider: 's3'; vendor: S3ProfileKey | string; endpoint: string; region: string; bucketName: string; bucketId: string; pathPrefix: string; bucketPrivate: boolean; lifecycleMode: string; serverSideEncryption: string; clientSideEncryption: string; enabled: boolean; healthState: string; credential: { configured: boolean; version: number }; lastTest: { status: string; at: string; errorCode?: string | null } | null; lastBackupAt: string | null; lastRestoreAt: string | null; updatedAt: string; }
 interface Backup { id: string; targetId: string; targetName: string; objectKey: string; status: string; encryption: string; plaintextDigest: string; sizeBytes: number; entryCounts: Record<string, number>; createdAt: string; completedAt: string | null; errorCode: string | null; }
 interface ExternalSummary { targets: number; readyTargets: number; configuredTargets: number; lastBackup: { status: string; at: string | null } | null; lastRestore: { status: string; at: string | null } | null; }
 interface RestorePreview { restoreId: string; backupId: string; digest: string; backupCreatedAt: string; restoreMode: string; exclusions: string[]; changes: { totals: { incoming: number; additions: number; changes: number; unchanged: number } }; }
@@ -19,7 +21,15 @@ interface PanelIssue { message: string; field: string; }
 
 const emptyChannel = () => ({ name: '', provider: 'slack' as Provider, target: '', webhookUrl: '', titlePrefix: '', smtpHost: '', smtpPort: 587, smtpSecure: false, smtpFrom: '', smtpRecipients: '', smtpUsername: '', smtpPassword: '', twilioAccountSid: '', twilioServiceSid: '', twilioFrom: '', twilioRecipients: '', twilioToken: '', reason: '' });
 const emptyRule = () => ({ name: '', priority: 100, minSeverity: 'error', sources: '', categories: '', channelIds: [] as string[], dedupWindowSeconds: 600, reason: '' });
-const emptyBackupTarget = () => ({ name: '', endpoint: 'https://s3.us-east-005.backblazeb2.com', region: 'us-east-005', bucketName: '', bucketId: '', pathPrefix: 'opensphere-console', accessKeyId: '', applicationKey: '', bucketPrivate: true, lifecycleMode: 'keep-all-versions', serverSideEncryption: 'unknown', reason: '' });
+const S3_PROFILES: readonly S3Profile[] = [
+  { value: 's3-compatible', label: '사용자 지정 S3 호환', region: 'us-east-1', endpoint: '', endpointPlaceholder: 'https://s3.example.com' },
+  { value: 'aws-s3', label: 'Amazon S3', region: 'ap-northeast-2', endpoint: 'https://s3.ap-northeast-2.amazonaws.com', endpointPlaceholder: 'https://s3.ap-northeast-2.amazonaws.com' },
+  { value: 'backblaze-b2', label: 'Backblaze B2', region: 'us-east-005', endpoint: 'https://s3.us-east-005.backblazeb2.com', endpointPlaceholder: 'https://s3.us-east-005.backblazeb2.com' },
+  { value: 'cloudflare-r2', label: 'Cloudflare R2', region: 'auto', endpoint: '', endpointPlaceholder: 'https://<account-id>.r2.cloudflarestorage.com' },
+  { value: 'minio', label: 'MinIO', region: 'us-east-1', endpoint: '', endpointPlaceholder: 'https://minio.example.com:9000' },
+  { value: 'ceph-rgw', label: 'Ceph Object Gateway (RGW)', region: 'us-east-1', endpoint: '', endpointPlaceholder: 'https://rgw.example.com' },
+];
+const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3ProfileKey, endpoint: '', region: 'us-east-1', bucketName: '', bucketId: '', pathPrefix: 'opensphere-console', accessKeyId: '', applicationKey: '', bucketPrivate: true, lifecycleMode: 'keep-all-versions', serverSideEncryption: 'unknown', reason: '' });
 
 @Component({
   selector: 'os-admin-external-channels',
@@ -28,7 +38,7 @@ const emptyBackupTarget = () => ({ name: '', endpoint: 'https://s3.us-east-005.b
   template: `
     <div class="os-page">
       <os-page-header title="외부 채널" tag="Core·Admin · Delivery & encrypted backup" />
-      <div class="manage-page-lead"><p>외부 알림 전달과 Console 구성의 암호화 백업·즉시 복원을 한 관리 표면에서 감독합니다. 알림과 백업은 별도 실행기·DB 역할·암호화 키를 사용합니다.</p><span>Supabase metadata · Backblaze B2 S3 · client-side AES-256-GCM · append-only audit</span></div>
+      <div class="manage-page-lead"><p>외부 알림 전달과 Console 구성의 암호화 백업·즉시 복원을 한 관리 표면에서 감독합니다. 알림과 백업은 별도 실행기·DB 역할·암호화 키를 사용합니다.</p><span>Supabase metadata · S3-compatible storage · client-side AES-256-GCM · append-only audit</span></div>
 
       <section class="manage-status-rail" aria-label="외부 채널 전달 상태">
         <div><span>Active</span><strong>{{ summary().active }}</strong><small>발송 가능 채널</small></div>
@@ -91,18 +101,18 @@ const emptyBackupTarget = () => ({ name: '', endpoint: 'https://s3.us-east-005.b
         <clr-tab>
           <button clrTabLink>백업 대상</button>
           <clr-tab-content>
-            <div class="os-actions"><button class="btn btn-sm btn-primary" (click)="openBackupTargetPanel()">S3 대상 추가</button><button class="btn btn-sm btn-outline" [disabled]="busy()" (click)="load()">새로고침</button><span class="os-sub">각 대상은 독립된 Region·Bucket·Object prefix·Application Key를 사용합니다. 자격 증명은 저장 후 다시 표시하지 않습니다.</span></div>
+            <div class="os-actions"><button class="btn btn-sm btn-primary" (click)="openBackupTargetPanel()">S3 대상 추가</button><button class="btn btn-sm btn-outline" [disabled]="busy()" (click)="load()">새로고침</button><span class="os-sub">각 대상은 독립된 Region·Bucket·Object prefix·S3 전용 자격 증명을 사용합니다. 자격 증명은 저장 후 다시 표시하지 않습니다.</span></div>
             @if (!backupTargets().length) {
               <section class="empty-backup">
                 <strong>외부 백업 대상이 아직 연결되지 않았습니다.</strong>
-                <p>Backblaze B2 버킷의 Region, S3 endpoint, Bucket name과 전용 Application Key를 입력하십시오. 필요한 수만큼 대상을 추가할 수 있습니다.</p>
+                <p>AWS Signature Version 4를 지원하는 S3 호환 저장소의 endpoint, Region, Bucket과 전용 자격 증명을 입력하십시오. 필요한 수만큼 대상을 추가할 수 있습니다.</p>
                 <button class="btn btn-sm btn-primary" (click)="openBackupTargetPanel()">첫 번째 대상 추가</button>
               </section>
             } @else {
               <div class="target-grid">
                 @for (target of backupTargets(); track target.id) {
                   <article class="target-card">
-                    <div class="target-card__head"><div><span class="eyebrow">S3 · Backblaze B2</span><h3>{{ target.name }}</h3></div><div class="target-state"><span class="label" [class.label-success]="target.enabled" [class.label-warning]="!target.enabled">{{ target.enabled ? '활성' : '중지' }}</span><span class="label" [class.label-success]="target.healthState === 'Ready'" [class.label-warning]="target.healthState === 'Degraded'" [class.label-danger]="target.healthState === 'Misconfigured'">{{ target.healthState }}</span></div></div>
+                    <div class="target-card__head"><div><span class="eyebrow">S3 · {{ s3ProfileLabel(target.vendor) }}</span><h3>{{ target.name }}</h3></div><div class="target-state"><span class="label" [class.label-success]="target.enabled" [class.label-warning]="!target.enabled">{{ target.enabled ? '활성' : '중지' }}</span><span class="label" [class.label-success]="target.healthState === 'Ready'" [class.label-warning]="target.healthState === 'Degraded'" [class.label-danger]="target.healthState === 'Misconfigured'">{{ target.healthState }}</span></div></div>
                     <dl><div><dt>Endpoint</dt><dd class="os-mono">{{ target.endpoint }}</dd></div><div><dt>Bucket</dt><dd>{{ target.bucketName }} <span class="os-mono">{{ target.bucketId }}</span></dd></div><div><dt>보존</dt><dd>{{ target.bucketPrivate ? 'Private' : 'Public' }} · {{ target.lifecycleMode }}</dd></div><div><dt>암호화</dt><dd><span class="ok">Client {{ target.clientSideEncryption }}</span> · Server {{ target.serverSideEncryption }}</dd></div><div><dt>자격 증명</dt><dd>{{ target.credential.configured ? 'Configured · v' + target.credential.version : 'Missing' }}</dd></div><div><dt>최근 백업</dt><dd>{{ fmt(target.lastBackupAt || '') }}</dd></div></dl>
                     <div class="card-actions"><button class="btn btn-sm btn-link" [disabled]="busy()" (click)="editBackupTarget(target)">편집·키 교체</button><button class="btn btn-sm btn-outline" [disabled]="busy() || !target.credential.configured" (click)="testBackupTarget(target)">연결 테스트</button><button class="btn btn-sm btn-primary" [disabled]="busy() || !target.enabled || !target.credential.configured" (click)="backupNow(target)">지금 백업</button><button class="btn btn-sm btn-link" [disabled]="busy()" (click)="toggleBackupTarget(target)">{{ target.enabled ? '중지' : '활성화' }}</button><button class="btn btn-sm btn-link danger-action" [disabled]="busy() || target.enabled" (click)="removeBackupTarget(target)">연결 해제</button></div>
                   </article>
@@ -177,29 +187,30 @@ const emptyBackupTarget = () => ({ name: '', endpoint: 'https://s3.us-east-005.b
       <div osPanelFooter>@if (pendingAction(); as action) { <button class="btn" [class.btn-primary]="!action.danger" [class.btn-danger]="action.danger" [disabled]="busy() || (action.testRecipient !== undefined && !validEmail(action.testRecipient)) || (!!action.requiredConfirmation && action.confirmation?.trim() !== action.requiredConfirmation)" (click)="executePendingAction()">{{ action.confirmLabel }}</button><button class="btn btn-outline" [disabled]="busy()" (click)="cancelPendingAction()">취소</button> }</div>
     </os-panel>
 
-    <os-panel class="backup-target-editor" [open]="backupTargetPanelOpen()" [title]="editingBackupTargetId() ? 'S3 백업 대상 편집' : 'S3 백업 대상 추가'" subtitle="Backblaze B2 · 자격 증명은 저장 후 다시 표시하지 않음" (closed)="closePanels()">
+    <os-panel class="backup-target-editor" [open]="backupTargetPanelOpen()" [title]="editingBackupTargetId() ? 'S3 백업 대상 편집' : 'S3 백업 대상 추가'" [subtitle]="s3ProfileLabel(backupTargetForm.vendor) + ' · 자격 증명은 저장 후 다시 표시하지 않음'" (closed)="closePanels()">
       @if (panelError(); as issue) { <div class="panel-error" role="alert"><strong>{{ fieldLabel(issue.field) }}</strong><span>{{ issue.message }}</span></div> }
       <div class="backup-panel-intro" id="backup-target-guidance">
         <strong>{{ editingBackupTargetId() ? '저장 위치를 수정하거나 전용 자격 증명을 교체합니다.' : '외부 저장소의 위치와 전용 자격 증명을 등록합니다.' }}</strong>
-        <span>Region과 일치하는 Backblaze HTTPS S3 endpoint만 허용됩니다.</span>
+        <span>프로파일은 대표적인 S3 설정을 채우는 도구이며 endpoint는 저장소 환경에 맞게 수정할 수 있습니다. HTTPS와 AWS Signature Version 4를 지원하는 S3 호환 저장소를 연결합니다.</span>
         <span class="backup-panel-security"><strong>보안:</strong> 모든 snapshot은 업로드 전에 AES-256-GCM으로 암호화됩니다.</span>
       </div>
-      <form clrForm clrLayout="vertical" class="backup-target-form" autocomplete="off" aria-describedby="backup-target-guidance">
+      <form clrForm clrLayout="vertical" class="backup-target-form" autocomplete="off" aria-describedby="backup-target-guidance" novalidate>
         <fieldset class="backup-form-section">
           <legend>저장 위치</legend>
-          <p>Backblaze B2 콘솔에 표시된 Region, endpoint와 Bucket 값을 그대로 입력합니다.</p>
+          <p>저장소 프로파일을 선택한 뒤 해당 서비스에서 확인한 Region, endpoint와 Bucket 값을 입력합니다.</p>
           <div class="backup-form-grid">
-            <clr-input-container><label>고유 연결 이름</label><input clrInput [(ngModel)]="backupTargetForm.name" name="backup-name" minlength="2" maxlength="80" required [attr.aria-invalid]="backupTargetFieldError('name') ? 'true' : null" placeholder="운영 구성 백업 · B2 서울" />@if (backupTargetFieldError('name'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
-            <clr-input-container><label>Region</label><input clrInput [(ngModel)]="backupTargetForm.region" name="backup-region" required [attr.aria-invalid]="backupTargetFieldError('region') ? 'true' : null" placeholder="us-east-005" />@if (backupTargetFieldError('region'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
-            <clr-input-container class="wide"><label>S3 endpoint</label><input clrInput [(ngModel)]="backupTargetForm.endpoint" name="backup-endpoint" required [attr.aria-invalid]="backupTargetFieldError('endpoint') ? 'true' : null" placeholder="https://s3.us-east-005.backblazeb2.com" /><clr-control-helper>예: https://s3.us-east-005.backblazeb2.com</clr-control-helper>@if (backupTargetFieldError('endpoint'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
-            <clr-input-container><label>Bucket name</label><input clrInput [(ngModel)]="backupTargetForm.bucketName" name="backup-bucket-name" minlength="3" maxlength="63" required [attr.aria-invalid]="backupTargetFieldError('bucketName') ? 'true' : null" placeholder="Backblaze 화면의 Bucket Name" /><clr-control-helper>S3 요청에 사용하는 실제 버킷 이름입니다.</clr-control-helper>@if (backupTargetFieldError('bucketName'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
-            <clr-input-container><label>Bucket ID (선택)</label><input clrInput [(ngModel)]="backupTargetForm.bucketId" name="backup-bucket-id" maxlength="128" [attr.aria-invalid]="backupTargetFieldError('bucketId') ? 'true' : null" placeholder="Backblaze Bucket ID" /><clr-control-helper>운영자가 버킷을 식별하기 위한 참조값입니다.</clr-control-helper>@if (backupTargetFieldError('bucketId'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
+            <clr-select-container><label>저장소 프로파일</label><select clrSelect [ngModel]="backupTargetForm.vendor" (ngModelChange)="applyS3Profile($event)" name="backup-vendor">@for (profile of s3Profiles; track profile.value) { <option [value]="profile.value">{{ profile.label }}</option> }</select><clr-control-helper>프로파일을 선택해도 endpoint와 Region을 직접 수정할 수 있습니다.</clr-control-helper></clr-select-container>
+            <clr-input-container><label>고유 연결 이름</label><input clrInput [(ngModel)]="backupTargetForm.name" name="backup-name" minlength="2" maxlength="80" required [attr.aria-invalid]="backupTargetFieldError('name') ? 'true' : null" placeholder="운영 구성 백업 · 서울" />@if (backupTargetFieldError('name'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
+            <clr-input-container><label>Region</label><input clrInput [(ngModel)]="backupTargetForm.region" name="backup-region" required [attr.aria-invalid]="backupTargetFieldError('region') ? 'true' : null" [placeholder]="selectedS3Profile().region" />@if (backupTargetFieldError('region'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
+            <clr-input-container><label>Bucket name</label><input clrInput [(ngModel)]="backupTargetForm.bucketName" name="backup-bucket-name" minlength="3" maxlength="63" required [attr.aria-invalid]="backupTargetFieldError('bucketName') ? 'true' : null" placeholder="opensphere-console-backup" /><clr-control-helper>S3 요청에 사용하는 실제 버킷 이름입니다.</clr-control-helper>@if (backupTargetFieldError('bucketName'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
+            <clr-input-container class="wide"><label>S3 endpoint</label><input clrInput [(ngModel)]="backupTargetForm.endpoint" name="backup-endpoint" required [attr.aria-invalid]="backupTargetFieldError('endpoint') ? 'true' : null" [placeholder]="selectedS3Profile().endpointPlaceholder" /><clr-control-helper>HTTPS origin만 입력합니다. 경로·query·인증 정보는 포함하지 않습니다.</clr-control-helper>@if (backupTargetFieldError('endpoint'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
+            <clr-input-container><label>Bucket ID (선택)</label><input clrInput [(ngModel)]="backupTargetForm.bucketId" name="backup-bucket-id" maxlength="128" [attr.aria-invalid]="backupTargetFieldError('bucketId') ? 'true' : null" placeholder="저장소가 제공하는 버킷 식별자" /><clr-control-helper>운영자가 버킷을 식별하기 위한 선택 참조값입니다.</clr-control-helper>@if (backupTargetFieldError('bucketId'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
             <clr-input-container class="wide"><label>Object prefix</label><input clrInput [(ngModel)]="backupTargetForm.pathPrefix" name="backup-prefix" maxlength="200" required [attr.aria-invalid]="backupTargetFieldError('pathPrefix') ? 'true' : null" /><clr-control-helper>이 대상에서 Console 백업 객체를 구분할 경로 접두사입니다.</clr-control-helper>@if (backupTargetFieldError('pathPrefix'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
           </div>
         </fieldset>
         <fieldset class="backup-form-section">
           <legend>버킷 정책 확인</legend>
-          <p>Backblaze에 설정된 현재 정책을 기록합니다. Console이 이 값을 변경하지는 않습니다.</p>
+          <p>외부 저장소에 설정된 현재 정책을 기록합니다. Console이 이 값을 변경하지는 않습니다.</p>
           <div class="backup-form-grid">
             <clr-select-container><label>버킷 보존 방식</label><select clrSelect [(ngModel)]="backupTargetForm.lifecycleMode" name="backup-lifecycle"><option value="keep-all-versions">모든 버전 보존</option><option value="keep-only-last-version">최신 버전만 보존</option><option value="custom">사용자 지정</option></select></clr-select-container>
             <clr-select-container><label>버킷 서버 암호화</label><select clrSelect [(ngModel)]="backupTargetForm.serverSideEncryption" name="backup-server-encryption"><option value="unknown">확인되지 않음</option><option value="enabled">활성</option><option value="disabled">비활성</option></select></clr-select-container>
@@ -207,10 +218,10 @@ const emptyBackupTarget = () => ({ name: '', endpoint: 'https://s3.us-east-005.b
         </fieldset>
         <fieldset class="backup-form-section">
           <legend>전용 자격 증명</legend>
-          <p>이 Bucket에만 필요한 최소 권한의 Backblaze Application Key를 사용합니다.</p>
+          <p>이 Bucket과 Object prefix에 필요한 최소 권한만 가진 S3 전용 자격 증명을 사용합니다.</p>
           <div class="backup-form-grid">
-            <clr-input-container><label>Application Key ID</label><input clrInput type="password" [(ngModel)]="backupTargetForm.accessKeyId" name="backup-access-key" autocomplete="new-password" minlength="25" maxlength="25" pattern="[A-Za-z0-9]{25}" [required]="!editingBackupTargetId()" [attr.aria-invalid]="backupTargetFieldError('accessKeyId') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetId() ? '두 자격 증명을 모두 비우면 기존 값을 유지합니다.' : 'Backblaze App Keys 화면의 25자 keyID입니다.' }}</clr-control-helper>@if (backupTargetFieldError('accessKeyId'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
-            <clr-input-container><label>Application Key</label><input clrInput type="password" [(ngModel)]="backupTargetForm.applicationKey" name="backup-secret-key" autocomplete="new-password" minlength="31" maxlength="31" pattern="[A-Za-z0-9]{31}" [required]="!editingBackupTargetId()" [attr.aria-invalid]="backupTargetFieldError('applicationKey') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetId() ? '두 값을 함께 입력한 경우에만 새 자격 증명으로 교체합니다.' : '키 생성 직후 한 번만 표시되는 31자 Secret입니다.' }}</clr-control-helper>@if (backupTargetFieldError('applicationKey'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
+            <clr-input-container><label>Access key ID</label><input clrInput type="password" [(ngModel)]="backupTargetForm.accessKeyId" name="backup-access-key" autocomplete="new-password" minlength="3" maxlength="128" [required]="!editingBackupTargetId()" [attr.aria-invalid]="backupTargetFieldError('accessKeyId') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetId() ? '두 자격 증명을 모두 비우면 기존 값을 유지합니다.' : credentialIdHint() }}</clr-control-helper>@if (backupTargetFieldError('accessKeyId'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
+            <clr-input-container><label>Secret access key</label><input clrInput type="password" [(ngModel)]="backupTargetForm.applicationKey" name="backup-secret-key" autocomplete="new-password" minlength="8" maxlength="256" [required]="!editingBackupTargetId()" [attr.aria-invalid]="backupTargetFieldError('applicationKey') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetId() ? '두 값을 함께 입력한 경우에만 새 자격 증명으로 교체합니다.' : credentialSecretHint() }}</clr-control-helper>@if (backupTargetFieldError('applicationKey'); as issue) { <div class="field-error">{{ issue }}</div> }</clr-input-container>
           </div>
         </fieldset>
         <fieldset class="backup-form-section backup-form-section--last">
@@ -221,7 +232,7 @@ const emptyBackupTarget = () => ({ name: '', endpoint: 'https://s3.us-east-005.b
           </div>
         </fieldset>
       </form>
-      <div osPanelFooter class="backup-panel-footer"><span class="backup-panel-footer__note">필수 항목을 입력하면 저장할 수 있습니다.</span><div class="backup-panel-footer__actions"><button class="btn btn-outline" [disabled]="busy()" (click)="closePanels()">취소</button><button class="btn btn-primary" [disabled]="busy() || !backupTargetFormValid()" (click)="saveBackupTarget()">{{ editingBackupTargetId() ? '변경 저장' : '대상 추가' }}</button></div></div>
+      <div osPanelFooter class="backup-panel-footer"><div class="backup-panel-footer__actions"><button class="btn btn-outline" [disabled]="busy()" (click)="closePanels()">취소</button><button class="btn btn-primary" [disabled]="busy()" (click)="saveBackupTarget()">{{ editingBackupTargetId() ? '변경 저장' : '대상 추가' }}</button></div></div>
     </os-panel>
 
     <os-panel [open]="!!restorePreview()" title="구성 복원 확인" subtitle="AAL2 · digest-bound transactional merge" (closed)="cancelRestore()">
@@ -257,31 +268,32 @@ const emptyBackupTarget = () => ({ name: '', endpoint: 'https://s3.us-east-005.b
     :host ::ng-deep .backup-form-grid .clr-form-control { margin-top:.55rem; }
     :host ::ng-deep .backup-form-grid label { color:var(--os-ink,#17233c); font-size:.78rem; font-weight:600; line-height:1.35; }
     :host ::ng-deep .backup-form-grid .clr-subtext { margin-top:.3rem; color:var(--os-ink-muted,#525d73); font-size:.72rem; line-height:1.45; }
-    .backup-panel-footer { justify-content:space-between !important; gap:1rem !important; }
-    .backup-panel-footer__note { color:var(--os-ink-muted,#525d73); font-size:.74rem; line-height:1.4; }
+    .backup-panel-footer { justify-content:flex-end !important; gap:1rem !important; }
     .backup-panel-footer__actions { display:flex; align-items:center; justify-content:flex-end; gap:.5rem; flex:0 0 auto; }
-    @media (max-width:760px) { .channel-form,.backup-form-grid { grid-template-columns:1fr; }.wide { grid-column:1; }.scope-note{align-items:flex-start;flex-direction:column}.target-grid{grid-template-columns:1fr}.backup-panel-footer { align-items:flex-start !important; flex-direction:column; }.backup-panel-footer__actions { width:100%; }.backup-panel-footer__actions .btn { flex:1 1 0; } }
+    @media (max-width:760px) { .channel-form,.backup-form-grid { grid-template-columns:1fr; }.wide { grid-column:1; }.scope-note{align-items:flex-start;flex-direction:column}.target-grid{grid-template-columns:1fr}.backup-panel-footer__actions { width:100%; }.backup-panel-footer__actions .btn { flex:1 1 0; } }
   `],
 })
 export class AdminExternalChannels {
   private readonly http = inject(HttpService);
+  readonly s3Profiles = S3_PROFILES;
   readonly summary = signal<Summary>({ active: 0, healthy: 0, degraded: 0, failed24h: 0, deadLetter: 0, paused: false });
   readonly channels = signal<Channel[]>([]); readonly rules = signal<Rule[]>([]); readonly deliveries = signal<Delivery[]>([]);
   readonly externalSummary = signal<ExternalSummary>({ targets: 0, readyTargets: 0, configuredTargets: 0, lastBackup: null, lastRestore: null });
   readonly backupTargets = signal<BackupTarget[]>([]); readonly backups = signal<Backup[]>([]); readonly restorePreview = signal<RestorePreview | null>(null);
-  readonly loading = signal(true); readonly busy = signal(false); readonly error = signal(''); readonly panelError = signal<PanelIssue | null>(null);
+  readonly loading = signal(true); readonly busy = signal(false); readonly error = signal(''); readonly panelError = signal<PanelIssue | null>(null); readonly backupTargetSubmitAttempted = signal(false);
   readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly backupTargetPanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null); readonly editingBackupTargetId = signal<string | null>(null);
   channelForm = emptyChannel(); ruleForm = emptyRule(); backupTargetForm = emptyBackupTarget(); restoreConfirmation = ''; restoreReason = '운영 구성 복원 실행';
   constructor() { void this.load(); }
   async load(): Promise<void> { this.loading.set(true); try { const [summary, channels, rules, deliveries, externalSummary, targets, backups] = await Promise.all([this.http.json<Summary>('/api/notifications/summary'), this.http.json<{ items: Channel[] }>('/api/notifications/channels'), this.http.json<{ items: Rule[] }>('/api/notifications/rules'), this.http.json<{ items: Delivery[] }>('/api/notifications/deliveries?limit=100'), this.http.json<ExternalSummary>('/api/external-channels/summary'), this.http.json<{ items: BackupTarget[] }>('/api/external-channels/backup-targets'), this.http.json<{ items: Backup[] }>('/api/external-channels/backups')]); this.summary.set(summary); this.channels.set(channels.items || []); this.rules.set(rules.items || []); this.deliveries.set(deliveries.items || []); this.externalSummary.set(externalSummary); this.backupTargets.set(targets.items || []); this.backups.set(backups.items || []); } catch (error) { this.error.set(`외부 채널 정보를 불러오지 못했습니다: ${String(error)}`); } finally { this.loading.set(false); } }
   openChannelPanel(): void { this.panelError.set(null); this.editingChannelId.set(null); this.channelForm = emptyChannel(); this.channelPanelOpen.set(true); }
   openRulePanel(): void { this.panelError.set(null); this.ruleForm = emptyRule(); this.rulePanelOpen.set(true); }
-  openBackupTargetPanel(): void { this.panelError.set(null); this.editingBackupTargetId.set(null); this.backupTargetForm = emptyBackupTarget(); this.backupTargetPanelOpen.set(true); }
+  openBackupTargetPanel(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.editingBackupTargetId.set(null); this.backupTargetForm = emptyBackupTarget(); this.backupTargetPanelOpen.set(true); }
   editBackupTarget(target: BackupTarget): void {
     this.panelError.set(null);
     this.editingBackupTargetId.set(target.id);
     this.backupTargetForm = {
       ...emptyBackupTarget(),
+      vendor: S3_PROFILES.some((profile) => profile.value === target.vendor) ? target.vendor as S3ProfileKey : 's3-compatible',
       name: target.name,
       endpoint: target.endpoint,
       region: target.region,
@@ -293,11 +305,18 @@ export class AdminExternalChannels {
       serverSideEncryption: target.serverSideEncryption,
       reason: '',
     };
+    this.backupTargetSubmitAttempted.set(false);
     this.backupTargetPanelOpen.set(true);
   }
-  closePanels(): void { this.panelError.set(null); this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.backupTargetPanelOpen.set(false); this.editingChannelId.set(null); this.editingBackupTargetId.set(null); }
+  closePanels(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.backupTargetPanelOpen.set(false); this.editingChannelId.set(null); this.editingBackupTargetId.set(null); }
   async saveBackupTarget(): Promise<void> {
-    if (!this.backupTargetFormValid()) return;
+    this.backupTargetSubmitAttempted.set(true);
+    const invalidField = this.backupTargetFields().find((field) => this.backupTargetValidationError(field));
+    if (invalidField) {
+      this.panelError.set(null);
+      this.focusBackupTargetField(invalidField);
+      return;
+    }
     await this.mutatePanel(async () => {
       const editingId = this.editingBackupTargetId();
       await this.request(editingId ? `/api/external-channels/backup-targets/${editingId}` : '/api/external-channels/backup-targets', this.backupTargetForm, editingId ? 'PUT' : 'POST');
@@ -332,21 +351,70 @@ export class AdminExternalChannels {
   fileSize(value: number): string { if (!value) return '—'; if (value < 1024) return `${value} B`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`; return `${(value / 1024 / 1024).toFixed(1)} MiB`; }
   totalEntries(backup: Backup): number { return Object.values(backup.entryCounts || {}).reduce((sum, value) => sum + Number(value || 0), 0); }
   shortDigest(value: string): string { return value ? `${value.slice(0, 18)}…${value.slice(-8)}` : 'digest pending'; }
+  applyS3Profile(value: string): void {
+    const previous = this.selectedS3Profile();
+    const profile = S3_PROFILES.find((item) => item.value === value) || S3_PROFILES[0];
+    const endpointWasSuggested = !this.backupTargetForm.endpoint.trim() || this.backupTargetForm.endpoint === previous.endpoint;
+    const regionWasSuggested = !this.backupTargetForm.region.trim() || this.backupTargetForm.region === previous.region;
+    this.backupTargetForm.vendor = profile.value;
+    if (endpointWasSuggested) this.backupTargetForm.endpoint = profile.endpoint;
+    if (regionWasSuggested) this.backupTargetForm.region = profile.region;
+  }
+  selectedS3Profile(): S3Profile { return S3_PROFILES.find((profile) => profile.value === this.backupTargetForm.vendor) || S3_PROFILES[0]; }
+  s3ProfileLabel(value: string): string { return S3_PROFILES.find((profile) => profile.value === value)?.label || 'S3 호환 저장소'; }
+  credentialIdHint(): string {
+    if (this.backupTargetForm.vendor === 'backblaze-b2') return 'Backblaze App Keys 화면의 25자 keyID입니다.';
+    return '저장소가 발급한 S3 Access key ID입니다.';
+  }
+  credentialSecretHint(): string {
+    if (this.backupTargetForm.vendor === 'backblaze-b2') return '키 생성 직후 한 번만 표시되는 31자 applicationKey입니다.';
+    return 'Access key ID와 함께 발급된 Secret access key입니다.';
+  }
   backupTargetFieldError(field: string): string {
+    const issue = this.backupTargetValidationError(field);
+    if (!issue) return '';
     const value = this.backupTargetForm;
+    const entered = ({ name: value.name, region: value.region, endpoint: value.endpoint, bucketName: value.bucketName, bucketId: value.bucketId, pathPrefix: value.pathPrefix, accessKeyId: value.accessKeyId, applicationKey: value.applicationKey } as Record<string, string>)[field]?.trim();
+    const pairedCredentialEntered = (field === 'accessKeyId' && value.applicationKey.trim()) || (field === 'applicationKey' && value.accessKeyId.trim());
+    return this.backupTargetSubmitAttempted() || !!entered || !!pairedCredentialEntered ? issue : '';
+  }
+  backupTargetFormValid(): boolean { return this.backupTargetFields().every((field) => !this.backupTargetValidationError(field)); }
+  fieldLabel(field: string): string { return ({ accessKeyId: 'Access key ID', applicationKey: 'Secret access key', bucketName: 'Bucket name', bucketId: 'Bucket ID', region: 'Region', endpoint: 'S3 endpoint', pathPrefix: 'Object prefix', name: '연결 이름', confirmation: '확인 문구' } as Record<string, string>)[field] || '요청 오류'; }
+  private backupTargetFields(): string[] { return ['name', 'region', 'endpoint', 'bucketName', 'bucketId', 'pathPrefix', 'accessKeyId', 'applicationKey']; }
+  private backupTargetValidationError(field: string): string {
+    const value = this.backupTargetForm;
+    if (field === 'name' && !value.name.trim()) return '이 대상을 구분할 연결 이름을 입력하세요.';
     if (field === 'name' && (value.name.trim().length < 2 || value.name.trim().length > 80)) return '연결 이름은 2~80자로 입력하세요.';
-    if (field === 'region' && !/^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(value.region.trim().toLowerCase())) return 'Backblaze S3 Region을 입력하세요. 예: us-east-005';
-    if (field === 'endpoint' && value.endpoint.trim().toLowerCase() !== `https://s3.${value.region.trim().toLowerCase()}.backblazeb2.com`) return 'Endpoint는 입력한 Region의 Backblaze HTTPS S3 주소와 정확히 일치해야 합니다.';
-    if (field === 'bucketName' && !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(value.bucketName.trim().toLowerCase())) return 'Backblaze 화면의 Bucket name을 3~63자 형식으로 입력하세요.';
+    if (field === 'region' && !value.region.trim()) return 'S3 서명에 사용할 Region을 입력하세요.';
+    if (field === 'region' && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(value.region.trim().toLowerCase())) return 'Region은 영문 소문자·숫자로 시작하는 1~64자 값이어야 합니다.';
+    if (field === 'endpoint') {
+      if (!value.endpoint.trim()) return 'S3 API에 연결할 HTTPS endpoint를 입력하세요.';
+      try {
+        const endpoint = new URL(value.endpoint.trim());
+        if (endpoint.protocol !== 'https:' || !endpoint.hostname || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || !['', '/'].includes(endpoint.pathname)) {
+          return 'Endpoint는 경로·query·인증 정보가 없는 HTTPS origin으로 입력하세요.';
+        }
+      } catch { return '올바른 HTTPS S3 endpoint를 입력하세요.'; }
+    }
+    if (field === 'bucketName' && !value.bucketName.trim()) return '백업 객체를 저장할 Bucket name을 입력하세요.';
+    if (field === 'bucketName' && !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(value.bucketName.trim().toLowerCase())) return 'Bucket name은 영문 소문자·숫자로 시작하고 끝나는 3~63자 값이어야 합니다.';
     if (field === 'bucketId' && value.bucketId.trim() && !/^[A-Za-z0-9_-]{1,128}$/.test(value.bucketId.trim())) return 'Bucket ID는 128자 이내의 영문·숫자·밑줄·하이픈만 입력하세요.';
+    if (field === 'pathPrefix' && !value.pathPrefix.trim()) return '백업 객체를 구분할 Object prefix를 입력하세요.';
     if (field === 'pathPrefix' && (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(value.pathPrefix.trim()) || /(^|\/)\.\.?(\/|$)/.test(value.pathPrefix.trim()))) return 'Object prefix는 문자나 숫자로 시작하고 경로 이탈 구문을 포함할 수 없습니다.';
     const credentialsBlank = !value.accessKeyId.trim() && !value.applicationKey.trim();
-    if (field === 'accessKeyId' && !(this.editingBackupTargetId() && credentialsBlank) && !/^[A-Za-z0-9]{25}$/.test(value.accessKeyId.trim())) return value.applicationKey.trim() && !value.accessKeyId.trim() ? 'Application Key와 함께 Key ID도 입력하세요.' : 'Key Name이나 Bucket ID가 아닌 Backblaze의 25자 keyID를 입력하세요.';
-    if (field === 'applicationKey' && !(this.editingBackupTargetId() && credentialsBlank) && !/^[A-Za-z0-9]{31}$/.test(value.applicationKey.trim())) return value.accessKeyId.trim() && !value.applicationKey.trim() ? 'Key ID와 함께 Application Key도 입력하세요.' : '키 생성 직후 한 번 표시되는 31자 applicationKey를 입력하세요.';
+    if (field === 'accessKeyId' && !(this.editingBackupTargetId() && credentialsBlank) && !/^[\x21-\x7e]{3,128}$/.test(value.accessKeyId.trim())) return value.applicationKey.trim() && !value.accessKeyId.trim() ? 'Secret access key와 함께 Access key ID도 입력하세요.' : 'Access key ID는 공백 없이 3~128자로 입력하세요.';
+    if (field === 'applicationKey' && !(this.editingBackupTargetId() && credentialsBlank) && !/^[\x21-\x7e]{8,256}$/.test(value.applicationKey.trim())) return value.accessKeyId.trim() && !value.applicationKey.trim() ? 'Access key ID와 함께 Secret access key도 입력하세요.' : 'Secret access key는 공백 없이 8~256자로 입력하세요.';
     return '';
   }
-  backupTargetFormValid(): boolean { return ['name', 'region', 'endpoint', 'bucketName', 'bucketId', 'pathPrefix', 'accessKeyId', 'applicationKey'].every((field) => !this.backupTargetFieldError(field)); }
-  fieldLabel(field: string): string { return ({ accessKeyId: 'Application Key ID', applicationKey: 'Application Key', bucketName: 'Bucket name', bucketId: 'Bucket ID', region: 'Region', endpoint: 'S3 endpoint', pathPrefix: 'Object prefix', name: '연결 이름', confirmation: '확인 문구' } as Record<string, string>)[field] || '요청 오류'; }
+  private focusBackupTargetField(field: string): void {
+    if (typeof document === 'undefined') return;
+    const name = ({ name: 'backup-name', region: 'backup-region', endpoint: 'backup-endpoint', bucketName: 'backup-bucket-name', bucketId: 'backup-bucket-id', pathPrefix: 'backup-prefix', accessKeyId: 'backup-access-key', applicationKey: 'backup-secret-key' } as Record<string, string>)[field];
+    queueMicrotask(() => {
+      const element = document.querySelector<HTMLElement>(`[name="${name}"]`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element?.focus({ preventScroll: true });
+    });
+  }
   private async request(path: string, body: unknown, method = 'POST'): Promise<void> { const response = await this.http.request(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!response.ok) { const out = await response.json().catch(() => ({})); throw new PanelRequestError(out.error || `HTTP ${response.status}`, out.field || ''); } }
   private openPendingAction(title: string, description: string, path: string, confirmLabel: string, testRecipient?: string, options: { method?: 'POST' | 'DELETE'; requiredConfirmation?: string; danger?: boolean } = {}): void { this.panelError.set(null); this.pendingAction.set({ title, description, path, confirmLabel, reason: '운영자 수동 실행', testRecipient, confirmation: '', method: options.method || 'POST', requiredConfirmation: options.requiredConfirmation, danger: options.danger }); }
   cancelPendingAction(): void { this.panelError.set(null); this.pendingAction.set(null); }

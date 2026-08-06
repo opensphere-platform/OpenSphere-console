@@ -113,25 +113,32 @@ function decipherJson(envelope, keyName, aad = '') {
 }
 
 function targetInput(row) {
-  if (!row || row.provider !== 's3' || row.vendor !== 'backblaze-b2') {
-    throw { code: 400, msg: 'only Backblaze B2 S3 targets are supported by this executor' };
+  if (!row || row.provider !== 's3') {
+    throw { code: 400, msg: 'only S3-compatible targets are supported by this executor' };
   }
-  const endpoint = new URL(row.endpoint);
-  const expectedHost = `s3.${row.region}.backblazeb2.com`;
+  if (!/^[a-z0-9][a-z0-9.-]{1,63}$/.test(row.vendor || '')) {
+    throw { code: 400, field: 'vendor', msg: 'invalid S3 storage profile' };
+  }
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(row.region || '')) {
+    throw { code: 400, field: 'region', msg: 'invalid S3 region' };
+  }
+  let endpoint;
+  try { endpoint = new URL(row.endpoint); }
+  catch { throw { code: 400, field: 'endpoint', msg: 'valid HTTPS S3 endpoint is required' }; }
   if (
     endpoint.protocol !== 'https:'
-    || endpoint.hostname !== expectedHost
+    || !endpoint.hostname
     || endpoint.username
     || endpoint.password
     || endpoint.search
     || endpoint.hash
     || !['', '/'].includes(endpoint.pathname)
-  ) throw { code: 400, msg: 'Backblaze endpoint must exactly match the configured region' };
+  ) throw { code: 400, field: 'endpoint', msg: 'endpoint must be an HTTPS origin without path, query or credentials' };
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(row.bucket_name || '')) {
-    throw { code: 400, msg: 'invalid S3 bucket name' };
+    throw { code: 400, field: 'bucketName', msg: 'invalid S3 bucket name' };
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(row.path_prefix || '')) {
-    throw { code: 400, msg: 'invalid backup path prefix' };
+    throw { code: 400, field: 'pathPrefix', msg: 'invalid backup path prefix' };
   }
   return { ...row, endpoint: endpoint.origin };
 }
@@ -139,18 +146,18 @@ function targetInput(row) {
 function credentialInput(value) {
   const accessKeyId = String(value?.accessKeyId || '').trim();
   const applicationKey = String(value?.applicationKey || '').trim();
-  if (!/^[A-Za-z0-9]{25}$/.test(accessKeyId)) {
+  if (!/^[\x21-\x7e]{3,128}$/.test(accessKeyId)) {
     throw {
       code: 400,
       field: 'accessKeyId',
-      msg: 'Backblaze Application Key ID must be the 25-character keyID issued for an S3-compatible application key',
+      msg: 'S3 Access key ID must be 3-128 printable characters without spaces',
     };
   }
-  if (!/^[A-Za-z0-9]{31}$/.test(applicationKey)) {
+  if (!/^[\x21-\x7e]{8,256}$/.test(applicationKey)) {
     throw {
       code: 400,
       field: 'applicationKey',
-      msg: 'Backblaze Application Key must be the 31-character secret shown when the application key is created',
+      msg: 'S3 Secret access key must be 8-256 printable characters without spaces',
     };
   }
   return { accessKeyId, applicationKey };
@@ -298,13 +305,13 @@ async function s3Request(args) {
 
 function s3Failure(providerCode, status) {
   if (providerCode === 'InvalidAccessKeyId') {
-    return { field: 'accessKeyId', message: 'Backblaze가 Application Key ID를 올바른 keyID로 인식하지 못했습니다.' };
+    return { field: 'accessKeyId', message: 'S3 저장소가 Access key ID를 인식하지 못했습니다.' };
   }
   if (providerCode === 'SignatureDoesNotMatch') {
-    return { field: 'applicationKey', message: 'Backblaze Application Key가 Key ID와 일치하지 않습니다.' };
+    return { field: 'applicationKey', message: 'Secret access key가 Access key ID 또는 Region과 일치하지 않습니다.' };
   }
   if (providerCode === 'NoSuchBucket') {
-    return { field: 'bucketName', message: 'Backblaze에서 입력한 Bucket name을 찾을 수 없습니다.' };
+    return { field: 'bucketName', message: 'S3 저장소에서 입력한 Bucket name을 찾을 수 없습니다.' };
   }
   if (providerCode === 'AuthorizationHeaderMalformed' || providerCode === 'PermanentRedirect') {
     return { field: 'region', message: 'Bucket의 Region 또는 S3 endpoint가 일치하지 않습니다.' };
@@ -312,7 +319,7 @@ function s3Failure(providerCode, status) {
   if (providerCode === 'AccessDenied' || status === 403) {
     return {
       field: 'accessKeyId',
-      message: 'Application Key에 이 Bucket의 목록·읽기·쓰기 권한이 없습니다.',
+      message: 'S3 자격 증명에 이 Bucket의 목록·읽기·쓰기 권한이 없습니다.',
     };
   }
   return { field: '', message: '' };
@@ -322,7 +329,7 @@ async function testTarget(targetId) {
   const target = await targetFor(targetId);
   const credential = await credentialFor(targetId);
   try {
-    // A bounded ListObjectsV2 request yields Backblaze's typed XML error body;
+    // A bounded ListObjectsV2 request yields a typed S3 XML error body;
     // HeadBucket commonly returns an empty 403 and cannot identify the field.
     await s3Request({ target, credential, method: 'GET', query: { 'list-type': 2, 'max-keys': 1 } });
     const at = new Date().toISOString();

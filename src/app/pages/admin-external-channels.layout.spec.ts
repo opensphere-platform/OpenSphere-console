@@ -27,9 +27,13 @@ test('shared side panel keeps header and footer fixed while only the body scroll
   assert.match(panel, /\.os-panel-footer\s*\{[\s\S]{0,280}flex:\s*0 0 auto;[\s\S]{0,280}width:\s*100%;[\s\S]{0,280}border-top:/);
 });
 
-test('backup panel copy avoids mixed-language credential guidance and tiny helper text', () => {
+test('backup panel uses S3 profiles, field-level validation and an uncluttered action footer', () => {
   assert.doesNotMatch(page, /credentials are write-only/);
   assert.match(page, /자격 증명은 저장 후 다시 표시하지 않음/);
+  assert.match(page, /저장소 프로파일/);
+  assert.match(page, /backupTargetSubmitAttempted/);
+  assert.match(page, /focusBackupTargetField/);
+  assert.doesNotMatch(page, /필수 항목을 입력하면 저장할 수 있습니다/);
   assert.match(page, /\.backup-form-grid \.clr-subtext[\s\S]{0,160}font-size:\.72rem/);
-  assert.match(page, /\.backup-panel-footer__note[\s\S]{0,140}font-size:\.74rem/);
+  assert.match(page, /\.backup-panel-footer \{ justify-content:flex-end/);
 });
