@@ -124,7 +124,8 @@ class RegistryCredentialCoordinator {
   }
 
   mounted() {
-    const credentials = dockerCredentials(this.readFile(this.configPath));
+    const rawConfig = this.readFile(this.configPath);
+    const credentials = dockerCredentials(rawConfig);
     if (!credentials?.generation) return null;
     // The credential generation travels with the same projected Secret as the
     // credential bytes.  The independent ConfigMap projection is an optional
@@ -132,15 +133,42 @@ class RegistryCredentialCoordinator {
     // fully converged Secret mount into a permanent propagation failure.
     const projectedGeneration = String(this.readFile(this.generationPath) || '').trim();
     if (projectedGeneration && projectedGeneration !== credentials.generation) return null;
-    return { ...credentials, generation: credentials.generation };
+    return { ...credentials, generation: credentials.generation, rawConfig };
+  }
+
+  async mountedForState(state) {
+    const mounted = this.mounted();
+    if (mounted) return mounted.generation === state.generation ? mounted : null;
+
+    // Credentials written before generation-aware coordination do not contain
+    // x-opensphere-credential-generation. Accept that one-time legacy shape only
+    // when both projected files and the live Secret prove that the mounted bytes
+    // belong to the current lifecycle generation. A later credential rotation is
+    // written by dockerConfig() and therefore returns to the embedded-generation
+    // fast path above.
+    const rawConfig = this.readFile(this.configPath);
+    const credentials = dockerCredentials(rawConfig);
+    const projectedGeneration = String(this.readFile(this.generationPath) || '').trim();
+    if (!credentials || credentials.generation || projectedGeneration !== state.generation) return null;
+
+    const secret = await this.k8s('GET', secretPath(this.namespace, this.secretName));
+    if (!secret.ok) {
+      if (secret.status === 404) return null;
+      throw storeError(`registry credential legacy verification HTTP ${secret.status}`);
+    }
+    const secretGeneration = String(secret.json?.metadata?.annotations?.[GENERATION_ANNOTATION] || '').trim();
+    const encoded = secret.json?.data?.['.dockerconfigjson'];
+    const storedConfig = encoded ? Buffer.from(encoded, 'base64').toString('utf8') : '';
+    if (secretGeneration !== state.generation || storedConfig !== rawConfig) return null;
+    return { ...credentials, generation: state.generation, rawConfig };
   }
 
   async credentials() {
     const state = await this.state();
     if (state.phase === 'configuring' || state.phase === 'revoking') throw propagationError();
     if (state.phase !== 'configured' || !state.generation) return null;
-    const mounted = this.mounted();
-    if (!mounted || mounted.generation !== state.generation) throw propagationError();
+    const mounted = await this.mountedForState(state);
+    if (!mounted) throw propagationError();
     return { username: mounted.username, password: mounted.password };
   }
 
@@ -149,8 +177,8 @@ class RegistryCredentialCoordinator {
     let observed = '';
     if (state.generation) {
       if (state.phase === 'configured') {
-        const mounted = this.mounted();
-        if (mounted?.generation === state.generation) observed = `configured:${state.generation}`;
+        const mounted = await this.mountedForState(state);
+        if (mounted) observed = `configured:${state.generation}`;
       } else if (state.phase === 'revoked') {
         const secret = await this.k8s('GET', secretPath(this.namespace, this.secretName));
         if (secret.status === 404) observed = `revoked:${state.generation}`;

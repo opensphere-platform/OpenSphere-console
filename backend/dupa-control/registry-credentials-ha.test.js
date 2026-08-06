@@ -134,6 +134,48 @@ test('a mismatched optional state projection still blocks credential use', async
   await assert.rejects(a.credentials(), (error) => error.code === 503 && error.reason === 'RegistryCredentialsPropagating');
 });
 
+test('a legacy credential Secret converges when its annotation and projected bytes match', async () => {
+  const cluster = fakeCluster();
+  const legacyConfig = JSON.stringify({ auths: { 'ghcr.io': {
+    username: 'opensphere-platform', password: 'legacy-token',
+  } } });
+  cluster.state.secret = {
+    metadata: { name: 'opensphere-ghcr-pull', annotations: { 'opensphere.io/credential-generation': 'generation-1' } },
+    type: 'kubernetes.io/dockerconfigjson',
+    data: { '.dockerconfigjson': Buffer.from(legacyConfig).toString('base64') },
+  };
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: {
+    phase: 'configured', generation: 'generation-1', updatedAt: '2026-07-23T00:00:00.000Z',
+  } });
+  const mounts = new Map([
+    ['/mount/controller-a/config.json', legacyConfig],
+    ['/state/controller-a/generation', 'generation-1'],
+  ]);
+  const a = coordinator(cluster, 'controller-a', mounts);
+  assert.deepEqual(await a.credentials(), { username: 'opensphere-platform', password: 'legacy-token' });
+  assert.equal((await a.observe()).observed, 'configured:generation-1');
+});
+
+test('a stale legacy credential projection remains blocked', async () => {
+  const cluster = fakeCluster();
+  const storedConfig = JSON.stringify({ auths: { 'ghcr.io': { username: 'opensphere-platform', password: 'new-token' } } });
+  const staleConfig = JSON.stringify({ auths: { 'ghcr.io': { username: 'opensphere-platform', password: 'old-token' } } });
+  cluster.state.secret = {
+    metadata: { name: 'opensphere-ghcr-pull', annotations: { 'opensphere.io/credential-generation': 'generation-1' } },
+    type: 'kubernetes.io/dockerconfigjson',
+    data: { '.dockerconfigjson': Buffer.from(storedConfig).toString('base64') },
+  };
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: {
+    phase: 'configured', generation: 'generation-1', updatedAt: '2026-07-23T00:00:00.000Z',
+  } });
+  const mounts = new Map([
+    ['/mount/controller-a/config.json', staleConfig],
+    ['/state/controller-a/generation', 'generation-1'],
+  ]);
+  const a = coordinator(cluster, 'controller-a', mounts);
+  await assert.rejects(a.credentials(), (error) => error.code === 503 && error.reason === 'RegistryCredentialsPropagating');
+});
+
 test('logout blocks credential use immediately and reports propagation until all replicas observe revocation', async () => {
   const cluster = fakeCluster();
   const mounts = new Map();
