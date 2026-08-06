@@ -133,6 +133,18 @@ import { ClarityModule } from '@clr/angular';
         max-height: none;
         overflow: hidden;
       }
+      :host ::ng-deep clr-side-panel.side-panel .modal-body-wrapper > .modal-body {
+        box-sizing: border-box;
+        display: flex;
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+        min-height: 0;
+        margin: 0;
+        padding: 0 !important;
+        overflow: hidden;
+      }
       :host ::ng-deep clr-side-panel.side-panel .modal-footer {
         flex: 0 0 auto;
         width: 100%;

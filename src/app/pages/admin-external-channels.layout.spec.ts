@@ -20,6 +20,7 @@ test('backup target editor has distinct guidance, scrollable body sections, and 
 test('shared side panel keeps header and footer fixed while only the body scrolls', () => {
   assert.match(panel, /\.modal-content\s*\{[\s\S]{0,220}display:\s*flex;[\s\S]{0,220}overflow:\s*hidden;/);
   assert.match(panel, /\.modal-header--accessible\s*\{[\s\S]{0,220}width:\s*100%;[\s\S]{0,160}padding:\s*0\s*!important;/);
+  assert.match(panel, /\.modal-body-wrapper > \.modal-body\s*\{[\s\S]{0,260}width:\s*100%;[\s\S]{0,260}padding:\s*0\s*!important;[\s\S]{0,120}overflow:\s*hidden;/);
   assert.match(panel, /\.modal-footer\s*\{[\s\S]{0,180}width:\s*100%;[\s\S]{0,120}padding:\s*0\s*!important;/);
   assert.match(panel, /\.side-panel-title\s*\{[\s\S]{0,260}flex:\s*0 0 auto;[\s\S]{0,260}border-bottom:/);
   assert.match(panel, /\.side-panel-body\s*\{[\s\S]{0,320}flex:\s*1 1 auto;[\s\S]{0,320}overflow-y:\s*auto;/);
