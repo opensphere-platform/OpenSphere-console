@@ -122,6 +122,10 @@ spec:
           # 실배포 기준: 현재 검증된 로컬 런타임 이미지.
           image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
           imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: installation-policy
+              mountPath: /var/run/opensphere-installation
+              readOnly: true
           env:
             - { name: APP_VERSION, value: "0.8.0-oaa-recovery-owner" }
             # fetch(kube API / secret read)가 kube CA 신뢰하도록
@@ -203,6 +207,11 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: installation-policy
+          configMap:
+            name: opensphere-installation-lock
+            optional: true
 ---
 apiVersion: v1
 kind: Service

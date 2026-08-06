@@ -387,7 +387,15 @@ function createModuleOperationApi({
 
     try {
       const mutation = req.method === 'POST';
-      const auth = await authenticate(req, { mutation });
+      let operationBody = null;
+      if ((operationCreateMatch || verifyMatch) && mutation) {
+        operationBody = await readBody(req);
+        if (verifyMatch) operationBody.action = 'verify';
+      }
+      const auth = await authenticate(req, {
+        mutation,
+        action: String(operationBody?.action || '').trim(),
+      });
       if (listPath && req.method === 'GET') {
         const descriptors = Object.values(MODULES).map(publicModuleDescriptor);
         const projection = await getOwnerProjection(auth.authorization).catch((error) => ({
@@ -418,8 +426,7 @@ function createModuleOperationApi({
         return json(res, 200, { receipt: normalizeRow(row) }), true;
       }
       if ((operationCreateMatch || verifyMatch) && req.method === 'POST') {
-        const body = await readBody(req);
-        if (verifyMatch) body.action = 'verify';
+        const body = operationBody;
         const result = await submit(req, (operationCreateMatch || verifyMatch)[1], body, auth.authorization, auth.actor);
         const action = result.receipt.action === 'delete-runtime' ? 'uninstall'
           : result.receipt.action === 'verify' ? 'validate'

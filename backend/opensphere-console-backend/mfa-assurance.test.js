@@ -31,6 +31,15 @@ test('administrator mutations require a real AAL2 session by default', () => {
   assert.match(deploy, /name: NOTIFICATION_REQUIRE_AAL2, value: "true"/);
 });
 
+test('Extension install and update read the mounted development edge policy and all other mutations retain MFA', () => {
+  assert.match(backend, /readInstallationPolicy\(INSTALLATION_CONFIG_FILE\)/);
+  assert.match(backend, /moduleLifecycleNeedsRecentAal2\(lifecycleAction\)/);
+  assert.match(backend, /install\|enable\|disable\|uninstall\|rollback/);
+  assert.match(deploy, /mountPath: \/var\/run\/opensphere-installation/);
+  assert.match(deploy, /name: opensphere-installation-lock/);
+  assert.match(deploy, /optional: true/);
+});
+
 test('CLI sessions and PATs cannot manufacture Supabase AAL2 assurance', () => {
   const actorProjection = backend.slice(
     backend.indexOf('async function resolveConsoleActor'),

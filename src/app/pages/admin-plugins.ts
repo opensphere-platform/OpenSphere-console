@@ -169,7 +169,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
 
     <section class="oci-install" aria-labelledby="oci-install-title">
       <h2 id="oci-install-title">Extension 설치</h2>
-      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 최근 MFA 확인과 8자 이상의 사유가 필요합니다.</p>
+      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 개발용 local edge의 설치·업데이트는 MFA를 생략하고, 다른 환경과 다른 lifecycle 작업은 최근 MFA를 요구합니다. 사유는 항상 8자 이상 필요합니다.</p>
       <div class="registry-access-form registry-access-form--install">
         <div class="clr-form-control">
           <label for="extension-image" class="clr-control-label">OCI image</label>

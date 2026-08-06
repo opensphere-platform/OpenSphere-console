@@ -69,7 +69,7 @@ test('module uninstall removes every verified labelled binding and general profi
   assert.doesNotMatch(ai, /resources: \[persistentvolumeclaims\][^\n]+delete/);
 });
 
-test('Console and CLI share lifecycle API with recent AAL2 and durable reason gates', () => {
+test('Console and CLI share lifecycle API with scoped development-edge MFA policy and durable reason gates', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   const backend = read('backend', 'opensphere-console-backend', 'server.js');
   const client = read('src', 'app', 'core', 'plugin-control-client.service.ts');
@@ -77,6 +77,7 @@ test('Console and CLI share lifecycle API with recent AAL2 and durable reason ga
   assert.doesNotMatch(controller, /CliInstallationRequired/);
   assert.match(controller, /reason\.length < 8/);
   assert.match(backend, /module lifecycle mutation/);
+  assert.match(backend, /moduleLifecycleNeedsRecentAal2/);
   assert.match(backend, /requireRecentAal2\(actor/);
   assert.match(client, /\/api\/admin\/extensions\/install/);
   assert.match(page, /Extension 설치/);

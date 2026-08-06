@@ -13,6 +13,11 @@ const { createBrowserSessionManager } = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 const { createModuleOperationApi } = require('./module-operation-api');
+const {
+  DEFAULT_INSTALLATION_CONFIG_FILE,
+  moduleLifecycleRequiresRecentAal2,
+  readInstallationPolicy,
+} = require('./module-lifecycle-policy');
 const { evaluateDataIdentityReadiness } = require('./data-identity-readiness');
 const {
   FOUNDATION_BOOTSTRAP_RECONCILER,
@@ -82,6 +87,7 @@ const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 't
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
+const INSTALLATION_CONFIG_FILE = process.env.INSTALLATION_CONFIG_FILE || DEFAULT_INSTALLATION_CONFIG_FILE;
 const CLI_TOKEN_ISSUER = 'opensphere-cli';
 const CLI_TOKEN_AUDIENCE = 'opensphere-cli';
 const CLI_JWT_SECRET = process.env.CLI_JWT_SECRET || '';
@@ -790,7 +796,15 @@ async function logAudit(actor, action, target, result, reason, opts = {}) {
   return persisted;
 }
 
-async function authenticateModuleRequest(req, { mutation = false } = {}) {
+function moduleLifecycleNeedsRecentAal2(action) {
+  return moduleLifecycleRequiresRecentAal2(
+    action,
+    readInstallationPolicy(INSTALLATION_CONFIG_FILE),
+    CONSOLE_PUBLIC_URL,
+  );
+}
+
+async function authenticateModuleRequest(req, { mutation = false, action = '' } = {}) {
   let actor;
   let authorization = String(req.headers.authorization || '');
   if (authorization) {
@@ -804,7 +818,9 @@ async function authenticateModuleRequest(req, { mutation = false } = {}) {
   if (!actor.groups?.includes(SUPABASE_BACKEND_ROLE)) {
     throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
   }
-  if (mutation) requireRecentAal2(actor, 'module lifecycle mutation');
+  if (mutation && moduleLifecycleNeedsRecentAal2(action)) {
+    requireRecentAal2(actor, 'module lifecycle mutation');
+  }
   return { actor, authorization };
 }
 
@@ -2492,7 +2508,15 @@ async function readBody(req) {
 
 async function proxyAdminControlRequest(req, res, url) {
   let authorization = String(req.headers.authorization || '');
-  const requireAal2 = isMutationRequest(req);
+  const method = String(req.method || 'GET').toUpperCase();
+  const registrationLifecycle = url.pathname.match(
+    /^\/api\/admin\/plugins\/registrations\/[a-z0-9-]+\/(install|enable|disable|uninstall|rollback)$/,
+  );
+  const lifecycleAction = url.pathname === '/api/admin/extensions/install'
+    ? 'install'
+    : registrationLifecycle?.[1] || '';
+  const requireAal2 = isMutationRequest(req)
+    && (!lifecycleAction || moduleLifecycleNeedsRecentAal2(lifecycleAction));
   if (authorization) {
     // CLI/PAT requests retain their bearer credential, but are verified at the
     // Console enforcement point before the request reaches DUPA. A bearer
@@ -2508,7 +2532,6 @@ async function proxyAdminControlRequest(req, res, url) {
     authorization = `Bearer ${session.accessToken}`;
   }
 
-  const method = String(req.method || 'GET').toUpperCase();
   const hasBody = !['GET', 'HEAD'].includes(method);
   const body = hasBody ? await readRawBody(req) : undefined;
   const headers = {
