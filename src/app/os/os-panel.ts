@@ -95,6 +95,13 @@ import { ClarityModule } from '@clr/angular';
         min-width: 420px;
         max-width: 92vw;
       }
+      :host ::ng-deep clr-side-panel.side-panel .modal-content {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+      }
       .os-panel-grip {
         position: fixed;
         top: var(--os-header-height, 3rem);
@@ -138,6 +145,25 @@ import { ClarityModule } from '@clr/angular';
         align-items: center;
         gap: 0.7rem;
       }
+      .side-panel-title {
+        box-sizing: border-box;
+        flex: 0 0 auto;
+        min-width: 0;
+        padding: 1rem 1.5rem 0.9rem;
+        border-bottom: 1px solid var(--os-hairline, #d7dce1);
+        background: var(--os-surface-2, #f4f4f4);
+      }
+      .side-panel-body {
+        box-sizing: border-box;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+        padding: 1.25rem 1.5rem 2rem;
+        background: var(--os-canvas, #fff);
+      }
       .os-panel-logo-chip {
         display: inline-flex;
         align-items: center;
@@ -150,10 +176,15 @@ import { ClarityModule } from '@clr/angular';
       }
       .os-panel-title-text {
         min-width: 0;
+        font-size: 1.15rem;
+        font-weight: 500;
+        line-height: 1.3;
       }
       .os-panel-sub {
-        font-size: 0.65rem;
-        color: var(--os-muted, #667193);
+        margin-top: 0.2rem;
+        font-size: 0.75rem;
+        line-height: 1.45;
+        color: var(--os-ink-muted, #525d73);
         font-weight: 400;
       }
       .os-panel-full {
@@ -168,10 +199,13 @@ import { ClarityModule } from '@clr/angular';
         flex-direction: column;
       }
       .os-panel-footer {
-        min-height: 3.25rem;
+        box-sizing: border-box;
+        flex: 0 0 auto;
+        min-height: 4rem;
         align-items: center;
-        padding: 0.65rem 1.2rem;
+        padding: 0.75rem 1.5rem;
         border-top: 1px solid var(--os-hairline, #d7dce1);
+        box-shadow: 0 -0.15rem 0.55rem rgba(20, 33, 61, 0.06);
         background: var(--os-canvas, #fff);
       }
       .os-panel-footer:empty {
