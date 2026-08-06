@@ -406,6 +406,11 @@ function verifiedStagedUpdate(reg) {
     && currentDigest !== previousDigest;
 }
 const FOUNDATION_UPGRADE_AUTHORIZATION_KIND = 'VerifiedActivatedFoundationUpdate/v1';
+function canonicalFoundationUpgradeOperationId(value) {
+  const raw = String(value || '').toLowerCase();
+  if (/^os-[a-f0-9]+$/.test(raw)) return raw;
+  return `os-${createHash('sha256').update(raw).digest('hex')}`;
+}
 function foundationUpgradeAuthorization(currentPkg, currentReg, targetPkg, actor, opId, requestedAt = new Date().toISOString()) {
   if (currentPkg?.metadata?.name !== FOUNDATION_ID || targetPkg?.metadata?.name !== FOUNDATION_ID) return null;
   if (!verifiedActivatedRegistration(currentReg)) return null;
@@ -427,7 +432,10 @@ function foundationUpgradeAuthorization(currentPkg, currentReg, targetPkg, actor
     toDigest,
     toManifestSha256,
     requestedBy: auditActorLabel(actor),
-    operationId: String(opId || ''),
+    // HTTP correlation ids are UUIDs, while the durable CRD contract uses an
+    // os-<hex> identifier. Preserve correlation deterministically without
+    // weakening the status schema or bypassing exact-transition validation.
+    operationId: canonicalFoundationUpgradeOperationId(opId),
     requestedAt: String(requestedAt || ''),
   };
 }

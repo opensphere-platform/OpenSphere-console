@@ -97,7 +97,7 @@ test('Foundation management shell stays accessible while PFS services remain evi
   assert.doesNotMatch(controller, /PlatformSupportProfileRequiredForPfsPlugin/);
   assert.match(controller, /const foundationActivationAllowed = true/);
   const foundationEnableStart = controller.indexOf("if (id === FOUNDATION_ID && action === 'enable')");
-  const foundationEnableEnd = controller.indexOf('// Activation is the gate for PFS plugins', foundationEnableStart);
+  const foundationEnableEnd = controller.indexOf('// Domain modules retain the PFS establishment gate', foundationEnableStart);
   const foundationEnable = controller.slice(foundationEnableStart, foundationEnableEnd);
   assert.match(foundationEnable, /foundation-shell-management-activation/);
   assert.doesNotMatch(foundationEnable, /return json\(res, 409/);
@@ -236,6 +236,13 @@ test('Foundation update evidence is exact-transition and expires without bypassi
     currentPkg, activeReg, targetPkg, { username: 'cmars' }, `os-${'e'.repeat(24)}`, '2026-07-29T02:00:00.000Z',
   );
   assert.ok(authorization);
+  const uuidAuthorization = foundationUpgradeAuthorization(
+    currentPkg, activeReg, targetPkg, { username: 'cmars' }, '10aa82f0-ade1-4d32-8d69-069e39bf4894', '2026-07-29T02:00:00.000Z',
+  );
+  assert.match(uuidAuthorization.operationId, /^os-[a-f0-9]+$/);
+  assert.equal(uuidAuthorization.operationId, foundationUpgradeAuthorization(
+    currentPkg, activeReg, targetPkg, { username: 'cmars' }, '10aa82f0-ade1-4d32-8d69-069e39bf4894', '2026-07-29T02:00:00.000Z',
+  ).operationId, 'UUID correlation ids must map to stable CRD-safe authorization ids');
   const staged = {
     spec: { desiredState: 'Installed' },
     status: {
@@ -343,7 +350,7 @@ test('known L6 domain subShells are fail-closed behind live PFS admission', () =
   const controller = read('backend', 'dupa-control', 'controller.js');
   assert.match(controller, /domainActivationAllowed:\s*domainAdmissionReady/);
   assert.match(controller, /else if \(requiresDomainAdmission\(pkg\)\)/);
-  assert.match(controller, /else if \(targetPkg\.ok && requiresDomainAdmission\(targetPkg\.json\)\)/);
+  assert.match(controller, /if \(targetPkg\.ok && requiresDomainAdmission\(targetPkg\.json\)\)/);
   assert.match(controller, /error: 'DomainAdmissionLocked'/);
   assert.match(controller, /phase: 'DependencyPending',\s*\n\s*reason: admission\.reason/);
 });
