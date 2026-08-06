@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { ChangeDetectionStrategy, Component, inject, signal, viewChild } from '@angular/core';
+import { FormsModule, NgForm } from '@angular/forms';
 import { ClarityModule } from '@clr/angular';
 import { HttpService } from '../core/http.service';
 import { OsPageHeader } from '../os/os-page-header';
@@ -194,7 +194,7 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
         <span>프로파일은 대표적인 S3 설정을 채우는 도구이며 endpoint는 저장소 환경에 맞게 수정할 수 있습니다. HTTPS와 AWS Signature Version 4를 지원하는 S3 호환 저장소를 연결합니다.</span>
         <span class="backup-panel-security"><strong>보안:</strong> 모든 snapshot은 업로드 전에 AES-256-GCM으로 암호화됩니다.</span>
       </div>
-      <form clrForm clrLayout="vertical" class="backup-target-form" autocomplete="off" aria-describedby="backup-target-guidance" novalidate>
+      <form #backupTargetFormRef="ngForm" clrForm clrLayout="vertical" class="backup-target-form" autocomplete="off" aria-describedby="backup-target-guidance" novalidate>
         <fieldset class="backup-form-section">
           <legend>저장 위치</legend>
           <p>저장소 프로파일을 선택한 뒤 해당 서비스에서 확인한 Region, endpoint와 Bucket 값을 입력합니다.</p>
@@ -281,6 +281,7 @@ export class AdminExternalChannels {
   readonly externalSummary = signal<ExternalSummary>({ targets: 0, readyTargets: 0, configuredTargets: 0, lastBackup: null, lastRestore: null });
   readonly backupTargets = signal<BackupTarget[]>([]); readonly backups = signal<Backup[]>([]); readonly restorePreview = signal<RestorePreview | null>(null);
   readonly loading = signal(true); readonly busy = signal(false); readonly error = signal(''); readonly panelError = signal<PanelIssue | null>(null); readonly backupTargetSubmitAttempted = signal(false);
+  readonly backupTargetFormRef = viewChild<NgForm>('backupTargetFormRef');
   readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly backupTargetPanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null); readonly editingBackupTargetId = signal<string | null>(null);
   channelForm = emptyChannel(); ruleForm = emptyRule(); backupTargetForm = emptyBackupTarget(); restoreConfirmation = ''; restoreReason = '운영 구성 복원 실행';
   constructor() { void this.load(); }
@@ -311,6 +312,7 @@ export class AdminExternalChannels {
   closePanels(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.backupTargetPanelOpen.set(false); this.editingChannelId.set(null); this.editingBackupTargetId.set(null); }
   async saveBackupTarget(): Promise<void> {
     this.backupTargetSubmitAttempted.set(true);
+    this.backupTargetFormRef()?.form.markAllAsTouched();
     const invalidField = this.backupTargetFields().find((field) => this.backupTargetValidationError(field));
     if (invalidField) {
       this.panelError.set(null);

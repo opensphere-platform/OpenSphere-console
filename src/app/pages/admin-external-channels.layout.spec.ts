@@ -32,6 +32,7 @@ test('backup panel uses S3 profiles, field-level validation and an uncluttered a
   assert.match(page, /자격 증명은 저장 후 다시 표시하지 않음/);
   assert.match(page, /저장소 프로파일/);
   assert.match(page, /backupTargetSubmitAttempted/);
+  assert.match(page, /markAllAsTouched/);
   assert.match(page, /focusBackupTargetField/);
   assert.equal(page.match(/<clr-control-error>/g)?.length, 8);
   assert.doesNotMatch(page, /class="field-error"/);

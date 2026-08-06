@@ -187,6 +187,7 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.match(source, /S3 endpoint/);
   for (const profile of ['사용자 지정 S3 호환', 'Amazon S3', 'Backblaze B2', 'Cloudflare R2', 'MinIO', 'Ceph Object Gateway (RGW)']) assert.ok(source.includes(profile));
   assert.match(source, /backupTargetSubmitAttempted/);
+  assert.match(source, /markAllAsTouched/);
   assert.match(source, /focusBackupTargetField/);
   assert.equal(source.match(/<clr-control-error>/g)?.length, 8);
   assert.doesNotMatch(source, /class="field-error"/);
