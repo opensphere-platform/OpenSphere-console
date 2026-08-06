@@ -102,6 +102,42 @@ import { ClarityModule } from '@clr/angular';
         min-height: 0;
         overflow: hidden;
       }
+      /* The structural bands must touch every panel edge. Clarity's modal
+       * defaults add outer header/footer padding that turns them into floating
+       * islands and leaves dead space above, below and at both sides. Keep the
+       * readable inset inside each band instead. */
+      :host ::ng-deep clr-side-panel.side-panel .modal-header,
+      :host ::ng-deep clr-side-panel.side-panel .modal-header--accessible {
+        position: relative;
+        flex: 0 0 auto;
+        width: 100%;
+        padding: 0 !important;
+      }
+      :host ::ng-deep clr-side-panel.side-panel .modal-title-wrapper {
+        width: 100%;
+        min-width: 0;
+      }
+      :host ::ng-deep clr-side-panel.side-panel .modal-header .close,
+      :host ::ng-deep clr-side-panel.side-panel .modal-header--accessible .close,
+      :host ::ng-deep clr-side-panel.side-panel .modal-header .pinnable,
+      :host ::ng-deep clr-side-panel.side-panel .modal-header--accessible .pinnable {
+        position: absolute;
+        top: 1rem;
+        right: 1.25rem;
+        z-index: 1;
+      }
+      :host ::ng-deep clr-side-panel.side-panel .modal-body-wrapper {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        max-height: none;
+        overflow: hidden;
+      }
+      :host ::ng-deep clr-side-panel.side-panel .modal-footer {
+        flex: 0 0 auto;
+        width: 100%;
+        padding: 0 !important;
+      }
       .os-panel-grip {
         position: fixed;
         top: var(--os-header-height, 3rem);
@@ -148,15 +184,19 @@ import { ClarityModule } from '@clr/angular';
       .side-panel-title {
         box-sizing: border-box;
         flex: 0 0 auto;
+        width: 100%;
         min-width: 0;
-        padding: 1rem 1.5rem 0.9rem;
+        margin: 0;
+        padding: 1rem 3.75rem 0.9rem 1.5rem;
         border-bottom: 1px solid var(--os-hairline, #d7dce1);
         background: var(--os-surface-2, #f4f4f4);
       }
       .side-panel-body {
         box-sizing: border-box;
         flex: 1 1 auto;
+        width: 100%;
         min-height: 0;
+        margin: 0;
         overflow-x: hidden;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -201,8 +241,10 @@ import { ClarityModule } from '@clr/angular';
       .os-panel-footer {
         box-sizing: border-box;
         flex: 0 0 auto;
+        width: 100%;
         min-height: 4rem;
         align-items: center;
+        margin: 0;
         padding: 0.75rem 1.5rem;
         border-top: 1px solid var(--os-hairline, #d7dce1);
         box-shadow: 0 -0.15rem 0.55rem rgba(20, 33, 61, 0.06);
