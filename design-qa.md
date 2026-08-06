@@ -68,6 +68,44 @@ final result: passed
 
 ---
 
+# S3-compatible backup target panel — Design QA
+
+Date: 2026-08-06 KST
+
+## Source and deployed implementation
+
+- Reference: `C:/Users/cmars/AppData/Local/Temp/codex-clipboard-03c01c2d-30c3-4ddc-8ec9-23e9dc7d2570.png`.
+- Runtime: `https://localhost:1114/manage/external-channels` → `백업 대상` → `S3 대상 추가`.
+- Deployed Console image: `sha256:ac1553cfc2ffc958fab22975b95ac7f573c80fb4af049b9355b96500d7f7d4ec`.
+- State compared: right-side panel open after attempting to save an empty target.
+
+## Visual comparison
+
+- The panel owns the full available height and width from the shell boundary; header and footer remain flush to the panel edges.
+- Header, scrollable body, and footer are distinct regions. The footer action stays at the bottom while form content scrolls independently.
+- The reference's readable two-column form rhythm is retained while the revised form adds provider profiles and task-based sections.
+- The implementation removes the Backblaze-only assumption and offers custom S3, Amazon S3, Backblaze B2, Cloudflare R2, MinIO, and Ceph RGW profiles.
+- No generic “필수 항목을 입력하면 저장할 수 있습니다.” footer copy remains.
+- Required-field errors render immediately below the relevant controls in the Clarity error style without displacing the panel header or footer.
+
+## Interaction and accessibility
+
+- The save button remains enabled when idle so an operator can request validation.
+- Empty submission focuses `backup-name`, marks every invalid required control with `aria-invalid=true`, and displays five actionable field messages.
+- The page contains no browser console error. Existing number-input component warnings are unrelated to this panel.
+- No backup target was created or modified during verification.
+
+## Verification
+
+- Full Console test suite: 345 passed, 0 failed before the Clarity projection correction.
+- Focused external-channel and panel regression suite: 13 passed, 0 failed after the final form-state correction.
+- Production Angular build: passed; existing bundle/style budget warnings remain.
+- Kubernetes rollout: `opensphere-console`, 2/2 replicas Ready.
+
+final result: passed
+
+---
+
 # Platform Release and Extension administration field sizing — Design QA
 
 Date: 2026-08-02 KST
