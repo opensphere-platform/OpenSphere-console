@@ -18,7 +18,7 @@ export interface Registration {
   name: string; desiredState: string;
   installation?: {
     requestedAt?: string; requestedBy?: string; requestedById?: string;
-    client?: 'cli:os'; operationId?: string;
+    client?: 'cli:os' | 'console:web'; operationId?: string;
   };
   status: {
     phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string;
@@ -29,6 +29,13 @@ export interface Registration {
     currentRequestedChannel?: string; currentResolvedAt?: string;
     currentSource?: string; currentRevision?: string;
     currentSignatureIdentity?: string; currentEvidenceRefs?: string[];
+    previousDigest?: string; previousManifestSha256?: string;
+    previousVersion?: string; previousCompatibilityVersion?: string;
+    previousBuildAuthority?: 'localhost' | 'github-actions';
+    previousRequestedRef?: string; previousRequestedChannel?: string;
+    previousSource?: string; previousRevision?: string;
+    previousSignatureIdentity?: string; previousEvidenceRefs?: string[];
+    previousRegistryCredentialsRequired?: boolean;
     currentChannelDigest?: string;
     channelState?: 'Current' | 'UpdateAvailable' | 'SecurityActionRequired' | 'ChannelUnavailable';
     channelCheckedAt?: string; channelReason?: string;
@@ -71,6 +78,14 @@ export interface RegistryCredentialStatus {
 }
 export interface ImageRevocation {
   repository: string; digest: string; replacementDigest?: string; revokedAt: string; actor: string; reason: string;
+}
+export interface ExtensionInstallResult {
+  accepted: boolean;
+  id: string;
+  operation: 'Install' | 'Update';
+  desiredState: 'Installed' | 'Enabled' | 'Disabled';
+  image: string;
+  activation?: { allowed: false; reason: string; pendingCapabilities: string[] };
 }
 export interface ExtensionProjectionStatus {
   ready: boolean;
@@ -141,12 +156,25 @@ export class PluginControlClient {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason }),
     }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return (await r.json()).item; });
   }
+  install(image: string, reason: string, client: 'cli:os' | 'console:web' = 'console:web'): Promise<ExtensionInstallResult> {
+    return this.http.request('/api/admin/extensions/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ image: image.trim(), reason: reason.trim(), client }),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { message?: unknown; error?: unknown };
+        throw new Error(`install HTTP ${r.status}: ${String(body.message || body.error || 'request failed')}`);
+      }
+      return r.json() as Promise<ExtensionInstallResult>;
+    });
+  }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
   bindingAction(name: string, action: 'enable' | 'disable') {
     return this.http.request(`/api/admin/bindings/${name}/${action}`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error(`${action} HTTP ${r.status}`); return r.json(); });
   }
-  private act(id: string, action: 'enable' | 'disable' | 'uninstall', reason?: string) {
+  private act(id: string, action: 'install' | 'enable' | 'disable' | 'uninstall' | 'rollback', reason?: string) {
     return this.http.request(`/api/admin/plugins/registrations/${id}/${action}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason ?? '' }),
     }).then(async (r) => {
@@ -163,9 +191,10 @@ export class PluginControlClient {
       return r.json();
     });
   }
-  enable(id: string) { return this.act(id, 'enable'); }
-  disable(id: string) { return this.act(id, 'disable'); }
-  uninstall(id: string) { return this.act(id, 'uninstall'); }
+  enable(id: string, reason: string) { return this.act(id, 'enable', reason); }
+  disable(id: string, reason: string) { return this.act(id, 'disable', reason); }
+  uninstall(id: string, reason: string) { return this.act(id, 'uninstall', reason); }
+  rollback(id: string, reason: string) { return this.act(id, 'rollback', reason); }
   /** 1단 아이콘 지정 — UIPluginPackage spec.nav.icon 패치(Carbon 토큰명). 빈 문자열=기본 아이콘. */
   setIcon(id: string, icon: string) {
     return this.http.request(`/api/admin/plugins/packages/${id}/icon`, {

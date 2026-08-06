@@ -4,6 +4,10 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./admin-plugins.ts', import.meta.url), 'utf8');
 const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts', import.meta.url), 'utf8');
+const routes = fs.readFileSync(new URL('../app.routes.ts', import.meta.url), 'utf8');
+const extensionHost = fs.readFileSync(new URL('../core/extension-host.service.ts', import.meta.url), 'utf8');
+const shell = fs.readFileSync(new URL('../os/os-shell.ts', import.meta.url), 'utf8');
+const perspectives = fs.readFileSync(new URL('../core/perspectives.ts', import.meta.url), 'utf8');
 
 test('Extension operations separate user intent, serving state, and verification', () => {
   assert.match(source, /<span>서비스 중<\/span>/);
@@ -28,4 +32,34 @@ test('an unavailable control projection is unknown or stale, never a false zero'
   assert.match(client, /ExtensionProjectionStatus/);
   assert.match(client, /catalogSnapshot/);
   assert.match(client, /registrationsSnapshot/);
+});
+
+test('Extension management separates first-level subShells from host-owned plugins', () => {
+  assert.match(source, /SubShell 관리/);
+  assert.match(source, /Plugin 관리/);
+  assert.match(source, /subShellRegistrations\(\)/);
+  assert.match(source, /pluginHostGroups\(\)/);
+  assert.match(source, /group\.hostRef/);
+  assert.match(source, /plugin은 1단 메뉴 객체가 아닙니다/);
+  assert.doesNotMatch(source, /@for \(r of registrations\(\); track r\.name\)/);
+});
+
+test('every Extension management tab has a reloadable canonical route', () => {
+  assert.match(routes, /path: 'extensions', redirectTo: 'extensions\/subshells'/);
+  assert.match(routes, /path: 'extensions\/:view', component: AdminPlugins/);
+  for (const view of ['subshells', 'plugins', 'topology', 'catalog', 'audit', 'bindings']) {
+    assert.match(source, new RegExp(`selectView\\('${view}'\\)`));
+    assert.match(source, new RegExp(`activeView\\(\\) === '${view}'`));
+  }
+});
+
+test('PFSS child plugins keep their host ownership across routes and navigation', () => {
+  assert.match(routes, /return childPath \? `\/pfss\/\$\{childPath\}` : '\/pfss\/foundation'/);
+  assert.match(routes, /path: 'p\/opensearch', redirectTo: 'pfss\/opensearch'/);
+  assert.match(routes, /path: 'p\/postgres', redirectTo: 'pfss\/postgres'/);
+  assert.match(routes, /matcher: pfssHostMatcher, component: PluginHost, data: \{ pluginId: 'foundation' \}/);
+  assert.match(extensionHost, /hostRef: String\(item\['hostRef'\] \|\| 'main'\)/);
+  assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
+  assert.match(source, /if \(hostRef === 'foundation'\) return `\/pfss\/\$\{r\.name\}`/);
+  assert.match(perspectives, /id === 'foundation' \? '\/pfss\/foundation' : `\/p\/\$\{id\}`/);
 });

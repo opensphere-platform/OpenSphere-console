@@ -115,6 +115,9 @@ jobs:
           - image: opensphere-console
             context: .
             file: OpenSphere-console/Dockerfile
+          - image: opensphere-os-cli
+            context: OpenSphere-console/backend/os-cli
+            file: OpenSphere-console/backend/os-cli/Dockerfile
           - image: opensphere-console-backend
             context: OpenSphere-console/backend
             file: OpenSphere-console/backend/opensphere-console-backend/Dockerfile
@@ -162,7 +165,26 @@ jobs:
         with:
           repository: opensphere-platform/OpenSphere-SDK
           path: OpenSphere-SDK
+      - name: Require private Setup read credential
+        if: matrix.image == 'opensphere-console-backend'
+        env:
+          SETUP_REPOSITORY_SSH_KEY: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
+        run: test -n "$SETUP_REPOSITORY_SSH_KEY"
+      - name: Checkout governed Setup CLI
+        if: matrix.image == 'opensphere-console-backend'
+        uses: actions/checkout@v4
+        with:
+          repository: opensphere-platform/OpenSphere-Setup-CLI
+          path: OpenSphere-Setup-CLI
+          ssh-key: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
+          persist-credentials: false
+      - name: Record Setup source revision
+        if: matrix.image == 'opensphere-console-backend'
+        id: setup
+        shell: bash
+        run: echo "revision=$(git -C OpenSphere-Setup-CLI rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Download native macOS CLI artifact
+        if: matrix.image == 'opensphere-os-cli'
         uses: actions/download-artifact@v4
         with:
           name: opensphere-cli-darwin
@@ -208,7 +230,8 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           build-contexts: |
-            macos-cli=${{ runner.temp }}/opensphere-cli-macos
+            macos-cli=${{ matrix.image == 'opensphere-os-cli' && format('{0}/opensphere-cli-macos', runner.temp) || '.' }}
+            setup-cli=${{ matrix.image == 'opensphere-console-backend' && 'OpenSphere-Setup-CLI' || '.' }}
           # GA is built only by the approved GitHub workflow with the complete
           # supported architecture set and supply-chain evidence.
           platforms: linux/amd64,linux/arm64
@@ -225,6 +248,7 @@ jobs:
             # publish the reduced artifact set a local edge build may produce.
             CLI_DARWIN_CONTEXT=macos-cli
             CLI_REQUIRE_DARWIN=true
+            SETUP_SOURCE_REVISION=${{ steps.setup.outputs.revision || github.sha }}
           secrets: |
             "cli_update_signing_key=${{ secrets.CLI_UPDATE_SIGNING_PRIVATE_KEY }}"
           cache-from: type=gha,scope=${{ matrix.image }}
@@ -427,6 +451,19 @@ jobs:
             publish_immutable_tag "$repository" "$digest"
             crane tag "$repository@$digest" ga
           done
+
+          # Downloadable CLI artifacts have an independent lifecycle so a UI
+          # change never recompiles or rolls them. They remain exact-digest,
+          # provenance/SBOM-attested GA output, but are intentionally outside
+          # the 13-component Console runtime BOM.
+          cli_repository="ghcr.io/opensphere-platform/opensphere-os-cli"
+          cli_source="$cli_repository:sha-${GITHUB_SHA:0:7}"
+          cli_digest="$(crane digest "$cli_source")"
+          cli_revision="$(crane config "$cli_source" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
+          test "$cli_revision" = "$GITHUB_SHA"
+          publish_immutable_tag "$cli_repository" "$cli_digest"
+          crane tag "$cli_repository@$cli_digest" ga
+          test "$(crane digest "$cli_repository:ga")" = "$cli_digest"
 
           # This is the atomic publication point. If any earlier step fails,
           # Console:ga still anchors the previous complete signed BOM.

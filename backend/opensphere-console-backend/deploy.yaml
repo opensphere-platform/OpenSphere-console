@@ -31,6 +31,24 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensph
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
+# The browser-facing Backend may read only the managed installation lock. It
+# cannot apply release resources or create executor Jobs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-backend-installation-lock, namespace: opensphere-console }
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["opensphere-installation-lock"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-backend-installation-lock, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-installation-lock }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
+---
 # Recovery evidence is a single non-secret status ConfigMap. The Backend has
 # no list, watch, or write authority in this namespace.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -102,7 +120,7 @@ spec:
       containers:
         - name: api
           # 실배포 기준: 현재 검증된 로컬 런타임 이미지.
-          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:34d1b9e5ea5ca37398f82544af954c2d893abae16c0ba3598e0f9cea7d55f032
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
           imagePullPolicy: IfNotPresent
           env:
             - { name: APP_VERSION, value: "0.8.0-oaa-recovery-owner" }
@@ -143,7 +161,7 @@ spec:
             - { name: GITEA_REPOSITORY, value: platform-declarations }
             - { name: GITEA_DEFAULT_BRANCH, value: main }
             - { name: GITEA_RECONCILER_NAME, value: oaa-governed-adapter }
-            - { name: GITEA_RECONCILER_NAMES, value: "oaa-governed-adapter,ceph-prerequisite-reconciler" }
+            - { name: GITEA_RECONCILER_NAMES, value: "oaa-governed-adapter,ceph-prerequisite-reconciler,foundation-bootstrap-reconciler,platform-release-reconciler" }
             - { name: GITEA_CHANGE_REQUIRE_AAL2, value: "true" }
             - { name: GITEA_REQUIRE_VERIFIED_MERGE, value: "true" }
             - name: GITEA_TOKEN
@@ -175,7 +193,9 @@ spec:
             - name: EXTERNAL_CHANNEL_EXECUTOR_TOKEN
               valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: internal-token } }
           ports: [{ containerPort: 8080 }]
-          readinessProbe: { httpGet: { path: /readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
+          # Serving readiness keeps the native management and diagnostic surface
+          # routable while /readyz reports dependency degradation in detail.
+          readinessProbe: { httpGet: { path: /serving-readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
           resources:
             requests: { cpu: 20m, memory: 48Mi }
@@ -190,3 +210,429 @@ metadata: { name: opensphere-console-backend, namespace: opensphere-console, lab
 spec:
   selector: { app: opensphere-console-backend }
   ports: [{ name: http, port: 8080, targetPort: 8080 }]
+---
+# Foundation bootstrap is not executed by the browser-facing Backend or the
+# Foundation subShell. This dedicated reconciler consumes only reviewed Gitea
+# requests for the closed, digest-pinned catalog.
+apiVersion: v1
+kind: Namespace
+metadata: { name: opensphere-system }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: opensphere-foundation }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: foundation-bootstrap-reconciler, namespace: opensphere-console }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: foundation-bootstrap-reconciler }
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["foundation.opensphere.io"]
+    resources: ["foundationmodels", "foundationmoduledescriptors"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["foundation.opensphere.io"]
+    resources: ["foundationclaims"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["foundation.opensphere.io"]
+    resources: ["foundationbindings"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: foundation-bootstrap-reconciler }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: foundation-bootstrap-reconciler }
+subjects:
+  - { kind: ServiceAccount, name: foundation-bootstrap-reconciler, namespace: opensphere-console }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: foundation-bootstrap-support-profile-reader, namespace: opensphere-console }
+rules:
+  - apiGroups: ["platform.opensphere.io"]
+    resources: ["platformsupportprofiles"]
+    resourceNames: ["default"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: foundation-bootstrap-support-profile-reader, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: foundation-bootstrap-support-profile-reader }
+subjects:
+  - { kind: ServiceAccount, name: foundation-bootstrap-reconciler, namespace: opensphere-console }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: foundation-bootstrap-system-installer, namespace: opensphere-system }
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: foundation-bootstrap-system-installer, namespace: opensphere-system }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: foundation-bootstrap-system-installer }
+subjects:
+  - { kind: ServiceAccount, name: foundation-bootstrap-reconciler, namespace: opensphere-console }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: foundation-bootstrap-foundation-installer, namespace: opensphere-foundation }
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: foundation-bootstrap-foundation-installer, namespace: opensphere-foundation }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: foundation-bootstrap-foundation-installer }
+subjects:
+  - { kind: ServiceAccount, name: foundation-bootstrap-reconciler, namespace: opensphere-console }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: foundation-bootstrap-closed-catalog }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apiextensions.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["customresourcedefinitions"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["namespaces", "serviceaccounts"]
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+      - apiGroups: ["foundation.opensphere.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["foundationmodels", "foundationmoduledescriptors", "foundationclaims"]
+  validations:
+    - expression: >-
+        request.userInfo.username != 'system:serviceaccount:opensphere-console:foundation-bootstrap-reconciler'
+        || (
+          (request.kind.kind == 'CustomResourceDefinition' && object.metadata.name in [
+            'foundationmodels.foundation.opensphere.io',
+            'foundationmoduledescriptors.foundation.opensphere.io',
+            'foundationclaims.foundation.opensphere.io',
+            'foundationbindings.foundation.opensphere.io',
+            'identitydirectoryclaims.foundation.opensphere.io',
+            'identitydirectorybindings.foundation.opensphere.io'
+          ])
+          || (request.kind.kind == 'Namespace' && object.metadata.name in ['opensphere-system', 'opensphere-foundation'])
+          || (request.kind.kind == 'ClusterRole' && object.metadata.name in ['foundation-control-plane-core', 'foundation-control-plane-identity-directory'])
+          || (request.kind.kind == 'ClusterRoleBinding' && object.metadata.name in ['foundation-control-plane-core', 'foundation-control-plane-identity-directory'])
+          || (request.kind.kind == 'ServiceAccount' && object.metadata.namespace == 'opensphere-system' && object.metadata.name == 'foundation-control-plane')
+          || (request.kind.kind == 'Role' && object.metadata.namespace == 'opensphere-foundation' && object.metadata.name == 'foundation-control-plane-deployer')
+          || (request.kind.kind == 'RoleBinding' && object.metadata.namespace == 'opensphere-foundation' && object.metadata.name == 'foundation-control-plane-deployer')
+          || (request.kind.kind == 'Deployment' && object.metadata.namespace == 'opensphere-system' && object.metadata.name == 'foundation-control-plane')
+          || (request.kind.kind == 'FoundationModel' && object.metadata.name in ['identity', 'data', 'observability'])
+          || (request.kind.kind == 'FoundationModuleDescriptor' && object.metadata.name == 'identity')
+          || (
+            request.kind.kind == 'FoundationClaim'
+            && object.metadata.namespace == 'opensphere-system'
+            && object.metadata.name == 'foundation-bootstrap-observability'
+          )
+        )
+      message: "foundation-bootstrap-reconciler may mutate only the signed closed Foundation catalog"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: foundation-bootstrap-closed-catalog }
+spec:
+  policyName: foundation-bootstrap-closed-catalog
+  validationActions: [Deny]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: foundation-bootstrap-reconciler
+  namespace: opensphere-console
+  labels: { app: foundation-bootstrap-reconciler, app.kubernetes.io/part-of: opensphere-console }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: foundation-bootstrap-reconciler } }
+  template:
+    metadata: { labels: { app: foundation-bootstrap-reconciler, app.kubernetes.io/part-of: opensphere-console } }
+    spec:
+      serviceAccountName: foundation-bootstrap-reconciler
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      containers:
+        - name: reconciler
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
+          imagePullPolicy: IfNotPresent
+          command: ["node", "/app/opensphere-console-backend/foundation-bootstrap-reconciler.js"]
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - { name: CONSOLE_BACKEND_URL, value: "http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080" }
+            - { name: GITEA_URL, value: "http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000" }
+            - { name: GITEA_ORGANIZATION, value: opensphere }
+            - { name: GITEA_REPOSITORY, value: platform-declarations }
+            - { name: GITEA_PATH, value: foundation-bootstrap }
+            - name: GITEA_TOKEN
+              valueFrom: { secretKeyRef: { name: opensphere-gitea-control-plane, key: token } }
+            - name: RECONCILER_TOKEN
+              valueFrom: { secretKeyRef: { name: opensphere-gitea-control-plane, key: reconciler-token } }
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /readyz, port: http }, initialDelaySeconds: 2, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+# Platform Release execution is isolated from the browser-facing Backend. The
+# reconciler can dispatch only Jobs; the exact-digest executor Job alone holds
+# release installation authority and remains alive while Console Deployments
+# are replaced by the reviewed target release.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: platform-release-reconciler, namespace: opensphere-console }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: platform-release-reconciler, namespace: opensphere-console }
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: platform-release-reconciler, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: platform-release-reconciler }
+subjects:
+  - { kind: ServiceAccount, name: platform-release-reconciler, namespace: opensphere-console }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: platform-release-executor, namespace: opensphere-console }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: platform-release-executor }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin }
+subjects:
+  - { kind: ServiceAccount, name: platform-release-executor, namespace: opensphere-console }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: platform-release-executor-job-boundary }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+  validations:
+    - expression: >-
+        object.spec.template.spec.serviceAccountName != 'platform-release-executor'
+        || (
+          request.userInfo.username == 'system:serviceaccount:opensphere-console:platform-release-reconciler'
+          && object.metadata.namespace == 'opensphere-console'
+          && object.metadata.name.startsWith('platform-release-')
+          && object.metadata.labels['app'] == 'platform-release-executor'
+          && object.spec.backoffLimit == 0
+          && object.spec.activeDeadlineSeconds == 2700
+          && object.spec.ttlSecondsAfterFinished == 86400
+          && object.spec.template.spec.restartPolicy == 'Never'
+          && size(object.spec.template.spec.imagePullSecrets) == 1
+          && object.spec.template.spec.imagePullSecrets[0].name == 'opensphere-ghcr-pull'
+          && size(object.spec.template.spec.volumes) == 2
+          && object.spec.template.spec.volumes[0].name == 'tmp'
+          && has(object.spec.template.spec.volumes[0].emptyDir)
+          && object.spec.template.spec.volumes[1].name == 'ghcr'
+          && object.spec.template.spec.volumes[1].secret.secretName == 'opensphere-ghcr-pull'
+          && size(object.spec.template.spec.containers) == 1
+          && object.spec.template.spec.containers[0].name == 'executor'
+          && object.spec.template.spec.containers[0].image.matches(
+            '^ghcr[.]io/opensphere-platform/opensphere-console-backend@sha256:[a-f0-9]{64}$'
+          )
+          && object.spec.template.spec.containers[0].command
+            == ['node', '/app/opensphere-console-backend/platform-release-executor.mjs']
+          && (
+            !has(object.spec.template.spec.containers[0].args)
+            || size(object.spec.template.spec.containers[0].args) == 0
+          )
+          && object.spec.template.spec.containers[0].env.map(e, e.name) == [
+            'HOME',
+            'NODE_EXTRA_CA_CERTS',
+            'CONSOLE_BACKEND_URL',
+            'GITEA_URL',
+            'GITEA_ORGANIZATION',
+            'GITEA_REPOSITORY',
+            'GITEA_PATH',
+            'REQUEST_ID',
+            'GIT_COMMIT_SHA',
+            'ATTEMPT',
+            'EXPECTED_PREVIOUS_RELEASE_DIGEST',
+            'GITEA_TOKEN',
+            'RECONCILER_TOKEN'
+          ]
+          && object.spec.template.spec.containers[0].env[0].value == '/tmp/home'
+          && object.spec.template.spec.containers[0].env[1].value
+            == '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+          && object.spec.template.spec.containers[0].env[2].value
+            == 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080'
+          && object.spec.template.spec.containers[0].env[3].value
+            == 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000'
+          && object.spec.template.spec.containers[0].env[4].value == 'opensphere'
+          && object.spec.template.spec.containers[0].env[5].value == 'platform-declarations'
+          && object.spec.template.spec.containers[0].env[6].value == 'platform-release'
+          && object.spec.template.spec.containers[0].env[7].value.matches(
+            '^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+          )
+          && object.spec.template.spec.containers[0].env[8].value.matches('^[a-f0-9]{40}$')
+          && object.spec.template.spec.containers[0].env[9].value.matches('^[0-9]+$')
+          && object.spec.template.spec.containers[0].env[10].value.matches(
+            '^sha256:[a-f0-9]{64}$'
+          )
+          && object.spec.template.spec.containers[0].env[11].valueFrom.secretKeyRef.name
+            == 'opensphere-gitea-control-plane'
+          && object.spec.template.spec.containers[0].env[11].valueFrom.secretKeyRef.key == 'token'
+          && object.spec.template.spec.containers[0].env[12].valueFrom.secretKeyRef.name
+            == 'opensphere-gitea-control-plane'
+          && object.spec.template.spec.containers[0].env[12].valueFrom.secretKeyRef.key
+            == 'reconciler-token'
+          && object.spec.template.spec.containers[0].volumeMounts.map(v, v.name) == ['tmp', 'ghcr']
+          && object.spec.template.spec.containers[0].volumeMounts[0].mountPath == '/tmp'
+          && object.spec.template.spec.containers[0].volumeMounts[1].mountPath
+            == '/var/run/secrets/opensphere-ghcr'
+          && object.spec.template.spec.containers[0].volumeMounts[1].readOnly
+          && object.spec.template.spec.containers[0].securityContext.runAsNonRoot
+          && !object.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          && object.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          && object.spec.template.spec.containers[0].securityContext.capabilities.drop == ['ALL']
+        )
+      message: "platform-release-executor ServiceAccount is reserved for the closed exact-digest release Job"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: platform-release-executor-job-boundary }
+spec:
+  policyName: platform-release-executor-job-boundary
+  validationActions: [Deny]
+---
+# A direct Pod using the privileged executor ServiceAccount would bypass the Job
+# policy above. Only the Kubernetes Job controller may materialize such a Pod,
+# and the owner, image and command must still be the reviewed release Job.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: platform-release-executor-pod-boundary }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  validations:
+    - expression: >-
+        object.spec.serviceAccountName != 'platform-release-executor'
+        || (
+          request.userInfo.username in [
+            'system:kube-controller-manager',
+            'system:serviceaccount:kube-system:job-controller'
+          ]
+          && object.metadata.namespace == 'opensphere-console'
+          && object.metadata.name.startsWith('platform-release-')
+          && object.metadata.labels['app'] == 'platform-release-executor'
+          && size(object.metadata.ownerReferences) == 1
+          && object.metadata.ownerReferences[0].apiVersion == 'batch/v1'
+          && object.metadata.ownerReferences[0].kind == 'Job'
+          && object.metadata.ownerReferences[0].name.startsWith('platform-release-')
+          && object.metadata.ownerReferences[0].controller
+          && object.spec.restartPolicy == 'Never'
+          && size(object.spec.containers) == 1
+          && object.spec.containers[0].name == 'executor'
+          && object.spec.containers[0].image.matches(
+            '^ghcr[.]io/opensphere-platform/opensphere-console-backend@sha256:[a-f0-9]{64}$'
+          )
+          && object.spec.containers[0].command
+            == ['node', '/app/opensphere-console-backend/platform-release-executor.mjs']
+        )
+      message: "direct Pods cannot use the privileged platform-release-executor ServiceAccount"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: platform-release-executor-pod-boundary }
+spec:
+  policyName: platform-release-executor-pod-boundary
+  validationActions: [Deny]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-release-reconciler
+  namespace: opensphere-console
+  labels: { app: platform-release-reconciler, app.kubernetes.io/part-of: opensphere-console }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: platform-release-reconciler } }
+  template:
+    metadata: { labels: { app: platform-release-reconciler, app.kubernetes.io/part-of: opensphere-console } }
+    spec:
+      serviceAccountName: platform-release-reconciler
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      containers:
+        - name: reconciler
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
+          imagePullPolicy: IfNotPresent
+          command: ["node", "/app/opensphere-console-backend/platform-release-reconciler.js"]
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - { name: CONSOLE_BACKEND_URL, value: "http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080" }
+            - { name: GITEA_URL, value: "http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000" }
+            - { name: GITEA_ORGANIZATION, value: opensphere }
+            - { name: GITEA_REPOSITORY, value: platform-declarations }
+            - { name: GITEA_PATH, value: platform-release }
+            - { name: EXECUTOR_IMAGE, value: "ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84" }
+            - name: GITEA_TOKEN
+              valueFrom: { secretKeyRef: { name: opensphere-gitea-control-plane, key: token } }
+            - name: RECONCILER_TOKEN
+              valueFrom: { secretKeyRef: { name: opensphere-gitea-control-plane, key: reconciler-token } }
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /readyz, port: http }, initialDelaySeconds: 2, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 10m, memory: 40Mi }
+            limits: { cpu: 250m, memory: 192Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }

@@ -104,11 +104,29 @@ test('initial-password and recovery links open a public password form without an
   assert.match(supabaseManifest, /GOTRUE_PASSWORD_MIN_LENGTH, value: "12"/);
 });
 
-test('a stale browser session is discarded and routed to login instead of surfacing an outage', () => {
-  assert.match(authService, /this\.statusOf\(error\) === 401/);
+test('only an authoritative 401 discards a browser session while dependency outage keeps verified GET access', () => {
+  assert.match(authService, /this\.statusOf\(error\) !== 401/);
   assert.match(authService, /this\.clearIdentity\(\);\s*this\.loginRequired\.set\(true\)/);
-  assert.match(browserSession, /browser session refresh credential was rejected/);
-  assert.match(browserSession, /revokeTokenFamily/);
+  assert.match(browserSession, /Supabase session refresh temporarily unavailable; browser session preserved/);
+  assert.match(browserSession, /if \(\[400, 401\]\.includes\(errorStatus\(error\)\)\)/);
+  assert.match(browserSession, /refresh credential was explicitly rejected/);
+  assert.match(browserSession, /rowAfterPeerRefresh/);
+  assert.match(browserSession, /tokenActuallyExpired/);
+  assert.match(browserSession, /persistRefreshRejection/);
+  assert.match(browserSession, /refresh_rejected/);
+  assert.match(browserSession, /authorityDegraded: true/);
+  assert.match(browserSession, /if \(!readOnly \|\| !cached/);
+});
+
+test('session lifetime defaults to 24 hours and idle extension requires real browser activity', () => {
+  assert.match(browserSession, /const DEFAULT_DURATION = '24h'/);
+  assert.match(authService, /const DEFAULT_SESSION_DURATION: SessionDuration = '24h'/);
+  assert.match(authService, /\/api\/identity\/session\/touch/);
+  assert.match(authService, /window\.addEventListener\('pointerdown'/);
+  assert.match(authService, /window\.addEventListener\('keydown'/);
+  assert.doesNotMatch(httpService, /touchSession/);
+  assert.match(backend, /p === '\/api\/identity\/session\/touch'/);
+  assert.match(myInfo, /실제 사용자 활동 기준 유휴 30분 제한/);
 });
 
 test('login keeps the established card design and adds only the requested session duration option', () => {
@@ -124,12 +142,23 @@ test('login keeps the established card design and adds only the requested sessio
 test('browser admin requests resolve the HttpOnly session at the Console enforcement point', () => {
   assert.match(backend, /async function proxyAdminControlRequest/);
   assert.match(backend, /browserSessions\.authenticate\(req\)/);
+  assert.match(backend, /const requireAal2 = isMutationRequest\(req\)/);
+  assert.match(backend, /verifyConsoleAdmin\(req, \{ requireAal2 \}\)/);
+  assert.match(backend, /assertConsoleAdminActor\(session\.actor, \{ requireAal2 \}\)/);
   assert.match(backend, /authorization = `Bearer \$\{session\.accessToken\}`/);
   assert.match(backend, /p\.startsWith\('\/api\/admin\/'\) && p !== '\/api\/admin\/events'/);
   assert.match(nginx, /location = \/api\/admin\/events \{[\s\S]*?\$dupa_controller_upstream/);
   assert.match(nginx, /location \/api\/admin\/ \{[\s\S]*?\$console_backend_upstream/);
   assert.match(httpService, /shouldReauthenticateAfterUnauthorized/);
   assert.doesNotMatch(httpService, /void this\.auth\.reAuthenticate\(\)/);
+});
+
+test('owner-service bearer delegation preserves recent MFA only through the exact browser-session ledger row', () => {
+  assert.match(backend, /actorForForwardedAccessToken\(match\[1\], actor\)/);
+  assert.match(browserSession, /supabase_session_id=eq\.\$\{encodeURIComponent\(authSessionId\)\}/);
+  assert.match(browserSession, /safeEqualHash\(sha256\(storedToken\), token\)/);
+  assert.match(browserSession, /lastReauthenticatedAt: row\.last_reauthenticated_at \|\| null/);
+  assert.doesNotMatch(browserSession, /lastReauthenticatedAt:\s*new Date\([^\n]*iat/);
 });
 
 test('all deployed Supabase JWT consumers use the public Auth issuer', () => {

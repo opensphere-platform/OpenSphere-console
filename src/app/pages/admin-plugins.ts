@@ -1,5 +1,6 @@
 import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { NgTemplateOutlet } from '@angular/common';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsRawIcon } from '../os/os-raw-icon';
@@ -8,6 +9,7 @@ import { OsActionDialog } from '../os/os-action-dialog';
 import { IconLibraryService } from '../os/icon-library.service';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PlatformReadinessService } from '../core/platform-readiness.service';
+import { buildExtensionManagementViews } from '../core/extension-view-model';
 import {
   PluginControlClient,
   CatalogItem,
@@ -50,6 +52,9 @@ interface TreeNode {
   actionable: boolean;
 }
 
+type ExtensionManagementView = 'subshells' | 'plugins' | 'topology' | 'catalog' | 'audit' | 'bindings';
+const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshells', 'plugins', 'topology', 'catalog', 'audit', 'bindings'];
+
 /**
  * Admin Control Page (계획서 §7) — Catalog/Installed/Audit 탭.
  * 설치/비활성화/재활성화/삭제를 Control API로만 수행하고, 성공 후 Extension Host를
@@ -57,7 +62,7 @@ interface TreeNode {
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [RouterLink, ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
+  imports: [NgTemplateOutlet, RouterLink, ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
       <os-page-header title="Console Extensions" tag="Core Runtime">
@@ -93,7 +98,7 @@ interface TreeNode {
     <clr-accordion class="management-actions">
       <clr-accordion-panel>
         <clr-accordion-title>관리 작업</clr-accordion-title>
-        <clr-accordion-description>CLI 설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
+        <clr-accordion-description>Extension 설치 · Registry 자격증명 · Digest 철회</clr-accordion-description>
         <clr-accordion-content *clrIfExpanded>
     <section class="registry-access" aria-labelledby="registry-access-title">
       <div class="registry-access-head">
@@ -105,7 +110,7 @@ interface TreeNode {
           <span class="label" [class.label-success]="registry.configured">{{ registry.configured ? 'Configured' : 'Not configured' }}</span>
         }
       </div>
-      <div class="registry-access-form">
+      <div class="registry-access-form registry-access-form--credentials">
         <div class="clr-form-control">
           <label for="registry-user" class="clr-control-label">GitHub username</label>
           <div class="clr-control-container"><div class="clr-input-wrapper">
@@ -137,7 +142,7 @@ interface TreeNode {
         </div>
         <span class="label label-danger">Revoked {{ revocations().length }}</span>
       </div>
-      <div class="registry-access-form">
+      <div class="registry-access-form registry-access-form--revocation">
         <div class="clr-form-control">
           <label for="revoke-image" class="clr-control-label">Repository digest</label>
           <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-image" #revokeImageRef class="clr-input" size="70" placeholder="ghcr.io/opensphere-platform/...@sha256:..." /></div></div>
@@ -163,107 +168,161 @@ interface TreeNode {
     </section>
 
     <section class="oci-install" aria-labelledby="oci-install-title">
-      <h2 id="oci-install-title">설치는 Console native CLI에서 진행</h2>
-      <p class="os-sub">브라우저는 설치 요청을 만들지 않습니다. 서명·권한·provenance 검증과 설치 근거는 <code>os</code> CLI가 같은 인증·감사 경계에서 기록합니다.</p>
-      <pre class="os-mono">os extensions inspect ghcr.io/opensphere-platform/&lt;module&gt;:edge
-os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "승인 사유"</pre>
+      <h2 id="oci-install-title">Extension 설치</h2>
+      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 최근 MFA 확인과 8자 이상의 사유가 필요합니다.</p>
+      <div class="registry-access-form registry-access-form--install">
+        <div class="clr-form-control">
+          <label for="extension-image" class="clr-control-label">OCI image</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="extension-image" #extensionImage class="clr-input" placeholder="ghcr.io/opensphere-platform/opensphere-…:edge" /></div></div>
+        </div>
+        <div class="clr-form-control">
+          <label for="extension-install-reason" class="clr-control-label">설치 사유</label>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="extension-install-reason" #extensionInstallReason class="clr-input" minlength="8" placeholder="운영 변경 사유(8자 이상)" /></div></div>
+        </div>
+        <button
+          class="btn btn-primary"
+          [disabled]="!extensionImage.value.trim() || extensionInstallReason.value.trim().length < 8"
+          (click)="installModule(extensionImage.value, extensionInstallReason.value)"
+        >
+          설치
+        </button>
+      </div>
     </section>
         </clr-accordion-content>
       </clr-accordion-panel>
     </clr-accordion>
 
+    <ng-template #extensionStatusTable let-items let-emptyText="emptyText">
+      <div class="extension-table-wrap">
+        <table class="table extension-table">
+          <thead>
+            <tr>
+              <th class="left">Extension</th>
+              <th class="left">소속 Host</th>
+              <th>사용자 설정</th>
+              <th>현재 서비스</th>
+              <th>실행 상태</th>
+              <th>검증·업데이트</th>
+              <th class="left">버전·채널</th>
+              <th>Console 연결</th>
+              <th>작업</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (r of items; track r.name) {
+              <tr>
+                <td class="left">
+                  <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
+                  <div class="state-detail">{{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span></div>
+                </td>
+                <td class="left">
+                  <strong>{{ extensionParentLabel(r) }}</strong>
+                  <div class="state-detail os-mono">{{ extensionParentRef(r) }}</div>
+                </td>
+                <td>
+                  <span class="label" [class.label-success]="r.desiredState === 'Enabled'" [class.label-warning]="r.desiredState === 'Installed'">{{ desiredStateLabel(r) }}</span>
+                  <div class="state-detail">{{ desiredStateDetail(r) }}</div>
+                </td>
+                <td>
+                  <span
+                    class="label"
+                    [class.label-success]="effectiveState(r).tone === 'success'"
+                    [class.label-warning]="effectiveState(r).tone === 'warning'"
+                    [class.label-danger]="effectiveState(r).tone === 'danger'"
+                    >{{ effectiveState(r).label }}</span
+                  >
+                  <div class="state-detail">{{ effectiveState(r).detail }}</div>
+                </td>
+                <td>
+                  <span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span>
+                  <div class="state-detail">Pod · Service</div>
+                </td>
+                <td>
+                  <span class="label" [class.label-success]="verificationGate(r).tone === 'success'" [class.label-warning]="verificationGate(r).tone === 'warning'" [class.label-danger]="verificationGate(r).tone === 'danger'">{{ verificationGate(r).label }}</span>
+                  <div class="state-detail">{{ verificationGate(r).detail }}</div>
+                </td>
+                <td class="left">
+                  <strong>{{ artifactVersion(r) }}</strong>
+                  <div class="state-detail">{{ r.status.currentRequestedChannel || 'exact' }} · {{ buildAuthorityLabel(r.status.currentBuildAuthority) }}</div>
+                  <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
+                </td>
+                <td>
+                  <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
+                  <div class="state-detail">{{ integrationSummary(r) }}</div>
+                </td>
+                <td>
+                  <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
+                  @if (r.desiredState === 'Enabled') {
+                    <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
+                  } @else {
+                    <button
+                      class="btn btn-sm btn-success-outline"
+                      [disabled]="activationLocked(r.name)"
+                      [title]="activationLockReason(r.name) || ''"
+                      (click)="run('enable', r.name)"
+                    >
+                      Enable
+                    </button>
+                  }
+                </td>
+              </tr>
+            } @empty {
+              <tr><td colspan="9" class="os-sub">{{ emptyText }}</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </ng-template>
+
     <clr-tabs>
       <clr-tab>
-        <button clrTabLink>서비스 상태</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('subshells')">SubShells <span class="view-count">{{ subShellRegistrations().length }}</span></button>
+        <clr-tab-content *clrIfActive="activeView() === 'subshells'">
+          <div class="extension-view-intro">
+            <div><span class="view-kicker">FIRST-LEVEL OPERATING SHELLS</span><h2>SubShell 관리</h2></div>
+            <p>Main Shell에 직접 연결되어 1단 메뉴와 독립 운영 영역을 제공하는 subShell만 표시합니다. plugin은 이 view에 포함하지 않습니다.</p>
+          </div>
           <div class="status-guide">
             <strong>상태 읽는 법</strong>
             <span><i class="status-dot success"></i>사용자 설정대로 서비스 중</span>
             <span><i class="status-dot warning"></i>서비스 유지 또는 처리 대기</span>
             <span><i class="status-dot danger"></i>서비스 차단 — 운영자 조치 필요</span>
           </div>
-          <div class="extension-table-wrap">
-          <table class="table extension-table">
-            <thead>
-              <tr>
-                <th class="left">Extension</th>
-                <th>사용자 설정</th>
-                <th>현재 서비스</th>
-                <th>실행 상태</th>
-                <th>검증·업데이트</th>
-                <th class="left">버전·채널</th>
-                <th>Console 연결</th>
-                <th>작업</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (r of registrations(); track r.name) {
-                <tr>
-                  <td class="left">
-                    <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
-                    <div class="state-detail">{{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span></div>
-                  </td>
-                  <td>
-                    <span class="label" [class.label-success]="r.desiredState === 'Enabled'" [class.label-warning]="r.desiredState === 'Installed'">{{ desiredStateLabel(r) }}</span>
-                    <div class="state-detail">{{ desiredStateDetail(r) }}</div>
-                  </td>
-                  <td>
-                    <span
-                      class="label"
-                      [class.label-success]="effectiveState(r).tone === 'success'"
-                      [class.label-warning]="effectiveState(r).tone === 'warning'"
-                      [class.label-danger]="effectiveState(r).tone === 'danger'"
-                      >{{ effectiveState(r).label }}</span
-                    >
-                    <div class="state-detail">{{ effectiveState(r).detail }}</div>
-                  </td>
-                  <td>
-                    <span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span>
-                    <div class="state-detail">Pod · Service</div>
-                  </td>
-                  <td>
-                    <span class="label" [class.label-success]="verificationGate(r).tone === 'success'" [class.label-warning]="verificationGate(r).tone === 'warning'" [class.label-danger]="verificationGate(r).tone === 'danger'">{{ verificationGate(r).label }}</span>
-                    <div class="state-detail">{{ verificationGate(r).detail }}</div>
-                  </td>
-                  <td class="left">
-                    <strong>{{ artifactVersion(r) }}</strong>
-                    <div class="state-detail">{{ r.status.currentRequestedChannel || 'exact' }} · {{ buildAuthorityLabel(r.status.currentBuildAuthority) }}</div>
-                    <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
-                  </td>
-                  <td>
-                    <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
-                    <div class="state-detail">{{ integrationSummary(r) }}</div>
-                  </td>
-                  <td>
-                    <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
-                    @if (r.desiredState === 'Enabled') {
-                      <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
-                    } @else {
-                      <button
-                        class="btn btn-sm btn-success-outline"
-                        [disabled]="activationLocked(r.name)"
-                        [title]="activationLockReason(r.name) || ''"
-                        (click)="run('enable', r.name)"
-                      >
-                        Enable
-                      </button>
-                    }
-                  </td>
-                </tr>
-              } @empty {
-                <tr>
-                  <td colspan="8" class="os-sub">설치된 Extension 없음 — <code>os extensions install</code>로 설치</td>
-                </tr>
-              }
-            </tbody>
-          </table>
-          </div>
+          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: subShellRegistrations(), emptyText: '설치된 subShell이 없습니다.' }" />
         </clr-tab-content>
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>구성도 Topology</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ pluginRegistrationCount() }}</span></button>
+        <clr-tab-content *clrIfActive="activeView() === 'plugins'">
+          <div class="extension-view-intro">
+            <div><span class="view-kicker">HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
+            <p>plugin은 1단 메뉴 객체가 아닙니다. 각 plugin을 소유·호스팅하는 subShell 아래에 묶어 설치·활성화·검증 상태를 관리합니다.</p>
+          </div>
+          @for (group of pluginHostGroups(); track group.hostRef) {
+            <section class="plugin-host-group" [attr.aria-label]="group.hostLabel + ' plugins'">
+              <header>
+                <div><span class="view-kicker">HOST</span><h3>{{ group.hostLabel }}</h3></div>
+                <div class="plugin-host-coordinate"><span class="label label-info">subShell</span><code>{{ group.hostRef }}</code><strong>{{ group.items.length }} plugin</strong></div>
+              </header>
+              <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: group.items, emptyText: '이 host에 설치된 plugin이 없습니다.' }" />
+            </section>
+          } @empty {
+            <div class="empty-view">설치된 plugin이 없습니다. plugin은 설치 후 선언된 <code>hostRef</code> 아래에 표시됩니다.</div>
+          }
+          @if (unclassifiedRegistrations().length) {
+            <section class="plugin-host-group contract-warning" aria-label="분류 확인 필요">
+              <header><div><span class="view-kicker">CONTRACT WARNING</span><h3>분류 확인 필요</h3></div></header>
+              <p>Catalog의 kind/hostRef 계약과 연결되지 않은 Registration입니다. subShell이나 plugin 목록에 임의 편입하지 않습니다.</p>
+              <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: unclassifiedRegistrations(), emptyText: '' }" />
+            </section>
+          }
+        </clr-tab-content>
+      </clr-tab>
+
+      <clr-tab>
+        <button clrTabLink (click)="selectView('topology')">구성도 Topology</button>
+        <clr-tab-content *clrIfActive="activeView() === 'topology'">
           <p class="os-sub">
             shell → plugin 귀속 위계 (§2.7) — console(mainShell)가 subShell·plugin을 호스팅,
             Bindings는 shell 귀속 예외 범주
@@ -343,8 +402,8 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>Catalog</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('catalog')">Catalog</button>
+        <clr-tab-content *clrIfActive="activeView() === 'catalog'">
           <table class="table">
             <thead>
               <tr>
@@ -402,7 +461,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
                         <button class="btn btn-sm" (click)="run('disable', c.name)">Disable</button>
                       }
                       @default {
-                        <span class="os-sub">설치는 <code>os extensions install</code></span>
+                        <span class="os-sub">위 “Extension 설치”에서 OCI release 지정</span>
                       }
                     }
                     @if (phaseOf(c.name)) {
@@ -429,8 +488,8 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>Audit</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('audit')">Audit</button>
+        <clr-tab-content *clrIfActive="activeView() === 'audit'">
           <table class="table">
             <thead>
               <tr>
@@ -461,8 +520,8 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink>Bindings</button>
-        <clr-tab-content>
+        <button clrTabLink (click)="selectView('bindings')">Bindings</button>
+        <clr-tab-content *clrIfActive="activeView() === 'bindings'">
           <p class="os-sub">
             향후 workforce 인증·권한·명령처럼 Main Shell core 밖의 CLI 확장을 선언하는 채널입니다.
             native <code>os</code>는 이 목록에 포함되지 않습니다.
@@ -545,7 +604,7 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
 
         <div class="cc-primary-actions">
           @if (pageReady(r)) {
-            <a class="btn btn-sm btn-primary" [routerLink]="['/p', r.name]">Extension 페이지 열기</a>
+            <a class="btn btn-sm btn-primary" [routerLink]="extensionPageRoute(r)">Extension 페이지 열기</a>
           }
           <button class="btn btn-sm btn-outline" (click)="refresh()">상태 새로고침</button>
         </div>
@@ -692,6 +751,14 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
               Enable
             </button>
           }
+          <button
+            class="btn btn-sm btn-outline"
+            [disabled]="!rollbackAvailable(r)"
+            [title]="rollbackAvailable(r) ? rollbackSummary(r) : '검증된 이전 release 증거가 없습니다.'"
+            (click)="run('rollback', r.name)"
+          >
+            Rollback
+          </button>
           <button class="btn btn-sm btn-danger-outline" (click)="run('uninstall', r.name)">Uninstall</button>
         </div>
 
@@ -702,13 +769,24 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
     }
 
     <os-action-dialog
-      [open]="!!pendingUninstall()"
-      title="Extension 제거"
-      [message]="pendingUninstall() ? pendingUninstall() + '의 메뉴와 워크로드를 제거합니다.' : ''"
-      confirmLabel="제거"
-      [danger]="true"
-      (confirmed)="confirmUninstall()"
-      (cancelled)="pendingUninstall.set(null)"
+      [open]="!!pendingAction()"
+      [title]="pendingAction()?.action === 'uninstall' ? 'Extension 제거' : 'Extension 상태 변경'"
+      [message]="pendingAction() ? pendingAction()!.id + '에 ' + pendingAction()!.action + ' 작업을 실행합니다.' : ''"
+      [confirmLabel]="pendingAction()?.action === 'uninstall' ? '제거' : '실행'"
+      [danger]="pendingAction()?.action === 'uninstall'"
+      [reasonRequired]="true"
+      (confirmed)="confirmAction($event)"
+      (cancelled)="pendingAction.set(null)"
+    />
+    <os-action-dialog
+      [open]="!!pendingRollback()"
+      title="이전 검증 Release로 롤백"
+      [message]="pendingRollbackRegistration() ? rollbackSummary(pendingRollbackRegistration()!) : ''"
+      confirmLabel="검증 후 롤백"
+      [reasonRequired]="true"
+      reasonLabel="롤백 승인 사유"
+      (confirmed)="confirmRollback($event)"
+      (cancelled)="pendingRollback.set(null)"
     />
     </div>
   `,
@@ -751,8 +829,20 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
       }
       .registry-access-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
       .registry-access h2 { margin: 0; font-size: 1rem; }
-      .registry-access-form { display: flex; align-items: flex-end; gap: 0.55rem; flex-wrap: wrap; }
-      .registry-access-form .clr-form-control { margin-top: 0.45rem; }
+      .registry-access-form { display: flex; align-items: flex-end; gap: 0.7rem; flex-wrap: wrap; }
+      .registry-access-form .clr-form-control { min-width: 0; margin-top: 0.45rem; }
+      .registry-access-form .clr-control-container,
+      .registry-access-form .clr-input-wrapper,
+      .registry-access-form .clr-input { box-sizing: border-box; width: 100%; max-width: none; }
+      .registry-access-form--credentials .clr-form-control:nth-child(1) { flex: 0.8 1 16rem; }
+      .registry-access-form--credentials .clr-form-control:nth-child(2) { flex: 1.15 1 22rem; }
+      .registry-access-form--credentials .clr-form-control:nth-child(3) { flex: 1.35 1 26rem; }
+      .registry-access-form--revocation .clr-form-control:nth-child(1) { flex: 1.5 1 34rem; }
+      .registry-access-form--revocation .clr-form-control:nth-child(2) { flex: 1.25 1 30rem; }
+      .registry-access-form--revocation .clr-form-control:nth-child(3) { flex: 1 1 22rem; }
+      .registry-access-form--install .clr-form-control:nth-child(1) { flex: 1.5 1 36rem; }
+      .registry-access-form--install .clr-form-control:nth-child(2) { flex: 1 1 28rem; }
+      .registry-access-form > .btn { flex: 0 0 auto; }
       .oci-install h2 { margin: 0; font-size: 1rem; }
       .oci-install .clr-form-control { margin-top: 0.45rem; }
       .inspection-plan { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.65rem; flex-wrap: wrap; }
@@ -786,8 +876,53 @@ os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "
       }
       .status-guide strong { color: var(--os-ink); }
       .status-guide span { display: inline-flex; align-items: center; gap: 0.25rem; }
+      .view-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.2rem;
+        margin-left: 0.3rem;
+        padding: 0 0.3rem;
+        border-radius: 0.65rem;
+        background: var(--clr-color-neutral-200, #e8e8e8);
+        font-size: 0.62rem;
+        line-height: 1.2rem;
+      }
+      .extension-view-intro {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 1rem;
+        margin: 0.8rem 0 0.45rem;
+        padding-bottom: 0.55rem;
+        border-bottom: 1px solid var(--os-hairline);
+      }
+      .extension-view-intro h2,
+      .plugin-host-group h3 { margin: 0.15rem 0 0; }
+      .extension-view-intro p { max-width: 52rem; margin: 0; color: var(--os-muted); font-size: 0.72rem; }
+      .view-kicker { color: var(--os-accent); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; }
+      .plugin-host-group {
+        margin: 0.8rem 0 1rem;
+        border: 1px solid var(--os-hairline);
+        border-radius: var(--os-radius);
+        background: var(--os-surface-1);
+      }
+      .plugin-host-group > header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.7rem 0.9rem;
+        border-bottom: 1px solid var(--os-hairline);
+      }
+      .plugin-host-group .extension-table-wrap { padding: 0 0.65rem 0.65rem; }
+      .plugin-host-coordinate { display: flex; align-items: center; gap: 0.45rem; color: var(--os-muted); font-size: 0.68rem; }
+      .plugin-host-coordinate code { color: var(--os-ink); }
+      .empty-view { margin: 0.8rem 0; padding: 1rem; border: 1px dashed var(--os-hairline); color: var(--os-muted); }
+      .contract-warning { border-color: var(--os-warning); }
+      .contract-warning > p { margin: 0.6rem 0.9rem; color: var(--os-muted); font-size: 0.7rem; }
       .extension-table-wrap { width: 100%; overflow-x: auto; }
-      .extension-table { min-width: 76rem; }
+      .extension-table { min-width: 86rem; }
       .extension-table td { vertical-align: top; }
       .status-dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; display: inline-block; }
       .status-dot.success { background: var(--os-success); }
@@ -971,7 +1106,10 @@ export class AdminPlugins implements OnInit {
   private ctl = inject(PluginControlClient);
   private ext = inject(ExtensionHostService);
   private readinessApi = inject(PlatformReadinessService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   readonly iconLib = inject(IconLibraryService);
+  readonly activeView = signal<ExtensionManagementView>(this.normalizeView(this.route.snapshot.paramMap.get('view')));
 
   readonly catalog = signal<CatalogItem[]>([]);
   readonly registrations = signal<Registration[]>([]);
@@ -979,6 +1117,8 @@ export class AdminPlugins implements OnInit {
   readonly bindings = signal<Binding[]>([]);
   readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
   readonly revocations = signal<ImageRevocation[]>([]);
+  readonly installing = signal(false);
+  readonly pendingRollback = signal<string | null>(null);
   readonly foundationActivationAllowed = signal(false);
   readonly catalogLoaded = signal(false);
   readonly registrationsLoaded = signal(false);
@@ -986,9 +1126,16 @@ export class AdminPlugins implements OnInit {
   readonly projectionStatus = signal<ExtensionProjectionStatus | null>(null);
   readonly dataWarning = signal<string | null>(null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
-  readonly pendingUninstall = signal<string | null>(null);
+  readonly pendingAction = signal<{ action: 'enable' | 'disable' | 'uninstall'; id: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
+  readonly extensionViews = computed(() => buildExtensionManagementViews(this.catalog(), this.registrations()));
+  readonly subShellRegistrations = computed(() => this.extensionViews().subShells);
+  readonly pluginHostGroups = computed(() => this.extensionViews().pluginGroups);
+  readonly unclassifiedRegistrations = computed(() => this.extensionViews().unclassified);
+  readonly pluginRegistrationCount = computed(() =>
+    this.pluginHostGroups().reduce((total, group) => total + group.items.length, 0),
+  );
 
   /** 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 상태(phase/reason 등). */
   readonly selected = signal<string | null>(null);
@@ -1048,6 +1195,14 @@ export class AdminPlugins implements OnInit {
   }
   extensionKind(r: Registration): string {
     return this.catalogItem(r.name)?.kind || 'Extension';
+  }
+  extensionParentRef(r: Registration): string {
+    const item = this.catalogItem(r.name);
+    return item?.kind === 'plugin' ? (item.hostRef || 'main') : 'main';
+  }
+  extensionParentLabel(r: Registration): string {
+    const parentRef = this.extensionParentRef(r);
+    return parentRef === 'main' ? 'OpenSphere Main Shell' : this.displayName(parentRef);
   }
   artifactVersion(r: Registration): string {
     const version = r.status.currentVersion || r.status.observedVersion || '';
@@ -1137,6 +1292,12 @@ export class AdminPlugins implements OnInit {
   effectiveStateByName(name: string): EffectiveExtensionState {
     const r = this.registrations().find((item) => item.name === name);
     return r ? this.effectiveState(r) : { label: '미설치', detail: 'Registration 없음', tone: 'neutral' };
+  }
+
+  extensionPageRoute(r: Registration): string {
+    const hostRef = this.catalogItem(r.name)?.hostRef || 'main';
+    if (hostRef === 'foundation') return `/pfss/${r.name}`;
+    return hostRef === 'main' ? `/p/${r.name}` : `/p/${hostRef}/${r.name}`;
   }
   desiredStateByName(name: string): string {
     return this.registrations().find((item) => item.name === name)?.desiredState || '';
@@ -1241,7 +1402,6 @@ export class AdminPlugins implements OnInit {
       ManifestUnreachable: 'manifest 접근 불가(파드/서비스)',
       EntryUnreachable: '엔트리 파일 접근 불가',
       SignatureUnreachable: '서명 파일 접근 불가',
-      PermissionProfileDrift: 'DUPA가 요구하는 고정 RBAC 권한 프로파일과 설치된 ClusterRole 규칙이 다름',
     };
     return reason ? (m[reason] ?? reason) : '';
   }
@@ -1307,7 +1467,27 @@ export class AdminPlugins implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
+    this.route.paramMap.subscribe((params) => {
+      const requested = params.get('view');
+      const normalized = this.normalizeView(requested);
+      this.activeView.set(normalized);
+      if (requested !== normalized) {
+        void this.router.navigate(['/manage/extensions', normalized], { replaceUrl: true });
+      }
+    });
     await this.refresh();
+  }
+
+  selectView(view: ExtensionManagementView): void {
+    if (this.activeView() === view) return;
+    this.activeView.set(view);
+    void this.router.navigate(['/manage/extensions', view]);
+  }
+
+  private normalizeView(value: string | null): ExtensionManagementView {
+    return EXTENSION_MANAGEMENT_VIEWS.includes(value as ExtensionManagementView)
+      ? value as ExtensionManagementView
+      : 'subshells';
   }
 
   async refresh(): Promise<void> {
@@ -1364,6 +1544,27 @@ export class AdminPlugins implements OnInit {
     } catch (err) { this.msg.set({ type: 'danger', text: `GHCR 자격증명 저장 실패: ${err}` }); }
   }
 
+  async installExtension(image: string, reason: string): Promise<void> {
+    if (this.installing()) return;
+    this.installing.set(true);
+    try {
+      const result = await this.ctl.install(image.trim(), reason.trim());
+      const waiting = result.activation?.allowed === false
+        ? ` 활성화는 ${result.activation.pendingCapabilities.join(', ') || result.activation.reason} 충족까지 대기합니다.`
+        : '';
+      const operation = result.operation === 'Update' ? '업데이트' : '설치';
+      const intent = result.desiredState === 'Enabled' ? '기존 활성 상태를 유지합니다.'
+        : result.desiredState === 'Disabled' ? '기존 비활성 상태를 유지합니다.'
+          : '검증 후 관리자가 활성화할 수 있습니다.';
+      this.msg.set({ type: 'success', text: `${result.id} ${operation}가 접수되었습니다. ${intent}${waiting}` });
+      await this.refresh();
+    } catch (err) {
+      this.msg.set({ type: 'danger', text: `Extension 설치 실패: ${err}` });
+    } finally {
+      this.installing.set(false);
+    }
+  }
+
   async removeRegistryCredentials(reason: string): Promise<void> {
     try {
       this.registryStatus.set(await this.ctl.removeRegistryCredentials(reason.trim()));
@@ -1381,7 +1582,7 @@ export class AdminPlugins implements OnInit {
   }
 
   foundationActivationLocked(id?: string | null): boolean {
-    return id === 'foundation' && !this.foundationActivationAllowed();
+    return false;
   }
 
   /**
@@ -1391,9 +1592,6 @@ export class AdminPlugins implements OnInit {
    * 실어 보내므로 화면이 미충족 capability를 그대로 이름으로 말할 수 있다.
    */
   activationLockReason(id?: string | null): string | null {
-    if (this.foundationActivationLocked(id)) {
-      return 'Foundation 활성화는 Platform Support Profile Ready가 필요합니다.';
-    }
     const admission = this.registrations().find((r) => r.name === id)?.status?.admission;
     if (!admission || admission.activationAllowed !== false) return null;
     const pending = (admission.pendingCapabilities || []).map((c) => this.capabilityText(c));
@@ -1520,7 +1718,35 @@ export class AdminPlugins implements OnInit {
     return t === 'group' ? '' : t;
   }
 
-  async run(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+  rollbackAvailable(r: Registration): boolean {
+    const previousDigest = String(r.status.previousDigest || '');
+    const currentDigest = String(r.status.currentDigest || '');
+    return /^sha256:[a-f0-9]{64}$/.test(previousDigest)
+      && previousDigest !== currentDigest
+      && /^[a-f0-9]{64}$/.test(String(r.status.previousManifestSha256 || ''))
+      && /^[0-9]{12}$/.test(String(r.status.previousVersion || ''))
+      && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(String(r.status.previousCompatibilityVersion || ''))
+      && ['localhost', 'github-actions'].includes(String(r.status.previousBuildAuthority || ''))
+      && String(r.status.previousRequestedRef || '').length > 0
+      && String(r.status.previousSource || '').length > 0
+      && /^[a-f0-9]{40}$/.test(String(r.status.previousRevision || ''))
+      && String(r.status.previousSignatureIdentity || '').length > 0
+      && (r.status.previousEvidenceRefs || []).length >= 2;
+  }
+
+  rollbackSummary(r: Registration): string {
+    return `${this.displayName(r.name)}을 이전 검증 release로 되돌립니다.\n`
+      + `현재: ${this.artifactVersion(r)} · ${this.shortDigest(r.status.currentDigest)}\n`
+      + `대상: ${r.status.previousVersion || '미보고'} · ${this.shortDigest(r.status.previousDigest)}\n`
+      + `서명·digest·source revision을 서버에서 다시 검증하고 승인 사유를 영구 감사에 기록합니다.`;
+  }
+
+  pendingRollbackRegistration(): Registration | null {
+    const id = this.pendingRollback();
+    return id ? this.registrations().find((registration) => registration.name === id) || null : null;
+  }
+
+  async run(action: 'enable' | 'disable' | 'uninstall' | 'rollback', id: string): Promise<void> {
     // The API is the gate; this only keeps the page from firing a request whose
     // refusal is already known, and it names the same missing capabilities the
     // button's tooltip does.
@@ -1529,23 +1755,36 @@ export class AdminPlugins implements OnInit {
       this.msg.set({ type: 'info', text: `활성화 대기 — ${lock} 플랫폼 제어에서 선행 조건과 4개 검증 증거를 확인하세요.` });
       return;
     }
-    if (action === 'uninstall') {
-      this.pendingUninstall.set(id);
+    if (action === 'rollback') {
+      const registration = this.registrations().find((item) => item.name === id);
+      if (!registration || !this.rollbackAvailable(registration)) {
+        this.msg.set({ type: 'danger', text: `rollback 실패: ${id}의 검증된 이전 release 증거가 없습니다.` });
+        return;
+      }
+      this.pendingRollback.set(id);
       return;
     }
-    await this.execute(action, id);
+    this.pendingAction.set({ action, id });
   }
 
-  async confirmUninstall(): Promise<void> {
-    const id = this.pendingUninstall();
+  async confirmAction(reason: string): Promise<void> {
+    const pending = this.pendingAction();
+    if (!pending) return;
+    this.pendingAction.set(null);
+    await this.execute(pending.action, pending.id, reason);
+  }
+
+  async confirmRollback(reason: string): Promise<void> {
+    const id = this.pendingRollback();
     if (!id) return;
-    this.pendingUninstall.set(null);
-    await this.execute('uninstall', id);
+    this.pendingRollback.set(null);
+    await this.execute('rollback', id, reason);
   }
 
-  private async execute(action: 'enable' | 'disable' | 'uninstall', id: string): Promise<void> {
+  private async execute(action: 'enable' | 'disable' | 'uninstall' | 'rollback', id: string, reason: string): Promise<void> {
     try {
-      await this.ctl[action](id);
+      if (action === 'rollback') await this.ctl.rollback(id, reason);
+      else await this.ctl[action](id, reason);
       this.msg.set({ type: 'info', text: `${action} 요청됨: ${id} — controller가 조정 중…` });
       // controller reconcile + registry 반영을 잠깐 기다린 뒤 셸 메뉴 reload
       await this.poll(id, action);
@@ -1554,6 +1793,18 @@ export class AdminPlugins implements OnInit {
       this.msg.set({ type: 'success', text: `${action} 완료: ${id}` });
     } catch (err) {
       this.msg.set({ type: 'danger', text: `${action} 실패: ${err}` });
+    }
+  }
+
+  async installModule(image: string, reason: string): Promise<void> {
+    try {
+      const result = await this.ctl.install(image, reason);
+      const id = String((result as { id?: unknown })?.id || image);
+      const operation = result.operation === 'Update' ? 'update' : 'install';
+      this.msg.set({ type: 'info', text: `${operation} 요청됨: ${id} — 관리자 의도 ${result.desiredState}를 보존하며 검증과 workload를 조정 중…` });
+      await this.refresh();
+    } catch (error) {
+      this.msg.set({ type: 'danger', text: `install 실패: ${String(error)}` });
     }
   }
 

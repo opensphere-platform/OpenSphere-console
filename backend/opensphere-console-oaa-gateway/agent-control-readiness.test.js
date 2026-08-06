@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
+
+const deployment = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
 
 const complete = {
   coreReadiness: {
@@ -64,4 +68,8 @@ test('owner API outages and mutation lifecycle failures remain explicit blockers
   assert.deepEqual(result.ownerApis.unavailable, ['Cluster Manager HIS preflight']);
   assert.ok(result.blockers.includes('cluster_manager_not_activated'));
   assert.ok(result.blockers.includes('owner_api_unavailable'));
+});
+
+test('the readiness probe preserves the semantic gate without a one-second reboot timeout', () => {
+  assert.match(deployment, /readinessProbe:.*path: \/readyz.*timeoutSeconds: 5.*failureThreshold: 3/);
 });

@@ -107,7 +107,7 @@ interface NavBand {
             routerLink="/"
             routerLinkActive="active"
             [routerLinkActiveOptions]="{ exact: true }"
-            ><os-cicon clrVerticalNavIcon [icon]="iconHome" [size]="20" />홈 · Perspectives</a
+            ><os-cicon clrVerticalNavIcon [icon]="iconHome" [size]="20" />홈 · 10P × 6L</a
           >
           @for (band of bands(); track band.band) {
             <div class="os-band-label">{{ band.band }}</div>
@@ -422,7 +422,7 @@ export class OsShell {
     // 밴드 → 항목 수집(하드코딩 빈 밴드 없음 — native + 등록 플러그인에서만)
     const byBand = new Map<string, NavItem[]>();
     for (const nb of OsShell.NATIVE) byBand.set(nb.band, [...nb.items]);
-    for (const p of this.ext.pages()) {
+    for (const p of this.ext.pages().filter((page) => this.ext.primarySubShellIds().has(page.id))) {
       if (trees[p.id]) {
         if (!byBand.has(p.navBand)) byBand.set(p.navBand, []); // 트리만 기여하는 밴드도 등장
         continue;
@@ -431,7 +431,6 @@ export class OsShell {
       arr.push({ path: routeForPlugin(p.id), label: p.title, plugin: true });
       byBand.set(p.navBand, arr);
     }
-
     // 정렬(알려진 순서 우선) → 역할 게이트 → 빈 밴드 제거
     const known = OsShell.BAND_ORDER.filter((b) => byBand.has(b));
     const extra = [...byBand.keys()].filter((b) => !OsShell.BAND_ORDER.includes(b));
@@ -448,7 +447,7 @@ export class OsShell {
     const trees = this.ext.navTrees();
     return this.ext
       .pages()
-      .filter((p) => p.navBand === band && trees[p.id])
+      .filter((p) => this.ext.primarySubShellIds().has(p.id) && p.navBand === band && trees[p.id])
       .flatMap((p) => trees[p.id]);
   }
 }

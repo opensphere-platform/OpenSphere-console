@@ -2,7 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs } = require('./controller');
+
+const controllerSource = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+const controllerManifest = fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8');
+const permissionProfileDocument = (name) => controllerManifest
+  .split(/\r?\n---\r?\n/)
+  .find((document) => document.includes('kind: ClusterRole') && document.includes(`name: ${name}`));
 
 const off = { enabled: false, reason: 'not published' };
 const descriptor = {
@@ -109,17 +115,15 @@ test('selects runnable multi-architecture manifests and ignores attestations', (
   assert.deepEqual(selected.map((entry) => `${entry.platform.os}/${entry.platform.architecture}`), ['linux/amd64', 'linux/arm64']);
 });
 
-test('rejects unapproved permission profile and observer role is read-only', () => {
+test('rejects unapproved permission profiles and keeps RBAC rules out of the controller', () => {
   const bad = structuredClone(descriptor); bad.permissionProfile = 'cluster-admin';
   assert.ok(moduleDescriptorIssues(bad).some((issue) => issue.code === 'UnknownPermissionProfile'));
-  const rules = observerClusterRoleManifest().rules;
-  const verbs = rules.flatMap((rule) => rule.verbs);
-  assert.deepEqual([...new Set(verbs)].sort(), ['get', 'list', 'watch']);
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('networking.k8s.io') && rule.resources.includes('ingressclasses')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('cert-manager.io') && rule.resources.includes('clusterissuers')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('acme.cert-manager.io') && rule.resources.includes('challenges')));
-  assert.ok(!rules.some((rule) => rule.resources.includes('secrets')));
-  assert.ok(!rules.some((rule) => rule.resources.includes('users') || rule.verbs.includes('impersonate')));
+  assert.doesNotMatch(controllerSource, /function (?:observer|infrastructureManager|aiDomainOperator)ClusterRoleManifest/);
+  assert.doesNotMatch(controllerSource, /PermissionProfileDrift|PERMISSION_PROFILE_ROLES/);
+  const observer = permissionProfileDocument('opensphere-module-cluster-observer-v1');
+  assert.ok(observer);
+  assert.doesNotMatch(observer, /verbs: \[[^\]]*(?:create|update|patch|delete|escalate|impersonate)/);
+  assert.doesNotMatch(observer, /resources: \[[^\]]*(?:secrets|users)/);
 });
 
 test('HIS manager profile is rejected: Console modules cannot own HIS lifecycle', () => {
@@ -128,19 +132,42 @@ test('HIS manager profile is rejected: Console modules cannot own HIS lifecycle'
   assert.ok(moduleDescriptorIssues(his).some((issue) => issue.code === 'UnknownPermissionProfile'));
 });
 
-test('infrastructure manager adds only consumer-side storage integration writes', () => {
+test('permission profile downgrade, disable, and uninstall revoke stale cluster bindings', () => {
+  const permissionStart = controllerSource.indexOf('async function revokePermissionBindings');
+  const permissionEnd = controllerSource.indexOf('async function applyWorkload', permissionStart);
+  const permissionFlow = controllerSource.slice(permissionStart, permissionEnd);
+  assert.match(permissionFlow, /for \(const profile of APPROVED_PERMISSION_PROFILES\)/);
+  assert.match(permissionFlow, /if \(profile === 'none'\) continue/);
+  assert.match(permissionFlow, /if \(profile === keepProfile\) continue/);
+  assert.match(permissionFlow, /await revokePermissionBindings\(pkg\.metadata\.name\)/);
+  assert.match(permissionFlow, /await revokePermissionBindings\(pkg\.metadata\.name, profile\)/);
+
+  const disabledStart = controllerSource.indexOf("if (desired === 'Disabled')");
+  const disabledEnd = controllerSource.indexOf("if (channelEvidence.channelState", disabledStart);
+  assert.match(controllerSource.slice(disabledStart, disabledEnd), /await revokePermissionBindings\(pkg\.metadata\.name\)/);
+
+  const uninstallStart = controllerSource.indexOf('async function deleteWorkload');
+  const uninstallEnd = controllerSource.indexOf('async function workloadReady', uninstallStart);
+  const uninstallFlow = controllerSource.slice(uninstallStart, uninstallEnd);
+  assert.match(uninstallFlow, /labelSelector=\$\{selector\}/);
+  assert.match(uninstallFlow, /subjects\.every\(\(subject\) => subject\.kind === 'ServiceAccount'/);
+  assert.match(uninstallFlow, /PermissionBindingOwnershipMismatch/);
+  assert.match(uninstallFlow, /deleteManagedResource\(`\$\{bindingPath\}\/\$\{binding\.metadata\.name\}`/);
+
+  assert.match(controllerManifest, /resources: \[clusterroles\][\s\S]{0,240}verbs: \[bind\]/);
+  assert.match(controllerManifest, /resources: \[clusterrolebindings\], verbs: \[get, list, create, patch, delete\]/);
+});
+
+test('infrastructure manager manifest limits consumer-side storage integration writes', () => {
   const infrastructure = structuredClone(descriptor);
   infrastructure.permissionProfile = 'cluster-infrastructure-manager-v1';
   assert.deepEqual(moduleDescriptorIssues(infrastructure), []);
-  const rules = infrastructureManagerClusterRoleManifest().rules;
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('storage.k8s.io') && rule.resources.includes('storageclasses') && rule.verbs.includes('create')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshotclasses') && rule.verbs.includes('delete')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('snapshot.storage.k8s.io') && rule.resources.includes('volumesnapshots') && rule.verbs.includes('create')));
-  assert.ok(rules.some((rule) => rule.apiGroups.includes('ceph.rook.io') && rule.verbs.includes('create')));
-  assert.ok(!rules.some((rule) => rule.apiGroups.includes('monitoring.coreos.com')));
-  assert.ok(!rules.some((rule) => rule.resources.includes('clusterroles') && rule.verbs.includes('escalate')));
-  assert.ok(!rules.some((rule) => rule.verbs.includes('impersonate')));
-  assert.ok(!rules.some((rule) => rule.resources.includes('users')));
+  const profile = permissionProfileDocument('opensphere-module-cluster-infrastructure-manager-v1');
+  assert.ok(profile);
+  assert.match(profile, /resources: \[storageclasses\], verbs: \[get, list, watch, create, update, patch, delete\]/);
+  assert.match(profile, /resources: \[volumesnapshots\], verbs: \[get, list, watch, create, update, patch\]/);
+  assert.match(profile, /apiGroups: \[ceph\.rook\.io, csi\.ceph\.io\][^\n]*verbs: \[get, list, watch, create, update, patch\]/);
+  assert.doesNotMatch(profile, /monitoring\.coreos\.com|escalate|impersonate|resources: \[users\]/);
 });
 
 test('managed plugin workload receives only the Supabase-backed Console identity contract', () => {
@@ -250,14 +277,14 @@ test('runtime Registry projects channel status and immutable approval evidence',
   });
 });
 
-test('extension installation is native CLI-only and preserves immutable installation provenance', () => {
+test('Console and CLI use one installation API and preserve immutable installation provenance', () => {
   const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
   const crd = fs.readFileSync(path.join(__dirname, 'ui-plugin-crds.yaml'), 'utf8');
-  assert.match(controller, /body\.client !== 'cli:os'/);
-  assert.match(controller, /cliInstallationProvenance\(actor, opId\)/);
+  assert.doesNotMatch(controller, /CliInstallationRequired|body\.client !== 'cli:os'/);
+  assert.match(controller, /installationProvenance\(actor, opId, body\.client\)/);
   assert.match(controller, /installation: x\.spec\.installation/);
   assert.match(crd, /installation:\s*\n\s*type: object/);
-  assert.match(crd, /client: \{ type: string, enum: \['cli:os'\] \}/);
+  assert.match(crd, /client: \{ type: string, enum: \['cli:os', 'console:web'\] \}/);
 });
 
 test('OAA Extension security facade is exact-digest, permission-gated, AAL2, and credential-free', () => {

@@ -1,5 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { AuthService } from './auth.service';
+import { requestWithStepUp } from './http-step-up';
 
 const REQUEST_TIMEOUT_MS = 15000;
 
@@ -27,28 +28,36 @@ export class HttpService {
       const csrf = this.cookieValue('__Host-opensphere_csrf');
       if (csrf) headers.set('X-OS-CSRF-Token', csrf);
     }
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    if (init.signal) {
-      if (init.signal.aborted) controller.abort();
-      else init.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
-    try {
-      const response = await fetch(target, { ...init, headers, signal: controller.signal });
-      if (response.ok) this.auth.touchSession();
-      // A downstream 401 is not proof that the browser session ended. Confirm
-      // the opaque cookie with the identity authority before showing login;
-      // service routing or permission failures must not erase a valid session.
-      if (response.status === 401 && this.auth.subject()) {
-        this.reauthRequired.set(await this.auth.shouldReauthenticateAfterUnauthorized());
+    const fetchOnce = async (): Promise<Response> => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      if (init.signal) {
+        if (init.signal.aborted) controller.abort();
+        else init.signal.addEventListener('abort', () => controller.abort(), { once: true });
       }
-      if (response.status === 428 && this.auth.subject()) {
-        this.auth.requestStepUp();
+      try {
+        const attemptTarget = target instanceof Request ? target.clone() : target;
+        return await fetch(attemptTarget, { ...init, headers, signal: controller.signal });
+      } finally {
+        window.clearTimeout(timeout);
       }
-      return response;
-    } finally {
-      window.clearTimeout(timeout);
+    };
+
+    // Recent AAL2 is an approval phase of this command, not a failed command.
+    // The helper waits for the shared modal, then replays exactly once with the
+    // same correlation and idempotency keys prepared above.
+    const response = await requestWithStepUp(
+      fetchOnce,
+      () => this.auth.requestStepUp(),
+      () => Boolean(this.auth.subject()),
+    );
+    // A downstream 401 is not proof that the browser session ended. Confirm
+    // the opaque cookie with the identity authority before showing login;
+    // service routing or permission failures must not erase a valid session.
+    if (response.status === 401 && this.auth.subject()) {
+      this.reauthRequired.set(await this.auth.shouldReauthenticateAfterUnauthorized());
     }
+    return response;
   }
 
   async json<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {

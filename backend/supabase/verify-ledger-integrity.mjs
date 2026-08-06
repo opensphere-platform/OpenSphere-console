@@ -13,7 +13,7 @@
 //   2. DELETE / UPDATE 가 거부된다
 //   3. prev_hash 를 서버가 채운다      ← 시정 전에는 항상 NULL 이었다
 //   4. 클라이언트가 보낸 prev_hash 는 무시된다
-//   5. 행이 사라지면 verify_event_chain() 이 그 지점을 지목한다
+//   5. 행이 사라지면 verify_event_ledger_chain() 이 그 지점을 지목한다
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -129,13 +129,13 @@ function verifyApprovalBinding() {
   console.log('  ✓ 승인 결과가 원장에 남는다 — phase=applied, gitea 리뷰 id 포함');
 
   // ⑤ 의도와 결과가 같은 correlation 으로 한 사슬에 이어지는가.
-  const trail = psql(`SELECT string_agg(action || ':' || phase, ' -> ' ORDER BY seq)
+  const trail = psql(`SELECT string_agg(action || ':' || phase, ' -> ' ORDER BY chain_sequence)
     FROM audit.event WHERE correlation_id='${REQ}';`).trim();
   assert.match(trail, /change-approval:authorized -> change-approval-result:applied$/,
     `상관 추적이 의도→결과로 이어지지 않는다 (실제: ${trail})`);
   console.log(`  ✓ 한 correlation 으로 이어진다 — ${trail}`);
 
-  assert.equal(psql('SELECT count(*) FROM audit.verify_event_chain();').trim(), '0',
+  assert.equal(psql('SELECT valid FROM audit.verify_event_ledger_chain();').trim(), 't',
     '결재 기록을 추가한 뒤 사슬이 깨졌다');
   console.log('  ✓ 결재 기록 추가 후에도 사슬 무결');
 }
@@ -190,7 +190,7 @@ function verifyAgentBinding() {
   const after = Number(psql(`SELECT count(*) FROM audit.event WHERE actor_type='service';`).trim());
   assert.equal(after - before, 2, `service 행위자 기록 수가 기대와 다르다 (${after - before})`);
 
-  assert.equal(psql('SELECT count(*) FROM audit.verify_event_chain();').trim(), '0',
+  assert.equal(psql('SELECT valid FROM audit.verify_event_ledger_chain();').trim(), 't',
     '에이전트 기록을 추가한 뒤 사슬이 깨졌다');
   console.log('  ✓ 에이전트 기록 추가 후에도 사슬 무결');
 }
@@ -222,12 +222,16 @@ function main() {
       VALUES (extensions.gen_random_uuid(),'c1','system','t.one','x','x1','r1','applied','ok','h1'),
              (extensions.gen_random_uuid(),'c2','system','t.two','x','x2','r2','applied','ok','h2'),
              (extensions.gen_random_uuid(),'c3','system','t.three','x','x3','r3','applied','ok','h3');`);
-    const chain = psql(`SELECT coalesce(prev_hash,'ROOT') FROM audit.event ORDER BY seq;`).trim().split('\n');
-    assert.deepEqual(chain, ['ROOT', 'h1', 'h2'], 'prev_hash 사슬이 서버에서 채워지지 않았다');
-    console.log('  ✓ prev_hash 를 서버가 채운다 — ROOT → h1 → h2');
+    const chain = psql(`SELECT chain_sequence || '|' || prev_hash || '|' || ledger_hash
+      FROM audit.event ORDER BY chain_sequence;`).trim().split('\n').map((row) => row.split('|'));
+    assert.deepEqual(chain.map(([sequence]) => sequence), ['1', '2', '3']);
+    assert.equal(chain[0][1], '0'.repeat(64), '첫 원장 행의 genesis 링크가 잘못됐다');
+    assert.equal(chain[1][1], chain[0][2], '두 번째 행이 첫 번째 ledger_hash를 가리키지 않는다');
+    assert.equal(chain[2][1], chain[1][2], '세 번째 행이 두 번째 ledger_hash를 가리키지 않는다');
+    console.log('  ✓ prev_hash 를 서버가 채운다 — genesis → ledger_hash → ledger_hash');
 
-    assert.equal(psql('SELECT count(*) FROM audit.verify_event_chain();').trim(), '0');
-    console.log('  ✓ verify_event_chain() 이 정상 사슬을 0 파손으로 판정한다');
+    assert.equal(psql('SELECT valid FROM audit.verify_event_ledger_chain();').trim(), 't');
+    console.log('  ✓ verify_event_ledger_chain() 이 정상 사슬을 valid=true 로 판정한다');
 
     // ── 2. 변경 계열이 전부 막히는가 ────────────────────────────────────────
     mustReject('TRUNCATE audit.event;', 'TRUNCATE');
@@ -237,7 +241,8 @@ function main() {
     // ── 3. 클라이언트가 보낸 링크를 신뢰하지 않는가 ──────────────────────────
     psql(`INSERT INTO audit.event (request_id, correlation_id, actor_type, action, target_type, target_id, reason, phase, result, event_hash, prev_hash)
       VALUES (extensions.gen_random_uuid(),'c4','system','t.four','x','x4','r4','applied','ok','h4','ATTACKER');`);
-    assert.equal(psql(`SELECT prev_hash FROM audit.event WHERE action='t.four';`).trim(), 'h3',
+    assert.equal(psql(`SELECT prev_hash = (SELECT ledger_hash FROM audit.event WHERE action='t.three')
+      FROM audit.event WHERE action='t.four';`).trim(), 't',
       '클라이언트가 보낸 prev_hash 가 그대로 저장됐다 — 위조된 링크를 받아들인다');
     console.log('  ✓ 클라이언트가 보낸 prev_hash 를 서버 값으로 덮는다');
 
@@ -255,9 +260,10 @@ function main() {
     psql(`ALTER TABLE audit.event DISABLE TRIGGER audit_event_append_only;
           DELETE FROM audit.event WHERE action='t.two';
           ALTER TABLE audit.event ENABLE ALWAYS TRIGGER audit_event_append_only;`);
-    const breaks = psql(`SELECT seq || '|' || expected_prev || '|' || actual_prev FROM audit.verify_event_chain();`).trim();
-    assert.equal(breaks, '3|h1|h2', `사슬 파손이 탐지되지 않았다 (실제: ${breaks || '(없음)'})`);
-    console.log('  ✓ 행이 사라지면 verify_event_chain() 이 그 지점을 지목한다 — seq 3, 기대 h1, 실제 h2');
+    const breaks = psql(`SELECT CASE WHEN valid THEN 'valid' ELSE 'invalid' END || '|' || first_invalid_sequence
+      FROM audit.verify_event_ledger_chain();`).trim();
+    assert.equal(breaks, 'invalid|3', `사슬 파손이 탐지되지 않았다 (실제: ${breaks || '(없음)'})`);
+    console.log('  ✓ 행이 사라지면 verify_event_ledger_chain() 이 첫 파손 chain_sequence=3을 지목한다');
 
     console.log('\n원장 무결성 검증 통과.');
   } finally {

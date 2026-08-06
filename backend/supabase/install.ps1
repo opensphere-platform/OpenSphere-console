@@ -36,6 +36,72 @@ function Invoke-Kubectl([string[]]$Arguments, [string]$InputText = "") {
   if ($LASTEXITCODE -ne 0) { throw "kubectl failed: $($Arguments -join ' ')" }
 }
 
+function Set-WorkloadStartupProbe([string]$Workload, [string]$Container, [hashtable]$Probe) {
+  # Existing installations intentionally retain their release-pinned images,
+  # but startup safety is an operational invariant rather than an image
+  # upgrade. Strategic merge preserves every other Pod-template field and is
+  # idempotent when the expected probe is already present.
+  $patch = @{
+    spec = @{
+      template = @{
+        spec = @{
+          containers = @(@{
+            name = $Container
+            startupProbe = $Probe
+          })
+        }
+      }
+    }
+  } | ConvertTo-Json -Depth 12 -Compress
+  Invoke-Kubectl @('-n', $Namespace, 'patch', $Workload, '--type=strategic', '-p', $patch)
+}
+
+function Set-DatabaseDependentStartupContract(
+  [string]$Workload,
+  [string]$Container,
+  [hashtable]$Probe,
+  [string]$DatabaseRole,
+  [string]$PostgresImage
+) {
+  if ($PostgresImage -notmatch '^ghcr\.io/opensphere-platform/opensphere-console-supabase-postgres@sha256:[a-f0-9]{64}$') {
+    throw "Existing PostgreSQL image is not an exact governed digest: $PostgresImage"
+  }
+  $databaseHost = "opensphere-supabase-postgres.$Namespace.svc.cluster.local"
+  $waitCommand = 'until PGPASSWORD="$POSTGRES_PASSWORD" psql -h ' + $databaseHost + ' -U ' + $DatabaseRole + " -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; do sleep 2; done"
+  $patch = @{
+    spec = @{
+      template = @{
+        spec = @{
+          initContainers = @(@{
+            name = 'wait-for-postgres'
+            image = $PostgresImage
+            imagePullPolicy = 'IfNotPresent'
+            env = @(@{
+              name = 'POSTGRES_PASSWORD'
+              valueFrom = @{ secretKeyRef = @{ name = 'opensphere-supabase-secrets'; key = 'postgres-password' } }
+            })
+            command = @('/bin/sh', '-ec')
+            args = @($waitCommand)
+            resources = @{
+              requests = @{ cpu = '10m'; memory = '32Mi' }
+              limits = @{ cpu = '100m'; memory = '128Mi' }
+            }
+            securityContext = @{
+              allowPrivilegeEscalation = $false
+              capabilities = @{ drop = @('ALL') }
+            }
+          })
+          containers = @(@{
+            name = $Container
+            startupProbe = $Probe
+          })
+        }
+      }
+    }
+  } | ConvertTo-Json -Depth 16 -Compress
+  Invoke-Kubectl @('-n', $Namespace, 'patch', $Workload, '--type=strategic', '-p', $patch)
+}
+
 function New-RandomBase64([int]$Bytes) {
   $buffer = New-Object byte[] $Bytes
   [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
@@ -103,7 +169,23 @@ if ($ExistingInstallation) {
       Invoke-Kubectl @('-n', $Namespace, 'get', $resource)
     }
   }
-  Write-Host 'Existing Supabase installation verified; bootstrap workload reconciliation skipped.'
+  Set-WorkloadStartupProbe 'statefulset/opensphere-supabase-postgres' 'postgres' @{
+    exec = @{ command = @('/bin/sh', '-c', 'pg_isready -U postgres -d postgres') }
+    failureThreshold = 60
+    periodSeconds = 5
+  }
+  $postgresRuntimeImage = (& kubectl @kubectlArgs -n $Namespace get statefulset opensphere-supabase-postgres -o 'jsonpath={.spec.template.spec.containers[0].image}').Trim()
+  Set-DatabaseDependentStartupContract 'deployment/opensphere-supabase-auth' 'auth' @{
+    httpGet = @{ path = '/health'; port = 'http' }
+    failureThreshold = 60
+    periodSeconds = 5
+  } 'supabase_auth_admin' $postgresRuntimeImage
+  Set-DatabaseDependentStartupContract 'deployment/opensphere-supabase-rest' 'rest' @{
+    httpGet = @{ path = '/live'; port = 'admin' }
+    failureThreshold = 60
+    periodSeconds = 5
+  } 'authenticator' $postgresRuntimeImage
+  Write-Host 'Existing Supabase installation verified; release-pinned images preserved and startup safety reconciled.'
 } else {
   Invoke-Kubectl @("apply", "-f", "-") $renderedManifest
 }
@@ -309,6 +391,42 @@ function Get-SupabaseMigrationChecksum([string]$MigrationId) {
   return (($output | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | Select-Object -Last 1)
 }
 
+function Get-TextSha256([string]$Value) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Value)
+    return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
+  }
+}
+
+function Get-SupabaseMigrationChecksums([string]$Path) {
+  # Git checkouts may materialize the same reviewed SQL with LF or CRLF. The
+  # ledger stores the canonical LF digest, while historical rows can contain
+  # either byte representation. Accept only these equivalent encodings; any
+  # actual SQL content change still fails closed.
+  $text = [IO.File]::ReadAllText($Path)
+  $lf = $text.Replace("`r`n", "`n")
+  $crlf = $lf.Replace("`n", "`r`n")
+  return [ordered]@{
+    Canonical = Get-TextSha256 $lf
+    Crlf = Get-TextSha256 $crlf
+    Raw = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
+}
+
+# Check immutable migration content before role maintenance, service restart or
+# schema execution. A drift must not disturb a healthy identity authority.
+foreach ($migration in $migrations) {
+  $migrationId = [IO.Path]::GetFileNameWithoutExtension($migration.Name)
+  $checksums = Get-SupabaseMigrationChecksums $migration.FullName
+  $recordedChecksum = Get-SupabaseMigrationChecksum $migrationId
+  if ($recordedChecksum -and $recordedChecksum -notin @($checksums.Canonical, $checksums.Crlf, $checksums.Raw)) {
+    throw "Migration checksum drift for ${migrationId}: live=$recordedChecksum canonical=$($checksums.Canonical)"
+  }
+}
+
 # Do not create these roles ourselves: their membership and grants are owned by
 # the Supabase PostgreSQL image.  A missing role means the image contract has
 # changed, and the installer must fail closed rather than invent a weaker role.
@@ -326,17 +444,21 @@ Invoke-SupabasePsql $supabaseServiceRoleSql
 # deferred until the Console migrations create every schema named by
 # PGRST_DB_SCHEMAS. Waiting for it here deadlocks a fresh install because its
 # readiness endpoint remains 503 while `console` and `audit` do not yet exist.
-foreach ($workload in @('opensphere-supabase-auth', 'opensphere-supabase-storage')) {
-  Invoke-Kubectl @('-n', $Namespace, 'rollout', 'restart', "deployment/$workload")
-  Invoke-Kubectl @('-n', $Namespace, 'rollout', 'status', "deployment/$workload", '--timeout=10m')
+if (-not $ExistingInstallation) {
+  foreach ($workload in @('opensphere-supabase-auth', 'opensphere-supabase-storage')) {
+    Invoke-Kubectl @('-n', $Namespace, 'rollout', 'restart', "deployment/$workload")
+    Invoke-Kubectl @('-n', $Namespace, 'rollout', 'status', "deployment/$workload", '--timeout=10m')
+  }
 }
 
 # Storage API ships and maintains its own schema migrations.  Execute the
 # version-matched migration runner from the running Storage image rather than
 # copying a private snapshot of Supabase-owned SQL into Console migrations.
-$storagePod = (& kubectl @kubectlArgs -n $Namespace get pod -l app=opensphere-supabase-storage -o "jsonpath={.items[0].metadata.name}")
-if (-not $storagePod) { throw "Supabase Storage pod not found" }
-Invoke-Kubectl @('-n', $Namespace, 'exec', $storagePod, '--', 'node', '/app/dist/scripts/migrate-call.js')
+if (-not $ExistingInstallation) {
+  $storagePod = (& kubectl @kubectlArgs -n $Namespace get pod -l app=opensphere-supabase-storage -o "jsonpath={.items[0].metadata.name}")
+  if (-not $storagePod) { throw "Supabase Storage pod not found" }
+  Invoke-Kubectl @('-n', $Namespace, 'exec', $storagePod, '--', 'node', '/app/dist/scripts/migrate-call.js')
+}
 
 $backendPassword = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.backend-password}")
 $backendPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($backendPassword))
@@ -429,14 +551,16 @@ REVOKE ALL ON TABLE console.schema_migration FROM PUBLIC, anon, authenticated, s
 GRANT SELECT ON TABLE console.schema_migration TO opensphere_console_backend;
 "@
 Invoke-SupabaseMigrationPsql $migrationLedgerBootstrap
+$appliedMigrationCount = 0
 foreach ($migration in $migrations) {
   $migrationId = [IO.Path]::GetFileNameWithoutExtension($migration.Name)
-  $checksum = (Get-FileHash -LiteralPath $migration.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+  $checksums = Get-SupabaseMigrationChecksums $migration.FullName
+  $checksum = $checksums.Canonical
   $recordedChecksum = Get-SupabaseMigrationChecksum $migrationId
-  if ($recordedChecksum -and $recordedChecksum -ne $checksum) {
-    throw "Migration checksum drift for ${migrationId}: live=$recordedChecksum release=$checksum"
+  if ($recordedChecksum -and $recordedChecksum -notin @($checksums.Canonical, $checksums.Crlf, $checksums.Raw)) {
+    throw "Migration checksum drift for ${migrationId}: live=$recordedChecksum canonical=$checksum"
   }
-  if ($recordedChecksum -eq $checksum) {
+  if ($recordedChecksum) {
     Write-Host "Supabase migration $migrationId already attested"
     continue
   }
@@ -450,12 +574,19 @@ ON CONFLICT (migration_id) DO NOTHING;
   Invoke-SupabaseMigrationPsql $ledgerSql
   $attestedChecksum = Get-SupabaseMigrationChecksum $migrationId
   if ($attestedChecksum -ne $checksum) { throw "Migration ledger did not attest $migrationId" }
+  $appliedMigrationCount += 1
 }
 
 # Reload the two schema-consuming APIs after Console migrations have completed.
-foreach ($workload in @('opensphere-supabase-rest', 'opensphere-supabase-storage')) {
-  Invoke-Kubectl @('-n', $Namespace, 'rollout', 'restart', "deployment/$workload")
-  Invoke-Kubectl @('-n', $Namespace, 'rollout', 'status', "deployment/$workload", '--timeout=10m')
+if (-not $ExistingInstallation) {
+  foreach ($workload in @('opensphere-supabase-rest', 'opensphere-supabase-storage')) {
+    Invoke-Kubectl @('-n', $Namespace, 'rollout', 'restart', "deployment/$workload")
+    Invoke-Kubectl @('-n', $Namespace, 'rollout', 'status', "deployment/$workload", '--timeout=10m')
+  }
+} elseif ($appliedMigrationCount -gt 0) {
+  # PostgREST supports a transactional schema-cache reload. Existing installs
+  # must not incur an identity/storage rollout merely because Console SQL grew.
+  Invoke-SupabaseMigrationPsql "NOTIFY pgrst, 'reload schema';"
 }
 
 Write-Host "Supabase Data & Identity installed in namespace $Namespace."

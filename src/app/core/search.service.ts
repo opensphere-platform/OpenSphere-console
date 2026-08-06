@@ -62,7 +62,7 @@ export class SearchService {
 
   /** 정적 셸 페이지 인덱스 */
   private readonly STATIC: SearchResult[] = [
-    { label: '홈 · Perspectives', sublabel: '셸 홈', path: '/', kind: 'page' },
+    { label: '홈 · 10P × 6L', sublabel: '서비스 실현 아키텍처', path: '/', kind: 'page' },
     { label: 'Developer Catalog', sublabel: '관리 · 자산 및 확장', path: '/manage/catalog', kind: 'page' },
     { label: 'APIs', sublabel: '관리 · 자산 및 확장', path: '/manage/apis', kind: 'page' },
     { label: 'Console CLI', sublabel: '관리 · 자산 및 확장', path: '/manage/cli', kind: 'page' },
@@ -70,6 +70,7 @@ export class SearchService {
     { label: 'Console 기반 서비스', sublabel: '관리 · Foundation Services', path: '/manage/foundation-services', kind: 'page' },
     { label: 'Data & Identity', sublabel: '관리 · Supabase 권위', path: '/manage/data-identity', kind: 'page' },
     { label: '선언형 상태 변경', sublabel: '관리 · State Change Authority', path: '/manage/state-changes', kind: 'page' },
+    { label: 'Platform Release', sublabel: '관리 · Upgrade / Rollback', path: '/manage/platform-release', kind: 'page' },
     { label: 'Infrastructure Monitoring', sublabel: '관리 · Beszel 노드 시계열', path: '/manage/infrastructure-monitoring', kind: 'page' },
     { label: 'OAA Gateway', sublabel: '관리 · 플랫폼 기반', path: '/manage/oaa', kind: 'page' },
     { label: '플랫폼 준비 상태', sublabel: '관리 · 플랫폼 수명주기', path: '/manage/platform-readiness', kind: 'page' },

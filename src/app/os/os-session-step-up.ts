@@ -9,6 +9,7 @@ import { AuthService } from '../core/auth.service';
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <clr-modal
+      class="os-security-step-up-modal"
       [clrModalOpen]="auth.stepUpRequired()"
       [clrModalClosable]="!auth.stepUpBusy()"
       [clrModalSize]="'sm'"
@@ -50,6 +51,25 @@ import { AuthService } from '../core/auth.service';
     </clr-modal>
   `,
   styles: [`
+    :host {
+      display: block;
+      position: fixed;
+      inset: 0;
+      z-index: var(--os-z-security-step-up);
+      pointer-events: none;
+    }
+    :host ::ng-deep clr-modal.os-security-step-up-modal .modal {
+      z-index: var(--os-z-security-step-up) !important;
+      pointer-events: auto;
+    }
+    :host ::ng-deep clr-modal.os-security-step-up-modal .modal-dialog {
+      z-index: var(--os-z-security-step-up) !important;
+      pointer-events: auto;
+    }
+    :host ::ng-deep clr-modal.os-security-step-up-modal .modal-backdrop {
+      z-index: calc(var(--os-z-security-step-up) - 1) !important;
+      pointer-events: auto;
+    }
     .modal-body p{margin:0 0 var(--os-5);color:var(--os-ink-muted);font-size:.72rem;line-height:1.5}
     clr-input-container{margin-top:0}
     clr-alert{display:block;margin-top:var(--os-4)}

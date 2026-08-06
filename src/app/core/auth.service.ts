@@ -1,11 +1,23 @@
 import { Injectable, signal } from '@angular/core';
 import { createTotpQrCode } from './totp-qr';
+import { authBootstrapRetryDelay, isRetryableAuthBootstrapStatus } from './auth-bootstrap-recovery';
+
+const SESSION_DURATION_PREFERENCE_KEY = 'opensphere.session.duration.v2';
+const LEGACY_SESSION_DURATION_PREFERENCE_KEY = 'opensphere.session.duration';
+const DEFAULT_SESSION_DURATION: SessionDuration = '24h';
+const ACTIVITY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 
 interface ApiError {
   error?: string;
   error_description?: string;
   msg?: string;
   message?: string;
+}
+
+interface StepUpRequest {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (reason: Error) => void;
 }
 
 export type SessionDuration = 'browser' | '8h' | '24h' | '7d';
@@ -32,6 +44,7 @@ interface SessionProjection {
   permissions?: unknown;
   assurance?: 'aal1' | 'aal2';
   session?: BrowserSession | null;
+  authorityDegraded?: boolean;
   error?: string;
 }
 
@@ -75,6 +88,9 @@ export class AuthService {
   readonly passwordRecoveryState = signal<'idle' | 'ready' | 'completed' | 'error'>('idle');
   readonly passwordRecoveryMessage = signal('');
   readonly initError = signal('');
+  readonly initializing = signal(true);
+  readonly autoRetryPending = signal(false);
+  readonly authorityWarning = signal('');
   readonly setupRequired = signal(false);
   readonly setupBusy = signal(false);
   readonly setupDefaults = signal({ username: 'opensphere-admin', displayName: 'OpenSphere Administrator', email: 'admin@opensphere.local' });
@@ -84,11 +100,22 @@ export class AuthService {
   readonly stepUpError = signal('');
   readonly sessionEvents = signal<SessionEvent[]>([]);
   private passwordRecoveryToken = '';
+  private stepUpRequest?: StepUpRequest;
+  private readonly stepUpEvent = 'opensphere:auth-step-up-required';
+  private lastActivityHeartbeatAt = 0;
+  private activityHeartbeatInFlight = false;
+  private initializationInFlight = false;
+  private initializationRetryAttempt = 0;
+  private initializationRetryTimer?: number;
+  private readonly initializationWaiters = new Set<() => void>();
+  private pendingNavigationIntent = '';
   private readonly sessionChannel = typeof BroadcastChannel === 'undefined'
     ? null
     : new BroadcastChannel('opensphere.browser-session');
 
   constructor() {
+    window.addEventListener(this.stepUpEvent, () => { void this.requestStepUp().catch(() => undefined); });
+    this.registerActivityHeartbeat();
     this.sessionChannel?.addEventListener('message', (event) => {
       if (event.data?.type !== 'session-ended') return;
       this.clearIdentity();
@@ -98,6 +125,94 @@ export class AuthService {
 
   setInitError(error: unknown): void {
     this.initError.set(String(error instanceof Error ? error.message : error || '인증 초기화 실패'));
+  }
+
+  startInitialization(): void {
+    void this.runInitialization();
+  }
+
+  retryInitializationNow(): void {
+    this.initializationRetryAttempt = 0;
+    this.cancelInitializationRetry();
+    void this.runInitialization();
+  }
+
+  private async runInitialization(): Promise<void> {
+    if (this.initializationInFlight) return;
+    this.initializationInFlight = true;
+    this.cancelInitializationRetry();
+    this.initializing.set(true);
+    this.initError.set('');
+    try {
+      await this.init();
+      this.initializationRetryAttempt = 0;
+    } catch (error) {
+      this.setInitError(error);
+      if (isRetryableAuthBootstrapStatus(this.statusOf(error))) this.scheduleInitializationRetry();
+    } finally {
+      this.initializing.set(false);
+      this.initializationInFlight = false;
+      this.notifyInitializationWaiters();
+    }
+  }
+
+  /**
+   * Router guards call this during the first browser navigation. A deep link
+   * must wait for the opaque session bootstrap (including transient retries)
+   * instead of being synchronously cancelled and replaced by `/`.
+   */
+  async waitForInitialAuthorization(): Promise<boolean> {
+    while (this.initializing() || this.autoRetryPending()) {
+      await new Promise<void>((resolve) => this.initializationWaiters.add(resolve));
+    }
+    return this.hasValidToken();
+  }
+
+  rememberNavigationIntent(path: string): void {
+    const normalized = this.navigationIntent(path);
+    if (normalized) this.pendingNavigationIntent = normalized;
+  }
+
+  clearNavigationIntent(path?: string): void {
+    if (!path || this.pendingNavigationIntent === this.navigationIntent(path)) this.pendingNavigationIntent = '';
+  }
+
+  consumeNavigationIntent(fallback = '/'): string {
+    const target = this.pendingNavigationIntent || this.navigationIntent(fallback) || '/';
+    this.pendingNavigationIntent = '';
+    return target;
+  }
+
+  private notifyInitializationWaiters(): void {
+    const waiters = [...this.initializationWaiters];
+    this.initializationWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
+
+  private navigationIntent(path: string): string {
+    try {
+      const target = new URL(path || '/', window.location.origin);
+      if (target.origin !== window.location.origin || target.pathname.startsWith('/auth/')) return '';
+      return `${target.pathname}${target.search}${target.hash}`;
+    } catch {
+      return '';
+    }
+  }
+
+  private scheduleInitializationRetry(): void {
+    const delay = authBootstrapRetryDelay(this.initializationRetryAttempt++);
+    this.autoRetryPending.set(true);
+    this.initializationRetryTimer = window.setTimeout(() => {
+      this.initializationRetryTimer = undefined;
+      this.autoRetryPending.set(false);
+      void this.runInitialization();
+    }, delay);
+  }
+
+  private cancelInitializationRetry(): void {
+    if (this.initializationRetryTimer !== undefined) window.clearTimeout(this.initializationRetryTimer);
+    this.initializationRetryTimer = undefined;
+    this.autoRetryPending.set(false);
   }
 
   /** @deprecated Browser bearer tokens are intentionally unavailable. */
@@ -111,11 +226,6 @@ export class AuthService {
   isTokenExpired(): boolean { return !this.hasValidToken(); }
   accountUrl(): string { return '/me?tab=security'; }
 
-  touchSession(): void {
-    if (!this.subject() || !this.tokenExp()) return;
-    this.idleExp.set(Math.min(this.tokenExp(), Math.floor(Date.now() / 1000) + 30 * 60));
-  }
-
   async init(): Promise<void> {
     if (this.consumePasswordRecoveryRedirect()) return;
     if (window.location.pathname === '/auth/recovery') {
@@ -124,19 +234,26 @@ export class AuthService {
       this.loginRequired.set(false);
       return;
     }
-    if (await this.refreshInitialSetup()) return;
     if (await this.adoptLegacySession()) return;
     try {
       await this.refreshAuthorization();
       this.loginRequired.set(false);
+      return;
     } catch (error) {
-      if (this.statusOf(error) === 401) {
-        this.clearIdentity();
-        this.loginRequired.set(true);
-        return;
-      }
-      throw error;
+      if (this.statusOf(error) !== 401) throw error;
     }
+
+    // A missing browser session is the only reason to ask whether first-time
+    // setup is required. Bootstrap status is not a session authority and must
+    // never eject an already authenticated operator from the Shell.
+    this.clearIdentity();
+    try {
+      if (await this.refreshInitialSetup()) return;
+      this.authorityWarning.set('');
+    } catch (error) {
+      this.authorityWarning.set(String(error instanceof Error ? error.message : error));
+    }
+    this.loginRequired.set(true);
   }
 
   private async adoptLegacySession(): Promise<boolean> {
@@ -300,14 +417,26 @@ export class AuthService {
     this.broadcastSessionEnded();
   }
 
-  requestStepUp(): void {
+  requestStepUp(): Promise<void> {
+    if (this.stepUpRequest) return this.stepUpRequest.promise;
+    let resolve!: () => void;
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<void>((resolveRequest, rejectRequest) => {
+      resolve = resolveRequest;
+      reject = rejectRequest;
+    });
+    this.stepUpRequest = { promise, resolve, reject };
     this.stepUpError.set('');
     this.stepUpRequired.set(true);
+    return promise;
   }
 
   cancelStepUp(): void {
+    const request = this.stepUpRequest;
+    this.stepUpRequest = undefined;
     this.stepUpError.set('');
     this.stepUpRequired.set(false);
+    request?.reject(new Error('MFA 재확인이 취소되어 원래 작업을 실행하지 않았습니다.'));
   }
 
   async completeStepUp(code: string): Promise<void> {
@@ -319,7 +448,10 @@ export class AuthService {
         body: JSON.stringify({ code: String(code || '').trim() }),
       });
       await this.refreshAuthorization();
+      const request = this.stepUpRequest;
+      this.stepUpRequest = undefined;
       this.stepUpRequired.set(false);
+      request?.resolve();
     } catch (error) {
       this.stepUpError.set(error instanceof Error ? error.message : String(error));
       throw error;
@@ -436,8 +568,51 @@ export class AuthService {
     this.roles.set(groups);
     this.assurance.set(body.assurance === 'aal2' ? 'aal2' : 'aal1');
     this.currentSession.set(body.session || null);
+    this.authorityWarning.set(body.authorityDegraded ? 'Supabase authorization state unavailable; cached read-only session is active.' : '');
     this.tokenExp.set(this.epoch(body.session?.absoluteExpiresAt));
     this.idleExp.set(this.epoch(body.session?.idleExpiresAt));
+  }
+
+  private registerActivityHeartbeat(): void {
+    const activity = (event: Event) => {
+      if (!event.isTrusted) return;
+      this.queueActivityHeartbeat();
+    };
+    window.addEventListener('pointerdown', activity, { passive: true });
+    window.addEventListener('keydown', activity);
+    window.addEventListener('touchstart', activity, { passive: true });
+    document.addEventListener('visibilitychange', (event) => {
+      if (document.visibilityState === 'visible') activity(event);
+    });
+  }
+
+  private queueActivityHeartbeat(): void {
+    if (!this.subject() || this.loginRequired() || this.activityHeartbeatInFlight) return;
+    if (Date.now() - this.lastActivityHeartbeatAt < ACTIVITY_HEARTBEAT_INTERVAL_MS) return;
+    void this.sendActivityHeartbeat();
+  }
+
+  private async sendActivityHeartbeat(): Promise<void> {
+    this.activityHeartbeatInFlight = true;
+    try {
+      const body = await this.api<{ session?: BrowserSession }>('/api/identity/session/touch', {
+        method: 'POST',
+        body: '{}',
+      });
+      if (body.session) {
+        this.currentSession.set(body.session);
+        this.tokenExp.set(this.epoch(body.session.absoluteExpiresAt));
+        this.idleExp.set(this.epoch(body.session.idleExpiresAt));
+      }
+      this.lastActivityHeartbeatAt = Date.now();
+    } catch (error) {
+      if (this.statusOf(error) === 401) {
+        this.clearIdentity();
+        this.loginRequired.set(true);
+      }
+    } finally {
+      this.activityHeartbeatInFlight = false;
+    }
   }
 
   private async api<T = Record<string, unknown>>(path: string, init: RequestInit = {}, csrf = true): Promise<T> {
@@ -462,6 +637,8 @@ export class AuthService {
   }
 
   private clearIdentity(): void {
+    const stepUpRequest = this.stepUpRequest;
+    this.stepUpRequest = undefined;
     this.user.set('');
     this.groups.set([]);
     this.roles.set([]);
@@ -477,23 +654,31 @@ export class AuthService {
     this.mfaEnrollmentRequired.set(false);
     this.stepUpRequired.set(false);
     this.stepUpError.set('');
+    stepUpRequest?.reject(new Error('세션이 종료되어 대기 중이던 보안 작업을 실행하지 않았습니다.'));
+    this.lastActivityHeartbeatAt = 0;
   }
 
   private broadcastSessionEnded(): void {
     this.sessionChannel?.postMessage({ type: 'session-ended', at: new Date().toISOString() });
   }
 
-  private normalizeDuration(value: SessionDuration): SessionDuration {
-    return ['browser', '8h', '24h', '7d'].includes(value) ? value : '8h';
+  private normalizeDuration(value: unknown): SessionDuration {
+    return ['browser', '8h', '24h', '7d'].includes(String(value))
+      ? String(value) as SessionDuration
+      : DEFAULT_SESSION_DURATION;
   }
 
   private loadDurationPreference(): SessionDuration {
-    try { return this.normalizeDuration((localStorage.getItem('opensphere.session.duration') || '8h') as SessionDuration); }
-    catch { return '8h'; }
+    try {
+      const current = localStorage.getItem(SESSION_DURATION_PREFERENCE_KEY);
+      if (current) return this.normalizeDuration(current);
+      const legacy = localStorage.getItem(LEGACY_SESSION_DURATION_PREFERENCE_KEY);
+      return legacy && legacy !== '8h' ? this.normalizeDuration(legacy) : DEFAULT_SESSION_DURATION;
+    } catch { return DEFAULT_SESSION_DURATION; }
   }
 
   private saveDurationPreference(value: SessionDuration): void {
-    try { localStorage.setItem('opensphere.session.duration', value); } catch { /* optional preference */ }
+    try { localStorage.setItem(SESSION_DURATION_PREFERENCE_KEY, value); } catch { /* optional preference */ }
   }
 
   private errorText(body: ApiError, status: number): string {

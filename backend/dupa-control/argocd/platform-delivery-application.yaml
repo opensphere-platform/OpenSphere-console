@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: opensphere-platform-delivery-verify
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    opensphere.io/managed-by: platform-delivery
+spec:
+  project: opensphere-platform-delivery
+  source:
+    repoURL: http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000/opensphere/platform-declarations.git
+    targetRevision: main
+    path: platform-delivery/verification
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: opensphere-platform-delivery
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true

@@ -24,6 +24,7 @@ spec:
     spec:
       # F-6: 정적 아티팩트 서버는 K8s API를 호출하지 않으므로 SA 토큰을 마운트하지 않는다.
       automountServiceAccountToken: false
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       # F-6: 2 replica가 가능하면 서로 다른 노드에 분산되도록(단일 노드 장애에 index.json 가용성 유지).
       topologySpreadConstraints:
         - maxSkew: 1
@@ -37,9 +38,10 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: serve
-          # 개발 진단 전용 독립 배포. 제품 Setup은 별도 Pod를 만들지 않고
-          # opensphere-console 이미지에 내장된 동일 바이너리를 직접 제공한다.
-          image: os-cli:cli-hardening-20260712
+          # CLI artifact lifecycle is deliberately independent from the Angular
+          # shell. Publication/deployment replaces this closed placeholder with
+          # one exact GHCR digest; a mutable tag is never admitted at runtime.
+          image: __OPENSPHERE_OS_CLI_IMAGE__
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /index.json, port: http }, initialDelaySeconds: 2 }

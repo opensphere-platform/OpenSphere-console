@@ -12,6 +12,23 @@ const { normalizedEvent } = require('../notification-dispatcher/contract');
 const { createBrowserSessionManager } = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
+const { createModuleOperationApi } = require('./module-operation-api');
+const { evaluateDataIdentityReadiness } = require('./data-identity-readiness');
+const {
+  FOUNDATION_BOOTSTRAP_RECONCILER,
+  FOUNDATION_BOOTSTRAP_TEMPLATE_ID,
+  cloneFoundationBootstrapTemplate,
+} = require('./foundation-bootstrap-contract');
+const {
+  PLATFORM_RELEASE_CONSUMER,
+  PLATFORM_RELEASE_RECONCILER,
+  PLATFORM_RELEASE_TARGET,
+  buildComponentReleaseLock,
+  platformReleaseApprovalPolicy,
+  validatePlatformReleaseDesiredState,
+  validateReleaseTransition,
+  releaseSummary,
+} = require('./platform-release-contract');
 
 const MAX_BODY = 256 * 1024; // prevent unbounded in-memory request buffering
 const newOpId = () => randomUUID();
@@ -42,10 +59,13 @@ const GITEA_REPOSITORY = process.env.GITEA_REPOSITORY || 'platform-declarations'
 const GITEA_DEFAULT_BRANCH = process.env.GITEA_DEFAULT_BRANCH || 'main';
 const GITEA_WEBHOOK_SECRET = process.env.GITEA_WEBHOOK_SECRET || '';
 const GITEA_RECONCILER_NAME = process.env.GITEA_RECONCILER_NAME || 'opensphere-declaration-reconciler';
-const GITEA_RECONCILER_NAMES = new Set((process.env.GITEA_RECONCILER_NAMES || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler`)
+const GITEA_RECONCILER_NAMES = new Set((process.env.GITEA_RECONCILER_NAMES
+  || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler,${FOUNDATION_BOOTSTRAP_RECONCILER},platform-release-reconciler`)
   .split(',').map((value) => value.trim()).filter(Boolean));
 const GITEA_CHANGE_REQUIRE_AAL2 = String(process.env.GITEA_CHANGE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const GITEA_REQUIRE_VERIFIED_MERGE = String(process.env.GITEA_REQUIRE_VERIFIED_MERGE || 'true').toLowerCase() !== 'false';
+const ARGOCD_VERIFICATION_PATH = 'platform-delivery/verification/opensphere-platform-delivery-verification.json';
+const ARGOCD_VERIFICATION_CONFIRMATION = 'bootstrap argocd verification';
 const RECONCILER_RECEIPT_TOKEN = process.env.RECONCILER_RECEIPT_TOKEN || '';
 const GITEA_TIMEOUT_MS = Number(process.env.GITEA_TIMEOUT_MS || 3000);
 const SUPABASE_BACKEND_ROLE = process.env.SUPABASE_BACKEND_ROLE || 'console-admins';
@@ -60,6 +80,7 @@ const AUDIT_READ_LIMIT = Number(process.env.SUPABASE_AUDIT_READ_LIMIT || 200);
 const SUPABASE_REQUIRE_AAL2 = String(process.env.SUPABASE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
 const CLI_TOKEN_ISSUER = 'opensphere-cli';
 const CLI_TOKEN_AUDIENCE = 'opensphere-cli';
@@ -587,9 +608,17 @@ async function verifyAuthed(req) {
       const claims = b64urlParsePayload(match[1]);
       if (claims?.iss !== SUPABASE_AUTH_ISSUER) throw { code: 401, msg: 'unsupported token issuer' };
     }
-    return verifySupabaseToken(match[1]);
+    const actor = await verifySupabaseToken(match[1]);
+    const delegated = browserSessions
+      ? await browserSessions.actorForForwardedAccessToken(match[1], actor)
+      : null;
+    return delegated || actor;
   }
-  return verifySupabaseToken(match[1]);
+  const actor = await verifySupabaseToken(match[1]);
+  const delegated = browserSessions
+    ? await browserSessions.actorForForwardedAccessToken(match[1], actor)
+    : null;
+  return delegated || actor;
 }
 
 async function resolveConsoleActor(subject, claims = {}) {
@@ -684,15 +713,18 @@ function requireRecentAal2(actor, operation = 'admin mutation') {
   }
 }
 
-async function verifyConsoleAdmin(req, options = {}) {
-  const actor = await verifyAuthed(req);
+function assertConsoleAdminActor(actor, options = {}) {
   if (!actor.groups || !actor.groups.includes(SUPABASE_BACKEND_ROLE)) {
     throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
   }
+  if (options.requireAal2 === true) requireRecentAal2(actor, 'admin mutation');
+  return actor;
+}
+
+async function verifyConsoleAdmin(req, options = {}) {
   const requireAal2 = options.requireAal2 === true
     || (options.requireAal2 !== false && SUPABASE_REQUIRE_AAL2 && isMutationRequest(req));
-  if (requireAal2) requireRecentAal2(actor, 'admin mutation');
-  return actor;
+  return assertConsoleAdminActor(await verifyAuthed(req), { ...options, requireAal2 });
 }
 
 async function verifyOaaIdentityOwner(req, options = {}) {
@@ -758,6 +790,57 @@ async function logAudit(actor, action, target, result, reason, opts = {}) {
   return persisted;
 }
 
+async function authenticateModuleRequest(req, { mutation = false } = {}) {
+  let actor;
+  let authorization = String(req.headers.authorization || '');
+  if (authorization) {
+    actor = await verifyAuthed(req);
+  } else {
+    if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+    const session = await browserSessions.authenticate(req);
+    actor = session.actor;
+    authorization = `Bearer ${session.accessToken}`;
+  }
+  if (!actor.groups?.includes(SUPABASE_BACKEND_ROLE)) {
+    throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
+  }
+  if (mutation) requireRecentAal2(actor, 'module lifecycle mutation');
+  return { actor, authorization };
+}
+
+async function clusterManagerOwnerRequest(pathName, {
+  method = 'GET',
+  authorization,
+  body,
+} = {}) {
+  let response;
+  try {
+    response = await fetch(`${CLUSTER_MANAGER_URL}${pathName}`, {
+      method,
+      headers: {
+        authorization,
+        accept: 'application/json',
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(method === 'GET' ? 8000 : 15000),
+    });
+  } catch {
+    throw { code: 503, errorCode: 'owner_unavailable', msg: 'Shared Observability owner unavailable' };
+  }
+  const text = await response.text();
+  let parsed = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
+  if (!response.ok) {
+    throw {
+      code: response.status,
+      errorCode: `owner_http_${response.status}`,
+      msg: parsed.error || `Shared Observability owner HTTP ${response.status}`,
+    };
+  }
+  return parsed;
+}
+
 function projectedSessionGroups(actor) {
   const groups = new Set(Array.isArray(actor?.groups) ? actor.groups : []);
   if (groups.has(SUPABASE_BACKEND_ROLE)) {
@@ -780,6 +863,14 @@ const externalChannelApi = createExternalChannelApi({
   managementReason,
   newOpId,
   executorRequest: externalChannelExecutorRequest,
+});
+
+const moduleOperationApi = createModuleOperationApi({
+  restRequest,
+  authenticate: authenticateModuleRequest,
+  readBody,
+  ownerRequest: clusterManagerOwnerRequest,
+  logAudit,
 });
 
 async function verifyNotificationAdmin(req) {
@@ -1143,14 +1234,19 @@ async function submitOaaAction(actor, body = {}, authorization = '') {
 }
 
 async function requireSupabase() {
-  const result = await restRequest('operator', {
-    query: 'select=user_id&limit=1',
-    prefer: 'count=exact',
+  const readiness = await evaluateDataIdentityReadiness({
+    readDataAuthority: () => restRequest('operator', {
+      query: 'select=user_id&limit=1',
+      prefer: 'count=exact',
+    }),
+    authUrl: SUPABASE_AUTH_URL,
+    storageUrl: SUPABASE_STORAGE_URL,
+    timeoutMs: SUPABASE_TIMEOUT_MS,
   });
-  if (!Array.isArray(result)) {
-    throw { code: 503, msg: 'Supabase data and identity authority unavailable' };
+  if (!readiness.ready) {
+    throw { code: 503, msg: 'Supabase data and identity authority unavailable', readiness };
   }
-  return { ready: true, service: 'supabase-data-identity', source: 'supabase', version: VERSION };
+  return { ...readiness, service: 'supabase-data-identity', source: 'supabase', version: VERSION };
 }
 
 async function serviceProbe(key, name, url, responsibility) {
@@ -1315,13 +1411,19 @@ async function changeRequests() {
     const list = approvals.get(approval.request_id) || [];
     list.push({ ...approval, approver_display_name: operators.get(approval.approver_id) || approval.approver_id }); approvals.set(approval.request_id, list);
   }
-  return (Array.isArray(rows) ? rows : []).map((row) => ({
-    ...row,
-    requester: { id: row.actor_id, type: row.actor_type, displayName: operators.get(row.actor_id) || row.actor_id },
-    execution: execution.get(row.request_id) || null,
-    outbox: outbox.get(row.request_id) || null,
-    approvals: approvals.get(row.request_id) || [],
-  }));
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const requestApprovals = approvals.get(row.request_id) || [];
+    const ownerMfaAuthorized = row.target === PLATFORM_RELEASE_TARGET
+      && requestApprovals.some((approval) => approval.approver_id === row.actor_id);
+    return {
+      ...row,
+      approvalPolicy: ownerMfaAuthorized ? 'owner-mfa' : 'cross-operator',
+      requester: { id: row.actor_id, type: row.actor_type, displayName: operators.get(row.actor_id) || row.actor_id },
+      execution: execution.get(row.request_id) || null,
+      outbox: outbox.get(row.request_id) || null,
+      approvals: requestApprovals,
+    };
+  });
 }
 
 async function consumerContracts() {
@@ -1421,6 +1523,151 @@ async function giteaStatus() {
   }
 }
 
+function argocdVerificationManifest() {
+  return {
+    apiVersion: 'v1',
+    kind: 'ConfigMap',
+    metadata: {
+      name: 'opensphere-platform-delivery-verification',
+      namespace: 'opensphere-platform-delivery',
+      labels: {
+        'app.kubernetes.io/name': 'opensphere-platform-delivery-verification',
+        'app.kubernetes.io/part-of': 'opensphere-platform-delivery',
+        'app.kubernetes.io/managed-by': 'argocd',
+        'opensphere.io/capability': 'delivery.gitops',
+      },
+      annotations: {
+        'opensphere.io/contract': 'delivery.gitops/v1',
+        'opensphere.io/verification-purpose': 'argocd-repository-sync',
+      },
+    },
+    data: {
+      contract: 'delivery.gitops/v1',
+      repository: 'opensphere/platform-declarations',
+      path: 'platform-delivery/verification',
+    },
+  };
+}
+
+async function bootstrapArgocdVerification(actor, input = {}) {
+  requireActorPermission(actor, 'console.git.change');
+  if (GITEA_CHANGE_REQUIRE_AAL2 && actor.assurance !== 'aal2') throw { code: 403, msg: 'Argo CD verification bootstrap requires MFA assurance aal2' };
+  if (!GITEA_TOKEN || !GITEA_REVIEW_TOKEN) throw { code: 503, msg: 'Gitea control and review credentials are not configured' };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw { code: 400, msg: 'JSON object required' };
+  const extra = Object.keys(input).filter((key) => !['reason', 'confirm'].includes(key));
+  if (extra.length) throw { code: 400, msg: `unsupported Argo CD verification inputs: ${extra.join(', ')}` };
+  const reason = managementReason(input.reason);
+  if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+  if (String(input.confirm || '').trim() !== ARGOCD_VERIFICATION_CONFIRMATION) {
+    throw { code: 409, msg: `confirmation must exactly equal: ${ARGOCD_VERIFICATION_CONFIRMATION}` };
+  }
+  const manifest = argocdVerificationManifest();
+  const rendered = `${JSON.stringify(manifest, null, 2)}\n`;
+  const contentsPath = `/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/contents/${giteaEncodedPath(ARGOCD_VERIFICATION_PATH)}`;
+  let existing = null;
+  try {
+    existing = await giteaRequest(`${contentsPath}?ref=${encodeURIComponent(GITEA_DEFAULT_BRANCH)}`);
+  } catch (error) {
+    if (error?.code !== 404) throw error;
+  }
+  if (existing?.body?.content) {
+    let current = '';
+    try { current = Buffer.from(String(existing.body.content).replace(/\s+/g, ''), 'base64').toString('utf8'); } catch { current = ''; }
+    try {
+      if (canonicalJson(JSON.parse(current)) === canonicalJson(manifest)) {
+        const branch = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/branches/${encodeURIComponent(GITEA_DEFAULT_BRANCH)}`);
+        const revision = String(branch.body?.commit?.id || branch.body?.commit?.sha || '').toLowerCase();
+        await logAudit(actor, 'argocd-verification-bootstrap', ARGOCD_VERIFICATION_PATH, 'ok-noop', reason, {
+          requestId: randomUUID(),
+          phase: 'applied',
+          targetType: 'gitea-fixed-declaration',
+          payloadDigest: toHashHex(rendered),
+        });
+        return { ready: true, changed: false, path: ARGOCD_VERIFICATION_PATH, mergeRevision: revision || null };
+      }
+    } catch {
+      // A malformed or drifted fixed declaration is replaced only through the
+      // same reviewed branch path below; it is never patched directly on main.
+    }
+  }
+
+  const requestId = randomUUID();
+  const branch = `bootstrap/argocd-verification-${requestId.slice(0, 8)}`;
+  const title = '[Console] Bootstrap Argo CD verification declaration';
+  await logAudit(actor, 'argocd-verification-bootstrap', ARGOCD_VERIFICATION_PATH, 'attempt', reason, {
+    requestId,
+    phase: 'intent',
+    targetType: 'gitea-fixed-declaration',
+    payloadDigest: toHashHex(rendered),
+  });
+  try {
+    const file = await giteaRequest(contentsPath, {
+      method: existing ? 'PUT' : 'POST',
+      body: {
+        branch: GITEA_DEFAULT_BRANCH,
+        new_branch: branch,
+        message: `${title} (${requestId})`,
+        content: Buffer.from(rendered).toString('base64'),
+        ...(existing?.body?.sha ? { sha: existing.body.sha } : {}),
+      },
+    });
+    const desiredRevision = String(file.body?.commit?.sha || '').toLowerCase();
+    const pull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls`, {
+      method: 'POST',
+      body: {
+        title,
+        head: branch,
+        base: GITEA_DEFAULT_BRANCH,
+        body: `Fixed Console bootstrap contract ${requestId}.\n\nReason: ${reason}`,
+      },
+    });
+    const pullNumber = Number(pull.body?.number || 0);
+    if (!Number.isInteger(pullNumber) || pullNumber < 1) throw { code: 502, msg: 'Gitea did not return a pull request number' };
+    await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/reviews`, {
+      method: 'POST',
+      authToken: GITEA_REVIEW_TOKEN,
+      body: {
+        event: 'APPROVED',
+        body: `Approved fixed OpenSphere bootstrap contract ${requestId}; no operator-supplied manifest or path is accepted.`,
+      },
+    });
+    await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/merge`, {
+      method: 'POST',
+      body: { Do: 'merge', delete_branch_after_merge: false },
+    });
+    const mergedPull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}`);
+    const merged = mergedPull.body?.state === 'closed' && mergedPull.body?.merged === true;
+    const mergeRevision = String(mergedPull.body?.merge_commit_sha || '').toLowerCase();
+    if (!merged || !/^[0-9a-f]{40,64}$/.test(mergeRevision)) {
+      throw { code: 502, msg: 'fixed Argo CD verification pull request was not merged' };
+    }
+    const verification = await assertVerifiedGovernedMerge(mergeRevision);
+    await logAudit(actor, 'argocd-verification-bootstrap', ARGOCD_VERIFICATION_PATH, 'ok', reason, {
+      requestId,
+      phase: 'applied',
+      targetType: 'gitea-fixed-declaration',
+      payloadDigest: toHashHex(rendered),
+    });
+    return {
+      ready: true,
+      changed: true,
+      path: ARGOCD_VERIFICATION_PATH,
+      pullNumber,
+      desiredRevision: desiredRevision || null,
+      mergeRevision,
+      verification,
+    };
+  } catch (error) {
+    await logAudit(actor, 'argocd-verification-bootstrap', ARGOCD_VERIFICATION_PATH, 'failed', reason, {
+      requestId,
+      phase: 'failed',
+      targetType: 'gitea-fixed-declaration',
+      payloadDigest: toHashHex(rendered),
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
 function uuid(value, label = 'request id') {
   const parsed = String(value || '');
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed)) throw { code: 400, msg: `invalid ${label}` };
@@ -1444,6 +1691,9 @@ function validateDeclaration(value, pathName = 'desiredState') {
     if (!node || typeof node !== 'object') return;
     for (const [key, child] of Object.entries(node)) {
       const secretReferenceKey = /(?:secret(?:key)?ref|secretrefs|secretname|secretnames|imagepullsecrets)$/i.test(key);
+      if (key === 'registryCredentialsRequired' && typeof child === 'boolean') {
+        continue;
+      }
       if (/(password|token|credential|private.?key|secret)/i.test(key) && !secretReferenceKey) {
         throw { code: 400, msg: `${at}.${key} may not contain secret material; use a named Secret reference` };
       }
@@ -1463,7 +1713,7 @@ const CEPH_PREREQUISITE_TEMPLATE = Object.freeze({
   reasonPlaceholder: '외부 Ceph 연결을 위한 Rook CRD·Operator·CSI 설치 사유',
   returnTo: '/p/cluster-manager/ceph/ceph',
   desiredState: Object.freeze({
-    contract: 'opensphere.ceph.rook-prerequisite/v1',
+    contract: 'opensphere.ceph.rook-prerequisite/v3',
     release: Object.freeze({
       name: 'rook-ceph',
       namespace: 'rook-ceph',
@@ -1471,14 +1721,35 @@ const CEPH_PREREQUISITE_TEMPLATE = Object.freeze({
       version: 'v1.20.2',
       sha256: '6e0f10f5ca54e618fb90dd149dc9dfbc8a4932955bff2227b692fb32069daf52',
     }),
-    components: Object.freeze(['crds', 'operator', 'csi', 'runtime-rbac']),
-    verification: Object.freeze(['cephclusters.ceph.rook.io Established', 'deployment/rook-ceph-operator Ready']),
+    runtime: Object.freeze({
+      name: 'opensphere-ceph-runtime',
+      namespace: 'rook-ceph',
+      chart: 'opensphere-ceph-runtime',
+      version: '1.4.0',
+    }),
+    components: Object.freeze(['crds', 'operator', 'csi', 'runtime-rbac', 'data-path-verification-runtime']),
+    verification: Object.freeze([
+      'cephclusters.ceph.rook.io Established',
+      'all ceph-csi-operator CRDs Established',
+      'deployment/rook-ceph-operator Ready',
+      'deployment/ceph-csi-controller-manager Ready',
+      'drivers.csi.ceph.io/rook-ceph.rbd.csi.ceph.com configured',
+      'namespace/opensphere-ceph-verification Pod Security restricted',
+      'role/opensphere-ceph-verification-runner installed',
+      'networkpolicy/opensphere-ceph-verification-default-deny installed',
+    ]),
+    elevatedPrivileges: Object.freeze([]),
   }),
 });
 
 function changeTemplate(templateId) {
-  if (templateId !== CEPH_PREREQUISITE_TEMPLATE.id) throw { code: 404, msg: 'change template not found' };
-  return JSON.parse(JSON.stringify(CEPH_PREREQUISITE_TEMPLATE));
+  if (templateId === CEPH_PREREQUISITE_TEMPLATE.id) {
+    return JSON.parse(JSON.stringify(CEPH_PREREQUISITE_TEMPLATE));
+  }
+  if (templateId === FOUNDATION_BOOTSTRAP_TEMPLATE_ID) {
+    return cloneFoundationBootstrapTemplate();
+  }
+  throw { code: 404, msg: 'change template not found' };
 }
 
 function changeTemplateRequestPhase(change, execution, outbox) {
@@ -1507,8 +1778,9 @@ function changeTemplateRequestMessage(phase) {
 async function changeTemplateRequestStatus(templateId) {
   const template = changeTemplate(templateId);
   const action = `gitea:${template.action}`;
+  const payloadDigest = `sha256:${toHashHex(canonicalJson(template.desiredState))}`;
   const rows = await restRequest('change_request', {
-    query: `select=request_id,action,target,reason,status,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&target=eq.${encodeURIComponent(template.target)}&action=eq.${encodeURIComponent(action)}&order=created_at.desc&limit=1`,
+    query: `select=request_id,action,target,reason,status,payload_digest,git_repo,git_ref,git_commit_sha,k8s_operation_id,created_at,completed_at&target=eq.${encodeURIComponent(template.target)}&action=eq.${encodeURIComponent(action)}&payload_digest=eq.${encodeURIComponent(payloadDigest)}&order=created_at.desc&limit=1`,
   });
   const change = Array.isArray(rows) ? rows[0] : null;
   if (!change) return { templateId: template.id, current: null, checkedAt: new Date().toISOString() };
@@ -1567,6 +1839,158 @@ function validateChangeTemplate(body, declaration) {
   }
 }
 
+function parseInstalledPlatformRelease(configMap) {
+  const raw = String(configMap?.data?.['release.json'] || '').trim();
+  if (!raw) throw { code: 503, msg: 'managed installation lock has no release.json' };
+  let lock;
+  try { lock = JSON.parse(raw); }
+  catch { throw { code: 503, msg: 'managed installation lock is invalid JSON' }; }
+  try { return { lock, summary: releaseSummary(lock) }; }
+  catch (error) { throw { code: 503, msg: `managed installation lock is invalid: ${error.message}` }; }
+}
+
+async function installedPlatformRelease() {
+  const configMap = await k8sGet('/api/v1/namespaces/opensphere-console/configmaps/opensphere-installation-lock')
+    .catch((error) => { throw { code: 503, msg: `managed installation lock unavailable: ${error.message}` }; });
+  return parseInstalledPlatformRelease(configMap);
+}
+
+async function platformReleaseRuntimeStatus() {
+  try {
+    const deployment = await k8sGet(
+      '/apis/apps/v1/namespaces/opensphere-console/deployments/platform-release-reconciler',
+    );
+    const desired = Number(deployment?.spec?.replicas ?? 1);
+    const observed = Number(deployment?.status?.observedGeneration ?? 0);
+    const generation = Number(deployment?.metadata?.generation ?? 0);
+    const updated = Number(deployment?.status?.updatedReplicas ?? 0);
+    const available = Number(deployment?.status?.availableReplicas ?? 0);
+    const rolloutReady = observed >= generation && updated === desired && available === desired;
+    const env = deployment?.spec?.template?.spec?.containers?.[0]?.env || [];
+    const executorImage = String(env.find((entry) => entry.name === 'EXECUTOR_IMAGE')?.value || '');
+    const exactExecutor = /^ghcr\.io\/opensphere-platform\/opensphere-console-backend@sha256:[a-f0-9]{64}$/
+      .test(executorImage);
+    return {
+      ready: rolloutReady && exactExecutor,
+      state: rolloutReady && exactExecutor ? 'Ready' : 'Unavailable',
+      blocker: !rolloutReady
+        ? 'platform_release_reconciler_rollout_incomplete'
+        : (!exactExecutor ? 'platform_release_executor_image_not_exact_digest' : null),
+      generation,
+      observedGeneration: observed,
+      desiredReplicas: desired,
+      updatedReplicas: updated,
+      availableReplicas: available,
+      executorImage: exactExecutor ? executorImage : null,
+    };
+  } catch (error) {
+    return {
+      ready: false,
+      state: 'Unavailable',
+      blocker: `platform_release_reconciler_unavailable:${String(error?.message || error).slice(0, 300)}`,
+      generation: null,
+      observedGeneration: null,
+      desiredReplicas: null,
+      updatedReplicas: null,
+      availableReplicas: null,
+      executorImage: null,
+    };
+  }
+}
+
+async function platformReleaseStatus() {
+  const installed = await installedPlatformRelease();
+  const [contracts, changes, executions, receipts, runtime] = await Promise.all([
+    restRequest('consumer_contract', {
+      query: `select=consumer_id,display_name,reconciler,status,metadata,updated_at&consumer_id=eq.${encodeURIComponent(PLATFORM_RELEASE_CONSUMER)}`,
+    }),
+    restRequest('change_request', {
+      query: `select=request_id,action,target,reason,status,git_commit_sha,k8s_operation_id,created_at,completed_at&target=eq.${encodeURIComponent(PLATFORM_RELEASE_TARGET)}&order=created_at.desc&limit=20`,
+    }),
+    restRequest('change_execution', {
+      query: 'select=request_id,pull_number,pull_url,merge_revision,reconciler,reconciler_status,drift_status,attempt_count,last_error,updated_at',
+    }),
+    restRequest('reconcile_receipt', {
+      query: `select=operation_id,request_id,reconciler,desired_revision,applied_revision,succeeded,result,evidence,received_at&reconciler=eq.${encodeURIComponent(PLATFORM_RELEASE_RECONCILER)}&order=received_at.desc&limit=20`,
+    }),
+    platformReleaseRuntimeStatus(),
+  ]);
+  const executionByRequest = new Map((Array.isArray(executions) ? executions : [])
+    .map((entry) => [entry.request_id, entry]));
+  const receiptByRequest = new Map((Array.isArray(receipts) ? receipts : [])
+    .map((entry) => [entry.request_id, entry]));
+  return {
+    authority: {
+      declaration: 'Gitea reviewed GovernedChange',
+      execution: PLATFORM_RELEASE_RECONCILER,
+      observed: 'opensphere-installation-lock + reconcile receipt',
+      localKubeconfigExecution: false,
+      supportedChannels: ['edge'],
+      approvalPolicy: {
+        localEdgeComponentApply: 'owner-mfa',
+        integratedRollbackAndPromotion: 'cross-operator',
+      },
+      blockedChannels: {
+        candidate: 'integrated recovery drill required by Setup',
+        stable: 'integrated recovery drill required by Setup',
+        ga: 'signed GA lock installation is not implemented by Setup',
+      },
+    },
+    execution: runtime,
+    current: { ...installed.summary, components: installed.lock.components },
+    contract: Array.isArray(contracts) ? contracts[0] || null : null,
+    changes: (Array.isArray(changes) ? changes : []).map((change) => ({
+      ...change,
+      execution: executionByRequest.get(change.request_id) || null,
+      receipt: receiptByRequest.get(change.request_id) || null,
+    })),
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+async function generatePlatformComponentTarget(actor, body = {}) {
+  requireActorPermission(actor, 'console.git.change');
+  requireRecentAal2(actor, 'Platform Release component target generation');
+  const reason = managementReason(body.reason);
+  if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+  const installed = await installedPlatformRelease();
+  let targetLock;
+  try {
+    targetLock = buildComponentReleaseLock(installed.lock, {
+      sourceRevision: body.sourceRevision,
+      components: body.components,
+    });
+  } catch (error) {
+    throw { code: 400, msg: error.message };
+  }
+  await logAudit(
+    actor,
+    'platform-release-component-target-generate',
+    targetLock.releaseDigest,
+    'ok',
+    reason,
+    {
+      requestId: newOpId(),
+      // audit.event deliberately uses a closed lifecycle vocabulary. Target
+      // generation records the operator's reviewed intent; `planned` is not a
+      // schema phase and would make PostgREST reject the entire operation.
+      phase: 'intent',
+      targetType: 'platform-release-lock',
+      payloadDigest: toHashHex(canonicalJson({
+        baseReleaseDigest: targetLock.baseReleaseDigest,
+        changedComponents: targetLock.changedComponents,
+        releaseDigest: targetLock.releaseDigest,
+      })),
+    },
+  );
+  return {
+    targetLock,
+    baseReleaseDigest: installed.summary.releaseDigest,
+    changedComponents: targetLock.changedComponents,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 async function governedChange(actor, body = {}) {
   requireActorPermission(actor, 'console.git.change');
   if (GITEA_CHANGE_REQUIRE_AAL2 && actor.assurance !== 'aal2') throw { code: 403, msg: 'governed Gitea change requires MFA assurance aal2' };
@@ -1581,7 +2005,31 @@ async function governedChange(actor, body = {}) {
   if (rollbackOf && action.toLowerCase() !== 'rollback') throw { code: 400, msg: 'rollbackOf is allowed only for rollback changes' };
   const target = String(body.target || consumerId).trim();
   if (!target || target.length > 300 || /[\r\n]/.test(target)) throw { code: 400, msg: 'invalid governed change target' };
-  const declaration = validateDeclaration(body.desiredState);
+  let declaration = validateDeclaration(body.desiredState);
+  let releaseApprovalPolicy = null;
+  let releaseDesiredState = null;
+  if (consumerId === PLATFORM_RELEASE_CONSUMER) {
+    requireRecentAal2(actor, 'Platform Release request');
+    if (!['apply', 'rollback'].includes(action.toLowerCase()) || target !== PLATFORM_RELEASE_TARGET) {
+      throw { code: 400, msg: 'Platform Release permits only apply or rollback for opensphere-platform' };
+    }
+    let desiredState;
+    try { desiredState = validatePlatformReleaseDesiredState(declaration.value); }
+    catch (error) { throw { code: 400, msg: error.message }; }
+    const installed = await installedPlatformRelease();
+    if (desiredState.previousReleaseDigest !== installed.summary.releaseDigest) {
+      throw { code: 409, msg: 'Platform Release request is stale; current installation lock changed' };
+    }
+    try { validateReleaseTransition(installed.lock, desiredState.targetLock); }
+    catch (error) { throw { code: 409, msg: error.message }; }
+    if (action.toLowerCase() === 'apply'
+      && desiredState.targetLock.releaseDigest === installed.summary.releaseDigest) {
+      throw { code: 409, msg: 'requested Platform Release is already installed' };
+    }
+    releaseApprovalPolicy = platformReleaseApprovalPolicy(action, desiredState);
+    releaseDesiredState = desiredState;
+    declaration = validateDeclaration(desiredState);
+  }
   validateChangeTemplate(body, declaration);
   const contractRows = await restRequest('consumer_contract', { query: `select=consumer_id,gitea_repository,gitea_path,reconciler&consumer_id=eq.${encodeURIComponent(consumerId)}` });
   const contract = Array.isArray(contractRows) ? contractRows[0] : null;
@@ -1606,7 +2054,13 @@ async function governedChange(actor, body = {}) {
   });
   const change = Array.isArray(started) ? started[0] : started;
   if (!change?.request_id) throw { code: 503, msg: 'governed change intent was not persisted' };
-  if (change.request_id !== requestId) return { accepted: true, duplicate: true, requestId: change.request_id, status: change.status };
+  if (change.request_id !== requestId) return {
+    accepted: true,
+    duplicate: true,
+    requestId: change.request_id,
+    status: change.status,
+    approvalPolicy: releaseApprovalPolicy,
+  };
 
   const branch = `control/${requestId}`;
   const sourcePath = String(contract.gitea_path || `${consumerId}/`).replace(/^\/+/, '').replace(/\/+$/, '');
@@ -1647,13 +2101,145 @@ async function governedChange(actor, body = {}) {
       body: { reconciler: contract.reconciler || GITEA_RECONCILER_NAME, updated_at: new Date().toISOString() },
       prefer: 'return=minimal',
     });
-    return {
+    const proposal = {
       accepted: true, requestId, status: 'authorized', branch, rollbackOf,
       pullRequest: { number: pull.body?.number || null, url: pull.body?.html_url || null },
       desiredRevision: desiredRevision || null,
+      approvalPolicy: releaseApprovalPolicy,
     };
+    if (releaseApprovalPolicy?.mode === 'owner-mfa') {
+      try {
+        proposal.autoAuthorization = await authorizeLocalEdgeComponentRelease(actor, {
+          requestId,
+          action,
+          reason,
+          desiredState: releaseDesiredState,
+          branch,
+          pullNumber: Number(pull.body?.number || 0),
+          reconciler: contract.reconciler || GITEA_RECONCILER_NAME,
+        });
+        proposal.status = proposal.autoAuthorization.merged ? 'committed' : 'authorized';
+      } catch (error) {
+        proposal.autoAuthorization = {
+          attempted: true,
+          succeeded: false,
+          error: String(error?.msg || error).slice(0, 300),
+        };
+      }
+    }
+    return proposal;
   } catch (error) {
     await restRequest('rpc/record_change_failure', { method: 'POST', body: { p_request_id: requestId, p_result: 'gitea-proposal-failed', p_error: String(error?.msg || 'Gitea proposal failed').slice(0, 1800) } }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function authorizeLocalEdgeComponentRelease(actor, {
+  requestId, action, reason, desiredState, branch, pullNumber, reconciler,
+}) {
+  const policy = platformReleaseApprovalPolicy(action, desiredState);
+  if (policy.mode !== 'owner-mfa' || policy.autoMerge !== true) {
+    throw { code: 409, msg: 'release is not eligible for owner MFA authorization' };
+  }
+  requireRecentAal2(actor, 'local edge component release authorization');
+  if (!Number.isInteger(pullNumber) || pullNumber < 1) {
+    throw { code: 502, msg: 'Gitea did not return a pull request number' };
+  }
+  await restRequest('change_approval', {
+    method: 'POST',
+    body: {
+      request_id: requestId,
+      approver_id: actor.sub,
+      reason,
+      status: 'intent',
+    },
+    prefer: 'return=minimal',
+  });
+  let reviewId = null;
+  try {
+    const review = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/reviews`, {
+      method: 'POST',
+      authToken: GITEA_REVIEW_TOKEN,
+      body: {
+        event: 'APPROVED',
+        body: `Local edge component release authorized by owner ${actor.sub} with recent MFA; correlation ${requestId}. Reason: ${reason}`,
+      },
+    });
+    reviewId = Number.isInteger(review.body?.id) ? review.body.id : null;
+    await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/merge`, {
+      method: 'POST',
+      body: { Do: 'merge', delete_branch_after_merge: false },
+    });
+    const pull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}`);
+    const merged = pull.body?.state === 'closed' && pull.body?.merged === true;
+    const mergeRevision = String(pull.body?.merge_commit_sha || '').toLowerCase();
+    if (!merged || !/^[0-9a-f]{40,64}$/.test(mergeRevision)) {
+      throw { code: 502, msg: 'owner-authorized local edge pull request was not merged' };
+    }
+    await assertVerifiedGovernedMerge(mergeRevision);
+    await restRequest('change_approval', {
+      method: 'PATCH',
+      query: `request_id=eq.${encodeURIComponent(requestId)}&approver_id=eq.${encodeURIComponent(actor.sub)}`,
+      body: {
+        status: 'applied',
+        gitea_review_id: reviewId,
+        error_code: null,
+        completed_at: new Date().toISOString(),
+      },
+      prefer: 'return=minimal',
+    });
+    await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'owner-mfa-authorized', reason, {
+      requestId,
+      phase: 'authorized',
+      targetType: 'platform-release',
+      payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, mergeRevision, mode: policy.mode })),
+    });
+    let reconciliationError = null;
+    try {
+      await convergeGovernedMerge({
+        requestId,
+        branch,
+        mergeRevision,
+        repository: giteaRepoName(),
+        reconciler: reconciler || PLATFORM_RELEASE_RECONCILER,
+      });
+    } catch (error) {
+      reconciliationError = String(error?.msg || error).slice(0, 300);
+      await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'reconciliation-queue-failed', reason, {
+        requestId,
+        phase: 'authorized',
+        targetType: 'platform-release',
+        payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, mergeRevision, reconciliationError })),
+      }).catch(() => undefined);
+    }
+    return {
+      attempted: true,
+      succeeded: true,
+      mode: policy.mode,
+      merged: true,
+      mergeRevision,
+      pullNumber,
+      reconciliationQueued: !reconciliationError,
+      reconciliationError,
+    };
+  } catch (error) {
+    await restRequest('change_approval', {
+      method: 'PATCH',
+      query: `request_id=eq.${encodeURIComponent(requestId)}&approver_id=eq.${encodeURIComponent(actor.sub)}`,
+      body: {
+        status: 'failed',
+        gitea_review_id: reviewId,
+        error_code: String(error?.msg || 'owner-mfa-authorization-failed').slice(0, 180),
+        completed_at: new Date().toISOString(),
+      },
+      prefer: 'return=minimal',
+    }).catch(() => undefined);
+    await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'failed', reason, {
+      requestId,
+      phase: 'failed',
+      targetType: 'platform-release',
+      payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, error: error?.msg || 'owner-mfa-authorization-failed' })),
+    }).catch(() => undefined);
     throw error;
   }
 }
@@ -1906,16 +2492,19 @@ async function readBody(req) {
 
 async function proxyAdminControlRequest(req, res, url) {
   let authorization = String(req.headers.authorization || '');
+  const requireAal2 = isMutationRequest(req);
   if (authorization) {
     // CLI/PAT requests retain their bearer credential, but are verified at the
-    // Console enforcement point before the request reaches DUPA.
-    await verifyAuthed(req);
+    // Console enforcement point before the request reaches DUPA. A bearer
+    // string never substitutes for the current admin role or recent AAL2 proof.
+    await verifyConsoleAdmin(req, { requireAal2 });
   } else {
     // Browser credentials never return to JavaScript. Resolve the opaque
     // HttpOnly cookie server-side and forward only the short-lived Supabase
     // access token. authenticate(req) also enforces Origin + CSRF on mutations.
     if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
     const session = await browserSessions.authenticate(req);
+    assertConsoleAdminActor(session.actor, { requireAal2 });
     authorization = `Bearer ${session.accessToken}`;
   }
 
@@ -2860,10 +3449,24 @@ const server = http.createServer(async (req, res) => {
   _httpReqs++;
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
+    if (p === '/serving-readyz') {
+      return json(res, 200, {
+        ready: true,
+        service: 'opensphere-console-backend',
+        mode: 'read-only-management-surface',
+        version: VERSION,
+      });
+    }
     if (p === '/readyz') {
       try { return json(res, 200, await requireSupabase()); }
-      catch {
-        return json(res, 503, { ready: false, required: true, error: 'Supabase data and identity authority unavailable' });
+      catch (error) {
+        return json(res, 503, {
+          ready: false,
+          required: true,
+          error: 'Supabase data and identity authority unavailable',
+          components: error?.readiness?.components || [],
+          checkedAt: error?.readiness?.checkedAt || new Date().toISOString(),
+        });
       }
     }
     if (p === '/metrics') {
@@ -2890,6 +3493,10 @@ const server = http.createServer(async (req, res) => {
           'cache-control': 'no-store',
         });
       }
+    }
+    if (p.startsWith('/api/modules') || p.startsWith('/api/module-operations')) {
+      const handled = await moduleOperationApi.handle(req, res, p, json);
+      if (handled) return;
     }
     if (p.startsWith('/api/admin/') && p !== '/api/admin/events') {
       try {
@@ -2985,6 +3592,15 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, await browserSessions.completeMfa(req, (await readBody(req)).code));
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'Console MFA verification failed' });
+      }
+    }
+    if (p === '/api/identity/session/touch' && req.method === 'POST') {
+      try {
+        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+        const result = await browserSessions.touch(req);
+        return json(res, 200, { session: result.session });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Browser session activity update failed' });
       }
     }
     if (p === '/api/identity/session/step-up' && req.method === 'POST') {
@@ -3146,11 +3762,30 @@ const server = http.createServer(async (req, res) => {
         if (!req.headers.authorization && browserSessions) {
           const result = await browserSessions.list(req);
           actor = result.auth.actor;
+          if (result.auth.authorityDegraded) actor = { ...actor, authorityDegraded: true };
           currentSession = result.items.find((item) => item.current) || null;
         } else {
-          actor = await verifyAuthed(req);
+          try {
+            actor = await verifyAuthed(req);
+          } catch (error) {
+            const match = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+            const cached = error?.code === 503 && match && browserSessions
+              ? browserSessions.cachedActorForAccessToken(match[1]) : null;
+            if (!cached) throw error;
+            actor = cached;
+          }
         }
-        const identity = userFromAuthRow(await getAuthUser(actor.sub), actor.displayName || actor.username || actor.sub);
+        let identity;
+        try {
+          identity = userFromAuthRow(await getAuthUser(actor.sub), actor.displayName || actor.username || actor.sub);
+        } catch (error) {
+          if (!actor.authorityDegraded) throw error;
+          identity = {
+            username: actor.username || actor.sub,
+            email: actor.username?.includes('@') ? actor.username : '',
+            displayName: actor.displayName || actor.username || actor.sub,
+          };
+        }
         return json(res, 200, {
           subject: actor.sub,
           username: identity.username || actor.username,
@@ -3159,6 +3794,8 @@ const server = http.createServer(async (req, res) => {
           groups: projectedSessionGroups(actor),
           permissions: actor.permissions || [],
           assurance: actor.assurance,
+          lastReauthenticatedAt: actor.lastReauthenticatedAt || null,
+          authorityDegraded: actor.authorityDegraded === true,
           session: currentSession,
         });
       } catch (e) {
@@ -3449,9 +4086,29 @@ const server = http.createServer(async (req, res) => {
         return json(res, authErrorStatus(e), { error: e.msg || 'State Change Authority status unavailable' });
       }
     }
+    if (p === '/api/platform/gitea/bootstrap/argocd-verification' && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req);
+        return json(res, 200, await bootstrapArgocdVerification(actor, await readBody(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Argo CD verification bootstrap failed' });
+      }
+    }
     if (p === '/api/platform/contracts' && req.method === 'GET') {
       try { await verifyConsoleAdmin(req); return json(res, 200, { items: await consumerContracts(), checkedAt: new Date().toISOString() }); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'consumer contracts unavailable' }); }
+    }
+    if (p === '/api/platform/releases/status' && req.method === 'GET') {
+      try { await verifyConsoleAdmin(req); return json(res, 200, await platformReleaseStatus()); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'Platform Release status unavailable' }); }
+    }
+    if (p === '/api/platform/releases/component-target' && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req, { requireAal2: true });
+        return json(res, 200, await generatePlatformComponentTarget(actor, await readBody(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Platform component release target generation failed' });
+      }
     }
     const changeTemplateStatusPath = p.match(/^\/api\/platform\/change-templates\/([a-z0-9-]+)\/status$/);
     if (changeTemplateStatusPath && req.method === 'GET') {

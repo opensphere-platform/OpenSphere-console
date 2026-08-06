@@ -47,12 +47,20 @@ test('Ceph prerequisite requests are immutable templates assigned to a dedicated
   assert.match(server, /CEPH_PREREQUISITE_TEMPLATE/);
   assert.match(server, /ceph-rook-prerequisite/);
   assert.match(server, /rook-ceph\/v1\.20\.2/);
+  assert.match(server, /opensphere\.ceph\.rook-prerequisite\/v3/);
+  assert.match(server, /data-path-verification-runtime/);
+  assert.match(server, /opensphere-ceph-verification-default-deny/);
+  assert.match(server, /opensphere-ceph-runtime[^]*version: '1\.4\.0'/);
+  assert.doesNotMatch(server, /nbd-preparer|nbdDevicePreparer/);
   assert.match(server, /6e0f10f5ca54e618fb90dd149dc9dfbc8a4932955bff2227b692fb32069daf52/);
   assert.match(server, /change template fields are immutable/);
   assert.match(server, /ceph-prerequisite-reconciler/);
   assert.match(server, /reconciler is outside the configured allowlist/);
+  assert.match(server, /platform-release-reconciler/);
+  assert.match(deploy, /GITEA_RECONCILER_NAMES[^\n]*platform-release-reconciler/);
   assert.match(server, /reconcile receipt identity does not match the assigned consumer reconciler/);
   assert.match(server, /changeTemplateRequestStatus/);
+  assert.match(server, /payload_digest=eq\.\$\{encodeURIComponent\(payloadDigest\)\}/);
   assert.match(server, /changeTemplateRequestPhase/);
   assert.match(server, /AwaitingApproval/);
   assert.match(server, /changeTemplateStatusPath/);
@@ -171,4 +179,24 @@ test('Gitea supply-chain policy requires signed commits and server-only signing 
   assert.match(bootstrap, /branch_protections\/main/);
   assert.match(bootstrap, /Invoke-GiteaRequest 'PATCH'/);
   assert.match(server, /merged commit signature is not verified/);
+});
+
+test('Argo CD verification bootstrap is a fixed reviewed declaration and accepts no repository inputs', () => {
+  const bootstrapAction = server.slice(
+    server.indexOf('async function bootstrapArgocdVerification'),
+    server.indexOf('function uuid('),
+  );
+  assert.match(server, /platform-delivery\/verification\/opensphere-platform-delivery-verification\.json/);
+  assert.match(server, /bootstrap argocd verification/);
+  assert.match(bootstrapAction, /console\.git\.change/);
+  assert.match(bootstrapAction, /MFA assurance aal2/);
+  assert.match(bootstrapAction, /\['reason', 'confirm'\]/);
+  assert.match(bootstrapAction, /authToken: GITEA_REVIEW_TOKEN/);
+  assert.match(bootstrapAction, /assertVerifiedGovernedMerge\(mergeRevision\)/);
+  assert.ok(
+    bootstrapAction.indexOf("'attempt'") < bootstrapAction.indexOf("method: existing ? 'PUT' : 'POST'"),
+    'durable intent audit must precede the Gitea write',
+  );
+  assert.doesNotMatch(bootstrapAction, /input\.(?:path|repository|manifest|content|branch|url)/);
+  assert.match(server, /\/api\/platform\/gitea\/bootstrap\/argocd-verification/);
 });

@@ -57,6 +57,39 @@ subjects:
     name: opensphere-console-dupa-controller
     namespace: opensphere-console
 ---
+# Platform Delivery evidence is read-only and namespace-scoped. The controller
+# reads only the canonical Argo CD runtime, Application and AppProject; it
+# cannot mutate runtime or desired state.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dupa-platform-delivery-evidence-reader
+  namespace: argocd
+rules:
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    resourceNames: [argocd-repo-server, argocd-server, argocd-applicationset-controller]
+    verbs: [get]
+  - apiGroups: ["apps"]
+    resources: [statefulsets]
+    resourceNames: [argocd-application-controller]
+    verbs: [get]
+  - apiGroups: ["argoproj.io"]
+    resources: [applications, appprojects]
+    resourceNames: [opensphere-platform-delivery-verify, opensphere-platform-delivery]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dupa-platform-delivery-evidence-reader
+  namespace: argocd
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: dupa-platform-delivery-evidence-reader }
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-dupa-controller
+    namespace: opensphere-console
+---
 # The canonical admission red-test proves the CronJob image-integrity policy by
 # replaying the backup CronJob through a server dry-run.  Kubernetes charges a
 # dry-run PUT against the `update` verb, and this workload lives outside the
@@ -105,12 +138,89 @@ rules:
     verbs: [get]
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterrolebindings], verbs: [get, list] }
   - { apiGroups: ["observability.opensphere.io"], resources: [observabilitybindings], verbs: [get, list] }
+  - apiGroups: ["pkg.crossplane.io"]
+    resources: [providers]
+    resourceNames: [crossplane-contrib-provider-helm]
+    verbs: [get]
+  - apiGroups: ["helm.crossplane.io"]
+    resources: [providerconfigs]
+    resourceNames: [default]
+    verbs: [get]
+  # PFS establishment is a live read projection. The DUPA controller never
+  # creates or mutates Foundation contracts; the Foundation control plane owns
+  # their status and consumer-protect finalizers.
+  - apiGroups: ["foundation.opensphere.io"]
+    resources:
+      - foundationmodels
+      - foundationmoduledescriptors
+      - foundationclaims
+      - foundationbindings
+      - identitydirectoryclaims
+      - identitydirectorybindings
+    verbs: [get, list, watch]
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    resourceNames: [foundation-control-plane]
+    verbs: [get]
   - { apiGroups: ["authentication.k8s.io"], resources: [tokenreviews], verbs: [create] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: { name: dupa-console-evidence-reader }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dupa-console-evidence-reader }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
+---
+# Delivery evidence is strictly namespaced and read-only.  This avoids turning
+# the Console controller into a second Argo CD administrator while still
+# proving the exact control-plane and Application that own GitOps delivery.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-platform-delivery-evidence-reader
+  namespace: argocd
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: [applications, appprojects]
+    resourceNames: [opensphere-platform-delivery-verify, opensphere-platform-delivery]
+    verbs: [get]
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    resourceNames: [argocd-repo-server, argocd-server, argocd-applicationset-controller]
+    verbs: [get]
+  - apiGroups: ["apps"]
+    resources: [statefulsets]
+    resourceNames: [argocd-application-controller]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-platform-delivery-evidence-reader
+  namespace: argocd
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-platform-delivery-evidence-reader }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
+---
+# Crossplane is an optional SRL-L4 adapter. Once selected, its fixed control
+# plane and approved Provider become part of Delivery readiness.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-crossplane-evidence-reader
+  namespace: crossplane-system
+rules:
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    resourceNames: [crossplane]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-crossplane-evidence-reader
+  namespace: crossplane-system
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-crossplane-evidence-reader }
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-dupa-controller, namespace: opensphere-console }
 ---
@@ -175,8 +285,8 @@ rules:
     verbs: [get, list, watch]
   - { apiGroups: [storage.k8s.io], resources: [storageclasses], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [snapshot.storage.k8s.io], resources: [volumesnapshotclasses], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [snapshot.storage.k8s.io], resources: [volumesnapshots], verbs: [get, list, watch, create, update, patch, delete] }
-  - { apiGroups: [ceph.rook.io, csi.ceph.io], resources: ["*"], verbs: [get, list, watch, create, update, patch, delete] }
+  - { apiGroups: [snapshot.storage.k8s.io], resources: [volumesnapshots], verbs: [get, list, watch, create, update, patch] }
+  - { apiGroups: [ceph.rook.io, csi.ceph.io], resources: ["*"], verbs: [get, list, watch, create, update, patch] }
 ---
 # AI domain subShell profile. cluster observer를 상속하지 않고 module rbac.yaml이 선언한
 # read/write 집합만 부여한다.
@@ -621,7 +731,7 @@ rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [clusterroles]
     resourceNames: [opensphere-module-cluster-observer-v1, opensphere-module-cluster-infrastructure-manager-v1, opensphere-module-ai-domain-operator-v1]
-    verbs: [get, bind]
+    verbs: [bind]
   - { apiGroups: [rbac.authorization.k8s.io], resources: [clusterrolebindings], verbs: [get, list, create, patch, delete] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -655,7 +765,7 @@ spec:
         - name: controller
           # edge is released as an immutable GHCR digest. A local override must also
           # satisfy the managed-workload image-integrity admission policy.
-          image: ghcr.io/opensphere-platform/opensphere-console-dupa-controller@sha256:3f8e68d59417ea249725a083277eb43101571dd4014b0c900abcbb4e69fb44ed
+          image: ghcr.io/opensphere-platform/opensphere-console-dupa-controller@sha256:9346ba0135ac19908ef162c60c5bdc8dbe85dd48d4e1a7c9cd928a1855a889c1
           imagePullPolicy: Always
           env:
             - { name: NAMESPACE, value: opensphere-console }
@@ -671,6 +781,10 @@ spec:
             # 모든 Console 권한은 Supabase-backed Console identity service가 단일 검증한다.
             - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
             - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
+            - { name: HIS_STATUS_URL, value: http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/his/internal/status }
+            - { name: HIS_STATUS_MAX_AGE_MS, value: "60000" }
+            - { name: FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS, value: "3600000" }
+            - { name: RECOVERY_EVIDENCE_MAX_AGE_MS, value: "86400000" }
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - { name: SUPABASE_REST_URL, value: http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000 }

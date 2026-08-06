@@ -1,7 +1,9 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
+import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
+import { extensionRouteTarget, prioritizeRequestedHost } from './extension-load-order';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
 export type { PluginPage, NavNode } from '@opensphere/sdk';
@@ -91,9 +93,22 @@ export interface ManualContribution {
   documents: ManualContributionDocument[];
 }
 
+export interface ManagementInventoryItem {
+  id: string;
+  title: string;
+  navBand: string;
+  /** Canonical ownership boundary. Child plugins must not be flattened into Main Shell navigation. */
+  hostRef: string;
+  kind?: 'subShell' | 'plugin';
+  icon?: string;
+  desiredState?: string;
+  phase?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class ExtensionHostService {
   private auth = inject(AuthService);
+  private http = inject(HttpService);
   private notif = inject(NotificationService);
   private router = inject(Router);
   private activeModules = new Map<string, PluginModule>();
@@ -116,6 +131,13 @@ export class ExtensionHostService {
    */
   readonly pluginLoadStates = signal<Record<string, PluginLoadState>>({});
   readonly pages = signal<PluginPage[]>([]);
+  /** Host-owned projection. Unlike pages, this inventory survives inactive or
+   * degraded serving contributions and never causes guest assets to load. */
+  readonly managementInventory = signal<ManagementInventoryItem[]>([]);
+  /** Enabled, verified Registry entries that are allowed to own the Console's
+   * first-level product navigation. Plugins and disabled subShells never enter
+   * this set; their lifecycle remains available only on management/host pages. */
+  readonly primarySubShellIds = signal<ReadonlySet<string>>(new Set<string>());
   readonly failures = signal<PluginFailure[]>([]);
   /** 플러그인별 기여 내비 트리(nav:contribute) — pluginId → 재귀 NavNode[] */
   readonly navTrees = signal<Record<string, NavNode[]>>({});
@@ -136,6 +158,7 @@ export class ExtensionHostService {
   async load(): Promise<void> {
     this.startRegistryWatch();
     this.loadState.set('loading');
+    void this.loadManagementInventory();
     try {
       let reg: RegistryV3;
       try {
@@ -150,15 +173,30 @@ export class ExtensionHostService {
         return;
       }
       const activePlugins = (reg.plugins ?? []).filter((entry) => entry.available === true);
+			this.primarySubShellIds.set(new Set(activePlugins
+				.filter((entry) => (entry.componentKind ?? entry.kind) === 'subShell' && (entry.hostRef ?? 'main') === 'main')
+				.map((entry) => entry.id)));
 			this.registryFingerprint = this.fingerprint(activePlugins, reg.trustedKeys ?? {});
       // 1단 아이콘 맵(registry 전사값). registry에는 Enabled 플러그인만 들어오므로 그대로 사용.
-      this.pluginIcons.set(Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])));
+      this.pluginIcons.update((current) => ({ ...current, ...Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])) }));
       this.registryEntries = activePlugins;
       // Main Shell은 직속 consumer만 활성화한다. subShell의 child는 subShell-scoped host를 통해
       // mountChild()로 활성화되어 위계와 capability 경계를 보존한다.
-      await Promise.all(activePlugins
-        .filter((e) => (e.hostRef ?? 'main') === 'main')
-        .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+      const mainPlugins = activePlugins.filter((e) => (e.hostRef ?? 'main') === 'main');
+      const orderedMainPlugins = prioritizeRequestedHost(mainPlugins, window.location.pathname);
+      const requestedHost = extensionRouteTarget(window.location.pathname).hostId;
+      if (requestedHost && orderedMainPlugins[0]?.id === requestedHost) {
+        // Cold deep links are an administrator-facing management surface. Do
+        // not make the requested product wait behind unrelated subShell
+        // verification; establish it first, then continue normal background
+        // activation of the remaining registry entries.
+        await this.loadOne(orderedMainPlugins[0], reg.trustedKeys ?? {}, HOST_API_VERSION);
+        await Promise.all(orderedMainPlugins.slice(1)
+          .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+      } else {
+        await Promise.all(orderedMainPlugins
+          .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+      }
     } finally {
       this.loadState.set('ready');
     }
@@ -170,6 +208,7 @@ export class ExtensionHostService {
    * 셸 이미지·파드는 불변 — registry 변화만으로 메뉴가 증감한다.
    */
   async reload(): Promise<void> {
+    await this.loadManagementInventory();
     // CustomElementRegistry는 unregister를 지원하지 않는다. 활성 guest를 같은 document에서
     // 재평가하면 이전 생성자와 새 번들이 섞이므로 registry 변경은 document 경계에서 교체한다.
     if (this.activeModules.size > 0) {
@@ -185,7 +224,46 @@ export class ExtensionHostService {
     this.pluginIcons.set({});
     this.apiBaseByPlugin.set({});
     this.pluginLoadStates.set({});
+    this.primarySubShellIds.set(new Set<string>());
     await this.load();
+  }
+
+  private async loadManagementInventory(): Promise<void> {
+    try {
+      const [catalogResponse, registrationResponse] = await Promise.all([
+        fetchWithTimeout('/api/admin/plugins/catalog', { cache: 'no-store' }),
+        fetchWithTimeout('/api/admin/plugins/registrations', { cache: 'no-store' }),
+      ]);
+      if (!catalogResponse.ok || !registrationResponse.ok) return;
+      const catalog = await catalogResponse.json() as { items?: Array<Record<string, unknown>> };
+      const registrations = await registrationResponse.json() as { items?: Array<Record<string, unknown>> };
+      const registrationByName = new Map((registrations.items || []).map((item) => [String(item['name'] || ''), item]));
+      const items: ManagementInventoryItem[] = (catalog.items || []).flatMap((item) => {
+        const id = String(item['name'] || '');
+        if (!id) return [];
+        const nav = item['nav'] && typeof item['nav'] === 'object' ? item['nav'] as Record<string, unknown> : {};
+        const registration = registrationByName.get(id);
+        const status = registration?.['status'] && typeof registration['status'] === 'object'
+          ? registration['status'] as Record<string, unknown> : {};
+        return [{
+          id,
+          title: String(item['displayName'] || id),
+          navBand: String(nav['band'] || '운영 Operate'),
+          hostRef: String(item['hostRef'] || 'main'),
+          kind: item['kind'] === 'subShell' ? 'subShell' : 'plugin',
+          icon: String(nav['icon'] || ''),
+          desiredState: String(registration?.['desiredState'] || ''),
+          phase: String(status['phase'] || 'NotInstalled'),
+        }];
+      });
+      this.managementInventory.set(items);
+      this.pluginIcons.update((current) => ({
+        ...Object.fromEntries(items.map((item) => [item.id, item.icon || ''])),
+        ...current,
+      }));
+    } catch (error) {
+      console.warn('[extension-host] management inventory unavailable:', error);
+    }
   }
 
   private startRegistryWatch(): void {
@@ -306,18 +384,26 @@ export class ExtensionHostService {
 			if (manifest.manifestVersion === 3 && typeof mod.deactivate !== 'function') {
 				throw new Error('deactivate() export 없음 (Production lifecycle 계약 위반)');
 			}
-      // 부모가 page를 등록하기 전에 승인된 child의 custom element를 먼저 정의한다.
-      // 그렇지 않으면 deep link 첫 렌더에서 Foundation이 정상 Activated child를
-      // "아직 로드되지 않음"으로 오인하는 일시적 경쟁 조건이 발생한다.
-      if (manifest.kind === 'subShell') {
-        await Promise.all(this.registryEntries
-          .filter((child) => (child.hostRef ?? 'main') === e.id)
-          .map((child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION)));
+      const childEntries = manifest.kind === 'subShell'
+        ? this.registryEntries.filter((child) => (child.hostRef ?? 'main') === e.id)
+        : [];
+      const routeTarget = extensionRouteTarget(window.location.pathname);
+      const requestedChild = routeTarget.hostId === e.id
+        ? childEntries.find((child) => child.id === routeTarget.childId)
+        : undefined;
+      // A direct child deep link still defines that child before the parent
+      // mounts, preserving the Foundation outlet contract. A host overview,
+      // however, must not remain blank while every optional child is verified.
+      if (requestedChild) {
+        await this.loadOne(requestedChild, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION);
       }
       await mod.activate(context);
       this.activeModules.set(e.id, mod);
       this.setPluginLoadState(e.id, 'ready');
       console.info(`[extension-host] plugin '${e.id}' 검증 통과(무결성·서명·호환·권한) 후 활성화`);
+      await Promise.all(childEntries
+        .filter((child) => child !== requestedChild)
+        .map((child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION)));
     } catch (err) {
       try { await mod?.deactivate?.(); } catch (cleanupError) { console.warn(`[extension-host] plugin '${e.id}' cleanup 실패:`, cleanupError); }
       console.warn(`[extension-host] plugin '${e.id}' 제외:`, err);
@@ -345,6 +431,8 @@ export class ExtensionHostService {
 				manifestSha256: entry.manifestSha256,
 				signature: entry.signature,
 				keyId: entry.keyId,
+				kind: entry.kind,
+				componentKind: entry.componentKind,
 				hostRef: entry.hostRef,
 				hostCompat: entry.hostCompat,
 				hostApiVersion: entry.hostApiVersion,
@@ -546,33 +634,11 @@ export class ExtensionHostService {
     if (target.origin !== location.origin || !allowedBases.some((allowed) => target.pathname === allowed || target.pathname.startsWith(`${allowed}/`))) {
       throw new Error('plugin API 요청이 승인된 same-origin base 밖에 있음');
     }
+    // Main Shell and every extension share one command transport. This keeps
+    // CSRF, correlation, idempotency, timeout and MFA continuation semantics
+    // identical instead of letting each plugin invent a second control path.
     const headers = new Headers(input instanceof Request ? input.headers : init.headers);
-		headers.delete('authorization');
-		headers.delete('x-os-id-token');
-		headers.delete('x-opensphere-user');
-		headers.delete('x-opensphere-actor');
-		const correlationId = headers.get('X-OS-Correlation-ID');
-		if (!correlationId || !/^[A-Za-z0-9._:-]{1,128}$/.test(correlationId)) headers.set('X-OS-Correlation-ID', crypto.randomUUID());
-		const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-		if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-Idempotency-Key')) {
-			headers.set('X-OS-Idempotency-Key', crypto.randomUUID());
-		}
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-CSRF-Token')) {
-      const prefix = '__Host-opensphere_csrf=';
-      const value = document.cookie.split(';').map((item) => item.trim()).find((item) => item.startsWith(prefix));
-      if (value) headers.set('X-OS-CSRF-Token', decodeURIComponent(value.slice(prefix.length)));
-    }
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 15000);
-    if (init.signal) {
-      if (init.signal.aborted) controller.abort();
-      else init.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
-    try {
-      return await fetchWithTimeout(target, { ...init, headers, signal: controller.signal });
-    } finally {
-      window.clearTimeout(timeout);
-    }
+    return this.http.request(target, { ...init, headers });
   }
 
   private normalizeManualContribution(pluginId: string, input: ManualContribution): ManualContribution {

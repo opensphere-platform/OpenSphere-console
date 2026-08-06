@@ -4,8 +4,10 @@ param(
   [string]$SourceRevision = '',
   [string]$Platform = '',
   [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git',
+  [string]$SetupRepository = 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git',
+  [string]$SetupSourcePath = '',
   [switch]$UseExistingRegistryLogin,
-  [ValidateSet('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
+  [ValidateSet('console', 'cliArtifacts', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
   [string[]]$Components = @('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
 )
 
@@ -133,6 +135,7 @@ $platformRoot = Split-Path $repoRoot -Parent
 $workspace = Join-Path $platformRoot ".codex-tmp\local-edge-$($SourceRevision.Substring(0, 12))"
 $consoleCheckout = Join-Path $workspace 'OpenSphere-console'
 $sdkCheckout = Join-Path $workspace 'OpenSphere-SDK'
+$setupCheckout = Join-Path $workspace 'OpenSphere-Setup-CLI'
 $metadataRoot = Join-Path $workspace 'metadata'
 
 if (Test-Path -LiteralPath $workspace) {
@@ -147,9 +150,83 @@ Write-Host "[immutable] $localTag"
 Write-Host "[platform] $Platform"
 Write-Host "[policy] build-authority=localhost, release-class=pre-ga, ga-eligible=false"
 
-Write-Host '[step 01/06] Prepare clean Console and SDK source'
+Write-Host '[step 01/06] Prepare clean Console, SDK and governed Setup source'
 Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRevision
 Invoke-Checked git clone --depth 1 --branch main $SdkRepository $sdkCheckout
+$backendSelected = $Components.Count -eq 0 -or $Components -contains 'backend'
+$setupSourceRevision = ''
+if ($backendSelected) {
+  if ($SetupSourcePath) {
+    $resolvedSetupSource = (Resolve-Path -LiteralPath $SetupSourcePath).Path
+    $setupDirty = & git -C $resolvedSetupSource status --short
+    if ($LASTEXITCODE -ne 0 -or $setupDirty) {
+      throw 'SetupSourcePath must be a clean governed Setup CLI Git worktree.'
+    }
+    $setupSourceRevision = (& git -C $resolvedSetupSource rev-parse HEAD).Trim()
+    Invoke-Checked git -C $resolvedSetupSource worktree add --detach $setupCheckout $setupSourceRevision
+  } else {
+    Invoke-Checked git clone --depth 1 --branch main $SetupRepository $setupCheckout
+    $setupSourceRevision = (& git -C $setupCheckout rev-parse HEAD).Trim()
+  }
+  if ($setupSourceRevision -notmatch '^[0-9a-f]{40}$') {
+    throw 'SetupSourceRevision must resolve to a full lowercase Git commit.'
+  }
+  $setupSourceLockPath = Join-Path $consoleCheckout 'backend\opensphere-console-backend\setup-source.lock'
+  $expectedSetupSourceRevision = (Get-Content -LiteralPath $setupSourceLockPath -Raw).Trim()
+  if ($expectedSetupSourceRevision -notmatch '^[0-9a-f]{40}$') {
+    throw 'The governed Backend setup-source.lock is invalid.'
+  }
+  if ($setupSourceRevision -ne $expectedSetupSourceRevision) {
+    throw "Setup source revision $setupSourceRevision differs from governed lock $expectedSetupSourceRevision."
+  }
+  Write-Host "[setup] $setupSourceRevision"
+}
+
+function Assert-LocalEdgeImageMetadata {
+  param(
+    [Parameter(Mandatory)][string]$Repository,
+    [Parameter(Mandatory)][string]$Digest,
+    [Parameter(Mandatory)][string]$ExpectedSourceRevision,
+    [Parameter(Mandatory)][string]$ExpectedReleaseTag,
+    [Parameter(Mandatory)][string]$ExpectedPlatform
+  )
+
+  $reference = "${Repository}@${Digest}"
+  $raw = & docker buildx imagetools inspect --format '{{json .Image}}' $reference
+  if ($LASTEXITCODE -ne 0) {
+    throw "OCI metadata inspection failed for $reference"
+  }
+  try {
+    $image = ($raw -join "`n") | ConvertFrom-Json
+  } catch {
+    throw "OCI metadata inspection returned invalid JSON for ${reference}: $($_.Exception.Message)"
+  }
+  $actualPlatform = "$([string]$image.os)/$([string]$image.architecture)"
+  if ($actualPlatform -ne $ExpectedPlatform) {
+    throw "OCI platform mismatch for ${reference}: $actualPlatform, expected $ExpectedPlatform"
+  }
+  $expectedLabels = [ordered]@{
+    'io.opensphere.channel' = 'edge'
+    'io.opensphere.source-revision' = $ExpectedSourceRevision
+    'io.opensphere.release-tag' = $ExpectedReleaseTag
+    'org.opencontainers.image.version' = $ExpectedReleaseTag
+    'opensphere.io/build-authority' = 'localhost'
+    'opensphere.io/release-class' = 'pre-ga'
+    'opensphere.io/ga-eligible' = 'false'
+  }
+  foreach ($entry in $expectedLabels.GetEnumerator()) {
+    $property = $image.config.Labels.PSObject.Properties[$entry.Key]
+    $actual = if ($property) { [string]$property.Value } else { '' }
+    if ($actual -ne [string]$entry.Value) {
+      throw "OCI label mismatch for ${reference}: $($entry.Key)='$actual', expected '$($entry.Value)'"
+    }
+  }
+  $remoteDigest = Get-RemoteDigest -Reference $reference
+  if ($remoteDigest -ne $Digest) {
+    throw "OCI digest mismatch for ${reference}: $remoteDigest, expected $Digest"
+  }
+  Write-Host "[preflight] $reference metadata and $ExpectedPlatform runtime verified"
+}
 
 Write-Host '[step 02/06] Declare the CLI platforms this host can build'
 # The macOS CLI reaches the Keychain through cgo against Security.framework, so it
@@ -179,9 +256,13 @@ if ($UseExistingRegistryLogin) {
   }
 }
 
-$images = @(
+$allImages = @(
   [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $workspace; File = (Join-Path $consoleCheckout 'Dockerfile') },
-  [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile') },
+  # CLI artifacts are a Console-native auxiliary workload with an independent
+  # build and rollout. They are intentionally not added to the 13-component
+  # Platform Release lock merely to decouple an Angular UI build.
+  [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile') },
+  [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'); SetupContext = $setupCheckout },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'oaaGateway'; Image = 'opensphere-console-oaa-gateway'; Context = (Join-Path $consoleCheckout 'backend\opensphere-console-oaa-gateway'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-oaa-gateway\Dockerfile') },
   [ordered]@{ Key = 'oaaGovernedAdapter'; Image = 'opensphere-oaa-governed-adapter'; Context = (Join-Path $consoleCheckout 'backend\oaa-governed-adapter'); File = (Join-Path $consoleCheckout 'backend\oaa-governed-adapter\Dockerfile') },
@@ -194,12 +275,23 @@ $images = @(
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
+$canonicalImages = @($allImages | Where-Object { $_.Key -ne 'cliArtifacts' })
 $requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
-$images = @($images | Where-Object { $requestedComponents.Contains($_.Key) })
+$images = @($allImages | Where-Object { $requestedComponents.Contains($_.Key) })
 if (-not $images.Count) { throw 'At least one Console component must be selected.' }
+$integratedPublication = $images.Count -eq $canonicalImages.Count `
+  -and -not ($images.Key -contains 'cliArtifacts') `
+  -and @($canonicalImages | Where-Object { -not $requestedComponents.Contains($_.Key) }).Count -eq 0
+$partialPublication = -not $integratedPublication
+$integratedAnchorBefore = if ($partialPublication -and ($images | Where-Object { $_.Key -eq 'console' })) {
+  Get-RemoteDigest -Reference "$Registry/opensphere-console:edge"
+} else {
+  $null
+}
 
 Write-Host "[step 04/06] Build and push $($images.Count) host-native images"
+Write-Host "[scope] $($images.Key -join ', ')"
 $digests = [ordered]@{}
 for ($index = 0; $index -lt $images.Count; $index += 1) {
   $item = $images[$index]
@@ -221,15 +313,29 @@ for ($index = 0; $index -lt $images.Count; $index += 1) {
     '--label', 'opensphere.io/release-class=pre-ga',
     '--label', 'opensphere.io/ga-eligible=false',
     '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local',
-    '--file', $item.File,
-    $item.Context
+    '--file', $item.File
   )
+  if ($item.Key -eq 'backend') {
+    if (-not $setupSourceRevision -or -not (Test-Path -LiteralPath $item.SetupContext)) {
+      throw 'Backend build requires the clean governed Setup CLI context.'
+    }
+    $arguments += @(
+      '--build-context', "setup-cli=$($item.SetupContext)",
+      '--build-arg', "SETUP_SOURCE_REVISION=$setupSourceRevision"
+    )
+  }
+  $arguments += $item.Context
   Invoke-Checked docker @arguments
   $metadata = Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json
   $digest = $metadata.'containerimage.digest'
   if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
     throw "Build did not return a canonical digest for $repository"
   }
+  # This is the only promotion path. Fail before any date/channel tag moves if
+  # Buildx produced the wrong platform or if any policy label is absent/stale.
+  Assert-LocalEdgeImageMetadata -Repository $repository -Digest $digest `
+    -ExpectedSourceRevision $SourceRevision -ExpectedReleaseTag $releaseTag `
+    -ExpectedPlatform $Platform
   $digests[$item.Key] = $digest
   Write-Host "[pushed] ${repository}:$localTag -> $digest"
 }
@@ -249,66 +355,56 @@ foreach ($item in $images) {
     sourceRevision = $SourceRevision
   }
 }
-$publication = if ($componentMode) {
-  [ordered]@{
-    apiVersion = 'release.opensphere.io/v1alpha1'
-    kind = 'OpenSphereEdgeComponentPublication'
-    releaseScope = 'component'
-    channel = 'edge'
-    releaseTag = $releaseTag
-    immutableTag = $localTag
-    source = 'https://github.com/opensphere-platform/OpenSphere-console'
-    sourceRevision = $SourceRevision
-    buildAuthority = 'localhost'
-    releaseClass = 'pre-ga'
-    gaEligible = $false
-    supportedPlatforms = @($Platform)
-    selectedComponents = @($images | ForEach-Object { $_.Key })
-    components = $componentEvidence
-  }
-} else {
-  [ordered]@{
-    apiVersion = 'release.opensphere.io/v1alpha1'
-    kind = 'OpenSphereReleaseBOM'
-    releaseScope = 'integrated'
-    channel = 'edge'
-    status = 'Active'
-    releaseTag = $releaseTag
-    immutableTag = $localTag
-    source = 'https://github.com/opensphere-platform/OpenSphere-console'
-    sourceRevision = $SourceRevision
-    buildAuthority = 'localhost'
-    releaseClass = 'pre-ga'
-    gaEligible = $false
-    supportedPlatforms = @($Platform)
-    components = $componentEvidence
-  }
+$bom = [ordered]@{
+  apiVersion = 'release.opensphere.io/v1alpha1'
+  kind = $partialPublication ? 'OpenSphereEdgeComponentPublication' : 'OpenSphereReleaseBOM'
+  publicationScope = $partialPublication ? 'ComponentSet' : 'CompleteConsoleRelease'
+  channel = 'edge'
+  status = 'Active'
+  releaseTag = $releaseTag
+  immutableTag = $localTag
+  source = 'https://github.com/opensphere-platform/OpenSphere-console'
+  sourceRevision = $SourceRevision
+  buildAuthority = 'localhost'
+  releaseClass = 'pre-ga'
+  gaEligible = $false
+  supportedPlatforms = @($Platform)
+  components = $componentEvidence
 }
-$publicationPath = Join-Path $workspace $(if ($componentMode) { 'opensphere-edge-component-publication.json' } else { 'opensphere-local-release-bom.json' })
-$publication | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $publicationPath -Encoding utf8
+$bomPath = Join-Path $workspace ($partialPublication ? 'opensphere-local-component-publication.json' : 'opensphere-local-release-bom.json')
+$bom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bomPath -Encoding utf8
 
-Write-Host '[step 06/06] Advance edge atomically with Console anchor last'
+Write-Host '[step 06/06] Advance selected component tags without moving a partial Console anchor'
 foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
   Set-RemoteTag -Repository "$Registry/$($item.Image)" -Digest $digests[$item.Key] -Tag edge
 }
 $console = $images | Where-Object { $_.Key -eq 'console' }
-if ($console) {
+if ($console -and -not $partialPublication) {
   Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+}
+if ($console -and $partialPublication) {
+  $integratedAnchorAfter = Get-RemoteDigest -Reference "$Registry/opensphere-console:edge"
+  if ($integratedAnchorAfter -ne $integratedAnchorBefore) {
+    throw "Partial publication moved the integrated Console edge anchor: before=$integratedAnchorBefore after=$integratedAnchorAfter"
+  }
 }
 
 foreach ($item in $images) {
-  $actual = Get-RemoteDigest -Reference "$Registry/$($item.Image):edge"
+  $verificationTag = if ($partialPublication -and $item.Key -eq 'console') { $localTag } else { 'edge' }
+  $actual = Get-RemoteDigest -Reference "$Registry/$($item.Image):$verificationTag"
   if ($actual -ne $digests[$item.Key]) {
-    throw "Final edge verification failed for $($item.Image)"
+    throw "Final publication verification failed for $($item.Image):$verificationTag"
   }
 }
 
 Write-Host '[success] Local edge publish completed'
 Write-Host "[release] $releaseTag"
 Write-Host "[immutable] $localTag"
-if ($console) {
+if ($console -and -not $partialPublication) {
   Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
+} elseif ($console) {
+  Write-Host "[anchor] preserved $Registry/opensphere-console@$integratedAnchorBefore"
 } else {
   Write-Host '[anchor] not selected; component-only edge publication'
 }
-Write-Host "[evidence] $publicationPath"
+Write-Host "[bom] $bomPath"

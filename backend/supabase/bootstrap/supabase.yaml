@@ -86,6 +86,10 @@ spec:
             exec: { command: ["/bin/sh", "-c", "pg_isready -U postgres -d postgres"] }
             initialDelaySeconds: 10
             periodSeconds: 5
+          startupProbe:
+            exec: { command: ["/bin/sh", "-c", "pg_isready -U postgres -d postgres"] }
+            failureThreshold: 60
+            periodSeconds: 5
           livenessProbe:
             exec: { command: ["/bin/sh", "-c", "pg_isready -U postgres -d postgres"] }
             initialDelaySeconds: 30
@@ -123,6 +127,23 @@ spec:
     spec:
       serviceAccountName: opensphere-supabase-auth
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      initContainers:
+        - name: wait-for-postgres
+          image: docker.io/supabase/postgres:17.6.1.136
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - >-
+              until PGPASSWORD="$POSTGRES_PASSWORD" psql -h opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local -U supabase_auth_admin -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
       containers:
         - name: auth
           image: docker.io/supabase/gotrue:v2.189.0
@@ -153,6 +174,7 @@ spec:
             - { name: GOTRUE_SECURITY_CAPTCHA_ENABLED, value: "false" }
           ports: [{ name: http, containerPort: 9999 }]
           readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 5, periodSeconds: 5 }
+          startupProbe: { httpGet: { path: /health, port: http }, failureThreshold: 60, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 50m, memory: 96Mi }
@@ -182,6 +204,23 @@ spec:
     spec:
       serviceAccountName: opensphere-supabase-rest
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      initContainers:
+        - name: wait-for-postgres
+          image: docker.io/supabase/postgres:17.6.1.136
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - >-
+              until PGPASSWORD="$POSTGRES_PASSWORD" psql -h opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local -U authenticator -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
       containers:
         - name: rest
           image: docker.io/postgrest/postgrest:v14.12
@@ -200,6 +239,7 @@ spec:
             - { name: PGRST_DB_MAX_ROWS, value: "1000" }
           ports: [{ name: http, containerPort: 3000 }, { name: admin, containerPort: 3001 }]
           readinessProbe: { httpGet: { path: /ready, port: admin }, initialDelaySeconds: 5, periodSeconds: 5 }
+          startupProbe: { httpGet: { path: /live, port: admin }, failureThreshold: 60, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /live, port: admin }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 50m, memory: 64Mi }
@@ -250,6 +290,10 @@ spec:
               valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
             - { name: DATABASE_URL, value: "postgres://supabase_storage_admin:$(POSTGRES_PASSWORD)@opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local:5432/postgres" }
             - { name: POSTGREST_URL, value: http://opensphere-supabase-rest.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local:3000 }
+            - { name: OPENSPHERE_STORAGE_DATABASE_HOST, value: opensphere-supabase-postgres.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local }
+            - { name: OPENSPHERE_STORAGE_DATABASE_PORT, value: "5432" }
+            - { name: OPENSPHERE_STORAGE_REST_HOST, value: opensphere-supabase-rest.__OPENSPHERE_SUPABASE_NAMESPACE__.svc.cluster.local }
+            - { name: OPENSPHERE_STORAGE_REST_PORT, value: "3000" }
             - { name: STORAGE_PUBLIC_URL, value: __OPENSPHERE_CONSOLE_URL__/storage/v1 }
             - { name: STORAGE_BACKEND, value: file }
             - { name: FILE_STORAGE_BACKEND_PATH, value: /var/lib/storage }
@@ -259,6 +303,7 @@ spec:
             - { name: GLOBAL_S3_BUCKET, value: opensphere-console }
             - { name: ENABLE_IMAGE_TRANSFORMATION, value: "false" }
           ports: [{ name: http, containerPort: 5000 }]
+          startupProbe: { httpGet: { path: /status, port: http }, failureThreshold: 180, periodSeconds: 2 }
           readinessProbe: { httpGet: { path: /status, port: http }, initialDelaySeconds: 10, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /status, port: http }, initialDelaySeconds: 30, periodSeconds: 10 }
           resources:
