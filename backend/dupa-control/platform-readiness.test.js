@@ -94,7 +94,7 @@ test('Foundation management shell stays accessible while PFS services remain evi
   const client = read('src', 'app', 'core', 'plugin-control-client.service.ts');
   assert.match(controller, /PlatformSupportProfileRequired/);
   assert.match(controller, /id === FOUNDATION_ID && action === 'enable'/);
-  assert.match(controller, /PlatformSupportProfileRequiredForPfsPlugin/);
+  assert.doesNotMatch(controller, /PlatformSupportProfileRequiredForPfsPlugin/);
   assert.match(controller, /const foundationActivationAllowed = true/);
   const foundationEnableStart = controller.indexOf("if (id === FOUNDATION_ID && action === 'enable')");
   const foundationEnableEnd = controller.indexOf('// Activation is the gate for PFS plugins', foundationEnableStart);
@@ -123,13 +123,14 @@ test('Foundation management shell stays accessible while PFS services remain evi
   assert.match(client, /HTTP \$\{r\.status\}\$\{detail/);
 });
 
-test('a PFS plugin stages unconditionally and only its activation waits for the Support Profile', () => {
+test('a PFS plugin installs and activates independently of advisory Support Profile evidence', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
 
   // The admission contract carries the split explicitly, so a client can tell
   // "may I install?" from "may I turn it on?" instead of inferring it.
   assert.match(controller, /pfsPluginStageAllowed:\s*true/);
-  assert.match(controller, /pfsPluginActivationAllowed:\s*supportReady/);
+  assert.match(controller, /pfsPluginActivationAllowed:\s*true/);
+  assert.match(controller, /pfsPluginInstallAllowed:\s*true/);
 
   // Installation must not consult the gate. CONSTITUTION-0003 §7.3 forbids
   // disabling a whole consumer because a collector is missing, and §7.2 holds an
@@ -138,21 +139,13 @@ test('a PFS plugin stages unconditionally and only its activation waits for the 
   assert.ok(installStart > 0, 'install handler was not located');
   const installEnd = controller.indexOf('\n    if (p === ', installStart + 1);
   const install = controller.slice(installStart, installEnd > 0 ? installEnd : undefined);
-  const pfsGateStart = install.indexOf('if (pkg.spec.hostRef === FOUNDATION_ID)');
-  const pfsGateEnd = install.indexOf('} else if (requiresDomainAdmission(pkg))', pfsGateStart);
-  assert.ok(pfsGateStart > 0 && pfsGateEnd > pfsGateStart, 'PFS staging gate was not located');
-  assert.doesNotMatch(
-    install.slice(pfsGateStart, pfsGateEnd),
-    /return json\(/,
-    'an incomplete Support Profile must not refuse PFS plugin installation',
-  );
-  assert.match(install, /pfs-plugin-stage/, 'staging a gated plugin must leave durable audit evidence');
-  assert.match(install, /pendingCapabilities/, 'the install response must name what is still missing');
+  assert.doesNotMatch(install, /pfs-plugin-stage/);
+  assert.doesNotMatch(install, /PlatformSupportProfileIncomplete/);
 
-  // The gate moves to activation, in the reconcile loop and on the enable path.
+  // Domain admission remains explicit; hosted PFS plugins have no global gate.
   assert.match(controller, /\['enable', 'rollback'\]\.includes\(action\)/);
-  assert.match(controller, /reason: 'PlatformSupportProfileIncomplete'/);
-  assert.match(controller, /phase: 'DependencyPending',\s*\n\s*reason: 'PlatformSupportProfileIncomplete'/);
+  assert.match(controller, /requiresDomainAdmission\(targetPkg\.json\)/);
+  assert.doesNotMatch(controller, /PlatformSupportProfileRequiredForPfsPlugin/);
 });
 
 test('recovery drill evidence is advisory for service activation but remains visible', () => {

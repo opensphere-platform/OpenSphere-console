@@ -1967,23 +1967,20 @@ async function reconcile() {
         }
       }
 
-      // A PFS plugin may be installed, verified and staged at any time; only
-      // activation waits for the Platform Support Profile.  CONSTITUTION-0003 §7.2
-      // holds an unmet activation dependency as DependencyPending rather than
-      // refusing the install, and §7.3 forbids disabling a whole consumer because
-      // a collector is absent.  The verdict is written onto the registration —
-      // both while staged and while pending — so the operator reads the remaining
-      // work off the resource instead of inferring it from a refusal.
+      // A hosted PFS plugin is governed by its signed artifact, declared host and
+      // runtime health. Platform-wide support evidence is advisory here: a stale
+      // telemetry canary or recovery drill must not disable an otherwise healthy
+      // Directory, database or policy capability.
       let admission;
       if (hostRef === FOUNDATION_ID) {
         const readiness = await supportProfileReadiness();
         const capabilities = readiness.capabilities || [];
-        const activationAllowed = readiness.admission.pfsPluginActivationAllowed === true;
         admission = {
-          activationAllowed,
-          reason: activationAllowed ? '' : 'PlatformSupportProfileIncomplete',
-          pendingCapabilities: capabilities.filter((c) => !c.ready).map((c) => String(c.type)),
+          activationAllowed: true,
+          reason: '',
+          pendingCapabilities: [],
           satisfiedCapabilities: capabilities.filter((c) => c.ready).map((c) => String(c.type)),
+          advisoryCapabilities: capabilities.filter((c) => !c.ready).map((c) => String(c.type)),
           route: '/manage/platform-control',
           checkedAt: new Date().toISOString(),
         };
@@ -3052,17 +3049,13 @@ async function platformReadinessStatus() {
       // Foundation shell activation remains available to administrators. PFS
       // establishment and hosted capability activation stay evidence-gated.
       foundationInstallAllowed: foundationActivationAllowed,
-      // PFS plugins follow the same stage/activate split as the Foundation
-      // subShell above: an immutable, signature-verified plugin may be installed
-      // and staged so its status surface can report what the platform still
-      // lacks, while activation stays behind the Platform Support Profile.
+      // PFS plugin activation depends on its signed artifact, host and runtime.
+      // Support Profile evidence remains visible but cannot disable consumers.
       pfsPluginStageAllowed: true,
-      pfsPluginActivationAllowed: supportReady,
+      pfsPluginActivationAllowed: true,
       domainStageAllowed: true,
       domainActivationAllowed: domainAdmissionReady,
-      // Compatibility alias for older clients; like foundationInstallAllowed it
-      // now reports the activation gate, not an installation gate.
-      pfsPluginInstallAllowed: supportReady,
+      pfsPluginInstallAllowed: true,
       reason: supportReady ? '' : 'PlatformSupportProfileRequiredForPfsServices',
       advisoryCapabilities: supportAdmission.advisory.map((item) => ({ type: item.type, ready: item.ready, reason: item.reason })),
     },
@@ -3491,24 +3484,11 @@ const server = http.createServer(async (req, res) => {
             foundationAuthorization = foundationUpgradeAuthorization(currentPkg, currentReg, pkg, actor, opId);
           }
         }
-        // A PFS plugin installs and stages unconditionally; the Platform Support
-        // Profile gates activation, not installation (CONSTITUTION-0003 §7.2/§7.3,
-        // CONSTITUTION-0004 §8.4 — the pre-Established gates cover operand detail,
-        // Claim creation and mutation, and status/remediation surfaces stay open).
-        // Refusing the install left the operator with one CLI error and no surface
-        // naming the missing capability, so the staged registration is now the
-        // thing that reports it.
+        // Platform Support evidence is advisory for hosted PFS plugins. Domain
+        // shells still retain their own establishment/admission boundary.
         let pendingCapabilities = [];
         let activationReason = '';
-        if (pkg.spec.hostRef === FOUNDATION_ID) {
-          const readiness = await platformReadinessStatus();
-          if (!readiness.admission.pfsPluginActivationAllowed) {
-            activationReason = 'PlatformSupportProfileIncomplete';
-            pendingCapabilities = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
-            await durableAudit(actor, 'pfs-plugin-stage', pkg.metadata.name, 'accepted',
-              `staged pending Platform Support Profile: ${pendingCapabilities.join(', ') || 'unknown'}`, opId);
-          }
-        } else if (requiresDomainAdmission(pkg)) {
+        if (requiresDomainAdmission(pkg)) {
           const readiness = await platformReadinessStatus();
           if (!readiness.admission.domainActivationAllowed) {
             activationReason = 'DomainAdmissionLocked';
@@ -3634,25 +3614,11 @@ const server = http.createServer(async (req, res) => {
           await durableAudit(actor, 'foundation-shell-management-activation', id, 'accepted', 'Management shell enabled; PFS establishment and hosted services remain evidence-gated', opId);
         }
       }
-      // Activation is the gate for PFS plugins. Installing and staging one is
-      // always permitted so its status can name what the platform still lacks;
-      // turning it on waits for the Platform Support Profile.
+      // Domain modules retain the PFS establishment gate. Hosted Foundation
+      // plugins use their own artifact, host and workload verification instead.
       if (id !== FOUNDATION_ID && ['enable', 'rollback'].includes(action)) {
         const targetPkg = await getPackage(id);
-        if (targetPkg.ok && targetPkg.json?.spec?.hostRef === FOUNDATION_ID) {
-          const readiness = await platformReadinessStatus();
-          if (!readiness.admission.pfsPluginActivationAllowed) {
-            const pending = (readiness.capabilities || []).filter((c) => !c.ready).map((c) => c.type);
-            await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequiredForPfsPlugin', opId);
-            return json(res, 409, {
-              error: 'PlatformSupportProfileRequiredForPfsPlugin',
-              message: 'PFS plugin activation requires Platform Support Profile Ready. The plugin may remain installed and staged; its registration status reports the missing capabilities.',
-              pendingCapabilities: pending,
-              route: '/manage/platform-control',
-              opId,
-            });
-          }
-        } else if (targetPkg.ok && requiresDomainAdmission(targetPkg.json)) {
+        if (targetPkg.ok && requiresDomainAdmission(targetPkg.json)) {
           const readiness = await platformReadinessStatus();
           if (!readiness.admission.domainActivationAllowed) {
             await durableAudit(actor, action, id, 'denied', 'DomainAdmissionLocked', opId);
