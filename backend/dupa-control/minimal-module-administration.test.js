@@ -40,6 +40,7 @@ test('Delivery evidence reads only its owner runtime and canonical Application',
 
 test('module uninstall removes every verified labelled binding and general profiles retain data', () => {
   const source = read('backend', 'dupa-control', 'controller.js');
+  const deployment = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
   assert.match(source, /function permissionBindingName\(moduleName, profile\)/);
   assert.match(source, /labelSelector=\$\{selector\}/);
   assert.match(source, /PermissionBindingOwnershipMismatch/);
@@ -50,6 +51,12 @@ test('module uninstall removes every verified labelled binding and general profi
   );
   assert.doesNotMatch(infrastructure, /resources: \['volumesnapshots'\][^\n]+delete/);
   assert.doesNotMatch(infrastructure, /apiGroups: \['ceph\.rook\.io', 'csi\.ceph\.io'\][^\n]+delete/);
+  const provisionedInfrastructure = deployment.slice(
+    deployment.indexOf('name: opensphere-module-cluster-infrastructure-manager-v1'),
+    deployment.indexOf('name: opensphere-module-ai-domain-operator-v1'),
+  );
+  assert.doesNotMatch(provisionedInfrastructure, /resources: \[volumesnapshots\][^\n]+delete/);
+  assert.doesNotMatch(provisionedInfrastructure, /apiGroups: \[ceph\.rook\.io, csi\.ceph\.io\][^\n]+delete/);
   const ai = source.slice(
     source.indexOf('function aiDomainOperatorClusterRoleManifest()'),
     source.indexOf('const PERMISSION_PROFILE_ROLES'),
