@@ -188,6 +188,8 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   for (const profile of ['사용자 지정 S3 호환', 'Amazon S3', 'Backblaze B2', 'Cloudflare R2', 'MinIO', 'Ceph Object Gateway (RGW)']) assert.ok(source.includes(profile));
   assert.match(source, /backupTargetSubmitAttempted/);
   assert.match(source, /focusBackupTargetField/);
+  assert.equal(source.match(/<clr-control-error>/g)?.length, 8);
+  assert.doesNotMatch(source, /class="field-error"/);
   assert.match(source, /\[disabled\]="busy\(\)" \(click\)="saveBackupTarget\(\)"/);
   assert.doesNotMatch(source, /필수 항목을 입력하면 저장할 수 있습니다/);
   assert.doesNotMatch(source, /Region과 일치하는 Backblaze HTTPS S3 endpoint만 허용/);

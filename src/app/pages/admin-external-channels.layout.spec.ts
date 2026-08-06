@@ -33,6 +33,8 @@ test('backup panel uses S3 profiles, field-level validation and an uncluttered a
   assert.match(page, /저장소 프로파일/);
   assert.match(page, /backupTargetSubmitAttempted/);
   assert.match(page, /focusBackupTargetField/);
+  assert.equal(page.match(/<clr-control-error>/g)?.length, 8);
+  assert.doesNotMatch(page, /class="field-error"/);
   assert.doesNotMatch(page, /필수 항목을 입력하면 저장할 수 있습니다/);
   assert.match(page, /\.backup-form-grid \.clr-subtext[\s\S]{0,160}font-size:\.72rem/);
   assert.match(page, /\.backup-panel-footer \{ justify-content:flex-end/);
