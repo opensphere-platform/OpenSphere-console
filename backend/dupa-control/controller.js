@@ -2225,7 +2225,9 @@ const requiredProfileSpec = Object.freeze({
   hostRequirements: { clusterManager: true, his: true },
   delivery: { required: true },
   observability: { required: true },
-  backupRestore: { required: true },
+  // Backup/restore readiness is reported separately and gates data-impacting
+  // operations. It is not a universal prerequisite for PFS plugin activation.
+  backupRestore: { required: false },
   securityPolicy: { required: true },
   optionalCapabilities: [],
 });
@@ -2605,7 +2607,6 @@ async function platformReadinessStatus() {
   const capabilities = [
     condition('Delivery', delivery.ready, delivery.ready ? 'Verified' : 'DeliveryEvidenceMissing', delivery.reason || 'GitOps delivery evidence verified', [delivery]),
     condition('Observability', observability.ready, observability.ready ? 'Verified' : 'TelemetryEvidenceMissing', observability.reason || 'Live telemetry verified', [observability]),
-    condition('BackupRestore', backupRestore.ready, backupRestore.ready ? 'Verified' : 'RestoreEvidenceMissing', backupRestore.reason || 'Backup and restore drill verified', [backupRestore]),
     condition('SecurityPolicy', securityPolicy.ready, securityPolicy.ready ? 'Verified' : 'PolicyEvidenceMissing', securityPolicy.reason || 'Security and policy evidence verified', [securityPolicy]),
   ];
   const prerequisites = [
@@ -2633,7 +2634,7 @@ async function platformReadinessStatus() {
     : !prerequisitesReady ? 'Blocked' : supportReady ? 'Ready' : 'Degraded';
   const lifecycle = [
     ...prerequisites.map((x) => ({ ...x, state: x.ready ? 'Ready' : 'Blocked' })),
-    { key: 'support-profile', label: 'Platform Support Profile Ready', ready: supportReady, state: profilePhase, detail: profile.declared ? `${capabilities.filter((x) => x.ready).length}/4 capability evidence verified` : 'Profile preflight has not been declared', route: '/manage/platform-control' },
+    { key: 'support-profile', label: 'Platform Support Profile Ready', ready: supportReady, state: profilePhase, detail: profile.declared ? `${capabilities.filter((x) => x.ready).length}/${capabilities.length} required capability evidence verified` : 'Profile preflight has not been declared', route: '/manage/platform-control' },
     {
       key: 'pfs',
       label: 'PFS Established',
@@ -2656,7 +2657,9 @@ async function platformReadinessStatus() {
   return {
     apiVersion: `${PLATFORM_GROUP}/${V}`, kind: 'PlatformReadinessStatus', observedAt: new Date().toISOString(),
     phase: profilePhase, ready: supportReady, profile: { declared: profile.declared, crdReady: profile.crdReady, name: PLATFORM_PROFILE_NAME, generation: profile.resource?.metadata?.generation || 0, lastVerifiedAt: profile.resource?.status?.lastVerifiedAt || '', status: profile.resource?.status || null },
-    prerequisites, capabilities, lifecycle, evidence: { platformControl, mainShell, clusterManager, his, probeFailures },
+    // Recovery evidence remains observable for backup and data-impacting change
+    // policy, but it is deliberately excluded from the general activation gate.
+    prerequisites, capabilities, lifecycle, evidence: { platformControl, mainShell, clusterManager, his, backupRestore, probeFailures },
     admission: {
       foundationStageAllowed: true,
       foundationActivationAllowed,
