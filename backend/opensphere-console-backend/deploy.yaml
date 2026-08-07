@@ -120,7 +120,7 @@ spec:
       containers:
         - name: api
           # 실배포 기준: 현재 검증된 로컬 런타임 이미지.
-          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:88c06b49a91d8f26c785d5f4c61d4693a8834fcd1bc31a7474995e224ea9291d
           imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: installation-policy
@@ -401,7 +401,7 @@ spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: reconciler
-          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:88c06b49a91d8f26c785d5f4c61d4693a8834fcd1bc31a7474995e224ea9291d
           imagePullPolicy: IfNotPresent
           command: ["node", "/app/opensphere-console-backend/foundation-bootstrap-reconciler.js"]
           env:
