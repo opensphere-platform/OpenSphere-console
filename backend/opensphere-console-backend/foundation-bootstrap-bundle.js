@@ -13,7 +13,7 @@ const FOUNDATION_OTEL_MIRROR_IMAGE =
 const FOUNDATION_CONTROL_PLANE_SOURCE_IMAGE =
   'ghcr.io/opensphere-platform/foundation-control-plane@sha256:b1275c9315c48580629afe16fad7a81e16e0a666bfc3903f31a865066aa83db4';
 const FOUNDATION_CONTROL_PLANE_RELEASE_IMAGE =
-  'ghcr.io/opensphere-platform/opensphere-foundation-control-plane@sha256:44a3ee3ae6a1643b389dd315399bd320401d0eab0efa2fa31e9f557edfeaee01';
+  'ghcr.io/opensphere-platform/opensphere-foundation-control-plane@sha256:b4962bfdd15c4f206d33d9d96d99883155be8bfffccf8824c082e60755d25f7f';
 
 // Gzip-compressed, LF-normalized closed Foundation bootstrap catalog.
 // Source: OpenSphere-shell-foundation/deploy/{foundation-contracts,
