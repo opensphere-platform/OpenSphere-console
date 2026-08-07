@@ -53,6 +53,8 @@ test('embedded Foundation catalog has fixed identities and digest-pinned workloa
   assert.match(FOUNDATION_BOOTSTRAP_CANARY_YAML, /name: foundation-bootstrap-observability/);
   catalog.forEach(validateCatalogDocument);
   const deployment = catalog.find((item) => item.kind === 'Deployment');
+  assert.match(deployment.document, /ghcr\.io\/opensphere-platform\/opensphere-foundation-control-plane@sha256:44a3ee3ae6a1643b389dd315399bd320401d0eab0efa2fa31e9f557edfeaee01/);
+  assert.doesNotMatch(deployment.document, /ghcr\.io\/opensphere-platform\/foundation-control-plane@sha256:b1275c9315c48580629afe16fad7a81e16e0a666bfc3903f31a865066aa83db4/);
   const images = [...deployment.document.matchAll(/(?:image:\s*|--[a-z-]+-image=)([^\s"']+)/g)]
     .map((match) => match[1]);
   assert.equal(images.length, 8);

@@ -10,6 +10,10 @@ const FOUNDATION_OTEL_SOURCE_IMAGE =
   'docker.io/otel/opentelemetry-collector-contrib@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029';
 const FOUNDATION_OTEL_MIRROR_IMAGE =
   'ghcr.io/opensphere-platform/mirror-opentelemetry-collector-contrib@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029';
+const FOUNDATION_CONTROL_PLANE_SOURCE_IMAGE =
+  'ghcr.io/opensphere-platform/foundation-control-plane@sha256:b1275c9315c48580629afe16fad7a81e16e0a666bfc3903f31a865066aa83db4';
+const FOUNDATION_CONTROL_PLANE_RELEASE_IMAGE =
+  'ghcr.io/opensphere-platform/opensphere-foundation-control-plane@sha256:44a3ee3ae6a1643b389dd315399bd320401d0eab0efa2fa31e9f557edfeaee01';
 
 // Gzip-compressed, LF-normalized closed Foundation bootstrap catalog.
 // Source: OpenSphere-shell-foundation/deploy/{foundation-contracts,
@@ -79,7 +83,13 @@ function embeddedCatalogYaml() {
   if (sourceImageCount !== 1) {
     throw new Error(`embedded Foundation bootstrap OTEL source image count mismatch (${sourceImageCount})`);
   }
-  const base = bundledBase.replace(FOUNDATION_OTEL_SOURCE_IMAGE, FOUNDATION_OTEL_MIRROR_IMAGE);
+  const controlPlaneImageCount = bundledBase.split(FOUNDATION_CONTROL_PLANE_SOURCE_IMAGE).length - 1;
+  if (controlPlaneImageCount !== 1) {
+    throw new Error(`embedded Foundation control-plane source image count mismatch (${controlPlaneImageCount})`);
+  }
+  const base = bundledBase
+    .replace(FOUNDATION_OTEL_SOURCE_IMAGE, FOUNDATION_OTEL_MIRROR_IMAGE)
+    .replace(FOUNDATION_CONTROL_PLANE_SOURCE_IMAGE, FOUNDATION_CONTROL_PLANE_RELEASE_IMAGE);
   return `${base}\n---\n${FOUNDATION_BOOTSTRAP_CANARY_YAML.trim()}\n`;
 }
 
