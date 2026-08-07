@@ -391,19 +391,21 @@ export class ExtensionHostService {
       const requestedChild = routeTarget.hostId === e.id
         ? childEntries.find((child) => child.id === routeTarget.childId)
         : undefined;
-      // A direct child deep link still defines that child before the parent
-      // mounts, preserving the Foundation outlet contract. A host overview,
-      // however, must not remain blank while every optional child is verified.
+      // The parent receives host.children() during activate(), so every child
+      // must finish its verified lifecycle first. loadOne() records a failed
+      // optional child without throwing; only successfully activated children
+      // are therefore projected into the parent context. Direct deep links
+      // still prioritize their requested child before the remaining children.
       if (requestedChild) {
         await this.loadOne(requestedChild, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION);
       }
+      await Promise.all(childEntries
+        .filter((child) => child !== requestedChild)
+        .map((child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION)));
       await mod.activate(context);
       this.activeModules.set(e.id, mod);
       this.setPluginLoadState(e.id, 'ready');
       console.info(`[extension-host] plugin '${e.id}' 검증 통과(무결성·서명·호환·권한) 후 활성화`);
-      await Promise.all(childEntries
-        .filter((child) => child !== requestedChild)
-        .map((child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION)));
     } catch (err) {
       try { await mod?.deactivate?.(); } catch (cleanupError) { console.warn(`[extension-host] plugin '${e.id}' cleanup 실패:`, cleanupError); }
       console.warn(`[extension-host] plugin '${e.id}' 제외:`, err);

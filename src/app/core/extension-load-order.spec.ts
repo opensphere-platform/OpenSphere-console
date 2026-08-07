@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { extensionRouteTarget, prioritizeRequestedHost } from './extension-load-order.ts';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 const registry = [
   { id: 'cluster-manager', hostRef: 'main' },
@@ -38,4 +43,13 @@ test('cold extension activation prioritizes only the requested main subShell', (
     prioritizeRequestedHost(registry, '/manage/extensions/subshells').map((entry) => entry.id),
     registry.map((entry) => entry.id),
   );
+});
+
+test('host children finish verified activation before their parent receives host.children()', () => {
+  const source = readFileSync(path.join(here, 'extension-host.service.ts'), 'utf8');
+  const childActivation = source.indexOf('await Promise.all(childEntries');
+  const parentActivation = source.indexOf('await mod.activate(context)');
+  assert.ok(childActivation >= 0);
+  assert.ok(parentActivation > childActivation);
+  assert.match(source, /this\.activeModules\.has\(entry\.id\)/);
 });
