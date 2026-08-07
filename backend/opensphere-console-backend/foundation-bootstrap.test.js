@@ -52,12 +52,15 @@ test('embedded Foundation catalog has fixed identities and digest-pinned workloa
   assert.equal(embeddedCatalogDigest(), FOUNDATION_BOOTSTRAP_CATALOG_SHA256);
   assert.match(FOUNDATION_BOOTSTRAP_CANARY_YAML, /name: foundation-bootstrap-observability/);
   catalog.forEach(validateCatalogDocument);
+  const coreRole = catalog.find((item) => item.kind === 'ClusterRole' && item.name === 'foundation-control-plane-core');
+  assert.match(coreRole.document, /resources: \[postgresclaims\][\s\S]*verbs: \[get, list, watch/);
+  assert.match(coreRole.document, /resources: \[addoninstalls\][\s\S]*verbs: \[get, list, watch/);
   const deployment = catalog.find((item) => item.kind === 'Deployment');
   assert.match(deployment.document, /ghcr\.io\/opensphere-platform\/opensphere-foundation-control-plane@sha256:b4962bfdd15c4f206d33d9d96d99883155be8bfffccf8824c082e60755d25f7f/);
   assert.doesNotMatch(deployment.document, /ghcr\.io\/opensphere-platform\/foundation-control-plane@sha256:b1275c9315c48580629afe16fad7a81e16e0a666bfc3903f31a865066aa83db4/);
   const images = [...deployment.document.matchAll(/(?:image:\s*|--[a-z-]+-image=)([^\s"']+)/g)]
     .map((match) => match[1]);
-  assert.equal(images.length, 8);
+  assert.equal(images.length, 12);
   assert.ok(images.every((image) => /@sha256:[a-f0-9]{64}$/.test(image)));
 });
 
@@ -65,7 +68,7 @@ test('Foundation supply-chain preflight accepts only the governed immutable OTEL
   const catalog = loadFoundationBootstrapCatalog();
   const status = catalogSupplyChainStatus(catalog);
   assert.equal(status.ready, true);
-  assert.equal(status.checkedImages, 8);
+  assert.equal(status.checkedImages, 12);
   assert.deepEqual(status.blockers, []);
   assert.equal(assertCatalogSupplyChain(catalog).ready, true);
   const deployment = catalog.find((item) => item.kind === 'Deployment');
