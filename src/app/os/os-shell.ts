@@ -19,7 +19,7 @@ import ChevronRight16 from '@carbon/icons/es/chevron--right/16';
 import { AuthService } from '../core/auth.service';
 import { ExtensionHostService, NavNode } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
-import { routeForPlugin } from '../core/perspectives';
+import { pluginIdFromRoute, routeForPlugin } from '../core/perspectives';
 import { OsNavNode } from './os-nav-node';
 import { OsSearch } from './os-search';
 import { OsNotifications } from './os-notifications';
@@ -380,7 +380,7 @@ export class OsShell {
   pluginSvg(item: NavItem): string | null {
     const path = item.path || '';
     if (!(item.plugin || path.startsWith('/p/'))) return null;
-    const id = path.replace(/^\/p\//, '').split(/[/?#]/)[0];
+    const id = pluginIdFromRoute(path);
     const tok = this.ext.pluginIcons()[id];
     if (!tok || iconByToken(tok)) return null; // 미지정·큐레이션은 os-cicon(즉시)
     return this.iconLib.getSvg(tok); // 미로딩이면 백그라운드 로딩 + null → 로딩 후 재렌더
@@ -391,7 +391,7 @@ export class OsShell {
     const p = path.toLowerCase();
     // 플러그인: 관리자 지정 아이콘(registry의 spec.nav.icon 토큰) — 큐레이션 디스크립터(즉시). 비큐레이션은 pluginSvg가 처리.
     if (p.startsWith('/p/') || item.plugin) {
-      const id = path.replace(/^\/p\//, '').split(/[/?#]/)[0];
+      const id = pluginIdFromRoute(path);
       return iconByToken(this.ext.pluginIcons()[id]) ?? Application16;
     }
     if (p.includes('container')) return Kubernetes16;

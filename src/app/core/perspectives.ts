@@ -10,3 +10,12 @@
 export function routeForPlugin(id: string): string {
   return id === 'foundation' ? '/pfss/foundation' : `/p/${id}`;
 }
+
+/** Resolve the owning extension id from a first-level extension route. */
+export function pluginIdFromRoute(path: string): string {
+  const route = path.split(/[?#]/, 1)[0].replace(/\/+$/, '');
+  const pfssMatch = route.match(/^\/pfss\/([^/]+)$/);
+  if (pfssMatch) return pfssMatch[1];
+  const pluginMatch = route.match(/^\/p\/([^/]+)$/);
+  return pluginMatch?.[1] ?? '';
+}
