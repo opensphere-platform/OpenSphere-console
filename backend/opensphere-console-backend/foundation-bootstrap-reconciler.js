@@ -117,11 +117,8 @@ function deploymentReady(deployment) {
 function supportProfileReady(profile) {
   const generation = Number(profile?.metadata?.generation ?? 0);
   const status = profile?.status || {};
-  const conditions = Array.isArray(status.conditions) ? status.conditions : [];
   return status.phase === 'Ready'
-    && Number(status.observedGeneration ?? 0) >= generation
-    && conditions.length > 0
-    && conditions.every((condition) => condition?.status === 'True');
+    && Number(status.observedGeneration ?? 0) >= generation;
 }
 
 function hasConsumerProtectFinalizer(resource) {

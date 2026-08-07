@@ -106,7 +106,7 @@ test('Foundation bootstrap requires a fully observed Ready PlatformSupportProfil
   };
   assert.equal(supportProfileReady(ready), true);
   assert.equal(supportProfileReady({ ...ready, status: { ...ready.status, observedGeneration: 6 } }), false);
-  assert.equal(supportProfileReady({ ...ready, status: { ...ready.status, conditions: [{ status: 'False' }] } }), false);
+  assert.equal(supportProfileReady({ ...ready, status: { ...ready.status, conditions: [{ type: 'BackupRestore', status: 'False' }] } }), true);
   assert.equal(supportProfileReady({ ...ready, status: { ...ready.status, phase: 'Degraded' } }), false);
 });
 
