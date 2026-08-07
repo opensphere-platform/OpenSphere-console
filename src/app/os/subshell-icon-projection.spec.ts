@@ -20,3 +20,13 @@ test('first-level subShell navigation renders selected raw icons before fallback
   assert.match(shellSource, /const tok = this\.ext\.pluginIcons\(\)\[id\]/);
   assert.match(shellSource, /return this\.iconLib\.getSvg\(tok\)/);
 });
+
+test('contributed nav-tree roots receive the owning subShell selected icon', () => {
+  assert.match(shellSource, /<os-nav-node \[node\]="tree\.node" \[iconToken\]="pluginIconToken\(tree\.ownerId\)"/);
+  assert.match(shellSource, /ownerId: p\.id, node/);
+
+  const navNodeSource = readFileSync(path.join(here, 'os-nav-node.ts'), 'utf8');
+  assert.match(navNodeSource, /@Input\(\) iconToken = ''/);
+  assert.match(navNodeSource, /return this\.iconLib\.getSvg\(this\.iconToken\)/);
+  assert.match(navNodeSource, /return iconByToken\(this\.iconToken\) \?\? this\.icon/);
+});

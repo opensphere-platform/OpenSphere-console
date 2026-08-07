@@ -35,6 +35,10 @@ interface NavBand {
   band: string;
   items: NavItem[];
 }
+interface NavTreeRoot {
+  ownerId: string;
+  node: NavNode;
+}
 
 /**
  * os-shell — OpenSphere 제품 프레임 (dynamic-ui §6.1: 프레임·내비·세션은 셸 소유).
@@ -125,8 +129,8 @@ interface NavBand {
               </a>
             }
             <!-- 플러그인이 기여한 재귀 메뉴 트리(임의 깊이·동적) — DUPA nav 기여 -->
-            @for (node of treesForBand(band.band); track node.id) {
-              <os-nav-node [node]="node" />
+            @for (tree of treesForBand(band.band); track tree.ownerId + ':' + tree.node.id) {
+              <os-nav-node [node]="tree.node" [iconToken]="pluginIconToken(tree.ownerId)" />
             }
           }
           <!-- 콘솔 관리(Model A) — 1단 하단 별도 항목, 진입 시 2단 보조메뉴(AdminLayout). 관리자 전용. -->
@@ -410,6 +414,10 @@ export class OsShell {
     return Grid16;
   }
 
+  pluginIconToken(pluginId: string): string {
+    return this.ext.pluginIcons()[pluginId] ?? '';
+  }
+
   /** native Core 항목 — 실제 셸 컴포넌트(규칙 부합, 밴드 고정). 그 외 밴드/항목은 전부 등록(DUPA) 기반.
    *  ADR-UI-003 §3.3: 빈 '예정' 밴드(운영/전달/지능 placeholder)는 더 이상 하드코딩하지 않는다. */
   private static readonly NATIVE: NavBand[] = [];
@@ -451,11 +459,11 @@ export class OsShell {
   });
 
   /** 해당 band에 속한 플러그인들의 기여 nav 트리(루트 노드들)를 모은다. */
-  treesForBand(band: string): NavNode[] {
+  treesForBand(band: string): NavTreeRoot[] {
     const trees = this.ext.navTrees();
     return this.ext
       .pages()
       .filter((p) => this.ext.primarySubShellIds().has(p.id) && p.navBand === band && trees[p.id])
-      .flatMap((p) => trees[p.id]);
+      .flatMap((p) => trees[p.id].map((node) => ({ ownerId: p.id, node })));
   }
 }
