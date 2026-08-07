@@ -1744,7 +1744,11 @@ function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}) 
   const cli = pkg.spec.contributions?.cli?.enabled === true ? {
     namespace: pkg.spec.cli?.namespace || pkg.spec.contributions.cli.namespace,
     manifestPath: pkg.spec.cli?.manifestPath || pkg.spec.contributions.cli.manifestPath,
-    apiBase: pkg.spec.api?.basePath || pkg.spec.contributions.api?.basePath || '',
+    // CLI discovery always reaches the verified consumer through its canonical
+    // proxy namespace. A hosted plugin may deliberately disable the generic API
+    // contribution while still publishing a CLI manifest, so an empty apiBase
+    // would invalidate the entire Registry for native os clients.
+    apiBase: pkg.spec.api?.basePath || pkg.spec.contributions.api?.basePath || `${SHELL_API_PREFIX}/${pkg.metadata.name}`,
   } : undefined;
   return {
     id: pkg.metadata.name,

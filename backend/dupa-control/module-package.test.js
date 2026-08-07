@@ -215,6 +215,30 @@ test('runtime Registry projects the signed CLI contribution for dynamic os dispa
   assert.deepEqual(entry.cli, { namespace: 'cluster', manifestPath: '/cli/manifest', apiBase: '/api/plugins/cluster-manager' });
 });
 
+test('hosted CLI remains discoverable when its generic API contribution is disabled', () => {
+  const hosted = structuredClone(descriptor);
+  hosted.id = 'postgres';
+  hosted.title = 'PostgreSQL';
+  hosted.kind = 'plugin';
+  hosted.hostRef = 'foundation';
+  hosted.api = undefined;
+  hosted.contributions.api = { enabled: false, reason: 'Foundation owns governed writes' };
+  hosted.contributions.cli = { enabled: true, namespace: 'postgres', manifestPath: '/cli/manifest' };
+  const pkg = packageFromInspection({
+    cli: true,
+    descriptor: hosted,
+    repository: 'ghcr.io/opensphere-platform/opensphere-plugin-postgres',
+    digest: `sha256:${'b'.repeat(64)}`,
+  });
+  pkg.metadata = { ...pkg.metadata, name: 'postgres' };
+
+  assert.deepEqual(publishedPluginEntry(pkg, '/manifest', '/signature').cli, {
+    namespace: 'postgres',
+    manifestPath: '/cli/manifest',
+    apiBase: '/api/plugins/postgres',
+  });
+});
+
 test('hardened runtime materializes Pod security, availability, network and scrape policy', () => {
   const hardened = structuredClone(descriptor);
   hardened.runtime.security = { automountServiceAccountToken: false, runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, readOnlyRootFilesystem: true, seccompProfile: 'RuntimeDefault' };
