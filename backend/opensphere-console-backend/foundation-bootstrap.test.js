@@ -56,7 +56,7 @@ test('embedded Foundation catalog has fixed identities and digest-pinned workloa
   assert.match(coreRole.document, /resources: \[postgresclaims\][\s\S]*verbs: \[get, list, watch/);
   assert.match(coreRole.document, /resources: \[addoninstalls\][\s\S]*verbs: \[get, list, watch/);
   const deployment = catalog.find((item) => item.kind === 'Deployment');
-  assert.match(deployment.document, /ghcr\.io\/opensphere-platform\/opensphere-foundation-control-plane@sha256:b4962bfdd15c4f206d33d9d96d99883155be8bfffccf8824c082e60755d25f7f/);
+  assert.match(deployment.document, /ghcr\.io\/opensphere-platform\/opensphere-foundation-control-plane@sha256:aa6361275e39e52f43f88089242bc510a1954e90619725ed48ec401816b64937/);
   assert.doesNotMatch(deployment.document, /ghcr\.io\/opensphere-platform\/foundation-control-plane@sha256:b1275c9315c48580629afe16fad7a81e16e0a666bfc3903f31a865066aa83db4/);
   const images = [...deployment.document.matchAll(/(?:image:\s*|--[a-z-]+-image=)([^\s"']+)/g)]
     .map((match) => match[1]);
