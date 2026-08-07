@@ -138,6 +138,7 @@ rules:
     verbs: [get]
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: [clusterrolebindings], verbs: [get, list] }
   - { apiGroups: ["observability.opensphere.io"], resources: [observabilitybindings], verbs: [get, list] }
+  - { apiGroups: ["apiextensions.k8s.io"], resources: [customresourcedefinitions], verbs: [get, list] }
   - apiGroups: ["pkg.crossplane.io"]
     resources: [providers]
     resourceNames: [crossplane-contrib-provider-helm]
@@ -519,12 +520,19 @@ rules:
       - ''
     resources:
       - services
-      - persistentvolumeclaims
     verbs:
       - create
       - update
       - patch
       - delete
+  - apiGroups:
+      - ''
+    resources:
+      - persistentvolumeclaims
+    verbs:
+      - create
+      - update
+      - patch
   - apiGroups:
       - apps
     resources:

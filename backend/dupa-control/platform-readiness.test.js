@@ -491,3 +491,41 @@ test('cluster infrastructure profile manifest matches the controller least-privi
     assert.doesNotMatch(normalized, /apiGroups: \[ceph\.rook\.io, csi\.ceph\.io\][^\n]*delete/);
   }
 });
+
+test('DUPA evidence RBAC can observe Foundation CRD establishment without mutating CRDs', () => {
+  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const roleStart = manifest.indexOf('name: dupa-console-evidence-reader');
+  const roleEnd = manifest.indexOf('\n---', roleStart);
+  const role = manifest.slice(roleStart, roleEnd).replace(/["']/g, '');
+  assert.match(
+    role,
+    /apiGroups: \[apiextensions\.k8s\.io\], resources: \[customresourcedefinitions\], verbs: \[get, list\]/,
+  );
+  assert.doesNotMatch(
+    role,
+    /customresourcedefinitions[^\n]*verbs: \[[^\]]*(?:create|update|patch|delete)/,
+  );
+});
+
+test('AI domain profile manifest preserves PVCs while matching the controller write contract', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const controllerStart = controller.indexOf('function aiDomainOperatorClusterRoleManifest()');
+  const controllerEnd = controller.indexOf('const PERMISSION_PROFILE_ROLES', controllerStart);
+  const manifestStart = manifest.indexOf('name: opensphere-module-ai-domain-operator-v1');
+  const manifestEnd = manifest.indexOf('\n---', manifestStart);
+  const controllerProfile = controller.slice(controllerStart, controllerEnd).replace(/["']/g, '');
+  assert.match(
+    controllerProfile,
+    /resources: \[persistentvolumeclaims\], verbs: \[create, update, patch\]/,
+  );
+
+  const manifestProfile = manifest.slice(manifestStart, manifestEnd);
+  const pvcResource = manifestProfile.indexOf('      - persistentvolumeclaims');
+  const pvcRuleStart = manifestProfile.lastIndexOf('  - apiGroups:', pvcResource);
+  const pvcRuleEnd = manifestProfile.indexOf('  - apiGroups:', pvcResource + 1);
+  const pvcRule = manifestProfile.slice(pvcRuleStart, pvcRuleEnd);
+  assert.match(pvcRule, /- persistentvolumeclaims/);
+  assert.match(pvcRule, /- create\s+- update\s+- patch/s);
+  assert.doesNotMatch(pvcRule, /- delete/);
+});
