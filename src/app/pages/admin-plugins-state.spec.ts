@@ -7,6 +7,7 @@ const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts
 const routes = fs.readFileSync(new URL('../app.routes.ts', import.meta.url), 'utf8');
 const extensionHost = fs.readFileSync(new URL('../core/extension-host.service.ts', import.meta.url), 'utf8');
 const shell = fs.readFileSync(new URL('../os/os-shell.ts', import.meta.url), 'utf8');
+const navIcon = fs.readFileSync(new URL('../os/os-nav-icon.ts', import.meta.url), 'utf8');
 const perspectives = fs.readFileSync(new URL('../core/perspectives.ts', import.meta.url), 'utf8');
 
 test('Extension operations separate user intent, serving state, and verification', () => {
@@ -57,7 +58,8 @@ test('the catalog icon selected in management wins when first-level navigation i
   assert.match(extensionHost, /await this\.loadManagementInventory\(\)/);
   assert.match(extensionHost, /\.\.\.Object\.fromEntries\(activePlugins\.map[\s\S]*\.\.\.current/);
   assert.match(extensionHost, /\.\.\.current,[\s\S]*\.\.\.Object\.fromEntries\(items\.map/);
-  assert.match(shell, /return this\.iconLib\.getSvg\(tok\)/);
+  assert.match(shell, /<os-nav-icon clrVerticalNavIcon \[token\]="iconTokenFor\(item\)"/);
+  assert.match(navIcon, /return this\.iconLibrary\.getSvg\(this\.token\)/);
 });
 
 test('every Extension management tab has a reloadable canonical route', () => {

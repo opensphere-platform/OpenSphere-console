@@ -7,7 +7,11 @@ import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
  * `@carbon/icons`의 SVG 디스크립터({elem,attrs,content})를 직접 직렬화해 렌더한다(아이콘=SVG뿐, Clarity와 무충돌).
  * 사용: import Search16 from '@carbon/icons/es/search/16'; <os-cicon [icon]="Search16" [size]="16"/>
  */
-interface IconNode { elem: string; attrs?: Record<string, unknown>; content?: IconNode[]; }
+export interface CarbonIconDescriptor {
+  elem: string;
+  attrs?: Record<string, unknown>;
+  content?: CarbonIconDescriptor[];
+}
 
 @Component({
   selector: 'os-cicon',
@@ -18,18 +22,18 @@ interface IconNode { elem: string; attrs?: Record<string, unknown>; content?: Ic
 export class CarbonIcon {
   private san = inject(DomSanitizer);
   html: SafeHtml = '';
-  private _d?: IconNode;
+  private _d?: CarbonIconDescriptor;
   private _s = 16;
 
-  @Input({ required: true }) set icon(d: IconNode) { this._d = d; this.render(); }
+  @Input({ required: true }) set icon(d: CarbonIconDescriptor) { this._d = d; this.render(); }
   @Input() set size(s: number) { this._s = s; this.render(); }
 
   private render(): void {
     if (!this._d) return;
-    const root: IconNode = { ...this._d, attrs: { ...this._d.attrs, width: this._s, height: this._s } };
+    const root: CarbonIconDescriptor = { ...this._d, attrs: { ...this._d.attrs, width: this._s, height: this._s } };
     this.html = this.san.bypassSecurityTrustHtml(this.toStr(root));
   }
-  private toStr(n: IconNode): string {
+  private toStr(n: CarbonIconDescriptor): string {
     const a = Object.entries(n.attrs || {}).map(([k, v]) => `${k}="${String(v)}"`).join(' ');
     const inner = (n.content || []).map((c) => this.toStr(c)).join('');
     return `<${n.elem} ${a}>${inner}</${n.elem}>`;

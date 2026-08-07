@@ -2,11 +2,7 @@ import { Component, inject, Input, ChangeDetectionStrategy } from '@angular/core
 import { Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { NavNode } from '../core/extension-host.service';
-import { CarbonIcon } from './carbon-icon';
-import { OsRawIcon } from './os-raw-icon';
-import { iconByToken } from './carbon-icon-catalog';
-import { IconLibraryService } from './icon-library.service';
-import Application16 from '@carbon/icons/es/application/16';
+import { OsNavIcon } from './os-nav-icon';
 
 /**
  * os-nav-node — 플러그인이 기여한 재귀 NavNode를 셸 내비에 네이티브로 렌더(임의 깊이).
@@ -20,18 +16,14 @@ import Application16 from '@carbon/icons/es/application/16';
  */
 @Component({
   selector: 'os-nav-node',
-  imports: [ClarityModule, CarbonIcon, OsRawIcon],
+  imports: [ClarityModule, OsNavIcon],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     @if (node.children?.length) {
       <clr-vertical-nav-group>
-        <a clrVerticalNavLink href="javascript:void(0)"
-          >@if (iconSvg(); as svg) {
-            <os-rawicon clrVerticalNavIcon [svg]="svg" [size]="20" />
-          } @else {
-            <os-cicon clrVerticalNavIcon [icon]="iconForNode()" [size]="20" />
-          }{{ node.label }}</a
-        >
+        <a clrVerticalNavLink href="javascript:void(0)">
+          <os-nav-icon clrVerticalNavIcon [token]="iconToken" />{{ node.label }}
+        </a>
         <clr-vertical-nav-group-children>
           @for (child of node.children; track child.id) {
             <os-nav-node [node]="child" />
@@ -39,13 +31,9 @@ import Application16 from '@carbon/icons/es/application/16';
         </clr-vertical-nav-group-children>
       </clr-vertical-nav-group>
     } @else {
-      <a clrVerticalNavLink [href]="node.route" (click)="go($event)" [class.active]="isActive()"
-        >@if (iconSvg(); as svg) {
-          <os-rawicon clrVerticalNavIcon [svg]="svg" [size]="20" />
-        } @else {
-          <os-cicon clrVerticalNavIcon [icon]="iconForNode()" [size]="20" />
-        }{{ node.label }}</a
-      >
+      <a clrVerticalNavLink [href]="node.route" (click)="go($event)" [class.active]="isActive()">
+        <os-nav-icon clrVerticalNavIcon [token]="iconToken" />{{ node.label }}
+      </a>
     }
   `,
 })
@@ -54,18 +42,6 @@ export class OsNavNode {
   /** Main Shell이 root nav node에 투영한 관리자 선택 Carbon 아이콘. 자식 노드는 기본 아이콘을 유지한다. */
   @Input() iconToken = '';
   private router = inject(Router);
-  private iconLib = inject(IconLibraryService);
-  /** 접힘 레일용 폴백 아이콘(플러그인 nav는 아이콘 메타가 없음). */
-  readonly icon = Application16;
-
-  iconSvg(): string | null {
-    if (!this.iconToken || iconByToken(this.iconToken)) return null;
-    return this.iconLib.getSvg(this.iconToken);
-  }
-
-  iconForNode(): any {
-    return iconByToken(this.iconToken) ?? this.icon;
-  }
 
   private parts(): [string, string] {
     const [path, hash = ''] = (this.node.route ?? '').split('#');

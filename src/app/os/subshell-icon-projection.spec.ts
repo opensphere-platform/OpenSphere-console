@@ -6,6 +6,8 @@ import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const shellSource = readFileSync(path.join(here, 'os-shell.ts'), 'utf8');
+const navNodeSource = readFileSync(path.join(here, 'os-nav-node.ts'), 'utf8');
+const navIconSource = readFileSync(path.join(here, 'os-nav-icon.ts'), 'utf8');
 
 test('first-level subShell navigation preloads the Carbon icon library', () => {
   assert.match(
@@ -15,18 +17,21 @@ test('first-level subShell navigation preloads the Carbon icon library', () => {
   );
 });
 
-test('first-level subShell navigation renders selected raw icons before fallback icons', () => {
-  assert.match(shellSource, /@if \(pluginSvg\(item\); as svg\)[\s\S]*?<os-rawicon/);
-  assert.match(shellSource, /const tok = this\.ext\.pluginIcons\(\)\[id\]/);
-  assert.match(shellSource, /return this\.iconLib\.getSvg\(tok\)/);
+test('flat first-level navigation delegates selected and fallback icons to one projector', () => {
+  assert.match(shellSource, /<os-nav-icon clrVerticalNavIcon \[token\]="iconTokenFor\(item\)" \[fallback\]="fallbackIconFor\(item\)"/);
+  assert.match(shellSource, /return this\.pluginIconToken\(pluginIdFromRoute\(path\)\)/);
 });
 
 test('contributed nav-tree roots receive the owning subShell selected icon', () => {
   assert.match(shellSource, /<os-nav-node \[node\]="tree\.node" \[iconToken\]="pluginIconToken\(tree\.ownerId\)"/);
   assert.match(shellSource, /ownerId: p\.id, node/);
 
-  const navNodeSource = readFileSync(path.join(here, 'os-nav-node.ts'), 'utf8');
   assert.match(navNodeSource, /@Input\(\) iconToken = ''/);
-  assert.match(navNodeSource, /return this\.iconLib\.getSvg\(this\.iconToken\)/);
-  assert.match(navNodeSource, /return iconByToken\(this\.iconToken\) \?\? this\.icon/);
+  assert.match(navNodeSource, /<os-nav-icon clrVerticalNavIcon \[token\]="iconToken"/);
+});
+
+test('the shared navigation icon projector owns curated, full-library and fallback resolution', () => {
+  assert.match(navIconSource, /if \(!this\.token \|\| iconByToken\(this\.token\)\) return null/);
+  assert.match(navIconSource, /return this\.iconLibrary\.getSvg\(this\.token\)/);
+  assert.match(navIconSource, /return iconByToken\(this\.token\) \?\? this\.fallback/);
 });
