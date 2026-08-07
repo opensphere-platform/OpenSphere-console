@@ -359,6 +359,14 @@ export class OsShell {
   private ext = inject(ExtensionHostService);
   private iconLib = inject(IconLibraryService);
 
+  constructor() {
+    // First-level navigation can be composed before an administrator opens
+    // the icon picker. Preload the same Carbon metadata used by that picker
+    // so a selected non-curated icon is available on the nav's first render
+    // instead of remaining on the Application fallback for the whole session.
+    void this.iconLib.ensure();
+  }
+
   /** 아바타 이니셜 — 사용자명 첫 글자(대문자). */
   readonly initial = computed(() => (this.auth.user()?.trim()?.[0] ?? '?').toUpperCase());
 
