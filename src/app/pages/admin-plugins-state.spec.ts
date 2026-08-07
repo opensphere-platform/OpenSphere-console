@@ -44,6 +44,22 @@ test('Extension management separates first-level subShells from host-owned plugi
   assert.doesNotMatch(source, /@for \(r of registrations\(\); track r\.name\)/);
 });
 
+test('SubShell management projects the selected Carbon icon without a redundant Host column', () => {
+  assert.match(source, /let-showHost="showHost" let-showIcon="showIcon"/);
+  assert.match(source, /subShellRegistrations\(\)[\s\S]*showHost: false, showIcon: true/);
+  assert.match(source, /group\.items[\s\S]*showHost: true, showIcon: false/);
+  assert.match(source, /@if \(showHost\) \{ <th class="left">소속 Host<\/th> \}/);
+  assert.match(source, /<os-rawicon \[svg\]="extensionIconSvg\(r\.name\)" \[size\]="20" \/>/);
+  assert.match(source, /extensionIconToken\(name: string\)/);
+});
+
+test('the catalog icon selected in management wins when first-level navigation is composed', () => {
+  assert.match(extensionHost, /await this\.loadManagementInventory\(\)/);
+  assert.match(extensionHost, /\.\.\.Object\.fromEntries\(activePlugins\.map[\s\S]*\.\.\.current/);
+  assert.match(extensionHost, /\.\.\.current,[\s\S]*\.\.\.Object\.fromEntries\(items\.map/);
+  assert.match(shell, /return this\.iconLib\.getSvg\(tok\)/);
+});
+
 test('every Extension management tab has a reloadable canonical route', () => {
   assert.match(routes, /path: 'extensions', redirectTo: 'extensions\/subshells'/);
   assert.match(routes, /path: 'extensions\/:view', component: AdminPlugins/);

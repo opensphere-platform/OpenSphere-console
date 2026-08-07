@@ -158,7 +158,10 @@ export class ExtensionHostService {
   async load(): Promise<void> {
     this.startRegistryWatch();
     this.loadState.set('loading');
-    void this.loadManagementInventory();
+    // The management catalog is the same projection the icon picker writes.
+    // Resolve it first so a stale Registry icon cannot overwrite the user's
+    // current selection while the first-level navigation is being composed.
+    await this.loadManagementInventory();
     try {
       let reg: RegistryV3;
       try {
@@ -178,7 +181,10 @@ export class ExtensionHostService {
 				.map((entry) => entry.id)));
 			this.registryFingerprint = this.fingerprint(activePlugins, reg.trustedKeys ?? {});
       // 1단 아이콘 맵(registry 전사값). registry에는 Enabled 플러그인만 들어오므로 그대로 사용.
-      this.pluginIcons.update((current) => ({ ...current, ...Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])) }));
+      this.pluginIcons.update((current) => ({
+        ...Object.fromEntries(activePlugins.map((e) => [e.id, e.icon ?? ''])),
+        ...current,
+      }));
       this.registryEntries = activePlugins;
       // Main Shell은 직속 consumer만 활성화한다. subShell의 child는 subShell-scoped host를 통해
       // mountChild()로 활성화되어 위계와 capability 경계를 보존한다.
@@ -258,8 +264,8 @@ export class ExtensionHostService {
       });
       this.managementInventory.set(items);
       this.pluginIcons.update((current) => ({
-        ...Object.fromEntries(items.map((item) => [item.id, item.icon || ''])),
         ...current,
+        ...Object.fromEntries(items.map((item) => [item.id, item.icon || ''])),
       }));
     } catch (error) {
       console.warn('[extension-host] management inventory unavailable:', error);

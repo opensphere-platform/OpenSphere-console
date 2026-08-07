@@ -205,13 +205,13 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       </clr-accordion-panel>
     </clr-accordion>
 
-    <ng-template #extensionStatusTable let-items let-emptyText="emptyText">
+    <ng-template #extensionStatusTable let-items let-emptyText="emptyText" let-showHost="showHost" let-showIcon="showIcon">
       <div class="extension-table-wrap">
         <table class="table extension-table">
           <thead>
             <tr>
               <th class="left">Extension</th>
-              <th class="left">소속 Host</th>
+              @if (showHost) { <th class="left">소속 Host</th> }
               <th>사용자 설정</th>
               <th>현재 서비스</th>
               <th>실행 상태</th>
@@ -225,13 +225,24 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             @for (r of items; track r.name) {
               <tr>
                 <td class="left">
-                  <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
-                  <div class="state-detail">{{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span></div>
+                  <div class="extension-identity">
+                    @if (showIcon) {
+                      <span class="extension-identity-icon" [title]="extensionIconToken(r.name)">
+                        <os-rawicon [svg]="extensionIconSvg(r.name)" [size]="20" />
+                      </span>
+                    }
+                    <div>
+                      <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
+                      <div class="state-detail">{{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span></div>
+                    </div>
+                  </div>
                 </td>
-                <td class="left">
-                  <strong>{{ extensionParentLabel(r) }}</strong>
-                  <div class="state-detail os-mono">{{ extensionParentRef(r) }}</div>
-                </td>
+                @if (showHost) {
+                  <td class="left">
+                    <strong>{{ extensionParentLabel(r) }}</strong>
+                    <div class="state-detail os-mono">{{ extensionParentRef(r) }}</div>
+                  </td>
+                }
                 <td>
                   <span class="label" [class.label-success]="r.desiredState === 'Enabled'" [class.label-warning]="r.desiredState === 'Installed'">{{ desiredStateLabel(r) }}</span>
                   <div class="state-detail">{{ desiredStateDetail(r) }}</div>
@@ -280,7 +291,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                 </td>
               </tr>
             } @empty {
-              <tr><td colspan="9" class="os-sub">{{ emptyText }}</td></tr>
+              <tr><td [attr.colspan]="showHost ? 9 : 8" class="os-sub">{{ emptyText }}</td></tr>
             }
           </tbody>
         </table>
@@ -301,7 +312,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             <span><i class="status-dot warning"></i>서비스 유지 또는 처리 대기</span>
             <span><i class="status-dot danger"></i>서비스 차단 — 운영자 조치 필요</span>
           </div>
-          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: subShellRegistrations(), emptyText: '설치된 subShell이 없습니다.' }" />
+          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: subShellRegistrations(), emptyText: '설치된 subShell이 없습니다.', showHost: false, showIcon: true }" />
         </clr-tab-content>
       </clr-tab>
 
@@ -318,7 +329,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                 <div><span class="view-kicker">HOST</span><h3>{{ group.hostLabel }}</h3></div>
                 <div class="plugin-host-coordinate"><span class="label label-info">subShell</span><code>{{ group.hostRef }}</code><strong>{{ group.items.length }} plugin</strong></div>
               </header>
-              <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: group.items, emptyText: '이 host에 설치된 plugin이 없습니다.' }" />
+              <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: group.items, emptyText: '이 host에 설치된 plugin이 없습니다.', showHost: true, showIcon: false }" />
             </section>
           } @empty {
             <div class="empty-view">설치된 plugin이 없습니다. plugin은 설치 후 선언된 <code>hostRef</code> 아래에 표시됩니다.</div>
@@ -327,7 +338,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             <section class="plugin-host-group contract-warning" aria-label="분류 확인 필요">
               <header><div><span class="view-kicker">CONTRACT WARNING</span><h3>분류 확인 필요</h3></div></header>
               <p>Catalog의 kind/hostRef 계약과 연결되지 않은 Registration입니다. subShell이나 plugin 목록에 임의 편입하지 않습니다.</p>
-              <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: unclassifiedRegistrations(), emptyText: '' }" />
+              <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: unclassifiedRegistrations(), emptyText: '', showHost: true, showIcon: false }" />
             </section>
           }
         </clr-tab-content>
@@ -872,6 +883,16 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         cursor: pointer;
       }
       .extension-link:hover { text-decoration: underline; }
+      .extension-identity { display: flex; align-items: flex-start; gap: 0.55rem; min-width: 0; }
+      .extension-identity-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 1.5rem;
+        width: 1.5rem;
+        height: 1.5rem;
+        color: var(--os-ink);
+      }
       .state-detail {
         max-width: 16rem;
         margin-top: 0.22rem;
@@ -1175,6 +1196,12 @@ export class AdminPlugins implements OnInit {
   iconToken(): string {
     const n = this.selected();
     return this.catalog().find((c) => c.name === n)?.nav?.icon || '';
+  }
+  extensionIconToken(name: string): string {
+    return this.catalog().find((c) => c.name === name)?.nav?.icon || 'application';
+  }
+  extensionIconSvg(name: string): string {
+    return this.iconLib.getSvg(this.extensionIconToken(name)) || '';
   }
   async chooseIcon(token: string): Promise<void> {
     const n = this.selected();
@@ -1493,6 +1520,7 @@ export class AdminPlugins implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
+    void this.iconLib.ensure();
     this.route.paramMap.subscribe((params) => {
       const requested = params.get('view');
       const normalized = this.normalizeView(requested);
