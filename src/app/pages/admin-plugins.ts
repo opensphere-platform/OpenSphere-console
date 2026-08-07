@@ -945,8 +945,6 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       .plugin-host-group {
         margin: 0.9rem 0 1rem;
         border: 1px solid var(--os-hairline);
-        border-radius: var(--os-radius);
-        background: var(--os-surface-1);
         overflow: hidden;
       }
       .plugin-host-group > header {
@@ -957,6 +955,8 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         padding: 0.7rem 0.9rem;
         border-bottom: 1px solid var(--os-hairline);
       }
+      .plugin-host-group>header{color:#fff}
+      .plugin-host-group>header *{color:inherit!important}
       .plugin-host-group .extension-table-wrap { padding: 0.65rem; }
       .plugin-host-coordinate { display: flex; align-items: center; gap: 0.45rem; color: var(--os-muted); font-size: 0.68rem; }
       .plugin-host-coordinate code { color: var(--os-ink); }
@@ -977,7 +977,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         border: 0 !important;
         table-layout: fixed;
       }
-      .extension-table.extension-table--with-host { min-width: 94rem; }
+      .extension-table.extension-table--with-host { min-width: 86rem; }
       .extension-table th,
       .extension-table td {
         min-width: 0;
@@ -997,15 +997,15 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       .extension-table:not(.extension-table--with-host) th:nth-child(6) { width: 15%; }
       .extension-table:not(.extension-table--with-host) th:nth-child(7) { width: 12%; }
       .extension-table:not(.extension-table--with-host) th:nth-child(8) { width: 9%; }
-      .extension-table--with-host th:nth-child(1) { width: 17%; }
-      .extension-table--with-host th:nth-child(2) { width: 15%; }
+      .extension-table--with-host th:nth-child(1) { width: 16%; }
+      .extension-table--with-host th:nth-child(2) { width: 14%; }
       .extension-table--with-host th:nth-child(3) { width: 11%; }
       .extension-table--with-host th:nth-child(4) { width: 10%; }
       .extension-table--with-host th:nth-child(5) { width: 8%; }
-      .extension-table--with-host th:nth-child(6) { width: 10%; }
-      .extension-table--with-host th:nth-child(7) { width: 13%; }
+      .extension-table--with-host th:nth-child(6) { width: 9%; }
+      .extension-table--with-host th:nth-child(7) { width: 12%; }
       .extension-table--with-host th:nth-child(8) { width: 10%; }
-      .extension-table--with-host th:nth-child(9) { width: 6%; }
+      .extension-table--with-host th:nth-child(9) { width: 10%; }
       .extension-actions { white-space: nowrap; }
       .extension-actions .btn + .btn { margin-left: 0.25rem; }
       .extension-table .os-mono { overflow-wrap: anywhere; }
