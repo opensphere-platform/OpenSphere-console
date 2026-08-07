@@ -1291,6 +1291,7 @@ export class AdminPlugins implements OnInit {
     return r.status.workload?.phase || r.health || '미보고';
   }
   menuState(r: Registration): { visible: boolean; label: string; reason: string } {
+    const hostRef = this.catalogItem(r.name)?.hostRef || 'main';
     const loadedPage = this.ext.pages().find((page) => page.id === r.name);
     if (loadedPage) return { visible: true, label: '메뉴 노출', reason: `${loadedPage.navBand} · /p/${r.name}` };
     const failure = this.ext.failures().find((item) => item.id === r.name);
@@ -1299,6 +1300,16 @@ export class AdminPlugins implements OnInit {
     if (r.status.phase === 'Failed') return { visible: false, label: '서비스 차단', reason: this.reasonText(r.status.reason) || '보안 검증 실패' };
     if (r.status.phase !== 'Activated') return { visible: false, label: '서비스 대기', reason: `Registration ${r.status.phase || '미보고'} 상태` };
     if (!this.catalogItem(r.name)?.nav) return { visible: false, label: '메뉴 미선언', reason: 'UIPluginPackage spec.nav가 없음' };
+    if (hostRef !== 'main') {
+      const childState = this.ext.pluginLoadState(r.name);
+      if (childState === 'ready') {
+        return { visible: true, label: 'Host 메뉴 사용 가능', reason: `${hostRef} 하위 · ${this.extensionPageRoute(r)}` };
+      }
+      if (childState === 'loading') {
+        return { visible: false, label: 'Host 적재 중', reason: `${hostRef}가 child plugin을 검증·활성화하는 중` };
+      }
+      return { visible: false, label: 'Host 메뉴 미제공', reason: `${hostRef} child 활성화가 완료되지 않음` };
+    }
     return { visible: false, label: '메뉴 미노출', reason: 'Activated이지만 Extension Host pages registry에 적재되지 않음' };
   }
   pageReady(r: Registration): boolean {

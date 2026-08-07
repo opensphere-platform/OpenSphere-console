@@ -17,10 +17,12 @@ test('Extension 상세가 네 진실 계층과 integration matrix를 제공한�
   assert.ok(source.includes('integrationRows(r)'));
 });
 
-test('Activated와 메뉴 미노출을 동시에 명시할 수 있다', () => {
+test('Main page와 host-owned child 메뉴 상태를 서로 다른 권위로 오판하지 않는다', () => {
   assert.ok(source.includes("return { visible: false, label: '메뉴 미노출'"));
+  assert.ok(source.includes("label: 'Host 메뉴 사용 가능'"));
+  assert.ok(source.includes("label: 'Host 메뉴 미제공'"));
+  assert.ok(source.includes('pluginLoadState(r.name)'));
   assert.ok(source.includes("label: 'UI 활성화 실패'"));
-  assert.ok(source.includes('메뉴 미노출'));
   assert.ok(source.includes('menuState(r)'));
 });
 

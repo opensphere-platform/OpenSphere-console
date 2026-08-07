@@ -59,7 +59,10 @@ test('PFSS child plugins keep their host ownership across routes and navigation'
   assert.match(routes, /path: 'p\/postgres', redirectTo: 'pfss\/postgres'/);
   assert.match(routes, /matcher: pfssHostMatcher, component: PluginHost, data: \{ pluginId: 'foundation' \}/);
   assert.match(extensionHost, /hostRef: String\(item\['hostRef'\] \|\| 'main'\)/);
+  assert.match(extensionHost, /this\.activeModules\.has\(entry\.id\)/);
   assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
   assert.match(source, /if \(hostRef === 'foundation'\) return `\/pfss\/\$\{r\.name\}`/);
+  assert.match(source, /label: 'Host 메뉴 사용 가능'/);
+  assert.match(source, /this\.ext\.pluginLoadState\(r\.name\)/);
   assert.match(perspectives, /id === 'foundation' \? '\/pfss\/foundation' : `\/p\/\$\{id\}`/);
 });

@@ -616,7 +616,17 @@ export class ExtensionHostService {
             }
           : {}),
       },
-      ...(manifest.kind === 'subShell' ? { host: { mountChild: childHost, children: () => this.registryEntries.filter((entry) => (entry.hostRef ?? 'main') === pluginId).map((entry) => entry.id) } } : {}),
+      ...(manifest.kind === 'subShell' ? {
+        host: {
+          mountChild: childHost,
+          // A host must project only child modules that completed the verified
+          // activate() lifecycle. Registry presence alone is catalog/install
+          // inventory and must never become a visible host menu entry.
+          children: () => this.registryEntries
+            .filter((entry) => (entry.hostRef ?? 'main') === pluginId && this.activeModules.has(entry.id))
+            .map((entry) => entry.id),
+        },
+      } : {}),
     };
   }
 
