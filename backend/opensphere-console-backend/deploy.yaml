@@ -310,6 +310,10 @@ rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     verbs: ["get", "create", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    resourceNames: ["foundation-control-plane-deployer"]
+    verbs: ["escalate", "bind"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

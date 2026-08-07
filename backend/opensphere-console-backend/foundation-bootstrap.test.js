@@ -221,6 +221,7 @@ test('Console release wires the Foundation template, dedicated runtime, least-pr
   assert.match(deploy, /resources: \["foundationclaims"\][\s\S]{0,80}verbs: \["get", "create", "patch"\]/);
   assert.match(deploy, /resources: \["foundationbindings"\][\s\S]{0,60}verbs: \["get"\]/);
   assert.match(deploy, /resources: \["clusterroles"\][\s\S]{0,120}resourceNames: \["foundation-control-plane-core", "foundation-control-plane-identity-directory"\][\s\S]{0,80}verbs: \["escalate", "bind"\]/);
+  assert.match(deploy, /resources: \["roles"\][\s\S]{0,100}resourceNames: \["foundation-control-plane-deployer"\][\s\S]{0,80}verbs: \["escalate", "bind"\]/);
   assert.match(deploy, /FoundationModel' && object\.metadata\.name in \['identity', 'data', 'observability'\]/);
   assert.match(deploy, /FoundationClaim'[\s\S]{0,180}foundation-bootstrap-observability/);
   assert.match(deploy, /foundation-bootstrap-reconciler may mutate only the signed closed Foundation catalog/);
