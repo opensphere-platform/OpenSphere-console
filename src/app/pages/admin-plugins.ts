@@ -207,7 +207,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
 
     <ng-template #extensionStatusTable let-items let-emptyText="emptyText" let-showHost="showHost" let-showIcon="showIcon">
       <div class="extension-table-wrap">
-        <table class="table extension-table">
+        <table class="table extension-table" [class.extension-table--with-host]="showHost">
           <thead>
             <tr>
               <th class="left">Extension</th>
@@ -274,7 +274,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                   <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
                   <div class="state-detail">{{ integrationSummary(r) }}</div>
                 </td>
-                <td>
+                <td class="extension-actions">
                   <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
                   @if (r.desiredState === 'Enabled') {
                     <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
@@ -894,19 +894,26 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         color: var(--os-ink);
       }
       .state-detail {
-        max-width: 16rem;
+        max-width: none;
         margin-top: 0.22rem;
         color: var(--os-muted);
         font-size: 0.64rem;
         line-height: 1.35;
+        overflow-wrap: anywhere;
       }
       .status-guide {
         display: flex;
         align-items: center;
         gap: 0.9rem;
-        margin: 0.6rem 0;
+        min-height: 2.6rem;
+        margin: 0.6rem 0 0;
+        padding: 0.45rem 0.7rem;
+        border: 1px solid var(--os-hairline);
+        border-bottom: 0;
+        background: var(--os-surface-1);
         color: var(--os-muted);
         font-size: 0.68rem;
+        flex-wrap: wrap;
       }
       .status-guide strong { color: var(--os-ink); }
       .status-guide span { display: inline-flex; align-items: center; gap: 0.25rem; }
@@ -924,10 +931,10 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       }
       .extension-view-intro {
         display: flex;
-        align-items: flex-end;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 1rem;
-        margin: 0.8rem 0 0.45rem;
+        margin: 0.9rem 0 0;
         padding-bottom: 0.55rem;
         border-bottom: 1px solid var(--os-hairline);
       }
@@ -936,10 +943,11 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       .extension-view-intro p { max-width: 52rem; margin: 0; color: var(--os-muted); font-size: 0.72rem; }
       .view-kicker { color: var(--os-accent); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; }
       .plugin-host-group {
-        margin: 0.8rem 0 1rem;
+        margin: 0.9rem 0 1rem;
         border: 1px solid var(--os-hairline);
         border-radius: var(--os-radius);
         background: var(--os-surface-1);
+        overflow: hidden;
       }
       .plugin-host-group > header {
         display: flex;
@@ -949,15 +957,67 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         padding: 0.7rem 0.9rem;
         border-bottom: 1px solid var(--os-hairline);
       }
-      .plugin-host-group .extension-table-wrap { padding: 0 0.65rem 0.65rem; }
+      .plugin-host-group .extension-table-wrap { padding: 0.65rem; }
       .plugin-host-coordinate { display: flex; align-items: center; gap: 0.45rem; color: var(--os-muted); font-size: 0.68rem; }
       .plugin-host-coordinate code { color: var(--os-ink); }
       .empty-view { margin: 0.8rem 0; padding: 1rem; border: 1px dashed var(--os-hairline); color: var(--os-muted); }
       .contract-warning { border-color: var(--os-warning); }
       .contract-warning > p { margin: 0.6rem 0.9rem; color: var(--os-muted); font-size: 0.7rem; }
-      .extension-table-wrap { width: 100%; overflow-x: auto; }
-      .extension-table { min-width: 86rem; }
-      .extension-table td { vertical-align: top; }
+      .extension-table-wrap {
+        width: 100%;
+        overflow-x: auto;
+        border: 1px solid var(--os-hairline);
+        background: var(--os-canvas, #fff);
+      }
+      .plugin-host-group .extension-table-wrap { border: 0; background: transparent; }
+      .extension-table {
+        width: 100%;
+        min-width: 82rem;
+        margin: 0 !important;
+        border: 0 !important;
+        table-layout: fixed;
+      }
+      .extension-table.extension-table--with-host { min-width: 94rem; }
+      .extension-table th,
+      .extension-table td {
+        min-width: 0;
+        padding: 0.7rem 0.8rem !important;
+        text-align: left !important;
+      }
+      .extension-table th {
+        white-space: nowrap;
+        font-size: 0.7rem;
+      }
+      .extension-table td { vertical-align: top; overflow-wrap: anywhere; }
+      .extension-table:not(.extension-table--with-host) th:nth-child(1) { width: 20%; }
+      .extension-table:not(.extension-table--with-host) th:nth-child(2) { width: 12%; }
+      .extension-table:not(.extension-table--with-host) th:nth-child(3) { width: 12%; }
+      .extension-table:not(.extension-table--with-host) th:nth-child(4) { width: 9%; }
+      .extension-table:not(.extension-table--with-host) th:nth-child(5) { width: 11%; }
+      .extension-table:not(.extension-table--with-host) th:nth-child(6) { width: 15%; }
+      .extension-table:not(.extension-table--with-host) th:nth-child(7) { width: 12%; }
+      .extension-table:not(.extension-table--with-host) th:nth-child(8) { width: 9%; }
+      .extension-table--with-host th:nth-child(1) { width: 17%; }
+      .extension-table--with-host th:nth-child(2) { width: 15%; }
+      .extension-table--with-host th:nth-child(3) { width: 11%; }
+      .extension-table--with-host th:nth-child(4) { width: 10%; }
+      .extension-table--with-host th:nth-child(5) { width: 8%; }
+      .extension-table--with-host th:nth-child(6) { width: 10%; }
+      .extension-table--with-host th:nth-child(7) { width: 13%; }
+      .extension-table--with-host th:nth-child(8) { width: 10%; }
+      .extension-table--with-host th:nth-child(9) { width: 6%; }
+      .extension-actions { white-space: nowrap; }
+      .extension-actions .btn + .btn { margin-left: 0.25rem; }
+      .extension-table .os-mono { overflow-wrap: anywhere; }
+      clr-tab-content > .table:not(.extension-table) {
+        margin-top: 0.75rem;
+        table-layout: fixed;
+      }
+      .tree {
+        overflow: hidden;
+        border: 1px solid var(--os-hairline);
+        background: var(--os-canvas, #fff);
+      }
       .status-dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; display: inline-block; }
       .status-dot.success { background: var(--os-success); }
       .status-dot.warning { background: var(--os-warning); }
