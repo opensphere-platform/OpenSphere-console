@@ -14,12 +14,24 @@ test('canonical plugin deep links identify both host and child ownership', () =>
     hostId: 'foundation',
     childId: 'postgres',
   });
+  assert.deepEqual(extensionRouteTarget('/pfss/postgres/admin'), {
+    hostId: 'foundation',
+    childId: 'postgres',
+  });
+  assert.deepEqual(extensionRouteTarget('/pfss/foundation'), {
+    hostId: 'foundation',
+    childId: '',
+  });
   assert.deepEqual(extensionRouteTarget('/manage/extensions/plugins'), { hostId: '', childId: '' });
 });
 
 test('cold extension activation prioritizes only the requested main subShell', () => {
   assert.deepEqual(
     prioritizeRequestedHost(registry, '/p/foundation/postgres').map((entry) => entry.id),
+    ['foundation', 'cluster-manager', 'postgres', 'gitlab'],
+  );
+  assert.deepEqual(
+    prioritizeRequestedHost(registry, '/pfss/postgres/admin').map((entry) => entry.id),
     ['foundation', 'cluster-manager', 'postgres', 'gitlab'],
   );
   assert.deepEqual(
