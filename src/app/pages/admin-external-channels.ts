@@ -13,7 +13,7 @@ interface Summary { active: number; healthy: number; degraded: number; failed24h
 interface PendingAction { title: string; description: string; path: string; reason: string; confirmLabel: string; method: 'POST' | 'DELETE'; testRecipient?: string; confirmation: string; requiredConfirmation?: string; danger?: boolean; }
 type S3ProfileKey = 's3-compatible' | 'aws-s3' | 'backblaze-b2' | 'cloudflare-r2' | 'minio' | 'ceph-rgw';
 interface S3Profile { value: S3ProfileKey; label: string; region: string; endpoint: string; endpointPlaceholder: string; logo: string; }
-interface BackupTarget { id: string; name: string; provider: 's3'; vendor: S3ProfileKey | string; endpoint: string; region: string; bucketName: string; bucketId: string; pathPrefix: string; bucketPrivate: boolean; lifecycleMode: string; serverSideEncryption: string; clientSideEncryption: string; enabled: boolean; healthState: string; credential: { configured: boolean; version: number }; lastTest: { status: string; at: string; errorCode?: string | null } | null; lastBackupAt: string | null; lastRestoreAt: string | null; updatedAt: string; }
+interface BackupTarget { id: string; name: string; provider: 's3'; vendor: S3ProfileKey | string; endpoint: string; region: string; bucketName: string; bucketId: string; pathPrefix: string; bucketPrivate: boolean; lifecycleMode: string; serverSideEncryption: string; clientSideEncryption: string; enabled: boolean; healthState: string; credential: { configured: boolean; version: number }; tlsTrust?: { mode: 'system' | 'custom-ca'; customCaConfigured: boolean; subject: string; issuer: string; validTo: string | null; fingerprint: string }; lastTest: { status: string; at: string; errorCode?: string | null } | null; lastBackupAt: string | null; lastRestoreAt: string | null; updatedAt: string; }
 interface Backup { id: string; targetId: string; targetName: string; objectKey: string; status: string; encryption: string; plaintextDigest: string; sizeBytes: number; entryCounts: Record<string, number>; createdAt: string; completedAt: string | null; errorCode: string | null; }
 interface ExternalSummary { targets: number; readyTargets: number; configuredTargets: number; lastBackup: { status: string; at: string | null } | null; lastRestore: { status: string; at: string | null } | null; }
 interface RestorePreview { restoreId: string; backupId: string; digest: string; backupCreatedAt: string; restoreMode: string; exclusions: string[]; changes: { totals: { incoming: number; additions: number; changes: number; unchanged: number } }; }
@@ -29,7 +29,7 @@ const S3_PROFILES: readonly S3Profile[] = [
   { value: 'minio', label: 'MinIO', region: 'us-east-1', endpoint: '', endpointPlaceholder: 'https://minio.example.com:9000', logo: '/brand/storage/minio.svg' },
   { value: 'ceph-rgw', label: 'Ceph Object Gateway (RGW)', region: 'us-east-1', endpoint: '', endpointPlaceholder: 'https://rgw.example.com', logo: '/brand/storage/ceph-rgw.svg' },
 ];
-const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3ProfileKey, endpoint: '', region: 'us-east-1', bucketName: '', bucketId: '', pathPrefix: 'opensphere-console', accessKeyId: '', applicationKey: '', bucketPrivate: true, lifecycleMode: 'keep-all-versions', serverSideEncryption: 'unknown', reason: '' });
+const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3ProfileKey, endpoint: '', region: 'us-east-1', bucketName: '', bucketId: '', pathPrefix: 'opensphere-console', accessKeyId: '', applicationKey: '', tlsTrustMode: 'system' as 'system' | 'custom-ca', customCaCertificatePem: '', bucketPrivate: true, lifecycleMode: 'keep-all-versions', serverSideEncryption: 'unknown', reason: '' });
 
 @Component({
   selector: 'os-admin-external-channels',
@@ -113,7 +113,7 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
                 @for (target of backupTargets(); track target.id) {
                   <article class="target-card">
                     <div class="target-card__head"><div class="target-brand"><img class="target-brand__logo" [src]="s3ProfileLogo(target.vendor)" [alt]="s3ProfileLabel(target.vendor) + ' 로고'" /><div><span class="eyebrow">S3 · {{ s3ProfileLabel(target.vendor) }}</span><h3>{{ target.name }}</h3></div></div><div class="target-state"><span class="label" [class.label-success]="target.enabled" [class.label-warning]="!target.enabled">{{ target.enabled ? '활성' : '중지' }}</span><span class="label" [class.label-success]="target.healthState === 'Ready'" [class.label-warning]="target.healthState === 'Degraded'" [class.label-danger]="target.healthState === 'Misconfigured'">{{ target.healthState }}</span></div></div>
-                    <dl><div><dt>Endpoint</dt><dd class="os-mono">{{ target.endpoint }}</dd></div><div><dt>Bucket</dt><dd>{{ target.bucketName }} <span class="os-mono">{{ target.bucketId }}</span></dd></div><div><dt>보존</dt><dd>{{ target.bucketPrivate ? 'Private' : 'Public' }} · {{ target.lifecycleMode }}</dd></div><div><dt>암호화</dt><dd><span class="ok">Client {{ target.clientSideEncryption }}</span> · Server {{ target.serverSideEncryption }}</dd></div><div><dt>자격 증명</dt><dd>{{ target.credential.configured ? 'Configured · v' + target.credential.version : 'Missing' }}</dd></div><div><dt>최근 백업</dt><dd>{{ fmt(target.lastBackupAt || '') }}</dd></div></dl>
+                    <dl><div><dt>Endpoint</dt><dd class="os-mono">{{ target.endpoint }}</dd></div><div><dt>Bucket</dt><dd>{{ target.bucketName }} <span class="os-mono">{{ target.bucketId }}</span></dd></div><div><dt>TLS 신뢰</dt><dd>{{ target.tlsTrust?.mode === 'custom-ca' ? '사용자 지정 CA' : '시스템 기본 CA' }}@if (target.tlsTrust?.customCaConfigured) { <small class="trust-summary" [title]="target.tlsTrust?.fingerprint">{{ target.tlsTrust?.subject }} · {{ fmt(target.tlsTrust?.validTo || '') }} 만료</small> }</dd></div><div><dt>보존</dt><dd>{{ target.bucketPrivate ? 'Private' : 'Public' }} · {{ target.lifecycleMode }}</dd></div><div><dt>암호화</dt><dd><span class="ok">Client {{ target.clientSideEncryption }}</span> · Server {{ target.serverSideEncryption }}</dd></div><div><dt>자격 증명</dt><dd>{{ target.credential.configured ? 'Configured · v' + target.credential.version : 'Missing' }}</dd></div><div><dt>최근 백업</dt><dd>{{ fmt(target.lastBackupAt || '') }}</dd></div></dl>
                     <div class="card-actions"><button class="btn btn-sm btn-link" [disabled]="busy()" (click)="editBackupTarget(target)">편집·키 교체</button><button class="btn btn-sm btn-outline" [disabled]="busy() || !target.credential.configured" (click)="testBackupTarget(target)">연결 테스트</button><button class="btn btn-sm btn-link" [disabled]="busy()" (click)="toggleBackupTarget(target)">{{ target.enabled ? '중지' : '활성화' }}</button><button class="btn btn-sm btn-link danger-action" [disabled]="busy() || target.enabled" (click)="removeBackupTarget(target)">연결 해제</button></div>
                   </article>
                 }
@@ -196,8 +196,7 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
       </div>
       <form #backupTargetFormRef="ngForm" clrForm clrLayout="vertical" class="backup-target-form" autocomplete="off" aria-describedby="backup-target-guidance" novalidate>
         <fieldset class="backup-form-section">
-          <legend>저장 위치</legend>
-          <p>저장소 프로파일을 선택한 뒤 해당 서비스에서 확인한 Region, endpoint와 Bucket 값을 입력합니다.</p>
+          <legend><span>저장 위치</span><small>저장소 프로파일을 선택한 뒤 해당 서비스에서 확인한 Region, endpoint와 Bucket 값을 입력합니다.</small></legend>
           <div class="backup-form-grid">
             <clr-select-container><label>저장소 프로파일</label><select clrSelect [ngModel]="backupTargetForm.vendor" (ngModelChange)="applyS3Profile($event)" name="backup-vendor">@for (profile of s3Profiles; track profile.value) { <option [value]="profile.value">{{ profile.label }}</option> }</select><clr-control-helper>프로파일을 선택해도 endpoint와 Region을 직접 수정할 수 있습니다.</clr-control-helper></clr-select-container>
             <clr-input-container><label>고유 연결 이름</label><input clrInput [(ngModel)]="backupTargetForm.name" name="backup-name" minlength="2" maxlength="80" required [attr.aria-invalid]="backupTargetFieldError('name') ? 'true' : null" placeholder="운영 구성 백업 · 서울" />@if (backupTargetFieldError('name'); as issue) { <clr-control-error>{{ issue }}</clr-control-error> }</clr-input-container>
@@ -209,24 +208,30 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
           </div>
         </fieldset>
         <fieldset class="backup-form-section">
-          <legend>버킷 정책 확인</legend>
-          <p>외부 저장소에 설정된 현재 정책을 기록합니다. Console이 이 값을 변경하지는 않습니다.</p>
+          <legend><span>TLS 신뢰</span><small>Endpoint 인증서를 검증할 신뢰 저장소를 선택합니다. 인증서 검증을 해제하지 않습니다.</small></legend>
+          <div class="backup-form-grid">
+            <clr-select-container><label>TLS 신뢰 방식</label><select clrSelect [(ngModel)]="backupTargetForm.tlsTrustMode" name="backup-tls-trust-mode"><option value="system">시스템 기본 CA</option><option value="custom-ca">사용자 지정 CA</option></select><clr-control-helper>공인 인증서는 시스템 기본 CA를, 사설 인증서는 사용자 지정 CA를 사용합니다.</clr-control-helper></clr-select-container>
+            @if (backupTargetForm.tlsTrustMode === 'custom-ca') {
+              <clr-textarea-container class="wide"><label>사용자 지정 CA 인증서 (PEM)</label><textarea clrTextarea [(ngModel)]="backupTargetForm.customCaCertificatePem" name="backup-custom-ca" rows="7" maxlength="65536" [required]="!editingBackupTargetCustomCaConfigured()" [placeholder]="editingBackupTargetCustomCaConfigured() ? '기존 CA를 유지하려면 비워 두세요.' : '-----BEGIN CERTIFICATE-----'" [attr.aria-invalid]="backupTargetFieldError('customCaCertificatePem') ? 'true' : null"></textarea><clr-control-helper>{{ editingBackupTargetCustomCaConfigured() ? '기존 사용자 지정 CA 저장됨 · 비우면 유지하고 새 PEM을 입력하면 교체합니다.' : '루트 또는 중간 CA 인증서 1~8개를 PEM 형식으로 등록합니다.' }}</clr-control-helper>@if (backupTargetFieldError('customCaCertificatePem'); as issue) { <clr-control-error>{{ issue }}</clr-control-error> }</clr-textarea-container>
+            }
+          </div>
+        </fieldset>
+        <fieldset class="backup-form-section">
+          <legend><span>버킷 정책 확인</span><small>외부 저장소에 설정된 현재 정책을 기록합니다. Console이 이 값을 변경하지는 않습니다.</small></legend>
           <div class="backup-form-grid">
             <clr-select-container><label>버킷 보존 방식</label><select clrSelect [(ngModel)]="backupTargetForm.lifecycleMode" name="backup-lifecycle"><option value="keep-all-versions">모든 버전 보존</option><option value="keep-only-last-version">최신 버전만 보존</option><option value="custom">사용자 지정</option></select></clr-select-container>
             <clr-select-container><label>버킷 서버 암호화</label><select clrSelect [(ngModel)]="backupTargetForm.serverSideEncryption" name="backup-server-encryption"><option value="unknown">확인되지 않음</option><option value="enabled">활성</option><option value="disabled">비활성</option></select></clr-select-container>
           </div>
         </fieldset>
         <fieldset class="backup-form-section">
-          <legend>전용 자격 증명</legend>
-          <p>이 Bucket과 Object prefix에 필요한 최소 권한만 가진 S3 전용 자격 증명을 사용합니다.</p>
+          <legend><span>전용 자격 증명</span><small>이 Bucket과 Object prefix에 필요한 최소 권한만 가진 S3 전용 자격 증명을 사용합니다.</small></legend>
           <div class="backup-form-grid">
             <clr-input-container><label>Access key ID</label><input clrInput type="password" [(ngModel)]="backupTargetForm.accessKeyId" name="backup-access-key" autocomplete="new-password" minlength="3" maxlength="128" [required]="!editingBackupTargetId()" [placeholder]="editingBackupTargetCredentialConfigured() ? '********' : ''" [attr.aria-invalid]="backupTargetFieldError('accessKeyId') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetCredentialConfigured() ? '기존 값 저장됨 · ******** · 두 자격 증명을 모두 비우면 유지합니다.' : credentialIdHint() }}</clr-control-helper>@if (backupTargetFieldError('accessKeyId'); as issue) { <clr-control-error>{{ issue }}</clr-control-error> }</clr-input-container>
             <clr-input-container><label>Secret access key</label><input clrInput type="password" [(ngModel)]="backupTargetForm.applicationKey" name="backup-secret-key" autocomplete="new-password" minlength="8" maxlength="256" [required]="!editingBackupTargetId()" [placeholder]="editingBackupTargetCredentialConfigured() ? '********' : ''" [attr.aria-invalid]="backupTargetFieldError('applicationKey') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetCredentialConfigured() ? '기존 값 저장됨 · ******** · 두 값을 함께 입력한 경우에만 교체합니다.' : credentialSecretHint() }}</clr-control-helper>@if (backupTargetFieldError('applicationKey'); as issue) { <clr-control-error>{{ issue }}</clr-control-error> }</clr-input-container>
           </div>
         </fieldset>
         <fieldset class="backup-form-section backup-form-section--last">
-          <legend>감사 메모</legend>
-          <p>운영 변경의 목적만 기록하며 자격 증명 원문은 감사 로그에 남기지 않습니다.</p>
+          <legend><span>감사 메모</span><small>운영 변경의 목적만 기록하며 자격 증명 원문은 감사 로그에 남기지 않습니다.</small></legend>
           <div class="backup-form-grid">
             <clr-input-container class="wide"><label>변경 사유 (선택)</label><input clrInput [(ngModel)]="backupTargetForm.reason" name="backup-reason" maxlength="240" placeholder="Console 구성 외부 백업 대상 최초 연결" /></clr-input-container>
           </div>
@@ -260,14 +265,16 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
     .backup-form-section { min-width:0; margin:0; padding:0 0 1.35rem; border:0; }
     .backup-form-section + .backup-form-section { padding-top:1.25rem; }
     .backup-form-section--last { padding-bottom:.25rem; border-bottom:0; }
-    .backup-form-section legend { width:100%; margin:0; padding:0; color:var(--os-ink,#17233c); font-size:1rem; font-weight:600; line-height:1.35; }
-    .backup-form-section > p { margin:.1rem 0 .65rem; color:var(--os-ink-muted,#525d73); font-size:.78rem; line-height:1.5; }
+    .backup-form-section legend { display:flex; width:100%; margin:0 0 .65rem; padding:0; flex-direction:column; gap:.08rem; color:var(--os-ink,#17233c); line-height:1.35; }
+    .backup-form-section legend > span { font-size:1rem; font-weight:600; }
+    .backup-form-section legend > small { color:var(--os-ink-muted,#525d73); font-size:.78rem; font-weight:400; line-height:1.45; }
     .backup-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:1.25rem; row-gap:.15rem; }
-    :host ::ng-deep .backup-form-grid .clr-control-container,:host ::ng-deep .backup-form-grid .clr-input-wrapper,:host ::ng-deep .backup-form-grid .clr-select-wrapper { width:100%; }
-    :host ::ng-deep .backup-form-grid input.clr-input,:host ::ng-deep .backup-form-grid select.clr-select { width:100%; max-width:none; font-size:.86rem; }
+    :host ::ng-deep .backup-form-grid .clr-control-container,:host ::ng-deep .backup-form-grid .clr-input-wrapper,:host ::ng-deep .backup-form-grid .clr-select-wrapper,:host ::ng-deep .backup-form-grid .clr-textarea-wrapper { width:100%; }
+    :host ::ng-deep .backup-form-grid input.clr-input,:host ::ng-deep .backup-form-grid select.clr-select,:host ::ng-deep .backup-form-grid textarea.clr-textarea { width:100%; max-width:none; font-size:.86rem; }
     :host ::ng-deep .backup-form-grid .clr-form-control { margin-top:.55rem; }
     :host ::ng-deep .backup-form-grid label { color:var(--os-ink,#17233c); font-size:.78rem; font-weight:600; line-height:1.35; }
     :host ::ng-deep .backup-form-grid .clr-subtext { margin-top:.3rem; color:var(--os-ink-muted,#525d73); font-size:.72rem; line-height:1.45; }
+    .trust-summary { display:block; margin-top:.1rem; color:var(--os-ink-muted,#525d73); font-size:.66rem; line-height:1.35; overflow-wrap:anywhere; }
     .backup-panel-footer { justify-content:flex-end !important; gap:1rem !important; }
     .backup-panel-footer__actions { display:flex; align-items:center; justify-content:flex-end; gap:.5rem; flex:0 0 auto; }
     @media (max-width:760px) { .channel-form,.backup-form-grid { grid-template-columns:1fr; }.wide { grid-column:1; }.scope-note{align-items:flex-start;flex-direction:column}.target-grid{grid-template-columns:1fr}.backup-panel-footer__actions { width:100%; }.backup-panel-footer__actions .btn { flex:1 1 0; } }
@@ -282,17 +289,18 @@ export class AdminExternalChannels {
   readonly backupTargets = signal<BackupTarget[]>([]); readonly backups = signal<Backup[]>([]); readonly restorePreview = signal<RestorePreview | null>(null);
   readonly loading = signal(true); readonly busy = signal(false); readonly error = signal(''); readonly panelError = signal<PanelIssue | null>(null); readonly backupTargetSubmitAttempted = signal(false);
   readonly backupTargetFormRef = viewChild<NgForm>('backupTargetFormRef');
-  readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly backupTargetPanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null); readonly editingBackupTargetId = signal<string | null>(null); readonly editingBackupTargetCredentialConfigured = signal(false);
+  readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly backupTargetPanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null); readonly editingBackupTargetId = signal<string | null>(null); readonly editingBackupTargetCredentialConfigured = signal(false); readonly editingBackupTargetCustomCaConfigured = signal(false);
   channelForm = emptyChannel(); ruleForm = emptyRule(); backupTargetForm = emptyBackupTarget(); restoreConfirmation = ''; restoreReason = '운영 구성 복원 실행';
   constructor() { void this.load(); }
   async load(): Promise<void> { this.loading.set(true); try { const [summary, channels, rules, deliveries, externalSummary, targets, backups] = await Promise.all([this.http.json<Summary>('/api/notifications/summary'), this.http.json<{ items: Channel[] }>('/api/notifications/channels'), this.http.json<{ items: Rule[] }>('/api/notifications/rules'), this.http.json<{ items: Delivery[] }>('/api/notifications/deliveries?limit=100'), this.http.json<ExternalSummary>('/api/external-channels/summary'), this.http.json<{ items: BackupTarget[] }>('/api/external-channels/backup-targets'), this.http.json<{ items: Backup[] }>('/api/external-channels/backups')]); this.summary.set(summary); this.channels.set(channels.items || []); this.rules.set(rules.items || []); this.deliveries.set(deliveries.items || []); this.externalSummary.set(externalSummary); this.backupTargets.set(targets.items || []); this.backups.set(backups.items || []); } catch (error) { this.error.set(`외부 채널 정보를 불러오지 못했습니다: ${String(error)}`); } finally { this.loading.set(false); } }
   openChannelPanel(): void { this.panelError.set(null); this.editingChannelId.set(null); this.channelForm = emptyChannel(); this.channelPanelOpen.set(true); }
   openRulePanel(): void { this.panelError.set(null); this.ruleForm = emptyRule(); this.rulePanelOpen.set(true); }
-  openBackupTargetPanel(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.editingBackupTargetId.set(null); this.editingBackupTargetCredentialConfigured.set(false); this.backupTargetForm = emptyBackupTarget(); this.backupTargetPanelOpen.set(true); }
+  openBackupTargetPanel(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.editingBackupTargetId.set(null); this.editingBackupTargetCredentialConfigured.set(false); this.editingBackupTargetCustomCaConfigured.set(false); this.backupTargetForm = emptyBackupTarget(); this.backupTargetPanelOpen.set(true); }
   editBackupTarget(target: BackupTarget): void {
     this.panelError.set(null);
     this.editingBackupTargetId.set(target.id);
     this.editingBackupTargetCredentialConfigured.set(target.credential.configured);
+    this.editingBackupTargetCustomCaConfigured.set(Boolean(target.tlsTrust?.customCaConfigured));
     this.backupTargetForm = {
       ...emptyBackupTarget(),
       vendor: S3_PROFILES.some((profile) => profile.value === target.vendor) ? target.vendor as S3ProfileKey : 's3-compatible',
@@ -302,6 +310,8 @@ export class AdminExternalChannels {
       bucketName: target.bucketName,
       bucketId: target.bucketId || '',
       pathPrefix: target.pathPrefix,
+      tlsTrustMode: target.tlsTrust?.mode || 'system',
+      customCaCertificatePem: '',
       bucketPrivate: target.bucketPrivate,
       lifecycleMode: target.lifecycleMode,
       serverSideEncryption: target.serverSideEncryption,
@@ -310,7 +320,7 @@ export class AdminExternalChannels {
     this.backupTargetSubmitAttempted.set(false);
     this.backupTargetPanelOpen.set(true);
   }
-  closePanels(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.backupTargetPanelOpen.set(false); this.editingChannelId.set(null); this.editingBackupTargetId.set(null); this.editingBackupTargetCredentialConfigured.set(false); }
+  closePanels(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.backupTargetPanelOpen.set(false); this.editingChannelId.set(null); this.editingBackupTargetId.set(null); this.editingBackupTargetCredentialConfigured.set(false); this.editingBackupTargetCustomCaConfigured.set(false); }
   async saveBackupTarget(): Promise<void> {
     this.backupTargetSubmitAttempted.set(true);
     this.backupTargetFormRef()?.form.markAllAsTouched();
@@ -377,13 +387,13 @@ export class AdminExternalChannels {
     const issue = this.backupTargetValidationError(field);
     if (!issue) return '';
     const value = this.backupTargetForm;
-    const entered = ({ name: value.name, region: value.region, endpoint: value.endpoint, bucketName: value.bucketName, bucketId: value.bucketId, pathPrefix: value.pathPrefix, accessKeyId: value.accessKeyId, applicationKey: value.applicationKey } as Record<string, string>)[field]?.trim();
+    const entered = ({ name: value.name, region: value.region, endpoint: value.endpoint, bucketName: value.bucketName, bucketId: value.bucketId, pathPrefix: value.pathPrefix, accessKeyId: value.accessKeyId, applicationKey: value.applicationKey, customCaCertificatePem: value.customCaCertificatePem } as Record<string, string>)[field]?.trim();
     const pairedCredentialEntered = (field === 'accessKeyId' && value.applicationKey.trim()) || (field === 'applicationKey' && value.accessKeyId.trim());
     return this.backupTargetSubmitAttempted() || !!entered || !!pairedCredentialEntered ? issue : '';
   }
   backupTargetFormValid(): boolean { return this.backupTargetFields().every((field) => !this.backupTargetValidationError(field)); }
-  fieldLabel(field: string): string { return ({ accessKeyId: 'Access key ID', applicationKey: 'Secret access key', bucketName: 'Bucket name', bucketId: 'Bucket ID', region: 'Region', endpoint: 'S3 endpoint', pathPrefix: 'Object prefix', name: '연결 이름', confirmation: '확인 문구' } as Record<string, string>)[field] || '요청 오류'; }
-  private backupTargetFields(): string[] { return ['name', 'region', 'endpoint', 'bucketName', 'bucketId', 'pathPrefix', 'accessKeyId', 'applicationKey']; }
+  fieldLabel(field: string): string { return ({ accessKeyId: 'Access key ID', applicationKey: 'Secret access key', customCaCertificatePem: '사용자 지정 CA 인증서', tlsTrustMode: 'TLS 신뢰 방식', bucketName: 'Bucket name', bucketId: 'Bucket ID', region: 'Region', endpoint: 'S3 endpoint', pathPrefix: 'Object prefix', name: '연결 이름', confirmation: '확인 문구' } as Record<string, string>)[field] || '요청 오류'; }
+  private backupTargetFields(): string[] { return ['name', 'region', 'endpoint', 'bucketName', 'bucketId', 'pathPrefix', 'customCaCertificatePem', 'accessKeyId', 'applicationKey']; }
   private backupTargetValidationError(field: string): string {
     const value = this.backupTargetForm;
     if (field === 'name' && !value.name.trim()) return '이 대상을 구분할 연결 이름을 입력하세요.';
@@ -404,6 +414,11 @@ export class AdminExternalChannels {
     if (field === 'bucketId' && value.bucketId.trim() && !/^[A-Za-z0-9_-]{1,128}$/.test(value.bucketId.trim())) return 'Bucket ID는 128자 이내의 영문·숫자·밑줄·하이픈만 입력하세요.';
     if (field === 'pathPrefix' && !value.pathPrefix.trim()) return '백업 객체를 구분할 Object prefix를 입력하세요.';
     if (field === 'pathPrefix' && (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(value.pathPrefix.trim()) || /(^|\/)\.\.?(\/|$)/.test(value.pathPrefix.trim()))) return 'Object prefix는 문자나 숫자로 시작하고 경로 이탈 구문을 포함할 수 없습니다.';
+    if (field === 'customCaCertificatePem' && value.tlsTrustMode === 'custom-ca') {
+      const pem = value.customCaCertificatePem.trim();
+      if (!pem && !this.editingBackupTargetCustomCaConfigured()) return '사설 인증서를 검증할 CA 인증서를 PEM 형식으로 입력하세요.';
+      if (pem && (pem.length > 65536 || !/^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----$/.test(pem))) return 'CA 인증서는 64 KiB 이하의 PEM 인증서 묶음이어야 합니다.';
+    }
     const credentialsBlank = !value.accessKeyId.trim() && !value.applicationKey.trim();
     if (field === 'accessKeyId' && !(this.editingBackupTargetId() && credentialsBlank) && !/^[\x21-\x7e]{3,128}$/.test(value.accessKeyId.trim())) return value.applicationKey.trim() && !value.accessKeyId.trim() ? 'Secret access key와 함께 Access key ID도 입력하세요.' : 'Access key ID는 공백 없이 3~128자로 입력하세요.';
     if (field === 'applicationKey' && !(this.editingBackupTargetId() && credentialsBlank) && !/^[\x21-\x7e]{8,256}$/.test(value.applicationKey.trim())) return value.accessKeyId.trim() && !value.applicationKey.trim() ? 'Access key ID와 함께 Secret access key도 입력하세요.' : 'Secret access key는 공백 없이 8~256자로 입력하세요.';
@@ -411,7 +426,7 @@ export class AdminExternalChannels {
   }
   private focusBackupTargetField(field: string): void {
     if (typeof document === 'undefined') return;
-    const name = ({ name: 'backup-name', region: 'backup-region', endpoint: 'backup-endpoint', bucketName: 'backup-bucket-name', bucketId: 'backup-bucket-id', pathPrefix: 'backup-prefix', accessKeyId: 'backup-access-key', applicationKey: 'backup-secret-key' } as Record<string, string>)[field];
+    const name = ({ name: 'backup-name', region: 'backup-region', endpoint: 'backup-endpoint', bucketName: 'backup-bucket-name', bucketId: 'backup-bucket-id', pathPrefix: 'backup-prefix', customCaCertificatePem: 'backup-custom-ca', accessKeyId: 'backup-access-key', applicationKey: 'backup-secret-key' } as Record<string, string>)[field];
     queueMicrotask(() => {
       const element = document.querySelector<HTMLElement>(`[name="${name}"]`);
       element?.scrollIntoView({ behavior: 'smooth', block: 'center' });

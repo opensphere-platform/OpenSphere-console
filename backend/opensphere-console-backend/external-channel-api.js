@@ -27,6 +27,24 @@ function credentialReplacement(input, { required = false } = {}) {
   return { accessKeyId, applicationKey };
 }
 
+function tlsTrustReplacement(input, { defaultMode = 'system', customCaConfigured = false } = {}) {
+  const mode = String(input?.tlsTrustMode || defaultMode).trim().toLowerCase();
+  if (!['system', 'custom-ca'].includes(mode)) {
+    throw { code: 400, field: 'tlsTrustMode', msg: 'TLS trust mode must be system or custom-ca' };
+  }
+  const customCaCertificatePem = String(input?.customCaCertificatePem || '').trim();
+  if (customCaCertificatePem.length > 65536) {
+    throw { code: 400, field: 'customCaCertificatePem', msg: 'Custom CA bundle must be 64 KiB or smaller' };
+  }
+  if (mode === 'system' && customCaCertificatePem) {
+    throw { code: 400, field: 'customCaCertificatePem', msg: 'Custom CA certificate requires custom-ca trust mode' };
+  }
+  if (mode === 'custom-ca' && !customCaCertificatePem && !customCaConfigured) {
+    throw { code: 400, field: 'customCaCertificatePem', msg: 'Custom CA certificate is required' };
+  }
+  return { mode, customCaCertificatePem };
+}
+
 function normalizeTarget(input) {
   const vendor = text(input?.vendor || 's3-compatible', 'storage profile', { required: true, min: 2, max: 64 }).toLowerCase();
   if (!/^[a-z0-9][a-z0-9.-]{1,63}$/.test(vendor)) throw { code: 400, field: 'vendor', msg: 'invalid S3 storage profile' };
@@ -87,6 +105,14 @@ function publicTarget(row) {
     credential: {
       configured: Boolean(row.credential_configured),
       version: Number(row.secret_version || 0),
+    },
+    tlsTrust: {
+      mode: row.tls_trust_mode || 'system',
+      customCaConfigured: Boolean(row.custom_ca_configured),
+      subject: row.custom_ca_subject || '',
+      issuer: row.custom_ca_issuer || '',
+      validTo: row.custom_ca_valid_to || null,
+      fingerprint: row.custom_ca_fingerprint || '',
     },
     lastTest: row.last_test_at ? {
       status: row.last_test_status,
@@ -335,7 +361,8 @@ function createExternalChannelApi({
 
   async function createTarget(actor, body) {
     const changeReason = auditReason(body?.reason);
-    const parsed = normalizeTarget(body);
+    const tlsTrust = tlsTrustReplacement(body);
+    const parsed = { ...normalizeTarget(body), tls_trust_mode: tlsTrust.mode };
     const credential = credentialReplacement(body, { required: true });
     await ensureUniqueTargetName(parsed.name);
     const id = newOpId();
@@ -348,6 +375,8 @@ function createExternalChannelApi({
       await executorRequest(`/internal/targets/${id}/credentials`, {
         accessKeyId: credential.accessKeyId,
         applicationKey: credential.applicationKey,
+        tlsTrustMode: tlsTrust.mode,
+        ...(tlsTrust.customCaCertificatePem ? { customCaCertificatePem: tlsTrust.customCaCertificatePem } : {}),
       });
     } catch (error) {
       await restRequest('external_backup_target', {
@@ -369,8 +398,15 @@ function createExternalChannelApi({
   async function updateTarget(actor, id, body) {
     const changeReason = auditReason(body?.reason);
     const current = await targetRow(id);
-    const parsed = normalizeTarget(body);
+    const tlsTrust = tlsTrustReplacement(body, {
+      defaultMode: current.tls_trust_mode || 'system',
+      customCaConfigured: Boolean(current.custom_ca_configured) && (current.tls_trust_mode || 'system') === 'custom-ca',
+    });
+    const parsed = { ...normalizeTarget(body), tls_trust_mode: tlsTrust.mode };
     const credential = credentialReplacement(body);
+    const connectionSecretChanged = Boolean(credential)
+      || tlsTrust.mode !== (current.tls_trust_mode || 'system')
+      || Boolean(tlsTrust.customCaCertificatePem);
     await ensureUniqueTargetName(parsed.name, id);
     const now = new Date().toISOString();
     const replacement = {
@@ -379,6 +415,13 @@ function createExternalChannelApi({
       last_test_status: null,
       last_test_at: null,
       last_error_code: null,
+      ...(tlsTrust.mode === 'system' ? {
+        custom_ca_configured: false,
+        custom_ca_subject: null,
+        custom_ca_issuer: null,
+        custom_ca_valid_to: null,
+        custom_ca_fingerprint: null,
+      } : {}),
       updated_by: actor.sub,
       updated_at: now,
     };
@@ -394,6 +437,12 @@ function createExternalChannelApi({
       bucket_private: current.bucket_private,
       lifecycle_mode: current.lifecycle_mode,
       server_side_encryption: current.server_side_encryption,
+      tls_trust_mode: current.tls_trust_mode || 'system',
+      custom_ca_configured: current.custom_ca_configured,
+      custom_ca_subject: current.custom_ca_subject,
+      custom_ca_issuer: current.custom_ca_issuer,
+      custom_ca_valid_to: current.custom_ca_valid_to,
+      custom_ca_fingerprint: current.custom_ca_fingerprint,
       health_state: current.health_state,
       last_test_status: current.last_test_status,
       last_test_at: current.last_test_at,
@@ -408,8 +457,12 @@ function createExternalChannelApi({
       prefer: 'return=minimal',
     });
     try {
-      if (credential) {
-        await executorRequest(`/internal/targets/${id}/credentials`, credential);
+      if (connectionSecretChanged) {
+        await executorRequest(`/internal/targets/${id}/credentials`, {
+          ...(credential || {}),
+          tlsTrustMode: tlsTrust.mode,
+          ...(tlsTrust.customCaCertificatePem ? { customCaCertificatePem: tlsTrust.customCaCertificatePem } : {}),
+        });
       }
     } catch (error) {
       await restRequest('external_backup_target', {
@@ -420,10 +473,14 @@ function createExternalChannelApi({
       }).catch(() => undefined);
       throw error;
     }
-    await logAudit(actor, credential ? 'external-backup-target-update-and-rotate' : 'external-backup-target-update', id, 'ok', changeReason, {
+    await logAudit(actor, connectionSecretChanged ? 'external-backup-target-update-and-rotate' : 'external-backup-target-update', id, 'ok', changeReason, {
       requestId: newOpId(),
       targetType: 'external-backup-target',
-      payloadDigest: rowDigest({ ...parsed, credentialRotated: Boolean(credential) }),
+      payloadDigest: rowDigest({
+        ...parsed,
+        credentialRotated: Boolean(credential),
+        tlsTrustUpdated: connectionSecretChanged && (!credential || Boolean(tlsTrust.customCaCertificatePem) || tlsTrust.mode !== (current.tls_trust_mode || 'system')),
+      }),
     });
     return publicTarget(await targetRow(id));
   }
@@ -652,6 +709,7 @@ module.exports = {
   auditReason,
   compareSnapshots,
   credentialReplacement,
+  tlsTrustReplacement,
   createExternalChannelApi,
   normalizeTarget,
   publicTarget,

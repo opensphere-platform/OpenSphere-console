@@ -4,19 +4,24 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { rootCertificates } = require('node:tls');
 const {
   auditReason,
   compareSnapshots,
   credentialReplacement,
   normalizeTarget,
+  tlsTrustReplacement,
 } = require('./external-channel-api');
 const {
   cipherJson,
+  connectionSecretInput,
   credentialInput,
+  customCaInput,
   decipherJson,
   s3Failure,
   signedS3Request,
   targetInput,
+  tlsFailure,
 } = require('../notification-dispatcher/external-backup-server');
 
 const read = (value) => fs.readFileSync(path.join(__dirname, value), 'utf8');
@@ -54,6 +59,29 @@ test('backup target credential rotation is pairwise and optional only while edit
     (error) => error?.field === 'accessKeyId',
   );
   assert.throws(() => credentialReplacement({}, { required: true }), { code: 400 });
+});
+
+test('per-target TLS trust requires a validated custom CA without permitting verification bypass', () => {
+  assert.deepEqual(tlsTrustReplacement({ tlsTrustMode: 'system' }), {
+    mode: 'system',
+    customCaCertificatePem: '',
+  });
+  assert.throws(
+    () => tlsTrustReplacement({ tlsTrustMode: 'custom-ca' }),
+    (error) => error?.field === 'customCaCertificatePem',
+  );
+  const customCa = customCaInput(rootCertificates[0]);
+  assert.match(customCa.fingerprint, /^SHA-256 ([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+  const connection = connectionSecretInput({
+    accessKeyId: 'key-id-for-test',
+    applicationKey: 'secret-application-key-for-test',
+    tlsTrustMode: 'custom-ca',
+    customCaCertificatePem: rootCertificates[0],
+  });
+  assert.equal(connection.secret.tlsTrustMode, 'custom-ca');
+  assert.equal(connection.metadata.subject.length > 0, true);
+  assert.equal(tlsFailure({ code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }, false).field, 'tlsTrustMode');
+  assert.equal(tlsFailure({ code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }, true).field, 'customCaCertificatePem');
 });
 
 test('S3-compatible failures identify the actionable configuration field', () => {
@@ -154,6 +182,7 @@ test('restore preview reports additions and changes without destructive deletion
 test('migration isolates secrets and restore scope from browser identities', () => {
   const migration = read('../supabase/migrations/0025_external_channels_backup.sql');
   const s3ProfilesMigration = read('../supabase/migrations/0043_external_backup_s3_compatible_profiles.sql');
+  const tlsTrustMigration = read('../supabase/migrations/0044_external_backup_target_tls_trust.sql');
   const reasonPolicy = read('../supabase/migrations/0027_external_channel_reason_policy.sql');
   assert.match(migration, /CREATE ROLE opensphere_external_channel_executor NOLOGIN NOINHERIT/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS console\.external_backup_secret/);
@@ -167,6 +196,9 @@ test('migration isolates secrets and restore scope from browser identities', () 
   assert.match(s3ProfilesMigration, /ALTER COLUMN vendor SET DEFAULT 's3-compatible'/);
   assert.match(s3ProfilesMigration, /external_backup_target_endpoint_check/);
   assert.doesNotMatch(s3ProfilesMigration, /vendor\s*=\s*'backblaze-b2'/);
+  assert.match(tlsTrustMigration, /tls_trust_mode IN \('system', 'custom-ca'\)/);
+  assert.match(tlsTrustMigration, /encrypted external_backup_secret envelope/);
+  assert.doesNotMatch(tlsTrustMigration, /rejectUnauthorized\s*=\s*false|NODE_TLS_REJECT_UNAUTHORIZED/);
 });
 
 test('External Channels UI and compatibility redirect expose backup and restore', () => {
@@ -195,13 +227,17 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.doesNotMatch(source, /target-brand__mark/);
   assert.doesNotMatch(source, /지금 백업|backupNow\(/);
   assert.doesNotMatch(source, /\.backup-form-section\s*\{[^}]*border-bottom:/);
-  assert.match(source, /<legend>버킷 정책 확인<\/legend>\s*<p>외부 저장소에 설정된 현재 정책을 기록합니다\. Console이 이 값을 변경하지는 않습니다\.<\/p>/);
+  assert.match(source, /<legend><span>버킷 정책 확인<\/span><small>외부 저장소에 설정된 현재 정책을 기록합니다\. Console이 이 값을 변경하지는 않습니다\.<\/small><\/legend>/);
+  assert.match(source, /<legend><span>TLS 신뢰<\/span><small>/);
+  assert.match(source, /name="backup-tls-trust-mode"/);
+  assert.match(source, /name="backup-custom-ca"/);
+  assert.doesNotMatch(source, /인증서 검증 안 함|verify\s*=\s*false/);
   assert.match(source, /s3ProfileLogo\(target\.vendor\)/);
   for (const logo of ['s3-compatible', 'amazon-s3', 'backblaze-b2', 'cloudflare-r2', 'minio', 'ceph-rgw']) {
     assert.ok(fs.existsSync(path.join(__dirname, `../../public/brand/storage/${logo}.svg`)), `${logo} logo must be packaged locally`);
   }
   assert.doesNotMatch(source, /logo:\s*'https?:\/\//);
-  assert.equal(source.match(/<clr-control-error>/g)?.length, 8);
+  assert.equal(source.match(/<clr-control-error>/g)?.length, 9);
   assert.doesNotMatch(source, /class="field-error"/);
   assert.match(source, /\[disabled\]="busy\(\)" \(click\)="saveBackupTarget\(\)"/);
   assert.doesNotMatch(source, /필수 항목을 입력하면 저장할 수 있습니다/);

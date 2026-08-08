@@ -37,6 +37,7 @@ const moduleOperationLedger = read('migrations', '0035_module_operation_ledger.s
 const browserSessionExpiryEvidence = read('migrations', '0037_browser_session_expiry_evidence.sql');
 const watchCursorStatusVocabulary = read('migrations', '0038_oaa_watch_cursor_status_vocabulary.sql');
 const externalBackupS3CompatibleProfiles = read('migrations', '0043_external_backup_s3_compatible_profiles.sql');
+const externalBackupTlsTrust = read('migrations', '0044_external_backup_target_tls_trust.sql');
 const storageEntrypoint = read('images', 'storage', 'opensphere-storage-entrypoint.sh');
 const storageDockerfile = read('images', 'storage', 'Dockerfile');
 const installer = read('install.ps1');
@@ -238,6 +239,9 @@ assert.match(externalBackupS3CompatibleProfiles, /ALTER COLUMN vendor SET DEFAUL
 assert.match(externalBackupS3CompatibleProfiles, /external_backup_target_endpoint_check/);
 assert.match(externalBackupS3CompatibleProfiles, /AWS Signature Version 4 compatible S3 API/);
 assert.doesNotMatch(externalBackupS3CompatibleProfiles, /vendor\s*=\s*'backblaze-b2'/);
+assert.match(externalBackupTlsTrust, /tls_trust_mode IN \('system', 'custom-ca'\)/);
+assert.match(externalBackupTlsTrust, /custom_ca_fingerprint/);
+assert.doesNotMatch(externalBackupTlsTrust, /NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*=\s*false/);
 assert.match(migrationLedger, /CREATE TABLE IF NOT EXISTS console\.schema_migration/);
 assert.match(migrationLedger, /sha256 text NOT NULL/);
 assert.match(migrationLedger, /source_revision text NOT NULL/);

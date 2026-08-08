@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const {
   createCipheriv,
   createDecipheriv,
@@ -8,6 +9,7 @@ const {
   createHmac,
   timingSafeEqual,
   randomBytes,
+  X509Certificate,
 } = require('crypto');
 
 const PORT = Number(process.env.PORT || 8082);
@@ -163,6 +165,59 @@ function credentialInput(value) {
   return { accessKeyId, applicationKey };
 }
 
+function certificateName(value) {
+  return String(value || '').split(/\r?\n/).map((part) => part.trim()).filter(Boolean).join(', ');
+}
+
+function customCaInput(value) {
+  const pem = String(value || '').trim();
+  if (!pem || Buffer.byteLength(pem, 'utf8') > 65536) {
+    throw { code: 400, field: 'customCaCertificatePem', msg: 'Custom CA bundle must be a non-empty PEM file no larger than 64 KiB' };
+  }
+  const blocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
+  if (!blocks.length || blocks.length > 8) {
+    throw { code: 400, field: 'customCaCertificatePem', msg: 'Custom CA bundle must contain 1-8 PEM certificates' };
+  }
+  let certificates;
+  try { certificates = blocks.map((block) => new X509Certificate(block)); }
+  catch { throw { code: 400, field: 'customCaCertificatePem', msg: 'Custom CA bundle contains an invalid certificate' }; }
+  if (certificates.some((certificate) => !certificate.ca)) {
+    throw { code: 400, field: 'customCaCertificatePem', msg: 'Custom CA bundle may contain only CA certificates' };
+  }
+  const now = Date.now();
+  if (certificates.some((certificate) => now < Date.parse(certificate.validFrom) || now > Date.parse(certificate.validTo))) {
+    throw { code: 400, field: 'customCaCertificatePem', msg: 'Custom CA bundle contains a certificate outside its validity period' };
+  }
+  const primary = certificates[0];
+  return {
+    pem: `${blocks.join('\n')}\n`,
+    subject: certificateName(primary.subject),
+    issuer: certificateName(primary.issuer),
+    validTo: new Date(primary.validTo).toISOString(),
+    fingerprint: `SHA-256 ${primary.fingerprint256}`,
+  };
+}
+
+function connectionSecretInput(value, existing = null) {
+  const replacementAccessKeyId = String(value?.accessKeyId || '').trim();
+  const replacementApplicationKey = String(value?.applicationKey || '').trim();
+  const credential = replacementAccessKeyId || replacementApplicationKey
+    ? credentialInput({ accessKeyId: replacementAccessKeyId, applicationKey: replacementApplicationKey })
+    : credentialInput(existing || {});
+  const tlsTrustMode = String(value?.tlsTrustMode || existing?.tlsTrustMode || 'system').trim().toLowerCase();
+  if (!['system', 'custom-ca'].includes(tlsTrustMode)) {
+    throw { code: 400, field: 'tlsTrustMode', msg: 'TLS trust mode must be system or custom-ca' };
+  }
+  if (tlsTrustMode === 'system') {
+    return { secret: { ...credential, tlsTrustMode: 'system' }, metadata: null };
+  }
+  const customCa = customCaInput(value?.customCaCertificatePem || existing?.customCaCertificatePem);
+  return {
+    secret: { ...credential, tlsTrustMode: 'custom-ca', customCaCertificatePem: customCa.pem },
+    metadata: customCa,
+  };
+}
+
 async function targetFor(id) {
   const rows = await rest('external_backup_target', {
     query: `select=*&id=eq.${encodeURIComponent(id)}&deleted_at=is.null`,
@@ -173,9 +228,10 @@ async function targetFor(id) {
 
 async function storeCredential(targetId, input) {
   const target = await targetFor(targetId);
-  const credential = credentialInput(input);
+  const existing = target.credential_configured ? await credentialFor(targetId) : null;
+  const connection = connectionSecretInput(input, existing);
   const version = Number(target.secret_version || 0) + 1;
-  const encrypted = cipherJson(credential, 'EXTERNAL_CREDENTIAL_ENCRYPTION_KEY');
+  const encrypted = cipherJson(connection.secret, 'EXTERNAL_CREDENTIAL_ENCRYPTION_KEY');
   await rest('rpc/external_backup_store_secret', {
     method: 'POST',
     body: {
@@ -193,6 +249,12 @@ async function storeCredential(targetId, input) {
     body: {
       credential_configured: true,
       secret_version: version,
+      tls_trust_mode: connection.secret.tlsTrustMode,
+      custom_ca_configured: Boolean(connection.metadata),
+      custom_ca_subject: connection.metadata?.subject || null,
+      custom_ca_issuer: connection.metadata?.issuer || null,
+      custom_ca_valid_to: connection.metadata?.validTo || null,
+      custom_ca_fingerprint: connection.metadata?.fingerprint || null,
       health_state: 'Degraded',
       updated_at: new Date().toISOString(),
     },
@@ -214,7 +276,12 @@ async function credentialFor(targetId) {
     ciphertext: rows[0].ciphertext,
     plaintextDigest: rows[0].plaintext_digest,
   };
-  return credentialInput(decipherJson(envelope, 'EXTERNAL_CREDENTIAL_ENCRYPTION_KEY').value);
+  const value = decipherJson(envelope, 'EXTERNAL_CREDENTIAL_ENCRYPTION_KEY').value;
+  const credential = credentialInput(value);
+  const tlsTrustMode = String(value?.tlsTrustMode || 'system').toLowerCase();
+  if (tlsTrustMode === 'system') return { ...credential, tlsTrustMode: 'system' };
+  const customCa = customCaInput(value?.customCaCertificatePem);
+  return { ...credential, tlsTrustMode: 'custom-ca', customCaCertificatePem: customCa.pem };
 }
 
 function awsEncode(value) {
@@ -286,9 +353,73 @@ function signedS3Request({ target, credential, method, objectKey = '', body = Bu
   };
 }
 
+function tlsFailure(error, usesCustomCa) {
+  const cause = error?.cause || error;
+  const code = String(cause?.code || '');
+  const certificateErrors = new Set([
+    'CERT_HAS_EXPIRED',
+    'CERT_NOT_YET_VALID',
+    'DEPTH_ZERO_SELF_SIGNED_CERT',
+    'ERR_TLS_CERT_ALTNAME_INVALID',
+    'SELF_SIGNED_CERT_IN_CHAIN',
+    'UNABLE_TO_GET_ISSUER_CERT',
+    'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+    'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  ]);
+  if (!certificateErrors.has(code)) return null;
+  return {
+    code: 502,
+    msg: usesCustomCa
+      ? '사용자 지정 CA로 S3 endpoint 인증서를 검증하지 못했습니다.'
+      : 'S3 endpoint 인증서가 시스템 신뢰 저장소에서 검증되지 않았습니다. 사용자 지정 CA를 등록하세요.',
+    externalCode: 's3-tls-certificate-untrusted',
+    field: usesCustomCa ? 'customCaCertificatePem' : 'tlsTrustMode',
+  };
+}
+
+function fetchWithCustomCa(url, options, customCaCertificatePem) {
+  return new Promise((resolve, reject) => {
+    const request = https.request(url, {
+      method: options.method,
+      headers: options.headers,
+      ca: customCaCertificatePem,
+      rejectUnauthorized: true,
+    }, (response) => {
+      const chunks = [];
+      let size = 0;
+      response.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > MAX_SNAPSHOT_BYTES * 3) {
+          request.destroy(Object.assign(new Error('S3 response exceeds limit'), { code: 'RESPONSE_TOO_LARGE' }));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on('end', () => resolve(new Response(Buffer.concat(chunks), {
+        status: Number(response.statusCode || 500),
+        headers: response.headers,
+      })));
+    });
+    request.setTimeout(30000, () => request.destroy(Object.assign(new Error('S3 request timed out'), { code: 'ETIMEDOUT' })));
+    request.on('error', reject);
+    if (options.body !== undefined) request.write(options.body);
+    request.end();
+  });
+}
+
 async function s3Request(args) {
   const signed = signedS3Request(args);
-  const response = await fetch(signed.url, signed.options);
+  const usesCustomCa = args.credential?.tlsTrustMode === 'custom-ca';
+  let response;
+  try {
+    response = usesCustomCa
+      ? await fetchWithCustomCa(signed.url, signed.options, args.credential.customCaCertificatePem)
+      : await fetch(signed.url, signed.options);
+  } catch (error) {
+    const failure = tlsFailure(error, usesCustomCa);
+    if (failure) throw failure;
+    throw error;
+  }
   if (!response.ok) {
     const detail = (await response.text()).replace(/\s+/g, ' ').slice(0, 300);
     const providerCode = detail.match(/<Code>([^<]+)<\/Code>/)?.[1] || '';
@@ -567,10 +698,13 @@ if (require.main === module) {
 module.exports = {
   canonicalPath,
   cipherJson,
+  connectionSecretInput,
   credentialInput,
+  customCaInput,
   decipherJson,
   s3Failure,
   signedS3Request,
+  tlsFailure,
   targetInput,
   server,
 };
