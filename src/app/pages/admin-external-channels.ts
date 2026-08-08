@@ -261,7 +261,7 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
     .backup-form-section + .backup-form-section { padding-top:1.25rem; }
     .backup-form-section--last { padding-bottom:.25rem; border-bottom:0; }
     .backup-form-section legend { width:100%; margin:0; padding:0; color:var(--os-ink,#17233c); font-size:1rem; font-weight:600; line-height:1.35; }
-    .backup-form-section > p { margin:.25rem 0 .65rem; color:var(--os-ink-muted,#525d73); font-size:.78rem; line-height:1.5; }
+    .backup-form-section > p { margin:.1rem 0 .65rem; color:var(--os-ink-muted,#525d73); font-size:.78rem; line-height:1.5; }
     .backup-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:1.25rem; row-gap:.15rem; }
     :host ::ng-deep .backup-form-grid .clr-control-container,:host ::ng-deep .backup-form-grid .clr-input-wrapper,:host ::ng-deep .backup-form-grid .clr-select-wrapper { width:100%; }
     :host ::ng-deep .backup-form-grid input.clr-input,:host ::ng-deep .backup-form-grid select.clr-select { width:100%; max-width:none; font-size:.86rem; }

@@ -195,6 +195,7 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.doesNotMatch(source, /target-brand__mark/);
   assert.doesNotMatch(source, /지금 백업|backupNow\(/);
   assert.doesNotMatch(source, /\.backup-form-section\s*\{[^}]*border-bottom:/);
+  assert.match(source, /<legend>버킷 정책 확인<\/legend>\s*<p>외부 저장소에 설정된 현재 정책을 기록합니다\. Console이 이 값을 변경하지는 않습니다\.<\/p>/);
   assert.match(source, /s3ProfileLogo\(target\.vendor\)/);
   for (const logo of ['s3-compatible', 'amazon-s3', 'backblaze-b2', 'cloudflare-r2', 'minio', 'ceph-rgw']) {
     assert.ok(fs.existsSync(path.join(__dirname, `../../public/brand/storage/${logo}.svg`)), `${logo} logo must be packaged locally`);
