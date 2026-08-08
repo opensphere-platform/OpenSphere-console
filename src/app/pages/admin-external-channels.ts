@@ -114,7 +114,7 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
                   <article class="target-card">
                     <div class="target-card__head"><div class="target-brand"><img class="target-brand__logo" [src]="s3ProfileLogo(target.vendor)" [alt]="s3ProfileLabel(target.vendor) + ' 로고'" /><div><span class="eyebrow">S3 · {{ s3ProfileLabel(target.vendor) }}</span><h3>{{ target.name }}</h3></div></div><div class="target-state"><span class="label" [class.label-success]="target.enabled" [class.label-warning]="!target.enabled">{{ target.enabled ? '활성' : '중지' }}</span><span class="label" [class.label-success]="target.healthState === 'Ready'" [class.label-warning]="target.healthState === 'Degraded'" [class.label-danger]="target.healthState === 'Misconfigured'">{{ target.healthState }}</span></div></div>
                     <dl><div><dt>Endpoint</dt><dd class="os-mono">{{ target.endpoint }}</dd></div><div><dt>Bucket</dt><dd>{{ target.bucketName }} <span class="os-mono">{{ target.bucketId }}</span></dd></div><div><dt>보존</dt><dd>{{ target.bucketPrivate ? 'Private' : 'Public' }} · {{ target.lifecycleMode }}</dd></div><div><dt>암호화</dt><dd><span class="ok">Client {{ target.clientSideEncryption }}</span> · Server {{ target.serverSideEncryption }}</dd></div><div><dt>자격 증명</dt><dd>{{ target.credential.configured ? 'Configured · v' + target.credential.version : 'Missing' }}</dd></div><div><dt>최근 백업</dt><dd>{{ fmt(target.lastBackupAt || '') }}</dd></div></dl>
-                    <div class="card-actions"><button class="btn btn-sm btn-link" [disabled]="busy()" (click)="editBackupTarget(target)">편집·키 교체</button><button class="btn btn-sm btn-outline" [disabled]="busy() || !target.credential.configured" (click)="testBackupTarget(target)">연결 테스트</button><button class="btn btn-sm btn-primary" [disabled]="busy() || !target.enabled || !target.credential.configured" (click)="backupNow(target)">지금 백업</button><button class="btn btn-sm btn-link" [disabled]="busy()" (click)="toggleBackupTarget(target)">{{ target.enabled ? '중지' : '활성화' }}</button><button class="btn btn-sm btn-link danger-action" [disabled]="busy() || target.enabled" (click)="removeBackupTarget(target)">연결 해제</button></div>
+                    <div class="card-actions"><button class="btn btn-sm btn-link" [disabled]="busy()" (click)="editBackupTarget(target)">편집·키 교체</button><button class="btn btn-sm btn-outline" [disabled]="busy() || !target.credential.configured" (click)="testBackupTarget(target)">연결 테스트</button><button class="btn btn-sm btn-link" [disabled]="busy()" (click)="toggleBackupTarget(target)">{{ target.enabled ? '중지' : '활성화' }}</button><button class="btn btn-sm btn-link danger-action" [disabled]="busy() || target.enabled" (click)="removeBackupTarget(target)">연결 해제</button></div>
                   </article>
                 }
               </div>
@@ -257,7 +257,7 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
     .backup-panel-intro > strong { font-size:.9rem; font-weight:600; }
     .backup-panel-security { color:#713400; }
     .backup-target-form { width:100%; max-width:80rem; margin:0; }
-    .backup-form-section { min-width:0; margin:0; padding:0 0 1.35rem; border:0; border-bottom:1px solid var(--os-hairline,#d7dce1); }
+    .backup-form-section { min-width:0; margin:0; padding:0 0 1.35rem; border:0; }
     .backup-form-section + .backup-form-section { padding-top:1.25rem; }
     .backup-form-section--last { padding-bottom:.25rem; border-bottom:0; }
     .backup-form-section legend { width:100%; margin:0; padding:0; color:var(--os-ink,#17233c); font-size:1rem; font-weight:600; line-height:1.35; }
@@ -329,7 +329,6 @@ export class AdminExternalChannels {
     });
   }
   testBackupTarget(target: BackupTarget): void { this.openPendingAction('S3 연결 테스트', `${target.name} 버킷에 AWS Signature v4로 접근 가능한지 검증합니다.`, `/api/external-channels/backup-targets/${target.id}/test`, '연결 테스트'); }
-  backupNow(target: BackupTarget): void { this.openPendingAction('Console 구성 백업', `${target.name}에 Secret을 제외한 Console 구성 snapshot을 암호화해 업로드합니다.`, `/api/external-channels/backup-targets/${target.id}/backup`, '지금 백업'); }
   toggleBackupTarget(target: BackupTarget): void { this.openPendingAction(target.enabled ? '백업 대상 중지' : '백업 대상 활성화', `${target.name} 대상의 자동·수동 백업 사용 상태를 ${target.enabled ? '중지' : '활성화'}합니다. 활성화 후에는 연결 테스트를 다시 실행해야 Ready 상태가 됩니다.`, `/api/external-channels/backup-targets/${target.id}/${target.enabled ? 'disable' : 'enable'}`, target.enabled ? '대상 중지' : '대상 활성화'); }
   removeBackupTarget(target: BackupTarget): void {
     const confirmation = `REMOVE ${target.id}`;
