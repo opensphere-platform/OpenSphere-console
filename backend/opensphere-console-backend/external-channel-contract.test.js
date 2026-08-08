@@ -189,6 +189,8 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.match(source, /backupTargetSubmitAttempted/);
   assert.match(source, /markAllAsTouched/);
   assert.match(source, /focusBackupTargetField/);
+  assert.match(source, /editingBackupTargetCredentialConfigured\(\) \? '\*\*\*\*\*\*\*\*' : ''/);
+  assert.match(source, /기존 값 저장됨 · \*\*\*\*\*\*\*\*/);
   assert.equal(source.match(/<clr-control-error>/g)?.length, 8);
   assert.doesNotMatch(source, /class="field-error"/);
   assert.match(source, /\[disabled\]="busy\(\)" \(click\)="saveBackupTarget\(\)"/);

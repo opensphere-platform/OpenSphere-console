@@ -220,8 +220,8 @@ const emptyBackupTarget = () => ({ name: '', vendor: 's3-compatible' as S3Profil
           <legend>전용 자격 증명</legend>
           <p>이 Bucket과 Object prefix에 필요한 최소 권한만 가진 S3 전용 자격 증명을 사용합니다.</p>
           <div class="backup-form-grid">
-            <clr-input-container><label>Access key ID</label><input clrInput type="password" [(ngModel)]="backupTargetForm.accessKeyId" name="backup-access-key" autocomplete="new-password" minlength="3" maxlength="128" [required]="!editingBackupTargetId()" [attr.aria-invalid]="backupTargetFieldError('accessKeyId') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetId() ? '두 자격 증명을 모두 비우면 기존 값을 유지합니다.' : credentialIdHint() }}</clr-control-helper>@if (backupTargetFieldError('accessKeyId'); as issue) { <clr-control-error>{{ issue }}</clr-control-error> }</clr-input-container>
-            <clr-input-container><label>Secret access key</label><input clrInput type="password" [(ngModel)]="backupTargetForm.applicationKey" name="backup-secret-key" autocomplete="new-password" minlength="8" maxlength="256" [required]="!editingBackupTargetId()" [attr.aria-invalid]="backupTargetFieldError('applicationKey') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetId() ? '두 값을 함께 입력한 경우에만 새 자격 증명으로 교체합니다.' : credentialSecretHint() }}</clr-control-helper>@if (backupTargetFieldError('applicationKey'); as issue) { <clr-control-error>{{ issue }}</clr-control-error> }</clr-input-container>
+            <clr-input-container><label>Access key ID</label><input clrInput type="password" [(ngModel)]="backupTargetForm.accessKeyId" name="backup-access-key" autocomplete="new-password" minlength="3" maxlength="128" [required]="!editingBackupTargetId()" [placeholder]="editingBackupTargetCredentialConfigured() ? '********' : ''" [attr.aria-invalid]="backupTargetFieldError('accessKeyId') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetCredentialConfigured() ? '기존 값 저장됨 · ******** · 두 자격 증명을 모두 비우면 유지합니다.' : credentialIdHint() }}</clr-control-helper>@if (backupTargetFieldError('accessKeyId'); as issue) { <clr-control-error>{{ issue }}</clr-control-error> }</clr-input-container>
+            <clr-input-container><label>Secret access key</label><input clrInput type="password" [(ngModel)]="backupTargetForm.applicationKey" name="backup-secret-key" autocomplete="new-password" minlength="8" maxlength="256" [required]="!editingBackupTargetId()" [placeholder]="editingBackupTargetCredentialConfigured() ? '********' : ''" [attr.aria-invalid]="backupTargetFieldError('applicationKey') ? 'true' : null" /><clr-control-helper>{{ editingBackupTargetCredentialConfigured() ? '기존 값 저장됨 · ******** · 두 값을 함께 입력한 경우에만 교체합니다.' : credentialSecretHint() }}</clr-control-helper>@if (backupTargetFieldError('applicationKey'); as issue) { <clr-control-error>{{ issue }}</clr-control-error> }</clr-input-container>
           </div>
         </fieldset>
         <fieldset class="backup-form-section backup-form-section--last">
@@ -282,16 +282,17 @@ export class AdminExternalChannels {
   readonly backupTargets = signal<BackupTarget[]>([]); readonly backups = signal<Backup[]>([]); readonly restorePreview = signal<RestorePreview | null>(null);
   readonly loading = signal(true); readonly busy = signal(false); readonly error = signal(''); readonly panelError = signal<PanelIssue | null>(null); readonly backupTargetSubmitAttempted = signal(false);
   readonly backupTargetFormRef = viewChild<NgForm>('backupTargetFormRef');
-  readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly backupTargetPanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null); readonly editingBackupTargetId = signal<string | null>(null);
+  readonly channelPanelOpen = signal(false); readonly rulePanelOpen = signal(false); readonly backupTargetPanelOpen = signal(false); readonly pendingAction = signal<PendingAction | null>(null); readonly editingChannelId = signal<string | null>(null); readonly editingBackupTargetId = signal<string | null>(null); readonly editingBackupTargetCredentialConfigured = signal(false);
   channelForm = emptyChannel(); ruleForm = emptyRule(); backupTargetForm = emptyBackupTarget(); restoreConfirmation = ''; restoreReason = '운영 구성 복원 실행';
   constructor() { void this.load(); }
   async load(): Promise<void> { this.loading.set(true); try { const [summary, channels, rules, deliveries, externalSummary, targets, backups] = await Promise.all([this.http.json<Summary>('/api/notifications/summary'), this.http.json<{ items: Channel[] }>('/api/notifications/channels'), this.http.json<{ items: Rule[] }>('/api/notifications/rules'), this.http.json<{ items: Delivery[] }>('/api/notifications/deliveries?limit=100'), this.http.json<ExternalSummary>('/api/external-channels/summary'), this.http.json<{ items: BackupTarget[] }>('/api/external-channels/backup-targets'), this.http.json<{ items: Backup[] }>('/api/external-channels/backups')]); this.summary.set(summary); this.channels.set(channels.items || []); this.rules.set(rules.items || []); this.deliveries.set(deliveries.items || []); this.externalSummary.set(externalSummary); this.backupTargets.set(targets.items || []); this.backups.set(backups.items || []); } catch (error) { this.error.set(`외부 채널 정보를 불러오지 못했습니다: ${String(error)}`); } finally { this.loading.set(false); } }
   openChannelPanel(): void { this.panelError.set(null); this.editingChannelId.set(null); this.channelForm = emptyChannel(); this.channelPanelOpen.set(true); }
   openRulePanel(): void { this.panelError.set(null); this.ruleForm = emptyRule(); this.rulePanelOpen.set(true); }
-  openBackupTargetPanel(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.editingBackupTargetId.set(null); this.backupTargetForm = emptyBackupTarget(); this.backupTargetPanelOpen.set(true); }
+  openBackupTargetPanel(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.editingBackupTargetId.set(null); this.editingBackupTargetCredentialConfigured.set(false); this.backupTargetForm = emptyBackupTarget(); this.backupTargetPanelOpen.set(true); }
   editBackupTarget(target: BackupTarget): void {
     this.panelError.set(null);
     this.editingBackupTargetId.set(target.id);
+    this.editingBackupTargetCredentialConfigured.set(target.credential.configured);
     this.backupTargetForm = {
       ...emptyBackupTarget(),
       vendor: S3_PROFILES.some((profile) => profile.value === target.vendor) ? target.vendor as S3ProfileKey : 's3-compatible',
@@ -309,7 +310,7 @@ export class AdminExternalChannels {
     this.backupTargetSubmitAttempted.set(false);
     this.backupTargetPanelOpen.set(true);
   }
-  closePanels(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.backupTargetPanelOpen.set(false); this.editingChannelId.set(null); this.editingBackupTargetId.set(null); }
+  closePanels(): void { this.panelError.set(null); this.backupTargetSubmitAttempted.set(false); this.channelPanelOpen.set(false); this.rulePanelOpen.set(false); this.backupTargetPanelOpen.set(false); this.editingChannelId.set(null); this.editingBackupTargetId.set(null); this.editingBackupTargetCredentialConfigured.set(false); }
   async saveBackupTarget(): Promise<void> {
     this.backupTargetSubmitAttempted.set(true);
     this.backupTargetFormRef()?.form.markAllAsTouched();
