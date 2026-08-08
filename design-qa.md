@@ -68,6 +68,46 @@ final result: passed
 
 ---
 
+# External Channel Custom CA Design QA
+
+- Date: 2026-08-09 KST
+- Source visual truth: `C:\Users\cmars\AppData\Local\Temp\codex-clipboard-f7d972f0-20e8-4d2b-ae7c-1c2fb5191df7.png`
+- Implementation screenshot: `docs/audit-evidence/2026-08-09-external-channel-ca/implementation.png`
+- Focused implementation crop: `docs/audit-evidence/2026-08-09-external-channel-ca/implementation-audit-crop.png`
+- Combined comparison: `docs/audit-evidence/2026-08-09-external-channel-ca/comparison.png`
+- Browser viewport: 1811 × 1542 CSS px
+- Source pixels: 662 × 105
+- Runtime: authenticated Console at `/manage/external-channels`, RGW backup target edit state
+
+## Comparison result
+
+The supplied reference establishes a compact section-heading pattern: the section title and its explanatory note are vertically adjacent, left aligned, and read as one unit. The implementation applies that same pattern to every edit section through one shared `legend > span + small` structure. The comparison normalizes both captures to the reference width; surrounding form width is intentionally responsive.
+
+## Required fidelity surfaces
+
+- Section title and note remain attached without a separating rule or oversized vertical gap.
+- All five target-edit sections use the same hierarchy and spacing instead of one-off markup.
+- Custom CA selection keeps the PEM input in the TLS section and does not change the page's overall information architecture.
+- A stored CA is represented safely as `********`; the textarea remains empty on re-entry, so the certificate body is never returned to the browser.
+- The helper copy states the replacement contract explicitly: an empty field preserves the stored CA, and a newly entered PEM replaces it.
+- The target card exposes certificate metadata and readiness only; credentials and certificate contents remain concealed.
+
+## Interaction verification
+
+- Selecting `사용자 지정 CA` reveals the PEM input.
+- Saving a valid CA stores it through the encrypted target-secret envelope.
+- Reopening the target shows the masked stored-state indicator without repopulating the PEM.
+- Connection testing with the target-specific CA reaches the RGW endpoint with certificate verification enabled and returns `Ready`.
+
+## Findings
+
+- No actionable P0, P1, or P2 visual or interaction issue remains.
+- No insecure `verify=false` fallback was introduced.
+
+final result: passed
+
+---
+
 # S3-compatible backup target panel — Design QA
 
 Date: 2026-08-06 KST

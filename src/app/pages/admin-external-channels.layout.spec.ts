@@ -11,6 +11,8 @@ test('backup target editor has distinct guidance, scrollable body sections, and 
   assert.match(page, /aria-describedby="backup-target-guidance"/);
   assert.match(page, /<legend><span>저장 위치<\/span><small>/);
   assert.match(page, /<legend><span>TLS 신뢰<\/span><small>/);
+  assert.match(page, /\[placeholder\]="editingBackupTargetCustomCaConfigured\(\) \? '\*\*\*\*\*\*\*\*'/);
+  assert.match(page, /기존 값 저장됨 · \*\*\*\*\*\*\*\* · 비우면 유지하고 새 PEM을 입력하면 교체합니다/);
   assert.match(page, /<legend><span>버킷 정책 확인<\/span><small>/);
   assert.match(page, /<legend><span>전용 자격 증명<\/span><small>/);
   assert.match(page, /<legend><span>감사 메모<\/span><small>/);
