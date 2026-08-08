@@ -191,6 +191,12 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.match(source, /focusBackupTargetField/);
   assert.match(source, /editingBackupTargetCredentialConfigured\(\) \? '\*\*\*\*\*\*\*\*' : ''/);
   assert.match(source, /기존 값 저장됨 · \*\*\*\*\*\*\*\*/);
+  assert.match(source, /class="target-brand__mark"/);
+  assert.match(source, /s3ProfileLogo\(target\.vendor\)/);
+  for (const logo of ['s3-compatible', 'amazon-s3', 'backblaze-b2', 'cloudflare-r2', 'minio', 'ceph-rgw']) {
+    assert.ok(fs.existsSync(path.join(__dirname, `../../public/brand/storage/${logo}.svg`)), `${logo} logo must be packaged locally`);
+  }
+  assert.doesNotMatch(source, /logo:\s*'https?:\/\//);
   assert.equal(source.match(/<clr-control-error>/g)?.length, 8);
   assert.doesNotMatch(source, /class="field-error"/);
   assert.match(source, /\[disabled\]="busy\(\)" \(click\)="saveBackupTarget\(\)"/);
