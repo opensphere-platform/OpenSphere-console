@@ -250,9 +250,9 @@ interface OaaActionBindingManifest {
 }
 
 /**
- * /manage/oaa — OAA(OpenSphere AI Agent) Gateway 관리 표면. **셸 네이티브** 전용 페이지(CONSTITUTION-0004 §4.2/§4.4).
- * OAA Core는 Main Shell native capability이고 OAA Gateway는 Supabase consumer인 별도 서버 workload다 — 여기서는
- * Gateway health, LLM provider key custody, Knowledge/Manual Registry, Tool Registry/Action Bindings만 다룬다.
+ * /manage/oaa — R2D2 관리 표면. **셸 네이티브** 전용 페이지(CONSTITUTION-0004 §4.2/§4.4).
+ * R2D2는 Main Shell native capability이고 보안·실행 격리용 Supabase consumer workload를 사용한다 — 여기서는
+ * runtime health, LLM provider key custody, Knowledge/Manual Registry, Tool Registry/Action Bindings만 다룬다.
  * Data & Identity 페이지에는 절대 다시 흡수하지 않는다(§8 감사 판정).
  *
  * 모든 호출은 same-origin `/api/oaa/*` + HttpService(내부적으로 AuthService.token()을 Bearer로 첨부, cross-origin 차단).
@@ -284,11 +284,11 @@ interface OaaActionBindingManifest {
         <p class="os-sub">
           R2D2는 Main Shell native capability이며, 보안·실행 격리를 위한 Console 소유 Supabase consumer workload를 사용합니다
           (<code>CONSTITUTION-0004 §4.2</code>). Provider key 미배포 시 채팅은 <strong>Degraded</strong>일 수 있으나 콘솔 관리는 항상 동작합니다.
-          @if (health(); as h) { · <code>{{ h.service }}</code> v{{ h.version }} · ns <code>{{ h.namespace }}</code> }
+          @if (health(); as h) { · <code>R2D2 runtime</code> v{{ h.version }} · ns <code>{{ h.namespace }}</code> }
         </p>
 
         <section class="manage-status-rail" aria-label="R2D2 운영 상태">
-          <div><span>Gateway</span><strong [class.ok]="!!health()">{{ health() ? 'Reachable' : 'Unavailable' }}</strong><small>{{ health()?.service || 'health unavailable' }}</small></div>
+          <div><span>Runtime</span><strong [class.ok]="!!health()">{{ health() ? 'Reachable' : 'Unavailable' }}</strong><small>{{ health() ? 'R2D2 runtime' : 'health unavailable' }}</small></div>
           <div><span>LLM keys</span><strong [class.warn]="llmKeysLoaded() && !llmKeys().length">{{ llmKeysLoaded() ? llmKeys().length : 'Loading' }}</strong><small>{{ llmKeys().length ? 'fingerprint inventory' : 'provider custody' }}</small></div>
           <div><span>Knowledge</span><strong>{{ knowledgeStats()?.documents ?? 'Loading' }}</strong><small>{{ knowledgeStats()?.chunks ?? 0 }} chunks</small></div>
           <div><span>Tools</span><strong>{{ toolManifest()?.tools?.length ?? 'Loading' }}</strong><small>registered capabilities</small></div>
@@ -304,9 +304,9 @@ interface OaaActionBindingManifest {
         }
 
         <clr-tabs>
-          <!-- 탭1: Gateway health/readiness -->
+          <!-- 탭1: R2D2 runtime health/readiness -->
           <clr-tab>
-            <button clrTabLink>Gateway</button>
+            <button clrTabLink>Runtime</button>
             <clr-tab-content>
               <div class="os-actions">
                 <button class="btn btn-sm btn-outline" [disabled]="healthBusy()" (click)="loadHealth()">새로고침</button>
@@ -317,7 +317,7 @@ interface OaaActionBindingManifest {
                 <div class="gw-body">
                   @if (health(); as h) {
                     <span class="label" [class.label-success]="h.status === 'ready'" [class.label-warning]="h.status === 'degraded'">{{ h.status === 'degraded' ? 'Degraded' : 'Reachable' }}</span>
-                    <span class="os-mono">{{ h.service }} · v{{ h.version }} · ns {{ h.namespace }}</span>
+                    <span class="os-mono">R2D2 runtime · v{{ h.version }} · ns {{ h.namespace }}</span>
                     <span class="label label-success">Lexical search ready</span>
                     <span class="label" [class.label-success]="h.semanticSearchReady" [class.label-warning]="!h.semanticSearchReady">
                       Semantic search: {{ h.semanticSearchReady ? 'ready' : 'unavailable' }}
@@ -756,7 +756,7 @@ interface OaaActionBindingManifest {
             <div class="oaa-generated-id" aria-label="설정 ID">
               <span class="oaa-generated-id-label">설정 ID <small>(자동 생성 · API key 아님)</small></span>
               <code>{{ llmForm.id }}</code>
-              <span class="oaa-generated-id-helper">Provider 선택에 따라 생성되며 Gateway와 감사 로그에서만 사용합니다.</span>
+              <span class="oaa-generated-id-helper">Provider 선택에 따라 생성되며 R2D2 runtime과 감사 로그에서만 사용합니다.</span>
             </div>
             <clr-select-container>
               <label>Provider</label>

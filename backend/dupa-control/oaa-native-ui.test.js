@@ -187,6 +187,9 @@ test('OAA API key visibility is explicit, accessible, and resets at every secret
 test('OAA Admin distinguishes reachable Gateway health from complete Agent readiness', () => {
   const admin = read('src', 'app', 'pages', 'admin-oaa.ts');
 
+  assert.match(admin, /<span>Runtime<\/span>/);
+  assert.match(admin, /R2D2 runtime · v\{\{ h\.version \}\}/);
+  assert.doesNotMatch(admin, /\{\{\s*h\.service/);
   assert.match(admin, /interface AgentControlReadiness/);
   assert.match(admin, /Complete Agent readiness/);
   assert.match(admin, /control\.agentControl\.blockers/);
