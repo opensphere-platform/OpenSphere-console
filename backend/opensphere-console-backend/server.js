@@ -11,6 +11,7 @@ const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence 
 const { normalizedEvent } = require('../notification-dispatcher/contract');
 const { createBrowserSessionManager } = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
+const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 const { createModuleOperationApi } = require('./module-operation-api');
 const {
@@ -3513,6 +3514,26 @@ const server = http.createServer(async (req, res) => {
         return res.end();
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'plugin proxy authorization failed' }, {
+          'cache-control': 'no-store',
+        });
+      }
+    }
+    if (p === '/api/internal/r2d2-proxy-authn' && req.method === 'GET') {
+      try {
+        const result = await authorizeR2d2ProxyRequest(req, {
+          authenticateBrowser: (forwarded) => {
+            if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+            return browserSessions.authenticate(forwarded);
+          },
+          verifyBearer: (forwarded) => verifyAuthed(forwarded),
+        });
+        res.writeHead(204, {
+          'cache-control': 'no-store',
+          'x-os-r2d2-authorization': result.authorization,
+        });
+        return res.end();
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'R2D2 proxy authentication failed' }, {
           'cache-control': 'no-store',
         });
       }

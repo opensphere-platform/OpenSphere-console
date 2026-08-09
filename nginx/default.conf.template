@@ -96,19 +96,42 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # OAA Core (Manual + OAA assistant) is Main Shell native. Same-origin proxy
-    # to the Supabase-backed in-cluster gateway. The gateway verifies the
-    # Supabase Console bearer token, so the
-    # spoofable identity headers are cleared here exactly like every other same-origin proxy above;
-    # actor identity is only ever reconstructed from the verified token. /healthz and /readyz are
-    # deliberately NOT exposed through this proxy — they remain in-cluster-only probe targets.
+    # R2D2 is Main Shell native. The browser holds only an opaque HttpOnly
+    # Console session, so an internal Console Backend auth_request validates the
+    # session/CSRF evidence and exchanges it for a short-lived Supabase bearer.
+    # Only that bearer reaches the Gateway; /healthz and /readyz remain
+    # in-cluster-only probe targets.
     location /api/oaa/ {
+        set $r2d2_original_method $request_method;
+        set $r2d2_original_uri $request_uri;
+        auth_request /_r2d2_authn;
+        auth_request_set $r2d2_authorization $upstream_http_x_os_r2d2_authorization;
         set $oaa_gateway_upstream opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local;
         proxy_pass http://$oaa_gateway_upstream:8080$request_uri;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
         proxy_set_header X-OS-Id-Token "";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization $r2d2_authorization;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # R2D2 browser-session mediation (internal only). The credential returned in
+    # the response header is consumed by auth_request_set and never exposed to
+    # browser JavaScript.
+    location = /_r2d2_authn {
+        internal;
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080/api/internal/r2d2-proxy-authn;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-OS-Internal-Authn-Subrequest "r2d2-proxy-v1";
+        proxy_set_header X-OS-Original-Method $r2d2_original_method;
+        proxy_set_header X-OS-Original-URI $r2d2_original_uri;
         proxy_set_header Authorization $http_authorization;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header X-OS-CSRF-Token $http_x_os_csrf_token;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
