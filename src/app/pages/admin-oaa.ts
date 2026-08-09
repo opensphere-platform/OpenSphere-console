@@ -272,22 +272,22 @@ interface OaaActionBindingManifest {
   imports: [ClarityModule, FormsModule, BackendUnavailable, OsPageHeader, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
-      <os-page-header title="OAA Gateway" tag="Core·Admin · OpenSphere AI Agent 관리 표면" />
+      <os-page-header title="R2D2" tag="Core·Admin · Console 내장 AI 관리 표면" />
       @if (gatewayDown(); as d) {
         <os-backend-unavailable
-          feature="OAA Gateway"
-          backend="opensphere-console-oaa-gateway (/api/oaa)"
-          hint="opensphere-console-oaa-gateway 배포 · Supabase PostgreSQL/pgvector 연결 시 복구됩니다. 미배포여도 콘솔 로그인/관리/Manual은 영향받지 않습니다."
+          feature="R2D2"
+          backend="R2D2 runtime (/api/oaa)"
+          hint="Console 내장 R2D2 runtime과 Supabase PostgreSQL/pgvector 연결이 준비되면 복구됩니다. R2D2 장애는 콘솔 로그인/관리/Manual에 영향을 주지 않습니다."
           [detail]="d"
         />
       } @else {
         <p class="os-sub">
-          OAA Core는 Main Shell native capability이고, OAA Gateway는 보안·격리를 위한 별도 Supabase consumer workload입니다
+          R2D2는 Main Shell native capability이며, 보안·실행 격리를 위한 Console 소유 Supabase consumer workload를 사용합니다
           (<code>CONSTITUTION-0004 §4.2</code>). Provider key 미배포 시 채팅은 <strong>Degraded</strong>일 수 있으나 콘솔 관리는 항상 동작합니다.
           @if (health(); as h) { · <code>{{ h.service }}</code> v{{ h.version }} · ns <code>{{ h.namespace }}</code> }
         </p>
 
-        <section class="manage-status-rail" aria-label="OAA 운영 상태">
+        <section class="manage-status-rail" aria-label="R2D2 운영 상태">
           <div><span>Gateway</span><strong [class.ok]="!!health()">{{ health() ? 'Reachable' : 'Unavailable' }}</strong><small>{{ health()?.service || 'health unavailable' }}</small></div>
           <div><span>LLM keys</span><strong [class.warn]="llmKeysLoaded() && !llmKeys().length">{{ llmKeysLoaded() ? llmKeys().length : 'Loading' }}</strong><small>{{ llmKeys().length ? 'fingerprint inventory' : 'provider custody' }}</small></div>
           <div><span>Knowledge</span><strong>{{ knowledgeStats()?.documents ?? 'Loading' }}</strong><small>{{ knowledgeStats()?.chunks ?? 0 }} chunks</small></div>
@@ -340,7 +340,7 @@ interface OaaActionBindingManifest {
                   <div class="os-card-h"><span>Complete Agent readiness</span><strong [class.ok]="control.fullyOperational" [class.warn]="!control.fullyOperational">{{ control.fullyOperational ? 'Fully operational' : 'Degraded' }}</strong></div>
                   <p class="os-sub">Owner API 도달 여부와 별개로 지식·실시간 projection·승인 mutation·Platform Support·HIS·Ceph capability를 모두 검증합니다. 마지막 확인 {{ formatDateTime(control.checkedAt) }}</p>
                   @if (control.agentControl.blockers.length) {
-                    <div class="oaa-blocker-list" aria-label="OAA 완전 운영 차단 사유">
+                    <div class="oaa-blocker-list" aria-label="R2D2 완전 운영 차단 사유">
                       @for (blocker of control.agentControl.blockers; track blocker) { <code>{{ blocker }}</code> }
                     </div>
                   }
@@ -363,7 +363,7 @@ interface OaaActionBindingManifest {
                 }
               } @else if (!llmKeys().length && llmKeysLoaded()) {
                 <clr-alert clrAlertType="info" [clrAlertClosable]="false">
-                  <clr-alert-item><span class="alert-text">Degraded: 등록된 LLM provider key가 없습니다 — OAA 채팅만 저하되고 콘솔 관리 기능에는 영향이 없습니다.</span></clr-alert-item>
+                  <clr-alert-item><span class="alert-text">Degraded: 등록된 LLM provider key가 없습니다 — R2D2 채팅만 저하되고 콘솔 관리 기능에는 영향이 없습니다.</span></clr-alert-item>
                 </clr-alert>
               }
             </clr-tab-content>
@@ -743,7 +743,7 @@ interface OaaActionBindingManifest {
         </clr-tabs>
 
         <!-- LLM key 생성/회전 — 인라인 폼 대신 우측 슬라이딩 패널. apiKey는 password 입력이고 성공/실패 직후 즉시 비운다. -->
-        <os-panel [open]="llmPanelOpen()" [title]="llmEditingId() ? 'LLM Key 회전 — ' + llmEditingId() : 'LLM Key 추가'" subtitle="OAA Gateway · Kubernetes Secret custody" (closed)="closeKeyPanel()">
+        <os-panel [open]="llmPanelOpen()" [title]="llmEditingId() ? 'LLM Key 회전 — ' + llmEditingId() : 'LLM Key 추가'" subtitle="R2D2 · Kubernetes Secret custody" (closed)="closeKeyPanel()">
           <div class="oaa-key-intro">
             <strong>Provider credential</strong>
             <p>API key는 게이트웨이가 Kubernetes Secret으로만 보관합니다. 이 화면은 raw key를 저장·재표시하지 않으며, 저장 직후 입력값을 비웁니다.</p>
@@ -848,7 +848,7 @@ interface OaaActionBindingManifest {
 
         <os-panel [open]="retentionPanelOpen()" [title]="retentionForm.stream ? 'Evidence retention — ' + retentionForm.stream : 'Evidence retention'" subtitle="Supabase evidence owner · AAL2 required" (closed)="closeRetentionPolicy()">
           <clr-alert clrAlertType="info" [clrAlertClosable]="false">
-            <clr-alert-item><span class="alert-text">이 설정은 보존·legal hold·export 필요 조건을 관리합니다. 정책 변경 자체는 증거를 삭제하지 않으며, OAA에는 purge API가 없습니다.</span></clr-alert-item>
+            <clr-alert-item><span class="alert-text">이 설정은 보존·legal hold·export 필요 조건을 관리합니다. 정책 변경 자체는 증거를 삭제하지 않으며, R2D2에는 purge API가 없습니다.</span></clr-alert-item>
           </clr-alert>
           <form clrForm clrLayout="vertical" class="clr-form-full-width oaa-retention-form">
             <div class="oaa-generated-id"><span class="oaa-generated-id-label">Evidence stream</span><code>{{ retentionForm.stream }}</code></div>
@@ -1506,7 +1506,7 @@ export class AdminOaa implements OnInit, OnDestroy {
   }
   expectedRetentionConfirm(): string {
     return this.retentionForm.stream
-      ? `update OAA evidence retention ${this.retentionForm.stream} to ${Number(this.retentionForm.retentionDays) || 0} days`
+      ? `update R2D2 evidence retention ${this.retentionForm.stream} to ${Number(this.retentionForm.retentionDays) || 0} days`
       : '';
   }
   canSaveRetentionPolicy(): boolean {
@@ -1522,7 +1522,12 @@ export class AdminOaa implements OnInit, OnDestroy {
     try {
       const r = await this.http.request('/api/oaa/admin/evidence/retention', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...this.retentionForm, retentionDays: Number(this.retentionForm.retentionDays) }),
+        body: JSON.stringify({
+          ...this.retentionForm,
+          retentionDays: Number(this.retentionForm.retentionDays),
+          // `oaa` remains the server-side compatibility identifier; only the official display name is R2D2.
+          confirm: this.retentionForm.confirm.replace(/^update R2D2 evidence retention /, 'update OAA evidence retention '),
+        }),
       });
       const accessError = this.adminAccessMessage(r.status);
       if (accessError) {
@@ -1635,8 +1640,8 @@ export class AdminOaa implements OnInit, OnDestroy {
   }
 
   private adminAccessMessage(status: number): string {
-    if (status === 401) return 'OAA Gateway가 현재 로그인 세션을 확인하지 못했습니다. 세션을 갱신한 뒤 다시 시도하세요.';
-    if (status === 403) return 'OAA Gateway 관리자 역할(console-admins)이 필요합니다.';
+    if (status === 401) return 'R2D2가 현재 로그인 세션을 확인하지 못했습니다. 세션을 갱신한 뒤 다시 시도하세요.';
+    if (status === 403) return 'R2D2 관리자 역할(console-admins)이 필요합니다.';
     return '';
   }
 
@@ -1653,7 +1658,7 @@ export class AdminOaa implements OnInit, OnDestroy {
     try {
       const r = await this.http.request('/api/oaa/tools/manifest', { cache: 'no-store' });
       if (r.status === 401 || r.status === 403) {
-        this.msg.set({ type: 'danger', text: 'OAA Gateway permission is required.' });
+        this.msg.set({ type: 'danger', text: 'R2D2 permission is required.' });
         return;
       }
       if (!r.ok) {
@@ -1672,7 +1677,7 @@ export class AdminOaa implements OnInit, OnDestroy {
     try {
       const r = await this.http.request('/api/oaa/tools/action-bindings', { cache: 'no-store' });
       if (r.status === 401 || r.status === 403) {
-        this.msg.set({ type: 'danger', text: 'OAA Gateway permission is required.' });
+        this.msg.set({ type: 'danger', text: 'R2D2 permission is required.' });
         return;
       }
       if (!r.ok) {

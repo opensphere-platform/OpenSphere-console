@@ -98,7 +98,7 @@ export const SERVICE_REALIZATION_LAYERS: readonly ServiceRealizationLayer[] = [
     evidence: '서명·digest 검증, activation, CLI parity, audited write와 rollback',
     authority: 'Main Shell control plane; runtime truth는 Kubernetes API',
     failurePolicy: 'Backbone 또는 audit 불가 시 관리 write를 차단하고 복구용 read-only 표면만 유지한다.',
-    objects: ['Main Shell', 'DUPA / Registry', 'Cluster Manager', 'OAA Core', 'Policy Gate'],
+    objects: ['Main Shell', 'DUPA / Registry', 'Cluster Manager', 'R2D2', 'Policy Gate'],
   },
   {
     id: 'SRL-L2',

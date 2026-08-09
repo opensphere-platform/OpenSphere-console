@@ -178,7 +178,7 @@ export class AdminLayout {
       items: [
         { label: 'Control Plane', route: '/manage/platform-control' },
         { label: 'Platform Release', route: '/manage/platform-release' },
-        { label: 'OAA', route: '/manage/oaa' },
+        { label: 'R2D2', route: '/manage/oaa' },
         { label: 'HIS Observability', route: '/manage/observability' },
       ],
     },

@@ -10,11 +10,11 @@
 
 ## 주요 대상
 
-- OAA Gateway와 provider key custody
+- R2D2와 provider key custody
 - 모델, inference endpoint와 promotion
 - Pipeline, experiment와 artifact
 - Manual Registry, pgvector 지식과 action binding
 
 ## 운영 시작
 
-OAA는 provider 모델의 기억에 의존하지 않고 Manual Registry와 실제 환경 증거를 사용합니다. 쓰기 작업은 preview, idempotency, 사용자 확인과 correlation audit를 필수로 거칩니다.
+R2D2는 provider 모델의 기억에 의존하지 않고 Manual Registry와 실제 환경 증거를 사용합니다. 쓰기 작업은 preview, idempotency, 사용자 확인과 correlation audit를 필수로 거칩니다.

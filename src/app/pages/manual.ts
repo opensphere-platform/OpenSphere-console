@@ -169,7 +169,7 @@ interface ManualBlock {
                 name="manual-query"
                 [ngModel]="query()"
                 (ngModelChange)="query.set($event)"
-                placeholder="Perspective, Cluster Manager, Data & Identity, OAA 검색"
+                placeholder="Perspective, Cluster Manager, Data & Identity, R2D2 검색"
                 aria-label="Manual 검색"
               />
               <button type="submit" [disabled]="searchLoading() || !query().trim()">검색</button>
@@ -185,7 +185,7 @@ interface ManualBlock {
           } @else if (docsError()) {
             <os-backend-unavailable
               feature="Manual"
-              backend="OAA Manual Registry (/api/manual)"
+              backend="R2D2 Manual Registry (/api/manual)"
               hint="Manual Registry 백엔드가 준비되면 Help Center가 자동 복구됩니다."
               [detail]="docsError()"
             />

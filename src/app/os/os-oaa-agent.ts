@@ -99,7 +99,7 @@ interface OaaSession {
   selector: 'os-oaa-agent',
   imports: [FormsModule, ClarityModule, CarbonIcon],
   template: `
-    <button class="oaa-trigger" [class.oaa-active]="open()" (click)="toggle()" title="OpenSphere AI Agent" aria-label="OpenSphere AI Agent">
+    <button class="oaa-trigger" [class.oaa-active]="open()" (click)="toggle()" title="R2D2" aria-label="R2D2">
       <span class="oaa-agent-mark" aria-hidden="true">
         <span class="oaa-agent-spark"></span>
         <span class="oaa-agent-smile"></span>
@@ -107,7 +107,7 @@ interface OaaSession {
     </button>
 
     @if (open()) {
-      <aside class="oaa-panel" [class.oaa-full]="full()" role="dialog" aria-label="OpenSphere AI Agent">
+      <aside class="oaa-panel" [class.oaa-full]="full()" role="dialog" aria-label="R2D2">
         <div class="oaa-resizer" (pointerdown)="startResize($event)" (dblclick)="resetDockWidth()" title="Drag to resize chat. Double-click to reset." aria-hidden="true"></div>
         <header class="oaa-head">
           <div class="oaa-head-left">
@@ -167,7 +167,7 @@ interface OaaSession {
                   </div>
                 }
                 @if (m.sources?.length) {
-                  <div class="oaa-sources" aria-label="OAA answer sources">
+                  <div class="oaa-sources" aria-label="R2D2 answer sources">
                     <div class="oaa-sources-title">Sources</div>
                     @for (s of m.sources || []; track sourceTrack(s)) {
                       <div class="oaa-source">
@@ -178,7 +178,7 @@ interface OaaSession {
                   </div>
                 }
                 @if (m.concepts?.length) {
-                  <div class="oaa-sources" aria-label="OAA concept graph">
+                  <div class="oaa-sources" aria-label="R2D2 concept graph">
                     <div class="oaa-sources-title">Concepts</div>
                     @for (c of m.concepts || []; track c.id) {
                       <div class="oaa-source">
@@ -189,7 +189,7 @@ interface OaaSession {
                   </div>
                 }
                 @if (m.actions?.length) {
-                  <div class="oaa-sources oaa-actions-list" aria-label="OAA suggested actions">
+                  <div class="oaa-sources oaa-actions-list" aria-label="R2D2 suggested actions">
                     <div class="oaa-sources-title">Suggested Actions</div>
                     @for (a of m.actions || []; track a.id) {
                       <div class="oaa-action-card">
@@ -222,7 +222,7 @@ interface OaaSession {
             placeholder="무엇이든 요청하세요"
             rows="3"
             (keydown)="onKeydown($event)"
-            aria-label="OAA 메시지"
+            aria-label="R2D2 메시지"
           ></textarea>
           <div class="oaa-compose-bar">
             <div class="oaa-compose-left">
@@ -715,7 +715,7 @@ export class OsOaaAgent implements OnDestroy {
       if (!r.ok) {
         // Degraded/unavailable(provider·key 미배포 포함)은 채팅 패널 내부 오류 배너로만 표시된다 —
         // 셸이나 Manual 등 다른 네이티브 화면에는 영향이 없다.
-        this.error.set(body.error || `OAA request failed (HTTP ${r.status})`);
+        this.error.set(body.error || `R2D2 request failed (HTTP ${r.status})`);
         return;
       }
       const sourceCount = Array.isArray(body.sources) ? body.sources.length : 0;
@@ -735,7 +735,7 @@ export class OsOaaAgent implements OnDestroy {
       }]);
       this.saveCurrentSession();
     } catch (e: any) {
-      if (e?.name !== 'AbortError') this.error.set('OAA request failed: ' + e);
+      if (e?.name !== 'AbortError') this.error.set('R2D2 request failed: ' + e);
     } finally {
       if (this.activeRequest === request) this.activeRequest = null;
       this.busy.set(false);
@@ -765,7 +765,7 @@ export class OsOaaAgent implements OnDestroy {
   }
 
   private initialMessages(): OaaMessage[] {
-    return [{ id: 'welcome-' + Date.now(), role: 'system', content: 'OAA ready.', meta: 'deepseek-v4-flash' }];
+    return [{ id: 'welcome-' + Date.now(), role: 'system', content: 'R2D2 ready.', meta: 'deepseek-v4-flash' }];
   }
 
   private pageContext(): Record<string, string> {

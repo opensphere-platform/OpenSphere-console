@@ -207,7 +207,7 @@ export class AdminOverview {
           description: '승인·적용·실측 증거 연결',
           route: '/manage/state-changes',
         },
-        { label: 'OAA', description: 'OpenSphere AI Agent 제어 표면', route: '/manage/oaa' },
+        { label: 'R2D2', description: 'Console 내장 AI 제어 표면', route: '/manage/oaa' },
         {
           label: '인프라 모니터링',
           description: '노드와 Kubernetes 기초 관측',

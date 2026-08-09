@@ -108,7 +108,7 @@ interface SupabaseStatus {
 
         @if (activeTab() === 'api') {
           <section class="domain-workspace" role="tabpanel" aria-label="API">
-              <section class="os-card"><div class="os-card-h">Console API boundary</div><p>브라우저는 Console Backend를 통해 Supabase 계약을 사용합니다. Back-end 전용 DB 역할과 선언 저장소 서비스 토큰은 브라우저·OAA·SubShell에 전달되지 않습니다.</p><div class="property"><span>Data API</span><strong>PostgREST + RLS</strong><small>직접 database superuser 경로 없음</small></div><div class="property"><span>상태 변경 관리</span><strong>Console → 서명된 상태 선언 → 적용 결과</strong><small>요청·승인·서명·전달·실측 결과의 상관관계 보존</small></div></section>
+              <section class="os-card"><div class="os-card-h">Console API boundary</div><p>브라우저는 Console Backend를 통해 Supabase 계약을 사용합니다. Back-end 전용 DB 역할과 선언 저장소 서비스 토큰은 브라우저·R2D2·SubShell에 전달되지 않습니다.</p><div class="property"><span>Data API</span><strong>PostgREST + RLS</strong><small>직접 database superuser 경로 없음</small></div><div class="property"><span>상태 변경 관리</span><strong>Console → 서명된 상태 선언 → 적용 결과</strong><small>요청·승인·서명·전달·실측 결과의 상관관계 보존</small></div></section>
           </section>
         }
 
