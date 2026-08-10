@@ -78,6 +78,10 @@ function createR2d2OperationApi(options) {
     }
     const approverId = String(actor.sub || actor.subject || '');
     if (!UUID.test(approverId)) throw { code: 401, msg: 'stable approver UUID required' };
+    if (['R2', 'R3'].includes(operation.requested_risk_class || operation.risk_class)
+        && approverId === String(operation.actor_id || '')) {
+      throw { code: 409, msg: 'R2/R3 operation requires an independent approver' };
+    }
     const expected = `approve R2D2 operation ${operationId} ${operation.descriptor_digest}`;
     if (String(body.confirmation || '') !== expected) throw { code: 400, msg: `confirmation required: ${expected}` };
     await store.approve(operationId, { approverId, assurance: 'aal2', approvalDigest: digest({ operationId, approverId, descriptorDigest: operation.descriptor_digest, confirmation: body.confirmation }) });

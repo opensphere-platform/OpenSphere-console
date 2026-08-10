@@ -1,6 +1,6 @@
 'use strict';
 
-const { randomUUID } = require('crypto');
+const { createHash, randomUUID } = require('crypto');
 const {
   runtimeRowToNode, buildRelations, digest, sanitizeOperationalValue,
   BoundedCoalescingQueue, graphCoverage,
@@ -66,6 +66,18 @@ function nodeUpsertParams(node) {
     JSON.stringify(node.attributes), node.fencingEpoch, node.collectionEpoch, node.streamSequence,
     node.sourceRevision, node.reconcileSessionId, node.snapshotComplete, node.observedAt, node.expiresAt,
   ];
+}
+
+function reconcileCompletenessDigest({
+  reconcileSessionId, expectedScopeCount, completedScopeCount,
+  observedResourceCount, authorityRevision, nodeIds,
+}) {
+  const material = [
+    'complete-reconcile-v2', String(reconcileSessionId), String(expectedScopeCount),
+    String(completedScopeCount), String(observedResourceCount), String(authorityRevision),
+    [...nodeIds].map(String).sort().join('\n'),
+  ].join('\n');
+  return `sha256:${createHash('sha256').update(material, 'utf8').digest('hex')}`;
 }
 
 class OperationalGraphStore {
@@ -176,7 +188,20 @@ class OperationalGraphStore {
         await client.query(`UPDATE oaa.resource_relation SET deleted_at=$4
           WHERE cluster_id=$1 AND deleted_at IS NULL AND reconcile_session_id<>$2 AND fencing_epoch<=$3`, [this.clusterId, reconcileSessionId, fencingEpoch, observedAt]);
       }
-      await client.query('SELECT oaa.complete_reconcile_session($1,$2)', [reconcileSessionId, inventory.completedScopeCount]);
+      const authorityRevision = String(inventory.authorityRevision || '');
+      const completenessDigest = reconcileCompletenessDigest({
+        reconcileSessionId,
+        expectedScopeCount: inventory.expectedScopeCount,
+        completedScopeCount: inventory.completedScopeCount,
+        observedResourceCount: nodes.length,
+        authorityRevision,
+        nodeIds: nodes.map((node) => node.nodeId),
+      });
+      await client.query(
+        'SELECT oaa.complete_reconcile_session_v2($1,$2,$3,$4,$5,$6)',
+        [reconcileSessionId, inventory.completedScopeCount, nodes.length,
+          inventory.pageTokenExhausted === true, authorityRevision, completenessDigest],
+      );
       for (const source of inventory.sources || []) {
         if (source.source === 'kubernetes') continue;
         await client.query(`INSERT INTO oaa.source_health(cluster_id,source,epistemic_state,configured,snapshot_complete,
@@ -332,18 +357,19 @@ class IncidentRuntime {
         }
         if (transitioned?.incident_id) {
           for (const impact of impacts) {
-            await client.query(`INSERT INTO oaa.incident_impact(incident_id,node_id,impact_type,distance,confidence,path_digest)
-              VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(incident_id,node_id,impact_type) DO UPDATE SET
-              distance=EXCLUDED.distance,confidence=EXCLUDED.confidence,path_digest=EXCLUDED.path_digest`, [
-              transitioned.incident_id, impact.nodeId, impact.impactType, impact.distance, impact.confidence, impact.pathDigest,
+            await client.query('SELECT oaa.attach_incident_impact($1,$2,$3,$4,$5,$6,$7,$8)', [
+              this.clusterId, fencingEpoch, transitioned.incident_id, impact.nodeId,
+              impact.impactType, impact.distance, impact.confidence, impact.pathDigest,
             ]);
           }
           const evidence = await client.query(`SELECT observation_id,received_at FROM oaa.observation
             WHERE cluster_id=$1 AND subject_node_id=$2 ORDER BY received_at DESC LIMIT 1`, [this.clusterId, signal.primaryNodeId]);
           if (evidence.rows[0]?.observation_id) {
-            await client.query(`INSERT INTO oaa.incident_evidence(incident_id,observation_id,observation_received_at,evidence_role,rank)
-              VALUES($1,$2,$3,$4,0) ON CONFLICT DO NOTHING`, [transitioned.incident_id, evidence.rows[0].observation_id, evidence.rows[0].received_at,
-              signal.causeStatus === 'confirmed' ? 'confirms' : 'supports']);
+            await client.query('SELECT oaa.attach_incident_evidence($1,$2,$3,$4,$5,$6,0)', [
+              this.clusterId, fencingEpoch, transitioned.incident_id,
+              evidence.rows[0].observation_id, evidence.rows[0].received_at,
+              signal.causeStatus === 'confirmed' ? 'confirms' : 'supports',
+            ]);
           }
         }
         outcomes.push(transitioned);
@@ -538,5 +564,5 @@ class OperationalIntelligenceRuntime {
 module.exports = {
   RULE_REVISION, leaseBody, leaseExpired, KubernetesLeaseElector, OperationalGraphStore,
   correlationSignals, IncidentRuntime, projectNodeForActor, OperationalQueryService,
-  OperationalIntelligenceRuntime, graphCoverage,
+  OperationalIntelligenceRuntime, graphCoverage, reconcileCompletenessDigest,
 };

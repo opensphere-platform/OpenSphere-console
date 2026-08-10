@@ -59,3 +59,33 @@ test('released migration history is immutable and numeric prefixes are never reu
     }
   }
 });
+
+test('migration manifest is the digest-bound canonical inventory', () => {
+  const migrationDir = path.join(here, 'migrations');
+  const manifest = JSON.parse(readFileSync(path.join(migrationDir, 'manifest.json'), 'utf8'));
+  const files = readdirSync(migrationDir).filter((name) => name.endsWith('.sql')).sort();
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.migrationCount, files.length);
+  assert.deepEqual(manifest.migrations.map(({ name }) => name), files);
+  assert.equal(manifest.latestMigrationId, files.at(-1).slice(0, 4));
+  const ids = new Set();
+  for (const entry of manifest.migrations) {
+    assert.equal(entry.id, entry.name.slice(0, 4));
+    assert.equal(ids.has(entry.id), false, `duplicate migration ID ${entry.id}`);
+    ids.add(entry.id);
+    assert.equal(entry.path, `backend/supabase/migrations/${entry.name}`);
+    const canonical = readFileSync(path.join(migrationDir, entry.name), 'utf8').replace(/\r\n/gu, '\n');
+    assert.equal(createHash('sha256').update(canonical, 'utf8').digest('hex'), entry.sha256);
+  }
+  const material = manifest.migrations.map(({ name, sha256 }) => `${name}\n${sha256}`).join('\n');
+  assert.equal(manifest.setDigest, `sha256:${createHash('sha256').update(material, 'utf8').digest('hex')}`);
+});
+
+test('component-scoped migration runner mutates schema only and never rolls workloads', () => {
+  const runner = readFileSync(path.join(here, 'migrate-only.ps1'), 'utf8');
+  assert.match(runner, /manifest\.json/);
+  assert.match(runner, /Migration manifest inventory mismatch/);
+  assert.match(runner, /NOTIFY pgrst, 'reload schema'/);
+  assert.doesNotMatch(runner, /rollout\s+(?:restart|status)/i);
+  assert.doesNotMatch(runner, /kubectl[^\n]*(?:apply|patch|delete)/i);
+});

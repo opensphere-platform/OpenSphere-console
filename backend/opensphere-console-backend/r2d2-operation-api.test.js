@@ -35,11 +35,23 @@ test('operation acceptance persists only digests/session identity and queues R1'
   assert.equal(JSON.stringify(rows).includes('Bearer'), false); assert.equal(JSON.stringify(rows).includes('accessToken'), false);
 });
 test('R2 remains awaiting approval until an AAL2 approval', async () => {
-  const f = fixture(); const body = request('rollback-image'); body.target.namespace = 'opensphere-console'; body.confirmation = exactConfirmation(DESCRIPTORS['rollback-image'], body.target);
+  const actor = {}; const f = fixture(actor); const body = request('rollback-image'); body.target.namespace = 'opensphere-console'; body.confirmation = exactConfirmation(DESCRIPTORS['rollback-image'], body.target);
   const op = await f.api.accept({ headers: { 'x-os-idempotency-key': 'rollback-123' } }, body);
   assert.equal(op.phase, 'AwaitingApproval'); const row = f.rows[0];
+  actor.sub = '33333333-3333-4333-8333-333333333333';
   await f.api.approve({}, row.operation_id, { confirmation: `approve R2D2 operation ${row.operation_id} ${row.descriptor_digest}` });
   assert.equal(row.phase, 'Queued');
+});
+
+test('R2 submitter cannot self-approve', async () => {
+  const f = fixture(); const body = request('rollback-image');
+  body.confirmation = exactConfirmation(DESCRIPTORS['rollback-image'], body.target);
+  await f.api.accept({ headers: { 'x-os-idempotency-key': 'rollback-self-123' } }, body);
+  const row = f.rows[0];
+  await assert.rejects(
+    () => f.api.approve({}, row.operation_id, { confirmation: `approve R2D2 operation ${row.operation_id} ${row.descriptor_digest}` }),
+    (error) => error?.code === 409 && /independent approver/.test(error?.msg),
+  );
 });
 
 test('planning replaces caller identity fields with live resolver evidence', async () => {

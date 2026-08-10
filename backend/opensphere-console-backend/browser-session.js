@@ -637,10 +637,22 @@ function createBrowserSessionManager({
       return { active: false, actorId, code: 'SessionCredentialInvalid' };
     }
     if (String(claims.sub || '') !== actorId) return { active: false, actorId, code: 'SessionActorChanged' };
+    let operator;
+    try {
+      const operators = await restRequest('operator', {
+        query: `select=user_id,status,disabled_at,credential_revision&user_id=eq.${encodeURIComponent(actorId)}&limit=1`,
+      });
+      operator = Array.isArray(operators) ? operators[0] : null;
+    } catch {
+      return { active: false, actorId, code: 'OperatorAuthorityUnavailable' };
+    }
+    if (!operator || operator.status !== 'active' || operator.disabled_at) {
+      return { active: false, actorId, code: 'OperatorInactive' };
+    }
     return {
       active: true, actorId, assurance: String(claims.assurance || row.assurance || 'aal1'),
       permissions: Array.isArray(claims.permissions) ? claims.permissions : [],
-      authzRevision: String(row.credential_revision || 0), accessToken,
+      authzRevision: String(operator.credential_revision ?? row.credential_revision ?? 0), accessToken,
       lastReauthenticatedAt: row.last_reauthenticated_at || null,
     };
   }

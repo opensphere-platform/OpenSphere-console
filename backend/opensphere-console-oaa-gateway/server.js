@@ -2773,20 +2773,30 @@ async function collectRuntimeInventory() {
     let continuation = '';
     let pages = 0;
     let response;
+    const authorityRevisions = [];
     do {
       response = await k8sGet(kubernetesResourcePath(kind, namespace, '', { limit: 500, continue: continuation || undefined }));
       pages += 1;
-      if (!response.ok) return { kind, namespace, ok: false, snapshotComplete: false, pages, error: response.error, rows: [] };
+      if (!response.ok) return { kind, namespace, ok: false, snapshotComplete: false, pageTokenExhausted: false, pages, error: response.error, rows: [] };
+      const authorityRevision = String(response.metadata?.resourceVersion || '');
+      if (!authorityRevision) {
+        return { kind, namespace, ok: false, snapshotComplete: false, pageTokenExhausted: false, pages, error: 'authority_revision_missing', rows: [] };
+      }
+      authorityRevisions.push(authorityRevision);
       items.push(...(response.items || []));
       continuation = String(response.metadata?.continue || '');
       if (pages >= 100 || items.length > 10000) {
-        return { kind, namespace, ok: false, snapshotComplete: false, pages, error: 'reconcile_page_budget_exceeded', rows: [] };
+        return { kind, namespace, ok: false, snapshotComplete: false, pageTokenExhausted: false, pages, error: 'reconcile_page_budget_exceeded', rows: [] };
       }
     } while (continuation);
+    if (new Set(authorityRevisions).size !== 1) {
+      return { kind, namespace, ok: false, snapshotComplete: false, pageTokenExhausted: true, pages, error: 'authority_revision_discontinuity', rows: [] };
+    }
     const projectedItems = definition.key === 'namespace'
       ? items.filter((item) => OAA_ENV_NAMESPACES.includes(item.metadata?.name || ''))
       : items;
-    return { kind, namespace, ok: true, snapshotComplete: true, pages,
+    return { kind, namespace, ok: true, snapshotComplete: true, pageTokenExhausted: true,
+      authorityRevision: authorityRevisions[0], pages,
       rows: projectedItems.map((item) => runtimeProjectionRow(sanitizeKubernetesObject(kind, item))) };
   });
   const projectionPool = getPgPool();
@@ -2805,10 +2815,16 @@ async function collectRuntimeInventory() {
   const reconcileSessionId = randomUUID();
   // Optional authority adapters cannot starve the Kubernetes authority lane.
   const snapshotComplete = batches.every((batch) => batch.snapshotComplete === true);
+  const pageTokenExhausted = batches.every((batch) => batch.pageTokenExhausted === true);
+  const authorityRevision = `sha256:${createHash('sha256').update(batches
+    .map((batch) => `${batch.kind}:${batch.namespace || '_'}:${batch.authorityRevision || 'missing'}`)
+    .sort().join('\n')).digest('hex')}`;
   return {
     observedAt: new Date().toISOString(),
     reconcileSessionId,
     snapshotComplete,
+    pageTokenExhausted,
+    authorityRevision,
     expectedScopeCount: batches.length,
     completedScopeCount: batches.filter((batch) => batch.snapshotComplete).length,
     rows: [...batches.flatMap((batch) => batch.rows), ...authorityAdapters.flatMap((batch) => batch.rows)],
@@ -2817,8 +2833,10 @@ async function collectRuntimeInventory() {
         blockerCode: snapshotComplete ? null : 'incomplete_reconcile', rows: batches.flatMap((batch) => batch.rows) },
       ...authorityAdapters,
     ],
-    access: batches.map(({ kind, namespace, ok, snapshotComplete: complete, pages, error, rows }) => ({
-      kind, namespace: namespace || null, ok, snapshotComplete: complete, pages, count: rows.length, error: error || null,
+    access: batches.map(({ kind, namespace, ok, snapshotComplete: complete, pageTokenExhausted: exhausted, authorityRevision: revision, pages, error, rows }) => ({
+      kind, namespace: namespace || null, ok, snapshotComplete: complete,
+      pageTokenExhausted: exhausted, authorityRevision: revision || null,
+      pages, count: rows.length, error: error || null,
     })),
   };
 }

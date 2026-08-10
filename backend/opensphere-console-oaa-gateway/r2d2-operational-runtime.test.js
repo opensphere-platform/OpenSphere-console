@@ -5,7 +5,20 @@ const assert = require('node:assert/strict');
 const {
   leaseBody, leaseExpired, KubernetesLeaseElector, correlationSignals,
   projectNodeForActor, OperationalQueryService, OperationalIntelligenceRuntime,
+  reconcileCompletenessDigest,
 } = require('./r2d2-operational-runtime');
+
+test('reconcile completeness evidence is deterministic and node-set bound', () => {
+  const input = {
+    reconcileSessionId: '11111111-1111-4111-8111-111111111111',
+    expectedScopeCount: 2, completedScopeCount: 2, observedResourceCount: 2,
+    authorityRevision: 'sha256:authority', nodeIds: ['node-b', 'node-a'],
+  };
+  const first = reconcileCompletenessDigest(input);
+  assert.match(first, /^sha256:[0-9a-f]{64}$/u);
+  assert.equal(first, reconcileCompletenessDigest({ ...input, nodeIds: ['node-a', 'node-b'] }));
+  assert.notEqual(first, reconcileCompletenessDigest({ ...input, nodeIds: ['node-a'] }));
+});
 
 test('lease expires deterministically and preserves Kubernetes resourceVersion fencing', () => {
   const current = { metadata: { resourceVersion: '7' }, spec: { holderIdentity: 'old', renewTime: '2026-08-10T00:00:00Z', leaseDurationSeconds: 30, leaseTransitions: 1 } };

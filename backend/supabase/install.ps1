@@ -20,6 +20,37 @@ $manifest = Join-Path $here "bootstrap\supabase.yaml"
 $migrationDirectory = Join-Path $here "migrations"
 $migrations = @(Get-ChildItem -LiteralPath $migrationDirectory -Filter '*.sql' -File | Sort-Object Name)
 if ($migrations.Count -eq 0) { throw "No Supabase migrations found in $migrationDirectory" }
+$migrationManifestPath = Join-Path $migrationDirectory 'manifest.json'
+if (-not (Test-Path -LiteralPath $migrationManifestPath)) { throw "Missing migration manifest: $migrationManifestPath" }
+function Get-CanonicalMigrationSha256([string]$Path) {
+  $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($text)))).Replace('-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+}
+function Get-StringSha256([string]$Value) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($Value)))).Replace('-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+}
+$migrationManifest = Get-Content -Raw -LiteralPath $migrationManifestPath | ConvertFrom-Json
+if ($migrationManifest.schemaVersion -ne 1 -or $migrationManifest.migrationCount -ne $migrations.Count) { throw 'Invalid migration manifest schema/count' }
+$manifestNames = @($migrationManifest.migrations | ForEach-Object { [string]$_.name })
+$actualNames = @($migrations | ForEach-Object { $_.Name })
+if (($manifestNames -join "`n") -ne ($actualNames -join "`n")) { throw 'Migration directory differs from canonical manifest' }
+$setRows = @()
+foreach ($entry in $migrationManifest.migrations) {
+  if ($entry.id -ne ([IO.Path]::GetFileNameWithoutExtension([string]$entry.name)).Substring(0,4) -or
+      $entry.path -ne "backend/supabase/migrations/$($entry.name)") { throw "Invalid migration manifest entry: $($entry.name)" }
+  $actualDigest = Get-CanonicalMigrationSha256 (Join-Path $migrationDirectory ([string]$entry.name))
+  if ($actualDigest -ne [string]$entry.sha256) { throw "Migration manifest digest mismatch: $($entry.name)" }
+  $setRows += "$($entry.name)`n$($entry.sha256)"
+}
+$setDigest = 'sha256:' + (Get-StringSha256 ($setRows -join "`n"))
+if ($setDigest -ne [string]$migrationManifest.setDigest -or
+    $migrationManifest.latestMigrationId -ne ([string]$migrationManifest.migrations[-1].id)) {
+  throw 'Migration manifest set/latest digest mismatch'
+}
 if (-not $SourceRevision) { $SourceRevision = [string]$env:OPENSPHERE_SOURCE_REVISION }
 if ($SourceRevision -notmatch '^[a-f0-9]{40}$') {
   throw "SourceRevision must be the immutable 40-character release commit SHA"

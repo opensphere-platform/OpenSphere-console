@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createBrowserSessionManager, sha256 } = require('./browser-session');
 
-function harness({ verifiedFactor = false } = {}) {
+function harness({ verifiedFactor = false, operatorStatus = 'active' } = {}) {
   let row = null;
   const additionalRows = [];
   let currentTime = '2026-07-27T00:00:00.000Z';
@@ -19,6 +19,12 @@ function harness({ verifiedFactor = false } = {}) {
       if (options.method === 'POST') events.push(...options.body);
       return [];
     }
+    if (resource === 'operator') return [{
+      user_id: '22222222-2222-4222-8222-222222222222',
+      status: operatorStatus,
+      disabled_at: operatorStatus === 'disabled' ? currentTime : null,
+      credential_revision: 0,
+    }];
     assert.equal(resource, 'browser_session');
     if (options.method === 'POST') {
       row = {
@@ -141,6 +147,27 @@ test('creates an opaque Secure browser session and encrypts Supabase tokens', as
   assert.doesNotMatch(h.row().access_token_ciphertext, /access-a/);
   assert.doesNotMatch(h.row().refresh_token_ciphertext, /refresh-a/);
   assert.equal(h.row().network_digest, sha256('10.10.1'));
+});
+
+test('durable execution independently rejects a disabled operator even with an active session token', async () => {
+  const active = harness();
+  await active.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com', password: 'not-persisted', duration: '24h',
+  });
+  assert.equal((await active.manager.resolveForDurableExecution(
+    active.row().id, '22222222-2222-4222-8222-222222222222',
+  )).active, true);
+
+  const disabled = harness({ operatorStatus: 'disabled' });
+  await disabled.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com', password: 'not-persisted', duration: '24h',
+  });
+  const denied = await disabled.manager.resolveForDurableExecution(
+    disabled.row().id, '22222222-2222-4222-8222-222222222222',
+  );
+  assert.deepEqual(denied, {
+    active: false, actorId: '22222222-2222-4222-8222-222222222222', code: 'OperatorInactive',
+  });
 });
 
 test('uses a 24-hour default without removing shorter or trusted-device choices', async () => {

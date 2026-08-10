@@ -73,10 +73,16 @@ async function main() {
     '-e', 'POSTGRES_PASSWORD=verify', '-e', 'POSTGRES_DB=postgres', image], { stdio: 'ignore' });
   let pool;
   try {
+    let consecutiveReady = 0;
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      try { sh('docker', ['exec', container, 'pg_isready', '-U', 'postgres'], { stdio: 'ignore' }); break; }
-      catch { await new Promise((resolve) => setTimeout(resolve, 500)); }
+      try {
+        sh('docker', ['exec', container, 'psql', '-U', 'postgres', '-d', 'postgres', '-tAc', 'SELECT 1'], { stdio: 'ignore' });
+        consecutiveReady += 1;
+        if (consecutiveReady >= 3) break;
+      } catch { consecutiveReady = 0; }
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
+    if (consecutiveReady < 3) throw new Error('PostgreSQL acceptance container did not become stably ready');
     psql(prep);
     applyMigrations('postgres', migrations);
     pool = connection();
@@ -85,10 +91,10 @@ async function main() {
     const retentionEnd = '2020-02-01T00:00:00Z';
     await assert.rejects(() => pool.query(`SELECT oaa.assert_evidence_purge_allowed(
       'observation',$1::timestamptz,$2::timestamptz,'40000000-0000-4000-8000-000000000001')`,
-    [retentionStart, retentionEnd]), /verified export proof required/);
+    [retentionStart, retentionEnd]), /verified export and restore proof required/);
     const exportProof = await pool.query(`INSERT INTO oaa.evidence_partition_export(
-      stream,range_start,range_end,row_count,object_ref,object_digest,verified_at,verified_by
-    ) VALUES('observation',$1,$2,0,'s3://r2d2-acceptance/observation-202001', $3,clock_timestamp(),'acceptance')
+      stream,range_start,range_end,row_count,object_ref,object_digest,verified_at,verified_by,restored_at
+    ) VALUES('observation',$1,$2,0,'s3://r2d2-acceptance/observation-202001', $3,clock_timestamp(),'acceptance',clock_timestamp())
     RETURNING export_id`, [retentionStart, retentionEnd, digestA]);
     await pool.query(`INSERT INTO oaa.evidence_legal_hold(stream,range_start,range_end,reason,created_by)
       VALUES('observation',$1,$2,'acceptance legal hold','acceptance')`, [retentionStart, retentionEnd]);

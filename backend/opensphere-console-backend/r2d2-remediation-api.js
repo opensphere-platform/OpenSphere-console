@@ -102,6 +102,9 @@ function createR2d2RemediationApi(options) {
     if (!UUID.test(approverId) || actor.assurance !== 'aal2') throw { code: 403, msg: 'stable AAL2 approver required' };
     const request = await store.get(remediationRequestId);
     if (!request) throw { code: 404, msg: 'Engineering Remediation request not found' };
+    if (approverId === String(request.actorId || request.actor_id || '')) {
+      throw { code: 409, msg: 'Engineering Remediation requires an independent approver' };
+    }
     const build = scope === 'deployment' ? await store.latestBuild(remediationRequestId) : null;
     if (scope === 'deployment' && !build) throw { code: 409, msg: 'verified build evidence is required before deployment approval' };
     const bindingDigest = scope === 'source_patch' ? request.approvalBindingDigest : deploymentApprovalBinding(request, build);

@@ -213,6 +213,9 @@ class EngineeringRemediationWorker {
     this.deps = deps;
     this.sandboxRoot = deps.sandboxRoot || '/var/lib/opensphere/r2d2-sandboxes';
     this.now = deps.now || (() => new Date());
+    // Merely being known to the proposal catalog never authorizes execution.
+    // Each repository is separately enabled only after its runner/sandbox audit.
+    this.executionRepositories = new Set(deps.executionRepositories || []);
   }
 
   async requireLease(requestId) {
@@ -238,6 +241,10 @@ class EngineeringRemediationWorker {
 
   async build(request, patchArtifact) {
     if (request.stage !== 'approved') throw new Error('source patch worker requires approved stage');
+    if (!this.executionRepositories.has(request.repository)) {
+      await this.deps.store.block(request.remediationRequestId, 'RepositoryExecutionNotEnabled');
+      return { status: 'blocked', code: 'RepositoryExecutionNotEnabled' };
+    }
     if (!approvalStillValid(request, {
       approvalBindingDigest: request.approvalBindingDigest,
       approvalExpiresAt: request.approvalExpiresAt,
@@ -275,6 +282,10 @@ class EngineeringRemediationWorker {
         }
       }
       await advance('ready_to_commit', { tests: testEvidence });
+      await this.requireLease(request.remediationRequestId);
+      if (!await this.authorize(request, 'source_patch', request.approvalBindingDigest)) {
+        return { status: 'blocked', code: 'AuthorizationRevokedBeforeCommit' };
+      }
       const commit = await this.deps.sources.commit(workspace, {
         baseRevision: request.baseRevision, patchDigest: request.patchDigest,
         remediationRequestId: request.remediationRequestId,
@@ -283,6 +294,9 @@ class EngineeringRemediationWorker {
       await advance('committed', { sourceRevision: commit.sourceRevision });
       await advance('building', {});
       await this.requireLease(request.remediationRequestId);
+      if (!await this.authorize(request, 'source_patch', request.approvalBindingDigest)) {
+        return { status: 'blocked', code: 'AuthorizationRevokedBeforeBuild' };
+      }
       const build = await this.deps.builder.build(workspace, {
         sourceRevision: commit.sourceRevision, patchDigest: request.patchDigest,
         components: request.affectedComponents, images: request.affectedImages,

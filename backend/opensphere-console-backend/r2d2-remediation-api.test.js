@@ -24,8 +24,9 @@ function body() {
   };
 }
 
-function fixture(enabled = true, executionEnabled = false, workerReady = false) {
+function fixture(enabled = true, executionEnabled = false, workerReady = false, approvalActorId = actorId) {
   const persisted = []; const approvals = [];
+  let authenticationCount = 0;
   const rowFor = (input, stage = 'proposed') => ({
     remediation_request_id: input.remediationRequestId, assessment_id: input.assessmentId,
     incident_id: input.incidentId, operation_id: '55555555-5555-4555-8555-555555555555',
@@ -45,7 +46,7 @@ function fixture(enabled = true, executionEnabled = false, workerReady = false) 
   approveScoped: async (input) => { approvals.push(input); return rowFor(persisted[0], 'approved'); } };
   const api = createR2d2RemediationApi({
     proposalEnabled: enabled, executionEnabled, workerReady,
-    authenticate: async () => ({ actor: { sub: actorId, browserSessionId: sessionId, assurance: 'aal2', credentialRevision: 9 } }),
+    authenticate: async () => ({ actor: { sub: authenticationCount++ === 0 ? actorId : approvalActorId, browserSessionId: sessionId, assurance: 'aal2', credentialRevision: 9 } }),
     store,
     now: () => new Date('2026-08-10T00:00:00Z'),
   });
@@ -72,7 +73,7 @@ test('source execution requires a separate exact AAL2 approval and remains defau
   await assert.rejects(() => disabled.api.approve({}, proposal.remediationRequestId, 'source_patch', {}),
     (error) => error?.code === 503);
 
-  const enabled = fixture(true, true);
+  const enabled = fixture(true, true, false, '66666666-6666-4666-8666-666666666666');
   const created = await enabled.api.propose({ headers: { 'x-os-idempotency-key': 'remediation-proposal-1' } }, assessmentId, body());
   const confirmation = `approve R2D2 source patch ${created.remediationRequestId} ${created.approvalBindingDigest}`;
   const approved = await enabled.api.approve({}, created.remediationRequestId, 'source_patch', { confirmation });

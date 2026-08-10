@@ -99,6 +99,7 @@ function workerFixture(request, overrides = {}) {
     provenanceDigest: image, signatureDigest: image, releaseLockDigest: image,
   };
   const deps = {
+    executionRepositories: [request.repository],
     store: {
       heartbeat: async () => true,
       getApprovals: async () => executionApprovals(request, 'source_patch', request.approvalBindingDigest),
@@ -195,6 +196,48 @@ test('stale approval or source revision blocks before patch application', async 
   assert.equal(patches, 0);
   assert.equal(fixture.destroyed(), 0);
   assert.equal(approvalsSatisfied(request, [], 'source_patch', request.approvalBindingDigest).allowed, false);
+});
+
+test('repository execution is empty by default even when the proposal catalog knows it', async () => {
+  const request = executionRequest();
+  const fixture = workerFixture(request, { executionRepositories: [] });
+  let sandboxCreates = 0;
+  fixture.deps.sandbox.create = async () => { sandboxCreates += 1; return {}; };
+  const out = await fixture.worker.build(request, { patchDigest: request.patchDigest });
+  assert.equal(out.code, 'RepositoryExecutionNotEnabled');
+  assert.equal(sandboxCreates, 0);
+});
+
+test('approval revocation after tests prevents commit', async () => {
+  const request = executionRequest(); let commits = 0; let reads = 0;
+  const fixture = workerFixture(request);
+  fixture.deps.store.getApprovals = async () => {
+    reads += 1;
+    return reads < 2
+      ? executionApprovals(request, 'source_patch', request.approvalBindingDigest)
+      : executionApprovals(request, 'source_patch', request.approvalBindingDigest).map((item) => ({ ...item, revokedAt: new Date().toISOString() }));
+  };
+  fixture.deps.sources.commit = async () => { commits += 1; return { sourceRevision: sha }; };
+  const out = await fixture.worker.build(request, { patchDigest: request.patchDigest });
+  assert.equal(out.code, 'AuthorizationRevokedBeforeCommit');
+  assert.equal(commits, 0);
+  assert.equal(fixture.destroyed(), 1);
+});
+
+test('approval revocation after commit prevents image build', async () => {
+  const request = executionRequest(); let builds = 0; let reads = 0;
+  const fixture = workerFixture(request);
+  fixture.deps.store.getApprovals = async () => {
+    reads += 1;
+    return reads < 3
+      ? executionApprovals(request, 'source_patch', request.approvalBindingDigest)
+      : executionApprovals(request, 'source_patch', request.approvalBindingDigest).map((item) => ({ ...item, revokedAt: new Date().toISOString() }));
+  };
+  fixture.deps.builder.build = async () => { builds += 1; return {}; };
+  const out = await fixture.worker.build(request, { patchDigest: request.patchDigest });
+  assert.equal(out.code, 'AuthorizationRevokedBeforeBuild');
+  assert.equal(builds, 0);
+  assert.equal(fixture.destroyed(), 1);
 });
 
 test('deployment approval is separately bound to built digests and failed postcondition rolls back exact inputs', async () => {
