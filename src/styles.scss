@@ -5,6 +5,7 @@
  */
 /* Foblex Flow 테마 — 연결선(SVG path) 스트로크·커넥터 스타일 제공(없으면 엣지가 투명). @use는 최상단 필수(Sass 규칙). */
 @use '@foblex/flow/styles/default' as *;
+@use './r2d2-page';
 @import '@clr/ui/clr-ui.min.css';
 @import '@carbon/charts/styles.css';
 /* IBM Plex — 라틴(Sans)+한글(Sans KR)+모노. 한·영 단일 IBM 폰트 통일(사용자 지정). OFL 오픈폰트. */
