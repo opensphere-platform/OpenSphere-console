@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
+import { createHash } from 'node:crypto';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(here, '..', 'opensphere-console-oaa-gateway', 'package.json'));
@@ -54,6 +55,16 @@ const sh = (command, args, options = {}) => execFileSync(command, args, { encodi
 const psql = (sql, database = 'postgres') => sh('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-d', database,
   '-v', 'ON_ERROR_STOP=1', '-t', '-A'], { input: sql });
 const applyMigrations = (database, selected) => selected.forEach((name) => psql(readFileSync(path.join(migrationsDir, name), 'utf8'), database));
+const migrationDigest = (name) => createHash('sha256')
+  .update(readFileSync(path.join(migrationsDir, name), 'utf8').replace(/\r\n/gu, '\n'), 'utf8')
+  .digest('hex');
+const attestMigrations = (database, selected) => psql(selected.map((name) => {
+  const id = name.slice(0, -4);
+  return `INSERT INTO console.schema_migration(migration_id,sha256,source_revision,executor)
+    VALUES('${id}','${migrationDigest(name)}','${'1'.repeat(40)}','acceptance') ON CONFLICT(migration_id) DO NOTHING;`;
+}).join('\n'), database);
+const schemaDump = (database) => sh('docker', ['exec', container, 'pg_dump', '-U', 'postgres', '-d', database,
+  '--schema-only', '--no-owner', '--no-privileges']).replace(/^\\(?:restrict|unrestrict)\s+.*$/gmu, '');
 const connection = (database = 'postgres') => new Pool({ host: '127.0.0.1', port, user: 'postgres', password: 'verify', database, max: 4 });
 const percentile = (values, ratio) => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * ratio) - 1)];
 
@@ -266,10 +277,29 @@ async function main() {
       risk_class,target_fingerprint,phase) VALUES('legacy-operation','legacy','verify','30000000-0000-4000-8000-000000000001',
       'legacy operation preserved','aal1','R0','${digestA}','Succeeded')`);
     applyMigrations('r2d2_upgrade', expansion);
+    attestMigrations('r2d2_upgrade', migrations);
     assert.equal((await upgradePool.query(`SELECT to_regclass('oaa.resource_node') IS NOT NULL AS ready`)).rows[0].ready, true);
     const legacyProjection = await upgradePool.query(`SELECT module_id,action,phase,result FROM console.module_operation WHERE idempotency_key='legacy-operation'`);
     assert.equal(legacyProjection.rows[0].phase, 'Succeeded');
     assert.equal((await upgradePool.query(`SELECT count(*)::int AS count FROM console.module_operation WHERE idempotency_key='legacy-operation'`)).rows[0].count, 1);
+
+    // L-5 convergence: a clean install and a legacy->expanded upgrade must
+    // produce the same catalog and the same immutable migration inventory.
+    psql('CREATE DATABASE r2d2_fresh;');
+    psql(prep, 'r2d2_fresh');
+    applyMigrations('r2d2_fresh', migrations);
+    attestMigrations('r2d2_fresh', migrations);
+    assert.equal(schemaDump('r2d2_upgrade'), schemaDump('r2d2_fresh'),
+      'clean install and component upgrade produced different database schemas');
+    const canonicalLedger = migrations.map((name) => `${name.slice(0, -4)}|${migrationDigest(name)}`).join('\n');
+    assert.equal((await upgradePool.query(`SELECT string_agg(migration_id || '|' || sha256, E'\\n' ORDER BY migration_id) AS ledger
+      FROM console.schema_migration`)).rows[0].ledger, canonicalLedger,
+      'component upgrade migration ledger differs from the canonical manifest inventory');
+    const freshPool = connection('r2d2_fresh');
+    assert.equal((await freshPool.query(`SELECT string_agg(migration_id || '|' || sha256, E'\\n' ORDER BY migration_id) AS ledger
+      FROM console.schema_migration`)).rows[0].ledger, canonicalLedger,
+      'clean install migration ledger differs from the canonical manifest inventory');
+    await freshPool.end();
     await upgradePool.end();
 
     const summary = {
@@ -283,7 +313,8 @@ async function main() {
         sameTimestampReplay: true },
       fencing: { staleWriterRejected: true, dbTakeoverMs: Number(failoverMs.toFixed(2)), targetMs: 30000 },
       dbRestart: { continuity: true },
-      restore: continuity.rows[0], upgrade: { oldSchemaDetected: true, expanded: true, legacyRowPreserved: true },
+      restore: continuity.rows[0], upgrade: { oldSchemaDetected: true, expanded: true, legacyRowPreserved: true,
+        cleanInstallSchemaConverged: true, migrationLedgerConverged: true },
     };
     console.log(JSON.stringify(summary, null, 2));
     console.log('R2D2 operational acceptance drill PASS');
