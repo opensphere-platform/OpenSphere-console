@@ -101,6 +101,47 @@ server {
     # session/CSRF evidence and exchanges it for a short-lived Supabase bearer.
     # Only that bearer reaches the Gateway; /healthz and /readyz remain
     # in-cluster-only probe targets.
+    # Durable management operations are owned by Console Backend because it
+    # alone can revalidate the opaque browser session at execution time.
+    location ^~ /api/oaa/operations {
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header Authorization "";
+        proxy_set_header X-OS-CSRF $http_x_os_csrf;
+        proxy_set_header X-OS-Idempotency-Key $http_x_os_idempotency_key;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # Patch-bound Engineering Remediation proposals are Console Backend-owned
+    # policy writes. They never pass through the read-only R2D2 Gateway.
+    location ^~ /api/oaa/remediations/ {
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080$request_uri;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header Authorization "";
+        proxy_set_header X-OS-Idempotency-Key $http_x_os_idempotency_key;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    location = /api/oaa/incidents/stream {
+        set $r2d2_original_method $request_method;
+        set $r2d2_original_uri $request_uri;
+        auth_request /_r2d2_authn;
+        auth_request_set $r2d2_authorization $upstream_http_x_os_r2d2_authorization;
+        set $oaa_gateway_upstream opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local;
+        proxy_pass http://$oaa_gateway_upstream:8080$request_uri;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 90s;
+        proxy_set_header Connection "";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization $r2d2_authorization;
+        proxy_set_header Last-Event-ID $http_last_event_id;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
     location /api/oaa/ {
         set $r2d2_original_method $request_method;
         set $r2d2_original_uri $request_uri;

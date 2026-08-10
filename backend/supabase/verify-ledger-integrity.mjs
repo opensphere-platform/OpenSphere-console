@@ -71,6 +71,118 @@ function mustReject(sql, label) {
   console.log(`  ✓ ${label} — 거부됨`);
 }
 
+function mustRejectPermission(sql, label) {
+  let rejected = false;
+  let detail = '';
+  try { psql(sql); } catch (err) {
+    rejected = true;
+    detail = String(err.stderr || err.stdout || err.message);
+  }
+  assert.ok(rejected, `${label}: least-privilege 경계를 넘어선 SQL이 통과했다`);
+  assert.match(detail, /permission denied|violates row-level security/i,
+    `${label}: 권한 경계 이외의 이유로 실패했다 — ${detail.slice(0, 300)}`);
+  console.log(`  ✓ ${label} — 권한 거부됨`);
+}
+
+function verifyR2d2RoleMatrix() {
+  console.log('\nR2D2 DB 역할 허용·거부 matrix (0046~0050)');
+  psql(`SET ROLE opensphere_oaa_observer;
+    INSERT INTO oaa.source_health(cluster_id,source,configured,epistemic_state,snapshot_complete,updated_at)
+    VALUES ('role-test','Kubernetes',true,'known',true,clock_timestamp()); RESET ROLE;`);
+  console.log('  ✓ observer는 source health projection을 기록할 수 있다');
+  mustRejectPermission('SET ROLE opensphere_oaa_observer; SELECT count(*) FROM console.module_operation;', 'observer → module_operation');
+
+  psql('SET ROLE opensphere_oaa_api; SELECT count(*) FROM oaa.source_health; RESET ROLE;');
+  console.log('  ✓ API 역할은 operational projection을 조회할 수 있다');
+  mustRejectPermission(`SET ROLE opensphere_oaa_api;
+    INSERT INTO oaa.source_health(cluster_id,source,configured,epistemic_state,snapshot_complete,updated_at)
+    VALUES ('role-test','Gitea',true,'known',true,clock_timestamp());`, 'API → projection write');
+
+  psql(`SET ROLE opensphere_oaa_maintenance;
+    SELECT count(*) FROM oaa.source_health;
+    INSERT INTO oaa.slo_sample(sampled_at,metric,value,labels) VALUES(clock_timestamp(),'coverage_ratio',1,'{}'); RESET ROLE;`);
+  console.log('  ✓ maintenance는 partition/SLO 계약 범위만 사용할 수 있다');
+  mustRejectPermission(`SET ROLE opensphere_oaa_maintenance;
+    UPDATE oaa.source_health SET blocker_code='tamper' WHERE cluster_id='role-test';`, 'maintenance → observer projection write');
+
+  psql('SET ROLE opensphere_oaa_incident_relay; SELECT count(*) FROM oaa.incident_outbox; RESET ROLE;');
+  console.log('  ✓ relay는 incident outbox를 조회할 수 있다');
+  mustRejectPermission('SET ROLE opensphere_oaa_incident_relay; SELECT count(*) FROM oaa.resource_node;', 'relay → graph read');
+
+  mustRejectPermission('SET ROLE opensphere_console_backend; SELECT count(*) FROM oaa.observation;', 'Console Backend → observation read');
+}
+
+function verifyR2d2DurabilityAndRemediation() {
+  console.log('\nR2D2 durable claim·deadline·Engineering Remediation 원자성');
+  const actor = '77777777-7777-4777-8777-777777777777';
+  const approver = '88888888-8888-4888-8888-888888888888';
+  const digestA = `sha256:${'a'.repeat(64)}`;
+  const digestB = `sha256:${'b'.repeat(64)}`;
+  const digestC = `sha256:${'c'.repeat(64)}`;
+  const operation = '99999999-9999-4999-8999-999999999999';
+  psql(`INSERT INTO console.module_operation(
+      operation_id,idempotency_key,module_id,action,actor_id,reason,assurance,risk_class,target_fingerprint,
+      phase,requested_risk_class,required_assurance,deadline_at,execution_state,verification_state
+    ) VALUES(
+      '${operation}','r2d2-r2-unapproved','r2d2','rollback-image','${actor}','R2 approval claim verification',
+      'aal2','R2','${digestA}','Queued','R2','aal2',clock_timestamp()+interval '1 hour','accepted','pending'
+    );`);
+  assert.equal(psql(`SELECT count(*) FROM console.claim_module_operation('worker-a',1,10)
+    WHERE operation_id='${operation}';`).trim(), '0', 'unapproved R2 operation was claimed');
+  console.log('  ✓ 승인 없는 R2는 DB claim 단계에서 차단된다');
+  psql(`INSERT INTO console.module_operation_approval(operation_id,approver_id,assurance,approval_digest)
+    VALUES('${operation}','${approver}','aal2','${digestB}');`);
+  assert.equal(psql(`SELECT count(*) FROM console.claim_module_operation('worker-a',1,10)
+    WHERE operation_id='${operation}';`).trim(), '1', 'approved R2 operation was not claimable');
+  console.log('  ✓ active AAL2 승인이 있는 R2만 claim된다');
+
+  const expired = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  psql(`INSERT INTO console.module_operation(
+      operation_id,idempotency_key,module_id,action,actor_id,reason,assurance,risk_class,target_fingerprint,
+      phase,requested_risk_class,required_assurance,deadline_at,execution_state,verification_state
+    ) VALUES(
+      '${expired}','r2d2-expired-work','r2d2','restart-workload','${actor}','Expired operation verification',
+      'aal1','R1','${digestA}','Queued','R1','aal1',clock_timestamp()-interval '1 second','accepted','pending'
+    ); SELECT count(*) FROM console.claim_module_operation('worker-b',2,10);`);
+  assert.equal(psql(`SELECT phase||'|'||execution_state FROM console.module_operation WHERE operation_id='${expired}';`).trim(),
+    'TimedOut|timed_out', 'expired unstarted operation did not converge to TimedOut');
+  console.log('  ✓ 만료된 미실행 작업은 TimedOut으로 수렴한다');
+
+  const incident = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const mismatch = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const assessment = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const remediation = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  psql(`INSERT INTO oaa.incident(
+      incident_id,cluster_id,fingerprint,incident_type,status,severity,confidence,cause_status,title,
+      first_detected_at,last_observed_at,primary_node_id,rule_revision,summary,fencing_epoch
+    ) VALUES('${incident}','local','${digestA}','digest_drift','active','high',1,'confirmed','digest drift',
+      clock_timestamp(),clock_timestamp(),'node:deployment','r2d2-correlation-v1','exact digest mismatch',1);
+    INSERT INTO oaa.mismatch(mismatch_id,incident_id,cluster_id,subject_node_id,mismatch_type,epistemic_state,
+      expected_digest,actual_digest,evidence_digest)
+    VALUES('${mismatch}','${incident}','local','node:deployment','exact_image_digest','known','${digestA}','${digestB}','${digestC}');
+    INSERT INTO oaa.remediation_assessment(assessment_id,mismatch_id,incident_id,minimum_ladder_step,lower_steps,
+      engineering_required,rationale,policy_revision,evidence_digest)
+    VALUES('${assessment}','${mismatch}','${incident}',5,
+      '[{"step":0,"status":"exhausted"},{"step":1,"status":"exhausted"},{"step":2,"status":"exhausted"},{"step":3,"status":"exhausted"},{"step":4,"status":"exhausted"}]',
+      true,'lower recovery ladder exhausted','r2d2-remediation-v1','${digestC}');`);
+  const proposalSql = `SELECT stage||'|'||remediation_request_id FROM oaa.propose_engineering_remediation(
+    '${remediation}','r2d2-remediation-proposal-db','${actor}','aal2','ffffffff-ffff-4fff-8fff-ffffffffffff','9',
+    '${assessment}','${incident}','https://gitea.opensphere.local/opensphere/OpenSphere-console.git',
+    '${'1'.repeat(40)}',ARRAY['backend/opensphere-console-oaa-gateway/'],'${digestB}',
+    'known mismatch requires bounded source repair','R2',ARRAY['oaaGateway'],ARRAY['opensphere-console-oaa-gateway'],
+    ARRAY['unit','contract','integration','security'],'component',NULL::text,'edge','localhost','${'2'.repeat(40)}',
+    ARRAY['${digestA}'],'${digestC}',clock_timestamp()+interval '1 hour');`;
+  const proposalResult = psql(`SET ROLE opensphere_console_backend; ${proposalSql} RESET ROLE;`)
+    .trim().split('\n').find((line) => line.startsWith('proposed|'));
+  assert.equal(proposalResult, `proposed|${remediation}`, 'atomic remediation proposal did not persist');
+  assert.equal(psql(`SELECT count(*) FROM console.module_operation mo JOIN oaa.engineering_remediation_request er
+    ON er.operation_id=mo.operation_id WHERE er.remediation_request_id='${remediation}'
+      AND mo.phase='AwaitingApproval' AND er.stage='proposed';`).trim(), '1',
+    'remediation request and durable operation were not atomically correlated');
+  console.log('  ✓ proposal와 durable operation이 하나의 DB transaction으로 상관 결속된다');
+  mustRejectPermission(`SET ROLE opensphere_oaa_api; ${proposalSql}`, 'API role → remediation proposal mutation');
+}
+
 /**
  * 결재 판정이 원장에 결속되는가.
  *
@@ -216,6 +328,8 @@ function main() {
       psql(readFileSync(path.join(MIGRATIONS, file), 'utf8'));
     }
     console.log('  ✓ 마이그레이션 전량 적용 완료 (건너뛴 것 없음)\n');
+    verifyR2d2RoleMatrix();
+    verifyR2d2DurabilityAndRemediation();
 
     // ── 1. 서버가 사슬을 채우는가 ────────────────────────────────────────────
     psql(`INSERT INTO audit.event (request_id, correlation_id, actor_type, action, target_type, target_id, reason, phase, result, event_hash)

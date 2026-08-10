@@ -9,6 +9,15 @@ COPY provider-tool-calls.js /app/provider-tool-calls.js
 COPY kubernetes-resource-catalog.js /app/kubernetes-resource-catalog.js
 COPY manual-seed-reconcile.js /app/manual-seed-reconcile.js
 COPY agent-control-readiness.js /app/agent-control-readiness.js
+COPY operational-graph.js /app/operational-graph.js
+COPY incident-engine.js /app/incident-engine.js
+COPY r2d2-operational-runtime.js /app/r2d2-operational-runtime.js
+COPY r2d2-prompt-boundary.js /app/r2d2-prompt-boundary.js
+COPY r2d2-durable-binding.js /app/r2d2-durable-binding.js
+COPY r2d2-sse-contract.js /app/r2d2-sse-contract.js
+COPY r2d2-operational-resilience.js /app/r2d2-operational-resilience.js
+COPY r2d2-incident-relay.js /app/r2d2-incident-relay.js
+COPY r2d2-source-adapters.js /app/r2d2-source-adapters.js
 COPY manual-seeds /app/manual-seeds
 ENV PORT=8080
 USER node

@@ -23,8 +23,9 @@ test('runtime watch retries transient failures with capped exponential backoff',
   assert.match(source, /OAA_K8S_WATCH_DISCOVERY_MS/);
 });
 
-test('OAA system context declares projection source and freshness', () => {
+test('OAA evidence context declares projection source and freshness without system authority', () => {
   assert.match(source, /projectionLagSeconds/);
-  assert.match(source, /Evidence source: \$\{snapshot\.evidenceSource/);
-  assert.match(source, /partial or cached projection data/);
+  assert.match(source, /evidenceSource: liveClusterReady/);
+  assert.match(source, /kubernetes-partial/);
+  assert.match(source, /return untrustedEvidenceMessage\('live-environment-snapshot', snapshot/);
 });

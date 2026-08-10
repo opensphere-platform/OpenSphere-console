@@ -135,6 +135,11 @@ spec:
             - { name: OAA_EMBED_DIM, value: "1536" }
             - { name: OAA_ALLOWED_NAMESPACES, value: "opensphere-console,opensphere-console-data,opensphere-console-change" }
             - { name: OAA_SCALE_MAX, value: "10" }
+            # R2D2 durable execution is shipped fail-closed. It is enabled only
+            # after the post-implementation acceptance and operator approval.
+            - { name: R2D2_DURABLE_OPERATION_ENABLED, value: "false" }
+            - { name: R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "false" }
+            - { name: OAA_GATEWAY_URL, value: "http://opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local:8080" }
             - { name: DUPA_CONTROL_URL, value: "http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080" }
             # ADR-006 canonical runtime mode.
             - { name: AUTH_PROVIDER, value: supabase }

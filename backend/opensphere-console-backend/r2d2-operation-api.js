@@ -1,0 +1,206 @@
+'use strict';
+
+const { randomUUID } = require('crypto');
+const { planOperation, bindOperation, expectedPostcondition, digest } = require('./r2d2-durable-operation');
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function publicOperation(row) {
+  return {
+    operationId: row.operation_id, action: row.action, target: row.precondition?.target || null,
+    phase: row.phase, executionState: row.execution_state, verificationState: row.verification_state,
+    riskClass: row.requested_risk_class || row.risk_class, requiredAssurance: row.required_assurance,
+    incidentId: row.incident_id || null, descriptorRevision: row.descriptor_revision,
+    toolId: row.tool_id, verifierId: row.verifier_id, attempt: Number(row.attempt || 0),
+    result: row.result || {}, errorCode: row.error_code || null,
+    createdAt: row.created_at, updatedAt: row.updated_at, deadlineAt: row.deadline_at,
+    approvalConfirmation: row.phase === 'AwaitingApproval' && row.action !== 'engineering-remediation'
+      ? `approve R2D2 operation ${row.operation_id} ${row.descriptor_digest}` : null,
+  };
+}
+
+function createR2d2OperationApi(options) {
+  const { authenticate, store, resolveTarget, enabled = false, now = () => new Date() } = options;
+
+  async function plan(req, body) {
+    const auth = await authenticate(req);
+    if (typeof resolveTarget !== 'function') throw { code: 503, msg: 'durable target resolver is unavailable' };
+    const target = await resolveTarget(String(body?.action || ''), body?.target || {}, auth);
+    const planned = planOperation({ action: body?.action, target });
+    return {
+      action: planned.action, descriptorId: planned.descriptorId, descriptorRevision: planned.descriptorRevision,
+      descriptorDigest: planned.descriptorDigest, riskClass: planned.riskClass,
+      requiredAssurance: planned.requiredAssurance, target: planned.target,
+      expectedConfirmation: planned.expectedConfirmation, expectedPostcondition: expectedPostcondition(planned),
+    };
+  }
+
+  async function accept(req, body) {
+    if (!enabled) throw { code: 503, msg: 'R2D2 durable operation execution is not activated' };
+    const auth = await authenticate(req);
+    const actor = auth.actor || auth;
+    const actorId = String(actor.sub || actor.subject || '');
+    if (!UUID.test(actorId)) throw { code: 401, msg: 'durable operation requires a stable actor UUID' };
+    if (typeof resolveTarget !== 'function') throw { code: 503, msg: 'durable target resolver is unavailable' };
+    const target = await resolveTarget(String(body?.action || ''), body?.target || {}, auth);
+    const bound = bindOperation({ ...body, target });
+    const idempotencyKey = String(req.headers['x-os-idempotency-key'] || body.idempotencyKey || '').trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(idempotencyKey)) throw { code: 400, msg: 'valid idempotency key required' };
+    const deadline = new Date(now().getTime() + Math.max(60000, Math.min(3600000, Number(body.deadlineMs || 600000))));
+    const approvalRequired = ['R2', 'R3'].includes(bound.riskClass);
+    const row = await store.insert({
+      operation_id: randomUUID(), idempotency_key: idempotencyKey, module_id: 'r2d2', action: bound.action,
+      actor_id: actorId, reason: bound.reason, assurance: actor.assurance || 'aal1', risk_class: bound.riskClass,
+      target_fingerprint: digest(bound.target), phase: approvalRequired ? 'AwaitingApproval' : 'Queued',
+      descriptor_revision: bound.descriptorRevision, descriptor_digest: bound.descriptorDigest,
+      tool_id: bound.toolId, verifier_id: bound.verifierId, target_uid: bound.target.uid,
+      target_generation: bound.target.generation, desired_revision: bound.target.desiredRevision,
+      requested_risk_class: bound.riskClass, required_assurance: bound.requiredAssurance,
+      actor_assurance_at_accept: actor.assurance || 'aal1', auth_session_id: actor.browserSessionId || actor.authSessionId,
+      authz_revision: String(actor.credentialRevision || actor.authzRevision || 0),
+      deadline_at: deadline.toISOString(), execution_state: approvalRequired ? 'awaiting_approval' : 'accepted',
+      verification_state: 'pending', precondition: { target: bound.target, ownerRoute: bound.ownerRoute, requiredPermission: bound.requiredPermission,
+        confirmationDigest: bound.confirmationDigest, humanConfirmation: String(body.confirmation) },
+      expected_postcondition: expectedPostcondition(bound),
+      incident_id: UUID.test(String(body.incidentId || '')) ? body.incidentId : null,
+    });
+    return publicOperation(row);
+  }
+
+  async function approve(req, operationId, body) {
+    const auth = await authenticate(req);
+    const actor = auth.actor || auth;
+    if (actor.assurance !== 'aal2') throw { code: 403, msg: 'AAL2 approval required' };
+    const operation = await store.get(operationId);
+    if (!operation) throw { code: 404, msg: 'operation not found' };
+    if (operation.action === 'engineering-remediation') {
+      throw { code: 409, msg: 'Engineering Remediation approval and execution are not activated' };
+    }
+    const approverId = String(actor.sub || actor.subject || '');
+    if (!UUID.test(approverId)) throw { code: 401, msg: 'stable approver UUID required' };
+    const expected = `approve R2D2 operation ${operationId} ${operation.descriptor_digest}`;
+    if (String(body.confirmation || '') !== expected) throw { code: 400, msg: `confirmation required: ${expected}` };
+    await store.approve(operationId, { approverId, assurance: 'aal2', approvalDigest: digest({ operationId, approverId, descriptorDigest: operation.descriptor_digest, confirmation: body.confirmation }) });
+    const approvals = await store.approvals(operationId);
+    const required = operation.requested_risk_class === 'R3' ? 2 : 1;
+    if (new Set(approvals.filter((item) => !item.revoked_at).map((item) => item.approver_id)).size >= required) await store.queue(operationId);
+    return { operationId, approvals: approvals.length, required };
+  }
+
+  async function handle(req, res, pathname, bodyReader, json) {
+    if (pathname === '/api/oaa/operations/plan' && req.method === 'POST') return json(res, 200, await plan(req, await bodyReader(req)));
+    if (pathname === '/api/oaa/operations' && req.method === 'POST') return json(res, 202, await accept(req, await bodyReader(req)));
+    if (pathname === '/api/oaa/operations' && req.method === 'GET') {
+      await authenticate(req); return json(res, 200, { operations: (await store.list()).map(publicOperation) });
+    }
+    const approval = pathname.match(/^\/api\/oaa\/operations\/([0-9a-f-]{36})\/approvals$/i);
+    if (approval && req.method === 'POST') return json(res, 200, await approve(req, approval[1], await bodyReader(req)));
+    const operation = pathname.match(/^\/api\/oaa\/operations\/([0-9a-f-]{36})$/i);
+    if (operation && req.method === 'GET') {
+      await authenticate(req); const row = await store.get(operation[1]);
+      if (!row) return json(res, 404, { error: 'operation not found' });
+      return json(res, 200, { ...publicOperation(row), steps: await store.steps(operation[1]), approvals: await store.approvals(operation[1]) });
+    }
+    return false;
+  }
+
+  return { plan, accept, approve, handle, publicOperation };
+}
+
+function createRestOperationStore(restRequest) {
+  const request = (resource, options = {}) => restRequest(resource, { ...options, profile: 'console' });
+  return {
+    async insert(row) {
+      const rows = await request('module_operation', { method: 'POST', query: 'select=*', body: [row], prefer: 'return=representation,resolution=ignore-duplicates' });
+      if (rows?.[0]) return rows[0];
+      const existing = await request('module_operation', { query: `select=*&idempotency_key=eq.${encodeURIComponent(row.idempotency_key)}&limit=1` });
+      if (!existing?.[0]) throw { code: 503, msg: 'durable operation was not persisted' };
+      if (existing[0].actor_id !== row.actor_id || existing[0].action !== row.action || existing[0].target_fingerprint !== row.target_fingerprint) {
+        throw { code: 409, msg: 'idempotency key is already bound to a different durable operation' };
+      }
+      return existing[0];
+    },
+    async get(id) { const rows = await request('module_operation', { query: `select=*&operation_id=eq.${encodeURIComponent(id)}&limit=1` }); return rows?.[0] || null; },
+    async list() { return request('module_operation', { query: 'select=*&order=created_at.desc&limit=100' }); },
+    async steps(id) { return request('module_operation_step', { query: `select=*&operation_id=eq.${encodeURIComponent(id)}&order=sequence.asc&limit=500` }); },
+    async approvals(id) { return request('module_operation_approval', { query: `select=approver_id,assurance,approval_digest,approved_at,revoked_at&operation_id=eq.${encodeURIComponent(id)}&order=approved_at.asc` }); },
+    async approve(id, item) {
+      await request('module_operation_approval', { method: 'POST', body: [{ operation_id: id, approver_id: item.approverId, assurance: item.assurance, approval_digest: item.approvalDigest }], prefer: 'return=minimal,resolution=ignore-duplicates' });
+    },
+    async queue(id) {
+      const rows = await request('module_operation', { method: 'PATCH', query: `operation_id=eq.${encodeURIComponent(id)}&phase=eq.AwaitingApproval&select=*`, body: { phase: 'Queued', execution_state: 'accepted', next_attempt_at: new Date().toISOString() }, prefer: 'return=representation' });
+      return rows?.[0] || null;
+    },
+  };
+}
+
+const PHASE_TO_DB = Object.freeze({
+  claimed: ['Claimed','claimed'], preflighting: ['Preflighting','preflighting'], authorization_expired: ['AuthorizationExpired','authorization_expired'],
+  preflight_blocked: ['PreflightBlocked','preflight_blocked'], executing: ['Running','executing'], ambiguous: ['Ambiguous','ambiguous'],
+  reconciling: ['Reconciling','reconciling'], verifying: ['Verifying','complete'], succeeded: ['Succeeded','complete'], failed: ['Failed','failed'],
+  verification_failed: ['VerificationFailed','complete'], inconclusive: ['Inconclusive','complete'], timed_out: ['TimedOut','timed_out'],
+  rolling_back: ['RollingBack','rolling_back'], rolled_back: ['RolledBack','rolled_back'], cancelled: ['Cancelled','cancelled'],
+});
+
+function workerOperation(row) {
+  return {
+    operationId: row.operation_id, phase: row.phase === 'Queued' ? 'accepted' : row.phase === 'AwaitingApproval' ? 'awaiting_approval' : String(row.phase || '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase(),
+    actorId: row.actor_id, authSessionId: row.auth_session_id, authzRevision: row.authz_revision,
+    action: row.action, descriptorDigest: row.descriptor_digest, toolId: row.tool_id, verifierId: row.verifier_id,
+    ownerRoute: row.precondition?.ownerRoute, riskClass: row.requested_risk_class, requiredAssurance: row.required_assurance,
+    requiredPermission: row.precondition?.requiredPermission,
+    confirmation: row.precondition?.humanConfirmation,
+    deadlineAt: row.deadline_at,
+    target: row.precondition?.target || { uid: row.target_uid, generation: row.target_generation, desiredRevision: row.desired_revision },
+    reason: row.reason,
+  };
+}
+
+function createRestWorkerStore(restRequest, workerId, claimEpoch) {
+  const request = (resource, options = {}) => restRequest(resource, { ...options, profile: 'console' });
+  return {
+    async claim(limit = 10) {
+      const rows = await request('rpc/claim_module_operation', { method: 'POST', body: { p_worker: workerId, p_claim_epoch: claimEpoch, p_limit: limit } });
+      return (rows || []).map(workerOperation);
+    },
+    async appendStep(operationId, item) {
+      const existing = await request('module_operation_step', { query: `select=sequence&operation_id=eq.${encodeURIComponent(operationId)}&order=sequence.desc&limit=1` });
+      const sequence = Number(existing?.[0]?.sequence || 0) + 1;
+      await request('module_operation_step', { method: 'POST', body: [{ operation_id: operationId, sequence, attempt: 0, step_type: item.type, status: item.status, evidence: item.evidence || {} }], prefer: 'return=minimal' });
+    },
+    async heartbeat(operationId) {
+      const kept = await request('rpc/heartbeat_module_operation', {
+        method: 'POST', body: { p_operation_id: operationId, p_worker: workerId, p_claim_epoch: claimEpoch },
+      });
+      return kept === true;
+    },
+    async recordDownstreamIntent(operationId, downstreamKey) {
+      const rows = await request('module_operation', {
+        method: 'PATCH',
+        query: `operation_id=eq.${encodeURIComponent(operationId)}&claim_owner=eq.${encodeURIComponent(workerId)}&claim_epoch=eq.${claimEpoch}&select=operation_id`,
+        body: { downstream_idempotency_key: downstreamKey, updated_at: new Date().toISOString() },
+        prefer: 'return=representation',
+      });
+      if (!rows?.[0]) throw Object.assign(new Error('durable operation claim lease was lost'), { code: 'ClaimLeaseLost' });
+    },
+    async setPhase(operationId, phase) {
+      const mapped = PHASE_TO_DB[phase]; if (!mapped) throw new Error(`unmapped operation phase ${phase}`);
+      const body = { phase: mapped[0], execution_state: mapped[1], updated_at: new Date().toISOString() };
+      if (phase === 'succeeded') body.verification_state = 'succeeded';
+      if (phase === 'verification_failed') body.verification_state = 'failed';
+      if (phase === 'inconclusive') body.verification_state = 'inconclusive';
+      const rows = await request('module_operation', {
+        method: 'PATCH',
+        query: `operation_id=eq.${encodeURIComponent(operationId)}&claim_owner=eq.${encodeURIComponent(workerId)}&claim_epoch=eq.${claimEpoch}&select=operation_id`,
+        body, prefer: 'return=representation',
+      });
+      if (!rows?.[0]) throw Object.assign(new Error('durable operation claim lease was lost'), { code: 'ClaimLeaseLost' });
+    },
+    async getApprovals(operationId) {
+      const rows = await request('module_operation_approval', { query: `select=approver_id,assurance,revoked_at&operation_id=eq.${encodeURIComponent(operationId)}` });
+      return (rows || []).map((row) => ({ approverId: row.approver_id, assurance: row.assurance, revokedAt: row.revoked_at }));
+    },
+  };
+}
+
+module.exports = { createR2d2OperationApi, createRestOperationStore, createRestWorkerStore, workerOperation, publicOperation };

@@ -28,6 +28,10 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: { name: opensphere-console-oaa-gateway, namespace: opensphere-console }
 rules:
+  # Observer leader election is the only Kubernetes write granted to R2D2.
+  # All managed-resource mutation remains owner-mediated.
+  - { apiGroups: [coordination.k8s.io], resources: [leases], resourceNames: [r2d2-operational-observer], verbs: [get, update, patch] }
+  - { apiGroups: [coordination.k8s.io], resources: [leases], verbs: [create] }
   - { apiGroups: [""], resources: [pods, services, endpoints, events, configmaps, persistentvolumeclaims], verbs: [get, list, watch] }
   - { apiGroups: [""], resources: [pods/log], verbs: [get] }
   - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list, watch] }
@@ -242,6 +246,29 @@ spec:
             - { name: OAA_PG_USER, value: opensphere_oaa_gateway }
             - { name: OAA_PG_PASSWORD, valueFrom: { secretKeyRef: { name: opensphere-oaa-runtime, key: pg-password } } }
             - { name: OAA_PG_SCHEMA, value: oaa }
+            # Operational Intelligence source is shipped fail-closed. Setup
+            # provisions a distinct observer login and enables flags only after
+            # schema, permission and acceptance gates pass.
+            - { name: R2D2_OBSERVER_ENABLED, value: "false" }
+            - { name: R2D2_GRAPH_ENABLED, value: "false" }
+            - { name: R2D2_INCIDENT_ENABLED, value: "false" }
+            - { name: R2D2_GLOBAL_RISK_ENABLED, value: "false" }
+            - { name: R2D2_INCIDENT_RELAY_ENABLED, value: "false" }
+            - { name: R2D2_MAINTENANCE_ENABLED, value: "false" }
+            - { name: R2D2_INCIDENT_LLM_ENABLED, value: "false" }
+            - { name: R2D2_CLUSTER_ID, value: local }
+            - name: R2D2_OBSERVER_PG_USER
+              valueFrom: { secretKeyRef: { name: opensphere-oaa-runtime, key: observer-pg-user, optional: true } }
+            - name: R2D2_OBSERVER_PG_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-oaa-runtime, key: observer-pg-password, optional: true } }
+            - name: R2D2_RELAY_PG_USER
+              valueFrom: { secretKeyRef: { name: opensphere-oaa-runtime, key: relay-pg-user, optional: true } }
+            - name: R2D2_RELAY_PG_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-oaa-runtime, key: relay-pg-password, optional: true } }
+            - name: R2D2_MAINTENANCE_PG_USER
+              valueFrom: { secretKeyRef: { name: opensphere-oaa-runtime, key: maintenance-pg-user, optional: true } }
+            - name: R2D2_MAINTENANCE_PG_PASSWORD
+              valueFrom: { secretKeyRef: { name: opensphere-oaa-runtime, key: maintenance-pg-password, optional: true } }
             - { name: OAA_EMBED_DIM, value: "1536" }
             - { name: OAA_ALLOW_HASH_EMBEDDINGS, value: "false" }
             - { name: OAA_RAG_TOP_K, value: "5" }

@@ -14,6 +14,9 @@ const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 const { createModuleOperationApi } = require('./module-operation-api');
+const { createR2d2OperationApi, createRestOperationStore, createRestWorkerStore } = require('./r2d2-operation-api');
+const { DurableOperationWorker } = require('./r2d2-durable-operation');
+const { createR2d2RemediationApi, createRestRemediationStore } = require('./r2d2-remediation-api');
 const {
   DEFAULT_INSTALLATION_CONFIG_FILE,
   moduleLifecycleRequiresRecentAal2,
@@ -85,8 +88,13 @@ const AUDIT_READ_LIMIT = Number(process.env.SUPABASE_AUDIT_READ_LIMIT || 200);
 // normal Console policy boundary.
 const SUPABASE_REQUIRE_AAL2 = String(process.env.SUPABASE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
+const R2D2_DURABLE_OPERATION_ENABLED = process.env.R2D2_DURABLE_OPERATION_ENABLED === 'true';
+const R2D2_ENGINEERING_PROPOSAL_ENABLED = process.env.R2D2_ENGINEERING_PROPOSAL_ENABLED === 'true';
+const R2D2_OPERATION_WORKER_ID = String(process.env.R2D2_OPERATION_WORKER_ID || process.env.HOSTNAME || `backend-${process.pid}`).slice(0, 128);
+const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env.R2D2_OPERATION_POLL_MS || 3000) || 3000));
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const OAA_GATEWAY_URL = (process.env.OAA_GATEWAY_URL || 'http://opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
 const INSTALLATION_CONFIG_FILE = process.env.INSTALLATION_CONFIG_FILE || DEFAULT_INSTALLATION_CONFIG_FILE;
 const CLI_TOKEN_ISSUER = 'opensphere-cli';
@@ -890,6 +898,59 @@ const moduleOperationApi = createModuleOperationApi({
   logAudit,
 });
 
+const r2d2OperationApi = createR2d2OperationApi({
+  enabled: R2D2_DURABLE_OPERATION_ENABLED,
+  authenticate: async (req) => {
+    let session;
+    const bearer = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i)?.[1] || '';
+    if (bearer) session = { actor: await verifyAuthed(req), accessToken: bearer };
+    else {
+      if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+      session = await browserSessions.authenticate(req);
+    }
+    const groups = new Set(session.actor?.groups || []);
+    if (!groups.has(SUPABASE_BACKEND_ROLE) && !groups.has('console-admins') && !groups.has('console-operators')) {
+      throw { code: 403, msg: 'R2D2 operations require Console operator permission' };
+    }
+    return session;
+  },
+  store: createRestOperationStore(restRequest),
+  resolveTarget: async (action, requested, auth) => {
+    const targetByAction = {
+      'restart-workload': { kind: 'Deployment', namespace: requested.namespace, name: requested.name },
+      'scale-workload': { kind: 'Deployment', namespace: requested.namespace, name: requested.name, replicas: requested.replicas },
+      'rollback-image': { kind: 'Deployment', namespace: requested.namespace, name: requested.name,
+        container: requested.container, image: requested.image,
+        digest: String(requested.image || '').match(/@(sha256:[0-9a-f]{64})$/)?.[1] || requested.digest },
+      'run-cronjob': { kind: 'CronJob', namespace: requested.namespace, name: requested.name },
+      'owner-recover': { kind: 'Capability', namespace: '', name: requested.name || requested.id },
+      'retry-delivery': { kind: 'NotificationDelivery', namespace: '', name: requested.name || requested.deliveryId },
+    };
+    const candidate = targetByAction[action];
+    if (!candidate) throw { code: 400, msg: 'unsupported durable operation action' };
+    const live = await durableAuthorityRead(candidate, auth.accessToken);
+    if (!live?.fresh || !live?.snapshotComplete || !live?.uid) throw { code: 409, msg: 'exact live target could not be resolved' };
+    return {
+      ...candidate,
+      uid: live.uid,
+      generation: live.generation ?? null,
+      resourceVersion: live.resourceVersion ?? null,
+      desiredRevision: live.desiredRevision ?? null,
+    };
+  },
+});
+
+const r2d2RemediationApi = createR2d2RemediationApi({
+  proposalEnabled: R2D2_ENGINEERING_PROPOSAL_ENABLED,
+  authenticate: async (req) => {
+    if (!browserSessions) throw { code: 503, msg: 'managed browser session broker unavailable' };
+    const session = await browserSessions.authenticate(req);
+    assertConsoleAdminActor(session.actor, { requireAal2: true });
+    return session;
+  },
+  store: createRestRemediationStore(restRequest),
+});
+
 async function verifyNotificationAdmin(req) {
   const actor = await verifyConsoleAdmin(req);
   if (NOTIFICATION_REQUIRE_AAL2 && actor.assurance !== 'aal2') {
@@ -1248,6 +1309,234 @@ async function submitOaaAction(actor, body = {}, authorization = '') {
     target,
     requiredPermission: policy.permission,
   };
+}
+
+async function durableAuthorityRead(target, accessToken) {
+  if (target.kind === 'NotificationDelivery') {
+    const rows = await restRequest('notification_delivery', { query: `select=id,status,attempt_count,updated_at&id=eq.${encodeURIComponent(target.name)}&limit=1` });
+    const row = rows?.[0];
+    return row ? { ...target, fresh: true, snapshotComplete: true, uid: row.id, resourceVersion: row.updated_at, _resource: row } : { fresh: true, snapshotComplete: true, uid: '' };
+  }
+  if (target.kind === 'Capability') {
+    try {
+      const response = await fetch(`${OAA_GATEWAY_URL}/api/oaa/durable/owner/status`, {
+        method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: target.name }), signal: AbortSignal.timeout(8000),
+      });
+      const status = await response.json().catch(() => ({}));
+      if (!response.ok) return { fresh: false, snapshotComplete: false };
+      return { ...target, fresh: true, snapshotComplete: true, uid: status.uid,
+        desiredRevision: status.desiredRevision, _resource: status };
+    } catch { return { fresh: false, snapshotComplete: false }; }
+  }
+  let response;
+  try {
+    response = await fetch(`${OAA_GATEWAY_URL}/api/oaa/tools/k8s/resource`, {
+      method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: String(target.kind || '').toLowerCase(), namespace: target.namespace, name: target.name }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch { return { fresh: false, snapshotComplete: false }; }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.resource) return { fresh: false, snapshotComplete: false };
+  const resource = body.resource;
+  return {
+    uid: resource.metadata?.uid || '', generation: resource.metadata?.generation ?? null,
+    resourceVersion: resource.metadata?.resourceVersion || null, desiredRevision: target.desiredRevision || null,
+    fresh: true, snapshotComplete: true, _resource: resource,
+  };
+}
+
+const DURABLE_TOOL_MAP = Object.freeze({
+  'owner.workload.restart': { toolId: 'oaa.k8s.workload.restart', action: 'apply' },
+  'owner.workload.scale': { toolId: 'oaa.k8s.workload.scale', action: 'apply' },
+  'owner.release.rollback': { toolId: 'oaa.k8s.workload.rollback-image', action: 'rollback' },
+  'owner.cronjob.run-once': { toolId: 'oaa.k8s.cronjob.run', action: 'apply' },
+});
+
+async function durableOwnerInvoke(_route, payload, accessToken) {
+  const actor = await verifyAuthed({ method: 'POST', headers: { authorization: `Bearer ${accessToken}` } });
+  if (payload.toolId === 'owner.notification.retry') {
+    requireActorPermission(actor, 'console.notification.manage');
+    try {
+      await notificationApi.retryDelivery(actor, payload.target.name, { reason: payload.reason });
+      return { operationId: payload.idempotencyKey, idempotencyKey: payload.idempotencyKey, status: 'queued', owner: 'console-notification' };
+    } catch (error) {
+      if (Number(error?.code) >= 500) error.ambiguous = true;
+      throw error;
+    }
+  }
+  if (payload.toolId === 'owner.recovery.execute') {
+    let response;
+    try {
+      response = await fetch(`${OAA_GATEWAY_URL}/api/oaa/durable/owner/recover`, {
+        method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: payload.target.name, reason: payload.reason, confirmation: payload.confirmation, idempotencyKey: payload.idempotencyKey }),
+        signal: AbortSignal.timeout(120000),
+      });
+    } catch (cause) {
+      throw Object.assign(new Error('owner recovery outcome is ambiguous'), { code: 'OwnerOutcomeAmbiguous', ambiguous: true, cause });
+    }
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw Object.assign(new Error(result.error || result.message || 'owner recovery failed'), { code: result.code || `OwnerHttp${response.status}` });
+    return { ...result, idempotencyKey: payload.idempotencyKey };
+  }
+  const mapping = DURABLE_TOOL_MAP[payload.toolId];
+  if (!mapping) throw Object.assign(new Error('owner tool is not registered'), { code: 'OwnerToolNotRegistered' });
+  requireActorPermission(actor, 'oaa.action.execute.high');
+  await requireOaaLifecycleGate(`Bearer ${accessToken}`);
+  const target = payload.target;
+  const inputs = { kind: String(target.kind).toLowerCase(), namespace: target.namespace, name: target.name,
+    targetUid: target.uid, targetGeneration: target.generation, targetResourceVersion: target.resourceVersion,
+    confirm: payload.confirmation };
+  if (payload.toolId === 'owner.workload.scale') inputs.replicas = target.replicas;
+  if (payload.toolId === 'owner.release.rollback') { inputs.container = target.container; inputs.image = target.image; }
+  let proposal;
+  try {
+    proposal = await governedChange(actor, {
+      consumerId: 'oaa-gateway', action: mapping.action, target: `${inputs.kind}:${target.namespace}/${target.name}`,
+      reason: payload.reason, desiredState: { toolId: mapping.toolId, target: `${inputs.kind}:${target.namespace}/${target.name}`,
+        inputs, durableOperationId: payload.operationId, requiredPermission: 'oaa.action.execute.high' },
+      idempotencyKey: payload.idempotencyKey,
+    });
+  } catch (error) {
+    if (Number(error?.code) >= 500) error.ambiguous = true;
+    throw error;
+  }
+  return { operationId: proposal.requestId, status: proposal.status, duplicate: proposal.duplicate === true,
+    pullRequest: proposal.pullRequest || null, desiredRevision: proposal.desiredRevision || null,
+    idempotencyKey: payload.idempotencyKey };
+}
+
+async function durableOwnerReconcile(route, downstreamKey, target = {}, accessToken = '') {
+  if (route === 'owner/notifications') {
+    const rows = await restRequest('notification_delivery', { query: `select=id,status,attempt_count,updated_at&id=eq.${encodeURIComponent(target.name)}&limit=1` });
+    return rows?.[0] ? { operationId: downstreamKey, status: rows[0].status, evidence: rows[0], idempotencyKey: downstreamKey } : null;
+  }
+  if (route === 'cluster-manager/his') {
+    try {
+      const response = await fetch(`${OAA_GATEWAY_URL}/api/oaa/durable/owner/status`, {
+        method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: target.name }), signal: AbortSignal.timeout(8000),
+      });
+      const status = await response.json().catch(() => ({}));
+      return response.ok ? { operationId: downstreamKey, status: status.state || 'observed', evidence: status, idempotencyKey: downstreamKey } : null;
+    } catch { return null; }
+  }
+  const rows = await restRequest('change_request', { query: `select=request_id,status,k8s_operation_id,completed_at&idempotency_key=eq.${encodeURIComponent(downstreamKey)}&limit=1` });
+  if (!rows?.[0]) return null;
+  const receipts = await restRequest('reconcile_receipt', { query: `select=operation_id,request_id,succeeded,result,evidence,received_at&request_id=eq.${encodeURIComponent(rows[0].request_id)}&order=received_at.desc&limit=1` });
+  return { operationId: rows[0].request_id, status: rows[0].status, downstreamOperationId: rows[0].k8s_operation_id,
+    receipt: receipts?.[0] || null, evidence: receipts?.[0]?.evidence || null, idempotencyKey: downstreamKey };
+}
+
+const durableDelay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function durableGatewayPost(path, payload, accessToken, timeoutMs = 8000) {
+  try {
+    const response = await fetch(`${OAA_GATEWAY_URL}${path}`, {
+      method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(timeoutMs),
+    });
+    const body = await response.json().catch(() => ({}));
+    return response.ok ? body : null;
+  } catch { return null; }
+}
+
+async function durableVerify(verifierId, target, receipt, accessToken) {
+  const deadline = Date.now() + 90000;
+  if (['authority.workload.rollout','authority.release.exact-digest','authority.job.completed'].includes(verifierId) && receipt?.idempotencyKey) {
+    let reconciled = receipt;
+    while (Date.now() < deadline) {
+      reconciled = await durableOwnerReconcile('cluster-manager/workloads', receipt.idempotencyKey, target, accessToken) || reconciled;
+      if (reconciled?.receipt) break;
+      await durableDelay(1500);
+    }
+    if (!reconciled?.receipt) return { status: 'inconclusive', observed: { code: 'OwnerReceiptPending' } };
+    if (reconciled.receipt.succeeded !== true) return { status: 'failed', observed: { code: 'OwnerReconcileFailed', result: reconciled.receipt.result } };
+    receipt = reconciled;
+  }
+  if (verifierId === 'authority.release.exact-digest') {
+    while (Date.now() < deadline) {
+      const rollout = await durableGatewayPost('/api/oaa/tools/k8s/rollout', { namespace: target.namespace, name: target.name }, accessToken);
+      const imageIds = (rollout?.pods || []).flatMap((pod) => pod.containers || [])
+        .filter((container) => container.name === target.container).map((container) => container.imageID || '');
+      const exactIds = imageIds.length > 0 && imageIds.every((imageId) => imageId.endsWith(`@${target.digest}`) || imageId.endsWith(target.digest));
+      if (rollout?.complete && exactIds) return { status: 'succeeded', observed: { complete: true, imageIds: imageIds.map((value) => value.slice(-80)) } };
+      await durableDelay(1500);
+    }
+    return { status: 'failed', observed: { code: 'ExactDigestRolloutNotConverged' } };
+  }
+  if (verifierId === 'authority.job.completed') {
+    const jobName = receipt?.evidence?.name;
+    if (!jobName) return { status: 'inconclusive', observed: { code: 'JobReceiptMissing' } };
+    while (Date.now() < deadline) {
+      const body = await durableGatewayPost('/api/oaa/tools/k8s/resource', { kind: 'job', namespace: target.namespace, name: jobName }, accessToken);
+      const job = body?.resource;
+      if (Number(job?.succeeded || 0) >= Number(job?.completions || 1)) return { status: 'succeeded', observed: { job: jobName, completionTime: job.completionTime || null } };
+      if (Number(job?.failed || 0) > 0) return { status: 'failed', observed: { job: jobName, failed: job.failed } };
+      await durableDelay(1500);
+    }
+    return { status: 'failed', observed: { code: 'JobCompletionTimeout', job: jobName } };
+  }
+  const live = await durableAuthorityRead(target, accessToken);
+  if (!live.fresh) return { status: 'inconclusive', observed: { code: 'AuthorityUnavailable' } };
+  const resource = live._resource || {};
+  if (verifierId === 'authority.workload.rollout') {
+    const desired = Number(resource.desired || 0); const ready = Number(resource.ready || 0);
+    const observed = Number(resource.observedGeneration || 0);
+    return { status: live.generation > Number(target.generation || 0) && observed >= Number(live.generation || 0) && ready >= desired ? 'succeeded' : 'failed', observed: { generation: live.generation, observedGeneration: observed, desired, ready } };
+  }
+  if (verifierId === 'authority.workload.replicas') {
+    const desired = Number(resource.desired); const ready = Number(resource.ready || 0);
+    const observed = Number(resource.observedGeneration || 0);
+    return { status: desired === Number(target.replicas) && ready === desired && observed >= Number(live.generation || 0) ? 'succeeded' : 'failed', observed: { desired, ready, observedGeneration: observed } };
+  }
+  if (verifierId === 'owner.notification.delivery') {
+    let current = resource;
+    while (Date.now() < deadline) {
+      if (['accepted','delivered'].includes(current.status)) return { status: 'succeeded', observed: { status: current.status, attempts: current.attempt_count || 0 } };
+      if (['failed','dead-letter','suppressed'].includes(current.status)) return { status: 'failed', observed: { status: current.status, attempts: current.attempt_count || 0 } };
+      await durableDelay(1500);
+      current = (await durableAuthorityRead(target, accessToken))._resource || {};
+    }
+    return { status: 'inconclusive', observed: { code: 'DeliveryStillPending', status: current.status || null, attempts: current.attempt_count || 0 } };
+  }
+  if (verifierId === 'owner.recovery.postcondition') {
+    let current = resource;
+    while (Date.now() < deadline) {
+      const state = String(current.state || '').toLowerCase();
+      if (['ready','deployed','healthy'].includes(state)) return { status: 'succeeded', observed: { state: current.state } };
+      if (['failed','blocked','degraded'].includes(state)) return { status: 'failed', observed: { state: current.state } };
+      await durableDelay(1500);
+      current = (await durableAuthorityRead(target, accessToken))._resource || {};
+    }
+    return { status: 'inconclusive', observed: { code: 'OwnerRecoveryStillPending', state: current.state || 'Unknown' } };
+  }
+  return { status: 'inconclusive', observed: { code: 'VerifierNotRegistered', receipt: Boolean(receipt) } };
+}
+
+let r2d2OperationTimer = null;
+let r2d2OperationLoopBusy = false;
+function startR2d2OperationWorker() {
+  if (!R2D2_DURABLE_OPERATION_ENABLED || r2d2OperationTimer) return;
+  const claimEpoch = Date.now();
+  const store = createRestWorkerStore(restRequest, R2D2_OPERATION_WORKER_ID, claimEpoch);
+  const worker = new DurableOperationWorker({
+    workerId: R2D2_OPERATION_WORKER_ID, store,
+    sessions: { resolve: (sessionId, actorId) => browserSessions.resolveForDurableExecution(sessionId, actorId) },
+    authority: { read: durableAuthorityRead },
+    owners: { invoke: durableOwnerInvoke, reconcile: durableOwnerReconcile },
+    verifiers: { verify: durableVerify },
+  });
+  const poll = async () => {
+    if (r2d2OperationLoopBusy) return; r2d2OperationLoopBusy = true;
+    try { for (const operation of await store.claim(5)) await worker.process(operation); }
+    catch (error) { console.warn('[r2d2-operation-worker]', error.message || error); }
+    finally { r2d2OperationLoopBusy = false; }
+  };
+  r2d2OperationTimer = setInterval(() => { void poll(); }, R2D2_OPERATION_POLL_MS);
+  r2d2OperationTimer.unref(); void poll();
 }
 
 async function requireSupabase() {
@@ -3538,6 +3827,24 @@ const server = http.createServer(async (req, res) => {
         });
       }
     }
+    if (p.startsWith('/api/oaa/remediations/')) {
+      try {
+        const handled = await r2d2RemediationApi.handle(req, res, p, readBody, json);
+        if (handled !== false) return;
+      } catch (e) {
+        const status = Number.isInteger(Number(e?.code)) && Number(e.code) >= 400 && Number(e.code) <= 599 ? Number(e.code) : 500;
+        return json(res, status, { error: e?.msg || e?.message || 'R2D2 Engineering Remediation request failed' }, { 'cache-control': 'no-store' });
+      }
+    }
+    if (p.startsWith('/api/oaa/operations')) {
+      try {
+        const handled = await r2d2OperationApi.handle(req, res, p, readBody, json);
+        if (handled !== false) return;
+      } catch (e) {
+        const status = Number.isInteger(Number(e?.code)) && Number(e.code) >= 400 && Number(e.code) <= 599 ? Number(e.code) : 500;
+        return json(res, status, { error: e?.msg || e?.message || 'R2D2 durable operation request failed' }, { 'cache-control': 'no-store' });
+      }
+    }
     if (p.startsWith('/api/modules') || p.startsWith('/api/module-operations')) {
       const handled = await moduleOperationApi.handle(req, res, p, json);
       if (handled) return;
@@ -4427,4 +4734,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => console.log(`opensphere-console-backend v${VERSION} listening :${PORT} (Supabase identity/data + catalog + Kubernetes passthrough)`));
+server.listen(PORT, () => {
+  console.log(`opensphere-console-backend v${VERSION} listening :${PORT} (Supabase identity/data + catalog + Kubernetes passthrough)`);
+  startR2d2OperationWorker();
+});
+
+function stopR2d2Worker() { if (r2d2OperationTimer) clearInterval(r2d2OperationTimer); }
+process.on('SIGTERM', stopR2d2Worker);
+process.on('SIGINT', stopR2d2Worker);

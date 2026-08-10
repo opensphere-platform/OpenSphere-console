@@ -47,6 +47,57 @@ interface OaaControlPlaneStatus {
   unavailable: string[];
   agentControl: AgentControlReadiness;
 }
+interface R2d2OperationalStatus {
+  clusterId: string;
+  graph: { total: number; fresh: number; observedAt: string | null };
+  sources: { source: string; epistemic_state: string; configured: boolean; snapshot_complete: boolean; last_complete_at: string | null; lag_seconds: number | null; blocker_code: string | null }[];
+  risk: { active: number; severityRank: number };
+  observer: { fencing_epoch: number; collector_id: string; lease_expires_at: string; heartbeat_at: string } | null;
+  runtime: { degraded?: boolean; reason?: string; fencingEpoch?: number; graph?: { nodeCount: number; relationCount: number; reconcileSessionId: string } } | null;
+  flags: { observer: boolean; graph: boolean; incident: boolean; globalRisk: boolean; incidentRelay?: boolean; maintenance?: boolean };
+}
+interface R2d2GraphNode {
+  nodeId: string; nodeType: string; displayName: string; namespace: string; authority: string;
+  health: string; epistemicState: string; observedAt: string; expiresAt: string;
+}
+interface R2d2Incident {
+  incidentId: string; type: string; status: string; severity: string; confidence: number;
+  causeStatus: string; causeCode: string | null; title: string; summary: string;
+  primaryNodeId: string; transitionSequence: number; firstDetectedAt: string; lastObservedAt: string;
+}
+interface R2d2IncidentDetail extends R2d2Incident {
+  timeline: { sequence: number; transition: string; from_status: string | null; to_status: string; reason_code: string; evidence_digest: string; occurred_at: string }[];
+  evidence: { observation_id: string; observation_type: string; severity: string; evidence_ref: string; observed_at: string }[];
+  impacts: { node_id: string; impact_type: string; distance: number; confidence: number }[];
+}
+interface R2d2Operation {
+  operationId: string; action: string; phase: string; executionState: string; verificationState: string;
+  riskClass: string; toolId: string; verifierId: string; attempt: number; errorCode: string | null;
+  createdAt: string; updatedAt: string; approvalConfirmation?: string | null;
+}
+interface R2d2OperationDetail extends R2d2Operation {
+  steps: { sequence: number; step_type: string; status: string; error_code?: string | null; observed_at: string; evidence?: Record<string, unknown> }[];
+  approvals: { approver_id: string; assurance: string; approved_at: string; revoked_at?: string | null }[];
+}
+interface R2d2Metacognition {
+  clusterId: string;
+  selfModel: null | {
+    observerState: string; graphState: string; incidentState: string; operationState: string;
+    remediationState: string; coverage: number; blockers: string[]; capabilityRevision: string; observedAt: string;
+  };
+  mismatches: {
+    mismatchId: string; incidentId: string | null; subjectNodeId: string; mismatchType: string;
+    epistemicState: string; expectedDigest: string; actualDigest: string; evidenceDigest: string;
+    detectedAt: string; resolvedAt: string | null; assessment: null | {
+      assessmentId: string; minimumLadderStep: number; engineeringRequired: boolean; rationale: string; assessedAt: string;
+    };
+  }[];
+  remediations: {
+    remediationRequestId: string; operationId: string; repository: string; patchDigest: string;
+    riskLevel: string; stage: string; targetChannel: string; buildAuthority: string;
+    affectedComponents: string[]; requiredTests: string[]; updatedAt: string;
+  }[];
+}
 
 interface LlmKey {
   id: string;
@@ -284,7 +335,7 @@ interface OaaActionBindingManifest {
           <div class="r2d2-target-badges" aria-label="R2D2 목표 상태">
             <span>Target model</span>
             <span>Phased enablement</span>
-            <span class="guarded">Wave 1 진입 gate 유지</span>
+            <span class="guarded">Source implemented · activation OFF</span>
           </div>
         </div>
         <aside class="r2d2-position-card" aria-label="현재 위치와 최종 목표">
@@ -295,8 +346,132 @@ interface OaaActionBindingManifest {
             <li><span>03</span><div><strong>운영 복구</strong><small>governed capability · postcondition</small></div></li>
             <li><span>04</span><div><strong>Engineering Remediation</strong><small>source · build · exact digest deploy</small></div></li>
           </ol>
-          <p>마지막 단계는 목표 구조로만 예약되어 있으며 별도 레드팀 평가와 사용자 승인 전에는 실행 capability가 아닙니다.</p>
+          <p>각 plane의 source 계약은 구현 중이며, 구현 후 레드팀 평가와 사용자 승인 전에는 운영 실행 capability를 활성화하지 않습니다.</p>
         </aside>
+      </section>
+
+      <section class="r2d2-live" aria-labelledby="r2d2-live-title">
+        <div class="r2d2-section-heading">
+          <div><span class="r2d2-kicker">LIVE · OPERATIONAL CONTROL</span><h2 id="r2d2-live-title">현재 관측 범위, 위험과 관리 작업을 하나의 증거 흐름으로 확인합니다.</h2></div>
+          <button class="btn btn-sm btn-outline" [disabled]="operationalBusy()" (click)="loadOperationalIntelligence()">새로고침</button>
+        </div>
+        @if (operationalError()) {
+          <clr-alert clrAlertType="warning" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">{{ operationalError() }}</span></clr-alert-item></clr-alert>
+        }
+        @if (operationalStatus(); as live) {
+          <div class="r2d2-live-metrics">
+            <article><span>GRAPH COVERAGE</span><strong>{{ live.graph.fresh }} / {{ live.graph.total }}</strong><small>{{ live.graph.observedAt ? formatDateTime(live.graph.observedAt) : 'fresh snapshot 없음' }}</small></article>
+            <article><span>ACTIVE RISK</span><strong [class.danger]="live.risk.severityRank >= 3">{{ live.risk.active }}</strong><small>최고 severity rank {{ live.risk.severityRank }}</small></article>
+            <article><span>OBSERVER FENCE</span><strong>{{ live.observer?.fencing_epoch || '-' }}</strong><small>{{ live.observer?.collector_id || 'leader 없음' }}</small></article>
+            <article><span>ACTIVATION</span><strong>{{ live.flags.observer ? 'ON' : 'OFF' }}</strong><small>Graph {{ live.flags.graph ? 'ON' : 'OFF' }} · Incident {{ live.flags.incident ? 'ON' : 'OFF' }}</small></article>
+          </div>
+          <div class="r2d2-live-grid">
+            <article class="r2d2-live-panel">
+              <h3>Authority source와 Coverage</h3>
+              <table class="table"><thead><tr><th>Source</th><th>인식 상태</th><th>Barrier</th><th>마지막 complete</th><th>Blocker</th></tr></thead><tbody>
+                @for (source of live.sources; track source.source) {
+                  <tr><td class="os-mono">{{ source.source }}</td><td><span class="label" [class.label-success]="source.epistemic_state === 'known'" [class.label-warning]="source.epistemic_state !== 'known'">{{ source.epistemic_state }}</span></td><td>{{ source.snapshot_complete ? 'complete' : 'partial' }}</td><td>{{ source.last_complete_at ? formatDateTime(source.last_complete_at) : '-' }}</td><td class="os-mono">{{ source.blocker_code || '-' }}</td></tr>
+                }
+              </tbody></table>
+            </article>
+            <article class="r2d2-live-panel">
+              <h3>R2D2 Self Model</h3>
+              <dl class="r2d2-live-kv">
+                <dt>관측자</dt><dd>{{ live.flags.observer ? (live.runtime?.degraded ? 'degraded' : 'enabled') : 'disabled' }}</dd>
+                <dt>세계 모델</dt><dd>{{ live.graph.fresh === live.graph.total && live.graph.total > 0 ? 'fresh' : (live.graph.total ? 'partial/stale' : 'unknown') }}</dd>
+                <dt>판단 모델</dt><dd>{{ live.flags.incident ? 'deterministic correlation enabled' : 'disabled' }}</dd>
+                <dt>수행 모델</dt><dd>durable operation · execution-time authorization</dd>
+                <dt>Engineering Remediation</dt><dd>proposal-only · 운영 활성화 전 fail-closed</dd>
+              </dl>
+            </article>
+          </div>
+        }
+
+        <div class="r2d2-live-grid">
+          <article class="r2d2-live-panel">
+            <h3>Operational Graph</h3>
+            <p class="os-sub">Kubernetes/owner 정본을 대체하지 않는 rebuildable advisory projection입니다.</p>
+            <div class="r2d2-scroll-table"><table class="table"><thead><tr><th>Node</th><th>Type</th><th>Namespace</th><th>Health</th><th>인식 상태</th></tr></thead><tbody>
+              @for (node of graphNodes(); track node.nodeId) {
+                <tr><td><strong>{{ node.displayName }}</strong><div class="os-mono">{{ shortId(node.nodeId) }}</div></td><td>{{ node.nodeType }}</td><td class="os-mono">{{ node.namespace || 'cluster' }}</td><td>{{ node.health }}</td><td>{{ node.epistemicState }}</td></tr>
+              }
+            </tbody></table></div>
+            @if (!graphNodes().length) { <p class="r2d2-empty">활성화되고 complete reconcile을 통과한 graph node가 없습니다.</p> }
+          </article>
+          <article class="r2d2-live-panel">
+            <h3>Incident와 위험 전파</h3>
+            <p class="os-sub">상태·severity·근거가 바뀐 material transition만 전역 outbox/SSE로 발행합니다.</p>
+            <div class="r2d2-scroll-table"><table class="table"><thead><tr><th>Incident</th><th>상태</th><th>Severity</th><th>원인 확실성</th><th>최근 관측</th></tr></thead><tbody>
+              @for (incident of incidents(); track incident.incidentId) {
+                <tr><td><button class="btn btn-sm btn-link r2d2-row-action" type="button" (click)="loadIncidentDetail(incident.incidentId)">{{ incident.title }}</button><div class="os-sub">{{ incident.type }} · {{ incident.summary }}</div></td><td>{{ incident.status }}</td><td><span class="label" [class.label-danger]="incident.severity === 'critical' || incident.severity === 'high'" [class.label-warning]="incident.severity === 'warning'">{{ incident.severity }}</span></td><td>{{ incident.causeStatus }} · {{ (incident.confidence * 100).toFixed(0) }}%</td><td>{{ formatDateTime(incident.lastObservedAt) }}</td></tr>
+              }
+            </tbody></table></div>
+            @if (!incidents().length) { <p class="r2d2-empty">현재 조회 가능한 Incident가 없습니다. 이것은 건강함을 단정하지 않으며 source coverage를 함께 확인해야 합니다.</p> }
+            @if (selectedIncident(); as detail) {
+              <section class="r2d2-detail" aria-label="선택한 Incident timeline">
+                <div class="r2d2-detail-head"><strong>{{ detail.title }}</strong><button class="btn btn-sm btn-link" type="button" (click)="selectedIncident.set(null)">닫기</button></div>
+                <p class="os-sub">Evidence {{ detail.evidence.length }} · Impact {{ detail.impacts.length }} · Transition {{ detail.timeline.length }}</p>
+                <ol>@for (step of detail.timeline; track step.sequence) { <li><span>{{ step.transition }}</span><strong>{{ step.from_status || 'new' }} → {{ step.to_status }}</strong><small>{{ step.reason_code }} · {{ formatDateTime(step.occurred_at) }}</small></li> }</ol>
+              </section>
+            }
+          </article>
+        </div>
+
+        <article class="r2d2-live-panel r2d2-operation-panel">
+          <div class="r2d2-operation-head"><div><h3>Durable management operation</h3><p class="os-sub">수락 후 실행 시점에 session·permission·AAL·승인을 다시 확인하고 live UID/revision과 postcondition으로 완료 판정합니다.</p></div><span class="label label-info">R1/R2 · R3 unavailable</span></div>
+          <div class="r2d2-scroll-table"><table class="table"><thead><tr><th>Operation</th><th>Action</th><th>Risk</th><th>Execution</th><th>Verification</th><th>Attempt</th><th>업데이트</th></tr></thead><tbody>
+            @for (operation of operations(); track operation.operationId) {
+              <tr><td><button class="btn btn-sm btn-link r2d2-row-action os-mono" type="button" (click)="loadOperationDetail(operation.operationId)">{{ shortId(operation.operationId) }}</button></td><td>{{ operation.action }}</td><td>{{ operation.riskClass }}</td><td>{{ operation.phase }} / {{ operation.executionState }}</td><td>{{ operation.verificationState }}</td><td>{{ operation.attempt }}</td><td>{{ formatDateTime(operation.updatedAt) }}</td></tr>
+            }
+          </tbody></table></div>
+          @if (!operations().length) { <p class="r2d2-empty">durable operation 기록이 없습니다. 작업은 등록된 descriptor와 exact confirmation을 통해서만 생성됩니다.</p> }
+          @if (selectedOperation(); as detail) {
+            <section class="r2d2-detail" aria-label="선택한 durable operation timeline">
+              <div class="r2d2-detail-head"><strong>{{ detail.action }} · {{ detail.phase }}</strong><button class="btn btn-sm btn-link" type="button" (click)="selectedOperation.set(null)">닫기</button></div>
+              <p class="os-sub">Approval {{ detail.approvals.length }} · Step {{ detail.steps.length }} · Verification {{ detail.verificationState }}</p>
+              @if (detail.approvalConfirmation) {
+                <div class="r2d2-operation-approval">
+                  <code>{{ detail.approvalConfirmation }}</code>
+                  <button class="btn btn-sm btn-primary" type="button" [disabled]="operationApprovalBusy()" (click)="approveOperation(detail)">AAL2 승인</button>
+                </div>
+              }
+              <ol>@for (step of detail.steps; track step.sequence) { <li><span>{{ step.step_type }}</span><strong>{{ step.status }}</strong><small>{{ step.error_code || 'evidence recorded' }} · {{ formatDateTime(step.observed_at) }}</small></li> }</ol>
+            </section>
+          }
+        </article>
+
+        @if (metacognition(); as meta) {
+          <article class="r2d2-live-panel r2d2-operation-panel" aria-label="R2D2 실제 메타인지와 Engineering Remediation 상태">
+            <div class="r2d2-operation-head">
+              <div><h3>SelfModel · Mismatch · Engineering Remediation</h3><p class="os-sub">설명용 문구가 아니라 Observer가 기록한 현재 자기 모델과 expected/actual 불일치, patch-bound 요청의 실제 상태입니다.</p></div>
+              <span class="label" [class.label-success]="meta.selfModel?.graphState === 'fresh'" [class.label-warning]="meta.selfModel?.graphState !== 'fresh'">{{ meta.selfModel?.graphState || 'unknown' }}</span>
+            </div>
+            @if (meta.selfModel; as model) {
+              <div class="r2d2-live-metrics r2d2-meta-metrics">
+                <article><span>OBSERVER</span><strong>{{ model.observerState }}</strong><small>{{ model.capabilityRevision }}</small></article>
+                <article><span>COVERAGE</span><strong>{{ (model.coverage * 100).toFixed(1) }}%</strong><small>{{ model.blockers.length ? model.blockers.join(' · ') : 'blocker 없음' }}</small></article>
+                <article><span>OPERATION</span><strong>{{ model.operationState }}</strong><small>execution-time authorization</small></article>
+                <article><span>ENGINEERING</span><strong>{{ model.remediationState }}</strong><small>실행 권한은 별도 활성화 gate</small></article>
+              </div>
+            } @else {
+              <p class="r2d2-empty">아직 Observer가 SelfModel 증거를 기록하지 않았습니다. 이것은 ready가 아니라 unknown입니다.</p>
+            }
+            <h4>Expected / Actual mismatch</h4>
+            <div class="r2d2-scroll-table"><table class="table"><thead><tr><th>대상</th><th>유형</th><th>인식 상태</th><th>Expected</th><th>Actual</th><th>복구 판정</th></tr></thead><tbody>
+              @for (mismatch of meta.mismatches; track mismatch.mismatchId) {
+                <tr><td class="os-mono">{{ shortId(mismatch.subjectNodeId) }}</td><td>{{ mismatch.mismatchType }}</td><td>{{ mismatch.epistemicState }}</td><td class="os-mono">{{ shortId(mismatch.expectedDigest) }}</td><td class="os-mono">{{ shortId(mismatch.actualDigest) }}</td><td>{{ mismatch.assessment ? ('step ' + mismatch.assessment.minimumLadderStep + ' · ' + (mismatch.assessment.engineeringRequired ? 'engineering required' : mismatch.assessment.rationale)) : 'assessment 없음' }}</td></tr>
+              }
+            </tbody></table></div>
+            @if (!meta.mismatches.length) { <p class="r2d2-empty">기록된 mismatch가 없습니다. source coverage가 완전한지 함께 확인해야 합니다.</p> }
+            <h4>Patch-bound remediation request</h4>
+            <div class="r2d2-scroll-table"><table class="table"><thead><tr><th>요청</th><th>Risk</th><th>Stage</th><th>Component</th><th>Patch</th><th>Delivery</th><th>업데이트</th></tr></thead><tbody>
+              @for (request of meta.remediations; track request.remediationRequestId) {
+                <tr><td class="os-mono">{{ shortId(request.remediationRequestId) }}</td><td>{{ request.riskLevel }}</td><td>{{ request.stage }}</td><td>{{ request.affectedComponents.join(', ') || '-' }}</td><td class="os-mono">{{ shortId(request.patchDigest) }}</td><td>{{ request.targetChannel }} · {{ request.buildAuthority }}</td><td>{{ formatDateTime(request.updatedAt) }}</td></tr>
+              }
+            </tbody></table></div>
+            @if (!meta.remediations.length) { <p class="r2d2-empty">Engineering Remediation 요청이 없습니다. 임의 source 수정·build·deploy 권한은 활성화되지 않습니다.</p> }
+          </article>
+        }
       </section>
 
       <section class="r2d2-section" aria-labelledby="r2d2-metacognition-title">
@@ -431,16 +606,16 @@ interface OaaActionBindingManifest {
       <section class="r2d2-section r2d2-roadmap" aria-labelledby="r2d2-roadmap-title">
         <div class="r2d2-section-heading">
           <div><span class="r2d2-kicker">07 · PHASED DELIVERY</span><h2 id="r2d2-roadmap-title">구현은 단계적으로, identity와 correlation 계약은 최종 목표에 맞춰 지금 고정합니다.</h2></div>
-          <p>현재 Wave 1 진입은 차단되어 있습니다. 아래 단계는 승인 순서를 나타내며 진행 상태를 과장하지 않습니다.</p>
+          <p>아래 상태는 source 구현 기준입니다. 운영 migration·배포·기능 활성화는 구현 후 레드팀 평가와 사용자 승인을 별도로 통과해야 합니다.</p>
         </div>
         <div class="r2d2-wave-grid">
-          <article class="current"><span>WAVE 0</span><strong>계약·기준선 동결</strong><p>identity · migration lineage · inventory · coverage denominator</p><small>Phase A 완료 / Phase B 시정 필요</small></article>
-          <article><span>WAVE 1</span><strong>Observer · Graph</strong><p>epoch · barrier · freshness · CoverageState</p><small>ENTRY BLOCKED</small></article>
-          <article><span>WAVE 2</span><strong>Incident · Impact</strong><p>epistemic state · evidence · confidence</p><small>NOT STARTED</small></article>
-          <article><span>WAVE 3</span><strong>Risk propagation</strong><p>Console global state · notification · context</p><small>NOT STARTED</small></article>
-          <article><span>WAVE 4</span><strong>Governed recovery</strong><p>instruction · operation · postcondition</p><small>NOT STARTED</small></article>
-          <article><span>WAVE 5</span><strong>Operational durability</strong><p>retention · partition · replay · failure isolation</p><small>NOT STARTED</small></article>
-          <article class="future"><span>FUTURE WAVE</span><strong>Engineering Remediation</strong><p>patch approval · sandbox · build evidence · deploy</p><small>RED-TEAM + USER APPROVAL REQUIRED</small></article>
+          <article class="current"><span>WAVE 0</span><strong>계약·기준선 동결</strong><p>identity · migration lineage · inventory · coverage denominator</p><small>COMPLETE</small></article>
+          <article><span>WAVE 1</span><strong>Observer · Graph</strong><p>epoch · barrier · freshness · CoverageState</p><small>SOURCE IMPLEMENTED · ACCEPTANCE PENDING</small></article>
+          <article><span>WAVE 2</span><strong>Incident · Impact</strong><p>epistemic state · evidence · confidence</p><small>SOURCE IMPLEMENTED · ACCEPTANCE PENDING</small></article>
+          <article><span>WAVE 3</span><strong>Risk propagation</strong><p>Console global state · notification · context</p><small>SOURCE IMPLEMENTED · ACCEPTANCE PENDING</small></article>
+          <article><span>WAVE 4</span><strong>Governed recovery</strong><p>instruction · operation · postcondition</p><small>SOURCE IMPLEMENTED · ACCEPTANCE PENDING</small></article>
+          <article><span>WAVE 5</span><strong>Operational durability</strong><p>retention · partition · replay · failure isolation</p><small>SOURCE IMPLEMENTED · DRILL PENDING</small></article>
+          <article class="future"><span>ENGINEERING REMEDIATION</span><strong>Source repair contract</strong><p>patch approval · sandbox · build evidence · deploy</p><small>PROPOSAL SOURCE ONLY · ACTIVATION PROHIBITED</small></article>
         </div>
       </section>
 
@@ -1173,8 +1348,39 @@ interface OaaActionBindingManifest {
       :host ::ng-deep .oaa-retention-form input.clr-input,
       :host ::ng-deep .oaa-retention-form select.clr-select { width: 100%; max-width: none; }
       .exec-result { margin: 0.7rem 0 0; max-height: 16rem; overflow: auto; border: 1px solid #e1e5ea; border-radius: 4px; background: #0f2230; color: #d7e6ee; padding: 0.7rem; font-size: 0.66rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+      .r2d2-live { margin: 1.2rem 0; padding: 1.1rem; border: 1px solid #b7c8d6; border-radius: 8px; background: linear-gradient(180deg, #f8fbfd, #fff); }
+      .r2d2-live .r2d2-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.8rem; }
+      .r2d2-live .r2d2-section-heading h2 { margin: 0.15rem 0 0; font-size: 1.05rem; }
+      .r2d2-kicker { color: #27709b; font-size: 0.57rem; font-weight: 700; letter-spacing: 0.08em; }
+      .r2d2-live-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid #dce5eb; border-radius: 6px; background: #fff; }
+      .r2d2-live-metrics article { display: grid; gap: 0.1rem; padding: 0.7rem; border-right: 1px solid #dce5eb; }
+      .r2d2-live-metrics article:last-child { border-right: 0; }
+      .r2d2-live-metrics span { color: #60798a; font-size: 0.55rem; font-weight: 700; letter-spacing: 0.06em; }
+      .r2d2-live-metrics strong { font-size: 1.1rem; color: #173b52; }
+      .r2d2-live-metrics strong.danger { color: #b3261e; }
+      .r2d2-live-metrics small { color: #6a7d89; font-size: 0.58rem; overflow-wrap: anywhere; }
+      .r2d2-live-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0.8rem; margin-top: 0.8rem; }
+      .r2d2-live-panel { min-width: 0; padding: 0.8rem; border: 1px solid #dce5eb; border-radius: 6px; background: #fff; }
+      .r2d2-live-panel h3 { margin: 0 0 0.25rem; font-size: 0.78rem; }
+      .r2d2-scroll-table { max-height: 20rem; overflow: auto; }
+      .r2d2-scroll-table .table { margin: 0.45rem 0 0; font-size: 0.61rem; }
+      .r2d2-live-kv { display: grid; grid-template-columns: 9rem 1fr; margin: 0.5rem 0 0; font-size: 0.62rem; }
+      .r2d2-live-kv dt,.r2d2-live-kv dd { margin: 0; padding: 0.35rem 0.4rem; border-bottom: 1px solid #edf1f3; }
+      .r2d2-live-kv dt { color: #60798a; font-weight: 600; }
+      .r2d2-empty { margin: 0.65rem 0 0; padding: 0.65rem; border: 1px dashed #b7c8d6; color: #60798a; font-size: 0.62rem; }
+      .r2d2-operation-panel { margin-top: 0.8rem; }
+      .r2d2-operation-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+      .r2d2-row-action { margin: 0; padding: 0; min-width: 0; text-align: left; font-weight: 600; }
+      .r2d2-detail { margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--cds-alias-object-border-color, #d7d7d7); background: var(--cds-alias-object-container-background, #fff); }
+      .r2d2-detail-head { display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+      .r2d2-operation-approval { margin-top: 0.6rem; padding: 0.55rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; background: var(--cds-alias-object-interaction-background, #f2f2f2); }
+      .r2d2-operation-approval code { overflow-wrap: anywhere; }
+      .r2d2-detail ol { list-style: none; padding: 0; margin: 0.5rem 0 0; display: grid; gap: 0.35rem; }
+      .r2d2-detail li { display: grid; grid-template-columns: minmax(8rem, 0.7fr) minmax(10rem, 1fr) 2fr; gap: 0.6rem; align-items: baseline; font-size: 0.75rem; }
       @media (max-width: 980px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
       @media (max-width: 760px) {
+        .r2d2-live-metrics,.r2d2-live-grid { grid-template-columns: 1fr; }
+        .r2d2-live-metrics article { border-right: 0; border-bottom: 1px solid #dce5eb; }
         .oaa-key-form { grid-template-columns: 1fr; }
         .oaa-key-form .oaa-field-wide,
         .oaa-form-section { grid-column: 1; }
@@ -1197,6 +1403,16 @@ export class AdminOaa implements OnInit, OnDestroy {
   readonly healthBusy = signal(false);
   readonly controlPlaneStatus = signal<OaaControlPlaneStatus | null>(null);
   readonly controlPlaneError = signal('');
+  readonly operationalStatus = signal<R2d2OperationalStatus | null>(null);
+  readonly graphNodes = signal<R2d2GraphNode[]>([]);
+  readonly incidents = signal<R2d2Incident[]>([]);
+  readonly operations = signal<R2d2Operation[]>([]);
+  readonly metacognition = signal<R2d2Metacognition | null>(null);
+  readonly selectedIncident = signal<R2d2IncidentDetail | null>(null);
+  readonly selectedOperation = signal<R2d2OperationDetail | null>(null);
+  readonly operationalBusy = signal(false);
+  readonly operationApprovalBusy = signal(false);
+  readonly operationalError = signal('');
   private timer: ReturnType<typeof setInterval> | null = null;
 
   // LLM provider keys
@@ -1319,8 +1535,8 @@ export class AdminOaa implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     await this.loadHealth();
-    await Promise.all([this.loadLlmKeys(), this.loadLlmUsage(), this.loadAgentEvidence(), this.loadKnowledgeStats(), this.loadToolManifest(), this.loadActionBindings()]);
-    this.timer = setInterval(() => this.loadHealth(true), 15000);
+    await Promise.all([this.loadOperationalIntelligence(), this.loadLlmKeys(), this.loadLlmUsage(), this.loadAgentEvidence(), this.loadKnowledgeStats(), this.loadToolManifest(), this.loadActionBindings()]);
+    this.timer = setInterval(() => { void this.loadHealth(true); void this.loadOperationalIntelligence(true); }, 15000);
   }
   ngOnDestroy(): void {
     if (this.timer) clearInterval(this.timer);
@@ -1363,6 +1579,62 @@ export class AdminOaa implements OnInit, OnDestroy {
       this.controlPlaneStatus.set(null);
       this.controlPlaneError.set(String(error));
     }
+  }
+
+  async loadOperationalIntelligence(silent = false): Promise<void> {
+    if (!silent) this.operationalBusy.set(true);
+    try {
+      const [statusResponse, graphResponse, incidentResponse, operationResponse, metacognitionResponse] = await Promise.all([
+        this.http.request('/api/oaa/operational/status', { cache: 'no-store' }),
+        this.http.request('/api/oaa/graph/nodes?limit=250', { cache: 'no-store' }),
+        this.http.request('/api/oaa/incidents?limit=100', { cache: 'no-store' }),
+        this.http.request('/api/oaa/operations', { cache: 'no-store' }),
+        this.http.request('/api/oaa/metacognition?limit=100', { cache: 'no-store' }),
+      ]);
+      if (!statusResponse.ok) {
+        const body = await statusResponse.json().catch(() => ({})) as { error?: string; code?: string };
+        this.operationalStatus.set(null); this.graphNodes.set([]); this.incidents.set([]);
+        this.operationalError.set(body.error || `Operational Intelligence HTTP ${statusResponse.status}`);
+      } else {
+        this.operationalStatus.set(await statusResponse.json() as R2d2OperationalStatus);
+        this.operationalError.set('');
+        if (graphResponse.ok) this.graphNodes.set(((await graphResponse.json()) as { nodes?: R2d2GraphNode[] }).nodes || []);
+        if (incidentResponse.ok) this.incidents.set(((await incidentResponse.json()) as { incidents?: R2d2Incident[] }).incidents || []);
+      }
+      if (operationResponse.ok) this.operations.set(((await operationResponse.json()) as { operations?: R2d2Operation[] }).operations || []);
+      if (metacognitionResponse.ok) this.metacognition.set(await metacognitionResponse.json() as R2d2Metacognition);
+    } catch (error) {
+      if (!silent) this.operationalError.set(`Operational Intelligence 조회 실패: ${error}`);
+    } finally { this.operationalBusy.set(false); }
+  }
+
+  async loadIncidentDetail(id: string): Promise<void> {
+    const response = await this.http.request(`/api/oaa/incidents/${encodeURIComponent(id)}`, { cache: 'no-store' });
+    if (response.ok) this.selectedIncident.set(await response.json() as R2d2IncidentDetail);
+  }
+
+  async loadOperationDetail(id: string): Promise<void> {
+    const response = await this.http.request(`/api/oaa/operations/${encodeURIComponent(id)}`, { cache: 'no-store' });
+    if (response.ok) this.selectedOperation.set(await response.json() as R2d2OperationDetail);
+  }
+
+  async approveOperation(operation: R2d2OperationDetail): Promise<void> {
+    const expected = operation.approvalConfirmation || '';
+    if (!expected) return;
+    const confirmation = window.prompt(`아래 승인 문구를 정확히 입력하십시오.\n\n${expected}`, '');
+    if (confirmation === null) return;
+    this.operationApprovalBusy.set(true);
+    try {
+      const response = await this.http.request(`/api/oaa/operations/${encodeURIComponent(operation.operationId)}/approvals`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirmation }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || `승인 HTTP ${response.status}`);
+      this.msg.set({ type: 'success', text: `R2D2 operation ${this.shortId(operation.operationId)} 승인 증거를 기록했습니다.` });
+      await Promise.all([this.loadOperationDetail(operation.operationId), this.loadOperationalIntelligence(true)]);
+    } catch (error) {
+      this.msg.set({ type: 'danger', text: `R2D2 operation 승인 실패: ${error}` });
+    } finally { this.operationApprovalBusy.set(false); }
   }
 
   // ---------- LLM provider keys ----------

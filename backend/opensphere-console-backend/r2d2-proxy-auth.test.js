@@ -99,6 +99,14 @@ test('nginx mediates R2D2 credentials and keeps the opaque cookie out of the Gat
   assert.doesNotMatch(gatewayLocation, /proxy_set_header Authorization \$http_authorization;/);
 });
 
+test('nginx keeps Engineering Remediation proposal writes on Console Backend', () => {
+  const nginx = fs.readFileSync(path.resolve(__dirname, '../../nginx/default.conf.template'), 'utf8');
+  const location = nginx.match(/location \^~ \/api\/oaa\/remediations\/ \{[\s\S]*?\n    \}/)?.[0] || '';
+  assert.match(location, /opensphere-console-backend/);
+  assert.match(location, /proxy_set_header Authorization ""/);
+  assert.doesNotMatch(location, /opensphere-console-oaa-gateway/);
+});
+
 test('Console Backend runtime image contains the R2D2 authentication mediator', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
   assert.match(dockerfile, /COPY opensphere-console-backend\/r2d2-proxy-auth\.js \.\/r2d2-proxy-auth\.js/);

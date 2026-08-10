@@ -11,7 +11,9 @@ const server = read('backend/opensphere-console-backend/server.js');
 const cli = read('backend/os-cli/cmd/os/main.go');
 const myInfo = read('src/app/pages/my-info.ts');
 const migration = read('backend/supabase/migrations/0006_cli_identity.sql');
-const deployment = read('deploy/opensphere-console.yaml');
+const cliIndex = read('backend/os-cli/index.json');
+const cliDeployment = read('backend/os-cli/deploy.yaml');
+const nginx = read('nginx/default.conf.template');
 
 test('CLI and Supabase backend share the v2 signed challenge contract', () => {
   assert.match(server, /opensphere-cli-session-v2\\n/);
@@ -53,8 +55,10 @@ test('Supabase CLI trust is RLS protected and enrollment approval is atomic', ()
   assert.match(migration, /FOR UPDATE;/i);
 });
 
-test('Console readiness rejects stale BFF CLI artifacts', () => {
-  assert.match(deployment, /"version": "0\.8\.1"/);
-  assert.match(deployment, /! grep -aRqs '\/bff\/cli'/);
-  assert.match(deployment, /Authentication uses \/api\/identity\/cli\//);
+test('decoupled CLI release rejects stale BFF authentication artifacts', () => {
+  assert.match(cliIndex, /"version": "0\.8\.1"/);
+  assert.match(cliDeployment, /path: \/index\.json/);
+  assert.doesNotMatch(cliIndex, /\/bff\/cli/);
+  assert.match(nginx, /Authentication uses \/api\/identity\/cli\//);
+  assert.doesNotMatch(nginx, /proxy_pass[^;]*\/bff\/cli/);
 });

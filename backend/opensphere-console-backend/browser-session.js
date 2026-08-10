@@ -614,6 +614,38 @@ function createBrowserSessionManager({
   }
 
   /**
+   * Durable workers re-open the server-owned session at execution time. No
+   * browser bearer is persisted in the operation row and no degraded cache is
+   * accepted for mutation.
+   */
+  async function resolveForDurableExecution(sessionId, expectedActorId) {
+    const id = String(sessionId || '');
+    const actorId = String(expectedActorId || '');
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !/^[0-9a-f-]{36}$/i.test(actorId)) return { active: false, code: 'InvalidSessionIdentity' };
+    const rows = await restRequest('browser_session', {
+      query: `select=*&id=eq.${encodeURIComponent(id)}&owner_id=eq.${encodeURIComponent(actorId)}&limit=1`,
+    });
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row || row.status !== 'active' || expiryEvent(row, now().getTime())) return { active: false, actorId, code: 'SessionInactive' };
+    let accessToken;
+    try { accessToken = decodeSecret(row.access_token_ciphertext, key); }
+    catch { return { active: false, actorId, code: 'SessionCredentialUnreadable' }; }
+    let claims;
+    try { claims = await verifyToken(accessToken); }
+    catch (error) {
+      if (authorityUnavailable(error)) return { active: false, actorId, code: 'AuthorizationAuthorityUnavailable' };
+      return { active: false, actorId, code: 'SessionCredentialInvalid' };
+    }
+    if (String(claims.sub || '') !== actorId) return { active: false, actorId, code: 'SessionActorChanged' };
+    return {
+      active: true, actorId, assurance: String(claims.assurance || row.assurance || 'aal1'),
+      permissions: Array.isArray(claims.permissions) ? claims.permissions : [],
+      authzRevision: String(row.credential_revision || 0), accessToken,
+      lastReauthenticatedAt: row.last_reauthenticated_at || null,
+    };
+  }
+
+  /**
    * Rejoin a bearer forwarded by an approved owner service with the durable
    * browser-session assurance record.  A Supabase access token proves AAL2,
    * but it does not carry the exact time of the most recent factor challenge.
@@ -888,6 +920,7 @@ function createBrowserSessionManager({
     create,
     adoptLegacy,
     authenticate,
+    resolveForDurableExecution,
     touch,
     completeMfa,
     list,

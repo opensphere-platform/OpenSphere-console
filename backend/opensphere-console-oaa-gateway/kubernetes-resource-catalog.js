@@ -104,6 +104,7 @@ function metadataSummary(object = {}) {
   return {
     name: metadata.name || '',
     namespace: metadata.namespace || '',
+    uid: metadata.uid || '',
     generation: metadata.generation ?? null,
     resourceVersion: metadata.resourceVersion || '',
     creationTimestamp: metadata.creationTimestamp || '',
