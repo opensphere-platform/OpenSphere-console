@@ -246,7 +246,8 @@ async function main() {
     assert.deepEqual(continuity.rows[0], { nodes: 10000, incidents: 10000, operations: 1, duplicate_incidents: 0, duplicate_operations: 0 });
     await restored.end();
 
-    // Expand/compatibility drill: old schema is explicitly detected, then 0046..0050
+    // Expand/compatibility drill: old schema is explicitly detected, then all
+    // operational migrations are applied in canonical inventory order.
     // expands without breaking the legacy module-operation projection or deleting data.
     psql('CREATE DATABASE r2d2_upgrade;');
     psql(prep, 'r2d2_upgrade');

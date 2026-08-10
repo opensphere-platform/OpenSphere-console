@@ -20,6 +20,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS = path.join(here, 'migrations');
@@ -85,7 +86,7 @@ function mustRejectPermission(sql, label) {
 }
 
 function verifyR2d2RoleMatrix() {
-  console.log('\nR2D2 DB 역할 허용·거부 matrix (0046~0050)');
+  console.log('\nR2D2 DB 역할 허용·거부 matrix (0046~0052)');
   psql(`SET ROLE opensphere_oaa_observer;
     INSERT INTO oaa.source_health(cluster_id,source,configured,epistemic_state,snapshot_complete,updated_at)
     VALUES ('role-test','Kubernetes',true,'known',true,clock_timestamp()); RESET ROLE;`);
@@ -152,6 +153,8 @@ function verifyR2d2DurabilityAndRemediation() {
   const mismatch = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const assessment = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   const remediation = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const patchText = '--- a/backend/opensphere-console-oaa-gateway/server.js\n+++ b/backend/opensphere-console-oaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const patchDigest = `sha256:${createHash('sha256').update(patchText).digest('hex')}`;
   psql(`INSERT INTO oaa.incident(
       incident_id,cluster_id,fingerprint,incident_type,status,severity,confidence,cause_status,title,
       first_detected_at,last_observed_at,primary_node_id,rule_revision,summary,fencing_epoch
@@ -165,10 +168,11 @@ function verifyR2d2DurabilityAndRemediation() {
     VALUES('${assessment}','${mismatch}','${incident}',5,
       '[{"step":0,"status":"exhausted"},{"step":1,"status":"exhausted"},{"step":2,"status":"exhausted"},{"step":3,"status":"exhausted"},{"step":4,"status":"exhausted"}]',
       true,'lower recovery ladder exhausted','r2d2-remediation-v1','${digestC}');`);
-  const proposalSql = `SELECT stage||'|'||remediation_request_id FROM oaa.propose_engineering_remediation(
+  const proposalSql = `SELECT stage||'|'||remediation_request_id FROM oaa.propose_engineering_remediation_v2(
     '${remediation}','r2d2-remediation-proposal-db','${actor}','aal2','ffffffff-ffff-4fff-8fff-ffffffffffff','9',
     '${assessment}','${incident}','https://gitea.opensphere.local/opensphere/OpenSphere-console.git',
-    '${'1'.repeat(40)}',ARRAY['backend/opensphere-console-oaa-gateway/'],'${digestB}',
+    '${'1'.repeat(40)}',ARRAY['backend/opensphere-console-oaa-gateway/'],'${patchDigest}',
+    $patch$${patchText}$patch$,ARRAY['backend/opensphere-console-oaa-gateway/server.js'],'${digestB}',
     'known mismatch requires bounded source repair','R2',ARRAY['oaaGateway'],ARRAY['opensphere-console-oaa-gateway'],
     ARRAY['unit','contract','integration','security'],'component',NULL::text,'edge','localhost','${'2'.repeat(40)}',
     ARRAY['${digestA}'],'${digestC}',clock_timestamp()+interval '1 hour');`;
@@ -180,6 +184,75 @@ function verifyR2d2DurabilityAndRemediation() {
       AND mo.phase='AwaitingApproval' AND er.stage='proposed';`).trim(), '1',
     'remediation request and durable operation were not atomically correlated');
   console.log('  ✓ proposal와 durable operation이 하나의 DB transaction으로 상관 결속된다');
+  assert.equal(psql(`SELECT count(*) FROM oaa.remediation_patch_artifact
+    WHERE remediation_request_id='${remediation}' AND patch_digest='${patchDigest}';`).trim(), '1',
+    'exact patch artifact was not committed atomically with proposal');
+  console.log('  ✓ exact unified diff artifact가 proposal과 원자적으로 결속된다');
+  const remediationOperation = psql(`SELECT operation_id FROM oaa.engineering_remediation_request
+    WHERE remediation_request_id='${remediation}';`).trim();
+  assert.match(psql(`SET ROLE opensphere_console_backend;
+    SELECT stage FROM oaa.record_engineering_remediation_approval(
+      '${remediation}','source_patch','${approver}','aal2','${digestC}','${digestB}',clock_timestamp()+interval '30 minutes');
+    RESET ROLE;`).trim(), /approved/, 'patch-bound approval did not activate the dedicated lifecycle');
+  assert.equal(psql(`SELECT count(*) FROM console.claim_module_operation('generic-owner-worker',3,10)
+    WHERE operation_id='${remediationOperation}';`).trim(), '0',
+    'Engineering Remediation escaped into the generic owner-facade worker');
+  console.log('  ✓ Engineering Remediation은 승인 후에도 generic owner worker에서 격리된다');
+  assert.equal(psql(`SET ROLE opensphere_console_backend;
+    SELECT count(*) FROM oaa.claim_engineering_remediation('engineering-worker',4,5)
+      WHERE remediation_request_id='${remediation}'; RESET ROLE;`).trim().split('\n').includes('1'), true,
+    'approved remediation was not claimable by the dedicated worker');
+  assert.equal(psql(`SET ROLE opensphere_console_backend;
+    SELECT oaa.heartbeat_engineering_remediation('${remediation}','engineering-worker',4); RESET ROLE;`).trim().split('\n').includes('t'), true,
+    'dedicated remediation lease heartbeat failed');
+  assert.match(psql(`SET ROLE opensphere_console_backend;
+    SELECT stage FROM oaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
+      'approved','sandboxed','{"network":"none","credentials":0}'::jsonb,'${digestA}'); RESET ROLE;`).trim(), /sandboxed/,
+    'fenced Engineering Remediation stage did not advance');
+  for (const [from, to] of [['sandboxed','patched'],['patched','testing'],['testing','ready_to_commit'],['ready_to_commit','committed'],['committed','building']]) {
+    psql(`SET ROLE opensphere_console_backend;
+      SELECT stage FROM oaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
+        '${from}','${to}','{}'::jsonb,'${digestA}'); RESET ROLE;`);
+  }
+  assert.match(psql(`SET ROLE opensphere_console_backend;
+    SELECT source_revision FROM oaa.record_engineering_build_evidence(
+      '${remediation}','engineering-worker',4,'${'3'.repeat(40)}','${patchDigest}',
+      '{"unit":{"status":"passed"}}'::jsonb,'${digestA}','${digestB}','${digestC}',
+      ARRAY['${digestA}'],'localhost','${digestB}'); RESET ROLE;`).trim(), /3{40}/,
+    'fenced build evidence was not accepted');
+  let staleBuildRejected = false;
+  try {
+    psql(`SET ROLE opensphere_console_backend;
+      SELECT source_revision FROM oaa.record_engineering_build_evidence(
+        '${remediation}','engineering-worker',5,'${'3'.repeat(40)}','${patchDigest}',
+        '{}'::jsonb,'${digestA}','${digestB}','${digestC}',ARRAY['${digestA}'],'localhost','${digestB}');`);
+  } catch (error) { staleBuildRejected = /build evidence claim was lost/.test(String(error.stderr || error.message)); }
+  assert.ok(staleBuildRejected, 'stale Engineering Remediation worker appended build evidence');
+  psql(`SET ROLE opensphere_console_backend;
+    SELECT stage FROM oaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
+      'building','build_failed','{"code":"BuilderFailed"}'::jsonb,'${digestA}'); RESET ROLE;`);
+  assert.equal(psql(`SELECT (claim_owner IS NULL)::text||'|'||stage FROM oaa.engineering_remediation_request
+    WHERE remediation_request_id='${remediation}';`).trim(), 'true|build_failed',
+    'build failure did not release its claim');
+  assert.equal(psql(`SELECT phase||'|'||execution_state FROM console.module_operation
+    WHERE operation_id='${remediationOperation}';`).trim(), 'Failed|failed',
+    'build failure did not terminate the durable operation');
+  psql(`UPDATE oaa.engineering_remediation_request SET stage='verifying',claim_owner='deploy-worker',claim_epoch=8,
+    lease_expires_at=clock_timestamp()+interval '30 seconds' WHERE remediation_request_id='${remediation}';`);
+  assert.match(psql(`SET ROLE opensphere_console_backend;
+    SELECT status FROM oaa.record_engineering_deployment_verification(
+      '${remediation}','deploy-worker',8,'${remediationOperation}',ARRAY['${digestA}'],ARRAY['${digestB}'],
+      '${digestA}','${digestB}','{"passed":false}'::jsonb,'{"passed":false}'::jsonb,false,'failed'); RESET ROLE;`).trim(), /failed/,
+    'fenced deployment verification was not accepted');
+  let staleVerificationRejected = false;
+  try {
+    psql(`SET ROLE opensphere_console_backend;
+      SELECT status FROM oaa.record_engineering_deployment_verification(
+        '${remediation}','deploy-worker',9,'${remediationOperation}',ARRAY['${digestA}'],ARRAY['${digestA}'],
+        '${digestA}','${digestA}','{"passed":true}'::jsonb,'{"passed":true}'::jsonb,false,'succeeded');`);
+  } catch (error) { staleVerificationRejected = /deployment verification claim was lost/.test(String(error.stderr || error.message)); }
+  assert.ok(staleVerificationRejected, 'stale Engineering Remediation worker appended deployment verification');
+  console.log('  ✓ scoped approval→claim→stage·build·verification fencing과 실패 종결이 연결된다');
   mustRejectPermission(`SET ROLE opensphere_oaa_api; ${proposalSql}`, 'API role → remediation proposal mutation');
 }
 

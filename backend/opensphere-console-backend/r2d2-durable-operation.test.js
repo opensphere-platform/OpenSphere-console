@@ -81,10 +81,48 @@ function workerFixture(overrides = {}) {
   return { worker: new DurableOperationWorker(deps), phases, steps, calls: () => calls };
 }
 
-function operation() {
-  const bound = bindOperation(request());
+function operation(action = 'restart-workload') {
+  const bound = bindOperation(request(action));
   return { ...bound, operationId: 'op-1', phase: 'accepted', actorId: 'actor', authSessionId: 'session-1', authzRevision: 'r1' };
 }
+
+test('all initial management scenarios bind to a closed owner and authoritative postcondition', async () => {
+  const scenarios = Object.keys(DESCRIPTORS);
+  assert.deepEqual(scenarios, [
+    'restart-workload', 'scale-workload', 'rollback-image',
+    'run-cronjob', 'owner-recover', 'retry-delivery',
+  ]);
+  for (const [index, action] of scenarios.entries()) {
+    const op = { ...operation(action), operationId: `scenario-${index}` };
+    let invoked;
+    const fixture = workerFixture({
+      store: {
+        appendStep: async (_id, item) => fixture.steps.push(item),
+        setPhase: async (_id, phase) => fixture.phases.push(phase),
+        getApprovals: async () => op.riskClass === 'R1'
+          ? [] : [{ approverId: 'operator-2', assurance: 'aal2' }],
+        heartbeat: async () => true,
+        recordDownstreamIntent: async () => {},
+      },
+      sessions: { resolve: async () => ({
+        active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2',
+        permissions: ['oaa.action.execute.high', 'console.notification.manage'], accessToken: 'memory-only',
+      }) },
+      authority: { read: async () => ({ ...op.target, fresh: true, snapshotComplete: true }) },
+      owners: {
+        invoke: async (route, payload) => { invoked = { route, payload }; return { operationId: `owner-${index}` }; },
+        reconcile: async () => null,
+      },
+      verifiers: { verify: async (verifierId, target) => ({ status: 'succeeded', observed: { verifierId, uid: target.uid } }) },
+    });
+    const result = await fixture.worker.process(op);
+    assert.equal(result.phase, 'succeeded', `${action} did not converge to succeeded`);
+    assert.equal(invoked.route, DESCRIPTORS[action].ownerRoute);
+    assert.equal(invoked.payload.toolId, DESCRIPTORS[action].toolId);
+    assert.equal(invoked.payload.target.uid, op.target.uid);
+    assert.equal(JSON.stringify({ invoked, steps: fixture.steps }).includes('memory-only'), false);
+  }
+});
 
 test('worker performs durable preflight, owner call and authoritative verification', async () => {
   const fixture = workerFixture();
