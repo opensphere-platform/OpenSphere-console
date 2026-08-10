@@ -1,0 +1,29 @@
+{
+  "apiVersion": "opensphere.io/r2d2-owner-capabilities/v1",
+  "ownerComponent": "opensphere-console-backend",
+  "ownerApiRevision": "v1",
+  "tools": [
+    "oaa.identity.role.membership",
+    "oaa.identity.status",
+    "oaa.identity.user.create",
+    "oaa.identity.user.enabled",
+    "oaa.k8s.cronjob.run",
+    "oaa.k8s.cronjob.suspend",
+    "oaa.k8s.deployment.restart",
+    "oaa.k8s.deployment.scale",
+    "oaa.k8s.resource.apply",
+    "oaa.k8s.resource.delete",
+    "oaa.k8s.workload.restart",
+    "oaa.k8s.workload.rollback-image",
+    "oaa.k8s.workload.scale",
+    "oaa.k8s.workload.update-image",
+    "oaa.notification.channel.enabled",
+    "oaa.notification.channel.test",
+    "oaa.notification.delivery.retry",
+    "oaa.notification.status",
+    "oaa.platform.readiness.preflight",
+    "oaa.platform.readiness.verify",
+    "oaa.recovery.plan",
+    "oaa.recovery.status"
+  ]
+}

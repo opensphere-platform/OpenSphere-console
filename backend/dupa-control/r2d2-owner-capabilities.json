@@ -1,0 +1,12 @@
+{
+  "apiVersion": "opensphere.io/r2d2-owner-capabilities/v1",
+  "ownerComponent": "dupa-controller",
+  "ownerApiRevision": "v1",
+  "tools": [
+    "oaa.extension.image.inspect",
+    "oaa.extension.image.revoke",
+    "oaa.extension.lifecycle",
+    "oaa.extension.security.status",
+    "oaa.registry.read"
+  ]
+}
