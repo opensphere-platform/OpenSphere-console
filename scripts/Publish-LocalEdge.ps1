@@ -27,6 +27,19 @@ function Invoke-Checked {
   }
 }
 
+function Get-CanonicalTextSha256 {
+  param([Parameter(Mandatory)][string]$Path)
+  $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    return 'sha256:' + ([BitConverter]::ToString(
+      $sha.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($text))
+    )).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
+  }
+}
+
 function Get-RemoteDigest {
   param([Parameter(Mandatory)][string]$Reference)
 
@@ -355,6 +368,26 @@ foreach ($item in $images) {
     sourceRevision = $SourceRevision
   }
 }
+$migrationManifestPath = Join-Path $consoleCheckout 'backend\supabase\migrations\manifest.json'
+if (-not (Test-Path -LiteralPath $migrationManifestPath)) {
+  throw "Supabase migration manifest is missing: $migrationManifestPath"
+}
+$migrationManifest = Get-Content -Raw -LiteralPath $migrationManifestPath | ConvertFrom-Json
+if ($migrationManifest.schemaVersion -ne 2 -or
+    [string]$migrationManifest.setDigest -notmatch '^sha256:[0-9a-f]{64}$' -or
+    [string]$migrationManifest.latestMigrationId -notmatch '^\d{4}$' -or
+    [int]$migrationManifest.migrationCount -le 0) {
+  throw 'Supabase migration manifest evidence is not canonical'
+}
+$releaseArtifacts = [ordered]@{
+  supabaseMigrationManifest = [ordered]@{
+    path = 'backend/supabase/migrations/manifest.json'
+    sha256 = Get-CanonicalTextSha256 -Path $migrationManifestPath
+    setDigest = [string]$migrationManifest.setDigest
+    latestMigrationId = [string]$migrationManifest.latestMigrationId
+    migrationCount = [int]$migrationManifest.migrationCount
+  }
+}
 $bom = [ordered]@{
   apiVersion = 'release.opensphere.io/v1alpha1'
   kind = $partialPublication ? 'OpenSphereEdgeComponentPublication' : 'OpenSphereReleaseBOM'
@@ -365,6 +398,7 @@ $bom = [ordered]@{
   immutableTag = $localTag
   source = 'https://github.com/opensphere-platform/OpenSphere-console'
   sourceRevision = $SourceRevision
+  artifacts = $releaseArtifacts
   buildAuthority = 'localhost'
   releaseClass = 'pre-ga'
   gaEligible = $false

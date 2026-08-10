@@ -44,6 +44,13 @@ Use `OpenSphere-Setup-CLI`. It replaces every upstream image with the exact
 signed Release BOM digest and downloads this installer plus migrations from the
 same source revision.
 
+`migrations/manifest.json` v2 is the canonical migration lineage. Every entry
+names its actual predecessor (so an intentionally unused numeric ID is not
+mistaken for missing history), and the lineage participates in `setDigest`.
+The signed Release BOM records the manifest path, canonical file digest,
+lineage-set digest, latest ID, and count; Setup rejects downloaded migration
+material that differs from that signed evidence.
+
 Manual development execution:
 
 ```powershell

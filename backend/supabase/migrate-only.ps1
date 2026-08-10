@@ -23,15 +23,20 @@ $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 $migrations = @(Get-ChildItem -LiteralPath $migrationDirectory -Filter '*.sql' -File | Sort-Object Name)
 $names = @($migrations | ForEach-Object { $_.Name })
 $manifestNames = @($manifest.migrations | ForEach-Object { [string]$_.name })
-if ($manifest.schemaVersion -ne 1 -or $manifest.migrationCount -ne $migrations.Count -or
+if ($manifest.schemaVersion -ne 2 -or $manifest.migrationCount -ne $migrations.Count -or
     ($names -join "`n") -ne ($manifestNames -join "`n")) { throw 'Migration manifest inventory mismatch' }
 $setRows = @()
+$predecessorMigrationId = $null
 foreach ($entry in $manifest.migrations) {
   if ([string]$entry.id -ne ([string]$entry.name).Substring(0,4) -or
-      [string]$entry.path -ne "backend/supabase/migrations/$($entry.name)") { throw "Invalid manifest entry $($entry.name)" }
+      [string]$entry.path -ne "backend/supabase/migrations/$($entry.name)" -or
+      [string]$entry.predecessorMigrationId -ne [string]$predecessorMigrationId) { throw "Invalid manifest lineage $($entry.name)" }
   $actual = Get-CanonicalSha256 (Join-Path $migrationDirectory ([string]$entry.name))
   if ($actual -ne [string]$entry.sha256) { throw "Migration digest mismatch: $($entry.name)" }
-  $setRows += "$($entry.name)`n$($entry.sha256)"
+  $lineagePredecessor = '-'
+  if ($null -ne $predecessorMigrationId) { $lineagePredecessor = [string]$predecessorMigrationId }
+  $setRows += "$($entry.id)`n$lineagePredecessor`n$($entry.name)`n$($entry.sha256)"
+  $predecessorMigrationId = [string]$entry.id
 }
 if ([string]$manifest.setDigest -ne ('sha256:' + (Get-TextSha256 ($setRows -join "`n"))) -or
     [string]$manifest.latestMigrationId -ne [string]$manifest.migrations[-1].id) { throw 'Migration manifest set digest mismatch' }

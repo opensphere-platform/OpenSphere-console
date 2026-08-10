@@ -139,6 +139,7 @@ spec:
             # after the post-implementation acceptance and operator approval.
             - { name: R2D2_DURABLE_OPERATION_ENABLED, value: "false" }
             - { name: R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "false" }
+            - { name: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES, value: "" }
             - { name: R2D2_ENGINEERING_EXECUTION_ENABLED, value: "false" }
             - { name: OAA_GATEWAY_URL, value: "http://opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local:8080" }
             - { name: DUPA_CONTROL_URL, value: "http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080" }

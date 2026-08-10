@@ -337,6 +337,11 @@ jobs:
           )
           declare -A digests
           components='{}'
+          migration_manifest='backend/supabase/migrations/manifest.json'
+          migration_manifest_sha="sha256:$(sha256sum "$migration_manifest" | awk '{print $1}')"
+          migration_set_digest="$(jq -er '.setDigest | select(test("^sha256:[0-9a-f]{64}$"))' "$migration_manifest")"
+          migration_latest="$(jq -er '.latestMigrationId | select(test("^[0-9]{4}$"))' "$migration_manifest")"
+          migration_count="$(jq -er '.migrationCount | select(type == "number" and . > 0)' "$migration_manifest")"
 
           # Do not move any channel tag until every immutable component was
           # built from this exact revision and admitted into the signed BOM.
@@ -373,15 +378,23 @@ jobs:
             --arg releaseTag "$release_tag" \
             --arg source 'https://github.com/opensphere-platform/OpenSphere-console' \
             --arg sourceRevision "$GITHUB_SHA" \
+            --arg migrationManifestPath "$migration_manifest" \
+            --arg migrationManifestSha "$migration_manifest_sha" \
+            --arg migrationSetDigest "$migration_set_digest" \
+            --arg migrationLatest "$migration_latest" \
+            --argjson migrationCount "$migration_count" \
             --argjson supportedPlatforms '["linux/amd64","linux/arm64"]' \
             --argjson components "$components" \
             '{apiVersion: $apiVersion, kind: $kind, channel: $channel, status: $status, releaseTag: $releaseTag,
               source: $source, sourceRevision: $sourceRevision,
+              artifacts: {supabaseMigrationManifest: {path: $migrationManifestPath, sha256: $migrationManifestSha,
+                setDigest: $migrationSetDigest, latestMigrationId: $migrationLatest, migrationCount: $migrationCount}},
               supportedPlatforms: $supportedPlatforms, components: $components}' \
             > "$RUNNER_TEMP/opensphere-release-bom.json"
 
           jq -e --arg revision "$GITHUB_SHA" \
-            '.sourceRevision == $revision and (.components | length) == 13' \
+            '.sourceRevision == $revision and (.components | length) == 13
+              and (.artifacts.supabaseMigrationManifest.sha256 | test("^sha256:[0-9a-f]{64}$"))' \
             "$RUNNER_TEMP/opensphere-release-bom.json" >/dev/null
           echo "anchor-digest=${digests[opensphere-console]}" >> "$GITHUB_OUTPUT"
           echo "release-tag=$release_tag" >> "$GITHUB_OUTPUT"

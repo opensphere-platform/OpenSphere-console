@@ -2,7 +2,7 @@
 
 const { randomUUID } = require('crypto');
 const {
-  digest, patchTextDigest, validateEnvelope, validatePatchArtifact,
+  REPOSITORIES, digest, patchTextDigest, validateEnvelope, validatePatchArtifact,
   deploymentApprovalBinding, exactEngineeringConfirmation,
 } = require('./r2d2-engineering-remediation');
 
@@ -49,11 +49,20 @@ function publicRemediation(row, executionEnabled = false, workerReady = false) {
 function createR2d2RemediationApi(options) {
   const {
     authenticate, store, proposalEnabled = false, executionEnabled = false,
-    workerReady = false, now = () => new Date(),
+    workerReady = false, proposalRepositories = [], now = () => new Date(),
   } = options;
+  const proposalPolicy = Object.freeze(Object.fromEntries(proposalRepositories.map((repositoryId) => {
+    if (!Object.hasOwn(REPOSITORIES, repositoryId)) {
+      throw new Error(`unknown R2D2 proposal repository: ${repositoryId}`);
+    }
+    return [repositoryId, REPOSITORIES[repositoryId]];
+  })));
 
   async function propose(req, assessmentId, body) {
     if (!proposalEnabled) throw { code: 503, msg: 'R2D2 Engineering Remediation proposal intake is not activated' };
+    if (!Object.hasOwn(proposalPolicy, String(body?.repositoryId || ''))) {
+      throw { code: 503, msg: 'R2D2 Engineering Remediation repository proposal is not activated' };
+    }
     if (!UUID.test(String(assessmentId || ''))) throw { code: 400, msg: 'valid assessment id required' };
     const session = await authenticate(req, { requireAal2: true });
     const actor = session.actor || session;
@@ -69,7 +78,7 @@ function createR2d2RemediationApi(options) {
     let envelope; let patchArtifact;
     try {
       const patchText = String(body?.patchText || '').replace(/\r\n/g, '\n');
-      envelope = validateEnvelope({ ...body, patchDigest: patchTextDigest(patchText), remediationRequestId, incidentId });
+      envelope = validateEnvelope({ ...body, patchDigest: patchTextDigest(patchText), remediationRequestId, incidentId }, proposalPolicy);
       patchArtifact = validatePatchArtifact(patchText, envelope);
     } catch (error) {
       throw { code: 400, msg: error.message || 'invalid Engineering Remediation approval envelope' };

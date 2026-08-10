@@ -129,16 +129,29 @@ function verifyR2d2RedteamHardening() {
   const sloPartition = psql(`SELECT c.oid::regclass::text FROM pg_inherits i
     JOIN pg_class c ON c.oid=i.inhrelid WHERE i.inhparent='oaa.slo_sample'::regclass ORDER BY c.relname DESC LIMIT 1;`).trim();
   for (const role of ['opensphere_oaa_gateway','opensphere_oaa_observer']) {
+    mustRejectPermission(`SET ROLE ${role}; UPDATE oaa.observation SET severity='info';`, `${role} → observation parent UPDATE`);
+    mustRejectPermission(`SET ROLE ${role}; DELETE FROM oaa.observation;`, `${role} → observation parent DELETE`);
+    mustRejectPermission(`SET ROLE ${role}; TRUNCATE oaa.observation;`, `${role} → observation parent TRUNCATE`);
     mustRejectPermission(`SET ROLE ${role}; UPDATE ${observationPartition} SET severity='info';`, `${role} → observation partition UPDATE`);
     mustRejectPermission(`SET ROLE ${role}; DELETE FROM ${observationPartition};`, `${role} → observation partition DELETE`);
     mustRejectPermission(`SET ROLE ${role}; TRUNCATE ${observationPartition};`, `${role} → observation partition TRUNCATE`);
   }
   for (const role of ['opensphere_oaa_gateway','opensphere_oaa_maintenance']) {
+    mustRejectPermission(`SET ROLE ${role}; UPDATE oaa.slo_sample SET value=0;`, `${role} → SLO parent UPDATE`);
+    mustRejectPermission(`SET ROLE ${role}; DELETE FROM oaa.slo_sample;`, `${role} → SLO parent DELETE`);
+    mustRejectPermission(`SET ROLE ${role}; TRUNCATE oaa.slo_sample;`, `${role} → SLO parent TRUNCATE`);
     mustRejectPermission(`SET ROLE ${role}; UPDATE ${sloPartition} SET value=0;`, `${role} → SLO partition UPDATE`);
     mustRejectPermission(`SET ROLE ${role}; DELETE FROM ${sloPartition};`, `${role} → SLO partition DELETE`);
     mustRejectPermission(`SET ROLE ${role}; TRUNCATE ${sloPartition};`, `${role} → SLO partition TRUNCATE`);
   }
-  console.log('  ✓ 동적 evidence partition의 role×UPDATE/DELETE/TRUNCATE matrix가 fail-closed다');
+  console.log('  ✓ evidence parent·동적 partition의 role×UPDATE/DELETE/TRUNCATE matrix가 fail-closed다');
+
+  mustReject(`SET session_replication_role='replica';
+    UPDATE oaa.slo_sample SET value=0 WHERE metric='coverage_ratio';`, 'replica role → SLO append-only UPDATE');
+  mustReject(`SET session_replication_role='replica';
+    DELETE FROM oaa.slo_sample WHERE metric='coverage_ratio';`, 'replica role → SLO append-only DELETE');
+  mustReject(`SET session_replication_role='replica'; TRUNCATE oaa.slo_sample;`, 'replica role → SLO append-only TRUNCATE');
+  console.log('  ✓ ENABLE ALWAYS append-only trigger는 session_replication_role=replica 우회를 막는다');
 
   mustRejectPermission(`SET ROLE opensphere_oaa_observer;
     INSERT INTO oaa.incident(cluster_id,fingerprint,incident_type,status,severity,confidence,cause_status,title,
@@ -151,7 +164,11 @@ function verifyR2d2RedteamHardening() {
     INSERT INTO oaa.incident_timeline(incident_id,sequence,transition,to_status,transition_sequence,fencing_epoch,reason_code,evidence_digest)
     SELECT incident_id,999,'raw','active',999,fencing_epoch,'raw','${`sha256:${'8'.repeat(64)}`}' FROM oaa.incident LIMIT 1;`,
   'observer → raw incident timeline INSERT');
-  console.log('  ✓ incident 상태·timeline은 fenced RPC 외 raw DML이 없다');
+  for (const table of ['incident','incident_timeline','incident_evidence','incident_impact','incident_outbox']) {
+    mustRejectPermission(`SET ROLE opensphere_oaa_observer; DELETE FROM oaa.${table};`, `observer → raw ${table} DELETE`);
+    mustRejectPermission(`SET ROLE opensphere_oaa_observer; TRUNCATE oaa.${table};`, `observer → raw ${table} TRUNCATE`);
+  }
+  console.log('  ✓ incident 5-table 상태·timeline·evidence·impact·outbox는 fenced RPC 외 raw DML이 없다');
 
   const selfOperation = '12121212-1212-4212-8212-121212121212';
   const selfActor = '13131313-1313-4313-8313-131313131313';

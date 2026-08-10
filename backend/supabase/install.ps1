@@ -34,17 +34,22 @@ function Get-StringSha256([string]$Value) {
   finally { $sha.Dispose() }
 }
 $migrationManifest = Get-Content -Raw -LiteralPath $migrationManifestPath | ConvertFrom-Json
-if ($migrationManifest.schemaVersion -ne 1 -or $migrationManifest.migrationCount -ne $migrations.Count) { throw 'Invalid migration manifest schema/count' }
+if ($migrationManifest.schemaVersion -ne 2 -or $migrationManifest.migrationCount -ne $migrations.Count) { throw 'Invalid migration manifest schema/count' }
 $manifestNames = @($migrationManifest.migrations | ForEach-Object { [string]$_.name })
 $actualNames = @($migrations | ForEach-Object { $_.Name })
 if (($manifestNames -join "`n") -ne ($actualNames -join "`n")) { throw 'Migration directory differs from canonical manifest' }
 $setRows = @()
+$predecessorMigrationId = $null
 foreach ($entry in $migrationManifest.migrations) {
   if ($entry.id -ne ([IO.Path]::GetFileNameWithoutExtension([string]$entry.name)).Substring(0,4) -or
-      $entry.path -ne "backend/supabase/migrations/$($entry.name)") { throw "Invalid migration manifest entry: $($entry.name)" }
+      $entry.path -ne "backend/supabase/migrations/$($entry.name)" -or
+      [string]$entry.predecessorMigrationId -ne [string]$predecessorMigrationId) { throw "Invalid migration manifest lineage: $($entry.name)" }
   $actualDigest = Get-CanonicalMigrationSha256 (Join-Path $migrationDirectory ([string]$entry.name))
   if ($actualDigest -ne [string]$entry.sha256) { throw "Migration manifest digest mismatch: $($entry.name)" }
-  $setRows += "$($entry.name)`n$($entry.sha256)"
+  $lineagePredecessor = '-'
+  if ($null -ne $predecessorMigrationId) { $lineagePredecessor = [string]$predecessorMigrationId }
+  $setRows += "$($entry.id)`n$lineagePredecessor`n$($entry.name)`n$($entry.sha256)"
+  $predecessorMigrationId = [string]$entry.id
 }
 $setDigest = 'sha256:' + (Get-StringSha256 ($setRows -join "`n"))
 if ($setDigest -ne [string]$migrationManifest.setDigest -or

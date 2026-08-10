@@ -18,14 +18,16 @@ for (const name of names) {
   const canonical = (await readFile(join(directory, name), 'utf8')).replace(/\r\n/gu, '\n');
   migrations.push({
     id: name.slice(0, 4),
+    predecessorMigrationId: migrations.at(-1)?.id ?? null,
     name,
     path: `backend/supabase/migrations/${name}`,
     sha256: createHash('sha256').update(canonical, 'utf8').digest('hex'),
   });
 }
-const setMaterial = migrations.map(({ name, sha256 }) => `${name}\n${sha256}`).join('\n');
+const setMaterial = migrations.map(({ id, predecessorMigrationId, name, sha256 }) =>
+  `${id}\n${predecessorMigrationId ?? '-'}\n${name}\n${sha256}`).join('\n');
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   latestMigrationId: migrations.at(-1).id,
   migrationCount: migrations.length,
   setDigest: `sha256:${createHash('sha256').update(setMaterial, 'utf8').digest('hex')}`,

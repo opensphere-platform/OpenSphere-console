@@ -46,6 +46,7 @@ function fixture(enabled = true, executionEnabled = false, workerReady = false, 
   approveScoped: async (input) => { approvals.push(input); return rowFor(persisted[0], 'approved'); } };
   const api = createR2d2RemediationApi({
     proposalEnabled: enabled, executionEnabled, workerReady,
+    proposalRepositories: ['console'],
     authenticate: async () => ({ actor: { sub: authenticationCount++ === 0 ? actorId : approvalActorId, browserSessionId: sessionId, assurance: 'aal2', credentialRevision: 9 } }),
     store,
     now: () => new Date('2026-08-10T00:00:00Z'),
@@ -102,6 +103,21 @@ test('proposal intake is default-off and rejects arbitrary source scope', async 
   await assert.rejects(() => disabled.propose({ headers: {} }, assessmentId, body()), (error) => error?.code === 503);
   const enabled = fixture(true).api;
   await assert.rejects(() => enabled.propose({ headers: {} }, assessmentId, { ...body(), allowedPaths: ['../../secrets'] }), (error) => error?.code === 400);
+});
+
+test('proposal repository catalog is empty by default and requires explicit activation', async () => {
+  const api = createR2d2RemediationApi({
+    proposalEnabled: true,
+    authenticate: async () => ({ actor: { sub: actorId, browserSessionId: sessionId, assurance: 'aal2', credentialRevision: 9 } }),
+    store: { propose: async () => { throw new Error('must not persist'); } },
+  });
+  await assert.rejects(
+    () => api.propose({ headers: { 'x-os-idempotency-key': 'remediation-proposal-1' } }, assessmentId, body()),
+    (error) => error?.code === 503 && /repository proposal is not activated/u.test(error?.msg),
+  );
+  assert.throws(() => createR2d2RemediationApi({
+    authenticate: async () => ({}), store: {}, proposalRepositories: ['unknown-repository'],
+  }), /unknown R2D2 proposal repository/u);
 });
 
 test('dedicated worker store keeps claim fencing and expected deployment evidence distinct from observations', async () => {

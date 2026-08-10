@@ -90,6 +90,8 @@ const SUPABASE_REQUIRE_AAL2 = String(process.env.SUPABASE_REQUIRE_AAL2 || 'true'
 const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const R2D2_DURABLE_OPERATION_ENABLED = process.env.R2D2_DURABLE_OPERATION_ENABLED === 'true';
 const R2D2_ENGINEERING_PROPOSAL_ENABLED = process.env.R2D2_ENGINEERING_PROPOSAL_ENABLED === 'true';
+const R2D2_ENGINEERING_PROPOSAL_REPOSITORIES = String(process.env.R2D2_ENGINEERING_PROPOSAL_REPOSITORIES || '')
+  .split(',').map((value) => value.trim()).filter(Boolean);
 const R2D2_ENGINEERING_EXECUTION_ENABLED = process.env.R2D2_ENGINEERING_EXECUTION_ENABLED === 'true';
 const R2D2_OPERATION_WORKER_ID = String(process.env.R2D2_OPERATION_WORKER_ID || process.env.HOSTNAME || `backend-${process.pid}`).slice(0, 128);
 const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env.R2D2_OPERATION_POLL_MS || 3000) || 3000));
@@ -943,6 +945,7 @@ const r2d2OperationApi = createR2d2OperationApi({
 
 const r2d2RemediationApi = createR2d2RemediationApi({
   proposalEnabled: R2D2_ENGINEERING_PROPOSAL_ENABLED,
+  proposalRepositories: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES,
   executionEnabled: R2D2_ENGINEERING_EXECUTION_ENABLED,
   authenticate: async (req) => {
     if (!browserSessions) throw { code: 503, msg: 'managed browser session broker unavailable' };
