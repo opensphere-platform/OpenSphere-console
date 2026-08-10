@@ -8,7 +8,7 @@ const {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function publicRemediation(row, executionEnabled = false) {
+function publicRemediation(row, executionEnabled = false, workerReady = false) {
   return {
     remediationRequestId: row.remediation_request_id,
     assessmentId: row.assessment_id,
@@ -36,16 +36,21 @@ function publicRemediation(row, executionEnabled = false) {
     updatedAt: row.updated_at,
     activation: {
       proposalOnly: !executionEnabled,
-      repositoryWrite: executionEnabled,
-      build: executionEnabled,
-      publish: executionEnabled,
-      deploy: executionEnabled,
+      approvalApi: executionEnabled,
+      workerReady,
+      repositoryWrite: executionEnabled && workerReady,
+      build: executionEnabled && workerReady,
+      publish: executionEnabled && workerReady,
+      deploy: executionEnabled && workerReady,
     },
   };
 }
 
 function createR2d2RemediationApi(options) {
-  const { authenticate, store, proposalEnabled = false, executionEnabled = false, now = () => new Date() } = options;
+  const {
+    authenticate, store, proposalEnabled = false, executionEnabled = false,
+    workerReady = false, now = () => new Date(),
+  } = options;
 
   async function propose(req, assessmentId, body) {
     if (!proposalEnabled) throw { code: 503, msg: 'R2D2 Engineering Remediation proposal intake is not activated' };
@@ -83,7 +88,7 @@ function createR2d2RemediationApi(options) {
       idempotencyKey,
       patchArtifact,
     });
-    return publicRemediation(row, executionEnabled);
+    return publicRemediation(row, executionEnabled, workerReady);
   }
 
   async function approve(req, remediationRequestId, scope, body) {
@@ -111,7 +116,7 @@ function createR2d2RemediationApi(options) {
       approvalDigest: digest({ remediationRequestId, scope, approverId, bindingDigest, confirmation: body.confirmation, expiresAt: new Date(expiry).toISOString() }),
       expiresAt: new Date(expiry).toISOString(),
     });
-    return publicRemediation(row, executionEnabled);
+    return publicRemediation(row, executionEnabled, workerReady);
   }
 
   async function handle(req, res, pathname, bodyReader, json) {

@@ -615,7 +615,7 @@ interface OaaActionBindingManifest {
           <article><span>WAVE 3</span><strong>Risk propagation</strong><p>Console global state · notification · context</p><small>SOURCE IMPLEMENTED · ACCEPTANCE PENDING</small></article>
           <article><span>WAVE 4</span><strong>Governed recovery</strong><p>instruction · operation · postcondition</p><small>SOURCE IMPLEMENTED · ACCEPTANCE PENDING</small></article>
           <article><span>WAVE 5</span><strong>Operational durability</strong><p>retention · partition · replay · failure isolation</p><small>SOURCE IMPLEMENTED · DRILL PENDING</small></article>
-          <article class="future"><span>ENGINEERING REMEDIATION</span><strong>Source repair contract</strong><p>patch approval · sandbox · build evidence · deploy</p><small>PROPOSAL SOURCE ONLY · ACTIVATION PROHIBITED</small></article>
+          <article class="future"><span>ENGINEERING REMEDIATION</span><strong>Source repair contract</strong><p>patch approval · sandbox · build evidence · deploy</p><small>EXECUTION SOURCE IMPLEMENTED · ACTIVATION PROHIBITED</small></article>
         </div>
       </section>
 

@@ -24,7 +24,7 @@ function body() {
   };
 }
 
-function fixture(enabled = true, executionEnabled = false) {
+function fixture(enabled = true, executionEnabled = false, workerReady = false) {
   const persisted = []; const approvals = [];
   const rowFor = (input, stage = 'proposed') => ({
     remediation_request_id: input.remediationRequestId, assessment_id: input.assessmentId,
@@ -44,7 +44,7 @@ function fixture(enabled = true, executionEnabled = false) {
   }, get: async () => persisted[0], latestBuild: async () => null,
   approveScoped: async (input) => { approvals.push(input); return rowFor(persisted[0], 'approved'); } };
   const api = createR2d2RemediationApi({
-    proposalEnabled: enabled, executionEnabled,
+    proposalEnabled: enabled, executionEnabled, workerReady,
     authenticate: async () => ({ actor: { sub: actorId, browserSessionId: sessionId, assurance: 'aal2', credentialRevision: 9 } }),
     store,
     now: () => new Date('2026-08-10T00:00:00Z'),
@@ -60,7 +60,10 @@ test('proposal is patch-bound, session-bound and cannot activate repository or d
   assert.equal(persisted[0].patchDigest, patchTextDigest(body().patchText));
   assert.deepEqual(persisted[0].patchArtifact.changedFiles, ['backend/opensphere-console-oaa-gateway/server.js']);
   assert.match(persisted[0].approvalBindingDigest, /^sha256:[0-9a-f]{64}$/);
-  assert.deepEqual(result.activation, { proposalOnly: true, repositoryWrite: false, build: false, publish: false, deploy: false });
+  assert.deepEqual(result.activation, {
+    proposalOnly: true, approvalApi: false, workerReady: false,
+    repositoryWrite: false, build: false, publish: false, deploy: false,
+  });
 });
 
 test('source execution requires a separate exact AAL2 approval and remains default-off', async () => {
@@ -76,8 +79,21 @@ test('source execution requires a separate exact AAL2 approval and remains defau
   assert.equal(approved.stage, 'approved');
   assert.equal(enabled.approvals[0].scope, 'source_patch');
   assert.equal(enabled.approvals[0].bindingDigest, created.approvalBindingDigest);
+  assert.deepEqual(approved.activation, {
+    proposalOnly: false, approvalApi: true, workerReady: false,
+    repositoryWrite: false, build: false, publish: false, deploy: false,
+  });
   await assert.rejects(() => enabled.api.approve({}, created.remediationRequestId, 'source_patch', { confirmation: 'approve everything' }),
     (error) => error?.code === 400);
+});
+
+test('execution capability is reported only when both approval API and an execution worker are ready', async () => {
+  const ready = fixture(true, true, true);
+  const created = await ready.api.propose({ headers: { 'x-os-idempotency-key': 'remediation-proposal-1' } }, assessmentId, body());
+  assert.deepEqual(created.activation, {
+    proposalOnly: false, approvalApi: true, workerReady: true,
+    repositoryWrite: true, build: true, publish: true, deploy: true,
+  });
 });
 
 test('proposal intake is default-off and rejects arbitrary source scope', async () => {
