@@ -32,3 +32,23 @@ test('R2D2 does not mistake the postgres UI plugin for the owner cluster contrac
   assert.match(source, /owner = 'PFSS PostgreSQL owner'/);
   assert.doesNotMatch(source, /oaa\.foundation\.postgres\.claim\.create'[\s\S]{0,1200}kubectl/);
 });
+
+test('vague PFSS PostgreSQL requests enter deterministic intake instead of fabricated defaults', () => {
+  assert.match(source, /r2d2\.foundation-postgres-intake\/v1/);
+  assert.match(source, /R2D2는 임의 기본값을 선택하지 않습니다/);
+  assert.match(source, /FOUNDATION_POSTGRES_CONVERSATION_FIELDS = Object\.freeze/);
+  for (const field of ['name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion', 'deletionPolicy']) {
+    assert.match(source, new RegExp(`'${field}'`));
+  }
+  assert.match(source, /const foundationPostgresOut = await foundationPostgresConversation\(baseMessages, actor\)/);
+  assert.match(source, /if \(foundationPostgresOut\) return foundationPostgresOut/);
+});
+
+test('PFSS PostgreSQL confirmation is sourced from the owner plan and fully bound', () => {
+  assert.match(source, /const expected = String\(plan\?\.expectedConfirmation \|\| ''\)/);
+  assert.match(source, /확인 문구는 owner plan이 반환한 값/);
+  assert.match(source, /replace\(\/<plan>\/g, String\(inputs\.plan \|\| ''\)\)/);
+  assert.match(source, /replace\(\/<postgresVersion>\/g, String\(inputs\.postgresVersion \|\| ''\)\)/);
+  assert.doesNotMatch(source, /key === 'his-binding'/);
+  assert.match(source, /key === 'his-preflight'/);
+});

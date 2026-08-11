@@ -5290,11 +5290,11 @@ async function oaaMutationLifecycle(actor) {
     else {
       const prerequisites = Array.isArray(body.prerequisites) ? body.prerequisites : [];
       const clusterManager = prerequisites.find((item) => item.key === 'cluster-manager');
-      const hisBinding = prerequisites.find((item) => item.key === 'his-binding');
+      const hisPreflight = prerequisites.find((item) => item.key === 'his-preflight');
       value = {
-        ready: Boolean(clusterManager?.ready && hisBinding?.ready),
-        reason: clusterManager?.ready ? (hisBinding?.ready ? null : 'his_preflight_not_ready') : 'cluster_manager_not_activated',
-        clusterManagerActivated: Boolean(clusterManager?.ready), hisPreflightReady: Boolean(hisBinding?.ready), observedAt: body.observedAt || null,
+        ready: Boolean(clusterManager?.ready && hisPreflight?.ready),
+        reason: clusterManager?.ready ? (hisPreflight?.ready ? null : 'his_preflight_not_ready') : 'cluster_manager_not_activated',
+        clusterManagerActivated: Boolean(clusterManager?.ready), hisPreflightReady: Boolean(hisPreflight?.ready), observedAt: body.observedAt || null,
       };
     }
   } catch {
@@ -5582,6 +5582,8 @@ function bindingConfirmationExpected(binding, inputs = {}) {
     .replace(/<replicas>/g, String(inputs.replicas ?? ''))
     .replace(/<kind>/g, String(inputs.kind || inputs.manifest?.kind || '').toLowerCase())
     .replace(/<name>/g, String(inputs.name || inputs.manifest?.metadata?.name || ''))
+    .replace(/<plan>/g, String(inputs.plan || ''))
+    .replace(/<postgresVersion>/g, String(inputs.postgresVersion || ''))
     .replace(/<container>/g, String(inputs.container || ''))
     .replace(/<image>/g, String(inputs.image || ''))
     .replace(/<suspend>/g, String(inputs.suspend ?? ''))
@@ -6169,6 +6171,113 @@ function knowledgeSystemMessage(rows) {
     score: row.score, authorityTier: row.authorityTier, sourcePath: row.sourcePath,
     sectionHeading: row.sectionHeading, content: row.content,
   })), 12000);
+}
+
+const FOUNDATION_POSTGRES_CONVERSATION_FIELDS = Object.freeze([
+  'name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion', 'deletionPolicy',
+]);
+
+function foundationPostgresConversationIntent(messages) {
+  const userMessages = (messages || [])
+    .filter((message) => message?.role === 'user')
+    .map((message) => String(message.content || ''));
+  const text = userMessages.join('\n');
+  const latest = userMessages.at(-1) || '';
+  const priorIntent = /(?:\bPFSS\b|\bPostgreSQL\b|\bPostgres\b|\bPG\b)/i.test(text)
+    && /(?:cluster|클러스터)/i.test(text)
+    && /(?:구성|설치|생성|provision|configure|install|create)/i.test(text);
+  const latestIntent = /(?:\bPFSS\b|\bPostgreSQL\b|\bPostgres\b|\bPG\b)/i.test(latest)
+    && /(?:cluster|클러스터)/i.test(latest)
+    && /(?:구성|설치|생성|provision|configure|install|create)/i.test(latest);
+  const latestSuppliesValues = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.some((field) => new RegExp(`(?:^|[\\s,])${field}\\s*=`, 'i').test(latest));
+  return priorIntent && (latestIntent || latestSuppliesValues);
+}
+
+function parseFoundationPostgresConversation(messages) {
+  const values = {};
+  const userTexts = (messages || [])
+    .filter((message) => message?.role === 'user')
+    .map((message) => String(message.content || ''));
+  for (const text of userTexts) {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const field of [...FOUNDATION_POSTGRES_CONVERSATION_FIELDS, 'storageSize', 'storageClass']) {
+            if (parsed[field] !== undefined) values[field] = String(parsed[field]).trim();
+          }
+        }
+      } catch { /* key=value parsing below remains authoritative */ }
+    }
+    for (const field of [...FOUNDATION_POSTGRES_CONVERSATION_FIELDS, 'storageSize', 'storageClass']) {
+      const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const match = new RegExp(`(?:^|[\\s,])${escaped}\\s*=\\s*(?:"([^"]+)"|'([^']+)'|([^,\\n]+))`, 'i').exec(text);
+      const value = String(match?.[1] || match?.[2] || match?.[3] || '').trim();
+      if (value) values[field] = value;
+    }
+  }
+  return values;
+}
+
+function foundationPostgresClarification(status, values) {
+  const missing = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.filter((field) => !values[field]);
+  const plans = (status?.plans || []).filter((plan) => plan.lifecycle === 'Available');
+  const versions = (status?.runtimeCatalog?.versions || []).filter((version) => version.lifecycle === 'Available');
+  const collected = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.filter((field) => values[field]);
+  return [
+    'PFSS PostgreSQL 클러스터를 구성할 수 있습니다. 실제 owner 계획 전 아래 값을 관리자가 명시해야 합니다. R2D2는 임의 기본값을 선택하지 않습니다.',
+    '',
+    `현재 owner: ${status?.owner || 'PFSS / data.sql.postgres'}`,
+    `허용 namespace: ${(status?.managedNamespaces || []).join(', ') || '조회되지 않음'}`,
+    `Available plan: ${plans.map((plan) => `${plan.name} (${plan.profile}, ${plan.instances} instance, ${plan.storage?.size || '-'})`).join(', ') || '없음'}`,
+    `Available PostgreSQL version: ${versions.map((version) => version.version).join(', ') || '없음'}`,
+    `현재 Claim/cluster: ${(status?.claims || []).length}/${(status?.clusters || []).length}`,
+    '',
+    `아직 필요한 값: ${missing.join(', ')}`,
+    `확인된 값: ${collected.length ? collected.map((field) => `${field}=${values[field]}`).join(', ') : '없음'}`,
+    '',
+    '다음 형식으로 답해주세요. 값은 쉼표 또는 줄바꿈으로 구분할 수 있습니다.',
+    'name=<RFC1123 이름>, namespace=<허용 namespace>, alias=<표시 이름>, database=<DB 이름>, owner=<DB owner>, plan=<Available plan>, postgresVersion=<Available version>, deletionPolicy=<Retain|Delete>',
+    '선택 입력: storageSize=<예: 10Gi>, storageClass=<예: ceph-rbd>',
+    '',
+    'deletionPolicy=Delete는 Claim 삭제 시 관리 클러스터도 삭제합니다. 운영 데이터는 Retain을 권장합니다.',
+  ].join('\n');
+}
+
+function foundationPostgresPlanMessage(plan, request) {
+  const expected = String(plan?.expectedConfirmation || '');
+  const actionInputs = { ...request, reason: 'PFSS PostgreSQL cluster provisioning approved' };
+  return [
+    'Foundation owner Admission dry-run이 통과했습니다. 아직 클러스터를 생성하지 않았습니다.',
+    '',
+    `대상: ${plan.target}`,
+    `작업: ${plan.action}`,
+    `Plan: ${request.plan}`,
+    `PostgreSQL: ${request.postgresVersion}`,
+    `Postcondition: ${plan.postcondition}`,
+    ...(Array.isArray(plan.warnings) && plan.warnings.length ? ['', '경고:', ...plan.warnings.map((warning) => `- ${warning}`)] : []),
+    '',
+    '실행하려면 관리자가 아래 명령을 그대로 전송해야 합니다. 확인 문구는 owner plan이 반환한 값이며 R2D2가 생성하지 않습니다.',
+    `/action manual-action:opensphere:foundation-postgres-claim-create ${JSON.stringify(actionInputs)} confirm ${expected}`,
+  ].join('\n');
+}
+
+async function foundationPostgresConversation(messages, actor) {
+  if (!foundationPostgresConversationIntent(messages)) return null;
+  const values = parseFoundationPostgresConversation(messages);
+  const missing = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.filter((field) => !values[field]);
+  if (missing.length) {
+    const status = await foundationPostgresStatusRead(actor);
+    return commandResponse(Date.now(), foundationPostgresClarification(status, values), {
+      schema: 'r2d2.foundation-postgres-intake/v1', phase: 'NeedsInput', missing, values, status,
+    });
+  }
+  const request = normalizeFoundationPostgresRequest(values);
+  const plan = await foundationPostgresPlanRead(request, actor);
+  return commandResponse(Date.now(), foundationPostgresPlanMessage(plan, request), {
+    schema: 'r2d2.foundation-postgres-intake/v1', phase: 'AwaitingConfirmation', request, plan,
+  });
 }
 
 function conceptGraphSystemMessage(graph) {
@@ -7417,6 +7526,8 @@ async function chatCompletion(body, actor) {
   const baseMessages = normalizeMessages(body);
   const commandOut = await handleSlashCommand(latestUserContent(baseMessages), body, actor);
   if (commandOut) return commandOut;
+  const foundationPostgresOut = await foundationPostgresConversation(baseMessages, actor);
+  if (foundationPostgresOut) return foundationPostgresOut;
   const key = await loadEnabledKey(String(body.keyId || '').trim());
   const source = usageSource(body.source, 'console-oaa-agent');
   const sessionId = String(body.sessionId || '').slice(0, 200);

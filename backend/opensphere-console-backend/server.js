@@ -1275,8 +1275,8 @@ async function requireOaaLifecycleGate(authorization) {
   if (!response.ok) throw { code: response.status === 401 || response.status === 403 ? response.status : 503, msg: body.error || 'OAA lifecycle gate is unavailable' };
   const prerequisites = Array.isArray(body.prerequisites) ? body.prerequisites : [];
   const clusterManager = prerequisites.find((item) => item.key === 'cluster-manager');
-  const hisBinding = prerequisites.find((item) => item.key === 'his-binding');
-  if (!clusterManager?.ready || !hisBinding?.ready) throw { code: 409, msg: 'OAA mutations require Cluster Manager Activated and HIS Preflight Ready' };
+  const hisPreflight = prerequisites.find((item) => item.key === 'his-preflight');
+  if (!clusterManager?.ready || !hisPreflight?.ready) throw { code: 409, msg: 'OAA mutations require Cluster Manager Activated and HIS Preflight Ready' };
   return { clusterManager: true, hisPreflight: true, observedAt: body.observedAt || null };
 }
 
