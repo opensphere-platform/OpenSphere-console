@@ -3,7 +3,7 @@ const fs = require('fs');
 const { createHash, randomUUID } = require('crypto');
 const { Pool } = require('pg');
 const { normalizeProviderToolCalls } = require('./provider-tool-calls');
-const { requiresLiveAgentTools } = require('./chat-runtime-policy');
+const { lexicalKnowledgeQuery, requiresLiveAgentTools } = require('./chat-runtime-policy');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
 const {
@@ -1223,6 +1223,7 @@ async function upsertKnowledgeDocument(doc, actor = null) {
     const embedding = await embeddingVector(`${title}\n${chunk}`, {
       keyId: doc.embeddingKeyId || '',
       strict: doc.strictEmbedding === true,
+      allowLexicalFallback: doc.allowLexicalFallback === true,
       allowHashFallback: doc.allowHashFallback === true,
     });
     embeddingMode = embedding.source.mode;
@@ -1298,7 +1299,7 @@ async function seedBuiltinKnowledge(force = false, actor = null) {
   }
   let chunks = 0;
   for (const doc of builtInKnowledgeDocs()) {
-    const out = await upsertKnowledgeDocument(doc, actor);
+    const out = await upsertKnowledgeDocument({ ...doc, allowLexicalFallback: true }, actor);
     chunks += out.chunks;
   }
   pgSeedReady = true;
@@ -1384,6 +1385,7 @@ async function searchKnowledge(query, limit = OAA_RAG_TOP_K, actor = null, usage
   } catch (error) {
     console.warn('[oaa-rag] semantic search degraded to PostgreSQL full-text:', error.message || error);
   }
+  const lexicalQuery = lexicalKnowledgeQuery(query);
   const r = embedding ? await pool.query(`
     SELECT
       d.id AS "documentId",
@@ -1429,7 +1431,7 @@ async function searchKnowledge(query, limit = OAA_RAG_TOP_K, actor = null, usage
       )
     ORDER BY score DESC, d.authority_tier ASC, d.updated_at DESC
     LIMIT $6
-  `, [String(query).trim(), ...knowledgeAclParams(actor), limit]);
+  `, [lexicalQuery, ...knowledgeAclParams(actor), limit]);
   const hits = r.rows.map((x) => {
     const metadata = x.metadata && typeof x.metadata === 'object' ? x.metadata : {};
     return {

@@ -13,4 +13,15 @@ function requiresLiveAgentTools(query) {
   return text.length > 0 && LIVE_OPERATION_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-module.exports = { requiresLiveAgentTools };
+// PostgreSQL's `simple` text search does not split a Korean particle from an
+// adjacent Latin identifier (`PFSS가` becomes one lexeme). Prefer explicit
+// acronyms or dotted canonical identifiers when present, while retaining the
+// complete query for ordinary natural-language searches.
+function lexicalKnowledgeQuery(query) {
+  const text = String(query || '').trim();
+  if (!text) return '';
+  const identifiers = text.match(/[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)+|\b[A-Z][A-Z0-9]{1,15}\b/g) || [];
+  return [...new Set(identifiers.map((value) => value.trim()).filter(Boolean))].join(' ') || text;
+}
+
+module.exports = { lexicalKnowledgeQuery, requiresLiveAgentTools };
