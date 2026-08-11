@@ -141,6 +141,19 @@ export class PluginControlClient {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason }),
     }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return (await r.json()).item; });
   }
+  install(image: string, reason: string, client: 'cli:os' | 'console:web' = 'console:web') {
+    return this.http.request('/api/admin/extensions/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ image: image.trim(), reason: reason.trim(), client }),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { message?: unknown; error?: unknown };
+        throw new Error(`install HTTP ${r.status}: ${String(body.message || body.error || 'request failed')}`);
+      }
+      return r.json();
+    });
+  }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
   bindingAction(name: string, action: 'enable' | 'disable') {
     return this.http.request(`/api/admin/bindings/${name}/${action}`, { method: 'POST' })

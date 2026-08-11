@@ -163,10 +163,25 @@ interface TreeNode {
     </section>
 
     <section class="oci-install" aria-labelledby="oci-install-title">
-      <h2 id="oci-install-title">설치는 Console native CLI에서 진행</h2>
-      <p class="os-sub">브라우저는 설치 요청을 만들지 않습니다. 서명·권한·provenance 검증과 설치 근거는 <code>os</code> CLI가 같은 인증·감사 경계에서 기록합니다.</p>
-      <pre class="os-mono">os extensions inspect ghcr.io/opensphere-platform/&lt;module&gt;:edge
-os extensions install ghcr.io/opensphere-platform/&lt;module&gt;:edge --reason "승인 사유"</pre>
+      <h2 id="oci-install-title">Extension 설치</h2>
+      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 최근 MFA 확인과 8자 이상의 사유가 필요합니다.</p>
+      <div class="registry-access-form">
+        <clr-input-container>
+          <label for="extension-image">OCI image</label>
+          <input id="extension-image" #extensionImage clrInput placeholder="ghcr.io/opensphere-platform/opensphere-…@sha256:…" />
+        </clr-input-container>
+        <clr-input-container>
+          <label for="extension-install-reason">설치 사유</label>
+          <input id="extension-install-reason" #extensionInstallReason clrInput minlength="8" placeholder="운영 변경 사유(8자 이상)" />
+        </clr-input-container>
+        <button
+          class="btn btn-primary"
+          [disabled]="!extensionImage.value.includes('@sha256:') || extensionInstallReason.value.trim().length < 8"
+          (click)="installModule(extensionImage.value, extensionInstallReason.value)"
+        >
+          설치
+        </button>
+      </div>
     </section>
         </clr-accordion-content>
       </clr-accordion-panel>
@@ -1554,6 +1569,17 @@ export class AdminPlugins implements OnInit {
       this.msg.set({ type: 'success', text: `${action} 완료: ${id}` });
     } catch (err) {
       this.msg.set({ type: 'danger', text: `${action} 실패: ${err}` });
+    }
+  }
+
+  async installModule(image: string, reason: string): Promise<void> {
+    try {
+      const result = await this.ctl.install(image, reason);
+      const id = String((result as { id?: unknown })?.id || image);
+      this.msg.set({ type: 'info', text: `install 요청됨: ${id} — 검증과 workload 조정 중…` });
+      await this.refresh();
+    } catch (error) {
+      this.msg.set({ type: 'danger', text: `install 실패: ${String(error)}` });
     }
   }
 
