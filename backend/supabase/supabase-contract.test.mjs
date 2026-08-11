@@ -101,3 +101,10 @@ test('R2D2 activation grants the query role only read access to observer fencing
   assert.match(sql, /FOR SELECT TO opensphere_oaa_gateway, opensphere_oaa_api USING \(true\)/);
   assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|ALL)/);
 });
+
+test('R2D2 reconcile evidence uses locale-independent bytewise ordering', () => {
+  const migrationDir = path.join(here, 'migrations');
+  const sql = readFileSync(path.join(migrationDir, '0055_r2d2_reconcile_digest_collation.sql'), 'utf8');
+  assert.match(sql, /string_agg\(node_id, E'\\n' ORDER BY node_id COLLATE "C"\)/);
+  assert.match(sql, /p_completeness_digest IS DISTINCT FROM expected_digest/);
+});

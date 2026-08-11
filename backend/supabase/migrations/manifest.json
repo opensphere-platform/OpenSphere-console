@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0054",
-  "migrationCount": 53,
-  "setDigest": "sha256:f821cce764404816bf0409f18615b8bc938973c5cce213c503d388a73bdc0d19",
+  "latestMigrationId": "0055",
+  "migrationCount": 54,
+  "setDigest": "sha256:e20d0ac933f5d77c1c6377e4e6df7c2894e35f564feafeff0e6586398fbb06ba",
   "migrations": [
     {
       "id": "0001",
@@ -374,6 +374,13 @@
       "name": "0054_r2d2_activation_runtime_fixes.sql",
       "path": "backend/supabase/migrations/0054_r2d2_activation_runtime_fixes.sql",
       "sha256": "d4f030ea82dd1d4a088778516c2562c6d34bb0fcb67ef6f2089b4bf99f4059df"
+    },
+    {
+      "id": "0055",
+      "predecessorMigrationId": "0054",
+      "name": "0055_r2d2_reconcile_digest_collation.sql",
+      "path": "backend/supabase/migrations/0055_r2d2_reconcile_digest_collation.sql",
+      "sha256": "cfcc05d5c4c01512c1b6418b010542216637f0e604b6637960ec42cad7dbfc35"
     }
   ]
 }
