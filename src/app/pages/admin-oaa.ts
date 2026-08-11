@@ -335,7 +335,7 @@ interface OaaActionBindingManifest {
           <div class="r2d2-target-badges" aria-label="R2D2 목표 상태">
             <span>Target model</span>
             <span>Phased enablement</span>
-            <span class="guarded">Source implemented · activation OFF</span>
+            <span class="guarded">Operational runtime ON · Engineering Remediation OFF</span>
           </div>
         </div>
         <aside class="r2d2-position-card" aria-label="현재 위치와 최종 목표">
@@ -346,7 +346,7 @@ interface OaaActionBindingManifest {
             <li><span>03</span><div><strong>운영 복구</strong><small>governed capability · postcondition</small></div></li>
             <li><span>04</span><div><strong>Engineering Remediation</strong><small>source · build · exact digest deploy</small></div></li>
           </ol>
-          <p>각 plane의 source 계약은 구현 중이며, 구현 후 레드팀 평가와 사용자 승인 전에는 운영 실행 capability를 활성화하지 않습니다.</p>
+          <p>관측·상황 이해·승인 기반 운영 복구는 활성화했습니다. 소스 수정·빌드·배포를 수행하는 Engineering Remediation은 별도 구현·평가·사용자 승인 전까지 fail-closed를 유지합니다.</p>
         </aside>
       </section>
 

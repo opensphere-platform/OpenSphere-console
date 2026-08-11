@@ -135,9 +135,9 @@ spec:
             - { name: OAA_EMBED_DIM, value: "1536" }
             - { name: OAA_ALLOWED_NAMESPACES, value: "opensphere-console,opensphere-console-data,opensphere-console-change" }
             - { name: OAA_SCALE_MAX, value: "10" }
-            # R2D2 durable execution is shipped fail-closed. It is enabled only
-            # after the post-implementation acceptance and operator approval.
-            - { name: R2D2_DURABLE_OPERATION_ENABLED, value: "false" }
+            # Reviewed durable operations are enabled by operator acceptance.
+            # Engineering source mutation remains an independent closed gate.
+            - { name: R2D2_DURABLE_OPERATION_ENABLED, value: "true" }
             - { name: R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "false" }
             - { name: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES, value: "" }
             - { name: R2D2_ENGINEERING_EXECUTION_ENABLED, value: "false" }
