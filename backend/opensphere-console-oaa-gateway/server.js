@@ -122,6 +122,7 @@ const OAA_HIS_LIFECYCLE_ACTIONS = Object.freeze(['install', 'upgrade', 'recover'
 const OAA_EXTENSION_LIFECYCLE_ACTIONS = Object.freeze(['install', 'enable', 'disable', 'uninstall', 'rollback']);
 const OAA_FOUNDATION_ENGINES = Object.freeze(['keycloak', 'samba', 'postgres', 'psmdb', 'valkey', 'opensearch', 'rustfs']);
 const OAA_FOUNDATION_MODELS = Object.freeze(['identity', 'data']);
+const OAA_POSTGRES_DELETION_POLICIES = Object.freeze(['Retain', 'Delete']);
 const OAA_CONSOLE_ROLES = Object.freeze(['console-admins', 'console-operators', 'console-viewers']);
 const OAA_EVIDENCE_STREAMS = Object.freeze(['agent_run', 'agent_step', 'tool_run', 'retrieval_trace', 'llm_usage_event', 'runtime_event']);
 const OAA_RECOVERY_COMPONENTS = Object.freeze(['all', 'supabase-database', 'supabase-storage', 'gitea']);
@@ -146,6 +147,7 @@ const OAA_OWNER_ACTION_TOOL_IDS = new Set([
   'oaa.foundation.claim.release',
   'oaa.foundation.identity-directory.claim.create',
   'oaa.foundation.identity-directory.claim.release',
+  'oaa.foundation.postgres.claim.create',
   'oaa.identity.user.create',
   'oaa.identity.user.enabled',
   'oaa.identity.role.membership',
@@ -3810,6 +3812,54 @@ function oaaActionBindings() {
       citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
+      id: 'manual-action:opensphere:foundation-postgres-status',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Read PFSS PostgreSQL runtimes, plans, managed namespaces, claims, and clusters', intent: 'inspect-foundation-postgres',
+      toolId: 'oaa.foundation.postgres.status', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: ['authenticated'], scopes: ['oaa:system:read'] },
+      audit: { eventType: 'foundation-postgres-status-read', targetTemplate: 'PFSS/data.sql.postgres' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:foundation-postgres-plan',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Admission-dry-run a PFSS PostgreSQL PostgresClaim and return the exact approval phrase', intent: 'plan-foundation-postgres',
+      toolId: 'oaa.foundation.postgres.plan', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'read', confirmation: 'none',
+      requiredInputs: bindingInput({
+        name: 'claim name', namespace: 'Foundation-managed namespace', alias: 'human display name',
+        database: 'initial database name', owner: 'initial database owner', plan: 'Available PostgreSQL AddOnPlan',
+        postgresVersion: 'Available PostgresRuntimeCatalog version', deletionPolicy: OAA_POSTGRES_DELETION_POLICIES.join(' | '),
+        storageSize: 'optional binary quantity such as 20Gi', storageClass: 'optional StorageClass name',
+      }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'], namespaceScope: ['opensphere-foundation'] },
+      audit: { eventType: 'foundation-postgres-plan', targetTemplate: 'PostgresClaim/<namespace>/<name>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:foundation-postgres-claim-create',
+      namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
+      title: 'Create a PFSS PostgreSQL cluster through the PostgresClaim owner contract', intent: 'create-foundation-postgres',
+      toolId: 'oaa.foundation.postgres.claim.create', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'high', confirmation: 'required',
+      confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+      requiredInputs: bindingInput({
+        name: 'claim name', namespace: 'Foundation-managed namespace', alias: 'human display name',
+        database: 'initial database name', owner: 'initial database owner', plan: 'Available PostgreSQL AddOnPlan',
+        postgresVersion: 'Available PostgresRuntimeCatalog version', deletionPolicy: OAA_POSTGRES_DELETION_POLICIES.join(' | '),
+        storageSize: 'optional binary quantity such as 20Gi', storageClass: 'optional StorageClass name',
+        reason: 'human management reason (8+ chars)',
+        confirm: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+      }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'], namespaceScope: ['opensphere-foundation'] },
+      audit: { eventType: 'foundation-postgres-claim-create', targetTemplate: 'PostgresClaim/<namespace>/<name>' },
+      citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
       id: 'manual-action:opensphere:foundation-engine-lifecycle',
       namespace: 'opensphere', sourceId: 'console-docs/oaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/oaa-control-plane-assessment#foundation-owner-control',
@@ -4330,6 +4380,54 @@ function oaaToolManifest() {
         endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/status'),
         riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
         auditEventType: 'foundation-status-read',
+      },
+      {
+        id: 'oaa.foundation.postgres.status',
+        name: 'Read PFSS PostgreSQL owner runtimes, plans, managed namespaces, claims, and clusters',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/postgres/status'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'foundation-postgres-status-read',
+      },
+      {
+        id: 'oaa.foundation.postgres.plan',
+        name: 'Admission-dry-run a PFSS PostgreSQL PostgresClaim and return the exact approval phrase',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/postgres/plan'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({
+          name: deploymentField, namespace: nsField,
+          alias: { type: 'string', minLength: 1, maxLength: 160 },
+          database: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_$]{0,62}$' },
+          owner: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_$]{0,62}$' },
+          plan: deploymentField,
+          postgresVersion: { type: 'string', pattern: '^\\d+(?:\\.\\d+)?$' },
+          deletionPolicy: { type: 'string', enum: OAA_POSTGRES_DELETION_POLICIES },
+          storageSize: { type: 'string', pattern: '^[0-9]+(?:Mi|Gi|Ti)$', required: false },
+          storageClass: { ...deploymentField, required: false },
+        }),
+        auditEventType: 'foundation-postgres-plan',
+      },
+      {
+        id: 'oaa.foundation.postgres.claim.create',
+        name: 'Create a PFSS PostgreSQL cluster through the PostgresClaim owner contract',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
+        riskLevel: 'high', confirmation: 'required',
+        confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+        inputSchema: schemaObject({
+          name: deploymentField, namespace: nsField,
+          alias: { type: 'string', minLength: 1, maxLength: 160 },
+          database: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_$]{0,62}$' },
+          owner: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_$]{0,62}$' },
+          plan: deploymentField,
+          postgresVersion: { type: 'string', pattern: '^\\d+(?:\\.\\d+)?$' },
+          deletionPolicy: { type: 'string', enum: OAA_POSTGRES_DELETION_POLICIES },
+          storageSize: { type: 'string', pattern: '^[0-9]+(?:Mi|Gi|Ti)$', required: false },
+          storageClass: { ...deploymentField, required: false },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
+        }),
+        auditEventType: 'foundation-postgres-claim-create',
       },
       {
         id: 'oaa.foundation.engine.lifecycle',
@@ -5041,6 +5139,8 @@ const TOOL_PERMISSION = {
   'oaa.observability.traces.query': 'oaa.logs.read',
   'oaa.registry.read': 'oaa.system.read',
   'oaa.foundation.status': 'oaa.system.read',
+  'oaa.foundation.postgres.status': 'oaa.system.read',
+  'oaa.foundation.postgres.plan': 'oaa.action.execute.high',
   'oaa.knowledge.search': 'oaa.knowledge.read',
   'oaa.knowledge.ingest-manual': 'oaa.knowledge.manage',
   'oaa.k8s.logs.tail': 'oaa.logs.read',
@@ -5078,6 +5178,7 @@ const TOOL_PERMISSION = {
   'oaa.foundation.claim.release': 'oaa.action.execute.high',
   'oaa.foundation.identity-directory.claim.create': 'oaa.action.execute.high',
   'oaa.foundation.identity-directory.claim.release': 'oaa.action.execute.high',
+  'oaa.foundation.postgres.claim.create': 'oaa.action.execute.high',
 };
 
 function requiredPermissionForTool(tool) {
@@ -6161,6 +6262,19 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
   });
   add('oaa.system.read', 'get_opensphere_registry', 'Read the current Main Shell native Registry projection from its owning DUPA API. Treat it as discovery and activation state, not Kubernetes runtime truth.', {});
   add('oaa.system.read', 'get_foundation_status', 'Read Foundation models, engine states, consumer claims, bindings, and controller readiness from the Foundation owner API.', {});
+  add('oaa.system.read', 'get_foundation_postgres_status', 'Read the PFSS data.sql.postgres owner projection: approved runtimes and plans, managed namespaces, PostgresClaims, and realized clusters. Use this before discussing PostgreSQL provisioning; do not confuse the postgres UI plugin Deployment with a database cluster.', {});
+  add('oaa.action.execute.high', 'plan_foundation_postgres_cluster', 'Validate a complete PFSS PostgreSQL cluster request through the typed owner Admission dry-run. Returns the exact human approval phrase and postcondition; it does not create the cluster.', {
+    name: { type: 'string', pattern: K8S_NAME_RE.source },
+    namespace: { type: 'string', enum: OAA_ENV_NAMESPACES },
+    alias: { type: 'string', minLength: 1, maxLength: 160 },
+    database: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_$]{0,62}$' },
+    owner: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_$]{0,62}$' },
+    plan: { type: 'string', pattern: K8S_NAME_RE.source },
+    postgresVersion: { type: 'string', pattern: '^\\d+(?:\\.\\d+)?$' },
+    deletionPolicy: { type: 'string', enum: OAA_POSTGRES_DELETION_POLICIES },
+    storageSize: { type: 'string', pattern: '^[0-9]+(?:Mi|Gi|Ti)$' },
+    storageClass: { type: 'string', pattern: K8S_NAME_RE.source },
+  }, ['name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion', 'deletionPolicy']);
   add('console.identity.manage', 'get_console_identity_status', 'Read the current PII-minimized Console user and canonical role inventory from the Supabase identity owner.', {});
   add('console.extension.security.read', 'get_extension_security_status', 'Read the append-only exact-digest Extension image revocation ledger.', {});
   add('console.extension.security.read', 'inspect_extension_image', 'Inspect an exact-digest OpenSphere Extension image, signed descriptor, source revision, platforms, provenance and SBOM evidence.', {
@@ -6734,6 +6848,19 @@ async function executeOwnerControlAction(toolId, inputs, actor) {
     requireConfirm(inputs.confirm, `release IdentityDirectory claim ${name}`);
     owner = 'Foundation control plane'; target = `IdentityDirectoryClaim/opensphere-foundation/${name}`;
     response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/oaa/identity-directory/claims/release', actor, { name, confirm: inputs.confirm, reason }, owner, 120000);
+  } else if (toolId === 'oaa.foundation.postgres.claim.create') {
+    const request = normalizeFoundationPostgresRequest(inputs);
+    const expected = foundationPostgresConfirmation(request);
+    requireConfirm(inputs.confirm, expected);
+    owner = 'PFSS PostgreSQL owner'; target = `PostgresClaim/${request.namespace}/${request.name}`;
+    response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/postgres/claims', actor, {
+      ...request, confirm: expected, reason,
+    }, owner, 120000);
+    response = {
+      ...response,
+      postcondition: 'PostgresClaim Ready=True and observedGeneration equals metadata.generation',
+      verificationTool: 'get_foundation_postgres_status',
+    };
   }
 
   const result = { action: 'owner-control-action', toolId, owner, target, accepted: true, response: redactProjection(response) };
@@ -6968,6 +7095,69 @@ async function foundationStatusRead(actor) {
   return projection;
 }
 
+function normalizeFoundationPostgresRequest(inputs) {
+  requireClosedOwnerInputs(inputs, [
+    'name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion',
+    'deletionPolicy', 'storageSize', 'storageClass', 'confirm', 'reason',
+  ]);
+  const name = requireOwnerActionId(inputs.name);
+  const namespace = requireOwnerActionId(inputs.namespace, OAA_ENV_NAMESPACES);
+  const alias = String(inputs.alias || '').trim();
+  if (!alias || alias.length > 160 || /[\u0000-\u001f\u007f]/.test(alias)) throw { code: 400, msg: 'alias must be 1..160 printable characters' };
+  const database = String(inputs.database || '').trim();
+  const ownerName = String(inputs.owner || '').trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_$]{0,62}$/.test(database)) throw { code: 400, msg: 'database is not a supported PostgreSQL identifier' };
+  if (!/^[A-Za-z_][A-Za-z0-9_$]{0,62}$/.test(ownerName)) throw { code: 400, msg: 'owner is not a supported PostgreSQL identifier' };
+  const plan = requireOwnerActionId(inputs.plan);
+  const postgresVersion = String(inputs.postgresVersion || '').trim();
+  if (!/^\d+(?:\.\d+)?$/.test(postgresVersion)) throw { code: 400, msg: 'postgresVersion must be an approved runtime version' };
+  const deletionPolicy = String(inputs.deletionPolicy || '');
+  if (!OAA_POSTGRES_DELETION_POLICIES.includes(deletionPolicy)) throw { code: 400, msg: 'deletionPolicy must be Retain or Delete' };
+  const storageSize = String(inputs.storageSize || '').trim();
+  const storageClass = String(inputs.storageClass || '').trim();
+  if (storageSize && !/^[0-9]+(?:Mi|Gi|Ti)$/.test(storageSize)) throw { code: 400, msg: 'storageSize must be a binary quantity such as 20Gi' };
+  if (storageClass) requireOwnerActionId(storageClass);
+  return {
+    name, namespace, alias, database, owner: ownerName, plan, postgresVersion, deletionPolicy,
+    ...(storageSize || storageClass ? { storage: { ...(storageSize ? { size: storageSize } : {}), ...(storageClass ? { storageClass } : {}) } } : {}),
+  };
+}
+
+function foundationPostgresConfirmation(request) {
+  return `create PostgreSQL cluster ${request.namespace}/${request.name} plan ${request.plan} version ${request.postgresVersion}`;
+}
+
+async function foundationPostgresStatusRead(actor) {
+  assertPermission(actor, 'oaa.system.read');
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/status`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch {
+    throw { code: 503, msg: 'PFSS PostgreSQL owner API is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `PFSS PostgreSQL owner HTTP ${response.status}` };
+  const projection = redactProjection(body);
+  audit(actor, 'foundation-postgres-status-read', 'PFSS/data.sql.postgres', 'ok', `${projection.claims?.length || 0} claims / ${projection.clusters?.length || 0} clusters`);
+  return projection;
+}
+
+async function foundationPostgresPlanRead(inputs, actor) {
+  assertPermission(actor, 'oaa.action.execute.high');
+  if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'PFSS PostgreSQL planning requires MFA assurance aal2' };
+  const request = normalizeFoundationPostgresRequest(inputs);
+  const projection = redactProjection(await fixedOwnerPost(
+    FOUNDATION_CONTROL_URL, '/api/foundation/oaa/postgres/plan', actor, request,
+    'PFSS PostgreSQL owner', 120000,
+  ));
+  audit(actor, 'foundation-postgres-plan', `PostgresClaim/${request.namespace}/${request.name}`, 'ok', `${request.plan}/${request.postgresVersion}`);
+  return projection;
+}
+
 async function executeAgentTool(name, args, actor, context = {}) {
   const input = args && typeof args === 'object' ? args : {};
   let result;
@@ -7070,6 +7260,14 @@ async function executeAgentTool(name, args, actor, context = {}) {
     case 'get_foundation_status':
       assertPermission(actor, 'oaa.system.read');
       result = await foundationStatusRead(actor);
+      break;
+    case 'get_foundation_postgres_status':
+      assertPermission(actor, 'oaa.system.read');
+      result = await foundationPostgresStatusRead(actor);
+      break;
+    case 'plan_foundation_postgres_cluster':
+      permissionCode = 'oaa.action.execute.high';
+      result = await foundationPostgresPlanRead(input, actor);
       break;
     case 'get_console_identity_status':
       permissionCode = 'console.identity.manage';
@@ -8371,6 +8569,15 @@ const server = http.createServer(async (req, res) => {
       const actor = await verifyAuthed(req);
       assertPermission(actor, 'oaa.system.read');
       return json(res, 200, await foundationStatusRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/foundation/postgres/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await foundationPostgresStatusRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/foundation/postgres/plan' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await foundationPostgresPlanRead(await readBody(req), actor));
     }
     if (url.pathname === '/api/oaa/tools/k8s/resources' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
