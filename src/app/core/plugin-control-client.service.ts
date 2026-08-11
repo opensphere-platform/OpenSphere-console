@@ -141,6 +141,7 @@ export class PluginControlClient {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason }),
     }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return (await r.json()).item; });
   }
+  /** Browser installs keep the same DUPA lifecycle gate; HttpService supplies CSRF and recent-AAL2 step-up. */
   install(image: string, reason: string, client: 'cli:os' | 'console:web' = 'console:web') {
     return this.http.request('/api/admin/extensions/install', {
       method: 'POST',
