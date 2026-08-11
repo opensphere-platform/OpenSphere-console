@@ -108,3 +108,11 @@ test('R2D2 reconcile evidence uses locale-independent bytewise ordering', () => 
   assert.match(sql, /string_agg\(node_id, E'\\n' ORDER BY node_id COLLATE "C"\)/);
   assert.match(sql, /p_completeness_digest IS DISTINCT FROM expected_digest/);
 });
+
+test('R2D2 relation monotonicity never dereferences a node-only record field', () => {
+  const migrationDir = path.join(here, 'migrations');
+  const sql = readFileSync(path.join(migrationDir, '0056_r2d2_relation_monotonicity.sql'), 'utf8');
+  assert.match(sql, /to_jsonb\(NEW\)->>'stream_sequence'/);
+  assert.match(sql, /TG_TABLE_NAME = 'resource_node'/);
+  assert.doesNotMatch(sql, /coalesce\(NEW\.stream_sequence/);
+});
