@@ -99,6 +99,15 @@ test('nginx mediates R2D2 credentials and keeps the opaque cookie out of the Gat
   assert.doesNotMatch(gatewayLocation, /proxy_set_header Authorization \$http_authorization;/);
 });
 
+test('nginx gives the authenticated R2D2 chat endpoint its bounded long-response window', () => {
+  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
+  const chatLocation = nginx.match(/location = \/api\/oaa\/chat \{[\s\S]*?\n    \}/)?.[0] || '';
+  assert.match(chatLocation, /auth_request \/_r2d2_authn;/);
+  assert.match(chatLocation, /proxy_read_timeout 120s;/);
+  assert.match(chatLocation, /proxy_set_header Cookie "";/);
+  assert.match(chatLocation, /proxy_set_header Authorization \$r2d2_authorization;/);
+});
+
 test('nginx keeps Engineering Remediation proposal writes on Console Backend', () => {
   const nginx = fs.readFileSync(path.resolve(__dirname, '../../nginx/default.conf.template'), 'utf8');
   const location = nginx.match(/location \^~ \/api\/oaa\/remediations\/ \{[\s\S]*?\n    \}/)?.[0] || '';

@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from './carbon-icon';
 import { AuthService } from '../core/auth.service';
-import { HttpService } from '../core/http.service';
+import { HttpRequestTimeoutError, HttpService } from '../core/http.service';
 import Send16 from '@carbon/icons/es/send/16';
 import Close16 from '@carbon/icons/es/close/16';
 import Restart16 from '@carbon/icons/es/restart/16';
@@ -77,6 +77,8 @@ interface OaaSession {
   messages: OaaMessage[];
   updatedAt: string;
 }
+
+const R2D2_CHAT_TIMEOUT_MS = 120000;
 
 /**
  * os-oaa-agent — Console-native global OAA(OpenSphere AI Agent) 우측 도크 패널.
@@ -710,6 +712,7 @@ export class OsOaaAgent implements OnDestroy {
           sessionId: this.currentId(),
         }),
         signal: request.signal,
+        timeoutMs: R2D2_CHAT_TIMEOUT_MS,
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -735,7 +738,11 @@ export class OsOaaAgent implements OnDestroy {
       }]);
       this.saveCurrentSession();
     } catch (e: any) {
-      if (e?.name !== 'AbortError') this.error.set('R2D2 request failed: ' + e);
+      if (e instanceof HttpRequestTimeoutError) {
+        this.error.set('R2D2 응답 대기 시간이 초과되었습니다. 질문을 다시 시도하거나 운영 범위를 줄여 주세요.');
+      } else if (e?.name !== 'AbortError') {
+        this.error.set('R2D2 request failed: ' + e);
+      }
     } finally {
       if (this.activeRequest === request) this.activeRequest = null;
       this.busy.set(false);

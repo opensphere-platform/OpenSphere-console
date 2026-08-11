@@ -3,6 +3,7 @@ const fs = require('fs');
 const { createHash, randomUUID } = require('crypto');
 const { Pool } = require('pg');
 const { normalizeProviderToolCalls } = require('./provider-tool-calls');
+const { requiresLiveAgentTools } = require('./chat-runtime-policy');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
 const {
@@ -6061,7 +6062,10 @@ function actionSuggestionsSystemMessage(actions) {
   return untrustedEvidenceMessage('deterministic-action-suggestions', items, 7000);
 }
 
-const AGENT_MAX_TOOL_ROUNDS = 6;
+const AGENT_MAX_TOOL_ROUNDS = 4;
+const AGENT_MAX_TOOL_CALLS = 12;
+const AGENT_MAX_TOTAL_TOKENS = 40000;
+const AGENT_TOOL_RESULT_MAX_CHARS = 8000;
 
 function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisOwnerCapabilities = new Set(), cephOwnerCapabilities = new Set(), recoveryOwnerCapabilities = new Set()) {
   const tools = [];
@@ -6188,7 +6192,7 @@ function redactToolText(value) {
 }
 
 function toolResultContent(result) {
-  return untrustedToolEvidenceContent(redactToolText(JSON.stringify(result)), 18000);
+  return untrustedToolEvidenceContent(redactToolText(JSON.stringify(result)), AGENT_TOOL_RESULT_MAX_CHARS);
 }
 
 async function backendGet(path, actor) {
@@ -7241,10 +7245,14 @@ async function chatCompletion(body, actor) {
   }
   messages = [...systemMessages, ...baseMessages, ...evidenceMessages];
   const maxTokens = Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024));
-  const [observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
-    oaaObservabilityCapabilities(actor), oaaHisOwnerCapabilities(actor), oaaCephOwnerCapabilities(actor), oaaRecoveryOwnerCapabilities(actor),
-  ]);
-  const tools = agentToolDefinitions(actor, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities);
+  const liveToolMode = requiresLiveAgentTools(userContent);
+  let tools = [];
+  if (liveToolMode) {
+    const [observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
+      oaaObservabilityCapabilities(actor), oaaHisOwnerCapabilities(actor), oaaCephOwnerCapabilities(actor), oaaRecoveryOwnerCapabilities(actor),
+    ]);
+    tools = agentToolDefinitions(actor, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities);
+  }
   const usage = normalizeProviderUsage(null);
   let usageRecorded = true;
   let data = {};
@@ -7292,7 +7300,8 @@ async function chatCompletion(body, actor) {
       tool_calls: toolCalls,
     });
     let freshToolCalls = 0;
-    for (const call of toolCalls.slice(0, 8)) {
+    const remainingToolBudget = Math.max(0, AGENT_MAX_TOOL_CALLS - toolTrace.length);
+    for (const call of toolCalls.slice(0, Math.min(8, remainingToolBudget))) {
       const toolName = String(call?.function?.name || '');
       let args = {};
       let output;
@@ -7362,6 +7371,10 @@ async function chatCompletion(body, actor) {
       audit(actor, 'agent-tool-loop-deduplicated', key.id, 'ok', `round=${rounds}; repeated_calls=${toolCalls.length}`);
       break;
     }
+    if (toolTrace.length >= AGENT_MAX_TOOL_CALLS || usage.totalTokens >= AGENT_MAX_TOTAL_TOKENS) {
+      audit(actor, 'agent-tool-loop-budget', key.id, 'ok', `round=${rounds}; tool_calls=${toolTrace.length}; total_tokens=${usage.totalTokens}`);
+      break;
+    }
   }
 
   if (!content) {
@@ -7402,7 +7415,7 @@ async function chatCompletion(body, actor) {
   }
   const latencyMs = Date.now() - started;
   if (agentRunRecorded) await finishAgentRun(requestId, 'completed', toolTrace.length);
-  audit(actor, 'chat-completion', key.id, 'ok', `${key.provider}/${model}; agent_rounds=${rounds}; tool_calls=${toolTrace.length}; total_tokens=${usage.totalTokens}; usage_recorded=${usageRecorded}`);
+  audit(actor, 'chat-completion', key.id, 'ok', `${key.provider}/${model}; tool_mode=${liveToolMode ? 'live' : 'knowledge'}; agent_rounds=${rounds}; tool_calls=${toolTrace.length}; total_tokens=${usage.totalTokens}; usage_recorded=${usageRecorded}`);
   return {
     requestId,
     keyId: key.id,
@@ -7413,9 +7426,11 @@ async function chatCompletion(body, actor) {
     usageRecorded,
     latencyMs,
     agent: {
-      mode: 'permission-filtered-read-tool-loop',
+      mode: liveToolMode ? 'live-operational-tools' : 'knowledge-only',
       rounds,
       maxToolRounds: AGENT_MAX_TOOL_ROUNDS,
+      maxToolCalls: AGENT_MAX_TOOL_CALLS,
+      maxTotalTokens: AGENT_MAX_TOTAL_TOKENS,
       toolsAvailable: tools.map((tool) => tool.function.name),
       toolCalls: toolTrace,
       mutationsRequireExplicitCommand: true,

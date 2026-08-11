@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import { requestWithStepUp } from './http-step-up.ts';
 
@@ -45,4 +47,14 @@ test('unauthenticated 428 is not retried', async () => {
   );
   assert.equal(response.status, 428);
   assert.equal(attempts, 1);
+});
+
+test('R2D2 chat owns a bounded long-response timeout and exposes timeout failures', () => {
+  const httpSource = fs.readFileSync(path.join(import.meta.dirname, 'http.service.ts'), 'utf8');
+  const agentSource = fs.readFileSync(path.join(import.meta.dirname, '..', 'os', 'os-oaa-agent.ts'), 'utf8');
+  assert.match(httpSource, /export class HttpRequestTimeoutError/);
+  assert.match(httpSource, /timeoutMs\?: number/);
+  assert.match(agentSource, /R2D2_CHAT_TIMEOUT_MS = 120000/);
+  assert.match(agentSource, /timeoutMs: R2D2_CHAT_TIMEOUT_MS/);
+  assert.match(agentSource, /e instanceof HttpRequestTimeoutError/);
 });

@@ -90,8 +90,12 @@ test('runtime inventory is broad but sanitizes configuration values', () => {
 });
 
 test('agent automatic loop exposes reads while mutations remain governed', () => {
-  assert.match(gateway, /AGENT_MAX_TOOL_ROUNDS = 6/);
-  assert.match(gateway, /permission-filtered-read-tool-loop/);
+  assert.match(gateway, /AGENT_MAX_TOOL_ROUNDS = 4/);
+  assert.match(gateway, /AGENT_MAX_TOOL_CALLS = 12/);
+  assert.match(gateway, /AGENT_MAX_TOTAL_TOKENS = 40000/);
+  assert.match(gateway, /requiresLiveAgentTools\(userContent\)/);
+  assert.match(gateway, /live-operational-tools/);
+  assert.match(gateway, /knowledge-only/);
   assert.match(gateway, /mutationsRequireExplicitCommand: true/);
   assert.match(gateway, /const OAA_MUTATION_NAMESPACES/);
   assert.match(gateway, /mutationNamespaces: OAA_MUTATION_NAMESPACES/);

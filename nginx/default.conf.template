@@ -142,6 +142,22 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    location = /api/oaa/chat {
+        set $r2d2_original_method $request_method;
+        set $r2d2_original_uri $request_uri;
+        auth_request /_r2d2_authn;
+        auth_request_set $r2d2_authorization $upstream_http_x_os_r2d2_authorization;
+        set $oaa_gateway_upstream opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local;
+        proxy_pass http://$oaa_gateway_upstream:8080$request_uri;
+        proxy_read_timeout 120s;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization $r2d2_authorization;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
     location /api/oaa/ {
         set $r2d2_original_method $request_method;
         set $r2d2_original_uri $request_uri;

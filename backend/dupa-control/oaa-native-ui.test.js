@@ -44,9 +44,10 @@ test('os-oaa-agent.ts calls only the same-origin /api/oaa/chat endpoint through 
   const agent = read('src', 'app', 'os', 'os-oaa-agent.ts');
   const http = read('src', 'app', 'core', 'http.service.ts');
 
-  assert.match(agent, /import\s*\{\s*HttpService\s*\}\s*from\s*'\.\.\/core\/http\.service'/);
+  assert.match(agent, /import\s*\{\s*HttpRequestTimeoutError,\s*HttpService\s*\}\s*from\s*'\.\.\/core\/http\.service'/);
   assert.match(agent, /private http = inject\(HttpService\)/);
   assert.match(agent, /this\.http\.request\('\/api\/oaa\/chat',/);
+  assert.match(agent, /timeoutMs:\s*R2D2_CHAT_TIMEOUT_MS/);
   assert.doesNotMatch(agent, /authorization:\s*['"`]Bearer/i);
   // The component owns no raw fetch call; the shared policy is the only network boundary.
   const fetchCalls = agent.match(/fetch\(/g) || [];

@@ -4,14 +4,28 @@ import { requestWithStepUp } from './http-step-up';
 
 const REQUEST_TIMEOUT_MS = 15000;
 
+export interface OpenSphereRequestInit extends RequestInit {
+  timeoutMs?: number;
+}
+
+export class HttpRequestTimeoutError extends Error {
+  override readonly name = 'HttpRequestTimeoutError';
+
+  constructor(readonly timeoutMs: number) {
+    super(`request timed out after ${timeoutMs}ms`);
+  }
+}
+
 @Injectable({ providedIn: 'root' })
 export class HttpService {
   private readonly auth = inject(AuthService);
   readonly reauthRequired = signal(false);
 
-  async request(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  async request(input: RequestInfo | URL, init: OpenSphereRequestInit = {}): Promise<Response> {
+    const { timeoutMs: requestedTimeoutMs, ...requestInit } = init;
+    const timeoutMs = Math.max(1000, Math.min(180000, Number(requestedTimeoutMs ?? REQUEST_TIMEOUT_MS) || REQUEST_TIMEOUT_MS));
     const target = this.sameOrigin(input);
-    const headers = new Headers(input instanceof Request ? input.headers : init.headers);
+    const headers = new Headers(input instanceof Request ? input.headers : requestInit.headers);
     headers.delete('X-OpenSphere-User');
     headers.delete('X-OpenSphere-Actor');
 		headers.delete('X-OS-Id-Token');
@@ -20,7 +34,7 @@ export class HttpService {
 		if (!correlationId || !/^[A-Za-z0-9._:-]{1,128}$/.test(correlationId)) {
 			headers.set('X-OS-Correlation-ID', crypto.randomUUID());
 		}
-		const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+    const method = String(requestInit.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
 		if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers.has('X-OS-Idempotency-Key')) {
 			headers.set('X-OS-Idempotency-Key', crypto.randomUUID());
 		}
@@ -30,16 +44,27 @@ export class HttpService {
     }
     const fetchOnce = async (): Promise<Response> => {
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-      if (init.signal) {
-        if (init.signal.aborted) controller.abort();
-        else init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+      let timedOut = false;
+      const abortFromCaller = () => controller.abort();
+      const timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+      if (requestInit.signal) {
+        if (requestInit.signal.aborted) controller.abort();
+        else requestInit.signal.addEventListener('abort', abortFromCaller, { once: true });
       }
       try {
         const attemptTarget = target instanceof Request ? target.clone() : target;
-        return await fetch(attemptTarget, { ...init, headers, signal: controller.signal });
+        return await fetch(attemptTarget, { ...requestInit, headers, signal: controller.signal });
+      } catch (error) {
+        if (timedOut && (error as { name?: string })?.name === 'AbortError') {
+          throw new HttpRequestTimeoutError(timeoutMs);
+        }
+        throw error;
       } finally {
         window.clearTimeout(timeout);
+        requestInit.signal?.removeEventListener('abort', abortFromCaller);
       }
     };
 
@@ -60,7 +85,7 @@ export class HttpService {
     return response;
   }
 
-  async json<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
+  async json<T>(input: RequestInfo | URL, init: OpenSphereRequestInit = {}): Promise<T> {
     const response = await this.request(input, init);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json() as Promise<T>;
