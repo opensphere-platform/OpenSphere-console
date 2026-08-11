@@ -1152,6 +1152,20 @@ function builtInKnowledgeDocs() {
     {
       namespace: 'opensphere',
       sourceType: 'builtin',
+      sourceId: 'pfss-product-boundary',
+      title: 'PFSS and PFS Product Boundary',
+      version: '2026-08-11',
+      metadata: { kind: 'platform-foundation', authorityTier: 1 },
+      authorityTier: 1,
+      content: [
+        'PFSS는 OpenSphere의 Platform Foundation Service Stack 제품·구현·운영 범위를 가리킨다. Constitution의 공식 Service Stack 약자는 PFS이며, PFSS는 동일한 PFS의 전체 구현·운영 범위를 강조하는 표현이지 별도의 네 번째 Service Stack이 아니다.',
+        'PFSS는 foundation subShell과 control plane 아래에서 domain service와 perspective engine이 공통으로 소비하는 identity, data, communication, AI substrate, observability, backup/restore capability를 제공한다. 각 PFSS module은 독립 extension과 owner 경계를 유지한다.',
+        'PFSS / data.sql.postgres는 PostgreSQL domain module이다. PostgresClaim, PostgresRuntimeCatalog와 typed owner API가 PostgreSQL 의미, profile, version, extension, backup, 상태와 완료 조건의 권위이며, R2D2는 이 owner projection을 통해 조회·계획·승인된 관리를 수행한다. StackGres와 Crossplane은 owner 내부 realization 세부이며 R2D2가 직접 제어하는 정본이 아니다.',
+      ].join('\n\n'),
+    },
+    {
+      namespace: 'opensphere',
+      sourceType: 'builtin',
       sourceId: 'workspace-policy',
       title: 'OpenSphere Workspace Policy Bands',
       version: '2026-07-04',
@@ -1292,18 +1306,23 @@ async function seedBuiltinKnowledge(force = false, actor = null) {
   const pool = getPgPool();
   if (!pool) return { seeded: false, reason: 'postgres not configured' };
   if (pgSeedReady && !force) return { seeded: false, reason: 'already ready' };
-  const count = await pool.query("SELECT count(*)::int AS n FROM oaa_knowledge_documents WHERE namespace = 'opensphere' AND source_type = 'builtin'");
-  if (count.rows[0].n > 0 && !force) {
+  const docs = builtInKnowledgeDocs();
+  const current = await pool.query("SELECT source_id, content_hash FROM oaa_knowledge_documents WHERE namespace = 'opensphere' AND source_type = 'builtin'");
+  const currentHashes = new Map(current.rows.map((row) => [row.source_id, row.content_hash]));
+  const pending = force ? docs : docs.filter((doc) => (
+    currentHashes.get(doc.sourceId) !== createHash('sha256').update(doc.content).digest('hex')
+  ));
+  if (!pending.length) {
     pgSeedReady = true;
     return { seeded: false, reason: 'builtin exists' };
   }
   let chunks = 0;
-  for (const doc of builtInKnowledgeDocs()) {
+  for (const doc of pending) {
     const out = await upsertKnowledgeDocument({ ...doc, allowLexicalFallback: true }, actor);
     chunks += out.chunks;
   }
   pgSeedReady = true;
-  return { seeded: true, documents: builtInKnowledgeDocs().length, chunks };
+  return { seeded: true, documents: pending.length, chunks };
 }
 
 async function knowledgeStats() {

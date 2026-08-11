@@ -62,6 +62,15 @@ test('lexical retrieval separates canonical identifiers from Korean particles', 
   assert.equal(lexicalKnowledgeQuery('플랫폼의 구조를 설명해줘'), '플랫폼의 구조를 설명해줘');
 });
 
+test('built-in knowledge defines PFSS without inventing a fourth Service Stack', () => {
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(server, /sourceId: 'pfss-product-boundary'/);
+  assert.match(server, /PFSS는 OpenSphere의 Platform Foundation Service Stack/);
+  assert.match(server, /별도의 네 번째 Service Stack이 아니다/);
+  assert.match(server, /PFSS \/ data\.sql\.postgres는 PostgreSQL domain module/);
+  assert.match(server, /const pending = force \? docs : docs\.filter/);
+});
+
 test('live tool loop has hard round, call, token, and evidence budgets', () => {
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
