@@ -189,13 +189,16 @@ class OperationalGraphStore {
       const completeSources = (inventory.sources || [{ source: 'kubernetes', configured: true, snapshotComplete: true }])
         .filter((source) => source.configured !== false && source.snapshotComplete === true)
         .map((source) => String(source.source));
-      await client.query(`UPDATE oaa.resource_node SET deleted_at=$4,epistemic_state='unknown',revision=revision+1
+      await client.query(`UPDATE oaa.resource_node SET deleted_at=$4,epistemic_state='unknown',revision=revision+1,
+          fencing_epoch=$3,collection_epoch=$6,reconcile_session_id=$2,snapshot_complete=true,observed_at=$4
         WHERE cluster_id=$1 AND authority=ANY($5::text[]) AND deleted_at IS NULL AND reconcile_session_id<>$2
-          AND fencing_epoch<=$3`, [this.clusterId, reconcileSessionId, fencingEpoch, observedAt, completeSources]);
+          AND fencing_epoch<=$3`, [this.clusterId, reconcileSessionId, fencingEpoch, observedAt, completeSources, collectionEpoch]);
       const relationSnapshotComplete = (inventory.sources || []).every((source) => source.configured === false || source.snapshotComplete === true);
       if (relationSnapshotComplete) {
-        await client.query(`UPDATE oaa.resource_relation SET deleted_at=$4
-          WHERE cluster_id=$1 AND deleted_at IS NULL AND reconcile_session_id<>$2 AND fencing_epoch<=$3`, [this.clusterId, reconcileSessionId, fencingEpoch, observedAt]);
+        await client.query(`UPDATE oaa.resource_relation SET deleted_at=$4,
+            fencing_epoch=$3,collection_epoch=$5,reconcile_session_id=$2,observed_at=$4
+          WHERE cluster_id=$1 AND deleted_at IS NULL AND reconcile_session_id<>$2 AND fencing_epoch<=$3`,
+        [this.clusterId, reconcileSessionId, fencingEpoch, observedAt, collectionEpoch]);
       }
       const authorityRevision = String(inventory.authorityRevision || '');
       const completenessDigest = reconcileCompletenessDigest({

@@ -2,17 +2,26 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   kubernetesMicroTime, leaseBody, leaseExpired, KubernetesLeaseElector, correlationSignals,
   projectNodeForActor, OperationalQueryService, OperationalIntelligenceRuntime,
   reconcileCompletenessDigest,
 } = require('./r2d2-operational-runtime');
 
+const runtimeSource = fs.readFileSync(path.join(__dirname, 'r2d2-operational-runtime.js'), 'utf8');
+
 test('Kubernetes Lease timestamps use the MicroTime wire format', () => {
   assert.equal(kubernetesMicroTime('2026-08-11T06:19:32.797Z'), '2026-08-11T06:19:32.797000Z');
   assert.equal(kubernetesMicroTime('2026-08-11T06:19:32Z'), '2026-08-11T06:19:32.000000Z');
   assert.equal(leaseBody('ns', 'r2d2', 'pod-a', '2026-08-11T06:19:32.797Z', 30).spec.renewTime,
     '2026-08-11T06:19:32.797000Z');
+});
+
+test('tombstones advance to the current fence and collection epoch', () => {
+  assert.match(runtimeSource, /resource_node SET deleted_at=\$4[\s\S]*fencing_epoch=\$3,collection_epoch=\$6/);
+  assert.match(runtimeSource, /resource_relation SET deleted_at=\$4[\s\S]*fencing_epoch=\$3,collection_epoch=\$5/);
 });
 
 test('reconcile completeness evidence is deterministic and node-set bound', () => {
