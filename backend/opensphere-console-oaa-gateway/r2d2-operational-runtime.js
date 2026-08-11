@@ -13,14 +13,23 @@ const { selfModel } = require('./r2d2-operational-resilience');
 const RULE_REVISION = 'r2d2-correlation-v1';
 const DEFAULT_CLUSTER = 'local';
 
+function kubernetesMicroTime(value) {
+  const timestamp = String(value || '');
+  if (/\.\d{6}Z$/u.test(timestamp)) return timestamp;
+  if (/\.\d{3}Z$/u.test(timestamp)) return timestamp.replace(/(\.\d{3})Z$/u, '$1' + '000Z');
+  if (/Z$/u.test(timestamp)) return timestamp.replace(/Z$/u, '.000000Z');
+  throw new Error('Kubernetes Lease timestamp must be UTC RFC3339');
+}
+
 function leaseBody(namespace, name, identity, now, durationSeconds, current = null) {
+  const leaseTime = kubernetesMicroTime(now);
   const transitions = Number(current?.spec?.leaseTransitions || 0) + (current?.spec?.holderIdentity && current.spec.holderIdentity !== identity ? 1 : 0);
   return {
     apiVersion: 'coordination.k8s.io/v1', kind: 'Lease',
     metadata: { name, namespace, ...(current?.metadata?.resourceVersion ? { resourceVersion: current.metadata.resourceVersion } : {}) },
     spec: {
       holderIdentity: identity, leaseDurationSeconds: durationSeconds,
-      acquireTime: current?.spec?.acquireTime || now, renewTime: now, leaseTransitions: transitions,
+      acquireTime: current?.spec?.acquireTime || leaseTime, renewTime: leaseTime, leaseTransitions: transitions,
     },
   };
 }
@@ -562,7 +571,7 @@ class OperationalIntelligenceRuntime {
 }
 
 module.exports = {
-  RULE_REVISION, leaseBody, leaseExpired, KubernetesLeaseElector, OperationalGraphStore,
+  RULE_REVISION, kubernetesMicroTime, leaseBody, leaseExpired, KubernetesLeaseElector, OperationalGraphStore,
   correlationSignals, IncidentRuntime, projectNodeForActor, OperationalQueryService,
   OperationalIntelligenceRuntime, graphCoverage, reconcileCompletenessDigest,
 };

@@ -3,10 +3,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  leaseBody, leaseExpired, KubernetesLeaseElector, correlationSignals,
+  kubernetesMicroTime, leaseBody, leaseExpired, KubernetesLeaseElector, correlationSignals,
   projectNodeForActor, OperationalQueryService, OperationalIntelligenceRuntime,
   reconcileCompletenessDigest,
 } = require('./r2d2-operational-runtime');
+
+test('Kubernetes Lease timestamps use the MicroTime wire format', () => {
+  assert.equal(kubernetesMicroTime('2026-08-11T06:19:32.797Z'), '2026-08-11T06:19:32.797000Z');
+  assert.equal(kubernetesMicroTime('2026-08-11T06:19:32Z'), '2026-08-11T06:19:32.000000Z');
+  assert.equal(leaseBody('ns', 'r2d2', 'pod-a', '2026-08-11T06:19:32.797Z', 30).spec.renewTime,
+    '2026-08-11T06:19:32.797000Z');
+});
 
 test('reconcile completeness evidence is deterministic and node-set bound', () => {
   const input = {

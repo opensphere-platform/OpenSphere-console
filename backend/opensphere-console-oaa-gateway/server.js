@@ -7894,7 +7894,8 @@ async function initializeOperationalIntelligence() {
     remediationEnabled: true, r3Available: false,
     elector, store, incidents, collect: collectRuntimeInventory,
   });
-  await r2d2Runtime.tick().catch((error) => console.warn('[r2d2-observer] initial tick failed:', error.message || error));
+  const initial = await r2d2Runtime.tick().catch((error) => ({ failed: true, reason: error.message || String(error) }));
+  if (initial?.failed || initial?.skipped) console.warn('[r2d2-observer] initial tick did not acquire:', initial.reason || 'unknown');
   r2d2Timer = setInterval(() => {
     void r2d2Runtime.tick().catch((error) => console.warn('[r2d2-observer] tick failed:', error.message || error));
   }, R2D2_OBSERVER_INTERVAL_MS);
