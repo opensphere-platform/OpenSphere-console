@@ -22,7 +22,7 @@ test('Console management exposes Supabase, Gitea and HIS as distinct authorities
   assert.doesNotMatch(layout, /routerLink="\/manage\/backbone"/);
 });
 
-test('Console management uses Clarity mixed tree navigation with direct overview and Extensions links', () => {
+test('Console management uses Clarity mixed tree navigation with direct overview, Extensions and R2D2 links', () => {
   const routes = read('src', 'app', 'app.routes.ts');
   const layout = read('src', 'app', 'pages', 'admin-layout.ts');
   const overview = read('src', 'app', 'pages', 'admin-overview.ts');
@@ -35,11 +35,16 @@ test('Console management uses Clarity mixed tree navigation with direct overview
     layout,
     /extensionItem = \{[\s\S]{0,120}label: 'Extensions',[\s\S]{0,80}route: '\/manage\/extensions'/,
   );
+  assert.match(
+    layout,
+    /r2d2Item = \{[\s\S]{0,120}label: 'R2D2',[\s\S]{0,80}route: '\/manage\/oaa'/,
+  );
   const treeGroups = layout.slice(
     layout.indexOf('readonly groups:'),
     layout.indexOf('constructor()'),
   );
   assert.doesNotMatch(treeGroups, /route: '\/manage\/extensions'/);
+  assert.doesNotMatch(treeGroups, /route: '\/manage\/oaa'/);
   assert.match(overview, /title="콘솔 관리" tag="Overview · Core Admin"/);
   assert.match(overview, /routerLink="\/manage\/extensions"/);
 });

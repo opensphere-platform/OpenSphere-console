@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   kubernetesMicroTime, leaseBody, leaseExpired, KubernetesLeaseElector, correlationSignals,
-  projectNodeForActor, OperationalQueryService, OperationalIntelligenceRuntime,
+  incidentRowToState, projectNodeForActor, OperationalQueryService, OperationalIntelligenceRuntime,
   reconcileCompletenessDigest,
 } = require('./r2d2-operational-runtime');
 
@@ -65,6 +65,20 @@ test('correlation rules detect workload, crash loop and endpoint loss using auth
   const signals = correlationSignals(nodes, { configured: true, epistemic_state: 'known', snapshot_complete: true, last_complete_at: new Date().toISOString() });
   assert.deepEqual(signals.map((s) => s.incidentType), ['rollout_not_progressing', 'crash_loop', 'endpoint_unavailable']);
   assert.ok(signals.every((s) => s.causeStatus === 'confirmed'));
+});
+
+test('persisted incident rows preserve cause status across runtime transitions', () => {
+  const state = incidentRowToState({
+    incident_id: 'incident-1', transition_sequence: 4, status: 'active', severity: 'high',
+    confidence: 0.9, cause_status: 'confirmed', cause_code: 'workload-not-ready',
+    first_detected_at: '2026-08-11T00:00:00Z', last_observed_at: '2026-08-11T00:01:00Z',
+    recovering_at: null,
+  });
+  assert.equal(state.incidentId, 'incident-1');
+  assert.equal(state.transitionSequence, 4);
+  assert.equal(state.causeStatus, 'confirmed');
+  assert.equal(state.causeCode, 'workload-not-ready');
+  assert.equal(state.lastObservedAt, '2026-08-11T00:01:00Z');
 });
 
 test('healthy authority facts emit clearing signals and exact digest drift remains independent', () => {

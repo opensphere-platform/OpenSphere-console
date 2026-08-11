@@ -25,7 +25,7 @@ interface AdminGroup {
 /**
  * AdminLayout — "콘솔 관리" 섹션 레이아웃 (Model A: 1단 진입 → 2단 보조메뉴 + 콘텐츠).
  * 2단 메뉴 표준 = OpenSphere AI Hub 방식(전역 .cm-nav: Clarity clr-vertical-nav, 흰 배경, 왼쪽 blue bar active).
- * /manage 개요와 Extensions는 독립 링크, 나머지는 책임 영역별 Clarity tree로 묶는다.
+ * /manage 개요, Extensions, R2D2는 독립 링크, 나머지는 책임 영역별 Clarity tree로 묶는다.
  * 아이콘은 Clarity Vertical Nav 규칙에 따라 최상위 항목에만 표시한다.
  */
 @Component({
@@ -59,6 +59,17 @@ interface AdminGroup {
         >
           <os-cicon clrVerticalNavIcon [icon]="extensionItem.icon" [size]="16" />{{
             extensionItem.label
+          }}
+        </a>
+
+        <a
+          clrVerticalNavLink
+          [routerLink]="r2d2Item.route"
+          routerLinkActive="active"
+          ariaCurrentWhenActive="page"
+        >
+          <os-cicon clrVerticalNavIcon [icon]="r2d2Item.icon" [size]="16" />{{
+            r2d2Item.label
           }}
         </a>
 
@@ -139,6 +150,11 @@ export class AdminLayout {
     route: '/manage/extensions',
     icon: Application16,
   };
+  readonly r2d2Item = {
+    label: 'R2D2',
+    route: '/manage/oaa',
+    icon: Activity16,
+  };
   readonly expanded = signal<Record<string, boolean>>({});
   readonly groups: AdminGroup[] = [
     {
@@ -178,7 +194,6 @@ export class AdminLayout {
       items: [
         { label: 'Control Plane', route: '/manage/platform-control' },
         { label: 'Platform Release', route: '/manage/platform-release' },
-        { label: 'R2D2', route: '/manage/oaa' },
         { label: 'HIS Observability', route: '/manage/observability' },
       ],
     },

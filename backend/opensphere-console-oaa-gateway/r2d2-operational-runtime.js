@@ -293,6 +293,22 @@ function correlationSignals(nodes, sourceHealth, now = new Date().toISOString())
   return signals;
 }
 
+function incidentRowToState(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    incidentId: row.incident_id,
+    transitionSequence: row.transition_sequence,
+    causeStatus: row.cause_status,
+    causeCode: row.cause_code,
+    firstDetectedAt: row.first_detected_at,
+    lastObservedAt: row.last_observed_at,
+    recoveringAt: row.recovering_at,
+    suspendedAt: row.suspended_at,
+    resolvedAt: row.resolved_at,
+  };
+}
+
 class IncidentRuntime {
   constructor(pool, options = {}) { this.pool = pool; this.clusterId = options.clusterId || DEFAULT_CLUSTER; }
 
@@ -327,10 +343,10 @@ class IncidentRuntime {
       for (const signal of signals) {
         const fingerprint = incidentFingerprint(signal);
         const current = byFingerprint.get(fingerprint) || null;
-        const next = deriveIncidentTransition(current && {
-          ...current, incidentId: current.incident_id, transitionSequence: current.transition_sequence,
-          lastObservedAt: current.last_observed_at, recoveringAt: current.recovering_at,
-        }, signal, { activationCount: 1, resolveStableMs: 30000 });
+        const next = deriveIncidentTransition(incidentRowToState(current), signal, {
+          activationCount: 1,
+          resolveStableMs: 30000,
+        });
         const impacts = boundedImpactTraversal(signal.primaryNodeId, relationResult.rows.map((r) => ({
           fromNodeId: r.from_node_id, toNodeId: r.to_node_id, relationType: r.relation_type,
         })), { maxDepth: 8, maxNodes: 1000 }).impacts;
@@ -575,6 +591,6 @@ class OperationalIntelligenceRuntime {
 
 module.exports = {
   RULE_REVISION, kubernetesMicroTime, leaseBody, leaseExpired, KubernetesLeaseElector, OperationalGraphStore,
-  correlationSignals, IncidentRuntime, projectNodeForActor, OperationalQueryService,
+  correlationSignals, incidentRowToState, IncidentRuntime, projectNodeForActor, OperationalQueryService,
   OperationalIntelligenceRuntime, graphCoverage, reconcileCompletenessDigest,
 };
