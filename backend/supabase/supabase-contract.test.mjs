@@ -93,3 +93,11 @@ test('component-scoped migration runner mutates schema only and never rolls work
   assert.doesNotMatch(runner, /rollout\s+(?:restart|status)/i);
   assert.doesNotMatch(runner, /kubectl[^\n]*(?:apply|patch|delete)/i);
 });
+
+test('R2D2 activation grants the query role only read access to observer fencing', () => {
+  const migrationDir = path.join(here, 'migrations');
+  const sql = readFileSync(path.join(migrationDir, '0054_r2d2_activation_runtime_fixes.sql'), 'utf8');
+  assert.match(sql, /GRANT SELECT ON oaa\.observer_fence TO opensphere_oaa_gateway, opensphere_oaa_api;/);
+  assert.match(sql, /FOR SELECT TO opensphere_oaa_gateway, opensphere_oaa_api USING \(true\)/);
+  assert.doesNotMatch(sql, /GRANT (?:INSERT|UPDATE|DELETE|ALL)/);
+});

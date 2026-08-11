@@ -7951,8 +7951,8 @@ async function runR2d2Maintenance() {
   await pool.query(`INSERT INTO oaa.slo_sample(sampled_at,metric,value,labels)
     SELECT clock_timestamp(),'coverage_ratio',
       CASE WHEN count(*)=0 THEN 0 ELSE count(*) FILTER (WHERE configured AND snapshot_complete AND epistemic_state='known')::numeric/count(*) END,
-      jsonb_build_object('clusterId',$1)
-    FROM oaa.source_health WHERE cluster_id=$1`, [R2D2_CLUSTER_ID]);
+      jsonb_build_object('clusterId',$1::text)
+    FROM oaa.source_health WHERE cluster_id=$1::text`, [R2D2_CLUSTER_ID]);
 }
 
 async function initializeR2d2Maintenance() {

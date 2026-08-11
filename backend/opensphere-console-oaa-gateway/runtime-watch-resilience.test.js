@@ -29,3 +29,8 @@ test('OAA evidence context declares projection source and freshness without syst
   assert.match(source, /kubernetes-partial/);
   assert.match(source, /return untrustedEvidenceMessage\('live-environment-snapshot', snapshot/);
 });
+
+test('maintenance binds the cluster identifier with an explicit PostgreSQL type', () => {
+  assert.match(source, /jsonb_build_object\('clusterId',\$1::text\)/);
+  assert.match(source, /FROM oaa\.source_health WHERE cluster_id=\$1::text/);
+});
