@@ -209,6 +209,20 @@ GET https://logos.opl.io.kr/i/{shortname}
 폰트는 IBM Plex Sans, IBM Plex Sans KR, IBM Plex Mono로 통일한다. display는 weight 300, body는
 weight 400과 0.16px tracking을 기본으로 한다.
 
+Main Shell은 `src/ui-contract.scss`에서 위 역할을 `opensphere.ui/1.0` 계약으로 제공한다. 표의 각
+`--os-type-{role}`은 `font` shorthand로 사용할 수 있는 합성 토큰이며, Shadow DOM을 통과해 정밀하게
+상속할 수 있도록 다음 원자 토큰도 함께 제공해야 한다.
+
+```text
+--os-type-{role}-size
+--os-type-{role}-weight
+--os-type-{role}-line-height
+--os-type-{role}-tracking
+```
+
+Main Shell이 값을 소유하고, Design Kit은 이 원자 토큰을 의미 역할에 매핑하며 standalone fallback만
+제공한다. subShell과 plugin은 값을 다시 선언하지 않고 상속된 역할을 소비한다.
+
 ### 6.3 간격·기하·계층
 
 - 4px grid: `--os-2`=4, `--os-3`=8, `--os-4`=12, `--os-5`=16,

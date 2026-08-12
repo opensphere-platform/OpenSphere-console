@@ -1,0 +1,47 @@
+/* OpenSphere Main Shell UI contract v1
+ *
+ * Main Shell owns the values. Design Kit maps these inherited custom
+ * properties to semantic roles, and subShell/plugin code consumes the roles.
+ * Keep this file free of component selectors so the contract crosses Shadow
+ * DOM boundaries through CSS custom-property inheritance only.
+ */
+:root {
+  --os-ui-contract-id: "opensphere.ui";
+  --os-ui-contract-version: "1.0";
+
+  --os-type-display-size: 42px;
+  --os-type-display-weight: 300;
+  --os-type-display-line-height: 1.2;
+  --os-type-display-tracking: 0;
+  --os-type-display: var(--os-type-display-weight) var(--os-type-display-size) / var(--os-type-display-line-height) var(--os-font);
+
+  --os-type-headline-size: 32px;
+  --os-type-headline-weight: 400;
+  --os-type-headline-line-height: 1.25;
+  --os-type-headline-tracking: 0;
+  --os-type-headline: var(--os-type-headline-weight) var(--os-type-headline-size) / var(--os-type-headline-line-height) var(--os-font);
+
+  --os-type-title-size: 20px;
+  --os-type-title-weight: 600;
+  --os-type-title-line-height: 1.4;
+  --os-type-title-tracking: 0;
+  --os-type-title: var(--os-type-title-weight) var(--os-type-title-size) / var(--os-type-title-line-height) var(--os-font);
+
+  --os-type-body-size: 14px;
+  --os-type-body-weight: 400;
+  --os-type-body-line-height: 1.43;
+  --os-type-body-tracking: 0.16px;
+  --os-type-body: var(--os-type-body-weight) var(--os-type-body-size) / var(--os-type-body-line-height) var(--os-font);
+
+  --os-type-body-strong-size: var(--os-type-body-size);
+  --os-type-body-strong-weight: 600;
+  --os-type-body-strong-line-height: var(--os-type-body-line-height);
+  --os-type-body-strong-tracking: var(--os-type-body-tracking);
+  --os-type-body-strong: var(--os-type-body-strong-weight) var(--os-type-body-strong-size) / var(--os-type-body-strong-line-height) var(--os-font);
+
+  --os-type-caption-size: 12px;
+  --os-type-caption-weight: 400;
+  --os-type-caption-line-height: 1.33;
+  --os-type-caption-tracking: 0.32px;
+  --os-type-caption: var(--os-type-caption-weight) var(--os-type-caption-size) / var(--os-type-caption-line-height) var(--os-font);
+}
