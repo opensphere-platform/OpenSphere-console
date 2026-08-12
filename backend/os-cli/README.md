@@ -19,7 +19,7 @@ workforce token을 `admin` PAT 필드에 저장하거나 admin 명령에 전달�
 ```bash
 docker build \
   --build-context macos-cli=/path/to/native-macos-cli-artifacts \
-  -t os-cli:console-native-v0.8.1 \
+  -t os-cli:console-native-v0.8.2 \
   backend/os-cli
 ```
 

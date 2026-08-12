@@ -29,7 +29,7 @@ import (
 	"time"
 )
 
-var version = "0.8.1"
+var version = "0.8.2"
 
 type Config struct {
 	Context     string `json:"context,omitempty"`
