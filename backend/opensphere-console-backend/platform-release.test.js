@@ -250,6 +250,11 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(deploy, /resources: \["jobs"\][\s\S]*verbs: \["get", "create"\]/);
   assert.match(dockerfile, /COPY --from=setup-cli src \/app\/opensphere-setup-cli\/src/);
   assert.match(dockerfile, /registry\.k8s\.io\/kubectl@sha256:/);
+  assert.match(dockerfile, /node:24-bookworm-slim@sha256:/);
+  assert.match(dockerfile, /powershell-7\.5\.7-linux-\$\{PS_ARCH\}\.tar\.gz/);
+  assert.match(dockerfile, /PS_SHA256='207a3c0b2f630e8e1226cc9beb651e2e16789f07729197f45fd3ad0902d1c593'/);
+  assert.match(dockerfile, /PS_SHA256='8eb84faecd4834f4b961a6601c28c0c61a620a43f005e977f546b89e1e0f1aa2'/);
+  assert.match(dockerfile, /pwsh -NoLogo -NoProfile -NonInteractive/);
   assert.match(dockerfile, /gh_2\.96\.0_linux_\$\{TARGETARCH\}/);
   assert.match(migration, /'platform-release-reconciler'/);
   assert.match(ui, /local kubeconfig/);
