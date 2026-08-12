@@ -40,6 +40,16 @@ function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
   return { consumed: segments, posParams: { id: segments[1] } };
 }
 
+/**
+ * PFSS canonical namespace.  The URL names the owning platform service stack,
+ * while PluginHost still mounts the registered `foundation` subShell.
+ * Child routing remains Foundation-owned after the host is mounted.
+ */
+function pfssHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
+  if (segments.length < 1 || segments[0].path !== 'pfss') return null;
+  return { consumed: segments };
+}
+
 export const routes: Routes = [
   { path: 'auth/recovery', component: PasswordRecoveryPage },
   { path: '', component: Landing },
@@ -79,7 +89,7 @@ export const routes: Routes = [
       { path: 'change-control', redirectTo: 'state-changes', pathMatch: 'full' },
       // Platform readiness is now part of the integrated Control Plane view.
       // Preserve controller links and old bookmarks without reviving a parallel page.
-      { path: 'platform-readiness', redirectTo: 'platform-control', pathMatch: 'full' },
+      { path: 'platform-readiness', component: AdminPlatformControl, data: { controlTab: 'readiness' } },
       // Permanent compatibility path. Preserve old bookmarks without exposing
       // the former screen in current Console navigation.
       { path: 'backbone', redirectTo: 'data-identity', pathMatch: 'full' },
@@ -97,6 +107,12 @@ export const routes: Routes = [
       { path: 'audit', component: AdminAudit },
     ],
   },
+  // OpenSearch is a PFSS child plugin, never a Main Shell top-level plugin.
+  // Preserve old bookmarks while making /pfss/<module> the canonical route.
+  { path: 'p/foundation/addc', redirectTo: 'pfss/addc', pathMatch: 'prefix' },
+  { path: 'p/foundation/opensearch', redirectTo: 'pfss/opensearch', pathMatch: 'prefix' },
+  { path: 'p/opensearch', redirectTo: 'pfss/opensearch', pathMatch: 'prefix' },
+  { matcher: pfssHostMatcher, component: PluginHost, data: { pluginId: 'foundation' } },
   // 등록된 플러그인(subShell·plugin)은 전부 `/p/<id>[/서브패스]` 동적 호스트로 진입(§10). 실제 화면은
   // 런타임 로드 모듈. 미등록 id는 PluginHost가 '등록 안 됨' 안내.
   { matcher: pluginHostMatcher, component: PluginHost },

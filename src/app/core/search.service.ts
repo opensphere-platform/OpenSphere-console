@@ -50,7 +50,7 @@ export class SearchService {
     { label: 'Infrastructure Monitoring', sublabel: 'Beszel · 노드 OS 시계열', path: '/manage/infrastructure-monitoring', kind: 'result' },
     { label: '역할/권한(RBAC)', sublabel: 'Identity', path: '/manage/roles', kind: 'result' },
     { label: '콘솔 관리자 온보딩', sublabel: 'Identity', path: '/manage/console-admins', kind: 'result' },
-    { label: 'OAA Gateway 관리', sublabel: 'OAA · Platform Foundation', path: '/manage/oaa', kind: 'result' },
+    { label: 'R2D2 관리', sublabel: 'R2D2 · Platform Foundation', path: '/manage/oaa', kind: 'result' },
     { label: 'Platform Support Profile', sublabel: '플랫폼 수명주기 · PFS 설치 준비', path: '/manage/platform-readiness', kind: 'result' },
   ];
 
@@ -62,7 +62,7 @@ export class SearchService {
 
   /** 정적 셸 페이지 인덱스 */
   private readonly STATIC: SearchResult[] = [
-    { label: '홈 · Perspectives', sublabel: '셸 홈', path: '/', kind: 'page' },
+    { label: '홈 · 10P × 6L', sublabel: '서비스 실현 아키텍처', path: '/', kind: 'page' },
     { label: 'Developer Catalog', sublabel: '관리 · 자산 및 확장', path: '/manage/catalog', kind: 'page' },
     { label: 'APIs', sublabel: '관리 · 자산 및 확장', path: '/manage/apis', kind: 'page' },
     { label: 'Console CLI', sublabel: '관리 · 자산 및 확장', path: '/manage/cli', kind: 'page' },
@@ -71,7 +71,7 @@ export class SearchService {
     { label: 'Data & Identity', sublabel: '관리 · Supabase 권위', path: '/manage/data-identity', kind: 'page' },
     { label: '선언형 상태 변경', sublabel: '관리 · State Change Authority', path: '/manage/state-changes', kind: 'page' },
     { label: 'Infrastructure Monitoring', sublabel: '관리 · Beszel 노드 시계열', path: '/manage/infrastructure-monitoring', kind: 'page' },
-    { label: 'OAA Gateway', sublabel: '관리 · 플랫폼 기반', path: '/manage/oaa', kind: 'page' },
+    { label: 'R2D2', sublabel: '관리 · 플랫폼 기반', path: '/manage/oaa', kind: 'page' },
     { label: '플랫폼 준비 상태', sublabel: '관리 · 플랫폼 수명주기', path: '/manage/platform-readiness', kind: 'page' },
   ];
 

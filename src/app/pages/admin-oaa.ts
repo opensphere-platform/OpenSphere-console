@@ -250,9 +250,10 @@ interface OaaActionBindingManifest {
 }
 
 /**
- * /manage/oaa — OAA(OpenSphere AI Agent) Gateway 관리 표면. **셸 네이티브** 전용 페이지(CONSTITUTION-0004 §4.2/§4.4).
- * OAA Core는 Main Shell native capability이고 OAA Gateway는 Supabase consumer인 별도 서버 workload다 — 여기서는
- * Gateway health, LLM provider key custody, Knowledge/Manual Registry, Tool Registry/Action Bindings만 다룬다.
+ * /manage/oaa — R2D2 관리 및 목표 아키텍처 표면. **셸 네이티브** 전용 페이지(CONSTITUTION-0004 §4.2/§4.4).
+ * R2D2는 Main Shell native capability이고 runtime은 Console 소유 Supabase consumer workload다 — 여기서는
+ * 최종 목표/메타인지 구조와 runtime health, LLM provider key custody, Knowledge/Manual Registry,
+ * Tool Registry/Action Bindings을 함께 다룬다. `oaa`는 schema/API/route의 내부 호환 식별자로만 유지한다.
  * Data & Identity 페이지에는 절대 다시 흡수하지 않는다(§8 감사 판정).
  *
  * 모든 호출은 same-origin `/api/oaa/*` + HttpService(내부적으로 AuthService.token()을 Bearer로 첨부, cross-origin 차단).
@@ -272,22 +273,195 @@ interface OaaActionBindingManifest {
   imports: [ClarityModule, FormsModule, BackendUnavailable, OsPageHeader, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
-      <os-page-header title="OAA Gateway" tag="Core·Admin · OpenSphere AI Agent 관리 표면" />
+      <os-page-header title="R2D2" tag="Core·Admin · Console 내장 AI 관리 표면" />
+
+      <section class="r2d2-north-star" aria-labelledby="r2d2-north-star-title">
+        <div class="r2d2-north-star-copy">
+          <div class="r2d2-eyebrow">OPERATIONAL INTELLIGENCE · NORTH STAR</div>
+          <h2 id="r2d2-north-star-title">OpenSphere의 상태뿐 아니라, 무엇을 모르는지와 어떻게 복구할지도 이해합니다.</h2>
+          <p>
+            R2D2의 최종 목표는 기대 상태와 실제 상태를 지속해서 비교하고, 관측 한계와 수행 가능 범위를 증거로 설명하며,
+            위험을 전파하고, 승인된 범위에서 운영 복구부터 소스 수정·빌드·배포·검증·롤백까지 하나의 추적 가능한 폐쇄 루프로 연결하는 것입니다.
+          </p>
+          <div class="r2d2-target-badges" aria-label="R2D2 목표 상태">
+            <span>Target model</span>
+            <span>Phased enablement</span>
+            <span class="guarded">Wave 1 진입 gate 유지</span>
+          </div>
+        </div>
+        <aside class="r2d2-position-card" aria-label="현재 위치와 최종 목표">
+          <div class="r2d2-position-head"><span>현재 위치</span><strong>Operational Intelligence</strong></div>
+          <ol>
+            <li class="done"><span>01</span><div><strong>관측 기반</strong><small>runtime projection · owner API · HIS</small></div></li>
+            <li class="active"><span>02</span><div><strong>상황 이해</strong><small>graph · coverage · incident · impact</small></div></li>
+            <li><span>03</span><div><strong>운영 복구</strong><small>governed capability · postcondition</small></div></li>
+            <li><span>04</span><div><strong>Engineering Remediation</strong><small>source · build · exact digest deploy</small></div></li>
+          </ol>
+          <p>마지막 단계는 목표 구조로만 예약되어 있으며 별도 레드팀 평가와 사용자 승인 전에는 실행 capability가 아닙니다.</p>
+        </aside>
+      </section>
+
+      <section class="r2d2-section" aria-labelledby="r2d2-metacognition-title">
+        <div class="r2d2-section-heading">
+          <div><span class="r2d2-kicker">01 · METACOGNITION</span><h2 id="r2d2-metacognition-title">메타인지란 자신의 지식과 능력의 한계를 데이터로 설명하는 것입니다.</h2></div>
+          <p>값이 없다는 사실을 정상으로 오인하지 않고, 판단마다 상태·신뢰도·근거·유효 시점을 함께 보존합니다.</p>
+        </div>
+        <div class="r2d2-epistemic-grid">
+          <article class="known"><span>KNOWN</span><strong>확인됨</strong><p>fresh한 정본 증거로 직접 확인된 상태입니다.</p><small>자동 판단에 사용 가능</small></article>
+          <article class="unknown"><span>UNKNOWN</span><strong>알 수 없음</strong><p>판단에 필요한 증거가 아직 존재하지 않습니다.</p><small>정상 판정·mutation 금지</small></article>
+          <article class="stale"><span>STALE</span><strong>유효기간 경과</strong><p>과거에는 확인됐지만 freshness를 초과했습니다.</p><small>재관측 전 판단 제한</small></article>
+          <article class="conflicting"><span>CONFLICTING</span><strong>정본 충돌</strong><p>둘 이상의 권위 source가 서로 다른 상태를 보고합니다.</p><small>Incident 생성·자동 복구 중지</small></article>
+          <article class="inferred"><span>INFERRED</span><strong>추론됨</strong><p>직접 관측이 아닌 관계와 규칙으로 계산한 상태입니다.</p><small>추론 경로 표시·단독 실행 근거 금지</small></article>
+          <article class="unobservable"><span>UNOBSERVABLE</span><strong>관측 불가</strong><p>권한, 정책 또는 장애로 현재 확인할 수 없습니다.</p><small>coverage gap을 위험으로 전파</small></article>
+        </div>
+        <div class="r2d2-evidence-contract" aria-label="판단 증거 계약">
+          <span>모든 핵심 판단</span>
+          <code>epistemicState</code><i>+</i><code>confidence</code><i>+</i><code>evidenceRefs</code><i>+</i><code>observedAt / expiresAt</code><i>+</i><code>collectionEpoch</code>
+        </div>
+      </section>
+
+      <section class="r2d2-section r2d2-dark" aria-labelledby="r2d2-four-planes-title">
+        <div class="r2d2-section-heading">
+          <div><span class="r2d2-kicker">02 · OPERATING MODEL</span><h2 id="r2d2-four-planes-title">세계 모델과 자기 모델이 함께 있어야 안전한 결정을 내릴 수 있습니다.</h2></div>
+          <p>네 plane은 논리적인 책임 분리이며, 별도 데이터베이스나 네 개의 신규 서비스를 의미하지 않습니다.</p>
+        </div>
+        <div class="r2d2-plane-flow" aria-label="R2D2 네 개의 논리 plane">
+          <article><span>01</span><strong>World Model</strong><p>resource · relation · desired/actual</p><small>OpenSphere의 구성과 실제 상태</small></article>
+          <b aria-hidden="true">→</b>
+          <article><span>02</span><strong>Self Model</strong><p>coverage · freshness · capability</p><small>R2D2가 보고 수행할 수 있는 범위</small></article>
+          <b aria-hidden="true">→</b>
+          <article><span>03</span><strong>Decision Model</strong><p>mismatch · incident · confidence</p><small>불일치, 영향과 불확실성</small></article>
+          <b aria-hidden="true">→</b>
+          <article><span>04</span><strong>Remediation Model</strong><p>proposal · approval · verification</p><small>허용된 복구와 결과 검증</small></article>
+        </div>
+        <div class="r2d2-authority-sources">
+          <span>AUTHORITY SOURCES</span>
+          <strong>Kubernetes</strong><i>·</i><strong>Gitea desired state</strong><i>·</i><strong>Release BOM</strong><i>·</i><strong>Owner APIs</strong><i>·</i><strong>HIS</strong>
+          <small>R2D2 projection은 정본을 대체하지 않으며 source · observed time · freshness · evidence digest를 보존합니다.</small>
+        </div>
+      </section>
+
+      <section class="r2d2-section" aria-labelledby="r2d2-mismatch-title">
+        <div class="r2d2-section-heading">
+          <div><span class="r2d2-kicker">03 · SITUATIONAL AWARENESS</span><h2 id="r2d2-mismatch-title">기대 상태와 실제 상태의 차이를 원인·영향·신뢰도와 함께 봅니다.</h2></div>
+          <p>Mismatch는 곧 변경 승인이 아닙니다. 먼저 증거를 고정하고 가장 작은 안전 조치를 계산합니다.</p>
+        </div>
+        <div class="r2d2-compare">
+          <article><span>EXPECTED STATE</span><strong>어떻게 동작해야 하는가</strong><ul><li>Release BOM · installation lock</li><li>Gitea desired state</li><li>owner policy · capability contract</li><li>환경 profile · namespace contract</li></ul></article>
+          <div class="r2d2-compare-core"><span>COMPARE</span><strong>Mismatch</strong><small>evidence + impact<br />+ confidence</small></div>
+          <article><span>ACTUAL STATE</span><strong>실제로 어떻게 동작하는가</strong><ul><li>Kubernetes workload · imageID</li><li>runtime owner API</li><li>HIS metric · log · trace</li><li>schema · migration state</li></ul></article>
+        </div>
+        <div class="r2d2-mismatch-types" aria-label="탐지할 mismatch 유형">
+          <span>configuration drift</span><span>image / digest drift</span><span>dependency readiness</span><span>migration lineage</span><span>capability contract</span><span>environment profile</span><span>provenance</span><span>coverage gap</span>
+        </div>
+      </section>
+
+      <section class="r2d2-section" aria-labelledby="r2d2-repair-title">
+        <div class="r2d2-section-heading">
+          <div><span class="r2d2-kicker">04 · REMEDIATION LADDER</span><h2 id="r2d2-repair-title">가장 작은 안전 조치부터 평가하고, 소스 변경은 마지막 수단으로 격리합니다.</h2></div>
+          <p>각 단계는 durable operation, 정책 gate와 postcondition 검증을 통과해야 다음 상태로 종료됩니다.</p>
+        </div>
+        <ol class="r2d2-repair-ladder">
+          <li><span>00</span><div><strong>재관측</strong><p>complete reconcile · owner 상태 재조회</p></div><small>READ ONLY</small></li>
+          <li><span>01</span><div><strong>운영 재시도</strong><p>reconcile 재요청 · notification retry</p></div><small>OWNER CAPABILITY</small></li>
+          <li><span>02</span><div><strong>런타임 복구</strong><p>restart · scale · CronJob one-off</p></div><small>DURABLE OPERATION</small></li>
+          <li><span>03</span><div><strong>검증된 산출물 복구</strong><p>이전에 검증된 exact digest rollback</p></div><small>RELEASE POLICY</small></li>
+          <li><span>04</span><div><strong>선언 상태 복구</strong><p>allowlist된 config · desired-state 변경</p></div><small>GITEA CHANGE LANE</small></li>
+          <li class="future"><span>05</span><div><strong>Engineering Remediation</strong><p>격리된 source patch · test · build</p></div><small>FUTURE / APPROVAL</small></li>
+          <li class="future"><span>06</span><div><strong>공급망 배포</strong><p>signed evidence · exact digest deploy · rollback</p></div><small>CONSTITUTION-0005</small></li>
+        </ol>
+      </section>
+
+      <section class="r2d2-section r2d2-engineering" aria-labelledby="r2d2-engineering-title">
+        <div class="r2d2-section-heading">
+          <div><span class="r2d2-kicker">05 · ENGINEERING REMEDIATION</span><h2 id="r2d2-engineering-title">관리자 허락은 포괄 권한이 아니라 정확한 patch와 결과물에 결속됩니다.</h2></div>
+          <p>이 capability는 아직 활성화되지 않았습니다. 구조적 확장점을 미리 고정해 이후 재설계 비용을 줄입니다.</p>
+        </div>
+        <div class="r2d2-engineering-flow" aria-label="Engineering Remediation 안전 흐름">
+          <div><span>1</span><strong>Evidence</strong><small>불일치 재현과 원인 후보 고정</small></div>
+          <div><span>2</span><strong>Isolate</strong><small>ephemeral worktree / build sandbox</small></div>
+          <div><span>3</span><strong>Propose</strong><small>최소 patch와 영향 component 계산</small></div>
+          <div><span>4</span><strong>Verify</strong><small>정적 분석 · unit · contract · integration</small></div>
+          <div><span>5</span><strong>Approve</strong><small>exact patch digest · risk · expiry</small></div>
+          <div><span>6</span><strong>Build</strong><small>SBOM · provenance · signature</small></div>
+          <div><span>7</span><strong>Deploy</strong><small>exact digest · postcondition · rollback</small></div>
+        </div>
+        <div class="r2d2-engineering-grid">
+          <article>
+            <span class="r2d2-card-label">APPROVAL ENVELOPE</span>
+            <h3>승인이 정확히 고정하는 것</h3>
+            <dl>
+              <div><dt>Source</dt><dd>canonical repository · base revision · allowed paths</dd></div>
+              <div><dt>Change</dt><dd>patch digest · reason · required tests</dd></div>
+              <div><dt>Impact</dt><dd>affected components/images · release scope</dd></div>
+              <div><dt>Delivery</dt><dd>channel · build authority · exact image digest</dd></div>
+              <div><dt>Recovery</dt><dd>rollback revision/digest · approval expiry</dd></div>
+            </dl>
+            <p class="r2d2-invalidation">어느 값이든 바뀌면 기존 승인은 즉시 무효화됩니다.</p>
+          </article>
+          <article>
+            <span class="r2d2-card-label">STRUCTURAL RESOURCES</span>
+            <h3>처음부터 예약할 데이터와 실행 경계</h3>
+            <div class="r2d2-resource-list">
+              <span><code>SelfModel</code> 관측·capability·blocker</span>
+              <span><code>CoverageState</code> reconcile·freshness</span>
+              <span><code>Mismatch</code> expected/actual·evidence</span>
+              <span><code>RemediationAssessment</code> 최소 복구 단계</span>
+              <span><code>EngineeringRemediationRequest</code> patch·승인 lifecycle</span>
+              <span><code>BuildEvidence</code> test·SBOM·provenance·signature</span>
+              <span><code>DeploymentVerification</code> lock·imageID·postcondition</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="r2d2-section" aria-labelledby="r2d2-guardrails-title">
+        <div class="r2d2-section-heading">
+          <div><span class="r2d2-kicker">06 · NON-NEGOTIABLE GUARDRAILS</span><h2 id="r2d2-guardrails-title">최종 목표가 커져도 안전 경계는 넓어지지 않습니다.</h2></div>
+          <p>R2D2는 정본과 owner를 대체하는 super-controller가 아니라, 증거와 승인을 연결하는 운영 지능입니다.</p>
+        </div>
+        <div class="r2d2-guardrails">
+          <article><strong>Owner-only mutation</strong><p>Kubernetes 직접 임의 변경 없이 등록된 owner capability 또는 governed adapter만 사용합니다.</p></article>
+          <article><strong>Uncertainty blocks action</strong><p>unknown · stale · conflicting · inferred만으로 mutation을 승인하지 않습니다.</p></article>
+          <article><strong>Isolated source work</strong><p>source 변경은 격리된 worktree에서만 수행하며 main worktree 직접 수정과 임의 shell은 금지합니다.</p></article>
+          <article><strong>Revalidate before execute</strong><p>authorization · approval · precondition을 실행 직전에 다시 확인합니다.</p></article>
+          <article><strong>Supply-chain authority</strong><p>build·channel·publication·exact digest는 CONSTITUTION-0005를 그대로 따릅니다.</p></article>
+          <article><strong>Verify or rollback</strong><p>정본에서 postcondition과 rollback 결과를 확인하기 전에는 완료가 아닙니다.</p></article>
+        </div>
+      </section>
+
+      <section class="r2d2-section r2d2-roadmap" aria-labelledby="r2d2-roadmap-title">
+        <div class="r2d2-section-heading">
+          <div><span class="r2d2-kicker">07 · PHASED DELIVERY</span><h2 id="r2d2-roadmap-title">구현은 단계적으로, identity와 correlation 계약은 최종 목표에 맞춰 지금 고정합니다.</h2></div>
+          <p>현재 Wave 1 진입은 차단되어 있습니다. 아래 단계는 승인 순서를 나타내며 진행 상태를 과장하지 않습니다.</p>
+        </div>
+        <div class="r2d2-wave-grid">
+          <article class="current"><span>WAVE 0</span><strong>계약·기준선 동결</strong><p>identity · migration lineage · inventory · coverage denominator</p><small>Phase A 완료 / Phase B 시정 필요</small></article>
+          <article><span>WAVE 1</span><strong>Observer · Graph</strong><p>epoch · barrier · freshness · CoverageState</p><small>ENTRY BLOCKED</small></article>
+          <article><span>WAVE 2</span><strong>Incident · Impact</strong><p>epistemic state · evidence · confidence</p><small>NOT STARTED</small></article>
+          <article><span>WAVE 3</span><strong>Risk propagation</strong><p>Console global state · notification · context</p><small>NOT STARTED</small></article>
+          <article><span>WAVE 4</span><strong>Governed recovery</strong><p>instruction · operation · postcondition</p><small>NOT STARTED</small></article>
+          <article><span>WAVE 5</span><strong>Operational durability</strong><p>retention · partition · replay · failure isolation</p><small>NOT STARTED</small></article>
+          <article class="future"><span>FUTURE WAVE</span><strong>Engineering Remediation</strong><p>patch approval · sandbox · build evidence · deploy</p><small>RED-TEAM + USER APPROVAL REQUIRED</small></article>
+        </div>
+      </section>
+
+      <div class="r2d2-runtime-divider" role="separator"><span>현재 R2D2 runtime 관리</span><small>아래 영역은 실제 연결 상태와 현재 구현된 관리 기능을 표시합니다.</small></div>
       @if (gatewayDown(); as d) {
         <os-backend-unavailable
-          feature="OAA Gateway"
-          backend="opensphere-console-oaa-gateway (/api/oaa)"
-          hint="opensphere-console-oaa-gateway 배포 · Supabase PostgreSQL/pgvector 연결 시 복구됩니다. 미배포여도 콘솔 로그인/관리/Manual은 영향받지 않습니다."
+          feature="R2D2"
+          backend="R2D2 runtime (/api/oaa)"
+          hint="Console 내장 R2D2 runtime과 Supabase PostgreSQL/pgvector 연결이 준비되면 복구됩니다. R2D2 장애는 콘솔 로그인/관리/Manual에 영향을 주지 않습니다."
           [detail]="d"
         />
       } @else {
         <p class="os-sub">
-          OAA Core는 Main Shell native capability이고, OAA Gateway는 보안·격리를 위한 별도 Supabase consumer workload입니다
+          R2D2는 Main Shell native capability이며, 보안·실행 격리를 위한 Console 소유 Supabase consumer workload를 사용합니다
           (<code>CONSTITUTION-0004 §4.2</code>). Provider key 미배포 시 채팅은 <strong>Degraded</strong>일 수 있으나 콘솔 관리는 항상 동작합니다.
           @if (health(); as h) { · <code>{{ h.service }}</code> v{{ h.version }} · ns <code>{{ h.namespace }}</code> }
         </p>
 
-        <section class="manage-status-rail" aria-label="OAA 운영 상태">
+        <section class="manage-status-rail" aria-label="R2D2 운영 상태">
           <div><span>Gateway</span><strong [class.ok]="!!health()">{{ health() ? 'Reachable' : 'Unavailable' }}</strong><small>{{ health()?.service || 'health unavailable' }}</small></div>
           <div><span>LLM keys</span><strong [class.warn]="llmKeysLoaded() && !llmKeys().length">{{ llmKeysLoaded() ? llmKeys().length : 'Loading' }}</strong><small>{{ llmKeys().length ? 'fingerprint inventory' : 'provider custody' }}</small></div>
           <div><span>Knowledge</span><strong>{{ knowledgeStats()?.documents ?? 'Loading' }}</strong><small>{{ knowledgeStats()?.chunks ?? 0 }} chunks</small></div>
@@ -340,7 +514,7 @@ interface OaaActionBindingManifest {
                   <div class="os-card-h"><span>Complete Agent readiness</span><strong [class.ok]="control.fullyOperational" [class.warn]="!control.fullyOperational">{{ control.fullyOperational ? 'Fully operational' : 'Degraded' }}</strong></div>
                   <p class="os-sub">Owner API 도달 여부와 별개로 지식·실시간 projection·승인 mutation·Platform Support·HIS·Ceph capability를 모두 검증합니다. 마지막 확인 {{ formatDateTime(control.checkedAt) }}</p>
                   @if (control.agentControl.blockers.length) {
-                    <div class="oaa-blocker-list" aria-label="OAA 완전 운영 차단 사유">
+                    <div class="oaa-blocker-list" aria-label="R2D2 완전 운영 차단 사유">
                       @for (blocker of control.agentControl.blockers; track blocker) { <code>{{ blocker }}</code> }
                     </div>
                   }
@@ -363,7 +537,7 @@ interface OaaActionBindingManifest {
                 }
               } @else if (!llmKeys().length && llmKeysLoaded()) {
                 <clr-alert clrAlertType="info" [clrAlertClosable]="false">
-                  <clr-alert-item><span class="alert-text">Degraded: 등록된 LLM provider key가 없습니다 — OAA 채팅만 저하되고 콘솔 관리 기능에는 영향이 없습니다.</span></clr-alert-item>
+                  <clr-alert-item><span class="alert-text">Degraded: 등록된 LLM provider key가 없습니다 — R2D2 채팅만 저하되고 콘솔 관리 기능에는 영향이 없습니다.</span></clr-alert-item>
                 </clr-alert>
               }
             </clr-tab-content>
@@ -743,7 +917,7 @@ interface OaaActionBindingManifest {
         </clr-tabs>
 
         <!-- LLM key 생성/회전 — 인라인 폼 대신 우측 슬라이딩 패널. apiKey는 password 입력이고 성공/실패 직후 즉시 비운다. -->
-        <os-panel [open]="llmPanelOpen()" [title]="llmEditingId() ? 'LLM Key 회전 — ' + llmEditingId() : 'LLM Key 추가'" subtitle="OAA Gateway · Kubernetes Secret custody" (closed)="closeKeyPanel()">
+        <os-panel [open]="llmPanelOpen()" [title]="llmEditingId() ? 'LLM Key 회전 — ' + llmEditingId() : 'LLM Key 추가'" subtitle="R2D2 · Kubernetes Secret custody" (closed)="closeKeyPanel()">
           <div class="oaa-key-intro">
             <strong>Provider credential</strong>
             <p>API key는 게이트웨이가 Kubernetes Secret으로만 보관합니다. 이 화면은 raw key를 저장·재표시하지 않으며, 저장 직후 입력값을 비웁니다.</p>
@@ -848,7 +1022,7 @@ interface OaaActionBindingManifest {
 
         <os-panel [open]="retentionPanelOpen()" [title]="retentionForm.stream ? 'Evidence retention — ' + retentionForm.stream : 'Evidence retention'" subtitle="Supabase evidence owner · AAL2 required" (closed)="closeRetentionPolicy()">
           <clr-alert clrAlertType="info" [clrAlertClosable]="false">
-            <clr-alert-item><span class="alert-text">이 설정은 보존·legal hold·export 필요 조건을 관리합니다. 정책 변경 자체는 증거를 삭제하지 않으며, OAA에는 purge API가 없습니다.</span></clr-alert-item>
+            <clr-alert-item><span class="alert-text">이 설정은 보존·legal hold·export 필요 조건을 관리합니다. 정책 변경 자체는 증거를 삭제하지 않으며, R2D2에는 purge API가 없습니다.</span></clr-alert-item>
           </clr-alert>
           <form clrForm clrLayout="vertical" class="clr-form-full-width oaa-retention-form">
             <div class="oaa-generated-id"><span class="oaa-generated-id-label">Evidence stream</span><code>{{ retentionForm.stream }}</code></div>
@@ -945,6 +1119,7 @@ interface OaaActionBindingManifest {
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
     `
+
       .gw-body { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; padding: 0.6rem 0.9rem; }
       .oaa-control-readiness .os-card-h { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
       .oaa-blocker-list { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 0.9rem 0.7rem; }
@@ -1001,8 +1176,28 @@ interface OaaActionBindingManifest {
       :host ::ng-deep .oaa-retention-form input.clr-input,
       :host ::ng-deep .oaa-retention-form select.clr-select { width: 100%; max-width: none; }
       .exec-result { margin: 0.7rem 0 0; max-height: 16rem; overflow: auto; border: 1px solid #e1e5ea; border-radius: 4px; background: #0f2230; color: #d7e6ee; padding: 0.7rem; font-size: 0.66rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-      @media (max-width: 980px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
+      @media (max-width: 1180px) {
+        .r2d2-plane-flow { grid-template-columns: 1fr 1fr; }
+        .r2d2-plane-flow > b { display: none; }
+        .r2d2-repair-ladder, .r2d2-engineering-flow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      }
+      @media (max-width: 980px) {
+        .r2d2-north-star, .r2d2-section-heading { grid-template-columns: 1fr; }
+        .r2d2-epistemic-grid, .r2d2-guardrails { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .r2d2-compare { grid-template-columns: 1fr; }
+        .r2d2-compare-core { min-height: 6rem; }
+        .r2d2-wave-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .stat-grid { grid-template-columns: 1fr 1fr; }
+      }
       @media (max-width: 760px) {
+        .r2d2-north-star { padding: 1.15rem; }
+        .r2d2-section { padding: 1rem; }
+        .r2d2-epistemic-grid, .r2d2-plane-flow, .r2d2-repair-ladder, .r2d2-engineering-flow, .r2d2-engineering-grid, .r2d2-guardrails, .r2d2-wave-grid { grid-template-columns: 1fr; }
+        .r2d2-wave-grid .future { grid-column: auto; }
+        .r2d2-repair-ladder li { min-height: 7.5rem; }
+        .r2d2-repair-ladder li:not(:last-child)::after { display: none; }
+        .r2d2-resource-list { grid-template-columns: 1fr; }
+        .r2d2-runtime-divider { align-items: flex-start; flex-direction: column; gap: 0.2rem; }
         .oaa-key-form { grid-template-columns: 1fr; }
         .oaa-key-form .oaa-field-wide,
         .oaa-form-section { grid-column: 1; }
@@ -1506,7 +1701,7 @@ export class AdminOaa implements OnInit, OnDestroy {
   }
   expectedRetentionConfirm(): string {
     return this.retentionForm.stream
-      ? `update OAA evidence retention ${this.retentionForm.stream} to ${Number(this.retentionForm.retentionDays) || 0} days`
+      ? `update R2D2 evidence retention ${this.retentionForm.stream} to ${Number(this.retentionForm.retentionDays) || 0} days`
       : '';
   }
   canSaveRetentionPolicy(): boolean {
@@ -1522,7 +1717,12 @@ export class AdminOaa implements OnInit, OnDestroy {
     try {
       const r = await this.http.request('/api/oaa/admin/evidence/retention', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...this.retentionForm, retentionDays: Number(this.retentionForm.retentionDays) }),
+        body: JSON.stringify({
+          ...this.retentionForm,
+          retentionDays: Number(this.retentionForm.retentionDays),
+          // `oaa` remains the server-side compatibility identifier; only the official display name is R2D2.
+          confirm: this.retentionForm.confirm.replace(/^update R2D2 evidence retention /, 'update OAA evidence retention '),
+        }),
       });
       const accessError = this.adminAccessMessage(r.status);
       if (accessError) {
@@ -1635,8 +1835,8 @@ export class AdminOaa implements OnInit, OnDestroy {
   }
 
   private adminAccessMessage(status: number): string {
-    if (status === 401) return 'OAA Gateway가 현재 로그인 세션을 확인하지 못했습니다. 세션을 갱신한 뒤 다시 시도하세요.';
-    if (status === 403) return 'OAA Gateway 관리자 역할(console-admins)이 필요합니다.';
+    if (status === 401) return 'R2D2가 현재 로그인 세션을 확인하지 못했습니다. 세션을 갱신한 뒤 다시 시도하세요.';
+    if (status === 403) return 'R2D2 관리자 역할(console-admins)이 필요합니다.';
     return '';
   }
 
@@ -1653,7 +1853,7 @@ export class AdminOaa implements OnInit, OnDestroy {
     try {
       const r = await this.http.request('/api/oaa/tools/manifest', { cache: 'no-store' });
       if (r.status === 401 || r.status === 403) {
-        this.msg.set({ type: 'danger', text: 'OAA Gateway permission is required.' });
+        this.msg.set({ type: 'danger', text: 'R2D2 permission is required.' });
         return;
       }
       if (!r.ok) {
@@ -1672,7 +1872,7 @@ export class AdminOaa implements OnInit, OnDestroy {
     try {
       const r = await this.http.request('/api/oaa/tools/action-bindings', { cache: 'no-store' });
       if (r.status === 401 || r.status === 403) {
-        this.msg.set({ type: 'danger', text: 'OAA Gateway permission is required.' });
+        this.msg.set({ type: 'danger', text: 'R2D2 permission is required.' });
         return;
       }
       if (!r.ok) {

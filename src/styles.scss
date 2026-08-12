@@ -5,6 +5,7 @@
  */
 /* Foblex Flow 테마 — 연결선(SVG path) 스트로크·커넥터 스타일 제공(없으면 엣지가 투명). @use는 최상단 필수(Sass 규칙). */
 @use '@foblex/flow/styles/default' as *;
+@use './r2d2-page';
 @import '@clr/ui/clr-ui.min.css';
 @import '@carbon/charts/styles.css';
 /* IBM Plex — 라틴(Sans)+한글(Sans KR)+모노. 한·영 단일 IBM 폰트 통일(사용자 지정). OFL 오픈폰트. */
@@ -57,7 +58,7 @@
   --os-header-height: 3rem;
 
   /* ── Z-index 레이어 스케일 (전역 오버레이 순서, 낮음→높음) ──
-   * OAA 에이전트 도킹 패널 < 퀵뷰 패널 드래그 그립 < 알림 토스트 < 전역 헤더(검색 포함) < 접근성 skip-link.
+   * OAA 에이전트 도킹 패널 < 퀵뷰 패널 드래그 그립 < 알림 토스트 < 전역 헤더(검색 포함) < 접근성 skip-link < 보안 MFA 재확인.
    * 헤더는 이 스케일 중 가장 높은 콘텐츠 레이어여야 한다 — position:relative + z-index로 자체
    * stacking context를 형성해, 콘텐츠 영역의 Clarity datagrid sticky 헤더 등이 검색 드롭다운 위로
    * 새어나오는 레이어링 버그(콘솔 전역검색 vs datagrid 헤더)를 막는다. 값 자체보다 "순서"가 계약이므로
@@ -67,6 +68,7 @@
   --os-z-notifications: 1100;
   --os-z-header: 1150;
   --os-z-skip-link: 2000;
+  --os-z-security-step-up: 3000;
 
   /* ── Overview 공통 배경(규약: 모든 섹션 /overview 페이지가 동일 배경 사용) ──
      containers/overview 기준 하단-우측 블루/핑크 글로우. CSS 변수는 ShadowDom도 상속하므로 subShell overview도 동일하게 var(--os-overview-bg) 사용 가능. */

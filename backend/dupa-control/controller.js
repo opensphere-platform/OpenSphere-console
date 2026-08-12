@@ -12,6 +12,7 @@ const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes, randomUUID } = require('crypto');
 const { RegistryCredentialCoordinator } = require('./registry-credentials');
 const { ExtensionProjectionCoordinator } = require('./extension-projection');
+const { foundationEstablishmentProjection } = require('./foundation-establishment');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-console';
@@ -95,6 +96,7 @@ async function verifyAuthed(req) {
     groups: Array.isArray(body.groups) ? body.groups : [],
     permissions: Array.isArray(body.permissions) ? body.permissions : [],
     assurance: String(body.assurance || 'aal1'), provider: 'supabase',
+    lastReauthenticatedAt: String(body.lastReauthenticatedAt || ''),
   };
 }
 const isAdminGroups = (groups) => (groups || []).includes(CONSOLE_ADMIN_GROUP);
@@ -111,6 +113,7 @@ const AUDIT_CAP = 500;
 const audit = [];
 const auditActorLabel = (actor) => typeof actor === 'object' ? (actor.username || actor.subject || 'system') : (actor || 'system');
 const auditActorId = (actor) => typeof actor === 'object' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(actor.subject || '')) ? actor.subject : null;
+
 // 지속 실패는 세어서 드러낸다. 감사 실패가 stdout 한 줄로 조용히 지나가면
 // "원장에 남는다" 는 주장이 거짓이 되고, 거짓이 된 사실조차 관측되지 않는다.
 let auditPersistFailures = 0;
@@ -378,6 +381,21 @@ function verifiedStagedUpdate(reg) {
     && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
     && currentDigest !== previousDigest;
 }
+function verifiedEnabledUpdate(reg) {
+  const status = reg?.status || {};
+  const currentDigest = String(status.currentDigest || '');
+  const previousDigest = String(status.previousDigest || '');
+  return reg?.spec?.desiredState === 'Enabled'
+    && ['Ready', 'Activated'].includes(status.phase)
+    && status.workload?.phase === 'Ready'
+    && status.verification?.manifest === 'Verified'
+    && status.verification?.signature === 'Verified'
+    && status.verification?.entryDigest === 'Verified'
+    && status.verification?.permissions === 'Approved'
+    && /^sha256:[a-f0-9]{64}$/.test(currentDigest)
+    && /^sha256:[a-f0-9]{64}$/.test(previousDigest)
+    && currentDigest !== previousDigest;
+}
 // CLIDownload (console.opensphere.io, cluster-scoped) — headless 비-UI 콘솔 바인딩. UIPluginPackage(UI 게스트)와 별개 kind.
 // 컨트롤러는 plugins를 reconcile(워크로드+서명)하지만, binding은 '선언'이라 reconcile 없이 admin에 '인식'시키기 위해 list만.
 const CONSOLE_GROUP = 'console.opensphere.io';
@@ -494,6 +512,9 @@ async function setStatus(name, status, reg, pkg) {
       entryDigest: verified ? 'Verified' : failed ? 'Failed' : 'Pending',
       permissions: verified ? 'Approved' : failed ? 'Failed' : 'Pending',
     },
+    // Merge-patch must actively clear a blocker that no longer applies. Leaving
+    // this field absent retains stale admission from an earlier reconcile.
+    admission: Object.hasOwn(status, 'admission') ? status.admission : null,
     integrations: integrationStatuses(pkg, phase, retryable, now, failed ? String(status.reason || '') : ''),
     serving: status.serving || {
       phase: ['Ready', 'Activated', 'Degraded'].includes(phase) ? 'Current' : 'Unavailable',
@@ -829,8 +850,8 @@ function infrastructureManagerClusterRoleManifest() {
       ...observerClusterRoleManifest().rules,
       { apiGroups: ['storage.k8s.io'], resources: ['storageclasses'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
       { apiGroups: ['snapshot.storage.k8s.io'], resources: ['volumesnapshotclasses'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['snapshot.storage.k8s.io'], resources: ['volumesnapshots'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
-      { apiGroups: ['ceph.rook.io', 'csi.ceph.io'], resources: ['*'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'] },
+      { apiGroups: ['snapshot.storage.k8s.io'], resources: ['volumesnapshots'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch'] },
+      { apiGroups: ['ceph.rook.io', 'csi.ceph.io'], resources: ['*'], verbs: ['get', 'list', 'watch', 'create', 'update', 'patch'] },
     ],
   };
 }
@@ -864,7 +885,8 @@ function aiDomainOperatorClusterRoleManifest() {
       { apiGroups: ['ai.opensphere.io'], resources: ['aitrainingstacks', 'workbenchclaims', 'dataconnectionclaims', 'computebackendclaims', 'datasetclaims', 'trainingjobclaims', 'modelpromotionclaims', 'inferenceclaims', 'pipelineclaims', 'pipelinerunclaims', 'experimentclaims', 'executionclaims', 'artifactclaims', 'monitoringtargets', 'distributedworkloadclaims', 'openspherecomponentcatalogs', 'openspherecomponentversions', 'openspheresubscriptions', 'opensphereinstallplans', 'openspheredatascienceclusters'], verbs: ['get', 'list', 'watch'] },
       { apiGroups: ['eval.ai.opensphere.io'], resources: ['evaluationpolicies', 'evaluationjobs'], verbs: ['get', 'list', 'watch'] },
       { apiGroups: [''], resources: ['events'], verbs: ['create', 'update', 'patch'] },
-      { apiGroups: [''], resources: ['services', 'persistentvolumeclaims'], verbs: ['create', 'update', 'patch', 'delete'] },
+      { apiGroups: [''], resources: ['services'], verbs: ['create', 'update', 'patch', 'delete'] },
+      { apiGroups: [''], resources: ['persistentvolumeclaims'], verbs: ['create', 'update', 'patch'] },
       { apiGroups: ['apps'], resources: ['deployments'], verbs: ['create', 'update', 'patch', 'delete'] },
       { apiGroups: ['batch'], resources: ['jobs'], verbs: ['create', 'update', 'patch', 'delete'] },
       { apiGroups: [''], resources: ['configmaps'], verbs: ['create', 'update', 'patch', 'delete'] },
@@ -891,11 +913,14 @@ const PERMISSION_PROFILE_ROLES = Object.freeze({
   'cluster-infrastructure-manager-v1': infrastructureManagerClusterRoleManifest,
   'ai-domain-operator-v1': aiDomainOperatorClusterRoleManifest,
 });
-function permissionBindingManifest(pkg, saName, profile) {
+function permissionBindingName(moduleName, profile) {
   const suffix = profile === 'cluster-observer-v1' ? 'observer-v1' : profile;
+  return `opensphere-module-${moduleName}-${suffix}`;
+}
+function permissionBindingManifest(pkg, saName, profile) {
   return {
     apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding',
-    metadata: { name: `opensphere-module-${pkg.metadata.name}-${suffix}`, labels: { 'opensphere.io/dupa-plugin': pkg.metadata.name, 'opensphere.io/managed-by': 'dupa' } },
+    metadata: { name: permissionBindingName(pkg.metadata.name, profile), labels: { 'opensphere.io/dupa-plugin': pkg.metadata.name, 'opensphere.io/managed-by': 'dupa' } },
     roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: `opensphere-module-${profile}` },
     subjects: [{ kind: 'ServiceAccount', name: saName, namespace: NS }],
   };
@@ -974,7 +999,29 @@ async function deleteWorkload(pkg) {
   await deleteManagedResource(`/apis/autoscaling/v2/namespaces/${NS}/horizontalpodautoscalers/${name}`, `HorizontalPodAutoscaler/${name}`);
   await deleteManagedResource(`/apis/networking.k8s.io/v1/namespaces/${NS}/networkpolicies/${name}`, `NetworkPolicy/${name}`);
   const sa = pluginServiceAccount(pkg);
-  await deleteManagedResource(`/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/opensphere-module-${pkg.metadata.name}-observer-v1`, `ClusterRoleBinding/${name}`);
+  const bindingPath = '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings';
+  const selector = encodeURIComponent(`opensphere.io/dupa-plugin=${name},opensphere.io/managed-by=dupa`);
+  const bindings = await k8s('GET', `${bindingPath}?labelSelector=${selector}`);
+  if (!bindings.ok) {
+    throw Object.assign(new Error(`ClusterRoleBinding inventory failed (HTTP ${bindings.status})`), {
+      reason: 'UninstallDeleteFailed'
+    });
+  }
+  for (const binding of bindings.json?.items || []) {
+    const labels = binding.metadata?.labels || {};
+    const subjects = Array.isArray(binding.subjects) ? binding.subjects : [];
+    const owned = labels['opensphere.io/dupa-plugin'] === name
+      && labels['opensphere.io/managed-by'] === 'dupa'
+      && subjects.length > 0
+      && subjects.every((subject) => subject.kind === 'ServiceAccount'
+        && subject.name === sa.name && subject.namespace === NS);
+    if (!owned) {
+      throw Object.assign(new Error(`refusing to delete unverified ClusterRoleBinding/${binding.metadata?.name || '?'}`), {
+        reason: 'PermissionBindingOwnershipMismatch'
+      });
+    }
+    await deleteManagedResource(`${bindingPath}/${binding.metadata.name}`, `ClusterRoleBinding/${binding.metadata.name}`);
+  }
   if (sa.managed) await deleteManagedResource(`/api/v1/namespaces/${NS}/serviceaccounts/${sa.name}`, `ServiceAccount/${sa.name}`);
 }
 async function workloadReady(name) {
@@ -1082,12 +1129,9 @@ async function verifyPlugin(pkg) {
   return { ok: true, manifest };
 }
 
-let _trustedKeys = null;
 async function loadTrustedKeys() {
-  if (_trustedKeys) return _trustedKeys;
   const cm = await k8s('GET', `/api/v1/namespaces/${NS}/configmaps/dupa-trusted-keys`);
-  _trustedKeys = cm.ok ? JSON.parse(cm.json.data['trusted-keys.json']).trustedKeys : {};
-  return _trustedKeys;
+  return cm.ok ? JSON.parse(cm.json.data['trusted-keys.json']).trustedKeys : {};
 }
 function sha256(s) { return createHash('sha256').update(s).digest('hex'); }
 function verifyP256(spkiB64, sigB64, text) {
@@ -1732,7 +1776,19 @@ async function reconcile() {
         const hostReady = hostPkg?.spec.kind === 'subShell' && hostReg?.spec.desiredState === 'Enabled'
           && ['Ready', 'Activated', 'Enabled'].includes(hostReg.status?.phase);
         if (!hostReady) {
-          await updateStatus({ phase: 'DependencyPending', reason: 'HostPending', retryable: true });
+          await updateStatus({
+            phase: 'DependencyPending',
+            reason: 'HostPending',
+            retryable: true,
+            admission: {
+              activationAllowed: false,
+              reason: 'HostPending',
+              pendingCapabilities: [`host:${hostRef}`],
+              satisfiedCapabilities: [],
+              route: '/manage/extensions',
+              checkedAt: new Date().toISOString(),
+            },
+          });
           continue;
         }
       }
@@ -1794,10 +1850,16 @@ async function reconcile() {
       if (hostRef === FOUNDATION_ID) {
         const readiness = await supportProfileReadiness();
         const capabilities = readiness.capabilities || [];
-        const activationAllowed = readiness.admission.pfsPluginActivationAllowed === true;
+        // A degraded Support Profile blocks the first activation of a PFS plugin,
+        // but must not take an already-enabled consumer offline during a verified
+        // exact-digest update. The API already accepts this staged-update path;
+        // the reconciler must preserve the same decision on every later pass.
+        const verifiedUpdate = verifiedEnabledUpdate(reg);
+        const profileActivationAllowed = readiness.admission.pfsPluginActivationAllowed === true;
+        const activationAllowed = profileActivationAllowed || verifiedUpdate;
         admission = {
           activationAllowed,
-          reason: activationAllowed ? '' : 'PlatformSupportProfileIncomplete',
+          reason: profileActivationAllowed ? '' : (verifiedUpdate ? 'VerifiedUpdateOfExistingActivation' : 'PlatformSupportProfileIncomplete'),
           pendingCapabilities: capabilities.filter((c) => !c.ready).map((c) => String(c.type)),
           satisfiedCapabilities: capabilities.filter((c) => c.ready).map((c) => String(c.type)),
           route: '/manage/platform-control',
@@ -1941,12 +2003,12 @@ function registryCredentialError(res, error, opId) {
   return json(res, status, body);
 }
 
-function cliInstallationProvenance(actor, opId) {
+function installationProvenance(actor, opId, client) {
   return {
     requestedAt: new Date().toISOString(),
     requestedBy: auditActorLabel(actor),
     requestedById: auditActorId(actor) || '',
-    client: 'cli:os',
+    client: client === 'cli:os' ? 'cli:os' : 'console:web',
     operationId: opId,
   };
 }
@@ -2446,17 +2508,49 @@ async function securityPolicyEvidence() {
   };
 }
 async function deliveryEvidence() {
-  const [gitea, packages, regs] = await Promise.all([giteaHealth(), listPackages(), listRegs()]);
-  const pkgs = packages.json?.items || [];
-  const registrations = regs.json?.items || [];
-  const immutable = pkgs.every((p) => /^sha256:[a-f0-9]{64}$/.test(p.spec?.image?.digest || ''));
-  const verified = registrations.every((r) => !['Installed', 'Enabled'].includes(r.spec?.desiredState)
-    || (['Ready', 'Activated', 'Disabled'].includes(r.status?.phase)
-      && r.status?.verification?.signature === 'Verified'
-      && r.status?.verification?.manifest === 'Verified'));
-  const failed = registrations.filter((r) => ['Failed', 'Degraded'].includes(r.status?.phase)).map((r) => r.metadata?.name);
-  const ready = gitea && packages.ok && regs.ok && immutable && verified && failed.length === 0;
-  return { ready, gitea, immutable, verified, failed, packageCount: pkgs.length, reason: ready ? '' : 'GitOps, immutable digest, signature, and drift evidence are required' };
+  const [gitea, deployments, statefulSets, application] = await Promise.all([
+    giteaHealth(),
+    k8s('GET', '/apis/apps/v1/namespaces/argocd/deployments'),
+    k8s('GET', '/apis/apps/v1/namespaces/argocd/statefulsets'),
+    k8s('GET', '/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/opensphere-platform-delivery-verify'),
+  ]);
+  const deploymentItems = deployments.json?.items || [];
+  const statefulSetItems = statefulSets.json?.items || [];
+  const runtimeItems = [...deploymentItems, ...statefulSetItems];
+  const runtimeConfigured = runtimeItems.length > 0;
+  const runtimeReady = runtimeConfigured && runtimeItems.every((item) => {
+    if (item.kind === 'StatefulSet') {
+      const desired = Number(item.spec?.replicas || 0);
+      return desired > 0 && Number(item.status?.readyReplicas || 0) === desired
+        && Number(item.status?.observedGeneration || 0) >= Number(item.metadata?.generation || 0);
+    }
+    return deploymentRolloutConverged(item);
+  });
+  const appConfigured = application.ok;
+  const sync = String(application.json?.status?.sync?.status || 'Unknown');
+  const health = String(application.json?.status?.health?.status || 'Unknown');
+  const revision = String(application.json?.status?.sync?.revision || '');
+  const appReady = appConfigured && sync === 'Synced' && health === 'Healthy' && Boolean(revision);
+  const ready = gitea && runtimeReady && appReady;
+  const state = !runtimeConfigured ? 'NotConfigured'
+    : !runtimeReady ? 'RuntimeDegraded'
+      : !appConfigured ? 'ApplicationNotConfigured'
+        : !appReady ? 'SyncDegraded' : 'Ready';
+  const reason = ready ? ''
+    : !gitea ? 'Gitea delivery source is unreachable'
+      : !runtimeConfigured ? 'Argo CD owner/runtime is not configured'
+        : !runtimeReady ? 'Argo CD owner/runtime is not Ready'
+          : !appConfigured ? 'Canonical Argo CD Application is not configured'
+            : `Canonical Application is ${sync}/${health}`;
+  return {
+    ready,
+    state,
+    reason,
+    gitea,
+    owner: 'argocd',
+    runtime: { configured: runtimeConfigured, ready: runtimeReady, components: runtimeItems.map((item) => item.metadata?.name).filter(Boolean) },
+    application: { configured: appConfigured, name: 'opensphere-platform-delivery-verify', sync, health, revision },
+  };
 }
 async function observabilityProfileEvidence() {
   const binding = await observabilityBinding();
@@ -2481,12 +2575,46 @@ async function readPlatformProfile() {
   if (!r.ok) return { declared: false, crdReady: false, resource: null, reason: `PlatformSupportProfile HTTP ${r.status}` };
   return { declared: true, crdReady: true, resource: r.json };
 }
+async function foundationEstablishmentStatus(supportReady, registration) {
+  const [bootstrapOwner, crds, controlPlane, models, descriptors, bindings] = await Promise.all([
+    k8s('GET', '/apis/apps/v1/namespaces/opensphere-console/deployments/foundation-bootstrap-reconciler'),
+    k8s('GET', '/apis/apiextensions.k8s.io/v1/customresourcedefinitions'),
+    k8s('GET', '/apis/apps/v1/namespaces/opensphere-system/deployments/foundation-control-plane'),
+    k8s('GET', '/apis/foundation.opensphere.io/v1alpha1/foundationmodels'),
+    k8s('GET', '/apis/foundation.opensphere.io/v1alpha1/foundationmoduledescriptors'),
+    k8s('GET', '/apis/foundation.opensphere.io/v1alpha1/foundationbindings'),
+  ]);
+  return foundationEstablishmentProjection({
+    supportReady,
+    shellReady: verifiedActivatedRegistration(registration),
+    bootstrapOwner,
+    crds,
+    controlPlane,
+    models,
+    descriptors,
+    bindings,
+  });
+}
 async function platformReadinessStatus() {
-  const [platformControl, mainShell, clusterManager, profile, delivery, observability, backupRestore, securityPolicy, regs] = await Promise.all([
+  const probeNames = ['platformControl', 'mainShell', 'clusterManager', 'profile', 'delivery', 'observability', 'backupRestore', 'securityPolicy', 'registrations'];
+  const settled = await Promise.allSettled([
     platformControlReadiness(), mainShellBaselineStatus(), clusterManagerActivationStatus(),
     readPlatformProfile(), deliveryEvidence(),
     observabilityProfileEvidence(), backupRestoreEvidence(), securityPolicyEvidence(), listRegs(),
   ]);
+  const probeFailures = settled.flatMap((result, index) => result.status === 'rejected'
+    ? [{ probe: probeNames[index], reason: String(result.reason?.message || result.reason || 'probe failed') }]
+    : []);
+  const value = (index, fallback) => settled[index].status === 'fulfilled' ? settled[index].value : fallback;
+  const platformControl = value(0, { ready: false, reason: 'platform control probe failed' });
+  const mainShell = value(1, { ready: false, reason: 'main shell probe failed' });
+  const clusterManager = value(2, { ready: false, phase: 'Unknown', workload: 'Unknown', reason: 'cluster manager probe failed' });
+  const profile = value(3, { declared: false, crdReady: false, resource: null, reason: 'profile probe failed' });
+  const delivery = value(4, { ready: false, state: 'ProbeFailed', reason: 'delivery probe failed' });
+  const observability = value(5, { ready: false, stackReady: false, mode: 'ProbeFailed', reason: 'observability probe failed' });
+  const backupRestore = value(6, { ready: false, reason: 'backup/restore probe failed' });
+  const securityPolicy = value(7, { ready: false, reason: 'security policy probe failed' });
+  const regs = value(8, { ok: false, json: { items: [] } });
   const his = {
     ready: observability.stackReady,
     state: observability.mode,
@@ -2506,30 +2634,54 @@ async function platformReadinessStatus() {
   ];
   const prerequisitesReady = prerequisites.every((x) => x.ready);
   const supportReady = profile.declared && prerequisitesReady && capabilities.every((x) => x.ready);
-  const foundationActivationOverride = !supportReady && FOUNDATION_ACTIVATION_DEV_OVERRIDE;
-  const foundationActivationAllowed = supportReady || foundationActivationOverride;
+  // The Foundation shell is the operator's management surface. Keep that shell
+  // activatable while support evidence is incomplete; Support Profile readiness
+  // gates PFS establishment and hosted services, not access to their repair UI.
+  const foundationActivationOverride = false;
+  const foundationActivationAllowed = true;
   const foundationReg = (regs.json?.items || []).find((x) => x.metadata?.name === FOUNDATION_ID);
-  const pfsEstablished = foundationReg?.status?.phase === 'Activated';
-  const domainAdmissionReady = pfsEstablished && supportReady;
+  const pfs = await foundationEstablishmentStatus(supportReady, foundationReg).catch((error) => ({
+    established: false,
+    phase: 'Degraded',
+    shellReady: false,
+    blockers: [{ key: 'foundation-establishment-probe', detail: String(error?.message || error || 'probe failed') }],
+  }));
+  const domainAdmissionReady = pfs.established && supportReady;
   const profilePhase = !profile.crdReady ? 'Blocked' : !profile.declared ? 'NotDeclared'
     : !prerequisitesReady ? 'Blocked' : supportReady ? 'Ready' : 'Degraded';
   const lifecycle = [
     ...prerequisites.map((x) => ({ ...x, state: x.ready ? 'Ready' : 'Blocked' })),
     { key: 'support-profile', label: 'Platform Support Profile Ready', ready: supportReady, state: profilePhase, detail: profile.declared ? `${capabilities.filter((x) => x.ready).length}/4 capability evidence verified` : 'Profile preflight has not been declared', route: '/manage/platform-control' },
-    { key: 'pfs', label: 'PFS Established', ready: pfsEstablished, state: pfsEstablished ? 'Ready' : (foundationActivationAllowed ? 'Available' : (foundationReg?.status?.phase === 'Ready' ? 'Staged' : 'Locked')), detail: pfsEstablished ? (supportReady ? 'Foundation activated' : 'Foundation activated by development override; PFS plugins remain locked') : (supportReady ? 'Foundation activation is unlocked' : (foundationActivationOverride ? 'Development override permits Foundation subShell activation only' : (foundationReg?.status?.phase === 'Ready' ? 'Foundation is staged; activation waits for Platform Support Profile Ready' : 'Foundation may be staged, but activation waits for Platform Support Profile Ready'))), route: foundationActivationAllowed ? '/manage/extensions' : '/manage/platform-control' },
-    { key: 'domain', label: 'Domain subShell Admission', ready: domainAdmissionReady, state: domainAdmissionReady ? 'Available' : 'Locked', detail: domainAdmissionReady ? 'Domain subShell admission available' : (pfsEstablished ? 'Development override does not unlock Domain subShell admission' : 'PFS must be established first'), route: domainAdmissionReady ? '/manage/extensions' : '/manage/platform-control' },
+    {
+      key: 'pfs',
+      label: 'PFS Established',
+      ready: pfs.established,
+      state: pfs.phase,
+      detail: pfs.established
+        ? 'Foundation contracts, control plane and Claim→Binding protection proof are live'
+        : (pfs.blockers[0]?.detail || 'Foundation establishment evidence is incomplete'),
+      route: pfs.shellReady ? '/p/foundation' : (foundationActivationAllowed ? '/manage/extensions' : '/manage/platform-control'),
+    },
+    {
+      key: 'domain',
+      label: 'Domain subShell Admission',
+      ready: domainAdmissionReady,
+      state: domainAdmissionReady ? 'Available' : 'Locked',
+      detail: domainAdmissionReady ? 'Domain subShell admission available' : 'PFS live establishment proof is required first',
+      route: domainAdmissionReady ? '/manage/extensions' : '/manage/platform-control',
+    },
   ];
   return {
     apiVersion: `${PLATFORM_GROUP}/${V}`, kind: 'PlatformReadinessStatus', observedAt: new Date().toISOString(),
     phase: profilePhase, ready: supportReady, profile: { declared: profile.declared, crdReady: profile.crdReady, name: PLATFORM_PROFILE_NAME, generation: profile.resource?.metadata?.generation || 0, lastVerifiedAt: profile.resource?.status?.lastVerifiedAt || '', status: profile.resource?.status || null },
-    prerequisites, capabilities, lifecycle, evidence: { platformControl, mainShell, clusterManager, his },
+    prerequisites, capabilities, lifecycle, evidence: { platformControl, mainShell, clusterManager, his, probeFailures },
     admission: {
       foundationStageAllowed: true,
       foundationActivationAllowed,
       foundationActivationOverride,
-      mode: foundationActivationOverride ? 'DevelopmentOverride' : (supportReady ? 'PlatformSupportProfile' : 'Blocked'),
-      // Compatibility alias for older clients. This gate now means activation,
-      // because an immutable, verified workload may be staged before PFS admission.
+      mode: supportReady ? 'PlatformSupportProfile' : 'ShellManagementOnly',
+      // Foundation shell activation remains available to administrators. PFS
+      // establishment and hosted capability activation stay evidence-gated.
       foundationInstallAllowed: foundationActivationAllowed,
       // PFS plugins follow the same stage/activate split as the Foundation
       // subShell above: an immutable, signature-verified plugin may be installed
@@ -2540,9 +2692,13 @@ async function platformReadinessStatus() {
       // Compatibility alias for older clients; like foundationInstallAllowed it
       // now reports the activation gate, not an installation gate.
       pfsPluginInstallAllowed: supportReady,
-      reason: supportReady ? '' : (foundationActivationOverride ? 'DevelopmentOverride' : 'PlatformSupportProfileRequired'),
+      reason: supportReady ? '' : 'PlatformSupportProfileRequiredForPfsServices',
     },
-    pfs: { established: pfsEstablished, phase: foundationReg?.status?.phase || 'NotInstalled' },
+    pfs: {
+      ...pfs,
+      extensionPhase: foundationReg?.status?.phase || 'NotInstalled',
+      extensionDesiredState: foundationReg?.spec?.desiredState || 'Absent',
+    },
   };
 }
 async function declarePlatformProfile(actor, reason) {
@@ -2550,7 +2706,10 @@ async function declarePlatformProfile(actor, reason) {
   const body = {
     apiVersion: `${PLATFORM_GROUP}/${V}`, kind: 'PlatformSupportProfile',
     metadata: { name: PLATFORM_PROFILE_NAME, namespace: NS },
-    spec: { ...requiredProfileSpec, approval: { requestedBy: actor, reason, requestedAt: new Date().toISOString() } },
+    // PlatformSupportProfile approval.requestedBy is a CRD string field. The
+    // authenticated request actor is a structured object, so persist the same
+    // stable human-readable label used by audit and UIPluginRegistration.
+    spec: { ...requiredProfileSpec, approval: { requestedBy: auditActorLabel(actor), reason, requestedAt: new Date().toISOString() } },
   };
   if (!current.crdReady) return { ok: false, status: 503, json: { message: current.reason || 'PlatformSupportProfile CRD unavailable' } };
   if (!current.declared) return k8s('POST', `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles`, body);
@@ -2578,11 +2737,12 @@ function platformVerificationProjection(actor, status) {
 }
 
 function platformVerificationComparable(value = {}) {
+  const normalized = value || {};
   return JSON.stringify({
-    phase: value.phase || '',
-    observedGeneration: Number(value.observedGeneration || 0),
-    conditions: (value.conditions || []).map((item) => ({ type: item.type, status: item.status, reason: item.reason, message: item.message })),
-    evidenceRefs: (value.evidenceRefs || []).map((item) => ({ type: item.type || '', ref: item.ref || '' })),
+    phase: normalized.phase || '',
+    observedGeneration: Number(normalized.observedGeneration || 0),
+    conditions: (normalized.conditions || []).map((item) => ({ type: item.type, status: item.status, reason: item.reason, message: item.message })),
+    evidenceRefs: (normalized.evidenceRefs || []).map((item) => ({ type: item.type || '', ref: item.ref || '' })),
   });
 }
 
@@ -2918,7 +3078,6 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/admin/extensions/install' && req.method === 'POST') {
       const body = await readBody(req).catch(() => ({}));
       const reason = String(body.reason || '').trim();
-      if (body.client !== 'cli:os') return json(res, 403, { error: 'CliInstallationRequired', message: 'use os extensions install', opId });
       if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'installation reason must be at least 8 characters', opId });
       try {
         const inspection = await inspectModuleImage(body.image);
@@ -2941,7 +3100,7 @@ const server = http.createServer(async (req, res) => {
         }
         const stored = await upsertPackage(pkg);
         if (!stored.ok) return json(res, stored.status >= 500 ? 502 : stored.status, { error: 'PackageStoreFailed', status: stored.status, opId });
-        const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, cliInstallationProvenance(actor, opId));
+        const registered = await ensureRegistration(pkg.metadata.name, 'Installed', actor, reason, installationProvenance(actor, opId, body.client));
         if (!registered.ok) return json(res, registered.status >= 500 ? 502 : registered.status, { error: 'RegistrationFailed', status: registered.status, opId });
         await durableAudit(actor, 'extension-install', pkg.metadata.name, 'accepted', inspection.image, opId);
         reconcile().catch((e) => console.error('reconcile error', e));
@@ -3021,19 +3180,18 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(/^\/api\/admin\/plugins\/registrations\/([a-z0-9-]+)\/(install|enable|disable|uninstall|rollback)$/);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
-      if (action === 'install') return json(res, 403, { error: 'CliInstallationRequired', message: 'use os extensions install', opId });
+      const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || '').trim();
+      if (reason.length < 8) {
+        return json(res, 400, { error: 'ApprovalReasonRequired', message: `${action} reason must be at least 8 characters`, opId });
+      }
+      if (action === 'install') {
+        return json(res, 400, { error: 'ImageReferenceRequired', message: 'use the common lifecycle install endpoint with an immutable image reference', opId });
+      }
       if (id === FOUNDATION_ID && action === 'enable') {
         const readiness = await platformReadinessStatus(req);
-        if (!readiness.admission.foundationActivationAllowed) {
-          await durableAudit(actor, action, id, 'denied', 'PlatformSupportProfileRequired', opId);
-          return json(res, 409, {
-            error: 'PlatformSupportProfileRequired',
-            message: 'Foundation activation requires Platform Support Profile Ready; staging as Installed/Ready is allowed',
-            readiness: { phase: readiness.phase, prerequisites: readiness.prerequisites, capabilities: readiness.capabilities }, opId,
-          });
-        }
-        if (readiness.admission.foundationActivationOverride) {
-          await durableAudit(actor, 'foundation-development-override', id, 'accepted', 'Foundation subShell activation only; PFS plugins remain gated', opId);
+        if (!readiness.ready) {
+          await durableAudit(actor, 'foundation-shell-management-activation', id, 'accepted', 'Management shell enabled; PFS establishment and hosted services remain evidence-gated', opId);
         }
       }
       // Activation is the gate for PFS plugins. Installing and staging one is
@@ -3115,16 +3273,15 @@ const server = http.createServer(async (req, res) => {
           await durableAudit(actor, action, id, 'error', `HTTP ${pr.status}`, opId);
           return json(res, pr.status >= 500 ? 502 : pr.status, { error: 'rollback patch failed', status: pr.status, opId });
         }
-        await ensureRegistration(id, 'Enabled', actor, 'rollback to previous verified release');
-        await durableAudit(actor, action, id, 'accepted', previousDigest, opId);
+        await ensureRegistration(id, 'Enabled', actor, reason);
+        await durableAudit(actor, action, id, 'accepted', reason, opId);
         reconcile().catch((e) => console.error('reconcile error', e));
         return json(res, 202, { accepted: true, id, desiredState: 'Enabled', digest: previousDigest, version: previousVersion });
       }
-      const body = await readBody(req).catch(() => ({}));
       const desired = action === 'install' ? 'Installed' : action === 'enable' ? 'Enabled' : action === 'disable' ? 'Disabled' : 'Uninstalled';
-      const r = await ensureRegistration(id, desired, actor, body.reason);
+      const r = await ensureRegistration(id, desired, actor, reason);
       if (!r.ok) { console.error(`[err] op=${opId} ${action} ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, action, id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
-      await durableAudit(actor, action, id, 'accepted', '', opId);
+      await durableAudit(actor, action, id, 'accepted', reason, opId);
       reconcile().catch((e) => console.error('reconcile error', e)); // 비동기 조정
       return json(res, 202, { accepted: true, id, desiredState: desired });
     }
@@ -3176,8 +3333,7 @@ if (require.main === module) {
 } else {
   // 테스트로 require될 때는 서버 미기동 — 순수 보안 검증 로직만 노출(P2-4 회귀 테스트).
   // 감사 원시요소는 **동작 시험**을 위해 내보낸다. 소스 문자열 정규식으로 계약을 확인하는 것은
-  // 동어반복이라 회귀를 못 잡는다(arch-002 레드팀 감사 패턴 B). 실제로 호출해 확인해야 한다.
-  module.exports = { logAudit, durableAudit, persistAuditNow, pollK8sEvents,
-    auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
-    isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
+// 동어반복이라 회귀를 못 잡는다(arch-002 레드팀 감사 패턴 B). 실제로 호출해 확인해야 한다.
+module.exports = { logAudit, durableAudit, persistAuditNow, pollK8sEvents, auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
+  isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses, moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems, kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, observerClusterRoleManifest, infrastructureManagerClusterRoleManifest, aiDomainOperatorClusterRoleManifest, publishedPluginEntry, retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate, verifiedEnabledUpdate, bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable };
 }

@@ -6,7 +6,17 @@ const { createBrowserSessionManager, sha256 } = require('./browser-session');
 
 function harness({ verifiedFactor = false } = {}) {
   let row = null;
+  let authorityOutage = false;
+  let verifierMode = 'normal';
+  let refreshMode = 'success';
+  let refreshCalls = 0;
+  const events = [];
   const restRequest = async (resource, options = {}) => {
+    if (authorityOutage) throw { code: 503, msg: 'Supabase unavailable' };
+    if (resource === 'session_event') {
+      if (options.method === 'POST') events.push(...options.body);
+      return [];
+    }
     assert.equal(resource, 'browser_session');
     if (options.method === 'POST') {
       row = {
@@ -29,6 +39,10 @@ function harness({ verifiedFactor = false } = {}) {
     return [];
   };
   const verifyToken = async (token) => {
+    if (verifierMode === 'outage') throw { code: 503, msg: 'Supabase authorization unavailable' };
+    if (verifierMode === 'expired' && token === 'access-a') {
+      throw { code: 401, reason: 'token_expired', msg: 'token expired' };
+    }
     if (!['access-a', 'access-aal2', 'access-refreshed'].includes(token)) throw { code: 401, msg: 'expired' };
     return {
       sub: '22222222-2222-4222-8222-222222222222',
@@ -44,7 +58,18 @@ function harness({ verifiedFactor = false } = {}) {
       return { access_token: 'access-a', refresh_token: 'refresh-a', user: { id: 'user' } };
     }
     if (path === '/token' && options.query === 'grant_type=refresh_token') {
-      assert.equal(options.body.refresh_token, 'legacy-refresh');
+      refreshCalls += 1;
+      if (refreshMode === 'outage') throw { code: 500, msg: 'database unavailable' };
+      if (refreshMode === 'rejected') throw { code: 400, msg: 'invalid refresh token' };
+      if (refreshMode === 'concurrent') {
+        if (refreshCalls === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          throw { code: 400, msg: 'refresh token already rotated' };
+        }
+      }
+      assert.ok(['legacy-refresh', 'refresh-a'].includes(options.body.refresh_token));
       return { access_token: 'access-refreshed', refresh_token: 'refresh-rotated', user: { id: 'user' } };
     }
     if (path === '/user') {
@@ -66,7 +91,15 @@ function harness({ verifiedFactor = false } = {}) {
     publicOrigin: 'https://console.example.test',
     now: () => new Date('2026-07-27T00:00:00.000Z'),
   });
-  return { manager, row: () => row };
+  return {
+    manager,
+    row: () => row,
+    events: () => events,
+    refreshCalls: () => refreshCalls,
+    setAuthorityOutage: (value) => { authorityOutage = value; },
+    setVerifierMode: (value) => { verifierMode = value; },
+    setRefreshMode: (value) => { refreshMode = value; },
+  };
 }
 
 function request({ cookie = '', csrf = '', method = 'GET' } = {}) {
@@ -125,6 +158,28 @@ test('authenticates through the opaque cookie and rejects a mutation without CSR
   assert.equal(accepted.actor.provider, 'supabase-browser-session');
 });
 
+test('keeps only a previously verified GET session during authority outage and fails mutations closed', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+    duration: '8h',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  const cookie = `__Host-opensphere_session=${encodeURIComponent(handle)}`;
+  const live = await h.manager.authenticate(request({ cookie }));
+  assert.equal(live.authorityDegraded, undefined);
+  h.setAuthorityOutage(true);
+  const degraded = await h.manager.authenticate(request({ cookie }));
+  assert.equal(degraded.authorityDegraded, true);
+  assert.equal(degraded.actor.sub, live.actor.sub);
+  assert.equal(h.manager.cachedActorForAccessToken(degraded.accessToken).authorityDegraded, true);
+  await assert.rejects(
+    h.manager.authenticate(request({ cookie, csrf: created.csrfToken, method: 'POST' })),
+    (error) => error.code === 503,
+  );
+});
+
 test('keeps a verified TOTP login pending until an aal2 challenge succeeds', async () => {
   const h = harness({ verifiedFactor: true });
   const created = await h.manager.create(request({ method: 'POST' }), {
@@ -174,4 +229,88 @@ test('adopts one legacy browser session by rotating its refresh credential once'
   assert.match(adopted.cookies[0], /^__Host-opensphere_session=/);
   assert.equal(h.row().persistence, 'browser');
   assert.doesNotMatch(h.row().refresh_token_ciphertext, /legacy-refresh|refresh-rotated/);
+});
+
+test('does not rotate or revoke a valid browser session when live authorization is unavailable', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+    duration: '8h',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  h.setVerifierMode('outage');
+  await assert.rejects(
+    h.manager.authenticate(request({
+      cookie: `__Host-opensphere_session=${encodeURIComponent(handle)}`,
+    })),
+    (error) => error.code === 503,
+  );
+  assert.equal(h.refreshCalls(), 0);
+  assert.equal(h.row().status, 'active');
+  assert.equal(h.events().some((event) => event.event === 'reuse_detected'), false);
+});
+
+test('preserves an expired browser session when Supabase refresh has a transient 5xx', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+    duration: '8h',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  h.setVerifierMode('expired');
+  h.setRefreshMode('outage');
+  await assert.rejects(
+    h.manager.authenticate(request({
+      cookie: `__Host-opensphere_session=${encodeURIComponent(handle)}`,
+    })),
+    (error) => error.code === 503 && /preserved/.test(error.msg),
+  );
+  assert.equal(h.refreshCalls(), 1);
+  assert.equal(h.row().status, 'active');
+  assert.equal(h.events().some((event) => event.event === 'reuse_detected'), false);
+});
+
+test('two concurrent refresh callers adopt the peer rotation instead of revoking the session', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+    duration: '8h',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  const req = request({
+    cookie: `__Host-opensphere_session=${encodeURIComponent(handle)}`,
+  });
+  h.setVerifierMode('expired');
+  h.setRefreshMode('concurrent');
+  const results = await Promise.all([
+    h.manager.authenticate(req),
+    h.manager.authenticate(req),
+  ]);
+  assert.equal(results.every((result) => result.actor.sub === '22222222-2222-4222-8222-222222222222'), true);
+  assert.equal(h.refreshCalls(), 2);
+  assert.equal(h.row().status, 'active');
+  assert.equal(h.events().some((event) => event.event === 'reuse_detected'), false);
+});
+
+test('revokes only after an explicit refresh rejection remains current after peer recheck', async () => {
+  const h = harness();
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+    duration: '8h',
+  });
+  const handle = decodeURIComponent(created.cookies[0].match(/^__Host-opensphere_session=([^;]+)/)[1]);
+  h.setVerifierMode('expired');
+  h.setRefreshMode('rejected');
+  await assert.rejects(
+    h.manager.authenticate(request({
+      cookie: `__Host-opensphere_session=${encodeURIComponent(handle)}`,
+    })),
+    (error) => error.code === 401 && /explicitly rejected/.test(error.msg),
+  );
+  assert.equal(h.row().status, 'revoked');
+  assert.equal(h.events().some((event) => event.event === 'reuse_detected'), true);
 });

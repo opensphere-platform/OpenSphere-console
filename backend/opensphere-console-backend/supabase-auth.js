@@ -20,7 +20,7 @@ function verifyHs256Jwt(token, options) {
   const now = Math.floor(Date.now() / 1000);
   if (!claims.sub) throw { code: 401, msg: 'missing sub' };
   if (!claims.iat || claims.iat > now + 30) throw { code: 401, msg: 'invalid iat' };
-  if (!claims.exp || claims.exp <= now) throw { code: 401, msg: 'token expired' };
+  if (!claims.exp || claims.exp <= now) throw { code: 401, reason: 'token_expired', msg: 'token expired' };
   if (claims.nbf && claims.nbf > now + 30) throw { code: 401, msg: 'token not yet valid' };
   if (claims.iss !== options.issuer) throw { code: 401, msg: 'bad iss' };
   const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];

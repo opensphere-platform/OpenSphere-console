@@ -95,7 +95,7 @@ test('os-oaa-agent.ts surfaces Degraded/error state with retry-by-resend, new ch
 
   assert.match(agent, /readonly error = signal\(''\)/);
   assert.match(agent, /@if \(error\(\)\) \{/);
-  assert.match(agent, /this\.error\.set\(body\.error \|\| `OAA request failed \(HTTP \$\{r\.status\}\)`\)/);
+  assert.match(agent, /this\.error\.set\(body\.error \|\| `R2D2 request failed \(HTTP \$\{r\.status\}\)`\)/);
   assert.match(agent, /newChat\(\):\s*void/);
   assert.match(agent, /toggleHistory\(\):\s*void/);
   assert.match(agent, /loadSession\(s: OaaSession\):\s*void/);
@@ -104,7 +104,7 @@ test('os-oaa-agent.ts surfaces Degraded/error state with retry-by-resend, new ch
 test('os-oaa-agent.ts exposes accessible open/close controls and dock resize + full workspace toggle', () => {
   const agent = read('src', 'app', 'os', 'os-oaa-agent.ts');
 
-  assert.match(agent, /aria-label="OpenSphere AI Agent"/);
+  assert.match(agent, /aria-label="R2D2"/);
   assert.match(agent, /\(click\)="close\(\)" title="Close" aria-label="Close"/);
   assert.match(agent, /startResize\(ev: PointerEvent\)/);
   assert.match(agent, /resetDockWidth\(\)/);
@@ -153,7 +153,7 @@ test('OAA admin uses the Supabase console-admins contract and the shared full-wi
   const styles = read('src', 'styles.scss');
 
   assert.doesNotMatch(admin, /opensphere-console-admins/);
-  assert.match(admin, /OAA Gateway 관리자 역할\(console-admins\)이 필요합니다/);
+  assert.match(admin, /R2D2 관리자 역할\(console-admins\)이 필요합니다/);
   assert.match(admin, /class="clr-form-full-width oaa-key-form"/);
   assert.match(admin, /설정 ID <small>\(자동 생성 · API key 아님\)<\/small>/);
   assert.doesNotMatch(admin, /name="oaa-key-id"/);
@@ -286,6 +286,8 @@ test('OAA Admin correlates agent evidence and governs retention without a purge 
   assert.match(admin, /Run → retrieval \/ tool \/ provider correlation/);
   assert.match(admin, /보존·Legal hold 정책/);
   assert.match(admin, /expectedRetentionConfirm/);
+  assert.match(admin, /update R2D2 evidence retention/);
+  assert.match(admin, /replace\(\/\^update R2D2 evidence retention \/, 'update OAA evidence retention '\)/);
   assert.match(admin, /\/api\/oaa\/admin\/evidence\/retention/);
   assert.doesNotMatch(admin, />\s*(?:Purge|삭제 실행)\s*</i);
   assert.match(gateway, /deletionPerformed: false/);

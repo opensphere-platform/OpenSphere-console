@@ -107,7 +107,7 @@ interface NavBand {
             routerLink="/"
             routerLinkActive="active"
             [routerLinkActiveOptions]="{ exact: true }"
-            ><os-cicon clrVerticalNavIcon [icon]="iconHome" [size]="20" />홈 · Perspectives</a
+            ><os-cicon clrVerticalNavIcon [icon]="iconHome" [size]="20" />홈 · 10P × 6L</a
           >
           @for (band of bands(); track band.band) {
             <div class="os-band-label">{{ band.band }}</div>
@@ -430,6 +430,16 @@ export class OsShell {
       const arr = byBand.get(p.navBand) ?? [];
       arr.push({ path: routeForPlugin(p.id), label: p.title, plugin: true });
       byBand.set(p.navBand, arr);
+    }
+    const servingIds = new Set(this.ext.pages().map((page) => page.id));
+    for (const item of this.ext.managementInventory()) {
+      if (servingIds.has(item.id)) continue;
+      // Inventory is a management projection, not a flat navigation authority.
+      // PFSS-owned children are reachable only through their host namespace.
+      if ((item.hostRef || 'main') !== 'main') continue;
+      const arr = byBand.get(item.navBand) ?? [];
+      arr.push({ path: routeForPlugin(item.id), label: item.title, plugin: true });
+      byBand.set(item.navBand, arr);
     }
 
     // 정렬(알려진 순서 우선) → 역할 게이트 → 빈 밴드 제거

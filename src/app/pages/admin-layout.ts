@@ -177,7 +177,7 @@ export class AdminLayout {
       icon: Layers16,
       items: [
         { label: 'Control Plane', route: '/manage/platform-control' },
-        { label: 'OAA', route: '/manage/oaa' },
+        { label: 'R2D2', route: '/manage/oaa' },
         { label: 'HIS Observability', route: '/manage/observability' },
       ],
     },

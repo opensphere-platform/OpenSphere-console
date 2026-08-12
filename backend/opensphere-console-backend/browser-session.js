@@ -65,6 +65,35 @@ function duration(value) {
   return normalized;
 }
 
+function jwtExpiry(token) {
+  try {
+    const payload = JSON.parse(Buffer.from(String(token).split('.')[1] || '', 'base64url').toString('utf8'));
+    return Number(payload.exp || 0) * 1000;
+  } catch {
+    return 0;
+  }
+}
+
+function errorStatus(error) {
+  const value = Number(error?.code || error?.status || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function authorityUnavailable(error) {
+  const status = errorStatus(error);
+  return status === 0 || status === 408 || status === 429 || status >= 500;
+}
+
+function tokenActuallyExpired(error, token, currentMs) {
+  if (error?.reason === 'token_expired') return true;
+  const expiresAt = jwtExpiry(token);
+  return Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= currentMs;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function clientNetworkDigest(req) {
   const raw = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
   if (!raw) return null;
@@ -128,6 +157,11 @@ function createBrowserSessionManager({
     ? encryptionKey
     : Buffer.from(String(encryptionKey || ''), 'base64');
   if (key.length !== 32) throw new Error('BROWSER_SESSION_ENCRYPTION_KEY must decode to exactly 32 bytes');
+  // This is a bounded availability cache, not an identity authority. Entries
+  // exist only after Supabase-backed verification and expire at the earliest of
+  // access-token, idle, and absolute session expiry. They are GET-only.
+  const verifiedByHandle = new Map();
+  const verifiedByAccessToken = new Map();
 
   function requestOriginAllowed(req) {
     const origin = String(req.headers.origin || '');
@@ -193,6 +227,129 @@ function createBrowserSessionManager({
   async function supabase(path, options = {}) {
     const body = await authRequest(path, options);
     return body && typeof body === 'object' ? body : {};
+  }
+
+  async function rowAfterPeerRefresh(handle, previousCiphertext) {
+    let latest = null;
+    for (const delayMs of [0, 25, 75, 150]) {
+      if (delayMs) await wait(delayMs);
+      latest = await rowForHandle(handle);
+      if (latest && latest.refresh_token_ciphertext !== previousCiphertext) return latest;
+    }
+    return latest;
+  }
+
+  async function claimsFromRow(latest) {
+    const accessToken = decodeSecret(latest.access_token_ciphertext, key);
+    const claims = await verifyToken(accessToken);
+    return {
+      row: latest,
+      accessToken,
+      claims,
+      refreshedByPeer: true,
+    };
+  }
+
+  async function refreshExpiredCredential(row, handle, current) {
+    const previousCiphertext = row.refresh_token_ciphertext;
+    const refreshToken = decodeSecret(previousCiphertext, key);
+    let refreshed;
+    try {
+      refreshed = await supabase('/token', {
+        method: 'POST',
+        query: 'grant_type=refresh_token',
+        body: { refresh_token: refreshToken },
+      });
+    } catch (error) {
+      // A Supabase/PostgreSQL timeout or 5xx is an availability failure, not
+      // proof of credential reuse. Preserve the opaque browser session and let
+      // the caller retry after the authority recovers.
+      if (authorityUnavailable(error)) {
+        throw {
+          code: 503,
+          msg: 'Supabase session refresh temporarily unavailable; browser session preserved',
+        };
+      }
+
+      // Another backend replica can rotate the same credential while this
+      // request is in flight. Re-read the durable row before interpreting a
+      // 400/401 as reuse; a changed ciphertext is the peer's successful result.
+      if ([400, 401].includes(errorStatus(error))) {
+        const latest = await rowAfterPeerRefresh(handle, previousCiphertext);
+        if (latest && latest.refresh_token_ciphertext !== previousCiphertext) {
+          return claimsFromRow(latest);
+        }
+        await revokeTokenFamily(row, 'refresh credential explicitly rejected');
+        throw {
+          code: 401,
+          msg: 'browser session refresh credential was explicitly rejected; related session family revoked',
+        };
+      }
+      throw error;
+    }
+
+    if (!refreshed.access_token || !refreshed.refresh_token) {
+      throw {
+        code: 503,
+        msg: 'Supabase session refresh returned no usable credential; browser session preserved',
+      };
+    }
+
+    // Persist the rotated pair before consulting live authorization state. If
+    // PostgREST or role projection is temporarily unavailable afterwards, the
+    // next request resumes from the new token instead of reusing the old one.
+    const nextCredential = {
+      access_token_ciphertext: encodeSecret(refreshed.access_token, key),
+      refresh_token_ciphertext: encodeSecret(refreshed.refresh_token, key),
+    };
+    let storedRows;
+    try {
+      storedRows = await restRequest('browser_session', {
+        method: 'PATCH',
+        query: `id=eq.${encodeURIComponent(row.id)}&status=eq.active&refresh_token_ciphertext=eq.${encodeURIComponent(previousCiphertext)}&select=*`,
+        body: nextCredential,
+        prefer: 'return=representation',
+      });
+    } catch {
+      throw {
+        code: 503,
+        msg: 'Supabase session rotation could not be persisted; browser session preserved',
+      };
+    }
+
+    if (!Array.isArray(storedRows) || !storedRows[0]) {
+      const latest = await rowAfterPeerRefresh(handle, previousCiphertext);
+      if (latest && latest.refresh_token_ciphertext !== previousCiphertext) {
+        return claimsFromRow(latest);
+      }
+      throw {
+        code: 503,
+        msg: 'Concurrent Supabase session rotation is still settling; browser session preserved',
+      };
+    }
+
+    const stored = { ...row, ...nextCredential, ...storedRows[0] };
+    const claims = await verifyToken(refreshed.access_token);
+    await restRequest('browser_session', {
+      method: 'PATCH',
+      query: `id=eq.${encodeURIComponent(row.id)}&status=eq.active`,
+      body: {
+        supabase_session_id: claims.authSessionId || row.supabase_session_id,
+        assurance: claims.assurance === 'aal2' ? 'aal2' : 'aal1',
+      },
+      prefer: 'return=minimal',
+    });
+    await recordEvent(row, 'refresh', 'ok');
+    return {
+      row: {
+        ...stored,
+        supabase_session_id: claims.authSessionId || row.supabase_session_id,
+        assurance: claims.assurance === 'aal2' ? 'aal2' : 'aal1',
+      },
+      accessToken: refreshed.access_token,
+      claims,
+      refreshedByPeer: false,
+    };
   }
 
   async function factors(accessToken) {
@@ -328,7 +485,16 @@ function createBrowserSessionManager({
 
   async function authenticate(req, options = {}) {
     const handle = parseCookies(req.headers.cookie)[COOKIE_NAME];
-    const row = await rowForHandle(handle);
+    const handleHash = sha256(handle);
+    let row;
+    try {
+      row = await rowForHandle(handle);
+    } catch (error) {
+      const cached = verifiedByHandle.get(handleHash);
+      const readOnly = ['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || 'GET').toUpperCase());
+      if (!readOnly || !cached || cached.validUntil <= now().getTime()) throw error;
+      return { ...cached.auth, authorityDegraded: true };
+    }
     if (!row || row.status !== 'active') throw { code: 401, msg: 'browser session is not active' };
     const current = now();
     if (Date.parse(row.absolute_expires_at) <= current.getTime()) return expire(row, 'absolute lifetime exceeded');
@@ -336,38 +502,26 @@ function createBrowserSessionManager({
     if (options.requireCsrf !== false && !csrfAllowed(req, row)) throw { code: 403, msg: 'browser session CSRF validation failed' };
 
     let accessToken = decodeSecret(row.access_token_ciphertext, key);
-    let refreshToken = decodeSecret(row.refresh_token_ciphertext, key);
     let claims;
     try {
       claims = await verifyToken(accessToken);
     } catch (error) {
-      let refreshed;
-      try {
-        refreshed = await supabase('/token', {
-          method: 'POST',
-          query: 'grant_type=refresh_token',
-          body: { refresh_token: refreshToken },
-        });
-      } catch {
-        await revokeTokenFamily(row, 'refresh token reuse or refresh rejection');
-        throw { code: 401, msg: 'browser session refresh credential was rejected; related session family revoked' };
+      const cached = verifiedByHandle.get(handleHash);
+      const readOnly = ['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || 'GET').toUpperCase());
+      if (authorityUnavailable(error)) {
+        if (readOnly && cached && cached.validUntil > current.getTime()) {
+          return { ...cached.auth, authorityDegraded: true };
+        }
+        throw error;
       }
-      if (!refreshed.access_token || !refreshed.refresh_token) return expire(row, 'refresh failed');
-      accessToken = refreshed.access_token;
-      refreshToken = refreshed.refresh_token;
-      claims = await verifyToken(accessToken);
-      await restRequest('browser_session', {
-        method: 'PATCH',
-        query: `id=eq.${encodeURIComponent(row.id)}&status=eq.active`,
-        body: {
-          access_token_ciphertext: encodeSecret(accessToken, key),
-          refresh_token_ciphertext: encodeSecret(refreshToken, key),
-          supabase_session_id: claims.authSessionId || row.supabase_session_id,
-          assurance: claims.assurance === 'aal2' ? 'aal2' : 'aal1',
-        },
-        prefer: 'return=minimal',
-      });
-      await recordEvent(row, 'refresh', 'ok');
+      // Refresh only a cryptographically valid token whose exp has elapsed.
+      // Inactive operators, credential-revision revocation, bad signatures and
+      // authorization outages must never be converted into refresh attempts.
+      if (!tokenActuallyExpired(error, accessToken, current.getTime())) throw error;
+      const rotated = await refreshExpiredCredential(row, handle, current);
+      row = rotated.row;
+      accessToken = rotated.accessToken;
+      claims = rotated.claims;
     }
 
     const nextIdle = new Date(Math.min(current.getTime() + idleTtlMs, Date.parse(row.absolute_expires_at)));
@@ -379,7 +533,7 @@ function createBrowserSessionManager({
         prefer: 'return=minimal',
       });
     }
-    return {
+    const result = {
       actor: {
         ...claims,
         browserSessionId: row.id,
@@ -391,6 +545,18 @@ function createBrowserSessionManager({
       row: { ...row, last_seen_at: current.toISOString(), idle_expires_at: nextIdle.toISOString() },
       accessToken,
     };
+    const tokenExpiresAt = jwtExpiry(accessToken) || Date.parse(result.row.absolute_expires_at);
+    const validUntil = Math.min(
+      tokenExpiresAt,
+      Date.parse(result.row.idle_expires_at),
+      Date.parse(result.row.absolute_expires_at),
+    );
+    if (Number.isFinite(validUntil) && validUntil > current.getTime()) {
+      const cached = { validUntil, auth: result };
+      verifiedByHandle.set(handleHash, cached);
+      verifiedByAccessToken.set(sha256(accessToken), cached);
+    }
+    return result;
   }
 
   async function completeMfa(req, code) {
@@ -440,6 +606,9 @@ function createBrowserSessionManager({
 
   async function list(req) {
     const auth = await authenticate(req, { requireCsrf: false });
+    if (auth.authorityDegraded) {
+      return { auth, items: [publicSession(auth.row, auth.row.id)] };
+    }
     const rows = await restRequest('browser_session', {
       query: `select=id,status,assurance,persistence,created_at,last_seen_at,idle_expires_at,absolute_expires_at,user_agent_digest&owner_id=eq.${encodeURIComponent(auth.actor.sub)}&status=in.(active,pending_mfa)&order=last_seen_at.desc`,
     });
@@ -607,6 +776,11 @@ function createBrowserSessionManager({
     verifyTotp,
     stepUp,
     events,
+    cachedActorForAccessToken(accessToken) {
+      const cached = verifiedByAccessToken.get(sha256(accessToken));
+      if (!cached || cached.validUntil <= now().getTime()) return null;
+      return { ...cached.auth.actor, authorityDegraded: true };
+    },
     clearCookies,
     cookieName: COOKIE_NAME,
   };

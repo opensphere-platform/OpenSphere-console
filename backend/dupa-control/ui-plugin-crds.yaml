@@ -107,7 +107,7 @@ spec:
                 shellCompat: { type: string }   # semver range, 예 ">=0.2.0 <0.4.0"
                 permissionProfile:
                   type: string
-                  enum: [none, cluster-observer-v1, cluster-infrastructure-manager-v1]
+                  enum: [none, cluster-observer-v1, cluster-infrastructure-manager-v1, ai-domain-operator-v1]
                 runtime:
                   type: object
                   properties:
@@ -305,7 +305,7 @@ spec:
                     requestedAt: { type: string }
                     requestedBy: { type: string }
                     requestedById: { type: string }
-                    client: { type: string, enum: ['cli:os'] }
+                    client: { type: string, enum: ['cli:os', 'console:web'] }
                     operationId: { type: string }
             status:
               type: object

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, verifiedActivatedRegistration, verifiedStagedUpdate, verifiedEnabledUpdate, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -32,7 +32,7 @@ test('HIS status is fail-closed on an unavailable or degraded Cluster Manager re
   assert.equal(normalizeHisStatus({ ok: true, status: 200, body: { state: 'Ready' } }).ready, true);
 });
 
-test('Foundation admission is enforced by API and exposed by Console page', () => {
+test('Foundation management shell stays accessible while PFS services remain evidence-gated', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   const page = read('src', 'app', 'pages', 'admin-platform-readiness.ts');
   const extensions = read('src', 'app', 'pages', 'admin-plugins.ts');
@@ -40,14 +40,20 @@ test('Foundation admission is enforced by API and exposed by Console page', () =
   assert.match(controller, /PlatformSupportProfileRequired/);
   assert.match(controller, /id === FOUNDATION_ID && action === 'enable'/);
   assert.match(controller, /PlatformSupportProfileRequiredForPfsPlugin/);
-  assert.match(controller, /foundation-development-override/);
-  assert.match(controller, /const domainAdmissionReady = pfsEstablished && supportReady/);
+  assert.match(controller, /const foundationActivationAllowed = true/);
+  const foundationEnableStart = controller.indexOf("if (id === FOUNDATION_ID && action === 'enable')");
+  const foundationEnableEnd = controller.indexOf('// Activation is the gate for PFS plugins', foundationEnableStart);
+  const foundationEnable = controller.slice(foundationEnableStart, foundationEnableEnd);
+  assert.match(foundationEnable, /foundation-shell-management-activation/);
+  assert.doesNotMatch(foundationEnable, /return json\(res, 409/);
+  assert.match(controller, /const pfs = await foundationEstablishmentStatus\(supportReady, foundationReg\)/);
+  assert.match(controller, /const domainAdmissionReady = pfs\.established && supportReady/);
+  assert.doesNotMatch(controller, /const pfsEstablished = foundationReg\?\.status\?\.phase === 'Activated'/);
   assert.match(page, /PFS ADMISSION/);
+  assert.match(page, /관리 화면은 항상 접근할 수 있습니다/);
   assert.match(page, /\/p\/cluster-manager\/his\/his/);
-  // Every activation control is bound to the same lock, and the lock covers both
-  // the Foundation subShell and a staged PFS plugin. Offering a button whose
-  // refusal is already known was a real defect: enable returned 409 from a
-  // control the page had left enabled.
+  // Hosted PFS plugins remain bound to a visible lock, while the Foundation
+  // management shell itself must never disappear behind that service gate.
   assert.ok((extensions.match(/\[disabled\]="activationLocked\(/g) || []).length >= 5);
   assert.equal(
     (extensions.match(/\[disabled\]="activationLocked\(/g) || []).length,
@@ -55,6 +61,7 @@ test('Foundation admission is enforced by API and exposed by Console page', () =
     'every disabled activation control must explain itself',
   );
   assert.match(extensions, /Ready · 활성화 대기/);
+  assert.match(extensions, /foundationActivationLocked[\s\S]*?return false/);
   assert.match(extensions, /activationLockReason\(id\)/);
   assert.match(extensions, /admission\.activationAllowed !== false/);
   assert.match(client, /body\.message \|\| body\.error/);
@@ -111,6 +118,21 @@ test('closed readiness gate permits only a verified update of an existing PFS pl
     ...verified, phase: 'Ready', previousDigest: verified.currentDigest,
   } }), false);
   assert.equal(verifiedStagedUpdate({ spec: { desiredState: 'Installed' }, status: { ...verified, phase: 'Ready' } }), false);
+  assert.equal(verifiedEnabledUpdate({ spec: { desiredState: 'Enabled' }, status: {
+    ...verified, phase: 'Ready', previousDigest: `sha256:${'b'.repeat(64)}`,
+  } }), true);
+  assert.equal(verifiedEnabledUpdate({ spec: { desiredState: 'Enabled' }, status: {
+    ...verified, phase: 'Activated', previousDigest: `sha256:${'b'.repeat(64)}`,
+  } }), true);
+  assert.equal(verifiedEnabledUpdate({ spec: { desiredState: 'Enabled' }, status: {
+    ...verified, phase: 'Activated', previousDigest: verified.currentDigest,
+  } }), false);
+  const controllerSource = read('backend', 'dupa-control', 'controller.js');
+  const reconcileStart = controllerSource.indexOf('async function reconcile()');
+  const reconcileEnd = controllerSource.indexOf('function emitSse', reconcileStart);
+  const reconcileSource = controllerSource.slice(reconcileStart, reconcileEnd);
+  assert.match(reconcileSource, /const verifiedUpdate = verifiedEnabledUpdate\(reg\)/);
+  assert.match(reconcileSource, /const activationAllowed = profileActivationAllowed \|\| verifiedUpdate/);
 });
 
 test('bootstrap owns the PlatformSupportProfile CRD lifecycle', () => {
@@ -170,8 +192,23 @@ test('PlatformSupportProfile status is a controller-owned projection that change
   const projected = platformVerificationProjection({ username: 'cmars' }, state);
   assert.equal(projected.verifiedBy, 'cmars');
   assert.equal(projected.conditions[0].lastTransitionTime, '2026-07-22T00:00:00.000Z');
+  assert.equal(platformVerificationComparable(null), platformVerificationComparable({}));
   assert.equal(platformVerificationComparable(prior), platformVerificationComparable(projected));
   const controller = read('backend', 'dupa-control', 'controller.js');
   assert.match(controller, /reconcilePlatformVerification\(\)/);
   assert.match(controller, /Promise\.all\(\[reconcile\(\), pollK8sEvents\(\), reconcilePlatformVerification\(\)\]\)/);
+});
+
+test('PlatformSupportProfile approval persists an actor label, not the authenticated actor object', () => {
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /approval:\s*\{\s*requestedBy:\s*auditActorLabel\(actor\),\s*reason,/);
+  assert.doesNotMatch(controller, /approval:\s*\{\s*requestedBy:\s*actor,\s*reason,/);
+});
+
+test('Delivery evidence reader is namespace-scoped and read-only', () => {
+  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  assert.match(manifest, /name: dupa-platform-delivery-evidence-reader\s+namespace: argocd/);
+  assert.match(manifest, /resources: \[deployments, statefulsets\]\s+verbs: \[get, list\]/);
+  assert.match(manifest, /resourceNames: \[opensphere-platform-delivery-verify\]\s+verbs: \[get\]/);
+  assert.doesNotMatch(manifest, /resourceNames: \[opensphere-platform-delivery-verify\]\s+verbs: \[[^\]]*(?:create|update|patch|delete)/);
 });

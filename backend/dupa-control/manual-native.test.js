@@ -44,7 +44,7 @@ test('native manual.ts consumes ManualService and implements the Help Center lan
   // The page depends on ManualService for its data — it never injects HttpService/ApiService or
   // calls fetch()/http.request() itself; /api/manual is only ever reached through the
   // ManualService indirection. (The template legitimately *displays* the backend name
-  // "OAA Manual Registry (/api/manual)" as user-facing text — that is not a network call.)
+  // "R2D2 Manual Registry (/api/manual)" as user-facing text — that is not a network call.)
   assert.match(manualPage, /import\s*\{[\s\S]*ManualService[\s\S]*\}\s*from\s*'\.\.\/core\/manual\.service'/);
   assert.match(manualPage, /private readonly manual = inject\(ManualService\)/);
   assert.doesNotMatch(manualPage, /inject\(HttpService\)|inject\(ApiService\)/);
@@ -89,7 +89,7 @@ test('native manual.ts consumes ManualService and implements the Help Center lan
   // Registry operation remains in /manage/oaa; /manual is exclusively the Help Center and reader.
   assert.doesNotMatch(
     manualPage,
-    /OsDatagrid|OsPanel|os-datagrid|os-panel|os-source-chips|sourceFilter\(|OAA Manual Registry 소스\/문서 탐색 및 검색/,
+    /OsDatagrid|OsPanel|os-datagrid|os-panel|os-source-chips|sourceFilter\(|R2D2 Manual Registry 소스\/문서 탐색 및 검색/,
   );
 
   // Safe rendering only — no innerHTML binding/assignment anywhere in the native page (a JSDoc

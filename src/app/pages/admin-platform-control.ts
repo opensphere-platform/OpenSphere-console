@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import CheckmarkFilled16 from '@carbon/icons/es/checkmark--filled/16';
 import WarningAltFilled16 from '@carbon/icons/es/warning--alt--filled/16';
@@ -12,8 +12,9 @@ import Renew16 from '@carbon/icons/es/renew/16';
 import { HttpService } from '../core/http.service';
 import { CarbonIcon } from '../os/carbon-icon';
 import { OsPageHeader } from '../os/os-page-header';
+import { AdminPlatformReadiness } from './admin-platform-readiness';
 
-type ControlTab = 'operations' | 'evidence' | 'journey';
+type ControlTab = 'operations' | 'readiness' | 'evidence' | 'journey';
 type EvidenceFilter = 'all' | 'supabase' | 'gitea' | 'runtime';
 type Verdict = 'Verified' | 'Attention required' | 'Failed' | 'Not configured' | 'Awaiting consumer';
 
@@ -62,7 +63,7 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
  */
 @Component({
   selector: 'os-admin-platform-control',
-  imports: [ClarityModule, RouterLink, CarbonIcon, OsPageHeader],
+  imports: [ClarityModule, RouterLink, CarbonIcon, OsPageHeader, AdminPlatformReadiness],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="os-page platform-control">
@@ -90,8 +91,9 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
 
       <nav class="workspace-tabs" role="tablist" aria-label="Platform Control 관점">
         <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'operations'" [class.active]="activeTab() === 'operations'" (click)="activeTab.set('operations')"><span>01</span>Operations<small>전체 상태와 위험</small></button>
-        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'evidence'" [class.active]="activeTab() === 'evidence'" (click)="activeTab.set('evidence')"><span>02</span>Evidence<small>검증과 출처</small></button>
-        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'journey'" [class.active]="activeTab() === 'journey'" (click)="activeTab.set('journey')"><span>03</span>변경 흐름<small>요청에서 검증까지</small></button>
+        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'readiness'" [class.active]="activeTab() === 'readiness'" (click)="activeTab.set('readiness')"><span>02</span>Support Profile<small>HIS 이후 PFS 선행조건</small></button>
+        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'evidence'" [class.active]="activeTab() === 'evidence'" (click)="activeTab.set('evidence')"><span>03</span>Evidence<small>검증과 출처</small></button>
+        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'journey'" [class.active]="activeTab() === 'journey'" (click)="activeTab.set('journey')"><span>04</span>변경 흐름<small>요청에서 검증까지</small></button>
       </nav>
 
       @if (activeTab() === 'operations') {
@@ -161,6 +163,12 @@ interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernet
             </tbody></table></div>
           </section>
         </div>
+      }
+
+      @if (activeTab() === 'readiness') {
+        <section class="readiness-workspace" role="tabpanel" aria-label="Platform Support Profile">
+          <os-admin-platform-readiness [embedded]="true" />
+        </section>
       }
 
       @if (activeTab() === 'evidence') {
@@ -264,9 +272,18 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   readonly journeySteps = computed(() => this.buildJourneySteps(this.selectedChange()));
 
   private readonly http = inject(HttpService);
+  private readonly route = inject(ActivatedRoute);
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  async ngOnInit(): Promise<void> { await this.refresh(); this.timer = setInterval(() => void this.refresh(true), 15_000); }
+  async ngOnInit(): Promise<void> {
+    const requestedTab = this.route.snapshot.queryParamMap.get('tab')
+      || this.route.snapshot.data['controlTab'];
+    if (requestedTab && ['operations', 'readiness', 'evidence', 'journey'].includes(requestedTab)) {
+      this.activeTab.set(requestedTab as ControlTab);
+    }
+    await this.refresh();
+    this.timer = setInterval(() => void this.refresh(true), 15_000);
+  }
   ngOnDestroy(): void { if (this.timer) clearInterval(this.timer); }
 
   async refresh(silent = false): Promise<void> {
