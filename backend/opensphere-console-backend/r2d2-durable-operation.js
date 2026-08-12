@@ -61,6 +61,14 @@ const DESCRIPTORS = Object.freeze({
     ownerRoute: 'owner/notifications', allowedNamespaces: [''],
     permission: 'console.notification.manage',
   }),
+  'create-postgres-cluster': Object.freeze({
+    descriptorId: 'foundation.postgres.cluster.create', revision: '1', toolId: 'owner.foundation.postgres.create',
+    verifierId: 'owner.foundation.postgres.ready', riskClass: 'R2', assurance: 'aal2',
+    targetKind: 'FoundationClaim',
+    confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+    ownerRoute: 'foundation/postgres', allowedNamespaces: ['opensphere-*'],
+    permission: 'oaa.action.execute.high',
+  }),
 });
 
 function stableJson(value) {
@@ -83,7 +91,9 @@ function exactConfirmation(descriptor, target) {
     .replace(/<uid>/g, String(target.uid || ''))
     .replace(/<digest>/g, String(target.digest || ''))
     .replace(/<revision>/g, String(target.desiredRevision || ''))
-    .replace(/<replicas>/g, String(target.replicas ?? ''));
+    .replace(/<replicas>/g, String(target.replicas ?? ''))
+    .replace(/<plan>/g, String(target.request?.plan || ''))
+    .replace(/<postgresVersion>/g, String(target.request?.postgresVersion || ''));
 }
 
 function namespaceAllowed(namespace, patterns) {
@@ -123,6 +133,18 @@ function planOperation(request, registry = DESCRIPTORS) {
   if (action === 'owner-recover' && !String(target.desiredRevision || '')) {
     throw Object.assign(new Error('owner recovery requires a desired revision'), { code: 'DesiredRevisionRequired' });
   }
+  if (action === 'create-postgres-cluster') {
+    const request = target.request || {};
+    for (const field of ['name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion', 'deletionPolicy']) {
+      if (!String(request[field] || '').trim()) throw Object.assign(new Error(`PostgreSQL request ${field} is required`), { code: 'PostgresRequestIncomplete' });
+    }
+    if (request.name !== target.name || request.namespace !== target.namespace) {
+      throw Object.assign(new Error('PostgreSQL request target does not match the resolved FoundationClaim'), { code: 'PostgresTargetMismatch' });
+    }
+    if (!String(target.resourceVersion || '')) {
+      throw Object.assign(new Error('PostgreSQL owner target revision is required'), { code: 'TargetRevisionRequired' });
+    }
+  }
   const expected = exactConfirmation(descriptor, target);
   const immutableDescriptor = { ...descriptor };
   return {
@@ -145,6 +167,7 @@ function planOperation(request, registry = DESCRIPTORS) {
       digest: target.digest == null ? null : String(target.digest),
       image: target.image == null ? null : String(target.image), container: target.container == null ? null : String(target.container),
       replicas: target.replicas == null ? null : Number(target.replicas),
+      request: target.request == null ? null : JSON.parse(JSON.stringify(target.request)),
     },
   };
 }
@@ -181,6 +204,9 @@ function expectedPostcondition(operation) {
       return { ...common, desiredRevision: target.desiredRevision, allowedStates: ['ready', 'deployed', 'healthy'] };
     case 'owner.notification.delivery':
       return { ...common, allowedStates: ['accepted', 'delivered'] };
+    case 'owner.foundation.postgres.ready':
+      return { ...common, foundationClaim: { phase: 'Bound', observedGenerationMatches: true },
+        postgresClaim: { ready: true, observedGenerationMatches: true }, sgClusterReady: true, bindingSecretIssued: true };
     default:
       throw Object.assign(new Error('descriptor verifier has no closed postcondition'), { code: 'PostconditionNotRegistered' });
   }
@@ -282,7 +308,26 @@ class DurableOperationWorker {
       const [session, approvals] = await Promise.all([
         this.deps.sessions.resolve(operation.authSessionId, operation.actorId), this.deps.store.getApprovals(operation.operationId),
       ]);
-      const authorization = authorizeAtExecution(operation, session, approvals);
+      let authorization = authorizeAtExecution(operation, session, approvals);
+      // A CLI credential is intentionally aal1. For R2/R3, an independent AAL2
+      // approver may become the execution identity only after the original
+      // actor/session/permission/revision checks passed up to AssuranceExpired.
+      if (!authorization.allowed && authorization.code === 'AssuranceExpired' && ['R2', 'R3'].includes(operation.riskClass)) {
+        const activeApprovalCount = new Set(approvals.filter((item) => !item.revokedAt && item.assurance === 'aal2')
+          .map((item) => String(item.approverId))).size;
+        const requiredApprovalCount = operation.riskClass === 'R3' ? 2 : 1;
+        for (const approval of activeApprovalCount >= requiredApprovalCount ? approvals : []) {
+          if (approval.revokedAt || approval.assurance !== 'aal2' || !approval.authSessionId
+              || String(approval.approverId) === String(operation.actorId)) continue;
+          const approverSession = await this.deps.sessions.resolve(approval.authSessionId, approval.approverId);
+          if (!approverSession?.active || approverSession.assurance !== 'aal2'
+              || String(approverSession.authzRevision || '') !== String(approval.authzRevision || '')
+              || !new Set(approverSession.permissions || []).has(operation.requiredPermission)) continue;
+          authorization = { allowed: true, phase: 'preflighting', code: 'AuthorizedByIndependentApprover',
+            accessToken: approverSession.accessToken, executionActorId: approval.approverId };
+          break;
+        }
+      }
       if (!authorization.allowed) {
         if (!resumingUncertainOwnerCall) await step(authorization.phase, 'authorization', 'blocked', { code: authorization.code });
         else {
@@ -290,6 +335,11 @@ class DurableOperationWorker {
           await step('inconclusive', 'authorization', 'blocked', { code: `${authorization.code}AfterOwnerCall` });
         }
         return { phase, ownerCalled: false, code: authorization.code };
+      }
+      if (authorization.executionActorId) {
+        await step(phase, 'authorization-delegation', 'succeeded', {
+          actorId: operation.actorId, executionActorId: authorization.executionActorId, code: authorization.code,
+        });
       }
       const downstreamKey = `${operation.operationId}:${operation.descriptorDigest}`;
       let receipt;

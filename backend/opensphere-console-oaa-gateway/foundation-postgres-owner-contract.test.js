@@ -14,16 +14,17 @@ test('R2D2 exposes PFSS PostgreSQL status, Admission plan, and owner create capa
   assert.match(source, /get_foundation_postgres_status/);
   assert.match(source, /plan_foundation_postgres_cluster/);
   assert.match(source, /\/api\/foundation\/oaa\/postgres\/status/);
-  assert.match(source, /\/api\/foundation\/oaa\/postgres\/plan/);
-  assert.match(source, /\/api\/foundation\/postgres\/claims/);
+  assert.match(source, /\/api\/oaa\/operations\/plan/);
+  assert.match(source, /action: 'create-postgres-cluster'/);
+  assert.doesNotMatch(source, /fixedOwnerPost\(FOUNDATION_CONTROL_URL, '\/api\/foundation\/postgres\/claims'/);
 });
 
-test('PostgreSQL create stays behind AAL2, exact confirmation, closed inputs, and owner postcondition', () => {
-  assert.match(source, /PFSS PostgreSQL planning requires MFA assurance aal2/);
+test('PostgreSQL create uses an expiring durable plan, exact confirmation, closed inputs, and owner postcondition', () => {
   assert.match(source, /create PostgreSQL cluster \$\{request\.namespace\}\/\$\{request\.name\} plan \$\{request\.plan\} version \$\{request\.postgresVersion\}/);
   assert.match(source, /requireConfirm\(inputs\.confirm, expected\)/);
   assert.match(source, /normalizeFoundationPostgresRequest\(inputs\)/);
-  assert.match(source, /PostgresClaim Ready=True and observedGeneration equals metadata\.generation/);
+  assert.match(source, /planId: plan\.planId, planDigest: plan\.planDigest, expiresAt: plan\.expiresAt/);
+  assert.match(source, /FoundationClaim Bound with observedGeneration current/);
   assert.match(source, /verificationTool: 'get_foundation_postgres_status'/);
 });
 

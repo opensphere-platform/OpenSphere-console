@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0056",
-  "migrationCount": 55,
-  "setDigest": "sha256:7d79c338dd345dc64bcf2781042ce0fe06cd32fc3d5fb31246a047ced99fbe49",
+  "latestMigrationId": "0057",
+  "migrationCount": 56,
+  "setDigest": "sha256:dc0ec9c6076cbc5b36b382da15ac72725e3a895150ed90855e60a34a8bb10257",
   "migrations": [
     {
       "id": "0001",
@@ -388,6 +388,13 @@
       "name": "0056_r2d2_relation_monotonicity.sql",
       "path": "backend/supabase/migrations/0056_r2d2_relation_monotonicity.sql",
       "sha256": "c580a13889a5c605e6f1e958370f0f6182ba619761d9a31d5e67e892a4bebc36"
+    },
+    {
+      "id": "0057",
+      "predecessorMigrationId": "0056",
+      "name": "0057_foundation_postgres_durable_plan.sql",
+      "path": "backend/supabase/migrations/0057_foundation_postgres_durable_plan.sql",
+      "sha256": "2754c3d4da2029524fdca54ccd225a5a784d3a642194e48d36520f0c59a88d88"
     }
   ]
 }

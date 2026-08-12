@@ -15,6 +15,13 @@ function request(action = 'restart-workload') {
     resourceVersion: '100', desiredRevision: 'rev-1', digest: `sha256:${'a'.repeat(64)}`,
     image: `ghcr.io/opensphere-platform/console@sha256:${'a'.repeat(64)}`, container: 'console', replicas: 2,
   };
+  if (action === 'create-postgres-cluster') {
+    Object.assign(target, {
+      namespace: 'opensphere-foundation', name: 'r2d2-e2e-pg',
+      request: { name: 'r2d2-e2e-pg', namespace: 'opensphere-foundation', alias: 'R2D2 E2E PostgreSQL',
+        database: 'r2d2_e2e', owner: 'r2d2_e2e', plan: 'postgresql-dev-single', postgresVersion: '18.4', deletionPolicy: 'Retain' },
+    });
+  }
   return { action, target, confirmation: exactConfirmation(descriptor, target), reason: 'operator requested recovery' };
 }
 
@@ -90,7 +97,7 @@ test('all initial management scenarios bind to a closed owner and authoritative 
   const scenarios = Object.keys(DESCRIPTORS);
   assert.deepEqual(scenarios, [
     'restart-workload', 'scale-workload', 'rollback-image',
-    'run-cronjob', 'owner-recover', 'retry-delivery',
+    'run-cronjob', 'owner-recover', 'retry-delivery', 'create-postgres-cluster',
   ]);
   for (const [index, action] of scenarios.entries()) {
     const op = { ...operation(action), operationId: `scenario-${index}` };
@@ -142,6 +149,28 @@ test('revoked session blocks without owner invocation', async () => {
   const result = await fixture.worker.process(operation());
   assert.equal(result.phase, 'authorization_expired');
   assert.equal(called, 0);
+});
+
+test('independent AAL2 approver can execute an R2 plan initiated by an active CLI aal1 session', async () => {
+	const op = operation('create-postgres-cluster');
+	let ownerToken = '';
+	const fixture = workerFixture({
+		store: {
+			appendStep: async (_id, item) => fixture.steps.push(item), setPhase: async (_id, phase) => fixture.phases.push(phase),
+			getApprovals: async () => [{ approverId: 'approver', assurance: 'aal2', authSessionId: 'browser-approval', authzRevision: 'r2' }],
+			heartbeat: async () => true, recordDownstreamIntent: async () => {},
+		},
+		sessions: { resolve: async (sessionId) => sessionId === 'browser-approval'
+			? { active: true, actorId: 'approver', assurance: 'aal2', authzRevision: 'r2', permissions: ['oaa.action.execute.high'], accessToken: 'approver-token' }
+			: { active: true, actorId: 'actor', assurance: 'aal1', authzRevision: 'r1', permissions: ['oaa.action.execute.high'], accessToken: 'cli-token' } },
+		authority: { read: async () => ({ ...op.target, fresh: true, snapshotComplete: true }) },
+		owners: { invoke: async (_route, _payload, token) => { ownerToken = token; return { operationId: 'owner-pg' }; }, reconcile: async () => null },
+		verifiers: { verify: async () => ({ status: 'succeeded', observed: { ready: true } }) },
+	});
+	const result = await fixture.worker.process(op);
+	assert.equal(result.phase, 'succeeded');
+	assert.equal(ownerToken, 'approver-token');
+	assert.ok(fixture.steps.some((item) => item.type === 'authorization-delegation'));
 });
 
 test('ambiguous owner outcome reconciles by idempotency key without a second mutation', async () => {

@@ -98,6 +98,7 @@ const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OAA_GATEWAY_URL = (process.env.OAA_GATEWAY_URL || 'http://opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const FOUNDATION_CONTROL_URL = (process.env.FOUNDATION_CONTROL_URL || 'http://foundation-oaa-owner.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
 const INSTALLATION_CONFIG_FILE = process.env.INSTALLATION_CONFIG_FILE || DEFAULT_INSTALLATION_CONFIG_FILE;
 const CLI_TOKEN_ISSUER = 'opensphere-cli';
@@ -919,6 +920,28 @@ const r2d2OperationApi = createR2d2OperationApi({
   },
   store: createRestOperationStore(restRequest),
   resolveTarget: async (action, requested, auth) => {
+    if (action === 'create-postgres-cluster') {
+      let response;
+      try {
+        response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/plan`, {
+          method: 'POST', headers: { authorization: `Bearer ${auth.accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify(requested || {}), signal: AbortSignal.timeout(15000),
+        });
+      } catch {
+        throw { code: 503, msg: 'PFSS PostgreSQL plan authority unavailable' };
+      }
+      const ownerPlan = await response.json().catch(() => ({}));
+      if (!response.ok) throw { code: response.status, msg: ownerPlan.error || 'PFSS PostgreSQL plan rejected' };
+      const namespace = String(requested?.namespace || '');
+      const name = String(requested?.name || '');
+      const targetRevision = String(ownerPlan.targetRevision || '');
+      const prospectiveUid = `pending:${createHash('sha256').update(`${namespace}/${name}:${targetRevision}`).digest('hex')}`;
+      return {
+        kind: 'FoundationClaim', namespace, name,
+        uid: String(ownerPlan.resource?.uid || prospectiveUid), generation: Number(ownerPlan.resource?.generation || 0),
+        resourceVersion: targetRevision, request: JSON.parse(JSON.stringify(requested || {})),
+      };
+    }
     const targetByAction = {
       'restart-workload': { kind: 'Deployment', namespace: requested.namespace, name: requested.name },
       'scale-workload': { kind: 'Deployment', namespace: requested.namespace, name: requested.name, replicas: requested.replicas },
@@ -1316,7 +1339,60 @@ async function submitOaaAction(actor, body = {}, authorization = '') {
   };
 }
 
+async function resolveDurableExecutionSession(sessionId, actorId) {
+  const browser = browserSessions
+    ? await browserSessions.resolveForDurableExecution(sessionId, actorId)
+    : { active: false, code: 'BrowserSessionUnavailable' };
+  if (browser.active) {
+    if (!browser.permissions?.includes('oaa.action.execute.high')) {
+      try {
+        const actor = await resolveConsoleActor(actorId, { credential_revision: browser.authzRevision });
+        if (actor.groups.includes(SUPABASE_BACKEND_ROLE) || actor.groups.includes('console-admins')) {
+          browser.permissions = [...new Set([...(browser.permissions || []), 'oaa.action.execute.high', 'console.notification.manage'])];
+        }
+      } catch { return { active: false, actorId, code: 'AuthorizationAuthorityUnavailable' }; }
+    }
+    return browser;
+  }
+  const rows = await restRequest('cli_session', {
+    query: `select=id,owner_id,device_id,credential_revision,status,expires_at&id=eq.${encodeURIComponent(sessionId)}&owner_id=eq.${encodeURIComponent(actorId)}&limit=1`,
+  });
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row || row.status !== 'active' || Date.parse(row.expires_at) <= Date.now()) {
+    return { active: false, actorId, code: 'SessionInactive' };
+  }
+  let actor;
+  try {
+    actor = await resolveConsoleActor(actorId, { jti: row.id, typ: 'cli_session', device_id: row.device_id,
+      credential_revision: row.credential_revision });
+  } catch {
+    return { active: false, actorId, code: 'AuthorizationAuthorityUnavailable' };
+  }
+  const expiry = Math.min(Math.floor(Date.parse(row.expires_at) / 1000), Math.floor(Date.now() / 1000) + 300);
+  const accessToken = cliToken({ sub: actorId, jti: row.id, typ: 'cli_session', device_id: row.device_id,
+    credential_revision: row.credential_revision, exp: expiry });
+  const permissions = actor.groups.includes(SUPABASE_BACKEND_ROLE) || actor.groups.includes('console-admins')
+    ? ['oaa.action.execute.high', 'console.notification.manage'] : [];
+  return { active: true, actorId, assurance: 'aal1', permissions,
+    authzRevision: String(row.credential_revision), accessToken, lastReauthenticatedAt: null };
+}
+
 async function durableAuthorityRead(target, accessToken) {
+  if (target.kind === 'FoundationClaim' && target.request) {
+    try {
+      const response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/plan`, {
+        method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify(target.request), signal: AbortSignal.timeout(15000),
+      });
+      const ownerPlan = await response.json().catch(() => ({}));
+      if (!response.ok) return { fresh: false, snapshotComplete: false };
+      const targetRevision = String(ownerPlan.targetRevision || '');
+      const prospectiveUid = `pending:${createHash('sha256').update(`${target.namespace}/${target.name}:${targetRevision}`).digest('hex')}`;
+      return { ...target, fresh: true, snapshotComplete: true,
+        uid: String(ownerPlan.resource?.uid || prospectiveUid), generation: Number(ownerPlan.resource?.generation || 0),
+        resourceVersion: targetRevision, _resource: ownerPlan.resource || null };
+    } catch { return { fresh: false, snapshotComplete: false }; }
+  }
   if (target.kind === 'NotificationDelivery') {
     const rows = await restRequest('notification_delivery', { query: `select=id,status,attempt_count,updated_at&id=eq.${encodeURIComponent(target.name)}&limit=1` });
     const row = rows?.[0];
@@ -1361,6 +1437,23 @@ const DURABLE_TOOL_MAP = Object.freeze({
 
 async function durableOwnerInvoke(_route, payload, accessToken) {
   const actor = await verifyAuthed({ method: 'POST', headers: { authorization: `Bearer ${accessToken}` } });
+  if (payload.toolId === 'owner.foundation.postgres.create') {
+    requireActorPermission(actor, 'oaa.action.execute.high');
+    let response;
+    try {
+      response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/apply`, {
+        method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json',
+          'x-idempotency-key': payload.idempotencyKey },
+        body: JSON.stringify({ ...(payload.target.request || {}), reason: payload.reason, confirm: payload.confirmation }),
+        signal: AbortSignal.timeout(120000),
+      });
+    } catch (cause) {
+      throw Object.assign(new Error('PFSS PostgreSQL owner outcome is ambiguous'), { code: 'OwnerOutcomeAmbiguous', ambiguous: true, cause });
+    }
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw Object.assign(new Error(result.error || 'PFSS PostgreSQL owner rejected execution'), { code: result.code || `OwnerHttp${response.status}` });
+    return { ...result, idempotencyKey: payload.idempotencyKey };
+  }
   if (payload.toolId === 'owner.notification.retry') {
     requireActorPermission(actor, 'console.notification.manage');
     try {
@@ -1414,6 +1507,15 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
 }
 
 async function durableOwnerReconcile(route, downstreamKey, target = {}, accessToken = '') {
+  if (route === 'foundation/postgres') {
+    try {
+      const response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/claims/${encodeURIComponent(target.namespace)}/${encodeURIComponent(target.name)}`, {
+        headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }, signal: AbortSignal.timeout(10000),
+      });
+      const status = await response.json().catch(() => ({}));
+      return response.ok ? { operationId: downstreamKey, status: status.stage || 'observed', evidence: status, idempotencyKey: downstreamKey } : null;
+    } catch { return null; }
+  }
   if (route === 'owner/notifications') {
     const rows = await restRequest('notification_delivery', { query: `select=id,status,attempt_count,updated_at&id=eq.${encodeURIComponent(target.name)}&limit=1` });
     return rows?.[0] ? { operationId: downstreamKey, status: rows[0].status, evidence: rows[0], idempotencyKey: downstreamKey } : null;
@@ -1450,6 +1552,27 @@ async function durableGatewayPost(path, payload, accessToken, timeoutMs = 8000) 
 
 async function durableVerify(verifierId, target, receipt, accessToken) {
   const deadline = Date.now() + 90000;
+  if (verifierId === 'owner.foundation.postgres.ready') {
+    const postgresDeadline = Date.now() + 9 * 60 * 1000;
+    let last = null;
+    while (Date.now() < postgresDeadline) {
+      last = await durableOwnerReconcile('foundation/postgres', receipt?.idempotencyKey || '', target, accessToken);
+      const evidence = last?.evidence || {};
+      if (evidence.ready === true && evidence.stage === 'Ready'
+          && evidence.foundationClaim?.observedGeneration === evidence.foundationClaim?.generation
+          && evidence.postgresClaim?.observedGeneration === evidence.postgresClaim?.generation) {
+        return { status: 'succeeded', observed: { stage: 'Ready', foundationClaim: evidence.foundationClaim,
+          postgresClaim: evidence.postgresClaim, credentialProjection: 'secretRef-only' } };
+      }
+      if (evidence.foundationClaim?.phase === 'Failed' || evidence.postgresClaim?.phase === 'Failed') {
+        return { status: 'failed', observed: { code: 'PFSSPostgresProvisioningFailed', stage: evidence.stage,
+          owner: 'PFSS', foundationClaim: evidence.foundationClaim, postgresClaim: evidence.postgresClaim } };
+      }
+      await durableDelay(3000);
+    }
+    return { status: 'inconclusive', observed: { code: 'PFSSPostgresStillProvisioning', owner: 'PFSS',
+      stage: last?.evidence?.stage || 'Unknown' } };
+  }
   if (['authority.workload.rollout','authority.release.exact-digest','authority.job.completed'].includes(verifierId) && receipt?.idempotencyKey) {
     let reconciled = receipt;
     while (Date.now() < deadline) {
@@ -1529,7 +1652,7 @@ function startR2d2OperationWorker() {
   const store = createRestWorkerStore(restRequest, R2D2_OPERATION_WORKER_ID, claimEpoch);
   const worker = new DurableOperationWorker({
     workerId: R2D2_OPERATION_WORKER_ID, store,
-    sessions: { resolve: (sessionId, actorId) => browserSessions.resolveForDurableExecution(sessionId, actorId) },
+    sessions: { resolve: resolveDurableExecutionSession },
     authority: { read: durableAuthorityRead },
     owners: { invoke: durableOwnerInvoke, reconcile: durableOwnerReconcile },
     verifiers: { verify: durableVerify },

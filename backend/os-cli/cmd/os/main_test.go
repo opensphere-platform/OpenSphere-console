@@ -117,6 +117,62 @@ func TestDynamicModuleCommandsIgnoreManifestFlagsAndNormalizePayloadKeys(t *test
 	}
 }
 
+func TestDynamicPayloadMergesJSONFileAndTypedNestedFlags(t *testing.T) {
+	denyAdditional := false
+	tool := Tool{SupportsFile: true, InputSchema: &ToolInputSchema{
+		Type: "object", AdditionalProperties: &denyAdditional,
+		Required: []string{"name", "postgresVersion", "storage"},
+		Properties: map[string]*ToolInputSchema{
+			"name": {Type: "string"}, "postgresVersion": {Type: "string"},
+			"extensions": {Type: "array", Items: &ToolInputSchema{Type: "string"}},
+			"storage": {Type: "object", AdditionalProperties: &denyAdditional, Properties: map[string]*ToolInputSchema{
+				"size": {Type: "string"}, "storageClass": {Type: "string"},
+			}},
+		},
+	}}
+	payload, err := dynamicPayload(tool, map[string]string{
+		"file": "-", "storage.size": "20Gi", "extensions": "pg_stat_statements,pgcrypto",
+	}, strings.NewReader(`{"name":"orders","postgresVersion":"18.4","storage":{"storageClass":"ceph-rbd"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage := payload["storage"].(map[string]any)
+	if storage["size"] != "20Gi" || storage["storageClass"] != "ceph-rbd" {
+		t.Fatalf("storage=%v", storage)
+	}
+	if got := payload["extensions"].([]any); len(got) != 2 || got[0] != "pg_stat_statements" {
+		t.Fatalf("extensions=%v", got)
+	}
+}
+
+func TestDynamicPayloadRejectsUnknownAndSecretArgvOptions(t *testing.T) {
+	denyAdditional := false
+	tool := Tool{InputSchema: &ToolInputSchema{Type: "object", AdditionalProperties: &denyAdditional,
+		Properties: map[string]*ToolInputSchema{"password": {Type: "string", Secret: true}}}}
+	if _, err := dynamicPayload(tool, map[string]string{"unknown": "value"}, strings.NewReader("")); err == nil {
+		t.Fatal("unknown option must be rejected")
+	}
+	if _, err := dynamicPayload(tool, map[string]string{"password": "canary-secret"}, strings.NewReader("")); err == nil {
+		t.Fatal("secret argv option must be rejected")
+	}
+}
+
+func TestDynamicPayloadValidatesTypedJSONFileRecursively(t *testing.T) {
+	denyAdditional := false
+	tool := Tool{SupportsFile: true, InputSchema: &ToolInputSchema{Type: "object", AdditionalProperties: &denyAdditional,
+		Properties: map[string]*ToolInputSchema{
+			"replicas": {Type: "integer"},
+			"extensions": {Type: "array", Items: &ToolInputSchema{Type: "object", AdditionalProperties: &denyAdditional,
+				Required: []string{"name"}, Properties: map[string]*ToolInputSchema{"name": {Type: "string"}}}},
+		}}}
+	if _, err := dynamicPayload(tool, map[string]string{"file": "-"}, strings.NewReader(`{"replicas":"three","extensions":[{"name":"pgcrypto"}]}`)); err == nil {
+		t.Fatal("typed file input must reject a string for an integer field")
+	}
+	if _, err := dynamicPayload(tool, map[string]string{"file": "-"}, strings.NewReader(`{"replicas":3,"extensions":[{"name":7}]}`)); err == nil {
+		t.Fatal("typed file input must validate nested array object fields")
+	}
+}
+
 func TestLongFlagsAcceptEqualsSyntax(t *testing.T) {
 	flags := parseLongFlags([]string{"--reason=reviewed-change", "--wait", "--timeout", "5m"})
 	if flags["reason"] != "reviewed-change" || flags["wait"] != "true" || flags["timeout"] != "5m" {

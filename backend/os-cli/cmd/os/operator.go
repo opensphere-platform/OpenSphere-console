@@ -81,6 +81,31 @@ func exitCode(err error) int {
 	return 1
 }
 
+func writeCLIError(out io.Writer, args []string, err error) {
+	_, output, optionErr := extractGlobalOptions(args)
+	if optionErr == nil && output == "json" {
+		status, code, message, hint := 0, "CommandFailed", strings.TrimSpace(err.Error()), ""
+		var cliErr *CLIError
+		var usageErr *UsageError
+		if errors.As(err, &cliErr) {
+			status, code, message, hint = cliErr.Status, cliErr.Code, strings.TrimSpace(cliErr.Message), strings.TrimSpace(cliErr.Hint)
+			if code == "" {
+				code = "HTTPError"
+			}
+		} else if errors.As(err, &usageErr) {
+			code, message = "UsageError", strings.TrimSpace(usageErr.Error())
+		}
+		envelope := map[string]any{
+			"schema": "opensphere.cli.error/v1", "ok": false,
+			"error": map[string]any{"code": code, "message": message, "status": status, "exitCode": exitCode(err), "hint": hint},
+		}
+		encoded, _ := json.MarshalIndent(envelope, "", "  ")
+		fmt.Fprintln(out, string(encoded))
+		return
+	}
+	fmt.Fprintln(out, "오류:", err)
+}
+
 func extractGlobalOptions(args []string) ([]string, string, error) {
 	output := "json"
 	clean := make([]string, 0, len(args))

@@ -24,15 +24,42 @@ function createR2d2OperationApi(options) {
 
   async function plan(req, body) {
     const auth = await authenticate(req);
+    const actor = auth.actor || auth;
     if (typeof resolveTarget !== 'function') throw { code: 503, msg: 'durable target resolver is unavailable' };
     const target = await resolveTarget(String(body?.action || ''), body?.target || {}, auth);
     const planned = planOperation({ action: body?.action, target });
-    return {
+    const output = {
       action: planned.action, descriptorId: planned.descriptorId, descriptorRevision: planned.descriptorRevision,
       descriptorDigest: planned.descriptorDigest, riskClass: planned.riskClass,
       requiredAssurance: planned.requiredAssurance, target: planned.target,
       expectedConfirmation: planned.expectedConfirmation, expectedPostcondition: expectedPostcondition(planned),
     };
+    if (planned.action !== 'create-postgres-cluster') return output;
+    const actorId = String(actor.sub || actor.subject || '');
+    const authSessionId = String(actor.browserSessionId || actor.authSessionId || '');
+    if (!UUID.test(actorId) || !UUID.test(authSessionId)) throw { code: 401, msg: 'durable plan requires stable actor and session UUIDs' };
+    if (typeof store.insertPlan !== 'function') throw { code: 503, msg: 'durable plan store is unavailable' };
+    const expiresAt = new Date(now().getTime() + 15 * 60 * 1000).toISOString();
+    const planId = `pgplan-${randomUUID()}`;
+    const requestPayload = { action: planned.action, target: body?.target || {}, reason: String(body?.reason || '').trim() };
+    if (requestPayload.reason.length < 8) throw { code: 400, msg: 'reason must contain at least eight characters' };
+    const planDigest = digest({ actorId, action: planned.action, descriptorDigest: planned.descriptorDigest,
+      target: planned.target, requestPayload, expectedPostcondition: output.expectedPostcondition, expiresAt });
+    await store.insertPlan({
+      plan_id: planId, actor_id: actorId, auth_session_id: authSessionId, action: planned.action,
+      descriptor_revision: planned.descriptorRevision, descriptor_digest: planned.descriptorDigest,
+      plan_digest: planDigest, target_revision: String(planned.target.resourceVersion || ''),
+      risk_class: planned.riskClass, required_assurance: planned.requiredAssurance,
+      expected_confirmation: planned.expectedConfirmation, target: planned.target,
+      request_payload: requestPayload, expected_postcondition: output.expectedPostcondition,
+      expires_at: expiresAt,
+    });
+    return { ...output, planId, planDigest, expiresAt, targetRevision: String(planned.target.resourceVersion || ''),
+      postconditions: [
+        'FoundationClaim Bound and observedGeneration equals metadata.generation',
+        'PostgresClaim Ready=True and observedGeneration equals metadata.generation',
+        'SGCluster Ready=True', 'connection binding Secret issued',
+      ] };
   }
 
   async function accept(req, body) {
@@ -42,9 +69,34 @@ function createR2d2OperationApi(options) {
     const actorId = String(actor.sub || actor.subject || '');
     if (!UUID.test(actorId)) throw { code: 401, msg: 'durable operation requires a stable actor UUID' };
     if (typeof resolveTarget !== 'function') throw { code: 503, msg: 'durable target resolver is unavailable' };
-    const target = await resolveTarget(String(body?.action || ''), body?.target || {}, auth);
-    const bound = bindOperation({ ...body, target });
-    const idempotencyKey = String(req.headers['x-os-idempotency-key'] || body.idempotencyKey || '').trim();
+    let requestBody = body || {};
+    let storedPlan = null;
+    let resolvedTarget = null;
+    if (String(body?.planId || '')) {
+      if (typeof store.getPlan !== 'function') throw { code: 503, msg: 'durable plan store is unavailable' };
+      storedPlan = await store.getPlan(String(body.planId));
+      if (!storedPlan) throw { code: 404, msg: 'durable plan not found' };
+      if (String(storedPlan.actor_id) !== actorId) throw { code: 403, msg: 'durable plan belongs to a different actor' };
+      const authSessionId = String(actor.browserSessionId || actor.authSessionId || '');
+      if (!UUID.test(authSessionId) || String(storedPlan.auth_session_id) !== authSessionId) {
+        throw { code: 403, msg: 'durable plan belongs to a different authenticated session' };
+      }
+      if (Date.parse(storedPlan.expires_at) <= now().getTime()) throw { code: 409, msg: 'durable plan expired' };
+      const plannedTarget = await resolveTarget(storedPlan.action, storedPlan.request_payload?.target || {}, auth);
+      resolvedTarget = plannedTarget;
+      const replanned = planOperation({ action: storedPlan.action, target: plannedTarget });
+      const recomputedDigest = digest({ actorId, action: replanned.action, descriptorDigest: replanned.descriptorDigest,
+        target: replanned.target, requestPayload: storedPlan.request_payload,
+        expectedPostcondition: expectedPostcondition(replanned), expiresAt: storedPlan.expires_at });
+      if (recomputedDigest !== storedPlan.plan_digest || replanned.descriptorDigest !== storedPlan.descriptor_digest) {
+        throw { code: 409, msg: 'durable plan target revision changed; create a new plan' };
+      }
+      requestBody = { action: storedPlan.action, target: storedPlan.request_payload.target,
+        reason: storedPlan.request_payload.reason, confirmation: body.confirmation };
+    }
+    const target = resolvedTarget || await resolveTarget(String(requestBody.action || ''), requestBody.target || {}, auth);
+    const bound = bindOperation({ ...requestBody, target });
+    const idempotencyKey = storedPlan?.plan_id || String(req.headers['x-os-idempotency-key'] || body.idempotencyKey || '').trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(idempotencyKey)) throw { code: 400, msg: 'valid idempotency key required' };
     const deadline = new Date(now().getTime() + Math.max(60000, Math.min(3600000, Number(body.deadlineMs || 600000))));
     const approvalRequired = ['R2', 'R3'].includes(bound.riskClass);
@@ -64,6 +116,12 @@ function createR2d2OperationApi(options) {
       expected_postcondition: expectedPostcondition(bound),
       incident_id: UUID.test(String(body.incidentId || '')) ? body.incidentId : null,
     });
+    if (storedPlan && typeof store.consumePlan === 'function') {
+      const consumed = await store.consumePlan(storedPlan.plan_id, row.operation_id);
+      if (!consumed && String(storedPlan.consumed_operation_id || '') !== String(row.operation_id)) {
+        throw { code: 409, msg: 'durable plan was already consumed' };
+      }
+    }
     return publicOperation(row);
   }
 
@@ -77,14 +135,18 @@ function createR2d2OperationApi(options) {
       throw { code: 409, msg: 'Engineering Remediation approval and execution are not activated' };
     }
     const approverId = String(actor.sub || actor.subject || '');
+    const approverSessionId = String(actor.browserSessionId || actor.authSessionId || '');
     if (!UUID.test(approverId)) throw { code: 401, msg: 'stable approver UUID required' };
+    if (!UUID.test(approverSessionId)) throw { code: 401, msg: 'AAL2 approval requires a durable browser session' };
     if (['R2', 'R3'].includes(operation.requested_risk_class || operation.risk_class)
         && approverId === String(operation.actor_id || '')) {
       throw { code: 409, msg: 'R2/R3 operation requires an independent approver' };
     }
     const expected = `approve R2D2 operation ${operationId} ${operation.descriptor_digest}`;
     if (String(body.confirmation || '') !== expected) throw { code: 400, msg: `confirmation required: ${expected}` };
-    await store.approve(operationId, { approverId, assurance: 'aal2', approvalDigest: digest({ operationId, approverId, descriptorDigest: operation.descriptor_digest, confirmation: body.confirmation }) });
+    await store.approve(operationId, { approverId, assurance: 'aal2', authSessionId: approverSessionId,
+      authzRevision: String(actor.credentialRevision || actor.authzRevision || 0),
+      approvalDigest: digest({ operationId, approverId, descriptorDigest: operation.descriptor_digest, confirmation: body.confirmation }) });
     const approvals = await store.approvals(operationId);
     const required = operation.requested_risk_class === 'R3' ? 2 : 1;
     if (new Set(approvals.filter((item) => !item.revoked_at).map((item) => item.approver_id)).size >= required) await store.queue(operationId);
@@ -114,6 +176,23 @@ function createR2d2OperationApi(options) {
 function createRestOperationStore(restRequest) {
   const request = (resource, options = {}) => restRequest(resource, { ...options, profile: 'console' });
   return {
+    async insertPlan(row) {
+      const rows = await request('module_operation_plan', { method: 'POST', query: 'select=*', body: [row], prefer: 'return=representation' });
+      if (!rows?.[0]) throw { code: 503, msg: 'durable plan was not persisted' };
+      return rows[0];
+    },
+    async getPlan(id) {
+      const rows = await request('module_operation_plan', { query: `select=*&plan_id=eq.${encodeURIComponent(id)}&limit=1` });
+      return rows?.[0] || null;
+    },
+    async consumePlan(id, operationId) {
+      const rows = await request('module_operation_plan', { method: 'PATCH',
+        query: `plan_id=eq.${encodeURIComponent(id)}&consumed_operation_id=is.null&select=*`,
+        body: { consumed_operation_id: operationId, consumed_at: new Date().toISOString() }, prefer: 'return=representation' });
+      if (rows?.[0]) return true;
+      const current = await this.getPlan(id);
+      return String(current?.consumed_operation_id || '') === String(operationId);
+    },
     async insert(row) {
       const rows = await request('module_operation', { method: 'POST', query: 'select=*', body: [row], prefer: 'return=representation,resolution=ignore-duplicates' });
       if (rows?.[0]) return rows[0];
@@ -127,9 +206,11 @@ function createRestOperationStore(restRequest) {
     async get(id) { const rows = await request('module_operation', { query: `select=*&operation_id=eq.${encodeURIComponent(id)}&limit=1` }); return rows?.[0] || null; },
     async list() { return request('module_operation', { query: 'select=*&order=created_at.desc&limit=100' }); },
     async steps(id) { return request('module_operation_step', { query: `select=*&operation_id=eq.${encodeURIComponent(id)}&order=sequence.asc&limit=500` }); },
-    async approvals(id) { return request('module_operation_approval', { query: `select=approver_id,assurance,approval_digest,approved_at,revoked_at&operation_id=eq.${encodeURIComponent(id)}&order=approved_at.asc` }); },
+    async approvals(id) { return request('module_operation_approval', { query: `select=approver_id,assurance,approval_digest,auth_session_id,authz_revision,approved_at,revoked_at&operation_id=eq.${encodeURIComponent(id)}&order=approved_at.asc` }); },
     async approve(id, item) {
-      await request('module_operation_approval', { method: 'POST', body: [{ operation_id: id, approver_id: item.approverId, assurance: item.assurance, approval_digest: item.approvalDigest }], prefer: 'return=minimal,resolution=ignore-duplicates' });
+      await request('module_operation_approval', { method: 'POST', body: [{ operation_id: id, approver_id: item.approverId,
+        assurance: item.assurance, approval_digest: item.approvalDigest, auth_session_id: item.authSessionId,
+        authz_revision: item.authzRevision }], prefer: 'return=minimal,resolution=merge-duplicates' });
     },
     async queue(id) {
       const rows = await request('module_operation', { method: 'PATCH', query: `operation_id=eq.${encodeURIComponent(id)}&phase=eq.AwaitingApproval&select=*`, body: { phase: 'Queued', execution_state: 'accepted', next_attempt_at: new Date().toISOString() }, prefer: 'return=representation' });
@@ -201,8 +282,9 @@ function createRestWorkerStore(restRequest, workerId, claimEpoch) {
       if (!rows?.[0]) throw Object.assign(new Error('durable operation claim lease was lost'), { code: 'ClaimLeaseLost' });
     },
     async getApprovals(operationId) {
-      const rows = await request('module_operation_approval', { query: `select=approver_id,assurance,revoked_at&operation_id=eq.${encodeURIComponent(operationId)}` });
-      return (rows || []).map((row) => ({ approverId: row.approver_id, assurance: row.assurance, revokedAt: row.revoked_at }));
+      const rows = await request('module_operation_approval', { query: `select=approver_id,assurance,auth_session_id,authz_revision,revoked_at&operation_id=eq.${encodeURIComponent(operationId)}` });
+      return (rows || []).map((row) => ({ approverId: row.approver_id, assurance: row.assurance,
+        authSessionId: row.auth_session_id, authzRevision: row.authz_revision, revokedAt: row.revoked_at }));
     },
   };
 }

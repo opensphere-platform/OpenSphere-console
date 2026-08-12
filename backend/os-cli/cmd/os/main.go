@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -66,14 +67,29 @@ type Registry struct {
 }
 
 type Tool struct {
-	Command     string               `json:"command"`
-	Method      string               `json:"method"`
-	Path        string               `json:"path"`
-	Components  map[string]ToolRoute `json:"components"`
-	Operations  map[string]ToolRoute `json:"operations"`
-	Description string               `json:"description"`
-	Risk        string               `json:"risk"`
-	Scope       string               `json:"scope"`
+	Command        string               `json:"command"`
+	Method         string               `json:"method"`
+	Path           string               `json:"path"`
+	Components     map[string]ToolRoute `json:"components"`
+	Operations     map[string]ToolRoute `json:"operations"`
+	Description    string               `json:"description"`
+	Risk           string               `json:"risk"`
+	Scope          string               `json:"scope"`
+	InputSchema    *ToolInputSchema     `json:"inputSchema,omitempty"`
+	PathParams     []string             `json:"pathParams,omitempty"`
+	SupportsFile   bool                 `json:"supportsFile,omitempty"`
+	ExplicitAction bool                 `json:"explicitAction,omitempty"`
+}
+
+type ToolInputSchema struct {
+	Type                 string                      `json:"type,omitempty"`
+	Properties           map[string]*ToolInputSchema `json:"properties,omitempty"`
+	Required             []string                    `json:"required,omitempty"`
+	Items                *ToolInputSchema            `json:"items,omitempty"`
+	Enum                 []any                       `json:"enum,omitempty"`
+	Default              any                         `json:"default,omitempty"`
+	Secret               bool                        `json:"secret,omitempty"`
+	AdditionalProperties *bool                       `json:"additionalProperties,omitempty"`
 }
 
 type ToolRoute struct {
@@ -520,7 +536,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	case "extensions":
 		return extensions(cfg, args[1:], out)
 	default:
-		return dynamic(cfg, args, out, errOut)
+		return dynamic(cfg, args, in, out, errOut)
 	}
 }
 
@@ -1305,7 +1321,7 @@ func validResourceName(value string) bool {
 	return value[len(value)-1] != '-'
 }
 
-func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
+func dynamic(cfg Config, args []string, in io.Reader, out, errOut io.Writer) error {
 	ns := args[0]
 	b, status, contentType, err := requestWithContentType(cfg, http.MethodGet, cfg.RegistryURL, nil, "")
 	if err != nil {
@@ -1376,6 +1392,8 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 	flags := parseLongFlags(args[1:])
 	method := strings.ToUpper(selected.Method)
 	path := selected.Path
+	prefix := toolCommandPrefix(selected.Command, ns)
+	consumedWords := len(prefix)
 	if len(selected.Components) > 0 {
 		component := strings.TrimSpace(flags["component"])
 		route, ok := selected.Components[component]
@@ -1389,7 +1407,6 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 		}
 	}
 	if len(selected.Operations) > 0 {
-		prefix := toolCommandPrefix(selected.Command, ns)
 		if len(commandWords) <= len(prefix) {
 			return usageError("GPU bridge 명령에는 operation이 필요합니다")
 		}
@@ -1398,27 +1415,54 @@ func dynamic(cfg Config, args []string, out, errOut io.Writer) error {
 			return usageErrorf("지원하지 않는 GPU bridge operation: %s", commandWords[len(prefix)])
 		}
 		path = route.Path
+		consumedWords++
+	}
+	positionals := commandWords[consumedWords:]
+	if len(positionals) != len(selected.PathParams) {
+		if len(selected.PathParams) > 0 {
+			return usageErrorf("명령에는 위치 인자 %s가 필요합니다", strings.Join(selected.PathParams, ", "))
+		}
+		if len(positionals) > 0 {
+			return usageError("지원하지 않는 위치 인자가 포함되었습니다")
+		}
+	}
+	for i, name := range selected.PathParams {
+		placeholder := "{" + name + "}"
+		if !strings.Contains(path, placeholder) {
+			return errors.New("CLI contribution path parameter schema is invalid")
+		}
+		path = strings.ReplaceAll(path, placeholder, url.PathEscape(positionals[i]))
 	}
 	if method == "" {
 		method = http.MethodGet
 	}
-	if method != http.MethodGet && !hasArg(args, "--preview") && !hasArg(args, "--apply") {
+	if method != http.MethodGet && !selected.ExplicitAction && selected.Scope != "write-plan" && !hasArg(args, "--preview") && !hasArg(args, "--apply") {
 		return usageError("write 명령은 --preview 또는 --apply를 명시해야 합니다")
 	}
 	target := join(base, path)
 	var body io.Reader
 	contentType = ""
+	payload, err := dynamicPayload(*selected, flags, in)
+	if err != nil {
+		return err
+	}
 	if method == http.MethodGet {
 		u, _ := url.Parse(target)
 		q := u.Query()
-		for k, v := range flags {
-			q.Set(k, v)
+		for k, v := range payload {
+			switch typed := v.(type) {
+			case string:
+				q.Set(k, typed)
+			default:
+				encoded, _ := json.Marshal(typed)
+				q.Set(k, string(encoded))
+			}
 		}
 		u.RawQuery = q.Encode()
 		target = u.String()
 	} else {
-		payload, _ := json.Marshal(jsonFlagPayload(flags))
-		body, contentType = bytes.NewReader(payload), "application/json"
+		encoded, _ := json.Marshal(payload)
+		body, contentType = bytes.NewReader(encoded), "application/json"
 	}
 	response, status, err := request(cfg, method, target, body, contentType)
 	if err != nil {
@@ -1444,6 +1488,273 @@ func toolCommandPrefix(command, ns string) []string {
 		prefix = append(prefix, word)
 	}
 	return prefix
+}
+
+func dynamicPayload(tool Tool, flags map[string]string, in io.Reader) (map[string]any, error) {
+	payload := map[string]any{}
+	if fileName := strings.TrimSpace(flags["file"]); fileName != "" {
+		if !tool.SupportsFile {
+			return nil, usageError("이 명령은 --file 입력을 지원하지 않습니다")
+		}
+		var reader io.Reader
+		var file *os.File
+		if fileName == "-" {
+			reader = in
+		} else {
+			opened, err := os.Open(fileName)
+			if err != nil {
+				return nil, fmt.Errorf("요청 파일 열기 실패: %w", err)
+			}
+			file, reader = opened, opened
+			defer file.Close()
+		}
+		raw, err := io.ReadAll(io.LimitReader(reader, (256<<10)+1))
+		if err != nil {
+			return nil, fmt.Errorf("요청 파일 읽기 실패: %w", err)
+		}
+		if len(raw) > 256<<10 {
+			return nil, usageError("요청 파일은 256KiB 이하여야 합니다")
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, usageErrorf("요청 파일은 JSON object여야 합니다: %v", err)
+		}
+	}
+	if tool.InputSchema == nil {
+		legacy := jsonFlagPayload(flags)
+		for key, value := range legacy {
+			if key != "file" && key != "preview" && key != "apply" {
+				payload[key] = value
+			}
+		}
+		return payload, nil
+	}
+	for key, raw := range flags {
+		if key == "file" || key == "preview" || key == "apply" {
+			continue
+		}
+		if err := setTypedFlag(payload, tool.InputSchema, key, raw); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateTypedPayload(payload, tool.InputSchema, "request"); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func setTypedFlag(payload map[string]any, schema *ToolInputSchema, key, raw string) error {
+	parts := strings.Split(key, ".")
+	for i := range parts {
+		parts[i] = kebabToCamel(parts[i])
+	}
+	current, currentSchema := payload, schema
+	for i, part := range parts {
+		property := currentSchema.Properties[part]
+		if property == nil {
+			return usageErrorf("manifest schema에 없는 option입니다: --%s", key)
+		}
+		if property.Secret {
+			return usageErrorf("secret option --%s 값은 argv로 전달할 수 없습니다; --file 또는 표준 입력을 사용하세요", key)
+		}
+		if i == len(parts)-1 {
+			value, err := coerceTypedValue(raw, property, "--"+key)
+			if err != nil {
+				return err
+			}
+			current[part] = value
+			return nil
+		}
+		if property.Type != "object" {
+			return usageErrorf("중첩 option 경로가 object가 아닙니다: --%s", key)
+		}
+		next, ok := current[part].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			current[part] = next
+		}
+		current, currentSchema = next, property
+	}
+	return nil
+}
+
+func coerceTypedValue(raw string, schema *ToolInputSchema, field string) (any, error) {
+	var value any
+	switch schema.Type {
+	case "", "string":
+		value = raw
+	case "integer":
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, usageErrorf("%s 값은 integer여야 합니다", field)
+		}
+		value = parsed
+	case "number":
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return nil, usageErrorf("%s 값은 number여야 합니다", field)
+		}
+		value = parsed
+	case "boolean":
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, usageErrorf("%s 값은 boolean이어야 합니다", field)
+		}
+		value = parsed
+	case "array":
+		values := []any{}
+		if strings.HasPrefix(strings.TrimSpace(raw), "[") {
+			if err := json.Unmarshal([]byte(raw), &values); err != nil {
+				return nil, usageErrorf("%s 값은 JSON array여야 합니다", field)
+			}
+		} else {
+			itemSchema := schema.Items
+			if itemSchema == nil {
+				itemSchema = &ToolInputSchema{Type: "string"}
+			}
+			for _, item := range strings.Split(raw, ",") {
+				coerced, err := coerceTypedValue(strings.TrimSpace(item), itemSchema, field)
+				if err != nil {
+					return nil, err
+				}
+				values = append(values, coerced)
+			}
+		}
+		value = values
+	case "object":
+		object := map[string]any{}
+		if err := json.Unmarshal([]byte(raw), &object); err != nil {
+			return nil, usageErrorf("%s 값은 JSON object여야 합니다", field)
+		}
+		value = object
+	default:
+		return nil, usageErrorf("지원하지 않는 manifest option type입니다: %s", schema.Type)
+	}
+	if len(schema.Enum) > 0 {
+		matched := false
+		for _, allowed := range schema.Enum {
+			if fmt.Sprint(allowed) == fmt.Sprint(value) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, usageErrorf("%s 값은 허용 목록에 없습니다", field)
+		}
+	}
+	return value, nil
+}
+
+func validateTypedPayload(payload map[string]any, schema *ToolInputSchema, field string) error {
+	if schema == nil {
+		return nil
+	}
+	for key, property := range schema.Properties {
+		value, found := payload[key]
+		if !found && property.Default != nil {
+			payload[key] = property.Default
+			value, found = property.Default, true
+		}
+		if !found {
+			continue
+		}
+		if err := validateTypedValue(value, property, field+"."+key); err != nil {
+			return err
+		}
+		if property.Type == "object" {
+			object, ok := value.(map[string]any)
+			if !ok {
+				return usageErrorf("%s.%s 값은 object여야 합니다", field, key)
+			}
+			if err := validateTypedPayload(object, property, field+"."+key); err != nil {
+				return err
+			}
+		}
+		if len(property.Enum) > 0 {
+			matched := false
+			for _, allowed := range property.Enum {
+				if fmt.Sprint(allowed) == fmt.Sprint(value) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return usageErrorf("%s.%s 값은 허용 목록에 없습니다", field, key)
+			}
+		}
+	}
+	for _, required := range schema.Required {
+		if value, ok := payload[required]; !ok || value == nil || strings.TrimSpace(fmt.Sprint(value)) == "" {
+			return usageErrorf("필수 option이 누락되었습니다: %s.%s", field, required)
+		}
+	}
+	if schema.AdditionalProperties != nil && !*schema.AdditionalProperties {
+		for key := range payload {
+			if schema.Properties[key] == nil {
+				return usageErrorf("manifest schema에 없는 입력 필드입니다: %s.%s", field, key)
+			}
+		}
+	}
+	return nil
+}
+
+func validateTypedValue(value any, schema *ToolInputSchema, field string) error {
+	switch schema.Type {
+	case "", "string":
+		if _, ok := value.(string); !ok {
+			return usageErrorf("%s 값은 string이어야 합니다", field)
+		}
+	case "integer":
+		number, floatOK := value.(float64)
+		_, intOK := value.(int64)
+		if (!floatOK || number != math.Trunc(number)) && !intOK {
+			return usageErrorf("%s 값은 integer여야 합니다", field)
+		}
+	case "number":
+		switch value.(type) {
+		case float64, int64:
+		default:
+			return usageErrorf("%s 값은 number여야 합니다", field)
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return usageErrorf("%s 값은 boolean이어야 합니다", field)
+		}
+	case "object":
+		if _, ok := value.(map[string]any); !ok {
+			return usageErrorf("%s 값은 object여야 합니다", field)
+		}
+	case "array":
+		items, ok := value.([]any)
+		if !ok {
+			return usageErrorf("%s 값은 array여야 합니다", field)
+		}
+		if schema.Items != nil {
+			for i, item := range items {
+				itemField := fmt.Sprintf("%s[%d]", field, i)
+				if err := validateTypedValue(item, schema.Items, itemField); err != nil {
+					return err
+				}
+				if schema.Items.Type == "object" {
+					if err := validateTypedPayload(item.(map[string]any), schema.Items, itemField); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	default:
+		return usageErrorf("지원하지 않는 manifest option type입니다: %s", schema.Type)
+	}
+	return nil
+}
+
+func kebabToCamel(key string) string {
+	parts := strings.Split(key, "-")
+	for i := 1; i < len(parts); i++ {
+		if parts[i] != "" {
+			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+		}
+	}
+	return strings.Join(parts, "")
 }
 
 func jsonFlagPayload(flags map[string]string) map[string]string {
@@ -1505,7 +1816,7 @@ func printHelp(out io.Writer) {
 
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "오류:", err)
+		writeCLIError(os.Stderr, os.Args[1:], err)
 		os.Exit(exitCode(err))
 	}
 }

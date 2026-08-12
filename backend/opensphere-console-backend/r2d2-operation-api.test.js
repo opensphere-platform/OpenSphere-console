@@ -10,17 +10,23 @@ function request(action = 'restart-workload') {
   return { action, target, reason: 'operator requested restart', confirmation: exactConfirmation(descriptor, target), idempotencyKey: 'request-123' };
 }
 function fixture(actor = {}) {
-  const rows = []; const approvals = [];
+  const rows = []; const approvals = []; const plans = [];
   const store = {
+    insertPlan: async (row) => { plans.push({ ...row }); return plans.at(-1); },
+    getPlan: async (id) => plans.find((row) => row.plan_id === id) || null,
+    consumePlan: async (id, operationId) => { const plan = plans.find((row) => row.plan_id === id); if (!plan || plan.consumed_operation_id) return false; plan.consumed_operation_id = operationId; return true; },
     insert: async (row) => { rows.push({ ...row, created_at: 'now', updated_at: 'now' }); return rows.at(-1); },
     get: async (id) => rows.find((r) => r.operation_id === id), list: async () => rows, steps: async () => [],
     approve: async (id, item) => approvals.push({ operation_id: id, approver_id: item.approverId, assurance: item.assurance, approval_digest: item.approvalDigest }),
     approvals: async (id) => approvals.filter((a) => a.operation_id === id), queue: async (id) => { rows.find((r) => r.operation_id === id).phase = 'Queued'; },
   };
   const api = createR2d2OperationApi({ enabled: true, authenticate: async () => ({ actor: { sub: '11111111-1111-4111-8111-111111111111', assurance: 'aal2', browserSessionId: '22222222-2222-4222-8222-222222222222', credentialRevision: 3, ...actor } }), store,
-    resolveTarget: async (_action, target) => ({ ...request().target, ...target, kind: 'Deployment', uid: 'live-uid', generation: 9, resourceVersion: 'live-rv' }),
+    resolveTarget: async (action, target) => action === 'create-postgres-cluster'
+      ? { kind: 'FoundationClaim', namespace: target.namespace, name: target.name, uid: 'pending:owner-revision',
+        generation: 0, resourceVersion: 'catalog-rv:runtime-rv', request: { ...target } }
+      : ({ ...request().target, ...target, kind: 'Deployment', uid: 'live-uid', generation: 9, resourceVersion: 'live-rv' }),
     now: () => new Date('2026-08-10T00:00:00Z') });
-  return { api, rows, approvals, store };
+  return { api, rows, approvals, plans, store };
 }
 test('operation acceptance persists only digests/session identity and queues R1', async () => {
   const { api, rows } = fixture();
@@ -60,6 +66,44 @@ test('planning replaces caller identity fields with live resolver evidence', asy
   assert.equal(plan.target.uid, 'live-uid');
   assert.equal(plan.target.generation, 9);
   assert.equal(plan.expectedConfirmation, 'restart deployment opensphere-console/console');
+});
+
+test('PostgreSQL plan is durable, expiring, revision-bound, and consumed into module_operation', async () => {
+  const f = fixture();
+  const target = {
+    name: 'r2d2-e2e-pg', namespace: 'opensphere-foundation', alias: 'R2D2 E2E PostgreSQL',
+    database: 'r2d2_e2e', owner: 'r2d2_e2e', plan: 'postgresql-dev-single',
+    postgresVersion: '18.4', deletionPolicy: 'Retain',
+  };
+  const planned = await f.api.plan({}, { action: 'create-postgres-cluster', target, reason: 'PFSS PostgreSQL configuration' });
+  assert.match(planned.planId, /^pgplan-/);
+  assert.match(planned.planDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(planned.targetRevision, 'catalog-rv:runtime-rv');
+  assert.equal(planned.expectedConfirmation,
+    'create PostgreSQL cluster opensphere-foundation/r2d2-e2e-pg plan postgresql-dev-single version 18.4');
+  assert.equal(f.plans.length, 1);
+  const accepted = await f.api.accept({ headers: {} }, { planId: planned.planId, confirmation: planned.expectedConfirmation });
+  assert.equal(accepted.phase, 'AwaitingApproval');
+  assert.equal(f.rows[0].action, 'create-postgres-cluster');
+  assert.equal(f.rows[0].precondition.target.request.database, 'r2d2_e2e');
+  assert.equal(f.plans[0].consumed_operation_id, accepted.operationId);
+});
+
+test('PostgreSQL durable plan cannot cross authenticated sessions', async () => {
+  const actor = {};
+  const f = fixture(actor);
+  const target = {
+    name: 'r2d2-e2e-pg', namespace: 'opensphere-foundation', alias: 'R2D2 E2E PostgreSQL',
+    database: 'r2d2_e2e', owner: 'r2d2_e2e', plan: 'postgresql-dev-single',
+    postgresVersion: '18.4', deletionPolicy: 'Retain',
+  };
+  const planned = await f.api.plan({}, { action: 'create-postgres-cluster', target, reason: 'PFSS PostgreSQL configuration' });
+  actor.browserSessionId = '44444444-4444-4444-8444-444444444444';
+  await assert.rejects(
+    () => f.api.accept({ headers: {} }, { planId: planned.planId, confirmation: planned.expectedConfirmation }),
+    (error) => error?.code === 403 && /different authenticated session/.test(error?.msg),
+  );
+  assert.equal(f.rows.length, 0);
 });
 
 test('durable acceptance is fail-closed when activation is off', async () => {

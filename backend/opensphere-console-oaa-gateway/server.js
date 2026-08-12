@@ -6383,7 +6383,8 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     deletionPolicy: { type: 'string', enum: OAA_POSTGRES_DELETION_POLICIES },
     storageSize: { type: 'string', pattern: '^[0-9]+(?:Mi|Gi|Ti)$' },
     storageClass: { type: 'string', pattern: K8S_NAME_RE.source },
-  }, ['name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion', 'deletionPolicy']);
+    reason: { type: 'string', minLength: 8, maxLength: 500 },
+  }, ['name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion', 'deletionPolicy', 'reason']);
   add('console.identity.manage', 'get_console_identity_status', 'Read the current PII-minimized Console user and canonical role inventory from the Supabase identity owner.', {});
   add('console.extension.security.read', 'get_extension_security_status', 'Read the append-only exact-digest Extension image revocation ledger.', {});
   add('console.extension.security.read', 'inspect_extension_image', 'Inspect an exact-digest OpenSphere Extension image, signed descriptor, source revision, platforms, provenance and SBOM evidence.', {
@@ -6961,14 +6962,21 @@ async function executeOwnerControlAction(toolId, inputs, actor) {
     const request = normalizeFoundationPostgresRequest(inputs);
     const expected = foundationPostgresConfirmation(request);
     requireConfirm(inputs.confirm, expected);
-    owner = 'PFSS PostgreSQL owner'; target = `PostgresClaim/${request.namespace}/${request.name}`;
-    response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/postgres/claims', actor, {
-      ...request, confirm: expected, reason,
-    }, owner, 120000);
+    owner = 'PFSS PostgreSQL owner'; target = `FoundationClaim/${request.namespace}/${request.name}`;
+    const plan = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/operations/plan', actor, {
+      action: 'create-postgres-cluster', target: request, reason,
+    }, 'Console durable PostgreSQL planner', 30000);
+    if (plan.expectedConfirmation !== expected || !plan.planId) throw { code: 409, msg: 'durable PostgreSQL plan binding changed; plan again' };
+    response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/operations', actor, {
+      planId: plan.planId, confirmation: expected,
+    }, 'Console durable operation ledger', 30000);
     response = {
-      ...response,
-      postcondition: 'PostgresClaim Ready=True and observedGeneration equals metadata.generation',
-      verificationTool: 'get_foundation_postgres_status',
+      ...response, planId: plan.planId, planDigest: plan.planDigest, expiresAt: plan.expiresAt,
+      postconditions: plan.postconditions || [
+        'FoundationClaim Bound with observedGeneration current',
+        'PostgresClaim Ready=True with observedGeneration current',
+      ],
+      verificationTool: 'get_foundation_postgres_status', durable: true,
     };
   }
 
@@ -7257,13 +7265,13 @@ async function foundationPostgresStatusRead(actor) {
 
 async function foundationPostgresPlanRead(inputs, actor) {
   assertPermission(actor, 'oaa.action.execute.high');
-  if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'PFSS PostgreSQL planning requires MFA assurance aal2' };
   const request = normalizeFoundationPostgresRequest(inputs);
   const projection = redactProjection(await fixedOwnerPost(
-    FOUNDATION_CONTROL_URL, '/api/foundation/oaa/postgres/plan', actor, request,
-    'PFSS PostgreSQL owner', 120000,
+    CONSOLE_IDENTITY_URL, '/api/oaa/operations/plan', actor,
+    { action: 'create-postgres-cluster', target: request, reason: String(inputs.reason || '') },
+    'Console durable PostgreSQL planner', 30000,
   ));
-  audit(actor, 'foundation-postgres-plan', `PostgresClaim/${request.namespace}/${request.name}`, 'ok', `${request.plan}/${request.postgresVersion}`);
+  audit(actor, 'foundation-postgres-plan', `FoundationClaim/${request.namespace}/${request.name}`, 'ok', `${request.plan}/${request.postgresVersion}`);
   return projection;
 }
 
