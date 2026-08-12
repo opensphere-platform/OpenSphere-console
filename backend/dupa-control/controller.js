@@ -1601,7 +1601,22 @@ function packageFromInspection(inspection) {
 }
 async function upsertPackage(pkg) {
   const existing = await getPackage(pkg.metadata.name);
-  return existing.ok ? k8s('PATCH', `${crd('uipluginpackages')}/${pkg.metadata.name}`, { metadata: { labels: pkg.metadata.labels }, spec: pkg.spec }) : k8s('POST', crd('uipluginpackages'), pkg);
+  if (!existing.ok) return k8s('POST', crd('uipluginpackages'), pkg);
+  // The signed module descriptor is authoritative for the entire package spec.
+  // A merge patch preserves keys omitted by a newer descriptor (for example the
+  // old contributions.cli.reason after CLI becomes enabled), which then causes
+  // ContributionDrift against the runtime manifest. Replace the resource so
+  // removed descriptor fields are actually removed while retaining Kubernetes
+  // identity and lifecycle metadata.
+  return k8s('PUT', `${crd('uipluginpackages')}/${pkg.metadata.name}`, {
+    ...pkg,
+    metadata: {
+      ...pkg.metadata,
+      resourceVersion: existing.json.metadata.resourceVersion,
+      ...(existing.json.metadata.finalizers ? { finalizers: existing.json.metadata.finalizers } : {}),
+      ...(existing.json.metadata.ownerReferences ? { ownerReferences: existing.json.metadata.ownerReferences } : {}),
+    },
+  });
 }
 function validContributions(contributions) {
   const required = ['page', 'navigation', 'api', 'cli', 'manual', 'search', 'notification', 'observability'];

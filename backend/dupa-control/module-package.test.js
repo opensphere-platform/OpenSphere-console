@@ -216,6 +216,15 @@ test('runtime Registry projects the signed CLI contribution for dynamic os dispa
   assert.deepEqual(entry.cli, { namespace: 'cluster', manifestPath: '/cli/manifest', apiBase: '/api/plugins/cluster-manager' });
 });
 
+test('package updates replace the signed spec so removed contribution fields cannot drift', () => {
+  const upsertStart = controllerSource.indexOf('async function upsertPackage');
+  const upsertEnd = controllerSource.indexOf('function validContributions', upsertStart);
+  const upsertFlow = controllerSource.slice(upsertStart, upsertEnd);
+  assert.match(upsertFlow, /k8s\('PUT'/);
+  assert.match(upsertFlow, /resourceVersion: existing\.json\.metadata\.resourceVersion/);
+  assert.doesNotMatch(upsertFlow, /k8s\('PATCH'/);
+});
+
 test('hardened runtime materializes Pod security, availability, network and scrape policy', () => {
   const hardened = structuredClone(descriptor);
   hardened.runtime.security = { automountServiceAccountToken: false, runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, readOnlyRootFilesystem: true, seccompProfile: 'RuntimeDefault' };
