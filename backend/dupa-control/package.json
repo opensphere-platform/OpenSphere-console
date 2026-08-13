@@ -6,6 +6,6 @@
   "main": "controller.js",
   "scripts": {
     "start": "node controller.js",
-    "test": "node --test platform-control-plane.test.js module-package.test.js observability-binding.test.js argocd-delivery.test.js manual-native.test.js oaa-native-ui.test.js release-channel-workflow.test.js release-build-authority-policy.test.js registry-credentials-ha.test.js extension-projection-ha.test.js extension-serving-contract.test.js"
+    "test": "node --test platform-control-plane.test.js platform-readiness.test.js foundation-establishment.test.js module-package.test.js observability-binding.test.js argocd-delivery.test.js manual-native.test.js oaa-native-ui.test.js release-channel-workflow.test.js release-build-authority-policy.test.js registry-credentials-ha.test.js extension-projection-ha.test.js extension-serving-contract.test.js"
   }
 }

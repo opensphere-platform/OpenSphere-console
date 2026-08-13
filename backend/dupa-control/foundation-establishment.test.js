@@ -5,6 +5,8 @@ const {
   CONSUMER_PROTECT_FINALIZER,
   foundationEstablishmentProjection,
 } = require('./foundation-establishment');
+const fs = require('node:fs');
+const path = require('node:path');
 
 function response(json, status = 200) {
   return { ok: status >= 200 && status < 300, status, json };
@@ -108,4 +110,21 @@ test('a Connected binding without the consumer-protect finalizer is not establis
   assert.equal(result.established, false);
   assert.equal(result.evidence.connectedBindings, 1);
   assert.equal(result.evidence.protectedConnectedBindings, 0);
+});
+
+test('DUPA reads only the named Foundation contract CRDs with least privilege', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  const manifest = fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8');
+  assert.match(controller, /FOUNDATION_CONTRACT_CRDS\.map\(\(name\) =>/);
+  assert.match(controller, /customresourcedefinitions\/\$\{encodeURIComponent\(name\)\}/);
+  assert.doesNotMatch(controller, /k8s\('GET', '\/apis\/apiextensions\.k8s\.io\/v1\/customresourcedefinitions'\)/);
+  for (const name of FOUNDATION_CONTRACT_CRDS) {
+    assert.match(manifest, new RegExp(`- ${name.replaceAll('.', '\\.')}`));
+  }
+  const roleStart = manifest.indexOf('metadata: { name: dupa-console-evidence-reader }');
+  const roleEnd = manifest.indexOf('\n---', roleStart);
+  const evidenceRole = manifest.slice(roleStart, roleEnd);
+  assert.match(evidenceRole, /resources: \[customresourcedefinitions\]/);
+  assert.match(evidenceRole, /verbs: \[get\]/);
+  assert.doesNotMatch(evidenceRole, /resources: \[customresourcedefinitions\][\s\S]*?verbs: \[[^\]]*(?:list|watch)/);
 });

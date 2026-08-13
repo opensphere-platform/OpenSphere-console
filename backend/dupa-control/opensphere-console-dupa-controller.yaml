@@ -158,6 +158,19 @@ rules:
       - identitydirectoryclaims
       - identitydirectorybindings
     verbs: [get, list, watch]
+  # Establishment reads only the six contract definitions it evaluates. Using
+  # named GETs avoids granting cluster-wide CRD list/watch while still making
+  # an unreadable contract fail closed instead of appearing as 0/6 missing.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: [customresourcedefinitions]
+    resourceNames:
+      - foundationmodels.foundation.opensphere.io
+      - foundationmoduledescriptors.foundation.opensphere.io
+      - foundationclaims.foundation.opensphere.io
+      - foundationbindings.foundation.opensphere.io
+      - identitydirectoryclaims.foundation.opensphere.io
+      - identitydirectorybindings.foundation.opensphere.io
+    verbs: [get]
   - apiGroups: ["apps"]
     resources: [deployments]
     resourceNames: [foundation-control-plane]

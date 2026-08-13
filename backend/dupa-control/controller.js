@@ -2856,6 +2856,14 @@ async function readPlatformProfile() {
   return { declared: true, crdReady: true, resource: r.json };
 }
 
+async function foundationContractCRDInventory() {
+  const results = await Promise.all(FOUNDATION_CONTRACT_CRDS.map((name) =>
+    k8s('GET', `/apis/apiextensions.k8s.io/v1/customresourcedefinitions/${encodeURIComponent(name)}`)));
+  const failed = results.find((result) => !result.ok);
+  if (failed) return failed;
+  return { ok: true, status: 200, json: { items: results.map((result) => result.json) } };
+}
+
 function settledProbeProjection(definitions, settled) {
   if (!Array.isArray(definitions) || !Array.isArray(settled) || definitions.length !== settled.length) {
     throw new Error('platform readiness probe definition/result cardinality mismatch');
@@ -2878,7 +2886,7 @@ function settledProbeProjection(definitions, settled) {
 async function foundationEstablishmentStatus(supportReady, registration) {
   const [bootstrapOwner, crds, controlPlane, models, descriptors, bindings] = await Promise.all([
     k8s('GET', '/apis/apps/v1/namespaces/opensphere-console/deployments/foundation-bootstrap-reconciler'),
-    k8s('GET', '/apis/apiextensions.k8s.io/v1/customresourcedefinitions'),
+    foundationContractCRDInventory(),
     k8s('GET', '/apis/apps/v1/namespaces/opensphere-system/deployments/foundation-control-plane'),
     k8s('GET', '/apis/foundation.opensphere.io/v1alpha1/foundationmodels'),
     k8s('GET', '/apis/foundation.opensphere.io/v1alpha1/foundationmoduledescriptors'),
