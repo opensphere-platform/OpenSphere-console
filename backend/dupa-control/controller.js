@@ -12,7 +12,10 @@ const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes, randomUUID } = require('crypto');
 const { RegistryCredentialCoordinator } = require('./registry-credentials');
 const { ExtensionProjectionCoordinator } = require('./extension-projection');
-const { foundationEstablishmentProjection } = require('./foundation-establishment');
+const {
+  FOUNDATION_CONTRACT_CRDS,
+  foundationEstablishmentProjection,
+} = require('./foundation-establishment');
 
 const PORT = process.env.PORT || 8080;
 const NS = process.env.NAMESPACE || 'opensphere-console';
