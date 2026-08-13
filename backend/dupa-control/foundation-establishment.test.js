@@ -115,6 +115,11 @@ test('a Connected binding without the consumer-protect finalizer is not establis
 test('DUPA reads only the named Foundation contract CRDs with least privilege', () => {
   const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
   const manifest = fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8');
+  assert.match(
+    controller,
+    /const\s*\{[\s\S]*?FOUNDATION_CONTRACT_CRDS,[\s\S]*?foundationEstablishmentProjection,[\s\S]*?\}\s*=\s*require\('\.\/foundation-establishment'\)/,
+    'controller must import the CRD inventory used by the runtime probe',
+  );
   assert.match(controller, /FOUNDATION_CONTRACT_CRDS\.map\(\(name\) =>/);
   assert.match(controller, /customresourcedefinitions\/\$\{encodeURIComponent\(name\)\}/);
   assert.doesNotMatch(controller, /k8s\('GET', '\/apis\/apiextensions\.k8s\.io\/v1\/customresourcedefinitions'\)/);
