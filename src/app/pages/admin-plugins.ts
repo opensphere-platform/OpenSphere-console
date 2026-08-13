@@ -419,8 +419,9 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             }
           </div>
           <p class="os-sub">
-            ⚠️ kind/hostRef가 데이터에 들어오기 전까지(§2.7 실현·§5.2) 위계는 scope·core·nav
-            신호로 도출됩니다. hostRef가 채워지면 plugin이 정확히 host 아래로 중첩됩니다.
+            구성도는 Registry의 <code>kind</code>·<code>hostRef</code>와 동일 ID
+            Package·Registration 계약만 투영합니다. 계약을 충족하지 못한 항목은 추론하지 않고
+            ‘분류 확인 필요’로 관리합니다.
           </p>
         </clr-tab-content>
       </clr-tab>
@@ -1758,17 +1759,9 @@ export class AdminPlugins implements OnInit {
     return this.registrations().find((r) => r.name === name)?.status.phase ?? null;
   }
 
-  // ── 구성도(Topology) 트리 — §2.7 shell→plugin 귀속 위계를 가용 신호(kind/hostRef·scope·core·nav)로 도출 ──
-  /** kind/hostRef가 있으면 그대로, 없으면 scope·core·nav로 휴리스틱 분류(데이터 정확해지면 자동 정확화). */
-  private classify(c: CatalogItem): 'core' | 'subShell' | 'plugin' {
-    if (c.kind === 'subShell') return 'subShell';
-    if (c.kind === 'plugin') return 'plugin';
-    if (c.core || /admin|main-?shell|console-admin/i.test(c.scope || c.nav?.band || '')) return 'core';
-    return c.nav?.band ? 'subShell' : 'plugin'; // nav 밴드 있는 비-core = perspective/subShell host
-  }
-
+  // ── 구성도(Topology) 트리 — Registry kind/hostRef 계약의 순수 투영 ──
   private buildTree(): TreeNode[] {
-    const cat = this.catalog();
+    const catalogByName = new Map(this.catalog().map((item) => [item.name, item]));
     const mk = (c: CatalogItem, type: TreeNode['type']): TreeNode => ({
       id: c.name,
       label: c.displayName || c.name,
@@ -1778,16 +1771,22 @@ export class AdminPlugins implements OnInit {
       children: [],
       actionable: true,
     });
-    const core = cat.filter((c) => this.classify(c) === 'core');
-    const subs = cat.filter((c) => this.classify(c) === 'subShell');
-    const plugins = cat.filter((c) => this.classify(c) === 'plugin');
-    // subShell node: hostRef로 자기 plugin을 중첩(현재 hostRef 미존재 → 빈 host). 나머지 plugin은 mainShell 직속.
-    const subNodes = subs.map((c) => {
-      const n = mk(c, 'subShell');
-      n.children = plugins.filter((p) => p.hostRef === c.name).map((p) => mk(p, 'plugin'));
+    const views = this.extensionViews();
+    const pluginGroupsByHost = new Map(views.pluginGroups.map((group) => [group.hostRef, group]));
+    const subNodes = views.subShells.flatMap((registration) => {
+      const item = catalogByName.get(registration.name);
+      if (!item) return [];
+      const n = mk(item, 'subShell');
+      n.children = (pluginGroupsByHost.get(item.name)?.items || []).flatMap((pluginRegistration) => {
+        const plugin = catalogByName.get(pluginRegistration.name);
+        return plugin ? [mk(plugin, 'plugin')] : [];
+      });
       return n;
     });
-    const mainPlugins = plugins.filter((p) => !p.hostRef || !subs.some((s) => s.name === p.hostRef));
+    const mainPlugins = (pluginGroupsByHost.get('main')?.items || []).flatMap((registration) => {
+      const item = catalogByName.get(registration.name);
+      return item ? [mk(item, 'plugin')] : [];
+    });
     const consoleNode: TreeNode = {
       id: 'console',
       label: 'console',
@@ -1795,9 +1794,8 @@ export class AdminPlugins implements OnInit {
       type: 'mainShell',
       actionable: false,
       children: [
-        ...core.map((c) => mk(c, 'core')),
         ...subNodes,
-        ...mainPlugins.map((c) => mk(c, 'plugin')),
+        ...mainPlugins,
       ],
     };
     const bindingsRoot: TreeNode = {

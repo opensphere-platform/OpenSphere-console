@@ -26,3 +26,14 @@ test('missing catalog identity is explicit unclassified data, never promoted to 
   assert.deepEqual(views.pluginGroups, []);
   assert.deepEqual(views.unclassified, [{ name: 'unknown-extension' }]);
 });
+
+test('plugin with an unknown hostRef is a contract violation, never attached to mainShell', () => {
+  const catalog = [
+    { name: 'postgres', displayName: 'PostgreSQL', kind: 'plugin' as const, hostRef: 'missing-host' },
+  ];
+  const registration = { name: 'postgres' };
+  const views = buildExtensionManagementViews(catalog, [registration]);
+
+  assert.deepEqual(views.pluginGroups, []);
+  assert.deepEqual(views.unclassified, [registration]);
+});

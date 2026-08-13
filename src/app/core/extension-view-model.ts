@@ -44,6 +44,14 @@ export function buildExtensionManagementViews<TRegistration extends ExtensionReg
     }
     if (item.kind === 'plugin') {
       const hostRef = item.hostRef || 'main';
+      const host = catalogByName.get(hostRef);
+      if (hostRef !== 'main' && (host?.kind !== 'subShell' || (host.hostRef || 'main') !== 'main')) {
+        // hostRef is an admission contract, not a UI hint.  A plugin whose
+        // declared host does not exist as a first-level subShell must remain
+        // visible as invalid data instead of being attached heuristically.
+        unclassified.push(registration);
+        continue;
+      }
       const group = pluginsByHost.get(hostRef) || [];
       group.push(registration);
       pluginsByHost.set(hostRef, group);
