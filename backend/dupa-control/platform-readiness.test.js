@@ -195,9 +195,9 @@ test('a previously activated exact digest remains serviceable while support evid
       currentDigest: digest,
       currentManifestSha256: manifestSha256,
       previousDigest: `sha256:${'c'.repeat(64)}`,
-      channelState: 'Current',
+      channelState: 'ChannelUnavailable',
     },
-  }, pkg), true, 'legacy registrations get a one-time durable activation migration');
+  }, pkg), true, 'explicit exact-evidence migration survives a transient registry channel outage');
   assert.equal(previouslyActivatedRelease({
     spec: { desiredState: 'Enabled' },
     status: {

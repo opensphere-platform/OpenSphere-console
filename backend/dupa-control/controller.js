@@ -590,8 +590,7 @@ function previouslyActivatedRelease(reg, pkg) {
     && annotations['opensphere.io/activated-digest-migration'] === currentDigest
     && annotations['opensphere.io/activated-manifest-migration'] === currentManifestSha256
     && status.currentDigest === currentDigest
-    && status.currentManifestSha256 === currentManifestSha256
-    && status.channelState === 'Current';
+    && status.currentManifestSha256 === currentManifestSha256;
   return reg?.spec?.desiredState === 'Enabled' && Boolean(currentDigest)
     && Boolean(currentManifestSha256) && (durable || legacy);
 }

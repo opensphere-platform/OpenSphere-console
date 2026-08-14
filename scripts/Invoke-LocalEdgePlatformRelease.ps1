@@ -96,7 +96,10 @@ try {
   do {
     $lockConfig = (Invoke-Checked kubectl -n opensphere-console get configmap opensphere-installation-lock -o json) |
       ConvertFrom-Json
-    $lock = [string]$lockConfig.data.'release-lock.json' | ConvertFrom-Json
+    # The installation-lock ConfigMap stores the canonical lock as release.json.
+    # Older local tooling used the non-existent release-lock.json key and could
+    # submit a valid release but then fail while observing its completion.
+    $lock = [string]$lockConfig.data.'release.json' | ConvertFrom-Json
     if ([string]$lock.releaseDigest -eq [string]$response.targetReleaseDigest) {
       Write-Host "[success] Installation lock observed exact target digest $($lock.releaseDigest)"
       [pscustomobject]@{
