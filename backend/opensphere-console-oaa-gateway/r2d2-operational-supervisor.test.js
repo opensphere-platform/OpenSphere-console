@@ -7,6 +7,7 @@ const { boundedDelay, OperationalIntelligenceSupervisor } = require('./r2d2-oper
 
 const serverSource = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 const adminSource = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'app', 'pages', 'admin-oaa.ts'), 'utf8');
+const reconcileReadMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '0059_r2d2_reconcile_session_read_projection.sql'), 'utf8');
 
 function supervisorFixture(overrides = {}) {
   const scheduled = [];
@@ -106,6 +107,13 @@ test('operational queries use a dedicated bounded pool instead of the watch proj
   assert.match(serverSource, /function getR2d2QueryPool\(\)[\s\S]*max: 4[\s\S]*\[r2d2-query-db\]/);
   assert.match(serverSource, /initializeOperationalIntelligence\(\)[\s\S]*const queryPool = getR2d2QueryPool\(\)/);
   assert.match(serverSource, /if \(r2d2QueryPool\) void r2d2QueryPool\.end\(\)/);
+});
+
+test('gateway can read, but cannot mutate, the complete reconcile barrier', () => {
+  assert.match(reconcileReadMigration, /REVOKE ALL ON TABLE oaa\.reconcile_session[\s\S]*opensphere_oaa_gateway/);
+  assert.match(reconcileReadMigration, /GRANT SELECT ON TABLE oaa\.reconcile_session[\s\S]*opensphere_oaa_gateway/);
+  assert.match(reconcileReadMigration, /CREATE POLICY api_reconcile_session_policy[\s\S]*FOR SELECT TO opensphere_oaa_gateway, opensphere_oaa_api/);
+  assert.doesNotMatch(reconcileReadMigration, /GRANT\s+(?:INSERT|UPDATE|DELETE|ALL)/);
 });
 
 test('admin OAA derives the operational badge from the server health projection', () => {
