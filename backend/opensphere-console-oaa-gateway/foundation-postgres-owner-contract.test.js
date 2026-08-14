@@ -59,7 +59,20 @@ test('vague PFSS PostgreSQL requests enter deterministic intake instead of fabri
   }
   assert.match(source, /assertFoundationPostgresReadyToPlan\(readiness\)/);
   assert.match(source, /POSTGRES_OWNER_QUERY_UNAVAILABLE/);
+  assert.match(source, /POSTGRES_CATALOG_UNAVAILABLE/);
   assert.match(source, /phase: operation\.workflow\.phase/);
+});
+
+test('vague PostgreSQL intake evaluates readiness before requiring the catalog', () => {
+  const start = source.indexOf('async function foundationPostgresConversation');
+  const end = source.indexOf('\n}\n\nfunction conceptGraphSystemMessage', start);
+  const conversation = source.slice(start, end);
+  const readinessRead = conversation.indexOf('readiness = await foundationPostgresReadinessRead(actor)');
+  const readinessGate = conversation.indexOf('if (!readiness.decision.readyToPlan)');
+  const catalogRead = conversation.indexOf('catalog = await foundationPostgresCatalogRead(actor)');
+  assert.ok(readinessRead >= 0 && readinessRead < readinessGate);
+  assert.ok(readinessGate < catalogRead);
+  assert.doesNotMatch(conversation.slice(0, readinessGate), /Promise\.all/);
 });
 
 test('PostgreSQL mutation planning fails closed before the durable planner when readiness is untrusted', () => {

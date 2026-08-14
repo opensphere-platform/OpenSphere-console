@@ -6368,16 +6368,12 @@ async function foundationPostgresConversation(messages, actor) {
     });
   }
   let readiness;
-  let catalog;
   try {
-    [readiness, catalog] = await Promise.all([
-      foundationPostgresReadinessRead(actor),
-      foundationPostgresCatalogRead(actor),
-    ]);
+    readiness = await foundationPostgresReadinessRead(actor);
   } catch (error) {
     const decision = {
       readyToPlan: false, readyToExecute: false, stale: true,
-      blocker: { code: 'POSTGRES_OWNER_QUERY_UNAVAILABLE', message: 'PFSS PostgreSQL owner readiness or catalog could not be read.' },
+      blocker: { code: 'POSTGRES_OWNER_QUERY_UNAVAILABLE', message: 'PFSS PostgreSQL owner readiness could not be read.' },
       nextAction: { owner: 'PFSS', action: 'Restore the authoritative Owner API and retry the read-only readiness check', automatic: false },
     };
     return commandResponse(Date.now(), foundationPostgresReadinessMessage(decision), {
@@ -6387,8 +6383,22 @@ async function foundationPostgresConversation(messages, actor) {
   }
   if (!readiness.decision.readyToPlan) {
     return commandResponse(Date.now(), foundationPostgresReadinessMessage(readiness.decision), {
-      schema: 'r2d2.foundation-postgres-intake/v1', phase: 'NeedsReadiness', readiness, catalog,
+      schema: 'r2d2.foundation-postgres-intake/v1', phase: 'NeedsReadiness', readiness,
       decision: readiness.decision,
+    });
+  }
+  let catalog;
+  try {
+    catalog = await foundationPostgresCatalogRead(actor);
+  } catch (error) {
+    const decision = {
+      readyToPlan: false, readyToExecute: false, stale: true,
+      blocker: { code: 'POSTGRES_CATALOG_UNAVAILABLE', message: 'PFSS PostgreSQL owner catalog could not be read.' },
+      nextAction: { owner: 'PFSS', action: 'Restore the authoritative PostgreSQL catalog projection and retry the read-only catalog check', automatic: false },
+    };
+    return commandResponse(Date.now(), foundationPostgresReadinessMessage(decision), {
+      schema: 'r2d2.foundation-postgres-intake/v1', phase: 'NeedsReadiness', readiness, decision,
+      ownerError: String(error?.msg || error?.message || 'PostgreSQL owner catalog unavailable').slice(0, 500),
     });
   }
   const missing = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.filter((field) => !values[field]);
