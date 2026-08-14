@@ -20,6 +20,10 @@ test('Extension Host reports loading and activates verified children before thei
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'loading'\)/);
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'ready'\)/);
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'failed'\)/);
+  assert.match(extensionHost, /readonly hostChildProjections = signal/);
+  assert.match(extensionHost, /reportProjections: reportChildProjections/);
+  assert.match(extensionHost, /child projection element가 정의되지 않음/);
+  assert.match(extensionHost, /child projection route가 canonical PFSS 경로가 아님/);
 
   const childSelection = extensionHost.indexOf("const childEntries = manifest.kind === 'subShell'");
   const requestedChildLoad = extensionHost.indexOf('if (requestedChild)', childSelection);

@@ -79,8 +79,20 @@ test('PFSS child plugins keep their host ownership across routes and navigation'
   assert.match(extensionHost, /hostRef: String\(item\['hostRef'\] \|\| 'main'\)/);
   assert.match(extensionHost, /this\.activeModules\.has\(entry\.id\)/);
   assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
-  assert.match(source, /if \(hostRef === 'foundation'\) return `\/pfss\/\$\{r\.name\}`/);
+  assert.match(source, /const projection = hostRef === 'main' \? undefined : this\.ext\.hostChildProjection\(hostRef, r\.name\)/);
+  assert.match(source, /if \(projection\) return projection\.route/);
   assert.match(source, /label: 'Host 메뉴 사용 가능'/);
   assert.match(source, /this\.ext\.pluginLoadState\(r\.name\)/);
   assert.match(perspectives, /id === 'foundation' \? '\/pfss\/foundation' : `\/p\/\$\{id\}`/);
+});
+
+test('a verified child is not reported available until its host acknowledges the real route and element', () => {
+  assert.match(extensionHost, /readonly hostChildProjections = signal/);
+  assert.match(extensionHost, /reportProjections: reportChildProjections/);
+  assert.match(extensionHost, /!customElements\.get\(element\)/);
+  assert.match(extensionHost, /this\.activeModules\.has\(entry\.id\)/);
+  assert.match(source, /HostProjectionMissing/);
+  assert.match(source, /label: 'Host 연동 실패'/);
+  assert.match(source, /this\.ext\.hostChildProjection\(hostRef, r\.name\)/);
+  assert.match(source, /\{\{ menuState\(r\)\.reason \}\}/);
 });

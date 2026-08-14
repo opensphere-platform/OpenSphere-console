@@ -31,6 +31,11 @@ export const SHELL_VERSION = '0.3.6';
 
 export interface PluginFailure { id: string; error: string; }
 export type PluginLoadState = 'loading' | 'ready' | 'failed';
+export interface HostChildProjection {
+  id: string;
+  route: string;
+  element: string;
+}
 export const HOST_API_VERSION = '1.0.0';
 const FETCH_TIMEOUT_MS = 15000;
 
@@ -130,6 +135,13 @@ export class ExtensionHostService {
    * PluginHost는 이 값을 사용해 다른 Extension의 적재를 현재 route의 상태로 오인하지 않는다.
    */
   readonly pluginLoadStates = signal<Record<string, PluginLoadState>>({});
+  /**
+   * Child bundle activation is not the same as a usable product surface.
+   * A subShell must explicitly acknowledge the canonical route and the
+   * Custom Element it compiled for each child before Console reports that
+   * child as available.
+   */
+  readonly hostChildProjections = signal<Record<string, readonly HostChildProjection[]>>({});
   readonly pages = signal<PluginPage[]>([]);
   /** Host-owned projection. Unlike pages, this inventory survives inactive or
    * degraded serving contributions and never causes guest assets to load. */
@@ -230,6 +242,7 @@ export class ExtensionHostService {
     this.pluginIcons.set({});
     this.apiBaseByPlugin.set({});
     this.pluginLoadStates.set({});
+    this.hostChildProjections.set({});
     this.primarySubShellIds.set(new Set<string>());
     await this.load();
   }
@@ -426,6 +439,10 @@ export class ExtensionHostService {
     return this.pluginLoadStates()[pluginId];
   }
 
+  hostChildProjection(hostRef: string, childId: string): HostChildProjection | undefined {
+    return this.hostChildProjections()[hostRef]?.find((projection) => projection.id === childId);
+  }
+
   private setPluginLoadState(pluginId: string, state: PluginLoadState): void {
     this.pluginLoadStates.update((states) => ({ ...states, [pluginId]: state }));
   }
@@ -460,6 +477,14 @@ export class ExtensionHostService {
     this.searchProviders.update((items) => { const { [pluginId]: _search, ...rest } = items; return rest; });
     this.manualContributions.update((items) => { const { [pluginId]: _manual, ...rest } = items; return rest; });
     this.apiBaseByPlugin.update((items) => { const { [pluginId]: _api, ...rest } = items; return rest; });
+    this.hostChildProjections.update((items) => {
+      const next: Record<string, readonly HostChildProjection[]> = {};
+      for (const [hostRef, projections] of Object.entries(items)) {
+        if (hostRef === pluginId) continue;
+        next[hostRef] = projections.filter((projection) => projection.id !== pluginId);
+      }
+      return next;
+    });
     for (const style of this.assetStyles.get(pluginId) ?? []) style.remove();
     this.assetStyles.delete(pluginId);
     this.notif.clearSource(pluginId);
@@ -494,6 +519,32 @@ export class ExtensionHostService {
       const child = this.registryEntries.find((entry) => entry.manifest === manifestUrl && (entry.hostRef ?? 'main') === pluginId);
       if (!child) throw new Error(`승인된 child manifest가 아님: ${manifestUrl}`);
       await this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION);
+    };
+    const reportChildProjections = (input: unknown): void => {
+      if (manifest.kind !== 'subShell') throw new Error('plugin은 child projection을 보고할 수 없음');
+      if (!Array.isArray(input)) throw new Error('child projection 보고는 배열이어야 함');
+      const activeChildren = new Map(this.registryEntries
+        .filter((entry) => (entry.hostRef ?? 'main') === pluginId && this.activeModules.has(entry.id))
+        .map((entry) => [entry.id, entry]));
+      const projections: HostChildProjection[] = [];
+      const seen = new Set<string>();
+      for (const candidate of input) {
+        if (!candidate || typeof candidate !== 'object') throw new Error('child projection 항목이 객체가 아님');
+        const raw = candidate as Record<string, unknown>;
+        const id = String(raw['id'] || '').trim();
+        const route = String(raw['route'] || '').trim();
+        const element = String(raw['element'] || '').trim();
+        if (!activeChildren.has(id)) throw new Error(`활성화·검증된 child가 아님: '${id}'`);
+        if (seen.has(id)) throw new Error(`child projection 중복: '${id}'`);
+        const target = new URL(route, window.location.origin);
+        if (target.origin !== window.location.origin || target.search || target.hash || !target.pathname.startsWith('/pfss/')) {
+          throw new Error(`child projection route가 canonical PFSS 경로가 아님: '${route}'`);
+        }
+        if (!element || !customElements.get(element)) throw new Error(`child projection element가 정의되지 않음: '${element}'`);
+        seen.add(id);
+        projections.push({ id, route: target.pathname, element });
+      }
+      this.hostChildProjections.update((items) => ({ ...items, [pluginId]: projections }));
     };
     const loadedModules = new Map<string, Promise<unknown>>();
     const loadModule = (id: string): Promise<unknown> => {
@@ -633,6 +684,7 @@ export class ExtensionHostService {
           children: () => this.registryEntries
             .filter((entry) => (entry.hostRef ?? 'main') === pluginId && this.activeModules.has(entry.id))
             .map((entry) => entry.id),
+          reportProjections: reportChildProjections,
         },
       } : {}),
     };

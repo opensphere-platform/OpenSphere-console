@@ -272,6 +272,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                 </td>
                 <td>
                   <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
+                  <div class="state-detail">{{ menuState(r).reason }}</div>
                   <div class="state-detail">{{ integrationSummary(r) }}</div>
                 </td>
                 <td class="extension-actions">
@@ -1391,7 +1392,15 @@ export class AdminPlugins implements OnInit {
     if (hostRef !== 'main') {
       const childState = this.ext.pluginLoadState(r.name);
       if (childState === 'ready') {
-        return { visible: true, label: 'Host 메뉴 사용 가능', reason: `${hostRef} 하위 · ${this.extensionPageRoute(r)}` };
+        const projection = this.ext.hostChildProjection(hostRef, r.name);
+        if (projection) {
+          return { visible: true, label: 'Host 메뉴 사용 가능', reason: `${projection.route} · ${projection.element}` };
+        }
+        return {
+          visible: false,
+          label: 'Host 연동 실패',
+          reason: `HostProjectionMissing — ${hostRef}가 ${this.extensionPageRoute(r)} 관리면을 승인하지 않았습니다. Host 업데이트가 필요합니다.`,
+        };
       }
       if (childState === 'loading') {
         return { visible: false, label: 'Host 적재 중', reason: `${hostRef}가 child plugin을 검증·활성화하는 중` };
@@ -1410,6 +1419,8 @@ export class AdminPlugins implements OnInit {
 
   extensionPageRoute(r: Registration): string {
     const hostRef = this.catalogItem(r.name)?.hostRef || 'main';
+    const projection = hostRef === 'main' ? undefined : this.ext.hostChildProjection(hostRef, r.name);
+    if (projection) return projection.route;
     if (hostRef === 'foundation') return `/pfss/${r.name}`;
     return hostRef === 'main' ? `/p/${r.name}` : `/p/${hostRef}/${r.name}`;
   }
@@ -1457,6 +1468,13 @@ export class AdminPlugins implements OnInit {
     }
     const menu = this.menuState(r);
     const isSubShell = this.catalogItem(r.name)?.kind === 'subShell';
+    const isHostedPlugin = (this.catalogItem(r.name)?.hostRef || 'main') !== 'main';
+    if (isHostedPlugin && !menu.visible) {
+      if (this.ext.loadState() === 'loading' || this.ext.pluginLoadState(r.name) === 'loading') {
+        return { label: 'Host 적재 중', detail: menu.reason, tone: 'warning' };
+      }
+      return { label: 'Host 연동 실패', detail: menu.reason, tone: 'danger' };
+    }
     if (isSubShell && !menu.visible) {
       if (this.ext.loadState() === 'loading') {
         return { label: 'UI 적재 중', detail: menu.reason, tone: 'warning' };
