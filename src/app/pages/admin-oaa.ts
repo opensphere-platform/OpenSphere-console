@@ -32,6 +32,11 @@ interface OaaHealth {
     ready: boolean; reason?: string; totalResources?: number; freshResources?: number;
     lastObservedAt?: string; lagSeconds?: number; refreshSeconds?: number; authority?: string; projection?: string;
   };
+  readiness?: { ready: boolean; coreReady?: boolean; operationalReady?: boolean; reason?: string | null };
+  operational?: {
+    enabled: boolean; ready: boolean; phase: string; schema: boolean; readable: boolean; fresh: boolean;
+    reason?: string | null; observedAt?: string | null; checkedAt?: string | null; lastConnectedAt?: string | null;
+  };
 }
 interface AgentControlReadiness {
   apiVersion: string;
@@ -55,6 +60,7 @@ interface R2d2OperationalStatus {
   observer: { fencing_epoch: number; collector_id: string; lease_expires_at: string; heartbeat_at: string } | null;
   runtime: { degraded?: boolean; reason?: string; fencingEpoch?: number; graph?: { nodeCount: number; relationCount: number; reconcileSessionId: string } } | null;
   flags: { observer: boolean; graph: boolean; incident: boolean; globalRisk: boolean; incidentRelay?: boolean; maintenance?: boolean };
+  readiness?: OaaHealth['operational'];
 }
 interface R2d2GraphNode {
   nodeId: string; nodeType: string; displayName: string; namespace: string; authority: string;
@@ -335,7 +341,7 @@ interface OaaActionBindingManifest {
           <div class="r2d2-target-badges" aria-label="R2D2 목표 상태">
             <span>Target model</span>
             <span>Phased enablement</span>
-            <span class="guarded">Operational runtime ON · Engineering Remediation OFF</span>
+            <span class="guarded">Operational runtime {{ operationalRuntimeLabel() }} · Engineering Remediation OFF</span>
           </div>
         </div>
         <aside class="r2d2-position-card" aria-label="현재 위치와 최종 목표">
@@ -346,7 +352,7 @@ interface OaaActionBindingManifest {
             <li><span>03</span><div><strong>운영 복구</strong><small>governed capability · postcondition</small></div></li>
             <li><span>04</span><div><strong>Engineering Remediation</strong><small>source · build · exact digest deploy</small></div></li>
           </ol>
-          <p>관측·상황 이해·승인 기반 운영 복구는 활성화했습니다. 소스 수정·빌드·배포를 수행하는 Engineering Remediation은 별도 구현·평가·사용자 승인 전까지 fail-closed를 유지합니다.</p>
+          <p>Operational runtime 상태는 서버 readiness projection을 따릅니다. 소스 수정·빌드·배포를 수행하는 Engineering Remediation은 별도 구현·평가·사용자 승인 전까지 fail-closed를 유지합니다.</p>
         </aside>
       </section>
 
@@ -636,6 +642,7 @@ interface OaaActionBindingManifest {
 
         <section class="manage-status-rail" aria-label="R2D2 운영 상태">
           <div><span>Runtime</span><strong [class.ok]="!!health()">{{ health() ? 'Reachable' : 'Unavailable' }}</strong><small>{{ health() ? 'R2D2 runtime' : 'health unavailable' }}</small></div>
+          <div><span>Operational</span><strong [class.ok]="health()?.operational?.ready" [class.warn]="health() && !health()?.operational?.ready">{{ operationalRuntimeLabel() }}</strong><small>{{ health()?.operational?.reason || health()?.operational?.phase || 'server projection unavailable' }}</small></div>
           <div><span>LLM keys</span><strong [class.warn]="llmKeysLoaded() && !llmKeys().length">{{ llmKeysLoaded() ? llmKeys().length : 'Loading' }}</strong><small>{{ llmKeys().length ? 'fingerprint inventory' : 'provider custody' }}</small></div>
           <div><span>Knowledge</span><strong>{{ knowledgeStats()?.documents ?? 'Loading' }}</strong><small>{{ knowledgeStats()?.chunks ?? 0 }} chunks</small></div>
           <div><span>Tools</span><strong>{{ toolManifest()?.tools?.length ?? 'Loading' }}</strong><small>registered capabilities</small></div>
@@ -1524,6 +1531,14 @@ export class AdminOaa implements OnInit, OnDestroy {
   readonly mutationGateOpen = computed<boolean>(
     () => !this.gatewayDown() && this.health()?.mutationEnabled === true && !!this.toolManifest() && !!this.actionBindings(),
   );
+
+  readonly operationalRuntimeLabel = computed<string>(() => {
+    const operational = this.health()?.operational;
+    if (!operational) return 'UNKNOWN';
+    if (operational.ready) return 'READY';
+    if (!operational.enabled || operational.phase === 'disabled') return 'OFF';
+    return 'DEGRADED';
+  });
 
   /** health가 로드되지 않았거나 게이트가 닫혀 있을 때 화면에 보여줄 사람이 읽을 수 있는 gate reason. */
   readonly mutationGateReasonText = computed<string>(() => {

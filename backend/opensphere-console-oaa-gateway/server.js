@@ -19,6 +19,8 @@ const {
 } = require('./r2d2-prompt-boundary');
 const { replayQuery, authorizationFingerprint } = require('./r2d2-sse-contract');
 const { durableBindingRequest, durableIdempotencyKey } = require('./r2d2-durable-binding');
+const { OperationalIntelligenceSupervisor } = require('./r2d2-operational-supervisor');
+const { capabilityAvailability, readinessDecision, operationWorkflow } = require('./r2d2-postgres-workflow');
 const {
   IncidentNotificationRelay,
   PgIncidentOutboxSource,
@@ -98,6 +100,8 @@ const R2D2_MAINTENANCE_PG_PASSWORD = String(process.env.R2D2_MAINTENANCE_PG_PASS
 const R2D2_RELAY_INTERVAL_MS = Math.max(1000, Math.min(60000, Number(process.env.R2D2_RELAY_INTERVAL_MS || 3000) || 3000));
 const R2D2_OBSERVER_INTERVAL_MS = Math.max(15000, Math.min(300000, Number(process.env.R2D2_OBSERVER_INTERVAL_MS || 60000) || 60000));
 const R2D2_MAINTENANCE_INTERVAL_MS = Math.max(3600000, Math.min(604800000, Number(process.env.R2D2_MAINTENANCE_INTERVAL_MS || 86400000) || 86400000));
+const R2D2_OPERATIONAL_HEALTH_POLL_MS = Math.max(5000, Math.min(60000, Number(process.env.R2D2_OPERATIONAL_HEALTH_POLL_MS || 15000) || 15000));
+const R2D2_OPERATIONAL_RECONNECT_DELAY_MS = Math.max(5000, Math.min(300000, Number(process.env.R2D2_OPERATIONAL_RECONNECT_DELAY_MS || 30000) || 30000));
 const OAA_ACTION_SUBMISSION_ENABLED = process.env.OAA_ACTION_SUBMISSION_ENABLED === 'true';
 const OAA_EMBED_KEY_ID = String(process.env.OAA_EMBED_KEY_ID || '').trim();
 const OAA_MANUAL_SEED_PATH = process.env.OAA_MANUAL_SEED_PATH || '/app/manual-seeds/opensphere-core-manuals.json';
@@ -336,6 +340,7 @@ let r2d2RelayPool = null;
 let r2d2MaintenancePool = null;
 let r2d2Runtime = null;
 let r2d2QueryService = null;
+let r2d2Supervisor = null;
 let r2d2Timer = null;
 let r2d2RelayTimer = null;
 let r2d2MaintenanceTimer = null;
@@ -4382,12 +4387,45 @@ function oaaToolManifest() {
         auditEventType: 'foundation-status-read',
       },
       {
+        id: 'oaa.foundation.postgres.capabilities',
+        name: 'Discover the authoritative PFSS PostgreSQL owner operations and approval policy',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/postgres/capabilities'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'foundation-postgres-capabilities-read',
+      },
+      {
+        id: 'oaa.foundation.postgres.readiness',
+        name: 'Read authoritative PFSS PostgreSQL readiness, stable blockers, and next action',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/postgres/readiness'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'foundation-postgres-readiness-read',
+      },
+      {
+        id: 'oaa.foundation.postgres.catalog',
+        name: 'Read the authoritative PFSS PostgreSQL runtime, plan, namespace, and storage catalog',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/postgres/catalog'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'foundation-postgres-catalog-read',
+      },
+      {
         id: 'oaa.foundation.postgres.status',
         name: 'Read PFSS PostgreSQL owner runtimes, plans, managed namespaces, claims, and clusters',
         channel: 'owner-control-plane', readOnly: true,
         endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/postgres/status'),
         riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
         auditEventType: 'foundation-postgres-status-read',
+      },
+      {
+        id: 'oaa.foundation.postgres.operation.watch',
+        name: 'Watch one PFSS PostgreSQL durable operation and authoritative postcondition receipt',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/oaa/tools/foundation/postgres/operation'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({ operationId: { type: 'string', pattern: '^[0-9a-fA-F-]{36}$' } }),
+        auditEventType: 'foundation-postgres-operation-watch',
       },
       {
         id: 'oaa.foundation.postgres.plan',
@@ -5139,7 +5177,11 @@ const TOOL_PERMISSION = {
   'oaa.observability.traces.query': 'oaa.logs.read',
   'oaa.registry.read': 'oaa.system.read',
   'oaa.foundation.status': 'oaa.system.read',
+  'oaa.foundation.postgres.capabilities': 'oaa.system.read',
+  'oaa.foundation.postgres.readiness': 'oaa.system.read',
+  'oaa.foundation.postgres.catalog': 'oaa.system.read',
   'oaa.foundation.postgres.status': 'oaa.system.read',
+  'oaa.foundation.postgres.operation.watch': 'oaa.system.read',
   'oaa.foundation.postgres.plan': 'oaa.action.execute.high',
   'oaa.knowledge.search': 'oaa.knowledge.read',
   'oaa.knowledge.ingest-manual': 'oaa.knowledge.manage',
@@ -5711,6 +5753,11 @@ async function executeActionBinding(body = {}, actor = null) {
         audit(actor, 'owner-control-action', actionTarget(binding, inputs), 'failed', `${binding.toolId} / ${failure.error}`);
         throw error;
       }
+      if (binding.toolId === 'oaa.foundation.postgres.claim.create') {
+        const receipt = ownerResult?.response || {};
+        ownerResult.workflow = operationWorkflow(receipt);
+        ownerResult.message = foundationPostgresOperationMessage({ ...receipt, workflow: ownerResult.workflow });
+      }
       await recordToolRun(actor, {
         requestId: randomUUID(),
         toolId: binding.toolId,
@@ -5718,7 +5765,7 @@ async function executeActionBinding(body = {}, actor = null) {
         permissionCode: TOOL_PERMISSION[binding.toolId] || 'oaa.action.execute.high',
         reason: inputs.reason,
         input: inputs,
-        status: 'applied',
+        status: binding.toolId === 'oaa.foundation.postgres.claim.create' ? 'accepted' : 'applied',
         result: ownerResult,
       });
       return {
@@ -5726,7 +5773,8 @@ async function executeActionBinding(body = {}, actor = null) {
         binding,
         confirmationExpected: expected || null,
         result: ownerResult,
-        message: bindingSummary(binding, ownerResult),
+        ...(ownerResult.workflow ? { phase: ownerResult.workflow.phase, operationId: ownerResult.response?.operationId || null } : {}),
+        message: ownerResult.message || bindingSummary(binding, ownerResult),
         latencyMs: Date.now() - started,
       };
     }
@@ -6176,6 +6224,11 @@ function knowledgeSystemMessage(rows) {
 const FOUNDATION_POSTGRES_CONVERSATION_FIELDS = Object.freeze([
   'name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion', 'deletionPolicy',
 ]);
+const FOUNDATION_POSTGRES_OPTIONAL_FIELDS = Object.freeze(['storageSize', 'storageClass', 'operationId']);
+const FOUNDATION_POSTGRES_ALL_FIELDS = Object.freeze([
+  ...FOUNDATION_POSTGRES_CONVERSATION_FIELDS,
+  ...FOUNDATION_POSTGRES_OPTIONAL_FIELDS,
+]);
 
 function foundationPostgresConversationIntent(messages) {
   const userMessages = (messages || [])
@@ -6189,7 +6242,7 @@ function foundationPostgresConversationIntent(messages) {
   const latestIntent = /(?:\bPFSS\b|\bPostgreSQL\b|\bPostgres\b|\bPG\b)/i.test(latest)
     && /(?:cluster|클러스터)/i.test(latest)
     && /(?:구성|설치|생성|provision|configure|install|create)/i.test(latest);
-  const latestSuppliesValues = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.some((field) => new RegExp(`(?:^|[\\s,])${field}\\s*=`, 'i').test(latest));
+  const latestSuppliesValues = FOUNDATION_POSTGRES_ALL_FIELDS.some((field) => new RegExp(`(?:^|[\\s,])${field}\\s*=`, 'i').test(latest));
   return priorIntent && (latestIntent || latestSuppliesValues);
 }
 
@@ -6204,13 +6257,13 @@ function parseFoundationPostgresConversation(messages) {
       try {
         const parsed = JSON.parse(trimmed);
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          for (const field of [...FOUNDATION_POSTGRES_CONVERSATION_FIELDS, 'storageSize', 'storageClass']) {
+          for (const field of FOUNDATION_POSTGRES_ALL_FIELDS) {
             if (parsed[field] !== undefined) values[field] = String(parsed[field]).trim();
           }
         }
       } catch { /* key=value parsing below remains authoritative */ }
     }
-    for (const field of [...FOUNDATION_POSTGRES_CONVERSATION_FIELDS, 'storageSize', 'storageClass']) {
+    for (const field of FOUNDATION_POSTGRES_ALL_FIELDS) {
       const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const match = new RegExp(`(?:^|[\\s,])${escaped}\\s*=\\s*(?:"([^"]+)"|'([^']+)'|([^,\\n]+))`, 'i').exec(text);
       const value = String(match?.[1] || match?.[2] || match?.[3] || '').trim();
@@ -6220,19 +6273,20 @@ function parseFoundationPostgresConversation(messages) {
   return values;
 }
 
-function foundationPostgresClarification(status, values) {
+function foundationPostgresClarification(catalog, values, decision) {
   const missing = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.filter((field) => !values[field]);
-  const plans = (status?.plans || []).filter((plan) => plan.lifecycle === 'Available');
-  const versions = (status?.runtimeCatalog?.versions || []).filter((version) => version.lifecycle === 'Available');
+  const plans = (catalog?.plans || []).filter((plan) => plan.lifecycle === 'Available');
+  const versions = (catalog?.runtimeCatalog?.versions || []).filter((version) => version.lifecycle === 'Available');
   const collected = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.filter((field) => values[field]);
   return [
     'PFSS PostgreSQL 클러스터를 구성할 수 있습니다. 실제 owner 계획 전 아래 값을 관리자가 명시해야 합니다. R2D2는 임의 기본값을 선택하지 않습니다.',
     '',
-    `현재 owner: ${status?.owner || 'PFSS / data.sql.postgres'}`,
-    `허용 namespace: ${(status?.managedNamespaces || []).join(', ') || '조회되지 않음'}`,
+    `현재 owner: ${catalog?.owner || 'PFSS / data.sql.postgres'}`,
+    `허용 namespace: ${(catalog?.managedNamespaces || catalog?.namespaces || []).join(', ') || '조회되지 않음'}`,
     `Available plan: ${plans.map((plan) => `${plan.name} (${plan.profile}, ${plan.instances} instance, ${plan.storage?.size || '-'})`).join(', ') || '없음'}`,
     `Available PostgreSQL version: ${versions.map((version) => version.version).join(', ') || '없음'}`,
-    `현재 Claim/cluster: ${(status?.claims || []).length}/${(status?.clusters || []).length}`,
+    `현재 Claim/cluster: ${(catalog?.claims || []).length}/${(catalog?.clusters || []).length}`,
+    `Owner readiness: plan=${decision?.readyToPlan === true ? 'ready' : 'blocked'}, execute=${decision?.readyToExecute === true ? 'ready' : 'blocked'}`,
     '',
     `아직 필요한 값: ${missing.join(', ')}`,
     `확인된 값: ${collected.length ? collected.map((field) => `${field}=${values[field]}`).join(', ') : '없음'}`,
@@ -6243,6 +6297,29 @@ function foundationPostgresClarification(status, values) {
     '',
     'deletionPolicy=Delete는 Claim 삭제 시 관리 클러스터도 삭제합니다. 운영 데이터는 Retain을 권장합니다.',
   ].join('\n');
+}
+
+function foundationPostgresReadinessMessage(decision) {
+  const blocker = decision?.blocker || {};
+  const nextAction = blocker.nextAction || decision?.nextAction;
+  const nextActionText = typeof nextAction === 'string'
+    ? nextAction
+    : [nextAction?.owner, nextAction?.action].filter(Boolean).join(': ');
+  return [
+    'PFSS PostgreSQL owner readiness가 확인되지 않아 mutation 계획을 진행하지 않았습니다.',
+    '',
+    `Blocker: ${blocker.code || 'POSTGRES_READINESS_UNKNOWN'} — ${blocker.message || 'owner readiness is unavailable'}`,
+    `Next action: ${nextActionText || 'owner readiness를 다시 확인하세요.'}`,
+  ].join('\n');
+}
+
+function foundationPostgresOperationMessage(operation) {
+  const workflow = operation?.workflow || operationWorkflow(operation);
+  return [
+    `PFSS PostgreSQL operation ${operation?.operationId || operation?.id || 'unknown'}: ${workflow.phase}`,
+    workflow.message,
+    workflow.nextAction ? `Next action: ${workflow.nextAction}` : '',
+  ].filter(Boolean).join('\n');
 }
 
 function foundationPostgresPlanMessage(plan, request) {
@@ -6266,17 +6343,48 @@ function foundationPostgresPlanMessage(plan, request) {
 async function foundationPostgresConversation(messages, actor) {
   if (!foundationPostgresConversationIntent(messages)) return null;
   const values = parseFoundationPostgresConversation(messages);
+  if (values.operationId) {
+    const operation = await foundationPostgresOperationWatch({ operationId: values.operationId }, actor);
+    return commandResponse(Date.now(), foundationPostgresOperationMessage(operation), {
+      schema: 'r2d2.foundation-postgres-intake/v1', phase: operation.workflow.phase, operation,
+    });
+  }
+  let readiness;
+  let catalog;
+  try {
+    [readiness, catalog] = await Promise.all([
+      foundationPostgresReadinessRead(actor),
+      foundationPostgresCatalogRead(actor),
+    ]);
+  } catch (error) {
+    const decision = {
+      readyToPlan: false, readyToExecute: false, stale: true,
+      blocker: { code: 'POSTGRES_OWNER_QUERY_UNAVAILABLE', message: 'PFSS PostgreSQL owner readiness or catalog could not be read.' },
+      nextAction: { owner: 'PFSS', action: 'Restore the authoritative Owner API and retry the read-only readiness check', automatic: false },
+    };
+    return commandResponse(Date.now(), foundationPostgresReadinessMessage(decision), {
+      schema: 'r2d2.foundation-postgres-intake/v1', phase: 'NeedsReadiness', decision,
+      ownerError: String(error?.msg || error?.message || 'PostgreSQL owner readiness unavailable').slice(0, 500),
+    });
+  }
+  if (!readiness.decision.readyToPlan) {
+    return commandResponse(Date.now(), foundationPostgresReadinessMessage(readiness.decision), {
+      schema: 'r2d2.foundation-postgres-intake/v1', phase: 'NeedsReadiness', readiness, catalog,
+      decision: readiness.decision,
+    });
+  }
   const missing = FOUNDATION_POSTGRES_CONVERSATION_FIELDS.filter((field) => !values[field]);
   if (missing.length) {
-    const status = await foundationPostgresStatusRead(actor);
-    return commandResponse(Date.now(), foundationPostgresClarification(status, values), {
-      schema: 'r2d2.foundation-postgres-intake/v1', phase: 'NeedsInput', missing, values, status,
+    return commandResponse(Date.now(), foundationPostgresClarification(catalog, values, readiness.decision), {
+      schema: 'r2d2.foundation-postgres-intake/v1', phase: 'NeedsInput', missing, values, readiness, catalog,
     });
   }
   const request = normalizeFoundationPostgresRequest(values);
-  const plan = await foundationPostgresPlanRead(request, actor);
+  const plan = await foundationPostgresPlanRead(request, actor, readiness);
   return commandResponse(Date.now(), foundationPostgresPlanMessage(plan, request), {
-    schema: 'r2d2.foundation-postgres-intake/v1', phase: 'AwaitingConfirmation', request, plan,
+    schema: 'r2d2.foundation-postgres-intake/v1', phase: 'Planned', nextPhase: 'AwaitingApproval',
+    nextAction: 'An authorized administrator must provide the exact owner confirmation through the independently authenticated action path.',
+    request, plan, readiness, catalog,
   });
 }
 
@@ -6371,7 +6479,13 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
   });
   add('oaa.system.read', 'get_opensphere_registry', 'Read the current Main Shell native Registry projection from its owning DUPA API. Treat it as discovery and activation state, not Kubernetes runtime truth.', {});
   add('oaa.system.read', 'get_foundation_status', 'Read Foundation models, engine states, consumer claims, bindings, and controller readiness from the Foundation owner API.', {});
+  add('oaa.system.read', 'get_foundation_postgres_capabilities', 'Discover the machine-readable PFSS data.sql.postgres owner operations. Never infer Database, Access, or Day-2 support when the operation is absent.', {});
+  add('oaa.system.read', 'get_foundation_postgres_readiness', 'Read current PFSS PostgreSQL readiness with stable blockers and nextAction. Missing or stale readiness blocks planning.', {});
+  add('oaa.system.read', 'get_foundation_postgres_catalog', 'Read the authoritative PFSS PostgreSQL plans, versions, namespaces, and storage classes. Never invent a catalog default.', {});
   add('oaa.system.read', 'get_foundation_postgres_status', 'Read the PFSS data.sql.postgres owner projection: approved runtimes and plans, managed namespaces, PostgresClaims, and realized clusters. Use this before discussing PostgreSQL provisioning; do not confuse the postgres UI plugin Deployment with a database cluster.', {});
+  add('oaa.system.read', 'watch_foundation_postgres_operation', 'Watch one durable PFSS PostgreSQL operation by operationId and return its approval, reconciliation, and authoritative receipt state.', {
+    operationId: { type: 'string', pattern: UUID_RE.source },
+  }, ['operationId']);
   add('oaa.action.execute.high', 'plan_foundation_postgres_cluster', 'Validate a complete PFSS PostgreSQL cluster request through the typed owner Admission dry-run. Returns the exact human approval phrase and postcondition; it does not create the cluster.', {
     name: { type: 'string', pattern: K8S_NAME_RE.source },
     namespace: { type: 'string', enum: OAA_ENV_NAMESPACES },
@@ -6599,6 +6713,22 @@ async function fixedOwnerPost(baseUrl, path, actor, payload, owner, timeoutMs = 
       method: 'POST',
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify(payload || {}),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    throw { code: 503, msg: `${owner} owner API is unavailable` };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `${owner} HTTP ${response.status}` };
+  return body;
+}
+
+async function fixedOwnerGet(baseUrl, path, actor, owner, timeoutMs = 30000) {
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
@@ -6962,6 +7092,8 @@ async function executeOwnerControlAction(toolId, inputs, actor) {
     const request = normalizeFoundationPostgresRequest(inputs);
     const expected = foundationPostgresConfirmation(request);
     requireConfirm(inputs.confirm, expected);
+    const readiness = await foundationPostgresReadinessRead(actor);
+    assertFoundationPostgresReadyToPlan(readiness);
     owner = 'PFSS PostgreSQL owner'; target = `FoundationClaim/${request.namespace}/${request.name}`;
     const plan = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/operations/plan', actor, {
       action: 'create-postgres-cluster', target: request, reason,
@@ -7244,6 +7376,62 @@ function foundationPostgresConfirmation(request) {
   return `create PostgreSQL cluster ${request.namespace}/${request.name} plan ${request.plan} version ${request.postgresVersion}`;
 }
 
+async function foundationPostgresCapabilitiesRead(actor) {
+  assertPermission(actor, 'oaa.system.read');
+  const projection = redactProjection(await fixedOwnerGet(
+    FOUNDATION_CONTROL_URL, '/api/foundation/oaa/postgres/capabilities?capability=data.sql.postgres', actor,
+    'PFSS PostgreSQL capabilities', 15000,
+  ));
+  audit(actor, 'foundation-postgres-capabilities-read', 'PFSS/data.sql.postgres', 'ok', `${projection.operations?.length || 0} operations`);
+  return { ...projection, r2d2Availability: capabilityAvailability(projection) };
+}
+
+async function foundationPostgresReadinessRead(actor) {
+  assertPermission(actor, 'oaa.system.read');
+  const [capabilities, readiness] = await Promise.all([
+    foundationPostgresCapabilitiesRead(actor),
+    fixedOwnerGet(FOUNDATION_CONTROL_URL, '/api/foundation/oaa/postgres/readiness?capability=data.sql.postgres', actor,
+      'PFSS PostgreSQL readiness', 30000).then(redactProjection),
+  ]);
+  const decision = readinessDecision(readiness, capabilities);
+  audit(actor, 'foundation-postgres-readiness-read', 'PFSS/data.sql.postgres', 'ok', `${readiness.state || 'Unknown'} / plan=${decision.readyToPlan} execute=${decision.readyToExecute}`);
+  return { ...readiness, decision };
+}
+
+function assertFoundationPostgresReadyToPlan(readiness) {
+  if (readiness?.decision?.readyToPlan) return;
+  const blocker = readiness?.decision?.blocker || {};
+  throw {
+    code: 409,
+    errorCode: blocker.code || 'POSTGRES_NOT_READY_TO_PLAN',
+    msg: blocker.message || 'PFSS PostgreSQL owner is not ready to plan.',
+    nextAction: readiness?.decision?.nextAction || { owner: 'PFSS', action: 'Refresh authoritative readiness and retry', automatic: false },
+  };
+}
+
+async function foundationPostgresCatalogRead(actor) {
+  assertPermission(actor, 'oaa.system.read');
+  const projection = redactProjection(await fixedOwnerGet(
+    FOUNDATION_CONTROL_URL, '/api/foundation/oaa/postgres/catalog', actor, 'PFSS PostgreSQL catalog', 30000,
+  ));
+  audit(actor, 'foundation-postgres-catalog-read', 'PFSS/data.sql.postgres', 'ok', `${projection.plans?.length || 0} plans / ${projection.runtimeCatalog?.versions?.length || 0} versions`);
+  return projection;
+}
+
+async function foundationPostgresOperationWatch(inputs, actor) {
+  requireClosedOwnerInputs(inputs, ['operationId']);
+  assertPermission(actor, 'oaa.system.read');
+  const operationId = String(inputs.operationId || '').trim();
+  if (!UUID_RE.test(operationId)) throw { code: 400, msg: 'operationId must be a UUID' };
+  const projection = redactProjection(await fixedOwnerGet(
+    FOUNDATION_CONTROL_URL, `/api/foundation/oaa/operations/${operationId}`, actor,
+    'PFSS PostgreSQL operation watch', 15000,
+  ));
+  const workflow = operationWorkflow(projection);
+  audit(actor, 'foundation-postgres-operation-watch', `Operation/${operationId}`, 'ok', workflow.phase);
+  return { ...projection, operationId: projection.operationId || operationId, workflow };
+}
+
 async function foundationPostgresStatusRead(actor) {
   assertPermission(actor, 'oaa.system.read');
   if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
@@ -7263,8 +7451,10 @@ async function foundationPostgresStatusRead(actor) {
   return projection;
 }
 
-async function foundationPostgresPlanRead(inputs, actor) {
+async function foundationPostgresPlanRead(inputs, actor, verifiedReadiness = null) {
   assertPermission(actor, 'oaa.action.execute.high');
+  const readiness = verifiedReadiness || await foundationPostgresReadinessRead(actor);
+  assertFoundationPostgresReadyToPlan(readiness);
   const request = normalizeFoundationPostgresRequest(inputs);
   const projection = redactProjection(await fixedOwnerPost(
     CONSOLE_IDENTITY_URL, '/api/oaa/operations/plan', actor,
@@ -7378,9 +7568,21 @@ async function executeAgentTool(name, args, actor, context = {}) {
       assertPermission(actor, 'oaa.system.read');
       result = await foundationStatusRead(actor);
       break;
+    case 'get_foundation_postgres_capabilities':
+      result = await foundationPostgresCapabilitiesRead(actor);
+      break;
+    case 'get_foundation_postgres_readiness':
+      result = await foundationPostgresReadinessRead(actor);
+      break;
+    case 'get_foundation_postgres_catalog':
+      result = await foundationPostgresCatalogRead(actor);
+      break;
     case 'get_foundation_postgres_status':
       assertPermission(actor, 'oaa.system.read');
       result = await foundationPostgresStatusRead(actor);
+      break;
+    case 'watch_foundation_postgres_operation':
+      result = await foundationPostgresOperationWatch(input, actor);
       break;
     case 'plan_foundation_postgres_cluster':
       permissionCode = 'oaa.action.execute.high';
@@ -8107,16 +8309,20 @@ async function computeReadiness({ probeSemantic = false } = {}) {
     agentLedger: false,
     manualRegistrySeed: false,
     toolRegistrySeed: false,
+    operationalQueryService: false,
+    operationalSchema: false,
+    operationalReadable: false,
+    operationalFresh: false,
   };
   const pool = getPgPool();
   if (!pool) {
-    return { ready: false, components, reason: 'postgres_not_configured' };
+    return { ready: false, coreReady: false, operationalReady: false, components, operational: operationalReadinessSnapshot(), reason: 'postgres_not_configured' };
   }
   try {
     await pool.query('SELECT 1');
     components.postgres = true;
   } catch {
-    return { ready: false, components, reason: 'postgres_unreachable' };
+    return { ready: false, coreReady: false, operationalReady: false, components, operational: operationalReadinessSnapshot(), reason: 'postgres_unreachable' };
   }
   try {
     await ensureKnowledgeSchema();
@@ -8125,7 +8331,7 @@ async function computeReadiness({ probeSemantic = false } = {}) {
     components.vectorSchema = false;
   }
   if (!components.vectorSchema) {
-    return { ready: false, components, reason: 'vector_schema_not_ready' };
+    return { ready: false, coreReady: false, operationalReady: false, components, operational: operationalReadinessSnapshot(), reason: 'vector_schema_not_ready' };
   }
   try {
     await ensureUsageLedgerSchema();
@@ -8134,7 +8340,7 @@ async function computeReadiness({ probeSemantic = false } = {}) {
     components.usageLedger = false;
   }
   if (!components.usageLedger) {
-    return { ready: false, components, reason: 'usage_ledger_not_ready' };
+    return { ready: false, coreReady: false, operationalReady: false, components, operational: operationalReadinessSnapshot(), reason: 'usage_ledger_not_ready' };
   }
   try {
     const controlSchema = await pool.query(`
@@ -8157,7 +8363,7 @@ async function computeReadiness({ probeSemantic = false } = {}) {
     components.agentLedger = false;
   }
   if (!components.runtimeProjection || !components.runtimeWatchSchema || !components.agentLedger) {
-    return { ready: false, components, reason: 'agent_control_schema_not_ready' };
+    return { ready: false, coreReady: false, operationalReady: false, components, operational: operationalReadinessSnapshot(), reason: 'agent_control_schema_not_ready' };
   }
   const manualRegistrySeedQuery = `
     SELECT count(*)::int AS n
@@ -8183,7 +8389,7 @@ async function computeReadiness({ probeSemantic = false } = {}) {
     components.manualRegistrySeed = false;
   }
   if (!components.manualRegistrySeed) {
-    return { ready: false, components, reason: 'manual_registry_seed_not_ready' };
+    return { ready: false, coreReady: false, operationalReady: false, components, operational: operationalReadinessSnapshot(), reason: 'manual_registry_seed_not_ready' };
   }
   const toolRegistrySeedQuery = 'SELECT count(*)::int AS n FROM oaa_tool_capabilities';
   try {
@@ -8203,7 +8409,7 @@ async function computeReadiness({ probeSemantic = false } = {}) {
     components.toolRegistrySeed = false;
   }
   if (!components.toolRegistrySeed) {
-    return { ready: false, components, reason: 'tool_registry_seed_not_ready' };
+    return { ready: false, coreReady: false, operationalReady: false, components, operational: operationalReadinessSnapshot(), reason: 'tool_registry_seed_not_ready' };
   }
   const semanticSearch = await checkEmbeddingReadiness(probeSemantic).catch(() => ({
     ready: false,
@@ -8211,48 +8417,126 @@ async function computeReadiness({ probeSemantic = false } = {}) {
     keyId: '', provider: '', model: '', checkedAt: null,
   }));
   const runtimeProjection = await runtimeProjectionStatus();
+  const operational = operationalReadinessSnapshot();
+  components.operationalQueryService = ['ready', 'degraded'].includes(operational.phase);
+  components.operationalSchema = operational.schema === true;
+  components.operationalReadable = operational.readable === true;
+  components.operationalFresh = operational.fresh === true;
+  const operationalReady = !operationalFeaturesRequired() || operational.ready === true;
   return {
-    ready: true,
+    ready: operationalReady,
+    coreReady: true,
+    operationalReady,
     components,
+    operational,
     capabilities: { lexicalSearch: true, semanticSearch, runtimeProjection },
-    degraded: !semanticSearch.ready || !runtimeProjection.ready,
-    degradedReason: !runtimeProjection.ready
+    degraded: !operationalReady || !semanticSearch.ready || !runtimeProjection.ready,
+    degradedReason: !operationalReady
+      ? (operational.reason || 'operational_not_ready')
+      : (!runtimeProjection.ready
       ? (runtimeProjection.reason || 'runtime_projection_stale')
-      : (semanticSearch.ready ? null : semanticSearch.reason),
-    reason: null,
+      : (semanticSearch.ready ? null : semanticSearch.reason)),
+    reason: operationalReady ? null : (operational.reason || 'operational_not_ready'),
+  };
+}
+
+function operationalFeaturesRequired() {
+  return R2D2_OBSERVER_ENABLED || R2D2_GRAPH_ENABLED || R2D2_INCIDENT_ENABLED || R2D2_GLOBAL_RISK_ENABLED;
+}
+
+async function probeOperationalQueryService(queryService) {
+  if (!queryService?.pool) return {
+    ready: false, schema: false, readable: false, fresh: false,
+    reason: 'operational_query_service_missing', observedAt: null,
+  };
+  let schema;
+  try {
+    schema = await queryService.pool.query(`SELECT
+      to_regclass('oaa.resource_node') IS NOT NULL AS graph_ready,
+      to_regclass('oaa.source_health') IS NOT NULL AS source_health_ready,
+      to_regclass('oaa.incident') IS NOT NULL AS incident_ready`);
+  } catch {
+    return { ready: false, schema: false, readable: false, fresh: false, reason: 'operational_query_unavailable', observedAt: null };
+  }
+  const schemaReady = schema.rows[0]?.graph_ready === true
+    && schema.rows[0]?.source_health_ready === true
+    && schema.rows[0]?.incident_ready === true;
+  if (!schemaReady) return { ready: false, schema: false, readable: true, fresh: false, reason: 'operational_schema_not_ready', observedAt: null };
+  let status;
+  try { status = await queryService.status(); }
+  catch { return { ready: false, schema: true, readable: false, fresh: false, reason: 'operational_query_unavailable', observedAt: null }; }
+  const total = Number(status?.graph?.total || 0);
+  const freshCount = Number(status?.graph?.fresh || 0);
+  const fresh = total > 0 && freshCount === total && Boolean(status?.graph?.observedAt);
+  return {
+    ready: fresh, schema: true, readable: true, fresh,
+    reason: total === 0 ? 'operational_graph_empty' : (fresh ? null : 'operational_graph_stale'),
+    observedAt: status?.graph?.observedAt || null,
+    graph: { total, fresh: freshCount },
+  };
+}
+
+function operationalReadinessSnapshot() {
+  if (!operationalFeaturesRequired()) return {
+    enabled: false, phase: 'disabled', ready: true, schema: true, readable: true, fresh: true,
+    reason: null, observedAt: null, checkedAt: null, retryExhausted: false,
+  };
+  return r2d2Supervisor ? { enabled: true, ...r2d2Supervisor.snapshot() } : {
+    enabled: true, phase: 'not_started', ready: false, schema: false, readable: false, fresh: false,
+    reason: 'operational_supervisor_not_started', observedAt: null, checkedAt: null, retryExhausted: false,
   };
 }
 
 async function initializeOperationalIntelligence() {
   const queryPool = getPgPool();
-  if (queryPool) {
-    const schema = await queryPool.query(`SELECT
-      to_regclass('oaa.resource_node') IS NOT NULL AS graph_ready,
-      to_regclass('oaa.incident') IS NOT NULL AS incident_ready`);
-    if (schema.rows[0]?.graph_ready) r2d2QueryService = new OperationalQueryService(queryPool, { clusterId: R2D2_CLUSTER_ID });
+  if (!queryPool) throw Object.assign(new Error('operational PostgreSQL pool is unavailable'), { code: 'postgres_not_configured' });
+  const queryService = new OperationalQueryService(queryPool, { clusterId: R2D2_CLUSTER_ID });
+  const initialHealth = await probeOperationalQueryService(queryService);
+  if (!initialHealth.schema || !initialHealth.readable) {
+    throw Object.assign(new Error(initialHealth.reason), { code: initialHealth.reason });
   }
+  r2d2QueryService = queryService;
   const observerPool = getR2d2ObserverPool();
   if (!R2D2_OBSERVER_ENABLED || !observerPool) {
     if (R2D2_OBSERVER_ENABLED) console.warn('[r2d2-observer] enabled but dedicated observer database credential is unavailable');
-    return;
+    return queryService;
   }
-  const elector = new KubernetesLeaseElector({
-    request: k8s, namespace: OAA_NAMESPACE, name: 'r2d2-operational-observer', identity: OAA_WATCH_OBSERVER_ID,
+  if (!r2d2Runtime) {
+    const elector = new KubernetesLeaseElector({
+      request: k8s, namespace: OAA_NAMESPACE, name: 'r2d2-operational-observer', identity: OAA_WATCH_OBSERVER_ID,
+    });
+    const store = new OperationalGraphStore(observerPool, { clusterId: R2D2_CLUSTER_ID, collectorId: OAA_WATCH_OBSERVER_ID });
+    const incidents = new IncidentRuntime(observerPool, { clusterId: R2D2_CLUSTER_ID });
+    r2d2Runtime = new OperationalIntelligenceRuntime({
+      enabled: R2D2_OBSERVER_ENABLED, graphEnabled: R2D2_GRAPH_ENABLED, incidentEnabled: R2D2_INCIDENT_ENABLED,
+      operationEnabled: OAA_ACTION_SUBMISSION_ENABLED, ownerAvailable: OAA_ACTION_SUBMISSION_ENABLED,
+      remediationEnabled: true, r3Available: false,
+      elector, store, incidents, collect: collectRuntimeInventory,
+    });
+    const initial = await r2d2Runtime.tick().catch((error) => ({ failed: true, reason: error.message || String(error) }));
+    if (initial?.failed || initial?.skipped) console.warn('[r2d2-observer] initial tick did not acquire:', initial.reason || 'unknown');
+    r2d2Timer = setInterval(() => {
+      void r2d2Runtime.tick().catch((error) => console.warn('[r2d2-observer] tick failed:', error.message || error));
+    }, R2D2_OBSERVER_INTERVAL_MS);
+    r2d2Timer.unref();
+  }
+  return queryService;
+}
+
+function startOperationalIntelligenceSupervisor() {
+  if (r2d2Supervisor) return r2d2Supervisor.start();
+  r2d2Supervisor = new OperationalIntelligenceSupervisor({
+    initialize: initializeOperationalIntelligence,
+    check: probeOperationalQueryService,
+    dispose: async (queryService) => { if (r2d2QueryService === queryService) r2d2QueryService = null; },
+    maxAttempts: 5, baseDelayMs: 1000, maxDelayMs: 30000, jitterRatio: 0.2,
+    healthPollMs: R2D2_OPERATIONAL_HEALTH_POLL_MS,
+    reconnectDelayMs: R2D2_OPERATIONAL_RECONNECT_DELAY_MS,
+    onState: (state) => {
+      if (!state.ready && state.phase !== 'connecting') console.warn('[r2d2-supervisor]', state.phase, state.reason || 'operational_not_ready');
+    },
   });
-  const store = new OperationalGraphStore(observerPool, { clusterId: R2D2_CLUSTER_ID, collectorId: OAA_WATCH_OBSERVER_ID });
-  const incidents = new IncidentRuntime(observerPool, { clusterId: R2D2_CLUSTER_ID });
-  r2d2Runtime = new OperationalIntelligenceRuntime({
-    enabled: R2D2_OBSERVER_ENABLED, graphEnabled: R2D2_GRAPH_ENABLED, incidentEnabled: R2D2_INCIDENT_ENABLED,
-    operationEnabled: OAA_ACTION_SUBMISSION_ENABLED, ownerAvailable: OAA_ACTION_SUBMISSION_ENABLED,
-    remediationEnabled: true, r3Available: false,
-    elector, store, incidents, collect: collectRuntimeInventory,
-  });
-  const initial = await r2d2Runtime.tick().catch((error) => ({ failed: true, reason: error.message || String(error) }));
-  if (initial?.failed || initial?.skipped) console.warn('[r2d2-observer] initial tick did not acquire:', initial.reason || 'unknown');
-  r2d2Timer = setInterval(() => {
-    void r2d2Runtime.tick().catch((error) => console.warn('[r2d2-observer] tick failed:', error.message || error));
-  }, R2D2_OBSERVER_INTERVAL_MS);
-  r2d2Timer.unref();
+  return r2d2Supervisor.start();
 }
 
 async function durableHisStatus(inputs, actor) {
@@ -8405,7 +8689,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, state.ready ? 200 : 503, {
         service: 'opensphere-console-oaa-gateway',
         ready: state.ready,
+        coreReady: state.coreReady === true,
+        operationalReady: state.operationalReady === true,
         components: state.components,
+        operational: state.operational || operationalReadinessSnapshot(),
         capabilities: state.capabilities || { lexicalSearch: false, semanticSearch: { ready: false, reason: 'core_not_ready' } },
         degraded: Boolean(state.degraded),
         degradedReason: state.degradedReason || null,
@@ -8425,23 +8712,28 @@ const server = http.createServer(async (req, res) => {
       }
       const semanticSearch = readiness.capabilities?.semanticSearch || { ready: false, reason: 'embedding_readiness_unknown' };
       const runtimeProjection = readiness.capabilities?.runtimeProjection || { ready: false, reason: 'runtime_projection_unknown' };
-      const degraded = readiness.ready && (!hasEnabledLlmKey || !semanticSearch.ready || !runtimeProjection.ready);
+      const degraded = !readiness.ready || !hasEnabledLlmKey || !semanticSearch.ready || !runtimeProjection.ready;
       const status = !readiness.ready ? 'not_ready' : (degraded ? 'degraded' : 'ready');
-      const degradedReason = !hasEnabledLlmKey
+      const degradedReason = !readiness.ready
+        ? (readiness.reason || 'readiness_not_ready')
+        : (!hasEnabledLlmKey
         ? 'llm_key_not_configured'
         : (!runtimeProjection.ready
           ? (runtimeProjection.reason || 'runtime_projection_stale')
-          : (!semanticSearch.ready ? semanticSearch.reason : null));
+          : (!semanticSearch.ready ? semanticSearch.reason : null)));
       return json(res, 200, {
         service: 'opensphere-console-oaa-gateway',
         version: VERSION,
         namespace: OAA_NAMESPACE,
-        ok: true,
+        ok: readiness.ready,
         status,
         readiness: {
           ready: readiness.ready,
+          coreReady: readiness.coreReady === true,
+          operationalReady: readiness.operationalReady === true,
           components: readiness.components,
           capabilities: readiness.capabilities,
+          operational: readiness.operational || operationalReadinessSnapshot(),
           reason: readiness.reason,
         },
         degraded,
@@ -8458,6 +8750,7 @@ const server = http.createServer(async (req, res) => {
         semanticSearchReady: Boolean(semanticSearch.ready),
         semanticSearch,
         runtimeProjection,
+        operational: readiness.operational || operationalReadinessSnapshot(),
         pgConfigured: pgEnabled(),
         embedDim: OAA_EMBED_DIM,
         allowedNamespaces: OAA_ENV_NAMESPACES,
@@ -8470,6 +8763,7 @@ const server = http.createServer(async (req, res) => {
       if (!r2d2QueryService) return operationalUnavailable(res);
       const status = await r2d2QueryService.status();
       return json(res, 200, { ...status, runtime: r2d2Runtime?.lastResult || null,
+        readiness: operationalReadinessSnapshot(),
         flags: { observer: R2D2_OBSERVER_ENABLED, graph: R2D2_GRAPH_ENABLED,
           incident: R2D2_INCIDENT_ENABLED, globalRisk: R2D2_GLOBAL_RISK_ENABLED,
           incidentRelay: R2D2_INCIDENT_RELAY_ENABLED, maintenance: R2D2_MAINTENANCE_ENABLED } });
@@ -8689,10 +8983,29 @@ const server = http.createServer(async (req, res) => {
       assertPermission(actor, 'oaa.system.read');
       return json(res, 200, await foundationStatusRead(actor));
     }
+    if (url.pathname === '/api/oaa/tools/foundation/postgres/capabilities' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await foundationPostgresCapabilitiesRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/foundation/postgres/readiness' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await foundationPostgresReadinessRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/foundation/postgres/catalog' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await foundationPostgresCatalogRead(actor));
+    }
     if (url.pathname === '/api/oaa/tools/foundation/postgres/status' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
       requireClosedOwnerInputs(await readBody(req), []);
       return json(res, 200, await foundationPostgresStatusRead(actor));
+    }
+    if (url.pathname === '/api/oaa/tools/foundation/postgres/operation' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await foundationPostgresOperationWatch(await readBody(req), actor));
     }
     if (url.pathname === '/api/oaa/tools/foundation/postgres/plan' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
@@ -8801,6 +9114,7 @@ const server = http.createServer(async (req, res) => {
     // human-readable message. Never include raw secrets/tokens/stack traces in the response body.
     const responseBody = { error: e.msg || e.message || String(e) };
     if (e.errorCode) responseBody.code = e.errorCode;
+    if (e.nextAction) responseBody.nextAction = redactProjection(e.nextAction);
     return json(res, code, responseBody);
   }
 });
@@ -8831,7 +9145,7 @@ async function initializeGatewayData(attempt = 1) {
 server.listen(PORT, () => {
   console.log(`opensphere-console-oaa-gateway v${VERSION} listening :${PORT} (ns=${OAA_NAMESPACE})`);
   void initializeGatewayData();
-  void initializeOperationalIntelligence().catch((error) => console.warn('[r2d2] initialization failed:', error.message || error));
+  void startOperationalIntelligenceSupervisor().catch((error) => console.warn('[r2d2] supervisor start failed:', error.message || error));
   void initializeIncidentRelay().catch((error) => console.warn('[r2d2-relay] initialization failed:', error.message || error));
   void initializeR2d2Maintenance().catch((error) => console.warn('[r2d2-maintenance] initialization failed:', error.message || error));
   void refreshRuntimeProjection();
@@ -8848,6 +9162,7 @@ function stopGateway() {
   if (r2d2Timer) clearInterval(r2d2Timer);
   if (r2d2RelayTimer) clearInterval(r2d2RelayTimer);
   if (r2d2MaintenanceTimer) clearInterval(r2d2MaintenanceTimer);
+  if (r2d2Supervisor) void r2d2Supervisor.stop().catch(() => undefined);
   if (r2d2ObserverPool) void r2d2ObserverPool.end().catch(() => undefined);
   if (r2d2RelayPool) void r2d2RelayPool.end().catch(() => undefined);
   if (r2d2MaintenancePool) void r2d2MaintenancePool.end().catch(() => undefined);

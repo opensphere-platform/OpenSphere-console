@@ -30,6 +30,13 @@ test('runtime contributions require the matching closed-set capability', () => {
   assert.equal(validCapabilities({ permissions: ['api:proxy', 'unknown:scope'], contributions }), false);
 });
 
+test('P-01 contract: unratified drawer capability remains unknown and fails closed', () => {
+  assert.equal(validCapabilities({
+    permissions: ['api:proxy', 'page:register', 'drawer:contribute'],
+    contributions,
+  }), false);
+});
+
 test('integration status exposes Ready and Disabled independently', () => {
   const status = integrationStatuses({ spec: { version: '1.0.0', contributions } }, 'Activated', false, '2026-07-10T00:00:00.000Z');
   assert.equal(status.page.phase, 'Ready');

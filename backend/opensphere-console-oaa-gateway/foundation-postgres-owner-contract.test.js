@@ -19,6 +19,17 @@ test('R2D2 exposes PFSS PostgreSQL status, Admission plan, and owner create capa
   assert.doesNotMatch(source, /fixedOwnerPost\(FOUNDATION_CONTROL_URL, '\/api\/foundation\/postgres\/claims'/);
 });
 
+test('R2D2 binds the four authoritative PostgreSQL read contracts directly', () => {
+  for (const id of ['capabilities', 'readiness', 'catalog', 'operation.watch']) {
+    assert.match(source, new RegExp(`id: 'oaa\\.foundation\\.postgres\\.${id.replace('.', '\\.')}'`));
+  }
+  assert.match(source, /\/api\/foundation\/oaa\/postgres\/capabilities\?capability=data\.sql\.postgres/);
+  assert.match(source, /\/api\/foundation\/oaa\/postgres\/readiness\?capability=data\.sql\.postgres/);
+  assert.match(source, /\/api\/foundation\/oaa\/postgres\/catalog/);
+  assert.match(source, /`\/api\/foundation\/oaa\/operations\/\$\{operationId\}`/);
+  assert.match(source, /fixedOwnerGet\(FOUNDATION_CONTROL_URL/);
+});
+
 test('PostgreSQL create uses an expiring durable plan, exact confirmation, closed inputs, and owner postcondition', () => {
   assert.match(source, /create PostgreSQL cluster \$\{request\.namespace\}\/\$\{request\.name\} plan \$\{request\.plan\} version \$\{request\.postgresVersion\}/);
   assert.match(source, /requireConfirm\(inputs\.confirm, expected\)/);
@@ -43,6 +54,36 @@ test('vague PFSS PostgreSQL requests enter deterministic intake instead of fabri
   }
   assert.match(source, /const foundationPostgresOut = await foundationPostgresConversation\(baseMessages, actor\)/);
   assert.match(source, /if \(foundationPostgresOut\) return foundationPostgresOut/);
+  for (const phase of ['NeedsReadiness', 'NeedsInput', 'Planned', 'AwaitingApproval']) {
+    assert.match(source, new RegExp(`['"]${phase}['"]`));
+  }
+  assert.match(source, /assertFoundationPostgresReadyToPlan\(readiness\)/);
+  assert.match(source, /POSTGRES_OWNER_QUERY_UNAVAILABLE/);
+  assert.match(source, /phase: operation\.workflow\.phase/);
+});
+
+test('PostgreSQL mutation planning fails closed before the durable planner when readiness is untrusted', () => {
+  const actionStart = source.indexOf("} else if (toolId === 'oaa.foundation.postgres.claim.create')");
+  const actionEnd = source.indexOf('\n  }\n\n  const result =', actionStart);
+  const action = source.slice(actionStart, actionEnd);
+  assert.ok(action.indexOf('foundationPostgresReadinessRead(actor)') < action.indexOf("'/api/oaa/operations/plan'"));
+  assert.ok(action.indexOf('assertFoundationPostgresReadyToPlan(readiness)') < action.indexOf("'/api/oaa/operations/plan'"));
+  assert.doesNotMatch(action, /\bkubectl\b|\bos-cli\b|execFile|spawn\(/);
+});
+
+test('every direct plan tool call checks authoritative readiness before planning', () => {
+  const start = source.indexOf('async function foundationPostgresPlanRead');
+  const end = source.indexOf('\n}\n\nasync function executeAgentTool', start);
+  const plan = source.slice(start, end);
+  assert.ok(plan.indexOf('foundationPostgresReadinessRead(actor)') < plan.indexOf("'/api/oaa/operations/plan'"));
+  assert.ok(plan.indexOf('assertFoundationPostgresReadyToPlan(readiness)') < plan.indexOf("'/api/oaa/operations/plan'"));
+});
+
+test('accepted PostgreSQL work is reported through operation workflow and never as an unverified success', () => {
+  assert.match(source, /ownerResult\.workflow = operationWorkflow\(receipt\)/);
+  assert.match(source, /status: binding\.toolId === 'oaa\.foundation\.postgres\.claim\.create' \? 'accepted' : 'applied'/);
+  assert.match(source, /foundationPostgresOperationMessage/);
+  assert.match(source, /operationId must be a UUID/);
 });
 
 test('PFSS PostgreSQL confirmation is sourced from the owner plan and fully bound', () => {
