@@ -396,6 +396,10 @@ export class AdminPlatformRelease implements OnInit {
 
   async generateComponentTarget(reason: string): Promise<void> {
     if (!this.canGenerateComponentTarget()) return;
+    // A 428 response opens the shell-level MFA dialog. Close this action
+    // dialog before starting the request so Clarity never has to manage two
+    // modal focus traps at once. The reason is already captured by value.
+    this.pendingGenerate.set(false);
     this.generating.set(true);
     try {
       const response = await this.http.request('/api/platform/releases/component-target', {
@@ -412,7 +416,6 @@ export class AdminPlatformRelease implements OnInit {
       this.releaseText = JSON.stringify(body.targetLock, null, 2);
       this.parseRelease();
       this.action = 'apply';
-      this.pendingGenerate.set(false);
       this.message.set({
         type: 'success',
         text: `현재 설치 lock에 결속된 Component Target을 생성했습니다: ${body.targetLock.changedComponents?.join(', ') || '변경 미확인'}. 내용을 검토한 뒤 적용 요청을 생성하세요.`,
@@ -443,6 +446,11 @@ export class AdminPlatformRelease implements OnInit {
     const target = this.target();
     const current = this.status()?.current;
     if (!target || !current || !this.canSubmit()) return;
+    // requestWithStepUp may suspend this command while the global MFA modal
+    // is open. Do not leave the confirmation dialog underneath it: nested
+    // Clarity modals race their open/close and focus state and can dismiss the
+    // MFA dialog while the operator is still entering the OTP.
+    this.pendingSubmit.set(false);
     this.submitting.set(true);
     try {
       const response = await this.http.request('/api/platform/changes', {
@@ -468,7 +476,6 @@ export class AdminPlatformRelease implements OnInit {
         error?: string;
       };
       if (!response.ok) throw new Error(String(body.error || `HTTP ${response.status}`));
-      this.pendingSubmit.set(false);
       if (body.approvalPolicy?.mode === 'owner-mfa' && body.autoAuthorization?.succeeded && body.autoAuthorization?.merged) {
         this.message.set({
           type: body.autoAuthorization.reconciliationQueued === false ? 'warning' : 'success',

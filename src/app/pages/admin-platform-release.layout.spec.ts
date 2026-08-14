@@ -17,3 +17,8 @@ test('Release Lock 식별자는 버전이 아니라 digest와 source revision으
   assert.doesNotMatch(source, /<dt>Release<\/dt>/);
   assert.doesNotMatch(source, /<dt>Source<\/dt>/);
 });
+
+test('MFA 재확인 전에 기존 확인 모달을 닫아 중첩된 Clarity focus trap을 만들지 않는다', () => {
+  assert.match(source, /async generateComponentTarget\(reason: string\)[\s\S]*?this\.pendingGenerate\.set\(false\);[\s\S]*?this\.generating\.set\(true\);/);
+  assert.match(source, /async submit\(reason: string\)[\s\S]*?this\.pendingSubmit\.set\(false\);[\s\S]*?this\.submitting\.set\(true\);/);
+});
