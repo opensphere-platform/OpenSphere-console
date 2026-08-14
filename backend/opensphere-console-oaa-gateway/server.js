@@ -335,6 +335,7 @@ function normalizeMessages(body) {
 }
 
 let pgPool = null;
+let r2d2QueryPool = null;
 let r2d2ObserverPool = null;
 let r2d2RelayPool = null;
 let r2d2MaintenancePool = null;
@@ -6300,6 +6301,22 @@ function foundationPostgresClarification(catalog, values, decision) {
   ].join('\n');
 }
 
+function getR2d2QueryPool() {
+  if (!pgEnabled()) return null;
+  if (r2d2QueryPool) return r2d2QueryPool;
+  const ca = pgCa();
+  if (OAA_PG_TLS && !ca) return null;
+  r2d2QueryPool = new Pool({
+    host: PG.host, port: PG.port, database: PG.database,
+    user: PG.user, password: PG.password,
+    ssl: OAA_PG_TLS ? { ca, rejectUnauthorized: true, servername: PG.host } : false,
+    options: `-c search_path=${PG.schema},extensions,public -c statement_timeout=10000`,
+    max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000,
+  });
+  r2d2QueryPool.on('error', (error) => console.error('[r2d2-query-db] pool error', error.message || error));
+  return r2d2QueryPool;
+}
+
 function foundationPostgresReadinessMessage(decision) {
   const blocker = decision?.blocker || {};
   const nextAction = blocker.nextAction || decision?.nextAction;
@@ -8489,7 +8506,7 @@ function operationalReadinessSnapshot() {
 }
 
 async function initializeOperationalIntelligence() {
-  const queryPool = getPgPool();
+  const queryPool = getR2d2QueryPool();
   if (!queryPool) throw Object.assign(new Error('operational PostgreSQL pool is unavailable'), { code: 'postgres_not_configured' });
   const queryService = new OperationalQueryService(queryPool, { clusterId: R2D2_CLUSTER_ID });
   const initialHealth = await probeOperationalQueryService(queryService);
@@ -9164,6 +9181,7 @@ function stopGateway() {
   if (r2d2RelayTimer) clearInterval(r2d2RelayTimer);
   if (r2d2MaintenanceTimer) clearInterval(r2d2MaintenanceTimer);
   if (r2d2Supervisor) void r2d2Supervisor.stop().catch(() => undefined);
+  if (r2d2QueryPool) void r2d2QueryPool.end().catch(() => undefined);
   if (r2d2ObserverPool) void r2d2ObserverPool.end().catch(() => undefined);
   if (r2d2RelayPool) void r2d2RelayPool.end().catch(() => undefined);
   if (r2d2MaintenancePool) void r2d2MaintenancePool.end().catch(() => undefined);

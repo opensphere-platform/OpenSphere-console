@@ -102,6 +102,12 @@ test('gateway readiness separates core health from required operational truth', 
   assert.match(serverSource, /const degraded = !readiness\.ready/);
 });
 
+test('operational queries use a dedicated bounded pool instead of the watch projection pool', () => {
+  assert.match(serverSource, /function getR2d2QueryPool\(\)[\s\S]*max: 4[\s\S]*\[r2d2-query-db\]/);
+  assert.match(serverSource, /initializeOperationalIntelligence\(\)[\s\S]*const queryPool = getR2d2QueryPool\(\)/);
+  assert.match(serverSource, /if \(r2d2QueryPool\) void r2d2QueryPool\.end\(\)/);
+});
+
 test('admin OAA derives the operational badge from the server health projection', () => {
   assert.doesNotMatch(adminSource, /Operational runtime ON/);
   assert.match(adminSource, /Operational runtime \{\{ operationalRuntimeLabel\(\) \}\}/);
