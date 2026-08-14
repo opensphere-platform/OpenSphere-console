@@ -11,6 +11,7 @@ const {
 } = require('./r2d2-operational-runtime');
 
 const runtimeSource = fs.readFileSync(path.join(__dirname, 'r2d2-operational-runtime.js'), 'utf8');
+const serverSource = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 
 test('Kubernetes Lease timestamps use the MicroTime wire format', () => {
   assert.equal(kubernetesMicroTime('2026-08-11T06:19:32.797Z'), '2026-08-11T06:19:32.797000Z');
@@ -21,7 +22,27 @@ test('Kubernetes Lease timestamps use the MicroTime wire format', () => {
 
 test('tombstones advance to the current fence and collection epoch', () => {
   assert.match(runtimeSource, /resource_node SET deleted_at=\$4[\s\S]*fencing_epoch=\$3,collection_epoch=\$6/);
+  assert.match(runtimeSource, /'kubernetes'=ANY\(\$5::text\[\]\) AND authority='unknown'/);
   assert.match(runtimeSource, /resource_relation SET deleted_at=\$4[\s\S]*fencing_epoch=\$3,collection_epoch=\$5/);
+});
+
+test('Kubernetes inventory rows preserve their source identity before graph materialization', () => {
+  assert.match(serverSource, /function runtimeProjectionRow\(resource\)[\s\S]*source: 'kubernetes'/);
+});
+
+test('operational readiness is bound to the latest complete reconcile barrier', async () => {
+  const queries = [];
+  const pool = { query: async (sql) => {
+    queries.push(sql);
+    if (sql.includes('source_health')) return { rows: [] };
+    if (sql.includes('latest_complete')) return { rows: [{ total: 1014, fresh: 1014, observed_at: '2026-08-14T10:33:47.507Z' }] };
+    if (sql.includes('FROM oaa.incident')) return { rows: [{ active: 0, severity_rank: null }] };
+    if (sql.includes('FROM oaa.observer_fence')) return { rows: [{ fencing_epoch: 657 }] };
+    throw new Error(`unexpected query: ${sql}`);
+  } };
+  const out = await new OperationalQueryService(pool, { clusterId: 'local' }).status();
+  assert.deepEqual(out.graph, { total: 1014, fresh: 1014, observedAt: '2026-08-14T10:33:47.507Z' });
+  assert.match(queries.join('\n'), /snapshot_complete=true[\s\S]*completed_at IS NOT NULL[\s\S]*JOIN latest_complete/);
 });
 
 test('reconcile completeness evidence is deterministic and node-set bound', () => {

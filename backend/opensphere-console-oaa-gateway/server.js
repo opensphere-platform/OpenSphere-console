@@ -2764,6 +2764,7 @@ function runtimeKey(kind, namespace = '') {
 
 function runtimeProjectionRow(resource) {
   return {
+    source: 'kubernetes',
     kind: resource.kind,
     namespace: resource.metadata?.namespace || '',
     name: resource.metadata?.name || '',

@@ -191,7 +191,9 @@ class OperationalGraphStore {
         .map((source) => String(source.source));
       await client.query(`UPDATE oaa.resource_node SET deleted_at=$4,epistemic_state='unknown',revision=revision+1,
           fencing_epoch=$3,collection_epoch=$6,reconcile_session_id=$2,snapshot_complete=true,observed_at=$4
-        WHERE cluster_id=$1 AND authority=ANY($5::text[]) AND deleted_at IS NULL AND reconcile_session_id<>$2
+        WHERE cluster_id=$1
+          AND (authority=ANY($5::text[]) OR ('kubernetes'=ANY($5::text[]) AND authority='unknown'))
+          AND deleted_at IS NULL AND reconcile_session_id<>$2
           AND fencing_epoch<=$3`, [this.clusterId, reconcileSessionId, fencingEpoch, observedAt, completeSources, collectionEpoch]);
       const relationSnapshotComplete = (inventory.sources || []).every((source) => source.configured === false || source.snapshotComplete === true);
       if (relationSnapshotComplete) {
@@ -424,7 +426,18 @@ class OperationalQueryService {
   async status() {
     const [sources, nodes, incidents, fence] = await Promise.all([
       this.pool.query('SELECT * FROM oaa.source_health WHERE cluster_id=$1 ORDER BY source', [this.clusterId]),
-      this.pool.query("SELECT count(*)::int AS total,count(*) FILTER(WHERE epistemic_state='known' AND expires_at>clock_timestamp())::int AS fresh,max(observed_at) AS observed_at FROM oaa.resource_node WHERE cluster_id=$1 AND deleted_at IS NULL", [this.clusterId]),
+      this.pool.query(`WITH latest_complete AS (
+        SELECT reconcile_session_id
+        FROM oaa.reconcile_session
+        WHERE cluster_id=$1 AND snapshot_complete=true AND completed_at IS NOT NULL
+        ORDER BY completed_at DESC LIMIT 1
+      )
+      SELECT count(*)::int AS total,
+        count(*) FILTER(WHERE n.epistemic_state='known' AND n.expires_at>clock_timestamp())::int AS fresh,
+        max(n.observed_at) AS observed_at
+      FROM oaa.resource_node n
+      JOIN latest_complete latest ON latest.reconcile_session_id=n.reconcile_session_id
+      WHERE n.cluster_id=$1 AND n.deleted_at IS NULL`, [this.clusterId]),
       this.pool.query("SELECT count(*) FILTER(WHERE status IN('detected','active','recovering'))::int AS active,max(CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END)::int AS severity_rank FROM oaa.incident WHERE cluster_id=$1", [this.clusterId]),
       this.pool.query('SELECT fencing_epoch,collector_id,lease_expires_at,heartbeat_at FROM oaa.observer_fence WHERE cluster_id=$1', [this.clusterId]),
     ]);
