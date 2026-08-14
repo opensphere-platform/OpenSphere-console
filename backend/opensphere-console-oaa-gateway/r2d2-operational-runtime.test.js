@@ -12,6 +12,7 @@ const {
 
 const runtimeSource = fs.readFileSync(path.join(__dirname, 'r2d2-operational-runtime.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+const liveNodeBarrierMigration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations', '0060_r2d2_reconcile_live_node_count.sql'), 'utf8');
 
 test('Kubernetes Lease timestamps use the MicroTime wire format', () => {
   assert.equal(kubernetesMicroTime('2026-08-11T06:19:32.797Z'), '2026-08-11T06:19:32.797000Z');
@@ -24,6 +25,13 @@ test('tombstones advance to the current fence and collection epoch', () => {
   assert.match(runtimeSource, /resource_node SET deleted_at=\$4[\s\S]*fencing_epoch=\$3,collection_epoch=\$6/);
   assert.match(runtimeSource, /'kubernetes'=ANY\(\$5::text\[\]\) AND authority='unknown'/);
   assert.match(runtimeSource, /resource_relation SET deleted_at=\$4[\s\S]*fencing_epoch=\$3,collection_epoch=\$5/);
+});
+
+test('reconcile completeness excludes fenced tombstones from the observer live node set', () => {
+  assert.match(liveNodeBarrierMigration,
+    /snapshot_complete=true AND deleted_at IS NULL;/);
+  assert.match(liveNodeBarrierMigration,
+    /string_agg\(node_id, E'\\n' ORDER BY node_id COLLATE "C"\)/);
 });
 
 test('Kubernetes inventory rows preserve their source identity before graph materialization', () => {

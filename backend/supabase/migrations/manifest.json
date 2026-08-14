@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0059",
-  "migrationCount": 58,
-  "setDigest": "sha256:567948a62ad5375717dd9ab5c9c761ba511b5aa64fcc53e4d97f93f096733d0f",
+  "latestMigrationId": "0060",
+  "migrationCount": 59,
+  "setDigest": "sha256:31394e113b9824ae9932d26d1b07feca2b421b9978c3ba1441dea9b370cc7ddd",
   "migrations": [
     {
       "id": "0001",
@@ -409,6 +409,13 @@
       "name": "0059_r2d2_reconcile_session_read_projection.sql",
       "path": "backend/supabase/migrations/0059_r2d2_reconcile_session_read_projection.sql",
       "sha256": "d71eeba39c7b2237c4e0a478b2e448672fefc9e5bf42d6d35226cb855c5cb0e4"
+    },
+    {
+      "id": "0060",
+      "predecessorMigrationId": "0059",
+      "name": "0060_r2d2_reconcile_live_node_count.sql",
+      "path": "backend/supabase/migrations/0060_r2d2_reconcile_live_node_count.sql",
+      "sha256": "fdbe62ec1e564a5269c27f1e67dad265d46c46cff13fa86e9fcc1ce7135d7746"
     }
   ]
 }
