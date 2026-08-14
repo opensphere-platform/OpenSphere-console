@@ -338,6 +338,9 @@ spec:
                   type: array
                   items: { type: string }
                 currentRegistryCredentialsRequired: { type: boolean }
+                lastActivatedDigest: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
+                lastActivatedManifestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                lastActivatedAt: { type: string, format: date-time }
                 currentChannelDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
                 channelState:
                   type: string

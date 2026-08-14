@@ -129,6 +129,8 @@ test('nginx keeps the opaque browser cookie out of plugin workloads', () => {
   assert.match(nginx, /proxy_set_header Authorization \$plugin_authorization;/);
   assert.match(nginx, /proxy_pass http:\/\/\$console_backend_upstream:8080\/api\/internal\/plugin-proxy-authz;/);
   assert.match(nginx, /proxy_set_header X-OS-Original-Method \$plugin_original_method;/);
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(server, /pluginProxyReleaseAllowed\(pluginId, req\.headers\['x-os-original-method'\]/);
   const pluginLocation = nginx.slice(
     nginx.indexOf('location ~ ^/api/plugins/'),
     nginx.indexOf('location = /_plugin_authz'),

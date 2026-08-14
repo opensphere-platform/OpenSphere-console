@@ -155,7 +155,7 @@ test('component target rejects stale bases, hidden changes and non-local promoti
   assert.throws(() => validateReleaseLock(promoted), /channel is unsupported|localhost edge/);
 });
 
-test('only localhost edge component apply uses initiating owner MFA authorization', () => {
+test('only localhost edge component apply uses the Docker Desktop automation boundary', () => {
   const base = releaseLock();
   const component = buildComponentReleaseLock(base, {
     sourceRevision: 'b'.repeat(40),
@@ -167,10 +167,10 @@ test('only localhost edge component apply uses initiating owner MFA authorizatio
     targetLock: component,
   };
   assert.deepEqual(platformReleaseApprovalPolicy('apply', state), {
-    mode: 'owner-mfa',
+    mode: 'local-edge-automation',
     requiredHumanApprovals: 0,
     autoMerge: true,
-    rationale: 'localhost edge component apply is authorized by the initiating owner recent MFA',
+    rationale: 'localhost edge component apply is authorized by the docker-desktop local automation boundary',
   });
   assert.equal(platformReleaseApprovalPolicy('rollback', state).mode, 'cross-operator');
 
@@ -235,11 +235,14 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(server, /platform-release-component-target-generate[\s\S]*phase: 'intent'/);
   assert.doesNotMatch(server, /platform-release-component-target-generate[\s\S]*phase: 'planned'/);
   assert.match(server, /validateReleaseTransition\(installed\.lock, desiredState\.targetLock\)/);
-  assert.match(server, /requireRecentAal2\(actor, 'Platform Release request'\)/);
+  assert.match(server, /localEdgeAutomationRequest/);
   assert.match(server, /platformReleaseRuntimeStatus/);
   assert.match(server, /supportedChannels: \['edge'\]/);
   assert.match(server, /authorizeLocalEdgeComponentRelease/);
-  assert.match(server, /platform-release-edge-owner-authorization/);
+  assert.match(server, /platform-release-edge-automation/);
+  assert.match(server, /\/api\/platform\/releases\/local-edge-automation/);
+  assert.match(server, /authentication\.k8s\.io\/v1\/tokenreviews/);
+  assert.match(server, /LOCAL_EDGE_AUTOMATION_AUDIENCE/);
   assert.match(server, /reconciliationQueued/);
   assert.match(deploy, /name: platform-release-reconciler/);
   assert.match(deploy, /name: platform-release-executor/);
@@ -248,6 +251,8 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(deploy, /system:serviceaccount:kube-system:job-controller/);
   assert.match(deploy, /object\.spec\.template\.spec\.containers\[0\]\.env\.map\(e, e\.name\)/);
   assert.match(deploy, /resources: \["jobs"\][\s\S]*verbs: \["get", "create"\]/);
+  assert.match(deploy, /name: opensphere-local-edge-release/);
+  assert.match(deploy, /resources: \["tokenreviews"\][\s\S]*verbs: \["create"\]/);
   assert.match(dockerfile, /COPY --from=setup-cli src \/app\/opensphere-setup-cli\/src/);
   assert.match(dockerfile, /registry\.k8s\.io\/kubectl@sha256:/);
   assert.match(dockerfile, /node:24-bookworm-slim@sha256:/);
@@ -265,9 +270,9 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(ui, /선택하지 않은 구성요소는 현재 설치 lock에서 그대로 계승/);
   assert.match(ui, /canGenerateComponentTarget\(\): boolean/);
   assert.doesNotMatch(ui, /canGenerateComponentTarget\s*=\s*computed/);
-  assert.match(ui, /최고 관리자의 최근 MFA/);
-  assert.match(ui, /ownerMfaTarget\(\): boolean/);
-  assert.match(ui, /최고 관리자 MFA로 승인·병합/);
+  assert.match(ui, /Docker Desktop 전용 자동화 신원/);
+  assert.match(ui, /localEdgeAutomationTarget\(\): boolean/);
+  assert.match(ui, /local edge 자동화 정책으로 승인·병합/);
   assert.match(ui, /this\.status\(\)\?\.execution\.ready/);
-  assert.match(ui, /component apply는 최고 관리자 MFA 정책/);
+  assert.match(ui, /component apply는 docker-desktop에 결속된 단기 ServiceAccount 자동화 정책/);
 });

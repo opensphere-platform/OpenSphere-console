@@ -75,7 +75,7 @@ interface ReleaseStatus {
     supportedChannels: string[];
     blockedChannels: Record<string, string>;
     approvalPolicy?: {
-      localEdgeComponentApply: 'owner-mfa';
+      localEdgeComponentApply: 'local-edge-automation';
       integratedRollbackAndPromotion: 'cross-operator';
     };
   };
@@ -101,7 +101,7 @@ interface ReleaseStatus {
     <div class="os-page release-page">
       <os-page-header title="Platform Release" tag="Console-governed install · upgrade · rollback" />
       <div class="lead">
-        <p>관리자가 서명된 OpenSphere Release Lock을 검토하고 적용합니다. local edge의 단일 component 적용은 최고 관리자의 최근 MFA와 사유로 즉시 병합하고, 통합 release·rollback·승격은 다른 관리자의 교차 승인을 거칩니다. 브라우저는 Kubernetes를 직접 변경하지 않습니다.</p>
+        <p>관리자가 서명된 OpenSphere Release Lock을 검토하고 적용합니다. local edge의 단일 component는 Docker Desktop 전용 자동화 신원으로 사람의 로그인·MFA 없이 처리할 수 있고, 통합 release·rollback·승격은 다른 관리자의 교차 승인을 거칩니다. 브라우저는 Kubernetes를 직접 변경하지 않습니다.</p>
         <button class="btn btn-sm btn-outline" type="button" [disabled]="busy()" (click)="refresh()">다시 확인</button>
       </div>
 
@@ -123,7 +123,7 @@ interface ReleaseStatus {
             <clr-alert-item><span class="alert-text">설치 실행기는 현재 사용할 수 없습니다: {{ state.execution.blocker || '원인 미보고' }}. 상태를 복구하기 전에는 요청을 생성하지 않습니다.</span></clr-alert-item>
           </clr-alert>
         }
-        <p class="channel-boundary">현재 transactional 설치 지원 channel은 <strong>edge</strong>입니다. component apply는 최고 관리자 MFA 정책, integrated apply와 rollback은 교차 승인 정책을 적용합니다. candidate·stable·GA는 각 channel 승격 조건이 충족될 때까지 닫혀 있습니다.</p>
+        <p class="channel-boundary">현재 transactional 설치 지원 channel은 <strong>edge</strong>입니다. component apply는 docker-desktop에 결속된 단기 ServiceAccount 자동화 정책, integrated apply와 rollback은 교차 승인 정책을 적용합니다. candidate·stable·GA는 각 channel 승격 조건이 충족될 때까지 닫혀 있습니다.</p>
       }
 
       <div class="workspace">
@@ -209,8 +209,8 @@ interface ReleaseStatus {
           <span class="eyebrow">AUTHORITY BOUNDARY</span>
           <h2>누가 무엇을 하는가</h2>
           <ol>
-            <li><strong>최고 관리자</strong><span>Release Lock과 변경 범위를 검토하고 최근 MFA와 사유로 승인</span></li>
-            <li><strong>정책 게이트</strong><span>edge component는 즉시 병합, integrated·rollback·승격은 다른 관리자 교차 승인</span></li>
+            <li><strong>Local edge 자동화</strong><span>docker-desktop 전용 단기 토큰으로 exact digest와 변경 범위를 제출</span></li>
+            <li><strong>정책 게이트</strong><span>edge component만 자동 병합, integrated·rollback·승격은 다른 관리자 교차 승인</span></li>
             <li><strong>Release reconciler</strong><span>정책 승인을 통과한 선언만 exact-digest Job으로 전달</span></li>
             <li><strong>Executor</strong><span>공급망 검증, upgrade, 실패 시 자동 rollback</span></li>
             <li><strong>Kubernetes</strong><span>설치 잠금과 Ready 실측 영수증 제공</span></li>
@@ -429,15 +429,15 @@ export class AdminPlatformRelease implements OnInit {
 
   confirmationMessage(): string {
     const target = this.target();
-    const approval = this.ownerMfaTarget()
-      ? '최고 관리자의 최근 MFA와 입력 사유로 Gitea PR을 즉시 병합하고 적용합니다.'
+    const approval = this.localEdgeAutomationTarget()
+      ? 'local edge 자동화 정책으로 Gitea PR을 즉시 병합하고 적용합니다. 이 수동 화면 요청은 로그인 세션 정책을 따릅니다.'
       : '요청자와 다른 관리자의 교차 승인이 필요합니다.';
     return target
       ? `${this.action === 'rollback' ? 'Rollback' : 'Upgrade'} 요청\n현재: ${this.status()?.current.releaseDigest || '미확인'}\n대상: ${target.releaseDigest}\n변경: ${this.changedComponents().join(', ')}\n${approval}`
       : '';
   }
 
-  ownerMfaTarget(): boolean {
+  localEdgeAutomationTarget(): boolean {
     const target = this.target();
     return this.action === 'apply' && target?.channel === 'edge' && target.releaseScope === 'component';
   }
@@ -471,22 +471,22 @@ export class AdminPlatformRelease implements OnInit {
       const body = await response.json().catch(() => ({})) as {
         requestId?: string;
         pullRequest?: { number?: number };
-        approvalPolicy?: { mode?: 'owner-mfa' | 'cross-operator' };
+        approvalPolicy?: { mode?: 'local-edge-automation' | 'owner-mfa' | 'cross-operator' };
         autoAuthorization?: { attempted?: boolean; succeeded?: boolean; merged?: boolean; reconciliationQueued?: boolean; error?: string; reconciliationError?: string | null };
         error?: string;
       };
       if (!response.ok) throw new Error(String(body.error || `HTTP ${response.status}`));
-      if (body.approvalPolicy?.mode === 'owner-mfa' && body.autoAuthorization?.succeeded && body.autoAuthorization?.merged) {
+      if (body.approvalPolicy?.mode === 'local-edge-automation' && body.autoAuthorization?.succeeded && body.autoAuthorization?.merged) {
         this.message.set({
           type: body.autoAuthorization.reconciliationQueued === false ? 'warning' : 'success',
           text: body.autoAuthorization.reconciliationQueued === false
-            ? `요청 ${body.requestId} · PR #${body.pullRequest?.number || '—'}은 최고 관리자 MFA로 병합됐습니다. 적용 대기열 전달은 webhook 재처리를 기다립니다: ${body.autoAuthorization.reconciliationError || '상세 오류 없음'}`
-            : `요청 ${body.requestId} · PR #${body.pullRequest?.number || '—'}을 최고 관리자 MFA로 승인·병합했습니다. 전용 executor가 exact digest를 적용합니다.`,
+            ? `요청 ${body.requestId} · PR #${body.pullRequest?.number || '—'}은 local edge 자동화 정책으로 병합됐습니다. 적용 대기열 전달은 webhook 재처리를 기다립니다: ${body.autoAuthorization.reconciliationError || '상세 오류 없음'}`
+            : `요청 ${body.requestId} · PR #${body.pullRequest?.number || '—'}을 local edge 자동화 정책으로 승인·병합했습니다. 전용 executor가 exact digest를 적용합니다.`,
         });
-      } else if (body.approvalPolicy?.mode === 'owner-mfa') {
+      } else if (body.approvalPolicy?.mode === 'local-edge-automation') {
         this.message.set({
           type: 'warning',
-          text: `요청 ${body.requestId} · PR #${body.pullRequest?.number || '—'}은 생성됐지만 최고 관리자 MFA 자동 승인이 완료되지 않았습니다. 상태 변경 관리에서 원인을 확인하세요: ${body.autoAuthorization?.error || '상세 오류 없음'}`,
+          text: `요청 ${body.requestId} · PR #${body.pullRequest?.number || '—'}은 생성됐지만 local edge 자동 승인이 완료되지 않았습니다. 상태 변경 관리에서 원인을 확인하세요: ${body.autoAuthorization?.error || '상세 오류 없음'}`,
         });
       } else {
         this.message.set({

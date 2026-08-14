@@ -54,14 +54,18 @@ if (mode === '--dist') {
   const dist = path.resolve(root, distArg || 'dist/opensphere-console/browser');
   const builtContract = JSON.parse(fs.readFileSync(path.join(dist, 'manual-contract.json'), 'utf8'));
   if (builtContract.contract !== CONTRACT) fail(`built manual-contract.json is not ${CONTRACT}`);
-  const bundles = fs.readdirSync(dist).filter((name) => /^main-.*\.js$/.test(name));
-  if (bundles.length !== 1) fail(`expected exactly one main bundle, found ${bundles.length}`);
-  const bundle = fs.readFileSync(path.join(dist, bundles[0]), 'utf8');
+  const mainBundles = fs.readdirSync(dist).filter((name) => /^main-.*\.js$/.test(name));
+  if (mainBundles.length !== 1) fail(`expected exactly one main bundle, found ${mainBundles.length}`);
+  // Angular may place the lazy /manual route in a numbered chunk. The build
+  // contract is the complete executable artifact, not an assumption that all
+  // route tokens remain in main.js after code splitting.
+  const bundles = fs.readdirSync(dist).filter((name) => /\.js$/.test(name));
+  const bundle = bundles.map((name) => fs.readFileSync(path.join(dist, name), 'utf8')).join('\n');
   for (const token of [CONTRACT, 'manual-local-header', 'manual-primary-grid']) {
-    requireText(bundle, token, bundles[0]);
+    requireText(bundle, token, `${bundles.length} JavaScript bundles`);
   }
-  for (const token of forbidden) forbidText(bundle, token, bundles[0]);
-  console.log(`[manual-ui-contract] dist verified: ${CONTRACT} (${bundles[0]})`);
+  for (const token of forbidden) forbidText(bundle, token, `${bundles.length} JavaScript bundles`);
+  console.log(`[manual-ui-contract] dist verified: ${CONTRACT} (${bundles.length} bundles)`);
   process.exit(0);
 }
 

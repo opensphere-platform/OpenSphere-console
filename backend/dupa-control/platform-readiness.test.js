@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedProxyServingMode, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, previouslyActivatedRelease, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -175,6 +175,62 @@ test('recovery drill evidence is advisory for service activation but remains vis
   const controller = read('backend', 'dupa-control', 'controller.js');
   assert.match(controller, /backupRestore:\s*\{ required: false \}/);
   assert.match(controller, /advisoryCapabilities:/);
+});
+
+test('a previously activated exact digest remains serviceable while support evidence is degraded', () => {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const manifestSha256 = 'b'.repeat(64);
+  const pkg = { spec: { image: { digest }, manifest: { sha256: manifestSha256 } } };
+  assert.equal(previouslyActivatedRelease({
+    spec: { desiredState: 'Enabled' },
+    status: { lastActivatedDigest: digest, lastActivatedManifestSha256: manifestSha256 },
+  }, pkg), true);
+  assert.equal(previouslyActivatedRelease({
+    spec: { desiredState: 'Enabled' },
+    metadata: { annotations: {
+      'opensphere.io/activated-digest-migration': digest,
+      'opensphere.io/activated-manifest-migration': manifestSha256,
+    } },
+    status: {
+      currentDigest: digest,
+      currentManifestSha256: manifestSha256,
+      previousDigest: `sha256:${'c'.repeat(64)}`,
+      channelState: 'Current',
+    },
+  }, pkg), true, 'legacy registrations get a one-time durable activation migration');
+  assert.equal(previouslyActivatedRelease({
+    spec: { desiredState: 'Enabled' },
+    status: {
+      currentDigest: digest,
+      currentManifestSha256: manifestSha256,
+      previousDigest: `sha256:${'c'.repeat(64)}`,
+      channelState: 'Current',
+    },
+  }, pkg), false, 'previousDigest alone never promotes a newly staged release');
+  assert.equal(previouslyActivatedRelease({
+    spec: { desiredState: 'Enabled' },
+    status: { lastActivatedDigest: `sha256:${'d'.repeat(64)}`, lastActivatedManifestSha256: manifestSha256 },
+  }, pkg), false, 'an updated digest cannot inherit the prior release activation');
+  assert.equal(previouslyActivatedRelease({
+    spec: { desiredState: 'Installed' },
+    status: { lastActivatedDigest: digest, lastActivatedManifestSha256: manifestSha256 },
+  }, pkg), false, 'operator staging intent is never published');
+
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  assert.match(controller, /servingMode: 'DegradedReadOnly'/);
+  assert.match(controller, /phase: 'Degraded',\s*\n\s*reason: 'PlatformSupportProfileDegraded'/);
+  assert.match(controller, /blockingCapabilities:/);
+
+  assert.equal(verifiedProxyServingMode(pkg, {
+    spec: { desiredState: 'Enabled' },
+    status: {
+      phase: 'Degraded', serving: { phase: 'DegradedReadOnly' }, workload: { phase: 'Ready' },
+      verification: { manifest: 'Verified', signature: 'Verified', entryDigest: 'Verified', permissions: 'Approved' },
+      lastActivatedDigest: digest, lastActivatedManifestSha256: manifestSha256,
+      currentDigest: digest, currentManifestSha256: manifestSha256,
+    },
+  }), 'DegradedReadOnly');
+  assert.match(controller, /readOnlyDenied = servingMode === 'DegradedReadOnly'/);
 });
 
 test('delivery evidence binds the exact governed Git source and resolved revision', () => {

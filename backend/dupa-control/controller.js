@@ -383,14 +383,31 @@ function verifiedProxyTarget(pkg, reg) {
     && packageDigest === String(reg?.status?.currentDigest || '')
     && packageManifest === String(reg?.status?.currentManifestSha256 || '');
 }
+function verifiedProxyServingMode(pkg, reg) {
+  if (verifiedProxyTarget(pkg, reg)) return 'Active';
+  const status = reg?.status || {};
+  const verified = reg?.spec?.desiredState === 'Enabled'
+    && status.phase === 'Degraded'
+    && status.serving?.phase === 'DegradedReadOnly'
+    && status.workload?.phase === 'Ready'
+    && status.verification?.manifest === 'Verified'
+    && status.verification?.signature === 'Verified'
+    && status.verification?.entryDigest === 'Verified'
+    && status.verification?.permissions === 'Approved'
+    && status.lastActivatedDigest === pkg?.spec?.image?.digest
+    && status.lastActivatedManifestSha256 === pkg?.spec?.manifest?.sha256
+    && status.currentDigest === pkg?.spec?.image?.digest
+    && status.currentManifestSha256 === pkg?.spec?.manifest?.sha256;
+  return verified ? 'DegradedReadOnly' : '';
+}
 async function proxyAuthorizationFromSharedState(id) {
-  if (!safeName(id) || RESERVED_PROXY_SERVICE_IDS.has(id)) return false;
+  if (!safeName(id) || RESERVED_PROXY_SERVICE_IDS.has(id)) return '';
   try {
     const [pkg, reg] = await Promise.all([getPackage(id), getReg(id)]);
-    return pkg.ok && reg.ok && verifiedProxyTarget(pkg.json, reg.json);
+    return pkg.ok && reg.ok ? verifiedProxyServingMode(pkg.json, reg.json) : '';
   } catch (error) {
     console.error(`[proxy-authz] shared-state lookup failed for '${id}':`, error?.message || error);
-    return false;
+    return '';
   }
 }
 function verifiedStagedUpdate(reg) {
@@ -552,6 +569,33 @@ function integrationStatuses(pkg, phase, retryable, now, rootReason = '') {
     }];
   }));
 }
+
+// Support evidence gates a new activation or a release transition. It must not
+// evict an exact digest that was already verified and activated: doing so turns
+// a telemetry/recovery observation outage into a Console-wide plugin outage.
+//
+// lastActivated* is the durable contract for new projections. A legacy record
+// is accepted only when an operator has first bound the independently verified
+// live digest and manifest to explicit migration annotations. previousDigest
+// alone is insufficient: a newly staged release also has a previous digest and
+// must never inherit the old release's activation.
+function previouslyActivatedRelease(reg, pkg) {
+  const status = reg?.status || {};
+  const annotations = reg?.metadata?.annotations || {};
+  const currentDigest = String(pkg?.spec?.image?.digest || '');
+  const currentManifestSha256 = String(pkg?.spec?.manifest?.sha256 || '');
+  const durable = status.lastActivatedDigest === currentDigest
+    && status.lastActivatedManifestSha256 === currentManifestSha256;
+  const legacy = !status.lastActivatedDigest
+    && annotations['opensphere.io/activated-digest-migration'] === currentDigest
+    && annotations['opensphere.io/activated-manifest-migration'] === currentManifestSha256
+    && status.currentDigest === currentDigest
+    && status.currentManifestSha256 === currentManifestSha256
+    && status.channelState === 'Current';
+  return reg?.spec?.desiredState === 'Enabled' && Boolean(currentDigest)
+    && Boolean(currentManifestSha256) && (durable || legacy);
+}
+
 async function setStatus(name, status, reg, pkg) {
   const now = new Date().toISOString();
   const phase = status.phase || 'Declared';
@@ -568,6 +612,8 @@ async function setStatus(name, status, reg, pkg) {
   const currentVersion = String(resolution.artifactVersion || '');
   const currentCompatibilityVersion = String(resolution.compatibilityVersion || pkg?.spec?.version || '');
   const releaseChanged = Boolean(reg?.status?.currentDigest && reg.status.currentDigest !== currentDigest);
+  const servingActivatedRelease = phase === 'Activated'
+    || status.serving?.phase === 'DegradedReadOnly';
   return k8s('PATCH', `${crd('uipluginregistrations')}/${name}/status`, { status: {
     ...reportedStatus,
     observedGeneration: Number(reg?.metadata?.generation || 0),
@@ -585,6 +631,15 @@ async function setStatus(name, status, reg, pkg) {
     currentSignatureIdentity: String(resolution.signatureIdentity || ''),
     currentEvidenceRefs: Array.isArray(resolution.evidenceRefs) ? resolution.evidenceRefs.map(String) : [],
     currentRegistryCredentialsRequired: resolution.registryCredentialsRequired === true,
+    ...(servingActivatedRelease ? {
+      lastActivatedDigest: currentDigest,
+      lastActivatedManifestSha256: currentManifestSha256,
+      lastActivatedAt: now,
+    } : reg?.status?.lastActivatedDigest ? {
+      lastActivatedDigest: String(reg.status.lastActivatedDigest),
+      lastActivatedManifestSha256: String(reg.status.lastActivatedManifestSha256 || ''),
+      lastActivatedAt: String(reg.status.lastActivatedAt || ''),
+    } : {}),
     previousDigest: releaseChanged ? String(reg.status.currentDigest) : String(reg?.status?.previousDigest || ''),
     previousManifestSha256: releaseChanged ? String(reg.status.currentManifestSha256 || '') : String(reg?.status?.previousManifestSha256 || ''),
     previousVersion: releaseChanged ? String(reg.status.currentVersion || reg.status.observedVersion || '') : String(reg?.status?.previousVersion || ''),
@@ -1902,10 +1957,14 @@ async function reconcile() {
         const readiness = await supportProfileReadiness();
         const capabilities = readiness.capabilities || [];
         const activationAllowed = readiness.admission.pfsPluginActivationAllowed === true;
+        const blockingTypes = new Set((readiness.admission.blockingCapabilities || [])
+          .map((item) => String(item.type)));
         admission = {
           activationAllowed,
           reason: activationAllowed ? '' : 'PlatformSupportProfileIncomplete',
-          pendingCapabilities: capabilities.filter((c) => !c.ready).map((c) => String(c.type)),
+          pendingCapabilities: capabilities
+            .filter((c) => !c.ready && blockingTypes.has(String(c.type)))
+            .map((c) => String(c.type)),
           satisfiedCapabilities: capabilities.filter((c) => c.ready).map((c) => String(c.type)),
           route: '/manage/platform-control',
           checkedAt: new Date().toISOString(),
@@ -1930,6 +1989,34 @@ async function reconcile() {
       }
 
       if (admission && !admission.activationAllowed) {
+        if (previouslyActivatedRelease(reg, pkg)) {
+          const manifestUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/ui-shell.manifest.json`;
+          const sigUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/${(pkg.spec.manifest.signaturePath || 'ui-shell.manifest.json.sig').split('/').pop()}`;
+          published.push({
+            ...publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence),
+            available: true,
+            servingMode: 'DegradedReadOnly',
+            servingReason: admission.reason,
+          });
+          await updateStatus(withAdmission({
+            phase: 'Degraded',
+            reason: 'PlatformSupportProfileDegraded',
+            manifestUrl,
+            retryable: true,
+            workloadReady: true,
+            serving: {
+              phase: 'DegradedReadOnly',
+              reason: admission.reason,
+              observedAt: new Date().toISOString(),
+            },
+            revalidation: {
+              phase: 'Pending',
+              reason: admission.reason,
+              observedAt: new Date().toISOString(),
+            },
+          }));
+          continue;
+        }
         await updateStatus(withAdmission({
           phase: 'DependencyPending',
           reason: admission.reason,
@@ -3002,6 +3089,7 @@ async function platformReadinessStatus() {
       pfsPluginInstallAllowed: supportReady,
       reason: supportReady ? '' : 'PlatformSupportProfileRequiredForPfsServices',
       advisoryCapabilities: supportAdmission.advisory.map((item) => ({ type: item.type, ready: item.ready, reason: item.reason })),
+      blockingCapabilities: supportAdmission.blocking.map((item) => ({ type: item.type, ready: item.ready, reason: item.reason })),
     },
     pfs: {
       ...pfs,
@@ -3164,16 +3252,22 @@ const server = http.createServer(async (req, res) => {
     // 등록·검증돼 단일 Registry에 투영 가능한 plugin id만 통과 → opensphere-console 내 임의 service 프록시 차단.
     if (p === '/api/internal/proxy-authz') {
       const id = req.headers['x-plugin-id'] || '';
+      const method = String(req.headers['x-os-original-method'] || 'GET').toUpperCase();
       // F-3: 예약된 native 서비스 id는 allowlist 상태와 무관하게 항상 403(이중 방어).
-      let permitted = proxyAllow.has(id) && !RESERVED_PROXY_SERVICE_IDS.has(id);
-      if (!permitted) {
+      let servingMode = proxyAllow.has(id) && !RESERVED_PROXY_SERVICE_IDS.has(id)
+        ? String(publishedPlugins.find((plugin) => plugin.id === id)?.servingMode || 'Active') : '';
+      if (!servingMode) {
         // Controller replica마다 reconcile 완료 시점이 다를 수 있다. 로컬 캐시 miss를
         // 곧바로 403으로 확정하지 않고 Kubernetes의 Package+Registration 검증 상태를
         // 공유 권위로 한 번 확인한다. exact digest/manifest까지 일치해야만 허용한다.
-        permitted = await proxyAuthorizationFromSharedState(id);
-        if (permitted) console.warn(`[proxy-authz] '${id}' authorized from shared Kubernetes state after local projection miss`);
+        servingMode = await proxyAuthorizationFromSharedState(id);
+        if (servingMode) console.warn(`[proxy-authz] '${id}' authorized from shared Kubernetes state after local projection miss`);
       }
-      res.writeHead(permitted ? 204 : 403); return res.end();
+      const readOnlyDenied = servingMode === 'DegradedReadOnly' && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+      res.writeHead(servingMode && !readOnlyDenied ? 204 : 403, {
+        ...(servingMode ? { 'x-os-plugin-serving-mode': servingMode } : {}),
+      });
+      return res.end();
     }
 
     // OAA Extension supply-chain owner facade.  It is deliberately separate
@@ -3729,12 +3823,12 @@ module.exports = {
   deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled,
   requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests,
   governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues,
-  localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedStagedUpdate,
+  localEdgeEvidenceRefs, verifiedActivatedRegistration, verifiedProxyTarget, verifiedProxyServingMode, verifiedStagedUpdate,
   authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization,
   extensionInstallTransition,
   bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint,
   admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence,
-  platformVerificationProjection, platformVerificationComparable, platformSupportAdmission,
+  platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, previouslyActivatedRelease,
   persistEventBeforeSeen, settledProbeProjection,
 };
 }
