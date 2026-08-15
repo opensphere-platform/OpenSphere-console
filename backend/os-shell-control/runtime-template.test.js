@@ -6,6 +6,7 @@ const { buildRuntimePod } = require('./runtime-template');
 const session = { session_id: '10000000-0000-4000-8000-000000000001', actor_id: '20000000-0000-4000-8000-000000000001',
   origin: 'https://console.test', permission_revision: `sha256:${'1'.repeat(64)}`, aal: 'aal2', release_evidence_ref: 'release://edge', generation: 2, fencing_epoch: 9 };
 const config = { namespace: 'opensphere-shell-sessions', runtimeServiceAccount: 'opensphere-shell-runtime',
+  runtimeMaxProcesses: 256, runtimeGlobalPodLimit: 8,
   runtimeImage: `ghcr.io/opensphere-platform/opensphere-os-shell-runtime@sha256:${'2'.repeat(64)}`,
   registrationURL: 'https://opensphere-shell-reconciler.opensphere-console.svc.cluster.local:8443/internal/runtime/register',
   runtimeControlURL: 'https://opensphere-shell-api.opensphere-console.svc.cluster.local:8443/api/os-shell/runtime',
@@ -25,6 +26,12 @@ test('runtime Pod separates bootstrap identity while sharing only agent and PTY 
   assert.equal(agent.volumeMounts.some((m) => m.name === 'workspace'), false);
   assert.equal(pod.spec.volumes.find((v) => v.name === 'bootstrap').projected.defaultMode, 0o440);
   assert.equal(pod.spec.volumes.find((v) => v.name === 'bootstrap').projected.sources[0].serviceAccountToken.audience, 'opensphere-shell-runtime-bootstrap');
+  for (const container of pod.spec.containers) {
+    assert.equal(container.env.find((entry) => entry.name === 'OPENSPHERE_SHELL_MAX_PROCESSES').value, '256');
+    assert.equal(container.resources.requests['ephemeral-storage'], '16Mi');
+  }
+  assert.equal(pod.spec.containers.find((c) => c.name === 'pty').resources.limits['ephemeral-storage'], '128Mi');
+  assert.equal(pod.spec.containers.find((c) => c.name === 'agent').resources.limits['ephemeral-storage'], '64Mi');
   assert.match(pty.image, /@sha256:/); assert.equal(pty.image, agent.image);
   const env = Object.fromEntries(agent.env.map((entry) => [entry.name, entry.value]));
   assert.match(env.OPENSPHERE_SHELL_REGISTRATION_URL, /opensphere-shell-reconciler/);

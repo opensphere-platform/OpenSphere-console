@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import { extensionRouteTarget, prioritizeRequestedHost } from './extension-load-order';
+import { OS_SHELL_STANDALONE_BOOT } from './boot-mode';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
 export type { PluginPage, NavNode } from '@opensphere/sdk';
@@ -168,6 +169,9 @@ export class ExtensionHostService {
   readonly apiBaseByPlugin = signal<Record<string, string>>({});
 
   async load(): Promise<void> {
+    if (OS_SHELL_STANDALONE_BOOT) {
+      throw new Error('ExternalExtensionsDisabledInStandaloneShell');
+    }
     this.startRegistryWatch();
     this.loadState.set('loading');
     // The management catalog is the same projection the icon picker writes.
@@ -305,6 +309,9 @@ export class ExtensionHostService {
   }
 
   private async loadOne(e: RegistryEntry, trustedKeys: Record<string, string>, hostApiVersion: string): Promise<void> {
+    if (OS_SHELL_STANDALONE_BOOT) {
+      throw new Error('ExternalExtensionsDisabledInStandaloneShell');
+    }
     let mod: PluginModule | undefined;
     if (this.loadingIds.has(e.id)) {
       this.failures.update((f) => [...f, { id: e.id, error: 'Host Contract cycle detected' }]);

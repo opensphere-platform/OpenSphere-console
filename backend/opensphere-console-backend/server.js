@@ -15,6 +15,7 @@ const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
 const { createOsShellAdmissionIssuer } = require('./os-shell-admission');
 const { createOsShellCredentialExchange } = require('./os-shell-delegation');
+const { validateLocalEdgeAutomationTokenClaims } = require('./local-edge-automation-token');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 const { createModuleOperationApi } = require('./module-operation-api');
 const { createR2d2OperationApi, createRestOperationStore, createRestWorkerStore } = require('./r2d2-operation-api');
@@ -2429,6 +2430,163 @@ if (OS_SHELL_DELEGATION_SECRET) {
     issueToken: cliToken,
   });
 }
+async function osShellFeatureState() {
+  const rows = await restRequest('rpc/get_shell_feature_state', { method: 'POST', body: {} });
+  const state = Array.isArray(rows) ? rows[0] : null;
+  if (!state) throw { code: 503, msg: 'OS Shell feature authority unavailable' };
+  return {
+    enabled: state.enabled === true,
+    revision: Number(state.revision),
+    actorActiveLimit: Number(state.actor_active_limit),
+    globalActiveLimit: Number(state.global_active_limit),
+    reason: state.reason,
+    changedBy: state.changed_by,
+    changedAt: state.changed_at,
+    drainCompletedAt: state.drain_completed_at,
+    activeSessions: Number(state.active_sessions),
+    activeTickets: Number(state.active_tickets),
+    scaleDownAllowed: state.scale_down_allowed === true,
+    operationId: state.operation_id || null,
+    operationKind: state.operation_kind || null,
+    operationPhase: state.operation_phase || null,
+    operationIdentity: state.operation_identity || null,
+    operationStartedAt: state.operation_started_at || null,
+    operationCompletedAt: state.operation_completed_at || null,
+    scaleClaimExpiresAt: state.scale_claim_expires_at || null,
+  };
+}
+
+async function setOsShellFeatureState(actor, body) {
+  const keys = Object.keys(body || {}).sort();
+  if (keys.join(',') !== 'enabled,expectedRevision,reason' || typeof body.enabled !== 'boolean'
+    || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 1
+    || String(body.reason || '').trim().length < 8 || String(body.reason).length > 512) {
+    throw { code: 400, msg: 'closed OS Shell feature operation requires enabled, expectedRevision, and reason' };
+  }
+  requireActorPermission(actor, 'console.identity.manage');
+  if (body.enabled) {
+    throw { code: 409, msg: 'ShellFeatureBrowserEnableRequiresVerifiedRelease',
+      nextAction: 'Run the signed local-edge release owner after exact migration, component, and readiness verification.' };
+  }
+  try {
+    await restRequest('rpc/set_shell_feature_state', { method: 'POST', body: {
+      p_enabled: body.enabled, p_expected_revision: body.expectedRevision,
+      p_reason: String(body.reason).trim(), p_actor_id: actor.sub,
+    } });
+  } catch (error) {
+    if (/ShellFeatureRevisionConflict/.test(String(error?.msg || error?.message || ''))) {
+      throw { code: 409, msg: 'ShellFeatureRevisionConflict' };
+    }
+    throw error;
+  }
+  return osShellFeatureState();
+}
+
+async function setOsShellFeatureStateLocalEdge(req, body) {
+  const actor = await verifyLocalEdgeAutomation(req);
+  const keys = Object.keys(body || {}).sort();
+  if (keys.join(',') !== 'enabled,evidence,expectedRevision,operationId,reason' || typeof body.enabled !== 'boolean'
+    || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 1
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(body.operationId || ''))
+    || String(body.reason || '').trim().length < 8 || String(body.reason).length > 512
+    || !body.evidence || typeof body.evidence !== 'object' || Array.isArray(body.evidence)) {
+    throw { code: 400, msg: 'closed local edge OS Shell feature operation requires enabled, expectedRevision, reason, and evidence' };
+  }
+  const evidenceKeys = Object.keys(body.evidence).sort();
+  if (evidenceKeys.join(',') !== 'authority,channel,componentSetDigest,gaEligible,latestMigrationId,migrationSetDigest,publicationSha256,releaseIntentKeyId,releaseIntentSha256,releaseIntentSignatureSha256,sourceRevision'
+    || body.evidence.authority !== 'kubernetes-workload' || body.evidence.channel !== 'edge'
+    || body.evidence.gaEligible !== false || body.evidence.latestMigrationId !== '0062'
+    || !/^sha256:[a-f0-9]{64}$/.test(String(body.evidence.componentSetDigest || ''))
+    || !/^sha256:[a-f0-9]{64}$/.test(String(body.evidence.publicationSha256 || ''))
+    || !/^sha256:[a-f0-9]{64}$/.test(String(body.evidence.migrationSetDigest || ''))
+    || body.evidence.releaseIntentKeyId !== 'opensphere-edge-local-v1'
+    || !/^sha256:[a-f0-9]{64}$/.test(String(body.evidence.releaseIntentSha256 || ''))
+    || !/^sha256:[a-f0-9]{64}$/.test(String(body.evidence.releaseIntentSignatureSha256 || ''))
+    || !/^[a-f0-9]{40}$/.test(String(body.evidence.sourceRevision || ''))) {
+    throw { code: 400, msg: 'local edge OS Shell feature evidence is outside the closed component release contract' };
+  }
+  try {
+    await restRequest('rpc/set_shell_feature_state_local_edge', { method: 'POST', body: {
+      p_enabled: body.enabled, p_expected_revision: body.expectedRevision,
+      p_reason: String(body.reason).trim(), p_actor_identity: actor.username,
+      p_operation_evidence: body.evidence, p_operation_id: body.operationId,
+    } });
+  } catch (error) {
+    if (/ShellFeatureRevisionConflict/.test(String(error?.msg || error?.message || ''))) {
+      throw { code: 409, msg: 'ShellFeatureRevisionConflict' };
+    }
+    throw error;
+  }
+  const state = await osShellFeatureState();
+  return { contract: 'opensphere-shell-feature-operation/v1', authority: actor.username,
+    operation: body.enabled ? 'Enable' : 'Disable', state,
+    evidenceSha256: `sha256:${toHashHex(canonicalJson(body.evidence))}` };
+}
+
+async function advanceOsShellScaleDownLocalEdge(req, body, action) {
+  const actor = await verifyLocalEdgeAutomation(req);
+  const expectedKeys = action === 'claim'
+    ? 'expectedRevision,operationId,scaleClaimToken'
+    : 'expectedRevision,operationId,scaleClaimToken';
+  if (Object.keys(body || {}).sort().join(',') !== expectedKeys
+    || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 1
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(body.operationId || ''))
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(body.scaleClaimToken || ''))) {
+    throw { code: 400, msg: 'closed scale-down fence requires expectedRevision, operationId, and scaleClaimToken' };
+  }
+  const rpc = action === 'claim' ? 'claim_shell_feature_scale_down' : 'complete_shell_feature_scale_down';
+  const rpcBody = {
+    p_operation_id: body.operationId,
+    p_expected_revision: body.expectedRevision,
+    p_actor_identity: actor.username,
+    p_scale_claim_token: body.scaleClaimToken,
+  };
+  if (action === 'claim') rpcBody.p_lease_seconds = 120;
+  try {
+    await restRequest(`rpc/${rpc}`, { method: 'POST', body: rpcBody });
+  } catch (error) {
+    if (/ShellFeature.*(?:Conflict|FenceLost|ClaimHeld|DrainIncomplete)/.test(String(error?.msg || error?.message || ''))) {
+      throw { code: 409, msg: String(error?.msg || error?.message).match(/ShellFeature[A-Za-z]+/)?.[0] || 'ShellFeatureOperationConflict' };
+    }
+    throw error;
+  }
+  return { contract: 'opensphere-shell-feature-operation/v1', authority: actor.username,
+    action: action === 'claim' ? 'ScaleDownClaim' : 'ScaleDownComplete', state: await osShellFeatureState() };
+}
+
+async function verifyLocalEdgeAutomation(req) {
+  const authorization = String(req.headers.authorization || '');
+  const match = authorization.match(/^Bearer\s+(\S+)$/i);
+  if (!match) throw { code: 401, msg: 'local edge automation ServiceAccount token is required' };
+  const reviewed = await k8sRequest('POST', '/apis/authentication.k8s.io/v1/tokenreviews', {
+    apiVersion: 'authentication.k8s.io/v1',
+    kind: 'TokenReview',
+    spec: { token: match[1], audiences: [LOCAL_EDGE_AUTOMATION_AUDIENCE] },
+  });
+  const username = String(reviewed.body?.status?.user?.username || '');
+  const audiences = Array.isArray(reviewed.body?.status?.audiences)
+    ? reviewed.body.status.audiences.map(String) : [];
+  if (!reviewed.ok || reviewed.body?.status?.authenticated !== true
+    || username !== LOCAL_EDGE_AUTOMATION_SERVICE_ACCOUNT
+    || !audiences.includes(LOCAL_EDGE_AUTOMATION_AUDIENCE)) {
+    throw { code: 403, msg: 'local edge automation identity or audience is not authorized' };
+  }
+  validateLocalEdgeAutomationTokenClaims(match[1], {
+    username: LOCAL_EDGE_AUTOMATION_SERVICE_ACCOUNT,
+    audience: LOCAL_EDGE_AUTOMATION_AUDIENCE,
+  });
+  return {
+    sub: LOCAL_EDGE_AUTOMATION_ACTOR_ID,
+    username,
+    displayName: 'Docker Desktop local edge automation',
+    actorType: 'service',
+    assurance: 'kubernetes-workload',
+    authSessionId: null,
+    groups: [],
+    permissions: ['console.git.change'],
+  };
+}
+
 async function generatePlatformComponentTarget(actor, body = {}) {
   requireActorPermission(actor, 'console.git.change');
   requireRecentAal2(actor, 'Platform Release component target generation');
@@ -4635,6 +4793,34 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'Platform component release target generation failed' });
       }
+    }
+    if (p === '/api/platform/os-shell/feature-state' && req.method === 'GET') {
+      try { const actor = await verifyConsoleAdmin(req); requireActorPermission(actor, 'console.identity.manage'); return json(res, 200, await osShellFeatureState()); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OS Shell feature state unavailable' }); }
+    }
+    if (p === '/api/platform/os-shell/feature-state' && req.method === 'PUT') {
+      try { const actor = await verifyConsoleAdmin(req); return json(res, 200, await setOsShellFeatureState(actor, await readBody(req))); }
+      catch (e) { return json(res, authErrorStatus(e), {
+        error: e.msg || 'OS Shell feature operation failed', ...(e.nextAction ? { nextAction: e.nextAction } : {}),
+      }); }
+    }
+    if (p === '/api/platform/os-shell/feature-state/local-edge-automation' && req.method === 'GET') {
+      try { const actor = await verifyLocalEdgeAutomation(req); return json(res, 200, {
+        contract: 'opensphere-shell-feature-operation/v1', authority: actor.username, state: await osShellFeatureState(),
+      }); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge OS Shell feature status failed' }); }
+    }
+    if (p === '/api/platform/os-shell/feature-state/local-edge-automation' && req.method === 'PUT') {
+      try { return json(res, 200, await setOsShellFeatureStateLocalEdge(req, await readBody(req))); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge OS Shell feature operation failed' }); }
+    }
+    if (p === '/api/platform/os-shell/feature-state/local-edge-automation/scale-down-claim' && req.method === 'POST') {
+      try { return json(res, 200, await advanceOsShellScaleDownLocalEdge(req, await readBody(req), 'claim')); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge OS Shell scale-down claim failed' }); }
+    }
+    if (p === '/api/platform/os-shell/feature-state/local-edge-automation/scale-down-complete' && req.method === 'POST') {
+      try { return json(res, 200, await advanceOsShellScaleDownLocalEdge(req, await readBody(req), 'complete')); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge OS Shell scale-down completion failed' }); }
     }
     if (p === '/api/internal/os-shell-authn' && req.method === 'GET' && issueOsShellAdmission) {
       try {

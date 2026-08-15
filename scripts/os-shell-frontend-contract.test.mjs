@@ -13,7 +13,7 @@ test('CBSS OS Shell is a default-off built-in full-page system plugin', () => {
   assert.match(descriptor, /owner:\s*'cbss-main-shell'/);
   assert.match(descriptor, /defaultEnabled:\s*false/);
   assert.match(descriptor, /grantedCapabilities:\s*\['session:attach'\]/);
-  assert.match(routes, /path:\s*'shell'/);
+  assert.doesNotMatch(routes, /path:\s*'shell'/);
   assert.doesNotMatch(routes, /path:\s*'p\/os-shell'/);
 });
 
@@ -100,4 +100,94 @@ test('ordinary Extension Host rejects system-only attach before bundle fetch', (
   const rejection = host.indexOf("perms.includes('session:attach')");
   const entryFetch = host.indexOf("fetchWithTimeout(entryUrl");
   assert.ok(rejection > 0 && entryFetch > rejection);
+});
+
+test('Console refresh resumes only the current actor session and reconnect always mints a new one-time ticket', () => {
+  const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
+  const attach = read('src/app/system-plugins/os-shell/os-shell-attach.service.ts');
+  assert.match(page, /const existing = await this[.]sessions[.]list\(\)/);
+  assert.match(page, /existing[.]find\(\(item\) => !TERMINAL_STATES[.]has\(item[.]observedState\)\)/);
+  assert.match(page, /this[.]session[.]set\(resumable\)/);
+  assert.match(attach, /const issued = await this[.]sessions[.]issueAttachTicket\(sessionId\)/);
+  assert.match(attach, /candidate[.]onclose[\s\S]*reconnect\(\)/);
+  assert.match(attach, /retryCount >= 2/);
+  assert.match(attach, /attachTicket = ''/);
+  assert.doesNotMatch(attach, /localStorage|sessionStorage|indexedDB/);
+});
+
+test('session create retains one client idempotency key across response loss and relies on DB quotas, not UI clicks', () => {
+  const service = read('src/app/system-plugins/os-shell/os-shell-session.service.ts');
+  const http = read('src/app/core/http.service.ts');
+  assert.match(service, /private pendingCreateKey[?]: string/);
+  assert.match(service, /const idempotencyKey = this[.]pendingCreateKey \?\?= crypto[.]randomUUID\(\)/);
+  assert.match(service, /'X-OS-Idempotency-Key': idempotencyKey/);
+  assert.match(service, /catch \(error\)[\s\S]*Retain the key[\s\S]*throw error/);
+  assert.match(service, /if \(!response[.]ok\)[\s\S]*this[.]pendingCreateKey = undefined/);
+  assert.match(service, /const session = await this[.]sessionResponse\(response\);[\s\S]*this[.]pendingCreateKey = undefined/);
+  assert.match(http, /target[.]origin !== window[.]location[.]origin/);
+});
+
+test('the native Shell route and proxy remain disjoint from canonical PFSS routing', () => {
+  const routes = read('src/app/app.routes.ts');
+  const nginx = read('nginx/default.conf.template');
+  assert.doesNotMatch(routes, /path:\s*'shell'|os-shell-page/);
+  assert.match(routes, /segments\[0\][.]path !== 'pfss'/);
+  assert.match(routes, /matcher:\s*pfssHostMatcher,\s*component:\s*PluginHost/);
+  assert.match(nginx, /location \/api\/os-shell\//);
+  assert.match(nginx, /location ~ \^\/api\/plugins\/\(\[a-z0-9-\]\+\)\/\([.]\*\)\$/);
+  assert.doesNotMatch(nginx, /location \/pfss\/[^\n]*os.shell/i);
+});
+
+test('active runtime authorization is revalidated on a two-second cadence within the five-second revoke SLO', () => {
+  const agent = read('backend/os-cli/cmd/os-shell-runtime/agent.go');
+  assert.match(agent, /time[.]NewTicker\(2 \* time[.]Second\)/);
+  assert.match(agent, /server[.]control[.]revalidate\(revalidateContext, server[.]binding\)/);
+  assert.match(agent, /ptyFrame\{Type: "revoked", Message: "runtime authorization revoked"\}/);
+});
+
+test('OS Shell uses an immutable extension-free top-level realm with full-navigation entry and exit', () => {
+  const bootMode = read('src/app/core/boot-mode.ts');
+  const app = read('src/app/app.ts');
+  const host = read('src/app/core/extension-host.service.ts');
+  const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
+  const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
+
+  assert.match(bootMode, /window[.]location[.]pathname === '\/shell'/);
+  assert.match(app, /OS_SHELL_STANDALONE_BOOT [??] null : inject\(ExtensionHostService\)/);
+  const startupGate = app.indexOf('if (OS_SHELL_STANDALONE_BOOT || !this.ext) return;');
+  const guestLoad = app.indexOf('void this.ext.load()');
+  assert.ok(startupGate > 0 && guestLoad > startupGate, 'external load must be unreachable in the Shell boot realm');
+  assert.match(host, /async load\(\)[\s\S]*OS_SHELL_STANDALONE_BOOT[\s\S]*ExternalExtensionsDisabledInStandaloneShell/);
+  assert.match(host, /private async loadOne[\s\S]*OS_SHELL_STANDALONE_BOOT[\s\S]*ExternalExtensionsDisabledInStandaloneShell/);
+  assert.match(launcher, /href="\/shell"/);
+  assert.match(launcher, /window[.]location[.]assign\('\/shell'\)/);
+  assert.doesNotMatch(launcher, /routerLink/);
+  assert.match(page, /window[.]location[.]assign\('\/'\)/);
+  assert.doesNotMatch(page, /navigateByUrl|routerLink/);
+});
+
+test('standalone Shell response severs opener/embed authority and cannot load guest execution surfaces', () => {
+  const nginx = read('nginx/default.conf.template');
+  const start = nginx.indexOf('location = /shell {');
+  const end = nginx.indexOf('# 해시드 자산', start);
+  assert.ok(start > 0 && end > start);
+  const shell = nginx.slice(start, end);
+  assert.match(shell, /script-src 'self'/);
+  assert.match(shell, /worker-src 'none'/);
+  assert.match(shell, /connect-src 'self'/);
+  assert.match(shell, /frame-src 'self'/);
+  assert.match(shell, /frame-ancestors 'none'/);
+  assert.match(shell, /Cross-Origin-Opener-Policy "same-origin"/);
+  assert.match(shell, /Cross-Origin-Embedder-Policy "require-corp"/);
+  assert.match(shell, /Cross-Origin-Resource-Policy "same-origin"/);
+  assert.doesNotMatch(shell, /blob:|unsafe-eval|worker-src 'self'|\$\{OS_AUTH_ORIGIN\}|\$http_host|https:\/\/ceph/);
+
+  // A prior same-realm plugin may install MutationObserver/postMessage hooks
+  // or open a popup, but real navigation destroys that realm; the response
+  // additionally starts a new browsing-context group and rejects embedding.
+  const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
+  assert.doesNotMatch(launcher, /window[.]open|target="_blank"/);
+  const routes = read('src/app/app.routes.ts');
+  assert.doesNotMatch(routes, /path:\s*'shell'|os-shell-page/);
+  assert.match(nginx, /location = \/shell\/ \{ return 308 \/shell; \}/);
 });

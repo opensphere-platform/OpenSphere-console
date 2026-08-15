@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
-const { createHash, createPublicKey, randomUUID, timingSafeEqual } = require('node:crypto');
+const { createHash, createHmac, createPublicKey, timingSafeEqual } = require('node:crypto');
 const { Pool } = require('pg');
 const WebSocket = require('ws');
 const { WebSocketServer } = WebSocket;
@@ -21,6 +21,7 @@ const PTY_PROTOCOL = 'opensphere.pty.v1';
 const MAX_BODY = 64 << 10;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
+const IDEMPOTENCY_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function hash(value) { return `sha256:${createHash('sha256').update(value).digest('hex')}`; }
 function runtimeCertificatePinned(raw, expected) { return Buffer.isBuffer(raw) && FINGERPRINT.test(String(expected || '')) && exactEqual(hash(raw), expected); }
@@ -30,9 +31,20 @@ function readBody(req) { return new Promise((resolve, reject) => { const chunks 
 function close(ws, code, reason) { try { ws.close(code, reason); } catch { ws.terminate(); } }
 function exactEqual(left, right) { const a = Buffer.from(String(left || '')); const b = Buffer.from(String(right || '')); return a.length === b.length && timingSafeEqual(a, b); }
 
+function idempotentSessionId(secret, actorId, browserSessionId, idempotencyKey) {
+  if (!IDEMPOTENCY_KEY.test(String(idempotencyKey || ''))) {
+    const error = new Error('IdempotencyKeyRequired'); error.code = 'IdempotencyKeyRequired'; error.status = 400; throw error;
+  }
+  const bytes = createHmac('sha256', secret).update('opensphere-shell-idempotency/v1\0')
+    .update(String(actorId)).update('\0').update(String(browserSessionId)).update('\0').update(String(idempotencyKey).toLowerCase()).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString('hex'); return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function releaseReadiness(config) { return { runtimeImageDigest: config.runtimeImageDigest, osArtifactDigest: config.osArtifactDigest,
   manifestSha256: config.manifestSha256, releaseEvidenceRef: config.releaseEvidenceRef,
-  sessionPolicyRevision: config.sessionPolicyRevision, runtimeTemplateRevision: config.runtimeTemplateRevision }; }
+  sessionPolicyRevision: config.sessionPolicyRevision, runtimeTemplateRevision: config.runtimeTemplateRevision,
+  runtimeMaxProcesses: config.runtimeMaxProcesses, runtimeGlobalPodLimit: config.runtimeGlobalPodLimit }; }
 
 function probeComponentReadiness(target, expectedMode, config, { request = http.request } = {}) {
   const url = new URL(target); if (url.protocol !== 'http:' || url.pathname !== '/readyz' || url.search || url.hash) return Promise.resolve(false);
@@ -177,10 +189,13 @@ function createControl({ config = loadConfig(), database, kubernetes,
 
   async function browserApi(req, res, path, claims) {
     if (path === '/api/os-shell/readiness' && req.method === 'GET') { await db.currentPermissionRevision(claims.sub, claims.permissionRevision);
-      const components = await componentReadiness(); const ready = config.enabled && config.mode === 'api' && Object.values(components).every(Boolean);
+      const feature = await db.featureState(); const components = await componentReadiness();
+      const policyExact = Number(feature.global_active_limit) === config.runtimeGlobalPodLimit;
+      const ready = config.enabled && feature.enabled === true && policyExact && config.mode === 'api' && Object.values(components).every(Boolean);
       return json(res, 200, { readiness: {
-      authorized: true, enabled: config.enabled, ready, components,
-      blocker: ready ? null : { code: !components.gateway ? 'ShellGatewayUnavailable' : !components.reconciler ? 'ShellReconcilerUnavailable'
+      authorized: true, enabled: config.enabled && feature.enabled === true, ready, components,
+      feature: { revision: Number(feature.revision), activeSessions: Number(feature.active_sessions), scaleDownAllowed: feature.scale_down_allowed === true },
+      blocker: ready ? null : { code: feature.enabled !== true ? 'ShellFeatureDisabled' : !policyExact ? 'ShellQuotaPolicyDrift' : !components.gateway ? 'ShellGatewayUnavailable' : !components.reconciler ? 'ShellReconcilerUnavailable'
         : !components.credentialAuthority ? 'ShellCredentialAuthorityUnavailable' : 'ShellConsoleApiUnavailable',
         nextAction: 'Restore the exact-digest CBSS components, credential authority, and canonical Console API frontdoor.' },
       observedAt: new Date().toISOString(), sessionClass: 'operator-interactive', runtimeAdapterId: 'cbss.kubernetes-pod', networkProfile: 'console-only',
@@ -195,7 +210,8 @@ function createControl({ config = loadConfig(), database, kubernetes,
       const now = Date.now(); const absolute = Math.min(Date.parse(claims.browserAbsoluteExpiresAt), now + 60 * 60_000);
       const idle = Math.min(Date.parse(claims.browserIdleExpiresAt), absolute, now + 15 * 60_000);
       if (!Number.isFinite(idle) || idle <= now + 5000 || absolute < idle) throw Object.assign(new Error('browser session lifetime is insufficient'), { status: 409 });
-      const row = await db.createSession({ sessionId: randomUUID(), browserSessionId: claims.browserSessionId, actorId: claims.sub,
+      const row = await db.createSession({ sessionId: idempotentSessionId(config.admissionSecret, claims.sub, claims.browserSessionId,
+        req.headers['x-os-idempotency-key']), browserSessionId: claims.browserSessionId, actorId: claims.sub,
         origin: claims.origin, aal: claims.aal, permissionRevision: claims.permissionRevision,
         runtimeTemplateRevision: config.runtimeTemplateRevision, idleExpiresAt: new Date(idle).toISOString(), absoluteExpiresAt: new Date(absolute).toISOString(),
         releaseEvidence: { releaseEvidenceRef: config.releaseEvidenceRef, manifestSha256: config.manifestSha256,
@@ -304,7 +320,7 @@ function createControl({ config = loadConfig(), database, kubernetes,
       if (path === '/internal/runtime/register' && req.method === 'POST') return await registerRuntime(req, res);
       if (path.startsWith('/api/os-shell/runtime/') && req.method === 'POST') return await runtimeApi(req, res, path);
       const claims = admission(req, config); return await browserApi(req, res, path, claims);
-    } catch (error) { return json(res, status(error), { error: error.message || 'OS Shell control failed' }); }
+    } catch (error) { return json(res, status(error), { error: error.code || 'ShellControlFailed', message: error.message || 'OS Shell control failed' }); }
   }
 
   async function reprojectStaleRuntime(row) {
@@ -391,6 +407,8 @@ function createControl({ config = loadConfig(), database, kubernetes,
             if (!row || Number(frame.generation) !== Number(row.generation) || Number(frame.fencingEpoch) !== Number(row.fencing_epoch)) throw new Error('attach ticket unavailable');
             const consumed = await db.consumeAttachTicket({ ...common, generation: row.generation, fencingEpoch: row.fencing_epoch, consumer: config.worker });
             if (!consumed) throw new Error('attach ticket already consumed');
+            const activityBinding = { ...common, generation: row.generation, fencingEpoch: row.fencing_epoch };
+            if (!await db.touchSessionActivity(activityBinding)) throw new Error('session activity authority rejected attach');
             const runtime = new WebSocket(row.runtime_attach_endpoint, PTY_PROTOCOL, { rejectUnauthorized: false, perMessageDeflate: false, followRedirects: false }); let pinned = false;
             runtime.once('upgrade', (response) => { const raw = response.socket.getPeerCertificate(true)?.raw;
               pinned = runtimeCertificatePinned(raw, row.runtime_tls_certificate_sha256); if (!pinned) runtime.terminate(); });
@@ -399,9 +417,15 @@ function createControl({ config = loadConfig(), database, kubernetes,
               attached = true;
               runtime.send(JSON.stringify({ type: 'attach', seq: 1, sessionId: row.session_id, runtimeUid: row.runtime_uid,
                 generation: Number(row.generation), fencingEpoch: Number(row.fencing_epoch), ticket: frame.ticket }));
-              let browserSequence = 0; let runtimeSequence = 0; const rate = { started: Date.now(), frames: 0, bytes: 0 };
+              let browserSequence = 0; let runtimeSequence = 0; let lastActivityTouch = Date.now(); const rate = { started: Date.now(), frames: 0, bytes: 0 };
               browser.on('message', (payload, isBinary) => { if (isBinary || payload.length > 72 << 10 || runtime.bufferedAmount > 1 << 20) return close(browser, 1013, 'Backpressure');
-                try { const out = browserFrame(JSON.parse(payload), browserSequence, rate); browserSequence = out.seq; out.seq += 1; runtime.send(JSON.stringify(out)); } catch { close(browser, 1003, 'FrameContractInvalid'); } });
+                try { const out = browserFrame(JSON.parse(payload), browserSequence, rate); browserSequence = out.seq; out.seq += 1; runtime.send(JSON.stringify(out));
+                  if ((out.type === 'stdin' || out.type === 'resize') && Date.now() - lastActivityTouch >= 30_000) {
+                    lastActivityTouch = Date.now(); void db.touchSessionActivity(activityBinding).then((fresh) => {
+                      if (!fresh) close(browser, 1008, 'SessionRevoked');
+                    }).catch(() => close(browser, 1008, 'SessionRevoked'));
+                  }
+                } catch { close(browser, 1003, 'FrameContractInvalid'); } });
               runtime.on('message', (payload, isBinary) => { if (isBinary || payload.length > 72 << 10 || browser.bufferedAmount > 1 << 20) return close(browser, 1013, 'Backpressure');
                 try { const out = runtimeFrame(JSON.parse(payload), runtimeSequence, row.session_id); runtimeSequence = out.sequence; browser.send(JSON.stringify(out)); } catch { close(browser, 1003, 'FrameContractInvalid'); } });
               browser.once('close', () => runtime.close()); runtime.once('close', () => browser.close());
@@ -427,5 +451,5 @@ function createControl({ config = loadConfig(), database, kubernetes,
 }
 
 if (require.main === module) createControl().start();
-module.exports = { bindingFrom, browserFrame, createControl, delegatedCredential, exactBinding, publicSession,
+module.exports = { bindingFrom, browserFrame, createControl, delegatedCredential, exactBinding, idempotentSessionId, publicSession,
   probeComponentReadiness, probeTlsDependencyReadiness, releaseReadiness, runtimeCertificatePinned, runtimeFrame, validatedRuntimePublicKey };

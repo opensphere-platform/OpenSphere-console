@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -35,8 +34,14 @@ type ptyServer struct {
 }
 
 func runPTY(ctx context.Context, binding runtimeBinding) error {
-	if os.Geteuid() == 0 {
+	if !ptyProcessLimitsSupported() {
+		return errors.New("PTY runtime process limits require Linux; non-Linux execution is unsupported")
+	}
+	if isRootProcess() {
 		return errors.New("PTY runtime refuses to run as root")
+	}
+	if err := applyPTYProcessLimits(); err != nil {
+		return fmt.Errorf("PTY runtime process limit failed closed: %w", err)
 	}
 	if err := requireLoopbackAddress(configuredPTYListenAddr); err != nil {
 		return err
@@ -316,21 +321,4 @@ func (server *ptyServer) runShell(ctx context.Context, cancel context.CancelFunc
 		terminateProcessGroup(command.Process.Pid)
 	}
 	wait.Wait()
-}
-
-func terminateProcessGroup(processID int) {
-	if processID < 2 {
-		return
-	}
-	if err := syscall.Kill(-processID, syscall.SIGTERM); err != nil {
-		return
-	}
-	timer := time.NewTimer(250 * time.Millisecond)
-	defer timer.Stop()
-	<-timer.C
-	_ = syscall.Kill(-processID, syscall.SIGKILL)
-}
-
-func init() {
-	_ = syscall.Setrlimit(syscall.RLIMIT_CORE, &syscall.Rlimit{Cur: 0, Max: 0})
 }

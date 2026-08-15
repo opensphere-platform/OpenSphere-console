@@ -7,6 +7,7 @@ const { loadConfig } = require('./config');
 const MANAGED = [
   'OS_SHELL_CONTROL_ENABLED', 'OS_SHELL_ATTACH_ENABLED', 'OS_SHELL_RECONCILER_ENABLED',
   'OS_SHELL_RUNTIME_REGISTRATION_ENABLED', 'OS_SHELL_RUNTIME_CONTROL_ENABLED', 'OS_SHELL_RUNTIME_IMAGE',
+  'OS_SHELL_RUNTIME_MAX_PROCESSES', 'OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT',
   'OS_SHELL_OS_ARTIFACT_DIGEST', 'OS_SHELL_MANIFEST_SHA256', 'OS_SHELL_RELEASE_EVIDENCE_REF',
   'OS_SHELL_RELEASE_KEY_ID', 'OS_SHELL_SESSION_POLICY_REVISION', 'OS_SHELL_RUNTIME_TEMPLATE_REVISION',
   'OS_SHELL_ADMISSION_SECRET', 'OS_SHELL_DELEGATION_SECRET', 'OS_SHELL_INTERNAL_TLS_CERT_FILE',
@@ -57,5 +58,12 @@ test('enabled API requires a public internal CA and accepts only the canonical r
     assert.match(value.consoleAPIReadinessURL, /opensphere-shell-console-api/);
     assert.match(value.gatewayReadinessURL, /opensphere-shell-gateway/); assert.match(value.reconcilerReadinessURL, /opensphere-shell-reconciler/);
     assert.match(value.credentialAuthorityReadinessURL, /opensphere-shell-credential-authority/);
+    assert.equal(value.runtimeMaxProcesses, 256); assert.equal(value.runtimeGlobalPodLimit, 8);
+  });
+  environment(enabled({ OS_SHELL_INTERNAL_CA_FILE: __filename, OS_SHELL_RUNTIME_MAX_PROCESSES: '255' }), () => {
+    assert.throws(() => loadConfig('api'), /closed value 256/);
+  });
+  environment(enabled({ OS_SHELL_INTERNAL_CA_FILE: __filename, OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT: '9' }), () => {
+    assert.throws(() => loadConfig('api'), /closed value 8/);
   });
 });

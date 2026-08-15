@@ -13,6 +13,7 @@ const (
 	fixedSessionClass      = "operator-interactive"
 	fixedRuntimeAdapterID  = "cbss.kubernetes-pod"
 	fixedNetworkProfile    = "console-only"
+	fixedPTYMaxProcesses   = uint64(256)
 	fixedConsoleAPIURL     = "https://opensphere-shell-console-api.opensphere-console.svc.cluster.local:8445"
 	defaultAgentListenAddr = ":8443"
 	defaultPTYListenAddr   = "127.0.0.1:8081"
@@ -36,6 +37,9 @@ type runtimeBinding struct {
 }
 
 func loadRuntimeBinding() (runtimeBinding, error) {
+	if value := strings.TrimSpace(os.Getenv("OPENSPHERE_SHELL_MAX_PROCESSES")); value != strconv.FormatUint(fixedPTYMaxProcesses, 10) {
+		return runtimeBinding{}, fmt.Errorf("OPENSPHERE_SHELL_MAX_PROCESSES must be the server-owned fixed value %d", fixedPTYMaxProcesses)
+	}
 	binding := runtimeBinding{
 		SessionID:          strings.TrimSpace(os.Getenv("OPENSPHERE_SHELL_SESSION_ID")),
 		ActorID:            strings.TrimSpace(os.Getenv("OPENSPHERE_SHELL_ACTOR_ID")),

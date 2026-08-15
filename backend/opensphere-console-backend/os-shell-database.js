@@ -12,6 +12,7 @@ const EXACT_REVISION = /^sha256:[a-f0-9]{64}$/;
 const HEALTH_CONTRACT = Object.freeze({
   api: Object.freeze([
     'console.current_shell_permission_revision(uuid)',
+    'console.get_shell_feature_state()',
     'console.create_shell_session(uuid,uuid,uuid,text,text,text,text,timestamptz,timestamptz,jsonb)',
     'console.get_shell_session(uuid,uuid,uuid,text)',
     'console.list_shell_sessions(uuid,uuid,text,integer)',
@@ -25,9 +26,11 @@ const HEALTH_CONTRACT = Object.freeze({
     'console.resolve_shell_attach_binding(text,uuid,uuid,uuid,text,text,text)',
     'console.consume_shell_attach_ticket(text,uuid,uuid,uuid,text,bigint,bigint,text,text,text)',
     'console.revalidate_shell_session(uuid,uuid,uuid,text,bigint,bigint,text,text)',
+    'console.touch_shell_session_activity(uuid,uuid,uuid,text,bigint,bigint,text,text)',
   ]),
   reconciler: Object.freeze([
     'console.current_shell_permission_revision(uuid)',
+    'console.get_shell_feature_state()',
     'console.claim_shell_sessions(text,integer)',
     'console.inspect_shell_claim(uuid,text,bigint,bigint)',
     'console.classify_shell_runtime_registration(uuid,bigint,bigint)',
@@ -59,6 +62,23 @@ function required(value, label) {
   const normalized = String(value ?? '').trim();
   if (!normalized) throw contractError('ShellDatabaseContractInvalid', `${label} is required`);
   return normalized;
+}
+
+function mappedShellAuthorityError(error) {
+  const message = String(error?.message || '');
+  const mappings = [
+    ['ShellFeatureDisabled', 503],
+    ['ShellActorSessionQuotaExceeded', 429],
+    ['ShellGlobalSessionQuotaExceeded', 503],
+    ['ShellSessionIdempotencyConflict', 409],
+    ['ShellFeatureRevisionConflict', 409],
+    ['ShellFeatureOperationInvalid', 400],
+  ];
+  const match = mappings.find(([code]) => message.includes(code));
+  if (!match) return error;
+  const mapped = contractError(match[0], match[0], match[1]);
+  mapped.cause = error;
+  return mapped;
 }
 
 function createOsShellDatabase({ query, now = () => Date.now(), allowLoopbackHttp = false } = {}) {
@@ -102,14 +122,17 @@ function createOsShellDatabase({ query, now = () => Date.now(), allowLoopbackHtt
   async function createSession(input) {
     const revision = await currentPermissionRevision(input.actorId, input.permissionRevision ?? null);
     const evidence = normalizeReleaseEvidence(input.releaseEvidence);
-    const result = await execute(
-      'SELECT * FROM console.create_shell_session($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text,$8::timestamptz,$9::timestamptz,$10::jsonb)',
-      [required(input.sessionId, 'sessionId'), required(input.browserSessionId, 'browserSessionId'),
-        required(input.actorId, 'actorId'), normalizeOrigin(input.origin, { allowLoopbackHttp }),
-        required(input.aal, 'aal'), revision, required(input.runtimeTemplateRevision, 'runtimeTemplateRevision'),
-        required(input.idleExpiresAt, 'idleExpiresAt'), required(input.absoluteExpiresAt, 'absoluteExpiresAt'),
-        JSON.stringify(evidence)],
-    );
+    let result;
+    try {
+      result = await execute(
+        'SELECT * FROM console.create_shell_session($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text,$8::timestamptz,$9::timestamptz,$10::jsonb)',
+        [required(input.sessionId, 'sessionId'), required(input.browserSessionId, 'browserSessionId'),
+          required(input.actorId, 'actorId'), normalizeOrigin(input.origin, { allowLoopbackHttp }),
+          required(input.aal, 'aal'), revision, required(input.runtimeTemplateRevision, 'runtimeTemplateRevision'),
+          required(input.idleExpiresAt, 'idleExpiresAt'), required(input.absoluteExpiresAt, 'absoluteExpiresAt'),
+          JSON.stringify(evidence)],
+      );
+    } catch (error) { throw mappedShellAuthorityError(error); }
     if (result.length !== 1) throw contractError('ShellSessionCreateFailed', 'session authority did not create exactly one row', 409);
     return result[0];
   }
@@ -139,13 +162,16 @@ function createOsShellDatabase({ query, now = () => Date.now(), allowLoopbackHtt
       ? required(input.ticketHash, 'ticketHash')
       : hashAttachTicket(required(input.ticket, 'ticket'));
     const expiresAt = normalizeAttachTicketExpiry(input.expiresAt, { now: now() });
-    const result = await execute(
-      'SELECT * FROM console.issue_shell_attach_ticket($1::text,$2::uuid,$3::uuid,$4::uuid,$5::text,$6::bigint,$7::bigint,$8::text,$9::text,$10::timestamptz)',
-      [ticketHash, required(input.sessionId, 'sessionId'), required(input.browserSessionId, 'browserSessionId'),
-        required(input.actorId, 'actorId'), normalizeOrigin(input.origin, { allowLoopbackHttp }),
-        positiveInteger(input.generation, 'generation'), positiveInteger(input.fencingEpoch, 'fencingEpoch'),
-        required(input.aal, 'aal'), revision, expiresAt],
-    );
+    let result;
+    try {
+      result = await execute(
+        'SELECT * FROM console.issue_shell_attach_ticket($1::text,$2::uuid,$3::uuid,$4::uuid,$5::text,$6::bigint,$7::bigint,$8::text,$9::text,$10::timestamptz)',
+        [ticketHash, required(input.sessionId, 'sessionId'), required(input.browserSessionId, 'browserSessionId'),
+          required(input.actorId, 'actorId'), normalizeOrigin(input.origin, { allowLoopbackHttp }),
+          positiveInteger(input.generation, 'generation'), positiveInteger(input.fencingEpoch, 'fencingEpoch'),
+          required(input.aal, 'aal'), revision, expiresAt],
+      );
+    } catch (error) { throw mappedShellAuthorityError(error); }
     if (result.length !== 1) throw contractError('AttachTicketIssueFailed', 'ticket authority did not issue exactly one row', 409);
     return result[0];
   }
@@ -218,6 +244,24 @@ function createOsShellDatabase({ query, now = () => Date.now(), allowLoopbackHtt
         revision, required(input.reasonCode, 'reasonCode')],
     );
     return result[0] || null;
+  }
+
+  async function touchSessionActivity(input) {
+    const revision = await currentPermissionRevision(input.actorId, input.permissionRevision ?? null);
+    const result = await execute(
+      'SELECT * FROM console.touch_shell_session_activity($1::uuid,$2::uuid,$3::uuid,$4::text,$5::bigint,$6::bigint,$7::text,$8::text)',
+      [required(input.sessionId, 'sessionId'), required(input.browserSessionId, 'browserSessionId'),
+        required(input.actorId, 'actorId'), normalizeOrigin(input.origin, { allowLoopbackHttp }),
+        positiveInteger(input.generation, 'generation'), positiveInteger(input.fencingEpoch, 'fencingEpoch'),
+        required(input.aal, 'aal'), revision],
+    );
+    return result[0] || null;
+  }
+
+  async function featureState() {
+    const result = await execute('SELECT * FROM console.get_shell_feature_state()', []);
+    if (result.length !== 1) throw contractError('ShellFeatureAuthorityUnavailable', 'feature authority did not return exactly one row', 503);
+    return result[0];
   }
 
   async function claimSessions(input) {
@@ -316,6 +360,7 @@ function createOsShellDatabase({ query, now = () => Date.now(), allowLoopbackHtt
     createSession,
     currentPermissionRevision,
     getSession,
+    featureState,
     heartbeatSession,
     health,
     issueAttachTicket,
@@ -330,6 +375,7 @@ function createOsShellDatabase({ query, now = () => Date.now(), allowLoopbackHtt
     revalidateSession,
     revalidateRuntime,
     transitionSession,
+    touchSessionActivity,
   });
 }
 

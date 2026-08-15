@@ -14,6 +14,30 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
 ---
 apiVersion: v1
+kind: ResourceQuota
+metadata: { name: opensphere-shell-runtime-budget, namespace: opensphere-shell-sessions }
+spec:
+  hard:
+    pods: "8"
+    requests.cpu: 400m
+    requests.memory: 512Mi
+    requests.ephemeral-storage: 256Mi
+    limits.cpu: "8"
+    limits.memory: 3Gi
+    limits.ephemeral-storage: 1536Mi
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: opensphere-shell-runtime-container-limits, namespace: opensphere-shell-sessions }
+spec:
+  limits:
+    - type: Container
+      min: { cpu: 25m, memory: 32Mi, ephemeral-storage: 16Mi }
+      max: { cpu: 500m, memory: 256Mi, ephemeral-storage: 128Mi }
+      defaultRequest: { cpu: 25m, memory: 32Mi, ephemeral-storage: 16Mi }
+      default: { cpu: 500m, memory: 128Mi, ephemeral-storage: 64Mi }
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata: { name: opensphere-shell-api, namespace: opensphere-console }
 automountServiceAccountToken: false
@@ -94,6 +118,8 @@ spec:
             - { name: OS_SHELL_RECONCILER_ENABLED, value: "false" }
             - { name: OS_SHELL_RUNTIME_REGISTRATION_ENABLED, value: "false" }
             - { name: OS_SHELL_RUNTIME_IMAGE, value: "__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__" }
+            - { name: OS_SHELL_RUNTIME_MAX_PROCESSES, value: "256" }
+            - { name: OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT, value: "8" }
             - { name: OS_SHELL_OS_ARTIFACT_DIGEST, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
             - { name: OS_SHELL_MANIFEST_SHA256, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
             - { name: OS_SHELL_RELEASE_EVIDENCE_REF, value: "release://disabled" }
@@ -148,6 +174,8 @@ spec:
             - { name: OS_SHELL_RUNTIME_REGISTRATION_ENABLED, value: "false" }
             - { name: OS_SHELL_RUNTIME_CONTROL_ENABLED, value: "false" }
             - { name: OS_SHELL_RUNTIME_IMAGE, value: "__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__" }
+            - { name: OS_SHELL_RUNTIME_MAX_PROCESSES, value: "256" }
+            - { name: OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT, value: "8" }
             - { name: OS_SHELL_OS_ARTIFACT_DIGEST, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
             - { name: OS_SHELL_MANIFEST_SHA256, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
             - { name: OS_SHELL_RELEASE_EVIDENCE_REF, value: "release://disabled" }
@@ -190,6 +218,8 @@ spec:
             - { name: OS_SHELL_ATTACH_ENABLED, value: "false" }
             - { name: OS_SHELL_RUNTIME_CONTROL_ENABLED, value: "false" }
             - { name: OS_SHELL_RUNTIME_IMAGE, value: "__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__" }
+            - { name: OS_SHELL_RUNTIME_MAX_PROCESSES, value: "256" }
+            - { name: OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT, value: "8" }
             - { name: OS_SHELL_OS_ARTIFACT_DIGEST, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
             - { name: OS_SHELL_MANIFEST_SHA256, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
             - { name: OS_SHELL_RELEASE_EVIDENCE_REF, value: "release://disabled" }
@@ -286,6 +316,179 @@ spec:
   type: ClusterIP
   selector: { app: opensphere-shell-console-api }
   ports: [{ name: console-api-tls, port: 8445, targetPort: console-api-tls }]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: opensphere-shell-runtime-template-v1
+  annotations:
+    opensphere.io/admission-contract: opensphere-shell-runtime-template-v1
+    opensphere.io/expression-set-sha256: sha256:69c748d9eb023d9e79dbd5752c81256f09c8f6c5ba105b47e66bcaa3d13f3547
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["pods/ephemeralcontainers", "pods/resize"]
+        scope: Namespaced
+  validations:
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:opensphere-console:opensphere-shell-reconciler'
+      message: only the fenced OS Shell reconciler may project runtime Pods
+      reason: Forbidden
+    - expression: >-
+        object.metadata.namespace == 'opensphere-shell-sessions' &&
+        object.metadata.name == 'os-shell-' + object.metadata.labels['opensphere.io/session-id'].replace('-', '').substring(0, 20) &&
+        (!has(object.metadata.generateName) || object.metadata.generateName == '') &&
+        object.metadata.labels.size() == 4 &&
+        object.metadata.labels['app'] == 'opensphere-os-shell-runtime' &&
+        object.metadata.labels['opensphere.io/session-id'].matches('^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') &&
+        object.metadata.labels['opensphere.io/generation'].matches('^[1-9][0-9]*$') &&
+        object.metadata.labels['opensphere.io/fencing-epoch'].matches('^[1-9][0-9]*$') &&
+        (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
+        (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
+        (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0)
+      message: runtime Pod identity labels must match the closed CBSS projection
+      reason: Invalid
+    - expression: >-
+        object.spec.serviceAccountName == 'opensphere-shell-runtime' &&
+        object.spec.automountServiceAccountToken == false &&
+        object.spec.restartPolicy == 'Never' && object.spec.enableServiceLinks == false &&
+        object.spec.terminationGracePeriodSeconds == 5 && object.spec.dnsPolicy == 'ClusterFirst' &&
+        object.spec.schedulerName == 'default-scheduler' && object.spec.imagePullSecrets.size() == 1 &&
+        object.spec.imagePullSecrets[0].name == 'opensphere-ghcr-pull' &&
+        (!has(object.spec.initContainers) || object.spec.initContainers.size() == 0) &&
+        (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.size() == 0) &&
+        (!has(object.spec.runtimeClassName) || object.spec.runtimeClassName == '') &&
+        (!has(object.spec.nodeName) || object.spec.nodeName == '') &&
+        (!has(object.spec.nodeSelector) || object.spec.nodeSelector.size() == 0) &&
+        (!has(object.spec.affinity)) && (!has(object.spec.tolerations) || object.spec.tolerations.size() == 0) &&
+        (!has(object.spec.shareProcessNamespace) || object.spec.shareProcessNamespace == false) &&
+        (!has(object.spec.dnsConfig)) && (!has(object.spec.hostAliases) || object.spec.hostAliases.size() == 0) &&
+        (!has(object.spec.activeDeadlineSeconds)) && (!has(object.spec.priorityClassName) || object.spec.priorityClassName == '') &&
+        (!has(object.spec.priority) || object.spec.priority == 0) &&
+        (!has(object.spec.topologySpreadConstraints) || object.spec.topologySpreadConstraints.size() == 0) &&
+        (!has(object.spec.hostNetwork) || object.spec.hostNetwork == false) &&
+        (!has(object.spec.hostPID) || object.spec.hostPID == false) &&
+        (!has(object.spec.hostIPC) || object.spec.hostIPC == false) &&
+        object.spec.securityContext.runAsNonRoot == true && object.spec.securityContext.fsGroup == 65532 &&
+        object.spec.securityContext.fsGroupChangePolicy == 'OnRootMismatch' &&
+        object.spec.securityContext.seccompProfile.type == 'RuntimeDefault' &&
+        (!has(object.spec.securityContext.sysctls) || object.spec.securityContext.sysctls.size() == 0) &&
+        (!has(object.spec.securityContext.supplementalGroups) || object.spec.securityContext.supplementalGroups.size() == 0) &&
+        (!has(object.spec.securityContext.windowsOptions)) && (!has(object.spec.securityContext.seLinuxOptions))
+      message: runtime Pod scheduling, service account, and host boundary are immutable
+      reason: Forbidden
+    - expression: >-
+        object.spec.containers.size() == 2 &&
+        object.spec.containers.exists(c, c.name == 'pty') && object.spec.containers.exists(c, c.name == 'agent') &&
+        object.spec.containers.all(c,
+          c.image == '__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__' &&
+          c.imagePullPolicy == 'IfNotPresent' && !has(c.command) && c.args.size() == 1 &&
+          ((c.name == 'pty' && c.args[0] == 'pty') || (c.name == 'agent' && c.args[0] == 'agent')) &&
+          (!has(c.envFrom) || c.envFrom.size() == 0) &&
+          c.securityContext.allowPrivilegeEscalation == false && c.securityContext.readOnlyRootFilesystem == true &&
+          c.securityContext.runAsNonRoot == true && c.securityContext.runAsUser == 65532 && c.securityContext.runAsGroup == 65532 &&
+          c.securityContext.seccompProfile.type == 'RuntimeDefault' &&
+          (!has(c.securityContext.privileged) || c.securityContext.privileged == false) &&
+          c.securityContext.capabilities.drop.size() == 1 && c.securityContext.capabilities.drop[0] == 'ALL' &&
+          (!has(c.securityContext.capabilities.add) || c.securityContext.capabilities.add.size() == 0) &&
+          (!has(c.securityContext.procMount) || c.securityContext.procMount == 'Default') &&
+          (!has(c.securityContext.seLinuxOptions)) && (!has(c.securityContext.windowsOptions)) &&
+          (!has(c.workingDir) || c.workingDir == '') &&
+          (!has(c.stdin) || c.stdin == false) && (!has(c.tty) || c.tty == false) &&
+          (!has(c.lifecycle)) && (!has(c.livenessProbe)) && (!has(c.startupProbe)) &&
+          (!has(c.volumeDevices) || c.volumeDevices.size() == 0) &&
+          ((c.name == 'pty' && (!has(c.ports) || c.ports.size() == 0) && !has(c.readinessProbe)) ||
+           (c.name == 'agent' && c.ports.size() == 1 && c.ports[0].name == 'runtime-wss' &&
+            c.ports[0].containerPort == 8443 && c.readinessProbe.tcpSocket.port == 'runtime-wss' &&
+            c.readinessProbe.periodSeconds == 2 && c.readinessProbe.failureThreshold == 10)))
+      message: runtime containers require the exact digest, command, count, and restricted security context
+      reason: Forbidden
+    - expression: >-
+        object.spec.containers.all(c,
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_SESSION_ID' && e.value == object.metadata.labels['opensphere.io/session-id']) &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_GENERATION' && e.value == object.metadata.labels['opensphere.io/generation']) &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_FENCING_EPOCH' && e.value == object.metadata.labels['opensphere.io/fencing-epoch']) &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_SESSION_CLASS' && e.value == 'operator-interactive') &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_RUNTIME_ADAPTER_ID' && e.value == 'cbss.kubernetes-pod') &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_NETWORK_PROFILE' && e.value == 'console-only') &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_MAX_PROCESSES' && e.value == '256') &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_ACTOR_ID' && e.value.matches('^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')) &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_ORIGIN' && e.value.matches('^https://[^/?#]+$')) &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_PERMISSION_REVISION' && e.value.matches('^sha256:[a-f0-9]{64}$')) &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_AAL' && e.value in ['aal1','aal2']) &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_RELEASE_EVIDENCE_REF' && e.value.size() > 0 && e.value.size() <= 512) &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_RUNTIME_UID' && has(e.valueFrom) &&
+            e.valueFrom.fieldRef.fieldPath == 'metadata.uid') &&
+          c.env.exists(e, e.name == 'OPENSPHERE_SHELL_CONSOLE_API_URL' &&
+            e.value == 'https://opensphere-shell-console-api.opensphere-console.svc.cluster.local:8445') &&
+          c.env.exists(e, e.name == 'SSL_CERT_FILE' && e.value == '/var/run/opensphere-shell-control-ca/ca.crt') &&
+          (c.name != 'agent' || (c.env.exists(e, e.name == 'OPENSPHERE_SHELL_REGISTRATION_URL' &&
+            e.value == 'https://opensphere-shell-reconciler.opensphere-console.svc.cluster.local:8443/internal/runtime/register') &&
+            c.env.exists(e, e.name == 'OPENSPHERE_SHELL_CONTROL_URL' &&
+            e.value == 'https://opensphere-shell-api.opensphere-console.svc.cluster.local:8443/api/os-shell/runtime'))) &&
+          ((c.name == 'pty' && c.env.size() == 15) || (c.name == 'agent' && c.env.size() == 17)) &&
+          c.env.all(e, c.env.filter(x, x.name == e.name).size() == 1) &&
+          c.env.all(e, e.name == 'OPENSPHERE_SHELL_RUNTIME_UID' ?
+            (has(e.valueFrom) && !has(e.value)) : (has(e.value) && !has(e.valueFrom))) &&
+          c.env.all(e, ['OPENSPHERE_SHELL_SESSION_ID','OPENSPHERE_SHELL_ACTOR_ID','OPENSPHERE_SHELL_ORIGIN',
+            'OPENSPHERE_SHELL_SESSION_CLASS','OPENSPHERE_SHELL_RUNTIME_ADAPTER_ID','OPENSPHERE_SHELL_NETWORK_PROFILE',
+            'OPENSPHERE_SHELL_RUNTIME_UID','OPENSPHERE_SHELL_PERMISSION_REVISION','OPENSPHERE_SHELL_AAL',
+            'OPENSPHERE_SHELL_RELEASE_EVIDENCE_REF','OPENSPHERE_SHELL_GENERATION','OPENSPHERE_SHELL_FENCING_EPOCH',
+            'OPENSPHERE_SHELL_MAX_PROCESSES','OPENSPHERE_SHELL_CONSOLE_API_URL','SSL_CERT_FILE',
+            'OPENSPHERE_SHELL_REGISTRATION_URL','OPENSPHERE_SHELL_CONTROL_URL'].exists(n, n == e.name)))
+      message: runtime environment is a closed binding with no injected variables
+      reason: Forbidden
+    - expression: >-
+        object.spec.containers.all(c,
+          c.resources.requests.size() == 3 && c.resources.limits.size() == 3 &&
+          c.resources.requests.cpu == '25m' && c.resources.requests.memory == '32Mi' &&
+          c.resources.requests['ephemeral-storage'] == '16Mi' &&
+          c.resources.limits.cpu == '500m' &&
+          ((c.name == 'pty' && c.resources.limits.memory == '256Mi' && c.resources.limits['ephemeral-storage'] == '128Mi') ||
+           (c.name == 'agent' && c.resources.limits.memory == '128Mi' && c.resources.limits['ephemeral-storage'] == '64Mi')) &&
+          ((c.name == 'pty' && c.volumeMounts.size() == 4 &&
+            c.volumeMounts.exists(m, m.name == 'internal' && m.mountPath == '/run/opensphere-shell-internal' && (!has(m.readOnly) || m.readOnly == false)) &&
+            c.volumeMounts.exists(m, m.name == 'agent-channel' && m.mountPath == '/run/opensphere-shell' && m.readOnly == true) &&
+            c.volumeMounts.exists(m, m.name == 'workspace' && m.mountPath == '/home/opensphere' && (!has(m.readOnly) || m.readOnly == false)) &&
+            c.volumeMounts.exists(m, m.name == 'control-ca' && m.mountPath == '/var/run/opensphere-shell-control-ca' && m.readOnly == true)) ||
+           (c.name == 'agent' && c.volumeMounts.size() == 4 &&
+            c.volumeMounts.exists(m, m.name == 'internal' && m.mountPath == '/run/opensphere-shell-internal' && (!has(m.readOnly) || m.readOnly == false)) &&
+            c.volumeMounts.exists(m, m.name == 'agent-channel' && m.mountPath == '/run/opensphere-shell' && (!has(m.readOnly) || m.readOnly == false)) &&
+            c.volumeMounts.exists(m, m.name == 'bootstrap' && m.mountPath == '/var/run/secrets/tokens' && m.readOnly == true) &&
+            c.volumeMounts.exists(m, m.name == 'control-ca' && m.mountPath == '/var/run/opensphere-shell-control-ca' && m.readOnly == true))))
+      message: runtime resources and mount graph must exactly match the bounded template
+      reason: Forbidden
+    - expression: >-
+        object.spec.volumes.size() == 5 &&
+        object.spec.volumes.exists(v, v.name == 'internal' && has(v.emptyDir) && v.emptyDir.medium == 'Memory' && v.emptyDir.sizeLimit == '1Mi') &&
+        object.spec.volumes.exists(v, v.name == 'agent-channel' && has(v.emptyDir) && v.emptyDir.medium == 'Memory' && v.emptyDir.sizeLimit == '1Mi') &&
+        object.spec.volumes.exists(v, v.name == 'workspace' && has(v.emptyDir) && v.emptyDir.medium == 'Memory' && v.emptyDir.sizeLimit == '64Mi') &&
+        object.spec.volumes.exists(v, v.name == 'bootstrap' && has(v.projected) && v.projected.defaultMode == 288 &&
+          v.projected.sources.size() == 1 && has(v.projected.sources[0].serviceAccountToken) &&
+          v.projected.sources[0].serviceAccountToken.audience == 'opensphere-shell-runtime-bootstrap' &&
+          v.projected.sources[0].serviceAccountToken.expirationSeconds == 600) &&
+        object.spec.volumes.exists(v, v.name == 'control-ca' && has(v.configMap) && v.configMap.name == 'opensphere-shell-control-ca')
+      message: runtime volumes must exactly match bounded tmpfs, projected bootstrap, and public CA inputs
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: opensphere-shell-runtime-template-v1 }
+spec:
+  policyName: opensphere-shell-runtime-template-v1
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels: { opensphere.io/scope: ephemeral-shell-runtime }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

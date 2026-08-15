@@ -52,6 +52,7 @@ func setBindingEnvironment(t *testing.T, binding runtimeBinding) {
 		"OPENSPHERE_SHELL_RELEASE_EVIDENCE_REF": binding.ReleaseEvidenceRef,
 		"OPENSPHERE_SHELL_GENERATION":           fmt.Sprint(binding.Generation),
 		"OPENSPHERE_SHELL_FENCING_EPOCH":        fmt.Sprint(binding.FencingEpoch),
+		"OPENSPHERE_SHELL_MAX_PROCESSES":        fmt.Sprint(fixedPTYMaxProcesses),
 	}
 	for name, value := range values {
 		t.Setenv(name, value)
@@ -70,6 +71,11 @@ func TestRuntimeBindingIsClosedAndRejectsKubeVirt(t *testing.T) {
 		t.Fatalf("KubeVirt must fail closed: %v", err)
 	}
 	t.Setenv("OPENSPHERE_SHELL_RUNTIME_ADAPTER_ID", fixedRuntimeAdapterID)
+	t.Setenv("OPENSPHERE_SHELL_MAX_PROCESSES", "255")
+	if _, err := loadRuntimeBinding(); err == nil || !strings.Contains(err.Error(), "server-owned fixed value 256") {
+		t.Fatalf("runtime process limit must be exact and server-owned: %v", err)
+	}
+	t.Setenv("OPENSPHERE_SHELL_MAX_PROCESSES", fmt.Sprint(fixedPTYMaxProcesses))
 	t.Setenv("OPENSPHERE_SHELL_COMMAND", "/bin/sh")
 	if _, err := loadRuntimeBinding(); err == nil || !strings.Contains(err.Error(), "forbidden") {
 		t.Fatalf("arbitrary command must fail closed: %v", err)
@@ -721,6 +727,7 @@ func TestAgentWSSPinsEphemeralCertificateAndBridgesLoopbackPTY(t *testing.T) {
 	configuredPTYAddr = strings.TrimPrefix(ptyHTTP.URL, "http://")
 	defer func() { configuredPTYAddr, controlHTTPClient = originalPTYAddr, originalClient }()
 	runtimeCredential := []byte(strings.Repeat("r", 64))
+	var authorityRevoked atomic.Bool
 	controlHTTP := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if request.Header.Get("Authorization") != "Bearer "+string(runtimeCredential) {
@@ -728,7 +735,13 @@ func TestAgentWSSPinsEphemeralCertificateAndBridgesLoopbackPTY(t *testing.T) {
 			return
 		}
 		switch request.URL.Path {
-		case "/api/os-shell/runtime/attach-authorize", "/api/os-shell/runtime/revalidate":
+		case "/api/os-shell/runtime/attach-authorize":
+			_ = json.NewEncoder(w).Encode(attachAuthorizeResponse{Contract: controlContract, Authorized: true, State: "Active"})
+		case "/api/os-shell/runtime/revalidate":
+			if authorityRevoked.Load() {
+				http.Error(w, "revoked", http.StatusForbidden)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(attachAuthorizeResponse{Contract: controlContract, Authorized: true, State: "Active"})
 		default:
 			http.NotFound(w, request)
@@ -790,6 +803,22 @@ func TestAgentWSSPinsEphemeralCertificateAndBridgesLoopbackPTY(t *testing.T) {
 	var pong ptyFrame
 	if err := wsjson.Read(readContext, connection, &pong); err != nil || pong.Type != "pong" {
 		t.Fatalf("agent did not relay bounded frames: %#v err=%v", pong, err)
+	}
+	authorityRevoked.Store(true)
+	revokedAt := time.Now()
+	revokeContext, revokeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer revokeCancel()
+	for {
+		var frame ptyFrame
+		if err := wsjson.Read(revokeContext, connection, &frame); err != nil {
+			t.Fatalf("active stream was not revoked within five seconds: %v", err)
+		}
+		if frame.Type == "revoked" {
+			if elapsed := time.Since(revokedAt); elapsed >= 5*time.Second {
+				t.Fatalf("active stream revoke exceeded five-second SLO: %s", elapsed)
+			}
+			break
+		}
 	}
 }
 

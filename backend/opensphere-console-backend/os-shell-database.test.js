@@ -57,6 +57,7 @@ test('mode health checks the exact login role and every required RPC privilege w
     'console.resolve_shell_attach_binding(text,uuid,uuid,uuid,text,text,text)',
     'console.consume_shell_attach_ticket(text,uuid,uuid,uuid,text,bigint,bigint,text,text,text)',
     'console.revalidate_shell_session(uuid,uuid,uuid,text,bigint,bigint,text,text)',
+    'console.touch_shell_session_activity(uuid,uuid,uuid,text,bigint,bigint,text,text)',
   ]);
   assert.match(call.text, /has_schema_privilege/);
   assert.match(call.text, /has_function_privilege/);
@@ -97,4 +98,32 @@ test('ticket issue is bounded to 30 seconds before reaching PostgreSQL', async (
     ...binding(), ticket: Buffer.alloc(32, 7).toString('base64url'), expiresAt: '2026-08-15T00:00:31.000Z',
   }), { code: 'AttachTicketExpiryInvalid' });
   assert.equal(calls.filter((call) => call.text.includes('issue_shell_attach_ticket')).length, 0);
+});
+
+test('stable PostgreSQL quota, kill-switch, and idempotency codes map to closed HTTP contracts', async () => {
+  for (const [databaseCode, status] of [
+    ['ShellFeatureDisabled', 503],
+    ['ShellActorSessionQuotaExceeded', 429],
+    ['ShellGlobalSessionQuotaExceeded', 503],
+    ['ShellSessionIdempotencyConflict', 409],
+  ]) {
+    const db = createOsShellDatabase({ query: async (text) => {
+      if (text.includes('current_shell_permission_revision')) return { rows: [{ permission_revision: REV1 }] };
+      throw Object.assign(new Error(databaseCode), { code: 'P0001' });
+    } });
+    await assert.rejects(() => db.createSession({ ...binding(), runtimeTemplateRevision: 'shell-runtime-v1',
+      idleExpiresAt: '2026-08-15T00:10:00.000Z', absoluteExpiresAt: '2026-08-15T01:00:00.000Z',
+      releaseEvidence: { releaseEvidenceRef: 'release://edge/test', manifestSha256: DIGEST, keyId: 'edge-local-1',
+        runtimeImageDigest: DIGEST, osArtifactDigest: DIGEST, sessionPolicyRevision: 'policy-v1' } }),
+    (error) => error.code === databaseCode && error.status === status);
+  }
+});
+
+test('feature state is read only through its closed RPC', async () => {
+  const calls = [];
+  const db = createOsShellDatabase({ query: async (text, values) => { calls.push({ text, values });
+    return { rows: [{ enabled: false, revision: 3, active_sessions: 0, scale_down_allowed: true }] }; } });
+  const state = await db.featureState();
+  assert.equal(state.scale_down_allowed, true);
+  assert.deepEqual(calls, [{ text: 'SELECT * FROM console.get_shell_feature_state()', values: [] }]);
 });
