@@ -239,6 +239,9 @@ if (-not $secretExists) {
   $oaaMaintenancePassword = New-RandomSafePassword 36
   $aiRuntimePassword = New-RandomSafePassword 36
   $aiPipelinePassword = New-RandomSafePassword 36
+  $shellApiPassword = New-RandomSafePassword 36
+  $shellGatewayPassword = New-RandomSafePassword 36
+  $shellReconcilerPassword = New-RandomSafePassword 36
   $jwtSecret = New-RandomBase64 48
   $anonKey = New-ServiceJwt $jwtSecret "anon"
   $serviceRoleKey = New-ServiceJwt $jwtSecret "service_role"
@@ -262,6 +265,11 @@ if (-not $secretExists) {
       'oaa-maintenance-password' = $oaaMaintenancePassword
       'ai-runtime-password' = $aiRuntimePassword
       'ai-pipeline-password' = $aiPipelinePassword
+      'shell-api-password' = $shellApiPassword
+      'shell-gateway-password' = $shellGatewayPassword
+      'shell-reconciler-password' = $shellReconcilerPassword
+      'shell-admission-secret' = (New-RandomSafePassword 48)
+      'shell-delegation-secret' = (New-RandomSafePassword 48)
       'jwt-secret' = $jwtSecret
       'anon-key' = $anonKey
       'service-role-key' = $serviceRoleKey
@@ -284,6 +292,11 @@ $requiredScopedSecrets = @{
   'oaa-maintenance-password' = 36
   'ai-runtime-password' = 36
   'ai-pipeline-password' = 36
+  'shell-api-password' = 36
+  'shell-gateway-password' = 36
+  'shell-reconciler-password' = 36
+  'shell-admission-secret' = 48
+  'shell-delegation-secret' = 48
   's3-access-key-id' = 32
   's3-access-key-secret' = 64
 }
@@ -304,6 +317,11 @@ $oaaGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensp
 $oaaObserverPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-observer-password}")
 $oaaRelayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-relay-password}")
 $oaaMaintenancePasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-maintenance-password}")
+$shellApiPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-api-password}")
+$shellGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-gateway-password}")
+$shellReconcilerPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-reconciler-password}")
+$shellAdmissionSecretB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-admission-secret}")
+$shellDelegationSecretB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-delegation-secret}")
 
 # Kubernetes Secrets are namespace-scoped. Mirror only the two server-side
 # values required by Console Backend; never copy the Postgres owner password.
@@ -345,6 +363,54 @@ stringData:
   maintenance-pg-user: opensphere_oaa_maintenance
 "@
 Invoke-Kubectl @("apply", "-f", "-") $oaaRuntimeSecret
+
+# Each Shell control-plane process receives exactly one constrained database
+# login. These Secrets intentionally contain no Supabase owner/JWT/service key.
+$shellDatabaseHost = "opensphere-supabase-postgres.$Namespace.svc.cluster.local"
+$shellDatabaseSecrets = @(
+  @{ Name = 'opensphere-shell-api-db'; Scope = 'shell-api-only'; User = 'opensphere_shell_api'; Password = $shellApiPasswordB64 },
+  @{ Name = 'opensphere-shell-gateway-db'; Scope = 'shell-gateway-only'; User = 'opensphere_shell_gateway'; Password = $shellGatewayPasswordB64 },
+  @{ Name = 'opensphere-shell-reconciler-db'; Scope = 'shell-reconciler-only'; User = 'opensphere_shell_reconciler'; Password = $shellReconcilerPasswordB64 }
+)
+foreach ($shellSecret in $shellDatabaseSecrets) {
+  $shellRuntimeSecret = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $($shellSecret.Name)
+  namespace: opensphere-console
+  labels:
+    opensphere.io/secret-scope: $($shellSecret.Scope)
+    opensphere.io/authority: cbss
+type: Opaque
+data:
+  password: $($shellSecret.Password)
+stringData:
+  provider: postgres
+  host: $shellDatabaseHost
+  port: "5432"
+  database: postgres
+  username: $($shellSecret.User)
+  sslmode: prefer
+"@
+  Invoke-Kubectl @('apply','-f','-') $shellRuntimeSecret
+}
+
+$shellControlRuntimeSecret = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensphere-shell-control-runtime
+  namespace: opensphere-console
+  labels:
+    opensphere.io/secret-scope: shell-control-only
+    opensphere.io/authority: cbss
+type: Opaque
+data:
+  admission-secret: $shellAdmissionSecretB64
+  delegation-secret: $shellDelegationSecretB64
+"@
+Invoke-Kubectl @('apply','-f','-') $shellControlRuntimeSecret
 
 # AI receives two constrained PostgreSQL logins and an RLS-scoped Storage S3
 # session. It never receives the owner password, service-role key, JWT signing
@@ -523,6 +589,9 @@ $oaaRelayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(
 $oaaMaintenancePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($oaaMaintenancePasswordB64))
 $aiRuntimePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aiRuntimePasswordB64))
 $aiPipelinePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aiPipelinePasswordB64))
+$shellApiPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($shellApiPasswordB64))
+$shellGatewayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($shellGatewayPasswordB64))
+$shellReconcilerPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($shellReconcilerPasswordB64))
 $escapedBackendPassword = $backendPassword.Replace("'", "''")
 $escapedOaaGatewayPassword = $oaaGatewayPassword.Replace("'", "''")
 $escapedOaaObserverPassword = $oaaObserverPassword.Replace("'", "''")
@@ -530,6 +599,9 @@ $escapedOaaRelayPassword = $oaaRelayPassword.Replace("'", "''")
 $escapedOaaMaintenancePassword = $oaaMaintenancePassword.Replace("'", "''")
 $escapedAiRuntimePassword = $aiRuntimePassword.Replace("'", "''")
 $escapedAiPipelinePassword = $aiPipelinePassword.Replace("'", "''")
+$escapedShellApiPassword = $shellApiPassword.Replace("'", "''")
+$escapedShellGatewayPassword = $shellGatewayPassword.Replace("'", "''")
+$escapedShellReconcilerPassword = $shellReconcilerPassword.Replace("'", "''")
 
 # Create the constrained runtime role without placing its password in argv or logs.
 $roleSql = @"
@@ -607,6 +679,39 @@ BEGIN
   ELSE
     ALTER ROLE opensphere_ai_pipeline LOGIN PASSWORD '$escapedAiPipelinePassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+`$`$;
+DO `$`$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_shell_api') THEN
+    CREATE ROLE opensphere_shell_api LOGIN PASSWORD '$escapedShellApiPassword'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE opensphere_shell_api LOGIN PASSWORD '$escapedShellApiPassword'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+`$`$;
+DO `$`$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_shell_gateway') THEN
+    CREATE ROLE opensphere_shell_gateway LOGIN PASSWORD '$escapedShellGatewayPassword'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE opensphere_shell_gateway LOGIN PASSWORD '$escapedShellGatewayPassword'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+`$`$;
+DO `$`$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_shell_reconciler') THEN
+    CREATE ROLE opensphere_shell_reconciler LOGIN PASSWORD '$escapedShellReconcilerPassword'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE opensphere_shell_reconciler LOGIN PASSWORD '$escapedShellReconcilerPassword'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
 END
 `$`$;

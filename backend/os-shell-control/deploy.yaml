@@ -1,0 +1,455 @@
+# CBSS OS Shell control plane. All workloads are default-off (replicas: 0 and
+# feature flags false) until exact-digest control/runtime images, release
+# evidence and the four separated TLS leaves are installed by the release
+# authority: opensphere-shell-api-tls, opensphere-shell-reconciler-tls,
+# opensphere-shell-credential-authority-tls, opensphere-shell-console-api-tls.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opensphere-shell-sessions
+  labels:
+    opensphere.io/scope: ephemeral-shell-runtime
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-shell-api, namespace: opensphere-console }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-shell-gateway, namespace: opensphere-console }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-shell-reconciler, namespace: opensphere-console }
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-shell-console-api, namespace: opensphere-console }
+automountServiceAccountToken: false
+---
+# Runtime has no RBAC binding. Its default token mount is disabled; the Pod
+# template projects one agent-only, audience-bound, ten-minute bootstrap token.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opensphere-shell-runtime, namespace: opensphere-shell-sessions }
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-shell-reconciler, namespace: opensphere-shell-sessions }
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-shell-reconciler, namespace: opensphere-shell-sessions }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-shell-reconciler }
+subjects: [{ kind: ServiceAccount, name: opensphere-shell-reconciler, namespace: opensphere-console }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: opensphere-shell-runtime-token-reviewer }
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: opensphere-shell-runtime-token-reviewer }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensphere-shell-runtime-token-reviewer }
+subjects: [{ kind: ServiceAccount, name: opensphere-shell-reconciler, namespace: opensphere-console }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: opensphere-shell-api, namespace: opensphere-console, labels: { app: opensphere-shell-api } }
+spec:
+  replicas: 0
+  selector: { matchLabels: { app: opensphere-shell-api } }
+  template:
+    metadata: { labels: { app: opensphere-shell-api, opensphere.io/authority: cbss-api } }
+    spec:
+      serviceAccountName: opensphere-shell-api
+      automountServiceAccountToken: false
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: api
+          image: __OPENSPHERE_OS_SHELL_CONTROL_IMAGE__
+          args: ["node", "server.js"]
+          env:
+            - { name: OS_SHELL_MODE, value: api }
+            - { name: OS_SHELL_CONTROL_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_CONTROL_ENABLED, value: "false" }
+            - { name: OS_SHELL_ATTACH_ENABLED, value: "false" }
+            - { name: OS_SHELL_RECONCILER_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_REGISTRATION_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_IMAGE, value: "__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__" }
+            - { name: OS_SHELL_OS_ARTIFACT_DIGEST, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+            - { name: OS_SHELL_MANIFEST_SHA256, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+            - { name: OS_SHELL_RELEASE_EVIDENCE_REF, value: "release://disabled" }
+            - { name: OS_SHELL_RELEASE_KEY_ID, value: disabled }
+            - { name: OS_SHELL_SESSION_POLICY_REVISION, value: disabled }
+            - { name: OS_SHELL_RUNTIME_TEMPLATE_REVISION, value: disabled }
+            - { name: OS_SHELL_INTERNAL_TLS_CERT_FILE, value: /var/run/opensphere-shell-api-tls/tls.crt }
+            - { name: OS_SHELL_INTERNAL_TLS_KEY_FILE, value: /var/run/opensphere-shell-api-tls/tls.key }
+            - { name: OS_SHELL_INTERNAL_CA_FILE, value: /var/run/opensphere-shell-control-ca/ca.crt }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/opensphere-shell-control-ca/ca.crt }
+            - { name: OS_SHELL_CONSOLE_BACKEND_URL, value: "https://opensphere-shell-credential-authority.opensphere-console.svc.cluster.local:8444" }
+            - { name: PGHOST, valueFrom: { secretKeyRef: { name: opensphere-shell-api-db, key: host } } }
+            - { name: PGPORT, valueFrom: { secretKeyRef: { name: opensphere-shell-api-db, key: port } } }
+            - { name: PGDATABASE, valueFrom: { secretKeyRef: { name: opensphere-shell-api-db, key: database } } }
+            - { name: PGUSER, valueFrom: { secretKeyRef: { name: opensphere-shell-api-db, key: username } } }
+            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: opensphere-shell-api-db, key: password } } }
+            - { name: PGSSLMODE, valueFrom: { secretKeyRef: { name: opensphere-shell-api-db, key: sslmode } } }
+            - { name: OS_SHELL_ADMISSION_SECRET, valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: admission-secret } } }
+            - { name: OS_SHELL_DELEGATION_SECRET, valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: delegation-secret } } }
+          ports: [{ name: browser-http, containerPort: 8080 }, { name: runtime-tls, containerPort: 8443 }]
+          volumeMounts:
+            - { name: api-tls, mountPath: /var/run/opensphere-shell-api-tls, readOnly: true }
+            - { name: control-ca, mountPath: /var/run/opensphere-shell-control-ca, readOnly: true }
+          readinessProbe: { httpGet: { path: /readyz, port: 8080 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 10 }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+      volumes:
+        - { name: api-tls, secret: { secretName: opensphere-shell-api-tls } }
+        - { name: control-ca, configMap: { name: opensphere-shell-control-ca } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: opensphere-shell-gateway, namespace: opensphere-console, labels: { app: opensphere-shell-gateway } }
+spec:
+  replicas: 0
+  selector: { matchLabels: { app: opensphere-shell-gateway } }
+  template:
+    metadata: { labels: { app: opensphere-shell-gateway, opensphere.io/authority: cbss-gateway } }
+    spec:
+      serviceAccountName: opensphere-shell-gateway
+      automountServiceAccountToken: false
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: gateway
+          image: __OPENSPHERE_OS_SHELL_CONTROL_IMAGE__
+          env:
+            - { name: OS_SHELL_MODE, value: gateway }
+            - { name: OS_SHELL_CONTROL_ENABLED, value: "false" }
+            - { name: OS_SHELL_ATTACH_ENABLED, value: "false" }
+            - { name: OS_SHELL_RECONCILER_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_REGISTRATION_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_CONTROL_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_IMAGE, value: "__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__" }
+            - { name: OS_SHELL_OS_ARTIFACT_DIGEST, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+            - { name: OS_SHELL_MANIFEST_SHA256, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+            - { name: OS_SHELL_RELEASE_EVIDENCE_REF, value: "release://disabled" }
+            - { name: OS_SHELL_RELEASE_KEY_ID, value: disabled }
+            - { name: OS_SHELL_SESSION_POLICY_REVISION, value: disabled }
+            - { name: OS_SHELL_RUNTIME_TEMPLATE_REVISION, value: disabled }
+            - { name: PGHOST, valueFrom: { secretKeyRef: { name: opensphere-shell-gateway-db, key: host } } }
+            - { name: PGPORT, valueFrom: { secretKeyRef: { name: opensphere-shell-gateway-db, key: port } } }
+            - { name: PGDATABASE, valueFrom: { secretKeyRef: { name: opensphere-shell-gateway-db, key: database } } }
+            - { name: PGUSER, valueFrom: { secretKeyRef: { name: opensphere-shell-gateway-db, key: username } } }
+            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: opensphere-shell-gateway-db, key: password } } }
+            - { name: PGSSLMODE, valueFrom: { secretKeyRef: { name: opensphere-shell-gateway-db, key: sslmode } } }
+            - { name: OS_SHELL_ADMISSION_SECRET, valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: admission-secret } } }
+          ports: [{ name: gateway-http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /readyz, port: 8080 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 10 }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: opensphere-shell-reconciler, namespace: opensphere-console, labels: { app: opensphere-shell-reconciler } }
+spec:
+  replicas: 0
+  selector: { matchLabels: { app: opensphere-shell-reconciler } }
+  template:
+    metadata: { labels: { app: opensphere-shell-reconciler, opensphere.io/authority: cbss-reconciler } }
+    spec:
+      serviceAccountName: opensphere-shell-reconciler
+      automountServiceAccountToken: true
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: reconciler
+          image: __OPENSPHERE_OS_SHELL_CONTROL_IMAGE__
+          env:
+            - { name: OS_SHELL_MODE, value: reconciler }
+            - { name: OS_SHELL_CONTROL_ENABLED, value: "false" }
+            - { name: OS_SHELL_RECONCILER_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_REGISTRATION_ENABLED, value: "false" }
+            - { name: OS_SHELL_ATTACH_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_CONTROL_ENABLED, value: "false" }
+            - { name: OS_SHELL_RUNTIME_IMAGE, value: "__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__" }
+            - { name: OS_SHELL_OS_ARTIFACT_DIGEST, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+            - { name: OS_SHELL_MANIFEST_SHA256, value: "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+            - { name: OS_SHELL_RELEASE_EVIDENCE_REF, value: "release://disabled" }
+            - { name: OS_SHELL_RELEASE_KEY_ID, value: disabled }
+            - { name: OS_SHELL_SESSION_POLICY_REVISION, value: disabled }
+            - { name: OS_SHELL_RUNTIME_TEMPLATE_REVISION, value: disabled }
+            - { name: OS_SHELL_INTERNAL_TLS_CERT_FILE, value: /var/run/opensphere-shell-reconciler-tls/tls.crt }
+            - { name: OS_SHELL_INTERNAL_TLS_KEY_FILE, value: /var/run/opensphere-shell-reconciler-tls/tls.key }
+            - { name: PGHOST, valueFrom: { secretKeyRef: { name: opensphere-shell-reconciler-db, key: host } } }
+            - { name: PGPORT, valueFrom: { secretKeyRef: { name: opensphere-shell-reconciler-db, key: port } } }
+            - { name: PGDATABASE, valueFrom: { secretKeyRef: { name: opensphere-shell-reconciler-db, key: database } } }
+            - { name: PGUSER, valueFrom: { secretKeyRef: { name: opensphere-shell-reconciler-db, key: username } } }
+            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: opensphere-shell-reconciler-db, key: password } } }
+            - { name: PGSSLMODE, valueFrom: { secretKeyRef: { name: opensphere-shell-reconciler-db, key: sslmode } } }
+          ports: [{ name: health-http, containerPort: 8080 }, { name: register-tls, containerPort: 8443 }]
+          volumeMounts: [{ name: reconciler-tls, mountPath: /var/run/opensphere-shell-reconciler-tls, readOnly: true }]
+          readinessProbe: { httpGet: { path: /readyz, port: 8080 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 10 }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+      volumes: [{ name: reconciler-tls, secret: { secretName: opensphere-shell-reconciler-tls } }]
+---
+# Dedicated, internal-only copy of the canonical Console frontdoor.  It runs
+# the exact Console image and therefore consumes the same data-driven Registry,
+# DUPA and plugin/PFSS routes as the browser frontdoor; no route table is copied
+# into CBSS.  The private leaf is mounted only here and its Service is ClusterIP.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: opensphere-shell-console-api, namespace: opensphere-console, labels: { app: opensphere-shell-console-api } }
+spec:
+  replicas: 0
+  selector: { matchLabels: { app: opensphere-shell-console-api } }
+  template:
+    metadata: { labels: { app: opensphere-shell-console-api, opensphere.io/authority: console-frontdoor } }
+    spec:
+      serviceAccountName: opensphere-shell-console-api
+      automountServiceAccountToken: false
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: console-frontdoor
+          image: __OPENSPHERE_CONSOLE_IMAGE__
+          imagePullPolicy: IfNotPresent
+          env: [{ name: OS_AUTH_ORIGIN, value: "https://localhost:1114" }]
+          ports: [{ name: console-api-tls, containerPort: 8443 }]
+          volumeMounts:
+            - { name: console-api-tls, mountPath: /etc/nginx/certs, readOnly: true }
+            - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
+            - { name: nginx-tmp, mountPath: /tmp }
+          readinessProbe: { httpGet: { scheme: HTTPS, path: /readyz, port: console-api-tls }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { scheme: HTTPS, path: /index.html, port: console-api-tls }, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 10m, memory: 24Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+      volumes:
+        - { name: console-api-tls, secret: { secretName: opensphere-shell-console-api-tls } }
+        - { name: nginx-conf, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
+        - { name: nginx-tmp, emptyDir: { medium: Memory, sizeLimit: 16Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-shell-api, namespace: opensphere-console }
+spec:
+  selector: { app: opensphere-shell-api }
+  ports: [{ name: browser-http, port: 8080, targetPort: browser-http }, { name: runtime-tls, port: 8443, targetPort: runtime-tls }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-shell-gateway, namespace: opensphere-console }
+spec:
+  selector: { app: opensphere-shell-gateway }
+  ports: [{ name: gateway-http, port: 8080, targetPort: gateway-http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-shell-reconciler, namespace: opensphere-console }
+spec:
+  selector: { app: opensphere-shell-reconciler }
+  ports: [{ name: health-http, port: 8080, targetPort: health-http }, { name: register-tls, port: 8443, targetPort: register-tls }]
+---
+# Selects the Setup-owned Console Backend Pods, but exposes only their
+# dedicated TLS 1.3 listener. The normal Backend Service does not expose 8444.
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-shell-credential-authority, namespace: opensphere-console }
+spec:
+  selector: { app: opensphere-console-backend }
+  ports: [{ name: credential-tls, port: 8444, targetPort: shell-credential-tls }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensphere-shell-console-api, namespace: opensphere-console }
+spec:
+  type: ClusterIP
+  selector: { app: opensphere-shell-console-api }
+  ports: [{ name: console-api-tls, port: 8445, targetPort: console-api-tls }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-api-ingress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-shell-api } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: opensphere-console } }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-shell-sessions } }
+          podSelector: { matchLabels: { app: opensphere-os-shell-runtime } }
+      ports: [{ protocol: TCP, port: 8443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-gateway-ingress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-shell-gateway } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: opensphere-console } }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - from:
+        - podSelector: { matchLabels: { app: opensphere-shell-api } }
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-reconciler-ingress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-shell-reconciler } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-shell-sessions } }
+          podSelector: { matchLabels: { app: opensphere-os-shell-runtime } }
+      ports: [{ protocol: TCP, port: 8443 }]
+    - from:
+        - podSelector: { matchLabels: { app: opensphere-shell-api } }
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# This additive rule extends the existing Console Backend ingress boundary for
+# the dedicated credential listener only; normal port 8080 remains governed by
+# deploy/production-hardening.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-credential-authority-ingress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-console-backend } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: opensphere-shell-api } }
+      ports: [{ protocol: TCP, port: 8444 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-console-api-ingress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-shell-console-api } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-shell-sessions } }
+          podSelector: { matchLabels: { app: opensphere-os-shell-runtime } }
+      ports: [{ protocol: TCP, port: 8443 }]
+    - from:
+        - podSelector: { matchLabels: { app: opensphere-shell-api } }
+      ports: [{ protocol: TCP, port: 8443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-api-egress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-shell-api } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: opensphere-console-backend } }
+      ports: [{ protocol: TCP, port: 8444 }]
+    - to:
+        - podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: [opensphere-shell-gateway, opensphere-shell-reconciler] }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
+        - podSelector: { matchLabels: { app: opensphere-shell-console-api } }
+      ports: [{ protocol: TCP, port: 8443 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console-data } }
+          podSelector: { matchLabels: { app: opensphere-supabase-postgres } }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-gateway-egress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-shell-gateway } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-shell-sessions } }
+          podSelector: { matchLabels: { app: opensphere-os-shell-runtime } }
+      ports: [{ protocol: TCP, port: 8443 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console-data } }
+          podSelector: { matchLabels: { app: opensphere-supabase-postgres } }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+# Preserve the canonical data-driven frontdoor while preventing the internal
+# copy from becoming a general network pivot. Registry, identity, CLI artifact
+# and every admitted plugin/PFSS Service terminate on target port 8080 in the
+# Console namespace; DNS is the only cross-namespace egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-console-api-egress, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: opensphere-shell-console-api } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: {} }]
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-runtime-default-deny, namespace: opensphere-shell-sessions }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensphere-shell-runtime-closed-network, namespace: opensphere-shell-sessions }
+spec:
+  podSelector: { matchLabels: { app: opensphere-os-shell-runtime } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+          podSelector: { matchLabels: { app: opensphere-shell-gateway } }
+      ports: [{ protocol: TCP, port: 8443 }]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+          podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: [opensphere-shell-api, opensphere-shell-reconciler] }
+      ports: [{ protocol: TCP, port: 8443 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+          podSelector: { matchLabels: { app: opensphere-shell-console-api } }
+      # Kubernetes NetworkPolicy is evaluated after Service DNAT by the
+      # supported CNI, so authorize the target container port, not Service 8445.
+      ports: [{ protocol: TCP, port: 8443 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]

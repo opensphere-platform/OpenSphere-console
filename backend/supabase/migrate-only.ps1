@@ -18,6 +18,14 @@ function Get-TextSha256([string]$Value) {
   finally { $sha.Dispose() }
 }
 function Get-CanonicalSha256([string]$Path) { return Get-TextSha256 ([IO.File]::ReadAllText($Path).Replace("`r`n", "`n")) }
+function New-RandomSafePassword([int]$Length) {
+  $alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  $buffer = New-Object byte[] $Length
+  [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
+  $chars = New-Object char[] $Length
+  for ($i = 0; $i -lt $Length; $i++) { $chars[$i] = $alphabet[$buffer[$i] % $alphabet.Length] }
+  return -join $chars
+}
 
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 $migrations = @(Get-ChildItem -LiteralPath $migrationDirectory -Filter '*.sql' -File | Sort-Object Name)
@@ -48,12 +56,96 @@ function Invoke-Kubectl([string[]]$Arguments, [string]$InputText = '') {
   if ($LASTEXITCODE -ne 0) { throw "kubectl failed: $($Arguments -join ' ')" }
 }
 
+# Component-scoped migrations may introduce RPC grants for Shell roles. Ensure
+# those LOGIN roles and their one-role-only workload Secrets exist before SQL is
+# evaluated; no owner/JWT/service-role credential is mirrored.
+$shellRoleSecrets = @(
+  @{ Role = 'opensphere_shell_api'; Key = 'shell-api-password'; Name = 'opensphere-shell-api-db'; Scope = 'shell-api-only' },
+  @{ Role = 'opensphere_shell_gateway'; Key = 'shell-gateway-password'; Name = 'opensphere-shell-gateway-db'; Scope = 'shell-gateway-only' },
+  @{ Role = 'opensphere_shell_reconciler'; Key = 'shell-reconciler-password'; Name = 'opensphere-shell-reconciler-db'; Scope = 'shell-reconciler-only' }
+)
+$shellControlKeys = @('shell-admission-secret','shell-delegation-secret')
+foreach ($key in $shellControlKeys) {
+  $encoded = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.$key}")
+  if (-not $encoded) {
+    $patch = @{ stringData = @{ $key = (New-RandomSafePassword 48) } } | ConvertTo-Json -Compress
+    Invoke-Kubectl @('-n',$Namespace,'patch','secret','opensphere-supabase-secrets','--type=merge','-p',$patch)
+  }
+}
+foreach ($shellRole in $shellRoleSecrets) {
+  $encoded = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.$($shellRole.Key)}")
+  if ($LASTEXITCODE -ne 0) { throw 'opensphere-supabase-secrets is required before component-scoped migration' }
+  if (-not $encoded) {
+    $patch = @{ stringData = @{ $shellRole.Key = (New-RandomSafePassword 36) } } | ConvertTo-Json -Compress
+    Invoke-Kubectl @('-n',$Namespace,'patch','secret','opensphere-supabase-secrets','--type=merge','-p',$patch)
+    $encoded = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.$($shellRole.Key)}")
+  }
+  if (-not $encoded) { throw "Shell database credential was not provisioned: $($shellRole.Key)" }
+  $shellRole.PasswordB64 = $encoded
+  $shellSecret = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $($shellRole.Name)
+  namespace: opensphere-console
+  labels:
+    opensphere.io/secret-scope: $($shellRole.Scope)
+    opensphere.io/authority: cbss
+type: Opaque
+data:
+  password: $encoded
+stringData:
+  provider: postgres
+  host: opensphere-supabase-postgres.$Namespace.svc.cluster.local
+  port: "5432"
+  database: postgres
+  username: $($shellRole.Role)
+  sslmode: prefer
+"@
+  Invoke-Kubectl @('apply','-f','-') $shellSecret
+}
+$shellAdmissionSecretB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o 'jsonpath={.data.shell-admission-secret}')
+$shellDelegationSecretB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o 'jsonpath={.data.shell-delegation-secret}')
+$shellControlRuntimeSecret = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensphere-shell-control-runtime
+  namespace: opensphere-console
+  labels: { opensphere.io/secret-scope: shell-control-only, opensphere.io/authority: cbss }
+type: Opaque
+data:
+  admission-secret: $shellAdmissionSecretB64
+  delegation-secret: $shellDelegationSecretB64
+"@
+Invoke-Kubectl @('apply','-f','-') $shellControlRuntimeSecret
+
 Invoke-Kubectl @('-n', $Namespace, 'get', 'statefulset/opensphere-supabase-postgres')
 $pod = (& kubectl @kubectlArgs -n $Namespace get pod -l app=opensphere-supabase-postgres -o 'jsonpath={.items[0].metadata.name}')
 if ($LASTEXITCODE -ne 0 -or -not $pod) { throw 'Supabase PostgreSQL pod not found' }
 function Invoke-MigrationSql([string]$Sql) {
   Invoke-Kubectl @('-n',$Namespace,'exec','-i',$pod,'--','sh','-ec','PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1') $Sql
 }
+
+$shellRoleSql = @()
+foreach ($shellRole in $shellRoleSecrets) {
+  $password = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$shellRole.PasswordB64)).Replace("'", "''")
+  $shellRoleSql += @"
+DO `$`$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$($shellRole.Role)') THEN
+    CREATE ROLE $($shellRole.Role) LOGIN PASSWORD '$password'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE $($shellRole.Role) LOGIN PASSWORD '$password'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+`$`$;
+"@
+}
+Invoke-MigrationSql ($shellRoleSql -join "`n")
+
 function Get-LedgerDigest([string]$Id) {
   if ($Id -notmatch '^[0-9]{4}_[a-z0-9_]+$') { throw "Invalid migration id $Id" }
   $rows = @(Invoke-Kubectl @('-n',$Namespace,'exec','-i',$pod,'--','sh','-ec','PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U supabase_admin -d postgres -tA -v ON_ERROR_STOP=1') "SELECT COALESCE((SELECT sha256 FROM console.schema_migration WHERE migration_id='$Id'),'');")

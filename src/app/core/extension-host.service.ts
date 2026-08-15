@@ -371,6 +371,11 @@ export class ExtensionHostService {
       for (const p of perms) {
         if (!isKnownCapability(p)) throw new Error(`알 수 없는 권한 scope '${p}'`);
       }
+			// session:attach is a CBSS system-only capability. Ordinary signed
+			// Consumers fail before entry bytes are fetched or imported.
+			if (perms.includes('session:attach')) {
+				throw new Error("system capability 'session:attach'는 외부 Consumer에 부여할 수 없음");
+			}
 			if (manifest.contributions.page.enabled && !perms.includes('page:register')) {
 				throw new Error("page contribution에 'page:register' 권한 미선언");
 			}

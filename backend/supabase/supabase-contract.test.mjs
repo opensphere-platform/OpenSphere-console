@@ -85,13 +85,50 @@ test('migration manifest is the digest-bound canonical inventory', () => {
   assert.equal(manifest.setDigest, `sha256:${createHash('sha256').update(material, 'utf8').digest('hex')}`);
 });
 
-test('component-scoped migration runner mutates schema only and never rolls workloads', () => {
+test('component-scoped migration runner provisions only scoped Shell DB credentials and never rolls workloads', () => {
   const runner = readFileSync(path.join(here, 'migrate-only.ps1'), 'utf8');
   assert.match(runner, /manifest\.json/);
   assert.match(runner, /Migration manifest inventory mismatch/);
   assert.match(runner, /NOTIFY pgrst, 'reload schema'/);
+  assert.match(runner, /opensphere-shell-api-db/);
+  assert.match(runner, /opensphere-shell-gateway-db/);
+  assert.match(runner, /opensphere-shell-reconciler-db/);
+  assert.match(runner, /NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
   assert.doesNotMatch(runner, /rollout\s+(?:restart|status)/i);
-  assert.doesNotMatch(runner, /kubectl[^\n]*(?:apply|patch|delete)/i);
+  assert.doesNotMatch(runner, /kubectl[^\n]*delete/i);
+  assert.doesNotMatch(runner, /(?:deployment|statefulset)[^\n]*(?:apply|patch)/i);
+});
+
+test('Shell session ledger is RPC-only, fenced, hash-only, and append-only', () => {
+  const sql = readFileSync(path.join(here, 'migrations', '0061_shell_session_ledger.sql'), 'utf8');
+  for (const table of ['shell_session', 'shell_attach_ticket', 'shell_session_event']) {
+    assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS console\\.${table}`));
+  }
+  assert.match(sql, /ticket_hash text PRIMARY KEY CHECK\(ticket_hash~'\^sha256:/);
+  assert.doesNotMatch(sql, /\b(raw_ticket|ticket_plaintext|ticket_value)\b/i);
+  assert.match(sql, /expires_at<=created_at\+interval '30 seconds'/);
+  assert.match(sql, /consumed_at IS NULL AND expires_at>v_now/);
+  assert.match(sql, /GET DIAGNOSTICS v_affected=ROW_COUNT/);
+  assert.match(sql, /ENABLE ALWAYS TRIGGER shell_session_event_append_only/);
+  assert.match(sql, /BEFORE TRUNCATE ON console\.shell_session_event/);
+  assert.match(sql, /NEW\.generation<OLD\.generation OR NEW\.fencing_epoch<OLD\.fencing_epoch/);
+  assert.match(sql, /current_shell_permission_revision/);
+  assert.match(sql, /ORDER BY code COLLATE "C"/);
+  assert.match(sql, /FROM PUBLIC,anon,authenticated,service_role,authenticator,opensphere_console_backend/);
+  assert.doesNotMatch(sql, /GRANT (?:SELECT|INSERT|UPDATE|DELETE|ALL) ON TABLE console\.shell_/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION console\.consume_shell_attach_ticket/);
+});
+
+test('full installer provisions three isolated Shell LOGIN roles and workload Secrets', () => {
+  const installer = readFileSync(path.join(here, 'install.ps1'), 'utf8');
+  for (const role of ['opensphere_shell_api', 'opensphere_shell_gateway', 'opensphere_shell_reconciler']) {
+    assert.match(installer, new RegExp(`CREATE ROLE ${role} LOGIN PASSWORD`));
+    assert.match(installer, new RegExp(`ALTER ROLE ${role} LOGIN PASSWORD`));
+  }
+  for (const name of ['opensphere-shell-api-db', 'opensphere-shell-gateway-db', 'opensphere-shell-reconciler-db']) {
+    assert.match(installer, new RegExp(name));
+  }
+  assert.match(installer, /opensphere\.io\/authority: cbss/);
 });
 
 test('R2D2 activation grants the query role only read access to observer fencing', () => {

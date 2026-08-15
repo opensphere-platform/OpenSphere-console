@@ -19,18 +19,29 @@ const (
 )
 
 type AttestedExecutionContext struct {
-	Profile       string
-	Authority     string
-	AttestationID string
+	Profile            string
+	Authority          string
+	AttestationID      string
+	ActorID            string
+	SessionID          string
+	SessionClass       string
+	RuntimeAdapterID   string
+	RuntimeUID         string
+	Origin             string
+	Audience           string
+	PermissionRevision string
+	AssuranceLevel     string
+	ReleaseEvidenceRef string
+	Generation         int64
+	FencingEpoch       int64
+	KeyID              string
 }
 
 // attestedExecutionContextProvider is intentionally an in-process seam. It is
 // not populated from argv, environment variables, or the user config file.
 // A future delegated credential agent adapter must verify the attestation
 // before returning a context here.
-var attestedExecutionContextProvider = func(context.Context) (*AttestedExecutionContext, error) {
-	return nil, nil
-}
+var attestedExecutionContextProvider = readAttestedExecutionContextFromAgent
 
 var nativeExecutionClasses = map[string]string{
 	"login":          executionClassLocalHost,
@@ -274,7 +285,21 @@ func resolveAttestedExecutionContext(ctx context.Context) (*AttestedExecutionCon
 	if attested == nil {
 		return nil, nil
 	}
-	if attested.Profile != "web-shell" || attested.Authority != "delegated-credential-agent" || strings.TrimSpace(attested.AttestationID) == "" {
+	if attested.Profile != "web-shell" ||
+		attested.Authority != "delegated-credential-agent" ||
+		attested.SessionClass != "operator-interactive" ||
+		attested.RuntimeAdapterID != "cbss.kubernetes-pod" ||
+		attested.Audience != "opensphere-os-cli" ||
+		strings.TrimSpace(attested.AttestationID) == "" ||
+		strings.TrimSpace(attested.ActorID) == "" ||
+		strings.TrimSpace(attested.SessionID) == "" ||
+		strings.TrimSpace(attested.RuntimeUID) == "" ||
+		strings.TrimSpace(attested.Origin) == "" ||
+		strings.TrimSpace(attested.PermissionRevision) == "" ||
+		strings.TrimSpace(attested.AssuranceLevel) == "" ||
+		strings.TrimSpace(attested.ReleaseEvidenceRef) == "" ||
+		strings.TrimSpace(attested.KeyID) == "" ||
+		attested.Generation < 1 || attested.FencingEpoch < 1 {
 		return nil, &CLIError{Code: "InvalidExecutionContext", Message: "검증되지 않은 Web Shell 실행 context입니다"}
 	}
 	return attested, nil

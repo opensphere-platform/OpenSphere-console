@@ -135,7 +135,14 @@ func TestAttestedWebShellPolicyIsClosedAndFailClosed(t *testing.T) {
 	}
 
 	attestedExecutionContextProvider = func(context.Context) (*AttestedExecutionContext, error) {
-		return &AttestedExecutionContext{Profile: "web-shell", Authority: "delegated-credential-agent", AttestationID: "session-attestation"}, nil
+		return &AttestedExecutionContext{
+			Profile: "web-shell", Authority: "delegated-credential-agent", AttestationID: "session-attestation",
+			ActorID: "operator-1", SessionID: "session-1", SessionClass: "operator-interactive",
+			RuntimeAdapterID: "cbss.kubernetes-pod", RuntimeUID: "runtime-uid-1", Origin: "https://localhost:1114",
+			Audience: "opensphere-os-cli", PermissionRevision: "permission-revision-1",
+			AssuranceLevel: "aal2", ReleaseEvidenceRef: "release-evidence-1",
+			Generation: 1, FencingEpoch: 1, KeyID: "agent-key-1",
+		}, nil
 	}
 	if err := enforceExecutionPolicy(context.Background(), "os status", executionClassConsoleAPI, nil); err != nil {
 		t.Fatalf("console-api must be available in attested Web Shell: %v", err)
