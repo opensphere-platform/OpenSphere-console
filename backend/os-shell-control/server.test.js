@@ -158,7 +158,13 @@ test('registration is Pending-409, then exact Provisioning replay succeeds while
     tlsCertificateSha256: `sha256:${'a'.repeat(64)}`, runtimeCredentialHash: `sha256:${'b'.repeat(64)}`,
     runtimeVersion: 'test', attachEndpoint: 'wss://untrusted.example/ignored' };
   const invoke = (value) => control.testContract.registerRuntime(request(value, { headers: { authorization: 'Bearer bootstrap' } }), response());
-  await assert.rejects(() => invoke(body), { status: 409, message: 'RuntimeRegistrationNotReady' });
+  const pendingResponse = response();
+  await control.testContract.handler(request(body, { headers: { authorization: 'Bearer bootstrap' } }), pendingResponse);
+  assert.equal(pendingResponse.statusCode, 409);
+  assert.deepEqual(JSON.parse(pendingResponse.body), {
+    error: 'RuntimeRegistrationNotReady', message: 'RuntimeRegistrationNotReady',
+  });
+  assert.equal(registerCalls, 0);
   registrationState = 'Provisioning';
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const res = response(); await control.testContract.registerRuntime(request(body, { headers: { authorization: 'Bearer bootstrap' } }), res);
