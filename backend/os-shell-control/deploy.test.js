@@ -224,24 +224,69 @@ test('internal Console API uses the canonical data-driven Registry and plugin/PF
   assert.equal(source.includes('DUPA_CONTROL_URL'), false);
 });
 
-test('local-edge deploy binds a runtime-only publication through an exact source-closure verifier', async () => {
+test('local-edge deploy binds component-only runtime/backend publications through exact source closures', async () => {
   assert.match(deployScript, /\[string\]\$RuntimePublicationEvidence = ''/);
+  assert.match(deployScript, /\[string\]\$BackendPublicationEvidence = ''/);
+  assert.match(deployScript, /\[string\]\$ConsolePublicationEvidence = ''/);
   assert.match(deployScript, /Runtime override requires exactly osShellRuntime/);
+  assert.match(deployScript, /Backend override requires exactly backend/);
+  assert.match(deployScript, /Console override requires exactly console/);
   assert.match(deployScript, /Runtime override changes the base Supabase migration lineage/);
+  assert.match(deployScript, /Backend override changes the base Supabase migration lineage/);
+  assert.match(deployScript, /Console override changes the base Supabase migration lineage/);
   assert.match(deployScript, /os-shell-runtime-override-boundary[.]mjs/);
-  assert.match(deployScript, /--base \(\[string\]\$evidence[.]sourceRevision\)/);
-  assert.match(deployScript, /--runtime \(\[string\]\$runtimeEvidence[.]sourceRevision\)/);
+  assert.match(deployScript, /'--base',\s*\r?\n?\s*\(\[string\]\$evidence[.]sourceRevision\)/);
+  assert.match(deployScript, /@\('--runtime', \(\[string\]\$runtimeEvidence[.]sourceRevision\)\)/);
+  assert.match(deployScript, /@\('--backend', \(\[string\]\$backendEvidence[.]sourceRevision\)\)/);
+  assert.match(deployScript, /@\('--console', \(\[string\]\$consoleEvidence[.]sourceRevision\)\)/);
+  assert.match(deployScript, /https:\/\/github[.]com\/opensphere-platform\/OpenSphere-console[.]git/);
+  assert.match(deployScript, /fetch --quiet --prune origin/);
   assert.match(deployScript, /deploymentToolingSha256 = \$deploymentToolingEvidence/);
   assert.match(deployScript, /release:\/\/edge-composite\//);
   assert.match(deployScript, /runtimePublicationEvidence = \$runtimePublicationPath/);
+  assert.match(deployScript, /backendPublicationEvidence = \$backendPublicationPath/);
+  assert.match(deployScript, /consolePublicationEvidence = \$consolePublicationPath/);
+  assert.match(deployScript, /backend = \[string\]\$backendEvidence[.]sourceRevision/);
+  assert.match(deployScript, /console = \[string\]\$consoleEvidence[.]sourceRevision/);
   assert.match(deployScript, /osShellRuntime = \[string\]\$runtimeEvidence[.]sourceRevision/);
+  assert.match(deployScript, /Set-BackendOsShellActivation -Image \$backend[.]image -SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
+  assert.match(deployScript, /Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend'[\s\S]*?-SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
+  assert.match(deployScript, /Assert-ImageMetadata -Repository \$consoleRepository[\s\S]*?-SourceRevision \$consoleEvidence[.]sourceRevision/);
+  assert.match(deployScript, /Assert-PrerequisiteDeployment -Deployment 'opensphere-console'[\s\S]*?-SourceRevision \(\[string\]\$consoleEvidence[.]sourceRevision\)/);
+  assert.match(deployScript, /Set-ConsoleApiActivation -SourceRevision \(\[string\]\$consoleEvidence[.]sourceRevision\)/);
+  assert.match(deployScript, /consoleSha256 = if \(\$consolePublicationPath\)/);
+  const featureEvidenceBlock = /\$featureOperationEvidence = \[ordered\]@\{([\s\S]*?)\r?\n\}/.exec(deployScript)?.[1] || '';
+  assert.doesNotMatch(featureEvidenceBlock, /consolePublicationSha256|backendPublicationSha256/);
+  assert.match(featureEvidenceBlock, /publicationSha256 = Get-FileSha256 -Path \$publicationPath/);
+  assert.match(deployScript, /backendOverrideBoundary = \$backendBoundaryEvidence/);
+  assert.match(deployScript, /consoleOverrideBoundary = \$consoleBoundaryEvidence/);
+  const toolingBlock = /\$deploymentToolingAllowlist = @\(([\s\S]*?)\r?\n\)/.exec(deployScript)?.[1] || '';
+  assert.doesNotMatch(toolingBlock, /backend[\\/]opensphere-console-backend[\\/](Dockerfile|local-edge-automation-token[.]test[.]js)/);
   const boundary = await import(pathToFileURL(path.join(__dirname, '..', '..', 'scripts', 'os-shell-runtime-override-boundary.mjs')).href);
+  const declaredToolingPaths = [...toolingBlock.matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
+  assert.deepEqual(declaredToolingPaths, [...boundary.deploymentToolingPaths].sort());
+  assert.ok(declaredToolingPaths.includes('scripts/Invoke-OsShellFeatureOperation.ps1'));
   const runtimePaths = ['backend/os-cli/cmd/os-shell-runtime/agent.go', 'backend/os-cli/Dockerfile.runtime'];
+  const backendPaths = [
+    'backend/opensphere-console-backend/Dockerfile',
+    'backend/opensphere-console-backend/local-edge-automation-token.test.js',
+  ];
+  const consolePaths = ['nginx/default.conf.template', 'scripts/os-shell-frontend-contract.test.mjs'];
   assert.doesNotThrow(() => boundary.assertRuntimeOverridePaths(runtimePaths));
+  assert.doesNotThrow(() => boundary.assertBackendOverridePaths(backendPaths));
+  assert.doesNotThrow(() => boundary.assertConsoleOverridePaths(consolePaths));
   for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'backend/os-shell-control/deploy.yaml', 'backend/os-cli/cmd/os/operator.go', 'backend/os-cli/cmd/os/web_shell_agent.go']) {
     assert.throws(() => boundary.assertRuntimeOverridePaths([...runtimePaths, privilegedPath]), /non-runtime authority/);
+    assert.throws(() => boundary.assertBackendOverridePaths([...backendPaths, privilegedPath]), /exact closed set/);
+    assert.throws(() => boundary.assertConsoleOverridePaths([...consolePaths, privilegedPath]), /exact closed set/);
   }
   assert.throws(() => boundary.assertHeadPaths([...runtimePaths, 'backend/supabase/migrate-only.ps1'], runtimePaths), /unbound source/);
+  assert.throws(() => boundary.assertHeadPaths([...backendPaths, ...consolePaths], backendPaths), /unbound source/);
+  for (const escape of ['../Dockerfile', '/tmp/Dockerfile', 'C:/tmp/Dockerfile', 'backend\\opensphere-console-backend\\Dockerfile']) {
+    assert.throws(() => boundary.assertBackendOverridePaths([escape, backendPaths[1]]), /canonical repository|exact closed set/);
+  }
+  assert.match(featureOperationScript, /\[string\]\$ConsolePublicationEvidence = ''/);
+  assert.match(featureOperationScript, /'-ConsolePublicationEvidence',\$ConsolePublicationEvidence/);
   assert.match(runtimeDockerfile, /-X main[.]webShellAgentSocketPath=\/run\/opensphere-shell\/channel\/agent[.]sock/);
   assert.match(runtimeDockerfile, /-X main[.]webShellAgentPublicKeyPath=\/run\/opensphere-shell\/channel\/agent-public-key[.]pem/);
 });
