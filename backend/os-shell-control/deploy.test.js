@@ -12,6 +12,13 @@ const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', '
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
 const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && doc.metadata?.name === name && (!namespace || doc.metadata?.namespace === namespace));
 
+test('local-edge deploy joins completed kubectl output instead of binding -join as a parameter', () => {
+  assert.doesNotMatch(deployScript, /= \(Invoke-Kubectl[^\r\n]+ -join [^\r\n]+\) \| ConvertFrom-Json/);
+  assert.match(deployScript, /merge-base --is-ancestor/);
+  assert.match(deployScript, /deploymentToolingAllowlist = @\(/);
+  assert.match(deployScript, /deploymentToolingSourceRevision = \$deploymentToolingSourceRevision/g);
+});
+
 test('control workloads are distinct, exact-rendered, and default-off without Kubernetes token leakage', () => {
   for (const mode of ['api', 'gateway', 'reconciler']) {
     const deployment = find('Deployment', `opensphere-shell-${mode}`, 'opensphere-console');

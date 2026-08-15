@@ -476,7 +476,7 @@ function Assert-PrerequisiteDeployment {
     [Parameter(Mandatory)][string]$Digest
   )
   Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'rollout', 'status', "deployment/$Deployment", '--timeout=600s') | Out-Null
-  $resource = (Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', "deployment/$Deployment", '-o', 'json') -join "`n") | ConvertFrom-Json
+  $resource = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', "deployment/$Deployment", '-o', 'json')) -join "`n") | ConvertFrom-Json
   $desired = [int]$resource.spec.replicas
   $ready = [int]$resource.status.readyReplicas
   if ($desired -le 0 -or $ready -ne $desired -or [int]$resource.status.availableReplicas -ne $desired) {
@@ -489,7 +489,7 @@ function Assert-PrerequisiteDeployment {
   }
   $selector = @($resource.spec.selector.matchLabels.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ','
   if (-not $selector) { throw "Prerequisite Deployment $Deployment has no closed Pod selector" }
-  $pods = (Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'pods', '-l', $selector, '-o', 'json') -join "`n") | ConvertFrom-Json
+  $pods = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'pods', '-l', $selector, '-o', 'json')) -join "`n") | ConvertFrom-Json
   if (@($pods.items).Count -ne $desired) { throw "Prerequisite Deployment $Deployment has an unexpected Pod count" }
   foreach ($pod in @($pods.items)) {
     $statuses = @($pod.status.containerStatuses | Where-Object { [string]$_.image -like "$repository@*" })
@@ -507,7 +507,7 @@ function Set-BackendOsShellActivation {
     [Parameter(Mandatory)][string]$SourceRevision,
     [Parameter(Mandatory)][string]$ReleaseEvidenceRef
   )
-  $deployment = (Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console-backend', '-o', 'json') -join "`n") | ConvertFrom-Json
+  $deployment = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console-backend', '-o', 'json')) -join "`n") | ConvertFrom-Json
   $containers = @($deployment.spec.template.spec.containers | Where-Object { [string]$_.image -eq $Image })
   if ($containers.Count -ne 1) {
     throw 'Console Backend activation patch requires exactly one exact-image container'
@@ -550,7 +550,7 @@ function Set-BackendOsShellActivation {
   }
   Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'patch', 'deployment/opensphere-console-backend', '--type=strategic', '--patch', ($patch | ConvertTo-Json -Depth 12 -Compress)) | Out-Null
   Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'rollout', 'status', 'deployment/opensphere-console-backend', '--timeout=600s') | Out-Null
-  $activated = (Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console-backend', '-o', 'json') -join "`n") | ConvertFrom-Json
+  $activated = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console-backend', '-o', 'json')) -join "`n") | ConvertFrom-Json
   $activatedContainer = @($activated.spec.template.spec.containers | Where-Object { [string]$_.image -eq $Image })
   foreach ($name in @('OS_SHELL_ADMISSION_ENABLED', 'OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED')) {
     $values = @($activatedContainer[0].env | Where-Object { [string]$_.name -eq $name })
@@ -666,7 +666,7 @@ foreach ($command in @('git', 'docker', 'kubectl')) {
 if ($KubeContext -ne 'docker-desktop' -or (& kubectl config current-context).Trim() -ne 'docker-desktop') {
   throw 'OS Shell local edge deployment is restricted to the docker-desktop context'
 }
-$nodes = (Invoke-Kubectl -Arguments @('get', 'nodes', '-o', 'json') -join "`n") | ConvertFrom-Json
+$nodes = ((Invoke-Kubectl -Arguments @('get', 'nodes', '-o', 'json')) -join "`n") | ConvertFrom-Json
 $nodeArchitectures = @($nodes.items | ForEach-Object { [string]$_.status.nodeInfo.architecture })
 if (-not $nodeArchitectures.Count -or @($nodeArchitectures | Where-Object { $_ -ne 'amd64' }).Count) {
   throw "Every docker-desktop node must be amd64; received: $($nodeArchitectures -join ',')"
@@ -716,8 +716,22 @@ Assert-ImageMetadata -Repository $runtimeRepository -Image $runtime.image -Diges
   -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag
 
 $head = (& git -C $consoleRoot rev-parse HEAD).Trim()
+$deploymentToolingSourceRevision = $head
 if ($head -ne [string]$evidence.sourceRevision) {
-  throw "Deployment source HEAD $head differs from committed publication revision $($evidence.sourceRevision)"
+  & git -C $consoleRoot merge-base --is-ancestor ([string]$evidence.sourceRevision) $head
+  if ($LASTEXITCODE -ne 0) {
+    throw "Deployment tooling HEAD $head is not a descendant of publication revision $($evidence.sourceRevision)"
+  }
+  $deploymentToolingAllowlist = @(
+    'scripts/Deploy-LocalEdgeOsShell.ps1',
+    'backend/os-shell-control/deploy.test.js'
+  )
+  $changedPaths = @(& git -C $consoleRoot diff --name-only ([string]$evidence.sourceRevision) $head |
+    ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+  $nonToolingChanges = @($changedPaths | Where-Object { $_ -notin $deploymentToolingAllowlist })
+  if (-not $changedPaths.Count -or $nonToolingChanges.Count) {
+    throw "Deployment tooling revision changes image or runtime inputs outside the closed allowlist: $($nonToolingChanges -join ', ')"
+  }
 }
 $dirty = & git -C $consoleRoot status --short
 if ($dirty) { throw 'The Console source must be clean before applying an OS Shell publication' }
@@ -807,6 +821,7 @@ if ($PrepareTrustOnly) {
     componentSet = 'cbss-os-shell'
     context = $KubeContext
     sourceRevision = [string]$evidence.sourceRevision
+    deploymentToolingSourceRevision = $deploymentToolingSourceRevision
     releaseTag = [string]$evidence.releaseTag
     publicationEvidence = $publicationPath
     preparedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -920,7 +935,7 @@ foreach ($resource in $deploymentResources) {
   if (-not $isConsoleApi -and $profile.Count -ne 1) { throw "Deployment $name has no closed activation profile" }
   if (-not $isConsoleApi) { $profile = $profile[0] }
   Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'rollout', 'status', "deployment/$name", '--timeout=600s') | Out-Null
-  $deployment = (Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', "deployment/$name", '-o', 'json') -join "`n") | ConvertFrom-Json
+  $deployment = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', "deployment/$name", '-o', 'json')) -join "`n") | ConvertFrom-Json
   $desired = [int]$deployment.spec.replicas
   $ready = [int]$deployment.status.readyReplicas
   $expectedReplicas = if ($isConsoleApi) { 1 } else { [int]$profile.Replicas }
@@ -964,7 +979,7 @@ foreach ($resource in $deploymentResources) {
   }
   $selector = @($deployment.spec.selector.matchLabels.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ','
   if (-not $selector) { throw "Deployment $name has no closed Pod selector" }
-  $pods = (Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'pods', '-l', $selector, '-o', 'json') -join "`n") | ConvertFrom-Json
+  $pods = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'pods', '-l', $selector, '-o', 'json')) -join "`n") | ConvertFrom-Json
   if (@($pods.items).Count -ne $desired) { throw "Deployment $name does not have the expected number of Pods" }
   foreach ($pod in @($pods.items)) {
     foreach ($status in @($pod.status.containerStatuses)) {
@@ -985,7 +1000,7 @@ foreach ($service in $expectedControlServices) {
 # hidden cross-mount cannot pass merely because it was outside this manifest.
 $secretOwnerEvidence = [ordered]@{}
 foreach ($profile in $privateTlsProfiles) { $secretOwnerEvidence[$profile.Secret] = @() }
-$allControlDeployments = (Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployments', '-o', 'json') -join "`n") | ConvertFrom-Json
+$allControlDeployments = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployments', '-o', 'json')) -join "`n") | ConvertFrom-Json
 foreach ($candidate in @($allControlDeployments.items)) {
   $candidateName = [string]$candidate.metadata.name
   $candidateServiceAccount = [string]$candidate.spec.template.spec.serviceAccountName
@@ -1053,6 +1068,7 @@ $receipt = [ordered]@{
   componentSet = 'cbss-os-shell'
   context = $KubeContext
   sourceRevision = [string]$evidence.sourceRevision
+  deploymentToolingSourceRevision = $deploymentToolingSourceRevision
   releaseTag = [string]$evidence.releaseTag
   publicationEvidence = $publicationPath
   deployedAt = [DateTimeOffset]::UtcNow.ToString('o')
