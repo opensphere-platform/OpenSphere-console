@@ -5,8 +5,6 @@ import { pathToFileURL } from 'node:url';
 
 export const runtimeInputPaths = Object.freeze([
   'backend/os-cli/Dockerfile.runtime',
-  'backend/os-cli/cmd/os/web_shell_agent.go',
-  'backend/os-cli/cmd/os/web_shell_agent_test.go',
 ]);
 
 export const deploymentToolingPaths = Object.freeze([
