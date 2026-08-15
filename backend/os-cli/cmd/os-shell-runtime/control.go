@@ -242,14 +242,24 @@ func (client *controlClient) close() {
 }
 
 func readProjectedBootstrapToken() ([]byte, error) {
-	info, err := os.Lstat(bootstrapTokenPath)
+	cleanPath := filepath.Clean(bootstrapTokenPath)
+	resolvedPath, err := filepath.EvalSymlinks(cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("projected runtime bootstrap token unavailable: %w", err)
+	}
+	root := filepath.Dir(cleanPath)
+	relative, err := filepath.Rel(root, resolvedPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return nil, errors.New("projected runtime bootstrap token escapes its projected volume")
+	}
+	info, err := os.Stat(resolvedPath)
 	if err != nil {
 		return nil, fmt.Errorf("projected runtime bootstrap token unavailable: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 || info.Size() < 32 || info.Size() > 16<<10 {
 		return nil, errors.New("projected runtime bootstrap token has unsafe metadata")
 	}
-	raw, err := os.ReadFile(filepath.Clean(bootstrapTokenPath))
+	raw, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return nil, err
 	}
