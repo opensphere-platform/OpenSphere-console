@@ -292,8 +292,12 @@ func (server *agentServer) handleAgentConnection(parent context.Context, connect
 		defer cancel()
 		proxied, err := server.proxyConsoleRequest(ctx, contextJWS, *request.Request)
 		if err != nil {
-			response.ContextJWS = ""
-			response.Error = "ConsoleRequestRejected"
+			// An upstream authorization or Console API failure does not invalidate
+			// the signed execution context. Preserve the attestation and return a
+			// closed, non-secret HTTP failure envelope so the CLI cannot misreport
+			// an authority outage as an agent protocol downgrade.
+			failure := closedProxyFailureResponse(err)
+			response.Response = &failure
 		} else {
 			response.Response = &proxied
 		}

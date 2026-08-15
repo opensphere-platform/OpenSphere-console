@@ -13,8 +13,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -808,6 +811,164 @@ func TestAgentUnixProtocolReturnsCLIV2Context(t *testing.T) {
 	if response.Contract != agentContract || response.ContextJWS == "" || response.Error != "" {
 		t.Fatalf("unexpected agent response: %#v", response)
 	}
+}
+
+func TestAgentCredentialFailurePreservesSignedContextAndStage(t *testing.T) {
+	current := time.Now().UTC().Truncate(time.Second)
+	originalNow, originalControlClient := now, controlHTTPClient
+	now = func() time.Time { return current }
+	defer func() { now, controlHTTPClient = originalNow, originalControlClient }()
+
+	authority := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/os-shell/runtime/credential" {
+			t.Fatalf("unexpected credential authority path: %s", request.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"delegated credential exchange rejected"}`))
+	}))
+	defer authority.Close()
+	controlHTTPClient = authority.Client()
+	controlURL, _ := url.Parse(authority.URL + "/api/os-shell/runtime")
+	identity, err := newSigningIdentity(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer identity.close()
+	server := &agentServer{binding: testBinding(), identity: identity, control: &controlClient{
+		controlURL: controlURL, runtimeCredential: []byte("runtime-credential"), runtimeCredentialExpiry: current.Add(time.Hour),
+	}}
+	serverSide, clientSide := net.Pipe()
+	defer clientSide.Close()
+	go server.handleAgentConnection(context.Background(), serverSide)
+	_ = json.NewEncoder(clientSide).Encode(agentRequest{Contract: agentContract, Operation: "request", Request: &agentHTTPRequest{
+		Method: http.MethodGet, Path: "/api/identity/cli/introspect", CorrelationID: "os-contract-test",
+	}})
+	var response agentResponse
+	if err := json.NewDecoder(bufio.NewReader(clientSide)).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Contract != agentContract || response.ContextJWS == "" || response.Error != "" || response.Response == nil {
+		t.Fatalf("credential failure must preserve the valid agent contract: %#v", response)
+	}
+	if response.Response.Status != http.StatusServiceUnavailable || response.Response.ContentType != "application/json" {
+		t.Fatalf("unexpected closed credential failure: %#v", response.Response)
+	}
+	body, err := base64.RawStdEncoding.DecodeString(response.Response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failure map[string]any
+	if json.Unmarshal(body, &failure) != nil || failure["code"] != "ShellCredentialUnavailable" || failure["stage"] != "credential-exchange" {
+		t.Fatalf("credential failure lost its safe stage/code: %s", body)
+	}
+	if strings.Contains(string(body), "delegated credential exchange rejected") {
+		t.Fatal("upstream authority details must not cross the Unix agent boundary")
+	}
+}
+
+func TestReleasedOSWhoamiCrossesRuntimeAgentContract(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix credential-agent contract")
+	}
+	temporary := t.TempDir()
+	socketPath := filepath.Join(temporary, "agent.sock")
+	publicKeyPath := filepath.Join(temporary, "agent-public-key.pem")
+	binaryPath := filepath.Join(temporary, "os")
+	build := exec.Command("go", "build", "-trimpath", "-ldflags", fmt.Sprintf(
+		"-X main.webShellAgentSocketPath=%s -X main.webShellAgentPublicKeyPath=%s", socketPath, publicKeyPath,
+	), "-o", binaryPath, "../os")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build released os CLI fixture: %v\n%s", err, output)
+	}
+
+	originalSocket, originalKey := configuredAgentSocketPath, configuredPublicKeyPath
+	originalControlClient, originalProxyClient := controlHTTPClient, runtimeProxyHTTPClient
+	configuredAgentSocketPath, configuredPublicKeyPath = socketPath, publicKeyPath
+	defer func() {
+		configuredAgentSocketPath, configuredPublicKeyPath = originalSocket, originalKey
+		controlHTTPClient, runtimeProxyHTTPClient = originalControlClient, originalProxyClient
+	}()
+	current := time.Now().UTC()
+	identity, err := newSigningIdentity(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer identity.close()
+	if err := publishPublicKey(identity.publicPEM); err != nil {
+		t.Fatal(err)
+	}
+
+	var credentialCalls, consoleCalls atomic.Int32
+	authorities := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/os-shell/runtime/credential":
+			credentialCalls.Add(1)
+			if request.Method != http.MethodPost || request.Header.Get("Authorization") != "Bearer runtime-credential" {
+				t.Errorf("unexpected credential request: %s %#v", request.Method, request.Header)
+			}
+			_ = json.NewEncoder(w).Encode(credentialResponse{
+				Contract: controlContract, AccessToken: "agent-memory-only-token",
+				TokenExpiresAt: current.Add(4 * time.Minute).Format(time.RFC3339),
+			})
+		case "/api/identity/cli/introspect":
+			consoleCalls.Add(1)
+			if request.Method != http.MethodGet || request.Header.Get("Authorization") != "Bearer agent-memory-only-token" {
+				t.Errorf("unexpected Console request: %s %#v", request.Method, request.Header)
+			}
+			_, _ = w.Write([]byte(`{"active":true,"sub":"operator-1"}`))
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	defer authorities.Close()
+	controlHTTPClient = authorities.Client()
+	runtimeProxyHTTPClient = &http.Client{Transport: authorities.Client().Transport, Timeout: 30 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	controlURL, _ := url.Parse(authorities.URL + "/api/os-shell/runtime")
+	server := &agentServer{
+		binding: testBinding(), identity: identity, consoleAPIURL: authorities.URL,
+		control: &controlClient{controlURL: controlURL, runtimeCredential: []byte("runtime-credential"), runtimeCredentialExpiry: current.Add(time.Hour)},
+	}
+	listener, err := listenAgentUnixSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.serveAgentSocket(ctx, listener) }()
+	defer func() {
+		cancel()
+		_ = listener.Close()
+		<-done
+	}()
+
+	command := exec.Command(binaryPath, "whoami")
+	command.Env = append(withoutEnvironment(os.Environ(), "OS_CONSOLE", "OS_IDENTITY", "OS_CONFIG", "OS_PAT"),
+		"OS_CONSOLE="+fixedConsoleAPIURL, "OS_CONFIG="+filepath.Join(temporary, "missing-config.json"), "OS_PAT=")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("released os whoami rejected the Runtime contract: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), `"active": true`) || credentialCalls.Load() != 1 || consoleCalls.Load() != 1 {
+		t.Fatalf("unexpected whoami result=%q credentialCalls=%d consoleCalls=%d", output, credentialCalls.Load(), consoleCalls.Load())
+	}
+}
+
+func withoutEnvironment(values []string, names ...string) []string {
+	blocked := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		blocked[name] = struct{}{}
+	}
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		name, _, _ := strings.Cut(value, "=")
+		if _, found := blocked[name]; !found {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
 }
 
 func TestRuntimePTYInputRateMatchesGatewayCeiling(t *testing.T) {
