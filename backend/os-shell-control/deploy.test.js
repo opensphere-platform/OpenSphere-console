@@ -8,6 +8,7 @@ const yaml = require('js-yaml');
 const source = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
 const deployScript = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Deploy-LocalEdgeOsShell.ps1'), 'utf8');
 const backendServer = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'server.js'), 'utf8');
+const backendDeploy = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
 const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
 const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && doc.metadata?.name === name && (!namespace || doc.metadata?.namespace === namespace));
@@ -75,7 +76,9 @@ test('local-edge activation patches and verifies the Setup-owned Backend credent
   assert.match(deployScript, /Set-BackendOsShellActivation -Image \$backend[.]image/);
   assert.match(deployScript, /OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED'; value = 'true'/);
   assert.match(deployScript, /OS_SHELL_ADMISSION_ENABLED'; value = 'true'/);
-  assert.match(deployScript, /shell-credential-tls'; containerPort = 8444/);
+  assert.match(deployScript, /shell-cred-tls'; containerPort = 8444/);
+  assert.match(backendDeploy, /name: shell-cred-tls, containerPort: 8444/);
+  assert.ok('shell-cred-tls'.length <= 15, 'Kubernetes container port names are limited to 15 characters');
   assert.match(deployScript, /secretName = 'opensphere-shell-credential-authority-tls'; optional = \$false/);
   assert.match(backendServer, /req[.]method === 'GET' && req[.]url === '\/readyz'/);
   assert.match(backendServer, /service: 'opensphere-shell-credential-authority'/);

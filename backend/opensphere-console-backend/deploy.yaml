@@ -216,7 +216,7 @@ spec:
             - { name: EXTERNAL_CHANNEL_REQUIRE_AAL2, value: "true" }
             - name: EXTERNAL_CHANNEL_EXECUTOR_TOKEN
               valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: internal-token } }
-          ports: [{ name: http, containerPort: 8080 }, { name: shell-credential-tls, containerPort: 8444 }]
+          ports: [{ name: http, containerPort: 8080 }, { name: shell-cred-tls, containerPort: 8444 }]
           # Serving readiness keeps the native management and diagnostic surface
           # routable while /readyz reports dependency degradation in detail.
           readinessProbe: { httpGet: { path: /serving-readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
