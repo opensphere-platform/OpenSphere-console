@@ -16,6 +16,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $manifestPath = Join-Path $here 'gitea.yaml'
 $signingScript = Join-Path $here 'configure-signing.ps1'
 $controlPlaneScript = Join-Path $here 'control-plane-bootstrap.ps1'
+$foundationOwnerAccessScript = Join-Path $here 'register-foundation-owner-release-repository-access.ps1'
 $kubectlArgs = @()
 if ($KubeContext) { $kubectlArgs += @('--context', $KubeContext) }
 
@@ -57,7 +58,7 @@ function Assert-SecretKeys([object]$Secret, [string[]]$Keys, [string]$Reference)
 }
 
 if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) { throw 'kubectl is required' }
-foreach ($path in @($manifestPath, $signingScript, $controlPlaneScript)) {
+foreach ($path in @($manifestPath, $signingScript, $controlPlaneScript, $foundationOwnerAccessScript)) {
   if (-not (Test-Path -LiteralPath $path)) { throw "Missing Gitea bootstrap artifact: $path" }
 }
 if ($GiteaImage -notmatch '^ghcr\.io/opensphere-platform/opensphere-console-gitea@sha256:[a-f0-9]{64}$') {
@@ -180,5 +181,8 @@ Invoke-Kubectl @('-n', $GiteaNamespace, 'rollout', 'status', 'deployment/opensph
 
 & $controlPlaneScript -GiteaNamespace $GiteaNamespace -ConsoleNamespace $ConsoleNamespace -KubeContext $KubeContext
 if ($LASTEXITCODE -ne 0) { throw 'Gitea declarative control-plane bootstrap failed' }
+
+& $foundationOwnerAccessScript -GiteaNamespace $GiteaNamespace -ConsoleNamespace $ConsoleNamespace -KubeContext $KubeContext
+if ($LASTEXITCODE -ne 0) { throw 'Foundation owner read-only Gitea access bootstrap failed' }
 
 Write-Host "Gitea Declarative Change Authority installed in namespace $GiteaNamespace."

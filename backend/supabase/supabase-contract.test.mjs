@@ -147,6 +147,15 @@ test('0062 makes create quota/idempotency and feature drain one atomic RPC-only 
   assert.doesNotMatch(sql, /GRANT (SELECT|INSERT|UPDATE|DELETE)/);
 });
 
+test('0063 registers the governed Foundation owner consumer and closes idempotency aliases', () => {
+  const sql = readFileSync(path.join(here, 'migrations', '0063_foundation_owner_release_consumer.sql'), 'utf8');
+  assert.match(sql, /'foundation-owner-release-reconciler'/);
+  assert.match(sql, /ON CONFLICT \(idempotency_key\) DO UPDATE/);
+  assert.match(sql, /change_request[.]payload_digest IS NOT DISTINCT FROM EXCLUDED[.]payload_digest/);
+  assert.match(sql, /idempotency key reused with a different governed change/);
+  assert.match(sql, /ERRCODE = '22023'/);
+});
+
 test('actual PostgreSQL verifier uses an isolated per-run container and cleans only its own authority', () => {
   const verifier = readFileSync(path.join(here, 'verify-ledger-integrity.mjs'), 'utf8');
   assert.match(verifier, /os-ledger-verify-\$\{process[.]pid\}-\$\{randomUUID/);

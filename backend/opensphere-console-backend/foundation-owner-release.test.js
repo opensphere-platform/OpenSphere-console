@@ -356,17 +356,18 @@ test('signed operation can durably roll back only the recorded prior owner relea
   }), /RollbackFenceLost/);
 });
 
-test('Bootstrap A keeps the Foundation gate closed until B installs the final owner workers', () => {
+test('Backend submits Gitea intent while a closed reconciler Job owns workload mutation', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
   const deployYaml = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   assert.match(dockerfile, /COPY opensphere-console-backend\/foundation-owner-release\.js/);
-  assert.doesNotMatch(dockerfile, /foundation-owner-release-reconciler\.js/);
-  assert.doesNotMatch(dockerfile, /foundation-owner-release-executor\.mjs/);
+  assert.match(dockerfile, /foundation-owner-release-reconciler\.js/);
+  assert.match(dockerfile, /foundation-owner-release-executor\.mjs/);
   assert.match(server, /consumerId: FOUNDATION_OWNER_RELEASE_CONSUMER/);
   assert.match(server, /governedChange\(actor/);
-  assert.match(server, /assertBackendBootstrapConvergedForFoundation\(installed\.lock\)/);
-  assert.doesNotMatch(deployYaml, /resourceNames:\s*\["foundation-oaa-owner"\]/);
-  assert.doesNotMatch(deployYaml, /foundation-owner-installation-lock/);
-  assert.doesNotMatch(deployYaml, /foundation-owner-release-executor\.mjs/);
+  assert.match(deployYaml, /resourceNames:\s*\["foundation-oaa-owner"\]/);
+  assert.match(deployYaml, /foundation-owner-installation-lock/);
+  assert.match(deployYaml, /foundation-owner-release-executor\.mjs/);
+  const backendBoundary = deployYaml.match(/name: opensphere-console-backend-foundation-owner-release[\s\S]*?---/)[0];
+  assert.doesNotMatch(backendBoundary, /resources:\s*\["deployments"\]/);
 });

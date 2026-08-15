@@ -60,6 +60,8 @@ COPY opensphere-console-backend/os-shell-context.js ./os-shell-context.js
 COPY opensphere-console-backend/os-shell-delegation.js ./os-shell-delegation.js
 COPY opensphere-console-backend/local-edge-automation-token.js ./local-edge-automation-token.js
 COPY opensphere-console-backend/foundation-owner-release.js ./foundation-owner-release.js
+COPY opensphere-console-backend/foundation-owner-release-reconciler.js ./foundation-owner-release-reconciler.js
+COPY opensphere-console-backend/foundation-owner-release-executor.mjs ./foundation-owner-release-executor.mjs
 COPY opensphere-console-backend/baseline-monitoring.js ./baseline-monitoring.js
 COPY opensphere-console-backend/data-identity-readiness.js ./data-identity-readiness.js
 COPY opensphere-console-backend/module-operation-api.js ./module-operation-api.js

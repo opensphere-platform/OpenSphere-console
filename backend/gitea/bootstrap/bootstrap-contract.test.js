@@ -8,6 +8,7 @@ const installer = read('install.ps1');
 const manifest = read('gitea.yaml');
 const signing = read('configure-signing.ps1');
 const controlPlane = read('control-plane-bootstrap.ps1');
+const foundationOwnerAccess = read('register-foundation-owner-release-repository-access.ps1');
 
 test('fresh Gitea install is digest-locked, resumable, and owns the safe zero-to-one transition', () => {
   assert.match(installer, /opensphere-console-gitea@sha256:\[a-f0-9\]\{64\}/);
@@ -16,6 +17,7 @@ test('fresh Gitea install is digest-locked, resumable, and owns the safe zero-to
   assert.match(installer, /Reusing existing private Gitea configuration/);
   assert.match(installer, /configure-signing\.ps1/);
   assert.match(installer, /control-plane-bootstrap\.ps1/);
+  assert.match(installer, /register-foundation-owner-release-repository-access\.ps1/);
   assert.match(installer, /scale', 'deployment\/opensphere-gitea', '--replicas=1'/);
   assert.doesNotMatch(installer, /--from-literal/);
   assert.match(manifest, /name: opensphere-gitea[\s\S]+?replicas: 0/);
@@ -45,4 +47,17 @@ test('Gitea change authority keeps signing and control credentials server-side',
   assert.doesNotMatch(controlPlane, /\$createReviewUser[\s\S]{0,400}--admin/);
   assert.match(controlPlane, /block_admin_merge_override = \$true/);
   assert.match(controlPlane, /enable_approvals_whitelist = \$true/);
+});
+
+test('Foundation owner executor receives a separately proven repository-read-only token', () => {
+  assert.match(foundationOwnerAccess, /opensphere-foundation-owner-release/);
+  assert.match(foundationOwnerAccess, /foundation-owner-release-gitea-readonly/);
+  assert.match(foundationOwnerAccess, /--scopes 'read:repository'/);
+  assert.match(foundationOwnerAccess, /permission = 'read'/);
+  assert.match(foundationOwnerAccess, /'PATCH'[\s\S]+?-ne 403/);
+  assert.match(foundationOwnerAccess, /opensphere\.io\/gitea-scopes' = 'read:repository'/);
+  assert.match(foundationOwnerAccess, /Assert-UserIsNotAdmin \$ServiceAccount/);
+  assert.doesNotMatch(foundationOwnerAccess, /write:(?:repository|organization)/);
+  assert.doesNotMatch(foundationOwnerAccess, /Write-Host.*\$(?:token|controlToken|password)/i);
+  assert.doesNotMatch(foundationOwnerAccess, /kubectl[^\r\n]+--from-literal/i);
 });
