@@ -281,7 +281,9 @@ function createControl({ config = loadConfig(), database, kubernetes,
       || Number(labels['opensphere.io/fencing-epoch']) !== Number(binding.fencingEpoch) || !pod.status?.podIP) throw Object.assign(new Error('bound runtime Pod identity changed'), { status: 403 });
     const row = await db.classifyRuntimeRegistration({ sessionId: binding.sessionId,
       generation: binding.generation, fencingEpoch: binding.fencingEpoch });
-    if (row?.observed_state === 'Pending') throw Object.assign(new Error('RuntimeRegistrationNotReady'), { status: 409 });
+    if (row?.observed_state === 'Pending') throw Object.assign(new Error('RuntimeRegistrationNotReady'), {
+      status: 409, code: 'RuntimeRegistrationNotReady',
+    });
     if (!row || !exactBinding(row, binding)) throw Object.assign(new Error('runtime registration fence rejected'), { status: 403 });
     const host = pod.status.podIP.includes(':') ? `[${pod.status.podIP}]` : pod.status.podIP;
     const expiry = new Date(Math.min(Date.now() + 60 * 60_000, Date.parse(row.absolute_expires_at))).toISOString();
