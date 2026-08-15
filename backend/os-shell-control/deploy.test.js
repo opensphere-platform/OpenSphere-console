@@ -174,3 +174,13 @@ test('internal Console API uses the canonical data-driven Registry and plugin/PF
   assert.match(canonicalConsoleNginx, /proxy_set_header Authorization \$plugin_authorization/);
   assert.equal(source.includes('DUPA_CONTROL_URL'), false);
 });
+
+test('local-edge deploy accepts only a descendant runtime-only publication as a composite override', () => {
+  assert.match(deployScript, /\[string\]\$RuntimePublicationEvidence = ''/);
+  assert.match(deployScript, /Runtime override requires exactly osShellRuntime/);
+  assert.match(deployScript, /merge-base --is-ancestor \(\[string\]\$evidence[.]sourceRevision\) \(\[string\]\$runtimeEvidence[.]sourceRevision\)/);
+  assert.match(deployScript, /Runtime override changes the base Supabase migration lineage/);
+  assert.match(deployScript, /release:\/\/edge-composite\//);
+  assert.match(deployScript, /runtimePublicationEvidence = \$runtimePublicationPath/);
+  assert.match(deployScript, /osShellRuntime = \[string\]\$runtimeEvidence[.]sourceRevision/);
+});

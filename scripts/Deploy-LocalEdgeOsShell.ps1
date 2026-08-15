@@ -2,6 +2,7 @@
 param(
   [Parameter(Mandatory)]
   [string]$PublicationEvidence,
+  [string]$RuntimePublicationEvidence = '',
   [string]$ManifestPath = '',
   [string]$KubeContext = 'docker-desktop',
   [string]$ControlNamespace = 'opensphere-console',
@@ -209,6 +210,33 @@ function Get-EvidenceComponent {
   return [ordered]@{
     image = [string]$component.image
     digest = $digestMatch.Groups[1].Value
+  }
+}
+
+function Assert-EdgePublicationEnvelope {
+  param(
+    [Parameter(Mandatory)]$Evidence,
+    [Parameter(Mandatory)][string]$Purpose
+  )
+  if ([string]$Evidence.apiVersion -ne 'release.opensphere.io/v1alpha1' -or
+      [string]$Evidence.kind -ne 'OpenSphereEdgeComponentPublication' -or
+      [string]$Evidence.publicationScope -ne 'ComponentSet' -or
+      [string]$Evidence.channel -ne 'edge' -or
+      [string]$Evidence.status -ne 'Active' -or
+      [string]$Evidence.source -ne 'https://github.com/opensphere-platform/OpenSphere-console' -or
+      [string]$Evidence.buildAuthority -ne 'localhost' -or
+      [string]$Evidence.releaseClass -ne 'pre-ga' -or
+      [bool]$Evidence.gaEligible -or
+      [string]$Evidence.sourceRevision -notmatch '^[a-f0-9]{40}$' -or
+      [string]$Evidence.releaseTag -notmatch '^[0-9]{12}$') {
+    throw "$Purpose publication evidence is outside the local edge component authority boundary"
+  }
+  $platforms = @($Evidence.supportedPlatforms | ForEach-Object { [string]$_ })
+  if ($platforms.Count -ne 1 -or $platforms[0] -ne 'linux/amd64') {
+    throw "$Purpose publication must contain exactly the linux/amd64 edge platform"
+  }
+  if ([string]$Evidence.immutableTag -ne "local-$(([string]$Evidence.sourceRevision).Substring(0, 12))") {
+    throw "$Purpose publication immutableTag is not derived from its committed SourceRevision"
   }
 }
 
@@ -723,36 +751,43 @@ if (-not $nodeArchitectures.Count -or @($nodeArchitectures | Where-Object { $_ -
 
 $publicationPath = (Resolve-Path -LiteralPath $PublicationEvidence).Path
 $evidence = Get-Content -Raw -LiteralPath $publicationPath | ConvertFrom-Json
-if ([string]$evidence.apiVersion -ne 'release.opensphere.io/v1alpha1' -or
-    [string]$evidence.kind -ne 'OpenSphereEdgeComponentPublication' -or
-    [string]$evidence.publicationScope -ne 'ComponentSet' -or
-    [string]$evidence.channel -ne 'edge' -or
-    [string]$evidence.status -ne 'Active' -or
-    [string]$evidence.source -ne 'https://github.com/opensphere-platform/OpenSphere-console' -or
-    [string]$evidence.buildAuthority -ne 'localhost' -or
-    [string]$evidence.releaseClass -ne 'pre-ga' -or
-    [bool]$evidence.gaEligible -or
-    [string]$evidence.sourceRevision -notmatch '^[a-f0-9]{40}$' -or
-    [string]$evidence.releaseTag -notmatch '^[0-9]{12}$') {
-  throw 'Publication evidence is outside the local edge component authority boundary'
-}
-$platforms = @($evidence.supportedPlatforms | ForEach-Object { [string]$_ })
-if ($platforms.Count -ne 1 -or $platforms[0] -ne 'linux/amd64') {
-  throw 'OS Shell publication must contain exactly the linux/amd64 edge platform'
-}
+Assert-EdgePublicationEnvelope -Evidence $evidence -Purpose 'OS Shell base'
 $componentKeys = @($evidence.components.PSObject.Properties.Name | Sort-Object)
 if (($componentKeys -join ',') -ne 'backend,cliArtifacts,console,osShellControl,osShellRuntime') {
   throw "OS Shell deploy requires the exact five-component publication; received: $($componentKeys -join ',')"
 }
-if ([string]$evidence.immutableTag -ne "local-$(([string]$evidence.sourceRevision).Substring(0, 12))") {
-  throw 'Publication immutableTag is not derived from the committed SourceRevision'
+
+$runtimePublicationPath = ''
+$runtimeEvidence = $evidence
+if ($RuntimePublicationEvidence) {
+  $runtimePublicationPath = (Resolve-Path -LiteralPath $RuntimePublicationEvidence).Path
+  if ($runtimePublicationPath -eq $publicationPath) {
+    throw 'RuntimePublicationEvidence must be a distinct component-only publication'
+  }
+  $runtimeEvidence = Get-Content -Raw -LiteralPath $runtimePublicationPath | ConvertFrom-Json
+  Assert-EdgePublicationEnvelope -Evidence $runtimeEvidence -Purpose 'OS Shell runtime override'
+  $runtimeComponentKeys = @($runtimeEvidence.components.PSObject.Properties.Name | Sort-Object)
+  if (($runtimeComponentKeys -join ',') -ne 'osShellRuntime') {
+    throw "Runtime override requires exactly osShellRuntime; received: $($runtimeComponentKeys -join ',')"
+  }
+  & git -C $consoleRoot merge-base --is-ancestor ([string]$evidence.sourceRevision) ([string]$runtimeEvidence.sourceRevision)
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Runtime override SourceRevision is not a descendant of the base OS Shell publication'
+  }
+  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
+  $runtimeMigration = $runtimeEvidence.artifacts.supabaseMigrationManifest
+  if (-not $runtimeMigration -or [string]$runtimeMigration.sha256 -ne [string]$baseMigration.sha256 -or
+      [string]$runtimeMigration.setDigest -ne [string]$baseMigration.setDigest -or
+      [string]$runtimeMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
+    throw 'Runtime override changes the base Supabase migration lineage'
+  }
 }
 
 $console = Get-EvidenceComponent -Evidence $evidence -Key 'console' -Repository $consoleRepository
 $backend = Get-EvidenceComponent -Evidence $evidence -Key 'backend' -Repository $backendRepository
 $cliArtifacts = Get-EvidenceComponent -Evidence $evidence -Key 'cliArtifacts' -Repository $cliRepository
 $control = Get-EvidenceComponent -Evidence $evidence -Key $controlComponent -Repository $controlRepository
-$runtime = Get-EvidenceComponent -Evidence $evidence -Key $runtimeComponent -Repository $runtimeRepository
+$runtime = Get-EvidenceComponent -Evidence $runtimeEvidence -Key $runtimeComponent -Repository $runtimeRepository
 Assert-ImageMetadata -Repository $consoleRepository -Image $console.image -Digest $console.digest `
   -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag -ExpectedPointerTag $evidence.immutableTag
 Assert-ImageMetadata -Repository $backendRepository -Image $backend.image -Digest $backend.digest `
@@ -762,21 +797,22 @@ Assert-ImageMetadata -Repository $cliRepository -Image $cliArtifacts.image -Dige
 Assert-ImageMetadata -Repository $controlRepository -Image $control.image -Digest $control.digest `
   -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag
 Assert-ImageMetadata -Repository $runtimeRepository -Image $runtime.image -Digest $runtime.digest `
-  -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag
+  -SourceRevision $runtimeEvidence.sourceRevision -ReleaseTag $runtimeEvidence.releaseTag
 
 $head = (& git -C $consoleRoot rev-parse HEAD).Trim()
 $deploymentToolingSourceRevision = $head
-if ($head -ne [string]$evidence.sourceRevision) {
-  & git -C $consoleRoot merge-base --is-ancestor ([string]$evidence.sourceRevision) $head
+$deploymentBaselineRevision = [string]$runtimeEvidence.sourceRevision
+if ($head -ne $deploymentBaselineRevision) {
+  & git -C $consoleRoot merge-base --is-ancestor $deploymentBaselineRevision $head
   if ($LASTEXITCODE -ne 0) {
-    throw "Deployment tooling HEAD $head is not a descendant of publication revision $($evidence.sourceRevision)"
+    throw "Deployment tooling HEAD $head is not a descendant of publication revision $deploymentBaselineRevision"
   }
   $deploymentToolingAllowlist = @(
     'scripts/Deploy-LocalEdgeOsShell.ps1',
     'backend/os-shell-control/deploy.yaml',
     'backend/os-shell-control/deploy.test.js'
   )
-  $changedPaths = @(& git -C $consoleRoot diff --name-only ([string]$evidence.sourceRevision) $head |
+  $changedPaths = @(& git -C $consoleRoot diff --name-only $deploymentBaselineRevision $head |
     ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
   $nonToolingChanges = @($changedPaths | Where-Object { $_ -notin $deploymentToolingAllowlist })
   if (-not $changedPaths.Count -or $nonToolingChanges.Count) {
@@ -852,7 +888,11 @@ try {
     Remove-Item -LiteralPath $resolvedCliEvidenceDirectory -Recurse -Force
   }
 }
-$releaseEvidenceRef = "release://edge/$([string]$evidence.releaseTag)/$(([string]$evidence.sourceRevision).Substring(0, 12))"
+$releaseEvidenceRef = if ($runtimePublicationPath) {
+  "release://edge-composite/$([string]$evidence.releaseTag)/$(([string]$evidence.sourceRevision).Substring(0, 12))/osShellRuntime/$([string]$runtimeEvidence.releaseTag)/$(([string]$runtimeEvidence.sourceRevision).Substring(0, 12))"
+} else {
+  "release://edge/$([string]$evidence.releaseTag)/$(([string]$evidence.sourceRevision).Substring(0, 12))"
+}
 $manifestSha256 = [string]$osShellRelease.cliManifest.sha256
 $releaseKeyId = [string]$osShellRelease.cliManifest.keyId
 $sessionPolicyRevision = [string]$osShellRelease.sessionPolicyRevision
@@ -875,6 +915,7 @@ if ($PrepareTrustOnly) {
     deploymentToolingSourceRevision = $deploymentToolingSourceRevision
     releaseTag = [string]$evidence.releaseTag
     publicationEvidence = $publicationPath
+    runtimePublicationEvidence = $runtimePublicationPath
     preparedAt = [DateTimeOffset]::UtcNow.ToString('o')
     privateSecrets = @($privateTlsProfiles | ForEach-Object { "$ControlNamespace/$($_.Secret)" })
     publicCaConfigMaps = @("$ControlNamespace/$controlCaConfigMap", "$SessionNamespace/$controlCaConfigMap")
@@ -1130,6 +1171,11 @@ $receipt = [ordered]@{
   deploymentToolingSourceRevision = $deploymentToolingSourceRevision
   releaseTag = [string]$evidence.releaseTag
   publicationEvidence = $publicationPath
+  runtimePublicationEvidence = $runtimePublicationPath
+  componentSourceRevisions = [ordered]@{
+    base = [string]$evidence.sourceRevision
+    osShellRuntime = [string]$runtimeEvidence.sourceRevision
+  }
   deployedAt = [DateTimeOffset]::UtcNow.ToString('o')
   migration = [ordered]@{
     id = '0061_shell_session_ledger'
