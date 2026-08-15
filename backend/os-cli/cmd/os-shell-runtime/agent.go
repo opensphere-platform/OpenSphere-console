@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	agentSocketPath      = "/run/opensphere-shell/agent.sock"
-	agentPublicKeyPath   = "/run/opensphere-shell/agent-public-key.pem"
-	internalPTYTokenPath = "/run/opensphere-shell-internal/pty-token"
+	agentSocketPath      = "/run/opensphere-shell/channel/agent.sock"
+	agentPublicKeyPath   = "/run/opensphere-shell/channel/agent-public-key.pem"
+	internalPTYTokenPath = "/run/opensphere-shell-internal/channel/pty-token"
 	internalPTYAddr      = "127.0.0.1:8081"
 	publicPTYSubprotocol = "opensphere.pty.v1"
 )

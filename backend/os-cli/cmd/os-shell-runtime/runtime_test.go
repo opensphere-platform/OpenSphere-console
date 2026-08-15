@@ -540,6 +540,16 @@ func TestPrepareRuntimeDirectoryRejectsNonDirectoryAfterChmodEPERM(t *testing.T)
 	}
 }
 
+func TestSensitiveRuntimeArtifactsUseOwnedChildDirectories(t *testing.T) {
+	for name, path := range map[string]string{
+		"agent socket": agentSocketPath, "agent public key": agentPublicKeyPath, "PTY token": internalPTYTokenPath,
+	} {
+		if filepath.Base(filepath.Dir(path)) != "channel" {
+			t.Fatalf("%s must live below the runtime-owned channel directory: %s", name, path)
+		}
+	}
+}
+
 func TestPTYRejectsStaleEpochAndInvalidToken(t *testing.T) {
 	binding := testBinding()
 	for name, mutate := range map[string]func(*ptyFrame){

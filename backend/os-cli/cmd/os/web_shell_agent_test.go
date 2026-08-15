@@ -20,6 +20,14 @@ import (
 	"time"
 )
 
+func TestWebShellAgentArtifactsUseOwnedChildDirectory(t *testing.T) {
+	for name, path := range map[string]string{"socket": webShellAgentSocketPath, "public key": webShellAgentPublicKeyPath} {
+		if filepath.Base(filepath.Dir(path)) != "channel" {
+			t.Fatalf("%s must live below the runtime-owned channel directory: %s", name, path)
+		}
+	}
+}
+
 func TestWebShellAgentVerifiesBoundJWSAndDelegatedCredential(t *testing.T) {
 	now := time.Date(2026, 8, 15, 6, 0, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
