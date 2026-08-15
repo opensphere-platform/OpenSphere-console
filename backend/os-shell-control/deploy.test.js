@@ -100,6 +100,38 @@ test('session namespace has a global resource budget and exact runtime template 
     "metadata.name == 'os-shell-'", 'metadata.generateName']) {
     assert.match(expressions, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
+  const scheduling = policy.spec.validations.find((entry) =>
+    entry.message === 'runtime Pod scheduling, service account, and host boundary are immutable').expression;
+  for (const required of [
+    'object.spec.tolerations.size() == 2',
+    "t.key == 'node.kubernetes.io/not-ready'",
+    "t.key == 'node.kubernetes.io/unreachable'",
+    "t.operator == 'Exists'",
+    "t.effect == 'NoExecute'",
+    't.tolerationSeconds == 300',
+    "(!has(t.value) || t.value == '')",
+  ]) assert.match(scheduling, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(scheduling, /tolerations[.]size[(][)] == 0/);
+
+  const exactDefaultTolerations = [
+    { key: 'node.kubernetes.io/not-ready', operator: 'Exists', effect: 'NoExecute', tolerationSeconds: 300 },
+    { key: 'node.kubernetes.io/unreachable', operator: 'Exists', effect: 'NoExecute', tolerationSeconds: 300 },
+  ];
+  const accepted = (items) => items.length === 2 && items.every((item) =>
+    ['node.kubernetes.io/not-ready', 'node.kubernetes.io/unreachable'].includes(item.key)
+      && item.operator === 'Exists' && item.effect === 'NoExecute' && item.tolerationSeconds === 300
+      && (!Object.hasOwn(item, 'value') || item.value === ''))
+    && exactDefaultTolerations.every((expected) => items.some((item) => item.key === expected.key));
+  assert.equal(accepted(exactDefaultTolerations), true);
+  for (const mutated of [
+    [],
+    [exactDefaultTolerations[0], exactDefaultTolerations[0]],
+    [...exactDefaultTolerations, { key: 'attacker', operator: 'Exists', effect: 'NoSchedule' }],
+    [{ ...exactDefaultTolerations[0], operator: 'Equal' }, exactDefaultTolerations[1]],
+    [{ ...exactDefaultTolerations[0], effect: 'NoSchedule' }, exactDefaultTolerations[1]],
+    [{ ...exactDefaultTolerations[0], tolerationSeconds: 301 }, exactDefaultTolerations[1]],
+    [{ ...exactDefaultTolerations[0], value: 'attacker' }, exactDefaultTolerations[1]],
+  ]) assert.equal(accepted(mutated), false);
 });
 
 test('reconciler RBAC is Pod lifecycle plus TokenReview only and runtime has zero bindings', () => {
