@@ -15,6 +15,7 @@ COPY OpenSphere-console/package.json OpenSphere-console/package-lock.json ./
 RUN npm ci --no-audit --no-fund --legacy-peer-deps
 COPY OpenSphere-console/angular.json OpenSphere-console/tsconfig.json OpenSphere-console/tsconfig.app.json OpenSphere-console/tsconfig.spec.json ./
 COPY OpenSphere-console/scripts ./scripts
+COPY OpenSphere-console/nginx ./nginx
 COPY OpenSphere-console/public ./public
 COPY OpenSphere-console/src ./src
 RUN npm run build -- --configuration production

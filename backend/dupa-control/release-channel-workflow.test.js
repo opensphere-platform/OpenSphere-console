@@ -8,6 +8,7 @@ const gaWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workflows'
 const angularConfig = JSON.parse(fs.readFileSync(path.join(consoleRoot, 'angular.json'), 'utf8'));
 const localEdgePublisher = fs.readFileSync(path.join(consoleRoot, 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
 const osShellDeployer = fs.readFileSync(path.join(consoleRoot, 'scripts', 'Deploy-LocalEdgeOsShell.ps1'), 'utf8');
+const consoleDockerfile = fs.readFileSync(path.join(consoleRoot, 'Dockerfile'), 'utf8');
 const osShellControlDockerfile = fs.readFileSync(path.join(consoleRoot, 'backend', 'os-shell-control', 'Dockerfile'), 'utf8');
 const osShellControlManifest = fs.readFileSync(path.join(consoleRoot, 'backend', 'os-shell-control', 'deploy.yaml'), 'utf8');
 const consoleBackendManifest = fs.readFileSync(path.join(consoleRoot, 'backend', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
@@ -79,6 +80,7 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   assert.match(osShellControlDockerfile, /COPY os-shell-control\//);
   assert.match(osShellControlDockerfile, /COPY opensphere-console-backend\/os-shell-contract\.js/);
   assert.match(osShellControlDockerfile, /opensphere-console-backend\/os-shell-admission\.js/);
+  assert.match(consoleDockerfile, /COPY OpenSphere-console\/nginx \.\/nginx/);
   assert.match(localEdgePublisher, /Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'/);
   assert.match(localEdgePublisher, /backend\\os-cli\\Dockerfile\.runtime/);
   assert.match(localEdgePublisher, /docker cp "\$\{cliEvidenceContainer\}:\/srv\/index\.json"/);
