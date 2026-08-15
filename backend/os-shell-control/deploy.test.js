@@ -62,6 +62,12 @@ test('reconciler RBAC is Pod lifecycle plus TokenReview only and runtime has zer
   const runtimeSubjects = docs.filter((doc) => /RoleBinding$/.test(doc.kind || '')).flatMap((doc) => doc.subjects || [])
     .filter((subject) => subject.name === 'opensphere-shell-runtime');
   assert.equal(runtimeSubjects.length, 0);
+  const runtimeServiceAccount = find('ServiceAccount', 'opensphere-shell-runtime', 'opensphere-shell-sessions');
+  assert.equal(runtimeServiceAccount.automountServiceAccountToken, false);
+  assert.deepEqual(runtimeServiceAccount.imagePullSecrets, [{ name: 'opensphere-ghcr-pull' }]);
+  assert.match(deployScript, /function Ensure-SessionRegistryPullSecret/);
+  assert.match(deployScript, /kubernetes[.]io\/dockerconfigjson/);
+  assert.match(deployScript, /registryPullSecret = "\$SessionNamespace\/\$registryPullSecret"/);
 });
 
 test('TLS services and leaves are separated across API, registration, credential mint and canonical Console frontdoor', () => {

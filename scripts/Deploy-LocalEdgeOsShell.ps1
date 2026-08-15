@@ -26,6 +26,7 @@ $consolePlaceholder = '__OPENSPHERE_CONSOLE_IMAGE__'
 $controlPlaceholder = '__OPENSPHERE_OS_SHELL_CONTROL_IMAGE__'
 $runtimePlaceholder = '__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__'
 $controlCaConfigMap = 'opensphere-shell-control-ca'
+$registryPullSecret = 'opensphere-ghcr-pull'
 $controlDeploymentProfiles = @(
   [ordered]@{
     Deployment = 'opensphere-shell-api'; Container = 'api'; Replicas = 2
@@ -278,6 +279,37 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
 "@
   Invoke-Kubectl -Arguments @('apply', '-f', '-') -InputText $namespaceDocument | Out-Null
+}
+
+function Ensure-SessionRegistryPullSecret {
+  $source = ((Invoke-Kubectl -Arguments @(
+    '-n', $ControlNamespace, 'get', "secret/$registryPullSecret", '-o', 'json'
+  )) -join "`n") | ConvertFrom-Json
+  $sourceDataProperties = @($source.data.PSObject.Properties)
+  if ([string]$source.type -ne 'kubernetes.io/dockerconfigjson' -or
+      $sourceDataProperties.Count -ne 1 -or
+      [string]$sourceDataProperties[0].Name -ne '.dockerconfigjson' -or
+      -not [string]$sourceDataProperties[0].Value) {
+    throw "The canonical registry pull Secret $ControlNamespace/$registryPullSecret is malformed"
+  }
+  $projection = [ordered]@{
+    apiVersion = 'v1'
+    kind = 'Secret'
+    metadata = [ordered]@{ name = $registryPullSecret; namespace = $SessionNamespace }
+    type = 'kubernetes.io/dockerconfigjson'
+    data = [ordered]@{ '.dockerconfigjson' = [string]$sourceDataProperties[0].Value }
+  }
+  Invoke-Kubectl -Arguments @('apply', '-f', '-') -InputText ($projection | ConvertTo-Json -Depth 6) | Out-Null
+  $target = ((Invoke-Kubectl -Arguments @(
+    '-n', $SessionNamespace, 'get', "secret/$registryPullSecret", '-o', 'json'
+  )) -join "`n") | ConvertFrom-Json
+  $targetDataProperties = @($target.data.PSObject.Properties)
+  if ([string]$target.type -ne 'kubernetes.io/dockerconfigjson' -or
+      $targetDataProperties.Count -ne 1 -or
+      [string]$targetDataProperties[0].Name -ne '.dockerconfigjson' -or
+      [string]$targetDataProperties[0].Value -cne [string]$sourceDataProperties[0].Value) {
+    throw "The session registry pull Secret $SessionNamespace/$registryPullSecret is not an exact projection"
+  }
 }
 
 function Assert-CertificateLifetime {
@@ -741,6 +773,7 @@ if ($head -ne [string]$evidence.sourceRevision) {
   }
   $deploymentToolingAllowlist = @(
     'scripts/Deploy-LocalEdgeOsShell.ps1',
+    'backend/os-shell-control/deploy.yaml',
     'backend/os-shell-control/deploy.test.js'
   )
   $changedPaths = @(& git -C $consoleRoot diff --name-only ([string]$evidence.sourceRevision) $head |
@@ -828,6 +861,7 @@ $runtimeTemplateRevision = [string]$osShellRelease.runtimeTemplate.sha256
 if ($PrepareTrustOnly) {
   Write-Host '[trust 1/2] Ensure Restricted session namespace and split internal TLS trust'
   Ensure-SessionNamespace
+  Ensure-SessionRegistryPullSecret
   Ensure-InternalTls
   if (-not $ReceiptPath) {
     $ReceiptPath = Join-Path (Split-Path $publicationPath -Parent) 'opensphere-local-os-shell-trust-preparation-receipt.json'
@@ -844,6 +878,7 @@ if ($PrepareTrustOnly) {
     preparedAt = [DateTimeOffset]::UtcNow.ToString('o')
     privateSecrets = @($privateTlsProfiles | ForEach-Object { "$ControlNamespace/$($_.Secret)" })
     publicCaConfigMaps = @("$ControlNamespace/$controlCaConfigMap", "$SessionNamespace/$controlCaConfigMap")
+    registryPullSecret = "$SessionNamespace/$registryPullSecret"
   }
   $trustReceipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ReceiptPath -Encoding utf8
   Write-Host '[trust 2/2] Split TLS trust prepared; no workload was deployed'
@@ -903,6 +938,7 @@ if ($manifestSource -notmatch "configMap:\s*\{\s*name:\s*$([regex]::Escape($cont
 
 Write-Host '[step 1/7] Ensure Restricted session namespace and split internal TLS trust'
 Ensure-SessionNamespace
+Ensure-SessionRegistryPullSecret
 Ensure-InternalTls
 
 Write-Host '[step 2/7] Verify Console, Backend and CLI prerequisite exact digests'
@@ -1126,6 +1162,7 @@ $receipt = [ordered]@{
     publicCaConfigMaps = @("$ControlNamespace/$controlCaConfigMap", "$SessionNamespace/$controlCaConfigMap")
     owners = $secretOwnerEvidence
   }
+  registryPullSecret = "$SessionNamespace/$registryPullSecret"
   deployments = $deploymentEvidence
   sar = 'verified'
 }
