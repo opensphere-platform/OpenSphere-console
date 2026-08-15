@@ -5,9 +5,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  assertBackendOverridePaths, assertCanonicalRepositoryPath, assertConsoleOverridePaths, assertHeadPaths,
-  assertRuntimeOverridePaths, backendOverridePaths, canonicalConsoleOrigin, consoleOverridePaths,
-  deploymentToolingPaths, verifyCompositeRepositoryBoundary,
+  assertBackendOverridePaths, assertCanonicalRepositoryPath, assertConsoleOverridePaths, assertControlOverridePaths,
+  assertHeadPaths, assertRuntimeOverridePaths, backendOverridePaths, canonicalConsoleOrigin, consoleOverridePaths,
+  controlOverridePaths, deploymentToolingPaths, verifyCompositeRepositoryBoundary,
 } from './os-shell-runtime-override-boundary.mjs';
 
 const validRuntime = [
@@ -57,6 +57,12 @@ test('console override accepts exactly the Nginx runtime input and its contract 
     /unbound source/);
 });
 
+test('control override accepts exactly runtime projection/readiness source and their tests', () => {
+  assert.doesNotThrow(() => assertControlOverridePaths(controlOverridePaths));
+  assert.throws(() => assertControlOverridePaths(controlOverridePaths.slice(0, -1)), /exact closed set/);
+  assert.throws(() => assertControlOverridePaths([...controlOverridePaths, 'backend/os-shell-control/config.js']), /exact closed set/);
+});
+
 test('backend override rejects path escape and non-canonical separators before allowlist comparison', () => {
   for (const value of ['../backend/Dockerfile', '/backend/Dockerfile', 'C:/backend/Dockerfile',
     'backend\\opensphere-console-backend\\Dockerfile', 'backend/../Dockerfile', './backend/Dockerfile', 'backend//Dockerfile']) {
@@ -66,10 +72,11 @@ test('backend override rejects path escape and non-canonical separators before a
 
 test('deployment tooling remains a separate authority from both component overrides', () => {
   assert.doesNotThrow(() => assertHeadPaths([
-    ...validRuntime, ...backendOverridePaths, ...consoleOverridePaths, ...deploymentToolingPaths,
-  ], [...validRuntime, ...backendOverridePaths, ...consoleOverridePaths]));
+    ...validRuntime, ...backendOverridePaths, ...consoleOverridePaths, ...controlOverridePaths, ...deploymentToolingPaths,
+  ], [...validRuntime, ...backendOverridePaths, ...consoleOverridePaths, ...controlOverridePaths]));
   assert.throws(() => assertBackendOverridePaths([...backendOverridePaths, ...deploymentToolingPaths]), /exact closed set/);
   assert.throws(() => assertConsoleOverridePaths([...consoleOverridePaths, ...deploymentToolingPaths]), /exact closed set/);
+  assert.throws(() => assertControlOverridePaths([...controlOverridePaths, ...deploymentToolingPaths]), /exact closed set/);
 });
 
 function git(repository, ...args) {
@@ -104,6 +111,8 @@ test('composite repository attribution rejects missing Console evidence, extra p
       [consoleOverridePaths[0]]: 'absolute_redirect off;\n',
       [consoleOverridePaths[1]]: 'console redirect contract\n',
     });
+    const controlRevision = commit(repository, 'control override', Object.fromEntries(
+      controlOverridePaths.map((path) => [path, `control contract ${path}\n`])));
     const headRevision = commit(repository, 'deployment tooling', {
       'scripts/Deploy-LocalEdgeOsShell.ps1': '# deployment tooling\n',
     });
@@ -112,19 +121,20 @@ test('composite repository attribution rejects missing Console evidence, extra p
     git(repository, 'branch', '--set-upstream-to=origin/main', 'main');
 
     const valid = verifyCompositeRepositoryBoundary({
-      repository, baseRevision, backendRevision, consoleRevision, headRevision,
+      repository, baseRevision, backendRevision, consoleRevision, controlRevision, headRevision,
     });
     assert.deepEqual(valid.backendPaths, backendOverridePaths);
     assert.deepEqual(valid.consolePaths, consoleOverridePaths);
+    assert.deepEqual(valid.controlPaths, controlOverridePaths);
     assert.deepEqual(valid.toolingPaths, ['scripts/Deploy-LocalEdgeOsShell.ps1']);
     const cumulativeConsoleEvidence = verifyCompositeRepositoryBoundary({
-      repository, baseRevision, backendRevision, consoleRevision: headRevision, headRevision,
+      repository, baseRevision, backendRevision, consoleRevision: headRevision, controlRevision, headRevision,
     });
     assert.deepEqual(cumulativeConsoleEvidence.consolePaths, consoleOverridePaths);
     assert.deepEqual(cumulativeConsoleEvidence.toolingPaths, ['scripts/Deploy-LocalEdgeOsShell.ps1']);
     assert.throws(() => verifyCompositeRepositoryBoundary({
-      repository, baseRevision, backendRevision, headRevision,
-    }), /unbound source/);
+      repository, baseRevision, backendRevision, controlRevision, headRevision,
+    }), /unbound source|outside the composite component attribution/);
 
     git(repository, 'switch', '-c', 'extra-console-evidence', consoleRevision);
     const extraRevision = commit(repository, 'extra Console evidence path', {
@@ -133,7 +143,7 @@ test('composite repository attribution rejects missing Console evidence, extra p
     git(repository, 'update-ref', 'refs/remotes/origin/extra-console-evidence', extraRevision);
     git(repository, 'switch', 'main');
     assert.throws(() => verifyCompositeRepositoryBoundary({
-      repository, baseRevision, backendRevision, consoleRevision: extraRevision, headRevision,
+      repository, baseRevision, backendRevision, consoleRevision: extraRevision, controlRevision, headRevision,
     }), /outside the composite component attribution/);
 
     git(repository, 'switch', '-c', 'tampered-console-evidence', consoleRevision);
@@ -143,7 +153,7 @@ test('composite repository attribution rejects missing Console evidence, extra p
     git(repository, 'update-ref', 'refs/remotes/origin/tampered-console-evidence', tamperedRevision);
     git(repository, 'switch', 'main');
     assert.throws(() => verifyCompositeRepositoryBoundary({
-      repository, baseRevision, backendRevision, consoleRevision: tamperedRevision, headRevision,
+      repository, baseRevision, backendRevision, consoleRevision: tamperedRevision, controlRevision, headRevision,
     }), /tampers with independently attributed component source/);
   } finally {
     rmSync(repository, { recursive: true, force: true });

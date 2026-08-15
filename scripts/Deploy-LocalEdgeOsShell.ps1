@@ -6,6 +6,7 @@ param(
   [string]$RuntimePublicationEvidence = '',
   [string]$BackendPublicationEvidence = '',
   [string]$ConsolePublicationEvidence = '',
+  [string]$ControlPublicationEvidence = '',
   [string]$ManifestPath = '',
   [string]$KubeContext = 'docker-desktop',
   [string]$ControlNamespace = 'opensphere-console',
@@ -36,6 +37,7 @@ $controlCaConfigMap = 'opensphere-shell-control-ca'
 $registryPullSecret = 'opensphere-ghcr-pull'
 $runtimeMaxProcesses = 256
 $runtimeGlobalPodLimit = 8
+$runtimeUserNamespacePolicy = 'required-hostUsers-false'
 $controlDeploymentProfiles = @(
   [ordered]@{
     Deployment = 'opensphere-shell-api'; Container = 'api'; Replicas = 2
@@ -924,10 +926,38 @@ if ($ConsolePublicationEvidence) {
   }
 }
 
+$controlPublicationPath = ''
+$controlEvidence = $evidence
+if ($ControlPublicationEvidence) {
+  $controlPublicationPath = (Resolve-Path -LiteralPath $ControlPublicationEvidence).Path
+  if ($controlPublicationPath -eq $publicationPath -or
+      ($runtimePublicationPath -and $controlPublicationPath -eq $runtimePublicationPath) -or
+      ($backendPublicationPath -and $controlPublicationPath -eq $backendPublicationPath) -or
+      ($consolePublicationPath -and $controlPublicationPath -eq $consolePublicationPath)) {
+    throw 'ControlPublicationEvidence must be a distinct component-only publication'
+  }
+  $controlEvidence = Get-Content -Raw -LiteralPath $controlPublicationPath | ConvertFrom-Json
+  Assert-EdgePublicationEnvelope -Evidence $controlEvidence -Purpose 'OS Shell control override'
+  $controlComponentKeys = @($controlEvidence.components.PSObject.Properties.Name | Sort-Object)
+  if (($controlComponentKeys -join ',') -ne 'osShellControl') {
+    throw "Control override requires exactly osShellControl; received: $($controlComponentKeys -join ',')"
+  }
+  if ([string]$controlEvidence.sourceRevision -eq [string]$evidence.sourceRevision) {
+    throw 'Control override SourceRevision must differ from the base OS Shell publication'
+  }
+  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
+  $controlMigration = $controlEvidence.artifacts.supabaseMigrationManifest
+  if (-not $controlMigration -or [string]$controlMigration.sha256 -ne [string]$baseMigration.sha256 -or
+      [string]$controlMigration.setDigest -ne [string]$baseMigration.setDigest -or
+      [string]$controlMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
+    throw 'Control override changes the base Supabase migration lineage'
+  }
+}
+
 $console = Get-EvidenceComponent -Evidence $consoleEvidence -Key 'console' -Repository $consoleRepository
 $backend = Get-EvidenceComponent -Evidence $backendEvidence -Key 'backend' -Repository $backendRepository
 $cliArtifacts = Get-EvidenceComponent -Evidence $evidence -Key 'cliArtifacts' -Repository $cliRepository
-$control = Get-EvidenceComponent -Evidence $evidence -Key $controlComponent -Repository $controlRepository
+$control = Get-EvidenceComponent -Evidence $controlEvidence -Key $controlComponent -Repository $controlRepository
 $runtime = Get-EvidenceComponent -Evidence $runtimeEvidence -Key $runtimeComponent -Repository $runtimeRepository
 Assert-ImageMetadata -Repository $consoleRepository -Image $console.image -Digest $console.digest `
   -SourceRevision $consoleEvidence.sourceRevision -ReleaseTag $consoleEvidence.releaseTag -ExpectedPointerTag $consoleEvidence.immutableTag
@@ -936,7 +966,7 @@ Assert-ImageMetadata -Repository $backendRepository -Image $backend.image -Diges
 Assert-ImageMetadata -Repository $cliRepository -Image $cliArtifacts.image -Digest $cliArtifacts.digest `
   -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag
 Assert-ImageMetadata -Repository $controlRepository -Image $control.image -Digest $control.digest `
-  -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag
+  -SourceRevision $controlEvidence.sourceRevision -ReleaseTag $controlEvidence.releaseTag
 Assert-ImageMetadata -Repository $runtimeRepository -Image $runtime.image -Digest $runtime.digest `
   -SourceRevision $runtimeEvidence.sourceRevision -ReleaseTag $runtimeEvidence.releaseTag
 
@@ -948,6 +978,7 @@ $deploymentToolingAllowlist = @(
   'scripts/Test-OsShellEdgeSigning.ps1',
   'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/Invoke-OsShellFeatureOperation.ps1',
+  'scripts/Publish-LocalEdge.ps1',
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
   'backend/os-shell-control/deploy.yaml',
@@ -956,8 +987,9 @@ $deploymentToolingAllowlist = @(
 $boundaryEvidence = $null
 $backendBoundaryEvidence = $null
 $consoleBoundaryEvidence = $null
+$controlBoundaryEvidence = $null
 $componentOverrideBoundary = $null
-if ($runtimePublicationPath -or $backendPublicationPath -or $consolePublicationPath) {
+if ($runtimePublicationPath -or $backendPublicationPath -or $consolePublicationPath -or $controlPublicationPath) {
   $boundaryVerifier = Join-Path $consoleRoot 'scripts\os-shell-runtime-override-boundary.mjs'
   if (-not (Test-Path -LiteralPath $boundaryVerifier)) { throw 'Component override boundary verifier is missing' }
   if ((& git -C $consoleRoot remote get-url origin).Trim() -ne 'https://github.com/opensphere-platform/OpenSphere-console.git') {
@@ -970,12 +1002,14 @@ if ($runtimePublicationPath -or $backendPublicationPath -or $consolePublicationP
   if ($runtimePublicationPath) { $boundaryArguments += @('--runtime', ([string]$runtimeEvidence.sourceRevision)) }
   if ($backendPublicationPath) { $boundaryArguments += @('--backend', ([string]$backendEvidence.sourceRevision)) }
   if ($consolePublicationPath) { $boundaryArguments += @('--console', ([string]$consoleEvidence.sourceRevision)) }
+  if ($controlPublicationPath) { $boundaryArguments += @('--control', ([string]$controlEvidence.sourceRevision)) }
   $boundaryOutput = & node @boundaryArguments
   if ($LASTEXITCODE -ne 0) { throw 'Composite component override source boundary verification failed' }
   $componentOverrideBoundary = ($boundaryOutput -join "`n") | ConvertFrom-Json
   if ($runtimePublicationPath) { $boundaryEvidence = $componentOverrideBoundary }
   if ($backendPublicationPath) { $backendBoundaryEvidence = $componentOverrideBoundary }
   if ($consolePublicationPath) { $consoleBoundaryEvidence = $componentOverrideBoundary }
+  if ($controlPublicationPath) { $controlBoundaryEvidence = $componentOverrideBoundary }
 } elseif ($head -ne [string]$evidence.sourceRevision) {
   & git -C $consoleRoot merge-base --is-ancestor ([string]$evidence.sourceRevision) $head
   if ($LASTEXITCODE -ne 0) {
@@ -1031,6 +1065,11 @@ if ([string]$migrationArtifact.setDigest -ne [string]$migrationManifest.setDiges
   throw 'Migration lineage evidence differs from the committed manifest'
 }
 $osShellRelease = $evidence.artifacts.osShellRelease
+$osShellControlRelease = if ($controlPublicationPath) {
+  $controlEvidence.artifacts.osShellControlRelease
+} else {
+  $osShellRelease
+}
 $runtimeTemplatePath = Join-Path $consoleRoot 'backend\os-shell-control\runtime-template.js'
 if (-not $osShellRelease -or
     [string]$osShellRelease.cliManifest.image -ne [string]$cliArtifacts.image -or
@@ -1038,13 +1077,17 @@ if (-not $osShellRelease -or
     [string]$osShellRelease.cliManifest.sha256 -notmatch '^sha256:[a-f0-9]{64}$' -or
     [string]$osShellRelease.cliManifest.signatureAlgorithm -ne 'Ed25519' -or
     [string]$osShellRelease.cliManifest.keyId -ne 'opensphere-cli-local-dev-v1' -or
-    [string]$osShellRelease.runtimeTemplate.path -ne 'backend/os-shell-control/runtime-template.js' -or
-    [string]$osShellRelease.runtimeTemplate.sha256 -ne (Get-CanonicalTextSha256 -Path $runtimeTemplatePath) -or
-    [string]$osShellRelease.sessionPolicyRevision -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' -or
-    [int]$osShellRelease.runtimeProcessPolicy.maxProcesses -ne $runtimeMaxProcesses -or
-    [int]$osShellRelease.runtimeProcessPolicy.globalPodLimit -ne $runtimeGlobalPodLimit -or
-    [string]$osShellRelease.runtimeProcessPolicy.enforcement -ne 'linux-rlimit-nproc-fixed-uid+namespace-resourcequota') {
-  throw 'OS Shell signed manifest, runtime template or session policy evidence is absent or inconsistent'
+    [string]$osShellRelease.sessionPolicyRevision -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') {
+  throw 'OS Shell signed CLI manifest or session policy evidence is absent or inconsistent'
+}
+if (-not $osShellControlRelease -or
+    [string]$osShellControlRelease.runtimeTemplate.path -ne 'backend/os-shell-control/runtime-template.js' -or
+    [string]$osShellControlRelease.runtimeTemplate.sha256 -ne (Get-CanonicalTextSha256 -Path $runtimeTemplatePath) -or
+    [int]$osShellControlRelease.runtimeProcessPolicy.maxProcesses -ne $runtimeMaxProcesses -or
+    [int]$osShellControlRelease.runtimeProcessPolicy.globalPodLimit -ne $runtimeGlobalPodLimit -or
+    [string]$osShellControlRelease.runtimeProcessPolicy.userNamespacePolicy -ne $runtimeUserNamespacePolicy -or
+    [string]$osShellControlRelease.runtimeProcessPolicy.enforcement -ne 'linux-userns+rlimit-nproc+namespace-resourcequota') {
+  throw 'OS Shell control runtime template or user-namespace process policy evidence is absent or inconsistent'
 }
 # Re-open the exact cliArtifacts image without executing it and independently
 # verify the signed manifest bytes recorded by publication. This prevents a
@@ -1086,6 +1129,9 @@ if ($backendPublicationPath) {
 if ($consolePublicationPath) {
   $releaseOverrides += "console/$([string]$consoleEvidence.releaseTag)/$(([string]$consoleEvidence.sourceRevision).Substring(0, 12))"
 }
+if ($controlPublicationPath) {
+  $releaseOverrides += "osShellControl/$([string]$controlEvidence.releaseTag)/$(([string]$controlEvidence.sourceRevision).Substring(0, 12))"
+}
 $releaseEvidenceRef = if ($releaseOverrides.Count) {
   "release://edge-composite/$([string]$evidence.releaseTag)/$(([string]$evidence.sourceRevision).Substring(0, 12))/$($releaseOverrides -join '/')"
 } else {
@@ -1094,7 +1140,7 @@ $releaseEvidenceRef = if ($releaseOverrides.Count) {
 $manifestSha256 = [string]$osShellRelease.cliManifest.sha256
 $releaseKeyId = [string]$osShellRelease.cliManifest.keyId
 $sessionPolicyRevision = [string]$osShellRelease.sessionPolicyRevision
-$runtimeTemplateRevision = [string]$osShellRelease.runtimeTemplate.sha256
+$runtimeTemplateRevision = [string]$osShellControlRelease.runtimeTemplate.sha256
 
 if ($PrepareTrustOnly) {
   Write-Host '[trust 1/2] Ensure Restricted session namespace and split internal TLS trust'
@@ -1117,10 +1163,12 @@ if ($PrepareTrustOnly) {
     runtimePublicationEvidence = $runtimePublicationPath
     backendPublicationEvidence = $backendPublicationPath
     consolePublicationEvidence = $consolePublicationPath
+    controlPublicationEvidence = $controlPublicationPath
     componentSourceRevisions = [ordered]@{
       base = [string]$evidence.sourceRevision
       backend = [string]$backendEvidence.sourceRevision
       console = [string]$consoleEvidence.sourceRevision
+      osShellControl = [string]$controlEvidence.sourceRevision
       osShellRuntime = [string]$runtimeEvidence.sourceRevision
     }
     preparedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -1222,7 +1270,7 @@ if (($deploymentResources -join ',') -ne ($expectedDeploymentResources -join ','
 }
 foreach ($profile in $controlDeploymentProfiles) {
   Set-ControlDeploymentActivation -Profile $profile `
-    -SourceRevision ([string]$evidence.sourceRevision) -ReleaseEvidenceRef $releaseEvidenceRef `
+    -SourceRevision ([string]$controlEvidence.sourceRevision) -ReleaseEvidenceRef $releaseEvidenceRef `
     -RuntimeImage $runtime.image -OsArtifactDigest $cliArtifacts.digest `
     -ManifestSha256 $manifestSha256 -ReleaseKeyId $releaseKeyId `
     -SessionPolicyRevision $sessionPolicyRevision -RuntimeTemplateRevision $runtimeTemplateRevision
@@ -1295,7 +1343,13 @@ foreach ($resource in $deploymentResources) {
       }
     }
   }
-  $deploymentEvidence[$name] = [ordered]@{ ready = "$ready/$desired"; serviceAccount = $serviceAccount; image = $expectedWorkloadImage }
+  $deploymentEvidence[$name] = [ordered]@{
+    ready = "$ready/$desired"
+    serviceAccount = $serviceAccount
+    image = $expectedWorkloadImage
+    sourceRevision = if ($isConsoleApi) { [string]$consoleEvidence.sourceRevision } else { [string]$controlEvidence.sourceRevision }
+    userNamespacePolicy = if ($isConsoleApi) { 'not-applicable' } else { $runtimeUserNamespacePolicy }
+  }
 }
 if ($runtimeBindingCount -lt 1) { throw 'No deployed control workload is bound to the exact runtime image' }
 foreach ($service in $expectedControlServices) {
@@ -1445,6 +1499,8 @@ $releaseProfile = [ordered]@{
     baseSha256 = Get-FileSha256 -Path $publicationPath
     consoleSha256 = if ($consolePublicationPath) { Get-FileSha256 -Path $consolePublicationPath }
       else { Get-FileSha256 -Path $publicationPath }
+    controlSha256 = if ($controlPublicationPath) { Get-FileSha256 -Path $controlPublicationPath }
+      else { Get-FileSha256 -Path $publicationPath }
     backendSha256 = if ($backendPublicationPath) { Get-FileSha256 -Path $backendPublicationPath }
       else { Get-FileSha256 -Path $publicationPath }
     runtimeSha256 = if ($runtimePublicationPath) { Get-FileSha256 -Path $runtimePublicationPath }
@@ -1454,6 +1510,7 @@ $releaseProfile = [ordered]@{
     base = [string]$evidence.sourceRevision
     console = [string]$consoleEvidence.sourceRevision
     backend = [string]$backendEvidence.sourceRevision
+    osShellControl = [string]$controlEvidence.sourceRevision
     osShellRuntime = [string]$runtimeEvidence.sourceRevision
     deploymentTooling = $deploymentToolingSourceRevision
   }
@@ -1470,7 +1527,8 @@ $releaseProfile = [ordered]@{
   runtimePolicy = [ordered]@{
     maxProcesses = $runtimeMaxProcesses
     globalPodLimit = $runtimeGlobalPodLimit
-    enforcement = 'linux-rlimit-nproc-fixed-uid+namespace-resourcequota'
+    userNamespacePolicy = $runtimeUserNamespacePolicy
+    enforcement = 'linux-userns+rlimit-nproc+namespace-resourcequota'
     runtimeTemplateRevision = $runtimeTemplateRevision
     sessionPolicyRevision = $sessionPolicyRevision
   }
@@ -1547,15 +1605,18 @@ $receipt = [ordered]@{
   runtimePublicationEvidence = $runtimePublicationPath
   backendPublicationEvidence = $backendPublicationPath
   consolePublicationEvidence = $consolePublicationPath
+  controlPublicationEvidence = $controlPublicationPath
   componentSourceRevisions = [ordered]@{
     base = [string]$evidence.sourceRevision
     backend = [string]$backendEvidence.sourceRevision
     console = [string]$consoleEvidence.sourceRevision
+    osShellControl = [string]$controlEvidence.sourceRevision
     osShellRuntime = [string]$runtimeEvidence.sourceRevision
   }
   runtimeOverrideBoundary = $boundaryEvidence
   backendOverrideBoundary = $backendBoundaryEvidence
   consoleOverrideBoundary = $consoleBoundaryEvidence
+  controlOverrideBoundary = $controlBoundaryEvidence
   deployedAt = [DateTimeOffset]::UtcNow.ToString('o')
   migration = [ordered]@{
     id = '0062_shell_session_quota_and_kill_switch'
@@ -1576,7 +1637,8 @@ $receipt = [ordered]@{
   runtimeProcessPolicy = [ordered]@{
     maxProcesses = $runtimeMaxProcesses
     globalPodLimit = $runtimeGlobalPodLimit
-    enforcement = 'linux-rlimit-nproc-fixed-uid+namespace-resourcequota'
+    userNamespacePolicy = $runtimeUserNamespacePolicy
+    enforcement = 'linux-userns+rlimit-nproc+namespace-resourcequota'
   }
   featureOperation = $featureOperation
   signedProfile = [ordered]@{

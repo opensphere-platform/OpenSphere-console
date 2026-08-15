@@ -63,6 +63,8 @@ $negativeCases = @(
   @{ Name = 'env-value-from'; Apply = { param($p) $p.spec.containers[0].env[0].PSObject.Properties.Remove('value'); $p.spec.containers[0].env[0] | Add-Member -NotePropertyName valueFrom -NotePropertyValue @{ secretKeyRef = @{ name = 'stolen'; key = 'token' } } } },
   @{ Name = 'node-selector'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName nodeSelector -NotePropertyValue @{ 'kubernetes.io/hostname' = 'attacker-selected' } -Force } },
   @{ Name = 'runtime-class'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName runtimeClassName -NotePropertyValue $runtimeClassName -Force } },
+  @{ Name = 'host-users-absent'; Apply = { param($p) $p.spec.PSObject.Properties.Remove('hostUsers') } },
+  @{ Name = 'host-users-true'; Apply = { param($p) $p.spec.hostUsers = $true } },
   @{ Name = 'extra-toleration'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(@{ key='attacker'; operator='Exists'; effect='NoSchedule' }) -Force } },
   @{ Name = 'duplicate-default-toleration'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(
     @{ key='node.kubernetes.io/not-ready'; operator='Exists'; effect='NoExecute'; tolerationSeconds=300 },
@@ -165,7 +167,29 @@ if ($LiveCreate) {
   $created = $null
   try {
     $created = $canonical | & kubectl --context $KubeContext --as $reconciler create -f - -o json | ConvertFrom-Json -Depth 100
-    if ($LASTEXITCODE -ne 0 -or -not $created.metadata.uid) { throw 'canonical runtime Pod create was rejected' }
+    if ($LASTEXITCODE -ne 0 -or -not $created.metadata.uid -or [bool]$created.spec.hostUsers -ne $false) {
+      throw 'canonical user-namespaced runtime Pod create was rejected or defaulted outside hostUsers=false'
+    }
+    $ptyStarted = $false
+    $ptyDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+    do {
+      $observedPod = & kubectl --context $KubeContext -n $namespace get pod $name -o json | ConvertFrom-Json -Depth 100
+      if ($LASTEXITCODE -ne 0) { throw 'canonical user-namespaced runtime Pod status read failed' }
+      $containerStatusesProperty = $observedPod.status.PSObject.Properties['containerStatuses']
+      $ptyStatus = if ($containerStatusesProperty) {
+        @($containerStatusesProperty.Value | Where-Object { [string]$_.name -eq 'pty' })
+      } else { @() }
+      if ($ptyStatus.Count -eq 1 -and $ptyStatus[0].state.PSObject.Properties['terminated']) {
+        $terminated = $ptyStatus[0].state.terminated
+        throw "user-namespaced PTY terminated before readiness: $($terminated | ConvertTo-Json -Compress)"
+      }
+      if ($ptyStatus.Count -eq 1 -and $ptyStatus[0].state.PSObject.Properties['running']) {
+        $ptyStarted = $true
+        break
+      }
+      Start-Sleep -Milliseconds 500
+    } while ([DateTimeOffset]::UtcNow -lt $ptyDeadline)
+    if (-not $ptyStarted) { throw 'user-namespaced PTY did not reach Running within 30 seconds' }
     $ephemeralPatch = @{
       spec = @{ ephemeralContainers = @(@{
         name='admission-canary'; image=$RuntimeImage; imagePullPolicy='IfNotPresent'; command=@('/nonexistent')
@@ -210,6 +234,7 @@ if ($LiveCreate) {
   canonicalServerDryRun = 'Allowed'
   canonicalLiveCreate = if ($LiveCreate) { 'AllowedThenDeleted' } else { 'NotRequested' }
   defaultTolerations = 'ExactNotReadyAndUnreachableNoExecute300s'
+  userNamespace = if ($LiveCreate) { 'HostUsersFalsePtyStarted' } else { 'NotRequested' }
   runtimeClassFixture = 'UniqueRuncCreatedThenExactUidVerifiedAndDeleted'
   mutatedServerDryRun = 'Denied'
   mutatedLiveCreate = 'Denied'

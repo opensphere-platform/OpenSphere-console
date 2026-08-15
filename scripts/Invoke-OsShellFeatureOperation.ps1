@@ -7,6 +7,7 @@ param(
   [string]$RuntimePublicationEvidence = '',
   [string]$BackendPublicationEvidence = '',
   [string]$ConsolePublicationEvidence = '',
+  [string]$ControlPublicationEvidence = '',
   [string]$DeploymentReceipt = '',
   [string]$RecoverySignedProfile = '',
   [string]$RecoverySignature = '',
@@ -95,6 +96,7 @@ if ($Operation -eq 'Enable') {
   if ($RuntimePublicationEvidence) { $arguments += @('-RuntimePublicationEvidence',$RuntimePublicationEvidence) }
   if ($BackendPublicationEvidence) { $arguments += @('-BackendPublicationEvidence',$BackendPublicationEvidence) }
   if ($ConsolePublicationEvidence) { $arguments += @('-ConsolePublicationEvidence',$ConsolePublicationEvidence) }
+  if ($ControlPublicationEvidence) { $arguments += @('-ControlPublicationEvidence',$ControlPublicationEvidence) }
   if ($ReceiptPath) { $arguments += @('-ReceiptPath',$ReceiptPath) }
   & (Join-Path $PSScriptRoot 'Deploy-LocalEdgeOsShell.ps1') @arguments
   if ($LASTEXITCODE -ne 0) { throw "OS Shell enable deployment failed with exit code $LASTEXITCODE" }

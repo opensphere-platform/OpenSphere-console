@@ -1,6 +1,7 @@
 'use strict';
 
 const DNS = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
+const USER_NAMESPACE_POLICY = 'required-hostUsers-false';
 function shellPodName(sessionId) { return `os-shell-${String(sessionId).replace(/-/g, '').slice(0, 20)}`; }
 function env(name, value) { return { name, value: String(value) }; }
 
@@ -24,6 +25,7 @@ function buildRuntimePod(session, config) {
       'opensphere.io/generation': String(session.generation), 'opensphere.io/fencing-epoch': String(session.fencing_epoch),
     } }, spec: {
       serviceAccountName: config.runtimeServiceAccount, automountServiceAccountToken: false, restartPolicy: 'Never',
+      hostUsers: false,
       enableServiceLinks: false, terminationGracePeriodSeconds: 5, dnsPolicy: 'ClusterFirst', schedulerName: 'default-scheduler',
       imagePullSecrets: [{ name: 'opensphere-ghcr-pull' }],
       securityContext: { runAsNonRoot: true, fsGroup: 65532, fsGroupChangePolicy: 'OnRootMismatch', seccompProfile: { type: 'RuntimeDefault' } },
@@ -61,4 +63,4 @@ function buildRuntimePod(session, config) {
   };
 }
 
-module.exports = { buildRuntimePod, shellPodName };
+module.exports = { buildRuntimePod, shellPodName, USER_NAMESPACE_POLICY };

@@ -13,7 +13,7 @@ const { verifyOsShellAdmission } = require('../opensphere-console-backend/os-she
 const { verifyOsShellContextJws } = require('../opensphere-console-backend/os-shell-context');
 const { loadConfig } = require('./config');
 const { createKubernetesClient, validatedRuntimeIdentity } = require('./kubernetes');
-const { buildRuntimePod, shellPodName } = require('./runtime-template');
+const { buildRuntimePod, shellPodName, USER_NAMESPACE_POLICY } = require('./runtime-template');
 
 const RUNTIME_CONTRACT = 'opensphere-shell-runtime/v1';
 const CONTROL_CONTRACT = 'opensphere-shell-control/v1';
@@ -44,7 +44,8 @@ function idempotentSessionId(secret, actorId, browserSessionId, idempotencyKey) 
 function releaseReadiness(config) { return { runtimeImageDigest: config.runtimeImageDigest, osArtifactDigest: config.osArtifactDigest,
   manifestSha256: config.manifestSha256, releaseEvidenceRef: config.releaseEvidenceRef,
   sessionPolicyRevision: config.sessionPolicyRevision, runtimeTemplateRevision: config.runtimeTemplateRevision,
-  runtimeMaxProcesses: config.runtimeMaxProcesses, runtimeGlobalPodLimit: config.runtimeGlobalPodLimit }; }
+  runtimeMaxProcesses: config.runtimeMaxProcesses, runtimeGlobalPodLimit: config.runtimeGlobalPodLimit,
+  userNamespacePolicy: USER_NAMESPACE_POLICY }; }
 
 function probeComponentReadiness(target, expectedMode, config, { request = http.request } = {}) {
   const url = new URL(target); if (url.protocol !== 'http:' || url.pathname !== '/readyz' || url.search || url.hash) return Promise.resolve(false);

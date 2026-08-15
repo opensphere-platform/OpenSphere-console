@@ -444,6 +444,7 @@ foreach ($item in $images) {
 # stopped image (never executing it) closes manifestSha256/keyId over the same
 # digest later admitted into every session receipt.
 $osShellReleaseArtifact = $null
+$osShellControlReleaseArtifact = $null
 $osShellComponentKeys = @('console', 'backend', 'cliArtifacts', 'osShellControl', 'osShellRuntime')
 $isExactOsShellPublication = $images.Count -eq $osShellComponentKeys.Count `
   -and @($osShellComponentKeys | Where-Object { -not $requestedComponents.Contains($_) }).Count -eq 0
@@ -488,7 +489,23 @@ if ($isExactOsShellPublication) {
     runtimeProcessPolicy = [ordered]@{
       maxProcesses = 256
       globalPodLimit = 8
-      enforcement = 'linux-rlimit-nproc-fixed-uid+namespace-resourcequota'
+      userNamespacePolicy = 'required-hostUsers-false'
+      enforcement = 'linux-userns+rlimit-nproc+namespace-resourcequota'
+    }
+  }
+}
+if ($requestedComponents.Contains('osShellControl')) {
+  $runtimeTemplatePath = Join-Path $consoleCheckout 'backend\os-shell-control\runtime-template.js'
+  $osShellControlReleaseArtifact = [ordered]@{
+    runtimeTemplate = [ordered]@{
+      path = 'backend/os-shell-control/runtime-template.js'
+      sha256 = Get-CanonicalTextSha256 -Path $runtimeTemplatePath
+    }
+    runtimeProcessPolicy = [ordered]@{
+      maxProcesses = 256
+      globalPodLimit = 8
+      userNamespacePolicy = 'required-hostUsers-false'
+      enforcement = 'linux-userns+rlimit-nproc+namespace-resourcequota'
     }
   }
 }
@@ -536,6 +553,9 @@ $releaseArtifacts = [ordered]@{
 }
 if ($osShellReleaseArtifact) {
   $releaseArtifacts['osShellRelease'] = $osShellReleaseArtifact
+}
+if ($osShellControlReleaseArtifact) {
+  $releaseArtifacts['osShellControlRelease'] = $osShellControlReleaseArtifact
 }
 $bom = [ordered]@{
   apiVersion = 'release.opensphere.io/v1alpha1'
