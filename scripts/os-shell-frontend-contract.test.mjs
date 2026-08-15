@@ -189,5 +189,5 @@ test('standalone Shell response severs opener/embed authority and cannot load gu
   assert.doesNotMatch(launcher, /window[.]open|target="_blank"/);
   const routes = read('src/app/app.routes.ts');
   assert.doesNotMatch(routes, /path:\s*'shell'|os-shell-page/);
-  assert.match(nginx, /location = \/shell\/ \{ return 308 \/shell; \}/);
+  assert.match(nginx, /location = \/shell\/[\s\S]*absolute_redirect off;[\s\S]*return 308 \/shell;/);
 });

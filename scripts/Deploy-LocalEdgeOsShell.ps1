@@ -4,6 +4,8 @@ param(
   [Parameter(Mandatory)]
   [string]$PublicationEvidence,
   [string]$RuntimePublicationEvidence = '',
+  [string]$BackendPublicationEvidence = '',
+  [string]$ConsolePublicationEvidence = '',
   [string]$ManifestPath = '',
   [string]$KubeContext = 'docker-desktop',
   [string]$ControlNamespace = 'opensphere-console',
@@ -627,7 +629,8 @@ function Assert-PrerequisiteDeployment {
   param(
     [Parameter(Mandatory)][string]$Deployment,
     [Parameter(Mandatory)][string]$Image,
-    [Parameter(Mandatory)][string]$Digest
+    [Parameter(Mandatory)][string]$Digest,
+    [Parameter(Mandatory)][string]$SourceRevision
   )
   Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'rollout', 'status', "deployment/$Deployment", '--timeout=600s') | Out-Null
   $resource = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', "deployment/$Deployment", '-o', 'json')) -join "`n") | ConvertFrom-Json
@@ -654,7 +657,13 @@ function Assert-PrerequisiteDeployment {
       throw "Prerequisite Pod $($pod.metadata.name) is not running the exact digest for $Deployment"
     }
   }
-  return [ordered]@{ deployment = $Deployment; ready = "$ready/$desired"; image = $Image; digest = $Digest }
+  return [ordered]@{
+    deployment = $Deployment
+    ready = "$ready/$desired"
+    image = $Image
+    digest = $Digest
+    sourceRevision = $SourceRevision
+  }
 }
 
 function Set-BackendOsShellActivation {
@@ -862,15 +871,68 @@ if ($RuntimePublicationEvidence) {
   }
 }
 
-$console = Get-EvidenceComponent -Evidence $evidence -Key 'console' -Repository $consoleRepository
-$backend = Get-EvidenceComponent -Evidence $evidence -Key 'backend' -Repository $backendRepository
+$backendPublicationPath = ''
+$backendEvidence = $evidence
+if ($BackendPublicationEvidence) {
+  $backendPublicationPath = (Resolve-Path -LiteralPath $BackendPublicationEvidence).Path
+  if ($backendPublicationPath -eq $publicationPath -or
+      ($runtimePublicationPath -and $backendPublicationPath -eq $runtimePublicationPath)) {
+    throw 'BackendPublicationEvidence must be a distinct component-only publication'
+  }
+  $backendEvidence = Get-Content -Raw -LiteralPath $backendPublicationPath | ConvertFrom-Json
+  Assert-EdgePublicationEnvelope -Evidence $backendEvidence -Purpose 'OS Shell backend override'
+  $backendComponentKeys = @($backendEvidence.components.PSObject.Properties.Name | Sort-Object)
+  if (($backendComponentKeys -join ',') -ne 'backend') {
+    throw "Backend override requires exactly backend; received: $($backendComponentKeys -join ',')"
+  }
+  if ([string]$backendEvidence.sourceRevision -eq [string]$evidence.sourceRevision) {
+    throw 'Backend override SourceRevision must differ from the base OS Shell publication'
+  }
+  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
+  $backendMigration = $backendEvidence.artifacts.supabaseMigrationManifest
+  if (-not $backendMigration -or [string]$backendMigration.sha256 -ne [string]$baseMigration.sha256 -or
+      [string]$backendMigration.setDigest -ne [string]$baseMigration.setDigest -or
+      [string]$backendMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
+    throw 'Backend override changes the base Supabase migration lineage'
+  }
+}
+
+$consolePublicationPath = ''
+$consoleEvidence = $evidence
+if ($ConsolePublicationEvidence) {
+  $consolePublicationPath = (Resolve-Path -LiteralPath $ConsolePublicationEvidence).Path
+  if ($consolePublicationPath -eq $publicationPath -or
+      ($runtimePublicationPath -and $consolePublicationPath -eq $runtimePublicationPath) -or
+      ($backendPublicationPath -and $consolePublicationPath -eq $backendPublicationPath)) {
+    throw 'ConsolePublicationEvidence must be a distinct component-only publication'
+  }
+  $consoleEvidence = Get-Content -Raw -LiteralPath $consolePublicationPath | ConvertFrom-Json
+  Assert-EdgePublicationEnvelope -Evidence $consoleEvidence -Purpose 'OS Shell Console override'
+  $consoleComponentKeys = @($consoleEvidence.components.PSObject.Properties.Name | Sort-Object)
+  if (($consoleComponentKeys -join ',') -ne 'console') {
+    throw "Console override requires exactly console; received: $($consoleComponentKeys -join ',')"
+  }
+  if ([string]$consoleEvidence.sourceRevision -eq [string]$evidence.sourceRevision) {
+    throw 'Console override SourceRevision must differ from the base OS Shell publication'
+  }
+  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
+  $consoleMigration = $consoleEvidence.artifacts.supabaseMigrationManifest
+  if (-not $consoleMigration -or [string]$consoleMigration.sha256 -ne [string]$baseMigration.sha256 -or
+      [string]$consoleMigration.setDigest -ne [string]$baseMigration.setDigest -or
+      [string]$consoleMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
+    throw 'Console override changes the base Supabase migration lineage'
+  }
+}
+
+$console = Get-EvidenceComponent -Evidence $consoleEvidence -Key 'console' -Repository $consoleRepository
+$backend = Get-EvidenceComponent -Evidence $backendEvidence -Key 'backend' -Repository $backendRepository
 $cliArtifacts = Get-EvidenceComponent -Evidence $evidence -Key 'cliArtifacts' -Repository $cliRepository
 $control = Get-EvidenceComponent -Evidence $evidence -Key $controlComponent -Repository $controlRepository
 $runtime = Get-EvidenceComponent -Evidence $runtimeEvidence -Key $runtimeComponent -Repository $runtimeRepository
 Assert-ImageMetadata -Repository $consoleRepository -Image $console.image -Digest $console.digest `
-  -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag -ExpectedPointerTag $evidence.immutableTag
+  -SourceRevision $consoleEvidence.sourceRevision -ReleaseTag $consoleEvidence.releaseTag -ExpectedPointerTag $consoleEvidence.immutableTag
 Assert-ImageMetadata -Repository $backendRepository -Image $backend.image -Digest $backend.digest `
-  -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag
+  -SourceRevision $backendEvidence.sourceRevision -ReleaseTag $backendEvidence.releaseTag
 Assert-ImageMetadata -Repository $cliRepository -Image $cliArtifacts.image -Digest $cliArtifacts.digest `
   -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag
 Assert-ImageMetadata -Repository $controlRepository -Image $control.image -Digest $control.digest `
@@ -891,13 +953,28 @@ $deploymentToolingAllowlist = @(
   'backend/os-shell-control/deploy.test.js'
 )
 $boundaryEvidence = $null
-if ($runtimePublicationPath) {
+$backendBoundaryEvidence = $null
+$consoleBoundaryEvidence = $null
+$componentOverrideBoundary = $null
+if ($runtimePublicationPath -or $backendPublicationPath -or $consolePublicationPath) {
   $boundaryVerifier = Join-Path $consoleRoot 'scripts\os-shell-runtime-override-boundary.mjs'
-  if (-not (Test-Path -LiteralPath $boundaryVerifier)) { throw 'Runtime override boundary verifier is missing' }
-  $boundaryOutput = & node $boundaryVerifier --repository $consoleRoot --base ([string]$evidence.sourceRevision) `
-    --runtime ([string]$runtimeEvidence.sourceRevision) --head $head
-  if ($LASTEXITCODE -ne 0) { throw 'Runtime override source boundary verification failed' }
-  $boundaryEvidence = ($boundaryOutput -join "`n") | ConvertFrom-Json
+  if (-not (Test-Path -LiteralPath $boundaryVerifier)) { throw 'Component override boundary verifier is missing' }
+  if ((& git -C $consoleRoot remote get-url origin).Trim() -ne 'https://github.com/opensphere-platform/OpenSphere-console.git') {
+    throw 'Component override verification requires the canonical GitHub Console origin'
+  }
+  & git -C $consoleRoot fetch --quiet --prune origin
+  if ($LASTEXITCODE -ne 0) { throw 'Canonical GitHub Console refs could not be fetched for component override verification' }
+  $boundaryArguments = @($boundaryVerifier, '--repository', $consoleRoot, '--base',
+    ([string]$evidence.sourceRevision), '--head', $head)
+  if ($runtimePublicationPath) { $boundaryArguments += @('--runtime', ([string]$runtimeEvidence.sourceRevision)) }
+  if ($backendPublicationPath) { $boundaryArguments += @('--backend', ([string]$backendEvidence.sourceRevision)) }
+  if ($consolePublicationPath) { $boundaryArguments += @('--console', ([string]$consoleEvidence.sourceRevision)) }
+  $boundaryOutput = & node @boundaryArguments
+  if ($LASTEXITCODE -ne 0) { throw 'Composite component override source boundary verification failed' }
+  $componentOverrideBoundary = ($boundaryOutput -join "`n") | ConvertFrom-Json
+  if ($runtimePublicationPath) { $boundaryEvidence = $componentOverrideBoundary }
+  if ($backendPublicationPath) { $backendBoundaryEvidence = $componentOverrideBoundary }
+  if ($consolePublicationPath) { $consoleBoundaryEvidence = $componentOverrideBoundary }
 } elseif ($head -ne [string]$evidence.sourceRevision) {
   & git -C $consoleRoot merge-base --is-ancestor ([string]$evidence.sourceRevision) $head
   if ($LASTEXITCODE -ne 0) {
@@ -998,8 +1075,18 @@ try {
     Remove-Item -LiteralPath $resolvedCliEvidenceDirectory -Recurse -Force
   }
 }
-$releaseEvidenceRef = if ($runtimePublicationPath) {
-  "release://edge-composite/$([string]$evidence.releaseTag)/$(([string]$evidence.sourceRevision).Substring(0, 12))/osShellRuntime/$([string]$runtimeEvidence.releaseTag)/$(([string]$runtimeEvidence.sourceRevision).Substring(0, 12))"
+$releaseOverrides = @()
+if ($runtimePublicationPath) {
+  $releaseOverrides += "osShellRuntime/$([string]$runtimeEvidence.releaseTag)/$(([string]$runtimeEvidence.sourceRevision).Substring(0, 12))"
+}
+if ($backendPublicationPath) {
+  $releaseOverrides += "backend/$([string]$backendEvidence.releaseTag)/$(([string]$backendEvidence.sourceRevision).Substring(0, 12))"
+}
+if ($consolePublicationPath) {
+  $releaseOverrides += "console/$([string]$consoleEvidence.releaseTag)/$(([string]$consoleEvidence.sourceRevision).Substring(0, 12))"
+}
+$releaseEvidenceRef = if ($releaseOverrides.Count) {
+  "release://edge-composite/$([string]$evidence.releaseTag)/$(([string]$evidence.sourceRevision).Substring(0, 12))/$($releaseOverrides -join '/')"
 } else {
   "release://edge/$([string]$evidence.releaseTag)/$(([string]$evidence.sourceRevision).Substring(0, 12))"
 }
@@ -1027,6 +1114,14 @@ if ($PrepareTrustOnly) {
     releaseTag = [string]$evidence.releaseTag
     publicationEvidence = $publicationPath
     runtimePublicationEvidence = $runtimePublicationPath
+    backendPublicationEvidence = $backendPublicationPath
+    consolePublicationEvidence = $consolePublicationPath
+    componentSourceRevisions = [ordered]@{
+      base = [string]$evidence.sourceRevision
+      backend = [string]$backendEvidence.sourceRevision
+      console = [string]$consoleEvidence.sourceRevision
+      osShellRuntime = [string]$runtimeEvidence.sourceRevision
+    }
     preparedAt = [DateTimeOffset]::UtcNow.ToString('o')
     privateSecrets = @($privateTlsProfiles | ForEach-Object { "$ControlNamespace/$($_.Secret)" })
     publicCaConfigMaps = @("$ControlNamespace/$controlCaConfigMap", "$SessionNamespace/$controlCaConfigMap")
@@ -1095,9 +1190,12 @@ Ensure-InternalTls
 
 Write-Host '[step 2/7] Verify Console, Backend and CLI prerequisite exact digests'
 $prerequisiteEvidence = [ordered]@{
-  console = Assert-PrerequisiteDeployment -Deployment 'opensphere-console' -Image $console.image -Digest $console.digest
-  backend = Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend' -Image $backend.image -Digest $backend.digest
-  cliArtifacts = Assert-PrerequisiteDeployment -Deployment 'os-cli' -Image $cliArtifacts.image -Digest $cliArtifacts.digest
+  console = Assert-PrerequisiteDeployment -Deployment 'opensphere-console' -Image $console.image -Digest $console.digest `
+    -SourceRevision ([string]$consoleEvidence.sourceRevision)
+  backend = Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend' -Image $backend.image -Digest $backend.digest `
+    -SourceRevision ([string]$backendEvidence.sourceRevision)
+  cliArtifacts = Assert-PrerequisiteDeployment -Deployment 'os-cli' -Image $cliArtifacts.image -Digest $cliArtifacts.digest `
+    -SourceRevision ([string]$evidence.sourceRevision)
 }
 
 Write-Host '[step 3/7] Apply committed Supabase migration lineage through additive 0062'
@@ -1105,7 +1203,7 @@ Write-Host '[step 3/7] Apply committed Supabase migration lineage through additi
 if ($LASTEXITCODE -ne 0) { throw "migrate-only.ps1 failed with exit code $LASTEXITCODE" }
 
 Write-Host '[step 4/7] Activate Backend admission and apply exact-digest OS Shell control manifest'
-Set-BackendOsShellActivation -Image $backend.image -SourceRevision ([string]$evidence.sourceRevision) -ReleaseEvidenceRef $releaseEvidenceRef
+Set-BackendOsShellActivation -Image $backend.image -SourceRevision ([string]$backendEvidence.sourceRevision) -ReleaseEvidenceRef $releaseEvidenceRef
 $renderedManifest = $manifestSource.Replace($consolePlaceholder, $console.image).Replace($controlPlaceholder, $control.image).Replace($runtimePlaceholder, $runtime.image)
 if ($renderedManifest.Contains($consolePlaceholder) -or $renderedManifest.Contains($controlPlaceholder) -or $renderedManifest.Contains($runtimePlaceholder) -or
     $renderedManifest -match '(?m)^\s*image:\s*[^\s]+:(edge|latest)\s*$') {
@@ -1128,7 +1226,7 @@ foreach ($profile in $controlDeploymentProfiles) {
     -ManifestSha256 $manifestSha256 -ReleaseKeyId $releaseKeyId `
     -SessionPolicyRevision $sessionPolicyRevision -RuntimeTemplateRevision $runtimeTemplateRevision
 }
-Set-ConsoleApiActivation -SourceRevision ([string]$evidence.sourceRevision) -ReleaseEvidenceRef $releaseEvidenceRef
+Set-ConsoleApiActivation -SourceRevision ([string]$consoleEvidence.sourceRevision) -ReleaseEvidenceRef $releaseEvidenceRef
 
 Write-Host '[step 5/7] Verify rollout, readiness, exact Pod image IDs and runtime binding'
 $deploymentEvidence = [ordered]@{}
@@ -1343,12 +1441,18 @@ $releaseProfile = [ordered]@{
   releaseTag = [string]$evidence.releaseTag
   releaseEvidenceRef = $releaseEvidenceRef
   publicationEvidence = [ordered]@{
-    consoleSha256 = Get-FileSha256 -Path $publicationPath
+    baseSha256 = Get-FileSha256 -Path $publicationPath
+    consoleSha256 = if ($consolePublicationPath) { Get-FileSha256 -Path $consolePublicationPath }
+      else { Get-FileSha256 -Path $publicationPath }
+    backendSha256 = if ($backendPublicationPath) { Get-FileSha256 -Path $backendPublicationPath }
+      else { Get-FileSha256 -Path $publicationPath }
     runtimeSha256 = if ($runtimePublicationPath) { Get-FileSha256 -Path $runtimePublicationPath }
       else { Get-FileSha256 -Path $publicationPath }
   }
   sourceRevisions = [ordered]@{
-    console = [string]$evidence.sourceRevision
+    base = [string]$evidence.sourceRevision
+    console = [string]$consoleEvidence.sourceRevision
+    backend = [string]$backendEvidence.sourceRevision
     osShellRuntime = [string]$runtimeEvidence.sourceRevision
     deploymentTooling = $deploymentToolingSourceRevision
   }
@@ -1412,7 +1516,7 @@ $featureOperationEvidence = [ordered]@{
   releaseIntentKeyId = $SigningKeyId
   releaseIntentSha256 = $signedProfile.DocumentSha256
   releaseIntentSignatureSha256 = $signedProfile.SignatureSha256
-  sourceRevision = [string]$evidence.sourceRevision
+  sourceRevision = [string]$consoleEvidence.sourceRevision
 }
 Write-Host '[owner] Open durable gate only after the signed release intent and trust verification converge'
 $enableOperationId = New-FeatureOperationId -Kind Enable -ReleaseIntentSha256 $signedProfile.DocumentSha256
@@ -1440,11 +1544,17 @@ $receipt = [ordered]@{
   releaseTag = [string]$evidence.releaseTag
   publicationEvidence = $publicationPath
   runtimePublicationEvidence = $runtimePublicationPath
+  backendPublicationEvidence = $backendPublicationPath
+  consolePublicationEvidence = $consolePublicationPath
   componentSourceRevisions = [ordered]@{
     base = [string]$evidence.sourceRevision
+    backend = [string]$backendEvidence.sourceRevision
+    console = [string]$consoleEvidence.sourceRevision
     osShellRuntime = [string]$runtimeEvidence.sourceRevision
   }
   runtimeOverrideBoundary = $boundaryEvidence
+  backendOverrideBoundary = $backendBoundaryEvidence
+  consoleOverrideBoundary = $consoleBoundaryEvidence
   deployedAt = [DateTimeOffset]::UtcNow.ToString('o')
   migration = [ordered]@{
     id = '0062_shell_session_quota_and_kill_switch'

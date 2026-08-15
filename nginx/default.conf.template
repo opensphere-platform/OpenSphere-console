@@ -572,7 +572,13 @@ server {
     # Canonicalize the only accepted trailing-slash alias with a real
     # navigation. Nginx URI normalization also collapses duplicate slashes and
     # percent-decodes unreserved characters before exact location matching.
-    location = /shell/ { return 308 /shell; }
+    location = /shell/ {
+        # Keep the canonicalization on the browser-visible origin. Nginx
+        # otherwise expands the relative target with its internal 8443
+        # listener, which is not the localhost edge front-door port.
+        absolute_redirect off;
+        return 308 /shell;
+    }
 
     # 해시드 자산(main-<hash>.js 등)은 내용 불변 → 장기 immutable 캐시
     location ~* "-[A-Za-z0-9]{8,}\.(?:js|css)$" {

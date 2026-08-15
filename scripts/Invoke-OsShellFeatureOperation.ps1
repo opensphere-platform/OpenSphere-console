@@ -5,6 +5,8 @@ param(
   [Parameter(Mandatory)][ValidateLength(8,512)][string]$Reason,
   [Parameter(Mandatory)][string]$PublicationEvidence,
   [string]$RuntimePublicationEvidence = '',
+  [string]$BackendPublicationEvidence = '',
+  [string]$ConsolePublicationEvidence = '',
   [string]$DeploymentReceipt = '',
   [string]$RecoverySignedProfile = '',
   [string]$RecoverySignature = '',
@@ -91,6 +93,8 @@ if ($Operation -eq 'Enable') {
   $arguments = @('-PublicationEvidence',$PublicationEvidence,'-KubeContext',$KubeContext,
     '-SigningKey',$SigningKey,'-SigningKeyId',$SigningKeyId)
   if ($RuntimePublicationEvidence) { $arguments += @('-RuntimePublicationEvidence',$RuntimePublicationEvidence) }
+  if ($BackendPublicationEvidence) { $arguments += @('-BackendPublicationEvidence',$BackendPublicationEvidence) }
+  if ($ConsolePublicationEvidence) { $arguments += @('-ConsolePublicationEvidence',$ConsolePublicationEvidence) }
   if ($ReceiptPath) { $arguments += @('-ReceiptPath',$ReceiptPath) }
   & (Join-Path $PSScriptRoot 'Deploy-LocalEdgeOsShell.ps1') @arguments
   if ($LASTEXITCODE -ne 0) { throw "OS Shell enable deployment failed with exit code $LASTEXITCODE" }
@@ -143,7 +147,13 @@ if ([string]$profile.contract -ne 'opensphere-os-shell-composite-release-profile
 }
 $publicationPath = (Resolve-Path -LiteralPath $PublicationEvidence).Path
 $publicationSha256 = Get-FileSha256 -Path $publicationPath
-if ([string]$profile.publicationEvidence.consoleSha256 -ne $publicationSha256) {
+$basePublicationProperty = $profile.publicationEvidence.PSObject.Properties['baseSha256']
+$boundBasePublicationSha256 = if ($basePublicationProperty) {
+  [string]$basePublicationProperty.Value
+} else {
+  [string]$profile.publicationEvidence.consoleSha256
+}
+if ($boundBasePublicationSha256 -ne $publicationSha256) {
   throw 'Disable publication evidence is not bound by the trusted signed ReleaseIntent'
 }
 $evidence = [ordered]@{
