@@ -491,8 +491,9 @@ function Assert-PrerequisiteDeployment {
   $selector = @($resource.spec.selector.matchLabels.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ','
   if (-not $selector) { throw "Prerequisite Deployment $Deployment has no closed Pod selector" }
   $pods = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'pods', '-l', $selector, '-o', 'json')) -join "`n") | ConvertFrom-Json
-  if (@($pods.items).Count -ne $desired) { throw "Prerequisite Deployment $Deployment has an unexpected Pod count" }
-  foreach ($pod in @($pods.items)) {
+  $activePods = @($pods.items | Where-Object { -not $_.metadata.PSObject.Properties['deletionTimestamp'] })
+  if ($activePods.Count -ne $desired) { throw "Prerequisite Deployment $Deployment has an unexpected active Pod count" }
+  foreach ($pod in $activePods) {
     $statuses = @($pod.status.containerStatuses | Where-Object { [string]$_.name -eq $boundContainerName })
     if ($statuses.Count -ne 1 -or -not [bool]$statuses[0].ready -or
         [string]$statuses[0].imageID -notmatch "@$([regex]::Escape($Digest))$") {
@@ -981,8 +982,9 @@ foreach ($resource in $deploymentResources) {
   $selector = @($deployment.spec.selector.matchLabels.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ','
   if (-not $selector) { throw "Deployment $name has no closed Pod selector" }
   $pods = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'pods', '-l', $selector, '-o', 'json')) -join "`n") | ConvertFrom-Json
-  if (@($pods.items).Count -ne $desired) { throw "Deployment $name does not have the expected number of Pods" }
-  foreach ($pod in @($pods.items)) {
+  $activePods = @($pods.items | Where-Object { -not $_.metadata.PSObject.Properties['deletionTimestamp'] })
+  if ($activePods.Count -ne $desired) { throw "Deployment $name does not have the expected number of active Pods" }
+  foreach ($pod in $activePods) {
     foreach ($status in @($pod.status.containerStatuses)) {
       if (-not [bool]$status.ready -or [string]$status.imageID -notmatch "@$([regex]::Escape($expectedWorkloadDigest))$") {
         throw "Pod $($pod.metadata.name) is not Ready on its exact published digest"
