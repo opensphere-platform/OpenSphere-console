@@ -220,7 +220,13 @@ function Test-KubectlCanI {
   )
   # This is the required kubectl auth can-i SelfSubjectAccessReview-compatible
   # projection. It never grants authority; it only verifies the installed RBAC.
-  $arguments = @('auth', 'can-i', $Verb, $Resource, '--as', $Subject)
+  $resourceParts = @($Resource -split '/', 2)
+  $resourceName = [string]$resourceParts[0]
+  $arguments = @('auth', 'can-i', $Verb, $resourceName, '--as', $Subject)
+  if ($resourceParts.Count -eq 2) {
+    if (-not [string]$resourceParts[1]) { throw "Invalid empty SAR subresource: $Resource" }
+    $arguments += @('--subresource', [string]$resourceParts[1])
+  }
   if ($Namespace) { $arguments += @('--namespace', $Namespace) }
   $allArguments = @('--context', $KubeContext) + $arguments
   $answerOutput = & kubectl @allArguments
