@@ -17,6 +17,13 @@ export const consoleOverridePaths = Object.freeze([
   'scripts/os-shell-frontend-contract.test.mjs',
 ]);
 
+export const controlOverridePaths = Object.freeze([
+  'backend/os-shell-control/runtime-template.js',
+  'backend/os-shell-control/runtime-template.test.js',
+  'backend/os-shell-control/server.js',
+  'backend/os-shell-control/server.test.js',
+]);
+
 export const canonicalConsoleOrigin = 'https://github.com/opensphere-platform/OpenSphere-console.git';
 
 export const deploymentToolingPaths = Object.freeze([
@@ -24,6 +31,7 @@ export const deploymentToolingPaths = Object.freeze([
   'backend/os-shell-control/deploy.yaml',
   'scripts/Deploy-LocalEdgeOsShell.ps1',
   'scripts/Invoke-OsShellFeatureOperation.ps1',
+  'scripts/Publish-LocalEdge.ps1',
   'scripts/Test-OsShellEdgeSigning.ps1',
   'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/os-shell-edge-signing.ps1',
@@ -66,6 +74,15 @@ export function assertConsoleOverridePaths(paths) {
   }
 }
 
+export function assertControlOverridePaths(paths) {
+  for (const value of paths) assertCanonicalRepositoryPath(value);
+  const actual = [...paths].sort();
+  const expected = [...controlOverridePaths].sort();
+  if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+    throw new Error(`control override changed paths are not the exact closed set: ${actual.join(', ')}`);
+  }
+}
+
 export function assertHeadPaths(headPaths, componentPaths) {
   for (const value of headPaths) assertCanonicalRepositoryPath(value);
   const componentSet = new Set(componentPaths);
@@ -101,11 +118,12 @@ function requireCanonicalOriginRevision(repository, revision, label) {
 }
 
 export function verifyCompositeRepositoryBoundary({ repository, baseRevision, runtimeRevision = null,
-  backendRevision = null, consoleRevision = null, headRevision }) {
+  backendRevision = null, consoleRevision = null, controlRevision = null, headRevision }) {
   const revisions = { baseRevision, headRevision };
   if (runtimeRevision) revisions.runtimeRevision = runtimeRevision;
   if (backendRevision) revisions.backendRevision = backendRevision;
   if (consoleRevision) revisions.consoleRevision = consoleRevision;
+  if (controlRevision) revisions.controlRevision = controlRevision;
   for (const [name, revision] of Object.entries(revisions)) {
     if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error(`${name} is not an exact Git revision`);
   }
@@ -135,7 +153,14 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
     consolePaths = evidenceChangedPaths.console.filter((path) => consoleOverridePaths.includes(path));
     assertConsoleOverridePaths(consolePaths);
   }
-  const componentPaths = [...runtimePaths, ...backendPaths, ...consolePaths];
+  let controlPaths = [];
+  if (controlRevision) {
+    requireAncestor(repository, baseRevision, controlRevision, 'control override');
+    evidenceChangedPaths.control = changedPaths(repository, baseRevision, controlRevision);
+    controlPaths = evidenceChangedPaths.control.filter((path) => controlOverridePaths.includes(path));
+    assertControlOverridePaths(controlPaths);
+  }
+  const componentPaths = [...runtimePaths, ...backendPaths, ...consolePaths, ...controlPaths];
   if (new Set(componentPaths).size !== componentPaths.length) throw new Error('component override path authorities overlap');
   const componentPathSet = new Set(componentPaths);
   for (const [authority, paths] of Object.entries(evidenceChangedPaths)) {
@@ -149,8 +174,10 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
     ...runtimePaths.map((path) => [path, runtimeRevision]),
     ...backendPaths.map((path) => [path, backendRevision]),
     ...consolePaths.map((path) => [path, consoleRevision]),
+    ...controlPaths.map((path) => [path, controlRevision]),
   ]);
-  for (const [authority, revision] of Object.entries({ runtime: runtimeRevision, backend: backendRevision, console: consoleRevision })) {
+  for (const [authority, revision] of Object.entries({ runtime: runtimeRevision, backend: backendRevision,
+    console: consoleRevision, control: controlRevision })) {
     if (!revision) continue;
     for (const path of evidenceChangedPaths[authority]) {
       if (deploymentToolingPaths.includes(path)) continue;
@@ -176,8 +203,8 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
   const upstreamRevision = git(repository, ['rev-parse', upstream]);
   if (headRevision !== upstreamRevision) throw new Error(`deployment HEAD is not the exact pushed upstream revision ${upstream}`);
   return {
-    baseRevision, runtimeRevision, backendRevision, consoleRevision, headRevision, upstream,
-    runtimePaths, backendPaths, consolePaths,
+    baseRevision, runtimeRevision, backendRevision, consoleRevision, controlRevision, headRevision, upstream,
+    runtimePaths, backendPaths, consolePaths, controlPaths,
     evidenceChangedPaths,
     toolingPaths: headPaths.filter((path) => deploymentToolingPaths.includes(path)),
     canonicalOrigin: canonicalConsoleOrigin,
@@ -205,6 +232,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
       repository: argument('--repository'), baseRevision: argument('--base'),
       runtimeRevision: optionalArgument('--runtime'), backendRevision: optionalArgument('--backend'),
       consoleRevision: optionalArgument('--console'),
+      controlRevision: optionalArgument('--control'),
       headRevision: argument('--head'),
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);

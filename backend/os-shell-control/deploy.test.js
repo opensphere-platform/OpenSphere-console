@@ -110,6 +110,8 @@ test('session namespace has a global resource budget and exact runtime template 
     "t.effect == 'NoExecute'",
     't.tolerationSeconds == 300',
     "(!has(t.value) || t.value == '')",
+    'has(object.spec.hostUsers)',
+    'object.spec.hostUsers == false',
   ]) assert.match(scheduling, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(scheduling, /tolerations[.]size[(][)] == 0/);
 
@@ -140,6 +142,9 @@ test('session namespace has a global resource budget and exact runtime template 
   assert.match(admissionHarness, /finally \{[\s\S]*metadata[.]uid -ne \$runtimeClassCreatedUid[\s\S]*delete runtimeclass \$runtimeClassName --wait=true[\s\S]*cleanup did not converge to zero/);
   assert.doesNotMatch(admissionHarness, /NotePropertyValue 'attacker-runtime'/);
   assert.match(admissionHarness, /PSObject[.]Properties\['ephemeralContainers'\]/);
+  assert.match(admissionHarness, /Name = 'host-users-absent'/);
+  assert.match(admissionHarness, /Name = 'host-users-true'/);
+  assert.match(admissionHarness, /HostUsersFalsePtyStarted/);
 });
 
 test('reconciler RBAC is Pod lifecycle plus TokenReview only and runtime has zero bindings', () => {
@@ -264,21 +269,25 @@ test('internal Console API uses the canonical data-driven Registry and plugin/PF
   assert.equal(source.includes('DUPA_CONTROL_URL'), false);
 });
 
-test('local-edge deploy binds component-only runtime/backend publications through exact source closures', async () => {
+test('local-edge deploy binds every component-only override through exact source closures', async () => {
   assert.match(deployScript, /\[string\]\$RuntimePublicationEvidence = ''/);
   assert.match(deployScript, /\[string\]\$BackendPublicationEvidence = ''/);
   assert.match(deployScript, /\[string\]\$ConsolePublicationEvidence = ''/);
+  assert.match(deployScript, /\[string\]\$ControlPublicationEvidence = ''/);
   assert.match(deployScript, /Runtime override requires exactly osShellRuntime/);
   assert.match(deployScript, /Backend override requires exactly backend/);
   assert.match(deployScript, /Console override requires exactly console/);
+  assert.match(deployScript, /Control override requires exactly osShellControl/);
   assert.match(deployScript, /Runtime override changes the base Supabase migration lineage/);
   assert.match(deployScript, /Backend override changes the base Supabase migration lineage/);
   assert.match(deployScript, /Console override changes the base Supabase migration lineage/);
+  assert.match(deployScript, /Control override changes the base Supabase migration lineage/);
   assert.match(deployScript, /os-shell-runtime-override-boundary[.]mjs/);
   assert.match(deployScript, /'--base',\s*\r?\n?\s*\(\[string\]\$evidence[.]sourceRevision\)/);
   assert.match(deployScript, /@\('--runtime', \(\[string\]\$runtimeEvidence[.]sourceRevision\)\)/);
   assert.match(deployScript, /@\('--backend', \(\[string\]\$backendEvidence[.]sourceRevision\)\)/);
   assert.match(deployScript, /@\('--console', \(\[string\]\$consoleEvidence[.]sourceRevision\)\)/);
+  assert.match(deployScript, /@\('--control', \(\[string\]\$controlEvidence[.]sourceRevision\)\)/);
   assert.match(deployScript, /https:\/\/github[.]com\/opensphere-platform\/OpenSphere-console[.]git/);
   assert.match(deployScript, /fetch --quiet --prune origin/);
   assert.match(deployScript, /deploymentToolingSha256 = \$deploymentToolingEvidence/);
@@ -286,8 +295,10 @@ test('local-edge deploy binds component-only runtime/backend publications throug
   assert.match(deployScript, /runtimePublicationEvidence = \$runtimePublicationPath/);
   assert.match(deployScript, /backendPublicationEvidence = \$backendPublicationPath/);
   assert.match(deployScript, /consolePublicationEvidence = \$consolePublicationPath/);
+  assert.match(deployScript, /controlPublicationEvidence = \$controlPublicationPath/);
   assert.match(deployScript, /backend = \[string\]\$backendEvidence[.]sourceRevision/);
   assert.match(deployScript, /console = \[string\]\$consoleEvidence[.]sourceRevision/);
+  assert.match(deployScript, /osShellControl = \[string\]\$controlEvidence[.]sourceRevision/);
   assert.match(deployScript, /osShellRuntime = \[string\]\$runtimeEvidence[.]sourceRevision/);
   assert.match(deployScript, /Set-BackendOsShellActivation -Image \$backend[.]image -SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend'[\s\S]*?-SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
@@ -300,6 +311,9 @@ test('local-edge deploy binds component-only runtime/backend publications throug
   assert.match(featureEvidenceBlock, /publicationSha256 = Get-FileSha256 -Path \$publicationPath/);
   assert.match(deployScript, /backendOverrideBoundary = \$backendBoundaryEvidence/);
   assert.match(deployScript, /consoleOverrideBoundary = \$consoleBoundaryEvidence/);
+  assert.match(deployScript, /controlOverrideBoundary = \$controlBoundaryEvidence/);
+  assert.match(deployScript, /\$controlEvidence[.]artifacts[.]osShellControlRelease/);
+  assert.match(deployScript, /userNamespacePolicy -ne \$runtimeUserNamespacePolicy/);
   const toolingBlock = /\$deploymentToolingAllowlist = @\(([\s\S]*?)\r?\n\)/.exec(deployScript)?.[1] || '';
   assert.doesNotMatch(toolingBlock, /backend[\\/]opensphere-console-backend[\\/](Dockerfile|local-edge-automation-token[.]test[.]js)/);
   const boundary = await import(pathToFileURL(path.join(__dirname, '..', '..', 'scripts', 'os-shell-runtime-override-boundary.mjs')).href);
@@ -312,13 +326,19 @@ test('local-edge deploy binds component-only runtime/backend publications throug
     'backend/opensphere-console-backend/local-edge-automation-token.test.js',
   ];
   const consolePaths = ['nginx/default.conf.template', 'scripts/os-shell-frontend-contract.test.mjs'];
+  const controlPaths = [
+    'backend/os-shell-control/runtime-template.js', 'backend/os-shell-control/runtime-template.test.js',
+    'backend/os-shell-control/server.js', 'backend/os-shell-control/server.test.js',
+  ];
   assert.doesNotThrow(() => boundary.assertRuntimeOverridePaths(runtimePaths));
   assert.doesNotThrow(() => boundary.assertBackendOverridePaths(backendPaths));
   assert.doesNotThrow(() => boundary.assertConsoleOverridePaths(consolePaths));
+  assert.doesNotThrow(() => boundary.assertControlOverridePaths(controlPaths));
   for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'backend/os-shell-control/deploy.yaml', 'backend/os-cli/cmd/os/operator.go', 'backend/os-cli/cmd/os/web_shell_agent.go']) {
     assert.throws(() => boundary.assertRuntimeOverridePaths([...runtimePaths, privilegedPath]), /non-runtime authority/);
     assert.throws(() => boundary.assertBackendOverridePaths([...backendPaths, privilegedPath]), /exact closed set/);
     assert.throws(() => boundary.assertConsoleOverridePaths([...consolePaths, privilegedPath]), /exact closed set/);
+    assert.throws(() => boundary.assertControlOverridePaths([...controlPaths, privilegedPath]), /exact closed set/);
   }
   assert.throws(() => boundary.assertHeadPaths([...runtimePaths, 'backend/supabase/migrate-only.ps1'], runtimePaths), /unbound source/);
   assert.throws(() => boundary.assertHeadPaths([...backendPaths, ...consolePaths], backendPaths), /unbound source/);
@@ -327,6 +347,14 @@ test('local-edge deploy binds component-only runtime/backend publications throug
   }
   assert.match(featureOperationScript, /\[string\]\$ConsolePublicationEvidence = ''/);
   assert.match(featureOperationScript, /'-ConsolePublicationEvidence',\$ConsolePublicationEvidence/);
+  assert.match(featureOperationScript, /'-ControlPublicationEvidence',\$ControlPublicationEvidence/);
+  assert.match(publisher, /\$releaseArtifacts\['osShellControlRelease'\]/);
+  assert.match(publisher, /userNamespacePolicy = 'required-hostUsers-false'/);
+  assert.match(publisher, /linux-userns\+rlimit-nproc\+namespace-resourcequota/);
+  assert.match(deployScript, /userNamespacePolicy = \$runtimeUserNamespacePolicy/);
+  assert.match(deployScript, /linux-userns\+rlimit-nproc\+namespace-resourcequota/);
+  assert.doesNotMatch(publisher, /linux-rlimit-nproc-fixed-uid\+namespace-resourcequota/);
+  assert.doesNotMatch(deployScript, /linux-rlimit-nproc-fixed-uid\+namespace-resourcequota/);
   assert.match(runtimeDockerfile, /-X main[.]webShellAgentSocketPath=\/run\/opensphere-shell\/channel\/agent[.]sock/);
   assert.match(runtimeDockerfile, /-X main[.]webShellAgentPublicKeyPath=\/run\/opensphere-shell\/channel\/agent-public-key[.]pem/);
 });

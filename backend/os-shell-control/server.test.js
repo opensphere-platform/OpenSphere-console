@@ -240,6 +240,7 @@ test('browser readiness projects gateway and reconciler state and fails closed w
   assert.deepEqual(observedModes.sort(), ['gateway', 'reconciler']);
   assert.equal(body.readiness.release.manifestSha256, config('api').manifestSha256);
   assert.equal(body.readiness.release.runtimeTemplateRevision, config('api').runtimeTemplateRevision);
+  assert.equal(body.readiness.release.userNamespacePolicy, 'required-hostUsers-false');
 });
 
 test('API readyz requires database plus exact-release gateway and reconciler readiness', async () => {

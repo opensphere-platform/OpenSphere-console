@@ -323,7 +323,7 @@ metadata:
   name: opensphere-shell-runtime-template-v1
   annotations:
     opensphere.io/admission-contract: opensphere-shell-runtime-template-v1
-    opensphere.io/expression-set-sha256: sha256:65a1d0783c15be5d17a708b3f918c9e7e0c55054b0ba939fd29defa2447ddb2d
+    opensphere.io/expression-set-sha256: sha256:8b0d9dfb2945abea469b754c9f6bc45748e4c387b4c98c2e69ed85e557eb9b0b
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -360,6 +360,7 @@ spec:
     - expression: >-
         object.spec.serviceAccountName == 'opensphere-shell-runtime' &&
         object.spec.automountServiceAccountToken == false &&
+        has(object.spec.hostUsers) && object.spec.hostUsers == false &&
         object.spec.restartPolicy == 'Never' && object.spec.enableServiceLinks == false &&
         object.spec.terminationGracePeriodSeconds == 5 && object.spec.dnsPolicy == 'ClusterFirst' &&
         object.spec.schedulerName == 'default-scheduler' && object.spec.imagePullSecrets.size() == 1 &&

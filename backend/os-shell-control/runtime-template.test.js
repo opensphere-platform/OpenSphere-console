@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { buildRuntimePod } = require('./runtime-template');
+const { buildRuntimePod, USER_NAMESPACE_POLICY } = require('./runtime-template');
 
 const session = { session_id: '10000000-0000-4000-8000-000000000001', actor_id: '20000000-0000-4000-8000-000000000001',
   origin: 'https://console.test', permission_revision: `sha256:${'1'.repeat(64)}`, aal: 'aal2', release_evidence_ref: 'release://edge', generation: 2, fencing_epoch: 9 };
@@ -14,6 +14,8 @@ const config = { namespace: 'opensphere-shell-sessions', runtimeServiceAccount: 
 test('runtime Pod separates bootstrap identity while sharing only agent and PTY tmpfs channels', () => {
   const pod = buildRuntimePod(session, config); const [pty, agent] = pod.spec.containers;
   assert.equal(pod.spec.automountServiceAccountToken, false);
+  assert.equal(pod.spec.hostUsers, false);
+  assert.equal(USER_NAMESPACE_POLICY, 'required-hostUsers-false');
   assert.equal(pod.spec.securityContext.fsGroup, 65532);
   assert.equal(pty.securityContext.readOnlyRootFilesystem, true);
   assert.equal(agent.securityContext.readOnlyRootFilesystem, true);
