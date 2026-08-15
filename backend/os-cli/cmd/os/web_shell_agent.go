@@ -126,7 +126,12 @@ func invokeWebShellAgent(ctx context.Context, request webShellAgentRequest) (web
 		return response, true, executionContextUnavailable(err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(webShellAgentNow().Add(35 * time.Second))
+	// The attestation clock is replaceable in tests so expiry checks can be
+	// deterministic. Socket I/O deadlines must remain tied to the process wall
+	// clock; otherwise a fixed attestation instant can make the deadline already
+	// expired and turn an otherwise valid agent exchange into an immediate
+	// timeout.
+	_ = conn.SetDeadline(time.Now().Add(35 * time.Second))
 	requestBytes, _ := json.Marshal(request)
 	if len(requestBytes) > webShellAgentMaxMessage {
 		return response, true, &CLIError{Code: "InvalidExecutionContext", Message: "Web Shell agent 요청이 허용 크기를 초과했습니다"}
