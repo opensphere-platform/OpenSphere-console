@@ -132,6 +132,14 @@ test('session namespace has a global resource budget and exact runtime template 
     [{ ...exactDefaultTolerations[0], tolerationSeconds: 301 }, exactDefaultTolerations[1]],
     [{ ...exactDefaultTolerations[0], value: 'attacker' }, exactDefaultTolerations[1]],
   ]) assert.equal(accepted(mutated), false);
+  assert.match(admissionHarness, /\$runtimeClassName = 'opensphere-shell-admission-' \+ \(\[guid\]::NewGuid\(\)/);
+  assert.match(admissionHarness, /get runtimeclass \$runtimeClassName --ignore-not-found -o name/);
+  assert.match(admissionHarness, /apiVersion = 'node[.]k8s[.]io\/v1'/);
+  assert.match(admissionHarness, /handler = 'runc'/);
+  assert.match(admissionHarness, /runtimeClassName -NotePropertyValue \$runtimeClassName/);
+  assert.match(admissionHarness, /finally \{[\s\S]*metadata[.]uid -ne \$runtimeClassCreatedUid[\s\S]*delete runtimeclass \$runtimeClassName --wait=true[\s\S]*cleanup did not converge to zero/);
+  assert.doesNotMatch(admissionHarness, /NotePropertyValue 'attacker-runtime'/);
+  assert.match(admissionHarness, /PSObject[.]Properties\['ephemeralContainers'\]/);
 });
 
 test('reconciler RBAC is Pod lifecycle plus TokenReview only and runtime has zero bindings', () => {
