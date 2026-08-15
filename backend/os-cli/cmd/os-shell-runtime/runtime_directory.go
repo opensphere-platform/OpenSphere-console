@@ -6,19 +6,25 @@ import (
 	"os"
 )
 
+var (
+	runtimeDirectoryMkdirAll = os.MkdirAll
+	runtimeDirectoryChmod    = os.Chmod
+	runtimeDirectoryStat     = os.Stat
+)
+
 // prepareRuntimeDirectory accepts a Kubernetes fsGroup-owned EmptyDir mount.
 // Such a mount is deliberately owned by root and cannot be chmod'ed by the
 // non-root runtime, but it is group-writable and inaccessible to other users.
 func prepareRuntimeDirectory(directory string) error {
-	if err := os.MkdirAll(directory, 0o750); err != nil {
+	if err := runtimeDirectoryMkdirAll(directory, 0o750); err != nil {
 		return err
 	}
-	if err := os.Chmod(directory, 0o750); err == nil {
+	if err := runtimeDirectoryChmod(directory, 0o750); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrPermission) {
 		return err
 	}
-	info, err := os.Stat(directory)
+	info, err := runtimeDirectoryStat(directory)
 	if err != nil {
 		return err
 	}
