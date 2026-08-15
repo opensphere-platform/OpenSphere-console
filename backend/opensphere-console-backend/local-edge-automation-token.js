@@ -8,7 +8,9 @@ function canonicalSegment(value) {
   return decoded;
 }
 
-function validateLocalEdgeAutomationTokenClaims(token, { username, audience, now = Math.floor(Date.now() / 1000) } = {}) {
+function validateLocalEdgeAutomationTokenClaims(token, { username, audience,
+  serviceAccountName = 'opensphere-local-edge-release', requirePodBound = false,
+  now = Math.floor(Date.now() / 1000) } = {}) {
   if (Buffer.byteLength(String(token || '')) > 16 * 1024) throw Object.assign(new Error('local edge automation token is oversized'), { code: 401 });
   const parts = String(token || '').split('.');
   if (parts.length !== 3) throw Object.assign(new Error('local edge automation token is malformed'), { code: 401 });
@@ -25,10 +27,13 @@ function validateLocalEdgeAutomationTokenClaims(token, { username, audience, now
     || !Number.isSafeInteger(issuedAt) || !Number.isSafeInteger(notBefore) || !Number.isSafeInteger(expiresAt)
     || expiresAt <= now || issuedAt > now + 30 || notBefore > now + 30 || expiresAt <= issuedAt || expiresAt - issuedAt > 600
     || claims['kubernetes.io']?.namespace !== 'opensphere-console'
-    || claims['kubernetes.io']?.serviceaccount?.name !== 'opensphere-local-edge-release') {
+    || claims['kubernetes.io']?.serviceaccount?.name !== serviceAccountName
+    || (requirePodBound && (typeof claims['kubernetes.io']?.pod?.name !== 'string'
+      || !claims['kubernetes.io'].pod.name || !/^[0-9a-f-]{36}$/i.test(String(claims['kubernetes.io']?.pod?.uid || ''))))) {
     throw Object.assign(new Error('local edge automation token lifetime or projected identity is invalid'), { code: 403 });
   }
-  return Object.freeze({ issuedAt, expiresAt, audience, subject: username });
+  return Object.freeze({ issuedAt, expiresAt, audience, subject: username,
+    podName: claims['kubernetes.io']?.pod?.name || null, podUid: claims['kubernetes.io']?.pod?.uid || null });
 }
 
 module.exports = { validateLocalEdgeAutomationTokenClaims };

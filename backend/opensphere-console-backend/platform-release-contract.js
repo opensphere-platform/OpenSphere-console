@@ -10,6 +10,67 @@ const RELEASE_LOCK_API_VERSION = 'release.opensphere.io/v1alpha1';
 const RELEASE_LOCK_KIND = 'OpenSphereReleaseLock';
 const RELEASE_SCOPE_INTEGRATED = 'integrated';
 const RELEASE_SCOPE_COMPONENT = 'component';
+const COMPONENT_PUBLICATION_BINDING_CONTRACT = 'opensphere-edge-component-publication-binding/v1';
+const COMPONENT_PUBLICATION_KIND = 'OpenSphereEdgeComponentPublication';
+const BACKEND_BOOTSTRAP_A_PUBLICATION_KIND = 'OpenSphereBackendComponentBootstrapAPublication';
+const BACKEND_BOOTSTRAP_A_PUBLICATION_CONTRACT =
+  'opensphere-backend-component-bootstrap-a-publication/v1';
+const COMPONENT_PUBLISHER = 'scripts/Publish-LocalEdgeBackendComponent.ps1';
+const BACKEND_BOOTSTRAP_A_VALIDATOR =
+  'backend/opensphere-console-backend/platform-release-contract.js';
+const BACKEND_BOOTSTRAP_CONTRACT = 'opensphere-backend-component-bootstrap/v1';
+const BACKEND_VERIFICATION_SET_CONTRACT = 'opensphere-backend-component-verification-set/v1';
+const EDGE_KEY_ID = 'opensphere-edge-local-v1';
+const REQUIRED_BACKEND_VERIFICATION_IDS = Object.freeze([
+  'console-full-test',
+  'console-test',
+  'fresh-ledger-verifier',
+  'rendered-manifest-client-dry-run',
+  'rendered-manifest-server-dry-run',
+  'setup-full-test',
+  'setup-test',
+]);
+const REQUIRED_BACKEND_BOOTSTRAP_A_VERIFICATION_IDS = Object.freeze([
+  ...REQUIRED_BACKEND_VERIFICATION_IDS,
+  'bootstrap-a-invoke-fixture',
+].sort());
+const BACKEND_BOOTSTRAP_A_CHANGED_PATHS = Object.freeze(new Set([
+  'backend/opensphere-console-backend/Dockerfile',
+  'backend/opensphere-console-backend/deploy.yaml',
+  'backend/opensphere-console-backend/local-edge-automation-token.js',
+  'backend/opensphere-console-backend/local-edge-automation-token.test.js',
+  'backend/opensphere-console-backend/platform-release-contract.js',
+  'backend/opensphere-console-backend/platform-release-admission.test.js',
+  'backend/opensphere-console-backend/platform-release-executor.mjs',
+  'backend/opensphere-console-backend/platform-release-internal-transport.js',
+  'backend/opensphere-console-backend/platform-release-internal-transport.test.js',
+  'backend/opensphere-console-backend/platform-release-manifest-projection.js',
+  'backend/opensphere-console-backend/platform-release-manifest-projection.test.js',
+  'backend/opensphere-console-backend/platform-release-reconciler.js',
+  'backend/opensphere-console-backend/platform-release-tls-initializer.mjs',
+  'backend/opensphere-console-backend/platform-release-tls-initializer.test.mjs',
+  'backend/opensphere-console-backend/platform-release.test.js',
+  'backend/opensphere-console-backend/platform-release-bootstrap-cross-version.test.js',
+  'backend/opensphere-console-backend/foundation-owner-release.test.js',
+  'backend/opensphere-console-backend/server.js',
+  'backend/opensphere-console-backend/setup-source.lock',
+  'scripts/Invoke-LocalEdgePlatformRelease.ps1',
+  'scripts/Publish-LocalEdgeBackendComponent.ps1',
+  'scripts/backend-bootstrap-a-invoke-fixture.test.ps1',
+  'scripts/backend-component-workflow.test.mjs',
+  'package.json',
+]));
+const BACKEND_BOOTSTRAP_A_SETUP_PATHS = Object.freeze(new Set([
+  'src/bootstrap.mjs', 'src/release.mjs', 'src/verify.mjs',
+  'src/New-PlatformReleaseAuthorityCertificates.ps1', 'src/platform-release-authority-tls.mjs',
+  'src/platform-release-bootstrap-cleanup.mjs',
+  'src/platform-release-bootstrap-manifest.mjs',
+  'test/base-runtime.test.mjs', 'test/release.test.mjs', 'test/upgrade.test.mjs',
+  'test/platform-release-authority-tls.test.mjs',
+  'test/platform-release-bootstrap-cleanup.test.mjs',
+  'test/platform-release-bootstrap-manifest.test.mjs',
+]));
+const BACKEND_COMPONENT_SETUP_PATHS = BACKEND_BOOTSTRAP_A_SETUP_PATHS;
 const APPROVAL_MODE_LOCAL_EDGE_AUTOMATION = 'local-edge-automation';
 const APPROVAL_MODE_CROSS_OPERATOR = 'cross-operator';
 // Setup is the installer authority. Its transactional bootstrap currently
@@ -76,6 +137,7 @@ function calculateReleaseDigest(lock) {
     ...(lock.releaseScope ? { releaseScope: lock.releaseScope } : {}),
     ...(lock.baseReleaseDigest ? { baseReleaseDigest: lock.baseReleaseDigest } : {}),
     ...(lock.changedComponents ? { changedComponents: lock.changedComponents } : {}),
+    ...(lock.componentPublication ? { componentPublication: lock.componentPublication } : {}),
   });
   return `sha256:${createHash('sha256').update(payload).digest('hex')}`;
 }
@@ -88,11 +150,11 @@ function assertClosedObject(value, allowed, label) {
   if (unknown.length) throw new Error(`${label} contains unsupported fields: ${unknown.join(', ')}`);
 }
 
-function validateReleaseLock(lock) {
+function validateReleaseLock(lock, { allowUnsignedComponentBootstrapBase = false } = {}) {
   assertClosedObject(lock, [
     'apiVersion', 'kind', 'channel', 'releaseDigest', 'resolvedAt', 'source',
     'sourceRevision', 'trust', 'releaseBom', 'components',
-    'releaseScope', 'baseReleaseDigest', 'changedComponents',
+    'releaseScope', 'baseReleaseDigest', 'changedComponents', 'componentPublication',
     'provenanceVerifiedAt', 'sbomVerifiedAt',
   ], 'targetLock');
   if (lock.apiVersion !== RELEASE_LOCK_API_VERSION || lock.kind !== RELEASE_LOCK_KIND) {
@@ -136,7 +198,8 @@ function validateReleaseLock(lock) {
     throw new Error('targetLock releaseScope is unsupported');
   }
   if (releaseScope === RELEASE_SCOPE_INTEGRATED
-    && (lock.baseReleaseDigest !== undefined || lock.changedComponents !== undefined)) {
+    && (lock.baseReleaseDigest !== undefined || lock.changedComponents !== undefined
+      || lock.componentPublication !== undefined)) {
     throw new Error('integrated targetLock cannot declare a component transition');
   }
   if (releaseScope === RELEASE_SCOPE_COMPONENT) {
@@ -157,6 +220,14 @@ function validateReleaseLock(lock) {
     }
     if (lock.releaseBom !== undefined) {
       throw new Error('component targetLock cannot claim a signed Release BOM');
+    }
+    if (lock.componentPublication === undefined) {
+      if (!allowUnsignedComponentBootstrapBase
+        || canonicalJson(lock.changedComponents) !== canonicalJson(['backend'])) {
+        throw new Error('component targetLock requires a signed component publication binding');
+      }
+    } else {
+      validateComponentPublicationBinding(lock.componentPublication);
     }
   }
   assertClosedObject(lock.components, REQUIRED_COMPONENTS, 'targetLock.components');
@@ -203,12 +274,434 @@ function validateReleaseLock(lock) {
   return lock;
 }
 
+function validateComponentPublicationBinding(value) {
+  assertClosedObject(value, [
+    'contract', 'publisher', 'publisherGitBlob', 'publisherSha256', 'documentSha256',
+    'signatureSha256', 'keyId', 'setupSourceRevision', 'setupSourceLockSha256',
+    'setupManifestProjectionGitBlob', 'setupManifestProjectionSha256', 'migrationSetDigest',
+    'platformRevision', 'inventorySha256', 'verificationSetDigest',
+    'bootstrapFrom',
+  ], 'targetLock.componentPublication');
+  if (value.contract !== COMPONENT_PUBLICATION_BINDING_CONTRACT
+    || value.publisher !== COMPONENT_PUBLISHER
+    || !/^[a-f0-9]{40,64}$/.test(String(value.publisherGitBlob || ''))
+    || !SHA256_RE.test(String(value.publisherSha256 || ''))
+    || !SHA256_RE.test(String(value.documentSha256 || ''))
+    || !SHA256_RE.test(String(value.signatureSha256 || ''))
+    || value.keyId !== EDGE_KEY_ID
+    || !REVISION_RE.test(String(value.setupSourceRevision || ''))
+    || !SHA256_RE.test(String(value.setupSourceLockSha256 || ''))
+    || !/^[a-f0-9]{40,64}$/.test(String(value.setupManifestProjectionGitBlob || ''))
+    || !SHA256_RE.test(String(value.setupManifestProjectionSha256 || ''))
+    || !SHA256_RE.test(String(value.migrationSetDigest || ''))
+    || !REVISION_RE.test(String(value.platformRevision || ''))
+    || !SHA256_RE.test(String(value.inventorySha256 || ''))
+    || !SHA256_RE.test(String(value.verificationSetDigest || ''))) {
+    throw new Error('targetLock component publication binding is invalid');
+  }
+  if (value.bootstrapFrom !== undefined) validateBackendBootstrapFrom(value.bootstrapFrom);
+  return value;
+}
+
+function validateBackendBootstrapFrom(value) {
+  assertClosedObject(value, [
+    'contract', 'requestId', 'releaseDigest', 'sourceRevision', 'image', 'mergeRevision',
+    'receiptOperationId', 'governedDocumentSha256', 'receiptSha256', 'handoffState',
+    'convergenceState', 'foundationFeatureGate', 'trustConfigUid',
+    'trustConfigResourceVersion', 'trustKeySpkiSha256',
+  ], 'Backend component publication bootstrapFrom');
+  if (value.contract !== BACKEND_BOOTSTRAP_CONTRACT
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(String(value.requestId || ''))
+    || !SHA256_RE.test(String(value.releaseDigest || ''))
+    || !REVISION_RE.test(String(value.sourceRevision || ''))
+    || !IMAGE_RE.test(String(value.image || ''))
+    || !value.image.includes('/opensphere-console-backend@')
+    || !/^[a-f0-9]{40,64}$/.test(String(value.mergeRevision || ''))
+    || !/^[A-Za-z0-9:._-]{8,255}$/.test(String(value.receiptOperationId || ''))
+    || !SHA256_RE.test(String(value.governedDocumentSha256 || ''))
+    || !SHA256_RE.test(String(value.receiptSha256 || ''))
+    || !/^[A-Za-z0-9._:-]{8,128}$/.test(String(value.trustConfigUid || ''))
+    || !/^[A-Za-z0-9._:-]{1,128}$/.test(String(value.trustConfigResourceVersion || ''))
+    || !SHA256_RE.test(String(value.trustKeySpkiSha256 || ''))
+    || value.handoffState !== 'BootstrapApplied'
+    || value.convergenceState !== 'PendingConvergence'
+    || value.foundationFeatureGate !== 'Closed') {
+    throw new Error('Backend component publication bootstrapFrom is invalid');
+  }
+  return value;
+}
+
+function validateBootstrapAInitializerCleanup(value, { bootstrapFrom, targetReleaseDigest } = {}) {
+  assertClosedObject(value, [
+    'bootstrapRequestId', 'bootstrapSourceRevision', 'cleanupSetDigest', 'completedAt', 'contract',
+    'deletedResources', 'journalCustody', 'journalResourceVersion', 'journalSha256', 'journalUid',
+    'residueCount', 'retainedAuthority', 'targetReleaseDigest',
+  ], 'Backend Bootstrap A initializer cleanup proof');
+  if (!bootstrapFrom || value.contract !== 'opensphere-bootstrap-a-initializer-cleanup/v1'
+    || value.bootstrapRequestId !== bootstrapFrom.requestId
+    || value.bootstrapSourceRevision !== bootstrapFrom.sourceRevision
+    || value.targetReleaseDigest !== targetReleaseDigest
+    || !SHA256_RE.test(String(value.cleanupSetDigest || ''))
+    || !SHA256_RE.test(String(value.journalSha256 || ''))
+    || !/^[0-9a-f-]{36}$/i.test(String(value.journalUid || ''))
+    || !/^\d+$/.test(String(value.journalResourceVersion || ''))
+    || value.residueCount !== 0
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(String(value.completedAt || ''))
+    || !Number.isFinite(Date.parse(value.completedAt))) {
+    throw new Error('Backend Bootstrap A initializer cleanup transaction binding is invalid');
+  }
+  const sourceRevision = bootstrapFrom.sourceRevision;
+  const expectedResources = [
+    ['batch/v1', 'Job', 'opensphere-console', `opensphere-tls-init-${sourceRevision}`],
+    ['v1', 'ServiceAccount', 'opensphere-console', 'platform-release-tls-initializer'],
+    ['rbac.authorization.k8s.io/v1', 'Role', 'opensphere-console', 'platform-release-tls-initializer'],
+    ['rbac.authorization.k8s.io/v1', 'RoleBinding', 'opensphere-console', 'platform-release-tls-initializer'],
+    ['admissionregistration.k8s.io/v1', 'ValidatingAdmissionPolicy', '',
+      'platform-release-tls-initializer-custody'],
+    ['admissionregistration.k8s.io/v1', 'ValidatingAdmissionPolicyBinding', '',
+      'platform-release-tls-initializer-custody'],
+    ['admissionregistration.k8s.io/v1', 'ValidatingAdmissionPolicy', '',
+      'platform-release-tls-initializer-job-boundary'],
+    ['admissionregistration.k8s.io/v1', 'ValidatingAdmissionPolicyBinding', '',
+      'platform-release-tls-initializer-job-boundary'],
+    ['admissionregistration.k8s.io/v1', 'ValidatingAdmissionPolicy', '',
+      'platform-release-tls-initializer-pod-boundary'],
+    ['admissionregistration.k8s.io/v1', 'ValidatingAdmissionPolicyBinding', '',
+      'platform-release-tls-initializer-pod-boundary'],
+    ['networking.k8s.io/v1', 'NetworkPolicy', 'opensphere-console',
+      'platform-release-tls-initializer'],
+  ].map(([apiVersion, kind, namespace, name]) => ({ apiVersion, kind, namespace, name }));
+  if (!Array.isArray(value.deletedResources) || value.deletedResources.length !== expectedResources.length) {
+    throw new Error('Backend Bootstrap A initializer cleanup resource set is incomplete');
+  }
+  const identities = value.deletedResources.map((entry) => {
+    assertClosedObject(entry, ['apiVersion', 'kind', 'name', 'namespace', 'resourceVersion', 'uid'],
+      'Backend Bootstrap A initializer cleanup resource identity');
+    if (!/^[0-9a-f-]{36}$/i.test(String(entry.uid || ''))
+      || !/^\d+$/.test(String(entry.resourceVersion || ''))) {
+      throw new Error('Backend Bootstrap A initializer cleanup resource identity is invalid');
+    }
+    return { apiVersion: entry.apiVersion, kind: entry.kind, namespace: entry.namespace, name: entry.name };
+  });
+  const sortCanonical = (items) => [...items].sort((left, right) =>
+    canonicalJson(left).localeCompare(canonicalJson(right)));
+  if (canonicalJson(identities) !== canonicalJson(sortCanonical(expectedResources))
+    || canonicalJson(value.deletedResources) !== canonicalJson(sortCanonical(value.deletedResources))
+    || value.cleanupSetDigest !== `sha256:${createHash('sha256')
+      .update(canonicalJson(value.deletedResources)).digest('hex')}`) {
+    throw new Error('Backend Bootstrap A initializer cleanup resource set or digest is invalid');
+  }
+  assertClosedObject(value.retainedAuthority, [
+    'caCertSha256', 'caConfigMapResourceVersion', 'caConfigMapUid', 'contract',
+    'secretResourceVersion', 'secretUid', 'serviceCustodyBindingResourceVersion',
+    'serviceCustodyBindingUid', 'serviceCustodyPolicyResourceVersion', 'serviceCustodyPolicyUid',
+    'serviceResourceVersion', 'serviceUid', 'tlsCertSha256',
+  ], 'Backend Bootstrap A retained TLS authority proof');
+  if (value.retainedAuthority.contract !== 'opensphere-platform-release-authority-retained/v1'
+    || !SHA256_RE.test(String(value.retainedAuthority.caCertSha256 || ''))
+    || !SHA256_RE.test(String(value.retainedAuthority.tlsCertSha256 || ''))) {
+    throw new Error('Backend Bootstrap A retained TLS authority proof is invalid');
+  }
+  for (const key of ['secret', 'caConfigMap', 'service', 'serviceCustodyPolicy', 'serviceCustodyBinding']) {
+    if (!/^[0-9a-f-]{36}$/i.test(String(value.retainedAuthority[`${key}Uid`] || ''))
+      || !/^\d+$/.test(String(value.retainedAuthority[`${key}ResourceVersion`] || ''))) {
+      throw new Error('Backend Bootstrap A retained TLS authority identity is invalid');
+    }
+  }
+  assertClosedObject(value.journalCustody,
+    ['bindingResourceVersion', 'bindingUid', 'policyResourceVersion', 'policyUid'],
+    'Backend Bootstrap A cleanup journal custody proof');
+  for (const key of ['policy', 'binding']) {
+    if (!/^[0-9a-f-]{36}$/i.test(String(value.journalCustody[`${key}Uid`] || ''))
+      || !/^\d+$/.test(String(value.journalCustody[`${key}ResourceVersion`] || ''))) {
+      throw new Error('Backend Bootstrap A cleanup journal custody identity is invalid');
+    }
+  }
+  return value;
+}
+
+function bootstrapReceiptProjection({ requestId, mergeRevision, receipt }) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
+    throw new Error('Backend bootstrap A receipt is unavailable');
+  }
+  return {
+    contract: 'opensphere-platform-bootstrap-a-receipt/v1',
+    requestId,
+    mergeRevision,
+    receipt: {
+      operationId: receipt.operationId,
+      desiredRevision: receipt.desiredRevision,
+      appliedRevision: receipt.appliedRevision,
+      succeeded: receipt.succeeded,
+      result: receipt.result,
+      evidence: receipt.evidence,
+    },
+  };
+}
+
+function bootstrapEvidenceHashes({ requestId, mergeRevision, governedDocument, receipt }) {
+  return {
+    governedDocumentSha256: `sha256:${createHash('sha256')
+      .update(canonicalJson(governedDocument)).digest('hex')}`,
+    receiptSha256: `sha256:${createHash('sha256')
+      .update(canonicalJson(bootstrapReceiptProjection({ requestId, mergeRevision, receipt }))).digest('hex')}`,
+  };
+}
+
+function validateBackendBootstrapEvidence(value, {
+  installedLock, governedDocument, mergeRevision, receipt,
+}) {
+  const bootstrap = validateBackendBootstrapFrom(value);
+  const installed = validateReleaseLock(installedLock, { allowUnsignedComponentBootstrapBase: true });
+  if (installed.componentPublication !== undefined
+    || installed.releaseScope !== RELEASE_SCOPE_COMPONENT
+    || canonicalJson(installed.changedComponents) !== canonicalJson(['backend'])) {
+    throw new Error('Backend bootstrap A must be an unsigned historical Backend-only component lock');
+  }
+  if (bootstrap.releaseDigest !== installed.releaseDigest
+    || bootstrap.sourceRevision !== installed.sourceRevision
+    || bootstrap.image !== installed.components.backend.image) {
+    throw new Error('Backend bootstrapFrom differs from the installed A release');
+  }
+  if (bootstrap.mergeRevision !== mergeRevision
+    || governedDocument?.apiVersion !== 'platform.opensphere.io/v1alpha1'
+    || governedDocument?.kind !== 'GovernedChange'
+    || governedDocument?.metadata?.requestId !== bootstrap.requestId
+    || governedDocument?.metadata?.consumerId !== PLATFORM_RELEASE_CONSUMER
+    || governedDocument?.spec?.action !== 'apply'
+    || governedDocument?.spec?.target !== PLATFORM_RELEASE_TARGET) {
+    throw new Error('Backend bootstrap A governed document identity is invalid');
+  }
+  const desired = governedDocument.spec.desiredState;
+  if (desired?.contract !== PLATFORM_RELEASE_CONTRACT
+    || !SHA256_RE.test(String(desired.previousReleaseDigest || ''))) {
+    throw new Error('Backend bootstrap A governed desired state is invalid');
+  }
+  const target = validateReleaseLock(desired.targetLock, { allowUnsignedComponentBootstrapBase: true });
+  if (target.componentPublication !== undefined
+    || target.releaseDigest !== installed.releaseDigest
+    || target.sourceRevision !== bootstrap.sourceRevision
+    || target.components.backend.image !== bootstrap.image) {
+    throw new Error('Backend bootstrap A governed target differs from the installed release');
+  }
+  if (receipt.succeeded !== true
+    || receipt.operationId !== bootstrap.receiptOperationId
+    || receipt.desiredRevision !== mergeRevision
+    || receipt.appliedRevision !== bootstrap.sourceRevision
+    || receipt.evidence?.installedReleaseDigest !== bootstrap.releaseDigest
+    || receipt.evidence?.sourceRevision !== bootstrap.sourceRevision) {
+    throw new Error('Backend bootstrap A receipt does not prove the installed release');
+  }
+  const hashes = bootstrapEvidenceHashes({
+    requestId: bootstrap.requestId,
+    mergeRevision,
+    governedDocument,
+    receipt,
+  });
+  if (hashes.governedDocumentSha256 !== bootstrap.governedDocumentSha256
+    || hashes.receiptSha256 !== bootstrap.receiptSha256) {
+    throw new Error('Backend bootstrap A document or receipt hash differs from bootstrapFrom');
+  }
+  return bootstrap;
+}
+
+function validateBackendComponentPublication(value, { bootstrapA = false } = {}) {
+  assertClosedObject(value, [
+    'apiVersion', 'kind', 'publicationScope', 'channel', 'status', 'releaseTag', 'immutableTag',
+    'source', 'sourceRevision', 'buildAuthority', 'releaseClass', 'gaEligible',
+    'supportedPlatforms', 'requestIntent', 'changedPaths', 'affectedImages', 'releaseScope',
+    'fullReleaseJustification', 'previous', 'setupSource', 'platformAuthority', 'verification',
+    'artifacts', 'components', 'tooling', 'bootstrapFrom', 'generatedAt',
+    ...(bootstrapA ? ['contract', 'bootstrapPhase'] : []),
+  ], 'Backend component publication');
+  assertClosedObject(value.components, ['backend'], 'Backend component publication components');
+  assertClosedObject(value.components.backend, [
+    'image', 'sourceRevision', 'registryCredentialsRequired',
+  ], 'Backend component publication backend');
+  assertClosedObject(value.setupSource, [
+    'repository', 'sourceRevision', 'changedPaths', 'lockSha256', 'manifestProjectionTool',
+  ], 'Backend component publication Setup source');
+  assertClosedObject(value.setupSource.manifestProjectionTool, ['path', 'gitBlob', 'sha256'],
+    'Backend component publication Setup manifest projection tool');
+  assertClosedObject(value.previous, [
+    'image', 'sourceRevision', 'setupSourceRevision',
+  ], 'Backend component publication previous release');
+  assertClosedObject(value.platformAuthority, [
+    'repository', 'sourceRevision', 'inventory',
+  ], 'Backend component publication Platform authority');
+  assertClosedObject(value.platformAuthority.inventory, [
+    'path', 'gitBlob', 'sha256',
+  ], 'Backend component publication Platform inventory');
+  assertClosedObject(value.verification, [
+    'contract', 'setDigest', 'results', 'renderedManifest',
+  ], 'Backend component publication verification');
+  assertClosedObject(value.verification.renderedManifest, [
+    'artifactUri', 'sha256',
+  ], 'Backend component publication rendered manifest');
+  assertClosedObject(value.artifacts, ['supabaseMigrationManifest'],
+    'Backend component publication artifacts');
+  assertClosedObject(value.artifacts.supabaseMigrationManifest, [
+    'path', 'sha256', 'setDigest', 'latestMigrationId', 'migrationCount',
+  ], 'Backend component publication migration artifact');
+  const expectedTooling = {
+    publisher: COMPONENT_PUBLISHER,
+    deployer: 'scripts/Invoke-LocalEdgePlatformRelease.ps1',
+    signingHelper: 'scripts/os-shell-edge-signing.ps1',
+    initializer: 'scripts/Initialize-FoundationOwnerInstallationLock.ps1',
+    ...(bootstrapA ? { bootstrapAValidator: BACKEND_BOOTSTRAP_A_VALIDATOR } : {}),
+  };
+  assertClosedObject(value.tooling, Object.keys(expectedTooling),
+    'Backend component publication tooling');
+  for (const [name, expectedPath] of Object.entries(expectedTooling)) {
+    assertClosedObject(value.tooling[name], ['path', 'gitBlob', 'sha256'],
+      `Backend component publication tooling ${name}`);
+    if (value.tooling[name].path !== expectedPath
+      || !/^[a-f0-9]{40,64}$/.test(String(value.tooling[name].gitBlob || ''))
+      || !SHA256_RE.test(String(value.tooling[name].sha256 || ''))) {
+      throw new Error(`Backend component publication tooling ${name} is invalid`);
+    }
+  }
+  const changed = value.changedPaths;
+  const setupChanged = value.setupSource.changedPaths;
+  const verificationResults = value.verification.results;
+  const verificationIds = Array.isArray(verificationResults)
+    ? verificationResults.map((result) => result?.id).sort() : [];
+  const requiredVerificationIds = bootstrapA
+    ? REQUIRED_BACKEND_BOOTSTRAP_A_VERIFICATION_IDS : REQUIRED_BACKEND_VERIFICATION_IDS;
+  if (value.apiVersion !== RELEASE_LOCK_API_VERSION
+    || value.kind !== (bootstrapA ? BACKEND_BOOTSTRAP_A_PUBLICATION_KIND : COMPONENT_PUBLICATION_KIND)
+    || (bootstrapA && (value.contract !== BACKEND_BOOTSTRAP_A_PUBLICATION_CONTRACT
+      || value.bootstrapPhase !== 'A' || value.bootstrapFrom !== undefined))
+    || value.publicationScope !== 'ComponentSet'
+    || value.channel !== 'edge' || value.status !== 'Active'
+    || value.source !== 'https://github.com/opensphere-platform/OpenSphere-console'
+    || !REVISION_RE.test(String(value.sourceRevision || ''))
+    || value.buildAuthority !== 'localhost' || value.releaseClass !== 'pre-ga'
+    || value.gaEligible !== false || canonicalJson(value.supportedPlatforms) !== canonicalJson(['linux/amd64'])
+    || value.releaseScope !== RELEASE_SCOPE_COMPONENT || value.fullReleaseJustification !== null
+    || !Array.isArray(value.affectedImages) || canonicalJson(value.affectedImages) !== canonicalJson(['backend'])
+    || !Array.isArray(changed) || !changed.length || canonicalJson(changed) !== canonicalJson([...new Set(changed)].sort())
+    || changed.some((path) => typeof path !== 'string' || !path || /^(?:[A-Za-z]:|\/|\\)/.test(path)
+      || /(^|\/)\.\.(\/|$)/.test(path))
+    || (bootstrapA && changed.some((path) => !BACKEND_BOOTSTRAP_A_CHANGED_PATHS.has(path)))
+    || !Array.isArray(setupChanged)
+    || canonicalJson(setupChanged) !== canonicalJson([...new Set(setupChanged)].sort())
+    || setupChanged.some((path) => !(bootstrapA
+      ? BACKEND_BOOTSTRAP_A_SETUP_PATHS : BACKEND_COMPONENT_SETUP_PATHS).has(path))
+    || value.setupSource.repository !== 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git'
+    || !REVISION_RE.test(String(value.setupSource.sourceRevision || ''))
+    || !SHA256_RE.test(String(value.setupSource.lockSha256 || ''))
+    || value.setupSource.manifestProjectionTool.path !== 'src/platform-release-bootstrap-manifest.mjs'
+    || !/^[a-f0-9]{40,64}$/.test(String(value.setupSource.manifestProjectionTool.gitBlob || ''))
+    || !SHA256_RE.test(String(value.setupSource.manifestProjectionTool.sha256 || ''))
+    || value.platformAuthority.repository !== 'https://github.com/opensphere-platform/OpenSphere-Platform-V2.git'
+    || !REVISION_RE.test(String(value.platformAuthority.sourceRevision || ''))
+    || value.platformAuthority.inventory.path !== 'repository-inventory.json'
+    || !/^[a-f0-9]{40,64}$/.test(String(value.platformAuthority.inventory.gitBlob || ''))
+    || !SHA256_RE.test(String(value.platformAuthority.inventory.sha256 || ''))
+    || value.verification.contract !== BACKEND_VERIFICATION_SET_CONTRACT
+    || !SHA256_RE.test(String(value.verification.setDigest || ''))
+    || !Array.isArray(verificationResults) || !verificationResults.length
+    || canonicalJson(verificationIds) !== canonicalJson(requiredVerificationIds)
+    || verificationResults.some((result) => {
+      try {
+        assertClosedObject(result, [
+          'id', 'result', 'artifactUri', 'artifactSha256', 'startedAt', 'completedAt',
+        ], 'Backend component publication verification result');
+      } catch { return true; }
+      return typeof result.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{2,127}$/.test(result.id)
+        || result.result !== 'PASS'
+        || typeof result.artifactUri !== 'string'
+        || !/^evidence:\/\/[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(result.artifactUri)
+        || !SHA256_RE.test(String(result.artifactSha256 || ''))
+        || !Number.isFinite(Date.parse(result.startedAt))
+        || !Number.isFinite(Date.parse(result.completedAt))
+        || Date.parse(result.completedAt) < Date.parse(result.startedAt);
+    })
+    || typeof value.verification.renderedManifest.artifactUri !== 'string'
+    || !/^evidence:\/\/[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/
+      .test(value.verification.renderedManifest.artifactUri)
+    || !SHA256_RE.test(String(value.verification.renderedManifest.sha256 || ''))
+    || value.components.backend.sourceRevision !== value.sourceRevision
+    || !IMAGE_RE.test(String(value.components.backend.image || ''))
+    || !value.components.backend.image.includes('/opensphere-console-backend@')
+    || value.components.backend.registryCredentialsRequired !== false
+    || value.artifacts.supabaseMigrationManifest.path !== 'backend/supabase/migrations/manifest.json'
+    || (bootstrapA
+      ? !/^\d{4}$/.test(String(value.artifacts.supabaseMigrationManifest.latestMigrationId || ''))
+      : value.artifacts.supabaseMigrationManifest.latestMigrationId !== '0063')
+    || !SHA256_RE.test(String(value.artifacts.supabaseMigrationManifest.sha256 || ''))
+    || !SHA256_RE.test(String(value.artifacts.supabaseMigrationManifest.setDigest || ''))
+    || !Number.isInteger(value.artifacts.supabaseMigrationManifest.migrationCount)
+    || value.artifacts.supabaseMigrationManifest.migrationCount < 1
+    || typeof value.requestIntent !== 'string' || value.requestIntent.trim().length < 8
+    || !/^\d{12}$/.test(String(value.releaseTag || ''))
+    || !/^local-[a-f0-9]{12}$/.test(String(value.immutableTag || ''))
+    || !Number.isFinite(Date.parse(value.generatedAt))) {
+    throw new Error('Backend component publication is outside the canonical component release contract');
+  }
+  if (!IMAGE_RE.test(String(value.previous.image || ''))
+    || !value.previous.image.includes('/opensphere-console-backend@')
+    || !REVISION_RE.test(String(value.previous.sourceRevision || ''))
+    || !REVISION_RE.test(String(value.previous.setupSourceRevision || ''))
+    || value.previous.image === value.components.backend.image
+    || value.previous.sourceRevision === value.sourceRevision) {
+    throw new Error('Backend component publication previous release identity is invalid');
+  }
+  if ((value.setupSource.sourceRevision === value.previous.setupSourceRevision) !== (setupChanged.length === 0)) {
+    throw new Error('Backend component publication Setup revision and changed paths are inconsistent');
+  }
+  const calculatedVerificationSetDigest = `sha256:${createHash('sha256').update(JSON.stringify({
+    contract: value.verification.contract,
+    results: value.verification.results,
+    renderedManifest: value.verification.renderedManifest,
+  })).digest('hex')}`;
+  if (calculatedVerificationSetDigest !== value.verification.setDigest) {
+    throw new Error('Backend component publication verification set digest does not match its evidence');
+  }
+  if (value.bootstrapFrom !== undefined) {
+    const bootstrap = validateBackendBootstrapFrom(value.bootstrapFrom);
+    if (value.previous.image !== bootstrap.image
+      || value.previous.sourceRevision !== bootstrap.sourceRevision) {
+      throw new Error('Backend component publication previous release differs from bootstrapFrom');
+    }
+  }
+  return value;
+}
+
+function validateBackendBootstrapAPublication(value) {
+  return validateBackendComponentPublication(value, { bootstrapA: true });
+}
+
+function backendComponentPublicationBinding(publication, verified) {
+  const value = validateBackendComponentPublication(publication);
+  return validateComponentPublicationBinding({
+    contract: COMPONENT_PUBLICATION_BINDING_CONTRACT,
+    publisher: COMPONENT_PUBLISHER,
+    publisherGitBlob: value.tooling.publisher.gitBlob,
+    publisherSha256: value.tooling.publisher.sha256,
+    documentSha256: verified.documentSha256,
+    signatureSha256: verified.signatureSha256,
+    keyId: verified.keyId,
+    setupSourceRevision: value.setupSource.sourceRevision,
+    setupSourceLockSha256: value.setupSource.lockSha256,
+    setupManifestProjectionGitBlob: value.setupSource.manifestProjectionTool.gitBlob,
+    setupManifestProjectionSha256: value.setupSource.manifestProjectionTool.sha256,
+    migrationSetDigest: value.artifacts.supabaseMigrationManifest.setDigest,
+    platformRevision: value.platformAuthority.sourceRevision,
+    inventorySha256: value.platformAuthority.inventory.sha256,
+    verificationSetDigest: value.verification.setDigest,
+    ...(value.bootstrapFrom ? { bootstrapFrom: structuredClone(value.bootstrapFrom) } : {}),
+  });
+}
+
 function sameComponent(left, right) {
   return canonicalJson(left) === canonicalJson(right);
 }
 
 function validateReleaseTransition(baseLock, targetLock) {
-  const base = validateReleaseLock(baseLock);
+  const base = validateReleaseLock(baseLock, { allowUnsignedComponentBootstrapBase: true });
   const target = validateReleaseLock(targetLock);
   if ((target.releaseScope || RELEASE_SCOPE_INTEGRATED) !== RELEASE_SCOPE_COMPONENT) {
     return target;
@@ -251,11 +744,11 @@ function normalizeComponentImage(name, value) {
 }
 
 function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
-  const base = validateReleaseLock(baseLock);
+  const base = validateReleaseLock(baseLock, { allowUnsignedComponentBootstrapBase: true });
   if (base.channel !== 'edge' || canonicalJson(base.trust) !== canonicalJson(LOCAL_EDGE_TRUST)) {
     throw new Error('component target generation requires an installed localhost edge release');
   }
-  assertClosedObject(evidence, ['sourceRevision', 'components'], 'componentEvidence');
+  assertClosedObject(evidence, ['sourceRevision', 'components', 'componentPublication'], 'componentEvidence');
   if (!REVISION_RE.test(String(evidence.sourceRevision || ''))) {
     throw new Error('componentEvidence sourceRevision is invalid');
   }
@@ -296,6 +789,7 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
     releaseScope: RELEASE_SCOPE_COMPONENT,
     baseReleaseDigest: base.releaseDigest,
     changedComponents,
+    componentPublication: validateComponentPublicationBinding(evidence.componentPublication),
     components,
   };
   target.releaseDigest = calculateReleaseDigest(target);
@@ -340,8 +834,8 @@ function platformReleaseApprovalPolicy(action, desiredState) {
     };
 }
 
-function releaseSummary(lock) {
-  const validated = validateReleaseLock(lock);
+function releaseSummary(lock, { allowUnsignedComponentBootstrapBase = false } = {}) {
+  const validated = validateReleaseLock(lock, { allowUnsignedComponentBootstrapBase });
   return {
     channel: validated.channel,
     releaseDigest: validated.releaseDigest,
@@ -367,9 +861,19 @@ module.exports = {
   RELEASE_SCOPE_COMPONENT,
   APPROVAL_MODE_LOCAL_EDGE_AUTOMATION,
   APPROVAL_MODE_CROSS_OPERATOR,
+  COMPONENT_PUBLICATION_BINDING_CONTRACT,
+  BACKEND_BOOTSTRAP_CONTRACT,
   canonicalJson,
   calculateReleaseDigest,
   buildComponentReleaseLock,
+  backendComponentPublicationBinding,
+  validateBackendComponentPublication,
+  validateBackendBootstrapAPublication,
+  validateBackendBootstrapFrom,
+  validateBootstrapAInitializerCleanup,
+  validateBackendBootstrapEvidence,
+  bootstrapEvidenceHashes,
+  validateComponentPublicationBinding,
   validateReleaseLock,
   validateReleaseTransition,
   validatePlatformReleaseDesiredState,

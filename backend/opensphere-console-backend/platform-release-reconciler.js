@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('http');
+const { createHash } = require('node:crypto');
 const fs = require('fs');
 const {
   PLATFORM_RELEASE_CONSUMER,
@@ -8,20 +9,20 @@ const {
   PLATFORM_RELEASE_TARGET,
   validatePlatformReleaseDesiredState,
 } = require('./platform-release-contract');
+const {
+  INTERNAL_AUTHORITY_CA_FILE,
+  requestJson: internalAuthorityRequest,
+} = require('./platform-release-internal-transport');
 
 const PORT = Number(process.env.PORT || 8080);
-const BACKEND_URL = (process.env.CONSOLE_BACKEND_URL
-  || 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
-const GITEA_URL = (process.env.GITEA_URL
-  || 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000').replace(/\/$/, '');
 const GITEA_ORGANIZATION = process.env.GITEA_ORGANIZATION || 'opensphere';
 const GITEA_REPOSITORY = process.env.GITEA_REPOSITORY || 'platform-declarations';
 const GITEA_PATH = String(process.env.GITEA_PATH || 'platform-release').replace(/^\/+|\/+$/g, '');
-const GITEA_TOKEN = process.env.GITEA_TOKEN || '';
-const RECONCILER_TOKEN = process.env.RECONCILER_TOKEN || '';
 const EXECUTOR_IMAGE = process.env.EXECUTOR_IMAGE || '';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const SA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount';
+const IDENTITY_TOKEN_PATH = process.env.IDENTITY_TOKEN_PATH
+  || '/var/run/secrets/opensphere-platform-release-identity/token';
 const POLL_INTERVAL_MS = Math.max(2000, Math.min(60000, Number(process.env.POLL_INTERVAL_MS || 5000)));
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COMMIT_RE = /^[0-9a-f]{40,64}$/i;
@@ -33,25 +34,11 @@ let lastDispatchAt = null;
 let lastError = null;
 let activeRequestId = null;
 let stopping = false;
+let authorityReadyAt = null;
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function serviceAccountToken() { return fs.readFileSync(`${SA_PATH}/token`, 'utf8').trim(); }
-function encodedPath(value) { return String(value).split('/').map(encodeURIComponent).join('/'); }
-
-async function jsonRequest(url, options = {}) {
-  const { timeoutMs = 10000, ...fetchOptions } = options;
-  const response = await fetch(url, { ...fetchOptions, signal: AbortSignal.timeout(timeoutMs) });
-  const text = await response.text();
-  let body;
-  try { body = text ? JSON.parse(text) : {}; }
-  catch { body = { raw: text }; }
-  if (!response.ok) {
-    const error = new Error(body?.error || body?.message || `HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  return body;
-}
+function receiptIdentityToken() { return fs.readFileSync(IDENTITY_TOKEN_PATH, 'utf8').trim(); }
 
 async function kubernetesRequest(method, path, body) {
   const response = await fetch(`${APISERVER}${path}`, {
@@ -103,24 +90,40 @@ async function loadManifest(work) {
   if (work.git_repo !== `${GITEA_ORGANIZATION}/${GITEA_REPOSITORY}`) {
     throw new Error('claimed repository is outside the Platform Release contract');
   }
-  const path = `${GITEA_PATH}/requests/${work.request_id}.json`;
-  const file = await jsonRequest(
-    `${GITEA_URL}/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}`
-      + `/contents/${encodedPath(path)}?ref=${encodeURIComponent(work.git_commit_sha)}`,
-    { headers: { authorization: `token ${GITEA_TOKEN}`, accept: 'application/json' } },
-  );
+  const file = await internalAuthorityRequest('/api/platform/reconcile/manifest', {
+    method: 'POST',
+    authorization: `Bearer ${receiptIdentityToken()}`,
+    body: { reconciler: PLATFORM_RELEASE_RECONCILER, requestId: work.request_id },
+  });
+  if (file.contract !== 'opensphere-platform-release-manifest-projection/v1'
+    || file.requestId !== work.request_id || file.gitCommitSha !== work.git_commit_sha
+    || file.gitRepo !== work.git_repo || file.path !== `${GITEA_PATH}/requests/${work.request_id}.json`
+    || !/^sha256:[a-f0-9]{64}$/.test(String(file.contentSha256 || ''))) {
+    throw new Error('internal release manifest projection differs from the claimed work');
+  }
   const raw = Buffer.from(String(file.content || '').replace(/\s/g, ''), 'base64').toString('utf8');
+  const observed = `sha256:${createHash('sha256').update(raw).digest('hex')}`;
+  if (observed !== file.contentSha256) throw new Error('internal release manifest projection hash mismatch');
   return validateGovernedManifest(JSON.parse(raw), work);
 }
 
-async function claimWork() {
-  const response = await jsonRequest(`${BACKEND_URL}/api/platform/reconcile/next`, {
+async function ensureInternalAuthorityReady(request = internalAuthorityRequest) {
+  if (authorityReadyAt) return authorityReadyAt;
+  const response = await request('/readyz', { method: 'GET' });
+  if (response?.ready !== true
+    || response?.service !== 'opensphere-platform-release-authority'
+    || response?.tls !== 'TLSv1.3') {
+    throw new Error('Platform Release TLS authority is not exactly ready for mutation claims');
+  }
+  authorityReadyAt = new Date().toISOString();
+  return authorityReadyAt;
+}
+
+async function claimWork(request = internalAuthorityRequest, identityToken = receiptIdentityToken) {
+  const response = await request('/api/platform/reconcile/next', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-opensphere-reconciler-token': RECONCILER_TOKEN,
-    },
-    body: JSON.stringify({ reconciler: PLATFORM_RELEASE_RECONCILER, limit: 1 }),
+    authorization: `Bearer ${identityToken()}`,
+    body: { reconciler: PLATFORM_RELEASE_RECONCILER, limit: 1 },
   });
   lastClaimAt = new Date().toISOString();
   lastError = null;
@@ -159,6 +162,7 @@ function executorJob(work, manifest) {
         },
         spec: {
           serviceAccountName: 'platform-release-executor',
+          automountServiceAccountToken: false,
           restartPolicy: 'Never',
           imagePullSecrets: [{ name: 'opensphere-ghcr-pull' }],
           containers: [{
@@ -169,8 +173,6 @@ function executorJob(work, manifest) {
             env: [
               { name: 'HOME', value: '/tmp/home' },
               { name: 'NODE_EXTRA_CA_CERTS', value: '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' },
-              { name: 'CONSOLE_BACKEND_URL', value: BACKEND_URL },
-              { name: 'GITEA_URL', value: GITEA_URL },
               { name: 'GITEA_ORGANIZATION', value: GITEA_ORGANIZATION },
               { name: 'GITEA_REPOSITORY', value: GITEA_REPOSITORY },
               { name: 'GITEA_PATH', value: GITEA_PATH },
@@ -179,17 +181,28 @@ function executorJob(work, manifest) {
               { name: 'ATTEMPT', value: String(attempt) },
               { name: 'EXPECTED_PREVIOUS_RELEASE_DIGEST', value: desired.previousReleaseDigest },
               {
-                name: 'GITEA_TOKEN',
-                valueFrom: { secretKeyRef: { name: 'opensphere-gitea-control-plane', key: 'token' } },
-              },
-              {
-                name: 'RECONCILER_TOKEN',
-                valueFrom: { secretKeyRef: { name: 'opensphere-gitea-control-plane', key: 'reconciler-token' } },
+                name: 'IDENTITY_TOKEN_PATH',
+                value: '/var/run/secrets/opensphere-platform-release-identity/token',
               },
             ],
             volumeMounts: [
+              {
+                name: 'kube-api-access',
+                mountPath: '/var/run/secrets/kubernetes.io/serviceaccount',
+                readOnly: true,
+              },
+              {
+                name: 'receipt-identity',
+                mountPath: '/var/run/secrets/opensphere-platform-release-identity',
+                readOnly: true,
+              },
               { name: 'tmp', mountPath: '/tmp' },
               { name: 'ghcr', mountPath: '/var/run/secrets/opensphere-ghcr', readOnly: true },
+              {
+                name: 'release-control-ca',
+                mountPath: '/var/run/opensphere-platform-release-control-ca',
+                readOnly: true,
+              },
             ],
             resources: {
               requests: { cpu: '100m', memory: '192Mi' },
@@ -203,6 +216,40 @@ function executorJob(work, manifest) {
             },
           }],
           volumes: [
+            {
+              name: 'kube-api-access',
+              projected: {
+                defaultMode: 256,
+                sources: [
+                  {
+                    serviceAccountToken: {
+                      path: 'token',
+                      audience: 'https://kubernetes.default.svc',
+                      expirationSeconds: 600,
+                    },
+                  },
+                  {
+                    configMap: {
+                      name: 'kube-root-ca.crt',
+                      items: [{ key: 'ca.crt', path: 'ca.crt' }],
+                    },
+                  },
+                ],
+              },
+            },
+            {
+              name: 'receipt-identity',
+              projected: {
+                defaultMode: 256,
+                sources: [{
+                  serviceAccountToken: {
+                    path: 'token',
+                    audience: 'opensphere-console-platform-release',
+                    expirationSeconds: 600,
+                  },
+                }],
+              },
+            },
             { name: 'tmp', emptyDir: {} },
             {
               name: 'ghcr',
@@ -210,6 +257,13 @@ function executorJob(work, manifest) {
                 secretName: 'opensphere-ghcr-pull',
                 optional: true,
                 items: [{ key: '.dockerconfigjson', path: 'config.json' }],
+              },
+            },
+            {
+              name: 'release-control-ca',
+              configMap: {
+                name: 'opensphere-platform-release-control-ca',
+                items: [{ key: 'ca.crt', path: 'ca.crt' }],
               },
             },
           ],
@@ -230,20 +284,88 @@ async function dispatch(work) {
     );
   } catch (error) {
     if (error.status !== 409) throw error;
+    const existing = await kubernetesRequest(
+      'GET',
+      `/apis/batch/v1/namespaces/opensphere-console/jobs/${encodeURIComponent(job.metadata.name)}`,
+    );
+    if (!sameExecutorJob(existing, job)) {
+      throw new Error('Platform Release executor Job name is occupied by a different immutable template');
+    }
   }
   lastDispatchAt = new Date().toISOString();
   lastError = null;
 }
 
+function sorted(value) {
+  if (Array.isArray(value)) return value.map(sorted);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sorted(value[key])]));
+  }
+  return value;
+}
+
+function normalizedExecutorJob(value, serverDefaulted) {
+  if (!value || typeof value !== 'object') return null;
+  const job = structuredClone(value);
+  delete job.status;
+  for (const key of ['uid', 'resourceVersion', 'generation', 'creationTimestamp', 'managedFields', 'selfLink']) {
+    delete job.metadata?.[key];
+  }
+  if (serverDefaulted) {
+    const selector = job.spec?.selector?.matchLabels;
+    const controllerUid = selector?.['batch.kubernetes.io/controller-uid'] || selector?.['controller-uid'];
+    const labels = job.spec?.template?.metadata?.labels;
+    const validSelector = typeof controllerUid === 'string' && controllerUid
+      && Object.keys(selector || {}).every((key) =>
+        ['batch.kubernetes.io/controller-uid', 'controller-uid'].includes(key))
+      && ['batch.kubernetes.io/controller-uid', 'controller-uid'].every((key) =>
+        !selector?.[key] || selector[key] === controllerUid)
+      && labels?.['batch.kubernetes.io/controller-uid'] === controllerUid
+      && labels?.['controller-uid'] === controllerUid
+      && labels?.['batch.kubernetes.io/job-name'] === job.metadata?.name
+      && labels?.['job-name'] === job.metadata?.name;
+    if (!validSelector
+      || job.spec.parallelism !== 1 || job.spec.completions !== 1
+      || job.spec.completionMode !== 'NonIndexed' || job.spec.manualSelector !== false
+      || job.spec.suspend !== false || job.spec.podReplacementPolicy !== 'TerminatingOrFailed') return null;
+    for (const key of ['selector', 'parallelism', 'completions', 'completionMode', 'manualSelector',
+      'suspend', 'podReplacementPolicy']) delete job.spec[key];
+    for (const key of ['batch.kubernetes.io/controller-uid', 'controller-uid',
+      'batch.kubernetes.io/job-name', 'job-name']) delete labels[key];
+    const podSpec = job.spec.template.spec;
+    if (podSpec.serviceAccount !== podSpec.serviceAccountName
+      || podSpec.schedulerName !== 'default-scheduler' || podSpec.dnsPolicy !== 'ClusterFirst'
+      || podSpec.terminationGracePeriodSeconds !== 30) return null;
+    delete podSpec.serviceAccount;
+    delete podSpec.schedulerName;
+    delete podSpec.dnsPolicy;
+    delete podSpec.terminationGracePeriodSeconds;
+    if (podSpec.securityContext && Object.keys(podSpec.securityContext).length === 0) {
+      delete podSpec.securityContext;
+    }
+    for (const container of podSpec.containers || []) {
+      if (container.terminationMessagePath !== '/dev/termination-log'
+        || container.terminationMessagePolicy !== 'File') return null;
+      delete container.terminationMessagePath;
+      delete container.terminationMessagePolicy;
+    }
+  }
+  return sorted(job);
+}
+
+function sameExecutorJob(actual, intended) {
+  const observed = normalizedExecutorJob(actual, true);
+  const expected = normalizedExecutorJob(intended, false);
+  return observed !== null && expected !== null
+    && JSON.stringify(observed) === JSON.stringify(expected);
+}
+
 async function sendDispatchFailure(work, error) {
   const result = String(error?.message || error).slice(0, 1800);
-  return jsonRequest(`${BACKEND_URL}/api/platform/reconcile/receipt`, {
+  return internalAuthorityRequest('/api/platform/reconcile/receipt', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-opensphere-reconciler-token': RECONCILER_TOKEN,
-    },
-    body: JSON.stringify({
+    authorization: `Bearer ${receiptIdentityToken()}`,
+    body: {
       requestId: work.request_id,
       operationId: `${work.request_id}:${work.git_commit_sha}:dispatch:${work.attempt}`.slice(0, 255),
       reconciler: PLATFORM_RELEASE_RECONCILER,
@@ -252,12 +374,14 @@ async function sendDispatchFailure(work, error) {
       succeeded: false,
       result,
       evidence: { stage: 'dispatch', errorCode: 'platform-release-dispatch-failed' },
-    }),
+    },
   });
 }
 
 function reconcilerReadiness() {
-  const credentialsReady = Boolean(GITEA_TOKEN && RECONCILER_TOKEN && fs.existsSync(`${SA_PATH}/token`));
+  const credentialsReady = Boolean(fs.existsSync(`${SA_PATH}/token`)
+    && fs.existsSync(IDENTITY_TOKEN_PATH)
+    && fs.existsSync(INTERNAL_AUTHORITY_CA_FILE));
   const imageReady = EXECUTOR_IMAGE_RE.test(EXECUTOR_IMAGE);
   return {
     ready: credentialsReady && imageReady,
@@ -276,6 +400,7 @@ async function pollLoop() {
         await sleep(POLL_INTERVAL_MS);
         continue;
       }
+      await ensureInternalAuthorityReady();
       const work = await claimWork();
       if (work) {
         activeRequestId = work.request_id;
@@ -327,7 +452,12 @@ if (require.main === module) {
 }
 
 module.exports = {
+  dispatch,
   validateGovernedManifest,
   executorJob,
+  ensureInternalAuthorityReady,
+  claimWork,
+  normalizedExecutorJob,
   reconcilerReadiness,
+  sameExecutorJob,
 };

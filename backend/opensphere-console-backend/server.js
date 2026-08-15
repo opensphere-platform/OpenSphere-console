@@ -16,7 +16,17 @@ const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
 const { createOsShellAdmissionIssuer } = require('./os-shell-admission');
 const { createOsShellCredentialExchange } = require('./os-shell-delegation');
 const { validateLocalEdgeAutomationTokenClaims } = require('./local-edge-automation-token');
+const {
+  DESIRED_STATE_CONTRACT: FOUNDATION_OWNER_RELEASE_CONTRACT,
+  FOUNDATION_OWNER_RELEASE_CONSUMER,
+  FOUNDATION_OWNER_RELEASE_RECONCILER,
+  FOUNDATION_OWNER_RELEASE_TARGET,
+  validateFoundationOwnerDesiredState,
+  verifyEdgeSignedDocument,
+  verifyFoundationPublication,
+} = require('./foundation-owner-release');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
+const { projectReconcileManifest } = require('./platform-release-manifest-projection');
 const { createModuleOperationApi } = require('./module-operation-api');
 const { createR2d2OperationApi, createRestOperationStore, createRestWorkerStore } = require('./r2d2-operation-api');
 const { DurableOperationWorker } = require('./r2d2-durable-operation');
@@ -36,8 +46,12 @@ const {
   PLATFORM_RELEASE_CONSUMER,
   PLATFORM_RELEASE_RECONCILER,
   PLATFORM_RELEASE_TARGET,
+  backendComponentPublicationBinding,
+  bootstrapEvidenceHashes,
   buildComponentReleaseLock,
   platformReleaseApprovalPolicy,
+  validateBackendBootstrapEvidence,
+  validateBootstrapAInitializerCleanup,
   validatePlatformReleaseDesiredState,
   validateReleaseTransition,
   releaseSummary,
@@ -73,7 +87,7 @@ const GITEA_DEFAULT_BRANCH = process.env.GITEA_DEFAULT_BRANCH || 'main';
 const GITEA_WEBHOOK_SECRET = process.env.GITEA_WEBHOOK_SECRET || '';
 const GITEA_RECONCILER_NAME = process.env.GITEA_RECONCILER_NAME || 'opensphere-declaration-reconciler';
 const GITEA_RECONCILER_NAMES = new Set((process.env.GITEA_RECONCILER_NAMES
-  || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler,${FOUNDATION_BOOTSTRAP_RECONCILER},platform-release-reconciler`)
+  || `${GITEA_RECONCILER_NAME},ceph-prerequisite-reconciler,${FOUNDATION_BOOTSTRAP_RECONCILER},platform-release-reconciler,${FOUNDATION_OWNER_RELEASE_RECONCILER}`)
   .split(',').map((value) => value.trim()).filter(Boolean));
 const GITEA_CHANGE_REQUIRE_AAL2 = String(process.env.GITEA_CHANGE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const GITEA_REQUIRE_VERIFIED_MERGE = String(process.env.GITEA_REQUIRE_VERIFIED_MERGE || 'true').toLowerCase() !== 'false';
@@ -108,6 +122,9 @@ const OS_SHELL_DELEGATION_SECRET = process.env.OS_SHELL_DELEGATION_SECRET || '';
 const OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED === 'true';
 const OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE || '';
 const OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE || '';
+const PLATFORM_RELEASE_AUTHORITY_ENABLED = process.env.PLATFORM_RELEASE_AUTHORITY_ENABLED === 'true';
+const PLATFORM_RELEASE_AUTHORITY_CERT_FILE = process.env.PLATFORM_RELEASE_AUTHORITY_CERT_FILE || '';
+const PLATFORM_RELEASE_AUTHORITY_KEY_FILE = process.env.PLATFORM_RELEASE_AUTHORITY_KEY_FILE || '';
 const R2D2_OPERATION_WORKER_ID = String(process.env.R2D2_OPERATION_WORKER_ID || process.env.HOSTNAME || `backend-${process.pid}`).slice(0, 128);
 const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env.R2D2_OPERATION_POLL_MS || 3000) || 3000));
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
@@ -2311,7 +2328,12 @@ function parseInstalledPlatformRelease(configMap) {
   let lock;
   try { lock = JSON.parse(raw); }
   catch { throw { code: 503, msg: 'managed installation lock is invalid JSON' }; }
-  try { return { lock, summary: releaseSummary(lock) }; }
+  try {
+    return {
+      lock,
+      summary: releaseSummary(lock, { allowUnsignedComponentBootstrapBase: true }),
+    };
+  }
   catch (error) { throw { code: 503, msg: `managed installation lock is invalid: ${error.message}` }; }
 }
 
@@ -2599,16 +2621,65 @@ async function verifyLocalEdgeAutomation(req) {
 
 async function executeLocalEdgePlatformRelease(req, body = {}) {
   const actor = await verifyLocalEdgeAutomation(req);
-  if (!body || typeof body !== 'object' || Array.isArray(body)
-    || Object.keys(body).some((key) => !['reason', 'sourceRevision', 'components'].includes(key))) {
+  const keys = body && typeof body === 'object' && !Array.isArray(body)
+    ? Object.keys(body).sort().join(',') : '';
+  const legacyBootstrapAKeys = ['components', 'reason', 'sourceRevision'].join(',');
+  if (keys === legacyBootstrapAKeys) {
+    return recoverLegacyBackendBootstrapA(actor, body);
+  }
+  if (keys
+      !== ['components', 'publicationDocumentBase64', 'publicationSignature', 'reason', 'sourceRevision'].join(',')) {
     throw { code: 400, msg: 'local edge automation body contains unsupported fields' };
   }
   const reason = managementReason(body.reason);
   if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+  let componentPublication;
+  let installedSignedRecovery = null;
+  try {
+    const trust = await k8sRequest(
+      'GET', '/api/v1/namespaces/opensphere-console/configmaps/dupa-trusted-keys',
+    );
+    if (!trust.ok) throw new Error('local edge trust store is unavailable');
+    const trustedKeys = JSON.parse(String(trust.body?.data?.['trusted-keys.json'] || ''));
+    const trustedPublicKeySpkiBase64 = trustedKeys?.trustedKeys?.['opensphere-edge-local-v1'];
+    if (typeof trustedPublicKeySpkiBase64 !== 'string' || !trustedPublicKeySpkiBase64) {
+      throw new Error('local edge trust key is unavailable');
+    }
+    const verified = verifyEdgeSignedDocument({
+      publicationDocumentBase64: body.publicationDocumentBase64,
+      publicationSignature: body.publicationSignature,
+      trustedPublicKeySpkiBase64,
+    });
+    if (verified.document.sourceRevision !== body.sourceRevision
+      || Object.keys(body.components || {}).sort().join(',') !== 'backend'
+      || verified.document.components.backend.image !== body.components.backend?.image) {
+      throw new Error('signed Backend publication differs from the requested component target');
+    }
+    const installed = await installedPlatformRelease();
+    if (installed.lock.componentPublication === undefined) {
+      if (verified.document.bootstrapFrom === undefined) {
+        throw new Error('first signed Backend release requires an exact bootstrapFrom proof');
+      }
+      await verifyInstalledBackendBootstrapA(verified.document.bootstrapFrom, installed.lock);
+    } else if (verified.document.bootstrapFrom !== undefined) {
+      const replayBinding = backendComponentPublicationBinding(verified.document, verified);
+      if (canonicalJson(replayBinding) !== canonicalJson(installed.lock.componentPublication)
+        || installed.lock.sourceRevision !== body.sourceRevision
+        || installed.lock.components.backend.image !== body.components.backend.image) {
+        throw new Error('bootstrapFrom replay differs from the installed signed Backend release');
+      }
+      installedSignedRecovery = await recoverInstalledSignedBackendRelease(body, installed.lock);
+    }
+    componentPublication = backendComponentPublicationBinding(verified.document, verified);
+  } catch (error) {
+    throw { code: 400, msg: error.message };
+  }
+  if (installedSignedRecovery) return installedSignedRecovery;
   const generated = await generatePlatformComponentTarget(actor, {
     reason,
     sourceRevision: body.sourceRevision,
     components: body.components,
+    componentPublication,
   });
   const proposal = await governedChange(actor, {
     consumerId: PLATFORM_RELEASE_CONSUMER,
@@ -2629,6 +2700,474 @@ async function executeLocalEdgePlatformRelease(req, body = {}) {
   };
 }
 
+async function recoverInstalledSignedBackendRelease(body, installedLock) {
+  const [changes, executions, contracts] = await Promise.all([
+    restRequest('change_request', {
+      query: `select=request_id,status,action,target,reason&target=eq.${encodeURIComponent(PLATFORM_RELEASE_TARGET)}&order=created_at.desc&limit=50`,
+    }),
+    restRequest('change_execution', {
+      query: `select=request_id,merge_revision,reconciler,reconciler_status&reconciler=eq.${encodeURIComponent(PLATFORM_RELEASE_RECONCILER)}`,
+    }),
+    restRequest('consumer_contract', {
+      query: `select=consumer_id,gitea_repository,gitea_path&consumer_id=eq.${encodeURIComponent(PLATFORM_RELEASE_CONSUMER)}`,
+    }),
+  ]);
+  const executionByRequest = new Map((Array.isArray(executions) ? executions : [])
+    .map((entry) => [entry.request_id, entry]));
+  const contract = Array.isArray(contracts) ? contracts[0] : null;
+  if (!contract || contract.gitea_repository !== giteaRepoName()) {
+    throw new Error('Platform Release governed repository is unavailable');
+  }
+  const sourcePath = String(contract.gitea_path || `${PLATFORM_RELEASE_CONSUMER}/`)
+    .replace(/^\/+|\/+$/g, '');
+  const matches = [];
+  for (const change of Array.isArray(changes) ? changes : []) {
+    if (change.action !== 'gitea:apply' || change.reason !== managementReason(body.reason)) continue;
+    const execution = executionByRequest.get(change.request_id);
+    const mergeRevision = String(execution?.merge_revision || '').toLowerCase();
+    if (!/^[a-f0-9]{40,64}$/.test(mergeRevision)) continue;
+    try {
+      const file = await giteaRequest(
+        `/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}`
+          + `/contents/${giteaEncodedPath(`${sourcePath}/requests/${change.request_id}.json`)}`
+          + `?ref=${encodeURIComponent(mergeRevision)}`,
+      );
+      const manifest = JSON.parse(Buffer.from(
+        String(file.body?.content || '').replace(/\s/g, ''), 'base64',
+      ).toString('utf8'));
+      const target = manifest?.spec?.desiredState?.targetLock;
+      if (manifest?.metadata?.requestId === change.request_id
+        && manifest?.metadata?.consumerId === PLATFORM_RELEASE_CONSUMER
+        && manifest?.spec?.action === 'apply'
+        && target?.releaseDigest === installedLock.releaseDigest
+        && target?.sourceRevision === body.sourceRevision
+        && target?.components?.backend?.image === body.components.backend.image
+        && canonicalJson(target?.componentPublication) === canonicalJson(installedLock.componentPublication)) {
+        matches.push({ change, execution, target });
+      }
+    } catch {
+      // Unrelated historical declarations cannot recover this signed target.
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error(matches.length
+      ? 'signed Backend release recovery identity is ambiguous'
+      : 'signed Backend release request was not durably recorded');
+  }
+  const [{ change, execution, target }] = matches;
+  return {
+    accepted: true,
+    duplicate: true,
+    recoveryOnly: true,
+    requestId: change.request_id,
+    status: change.status,
+    targetReleaseDigest: target.releaseDigest,
+    changedComponents: ['backend'],
+    mergeRevision: execution.merge_revision,
+  };
+}
+
+async function recoverLegacyBackendBootstrapA(actor, body) {
+  requireActorPermission(actor, 'console.git.change');
+  const reason = managementReason(body.reason);
+  const sourceRevision = String(body.sourceRevision || '');
+  const componentNames = Object.keys(body.components || {}).sort();
+  const image = String(body.components?.backend?.image || '');
+  if (!reason || !/^[a-f0-9]{40}$/.test(sourceRevision)
+    || canonicalJson(componentNames) !== canonicalJson(['backend'])
+    || !/^ghcr\.io\/opensphere-platform\/opensphere-console-backend@sha256:[a-f0-9]{64}$/.test(image)) {
+    throw { code: 400, msg: 'legacy Backend bootstrap A recovery identity is invalid' };
+  }
+  const [changes, executions, contracts] = await Promise.all([
+    restRequest('change_request', {
+      query: `select=request_id,status,action,target,reason&target=eq.${encodeURIComponent(PLATFORM_RELEASE_TARGET)}&order=created_at.desc&limit=50`,
+    }),
+    restRequest('change_execution', {
+      query: `select=request_id,merge_revision,reconciler,reconciler_status&reconciler=eq.${encodeURIComponent(PLATFORM_RELEASE_RECONCILER)}`,
+    }),
+    restRequest('consumer_contract', {
+      query: `select=consumer_id,gitea_repository,gitea_path&consumer_id=eq.${encodeURIComponent(PLATFORM_RELEASE_CONSUMER)}`,
+    }),
+  ]);
+  const executionByRequest = new Map((Array.isArray(executions) ? executions : [])
+    .map((entry) => [entry.request_id, entry]));
+  const contract = Array.isArray(contracts) ? contracts[0] : null;
+  if (!contract || contract.gitea_repository !== giteaRepoName()) {
+    throw { code: 503, msg: 'Platform Release governed repository is unavailable' };
+  }
+  const sourcePath = String(contract.gitea_path || `${PLATFORM_RELEASE_CONSUMER}/`)
+    .replace(/^\/+|\/+$/g, '');
+  const matches = [];
+  for (const change of Array.isArray(changes) ? changes : []) {
+    if (change.action !== 'gitea:apply' || change.reason !== reason) continue;
+    const execution = executionByRequest.get(change.request_id);
+    const mergeRevision = String(execution?.merge_revision || '').toLowerCase();
+    if (!/^[a-f0-9]{40,64}$/.test(mergeRevision)) continue;
+    try {
+      const file = await giteaRequest(
+        `/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}`
+          + `/contents/${giteaEncodedPath(`${sourcePath}/requests/${change.request_id}.json`)}`
+          + `?ref=${encodeURIComponent(mergeRevision)}`,
+      );
+      const manifest = JSON.parse(Buffer.from(
+        String(file.body?.content || '').replace(/\s/g, ''), 'base64',
+      ).toString('utf8'));
+      const target = manifest?.spec?.desiredState?.targetLock;
+      if (manifest?.metadata?.requestId === change.request_id
+        && manifest?.metadata?.consumerId === PLATFORM_RELEASE_CONSUMER
+        && manifest?.spec?.action === 'apply'
+        && target?.componentPublication === undefined
+        && target?.releaseScope === 'component'
+        && canonicalJson(target?.changedComponents) === canonicalJson(['backend'])
+        && target?.sourceRevision === sourceRevision
+        && target?.components?.backend?.image === image
+        && /^sha256:[a-f0-9]{64}$/.test(String(target?.releaseDigest || ''))) {
+        matches.push({ change, execution, target });
+      }
+    } catch {
+      // A malformed or inaccessible unrelated historical request is not a match.
+    }
+  }
+  if (matches.length !== 1) {
+    throw { code: 409, msg: matches.length
+      ? 'legacy Backend bootstrap A recovery identity is ambiguous'
+      : 'legacy Backend bootstrap A request was not durably recorded' };
+  }
+  const [{ change, execution, target }] = matches;
+  return {
+    accepted: true,
+    duplicate: true,
+    recoveryOnly: true,
+    requestId: change.request_id,
+    status: change.status,
+    targetReleaseDigest: target.releaseDigest,
+    changedComponents: ['backend'],
+    mergeRevision: execution.merge_revision,
+  };
+}
+
+async function verifyInstalledBackendBootstrapA(bootstrapFrom, installedLock) {
+  const observed = await buildInstalledBackendBootstrapAProof(
+    String(bootstrapFrom?.requestId || ''), installedLock,
+  );
+  if (canonicalJson(observed) !== canonicalJson(bootstrapFrom)) {
+    throw new Error('signed bootstrapFrom differs from the locally observed A proof');
+  }
+}
+
+const BOOTSTRAP_A_TRUST_MARKER = ' [bootstrap-a-trust:';
+const BOOTSTRAP_A_TRUST_CONTRACT = 'opensphere-bootstrap-a-trust-observation/v1';
+
+function parseBootstrapATrustObservation(reason) {
+  const text = String(reason || '');
+  const marker = text.indexOf(BOOTSTRAP_A_TRUST_MARKER);
+  if (marker < 8 || marker !== text.lastIndexOf(BOOTSTRAP_A_TRUST_MARKER) || !text.endsWith(']')) {
+    throw new Error('Backend bootstrap A governed reason lacks one terminal trust observation');
+  }
+  const operatorReason = text.slice(0, marker).trim();
+  const encoded = text.slice(marker + BOOTSTRAP_A_TRUST_MARKER.length, -1);
+  let bytes;
+  let value;
+  try {
+    bytes = Buffer.from(encoded, 'base64url');
+    if (!encoded || bytes.toString('base64url') !== encoded) throw new Error('non-canonical base64url');
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new Error('Backend bootstrap A trust observation is not canonical base64url JSON');
+  }
+  const keys = ['configMapResourceVersion', 'configMapUid', 'contract', 'keyId', 'keySpkiSha256'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || canonicalJson(Object.keys(value).sort()) !== canonicalJson(keys.sort())
+    || canonicalJson(value) !== bytes.toString('utf8')
+    || value.contract !== BOOTSTRAP_A_TRUST_CONTRACT
+    || value.keyId !== 'opensphere-edge-local-v1'
+    || !/^[A-Za-z0-9._:-]{8,128}$/.test(String(value.configMapUid || ''))
+    || !/^[A-Za-z0-9._:-]{1,128}$/.test(String(value.configMapResourceVersion || ''))
+    || !/^sha256:[a-f0-9]{64}$/.test(String(value.keySpkiSha256 || ''))) {
+    throw new Error('Backend bootstrap A trust observation is outside the exact contract');
+  }
+  return { operatorReason, observation: value };
+}
+
+async function verifyBootstrapATrustObservation(reason) {
+  const parsed = parseBootstrapATrustObservation(reason);
+  const trust = await k8sRequest(
+    'GET', '/api/v1/namespaces/opensphere-console/configmaps/dupa-trusted-keys',
+  );
+  if (!trust.ok) throw new Error('Backend bootstrap A trust ConfigMap is unavailable');
+  let keySet;
+  try { keySet = JSON.parse(String(trust.body?.data?.['trusted-keys.json'] || '')); }
+  catch { throw new Error('Backend bootstrap A trust ConfigMap is invalid'); }
+  const spkiBase64 = keySet?.trustedKeys?.['opensphere-edge-local-v1'];
+  let spki;
+  let key;
+  try {
+    spki = Buffer.from(String(spkiBase64 || ''), 'base64');
+    if (!spkiBase64 || spki.toString('base64') !== spkiBase64) throw new Error('non-canonical base64');
+    key = createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1'
+      || !key.export({ format: 'der', type: 'spki' }).equals(spki)) throw new Error('not canonical P-256');
+  } catch { throw new Error('Backend bootstrap A trusted key is not canonical P-256 SPKI'); }
+  const current = {
+    uid: String(trust.body?.metadata?.uid || ''),
+    resourceVersion: String(trust.body?.metadata?.resourceVersion || ''),
+    keySpkiSha256: `sha256:${createHash('sha256').update(spki).digest('hex')}`,
+  };
+  if (current.uid !== parsed.observation.configMapUid
+    || current.keySpkiSha256 !== parsed.observation.keySpkiSha256) {
+    throw new Error('Backend bootstrap A trust authority changed after the governed request');
+  }
+  return { ...parsed, current };
+}
+
+async function buildInstalledBackendBootstrapAProof(requestId, installedLock) {
+  const [changes, executions, receipts, contracts] = await Promise.all([
+    restRequest('change_request', {
+      query: `select=request_id,status,action,target&request_id=eq.${encodeURIComponent(requestId)}`,
+    }),
+    restRequest('change_execution', {
+      query: `select=request_id,merge_revision,reconciler,reconciler_status&request_id=eq.${encodeURIComponent(requestId)}`,
+    }),
+    restRequest('reconcile_receipt', {
+      query: `select=request_id,operation_id,desired_revision,applied_revision,succeeded,result,evidence&request_id=eq.${encodeURIComponent(requestId)}&reconciler=eq.${encodeURIComponent(PLATFORM_RELEASE_RECONCILER)}&order=received_at.desc&limit=1`,
+    }),
+    restRequest('consumer_contract', {
+      query: `select=consumer_id,gitea_repository,gitea_path&consumer_id=eq.${encodeURIComponent(PLATFORM_RELEASE_CONSUMER)}`,
+    }),
+  ]);
+  const change = Array.isArray(changes) ? changes[0] : null;
+  const execution = Array.isArray(executions) ? executions[0] : null;
+  const receiptRow = Array.isArray(receipts) ? receipts[0] : null;
+  const contract = Array.isArray(contracts) ? contracts[0] : null;
+  if (!change || !execution || !receiptRow || !contract
+    || change.status !== 'applied' || change.action !== 'gitea:apply'
+    || change.target !== PLATFORM_RELEASE_TARGET
+    || execution.reconciler !== PLATFORM_RELEASE_RECONCILER
+    || execution.reconciler_status !== 'Applied'
+    || contract.gitea_repository !== giteaRepoName()) {
+    throw new Error('Backend bootstrap A governed operation is not completed by the Platform Release authority');
+  }
+  const mergeRevision = String(execution.merge_revision || '').toLowerCase();
+  const sourcePath = String(contract.gitea_path || `${PLATFORM_RELEASE_CONSUMER}/`)
+    .replace(/^\/+|\/+$/g, '');
+  const file = await giteaRequest(
+    `/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}`
+      + `/contents/${giteaEncodedPath(`${sourcePath}/requests/${requestId}.json`)}`
+      + `?ref=${encodeURIComponent(mergeRevision)}`,
+  );
+  let governedDocument;
+  try {
+    governedDocument = JSON.parse(Buffer.from(
+      String(file.body?.content || '').replace(/\s/g, ''), 'base64',
+    ).toString('utf8'));
+  } catch {
+    throw new Error('Backend bootstrap A governed document is unreadable');
+  }
+  const receipt = {
+    operationId: receiptRow.operation_id,
+    desiredRevision: receiptRow.desired_revision,
+    appliedRevision: receiptRow.applied_revision,
+    succeeded: receiptRow.succeeded === true,
+    result: receiptRow.result,
+    evidence: receiptRow.evidence,
+  };
+  const trust = await verifyBootstrapATrustObservation(governedDocument?.spec?.reason);
+  if (receipt.evidence?.bootstrapTrust?.contract !== BOOTSTRAP_A_TRUST_CONTRACT
+    || receipt.evidence.bootstrapTrust.configMapUid !== trust.observation.configMapUid
+    || receipt.evidence.bootstrapTrust.observedResourceVersion
+      !== trust.observation.configMapResourceVersion
+    || !/^[A-Za-z0-9._:-]{1,128}$/
+      .test(String(receipt.evidence.bootstrapTrust.currentResourceVersion || ''))
+    || receipt.evidence.bootstrapTrust.keySpkiSha256 !== trust.observation.keySpkiSha256) {
+    throw new Error('Backend bootstrap A receipt does not bind the governed trust observation');
+  }
+  const hashes = bootstrapEvidenceHashes({
+    requestId,
+    mergeRevision,
+    governedDocument,
+    receipt,
+  });
+  const bootstrapFrom = {
+    contract: 'opensphere-backend-component-bootstrap/v1',
+    requestId,
+    releaseDigest: installedLock.releaseDigest,
+    sourceRevision: installedLock.sourceRevision,
+    image: installedLock.components?.backend?.image,
+    mergeRevision,
+    receiptOperationId: receipt.operationId,
+    handoffState: 'BootstrapApplied',
+    convergenceState: 'PendingConvergence',
+    foundationFeatureGate: 'Closed',
+    trustConfigUid: trust.observation.configMapUid,
+    trustConfigResourceVersion: trust.observation.configMapResourceVersion,
+    trustKeySpkiSha256: trust.observation.keySpkiSha256,
+    ...hashes,
+  };
+  validateBackendBootstrapEvidence(bootstrapFrom, {
+    installedLock,
+    governedDocument,
+    mergeRevision,
+    receipt,
+  });
+  return bootstrapFrom;
+}
+
+async function localEdgePlatformReleaseOperation(req, requestId) {
+  await verifyLocalEdgeAutomation(req);
+  const normalized = uuid(requestId, 'Platform Release request id');
+  const [changes, executions, outboxes, receipts] = await Promise.all([
+    restRequest('change_request', {
+      query: `select=request_id,status,action,target,git_commit_sha,completed_at&request_id=eq.${encodeURIComponent(normalized)}`,
+    }),
+    restRequest('change_execution', {
+      query: `select=request_id,merge_revision,reconciler,reconciler_status,last_error,updated_at&request_id=eq.${encodeURIComponent(normalized)}`,
+    }),
+    restRequest('change_outbox', {
+      query: `select=request_id,status,attempts,last_error,updated_at&request_id=eq.${encodeURIComponent(normalized)}`,
+    }),
+    restRequest('reconcile_receipt', {
+      query: `select=request_id,operation_id,desired_revision,applied_revision,succeeded,result,evidence,received_at&request_id=eq.${encodeURIComponent(normalized)}&reconciler=eq.${encodeURIComponent(PLATFORM_RELEASE_RECONCILER)}&order=received_at.desc&limit=1`,
+    }),
+  ]);
+  const change = Array.isArray(changes) ? changes[0] : null;
+  if (!change || change.target !== PLATFORM_RELEASE_TARGET) {
+    throw { code: 404, msg: 'local edge Platform Release operation was not found' };
+  }
+  const execution = Array.isArray(executions) ? executions[0] : null;
+  const outbox = Array.isArray(outboxes) ? outboxes[0] : null;
+  const receipt = Array.isArray(receipts) ? receipts[0] : null;
+  const normalizedReceipt = receipt ? {
+    operationId: receipt.operation_id,
+    desiredRevision: receipt.desired_revision,
+    appliedRevision: receipt.applied_revision,
+    succeeded: receipt.succeeded === true,
+    result: receipt.result,
+    evidence: receipt.evidence,
+    receivedAt: receipt.received_at,
+  } : null;
+  let bootstrapFrom = null;
+  const governedPhase = changeTemplateRequestPhase(change, execution, outbox);
+  if (change.status === 'applied' && execution?.reconciler_status === 'Applied'
+    && normalizedReceipt?.succeeded === true) {
+    const installed = await installedPlatformRelease();
+    if (installed.lock.componentPublication === undefined
+      && installed.lock.releaseDigest === normalizedReceipt.evidence?.installedReleaseDigest) {
+      bootstrapFrom = await buildInstalledBackendBootstrapAProof(normalized, installed.lock);
+    }
+  }
+  return {
+    contract: 'opensphere-local-edge-platform-release-operation/v1',
+    requestId: normalized,
+    phase: bootstrapFrom ? 'BootstrapApplied' : governedPhase,
+    overallPhase: bootstrapFrom ? 'PendingConvergence' : governedPhase,
+    foundationFeatureGate: bootstrapFrom ? 'Closed' : null,
+    status: change.status,
+    action: change.action,
+    mergeRevision: execution?.merge_revision || null,
+    reconcilerStatus: execution?.reconciler_status || null,
+    outboxStatus: outbox?.status || null,
+    attemptCount: Number(outbox?.attempts || 0),
+    receipt: normalizedReceipt,
+    bootstrapFrom,
+    lastError: String(execution?.last_error || outbox?.last_error || '').slice(0, 500) || null,
+  };
+}
+
+async function executeLocalEdgeFoundationOwnerRelease(req, body = {}) {
+  const actor = await verifyLocalEdgeAutomation(req);
+  const installed = await installedPlatformRelease();
+  if (installed.lock?.channel !== 'edge'
+    || installed.lock?.trust?.type !== 'localhost-edge/v1'
+    || installed.lock?.trust?.buildAuthority !== 'localhost'
+    || installed.lock?.trust?.gaEligible !== false) {
+    throw { code: 409, msg: 'Foundation owner automation is restricted to a canonical localhost edge installation' };
+  }
+  await assertBackendBootstrapConvergedForFoundation(installed.lock);
+  const trust = await k8sRequest(
+    'GET',
+    '/api/v1/namespaces/opensphere-console/configmaps/dupa-trusted-keys',
+  );
+  if (!trust.ok) throw { code: 503, msg: 'Foundation owner release trust store is unavailable' };
+  let trustedKeys;
+  try { trustedKeys = JSON.parse(String(trust.body?.data?.['trusted-keys.json'] || '')); }
+  catch { throw { code: 503, msg: 'Foundation owner release trust store is invalid' }; }
+  const trustedPublicKeySpkiBase64 = trustedKeys?.trustedKeys?.['opensphere-edge-local-v1'];
+  if (typeof trustedPublicKeySpkiBase64 !== 'string' || !trustedPublicKeySpkiBase64) {
+    throw { code: 503, msg: 'Foundation owner local-edge trust key is unavailable' };
+  }
+  try {
+    const verifiedPublication = verifyFoundationPublication({
+      publicationDocumentBase64: body.publicationDocumentBase64,
+      publicationSignature: body.publicationSignature,
+      trustedPublicKeySpkiBase64,
+    });
+    const signedBase = body.action === 'Rollback'
+      ? verifiedPublication.publication.module : verifiedPublication.publication.previousOwner;
+    if (body.expectedCurrent?.image !== signedBase.image
+      || body.expectedCurrent?.sourceRevision !== signedBase.sourceRevision) {
+      throw new Error('Foundation owner expectedCurrent differs from the signed previous owner release');
+    }
+    const desiredState = validateFoundationOwnerDesiredState({
+      contract: FOUNDATION_OWNER_RELEASE_CONTRACT,
+      action: body.action,
+      operationId: body.operationId,
+      reason: body.reason,
+      expectedCurrent: body.expectedCurrent,
+      publicationDocumentBase64: body.publicationDocumentBase64,
+      publicationSignature: body.publicationSignature,
+    });
+    const proposal = await governedChange(actor, {
+      consumerId: FOUNDATION_OWNER_RELEASE_CONSUMER,
+      action: String(body.action).toLowerCase(),
+      target: FOUNDATION_OWNER_RELEASE_TARGET,
+      reason: body.reason,
+      desiredState,
+      idempotencyKey: `foundation-owner:${body.operationId}:${String(body.action).toLowerCase()}`,
+    }, { localEdgeAutomation: true });
+    return { ...proposal, authority: actor.username, operationId: body.operationId };
+  } catch (error) {
+    if (!Number.isInteger(error?.code)) error.code = 400;
+    error.msg = error.message;
+    throw error;
+  }
+}
+
+async function assertBackendBootstrapConvergedForFoundation(installedLock) {
+  const bootstrap = installedLock?.componentPublication?.bootstrapFrom;
+  if (!bootstrap) {
+    if (installedLock?.releaseScope === 'component'
+      && Array.isArray(installedLock.changedComponents)
+      && installedLock.changedComponents.length === 1
+      && installedLock.changedComponents[0] === 'backend'
+      && installedLock.componentPublication === undefined) {
+      throw { code: 409, msg: 'Foundation owner feature gate remains closed during Backend Bootstrap A convergence' };
+    }
+    return;
+  }
+  const rows = await restRequest('reconcile_receipt', {
+    query: `select=request_id,succeeded,evidence,received_at&reconciler=eq.${encodeURIComponent(PLATFORM_RELEASE_RECONCILER)}&order=received_at.desc&limit=50`,
+  });
+  const receipt = (Array.isArray(rows) ? rows : []).find((entry) =>
+    entry.succeeded === true
+      && entry.evidence?.installedReleaseDigest === installedLock.releaseDigest
+      && entry.evidence?.componentPublication?.bootstrapFrom?.requestId === bootstrap.requestId
+      && entry.evidence?.bootstrapConvergence?.bootstrapRequestId === bootstrap.requestId);
+  if (!receipt
+    || receipt.evidence.bootstrapConvergence.handoffState !== 'BootstrapApplied'
+    || receipt.evidence.bootstrapConvergence.convergenceState !== 'Converged'
+    || receipt.evidence.bootstrapConvergence.foundationFeatureGate !== 'Open') {
+    throw { code: 409, msg: 'Foundation owner feature gate remains closed until the signed Backend B final receipt' };
+  }
+  try {
+    validateBootstrapAInitializerCleanup(receipt.evidence.bootstrapAInitializerCleanup, {
+      bootstrapFrom: bootstrap,
+      targetReleaseDigest: installedLock.releaseDigest,
+    });
+  } catch {
+    throw { code: 409, msg: 'Foundation owner feature gate remains closed until Bootstrap A initializer cleanup is durably proven' };
+  }
+}
+
 async function generatePlatformComponentTarget(actor, body = {}) {
   requireActorPermission(actor, 'console.git.change');
   const reason = managementReason(body.reason);
@@ -2639,6 +3178,7 @@ async function generatePlatformComponentTarget(actor, body = {}) {
     targetLock = buildComponentReleaseLock(installed.lock, {
       sourceRevision: body.sourceRevision,
       components: body.components,
+      componentPublication: body.componentPublication,
     });
   } catch (error) {
     throw { code: 400, msg: error.message };
@@ -2718,6 +3258,22 @@ async function governedChange(actor, body = {}, options = {}) {
     }
     releaseDesiredState = desiredState;
     declaration = validateDeclaration(desiredState);
+  } else if (consumerId === FOUNDATION_OWNER_RELEASE_CONSUMER) {
+    if (!localEdgeAutomationRequest || !['apply', 'rollback'].includes(action.toLowerCase())
+      || target !== FOUNDATION_OWNER_RELEASE_TARGET) {
+      throw { code: 403, msg: 'Foundation owner release requires the local edge automation authority' };
+    }
+    let desiredState;
+    try { desiredState = validateFoundationOwnerDesiredState(declaration.value); }
+    catch (error) { throw { code: 400, msg: error.message }; }
+    releaseApprovalPolicy = {
+      mode: 'local-edge-automation', requiredHumanApprovals: 0, autoMerge: true,
+      rationale: 'signed Docker Desktop Foundation component owner convergence',
+    };
+    releaseDesiredState = desiredState;
+    declaration = validateDeclaration(desiredState);
+  } else if (localEdgeAutomationRequest) {
+    throw { code: 403, msg: 'local edge automation is not authorized for this governed consumer' };
   }
   validateChangeTemplate(body, declaration);
   const contractRows = await restRequest('consumer_contract', { query: `select=consumer_id,gitea_repository,gitea_path,reconciler&consumer_id=eq.${encodeURIComponent(consumerId)}` });
@@ -2806,6 +3362,9 @@ async function governedChange(actor, body = {}, options = {}) {
           branch,
           pullNumber: Number(pull.body?.number || 0),
           reconciler: contract.reconciler || GITEA_RECONCILER_NAME,
+          policyOverride: releaseApprovalPolicy,
+          targetType: consumerId === FOUNDATION_OWNER_RELEASE_CONSUMER
+            ? 'foundation-owner-release' : 'platform-release',
         });
         proposal.status = proposal.autoAuthorization.merged ? 'committed' : 'authorized';
       } catch (error) {
@@ -2825,8 +3384,9 @@ async function governedChange(actor, body = {}, options = {}) {
 
 async function authorizeLocalEdgeComponentRelease(actor, {
   requestId, action, reason, desiredState, branch, pullNumber, reconciler,
+  policyOverride = null, targetType = 'platform-release',
 }) {
-  const policy = platformReleaseApprovalPolicy(action, desiredState);
+  const policy = policyOverride || platformReleaseApprovalPolicy(action, desiredState);
   if (policy.mode !== 'local-edge-automation' || policy.autoMerge !== true) {
     throw { code: 409, msg: 'release is not eligible for local edge automation' };
   }
@@ -2881,10 +3441,10 @@ async function authorizeLocalEdgeComponentRelease(actor, {
         prefer: 'return=minimal',
       });
     }
-    await logAudit(actor, 'platform-release-edge-automation', requestId, 'local-edge-authorized', reason, {
+    await logAudit(actor, `${targetType}-edge-automation`, requestId, 'local-edge-authorized', reason, {
       requestId,
       phase: 'authorized',
-      targetType: 'platform-release',
+      targetType,
       payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, mergeRevision, mode: policy.mode })),
     });
     let reconciliationError = null;
@@ -2898,10 +3458,10 @@ async function authorizeLocalEdgeComponentRelease(actor, {
       });
     } catch (error) {
       reconciliationError = String(error?.msg || error).slice(0, 300);
-      await logAudit(actor, 'platform-release-edge-automation', requestId, 'reconciliation-queue-failed', reason, {
+      await logAudit(actor, `${targetType}-edge-automation`, requestId, 'reconciliation-queue-failed', reason, {
         requestId,
         phase: 'authorized',
-        targetType: 'platform-release',
+        targetType,
         payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, mergeRevision, reconciliationError })),
       }).catch(() => undefined);
     }
@@ -2927,10 +3487,10 @@ async function authorizeLocalEdgeComponentRelease(actor, {
       },
       prefer: 'return=minimal',
     }).catch(() => undefined);
-    await logAudit(actor, 'platform-release-edge-automation', requestId, 'failed', reason, {
+    await logAudit(actor, `${targetType}-edge-automation`, requestId, 'failed', reason, {
       requestId,
       phase: 'failed',
-      targetType: 'platform-release',
+      targetType,
       payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, error: error?.msg || 'local-edge-authorization-failed' })),
     }).catch(() => undefined);
     throw error;
@@ -3084,15 +3644,87 @@ async function retryGovernedChange(actor, requestIdValue, body = {}) {
   return { requestId, requeued: true, outboxStatus: queued?.status || 'queued', attempts: Number(queued?.attempts || 0) };
 }
 
-function verifyReconcilerCredential(req) {
-  if (!RECONCILER_RECEIPT_TOKEN || !safeEqual(req.headers['x-opensphere-reconciler-token'], RECONCILER_RECEIPT_TOKEN)) throw { code: 401, msg: 'invalid reconciler credential' };
+async function verifyReconcilerCredential(req, reconciler, purpose, receipt = null) {
+  if (reconciler === FOUNDATION_OWNER_RELEASE_RECONCILER
+    || reconciler === PLATFORM_RELEASE_RECONCILER) {
+    const match = String(req.headers.authorization || '').match(/^Bearer\s+([^\s]+)$/i);
+    const foundationOwner = reconciler === FOUNDATION_OWNER_RELEASE_RECONCILER;
+    const audience = foundationOwner
+      ? 'opensphere-console-foundation-owner-release'
+      : 'opensphere-console-platform-release';
+    if (!match) throw { code: 401, msg: 'governed reconciler projected identity is required' };
+    const reviewed = await k8sRequest('POST', '/apis/authentication.k8s.io/v1/tokenreviews', {
+      apiVersion: 'authentication.k8s.io/v1', kind: 'TokenReview',
+      spec: { token: match[1], audiences: [audience] },
+    });
+    const dispatchErrorCode = foundationOwner
+      ? 'foundation-owner-release-dispatch-failed'
+      : 'platform-release-dispatch-failed';
+    const dispatchFailure = purpose === 'receipt' && receipt?.succeeded === false
+      && receipt?.evidence?.stage === 'dispatch'
+      && receipt?.evidence?.errorCode === dispatchErrorCode;
+    const serviceAccountPrefix = foundationOwner ? 'foundation-owner-release' : 'platform-release';
+    const reconcilerIdentity = `system:serviceaccount:opensphere-console:${serviceAccountPrefix}-reconciler`;
+    const executorIdentity = `system:serviceaccount:opensphere-console:${serviceAccountPrefix}-executor`;
+    const reviewedUsername = String(reviewed.body?.status?.user?.username || '');
+    const expected = purpose === 'manifest'
+      ? ([reconcilerIdentity, executorIdentity].includes(reviewedUsername) ? reviewedUsername : '')
+      : (purpose === 'claim' || dispatchFailure ? reconcilerIdentity : executorIdentity);
+    if (!reviewed.ok || reviewed.body?.status?.authenticated !== true
+      || !expected || reviewedUsername !== expected
+      || !Array.isArray(reviewed.body?.status?.audiences)
+      || !reviewed.body.status.audiences.map(String).includes(audience)) {
+      throw { code: 403, msg: 'governed reconciler identity, audience, or purpose mismatch' };
+    }
+    validateLocalEdgeAutomationTokenClaims(match[1], {
+      username: expected,
+      audience,
+      serviceAccountName: expected.split(':').at(-1),
+      requirePodBound: true,
+    });
+    return;
+  }
+  if (!RECONCILER_RECEIPT_TOKEN || !safeEqual(req.headers['x-opensphere-reconciler-token'], RECONCILER_RECEIPT_TOKEN)) {
+    throw { code: 401, msg: 'invalid reconciler credential' };
+  }
+}
+
+async function projectReconcileManifestForWorker(req, body) {
+  const reconciler = String(body?.reconciler || '').trim();
+  await verifyReconcilerCredential(req, reconciler, 'manifest');
+  const consumerId = reconciler === FOUNDATION_OWNER_RELEASE_RECONCILER
+    ? FOUNDATION_OWNER_RELEASE_CONSUMER
+    : (reconciler === PLATFORM_RELEASE_RECONCILER ? PLATFORM_RELEASE_CONSUMER : '');
+  if (!consumerId) throw { code: 403, msg: 'manifest projection consumer is outside the release authority' };
+  return projectReconcileManifest(body, {
+    readChange: async (requestId) => {
+      const rows = await restRequest('change_request', {
+        query: `select=request_id,target,status,git_commit_sha,git_repo&request_id=eq.${encodeURIComponent(requestId)}&limit=1`,
+      });
+      return Array.isArray(rows) ? rows[0] || null : null;
+    },
+    readConsumer: async () => {
+      const rows = await restRequest('consumer_contract', {
+        query: `select=consumer_id,gitea_repository,gitea_path,reconciler&consumer_id=eq.${encodeURIComponent(consumerId)}&limit=1`,
+      });
+      return Array.isArray(rows) ? rows[0] || null : null;
+    },
+    readGiteaFile: async ({ repository, path: filePath, revision }) => {
+      if (repository !== giteaRepoName()) throw new Error('manifest projection repository is not canonical');
+      const file = await giteaRequest(
+        `/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}`
+          + `/contents/${giteaEncodedPath(filePath)}?ref=${encodeURIComponent(revision)}`,
+      );
+      return file.body;
+    },
+  });
 }
 
 async function claimReconcileWork(req, body = {}) {
-  verifyReconcilerCredential(req);
   const limit = Math.max(1, Math.min(10, Number(body.limit || 1) || 1));
   const reconciler = String(body.reconciler || GITEA_RECONCILER_NAME).trim();
   if (!GITEA_RECONCILER_NAMES.has(reconciler)) throw { code: 403, msg: 'reconciler is outside the configured allowlist' };
+  await verifyReconcilerCredential(req, reconciler, 'claim');
   const rows = await restRequest('rpc/claim_change_reconcile', {
     method: 'POST',
     body: { p_reconciler: reconciler, p_limit: limit },
@@ -3104,13 +3736,15 @@ async function claimReconcileWork(req, body = {}) {
   };
 }
 
-async function recordReconcileReceipt(req, body) {
-  verifyReconcilerCredential(req);
+async function recordReconcileReceipt(req, body, { verifiedBootstrapALegacyReceipt = false } = {}) {
   const requestId = uuid(body.requestId);
   const operationId = String(body.operationId || '').trim();
   const reconciler = String(body.reconciler || GITEA_RECONCILER_NAME).trim();
   const result = String(body.result || '').trim();
   if (!operationId || operationId.length > 255 || !reconciler || reconciler.length > 255 || !result || result.length > 2000 || typeof body.succeeded !== 'boolean') throw { code: 400, msg: 'invalid reconcile receipt' };
+  if (!verifiedBootstrapALegacyReceipt) {
+    await verifyReconcilerCredential(req, reconciler, 'receipt', body);
+  }
   const evidence = body.evidence && typeof body.evidence === 'object' && !Array.isArray(body.evidence) ? validateDeclaration(body.evidence, 'evidence').value : {};
   const executionRows = await restRequest('change_execution', { query: `select=request_id,reconciler&request_id=eq.${encodeURIComponent(requestId)}` });
   const execution = Array.isArray(executionRows) ? executionRows[0] : null;
@@ -3125,6 +3759,115 @@ async function recordReconcileReceipt(req, body) {
   }
   await restRequest('rpc/record_reconcile_result', { method: 'POST', body: { p_request_id: requestId, p_operation_id: operationId, p_succeeded: body.succeeded, p_result: result } });
   return { duplicate: false, requestId, status: body.succeeded ? 'applied' : 'failed' };
+}
+
+async function recordBootstrapALegacyReceipt(req, body) {
+  const bodyKeys = [
+    'requestId', 'operationId', 'reconciler', 'desiredRevision', 'appliedRevision',
+    'succeeded', 'result', 'evidence',
+  ];
+  if (canonicalJson(Object.keys(body || {}).sort()) !== canonicalJson(bodyKeys.sort())
+    || body.reconciler !== PLATFORM_RELEASE_RECONCILER || body.succeeded !== true
+    || req.headers.authorization
+    || !RECONCILER_RECEIPT_TOKEN
+    || !safeEqual(req.headers['x-opensphere-reconciler-token'], RECONCILER_RECEIPT_TOKEN)) {
+    throw { code: 404, msg: 'not found' };
+  }
+  const installed = await installedPlatformRelease();
+  const lock = installed.lock;
+  if (lock.componentPublication !== undefined || lock.releaseScope !== 'component'
+    || canonicalJson(lock.changedComponents) !== canonicalJson(['backend'])
+    || body.evidence?.installedReleaseDigest !== lock.releaseDigest
+    || body.evidence?.sourceRevision !== lock.sourceRevision
+    || body.appliedRevision !== lock.sourceRevision) {
+    throw { code: 404, msg: 'not found' };
+  }
+  const requestId = uuid(body.requestId, 'Backend bootstrap A request id');
+  const [changes, executions, contracts, existingReceipts] = await Promise.all([
+    restRequest('change_request', {
+      query: `select=request_id,status,action,target&request_id=eq.${encodeURIComponent(requestId)}`,
+    }),
+    restRequest('change_execution', {
+      query: `select=request_id,merge_revision,reconciler,reconciler_status&request_id=eq.${encodeURIComponent(requestId)}`,
+    }),
+    restRequest('consumer_contract', {
+      query: `select=consumer_id,gitea_repository,gitea_path&consumer_id=eq.${encodeURIComponent(PLATFORM_RELEASE_CONSUMER)}`,
+    }),
+    restRequest('reconcile_receipt', {
+      query: `select=request_id,operation_id,desired_revision,applied_revision,succeeded,result,evidence&request_id=eq.${encodeURIComponent(requestId)}&reconciler=eq.${encodeURIComponent(PLATFORM_RELEASE_RECONCILER)}`,
+    }),
+  ]);
+  const change = Array.isArray(changes) ? changes[0] : null;
+  const execution = Array.isArray(executions) ? executions[0] : null;
+  const contract = Array.isArray(contracts) ? contracts[0] : null;
+  const mergeRevision = String(execution?.merge_revision || '').toLowerCase();
+  if (!change || !execution || !contract || change.action !== 'gitea:apply'
+    || change.target !== PLATFORM_RELEASE_TARGET || execution.reconciler !== PLATFORM_RELEASE_RECONCILER
+    || !['committed', 'applying', 'applied'].includes(String(change.status || ''))
+    || !/^[a-f0-9]{40,64}$/.test(mergeRevision) || body.desiredRevision !== mergeRevision
+    || contract.gitea_repository !== giteaRepoName()) {
+    throw { code: 404, msg: 'not found' };
+  }
+  const sourcePath = String(contract.gitea_path || `${PLATFORM_RELEASE_CONSUMER}/`)
+    .replace(/^\/+|\/+$/g, '');
+  const file = await giteaRequest(
+    `/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}`
+      + `/contents/${giteaEncodedPath(`${sourcePath}/requests/${requestId}.json`)}`
+      + `?ref=${encodeURIComponent(mergeRevision)}`,
+  );
+  let governedDocument;
+  try {
+    governedDocument = JSON.parse(Buffer.from(
+      String(file.body?.content || '').replace(/\s/g, ''), 'base64',
+    ).toString('utf8'));
+  } catch { throw { code: 404, msg: 'not found' }; }
+  const target = governedDocument?.spec?.desiredState?.targetLock;
+  if (governedDocument?.metadata?.requestId !== requestId
+    || governedDocument?.metadata?.consumerId !== PLATFORM_RELEASE_CONSUMER
+    || governedDocument?.spec?.action !== 'apply' || governedDocument?.spec?.target !== PLATFORM_RELEASE_TARGET
+    || target?.componentPublication !== undefined || target?.releaseDigest !== lock.releaseDigest
+    || target?.sourceRevision !== lock.sourceRevision
+    || target?.components?.backend?.image !== lock.components.backend.image) {
+    throw { code: 404, msg: 'not found' };
+  }
+  let trust;
+  try { trust = await verifyBootstrapATrustObservation(governedDocument.spec.reason); }
+  catch { throw { code: 404, msg: 'not found' }; }
+  const enriched = structuredClone(body);
+  enriched.evidence = {
+    ...enriched.evidence,
+    legacyTransportUsed: true,
+    bootstrapTrust: {
+      contract: BOOTSTRAP_A_TRUST_CONTRACT,
+      configMapUid: trust.observation.configMapUid,
+      observedResourceVersion: trust.observation.configMapResourceVersion,
+      currentResourceVersion: trust.current.resourceVersion,
+      keySpkiSha256: trust.observation.keySpkiSha256,
+    },
+  };
+  const receipts = Array.isArray(existingReceipts) ? existingReceipts : [];
+  if (receipts.length) {
+    if (receipts.length !== 1 || canonicalJson({
+      requestId: receipts[0].request_id, operationId: receipts[0].operation_id,
+      desiredRevision: receipts[0].desired_revision, appliedRevision: receipts[0].applied_revision,
+      succeeded: receipts[0].succeeded === true, result: receipts[0].result, evidence: receipts[0].evidence,
+    }) !== canonicalJson({
+      requestId, operationId: enriched.operationId, desiredRevision: enriched.desiredRevision,
+      appliedRevision: enriched.appliedRevision, succeeded: true, result: enriched.result,
+      evidence: enriched.evidence,
+    })) throw { code: 409, msg: 'Backend bootstrap A terminal receipt conflicts with its durable receipt' };
+    await restRequest('rpc/record_reconcile_result', { method: 'POST', body: {
+      p_request_id: requestId, p_operation_id: enriched.operationId,
+      p_succeeded: true, p_result: enriched.result,
+    } });
+    return { duplicate: true, requestId, status: 'applied', legacyTransportUsed: true };
+  }
+  const result = await recordReconcileReceipt(req, enriched, { verifiedBootstrapALegacyReceipt: true });
+  return { ...result, legacyTransportUsed: true };
+}
+
+function isInternalReleaseReconciler(value) {
+  return value === FOUNDATION_OWNER_RELEASE_RECONCILER || value === PLATFORM_RELEASE_RECONCILER;
 }
 
 async function listRoles() {
@@ -4802,11 +5545,31 @@ const server = http.createServer(async (req, res) => {
     // An approved reconciler reports an observed result with a dedicated
     // server-to-server credential. Browsers and OAA cannot call this path.
     if (p === '/api/platform/reconcile/next' && req.method === 'POST') {
-      try { return json(res, 200, await claimReconcileWork(req, await readBody(req))); }
+      try {
+        const body = await readBody(req);
+        if (isInternalReleaseReconciler(String(body?.reconciler || '').trim())) {
+          res.writeHead(404, { 'cache-control': 'no-store' }); return res.end();
+        }
+        return json(res, 200, await claimReconcileWork(req, body));
+      }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'reconcile work claim rejected' }); }
     }
     if (p === '/api/platform/reconcile/receipt' && req.method === 'POST') {
-      try { return json(res, 202, await recordReconcileReceipt(req, await readBody(req))); }
+      try {
+        const body = await readBody(req);
+        if (isInternalReleaseReconciler(String(body?.reconciler || '').trim())) {
+          if (String(body?.reconciler || '').trim() === PLATFORM_RELEASE_RECONCILER) {
+            try {
+              return json(res, 202, await recordBootstrapALegacyReceipt(req, body),
+                { 'cache-control': 'no-store' });
+            } catch (error) {
+              if (error?.code !== 404) throw error;
+            }
+          }
+          res.writeHead(404, { 'cache-control': 'no-store' }); return res.end();
+        }
+        return json(res, 202, await recordReconcileReceipt(req, body));
+      }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'reconcile receipt rejected' }); }
     }
     if (p === '/api/identity/supabase/status' && req.method === 'GET') {
@@ -4896,6 +5659,15 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/platform/releases/local-edge-automation' && req.method === 'POST') {
       try { return json(res, 202, await executeLocalEdgePlatformRelease(req, await readBody(req))); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge Platform Release automation failed' }); }
+    }
+    const localEdgeReleaseOperationPath = p.match(/^\/api\/platform\/releases\/local-edge-automation\/([0-9a-fA-F-]+)$/);
+    if (localEdgeReleaseOperationPath && req.method === 'GET') {
+      try { return json(res, 200, await localEdgePlatformReleaseOperation(req, localEdgeReleaseOperationPath[1])); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge Platform Release operation unavailable' }); }
+    }
+    if (p === '/api/platform/foundation-owner/local-edge-automation' && req.method === 'POST') {
+      try { return json(res, 200, await executeLocalEdgeFoundationOwnerRelease(req, await readBody(req))); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge Foundation owner release failed' }); }
     }
     const changeTemplateStatusPath = p.match(/^\/api\/platform\/change-templates\/([a-z0-9-]+)\/status$/);
     if (changeTemplateStatusPath && req.method === 'GET') {
@@ -5202,6 +5974,66 @@ if (OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED) {
   credentialAuthorityServer.listen(8444, '0.0.0.0', () => console.log('OS Shell credential authority listening with TLS 1.3 on :8444'));
 }
 
-function stopR2d2Worker() { if (r2d2OperationTimer) clearInterval(r2d2OperationTimer); if (credentialAuthorityServer) credentialAuthorityServer.close(); }
+let platformReleaseAuthorityServer = null;
+if (PLATFORM_RELEASE_AUTHORITY_ENABLED) {
+  if (!PLATFORM_RELEASE_AUTHORITY_CERT_FILE || !PLATFORM_RELEASE_AUTHORITY_KEY_FILE) {
+    throw new Error('Platform Release authority requires an exact TLS keypair');
+  }
+  platformReleaseAuthorityServer = https.createServer({
+    cert: fs.readFileSync(PLATFORM_RELEASE_AUTHORITY_CERT_FILE),
+    key: fs.readFileSync(PLATFORM_RELEASE_AUTHORITY_KEY_FILE),
+    minVersion: 'TLSv1.3',
+    maxVersion: 'TLSv1.3',
+  }, async (req, res) => {
+    const requestPath = new URL(req.url, 'https://opensphere-platform-release-authority.invalid').pathname;
+    if (req.method === 'GET' && requestPath === '/readyz') {
+      try {
+        const authority = await requireSupabase();
+        await giteaRequest('/api/v1/version');
+        return json(res, 200, {
+          ...authority, ready: true, service: 'opensphere-platform-release-authority', tls: 'TLSv1.3',
+        }, { 'cache-control': 'no-store' });
+      } catch (e) {
+        return json(res, 503, {
+          ready: false, service: 'opensphere-platform-release-authority',
+          error: e.msg || e.message || 'authority unavailable',
+        }, { 'cache-control': 'no-store' });
+      }
+    }
+    if (req.method !== 'POST' || ![
+      '/api/platform/reconcile/next',
+      '/api/platform/reconcile/manifest',
+      '/api/platform/reconcile/receipt',
+    ].includes(requestPath)) {
+      res.writeHead(404, { 'cache-control': 'no-store' }); return res.end();
+    }
+    try {
+      const body = await readBody(req);
+      if (!isInternalReleaseReconciler(String(body?.reconciler || '').trim())) {
+        res.writeHead(404, { 'cache-control': 'no-store' }); return res.end();
+      }
+      if (requestPath === '/api/platform/reconcile/next') {
+        return json(res, 200, await claimReconcileWork(req, body), { 'cache-control': 'no-store' });
+      }
+      if (requestPath === '/api/platform/reconcile/manifest') {
+        return json(res, 200, await projectReconcileManifestForWorker(req, body), { 'cache-control': 'no-store' });
+      }
+      return json(res, 202, await recordReconcileReceipt(req, body), { 'cache-control': 'no-store' });
+    } catch (e) {
+      return json(res, authErrorStatus(e), {
+        error: e.msg || e.message || 'Platform Release authority request rejected',
+      }, { 'cache-control': 'no-store' });
+    }
+  });
+  platformReleaseAuthorityServer.listen(8446, '0.0.0.0', () => {
+    console.log('Platform Release authority listening with TLS 1.3 on :8446');
+  });
+}
+
+function stopR2d2Worker() {
+  if (r2d2OperationTimer) clearInterval(r2d2OperationTimer);
+  if (credentialAuthorityServer) credentialAuthorityServer.close();
+  if (platformReleaseAuthorityServer) platformReleaseAuthorityServer.close();
+}
 process.on('SIGTERM', stopR2d2Worker);
 process.on('SIGINT', stopR2d2Worker);

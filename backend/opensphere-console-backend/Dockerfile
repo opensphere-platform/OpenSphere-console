@@ -59,6 +59,7 @@ COPY opensphere-console-backend/os-shell-admission.js ./os-shell-admission.js
 COPY opensphere-console-backend/os-shell-context.js ./os-shell-context.js
 COPY opensphere-console-backend/os-shell-delegation.js ./os-shell-delegation.js
 COPY opensphere-console-backend/local-edge-automation-token.js ./local-edge-automation-token.js
+COPY opensphere-console-backend/foundation-owner-release.js ./foundation-owner-release.js
 COPY opensphere-console-backend/baseline-monitoring.js ./baseline-monitoring.js
 COPY opensphere-console-backend/data-identity-readiness.js ./data-identity-readiness.js
 COPY opensphere-console-backend/module-operation-api.js ./module-operation-api.js
@@ -74,12 +75,15 @@ COPY opensphere-console-backend/foundation-bootstrap-contract.js ./foundation-bo
 COPY opensphere-console-backend/foundation-bootstrap-bundle.js ./foundation-bootstrap-bundle.js
 COPY opensphere-console-backend/foundation-bootstrap-reconciler.js ./foundation-bootstrap-reconciler.js
 COPY opensphere-console-backend/platform-release-contract.js ./platform-release-contract.js
+COPY opensphere-console-backend/platform-release-internal-transport.js ./platform-release-internal-transport.js
+COPY opensphere-console-backend/platform-release-tls-initializer.mjs ./platform-release-tls-initializer.mjs
+COPY opensphere-console-backend/platform-release-manifest-projection.js ./platform-release-manifest-projection.js
 COPY opensphere-console-backend/platform-release-reconciler.js ./platform-release-reconciler.js
 COPY opensphere-console-backend/platform-release-executor.mjs ./platform-release-executor.mjs
 COPY --from=setup-cli src /app/opensphere-setup-cli/src
 COPY --from=setup-cli package.json /app/opensphere-setup-cli/package.json
 COPY notification-dispatcher/contract.js /app/notification-dispatcher/contract.js
 ENV PORT=8080
-EXPOSE 8080
+EXPOSE 8080 8444 8446
 USER 1001
 CMD ["node", "/app/opensphere-console-backend/server.js"]

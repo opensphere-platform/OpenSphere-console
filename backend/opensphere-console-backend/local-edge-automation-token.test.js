@@ -33,3 +33,22 @@ test('projected local-edge token is exact-identity, canonical, current and at mo
   assert.throws(() => validateLocalEdgeAutomationTokenClaims(token({ sub: 'system:serviceaccount:default:attacker' }), { username, audience, now: 1100 }), /identity/);
   assert.throws(() => validateLocalEdgeAutomationTokenClaims(token({}, true), { username, audience, now: 1100 }), /canonical/);
 });
+
+test('Foundation reconciler identity is ten-minute and Pod-bound', () => {
+  const foundationUser = 'system:serviceaccount:opensphere-console:foundation-owner-release-reconciler';
+  const foundationAudience = 'opensphere-foundation-owner-release';
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const make = (overrides = {}) => `${encode({ alg: 'RS256' })}.${encode({ sub: foundationUser,
+    aud: [foundationAudience], iat: 1000, nbf: 1000, exp: 1600,
+    'kubernetes.io': { namespace: 'opensphere-console',
+      serviceaccount: { name: 'foundation-owner-release-reconciler' },
+      pod: { name: 'foundation-owner-release-reconciler-abc', uid: '11111111-2222-4333-8444-555555555555' } },
+    ...overrides })}.${Buffer.alloc(64, 3).toString('base64url')}`;
+  const options = { username: foundationUser, audience: foundationAudience,
+    serviceAccountName: 'foundation-owner-release-reconciler', requirePodBound: true, now: 1100 };
+  assert.equal(validateLocalEdgeAutomationTokenClaims(make(), options).podName,
+    'foundation-owner-release-reconciler-abc');
+  assert.throws(() => validateLocalEdgeAutomationTokenClaims(make({ exp: 1601 }), options), /lifetime/);
+  assert.throws(() => validateLocalEdgeAutomationTokenClaims(make({ 'kubernetes.io': {
+    namespace: 'opensphere-console', serviceaccount: { name: 'foundation-owner-release-reconciler' } } }), options), /projected identity/);
+});
