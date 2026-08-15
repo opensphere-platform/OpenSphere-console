@@ -737,7 +737,7 @@ function Set-ConsoleApiActivation {
 if ($env:OS -ne 'Windows_NT') {
   throw 'OS Shell local edge deployment is supported only from Windows Docker Desktop'
 }
-foreach ($command in @('git', 'docker', 'kubectl')) {
+foreach ($command in @('git', 'docker', 'kubectl', 'node')) {
   if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command is required" }
 }
 if ($KubeContext -ne 'docker-desktop' -or (& kubectl config current-context).Trim() -ne 'docker-desktop') {
@@ -801,18 +801,27 @@ Assert-ImageMetadata -Repository $runtimeRepository -Image $runtime.image -Diges
 
 $head = (& git -C $consoleRoot rev-parse HEAD).Trim()
 $deploymentToolingSourceRevision = $head
-$deploymentBaselineRevision = [string]$runtimeEvidence.sourceRevision
-if ($head -ne $deploymentBaselineRevision) {
-  & git -C $consoleRoot merge-base --is-ancestor $deploymentBaselineRevision $head
+$deploymentToolingAllowlist = @(
+  'scripts/Deploy-LocalEdgeOsShell.ps1',
+  'scripts/os-shell-runtime-override-boundary.mjs',
+  'scripts/os-shell-runtime-override-boundary.test.mjs',
+  'backend/os-shell-control/deploy.yaml',
+  'backend/os-shell-control/deploy.test.js'
+)
+$boundaryEvidence = $null
+if ($runtimePublicationPath) {
+  $boundaryVerifier = Join-Path $consoleRoot 'scripts\os-shell-runtime-override-boundary.mjs'
+  if (-not (Test-Path -LiteralPath $boundaryVerifier)) { throw 'Runtime override boundary verifier is missing' }
+  $boundaryOutput = & node $boundaryVerifier --repository $consoleRoot --base ([string]$evidence.sourceRevision) `
+    --runtime ([string]$runtimeEvidence.sourceRevision) --head $head
+  if ($LASTEXITCODE -ne 0) { throw 'Runtime override source boundary verification failed' }
+  $boundaryEvidence = ($boundaryOutput -join "`n") | ConvertFrom-Json
+} elseif ($head -ne [string]$evidence.sourceRevision) {
+  & git -C $consoleRoot merge-base --is-ancestor ([string]$evidence.sourceRevision) $head
   if ($LASTEXITCODE -ne 0) {
-    throw "Deployment tooling HEAD $head is not a descendant of publication revision $deploymentBaselineRevision"
+    throw "Deployment tooling HEAD $head is not a descendant of publication revision $($evidence.sourceRevision)"
   }
-  $deploymentToolingAllowlist = @(
-    'scripts/Deploy-LocalEdgeOsShell.ps1',
-    'backend/os-shell-control/deploy.yaml',
-    'backend/os-shell-control/deploy.test.js'
-  )
-  $changedPaths = @(& git -C $consoleRoot diff --name-only $deploymentBaselineRevision $head |
+  $changedPaths = @(& git -C $consoleRoot diff --name-only ([string]$evidence.sourceRevision) $head |
     ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
   $nonToolingChanges = @($changedPaths | Where-Object { $_ -notin $deploymentToolingAllowlist })
   if (-not $changedPaths.Count -or $nonToolingChanges.Count) {
@@ -821,6 +830,13 @@ if ($head -ne $deploymentBaselineRevision) {
 }
 $dirty = & git -C $consoleRoot status --short
 if ($dirty) { throw 'The Console source must be clean before applying an OS Shell publication' }
+$deploymentToolingEvidence = [ordered]@{}
+foreach ($relativePath in $deploymentToolingAllowlist) {
+  $toolingPath = Join-Path $consoleRoot $relativePath
+  if (Test-Path -LiteralPath $toolingPath) {
+    $deploymentToolingEvidence[$relativePath] = Get-CanonicalTextSha256 -Path $toolingPath
+  }
+}
 $migrationPath = Join-Path $consoleRoot 'backend\supabase\migrations\0061_shell_session_ledger.sql'
 $migrationManifestPath = Join-Path $consoleRoot 'backend\supabase\migrations\manifest.json'
 $migrationRunner = Join-Path $consoleRoot 'backend\supabase\migrate-only.ps1'
@@ -913,6 +929,7 @@ if ($PrepareTrustOnly) {
     context = $KubeContext
     sourceRevision = [string]$evidence.sourceRevision
     deploymentToolingSourceRevision = $deploymentToolingSourceRevision
+    deploymentToolingSha256 = $deploymentToolingEvidence
     releaseTag = [string]$evidence.releaseTag
     publicationEvidence = $publicationPath
     runtimePublicationEvidence = $runtimePublicationPath
@@ -1169,6 +1186,7 @@ $receipt = [ordered]@{
   context = $KubeContext
   sourceRevision = [string]$evidence.sourceRevision
   deploymentToolingSourceRevision = $deploymentToolingSourceRevision
+  deploymentToolingSha256 = $deploymentToolingEvidence
   releaseTag = [string]$evidence.releaseTag
   publicationEvidence = $publicationPath
   runtimePublicationEvidence = $runtimePublicationPath
@@ -1176,6 +1194,7 @@ $receipt = [ordered]@{
     base = [string]$evidence.sourceRevision
     osShellRuntime = [string]$runtimeEvidence.sourceRevision
   }
+  runtimeOverrideBoundary = $boundaryEvidence
   deployedAt = [DateTimeOffset]::UtcNow.ToString('o')
   migration = [ordered]@{
     id = '0061_shell_session_ledger'

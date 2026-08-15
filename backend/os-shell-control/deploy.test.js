@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { pathToFileURL } = require('node:url');
 const yaml = require('js-yaml');
 
 const source = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
@@ -175,12 +176,22 @@ test('internal Console API uses the canonical data-driven Registry and plugin/PF
   assert.equal(source.includes('DUPA_CONTROL_URL'), false);
 });
 
-test('local-edge deploy accepts only a descendant runtime-only publication as a composite override', () => {
+test('local-edge deploy binds a runtime-only publication through an exact source-closure verifier', async () => {
   assert.match(deployScript, /\[string\]\$RuntimePublicationEvidence = ''/);
   assert.match(deployScript, /Runtime override requires exactly osShellRuntime/);
-  assert.match(deployScript, /merge-base --is-ancestor \(\[string\]\$evidence[.]sourceRevision\) \(\[string\]\$runtimeEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /Runtime override changes the base Supabase migration lineage/);
+  assert.match(deployScript, /os-shell-runtime-override-boundary[.]mjs/);
+  assert.match(deployScript, /--base \(\[string\]\$evidence[.]sourceRevision\)/);
+  assert.match(deployScript, /--runtime \(\[string\]\$runtimeEvidence[.]sourceRevision\)/);
+  assert.match(deployScript, /deploymentToolingSha256 = \$deploymentToolingEvidence/);
   assert.match(deployScript, /release:\/\/edge-composite\//);
   assert.match(deployScript, /runtimePublicationEvidence = \$runtimePublicationPath/);
   assert.match(deployScript, /osShellRuntime = \[string\]\$runtimeEvidence[.]sourceRevision/);
+  const boundary = await import(pathToFileURL(path.join(__dirname, '..', '..', 'scripts', 'os-shell-runtime-override-boundary.mjs')).href);
+  const runtimePaths = ['backend/os-cli/cmd/os-shell-runtime/agent.go', 'backend/os-cli/cmd/os/web_shell_agent.go'];
+  assert.doesNotThrow(() => boundary.assertRuntimeOverridePaths(runtimePaths));
+  for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'backend/os-shell-control/deploy.yaml', 'backend/os-cli/cmd/os/operator.go']) {
+    assert.throws(() => boundary.assertRuntimeOverridePaths([...runtimePaths, privilegedPath]), /non-runtime authority/);
+  }
+  assert.throws(() => boundary.assertHeadPaths([...runtimePaths, 'backend/supabase/migrate-only.ps1'], runtimePaths), /unbound source/);
 });
