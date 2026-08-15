@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -20,37 +21,73 @@ var runtimeProxyHTTPClient = &http.Client{
 
 var proxyRequestID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 
+type consoleProxyFailure struct {
+	status    int
+	code      string
+	stage     string
+	retryable bool
+}
+
+func (failure *consoleProxyFailure) Error() string { return failure.code }
+
+func newConsoleProxyFailure(status int, code, stage string, retryable bool) error {
+	return &consoleProxyFailure{status: status, code: code, stage: stage, retryable: retryable}
+}
+
+func closedProxyFailureResponse(err error) agentHTTPResponse {
+	failure := &consoleProxyFailure{
+		status: http.StatusServiceUnavailable, code: "ShellRequestUnavailable",
+		stage: "runtime-proxy", retryable: true,
+	}
+	var classified *consoleProxyFailure
+	if errors.As(err, &classified) {
+		failure = classified
+	}
+	body, _ := json.Marshal(map[string]any{
+		"code": failure.code, "message": "Web Shell 요청을 현재 완료할 수 없습니다",
+		"stage": failure.stage, "retryable": failure.retryable,
+	})
+	return agentHTTPResponse{
+		Status: failure.status, ContentType: "application/json",
+		Body: base64.RawStdEncoding.EncodeToString(body),
+	}
+}
+
 func (server *agentServer) proxyConsoleRequest(ctx context.Context, contextJWS string, input agentHTTPRequest) (agentHTTPResponse, error) {
 	var output agentHTTPResponse
 	body, parsedPath, err := validateAgentHTTPRequest(input)
 	if err != nil {
-		return output, err
+		return output, newConsoleProxyFailure(http.StatusBadRequest, "ConsoleRequestInvalid", "request-validation", false)
 	}
 	defer wipe(body)
 	if !server.admitProxyRequest(len(body)) {
-		return output, errors.New("agent Console request rate exceeded")
+		return output, newConsoleProxyFailure(http.StatusTooManyRequests, "ConsoleRequestRateLimited", "request-admission", true)
 	}
 	release, err := server.acquireProxySlot(ctx)
 	if err != nil {
-		return output, err
+		return output, newConsoleProxyFailure(http.StatusServiceUnavailable, "ConsoleRequestUnavailable", "request-admission", true)
 	}
 	defer release()
 	credential, err := server.control.credential(ctx, contextJWS)
 	if err != nil {
-		return output, err
+		var controlFailure *controlHTTPError
+		if errors.As(err, &controlFailure) && (controlFailure.status == http.StatusUnauthorized || controlFailure.status == http.StatusForbidden) {
+			return output, newConsoleProxyFailure(http.StatusForbidden, "ShellRuntimeAuthorizationRevoked", "credential-exchange", false)
+		}
+		return output, newConsoleProxyFailure(http.StatusServiceUnavailable, "ShellCredentialUnavailable", "credential-exchange", true)
 	}
 	token := []byte(credential.AccessToken)
 	credential.AccessToken = ""
 	defer wipe(token)
 	base, err := url.Parse(server.consoleAPIURL)
 	if err != nil || base.String() == "" {
-		return output, errors.New("closed Console API endpoint is unavailable")
+		return output, newConsoleProxyFailure(http.StatusServiceUnavailable, "ShellConsoleAPIUnavailable", "console-api", true)
 	}
 	target := *base
 	target.Path, target.RawPath, target.RawQuery = parsedPath.Path, parsedPath.RawPath, parsedPath.RawQuery
 	request, err := http.NewRequestWithContext(ctx, input.Method, target.String(), bytes.NewReader(body))
 	if err != nil {
-		return output, err
+		return output, newConsoleProxyFailure(http.StatusBadRequest, "ConsoleRequestInvalid", "request-construction", false)
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+string(token))
@@ -63,21 +100,21 @@ func (server *agentServer) proxyConsoleRequest(ctx context.Context, contextJWS s
 	}
 	response, err := runtimeProxyHTTPClient.Do(request)
 	if err != nil {
-		return output, err
+		return output, newConsoleProxyFailure(http.StatusServiceUnavailable, "ShellConsoleAPIUnavailable", "console-api", true)
 	}
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxProxyResponse+1))
 	if err != nil {
-		return output, err
+		return output, newConsoleProxyFailure(http.StatusBadGateway, "ShellConsoleAPIResponseInvalid", "console-api", true)
 	}
 	defer wipe(responseBody)
 	if len(responseBody) > maxProxyResponse {
-		return output, errors.New("Console API response is too large")
+		return output, newConsoleProxyFailure(http.StatusBadGateway, "ShellConsoleAPIResponseInvalid", "console-api", false)
 	}
 	contentType := response.Header.Get("Content-Type")
 	retryAfter := response.Header.Get("Retry-After")
 	if len(contentType) > 256 || len(retryAfter) > 128 {
-		return output, errors.New("Console API response headers are too large")
+		return output, newConsoleProxyFailure(http.StatusBadGateway, "ShellConsoleAPIResponseInvalid", "console-api", false)
 	}
 	return agentHTTPResponse{
 		Status: response.StatusCode, ContentType: contentType, RetryAfter: retryAfter,
