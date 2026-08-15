@@ -15,6 +15,10 @@ const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && 
 
 test('local-edge deploy joins completed kubectl output instead of binding -join as a parameter', () => {
   assert.doesNotMatch(deployScript, /= \(Invoke-Kubectl[^\r\n]+ -join [^\r\n]+\) \| ConvertFrom-Json/);
+  assert.doesNotMatch(deployScript, /"\$repository@\*"/);
+  assert.equal((deployScript.match(/"\$\{repository\}@\*"/g) || []).length, 1);
+  assert.match(deployScript, /containerStatuses \| Where-Object \{ \[string\]\$_[.]name -eq \$boundContainerName \}/);
+  assert.doesNotMatch(deployScript, /\$statuses\[0\][.]image -ne \$Image/);
   assert.match(deployScript, /merge-base --is-ancestor/);
   assert.match(deployScript, /deploymentToolingAllowlist = @\(/);
   assert.match(deployScript, /deploymentToolingSourceRevision = \$deploymentToolingSourceRevision/g);
