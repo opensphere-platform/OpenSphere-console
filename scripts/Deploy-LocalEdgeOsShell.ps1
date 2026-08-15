@@ -1004,7 +1004,12 @@ foreach ($profile in $privateTlsProfiles) { $secretOwnerEvidence[$profile.Secret
 $allControlDeployments = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployments', '-o', 'json')) -join "`n") | ConvertFrom-Json
 foreach ($candidate in @($allControlDeployments.items)) {
   $candidateName = [string]$candidate.metadata.name
-  $candidateServiceAccount = [string]$candidate.spec.template.spec.serviceAccountName
+  $candidateServiceAccountProperty = $candidate.spec.template.spec.PSObject.Properties['serviceAccountName']
+  $candidateServiceAccount = if ($candidateServiceAccountProperty) {
+    [string]$candidateServiceAccountProperty.Value
+  } else {
+    'default'
+  }
   $volumesProperty = $candidate.spec.template.spec.PSObject.Properties['volumes']
   if (-not $volumesProperty) { continue }
   foreach ($volume in @($volumesProperty.Value)) {
