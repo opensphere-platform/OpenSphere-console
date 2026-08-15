@@ -1,7 +1,17 @@
 'use strict';
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 const { validateLocalEdgeAutomationTokenClaims } = require('./local-edge-automation-token');
+
+test('Backend image contains the local-edge token verifier required by server startup', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
+  assert.match(
+    dockerfile,
+    /COPY opensphere-console-backend\/local-edge-automation-token\.js \.\/local-edge-automation-token\.js/,
+  );
+});
 
 const username = 'system:serviceaccount:opensphere-console:opensphere-local-edge-release';
 const audience = 'opensphere-local-edge-release';
