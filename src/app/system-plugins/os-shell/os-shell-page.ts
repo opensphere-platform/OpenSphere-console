@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, Input, computed, inject, signal } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
 import { OsShellReadinessService } from './os-shell-readiness.service';
 import { OsShellSessionService } from './os-shell-session.service';
@@ -24,6 +24,9 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
           <span>Runtime</span><strong>{{ readiness.status().state }}</strong>
           <small>{{ readiness.status().observedAt || '아직 관측되지 않음' }}</small>
         </div>
+        @if (standalone) {
+          <a class="btn btn-sm" href="/" (click)="leaveStandalone($event)">Console로 돌아가기</a>
+        }
       </header>
 
       @if (message()) {
@@ -98,6 +101,7 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
   styleUrl: './os-shell-page.scss',
 })
 export class OsShellPage {
+  @Input() standalone = false;
   readonly readiness = inject(OsShellReadinessService);
   private readonly sessions = inject(OsShellSessionService);
   private readonly destroyRef = inject(DestroyRef);
@@ -117,6 +121,14 @@ export class OsShellPage {
       if (this.pollTimer !== undefined) window.clearTimeout(this.pollTimer);
     });
     void this.initialize();
+  }
+
+  leaveStandalone(event: MouseEvent): void {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    // Never turn this extension-free realm into the ordinary plugin-bearing
+    // SPA. A full navigation preserves history and constructs a fresh realm.
+    window.location.assign('/');
   }
 
   async refresh(): Promise<void> {

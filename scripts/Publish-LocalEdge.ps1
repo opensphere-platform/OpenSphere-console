@@ -451,6 +451,11 @@ if ($isExactOsShellPublication) {
       sha256 = Get-CanonicalTextSha256 -Path $runtimeTemplatePath
     }
     sessionPolicyRevision = 'operator-interactive-v1'
+    runtimeProcessPolicy = [ordered]@{
+      maxProcesses = 256
+      globalPodLimit = 8
+      enforcement = 'linux-rlimit-nproc-fixed-uid+namespace-resourcequota'
+    }
   }
 }
 

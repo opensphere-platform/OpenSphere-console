@@ -68,13 +68,9 @@ export const routes: Routes = [
   // Manual — Main Shell 네이티브 페이지(subShell/plugin/Consumer 아님). OAA Manual Registry
   // (/api/manual/*)를 ManualService로 직접 소비. 딥링크 `/manual?doc=<sourceId>`.
   { path: 'manual', component: ManualPage, canActivate: [authenticatedGuard] },
-  // CBSS-owned built-in system plugin. This stays outside /p because its
-  // capability implementation and release evidence are bound to Main Shell.
-  {
-    path: 'shell',
-    loadComponent: () => import('./system-plugins/os-shell/os-shell-page').then((module) => module.OsShellPage),
-    canActivate: [authenticatedGuard],
-  },
+  // `/shell` is intentionally absent. Nginx serves it as an extension-free
+  // top-level boot realm; exposing an Angular route would let an already
+  // activated external plugin reach the terminal through History API/router.
   // Containers 섹션은 DUPA subShell(shell-template)로 이전됨 → 네이티브 라우트 제거. /p/shell-template 로 진입.
 
   // "콘솔 관리" 섹션 (Model A): 1단 진입 → AdminLayout이 2단 보조메뉴 + 자식 페이지를 렌더.

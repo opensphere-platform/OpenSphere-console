@@ -22,10 +22,17 @@ assert.match(descriptor, /defaultEnabled:\s*false/);
 assert.match(descriptor, /releaseAuthority:\s*'opensphere-console-exact-digest'/);
 
 const routes = read('src/app/app.routes.ts');
-assert.match(routes, /path:\s*'shell'/);
-assert.match(routes, /OsShellPage/);
+assert.doesNotMatch(routes, /path:\s*'shell'|OsShellPage|os-shell-page/);
 const mainShell = read('src/app/os/os-shell.ts');
 assert.match(mainShell, /<os-shell-launcher\s*\/>/);
+const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
+assert.match(launcher, /window[.]location[.]assign\('\/shell'\)/);
+assert.doesNotMatch(launcher, /routerLink/);
+
+const bootMode = read('src/app/core/boot-mode.ts');
+const app = read('src/app/app.ts');
+assert.match(bootMode, /window[.]location[.]pathname === '\/shell'/);
+assert.match(app, /OS_SHELL_STANDALONE_BOOT [??] null : inject\(ExtensionHostService\)/);
 
 const surface = read('src/app/system-plugins/os-shell/os-shell-terminal-surface.ts');
 assert.match(surface, /sandbox="allow-scripts"/);
@@ -53,6 +60,11 @@ assert.match(nginx, /proxy_set_header X-OS-Shell-Admission \$os_shell_admission/
 assert.doesNotMatch(nginx, /OS_SHELL_CONTROL_UPSTREAM_PENDING|os_shell_control_plane_pending/);
 assert.match(nginx, /location \^~ \/os-shell-frame\//);
 assert.match(nginx, /connect-src 'none'/);
+const standalone = nginx.slice(nginx.indexOf('location = /shell {'), nginx.indexOf('# 해시드 자산'));
+assert.match(standalone, /worker-src 'none'/);
+assert.match(standalone, /Cross-Origin-Opener-Policy "same-origin"/);
+assert.match(standalone, /Cross-Origin-Embedder-Policy "require-corp"/);
+assert.doesNotMatch(standalone, /blob:/);
 
 if (mode === 'dist') {
   const dist = path.join(repo, 'dist', 'opensphere-console', 'browser', 'os-shell-frame');

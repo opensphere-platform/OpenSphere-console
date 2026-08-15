@@ -1,3 +1,4 @@
+#requires -Version 7.2
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)]
@@ -8,12 +9,15 @@ param(
   [string]$ControlNamespace = 'opensphere-console',
   [string]$SessionNamespace = 'opensphere-shell-sessions',
   [string]$ReceiptPath = '',
+  [string]$SigningKey = (Join-Path $env:USERPROFILE '.opensphere\keys\edge-local-v1-p256.pem'),
+  [ValidateSet('opensphere-edge-local-v1')][string]$SigningKeyId = 'opensphere-edge-local-v1',
   [switch]$PrepareTrustOnly
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'os-shell-tls-contract.ps1')
+. (Join-Path $PSScriptRoot 'os-shell-edge-signing.ps1')
 
 $canonicalRegistry = 'ghcr.io/opensphere-platform'
 $consoleRepository = "$canonicalRegistry/opensphere-console"
@@ -28,6 +32,8 @@ $controlPlaceholder = '__OPENSPHERE_OS_SHELL_CONTROL_IMAGE__'
 $runtimePlaceholder = '__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__'
 $controlCaConfigMap = 'opensphere-shell-control-ca'
 $registryPullSecret = 'opensphere-ghcr-pull'
+$runtimeMaxProcesses = 256
+$runtimeGlobalPodLimit = 8
 $controlDeploymentProfiles = @(
   [ordered]@{
     Deployment = 'opensphere-shell-api'; Container = 'api'; Replicas = 2
@@ -122,6 +128,79 @@ function Get-FileSha256 {
   } finally {
     $sha.Dispose()
     $stream.Dispose()
+  }
+}
+
+function Get-CanonicalObjectSha256 {
+  param([Parameter(Mandatory)][object]$Value)
+  $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Value | ConvertTo-Json -Depth 20 -Compress))
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return 'sha256:' + ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+}
+
+function New-FeatureOperationId {
+  param([Parameter(Mandatory)][ValidateSet('Enable','Disable')][string]$Kind,
+    [Parameter(Mandatory)][string]$ReleaseIntentSha256)
+  $material = [Text.UTF8Encoding]::new($false).GetBytes("opensphere-shell-feature-operation/v1|$Kind|$ReleaseIntentSha256")
+  $sha = [Security.Cryptography.SHA256]::HashData($material)
+  $hex = ([BitConverter]::ToString($sha[0..15])).Replace('-', '').ToLowerInvariant()
+  return "$($hex.Substring(0,8))-$($hex.Substring(8,4))-$($hex.Substring(12,4))-$($hex.Substring(16,4))-$($hex.Substring(20,12))"
+}
+
+function Ensure-OsShellEdgeEvidenceTrust {
+  param([Parameter(Mandatory)][string]$PublicKeySpkiBase64)
+  $configMap = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'configmap/dupa-trusted-keys', '-o', 'json')) -join "`n") | ConvertFrom-Json
+  $document = [string]$configMap.data.'trusted-keys.json' | ConvertFrom-Json -AsHashtable
+  if (-not $document.ContainsKey('trustedKeys') -or $document.trustedKeys -isnot [System.Collections.IDictionary]) {
+    throw 'Console development trust store is not a canonical trustedKeys map'
+  }
+  $trusted = @{}
+  foreach ($entry in $document.trustedKeys.GetEnumerator()) { $trusted[[string]$entry.Key] = [string]$entry.Value }
+  if ($trusted.ContainsKey($SigningKeyId) -and $trusted[$SigningKeyId] -cne $PublicKeySpkiBase64) {
+    throw "The development trust store contains a different public key for $SigningKeyId"
+  }
+  if (-not $trusted.ContainsKey($SigningKeyId)) {
+    $trusted[$SigningKeyId] = $PublicKeySpkiBase64
+    $patch = @{ data = @{ 'trusted-keys.json' = (@{ trustedKeys = $trusted } | ConvertTo-Json -Depth 5 -Compress) } } |
+      ConvertTo-Json -Depth 6 -Compress
+    Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'patch', 'configmap/dupa-trusted-keys', '--type', 'merge', '-p', $patch) | Out-Null
+    Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'rollout', 'restart', 'deployment/opensphere-console-dupa-controller') | Out-Null
+    Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'rollout', 'status', 'deployment/opensphere-console-dupa-controller', '--timeout=300s') | Out-Null
+  }
+  $verified = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'configmap/dupa-trusted-keys', '-o', 'json')) -join "`n") | ConvertFrom-Json
+  $verifiedKeys = ([string]$verified.data.'trusted-keys.json' | ConvertFrom-Json -AsHashtable).trustedKeys
+  if ([string]$verifiedKeys[$SigningKeyId] -cne $PublicKeySpkiBase64) { throw 'OS Shell edge evidence trust registration did not converge' }
+}
+
+function New-LocalEdgeAutomationToken {
+  $token = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'create', 'token', 'opensphere-local-edge-release',
+    '--audience', 'opensphere-local-edge-release', '--duration', '10m')) -join '').Trim()
+  if ($token.Length -lt 100 -or $token -match '\s') { throw 'local edge release-controller returned no canonical short-lived token' }
+  return $token
+}
+
+function Invoke-LocalEdgeShellFeatureOperation {
+  param(
+    [Parameter(Mandatory)][bool]$Enabled,
+    [Parameter(Mandatory)][System.Collections.IDictionary]$Evidence,
+    [Parameter(Mandatory)][string]$Reason,
+    [Parameter(Mandatory)][string]$OperationId
+  )
+  $token = New-LocalEdgeAutomationToken
+  $headers = @{ Authorization = "Bearer $token"; Accept = 'application/json' }
+  $endpoint = 'https://localhost:1114/api/platform/os-shell/feature-state/local-edge-automation'
+  try {
+    $current = Invoke-RestMethod -Uri $endpoint -Method Get -Headers $headers
+    $request = [ordered]@{ enabled = $Enabled; expectedRevision = [long]$current.state.revision;
+      operationId = $OperationId; reason = $Reason; evidence = $Evidence }
+    $result = Invoke-RestMethod -Uri $endpoint -Method Put -Headers $headers -ContentType 'application/json' `
+      -Body ($request | ConvertTo-Json -Depth 10 -Compress)
+    if ([bool]$result.state.enabled -ne $Enabled) { throw 'durable OS Shell feature gate did not converge' }
+    return $result
+  } finally {
+    $token = $null
+    $headers.Authorization = $null
   }
 }
 
@@ -803,6 +882,9 @@ $head = (& git -C $consoleRoot rev-parse HEAD).Trim()
 $deploymentToolingSourceRevision = $head
 $deploymentToolingAllowlist = @(
   'scripts/Deploy-LocalEdgeOsShell.ps1',
+  'scripts/os-shell-edge-signing.ps1',
+  'scripts/Test-OsShellEdgeSigning.ps1',
+  'scripts/Invoke-OsShellFeatureOperation.ps1',
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
   'backend/os-shell-control/deploy.yaml',
@@ -837,14 +919,17 @@ foreach ($relativePath in $deploymentToolingAllowlist) {
     $deploymentToolingEvidence[$relativePath] = Get-CanonicalTextSha256 -Path $toolingPath
   }
 }
-$migrationPath = Join-Path $consoleRoot 'backend\supabase\migrations\0061_shell_session_ledger.sql'
+$migration0061Path = Join-Path $consoleRoot 'backend\supabase\migrations\0061_shell_session_ledger.sql'
+$migration0062Path = Join-Path $consoleRoot 'backend\supabase\migrations\0062_shell_session_quota_and_kill_switch.sql'
 $migrationManifestPath = Join-Path $consoleRoot 'backend\supabase\migrations\manifest.json'
 $migrationRunner = Join-Path $consoleRoot 'backend\supabase\migrate-only.ps1'
-foreach ($path in @($migrationPath, $migrationManifestPath, $migrationRunner)) {
+foreach ($path in @($migration0061Path, $migration0062Path, $migrationManifestPath, $migrationRunner)) {
   if (-not (Test-Path -LiteralPath $path)) { throw "Required committed migration input is missing: $path" }
 }
 & git -C $consoleRoot cat-file -e "$($evidence.sourceRevision):backend/supabase/migrations/0061_shell_session_ledger.sql"
 if ($LASTEXITCODE -ne 0) { throw 'Migration 0061_shell_session_ledger.sql is not committed in SourceRevision' }
+& git -C $consoleRoot cat-file -e "$($evidence.sourceRevision):backend/supabase/migrations/0062_shell_session_quota_and_kill_switch.sql"
+if ($LASTEXITCODE -ne 0) { throw 'Migration 0062_shell_session_quota_and_kill_switch.sql is not committed in SourceRevision' }
 $migrationArtifact = $evidence.artifacts.supabaseMigrationManifest
 if (-not $migrationArtifact -or
     [string]$migrationArtifact.path -ne 'backend/supabase/migrations/manifest.json' -or
@@ -853,9 +938,15 @@ if (-not $migrationArtifact -or
 }
 $migrationManifest = Get-Content -Raw -LiteralPath $migrationManifestPath | ConvertFrom-Json
 $migration0061 = @($migrationManifest.migrations | Where-Object { [string]$_.name -eq '0061_shell_session_ledger.sql' })
-$migration0061Digest = (Get-CanonicalTextSha256 -Path $migrationPath).Substring('sha256:'.Length)
+$migration0062 = @($migrationManifest.migrations | Where-Object { [string]$_.name -eq '0062_shell_session_quota_and_kill_switch.sql' })
+$migration0061Digest = (Get-CanonicalTextSha256 -Path $migration0061Path).Substring('sha256:'.Length)
+$migration0062Digest = (Get-CanonicalTextSha256 -Path $migration0062Path).Substring('sha256:'.Length)
 if ($migration0061.Count -ne 1 -or [string]$migration0061[0].sha256 -ne $migration0061Digest) {
   throw 'Migration 0061 is absent from or inconsistent with the canonical migration manifest'
+}
+if ($migration0062.Count -ne 1 -or [string]$migration0062[0].sha256 -ne $migration0062Digest -or
+    [string]$migrationManifest.latestMigrationId -ne '0062') {
+  throw 'Migration 0062 is not the exact latest migration in the canonical migration manifest'
 }
 if ([string]$migrationArtifact.setDigest -ne [string]$migrationManifest.setDigest -or
     [string]$migrationArtifact.latestMigrationId -ne [string]$migrationManifest.latestMigrationId) {
@@ -871,7 +962,10 @@ if (-not $osShellRelease -or
     [string]$osShellRelease.cliManifest.keyId -ne 'opensphere-cli-local-dev-v1' -or
     [string]$osShellRelease.runtimeTemplate.path -ne 'backend/os-shell-control/runtime-template.js' -or
     [string]$osShellRelease.runtimeTemplate.sha256 -ne (Get-CanonicalTextSha256 -Path $runtimeTemplatePath) -or
-    [string]$osShellRelease.sessionPolicyRevision -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') {
+    [string]$osShellRelease.sessionPolicyRevision -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' -or
+    [int]$osShellRelease.runtimeProcessPolicy.maxProcesses -ne $runtimeMaxProcesses -or
+    [int]$osShellRelease.runtimeProcessPolicy.globalPodLimit -ne $runtimeGlobalPodLimit -or
+    [string]$osShellRelease.runtimeProcessPolicy.enforcement -ne 'linux-rlimit-nproc-fixed-uid+namespace-resourcequota') {
   throw 'OS Shell signed manifest, runtime template or session policy evidence is absent or inconsistent'
 }
 # Re-open the exact cliArtifacts image without executing it and independently
@@ -952,7 +1046,7 @@ $resolvedManifestPath = (Resolve-Path -LiteralPath $ManifestPath).Path
 $manifestSource = Get-Content -Raw -LiteralPath $resolvedManifestPath
 if ([regex]::Matches($manifestSource, [regex]::Escape($consolePlaceholder)).Count -ne 1 -or
     [regex]::Matches($manifestSource, [regex]::Escape($controlPlaceholder)).Count -ne 3 -or
-    [regex]::Matches($manifestSource, [regex]::Escape($runtimePlaceholder)).Count -ne 3) {
+    [regex]::Matches($manifestSource, [regex]::Escape($runtimePlaceholder)).Count -ne 4) {
   throw 'OS Shell manifest must bind one Console frontdoor, three control workloads and three runtime template references'
 }
 if ($manifestSource -match '(?m)^\s*image:\s*[^\s]+:(edge|latest)\s*$') {
@@ -1006,7 +1100,7 @@ $prerequisiteEvidence = [ordered]@{
   cliArtifacts = Assert-PrerequisiteDeployment -Deployment 'os-cli' -Image $cliArtifacts.image -Digest $cliArtifacts.digest
 }
 
-Write-Host '[step 3/7] Apply committed Supabase migration lineage including 0061'
+Write-Host '[step 3/7] Apply committed Supabase migration lineage through additive 0062'
 & $migrationRunner -KubeContext $KubeContext -SourceRevision ([string]$evidence.sourceRevision)
 if ($LASTEXITCODE -ne 0) { throw "migrate-only.ps1 failed with exit code $LASTEXITCODE" }
 
@@ -1073,6 +1167,8 @@ foreach ($resource in $deploymentResources) {
     $expectedEnvironment = [ordered]@{}
     foreach ($flag in $profile.Flags.GetEnumerator()) { $expectedEnvironment[[string]$flag.Key] = [string]$flag.Value }
     $expectedEnvironment['OS_SHELL_RUNTIME_IMAGE'] = [string]$runtime.image
+    $expectedEnvironment['OS_SHELL_RUNTIME_MAX_PROCESSES'] = [string]$runtimeMaxProcesses
+    $expectedEnvironment['OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT'] = [string]$runtimeGlobalPodLimit
     $expectedEnvironment['OS_SHELL_OS_ARTIFACT_DIGEST'] = [string]$cliArtifacts.digest
     $expectedEnvironment['OS_SHELL_MANIFEST_SHA256'] = $manifestSha256
     $expectedEnvironment['OS_SHELL_RELEASE_EVIDENCE_REF'] = $releaseEvidenceRef
@@ -1175,13 +1271,167 @@ Assert-Denied -Subject $runtimeSubject -Verb 'get' -Resource 'pods' -Namespace $
 Assert-Denied -Subject $runtimeSubject -Verb 'get' -Resource 'secrets' -Namespace $SessionNamespace
 Assert-Denied -Subject $runtimeSubject -Verb 'create' -Resource 'tokenreviews.authentication.k8s.io'
 
-Write-Host '[step 7/7] Record non-secret exact-digest deployment receipt'
+$componentImages = [ordered]@{
+  console = $console.image
+  backend = $backend.image
+  cliArtifacts = $cliArtifacts.image
+  osShellControl = $control.image
+  osShellRuntime = $runtime.image
+}
+$componentSetDigest = Get-CanonicalObjectSha256 -Value $componentImages
+Write-Host '[step 7/7] Sign exact release intent, open durable gate, and record deployment receipt'
 if (-not $ReceiptPath) {
   $ReceiptPath = Join-Path (Split-Path $publicationPath -Parent) 'opensphere-local-os-shell-deployment-receipt.json'
 }
+$receiptDirectory = Split-Path ([IO.Path]::GetFullPath($ReceiptPath)) -Parent
+if (-not (Test-Path -LiteralPath $receiptDirectory)) { throw "Receipt directory does not exist: $receiptDirectory" }
+$profilePath = Join-Path $receiptDirectory 'opensphere-local-os-shell-release-profile.json'
+$signaturePath = "$profilePath.sig.json"
+$verificationInputs = [ordered]@{}
+foreach ($relativePath in @(
+  'backend/os-shell-control/deploy.yaml',
+  'backend/os-shell-control/deploy.test.js',
+  'backend/os-shell-control/runtime-template.test.js',
+  'backend/os-shell-control/server.test.js',
+  'backend/supabase/verify-ledger-integrity.mjs',
+  'scripts/Test-OsShellRuntimeAdmission.ps1',
+  'scripts/Test-OsShellEdgeSigning.ps1',
+  'scripts/Invoke-OsShellFeatureOperation.ps1',
+  'scripts/os-shell-edge-signing.ps1'
+)) {
+  $verificationPath = Join-Path $consoleRoot $relativePath
+  if (-not (Test-Path -LiteralPath $verificationPath)) { throw "Release verification input is missing: $relativePath" }
+  $verificationInputs[$relativePath] = Get-CanonicalTextSha256 -Path $verificationPath
+}
+$applicableLimbs = @(
+  'G-01/full-page-positive','G-01/drawer-capability-negative','G-02','G-03','G-04','G-05','G-06','G-07','G-08','G-09',
+  'G-10','G-11','G-12','G-13','G-14/operator-persona-binding','G-14/unsupported-persona',
+  'G-14/unsupported-runtime-class','G-15','G-16','G-17',
+  'P-01','P-02/session-attach-grant-missing','P-04','P-05/full-page-route-history',
+  'P-06/full-page-feature-disable','P-06/logout-revoke','P-06/permission-revision-revoke','P-06/frame-port-handler-cleanup',
+  'P-08','P-09','P-10','P-11','P-12','P-13','P-14','P-15','P-16','P-17','P-18','P-19','P-20','P-21','P-22','P-23',
+  'P-24','P-25','P-26','P-27','P-28','P-29','P-30','P-31','P-32','P-33','P-34','P-35','P-36','P-37','P-38',
+  'P-39','P-40','P-41','P-42','P-43','P-44','P-45/unregistered-kubevirt-adapter','P-46','P-47','P-48','P-49','P-50'
+)
+$applicableEvidence = [ordered]@{}
+foreach ($limb in $applicableLimbs) {
+  $artifact = if ($limb -match '^P-(22|39|48)') { 'scripts/Test-OsShellRuntimeAdmission.ps1' }
+    elseif ($limb -match '^P-04') { 'scripts/Test-OsShellEdgeSigning.ps1' }
+    elseif ($limb -match '^P-(06|41)') { 'scripts/Invoke-OsShellFeatureOperation.ps1' }
+    elseif ($limb -match '^P-2[467]') { 'backend/os-shell-control/runtime-template.test.js' }
+    elseif ($limb -match '^P-(15|16|17|18|19|20|21|23|25|28|29|30|31|32|33|34|35|36|37|38|40|42|43)') {
+      'backend/supabase/verify-ledger-integrity.mjs'
+    } else { 'backend/os-shell-control/deploy.test.js' }
+  $applicableEvidence[$limb] = [ordered]@{
+    result = 'NOT_EXECUTED'
+    artifactUri = "source://OpenSphere-console/$artifact"
+    artifactSha256 = [string]$verificationInputs[$artifact]
+    completionPhase = 'post-activation-live-verification'
+  }
+}
+$applicableEvidenceSetDigest = Get-CanonicalObjectSha256 -Value $applicableEvidence
+$releaseProfile = [ordered]@{
+  apiVersion = 'release.opensphere.io/v1alpha1'
+  kind = 'OpenSphereOsShellCompositeReleaseProfile'
+  contract = 'opensphere-os-shell-composite-release-profile/v1'
+  profileId = 'os-shell-full-page-operator-local-edge/v1'
+  profileRevision = 'v1'
+  channel = 'edge'
+  releaseClass = 'pre-ga'
+  gaPromotionEligible = $false
+  context = $KubeContext
+  releaseTag = [string]$evidence.releaseTag
+  releaseEvidenceRef = $releaseEvidenceRef
+  publicationEvidence = [ordered]@{
+    consoleSha256 = Get-FileSha256 -Path $publicationPath
+    runtimeSha256 = if ($runtimePublicationPath) { Get-FileSha256 -Path $runtimePublicationPath }
+      else { Get-FileSha256 -Path $publicationPath }
+  }
+  sourceRevisions = [ordered]@{
+    console = [string]$evidence.sourceRevision
+    osShellRuntime = [string]$runtimeEvidence.sourceRevision
+    deploymentTooling = $deploymentToolingSourceRevision
+  }
+  images = $componentImages
+  componentSetDigest = $componentSetDigest
+  migration = [ordered]@{
+    latestMigrationId = [string]$migrationManifest.latestMigrationId
+    migrationCount = [int]$migrationManifest.migrationCount
+    manifestSha256 = Get-CanonicalTextSha256 -Path $migrationManifestPath
+    manifestSetDigest = [string]$migrationManifest.setDigest
+    immutable0061Sha256 = "sha256:$migration0061Digest"
+    additive0062Sha256 = "sha256:$migration0062Digest"
+  }
+  runtimePolicy = [ordered]@{
+    maxProcesses = $runtimeMaxProcesses
+    globalPodLimit = $runtimeGlobalPodLimit
+    enforcement = 'linux-rlimit-nproc-fixed-uid+namespace-resourcequota'
+    runtimeTemplateRevision = $runtimeTemplateRevision
+    sessionPolicyRevision = $sessionPolicyRevision
+  }
+  cliManifest = [ordered]@{ sha256 = $manifestSha256; keyId = $releaseKeyId; image = $cliArtifacts.image }
+  verificationSet = [ordered]@{
+    inputs = $verificationInputs
+    digest = Get-CanonicalObjectSha256 -Value $verificationInputs
+    admission = 'canonical-dryrun+single-field-policy-attributed-negative+optional-live-create'
+    database = 'fresh-postgresql+two-connection-cas+fencing+quota+drain'
+  }
+  applicableEvidenceSet = [ordered]@{
+    schema = 'opensphere-os-shell-evidence/v1'
+    status = 'RELEASE_INTENT_ONLY'
+    completionClaim = $false
+    countNotApplicableAsPass = $false
+    countDeferredAsPass = $false
+    applicableLimbCount = $applicableEvidence.Count
+    passCount = 0
+    results = $applicableEvidence
+    manifestDigest = $applicableEvidenceSetDigest
+    finalCompletionReceiptRequired = $true
+  }
+  excludedScope = [ordered]@{
+    notApplicable = @('P-02/drawer-grant-missing','P-03/persistent-drawer','P-05/drawer-persistence','P-06/drawer-cleanup')
+    deferred = @('G-14/developer-shell-positive','G-14/agent-shell-positive','G-14/kubevirt-adapter-positive','P-07','P-45/registered-kubevirt-adapter-positive','P-51')
+  }
+  deployedWorkloads = $deploymentEvidence
+}
+$signedProfile = New-OsShellEdgeSignedDocument -Document $releaseProfile -DocumentPath $profilePath `
+  -SignaturePath $signaturePath -SigningKeyPath $SigningKey -KeyId $SigningKeyId
+Ensure-OsShellEdgeEvidenceTrust -PublicKeySpkiBase64 $signedProfile.PublicKeySpkiBase64
+if (-not (Test-OsShellEdgeSignedDocument -DocumentPath $profilePath -SignaturePath $signaturePath `
+    -TrustedPublicKeySpkiBase64 $signedProfile.PublicKeySpkiBase64 -ExpectedKeyId $SigningKeyId)) {
+  throw 'signed OS Shell composite release profile did not verify'
+}
+$featureOperationEvidence = [ordered]@{
+  authority = 'kubernetes-workload'
+  channel = 'edge'
+  componentSetDigest = $componentSetDigest
+  gaEligible = $false
+  latestMigrationId = [string]$migrationManifest.latestMigrationId
+  migrationSetDigest = [string]$migrationManifest.setDigest
+  publicationSha256 = Get-FileSha256 -Path $publicationPath
+  releaseIntentKeyId = $SigningKeyId
+  releaseIntentSha256 = $signedProfile.DocumentSha256
+  releaseIntentSignatureSha256 = $signedProfile.SignatureSha256
+  sourceRevision = [string]$evidence.sourceRevision
+}
+Write-Host '[owner] Open durable gate only after the signed release intent and trust verification converge'
+$enableOperationId = New-FeatureOperationId -Kind Enable -ReleaseIntentSha256 $signedProfile.DocumentSha256
+$featureOperation = Invoke-LocalEdgeShellFeatureOperation -Enabled $true -Evidence $featureOperationEvidence `
+  -Reason "Enable exact local edge OS Shell release $([string]$evidence.releaseTag) after verified rollout" `
+  -OperationId $enableOperationId
+if ([bool]$featureOperation.state.enabled -ne $true -or [long]$featureOperation.state.activeTickets -ne 0) {
+  throw 'OS Shell feature gate opened with a non-canonical state'
+}
+try {
 $receipt = [ordered]@{
   apiVersion = 'release.opensphere.io/v1alpha1'
   kind = 'OpenSphereEdgeAuxiliaryDeploymentReceipt'
+  receiptClass = 'ActivationReceipt'
+  profileId = 'os-shell-full-page-operator-local-edge/v1'
+  profileRevision = 'v1'
+  plan011CompletionClaim = $false
+  applicableEvidenceSetDigest = $applicableEvidenceSetDigest
+  completionNextAction = 'Run every applicable Browser/CNI/lifecycle limb and issue a separately signed completion evidence-set receipt.'
   componentSet = 'cbss-os-shell'
   context = $KubeContext
   sourceRevision = [string]$evidence.sourceRevision
@@ -1197,17 +1447,13 @@ $receipt = [ordered]@{
   runtimeOverrideBoundary = $boundaryEvidence
   deployedAt = [DateTimeOffset]::UtcNow.ToString('o')
   migration = [ordered]@{
-    id = '0061_shell_session_ledger'
+    id = '0062_shell_session_quota_and_kill_switch'
+    predecessor = '0061_shell_session_ledger'
+    migrationCount = [int]$migrationManifest.migrationCount
     manifestSetDigest = [string]$migrationManifest.setDigest
     sourceRevision = [string]$evidence.sourceRevision
   }
-  images = [ordered]@{
-    console = $console.image
-    backend = $backend.image
-    cliArtifacts = $cliArtifacts.image
-    osShellControl = $control.image
-    osShellRuntime = $runtime.image
-  }
+  images = $componentImages
   releaseEvidence = [ordered]@{
     reference = $releaseEvidenceRef
     cliManifestSha256 = $manifestSha256
@@ -1215,6 +1461,22 @@ $receipt = [ordered]@{
     osArtifactDigest = $cliArtifacts.digest
     runtimeTemplateRevision = $runtimeTemplateRevision
     sessionPolicyRevision = $sessionPolicyRevision
+  }
+  runtimeProcessPolicy = [ordered]@{
+    maxProcesses = $runtimeMaxProcesses
+    globalPodLimit = $runtimeGlobalPodLimit
+    enforcement = 'linux-rlimit-nproc-fixed-uid+namespace-resourcequota'
+  }
+  featureOperation = $featureOperation
+  signedProfile = [ordered]@{
+    path = $profilePath
+    sha256 = $signedProfile.DocumentSha256
+    signaturePath = $signaturePath
+    signatureSha256 = $signedProfile.SignatureSha256
+    algorithm = 'ES256-P1363'
+    keyId = $SigningKeyId
+    publicTrustReference = 'configmap://opensphere-console/dupa-trusted-keys#opensphere-edge-local-v1'
+    gaPromotionEligible = $false
   }
   prerequisites = $prerequisiteEvidence
   tls = [ordered]@{
@@ -1230,9 +1492,34 @@ $receipt = [ordered]@{
   registryPullSecret = "$SessionNamespace/$registryPullSecret"
   deployments = $deploymentEvidence
   sar = 'verified'
+  detachedSignatureUri = "$ReceiptPath.sig.json"
 }
-$receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ReceiptPath -Encoding utf8
+$receiptSignaturePath = "$ReceiptPath.sig.json"
+$signedReceipt = New-OsShellEdgeSignedDocument -Document $receipt -DocumentPath $ReceiptPath `
+  -SignaturePath $receiptSignaturePath -SigningKeyPath $SigningKey -KeyId $SigningKeyId
+if (-not (Test-OsShellEdgeSignedDocument -DocumentPath $ReceiptPath -SignaturePath $receiptSignaturePath `
+    -TrustedPublicKeySpkiBase64 $signedProfile.PublicKeySpkiBase64 -ExpectedKeyId $SigningKeyId)) {
+  throw 'signed OS Shell activation receipt did not verify'
+}
+} catch {
+  $activationReceiptError = $_
+  try {
+    # The activation receipt does not yet exist, so recovery uses the already
+    # trust-registered signed ReleaseIntent directly. It executes the same
+    # durable drain/Pod0/exclusive-claim/scale0/complete owner path as a normal
+    # Disable and emits its own signed recovery receipt.
+    & (Join-Path $PSScriptRoot 'Invoke-OsShellFeatureOperation.ps1') -Operation Disable `
+      -Reason "Disable OS Shell after activation receipt failure for $([string]$evidence.releaseTag)" `
+      -PublicationEvidence $publicationPath -RecoverySignedProfile $profilePath -RecoverySignature $signaturePath `
+      -ReceiptPath "$ReceiptPath.activation-failure-disable.json" -SigningKey $SigningKey `
+      -SigningKeyId $SigningKeyId -KubeContext $KubeContext
+  } catch {
+    throw "Activation receipt failed and durable emergency disable also failed: receipt=$($activationReceiptError.Exception.Message); disable=$($_.Exception.Message)"
+  }
+  throw $activationReceiptError
+}
 Write-Host "[success] OS Shell auxiliary components deployed from exact publication evidence"
 Write-Host "[control] $($control.image)"
 Write-Host "[runtime] $($runtime.image)"
 Write-Host "[receipt] $ReceiptPath"
+Write-Host "[receipt-signature] $receiptSignaturePath ($($signedReceipt.SignatureSha256))"

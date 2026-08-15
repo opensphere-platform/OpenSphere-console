@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -55,8 +56,14 @@ type agentServer struct {
 }
 
 func runAgent(ctx context.Context, binding runtimeBinding) error {
-	if os.Geteuid() == 0 {
+	if !runtimeProcessProtectionsSupported() {
+		return errors.New("credential agent memory protections require Linux; non-Linux execution is unsupported")
+	}
+	if isRootProcess() {
 		return errors.New("credential agent refuses to run as root")
+	}
+	if err := applyAgentProcessProtections(); err != nil {
+		return fmt.Errorf("credential agent process protection failed closed: %w", err)
 	}
 	identity, err := newSigningIdentity(now().UTC())
 	if err != nil {
@@ -389,6 +396,7 @@ func (server *agentServer) bridgePTY(ctx context.Context, cancel context.CancelF
 	ctx, bridgeCancel := context.WithCancel(ctx)
 	defer bridgeCancel()
 	outbound := make(chan ptyFrame, 64)
+	revokedWritten := make(chan struct{}, 1)
 	outbound <- ptyFrame{Type: "attached", Sequence: initialSequence}
 	var wait sync.WaitGroup
 	wait.Add(4)
@@ -407,6 +415,12 @@ func (server *agentServer) bridgePTY(ctx context.Context, cancel context.CancelF
 				if err != nil {
 					bridgeCancel()
 					return
+				}
+				if frame.Type == "revoked" {
+					select {
+					case revokedWritten <- struct{}{}:
+					default:
+					}
 				}
 			}
 		}
@@ -474,9 +488,25 @@ func (server *agentServer) bridgePTY(ctx context.Context, cancel context.CancelF
 				err := server.control.revalidate(revalidateContext, server.binding)
 				revalidateCancel()
 				if err != nil {
+					sent := false
 					select {
 					case outbound <- ptyFrame{Type: "revoked", Message: "runtime authorization revoked"}:
+						sent = true
 					default:
+					}
+					if sent {
+						flushTimer := time.NewTimer(time.Second)
+						select {
+						case <-revokedWritten:
+						case <-flushTimer.C:
+						case <-ctx.Done():
+						}
+						if !flushTimer.Stop() {
+							select {
+							case <-flushTimer.C:
+							default:
+							}
+						}
 					}
 					bridgeCancel()
 					return

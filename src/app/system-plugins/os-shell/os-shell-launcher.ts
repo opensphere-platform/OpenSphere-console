@@ -1,5 +1,4 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
-import { RouterLink, RouterLinkActive } from '@angular/router';
 import Terminal20 from '@carbon/icons/es/terminal/20';
 import { AuthService } from '../../core/auth.service';
 import { CarbonIcon } from '../../os/carbon-icon';
@@ -7,14 +6,14 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
 
 @Component({
   selector: 'os-shell-launcher',
-  imports: [RouterLink, RouterLinkActive, CarbonIcon],
+  imports: [CarbonIcon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (eligible()) {
       <a
         class="os-shell-launcher"
-        routerLink="/shell"
-        routerLinkActive="active"
+        href="/shell"
+        (click)="openStandalone($event)"
         [class.blocked]="readiness.status().state === 'Blocked' || readiness.status().state === 'Disabled'"
         [title]="title()"
         aria-label="OpenSphere OS Shell"
@@ -55,5 +54,13 @@ export class OsShellLauncher {
 
   constructor() {
     void this.readiness.refresh();
+  }
+
+  openStandalone(event: MouseEvent): void {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    // A real navigation destroys any already-loaded external plugin realm.
+    // assign(), rather than replace(), preserves the browser Back entry.
+    window.location.assign('/shell');
   }
 }

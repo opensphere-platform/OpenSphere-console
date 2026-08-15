@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0061",
-  "migrationCount": 60,
-  "setDigest": "sha256:46fe52c7749b59566f3d7d6bc59b4d858cb1018e55ae270b093662de8c3a545e",
+  "latestMigrationId": "0062",
+  "migrationCount": 61,
+  "setDigest": "sha256:b45104e1c748b7f8d7d66d1837c611674341da69c2d1228a5034f3d57269e83e",
   "migrations": [
     {
       "id": "0001",
@@ -423,6 +423,13 @@
       "name": "0061_shell_session_ledger.sql",
       "path": "backend/supabase/migrations/0061_shell_session_ledger.sql",
       "sha256": "5bb566c70e0ebdb50aa3cab9498dbdc3d8f291c7ca963c341b6896fe0b4804d9"
+    },
+    {
+      "id": "0062",
+      "predecessorMigrationId": "0061",
+      "name": "0062_shell_session_quota_and_kill_switch.sql",
+      "path": "backend/supabase/migrations/0062_shell_session_quota_and_kill_switch.sql",
+      "sha256": "ed59833e6de7cbe309e1734696af46198351cbf94cd3490262dce848f1ba22af"
     }
   ]
 }

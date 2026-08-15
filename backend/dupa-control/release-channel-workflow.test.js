@@ -165,7 +165,9 @@ test('OS Shell local edge deploy is evidence-bound, non-interactive, and exact-d
 
 test('OS Shell release manifest is closed over exact workloads, services, trust and default-off source', () => {
   assert.equal((osShellControlManifest.match(/__OPENSPHERE_OS_SHELL_CONTROL_IMAGE__/g) || []).length, 3);
-  assert.equal((osShellControlManifest.match(/__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__/g) || []).length, 3);
+  // Three control workloads receive the runtime binding and the admission
+  // policy independently pins the same exact digest as the second boundary.
+  assert.equal((osShellControlManifest.match(/__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__/g) || []).length, 4);
   assert.equal((osShellControlManifest.match(/__OPENSPHERE_CONSOLE_IMAGE__/g) || []).length, 1);
   assert.equal((osShellControlManifest.match(/^\s*replicas:\s*0\s*$/gm) || []).length, 4);
   for (const name of ['opensphere-shell-api', 'opensphere-shell-gateway', 'opensphere-shell-reconciler', 'opensphere-shell-console-api']) {

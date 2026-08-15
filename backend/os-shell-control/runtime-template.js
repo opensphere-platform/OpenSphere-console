@@ -15,6 +15,7 @@ function buildRuntimePod(session, config) {
     env('OPENSPHERE_SHELL_PERMISSION_REVISION', session.permission_revision), env('OPENSPHERE_SHELL_AAL', session.aal),
     env('OPENSPHERE_SHELL_RELEASE_EVIDENCE_REF', session.release_evidence_ref),
     env('OPENSPHERE_SHELL_GENERATION', session.generation), env('OPENSPHERE_SHELL_FENCING_EPOCH', session.fencing_epoch),
+    env('OPENSPHERE_SHELL_MAX_PROCESSES', config.runtimeMaxProcesses),
   ];
   const securityContext = { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: true, runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: { type: 'RuntimeDefault' } };
   return {
@@ -23,7 +24,8 @@ function buildRuntimePod(session, config) {
       'opensphere.io/generation': String(session.generation), 'opensphere.io/fencing-epoch': String(session.fencing_epoch),
     } }, spec: {
       serviceAccountName: config.runtimeServiceAccount, automountServiceAccountToken: false, restartPolicy: 'Never',
-      enableServiceLinks: false, terminationGracePeriodSeconds: 5,
+      enableServiceLinks: false, terminationGracePeriodSeconds: 5, dnsPolicy: 'ClusterFirst', schedulerName: 'default-scheduler',
+      imagePullSecrets: [{ name: 'opensphere-ghcr-pull' }],
       securityContext: { runAsNonRoot: true, fsGroup: 65532, fsGroupChangePolicy: 'OnRootMismatch', seccompProfile: { type: 'RuntimeDefault' } },
       volumes: [
         { name: 'internal', emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
@@ -42,7 +44,7 @@ function buildRuntimePod(session, config) {
             { name: 'agent-channel', mountPath: '/run/opensphere-shell', readOnly: true },
             { name: 'workspace', mountPath: '/home/opensphere' },
             { name: 'control-ca', mountPath: '/var/run/opensphere-shell-control-ca', readOnly: true }], securityContext,
-          resources: { requests: { cpu: '25m', memory: '32Mi' }, limits: { cpu: '500m', memory: '256Mi' } } },
+          resources: { requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' }, limits: { cpu: '500m', memory: '256Mi', 'ephemeral-storage': '128Mi' } } },
         { name: 'agent', image: config.runtimeImage, imagePullPolicy: 'IfNotPresent', args: ['agent'],
           env: [...binding, env('OPENSPHERE_SHELL_REGISTRATION_URL', config.registrationURL),
             env('OPENSPHERE_SHELL_CONTROL_URL', config.runtimeControlURL),
@@ -53,7 +55,7 @@ function buildRuntimePod(session, config) {
             { name: 'bootstrap', mountPath: '/var/run/secrets/tokens', readOnly: true },
             { name: 'control-ca', mountPath: '/var/run/opensphere-shell-control-ca', readOnly: true }],
           readinessProbe: { tcpSocket: { port: 'runtime-wss' }, periodSeconds: 2, failureThreshold: 10 }, securityContext,
-          resources: { requests: { cpu: '25m', memory: '32Mi' }, limits: { cpu: '500m', memory: '128Mi' } } },
+          resources: { requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' }, limits: { cpu: '500m', memory: '128Mi', 'ephemeral-storage': '64Mi' } } },
       ],
     },
   };

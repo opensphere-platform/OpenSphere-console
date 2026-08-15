@@ -5,7 +5,7 @@ const { EventEmitter } = require('node:events');
 const { Readable } = require('node:stream');
 const test = require('node:test');
 const { browserFrame, createControl, delegatedCredential, exactBinding, runtimeCertificatePinned,
-  probeTlsDependencyReadiness, runtimeFrame, validatedRuntimePublicKey } = require('./server');
+  idempotentSessionId, probeTlsDependencyReadiness, runtimeFrame, validatedRuntimePublicKey } = require('./server');
 
 const REVISION = `sha256:${'1'.repeat(64)}`;
 const SESSION_ID = '10000000-0000-4000-8000-000000000001';
@@ -14,6 +14,7 @@ function config(mode, overrides = {}) {
   return { mode, enabled: true, attachEnabled: mode === 'gateway', reconcilerEnabled: mode === 'reconciler',
     registrationEnabled: false, runtimeControlEnabled: false, allowLoopbackHttp: false, port: 0,
     worker: 'worker-a', namespace: 'opensphere-shell-sessions', runtimeServiceAccount: 'opensphere-shell-runtime',
+    runtimeMaxProcesses: 256, runtimeGlobalPodLimit: 8,
     runtimeImage: `ghcr.io/opensphere-platform/opensphere-os-shell-runtime@sha256:${'2'.repeat(64)}`,
     runtimeImageDigest: `sha256:${'2'.repeat(64)}`, osArtifactDigest: `sha256:${'3'.repeat(64)}`,
     manifestSha256: `sha256:${'4'.repeat(64)}`, releaseEvidenceRef: 'release://test', releaseKeyId: 'test-key',
@@ -58,6 +59,15 @@ test('gateway converts bounded monotonic runtime frames', () => {
   assert.deepEqual(runtimeFrame({ type: 'attached', seq: 1 }, 0, 'session'), { type: 'attached', sequence: 1, sessionId: 'session' });
   assert.deepEqual(runtimeFrame({ type: 'stdout', seq: 2, data: Buffer.from('ok').toString('base64') }, 1, 'session'), { type: 'stdout', sequence: 2, data: 'ok' });
   assert.throws(() => runtimeFrame({ type: 'pong', seq: 1 }, 1, 'session'), /non-monotonic/);
+});
+
+test('session idempotency key projects to one actor and browser bound UUID across API replicas', () => {
+  const key = '30000000-0000-4000-8000-000000000001';
+  const first = idempotentSessionId('a'.repeat(32), ACTOR_ID, '30000000-0000-4000-8000-000000000002', key);
+  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(first, idempotentSessionId('a'.repeat(32), ACTOR_ID, '30000000-0000-4000-8000-000000000002', key));
+  assert.notEqual(first, idempotentSessionId('a'.repeat(32), '40000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000002', key));
+  assert.throws(() => idempotentSessionId('a'.repeat(32), ACTOR_ID, SESSION_ID, ''), (error) => error.code === 'IdempotencyKeyRequired');
 });
 
 test('runtime registration accepts exactly one Ed25519 PEM bound to canonical kid', () => {
@@ -217,6 +227,7 @@ test('browser readiness projects gateway and reconciler state and fails closed w
   const observedModes = [];
   const control = createControl({ config: config('api'), database: {
     currentPermissionRevision: async () => REVISION,
+    featureState: async () => ({ enabled: true, revision: 1, global_active_limit: 8, active_sessions: 0, scale_down_allowed: false }),
   }, componentReadinessProbe: async (_target, mode) => { observedModes.push(mode); return mode === 'gateway'; },
   dependencyReadinessProbe: async () => true });
   const req = request({}, { url: '/api/os-shell/readiness', encrypted: false }); req.method = 'GET';

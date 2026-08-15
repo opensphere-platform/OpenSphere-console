@@ -29,6 +29,8 @@ function loadConfig(mode = process.env.OS_SHELL_MODE) {
     worker: process.env.OS_SHELL_WORKER_ID || process.env.HOSTNAME || `shell-${process.pid}`,
     namespace: process.env.OS_SHELL_SESSION_NAMESPACE || 'opensphere-shell-sessions',
     runtimeServiceAccount: process.env.OS_SHELL_RUNTIME_SERVICE_ACCOUNT || 'opensphere-shell-runtime',
+    runtimeMaxProcesses: Number(process.env.OS_SHELL_RUNTIME_MAX_PROCESSES || 256),
+    runtimeGlobalPodLimit: Number(process.env.OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT || 8),
     runtimeImage: enabled ? runtimeImage() : '',
     runtimeImageDigest: enabled ? `sha256:${required('OS_SHELL_RUNTIME_IMAGE').split('@sha256:')[1]}` : '',
     osArtifactDigest: enabled ? digest('OS_SHELL_OS_ARTIFACT_DIGEST') : '',
@@ -49,6 +51,8 @@ function loadConfig(mode = process.env.OS_SHELL_MODE) {
     consoleBackendURL: process.env.OS_SHELL_CONSOLE_BACKEND_URL || 'https://opensphere-shell-credential-authority.opensphere-console.svc.cluster.local:8444',
     internalCAFile: process.env.OS_SHELL_INTERNAL_CA_FILE || '',
   };
+  if (config.runtimeMaxProcesses !== 256) throw new Error('OS_SHELL_RUNTIME_MAX_PROCESSES must be the closed value 256');
+  if (config.runtimeGlobalPodLimit !== 8) throw new Error('OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT must be the closed value 8');
   if (enabled && ((mode === 'reconciler' && config.registrationEnabled) || (mode === 'api' && config.runtimeControlEnabled))) {
     if (!config.tlsCertFile || !config.tlsKeyFile || !fs.existsSync(config.tlsCertFile) || !fs.existsSync(config.tlsKeyFile)) {
       throw new Error('runtime registration requires an exact internal HTTPS certificate and private key');

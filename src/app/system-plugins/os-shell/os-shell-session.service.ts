@@ -19,15 +19,30 @@ function number(value: unknown, fallback = 0): number {
 @Injectable({ providedIn: 'root' })
 export class OsShellSessionService {
   private readonly http = inject(HttpService);
+  private pendingCreateKey?: string;
 
   async create(): Promise<OsShellSession> {
-    const response = await this.http.request('/api/os-shell/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ networkProfile: 'console-only' }),
-      timeoutMs: 30000,
-    });
-    return this.sessionResponse(response);
+    const idempotencyKey = this.pendingCreateKey ??= crypto.randomUUID();
+    let response: Response;
+    try {
+      response = await this.http.request('/api/os-shell/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-OS-Idempotency-Key': idempotencyKey },
+        body: JSON.stringify({ networkProfile: 'console-only' }),
+        timeoutMs: 30000,
+      });
+    } catch (error) {
+      // A transport failure may have occurred after the authority committed.
+      // Retain the key so the next explicit retry resolves the same intent.
+      throw error;
+    }
+    if (!response.ok) {
+      this.pendingCreateKey = undefined;
+      throw new Error(await this.error(response));
+    }
+    const session = await this.sessionResponse(response);
+    this.pendingCreateKey = undefined;
+    return session;
   }
 
   async get(sessionId: string): Promise<OsShellSession> {

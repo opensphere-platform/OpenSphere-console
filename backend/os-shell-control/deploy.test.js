@@ -2,18 +2,31 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const { pathToFileURL } = require('node:url');
 const yaml = require('js-yaml');
 
 const source = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
 const deployScript = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Deploy-LocalEdgeOsShell.ps1'), 'utf8');
+const featureOperationScript = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Invoke-OsShellFeatureOperation.ps1'), 'utf8');
+const edgeSigning = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'os-shell-edge-signing.ps1'), 'utf8');
+const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+const admissionHarness = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Test-OsShellRuntimeAdmission.ps1'), 'utf8');
 const backendServer = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'server.js'), 'utf8');
 const backendDeploy = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
 const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 const runtimeDockerfile = fs.readFileSync(path.join(__dirname, '..', 'os-cli', 'Dockerfile.runtime'), 'utf8');
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
 const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && doc.metadata?.name === name && (!namespace || doc.metadata?.namespace === namespace));
+
+test('edge signing fails at the declared pwsh 7.2 boundary before Windows PowerShell crypto APIs run', { skip: process.platform !== 'win32' }, () => {
+  const script = path.join(__dirname, '..', '..', 'scripts', 'Test-OsShellEdgeSigning.ps1');
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', script], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /7[.]2/);
+  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /ExportPkcs8PrivateKeyPem|ECDsaCng/);
+});
 
 test('local-edge deploy joins completed kubectl output instead of binding -join as a parameter', () => {
   assert.doesNotMatch(deployScript, /= \(Invoke-Kubectl[^\r\n]+ -join [^\r\n]+\) \| ConvertFrom-Json/);
@@ -41,9 +54,11 @@ test('control workloads are distinct, exact-rendered, and default-off without Ku
     assert.equal(env.OS_SHELL_CONTROL_ENABLED, 'false'); assert.equal(env.OS_SHELL_MODE, mode);
     assert.equal(spec.containers[0].image, '__OPENSPHERE_OS_SHELL_CONTROL_IMAGE__');
     assert.equal(env.OS_SHELL_RUNTIME_IMAGE, '__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__');
+    assert.equal(env.OS_SHELL_RUNTIME_MAX_PROCESSES, '256');
+    assert.equal(env.OS_SHELL_RUNTIME_GLOBAL_POD_LIMIT, '8');
   }
   assert.equal((source.match(/__OPENSPHERE_OS_SHELL_CONTROL_IMAGE__/g) || []).length, 3);
-  assert.equal((source.match(/__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__/g) || []).length, 3);
+  assert.equal((source.match(/__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__/g) || []).length, 4);
   const consoleApi = find('Deployment', 'opensphere-shell-console-api', 'opensphere-console');
   assert.equal(consoleApi.spec.replicas, 0);
   assert.equal(consoleApi.spec.template.spec.automountServiceAccountToken, false);
@@ -53,6 +68,38 @@ test('control workloads are distinct, exact-rendered, and default-off without Ku
   assert.ok(consoleContainer.volumeMounts.some((mount) => mount.name === 'nginx-conf' && mount.mountPath === '/etc/nginx/conf.d'));
   assert.ok(consoleContainer.volumeMounts.some((mount) => mount.name === 'nginx-tmp' && mount.mountPath === '/tmp'));
   assert.equal((source.match(/__OPENSPHERE_CONSOLE_IMAGE__/g) || []).length, 1);
+});
+
+test('session namespace has a global resource budget and exact runtime template admission boundary', () => {
+  const quota = find('ResourceQuota', 'opensphere-shell-runtime-budget', 'opensphere-shell-sessions');
+  assert.deepEqual(quota.spec.hard, {
+    pods: '8', 'requests.cpu': '400m', 'requests.memory': '512Mi', 'requests.ephemeral-storage': '256Mi',
+    'limits.cpu': '8', 'limits.memory': '3Gi', 'limits.ephemeral-storage': '1536Mi',
+  });
+  const range = find('LimitRange', 'opensphere-shell-runtime-container-limits', 'opensphere-shell-sessions');
+  assert.equal(range.spec.limits[0].max['ephemeral-storage'], '128Mi');
+  const policy = find('ValidatingAdmissionPolicy', 'opensphere-shell-runtime-template-v1');
+  const binding = find('ValidatingAdmissionPolicyBinding', 'opensphere-shell-runtime-template-v1');
+  assert.equal(policy.spec.failurePolicy, 'Fail');
+  assert.equal(policy.metadata.annotations['opensphere.io/admission-contract'], 'opensphere-shell-runtime-template-v1');
+  const expressionSet = policy.spec.validations.map((entry) => entry.expression).join('\n\x1e\n');
+  assert.equal(`sha256:${require('node:crypto').createHash('sha256').update(expressionSet).digest('hex')}`,
+    policy.metadata.annotations['opensphere.io/expression-set-sha256']);
+  assert.deepEqual(policy.spec.matchConstraints.resourceRules[0].operations, ['CREATE', 'UPDATE']);
+  assert.deepEqual(policy.spec.matchConstraints.resourceRules[0].resources, ['pods']);
+  assert.deepEqual(policy.spec.matchConstraints.resourceRules[1], {
+    apiGroups: [''], apiVersions: ['v1'], operations: ['UPDATE'],
+    resources: ['pods/ephemeralcontainers', 'pods/resize'], scope: 'Namespaced',
+  });
+  assert.deepEqual(binding.spec.validationActions, ['Deny']);
+  assert.deepEqual(binding.spec.matchResources.namespaceSelector.matchLabels, { 'opensphere.io/scope': 'ephemeral-shell-runtime' });
+  const expressions = policy.spec.validations.map((entry) => entry.expression).join('\n');
+  for (const required of ['opensphere-shell-reconciler', 'opensphere-shell-runtime', '__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__',
+    "containers.size() == 2", "c.args[0] == 'pty'", "c.args[0] == 'agent'", "object.spec.volumes.size() == 5",
+    "OPENSPHERE_SHELL_NETWORK_PROFILE", "OPENSPHERE_SHELL_MAX_PROCESSES", "runtimeClassName", "nodeSelector",
+    "metadata.name == 'os-shell-'", 'metadata.generateName']) {
+    assert.match(expressions, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
 });
 
 test('reconciler RBAC is Pod lifecycle plus TokenReview only and runtime has zero bindings', () => {
@@ -197,4 +244,58 @@ test('local-edge deploy binds a runtime-only publication through an exact source
   assert.throws(() => boundary.assertHeadPaths([...runtimePaths, 'backend/supabase/migrate-only.ps1'], runtimePaths), /unbound source/);
   assert.match(runtimeDockerfile, /-X main[.]webShellAgentSocketPath=\/run\/opensphere-shell\/channel\/agent[.]sock/);
   assert.match(runtimeDockerfile, /-X main[.]webShellAgentPublicKeyPath=\/run\/opensphere-shell\/channel\/agent-public-key[.]pem/);
+});
+
+test('0062 owner operation is projected-SA, bidirectional, signed-intent-first and has no argv browser credential', () => {
+  assert.doesNotMatch(featureOperationScript, /BrowserCookie|CsrfToken|Cookie\s*=/i);
+  assert.match(featureOperationScript, /create','token','opensphere-local-edge-release'/);
+  assert.match(featureOperationScript, /--audience','opensphere-local-edge-release','--duration','10m'/);
+  assert.match(featureOperationScript, /Test-OsShellEdgeSignedDocument/);
+  assert.match(featureOperationScript, /activeTickets/);
+  assert.match(featureOperationScript, /runtimePods=0/);
+  assert.match(featureOperationScript, /'app=opensphere-os-shell-runtime'/);
+  assert.ok(featureOperationScript.indexOf("'app=opensphere-os-shell-runtime'") < featureOperationScript.indexOf("'scale',\"deployment/$deployment\""));
+  assert.match(featureOperationScript, /Deploy-LocalEdgeOsShell[.]ps1/);
+  assert.match(featureOperationScript, /'scale',"deployment\/\$deployment",'--replicas=0'/);
+  assert.match(featureOperationScript, /#requires -Version 7[.]2/);
+  assert.match(deployScript, /#requires -Version 7[.]2/);
+  assert.match(edgeSigning, /#requires -Version 7[.]2/);
+  assert.match(featureOperationScript, /Invoke-ScaleDownFence -Action Claim/);
+  assert.match(featureOperationScript, /Invoke-ScaleDownFence -Action Complete/);
+  assert.match(featureOperationScript, /\$alreadyCompleted = \[string\]\$operationResult[.]state[.]operationPhase -eq 'Completed'/);
+  assert.match(featureOperationScript, /if \(-not \$alreadyCompleted\) \{[\s\S]*Invoke-ScaleDownFence -Action Claim/);
+  assert.match(featureOperationScript, /completedAt=\[string\]\$operationResult[.]state[.]operationCompletedAt/);
+  assert.match(featureOperationScript, /RecoverySignedProfile/);
+  assert.match(featureOperationScript, /RecoverySignature/);
+  assert.ok(featureOperationScript.indexOf('Invoke-ScaleDownFence -Action Claim')
+    < featureOperationScript.indexOf("'scale',\"deployment/$deployment\""));
+  assert.match(featureOperationScript, /operationPhase='Completed'/);
+  assert.match(deployScript, /0062_shell_session_quota_and_kill_switch[.]sql/);
+  assert.match(deployScript, /latestMigrationId -ne '0062'/);
+  assert.ok(deployScript.indexOf('New-OsShellEdgeSignedDocument') < deployScript.indexOf('Invoke-LocalEdgeShellFeatureOperation -Enabled $true'));
+  assert.match(deployScript, /Invoke-OsShellFeatureOperation[.]ps1'\) -Operation Disable/);
+  assert.match(deployScript, /-RecoverySignedProfile \$profilePath -RecoverySignature \$signaturePath/);
+  assert.match(deployScript, /activation-failure-disable[.]json/);
+  assert.match(deployScript, /releaseIntentSignatureSha256/);
+  assert.match(deployScript, /publicationEvidence = \[ordered\]@\{/);
+  assert.match(featureOperationScript, /Disable publication evidence is not bound by the trusted signed ReleaseIntent/);
+  assert.match(deployScript, /profileId = 'os-shell-full-page-operator-local-edge\/v1'/);
+  assert.match(deployScript, /result = 'NOT_EXECUTED'/);
+  assert.match(deployScript, /manifestDigest = \$applicableEvidenceSetDigest/);
+  assert.match(deployScript, /plan011CompletionClaim = \$false/);
+  assert.match(edgeSigning, /IeeeP1363FixedFieldConcatenation/);
+  assert.match(edgeSigning, /ACL inheritance must be disabled/);
+  assert.match(edgeSigning, /single unencrypted PKCS8 P-256 key/);
+  assert.match(publisher, /maxProcesses\s*=\s*256/);
+  assert.match(publisher, /globalPodLimit\s*=\s*8/);
+  assert.match(admissionHarness, /--subresource=ephemeralcontainers/);
+  assert.match(admissionHarness, /--subresource=resize/);
+  assert.match(admissionHarness, /--as-group system:masters/);
+  assert.match(admissionHarness, /^#requires -Version 7[.]2/);
+  assert.match(admissionHarness, /opensphere-shell-runtime-template-v1/);
+  assert.match(backendServer, /validateLocalEdgeAutomationTokenClaims/);
+  assert.match(backendServer, /ShellFeatureBrowserEnableRequiresVerifiedRelease/);
+  assert.match(backendServer, /signed local-edge release owner after exact migration, component, and readiness verification/);
+  assert.match(backendServer, /scale-down-claim/);
+  assert.match(backendServer, /scale-down-complete/);
 });
