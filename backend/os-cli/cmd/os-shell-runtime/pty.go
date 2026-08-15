@@ -98,11 +98,7 @@ func publishInternalPTYToken() ([]byte, error) {
 	token := []byte(base64.RawURLEncoding.EncodeToString(randomBytes))
 	wipe(randomBytes)
 	directory := filepath.Dir(configuredInternalPTYTokenPath)
-	if err := os.MkdirAll(directory, 0o750); err != nil {
-		wipe(token)
-		return nil, err
-	}
-	if err := os.Chmod(directory, 0o750); err != nil {
+	if err := prepareRuntimeDirectory(directory); err != nil {
 		wipe(token)
 		return nil, err
 	}

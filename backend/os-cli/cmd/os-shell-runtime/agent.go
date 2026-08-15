@@ -139,10 +139,7 @@ func runAgent(ctx context.Context, binding runtimeBinding) error {
 
 func publishPublicKey(publicPEM []byte) error {
 	directory := filepath.Dir(configuredPublicKeyPath)
-	if err := os.MkdirAll(directory, 0o750); err != nil {
-		return err
-	}
-	if err := os.Chmod(directory, 0o750); err != nil {
+	if err := prepareRuntimeDirectory(directory); err != nil {
 		return err
 	}
 	temporary, err := os.CreateTemp(directory, ".agent-public-key-*")
@@ -174,10 +171,7 @@ func publishPublicKey(publicPEM []byte) error {
 
 func listenAgentUnixSocket() (net.Listener, error) {
 	directory := filepath.Dir(configuredAgentSocketPath)
-	if err := os.MkdirAll(directory, 0o750); err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(directory, 0o750); err != nil {
+	if err := prepareRuntimeDirectory(directory); err != nil {
 		return nil, err
 	}
 	if info, err := os.Lstat(configuredAgentSocketPath); err == nil {

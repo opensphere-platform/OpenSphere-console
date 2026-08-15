@@ -477,6 +477,20 @@ func TestInternalPTYTokenIsTmpfsStyleAndConsumedOnce(t *testing.T) {
 	wipe(read)
 }
 
+func TestPrepareRuntimeDirectoryCreatesPrivateDirectory(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "runtime")
+	if err := prepareRuntimeDirectory(directory); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o007 != 0 {
+		t.Fatalf("runtime directory must not be accessible to other users: %s", info.Mode().Perm())
+	}
+}
+
 func TestPTYRejectsStaleEpochAndInvalidToken(t *testing.T) {
 	binding := testBinding()
 	for name, mutate := range map[string]func(*ptyFrame){
