@@ -248,7 +248,11 @@ func readProjectedBootstrapToken() ([]byte, error) {
 		return nil, fmt.Errorf("projected runtime bootstrap token unavailable: %w", err)
 	}
 	root := filepath.Dir(cleanPath)
-	relative, err := filepath.Rel(root, resolvedPath)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("projected runtime bootstrap volume unavailable: %w", err)
+	}
+	relative, err := filepath.Rel(resolvedRoot, resolvedPath)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
 		return nil, errors.New("projected runtime bootstrap token escapes its projected volume")
 	}
