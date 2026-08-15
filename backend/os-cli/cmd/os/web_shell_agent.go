@@ -33,8 +33,8 @@ const (
 // These fixed, non-environment paths are part of the operator-interactive
 // runtime template. Tests replace them in-process; users cannot select a
 // different authority with argv, environment variables, or ~/.os/config.json.
-var webShellAgentSocketPath = "/run/opensphere-shell/channel/agent.sock"
-var webShellAgentPublicKeyPath = "/run/opensphere-shell/channel/agent-public-key.pem"
+var webShellAgentSocketPath = "/run/opensphere-shell/agent.sock"
+var webShellAgentPublicKeyPath = "/run/opensphere-shell/agent-public-key.pem"
 var webShellAgentNow = time.Now
 var webShellConsoleAPIURL = "https://opensphere-shell-console-api.opensphere-console.svc.cluster.local:8445"
 

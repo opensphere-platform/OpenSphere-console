@@ -550,6 +550,59 @@ func TestSensitiveRuntimeArtifactsUseOwnedChildDirectories(t *testing.T) {
 	}
 }
 
+func TestProjectedBootstrapTokenAcceptsInVolumeSymlinkAndGroupRead(t *testing.T) {
+	original := bootstrapTokenPath
+	root := t.TempDir()
+	dataDirectory := filepath.Join(root, "..2026_08_15")
+	if err := os.Mkdir(dataDirectory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dataDirectory, "token")
+	expected := []byte("projected-bound-service-account-token-1234567890")
+	if err := os.WriteFile(target, expected, 0o440); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapTokenPath = filepath.Join(root, "opensphere-shell-runtime-bootstrap")
+	if err := os.Symlink(filepath.Join("..2026_08_15", "token"), bootstrapTokenPath); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { bootstrapTokenPath = original })
+	actual, err := readProjectedBootstrapToken()
+	if err != nil || string(actual) != string(expected) {
+		t.Fatalf("projected in-volume symlink must be accepted: err=%v", err)
+	}
+	wipe(actual)
+}
+
+func TestProjectedBootstrapTokenRejectsSymlinkEscapeAndWritableToken(t *testing.T) {
+	original := bootstrapTokenPath
+	t.Cleanup(func() { bootstrapTokenPath = original })
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside-token")
+	if err := os.WriteFile(outside, []byte("projected-bound-service-account-token-1234567890"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapTokenPath = filepath.Join(root, "escape")
+	if err := os.Symlink(outside, bootstrapTokenPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readProjectedBootstrapToken(); err == nil {
+		t.Fatal("projected token symlink escape must be rejected")
+	}
+	if err := os.Remove(bootstrapTokenPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bootstrapTokenPath, []byte("projected-bound-service-account-token-1234567890"), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bootstrapTokenPath, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readProjectedBootstrapToken(); err == nil {
+		t.Fatal("group-writable projected token must be rejected")
+	}
+}
+
 func TestPTYRejectsStaleEpochAndInvalidToken(t *testing.T) {
 	binding := testBinding()
 	for name, mutate := range map[string]func(*ptyFrame){
