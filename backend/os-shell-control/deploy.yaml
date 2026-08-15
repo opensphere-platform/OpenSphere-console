@@ -323,7 +323,7 @@ metadata:
   name: opensphere-shell-runtime-template-v1
   annotations:
     opensphere.io/admission-contract: opensphere-shell-runtime-template-v1
-    opensphere.io/expression-set-sha256: sha256:69c748d9eb023d9e79dbd5752c81256f09c8f6c5ba105b47e66bcaa3d13f3547
+    opensphere.io/expression-set-sha256: sha256:65a1d0783c15be5d17a708b3f918c9e7e0c55054b0ba939fd29defa2447ddb2d
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -369,7 +369,15 @@ spec:
         (!has(object.spec.runtimeClassName) || object.spec.runtimeClassName == '') &&
         (!has(object.spec.nodeName) || object.spec.nodeName == '') &&
         (!has(object.spec.nodeSelector) || object.spec.nodeSelector.size() == 0) &&
-        (!has(object.spec.affinity)) && (!has(object.spec.tolerations) || object.spec.tolerations.size() == 0) &&
+        (!has(object.spec.affinity)) &&
+        object.spec.tolerations.size() == 2 &&
+        object.spec.tolerations.all(t,
+          (t.key == 'node.kubernetes.io/not-ready' || t.key == 'node.kubernetes.io/unreachable') &&
+          t.operator == 'Exists' && t.effect == 'NoExecute' && t.tolerationSeconds == 300 &&
+          (!has(t.value) || t.value == '')
+        ) &&
+        object.spec.tolerations.exists(t, t.key == 'node.kubernetes.io/not-ready') &&
+        object.spec.tolerations.exists(t, t.key == 'node.kubernetes.io/unreachable') &&
         (!has(object.spec.shareProcessNamespace) || object.spec.shareProcessNamespace == false) &&
         (!has(object.spec.dnsConfig)) && (!has(object.spec.hostAliases) || object.spec.hostAliases.size() == 0) &&
         (!has(object.spec.activeDeadlineSeconds)) && (!has(object.spec.priorityClassName) || object.spec.priorityClassName == '') &&

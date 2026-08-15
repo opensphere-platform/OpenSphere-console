@@ -24,7 +24,7 @@ process.stdout.write(JSON.stringify(buildRuntimePod({ session_id: sessionId, act
   runtimeMaxProcesses: 256,
   registrationURL: 'https://opensphere-shell-reconciler.opensphere-console.svc.cluster.local:8443/internal/runtime/register',
   runtimeControlURL: 'https://opensphere-shell-api.opensphere-console.svc.cluster.local:8443/api/os-shell/runtime',
-  consoleAPIURL: 'https://opensphere-shell-console-api.opensphere-console.svc.cluster.local:8445' }));
+  consoleAPIURL: 'https://opensphere-shell-console-api.opensphere-console.svc.cluster.local:8445' })));
 '@ $module $RuntimeImage $sessionId $actorId
 if ($LASTEXITCODE -ne 0 -or -not $canonical) { throw 'canonical runtime Pod fixture generation failed' }
 
@@ -63,6 +63,18 @@ $negativeCases = @(
   @{ Name = 'env-value-from'; Apply = { param($p) $p.spec.containers[0].env[0].PSObject.Properties.Remove('value'); $p.spec.containers[0].env[0] | Add-Member -NotePropertyName valueFrom -NotePropertyValue @{ secretKeyRef = @{ name = 'stolen'; key = 'token' } } } },
   @{ Name = 'node-selector'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName nodeSelector -NotePropertyValue @{ 'kubernetes.io/hostname' = 'attacker-selected' } -Force } },
   @{ Name = 'runtime-class'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName runtimeClassName -NotePropertyValue 'attacker-runtime' -Force } },
+  @{ Name = 'extra-toleration'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(@{ key='attacker'; operator='Exists'; effect='NoSchedule' }) -Force } },
+  @{ Name = 'duplicate-default-toleration'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(
+    @{ key='node.kubernetes.io/not-ready'; operator='Exists'; effect='NoExecute'; tolerationSeconds=300 },
+    @{ key='node.kubernetes.io/not-ready'; operator='Exists'; effect='NoExecute'; tolerationSeconds=300 }) -Force } },
+  @{ Name = 'toleration-seconds'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(
+    @{ key='node.kubernetes.io/not-ready'; operator='Exists'; effect='NoExecute'; tolerationSeconds=301 }) -Force } },
+  @{ Name = 'toleration-effect'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(
+    @{ key='node.kubernetes.io/not-ready'; operator='Exists'; effect='NoSchedule' }) -Force } },
+  @{ Name = 'toleration-operator'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(
+    @{ key='node.kubernetes.io/not-ready'; operator='Equal'; value=''; effect='NoExecute'; tolerationSeconds=300 }) -Force } },
+  @{ Name = 'toleration-value'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(
+    @{ key='node.kubernetes.io/not-ready'; operator='Equal'; value='attacker'; effect='NoExecute'; tolerationSeconds=300 }) -Force } },
   @{ Name = 'service-account'; Apply = { param($p) $p.spec.serviceAccountName = 'default' } },
   @{ Name = 'extra-volume'; Apply = { param($p) $p.spec.volumes += @{ name = 'extra'; emptyDir = @{ medium = 'Memory'; sizeLimit = '1Mi' } } } },
   @{ Name = 'share-process'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName shareProcessNamespace -NotePropertyValue $true -Force } },
@@ -146,6 +158,7 @@ if ($LiveCreate) {
   contract = 'opensphere-shell-runtime-template-v1'
   canonicalServerDryRun = 'Allowed'
   canonicalLiveCreate = if ($LiveCreate) { 'AllowedThenDeleted' } else { 'NotRequested' }
+  defaultTolerations = 'ExactNotReadyAndUnreachableNoExecute300s'
   mutatedServerDryRun = 'Denied'
   mutatedLiveCreate = 'Denied'
   ephemeralContainerSubresource = if ($LiveCreate) { 'DeniedByExactPolicy' } else { 'NotRequested' }

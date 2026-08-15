@@ -946,6 +946,7 @@ $deploymentToolingAllowlist = @(
   'scripts/Deploy-LocalEdgeOsShell.ps1',
   'scripts/os-shell-edge-signing.ps1',
   'scripts/Test-OsShellEdgeSigning.ps1',
+  'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/Invoke-OsShellFeatureOperation.ps1',
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
