@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -245,10 +246,20 @@ func rawRequest(method, rawURL string, body io.Reader, contentType, accessToken 
 }
 
 func rawRequestWithRetryAfter(method, rawURL string, body io.Reader, contentType, accessToken string) ([]byte, int, string, string, error) {
+	return rawRequestWithRetryAfterContext(context.Background(), method, rawURL, body, contentType, accessToken)
+}
+
+func rawRequestWithRetryAfterContext(ctx context.Context, method, rawURL string, body io.Reader, contentType, accessToken string) ([]byte, int, string, string, error) {
 	if err := validateURL(rawURL); err != nil {
 		return nil, 0, "", "", err
 	}
-	req, err := http.NewRequest(method, rawURL, body)
+	if response, status, responseContentType, retryAfter, present, err := proxyWebShellRequest(ctx, method, rawURL, body, contentType); present || err != nil {
+		return response, status, responseContentType, retryAfter, err
+	}
+	if accessToken == webShellAgentTransport {
+		return nil, 0, "", "", &CLIError{Code: "ExecutionContextUnavailable", Message: "Web Shell agent transport가 요청 전에 종료되었습니다"}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, 0, "", "", err
 	}
@@ -315,6 +326,17 @@ func signDeviceChallenge(privateDER []byte, deviceID, challengeID, nonce string)
 }
 
 func credentialToken(cfg Config) (string, error) {
+	if response, present, err := callWebShellAgent(context.Background(), "context"); present || err != nil {
+		if err != nil {
+			return "", err
+		}
+		if _, err := verifyWebShellContextJWS(response.ContextJWS); err != nil {
+			return "", err
+		}
+		// The Web Shell bearer never crosses the agent boundary. The subsequent
+		// raw request is transported through the Unix agent socket instead.
+		return webShellAgentTransport, nil
+	}
 	if strings.TrimSpace(cfg.PAT) != "" {
 		return strings.TrimSpace(cfg.PAT), nil
 	}

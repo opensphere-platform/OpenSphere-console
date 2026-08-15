@@ -7,7 +7,7 @@ param(
   [string]$SetupRepository = 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git',
   [string]$SetupSourcePath = '',
   [switch]$UseExistingRegistryLogin,
-  [ValidateSet('console', 'cliArtifacts', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
+  [ValidateSet('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
   [string[]]$Components = @('console', 'backend', 'dupaController', 'oaaGateway', 'oaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
 )
 
@@ -165,7 +165,34 @@ Write-Host "[policy] build-authority=localhost, release-class=pre-ga, ga-eligibl
 
 Write-Host '[step 01/06] Prepare clean Console, SDK and governed Setup source'
 Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRevision
-Invoke-Checked git clone --depth 1 --branch main $SdkRepository $sdkCheckout
+$sdkSourceLockPath = Join-Path $consoleCheckout 'sdk-source.lock'
+$sdkSourceRevision = (Get-Content -LiteralPath $sdkSourceLockPath -Raw).Trim()
+if ($sdkSourceRevision -notmatch '^[0-9a-f]{40}$') {
+  throw 'The governed Console sdk-source.lock is invalid.'
+}
+
+function Get-FileSha256 {
+  param([Parameter(Mandatory)][string]$Path)
+  $stream = [IO.File]::OpenRead($Path)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    return 'sha256:' + ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
+    $stream.Dispose()
+  }
+}
+New-Item -ItemType Directory -Path $sdkCheckout | Out-Null
+Invoke-Checked git -C $sdkCheckout init
+Invoke-Checked git -C $sdkCheckout remote add origin $SdkRepository
+Invoke-Checked git -C $sdkCheckout fetch --depth 1 origin $sdkSourceRevision
+Invoke-Checked git -C $sdkCheckout checkout --detach FETCH_HEAD
+$actualSdkSourceRevision = (& git -C $sdkCheckout rev-parse HEAD).Trim()
+$sdkDirty = & git -C $sdkCheckout status --short
+if ($actualSdkSourceRevision -ne $sdkSourceRevision -or $sdkDirty) {
+  throw "SDK checkout does not match governed lock $sdkSourceRevision."
+}
+Write-Host "[sdk] $sdkSourceRevision"
 $backendSelected = $Components.Count -eq 0 -or $Components -contains 'backend'
 $setupSourceRevision = ''
 if ($backendSelected) {
@@ -201,7 +228,8 @@ function Assert-LocalEdgeImageMetadata {
     [Parameter(Mandatory)][string]$Digest,
     [Parameter(Mandatory)][string]$ExpectedSourceRevision,
     [Parameter(Mandatory)][string]$ExpectedReleaseTag,
-    [Parameter(Mandatory)][string]$ExpectedPlatform
+    [Parameter(Mandatory)][string]$ExpectedPlatform,
+    [string]$ExpectedSdkSourceRevision = ''
   )
 
   $reference = "${Repository}@${Digest}"
@@ -227,6 +255,9 @@ function Assert-LocalEdgeImageMetadata {
     'opensphere.io/build-authority' = 'localhost'
     'opensphere.io/release-class' = 'pre-ga'
     'opensphere.io/ga-eligible' = 'false'
+  }
+  if ($ExpectedSdkSourceRevision) {
+    $expectedLabels['io.opensphere.sdk-source-revision'] = $ExpectedSdkSourceRevision
   }
   foreach ($entry in $expectedLabels.GetEnumerator()) {
     $property = $image.config.Labels.PSObject.Properties[$entry.Key]
@@ -276,6 +307,11 @@ $allImages = @(
   # build and rollout. They are intentionally not added to the 13-component
   # Platform Release lock merely to decouple an Angular UI build.
   [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile') },
+  # OS Shell control and runtime are CBSS-owned auxiliary workloads. They have
+  # their own exact-digest deployment evidence and must never expand the
+  # governed 13-component Platform Release lock.
+  [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\os-shell-control\Dockerfile') },
+  [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile.runtime') },
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'); SetupContext = $setupCheckout },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'oaaGateway'; Image = 'opensphere-console-oaa-gateway'; Context = (Join-Path $consoleCheckout 'backend\opensphere-console-oaa-gateway'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-oaa-gateway\Dockerfile') },
@@ -289,13 +325,19 @@ $allImages = @(
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
-$canonicalImages = @($allImages | Where-Object { $_.Key -ne 'cliArtifacts' })
+$auxiliaryComponentKeys = @('cliArtifacts', 'osShellControl', 'osShellRuntime')
+$canonicalImages = @($allImages | Where-Object { $_.Key -notin $auxiliaryComponentKeys })
 $requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
 $images = @($allImages | Where-Object { $requestedComponents.Contains($_.Key) })
 if (-not $images.Count) { throw 'At least one Console component must be selected.' }
+foreach ($item in $images) {
+  if (-not (Test-Path -LiteralPath $item.Context) -or -not (Test-Path -LiteralPath $item.File)) {
+    throw "Selected component $($item.Key) is not buildable from the committed source revision. Missing context or Dockerfile: $($item.File)"
+  }
+}
 $integratedPublication = $images.Count -eq $canonicalImages.Count `
-  -and -not ($images.Key -contains 'cliArtifacts') `
+  -and @($images | Where-Object { $_.Key -in $auxiliaryComponentKeys }).Count -eq 0 `
   -and @($canonicalImages | Where-Object { -not $requestedComponents.Contains($_.Key) }).Count -eq 0
 $partialPublication = -not $integratedPublication
 $integratedAnchorBefore = if ($partialPublication -and ($images | Where-Object { $_.Key -eq 'console' })) {
@@ -371,6 +413,9 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
       '--build-arg', "SETUP_SOURCE_REVISION=$setupSourceRevision"
     )
   }
+  if ($item.Key -eq 'console') {
+    $arguments += @('--build-arg', "SDK_SOURCE_REVISION=$sdkSourceRevision")
+  }
   $arguments += $item.Context
   Invoke-Checked docker @arguments
   $metadata = Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json
@@ -380,9 +425,10 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
   }
   # This is the only promotion path. Fail before any date/channel tag moves if
   # Buildx produced the wrong platform or if any policy label is absent/stale.
+  $sdkMetadataRevision = if ($item.Key -eq 'console') { $sdkSourceRevision } else { '' }
   Assert-LocalEdgeImageMetadata -Repository $repository -Digest $digest `
     -ExpectedSourceRevision $SourceRevision -ExpectedReleaseTag $releaseTag `
-    -ExpectedPlatform $Platform
+    -ExpectedPlatform $Platform -ExpectedSdkSourceRevision $sdkMetadataRevision
   $digests[$item.Key] = $digest
   Write-Host "[pushed] ${repository}:$localTag -> $digest"
 }
@@ -393,6 +439,55 @@ foreach ($item in $images) {
   Set-RemoteTag -Repository $repository -Digest $digests[$item.Key] -Tag $releaseTag -Immutable
 }
 
+# A five-component OS Shell publication must carry the signed CLI manifest
+# that its exact cliArtifacts image actually serves. Extracting from the
+# stopped image (never executing it) closes manifestSha256/keyId over the same
+# digest later admitted into every session receipt.
+$osShellReleaseArtifact = $null
+$osShellComponentKeys = @('console', 'backend', 'cliArtifacts', 'osShellControl', 'osShellRuntime')
+$isExactOsShellPublication = $images.Count -eq $osShellComponentKeys.Count `
+  -and @($osShellComponentKeys | Where-Object { -not $requestedComponents.Contains($_) }).Count -eq 0
+if ($isExactOsShellPublication) {
+  $cliManifestEvidencePath = Join-Path $metadataRoot 'opensphere-os-cli-index.json'
+  $cliEvidenceContainer = "opensphere-cli-evidence-$([guid]::NewGuid().ToString('N'))"
+  $cliEvidenceContainerCreated = $false
+  try {
+    Invoke-Checked docker create --name $cliEvidenceContainer `
+      "$Registry/opensphere-os-cli@$($digests.cliArtifacts)"
+    $cliEvidenceContainerCreated = $true
+    Invoke-Checked docker cp "${cliEvidenceContainer}:/srv/index.json" $cliManifestEvidencePath
+  } finally {
+    if ($cliEvidenceContainerCreated) {
+      Invoke-Checked docker container rm $cliEvidenceContainer
+    }
+  }
+  $cliManifestEvidence = Get-Content -Raw -LiteralPath $cliManifestEvidencePath | ConvertFrom-Json
+  if ([string]$cliManifestEvidence.signature.algorithm -ne 'Ed25519' -or
+      [string]$cliManifestEvidence.signature.keyId -ne 'opensphere-cli-local-dev-v1' -or
+      [string]$cliManifestEvidence.signature.value -notmatch '^[A-Za-z0-9_-]{80,128}$' -or
+      -not @($cliManifestEvidence.links).Count -or
+      @($cliManifestEvidence.links | Where-Object {
+        [string]$_.sha256 -notmatch '^[a-f0-9]{64}$' -or [int64]$_.size -le 0
+      }).Count) {
+    throw 'The exact cliArtifacts image does not contain a canonical signed local-edge manifest'
+  }
+  $runtimeTemplatePath = Join-Path $consoleCheckout 'backend\os-shell-control\runtime-template.js'
+  $osShellReleaseArtifact = [ordered]@{
+    cliManifest = [ordered]@{
+      image = "$Registry/opensphere-os-cli@$($digests.cliArtifacts)"
+      imagePath = '/srv/index.json'
+      sha256 = Get-FileSha256 -Path $cliManifestEvidencePath
+      signatureAlgorithm = [string]$cliManifestEvidence.signature.algorithm
+      keyId = [string]$cliManifestEvidence.signature.keyId
+    }
+    runtimeTemplate = [ordered]@{
+      path = 'backend/os-shell-control/runtime-template.js'
+      sha256 = Get-CanonicalTextSha256 -Path $runtimeTemplatePath
+    }
+    sessionPolicyRevision = 'operator-interactive-v1'
+  }
+}
+
 $componentEvidence = [ordered]@{}
 foreach ($item in $images) {
   $repository = "$Registry/$($item.Image)"
@@ -400,6 +495,14 @@ foreach ($item in $images) {
     repository = $item.Image
     image = "${repository}@$($digests[$item.Key])"
     sourceRevision = $SourceRevision
+  }
+  if ($item.Key -eq 'console') {
+    $componentEvidence[$item.Key].inputs = [ordered]@{
+      sdk = [ordered]@{
+        repository = $SdkRepository
+        sourceRevision = $sdkSourceRevision
+      }
+    }
   }
 }
 $migrationManifestPath = Join-Path $consoleCheckout 'backend\supabase\migrations\manifest.json'
@@ -414,6 +517,10 @@ if ($migrationManifest.schemaVersion -ne 2 -or
   throw 'Supabase migration manifest evidence is not canonical'
 }
 $releaseArtifacts = [ordered]@{
+  sdkSource = [ordered]@{
+    repository = $SdkRepository
+    sourceRevision = $sdkSourceRevision
+  }
   supabaseMigrationManifest = [ordered]@{
     path = 'backend/supabase/migrations/manifest.json'
     sha256 = Get-CanonicalTextSha256 -Path $migrationManifestPath
@@ -421,6 +528,9 @@ $releaseArtifacts = [ordered]@{
     latestMigrationId = [string]$migrationManifest.latestMigrationId
     migrationCount = [int]$migrationManifest.migrationCount
   }
+}
+if ($osShellReleaseArtifact) {
+  $releaseArtifacts['osShellRelease'] = $osShellReleaseArtifact
 }
 $bom = [ordered]@{
   apiVersion = 'release.opensphere.io/v1alpha1'

@@ -10,6 +10,7 @@ import { provideAnimationsAsync } from '@angular/platform-browser/animations/asy
 
 import { routes } from './app.routes';
 import { AuthService } from './core/auth.service';
+import { SystemPluginRegistryService } from './core/system-plugin-registry.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -23,5 +24,8 @@ export const appConfig: ApplicationConfig = {
       const auth = inject(AuthService);
       auth.startInitialization();
     }),
+    // Built-in descriptor validation is independent from optional DUPA
+    // Registry loading and cannot block unrelated Console surfaces.
+    provideAppInitializer(() => inject(SystemPluginRegistryService).initialize()),
   ],
 };

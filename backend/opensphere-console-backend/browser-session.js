@@ -651,6 +651,7 @@ function createBrowserSessionManager({
     }
     return {
       active: true, actorId, assurance: String(claims.assurance || row.assurance || 'aal1'),
+      groups: Array.isArray(claims.groups) ? claims.groups : [],
       permissions: Array.isArray(claims.permissions) ? claims.permissions : [],
       authzRevision: String(operator.credential_revision ?? row.credential_revision ?? 0), accessToken,
       lastReauthenticatedAt: row.last_reauthenticated_at || null,

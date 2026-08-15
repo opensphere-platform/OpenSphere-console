@@ -1,5 +1,6 @@
 // Console Backend — Supabase-backed identity/catalo​g/kubernetes proxy core.
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { createHmac, createHash, randomBytes, randomUUID, timingSafeEqual, createPublicKey, verify: verifySignature } = require('crypto');
@@ -12,6 +13,8 @@ const { normalizedEvent } = require('../notification-dispatcher/contract');
 const { createBrowserSessionManager } = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
+const { createOsShellAdmissionIssuer } = require('./os-shell-admission');
+const { createOsShellCredentialExchange } = require('./os-shell-delegation');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 const { createModuleOperationApi } = require('./module-operation-api');
 const { createR2d2OperationApi, createRestOperationStore, createRestWorkerStore } = require('./r2d2-operation-api');
@@ -93,6 +96,12 @@ const R2D2_ENGINEERING_PROPOSAL_ENABLED = process.env.R2D2_ENGINEERING_PROPOSAL_
 const R2D2_ENGINEERING_PROPOSAL_REPOSITORIES = String(process.env.R2D2_ENGINEERING_PROPOSAL_REPOSITORIES || '')
   .split(',').map((value) => value.trim()).filter(Boolean);
 const R2D2_ENGINEERING_EXECUTION_ENABLED = process.env.R2D2_ENGINEERING_EXECUTION_ENABLED === 'true';
+const OS_SHELL_ADMISSION_ENABLED = process.env.OS_SHELL_ADMISSION_ENABLED === 'true';
+const OS_SHELL_ADMISSION_SECRET = process.env.OS_SHELL_ADMISSION_SECRET || '';
+const OS_SHELL_DELEGATION_SECRET = process.env.OS_SHELL_DELEGATION_SECRET || '';
+const OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED === 'true';
+const OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE || '';
+const OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE || '';
 const R2D2_OPERATION_WORKER_ID = String(process.env.R2D2_OPERATION_WORKER_ID || process.env.HOSTNAME || `backend-${process.pid}`).slice(0, 128);
 const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env.R2D2_OPERATION_POLL_MS || 3000) || 3000));
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
@@ -151,6 +160,8 @@ const CONSOLE_ROLE_GROUPS = new Set(
 const AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'supabase';
 let verifySupabaseToken = null;
 let browserSessions = null;
+let issueOsShellAdmission = null;
+let exchangeOsShellCredential = null;
 let baselineMonitoring = null;
 if (AUTH_PROVIDER === 'supabase' || AUTH_PROVIDER === 'dual') {
   try {
@@ -226,7 +237,8 @@ function verifyCliToken(token) {
   if (header.alg !== 'HS256' || !safeEqual(expected, signature)) throw { code: 401, msg: 'bad CLI token signature' };
   if (claims.iss !== CLI_TOKEN_ISSUER || claims.aud !== CLI_TOKEN_AUDIENCE || !claims.sub || !claims.jti) throw { code: 401, msg: 'invalid CLI token claims' };
   if (!claims.iat || claims.iat > now + 30 || !claims.exp || claims.exp <= now) throw { code: 401, msg: 'expired CLI token' };
-  if (!['cli_session', 'pat'].includes(claims.typ)) throw { code: 401, msg: 'unsupported CLI token type' };
+  if (!['cli_session', 'pat', 'web_shell'].includes(claims.typ)) throw { code: 401, msg: 'unsupported CLI token type' };
+  if (claims.typ === 'web_shell' && claims.exp - claims.iat > 300) throw { code: 401, msg: 'web shell credential lifetime is invalid' };
   return claims;
 }
 
@@ -675,6 +687,16 @@ async function resolveConsoleActor(subject, claims = {}) {
 
 async function verifyManagedCliToken(token) {
   const claims = verifyCliToken(token);
+  if (claims.typ === 'web_shell') {
+    const rows = await restRequest('rpc/resolve_shell_delegation', { method: 'POST', body: {
+      p_session_id: claims.session_id, p_actor_id: claims.sub, p_generation: claims.generation,
+      p_fencing_epoch: claims.fencing_epoch, p_permission_revision: claims.permission_revision, p_aal: claims.aal,
+    } });
+    if (!Array.isArray(rows) || rows.length !== 1 || rows[0].session_id !== claims.jti) throw { code: 401, msg: 'web shell session authority revoked' };
+    const actor = await resolveConsoleActor(claims.sub, claims);
+    return { ...actor, assurance: claims.aal, provider: 'opensphere-web-shell', browserSessionId: rows[0].browser_session_id,
+      permissionRevision: claims.permission_revision, shellSessionId: claims.session_id };
+  }
   const resource = claims.typ === 'pat' ? 'api_token' : 'cli_session';
   const fields = claims.typ === 'pat'
     ? 'id,owner_id,credential_revision,status,expires_at,token_hash,scope'
@@ -2382,6 +2404,31 @@ async function platformReleaseStatus() {
   };
 }
 
+if (OS_SHELL_ADMISSION_ENABLED) {
+  issueOsShellAdmission = createOsShellAdmissionIssuer({
+    secret: OS_SHELL_ADMISSION_SECRET,
+    ttlSeconds: Math.min(15, Math.max(1, Number(process.env.OS_SHELL_ADMISSION_TTL_SEC || 12))),
+    allowLoopbackHttp: process.env.OS_SHELL_DEV_HTTP_LOOPBACK === 'true',
+  });
+}
+
+if (OS_SHELL_DELEGATION_SECRET) {
+  exchangeOsShellCredential = createOsShellCredentialExchange({
+    secret: OS_SHELL_DELEGATION_SECRET,
+    resolveShellSession: async (binding) => {
+      const rows = await restRequest('rpc/resolve_shell_delegation', { method: 'POST', body: {
+        p_session_id: binding.sessionId, p_actor_id: binding.actorId, p_generation: binding.generation,
+        p_fencing_epoch: binding.fencingEpoch, p_permission_revision: binding.permissionRevision, p_aal: binding.aal,
+      } });
+      return Array.isArray(rows) ? rows[0] || null : null;
+    },
+    resolveBrowserSession: (sessionId, actorId) => {
+      if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+      return browserSessions.resolveForDurableExecution(sessionId, actorId);
+    },
+    issueToken: cliToken,
+  });
+}
 async function generatePlatformComponentTarget(actor, body = {}) {
   requireActorPermission(actor, 'console.git.change');
   requireRecentAal2(actor, 'Platform Release component target generation');
@@ -4589,6 +4636,22 @@ const server = http.createServer(async (req, res) => {
         return json(res, authErrorStatus(e), { error: e.msg || 'Platform component release target generation failed' });
       }
     }
+    if (p === '/api/internal/os-shell-authn' && req.method === 'GET' && issueOsShellAdmission) {
+      try {
+        const result = await issueOsShellAdmission(req, (forwarded) => {
+          if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+          return browserSessions.authenticate(forwarded);
+        });
+        res.writeHead(204, {
+          'cache-control': 'no-store',
+          'x-os-shell-admission': result.assertion,
+          'x-os-shell-permission-revision': result.permissionRevision,
+        });
+        return res.end();
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'OS Shell admission failed' }, { 'cache-control': 'no-store' });
+      }
+    }
     const changeTemplateStatusPath = p.match(/^\/api\/platform\/change-templates\/([a-z0-9-]+)\/status$/);
     if (changeTemplateStatusPath && req.method === 'GET') {
       try { await verifyConsoleAdmin(req); return json(res, 200, await changeTemplateRequestStatus(changeTemplateStatusPath[1])); }
@@ -4867,6 +4930,33 @@ server.listen(PORT, () => {
   startR2d2OperationWorker();
 });
 
-function stopR2d2Worker() { if (r2d2OperationTimer) clearInterval(r2d2OperationTimer); }
+let credentialAuthorityServer = null;
+if (OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED) {
+  if (!exchangeOsShellCredential || !OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE || !OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE) {
+    throw new Error('OS Shell credential authority requires delegation secret and exact TLS keypair');
+  }
+  credentialAuthorityServer = https.createServer({
+    cert: fs.readFileSync(OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE),
+    key: fs.readFileSync(OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE),
+    minVersion: 'TLSv1.3',
+  }, async (req, res) => {
+    if (req.method === 'GET' && req.url === '/readyz') {
+      try {
+        const authority = await requireSupabase();
+        return json(res, 200, { ...authority, ready: true, service: 'opensphere-shell-credential-authority' }, { 'cache-control': 'no-store' });
+      } catch (e) {
+        return json(res, 503, { ready: false, service: 'opensphere-shell-credential-authority', error: e.msg || e.message || 'authority unavailable' }, { 'cache-control': 'no-store' });
+      }
+    }
+    if (req.method !== 'POST' || req.url !== '/api/internal/os-shell/credential') {
+      res.writeHead(404, { 'cache-control': 'no-store' }); return res.end();
+    }
+    try { return json(res, 200, await exchangeOsShellCredential(req, await readBody(req)), { 'cache-control': 'no-store' }); }
+    catch (e) { return json(res, authErrorStatus(e), { error: e.msg || e.message || 'OS Shell delegated credential exchange failed' }, { 'cache-control': 'no-store' }); }
+  });
+  credentialAuthorityServer.listen(8444, '0.0.0.0', () => console.log('OS Shell credential authority listening with TLS 1.3 on :8444'));
+}
+
+function stopR2d2Worker() { if (r2d2OperationTimer) clearInterval(r2d2OperationTimer); if (credentialAuthorityServer) credentialAuthorityServer.close(); }
 process.on('SIGTERM', stopR2d2Worker);
 process.on('SIGINT', stopR2d2Worker);

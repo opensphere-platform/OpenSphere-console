@@ -54,6 +54,10 @@ COPY opensphere-console-backend/cli-token-policy.js ./cli-token-policy.js
 COPY opensphere-console-backend/browser-session.js ./browser-session.js
 COPY opensphere-console-backend/plugin-proxy-auth.js ./plugin-proxy-auth.js
 COPY opensphere-console-backend/r2d2-proxy-auth.js ./r2d2-proxy-auth.js
+COPY opensphere-console-backend/os-shell-contract.js ./os-shell-contract.js
+COPY opensphere-console-backend/os-shell-admission.js ./os-shell-admission.js
+COPY opensphere-console-backend/os-shell-context.js ./os-shell-context.js
+COPY opensphere-console-backend/os-shell-delegation.js ./os-shell-delegation.js
 COPY opensphere-console-backend/baseline-monitoring.js ./baseline-monitoring.js
 COPY opensphere-console-backend/data-identity-readiness.js ./data-identity-readiness.js
 COPY opensphere-console-backend/module-operation-api.js ./module-operation-api.js

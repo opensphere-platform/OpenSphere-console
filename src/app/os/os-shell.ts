@@ -25,6 +25,7 @@ import { OsNotifications } from './os-notifications';
 import { OsOaaAgent } from './os-oaa-agent';
 import { OsSessionStepUp } from './os-session-step-up';
 import { OsR2d2Risk } from './os-r2d2-risk';
+import { OsShellLauncher } from '../system-plugins/os-shell/os-shell-launcher';
 
 interface NavItem {
   path: string;
@@ -58,6 +59,7 @@ interface NavTreeRoot {
     OsOaaAgent,
     OsSessionStepUp,
     OsR2d2Risk,
+    OsShellLauncher,
     CarbonIcon,
     OsNavIcon,
   ],
@@ -79,6 +81,7 @@ interface NavTreeRoot {
         <os-search />
         <div class="header-actions">
           <os-r2d2-risk />
+          <os-shell-launcher />
           <a class="os-header-manual" routerLink="/manual" routerLinkActive="active" title="Manual" aria-label="Manual">
             <os-cicon [icon]="iconManual" [size]="18" />
           </a>
