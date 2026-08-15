@@ -222,8 +222,17 @@ function Test-KubectlCanI {
   # projection. It never grants authority; it only verifies the installed RBAC.
   $arguments = @('auth', 'can-i', $Verb, $Resource, '--as', $Subject)
   if ($Namespace) { $arguments += @('--namespace', $Namespace) }
-  $answer = (Invoke-Kubectl -Arguments $arguments | Select-Object -Last 1).Trim().ToLowerInvariant()
+  $allArguments = @('--context', $KubeContext) + $arguments
+  $answerOutput = & kubectl @allArguments
+  $sarExitCode = $LASTEXITCODE
+  if ($sarExitCode -notin @(0, 1)) {
+    throw "kubectl auth can-i failed with exit code $sarExitCode for $Subject $Verb $Resource"
+  }
+  $answer = ($answerOutput | Select-Object -Last 1).Trim().ToLowerInvariant()
   if ($answer -notin @('yes', 'no')) { throw "Unexpected SAR answer for $Subject $Verb ${Resource}: $answer" }
+  if (($answer -eq 'yes' -and $sarExitCode -ne 0) -or ($answer -eq 'no' -and $sarExitCode -ne 1)) {
+    throw "Inconsistent SAR answer/exit code for $Subject $Verb ${Resource}: answer=$answer exit=$sarExitCode"
+  }
   return $answer -eq 'yes'
 }
 
