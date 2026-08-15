@@ -11,6 +11,7 @@ const deployScript = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts',
 const backendServer = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'server.js'), 'utf8');
 const backendDeploy = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
 const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
+const runtimeDockerfile = fs.readFileSync(path.join(__dirname, '..', 'os-cli', 'Dockerfile.runtime'), 'utf8');
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
 const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && doc.metadata?.name === name && (!namespace || doc.metadata?.namespace === namespace));
 
@@ -188,10 +189,12 @@ test('local-edge deploy binds a runtime-only publication through an exact source
   assert.match(deployScript, /runtimePublicationEvidence = \$runtimePublicationPath/);
   assert.match(deployScript, /osShellRuntime = \[string\]\$runtimeEvidence[.]sourceRevision/);
   const boundary = await import(pathToFileURL(path.join(__dirname, '..', '..', 'scripts', 'os-shell-runtime-override-boundary.mjs')).href);
-  const runtimePaths = ['backend/os-cli/cmd/os-shell-runtime/agent.go', 'backend/os-cli/cmd/os/web_shell_agent.go'];
+  const runtimePaths = ['backend/os-cli/cmd/os-shell-runtime/agent.go', 'backend/os-cli/Dockerfile.runtime'];
   assert.doesNotThrow(() => boundary.assertRuntimeOverridePaths(runtimePaths));
-  for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'backend/os-shell-control/deploy.yaml', 'backend/os-cli/cmd/os/operator.go']) {
+  for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'backend/os-shell-control/deploy.yaml', 'backend/os-cli/cmd/os/operator.go', 'backend/os-cli/cmd/os/web_shell_agent.go']) {
     assert.throws(() => boundary.assertRuntimeOverridePaths([...runtimePaths, privilegedPath]), /non-runtime authority/);
   }
   assert.throws(() => boundary.assertHeadPaths([...runtimePaths, 'backend/supabase/migrate-only.ps1'], runtimePaths), /unbound source/);
+  assert.match(runtimeDockerfile, /-X main[.]webShellAgentSocketPath=\/run\/opensphere-shell\/channel\/agent[.]sock/);
+  assert.match(runtimeDockerfile, /-X main[.]webShellAgentPublicKeyPath=\/run\/opensphere-shell\/channel\/agent-public-key[.]pem/);
 });

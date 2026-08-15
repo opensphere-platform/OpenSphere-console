@@ -7,15 +7,16 @@ import {
 const validRuntime = [
   'backend/os-cli/cmd/os-shell-runtime/agent.go',
   'backend/os-cli/cmd/os-shell-runtime/runtime_directory.go',
-  'backend/os-cli/cmd/os/web_shell_agent.go',
+  'backend/os-cli/Dockerfile.runtime',
 ];
 
-test('runtime override is closed over runtime and its exact embedded agent adapter only', () => {
+test('runtime override is closed over runtime source and its dedicated build overlay only', () => {
   assert.doesNotThrow(() => assertRuntimeOverridePaths(validRuntime));
   for (const path of [
     'backend/supabase/migrate-only.ps1',
     'backend/os-shell-control/deploy.yaml',
     'backend/os-cli/cmd/os/operator.go',
+    'backend/os-cli/cmd/os/web_shell_agent.go',
     'backend/os-cli/go.mod',
   ]) {
     assert.throws(() => assertRuntimeOverridePaths([...validRuntime, path]), /non-runtime authority/);
