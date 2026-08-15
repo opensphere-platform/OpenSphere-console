@@ -20,6 +20,7 @@ test('local-edge deploy joins completed kubectl output instead of binding -join 
   assert.match(deployScript, /containerStatuses \| Where-Object \{ \[string\]\$_[.]name -eq \$boundContainerName \}/);
   assert.doesNotMatch(deployScript, /\$statuses\[0\][.]image -ne \$Image/);
   assert.match(deployScript, /PSObject[.]Properties\['serviceAccountName'\]/);
+  assert.equal((deployScript.match(/PSObject[.]Properties\['deletionTimestamp'\]/g) || []).length, 2);
   assert.match(deployScript, /merge-base --is-ancestor/);
   assert.match(deployScript, /deploymentToolingAllowlist = @\(/);
   assert.match(deployScript, /deploymentToolingSourceRevision = \$deploymentToolingSourceRevision/g);
