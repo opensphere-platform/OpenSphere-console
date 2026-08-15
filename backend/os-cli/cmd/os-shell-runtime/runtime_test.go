@@ -574,6 +574,30 @@ func TestProjectedBootstrapTokenAcceptsInVolumeSymlinkAndGroupRead(t *testing.T)
 	wipe(actual)
 }
 
+func TestProjectedBootstrapTokenAcceptsCanonicalizedVolumeRoot(t *testing.T) {
+	original := bootstrapTokenPath
+	parent := t.TempDir()
+	realRoot := filepath.Join(parent, "real-volume")
+	if err := os.Mkdir(realRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	aliasRoot := filepath.Join(parent, "mounted-volume")
+	if err := os.Symlink(realRoot, aliasRoot); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapTokenPath = filepath.Join(aliasRoot, "token")
+	expected := []byte("projected-bound-service-account-token-1234567890")
+	if err := os.WriteFile(filepath.Join(realRoot, "token"), expected, 0o440); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { bootstrapTokenPath = original })
+	actual, err := readProjectedBootstrapToken()
+	if err != nil || string(actual) != string(expected) {
+		t.Fatalf("canonicalized projected volume root must be accepted: err=%v", err)
+	}
+	wipe(actual)
+}
+
 func TestProjectedBootstrapTokenRejectsSymlinkEscapeAndWritableToken(t *testing.T) {
 	original := bootstrapTokenPath
 	t.Cleanup(func() { bootstrapTokenPath = original })
