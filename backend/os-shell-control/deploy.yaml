@@ -276,7 +276,7 @@ kind: Service
 metadata: { name: opensphere-shell-credential-authority, namespace: opensphere-console }
 spec:
   selector: { app: opensphere-console-backend }
-  ports: [{ name: credential-tls, port: 8444, targetPort: shell-credential-tls }]
+  ports: [{ name: credential-tls, port: 8444, targetPort: shell-cred-tls }]
 ---
 apiVersion: v1
 kind: Service

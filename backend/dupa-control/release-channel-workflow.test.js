@@ -127,7 +127,7 @@ test('OS Shell local edge deploy is evidence-bound, non-interactive, and exact-d
   assert.match(osShellDeployer, /OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED/);
   assert.match(osShellDeployer, /OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE/);
   assert.match(osShellDeployer, /OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE/);
-  assert.match(osShellDeployer, /name = 'shell-credential-tls'; containerPort = 8444/);
+  assert.match(osShellDeployer, /name = 'shell-cred-tls'; containerPort = 8444/);
   assert.match(osShellDeployer, /name = 'shell-credential-authority-tls'; mountPath = '\/var\/run\/opensphere-shell-credential-authority'; readOnly = \$true/);
   assert.match(osShellDeployer, /secretName = 'opensphere-shell-credential-authority-tls'; optional = \$false/);
   assert.match(osShellDeployer, /name = 'opensphere-shell-control-runtime'; key = 'admission-secret'; optional = \$false/);

@@ -537,7 +537,7 @@ function Set-BackendOsShellActivation {
               name = 'opensphere-shell-control-runtime'; key = 'delegation-secret'; optional = $false
             } } }
           )
-          ports = @([ordered]@{ name = 'shell-credential-tls'; containerPort = 8444; protocol = 'TCP' })
+          ports = @([ordered]@{ name = 'shell-cred-tls'; containerPort = 8444; protocol = 'TCP' })
           volumeMounts = @([ordered]@{
             name = 'shell-credential-authority-tls'; mountPath = '/var/run/opensphere-shell-credential-authority'; readOnly = $true
           })
@@ -577,7 +577,7 @@ function Set-BackendOsShellActivation {
       throw "Console Backend service credential projection is not exact: $($binding.Name)"
     }
   }
-  $ports = @($activatedContainer[0].ports | Where-Object { [string]$_.name -eq 'shell-credential-tls' })
+  $ports = @($activatedContainer[0].ports | Where-Object { [string]$_.name -eq 'shell-cred-tls' })
   if ($ports.Count -ne 1 -or [int]$ports[0].containerPort -ne 8444) { throw 'Console Backend credential authority port 8444 is not exact' }
   $mounts = @($activatedContainer[0].volumeMounts | Where-Object { [string]$_.name -eq 'shell-credential-authority-tls' })
   if ($mounts.Count -ne 1 -or [string]$mounts[0].mountPath -ne '/var/run/opensphere-shell-credential-authority' -or -not [bool]$mounts[0].readOnly) {
