@@ -62,7 +62,7 @@ $negativeCases = @(
   @{ Name = 'duplicate-env'; Apply = { param($p) $p.spec.containers[0].env += $p.spec.containers[0].env[0] } },
   @{ Name = 'env-value-from'; Apply = { param($p) $p.spec.containers[0].env[0].PSObject.Properties.Remove('value'); $p.spec.containers[0].env[0] | Add-Member -NotePropertyName valueFrom -NotePropertyValue @{ secretKeyRef = @{ name = 'stolen'; key = 'token' } } } },
   @{ Name = 'node-selector'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName nodeSelector -NotePropertyValue @{ 'kubernetes.io/hostname' = 'attacker-selected' } -Force } },
-  @{ Name = 'runtime-class'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName runtimeClassName -NotePropertyValue 'attacker-runtime' -Force } },
+  @{ Name = 'runtime-class'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName runtimeClassName -NotePropertyValue $runtimeClassName -Force } },
   @{ Name = 'extra-toleration'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(@{ key='attacker'; operator='Exists'; effect='NoSchedule' }) -Force } },
   @{ Name = 'duplicate-default-toleration'; Apply = { param($p) $p.spec | Add-Member -NotePropertyName tolerations -NotePropertyValue @(
     @{ key='node.kubernetes.io/not-ready'; operator='Exists'; effect='NoExecute'; tolerationSeconds=300 },
@@ -85,13 +85,62 @@ $negativeCases = @(
   @{ Name = 'arbitrary-name'; Apply = { param($p) $p.metadata.name = 'os-shell-attacker-duplicate' } },
   @{ Name = 'generate-name'; Apply = { param($p) $p.metadata | Add-Member -NotePropertyName generateName -NotePropertyValue 'os-shell-attacker-' -Force } }
 )
-foreach ($case in $negativeCases) {
-  $candidate = $canonical | ConvertFrom-Json -Depth 100
-  & $case.Apply $candidate
-  $candidateOutput = ($candidate | ConvertTo-Json -Depth 100 -Compress) |
-    & kubectl --context $KubeContext --as $reconciler create --dry-run=server -f - 2>&1
-  if ($LASTEXITCODE -eq 0 -or ($candidateOutput -join "`n") -notmatch 'opensphere-shell-runtime-template-v1') {
-    throw "runtime admission negative '$($case.Name)' was not denied: $($candidateOutput -join ' ')"
+$runtimeClassName = 'opensphere-shell-admission-' + ([guid]::NewGuid().ToString('N').Substring(0, 12))
+$runtimeClassCreated = $false
+$runtimeClassCreatedUid = ''
+try {
+  $existingRuntimeClass = & kubectl --context $KubeContext get runtimeclass $runtimeClassName --ignore-not-found -o name
+  if ($LASTEXITCODE -ne 0) { throw 'RuntimeClass admission fixture preflight failed' }
+  if ($existingRuntimeClass) { throw "refusing to modify existing RuntimeClass $runtimeClassName" }
+  $runtimeClassFixture = [ordered]@{
+    apiVersion = 'node.k8s.io/v1'
+    kind = 'RuntimeClass'
+    metadata = [ordered]@{
+      name = $runtimeClassName
+      labels = [ordered]@{ 'opensphere.io/admission-canary' = 'runtime-class' }
+    }
+    handler = 'runc'
+  } | ConvertTo-Json -Depth 8 -Compress
+  $createdRuntimeClassRaw = $runtimeClassFixture | & kubectl --context $KubeContext create -f - -o json
+  if ($LASTEXITCODE -ne 0) { throw 'bounded RuntimeClass admission fixture create failed' }
+  $runtimeClassCreated = $true
+  if (-not $createdRuntimeClassRaw) { throw 'bounded RuntimeClass admission fixture returned no identity' }
+  $createdRuntimeClass = ($createdRuntimeClassRaw -join "`n") | ConvertFrom-Json -Depth 30
+  $runtimeClassCreatedUid = [string]$createdRuntimeClass.metadata.uid
+  if (-not $runtimeClassCreatedUid -or [string]$createdRuntimeClass.metadata.name -ne $runtimeClassName -or
+      [string]$createdRuntimeClass.handler -ne 'runc' -or
+      [string]$createdRuntimeClass.metadata.labels.'opensphere.io/admission-canary' -ne 'runtime-class') {
+    throw 'created RuntimeClass admission fixture is outside the exact bounded identity'
+  }
+
+  foreach ($case in $negativeCases) {
+    $candidate = $canonical | ConvertFrom-Json -Depth 100
+    & $case.Apply $candidate
+    $candidateOutput = ($candidate | ConvertTo-Json -Depth 100 -Compress) |
+      & kubectl --context $KubeContext --as $reconciler create --dry-run=server -f - 2>&1
+    if ($LASTEXITCODE -eq 0 -or ($candidateOutput -join "`n") -notmatch 'opensphere-shell-runtime-template-v1') {
+      throw "runtime admission negative '$($case.Name)' was not denied: $($candidateOutput -join ' ')"
+    }
+  }
+} finally {
+  if ($runtimeClassCreated) {
+    $currentRuntimeClassRaw = & kubectl --context $KubeContext get runtimeclass $runtimeClassName --ignore-not-found -o json
+    if ($LASTEXITCODE -ne 0) { throw "RuntimeClass fixture cleanup read failed for $runtimeClassName" }
+    if ($currentRuntimeClassRaw) {
+      $currentRuntimeClass = ($currentRuntimeClassRaw -join "`n") | ConvertFrom-Json -Depth 30
+      if ([string]$currentRuntimeClass.metadata.name -ne $runtimeClassName -or
+          ($runtimeClassCreatedUid -and [string]$currentRuntimeClass.metadata.uid -ne $runtimeClassCreatedUid) -or
+          [string]$currentRuntimeClass.handler -ne 'runc' -or
+          [string]$currentRuntimeClass.metadata.labels.'opensphere.io/admission-canary' -ne 'runtime-class') {
+        throw "refusing to delete RuntimeClass $runtimeClassName because its exact UID or fixture contract changed"
+      }
+      & kubectl --context $KubeContext delete runtimeclass $runtimeClassName --wait=true | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "RuntimeClass fixture cleanup failed for UID $runtimeClassCreatedUid" }
+    }
+    $remainingRuntimeClass = & kubectl --context $KubeContext get runtimeclass $runtimeClassName --ignore-not-found -o name
+    if ($LASTEXITCODE -ne 0 -or $remainingRuntimeClass) {
+      throw "RuntimeClass fixture cleanup did not converge to zero for UID $runtimeClassCreatedUid"
+    }
   }
 }
 
@@ -131,16 +180,18 @@ if ($LiveCreate) {
       throw "ephemeral-container injection was not attributed to the runtime policy: $($ephemeralOutput -join ' ')"
     }
     $afterEphemeral = & kubectl --context $KubeContext -n $namespace get pod $name -o json | ConvertFrom-Json -Depth 100
-    if (@($afterEphemeral.spec.ephemeralContainers).Count -ne 0) { throw 'denied ephemeral container mutated the live runtime Pod' }
+    $ephemeralContainersProperty = $afterEphemeral.spec.PSObject.Properties['ephemeralContainers']
+    $ephemeralContainerCount = if ($ephemeralContainersProperty) { @($ephemeralContainersProperty.Value).Count } else { 0 }
+    if ($ephemeralContainerCount -ne 0) { throw 'denied ephemeral container mutated the live runtime Pod' }
 
     $api = & kubectl --context $KubeContext get --raw /api/v1 | ConvertFrom-Json -Depth 30
     if (@($api.resources.name) -contains 'pods/resize') {
       $resizePatch = @{ spec=@{ containers=@(
-        @{name='pty';resources=@{requests=@{cpu='25m';memory='32Mi'};limits=@{cpu='750m';memory='256Mi'}}},
-        @{name='agent';resources=@{requests=@{cpu='25m';memory='32Mi'};limits=@{cpu='500m';memory='128Mi'}}}
+        @{name='pty';resources=@{requests=@{cpu='25m';memory='32Mi';'ephemeral-storage'='16Mi'};limits=@{cpu='400m';memory='256Mi';'ephemeral-storage'='128Mi'}}},
+        @{name='agent';resources=@{requests=@{cpu='25m';memory='32Mi';'ephemeral-storage'='16Mi'};limits=@{cpu='500m';memory='128Mi';'ephemeral-storage'='64Mi'}}}
       ) } } | ConvertTo-Json -Depth 20 -Compress
       $resizeOutput = & kubectl --context $KubeContext --as $reconciler --as-group system:masters `
-        -n $namespace patch pod $name --subresource=resize --type merge -p $resizePatch 2>&1
+        -n $namespace patch pod $name --subresource=resize --type strategic -p $resizePatch 2>&1
       if ($LASTEXITCODE -eq 0 -or ($resizeOutput -join "`n") -notmatch 'opensphere-shell-runtime-template-v1') {
         throw "in-place resize was not attributed to the runtime policy: $($resizeOutput -join ' ')"
       }
@@ -159,6 +210,7 @@ if ($LiveCreate) {
   canonicalServerDryRun = 'Allowed'
   canonicalLiveCreate = if ($LiveCreate) { 'AllowedThenDeleted' } else { 'NotRequested' }
   defaultTolerations = 'ExactNotReadyAndUnreachableNoExecute300s'
+  runtimeClassFixture = 'UniqueRuncCreatedThenExactUidVerifiedAndDeleted'
   mutatedServerDryRun = 'Denied'
   mutatedLiveCreate = 'Denied'
   ephemeralContainerSubresource = if ($LiveCreate) { 'DeniedByExactPolicy' } else { 'NotRequested' }
