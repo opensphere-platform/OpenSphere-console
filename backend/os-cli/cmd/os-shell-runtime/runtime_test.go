@@ -491,6 +491,55 @@ func TestPrepareRuntimeDirectoryCreatesPrivateDirectory(t *testing.T) {
 	}
 }
 
+func TestPrepareRuntimeDirectoryAcceptsSecureFSGroupMountAfterChmodEPERM(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "fs-group")
+	if err := os.MkdirAll(directory, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	original := runtimeDirectoryChmod
+	runtimeDirectoryChmod = func(string, os.FileMode) error { return os.ErrPermission }
+	t.Cleanup(func() { runtimeDirectoryChmod = original })
+	if err := prepareRuntimeDirectory(directory); err != nil {
+		t.Fatalf("secure fsGroup directory must be accepted after chmod EPERM: %v", err)
+	}
+}
+
+func TestPrepareRuntimeDirectoryRejectsUnsafeFSGroupMountAfterChmodEPERM(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "unsafe")
+	if err := os.MkdirAll(directory, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	original := runtimeDirectoryChmod
+	runtimeDirectoryChmod = func(string, os.FileMode) error { return os.ErrPermission }
+	t.Cleanup(func() { runtimeDirectoryChmod = original })
+	if err := prepareRuntimeDirectory(directory); err == nil {
+		t.Fatal("world-accessible fsGroup directory must be rejected")
+	}
+}
+
+func TestPrepareRuntimeDirectoryRejectsNonDirectoryAfterChmodEPERM(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalMkdirAll, originalChmod := runtimeDirectoryMkdirAll, runtimeDirectoryChmod
+	runtimeDirectoryMkdirAll = func(string, os.FileMode) error { return nil }
+	runtimeDirectoryChmod = func(string, os.FileMode) error { return os.ErrPermission }
+	t.Cleanup(func() {
+		runtimeDirectoryMkdirAll = originalMkdirAll
+		runtimeDirectoryChmod = originalChmod
+	})
+	if err := prepareRuntimeDirectory(path); err == nil {
+		t.Fatal("non-directory fsGroup mount must be rejected")
+	}
+}
+
 func TestPTYRejectsStaleEpochAndInvalidToken(t *testing.T) {
 	binding := testBinding()
 	for name, mutate := range map[string]func(*ptyFrame){
