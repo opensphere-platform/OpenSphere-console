@@ -6,7 +6,9 @@ RUN go mod download
 COPY cmd ./cmd
 RUN go test ./cmd/os-shell-runtime ./cmd/os && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.1.0" -o /out/opensphere-os-shell-runtime ./cmd/os-shell-runtime && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.2" -o /out/os ./cmd/os
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+      -ldflags="-s -w -X main.version=0.8.2 -X main.webShellAgentSocketPath=/run/opensphere-shell/channel/agent.sock -X main.webShellAgentPublicKeyPath=/run/opensphere-shell/channel/agent-public-key.pem" \
+      -o /out/os ./cmd/os
 
 FROM docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 ARG OPENSPHERE_VERSION=dev
