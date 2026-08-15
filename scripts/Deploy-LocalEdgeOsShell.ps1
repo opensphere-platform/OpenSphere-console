@@ -483,18 +483,19 @@ function Assert-PrerequisiteDeployment {
     throw "Prerequisite Deployment $Deployment is not fully Ready: ready=$ready desired=$desired"
   }
   $repository = ($Image -split '@', 2)[0]
-  $boundContainers = @($resource.spec.template.spec.containers | Where-Object { [string]$_.image -like "$repository@*" })
+  $boundContainers = @($resource.spec.template.spec.containers | Where-Object { [string]$_.image -like "${repository}@*" })
   if ($boundContainers.Count -ne 1 -or [string]$boundContainers[0].image -ne $Image) {
     throw "Prerequisite Deployment $Deployment is not pinned to $Image"
   }
+  $boundContainerName = [string]$boundContainers[0].name
   $selector = @($resource.spec.selector.matchLabels.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ','
   if (-not $selector) { throw "Prerequisite Deployment $Deployment has no closed Pod selector" }
   $pods = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'pods', '-l', $selector, '-o', 'json')) -join "`n") | ConvertFrom-Json
   if (@($pods.items).Count -ne $desired) { throw "Prerequisite Deployment $Deployment has an unexpected Pod count" }
   foreach ($pod in @($pods.items)) {
-    $statuses = @($pod.status.containerStatuses | Where-Object { [string]$_.image -like "$repository@*" })
+    $statuses = @($pod.status.containerStatuses | Where-Object { [string]$_.name -eq $boundContainerName })
     if ($statuses.Count -ne 1 -or -not [bool]$statuses[0].ready -or
-        [string]$statuses[0].image -ne $Image -or [string]$statuses[0].imageID -notmatch "@$([regex]::Escape($Digest))$") {
+        [string]$statuses[0].imageID -notmatch "@$([regex]::Escape($Digest))$") {
       throw "Prerequisite Pod $($pod.metadata.name) is not running the exact digest for $Deployment"
     }
   }
