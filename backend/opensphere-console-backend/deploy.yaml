@@ -59,6 +59,27 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-con
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
+# Local-edge Foundation publication uses the same short, audience-bound
+# opensphere-local-edge-release TokenReview authority as Platform Release. The
+# formal owner operation can read the development trust key and CAS-patch only
+# the dedicated Foundation owner Deployment; it cannot mutate the DUPA-managed
+# Foundation package or any other workload.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-backend-foundation-owner-release, namespace: opensphere-console }
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["dupa-trusted-keys"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-backend-foundation-owner-release, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-foundation-owner-release }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
+---
 # Recovery evidence is a single non-secret status ConfigMap. The Backend has
 # no list, watch, or write authority in this namespace.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1263,6 +1284,1209 @@ spec:
           resources:
             requests: { cpu: 10m, memory: 32Mi }
             limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+# Foundation owner component convergence retains the same Gitea declaration,
+# merge and durable reconcile-receipt chain as Platform Release. The Backend
+# owns no workload mutation authority. Only this reconciler can create the
+# closed executor Job; only that Job can CAS the one owner Deployment and its
+# dedicated installation lock.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: foundation-owner-release-reconciler, namespace: opensphere-console }
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: foundation-owner-release-reconciler, namespace: opensphere-console }
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: foundation-owner-release-reconciler, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: foundation-owner-release-reconciler }
+subjects:
+  - { kind: ServiceAccount, name: foundation-owner-release-reconciler, namespace: opensphere-console }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: foundation-owner-release-executor, namespace: opensphere-console }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: foundation-owner-installation-lock-initializer, namespace: opensphere-console }
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: foundation-owner-installation-lock-initializer, namespace: opensphere-console }
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["foundation-owner-installation-lock"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: foundation-owner-installation-lock-initializer, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: foundation-owner-installation-lock-initializer }
+subjects:
+  - { kind: ServiceAccount, name: foundation-owner-installation-lock-initializer, namespace: opensphere-console }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: foundation-owner-release-executor, namespace: opensphere-console }
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["foundation-oaa-owner"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["plugins.opensphere.io"]
+    resources: ["uipluginregistrations"]
+    resourceNames: ["foundation"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["dupa-trusted-keys", "foundation-owner-installation-lock"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["foundation-owner-installation-lock"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: foundation-owner-release-executor, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: foundation-owner-release-executor }
+subjects:
+  - { kind: ServiceAccount, name: foundation-owner-release-executor, namespace: opensphere-console }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: foundation-owner-installation-lock-writer }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["configmaps"]
+  validations:
+    - expression: >-
+        !(
+          (object != null
+            && object.metadata.namespace == 'opensphere-console'
+            && object.metadata.name == 'foundation-owner-installation-lock')
+          || (oldObject != null
+            && oldObject.metadata.namespace == 'opensphere-console'
+            && oldObject.metadata.name == 'foundation-owner-installation-lock')
+          || request.userInfo.username
+            == 'system:serviceaccount:opensphere-console:foundation-owner-installation-lock-initializer'
+        ) || (
+          (request.operation == 'CREATE'
+            && request.userInfo.username
+              == 'system:serviceaccount:opensphere-console:foundation-owner-installation-lock-initializer'
+            && object.metadata.namespace == 'opensphere-console'
+            && object.metadata.name == 'foundation-owner-installation-lock'
+            && size(object.data) == 1
+            && (!has(object.binaryData) || size(object.binaryData) == 0)
+            && object.data['release.json']
+              == '{"contract":"opensphere.foundation.owner.installation-lock/v1","revision":0,"phase":"Uninitialized"}')
+          || (request.operation == 'UPDATE'
+            && request.userInfo.username
+              == 'system:serviceaccount:opensphere-console:foundation-owner-release-executor')
+        )
+      message: "the durable Foundation owner lock can only be initialized once or transitioned by its fenced executor; deletion is denied"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: foundation-owner-installation-lock-writer }
+spec:
+  policyName: foundation-owner-installation-lock-writer
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: foundation-owner-release-executor-job-boundary }
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: apps/v1
+    kind: Deployment
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+  validations:
+    - expression: >-
+        !(
+          request.userInfo.username == 'system:serviceaccount:opensphere-console:foundation-owner-release-reconciler'
+          || object.spec.template.spec.serviceAccountName == 'foundation-owner-release-executor'
+          || object.metadata.name.startsWith('foundation-owner-release-')
+          || (has(object.metadata.labels) && 'app' in object.metadata.labels
+            && object.metadata.labels['app'] == 'foundation-owner-release-executor')
+        ) || (
+          request.userInfo.username == 'system:serviceaccount:opensphere-console:foundation-owner-release-reconciler'
+          && object.metadata.namespace == 'opensphere-console'
+          && object.metadata.name.matches('^foundation-owner-release-[a-f0-9]{20}-a[1-9][0-9]{0,3}$')
+          && object.metadata.labels['app'] == 'foundation-owner-release-executor'
+          && object.metadata.labels['app.kubernetes.io/part-of'] == 'opensphere-console'
+          && object.metadata.labels['opensphere.io/request-id'].matches(
+            '^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+          )
+          && object.metadata.labels.all(k, k in [
+            'app','app.kubernetes.io/part-of','opensphere.io/request-id'
+          ])
+          && (!has(object.metadata.annotations) || size(object.metadata.annotations) == 0)
+          && (!has(object.metadata.ownerReferences) || size(object.metadata.ownerReferences) == 0)
+          && object.spec.parallelism == 1
+          && object.spec.completions == 1
+          && object.spec.completionMode == 'NonIndexed'
+          && object.spec.manualSelector == false
+          && object.spec.suspend == false
+          && object.spec.podReplacementPolicy == 'TerminatingOrFailed'
+          && (!has(object.spec.podFailurePolicy))
+          && (!has(object.spec.successPolicy))
+          && (!has(object.spec.backoffLimitPerIndex))
+          && (!has(object.spec.maxFailedIndexes))
+          && (!has(object.spec.managedBy) || object.spec.managedBy == '')
+          && size(object.spec.selector.matchLabels) == 1
+          && object.spec.selector.matchLabels.all(k, k == 'batch.kubernetes.io/controller-uid')
+          && (!has(object.spec.selector.matchExpressions)
+            || size(object.spec.selector.matchExpressions) == 0)
+          && object.spec.backoffLimit == 0
+          && object.spec.activeDeadlineSeconds == 900
+          && object.spec.ttlSecondsAfterFinished == 86400
+          && object.spec.template.spec.restartPolicy == 'Never'
+          && object.spec.template.metadata.labels['app'] == 'foundation-owner-release-executor'
+          && object.spec.template.metadata.labels['opensphere.io/request-id']
+            == object.metadata.labels['opensphere.io/request-id']
+          && object.spec.template.metadata.labels['batch.kubernetes.io/job-name'] == object.metadata.name
+          && object.spec.template.metadata.labels['job-name'] == object.metadata.name
+          && object.spec.template.metadata.labels['batch.kubernetes.io/controller-uid']
+            == object.spec.selector.matchLabels['batch.kubernetes.io/controller-uid']
+          && object.spec.template.metadata.labels['controller-uid']
+            == object.spec.selector.matchLabels['batch.kubernetes.io/controller-uid']
+          && object.spec.template.metadata.labels.all(k, k in [
+            'app','opensphere.io/request-id','controller-uid','job-name',
+            'batch.kubernetes.io/controller-uid','batch.kubernetes.io/job-name'
+          ])
+          && (!has(object.spec.template.metadata.annotations)
+            || size(object.spec.template.metadata.annotations) == 0)
+          && object.spec.template.spec.serviceAccountName == 'foundation-owner-release-executor'
+          && object.spec.template.spec.serviceAccount == 'foundation-owner-release-executor'
+          && object.spec.template.spec.automountServiceAccountToken == false
+          && object.spec.template.spec.dnsPolicy == 'ClusterFirst'
+          && object.spec.template.spec.schedulerName == 'default-scheduler'
+          && object.spec.template.spec.terminationGracePeriodSeconds == 30
+          && (!has(object.spec.template.spec.hostNetwork) || !object.spec.template.spec.hostNetwork)
+          && (!has(object.spec.template.spec.hostPID) || !object.spec.template.spec.hostPID)
+          && (!has(object.spec.template.spec.hostIPC) || !object.spec.template.spec.hostIPC)
+          && (!has(object.spec.template.spec.nodeSelector) || size(object.spec.template.spec.nodeSelector) == 0)
+          && (!has(object.spec.template.spec.affinity))
+          && (!has(object.spec.template.spec.tolerations) || size(object.spec.template.spec.tolerations) == 0)
+          && (!has(object.spec.template.spec.topologySpreadConstraints)
+            || size(object.spec.template.spec.topologySpreadConstraints) == 0)
+          && (!has(object.spec.template.spec.hostAliases) || size(object.spec.template.spec.hostAliases) == 0)
+          && (!has(object.spec.template.spec.runtimeClassName)
+            || object.spec.template.spec.runtimeClassName == '')
+          && size(object.spec.template.spec.imagePullSecrets) == 1
+          && object.spec.template.spec.imagePullSecrets[0].name == 'opensphere-ghcr-pull'
+          && (!has(object.spec.template.spec.initContainers) || size(object.spec.template.spec.initContainers) == 0)
+          && (!has(object.spec.template.spec.ephemeralContainers) || size(object.spec.template.spec.ephemeralContainers) == 0)
+          && size(object.spec.template.spec.volumes) == 3
+          && object.spec.template.spec.volumes[0].name == 'kube-api-access'
+          && has(object.spec.template.spec.volumes[0].projected)
+          && object.spec.template.spec.volumes[0].projected.defaultMode == 256
+          && size(object.spec.template.spec.volumes[0].projected.sources) == 2
+          && object.spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken.path == 'token'
+          && object.spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken.audience
+            == 'https://kubernetes.default.svc'
+          && object.spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken.expirationSeconds == 600
+          && object.spec.template.spec.volumes[0].projected.sources[1].configMap.name == 'kube-root-ca.crt'
+          && size(object.spec.template.spec.volumes[0].projected.sources[1].configMap.items) == 1
+          && object.spec.template.spec.volumes[0].projected.sources[1].configMap.items[0].key == 'ca.crt'
+          && object.spec.template.spec.volumes[0].projected.sources[1].configMap.items[0].path == 'ca.crt'
+          && (!has(object.spec.template.spec.volumes[0].projected.sources[1].configMap.optional)
+            || !object.spec.template.spec.volumes[0].projected.sources[1].configMap.optional)
+          && object.spec.template.spec.volumes[1].name == 'receipt-identity'
+          && has(object.spec.template.spec.volumes[1].projected)
+          && object.spec.template.spec.volumes[1].projected.defaultMode == 256
+          && size(object.spec.template.spec.volumes[1].projected.sources) == 1
+          && object.spec.template.spec.volumes[1].projected.sources[0].serviceAccountToken.path == 'token'
+          && object.spec.template.spec.volumes[1].projected.sources[0].serviceAccountToken.audience
+            == 'opensphere-console-foundation-owner-release'
+          && object.spec.template.spec.volumes[1].projected.sources[0].serviceAccountToken.expirationSeconds == 600
+          && object.spec.template.spec.volumes[2].name == 'release-control-ca'
+          && object.spec.template.spec.volumes[2].configMap.name == 'opensphere-platform-release-control-ca'
+          && object.spec.template.spec.volumes[2].configMap.items == [{'key':'ca.crt','path':'ca.crt'}]
+          && (!has(object.spec.template.spec.volumes[2].configMap.optional)
+            || !object.spec.template.spec.volumes[2].configMap.optional)
+          && object.spec.template.spec.volumes[2].name == 'release-control-ca'
+          && object.spec.template.spec.volumes[2].configMap.name == 'opensphere-platform-release-control-ca'
+          && size(object.spec.template.spec.volumes[2].configMap.items) == 1
+          && object.spec.template.spec.volumes[2].configMap.items[0].key == 'ca.crt'
+          && object.spec.template.spec.volumes[2].configMap.items[0].path == 'ca.crt'
+          && (!has(object.spec.template.spec.volumes[2].configMap.optional)
+            || !object.spec.template.spec.volumes[2].configMap.optional)
+          && size(object.spec.template.spec.containers) == 1
+          && object.spec.template.spec.containers[0].name == 'executor'
+          && params.metadata.namespace == 'opensphere-console'
+          && params.metadata.name == 'foundation-owner-release-reconciler'
+          && size(params.spec.template.spec.containers) == 1
+          && params.spec.template.spec.containers[0].name == 'reconciler'
+          && params.spec.template.spec.containers[0].image.matches(
+            '^ghcr[.]io/opensphere-platform/opensphere-console-backend@sha256:[a-f0-9]{64}$'
+          )
+          && object.spec.template.spec.containers[0].image
+            == params.spec.template.spec.containers[0].image
+          && object.spec.template.spec.containers[0].imagePullPolicy == 'IfNotPresent'
+          && object.spec.template.spec.containers[0].command
+            == ['node', '/app/opensphere-console-backend/foundation-owner-release-executor.mjs']
+          && (!has(object.spec.template.spec.containers[0].args)
+            || size(object.spec.template.spec.containers[0].args) == 0)
+          && (!has(object.spec.template.spec.containers[0].envFrom)
+            || size(object.spec.template.spec.containers[0].envFrom) == 0)
+          && object.spec.template.spec.containers[0].env.map(e, e.name) == [
+            'NODE_EXTRA_CA_CERTS','GITEA_ORGANIZATION','GITEA_REPOSITORY','GITEA_PATH',
+            'REQUEST_ID','GIT_COMMIT_SHA','ATTEMPT','IDENTITY_TOKEN_PATH'
+          ]
+          && object.spec.template.spec.containers[0].env[0].value
+            == '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+          && object.spec.template.spec.containers[0].env[1].value == 'opensphere'
+          && object.spec.template.spec.containers[0].env[2].value == 'platform-declarations'
+          && object.spec.template.spec.containers[0].env[3].value == 'foundation-owner-release'
+          && object.spec.template.spec.containers[0].env[4].value.matches(
+            '^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+          )
+          && object.spec.template.spec.containers[0].env[4].value
+            == object.metadata.labels['opensphere.io/request-id']
+          && object.spec.template.spec.containers[0].env.all(e, has(e.value) && (!has(e.valueFrom)))
+          && object.spec.template.spec.containers[0].env[5].value.matches('^[a-f0-9]{40,64}$')
+          && object.spec.template.spec.containers[0].env[6].value.matches('^[1-9][0-9]{0,3}$')
+          && object.spec.template.spec.containers[0].env[7].value
+            == '/var/run/secrets/opensphere-foundation-owner-identity/token'
+          && size(object.spec.template.spec.containers[0].volumeMounts) == 3
+          && object.spec.template.spec.containers[0].volumeMounts[0].name == 'kube-api-access'
+          && object.spec.template.spec.containers[0].volumeMounts[0].mountPath
+            == '/var/run/secrets/kubernetes.io/serviceaccount'
+          && object.spec.template.spec.containers[0].volumeMounts[0].readOnly
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[0].subPath)
+            || object.spec.template.spec.containers[0].volumeMounts[0].subPath == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[0].subPathExpr)
+            || object.spec.template.spec.containers[0].volumeMounts[0].subPathExpr == '')
+          && object.spec.template.spec.containers[0].volumeMounts[1].name == 'receipt-identity'
+          && object.spec.template.spec.containers[0].volumeMounts[1].mountPath
+            == '/var/run/secrets/opensphere-foundation-owner-identity'
+          && object.spec.template.spec.containers[0].volumeMounts[1].readOnly
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[1].subPath)
+            || object.spec.template.spec.containers[0].volumeMounts[1].subPath == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[1].subPathExpr)
+            || object.spec.template.spec.containers[0].volumeMounts[1].subPathExpr == '')
+          && object.spec.template.spec.containers[0].volumeMounts[2].name == 'release-control-ca'
+          && object.spec.template.spec.containers[0].volumeMounts[2].mountPath
+            == '/var/run/opensphere-platform-release-control-ca'
+          && object.spec.template.spec.containers[0].volumeMounts[2].readOnly
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[2].subPath)
+            || object.spec.template.spec.containers[0].volumeMounts[2].subPath == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[2].subPathExpr)
+            || object.spec.template.spec.containers[0].volumeMounts[2].subPathExpr == '')
+          && (!has(object.spec.template.spec.containers[0].ports)
+            || size(object.spec.template.spec.containers[0].ports) == 0)
+          && (!has(object.spec.template.spec.containers[0].lifecycle))
+          && (!has(object.spec.template.spec.containers[0].livenessProbe))
+          && (!has(object.spec.template.spec.containers[0].readinessProbe))
+          && (!has(object.spec.template.spec.containers[0].startupProbe))
+          && object.spec.template.spec.containers[0].resources.requests == {'cpu':'50m','memory':'96Mi'}
+          && object.spec.template.spec.containers[0].resources.limits == {'cpu':'1','memory':'384Mi'}
+          && object.spec.template.spec.containers[0].securityContext.runAsNonRoot
+          && !object.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          && object.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          && object.spec.template.spec.containers[0].securityContext.capabilities.drop == ['ALL']
+          && (!has(object.spec.template.spec.containers[0].securityContext.privileged)
+            || !object.spec.template.spec.containers[0].securityContext.privileged)
+          && (!has(object.spec.template.spec.containers[0].securityContext.runAsUser))
+          && (!has(object.spec.template.spec.containers[0].securityContext.runAsGroup))
+          && (!has(object.spec.template.spec.containers[0].securityContext.procMount))
+        )
+      message: "foundation owner executor ServiceAccount is reserved for the reviewed exact Job"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: foundation-owner-release-executor-job-boundary }
+spec:
+  policyName: foundation-owner-release-executor-job-boundary
+  paramRef:
+    name: foundation-owner-release-reconciler
+    namespace: opensphere-console
+    parameterNotFoundAction: Deny
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: foundation-owner-release-executor-pod-boundary }
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: apps/v1
+    kind: Deployment
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  validations:
+    - expression: >-
+        !(
+          object.spec.serviceAccountName == 'foundation-owner-release-executor'
+          || object.metadata.name.startsWith('foundation-owner-release-')
+          || (has(object.metadata.labels) && 'app' in object.metadata.labels
+            && object.metadata.labels['app'] == 'foundation-owner-release-executor')
+        ) || (
+          request.userInfo.username in ['system:kube-controller-manager','system:serviceaccount:kube-system:job-controller']
+          && object.metadata.namespace == 'opensphere-console'
+          && object.metadata.name.matches(
+            '^foundation-owner-release-[a-f0-9]{20}-a[1-9][0-9]{0,3}-[a-z0-9]{5}$'
+          )
+          && object.metadata.labels['app'] == 'foundation-owner-release-executor'
+          && object.metadata.labels['opensphere.io/request-id'].matches(
+            '^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+          )
+          && object.metadata.labels.all(k, k in [
+            'app','opensphere.io/request-id','controller-uid','job-name',
+            'batch.kubernetes.io/controller-uid','batch.kubernetes.io/job-name'
+          ])
+          && (!has(object.metadata.annotations) || size(object.metadata.annotations) == 0)
+          && size(object.metadata.ownerReferences) == 1
+          && object.metadata.ownerReferences[0].apiVersion == 'batch/v1'
+          && object.metadata.ownerReferences[0].kind == 'Job'
+          && object.metadata.ownerReferences[0].name.matches(
+            '^foundation-owner-release-[a-f0-9]{20}-a[1-9][0-9]{0,3}$'
+          )
+          && object.metadata.ownerReferences[0].controller
+          && object.metadata.ownerReferences[0].blockOwnerDeletion
+          && object.metadata.labels['job-name'] == object.metadata.ownerReferences[0].name
+          && object.metadata.labels['batch.kubernetes.io/job-name'] == object.metadata.ownerReferences[0].name
+          && object.metadata.labels['controller-uid'] == string(object.metadata.ownerReferences[0].uid)
+          && object.metadata.labels['batch.kubernetes.io/controller-uid']
+            == string(object.metadata.ownerReferences[0].uid)
+          && object.spec.serviceAccountName == 'foundation-owner-release-executor'
+          && object.spec.automountServiceAccountToken == false
+          && object.spec.restartPolicy == 'Never'
+          && (!has(object.spec.hostNetwork) || !object.spec.hostNetwork)
+          && (!has(object.spec.hostPID) || !object.spec.hostPID)
+          && (!has(object.spec.hostIPC) || !object.spec.hostIPC)
+          && (!has(object.spec.nodeSelector) || size(object.spec.nodeSelector) == 0)
+          && (!has(object.spec.affinity))
+          && size(object.spec.tolerations) == 2
+          && object.spec.tolerations.all(t,
+            t.key in ['node.kubernetes.io/not-ready','node.kubernetes.io/unreachable']
+            && t.operator == 'Exists'
+            && t.effect == 'NoExecute'
+            && t.tolerationSeconds == 300
+            && (!has(t.value) || t.value == '')
+          )
+          && size(object.spec.tolerations.filter(t, t.key == 'node.kubernetes.io/not-ready')) == 1
+          && size(object.spec.tolerations.filter(t, t.key == 'node.kubernetes.io/unreachable')) == 1
+          && (!has(object.spec.topologySpreadConstraints) || size(object.spec.topologySpreadConstraints) == 0)
+          && (!has(object.spec.hostAliases) || size(object.spec.hostAliases) == 0)
+          && (!has(object.spec.runtimeClassName) || object.spec.runtimeClassName == '')
+          && size(object.spec.imagePullSecrets) == 1
+          && object.spec.imagePullSecrets[0].name == 'opensphere-ghcr-pull'
+          && size(object.spec.volumes) == 3
+          && object.spec.volumes[0].name == 'kube-api-access'
+          && has(object.spec.volumes[0].projected)
+          && object.spec.volumes[0].projected.defaultMode == 256
+          && size(object.spec.volumes[0].projected.sources) == 2
+          && object.spec.volumes[0].projected.sources[0].serviceAccountToken.path == 'token'
+          && object.spec.volumes[0].projected.sources[0].serviceAccountToken.audience
+            == 'https://kubernetes.default.svc'
+          && object.spec.volumes[0].projected.sources[0].serviceAccountToken.expirationSeconds == 600
+          && object.spec.volumes[0].projected.sources[1].configMap.name == 'kube-root-ca.crt'
+          && size(object.spec.volumes[0].projected.sources[1].configMap.items) == 1
+          && object.spec.volumes[0].projected.sources[1].configMap.items[0].key == 'ca.crt'
+          && object.spec.volumes[0].projected.sources[1].configMap.items[0].path == 'ca.crt'
+          && (!has(object.spec.volumes[0].projected.sources[1].configMap.optional)
+            || !object.spec.volumes[0].projected.sources[1].configMap.optional)
+          && object.spec.volumes[1].name == 'receipt-identity'
+          && has(object.spec.volumes[1].projected)
+          && object.spec.volumes[1].projected.defaultMode == 256
+          && size(object.spec.volumes[1].projected.sources) == 1
+          && object.spec.volumes[1].projected.sources[0].serviceAccountToken.path == 'token'
+          && object.spec.volumes[1].projected.sources[0].serviceAccountToken.audience
+            == 'opensphere-console-foundation-owner-release'
+          && object.spec.volumes[1].projected.sources[0].serviceAccountToken.expirationSeconds == 600
+          && object.spec.volumes[2].name == 'release-control-ca'
+          && object.spec.volumes[2].configMap.name == 'opensphere-platform-release-control-ca'
+          && size(object.spec.volumes[2].configMap.items) == 1
+          && object.spec.volumes[2].configMap.items[0].key == 'ca.crt'
+          && object.spec.volumes[2].configMap.items[0].path == 'ca.crt'
+          && (!has(object.spec.volumes[2].configMap.optional)
+            || !object.spec.volumes[2].configMap.optional)
+          && size(object.spec.containers) == 1
+          && object.spec.containers[0].name == 'executor'
+          && params.metadata.namespace == 'opensphere-console'
+          && params.metadata.name == 'foundation-owner-release-reconciler'
+          && size(params.spec.template.spec.containers) == 1
+          && params.spec.template.spec.containers[0].name == 'reconciler'
+          && params.spec.template.spec.containers[0].image.matches(
+            '^ghcr[.]io/opensphere-platform/opensphere-console-backend@sha256:[a-f0-9]{64}$'
+          )
+          && object.spec.containers[0].image == params.spec.template.spec.containers[0].image
+          && object.spec.containers[0].imagePullPolicy == 'IfNotPresent'
+          && object.spec.containers[0].command
+            == ['node', '/app/opensphere-console-backend/foundation-owner-release-executor.mjs']
+          && (!has(object.spec.containers[0].args) || size(object.spec.containers[0].args) == 0)
+          && (!has(object.spec.initContainers) || size(object.spec.initContainers) == 0)
+          && (!has(object.spec.ephemeralContainers) || size(object.spec.ephemeralContainers) == 0)
+          && (!has(object.spec.containers[0].envFrom) || size(object.spec.containers[0].envFrom) == 0)
+          && object.spec.containers[0].env.map(e, e.name) == [
+            'NODE_EXTRA_CA_CERTS','GITEA_ORGANIZATION','GITEA_REPOSITORY','GITEA_PATH',
+            'REQUEST_ID','GIT_COMMIT_SHA','ATTEMPT','IDENTITY_TOKEN_PATH'
+          ]
+          && object.spec.containers[0].env[0].value
+            == '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+          && object.spec.containers[0].env[1].value == 'opensphere'
+          && object.spec.containers[0].env[2].value == 'platform-declarations'
+          && object.spec.containers[0].env[3].value == 'foundation-owner-release'
+          && object.spec.containers[0].env[4].value
+            == object.metadata.labels['opensphere.io/request-id']
+          && object.spec.containers[0].env[5].value.matches('^[a-f0-9]{40,64}$')
+          && object.spec.containers[0].env[6].value.matches('^[1-9][0-9]{0,3}$')
+          && object.spec.containers[0].env[7].value
+            == '/var/run/secrets/opensphere-foundation-owner-identity/token'
+          && object.spec.containers[0].env.all(e, has(e.value) && (!has(e.valueFrom)))
+          && size(object.spec.containers[0].volumeMounts) == 3
+          && object.spec.containers[0].volumeMounts[0].name == 'kube-api-access'
+          && object.spec.containers[0].volumeMounts[0].mountPath
+            == '/var/run/secrets/kubernetes.io/serviceaccount'
+          && object.spec.containers[0].volumeMounts[0].readOnly
+          && (!has(object.spec.containers[0].volumeMounts[0].subPath)
+            || object.spec.containers[0].volumeMounts[0].subPath == '')
+          && (!has(object.spec.containers[0].volumeMounts[0].subPathExpr)
+            || object.spec.containers[0].volumeMounts[0].subPathExpr == '')
+          && object.spec.containers[0].volumeMounts[1].name == 'receipt-identity'
+          && object.spec.containers[0].volumeMounts[1].mountPath
+            == '/var/run/secrets/opensphere-foundation-owner-identity'
+          && object.spec.containers[0].volumeMounts[1].readOnly
+          && (!has(object.spec.containers[0].volumeMounts[1].subPath)
+            || object.spec.containers[0].volumeMounts[1].subPath == '')
+          && (!has(object.spec.containers[0].volumeMounts[1].subPathExpr)
+            || object.spec.containers[0].volumeMounts[1].subPathExpr == '')
+          && object.spec.containers[0].volumeMounts[2].name == 'release-control-ca'
+          && object.spec.containers[0].volumeMounts[2].mountPath
+            == '/var/run/opensphere-platform-release-control-ca'
+          && object.spec.containers[0].volumeMounts[2].readOnly
+          && (!has(object.spec.containers[0].volumeMounts[2].subPath)
+            || object.spec.containers[0].volumeMounts[2].subPath == '')
+          && (!has(object.spec.containers[0].volumeMounts[2].subPathExpr)
+            || object.spec.containers[0].volumeMounts[2].subPathExpr == '')
+          && (!has(object.spec.containers[0].ports) || size(object.spec.containers[0].ports) == 0)
+          && (!has(object.spec.containers[0].lifecycle))
+          && (!has(object.spec.containers[0].livenessProbe))
+          && (!has(object.spec.containers[0].readinessProbe))
+          && (!has(object.spec.containers[0].startupProbe))
+          && object.spec.containers[0].resources.requests == {'cpu':'50m','memory':'96Mi'}
+          && object.spec.containers[0].resources.limits == {'cpu':'1','memory':'384Mi'}
+          && object.spec.containers[0].securityContext.runAsNonRoot
+          && !object.spec.containers[0].securityContext.allowPrivilegeEscalation
+          && object.spec.containers[0].securityContext.readOnlyRootFilesystem
+          && object.spec.containers[0].securityContext.capabilities.drop == ['ALL']
+          && (!has(object.spec.containers[0].securityContext.privileged)
+            || !object.spec.containers[0].securityContext.privileged)
+          && (!has(object.spec.containers[0].securityContext.runAsUser))
+          && (!has(object.spec.containers[0].securityContext.runAsGroup))
+          && (!has(object.spec.containers[0].securityContext.procMount))
+        )
+      message: "direct Pods cannot use the Foundation owner executor ServiceAccount"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: foundation-owner-release-executor-pod-boundary }
+spec:
+  policyName: foundation-owner-release-executor-pod-boundary
+  paramRef:
+    name: foundation-owner-release-reconciler
+    namespace: opensphere-console
+    parameterNotFoundAction: Deny
+  validationActions: [Deny]
+---
+# The Foundation release workers carry short-lived projected identity tokens
+# and a repository-read token. Isolate both selectors and permit only DNS,
+# the local Docker Desktop API service, Backend reconcile endpoints and the
+# one private declarations repository. The executor additionally observes the
+# one Foundation owner endpoint after applying the exact workload digest.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: foundation-owner-release-reconciler, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: foundation-owner-release-reconciler } }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock: { cidr: 10.96.0.1/32 }
+      ports: [{ protocol: TCP, port: 443 }]
+    - to:
+        - podSelector: { matchLabels: { app: opensphere-console-backend } }
+      ports: [{ protocol: TCP, port: 8446 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: foundation-owner-release-executor, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: foundation-owner-release-executor } }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock: { cidr: 10.96.0.1/32 }
+      ports: [{ protocol: TCP, port: 443 }]
+    - to:
+        - podSelector: { matchLabels: { app: opensphere-console-backend } }
+      ports: [{ protocol: TCP, port: 8446 }]
+    - to:
+        - podSelector: { matchLabels: { app: foundation-oaa-owner } }
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# The existing Foundation-owned owner policy admits only Gateway and Backend.
+# NetworkPolicy is additive, so this narrow peer rule gives only the exact
+# executor Pod the manifest-read connection needed for postcondition checks.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: foundation-owner-release-executor-owner-read, namespace: opensphere-console }
+spec:
+  podSelector: { matchLabels: { app: foundation-oaa-owner } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: foundation-owner-release-executor } }
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# Reserve the long-lived Foundation reconciler identity as tightly as its
+# one-shot executor. A Deployment using its name, label, or ServiceAccount must
+# carry this exact digest and template; the ReplicaSet controller is the only
+# principal allowed to materialize the corresponding exact Pod.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: foundation-owner-release-reconciler-deployment-boundary }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+  validations:
+    - expression: >-
+        !(
+          object.metadata.name == 'foundation-owner-release-reconciler'
+          || object.spec.template.spec.serviceAccountName == 'foundation-owner-release-reconciler'
+          || (has(object.metadata.labels) && 'app' in object.metadata.labels
+            && object.metadata.labels['app'] == 'foundation-owner-release-reconciler')
+          || (has(object.spec.template.metadata.labels) && 'app' in object.spec.template.metadata.labels
+            && object.spec.template.metadata.labels['app'] == 'foundation-owner-release-reconciler')
+        ) || (
+          object.metadata.namespace == 'opensphere-console'
+          && object.metadata.name == 'foundation-owner-release-reconciler'
+          && size(object.metadata.labels) == 2
+          && object.metadata.labels['app'] == 'foundation-owner-release-reconciler'
+          && object.metadata.labels['app.kubernetes.io/part-of'] == 'opensphere-console'
+          && object.metadata.labels.all(k, k in ['app','app.kubernetes.io/part-of'])
+          && (!has(object.metadata.annotations) || size(object.metadata.annotations) == 0)
+          && (!has(object.metadata.ownerReferences) || size(object.metadata.ownerReferences) == 0)
+          && (!has(object.metadata.finalizers) || size(object.metadata.finalizers) == 0)
+          && object.spec.replicas == 1
+          && object.spec.progressDeadlineSeconds == 600
+          && object.spec.revisionHistoryLimit == 10
+          && (!has(object.spec.paused) || !object.spec.paused)
+          && (!has(object.spec.minReadySeconds) || object.spec.minReadySeconds == 0)
+          && size(object.spec.selector.matchLabels) == 1
+          && object.spec.selector.matchLabels['app'] == 'foundation-owner-release-reconciler'
+          && object.spec.selector.matchLabels.all(k, k == 'app')
+          && (!has(object.spec.selector.matchExpressions)
+            || size(object.spec.selector.matchExpressions) == 0)
+          && object.spec.strategy.type == 'RollingUpdate'
+          && object.spec.strategy.rollingUpdate.maxSurge == '25%'
+          && object.spec.strategy.rollingUpdate.maxUnavailable == '25%'
+          && size(object.spec.template.metadata.labels) == 2
+          && object.spec.template.metadata.labels['app'] == 'foundation-owner-release-reconciler'
+          && object.spec.template.metadata.labels['app.kubernetes.io/part-of'] == 'opensphere-console'
+          && object.spec.template.metadata.labels.all(k, k in ['app','app.kubernetes.io/part-of'])
+          && (!has(object.spec.template.metadata.annotations)
+            || size(object.spec.template.metadata.annotations) == 0)
+          && object.spec.template.spec.serviceAccountName == 'foundation-owner-release-reconciler'
+          && object.spec.template.spec.serviceAccount == 'foundation-owner-release-reconciler'
+          && object.spec.template.spec.automountServiceAccountToken == false
+          && object.spec.template.spec.restartPolicy == 'Always'
+          && object.spec.template.spec.dnsPolicy == 'ClusterFirst'
+          && object.spec.template.spec.schedulerName == 'default-scheduler'
+          && object.spec.template.spec.terminationGracePeriodSeconds == 30
+          && (!has(object.spec.template.spec.hostNetwork) || !object.spec.template.spec.hostNetwork)
+          && (!has(object.spec.template.spec.hostPID) || !object.spec.template.spec.hostPID)
+          && (!has(object.spec.template.spec.hostIPC) || !object.spec.template.spec.hostIPC)
+          && (!has(object.spec.template.spec.nodeName) || object.spec.template.spec.nodeName == '')
+          && (!has(object.spec.template.spec.nodeSelector) || size(object.spec.template.spec.nodeSelector) == 0)
+          && (!has(object.spec.template.spec.affinity))
+          && (!has(object.spec.template.spec.tolerations) || size(object.spec.template.spec.tolerations) == 0)
+          && (!has(object.spec.template.spec.topologySpreadConstraints)
+            || size(object.spec.template.spec.topologySpreadConstraints) == 0)
+          && (!has(object.spec.template.spec.hostAliases) || size(object.spec.template.spec.hostAliases) == 0)
+          && (!has(object.spec.template.spec.runtimeClassName)
+            || object.spec.template.spec.runtimeClassName == '')
+          && (!has(object.spec.template.spec.priorityClassName)
+            || object.spec.template.spec.priorityClassName == '')
+          && (!has(object.spec.template.spec.activeDeadlineSeconds))
+          && (!has(object.spec.template.spec.shareProcessNamespace)
+            || !object.spec.template.spec.shareProcessNamespace)
+          && (!has(object.spec.template.spec.hostname) || object.spec.template.spec.hostname == '')
+          && (!has(object.spec.template.spec.subdomain) || object.spec.template.spec.subdomain == '')
+          && (!has(object.spec.template.spec.setHostnameAsFQDN)
+            || !object.spec.template.spec.setHostnameAsFQDN)
+          && (!has(object.spec.template.spec.dnsConfig))
+          && (!has(object.spec.template.spec.readinessGates)
+            || size(object.spec.template.spec.readinessGates) == 0)
+          && (!has(object.spec.template.spec.overhead) || size(object.spec.template.spec.overhead) == 0)
+          && (!has(object.spec.template.spec.schedulingGates)
+            || size(object.spec.template.spec.schedulingGates) == 0)
+          && (!has(object.spec.template.spec.resourceClaims)
+            || size(object.spec.template.spec.resourceClaims) == 0)
+          && (!has(object.spec.template.spec.securityContext.runAsUser))
+          && (!has(object.spec.template.spec.securityContext.runAsGroup))
+          && (!has(object.spec.template.spec.securityContext.runAsNonRoot))
+          && (!has(object.spec.template.spec.securityContext.fsGroup))
+          && (!has(object.spec.template.spec.securityContext.fsGroupChangePolicy))
+          && (!has(object.spec.template.spec.securityContext.seLinuxOptions))
+          && (!has(object.spec.template.spec.securityContext.seccompProfile))
+          && (!has(object.spec.template.spec.securityContext.windowsOptions))
+          && (!has(object.spec.template.spec.securityContext.supplementalGroups)
+            || size(object.spec.template.spec.securityContext.supplementalGroups) == 0)
+          && (!has(object.spec.template.spec.securityContext.sysctls)
+            || size(object.spec.template.spec.securityContext.sysctls) == 0)
+          && (!has(object.spec.template.spec.initContainers)
+            || size(object.spec.template.spec.initContainers) == 0)
+          && (!has(object.spec.template.spec.ephemeralContainers)
+            || size(object.spec.template.spec.ephemeralContainers) == 0)
+          && size(object.spec.template.spec.imagePullSecrets) == 1
+          && object.spec.template.spec.imagePullSecrets[0].name == 'opensphere-ghcr-pull'
+          && size(object.spec.template.spec.volumes) == 3
+          && object.spec.template.spec.volumes[0].name == 'kube-api-access'
+          && object.spec.template.spec.volumes[0].projected.defaultMode == 256
+          && size(object.spec.template.spec.volumes[0].projected.sources) == 2
+          && object.spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken.path == 'token'
+          && object.spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken.audience
+            == 'https://kubernetes.default.svc'
+          && object.spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken.expirationSeconds == 600
+          && object.spec.template.spec.volumes[0].projected.sources[1].configMap.name == 'kube-root-ca.crt'
+          && size(object.spec.template.spec.volumes[0].projected.sources[1].configMap.items) == 1
+          && object.spec.template.spec.volumes[0].projected.sources[1].configMap.items[0].key == 'ca.crt'
+          && object.spec.template.spec.volumes[0].projected.sources[1].configMap.items[0].path == 'ca.crt'
+          && (!has(object.spec.template.spec.volumes[0].projected.sources[1].configMap.optional)
+            || !object.spec.template.spec.volumes[0].projected.sources[1].configMap.optional)
+          && object.spec.template.spec.volumes[1].name == 'receipt-identity'
+          && object.spec.template.spec.volumes[1].projected.defaultMode == 256
+          && size(object.spec.template.spec.volumes[1].projected.sources) == 1
+          && object.spec.template.spec.volumes[1].projected.sources[0].serviceAccountToken.path == 'token'
+          && object.spec.template.spec.volumes[1].projected.sources[0].serviceAccountToken.audience
+            == 'opensphere-console-foundation-owner-release'
+          && object.spec.template.spec.volumes[1].projected.sources[0].serviceAccountToken.expirationSeconds == 600
+          && object.spec.template.spec.volumes[2].name == 'release-control-ca'
+          && object.spec.template.spec.volumes[2].configMap.name == 'opensphere-platform-release-control-ca'
+          && size(object.spec.template.spec.volumes[2].configMap.items) == 1
+          && object.spec.template.spec.volumes[2].configMap.items[0].key == 'ca.crt'
+          && object.spec.template.spec.volumes[2].configMap.items[0].path == 'ca.crt'
+          && (!has(object.spec.template.spec.volumes[2].configMap.optional)
+            || !object.spec.template.spec.volumes[2].configMap.optional)
+          && size(object.spec.template.spec.containers) == 1
+          && object.spec.template.spec.containers[0].name == 'reconciler'
+          && object.spec.template.spec.containers[0].image.matches(
+            '^ghcr[.]io/opensphere-platform/opensphere-console-backend@sha256:[a-f0-9]{64}$'
+          )
+          && object.spec.template.spec.containers[0].imagePullPolicy == 'IfNotPresent'
+          && object.spec.template.spec.containers[0].command
+            == ['node','/app/opensphere-console-backend/foundation-owner-release-reconciler.js']
+          && (!has(object.spec.template.spec.containers[0].args)
+            || size(object.spec.template.spec.containers[0].args) == 0)
+          && (!has(object.spec.template.spec.containers[0].envFrom)
+            || size(object.spec.template.spec.containers[0].envFrom) == 0)
+          && object.spec.template.spec.containers[0].env.map(e, e.name) == [
+            'PORT','NODE_EXTRA_CA_CERTS','GITEA_ORGANIZATION','GITEA_REPOSITORY','GITEA_PATH',
+            'EXECUTOR_IMAGE','IDENTITY_TOKEN_PATH'
+          ]
+          && object.spec.template.spec.containers[0].env[0].value == '8080'
+          && object.spec.template.spec.containers[0].env[1].value
+            == '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+          && object.spec.template.spec.containers[0].env[2].value == 'opensphere'
+          && object.spec.template.spec.containers[0].env[3].value == 'platform-declarations'
+          && object.spec.template.spec.containers[0].env[4].value == 'foundation-owner-release'
+          && object.spec.template.spec.containers[0].env[5].value
+            == object.spec.template.spec.containers[0].image
+          && object.spec.template.spec.containers[0].env[6].value
+            == '/var/run/secrets/opensphere-foundation-owner-identity/token'
+          && object.spec.template.spec.containers[0].env.all(e, has(e.value) && !has(e.valueFrom))
+          && size(object.spec.template.spec.containers[0].volumeMounts) == 3
+          && object.spec.template.spec.containers[0].volumeMounts[0].name == 'kube-api-access'
+          && object.spec.template.spec.containers[0].volumeMounts[0].mountPath
+            == '/var/run/secrets/kubernetes.io/serviceaccount'
+          && object.spec.template.spec.containers[0].volumeMounts[0].readOnly
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[0].subPath)
+            || object.spec.template.spec.containers[0].volumeMounts[0].subPath == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[0].subPathExpr)
+            || object.spec.template.spec.containers[0].volumeMounts[0].subPathExpr == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[0].mountPropagation)
+            || object.spec.template.spec.containers[0].volumeMounts[0].mountPropagation == 'None')
+          && object.spec.template.spec.containers[0].volumeMounts[1].name == 'receipt-identity'
+          && object.spec.template.spec.containers[0].volumeMounts[1].mountPath
+            == '/var/run/secrets/opensphere-foundation-owner-identity'
+          && object.spec.template.spec.containers[0].volumeMounts[1].readOnly
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[1].subPath)
+            || object.spec.template.spec.containers[0].volumeMounts[1].subPath == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[1].subPathExpr)
+            || object.spec.template.spec.containers[0].volumeMounts[1].subPathExpr == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[1].mountPropagation)
+            || object.spec.template.spec.containers[0].volumeMounts[1].mountPropagation == 'None')
+          && object.spec.template.spec.containers[0].volumeMounts[2].name == 'release-control-ca'
+          && object.spec.template.spec.containers[0].volumeMounts[2].mountPath
+            == '/var/run/opensphere-platform-release-control-ca'
+          && object.spec.template.spec.containers[0].volumeMounts[2].readOnly
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[2].subPath)
+            || object.spec.template.spec.containers[0].volumeMounts[2].subPath == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[2].subPathExpr)
+            || object.spec.template.spec.containers[0].volumeMounts[2].subPathExpr == '')
+          && (!has(object.spec.template.spec.containers[0].volumeMounts[2].mountPropagation)
+            || object.spec.template.spec.containers[0].volumeMounts[2].mountPropagation == 'None')
+          && (!has(object.spec.template.spec.containers[0].volumeDevices)
+            || size(object.spec.template.spec.containers[0].volumeDevices) == 0)
+          && size(object.spec.template.spec.containers[0].ports) == 1
+          && object.spec.template.spec.containers[0].ports[0].name == 'http'
+          && object.spec.template.spec.containers[0].ports[0].containerPort == 8080
+          && object.spec.template.spec.containers[0].ports[0].protocol == 'TCP'
+          && (!has(object.spec.template.spec.containers[0].ports[0].hostIP)
+            || object.spec.template.spec.containers[0].ports[0].hostIP == '')
+          && (!has(object.spec.template.spec.containers[0].ports[0].hostPort)
+            || object.spec.template.spec.containers[0].ports[0].hostPort == 0)
+          && object.spec.template.spec.containers[0].readinessProbe.httpGet.path == '/readyz'
+          && object.spec.template.spec.containers[0].readinessProbe.httpGet.port == 'http'
+          && object.spec.template.spec.containers[0].readinessProbe.httpGet.scheme == 'HTTP'
+          && (!has(object.spec.template.spec.containers[0].readinessProbe.httpGet.host)
+            || object.spec.template.spec.containers[0].readinessProbe.httpGet.host == '')
+          && (!has(object.spec.template.spec.containers[0].readinessProbe.httpGet.httpHeaders)
+            || size(object.spec.template.spec.containers[0].readinessProbe.httpGet.httpHeaders) == 0)
+          && (!has(object.spec.template.spec.containers[0].readinessProbe.exec))
+          && (!has(object.spec.template.spec.containers[0].readinessProbe.tcpSocket))
+          && (!has(object.spec.template.spec.containers[0].readinessProbe.grpc))
+          && object.spec.template.spec.containers[0].readinessProbe.initialDelaySeconds == 2
+          && object.spec.template.spec.containers[0].readinessProbe.periodSeconds == 5
+          && object.spec.template.spec.containers[0].readinessProbe.timeoutSeconds == 1
+          && object.spec.template.spec.containers[0].readinessProbe.successThreshold == 1
+          && object.spec.template.spec.containers[0].readinessProbe.failureThreshold == 3
+          && object.spec.template.spec.containers[0].livenessProbe.httpGet.path == '/healthz'
+          && object.spec.template.spec.containers[0].livenessProbe.httpGet.port == 'http'
+          && object.spec.template.spec.containers[0].livenessProbe.httpGet.scheme == 'HTTP'
+          && (!has(object.spec.template.spec.containers[0].livenessProbe.httpGet.host)
+            || object.spec.template.spec.containers[0].livenessProbe.httpGet.host == '')
+          && (!has(object.spec.template.spec.containers[0].livenessProbe.httpGet.httpHeaders)
+            || size(object.spec.template.spec.containers[0].livenessProbe.httpGet.httpHeaders) == 0)
+          && (!has(object.spec.template.spec.containers[0].livenessProbe.exec))
+          && (!has(object.spec.template.spec.containers[0].livenessProbe.tcpSocket))
+          && (!has(object.spec.template.spec.containers[0].livenessProbe.grpc))
+          && object.spec.template.spec.containers[0].livenessProbe.initialDelaySeconds == 10
+          && object.spec.template.spec.containers[0].livenessProbe.periodSeconds == 10
+          && object.spec.template.spec.containers[0].livenessProbe.timeoutSeconds == 1
+          && object.spec.template.spec.containers[0].livenessProbe.successThreshold == 1
+          && object.spec.template.spec.containers[0].livenessProbe.failureThreshold == 3
+          && (!has(object.spec.template.spec.containers[0].startupProbe))
+          && (!has(object.spec.template.spec.containers[0].lifecycle))
+          && object.spec.template.spec.containers[0].terminationMessagePath == '/dev/termination-log'
+          && object.spec.template.spec.containers[0].terminationMessagePolicy == 'File'
+          && object.spec.template.spec.containers[0].resources.requests == {'cpu':'10m','memory':'40Mi'}
+          && object.spec.template.spec.containers[0].resources.limits == {'cpu':'250m','memory':'192Mi'}
+          && object.spec.template.spec.containers[0].securityContext.runAsNonRoot
+          && !object.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          && object.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          && object.spec.template.spec.containers[0].securityContext.capabilities.drop == ['ALL']
+          && (!has(object.spec.template.spec.containers[0].securityContext.privileged)
+            || !object.spec.template.spec.containers[0].securityContext.privileged)
+          && (!has(object.spec.template.spec.containers[0].securityContext.runAsUser))
+          && (!has(object.spec.template.spec.containers[0].securityContext.runAsGroup))
+          && (!has(object.spec.template.spec.containers[0].securityContext.procMount))
+          && (!has(object.spec.template.spec.containers[0].securityContext.seLinuxOptions))
+          && (!has(object.spec.template.spec.containers[0].securityContext.seccompProfile))
+          && (!has(object.spec.template.spec.containers[0].securityContext.windowsOptions))
+          && (!has(object.spec.template.spec.containers[0].workingDir)
+            || object.spec.template.spec.containers[0].workingDir == '')
+          && (!has(object.spec.template.spec.containers[0].stdin)
+            || !object.spec.template.spec.containers[0].stdin)
+          && (!has(object.spec.template.spec.containers[0].stdinOnce)
+            || !object.spec.template.spec.containers[0].stdinOnce)
+          && (!has(object.spec.template.spec.containers[0].tty)
+            || !object.spec.template.spec.containers[0].tty)
+        )
+      message: "the Foundation owner reconciler Deployment identity is reserved for its exact governed template"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: foundation-owner-release-reconciler-deployment-boundary }
+spec:
+  policyName: foundation-owner-release-reconciler-deployment-boundary
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: foundation-owner-release-reconciler-pod-boundary }
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: apps/v1
+    kind: Deployment
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  validations:
+    - expression: >-
+        !(
+          object.spec.serviceAccountName == 'foundation-owner-release-reconciler'
+          || object.metadata.name.startsWith('foundation-owner-release-reconciler-')
+          || (has(object.metadata.labels) && 'app' in object.metadata.labels
+            && object.metadata.labels['app'] == 'foundation-owner-release-reconciler')
+        ) || (
+          request.userInfo.username in [
+            'system:kube-controller-manager','system:serviceaccount:kube-system:replicaset-controller'
+          ]
+          && object.metadata.namespace == 'opensphere-console'
+          && object.metadata.name.matches(
+            '^foundation-owner-release-reconciler-[a-z0-9]{10}-[a-z0-9]{5}$'
+          )
+          && object.metadata.generateName
+            == 'foundation-owner-release-reconciler-' + object.metadata.labels['pod-template-hash'] + '-'
+          && size(object.metadata.labels) == 3
+          && object.metadata.labels['app'] == 'foundation-owner-release-reconciler'
+          && object.metadata.labels['app.kubernetes.io/part-of'] == 'opensphere-console'
+          && object.metadata.labels['pod-template-hash'].matches('^[a-z0-9]{10}$')
+          && object.metadata.labels.all(k, k in [
+            'app','app.kubernetes.io/part-of','pod-template-hash'
+          ])
+          && (!has(object.metadata.annotations) || size(object.metadata.annotations) == 0)
+          && size(object.metadata.ownerReferences) == 1
+          && object.metadata.ownerReferences[0].apiVersion == 'apps/v1'
+          && object.metadata.ownerReferences[0].kind == 'ReplicaSet'
+          && object.metadata.ownerReferences[0].name
+            == 'foundation-owner-release-reconciler-' + object.metadata.labels['pod-template-hash']
+          && string(object.metadata.ownerReferences[0].uid).matches(
+            '^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+          )
+          && object.metadata.ownerReferences[0].controller
+          && object.metadata.ownerReferences[0].blockOwnerDeletion
+          && (!has(object.metadata.finalizers) || size(object.metadata.finalizers) == 0)
+          && object.spec.serviceAccountName == 'foundation-owner-release-reconciler'
+          && object.spec.serviceAccount == 'foundation-owner-release-reconciler'
+          && object.spec.automountServiceAccountToken == false
+          && object.spec.restartPolicy == 'Always'
+          && object.spec.dnsPolicy == 'ClusterFirst'
+          && object.spec.schedulerName == 'default-scheduler'
+          && object.spec.terminationGracePeriodSeconds == 30
+          && (!has(object.spec.hostNetwork) || !object.spec.hostNetwork)
+          && (!has(object.spec.hostPID) || !object.spec.hostPID)
+          && (!has(object.spec.hostIPC) || !object.spec.hostIPC)
+          && (!has(object.spec.nodeName) || object.spec.nodeName == '')
+          && (!has(object.spec.nodeSelector) || size(object.spec.nodeSelector) == 0)
+          && (!has(object.spec.affinity))
+          && size(object.spec.tolerations) == 2
+          && object.spec.tolerations.all(t,
+            t.key in ['node.kubernetes.io/not-ready','node.kubernetes.io/unreachable']
+            && t.operator == 'Exists'
+            && t.effect == 'NoExecute'
+            && t.tolerationSeconds == 300
+            && (!has(t.value) || t.value == '')
+          )
+          && size(object.spec.tolerations.filter(t, t.key == 'node.kubernetes.io/not-ready')) == 1
+          && size(object.spec.tolerations.filter(t, t.key == 'node.kubernetes.io/unreachable')) == 1
+          && (!has(object.spec.topologySpreadConstraints)
+            || size(object.spec.topologySpreadConstraints) == 0)
+          && (!has(object.spec.hostAliases) || size(object.spec.hostAliases) == 0)
+          && (!has(object.spec.runtimeClassName) || object.spec.runtimeClassName == '')
+          && (!has(object.spec.priorityClassName) || object.spec.priorityClassName == '')
+          && (!has(object.spec.priority) || object.spec.priority == 0)
+          && (!has(object.spec.preemptionPolicy) || object.spec.preemptionPolicy == 'PreemptLowerPriority')
+          && (!has(object.spec.enableServiceLinks) || object.spec.enableServiceLinks)
+          && (!has(object.spec.activeDeadlineSeconds))
+          && (!has(object.spec.shareProcessNamespace) || !object.spec.shareProcessNamespace)
+          && (!has(object.spec.hostname) || object.spec.hostname == '')
+          && (!has(object.spec.subdomain) || object.spec.subdomain == '')
+          && (!has(object.spec.setHostnameAsFQDN) || !object.spec.setHostnameAsFQDN)
+          && (!has(object.spec.dnsConfig))
+          && (!has(object.spec.readinessGates) || size(object.spec.readinessGates) == 0)
+          && (!has(object.spec.overhead) || size(object.spec.overhead) == 0)
+          && (!has(object.spec.schedulingGates) || size(object.spec.schedulingGates) == 0)
+          && (!has(object.spec.resourceClaims) || size(object.spec.resourceClaims) == 0)
+          && (!has(object.spec.securityContext.runAsUser))
+          && (!has(object.spec.securityContext.runAsGroup))
+          && (!has(object.spec.securityContext.runAsNonRoot))
+          && (!has(object.spec.securityContext.fsGroup))
+          && (!has(object.spec.securityContext.fsGroupChangePolicy))
+          && (!has(object.spec.securityContext.seLinuxOptions))
+          && (!has(object.spec.securityContext.seccompProfile))
+          && (!has(object.spec.securityContext.windowsOptions))
+          && (!has(object.spec.securityContext.supplementalGroups)
+            || size(object.spec.securityContext.supplementalGroups) == 0)
+          && (!has(object.spec.securityContext.sysctls)
+            || size(object.spec.securityContext.sysctls) == 0)
+          && (!has(object.spec.initContainers) || size(object.spec.initContainers) == 0)
+          && (!has(object.spec.ephemeralContainers) || size(object.spec.ephemeralContainers) == 0)
+          && size(object.spec.imagePullSecrets) == 1
+          && object.spec.imagePullSecrets[0].name == 'opensphere-ghcr-pull'
+          && size(object.spec.volumes) == 3
+          && object.spec.volumes[0].name == 'kube-api-access'
+          && object.spec.volumes[0].projected.defaultMode == 256
+          && size(object.spec.volumes[0].projected.sources) == 2
+          && object.spec.volumes[0].projected.sources[0].serviceAccountToken.path == 'token'
+          && object.spec.volumes[0].projected.sources[0].serviceAccountToken.audience
+            == 'https://kubernetes.default.svc'
+          && object.spec.volumes[0].projected.sources[0].serviceAccountToken.expirationSeconds == 600
+          && object.spec.volumes[0].projected.sources[1].configMap.name == 'kube-root-ca.crt'
+          && size(object.spec.volumes[0].projected.sources[1].configMap.items) == 1
+          && object.spec.volumes[0].projected.sources[1].configMap.items[0].key == 'ca.crt'
+          && object.spec.volumes[0].projected.sources[1].configMap.items[0].path == 'ca.crt'
+          && (!has(object.spec.volumes[0].projected.sources[1].configMap.optional)
+            || !object.spec.volumes[0].projected.sources[1].configMap.optional)
+          && object.spec.volumes[1].name == 'receipt-identity'
+          && object.spec.volumes[1].projected.defaultMode == 256
+          && size(object.spec.volumes[1].projected.sources) == 1
+          && object.spec.volumes[1].projected.sources[0].serviceAccountToken.path == 'token'
+          && object.spec.volumes[1].projected.sources[0].serviceAccountToken.audience
+            == 'opensphere-console-foundation-owner-release'
+          && object.spec.volumes[1].projected.sources[0].serviceAccountToken.expirationSeconds == 600
+          && object.spec.volumes[2].name == 'release-control-ca'
+          && object.spec.volumes[2].configMap.name == 'opensphere-platform-release-control-ca'
+          && size(object.spec.volumes[2].configMap.items) == 1
+          && object.spec.volumes[2].configMap.items[0].key == 'ca.crt'
+          && object.spec.volumes[2].configMap.items[0].path == 'ca.crt'
+          && (!has(object.spec.volumes[2].configMap.optional)
+            || !object.spec.volumes[2].configMap.optional)
+          && size(object.spec.containers) == 1
+          && object.spec.containers[0].name == 'reconciler'
+          && params.metadata.namespace == 'opensphere-console'
+          && params.metadata.name == 'foundation-owner-release-reconciler'
+          && size(params.spec.template.spec.containers) == 1
+          && params.spec.template.spec.containers[0].name == 'reconciler'
+          && params.spec.template.spec.containers[0].image.matches(
+            '^ghcr[.]io/opensphere-platform/opensphere-console-backend@sha256:[a-f0-9]{64}$'
+          )
+          && object.spec.containers[0].image == params.spec.template.spec.containers[0].image
+          && object.spec.containers[0].imagePullPolicy == 'IfNotPresent'
+          && object.spec.containers[0].command
+            == ['node','/app/opensphere-console-backend/foundation-owner-release-reconciler.js']
+          && (!has(object.spec.containers[0].args) || size(object.spec.containers[0].args) == 0)
+          && (!has(object.spec.containers[0].envFrom) || size(object.spec.containers[0].envFrom) == 0)
+          && object.spec.containers[0].env.map(e, e.name) == [
+            'PORT','NODE_EXTRA_CA_CERTS','GITEA_ORGANIZATION','GITEA_REPOSITORY','GITEA_PATH',
+            'EXECUTOR_IMAGE','IDENTITY_TOKEN_PATH'
+          ]
+          && object.spec.containers[0].env[0].value == '8080'
+          && object.spec.containers[0].env[1].value
+            == '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+          && object.spec.containers[0].env[2].value == 'opensphere'
+          && object.spec.containers[0].env[3].value == 'platform-declarations'
+          && object.spec.containers[0].env[4].value == 'foundation-owner-release'
+          && object.spec.containers[0].env[5].value == object.spec.containers[0].image
+          && object.spec.containers[0].env[6].value
+            == '/var/run/secrets/opensphere-foundation-owner-identity/token'
+          && object.spec.containers[0].env.all(e, has(e.value) && !has(e.valueFrom))
+          && size(object.spec.containers[0].volumeMounts) == 3
+          && object.spec.containers[0].volumeMounts[0].name == 'kube-api-access'
+          && object.spec.containers[0].volumeMounts[0].mountPath
+            == '/var/run/secrets/kubernetes.io/serviceaccount'
+          && object.spec.containers[0].volumeMounts[0].readOnly
+          && (!has(object.spec.containers[0].volumeMounts[0].subPath)
+            || object.spec.containers[0].volumeMounts[0].subPath == '')
+          && (!has(object.spec.containers[0].volumeMounts[0].subPathExpr)
+            || object.spec.containers[0].volumeMounts[0].subPathExpr == '')
+          && (!has(object.spec.containers[0].volumeMounts[0].mountPropagation)
+            || object.spec.containers[0].volumeMounts[0].mountPropagation == 'None')
+          && object.spec.containers[0].volumeMounts[1].name == 'receipt-identity'
+          && object.spec.containers[0].volumeMounts[1].mountPath
+            == '/var/run/secrets/opensphere-foundation-owner-identity'
+          && object.spec.containers[0].volumeMounts[1].readOnly
+          && (!has(object.spec.containers[0].volumeMounts[1].subPath)
+            || object.spec.containers[0].volumeMounts[1].subPath == '')
+          && (!has(object.spec.containers[0].volumeMounts[1].subPathExpr)
+            || object.spec.containers[0].volumeMounts[1].subPathExpr == '')
+          && (!has(object.spec.containers[0].volumeMounts[1].mountPropagation)
+            || object.spec.containers[0].volumeMounts[1].mountPropagation == 'None')
+          && object.spec.containers[0].volumeMounts[2].name == 'release-control-ca'
+          && object.spec.containers[0].volumeMounts[2].mountPath
+            == '/var/run/opensphere-platform-release-control-ca'
+          && object.spec.containers[0].volumeMounts[2].readOnly
+          && (!has(object.spec.containers[0].volumeMounts[2].subPath)
+            || object.spec.containers[0].volumeMounts[2].subPath == '')
+          && (!has(object.spec.containers[0].volumeMounts[2].subPathExpr)
+            || object.spec.containers[0].volumeMounts[2].subPathExpr == '')
+          && (!has(object.spec.containers[0].volumeMounts[2].mountPropagation)
+            || object.spec.containers[0].volumeMounts[2].mountPropagation == 'None')
+          && (!has(object.spec.containers[0].volumeDevices)
+            || size(object.spec.containers[0].volumeDevices) == 0)
+          && size(object.spec.containers[0].ports) == 1
+          && object.spec.containers[0].ports[0].name == 'http'
+          && object.spec.containers[0].ports[0].containerPort == 8080
+          && object.spec.containers[0].ports[0].protocol == 'TCP'
+          && (!has(object.spec.containers[0].ports[0].hostIP)
+            || object.spec.containers[0].ports[0].hostIP == '')
+          && (!has(object.spec.containers[0].ports[0].hostPort)
+            || object.spec.containers[0].ports[0].hostPort == 0)
+          && object.spec.containers[0].readinessProbe.httpGet.path == '/readyz'
+          && object.spec.containers[0].readinessProbe.httpGet.port == 'http'
+          && object.spec.containers[0].readinessProbe.httpGet.scheme == 'HTTP'
+          && (!has(object.spec.containers[0].readinessProbe.httpGet.host)
+            || object.spec.containers[0].readinessProbe.httpGet.host == '')
+          && (!has(object.spec.containers[0].readinessProbe.httpGet.httpHeaders)
+            || size(object.spec.containers[0].readinessProbe.httpGet.httpHeaders) == 0)
+          && (!has(object.spec.containers[0].readinessProbe.exec))
+          && (!has(object.spec.containers[0].readinessProbe.tcpSocket))
+          && (!has(object.spec.containers[0].readinessProbe.grpc))
+          && object.spec.containers[0].readinessProbe.initialDelaySeconds == 2
+          && object.spec.containers[0].readinessProbe.periodSeconds == 5
+          && object.spec.containers[0].readinessProbe.timeoutSeconds == 1
+          && object.spec.containers[0].readinessProbe.successThreshold == 1
+          && object.spec.containers[0].readinessProbe.failureThreshold == 3
+          && object.spec.containers[0].livenessProbe.httpGet.path == '/healthz'
+          && object.spec.containers[0].livenessProbe.httpGet.port == 'http'
+          && object.spec.containers[0].livenessProbe.httpGet.scheme == 'HTTP'
+          && (!has(object.spec.containers[0].livenessProbe.httpGet.host)
+            || object.spec.containers[0].livenessProbe.httpGet.host == '')
+          && (!has(object.spec.containers[0].livenessProbe.httpGet.httpHeaders)
+            || size(object.spec.containers[0].livenessProbe.httpGet.httpHeaders) == 0)
+          && (!has(object.spec.containers[0].livenessProbe.exec))
+          && (!has(object.spec.containers[0].livenessProbe.tcpSocket))
+          && (!has(object.spec.containers[0].livenessProbe.grpc))
+          && object.spec.containers[0].livenessProbe.initialDelaySeconds == 10
+          && object.spec.containers[0].livenessProbe.periodSeconds == 10
+          && object.spec.containers[0].livenessProbe.timeoutSeconds == 1
+          && object.spec.containers[0].livenessProbe.successThreshold == 1
+          && object.spec.containers[0].livenessProbe.failureThreshold == 3
+          && (!has(object.spec.containers[0].startupProbe))
+          && (!has(object.spec.containers[0].lifecycle))
+          && object.spec.containers[0].terminationMessagePath == '/dev/termination-log'
+          && object.spec.containers[0].terminationMessagePolicy == 'File'
+          && object.spec.containers[0].resources.requests == {'cpu':'10m','memory':'40Mi'}
+          && object.spec.containers[0].resources.limits == {'cpu':'250m','memory':'192Mi'}
+          && object.spec.containers[0].securityContext.runAsNonRoot
+          && !object.spec.containers[0].securityContext.allowPrivilegeEscalation
+          && object.spec.containers[0].securityContext.readOnlyRootFilesystem
+          && object.spec.containers[0].securityContext.capabilities.drop == ['ALL']
+          && (!has(object.spec.containers[0].securityContext.privileged)
+            || !object.spec.containers[0].securityContext.privileged)
+          && (!has(object.spec.containers[0].securityContext.runAsUser))
+          && (!has(object.spec.containers[0].securityContext.runAsGroup))
+          && (!has(object.spec.containers[0].securityContext.procMount))
+          && (!has(object.spec.containers[0].securityContext.seLinuxOptions))
+          && (!has(object.spec.containers[0].securityContext.seccompProfile))
+          && (!has(object.spec.containers[0].securityContext.windowsOptions))
+          && (!has(object.spec.containers[0].workingDir)
+            || object.spec.containers[0].workingDir == '')
+          && (!has(object.spec.containers[0].stdin) || !object.spec.containers[0].stdin)
+          && (!has(object.spec.containers[0].stdinOnce) || !object.spec.containers[0].stdinOnce)
+          && (!has(object.spec.containers[0].tty) || !object.spec.containers[0].tty)
+        )
+      message: "only the ReplicaSet controller may create the exact Foundation owner reconciler Pod"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: foundation-owner-release-reconciler-pod-boundary }
+spec:
+  policyName: foundation-owner-release-reconciler-pod-boundary
+  paramRef:
+    name: foundation-owner-release-reconciler
+    namespace: opensphere-console
+    parameterNotFoundAction: Deny
+  validationActions: [Deny]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: foundation-owner-release-reconciler
+  namespace: opensphere-console
+  labels: { app: foundation-owner-release-reconciler, app.kubernetes.io/part-of: opensphere-console }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: foundation-owner-release-reconciler } }
+  template:
+    metadata: { labels: { app: foundation-owner-release-reconciler, app.kubernetes.io/part-of: opensphere-console } }
+    spec:
+      serviceAccountName: foundation-owner-release-reconciler
+      automountServiceAccountToken: false
+      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+      volumes:
+        - name: kube-api-access
+          projected:
+            defaultMode: 256
+            sources:
+              - serviceAccountToken: { path: token, audience: "https://kubernetes.default.svc", expirationSeconds: 600 }
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{ key: ca.crt, path: ca.crt }]
+        - name: receipt-identity
+          projected:
+            defaultMode: 256
+            sources:
+              - serviceAccountToken: { path: token, audience: opensphere-console-foundation-owner-release, expirationSeconds: 600 }
+        - name: release-control-ca
+          configMap:
+            name: opensphere-platform-release-control-ca
+            items: [{ key: ca.crt, path: ca.crt }]
+      containers:
+        - name: reconciler
+          image: ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84
+          imagePullPolicy: IfNotPresent
+          command: ["node", "/app/opensphere-console-backend/foundation-owner-release-reconciler.js"]
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - { name: GITEA_ORGANIZATION, value: opensphere }
+            - { name: GITEA_REPOSITORY, value: platform-declarations }
+            - { name: GITEA_PATH, value: foundation-owner-release }
+            - { name: EXECUTOR_IMAGE, value: "ghcr.io/opensphere-platform/opensphere-console-backend@sha256:8ff3652e8087e57c9e150e1b4a59ac64e19c7330cae6234d454f85075fb42e84" }
+            - { name: IDENTITY_TOKEN_PATH, value: /var/run/secrets/opensphere-foundation-owner-identity/token }
+          volumeMounts:
+            - { name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true }
+            - { name: receipt-identity, mountPath: /var/run/secrets/opensphere-foundation-owner-identity, readOnly: true }
+            - { name: release-control-ca, mountPath: /var/run/opensphere-platform-release-control-ca, readOnly: true }
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /readyz, port: http }, initialDelaySeconds: 2, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 10m, memory: 40Mi }
+            limits: { cpu: 250m, memory: 192Mi }
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false

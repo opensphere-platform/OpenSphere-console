@@ -904,6 +904,22 @@ async function main() {
       psql(readFileSync(path.join(MIGRATIONS, file), 'utf8'));
     }
     console.log('  ✓ 마이그레이션 전량 적용 완료 (건너뛴 것 없음)\n');
+    psql(`INSERT INTO auth.users (id,email) VALUES ('77777777-7777-4777-8777-777777777777','foundation-owner@test');
+      INSERT INTO console.operator (user_id,display_name) VALUES ('77777777-7777-4777-8777-777777777777','Foundation Owner Fixture');`);
+    const foundationOriginal = psql(`SELECT (console.begin_change(
+      '88888888-8888-4888-8888-888888888888','foundation-owner:99999999-9999-4999-8999-999999999999:apply',
+      'service','77777777-7777-4777-8777-777777777777','gitea:apply','foundation-oaa-owner',
+      'Foundation exact publication apply','sha256:${'a'.repeat(64)}')).request_id;`).trim();
+    const foundationReplay = psql(`SELECT (console.begin_change(
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','foundation-owner:99999999-9999-4999-8999-999999999999:apply',
+      'service','77777777-7777-4777-8777-777777777777','gitea:apply','foundation-oaa-owner',
+      'Foundation exact publication apply','sha256:${'a'.repeat(64)}')).request_id;`).trim();
+    assert.equal(foundationReplay, foundationOriginal, 'exact Foundation owner retry did not return its original request');
+    mustReject(`SELECT console.begin_change(
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','foundation-owner:99999999-9999-4999-8999-999999999999:apply',
+      'service','77777777-7777-4777-8777-777777777777','gitea:apply','foundation-oaa-owner',
+      'Foundation exact publication apply','sha256:${'b'.repeat(64)}');`, 'Foundation operationId alias with changed publication');
+    console.log('  ✓ Foundation owner operationId replay는 exact payload만 멱등 허용하고 변경 publication을 거부했다\n');
     await verifyShellSessionLedger();
     verifyR2d2RoleMatrix();
     verifyR2d2RedteamHardening();
