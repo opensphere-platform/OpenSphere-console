@@ -9,7 +9,6 @@ import { MyInfo } from './pages/my-info';
 import { ConsoleAdmins } from './pages/console-admins';
 import { AdminDataIdentity } from './pages/admin-data-identity';
 import { AdminChangeControl } from './pages/admin-change-control';
-import { AdminOaa } from './pages/admin-oaa';
 import { AdminObservability } from './pages/admin-observability';
 import { AdminPlatformControl } from './pages/admin-platform-control';
 import { AdminPlatformRelease } from './pages/admin-platform-release';
@@ -22,6 +21,7 @@ import { AdminOverview } from './pages/admin-overview';
 import { ManualPage } from './pages/manual';
 import { authenticatedGuard } from './core/authenticated.guard';
 import { PasswordRecoveryPage } from './pages/password-recovery';
+import { R2D2_ADMIN_ROUTE } from './system-plugins/r2d2/r2d2.route';
 
 /**
  * 플러그인 호스트 매처 — `/p/<id>` 그리고 그 아래 임의 깊이의 서브패스(`/p/<id>/a/b/...`)까지 전부
@@ -109,9 +109,10 @@ export const routes: Routes = [
       // Permanent compatibility path. Preserve old bookmarks without exposing
       // the former screen in current Console navigation.
       { path: 'backbone', redirectTo: 'data-identity', pathMatch: 'full' },
-      // OAA Core is Main Shell native; its data/audit authority is Supabase and
+      // R2D2 is a Console-owned system plugin. Its descriptor-derived lazy route
+      // isolates UI load failure while data/audit authority remains Supabase and
       // every applied operation follows the Gitea declarative change chain.
-      { path: 'oaa', component: AdminOaa },
+      R2D2_ADMIN_ROUTE,
       {
         path: 'infrastructure-monitoring',
         loadComponent: () => import('./pages/admin-infrastructure-monitoring').then((module) => module.AdminInfrastructureMonitoring),

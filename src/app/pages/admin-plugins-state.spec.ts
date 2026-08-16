@@ -10,8 +10,10 @@ const shell = fs.readFileSync(new URL('../os/os-shell.ts', import.meta.url), 'ut
 const navIcon = fs.readFileSync(new URL('../os/os-nav-icon.ts', import.meta.url), 'utf8');
 const perspectives = fs.readFileSync(new URL('../core/perspectives.ts', import.meta.url), 'utf8');
 const systemPluginRegistry = fs.readFileSync(new URL('../core/system-plugin-registry.service.ts', import.meta.url), 'utf8');
+const compositionManifest = fs.readFileSync(new URL('../core/console-composition.manifest.ts', import.meta.url), 'utf8');
 const osShellDescriptor = fs.readFileSync(new URL('../system-plugins/os-shell/os-shell.descriptor.ts', import.meta.url), 'utf8');
 const r2d2Descriptor = fs.readFileSync(new URL('../system-plugins/r2d2/r2d2.descriptor.ts', import.meta.url), 'utf8');
+const r2d2Route = fs.readFileSync(new URL('../system-plugins/r2d2/r2d2.route.ts', import.meta.url), 'utf8');
 
 test('Extension operations separate user intent, serving state, and verification', () => {
   assert.match(source, /<span>서비스 중<\/span>/);
@@ -58,7 +60,8 @@ test('Plugin management lists Console-owned system plugins separately from Regis
   assert.match(source, /descriptor\.category/);
   assert.match(source, /Console exact digest에 결속된 읽기 전용 항목/);
   assert.match(source, /<h2>Registry Plugins<\/h2>/);
-  assert.match(systemPluginRegistry, /\[OS_SHELL_SYSTEM_PLUGIN, R2D2_SYSTEM_PLUGIN\]/);
+  assert.match(systemPluginRegistry, /validateConsoleComposition\(CONSOLE_COMPOSITION_MANIFEST\)/);
+  assert.match(compositionManifest, /systemPlugins:\s*Object\.freeze\(\[OS_SHELL_SYSTEM_PLUGIN, R2D2_SYSTEM_PLUGIN\]\)/);
   assert.match(osShellDescriptor, /displayName:\s*'OS Shell'/);
   assert.match(osShellDescriptor, /category:\s*'Developer Tools'/);
   assert.match(r2d2Descriptor, /id:\s*'r2d2'/);
@@ -66,6 +69,9 @@ test('Plugin management lists Console-owned system plugins separately from Regis
   assert.match(r2d2Descriptor, /category:\s*'AI Orchestration'/);
   assert.match(r2d2Descriptor, /route:\s*'\/manage\/oaa'/);
   assert.match(r2d2Descriptor, /runtimeAdapterId:\s*'cbss\.oaa-gateway'/);
+  assert.match(r2d2Route, /loadComponent/);
+  assert.match(r2d2Route, /catch\(\(error: unknown\) =>/);
+  assert.match(r2d2Route, /return SystemPluginUnavailable/);
   const systemSection = source.slice(source.indexOf('aria-label="System Plugins"'), source.indexOf('<h2>Registry Plugins<\/h2>'));
   assert.doesNotMatch(systemSection, /run\('(?:enable|disable|uninstall)'/);
 });
@@ -82,6 +88,12 @@ test('Topology includes Console-owned system plugins without treating them as in
   assert.match(source, /actionable: false/);
   assert.match(systemPluginRegistry, /list\(\): readonly SystemPluginDescriptor\[\]/);
   assert.match(systemPluginRegistry, /Object\.freeze\(\[\.\.\.this\.descriptors\.values\(\)\]\)/);
+  assert.match(source, /id: 'core-surfaces'/);
+  assert.match(source, /label: 'Core Surfaces'/);
+  assert.match(source, /type: 'core'/);
+  assert.match(compositionManifest, /MANUAL_CORE_SURFACE/);
+  assert.match(compositionManifest, /kind:\s*'coreSurface'/);
+  assert.match(compositionManifest, /route:\s*'\/manual'/);
 });
 
 test('SubShell management projects the selected Carbon icon without a redundant Host column', () => {

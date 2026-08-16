@@ -1,4 +1,4 @@
-import type { SystemPluginDescriptor } from '../../core/system-plugin-registry.service';
+import type { SystemPluginDescriptor } from '../../core/system-plugin-contract';
 
 /** Console-owned, release-bound R2D2 AI orchestration descriptor. */
 export const R2D2_SYSTEM_PLUGIN = Object.freeze({

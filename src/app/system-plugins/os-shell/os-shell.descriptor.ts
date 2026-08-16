@@ -1,4 +1,4 @@
-import type { SystemPluginDescriptor } from '../../core/system-plugin-registry.service';
+import type { SystemPluginDescriptor } from '../../core/system-plugin-contract';
 
 /** CBSS-owned, Console-release-bound OS Shell descriptor. */
 export const OS_SHELL_SYSTEM_PLUGIN = Object.freeze({
