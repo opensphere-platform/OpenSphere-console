@@ -169,3 +169,52 @@ test('composite repository attribution rejects missing Console evidence, extra p
     rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test('platform bridge accepts squash-separated main while preserving exact OS Shell component blobs', () => {
+  const repository = mkdtempSync(join(tmpdir(), 'opensphere-shell-platform-bridge-'));
+  try {
+    git(repository, 'init', '-b', 'main');
+    git(repository, 'config', 'user.name', 'OpenSphere Test');
+    git(repository, 'config', 'user.email', 'test@opensphere.local');
+    const commonRevision = commit(repository, 'common root', { 'README.md': 'common\n' });
+    git(repository, 'switch', '-c', 'os-shell');
+    const baseRevision = commit(repository, 'OS Shell publication base', { 'OS-SHELL.md': 'base\n' });
+    const controlFiles = Object.fromEntries(
+      controlOverridePaths.map((path) => [path, `control contract ${path}\n`]));
+    const controlRevision = commit(repository, 'OS Shell control publication', controlFiles);
+    git(repository, 'switch', 'main');
+    git(repository, 'reset', '--hard', commonRevision);
+    const platformRevision = commit(repository, 'squash-equivalent canonical platform main', {
+      ...controlFiles,
+      'PLATFORM.md': 'canonical main\n',
+    });
+    const headRevision = commit(repository, 'reviewed deployment tooling', {
+      'scripts/Deploy-LocalEdgeOsShell.ps1': '# deployment tooling\n',
+    });
+    git(repository, 'remote', 'add', 'origin', canonicalConsoleOrigin);
+    git(repository, 'update-ref', 'refs/remotes/origin/os-shell', controlRevision);
+    git(repository, 'update-ref', 'refs/remotes/origin/main', headRevision);
+    git(repository, 'branch', '--set-upstream-to=origin/main', 'main');
+
+    const valid = verifyCompositeRepositoryBoundary({
+      repository, baseRevision, platformRevision, controlRevision, headRevision,
+    });
+    assert.equal(valid.platformRevision, platformRevision);
+    assert.deepEqual(valid.controlPaths, controlOverridePaths);
+    assert.deepEqual(valid.toolingPaths, ['scripts/Deploy-LocalEdgeOsShell.ps1']);
+    assert.throws(() => verifyCompositeRepositoryBoundary({
+      repository, baseRevision, platformRevision, backendRevision: platformRevision,
+      controlRevision, headRevision,
+    }), /cannot be combined/);
+
+    const tamperedHead = commit(repository, 'tamper OS Shell control after platform bridge', {
+      [controlOverridePaths[0]]: 'tampered control input\n',
+    });
+    git(repository, 'update-ref', 'refs/remotes/origin/main', tamperedHead);
+    assert.throws(() => verifyCompositeRepositoryBoundary({
+      repository, baseRevision, platformRevision, controlRevision, headRevision: tamperedHead,
+    }), /unbound source|component input differs/);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});

@@ -41,6 +41,7 @@ export const deploymentToolingPaths = Object.freeze([
   'backend/os-shell-control/deploy.test.js',
   'backend/os-shell-control/deploy.yaml',
   'scripts/Deploy-LocalEdgeOsShell.ps1',
+  'scripts/Invoke-LocalEdgePlatformRelease.ps1',
   'scripts/Invoke-OsShellFeatureOperation.ps1',
   'scripts/Publish-LocalEdge.ps1',
   'scripts/Publish-LocalEdgeOsShell.ps1',
@@ -52,6 +53,7 @@ export const deploymentToolingPaths = Object.freeze([
   'scripts/os-shell-edge-signing.ps1',
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
+  'backend/opensphere-console-backend/platform-release.test.js',
 ]);
 
 export function isRuntimeInputPath(path) {
@@ -133,9 +135,13 @@ function requireCanonicalOriginRevision(repository, revision, label) {
 }
 
 export function verifyCompositeRepositoryBoundary({ repository, baseRevision, runtimeRevision = null,
-  backendRevision = null, consoleRevision = null, controlRevision = null, headRevision }) {
+  platformRevision = null, backendRevision = null, consoleRevision = null, controlRevision = null, headRevision }) {
+  if (platformRevision && (backendRevision || consoleRevision)) {
+    throw new Error('platform bridge cannot be combined with legacy Backend or Console overrides');
+  }
   const revisions = { baseRevision, headRevision };
   if (runtimeRevision) revisions.runtimeRevision = runtimeRevision;
+  if (platformRevision) revisions.platformRevision = platformRevision;
   if (backendRevision) revisions.backendRevision = backendRevision;
   if (consoleRevision) revisions.consoleRevision = consoleRevision;
   if (controlRevision) revisions.controlRevision = controlRevision;
@@ -144,7 +150,8 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
   }
   requireCanonicalOrigin(repository);
   for (const [name, revision] of Object.entries(revisions)) requireCanonicalOriginRevision(repository, revision, name);
-  requireAncestor(repository, baseRevision, headRevision, 'deployment HEAD');
+  if (platformRevision) requireAncestor(repository, platformRevision, headRevision, 'deployment HEAD');
+  else requireAncestor(repository, baseRevision, headRevision, 'deployment HEAD');
 
   const evidenceChangedPaths = {};
   let runtimePaths = [];
@@ -213,10 +220,12 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
       }
     }
   }
-  const headPaths = changedPaths(repository, baseRevision, headRevision);
-  assertHeadPaths(headPaths, componentPaths);
-  const missingHeadPaths = componentPaths.filter((path) => !headPaths.includes(path));
-  if (missingHeadPaths.length) throw new Error(`deployment HEAD is missing attributed component source: ${missingHeadPaths.join(', ')}`);
+  const headPaths = changedPaths(repository, platformRevision || baseRevision, headRevision);
+  assertHeadPaths(headPaths, platformRevision ? [] : componentPaths);
+  if (!platformRevision) {
+    const missingHeadPaths = componentPaths.filter((path) => !headPaths.includes(path));
+    if (missingHeadPaths.length) throw new Error(`deployment HEAD is missing attributed component source: ${missingHeadPaths.join(', ')}`);
+  }
   for (const path of componentPaths) {
     const sourceRevision = authorityForPath.get(path);
     const sourceBlob = git(repository, ['rev-parse', `${sourceRevision}:${path}`]);
@@ -227,7 +236,7 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
   const upstreamRevision = git(repository, ['rev-parse', upstream]);
   if (headRevision !== upstreamRevision) throw new Error(`deployment HEAD is not the exact pushed upstream revision ${upstream}`);
   return {
-    baseRevision, runtimeRevision, backendRevision, consoleRevision, controlRevision, headRevision, upstream,
+    baseRevision, runtimeRevision, platformRevision, backendRevision, consoleRevision, controlRevision, headRevision, upstream,
     runtimePaths, backendPaths, consolePaths, controlPaths,
     evidenceChangedPaths,
     toolingPaths: headPaths.filter((path) => deploymentToolingPaths.includes(path)),
@@ -254,7 +263,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   try {
     const result = verifyCompositeRepositoryBoundary({
       repository: argument('--repository'), baseRevision: argument('--base'),
-      runtimeRevision: optionalArgument('--runtime'), backendRevision: optionalArgument('--backend'),
+      runtimeRevision: optionalArgument('--runtime'), platformRevision: optionalArgument('--platform'),
+      backendRevision: optionalArgument('--backend'),
       consoleRevision: optionalArgument('--console'),
       controlRevision: optionalArgument('--control'),
       headRevision: argument('--head'),

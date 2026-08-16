@@ -31,7 +31,7 @@ test('edge signing fails at the declared pwsh 7.2 boundary before Windows PowerS
 test('local-edge deploy joins completed kubectl output instead of binding -join as a parameter', () => {
   assert.doesNotMatch(deployScript, /= \(Invoke-Kubectl[^\r\n]+ -join [^\r\n]+\) \| ConvertFrom-Json/);
   assert.doesNotMatch(deployScript, /"\$repository@\*"/);
-  assert.equal((deployScript.match(/"\$\{repository\}@\*"/g) || []).length, 2);
+  assert.equal((deployScript.match(/"\$\{repository\}@\*"/g) || []).length, 3);
   assert.match(deployScript, /containerStatuses \| Where-Object \{ \[string\]\$_[.]name -eq \$boundContainerName \}/);
   assert.doesNotMatch(deployScript, /\$statuses\[0\][.]image -ne \$Image/);
   assert.match(deployScript, /PSObject[.]Properties\['serviceAccountName'\]/);
@@ -271,20 +271,24 @@ test('internal Console API uses the canonical data-driven Registry and plugin/PF
 
 test('local-edge deploy binds every component-only override through exact source closures', async () => {
   assert.match(deployScript, /\[string\]\$RuntimePublicationEvidence = ''/);
+  assert.match(deployScript, /\[string\]\$PlatformPublicationEvidence = ''/);
   assert.match(deployScript, /\[string\]\$BackendPublicationEvidence = ''/);
   assert.match(deployScript, /\[string\]\$ConsolePublicationEvidence = ''/);
   assert.match(deployScript, /\[string\]\$ControlPublicationEvidence = ''/);
   assert.match(deployScript, /Runtime override requires exactly osShellRuntime/);
+  assert.match(deployScript, /Platform bridge requires exactly backend and console/);
   assert.match(deployScript, /Backend override requires exactly backend/);
   assert.match(deployScript, /Console override requires exactly console/);
   assert.match(deployScript, /Control override requires exactly osShellControl/);
   assert.match(deployScript, /Runtime override changes the base Supabase migration lineage/);
+  assert.match(deployScript, /Platform bridge changes the base Supabase migration lineage/);
   assert.match(deployScript, /Backend override changes the base Supabase migration lineage/);
   assert.match(deployScript, /Console override changes the base Supabase migration lineage/);
   assert.match(deployScript, /Control override changes the base Supabase migration lineage/);
   assert.match(deployScript, /os-shell-runtime-override-boundary[.]mjs/);
   assert.match(deployScript, /'--base',\s*\r?\n?\s*\(\[string\]\$evidence[.]sourceRevision\)/);
   assert.match(deployScript, /@\('--runtime', \(\[string\]\$runtimeEvidence[.]sourceRevision\)\)/);
+  assert.match(deployScript, /@\('--platform', \(\[string\]\$platformEvidence[.]sourceRevision\)\)/);
   assert.match(deployScript, /@\('--backend', \(\[string\]\$backendEvidence[.]sourceRevision\)\)/);
   assert.match(deployScript, /@\('--console', \(\[string\]\$consoleEvidence[.]sourceRevision\)\)/);
   assert.match(deployScript, /@\('--control', \(\[string\]\$controlEvidence[.]sourceRevision\)\)/);
@@ -330,17 +334,9 @@ test('local-edge deploy binds every component-only override through exact source
   assert.deepEqual(declaredToolingPaths, [...boundary.deploymentToolingPaths].sort());
   assert.ok(declaredToolingPaths.includes('scripts/Invoke-OsShellFeatureOperation.ps1'));
   const runtimePaths = ['backend/os-cli/cmd/os-shell-runtime/agent.go', 'backend/os-cli/Dockerfile.runtime'];
-  const backendPaths = [
-    'backend/opensphere-console-backend/Dockerfile',
-    'backend/opensphere-console-backend/local-edge-automation-token.test.js',
-    'backend/opensphere-console-backend/os-shell-admission.js',
-    'backend/opensphere-console-backend/os-shell-admission.test.js',
-  ];
-  const consolePaths = ['nginx/default.conf.template', 'scripts/os-shell-frontend-contract.test.mjs'];
-  const controlPaths = [
-    'backend/os-shell-control/runtime-template.js', 'backend/os-shell-control/runtime-template.test.js',
-    'backend/os-shell-control/server.js', 'backend/os-shell-control/server.test.js',
-  ];
+  const backendPaths = [...boundary.backendOverridePaths];
+  const consolePaths = [...boundary.consoleOverridePaths];
+  const controlPaths = [...boundary.controlOverridePaths];
   assert.doesNotThrow(() => boundary.assertRuntimeOverridePaths(runtimePaths));
   assert.doesNotThrow(() => boundary.assertBackendOverridePaths(backendPaths));
   assert.doesNotThrow(() => boundary.assertConsoleOverridePaths(consolePaths));
