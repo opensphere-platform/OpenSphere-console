@@ -102,6 +102,11 @@ test('the macOS CLI is an optional build input that a release turns back into a 
   // The only named context it may add is the clean, revision-recorded Setup
   // checkout consumed by the backend Platform Release executor.
   assert.doesNotMatch(publisher, /--build-context[^\r\n]*darwin/i);
+  assert.match(publisher, /Get-Content -LiteralPath \$sdkSourceLockPath -Raw/);
+  assert.match(publisher, /git -C \$sdkCheckout fetch --depth 1 origin \$sdkSourceRevision/);
+  assert.match(publisher, /git -C \$sdkCheckout checkout --detach \$sdkSourceRevision/);
+  assert.match(publisher, /'--build-arg', "SDK_SOURCE_REVISION=\$sdkSourceRevision"/);
+  assert.doesNotMatch(publisher, /git clone --depth 1 --branch main \$SdkRepository \$sdkCheckout/);
   assert.match(publisher, /git clone --depth 1 --branch main \$SetupRepository \$setupCheckout/);
   assert.match(publisher, /'--build-context', "setup-cli=\$\(\$item\.SetupContext\)"/);
   assert.match(publisher, /'--build-arg', "SETUP_SOURCE_REVISION=\$setupSourceRevision"/);
