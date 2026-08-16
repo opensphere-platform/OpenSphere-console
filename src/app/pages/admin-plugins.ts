@@ -319,7 +319,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ pluginListCount() }}</span></button>
+        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ totalPluginCount() }}</span></button>
         <clr-tab-content *clrIfActive="activeView() === 'plugins'">
           <div class="extension-view-intro">
             <div><span class="view-kicker">SYSTEM &amp; HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
@@ -328,7 +328,11 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
           <section class="plugin-host-group" aria-label="System Plugins">
             <header>
               <div><span class="view-kicker">CONSOLE-OWNED</span><h3>System Plugins</h3></div>
-              <div class="plugin-host-coordinate"><span class="label label-info">system</span><code>cbss-main-shell</code><strong>{{ systemPluginDescriptors().length }} plugin</strong></div>
+              <div class="plugin-host-coordinate">
+                <span class="label label-info">system</span>
+                <code>cbss-main-shell</code>
+                <strong>{{ systemPluginCount() }} plugin</strong>
+              </div>
             </header>
             <div class="extension-table-wrap">
               <table class="table extension-table" aria-label="Console system plugin 목록">
@@ -345,7 +349,10 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                 <tbody>
                   @for (descriptor of systemPluginDescriptors(); track descriptor.id) {
                     <tr>
-                      <td><strong>{{ descriptor.id === 'os-shell' ? 'OS Shell' : descriptor.id }}</strong><div class="state-detail"><code>{{ descriptor.id }}</code></div></td>
+                      <td>
+                        <strong>{{ systemPluginDisplayName(descriptor.id) }}</strong>
+                        <div class="state-detail"><code>{{ descriptor.id }}</code></div>
+                      </td>
                       <td><span class="label label-info">systemPlugin</span></td>
                       <td><code>{{ descriptor.owner }}</code></td>
                       <td><a [href]="descriptor.route"><code>{{ descriptor.route }}</code></a></td>
@@ -359,7 +366,10 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
               </table>
             </div>
           </section>
-          <div class="extension-view-intro"><div><span class="view-kicker">REGISTRY-MANAGED</span><h2>Registry Plugins</h2></div><p>{{ pluginRegistrationCount() }} plugin</p></div>
+          <div class="extension-view-intro">
+            <div><span class="view-kicker">REGISTRY-MANAGED</span><h2>Registry Plugins</h2></div>
+            <p>{{ registryPluginCount() }} plugin</p>
+          </div>
           <p class="os-sub">Registry plugin은 1단 메뉴 객체가 아닙니다. 각 plugin을 소유·호스팅하는 subShell 아래에서 설치·활성화·검증 상태를 관리합니다.</p>
           @for (group of pluginHostGroups(); track group.hostRef) {
             <section class="plugin-host-group" [attr.aria-label]="group.hostLabel + ' plugins'">
@@ -1271,11 +1281,16 @@ export class AdminPlugins implements OnInit {
   readonly subShellRegistrations = computed(() => this.extensionViews().subShells);
   readonly pluginHostGroups = computed(() => this.extensionViews().pluginGroups);
   readonly unclassifiedRegistrations = computed(() => this.extensionViews().unclassified);
-  readonly pluginRegistrationCount = computed(() =>
+  readonly registryPluginCount = computed(() =>
     this.pluginHostGroups().reduce((total, group) => total + group.items.length, 0),
   );
   readonly systemPluginDescriptors = computed(() => this.systemPlugins.list());
-  readonly pluginListCount = computed(() => this.pluginRegistrationCount() + this.systemPluginDescriptors().length);
+  readonly systemPluginCount = computed(() => this.systemPluginDescriptors().length);
+  readonly totalPluginCount = computed(() => this.registryPluginCount() + this.systemPluginCount());
+
+  systemPluginDisplayName(id: string): string {
+    return id === 'os-shell' ? 'OS Shell' : id;
+  }
 
   /** 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 상태(phase/reason 등). */
   readonly selected = signal<string | null>(null);
