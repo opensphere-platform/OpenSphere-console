@@ -42,7 +42,7 @@ test('deployment HEAD is limited to exact runtime evidence plus closed deploymen
   );
 });
 
-test('backend override accepts exactly the two reviewed backend-only inputs', () => {
+test('backend override accepts the shared admission source used by Backend and Control', () => {
   assert.doesNotThrow(() => assertBackendOverridePaths(backendOverridePaths));
   assert.throws(() => assertBackendOverridePaths([backendOverridePaths[0]]), /exact closed set/);
   assert.throws(() => assertBackendOverridePaths([...backendOverridePaths, 'backend/opensphere-console-backend/server.js']), /exact closed set/);
@@ -106,6 +106,8 @@ test('composite repository attribution rejects missing Console evidence, extra p
     const backendRevision = commit(repository, 'backend override', {
       [backendOverridePaths[0]]: 'FROM scratch\n',
       [backendOverridePaths[1]]: 'backend token contract\n',
+      [backendOverridePaths[2]]: 'export const admission = true;\n',
+      [backendOverridePaths[3]]: 'backend admission contract\n',
     });
     const consoleRevision = commit(repository, 'console override', {
       [consoleOverridePaths[0]]: 'absolute_redirect off;\n',

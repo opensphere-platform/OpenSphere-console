@@ -979,6 +979,8 @@ $deploymentToolingAllowlist = @(
   'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/Invoke-OsShellFeatureOperation.ps1',
   'scripts/Publish-LocalEdge.ps1',
+  'scripts/Publish-LocalEdgeOsShell.ps1',
+  'scripts/os-shell-component-publisher.test.mjs',
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
   'backend/os-shell-control/deploy.yaml',
