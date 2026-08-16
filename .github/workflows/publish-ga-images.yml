@@ -22,19 +22,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: OpenSphere-console
-      - name: Resolve governed SDK revision
-        id: sdk
-        shell: bash
-        run: |
-          revision="$(tr -d '\r\n' < OpenSphere-console/sdk-source.lock)"
-          [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - name: Checkout SDK
         uses: actions/checkout@v4
         with:
           repository: opensphere-platform/OpenSphere-SDK
           path: OpenSphere-SDK
-          ref: ${{ steps.sdk.outputs.revision }}
       - name: Require private Setup read credential
         env:
           SETUP_REPOSITORY_SSH_KEY: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
@@ -167,21 +159,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: OpenSphere-console
-      - name: Resolve governed SDK revision
-        if: matrix.image == 'opensphere-console'
-        id: sdk
-        shell: bash
-        run: |
-          revision="$(tr -d '\r\n' < OpenSphere-console/sdk-source.lock)"
-          [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - name: Checkout SDK
         if: matrix.image == 'opensphere-console'
         uses: actions/checkout@v4
         with:
           repository: opensphere-platform/OpenSphere-SDK
           path: OpenSphere-SDK
-          ref: ${{ steps.sdk.outputs.revision }}
       - name: Require private Setup read credential
         if: matrix.image == 'opensphere-console-backend'
         env:
@@ -266,7 +249,6 @@ jobs:
             CLI_DARWIN_CONTEXT=macos-cli
             CLI_REQUIRE_DARWIN=true
             SETUP_SOURCE_REVISION=${{ steps.setup.outputs.revision || github.sha }}
-            SDK_SOURCE_REVISION=${{ steps.sdk.outputs.revision || github.sha }}
           secrets: |
             "cli_update_signing_key=${{ secrets.CLI_UPDATE_SIGNING_PRIVATE_KEY }}"
           cache-from: type=gha,scope=${{ matrix.image }}

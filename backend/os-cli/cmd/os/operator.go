@@ -23,6 +23,7 @@ type CLIError struct {
 	Code    string
 	Message string
 	Hint    string
+	Details map[string]any
 }
 
 func (e *CLIError) Error() string {
@@ -59,12 +60,21 @@ func retiredResourceError(resource, replacement string) error {
 }
 
 func exitCode(err error) int {
+	if missingInputsFromError(err) != nil {
+		return 2
+	}
 	var usageErr *UsageError
 	if errors.As(err, &usageErr) {
 		return 2
 	}
 	var cliErr *CLIError
 	if errors.As(err, &cliErr) {
+		switch cliErr.Code {
+		case "UnsupportedInWebShell", "CommandContractInvalid", "InvalidExecutionContext":
+			return 2
+		case "OperationCanceled":
+			return 130
+		}
 		switch cliErr.Status {
 		case http.StatusUnauthorized:
 			return 3
@@ -83,27 +93,69 @@ func exitCode(err error) int {
 
 func writeCLIError(out io.Writer, args []string, err error) {
 	_, output, optionErr := extractGlobalOptions(args)
+	envelope := cliErrorEnvelope(err)
 	if optionErr == nil && output == "json" {
-		status, code, message, hint := 0, "CommandFailed", strings.TrimSpace(err.Error()), ""
-		var cliErr *CLIError
-		var usageErr *UsageError
-		if errors.As(err, &cliErr) {
-			status, code, message, hint = cliErr.Status, cliErr.Code, strings.TrimSpace(cliErr.Message), strings.TrimSpace(cliErr.Hint)
-			if code == "" {
-				code = "HTTPError"
-			}
-		} else if errors.As(err, &usageErr) {
-			code, message = "UsageError", strings.TrimSpace(usageErr.Error())
-		}
-		envelope := map[string]any{
-			"schema": "opensphere.cli.error/v1", "ok": false,
-			"error": map[string]any{"code": code, "message": message, "status": status, "exitCode": exitCode(err), "hint": hint},
-		}
 		encoded, _ := json.MarshalIndent(envelope, "", "  ")
 		fmt.Fprintln(out, string(encoded))
 		return
 	}
-	fmt.Fprintln(out, "오류:", err)
+	if optionErr == nil && output == "yaml" {
+		_ = writeYAML(out, envelope, 0)
+		return
+	}
+	errorValue := envelope["error"].(map[string]any)
+	fmt.Fprintf(out, "오류 [%s]: %s\n", errorValue["code"], errorValue["message"])
+	if missing := missingInputsFromError(err); missing != nil {
+		fmt.Fprintln(out, "누락 입력:")
+		for _, input := range missing.MissingInputs {
+			option := input.Option
+			if option == "" {
+				option = "file"
+			}
+			fmt.Fprintf(out, "  %s (%s, %s)\n", input.Path, input.Type, option)
+		}
+		fmt.Fprintln(out, "다음 작업:")
+		for _, action := range missing.NextActions {
+			fmt.Fprintf(out, "  %s [%s]\n", action.Command, action.InputMode)
+		}
+	}
+	if hint, _ := errorValue["hint"].(string); hint != "" {
+		fmt.Fprintln(out, "조치:", hint)
+	}
+}
+
+func cliErrorEnvelope(err error) map[string]any {
+	status, code, message, hint := 0, "CommandFailed", strings.TrimSpace(err.Error()), ""
+	errorValue := map[string]any{}
+	var cliErr *CLIError
+	var usageErr *UsageError
+	if errors.As(err, &cliErr) {
+		status, code, message, hint = cliErr.Status, cliErr.Code, strings.TrimSpace(cliErr.Message), strings.TrimSpace(cliErr.Hint)
+		if code == "" {
+			code = "HTTPError"
+		}
+		if len(cliErr.Details) > 0 {
+			errorValue["details"] = cliErr.Details
+		}
+	} else if missing := missingInputsFromError(err); missing != nil {
+		code, message = "MissingInputs", strings.TrimSpace(missing.Error())
+		errorValue["toolId"] = missing.ToolID
+		errorValue["command"] = missing.Command
+		errorValue["supportsFile"] = missing.SupportsFile
+		errorValue["missingInputs"] = missing.MissingInputs
+		errorValue["nextActions"] = missing.NextActions
+		if missing.ActionBinding != nil {
+			errorValue["actionBinding"] = missing.ActionBinding
+		}
+	} else if errors.As(err, &usageErr) {
+		code, message = "UsageError", strings.TrimSpace(usageErr.Error())
+	}
+	errorValue["code"] = code
+	errorValue["message"] = message
+	errorValue["status"] = status
+	errorValue["exitCode"] = exitCode(err)
+	errorValue["hint"] = hint
+	return map[string]any{"schema": "opensphere.cli.error/v1", "ok": false, "error": errorValue}
 }
 
 func extractGlobalOptions(args []string) ([]string, string, error) {

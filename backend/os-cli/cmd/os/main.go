@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -68,18 +69,36 @@ type Registry struct {
 }
 
 type Tool struct {
-	Command        string               `json:"command"`
-	Method         string               `json:"method"`
-	Path           string               `json:"path"`
-	Components     map[string]ToolRoute `json:"components"`
-	Operations     map[string]ToolRoute `json:"operations"`
-	Description    string               `json:"description"`
-	Risk           string               `json:"risk"`
-	Scope          string               `json:"scope"`
-	InputSchema    *ToolInputSchema     `json:"inputSchema,omitempty"`
-	PathParams     []string             `json:"pathParams,omitempty"`
-	SupportsFile   bool                 `json:"supportsFile,omitempty"`
-	ExplicitAction bool                 `json:"explicitAction,omitempty"`
+	ID              string               `json:"id,omitempty"`
+	Command         string               `json:"command"`
+	Method          string               `json:"method"`
+	Path            string               `json:"path"`
+	Components      map[string]ToolRoute `json:"components"`
+	Operations      map[string]ToolRoute `json:"operations"`
+	Description     string               `json:"description"`
+	Risk            string               `json:"risk"`
+	Scope           string               `json:"scope"`
+	InputSchema     *ToolInputSchema     `json:"inputSchema,omitempty"`
+	PathParams      []string             `json:"pathParams,omitempty"`
+	SupportsFile    bool                 `json:"supportsFile,omitempty"`
+	ExplicitAction  bool                 `json:"explicitAction,omitempty"`
+	ContractVersion string               `json:"contractVersion,omitempty"`
+	SourceRevision  string               `json:"sourceRevision,omitempty"`
+	RequestType     string               `json:"requestType,omitempty"`
+	ExecutionClass  string               `json:"executionClass,omitempty"`
+	Availability    *ToolAvailability    `json:"availability,omitempty"`
+	WebShell        *ToolWebShellPolicy  `json:"webShell,omitempty"`
+	ActionBinding   map[string]any       `json:"actionBinding,omitempty"`
+}
+
+type ToolAvailability struct {
+	WebShell *bool  `json:"webShell,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+type ToolWebShellPolicy struct {
+	Available *bool  `json:"available,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type ToolInputSchema struct {
@@ -100,8 +119,11 @@ type ToolRoute struct {
 }
 
 type ToolManifest struct {
-	Kind  string `json:"kind"`
-	Tools []Tool `json:"tools"`
+	Kind            string `json:"kind"`
+	SchemaVersion   string `json:"schemaVersion,omitempty"`
+	ContractVersion string `json:"contractVersion,omitempty"`
+	SourceRevision  string `json:"sourceRevision,omitempty"`
+	Tools           []Tool `json:"tools"`
 }
 
 func defaults() Config {
@@ -467,6 +489,10 @@ func requireOK(b []byte, status int) error {
 }
 
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
+	return runContext(context.Background(), args, in, out, errOut)
+}
+
+func runContext(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) error {
 	var err error
 	args, output, err := extractGlobalOptions(args)
 	if err != nil {
@@ -480,7 +506,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return printCommandHelp(out, args[1:])
 	}
 	if len(args) > 1 && hasHelpFlag(args[1:]) {
-		return printCommandHelp(out, args)
+		if _, native := nativeCommandDefinition(strings.ToLower(args[0])); native {
+			return printCommandHelp(out, args)
+		}
 	}
 	if err := validateNativeCommandOptions(args); err != nil {
 		return err
@@ -490,6 +518,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return nil
 	}
 	if args[0] == "login" {
+		if err := enforceNativeExecutionPolicy(ctx, args[0]); err != nil {
+			return err
+		}
 		return login(args[1:], in, out, errOut)
 	}
 	cfg, err := loadConfig()
@@ -499,6 +530,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	cfg.Output = output
 	if _, native := nativeCommandDefinition(strings.ToLower(args[0])); native {
 		cfg.Command, _ = nativeRuleFor(args)
+		if err := enforceNativeExecutionPolicy(ctx, args[0]); err != nil {
+			return err
+		}
 	} else {
 		cfg.Command = strings.ToLower(args[0])
 	}
@@ -558,7 +592,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	case "extensions":
 		return extensions(cfg, args[1:], out)
 	default:
-		return dynamic(cfg, args, in, out, errOut)
+		return dynamic(ctx, cfg, args, in, out, errOut)
 	}
 }
 
@@ -1343,7 +1377,7 @@ func validResourceName(value string) bool {
 	return value[len(value)-1] != '-'
 }
 
-func dynamic(cfg Config, args []string, in io.Reader, out, errOut io.Writer) error {
+func dynamic(ctx context.Context, cfg Config, args []string, in io.Reader, out, errOut io.Writer) error {
 	ns := args[0]
 	b, status, contentType, err := requestWithContentType(cfg, http.MethodGet, cfg.RegistryURL, nil, "")
 	if err != nil {
@@ -1384,15 +1418,18 @@ func dynamic(cfg Config, args []string, in io.Reader, out, errOut io.Writer) err
 	if err := requireJSONResponse(manifestContentType, "CLI contribution manifest"); err != nil {
 		return err
 	}
-	if len(args) == 1 || args[1] == "manifest" {
-		return renderOutput(cfg, out, manifestBytes)
-	}
 	var manifest ToolManifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return err
 	}
-	if manifest.Kind == "" || len(manifest.Tools) == 0 {
-		return errors.New("CLI contribution manifest schema is invalid")
+	if err := validateToolManifest(manifest); err != nil {
+		return err
+	}
+	if len(args) == 1 || args[1] == "manifest" {
+		return renderOutput(cfg, out, manifestBytes)
+	}
+	if hasHelpFlag(args[1:]) {
+		return printDynamicCommandHelp(out, ns, args[1:], manifest)
 	}
 	commandWords := nonFlagArgs(args[1:])
 	var selected *Tool
@@ -1410,6 +1447,9 @@ func dynamic(cfg Config, args []string, in io.Reader, out, errOut io.Writer) err
 		}
 		sort.Strings(available)
 		return usageErrorf("명령을 찾을 수 없습니다; 사용 가능: %s", strings.Join(available, ", "))
+	}
+	if err := enforceDynamicExecutionPolicy(ctx, *selected); err != nil {
+		return err
 	}
 	flags := parseLongFlags(args[1:])
 	method := strings.ToUpper(selected.Method)
@@ -1464,7 +1504,13 @@ func dynamic(cfg Config, args []string, in io.Reader, out, errOut io.Writer) err
 	target := join(base, path)
 	var body io.Reader
 	contentType = ""
-	payload, err := dynamicPayload(*selected, flags, in)
+	payloadFlags := flags
+	if isDynamicOperationWatch(*selected) {
+		payloadFlags = copyStringMap(flags)
+		delete(payloadFlags, "interval")
+		delete(payloadFlags, "timeout")
+	}
+	payload, err := dynamicPayload(*selected, payloadFlags, in)
 	if err != nil {
 		return err
 	}
@@ -1485,6 +1531,9 @@ func dynamic(cfg Config, args []string, in io.Reader, out, errOut io.Writer) err
 	} else {
 		encoded, _ := json.Marshal(payload)
 		body, contentType = bytes.NewReader(encoded), "application/json"
+	}
+	if isDynamicOperationWatch(*selected) {
+		return watchDynamicOperation(ctx, cfg, *selected, target, flags, out)
 	}
 	response, status, err := request(cfg, method, target, body, contentType)
 	if err != nil {
@@ -1559,6 +1608,15 @@ func dynamicPayload(tool Tool, flags map[string]string, in io.Reader) (map[strin
 		}
 	}
 	if err := validateTypedPayload(payload, tool.InputSchema, "request"); err != nil {
+		var missing *MissingInputsError
+		if errors.As(err, &missing) {
+			missing.ToolID = tool.ID
+			missing.Command = tool.Command
+			missing.SupportsFile = tool.SupportsFile
+			missing.ActionBinding = tool.ActionBinding
+			missing.NextActions = missingInputActions(tool)
+			populateMissingInputActionPaths(missing)
+		}
 		return nil, err
 	}
 	return payload, nil
@@ -1667,6 +1725,17 @@ func coerceTypedValue(raw string, schema *ToolInputSchema, field string) (any, e
 }
 
 func validateTypedPayload(payload map[string]any, schema *ToolInputSchema, field string) error {
+	if err := validateTypedPayloadValues(payload, schema, field); err != nil {
+		return err
+	}
+	missing := collectMissingInputs(payload, schema, field)
+	if len(missing) > 0 {
+		return &MissingInputsError{MissingInputs: missing}
+	}
+	return nil
+}
+
+func validateTypedPayloadValues(payload map[string]any, schema *ToolInputSchema, field string) error {
 	if schema == nil {
 		return nil
 	}
@@ -1687,7 +1756,7 @@ func validateTypedPayload(payload map[string]any, schema *ToolInputSchema, field
 			if !ok {
 				return usageErrorf("%s.%s 값은 object여야 합니다", field, key)
 			}
-			if err := validateTypedPayload(object, property, field+"."+key); err != nil {
+			if err := validateTypedPayloadValues(object, property, field+"."+key); err != nil {
 				return err
 			}
 		}
@@ -1702,11 +1771,6 @@ func validateTypedPayload(payload map[string]any, schema *ToolInputSchema, field
 			if !matched {
 				return usageErrorf("%s.%s 값은 허용 목록에 없습니다", field, key)
 			}
-		}
-	}
-	for _, required := range schema.Required {
-		if value, ok := payload[required]; !ok || value == nil || strings.TrimSpace(fmt.Sprint(value)) == "" {
-			return usageErrorf("필수 option이 누락되었습니다: %s.%s", field, required)
 		}
 	}
 	if schema.AdditionalProperties != nil && !*schema.AdditionalProperties {
@@ -1757,7 +1821,7 @@ func validateTypedValue(value any, schema *ToolInputSchema, field string) error 
 					return err
 				}
 				if schema.Items.Type == "object" {
-					if err := validateTypedPayload(item.(map[string]any), schema.Items, itemField); err != nil {
+					if err := validateTypedPayloadValues(item.(map[string]any), schema.Items, itemField); err != nil {
 						return err
 					}
 				}
@@ -1837,7 +1901,9 @@ func printHelp(out io.Writer) {
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := runContext(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		writeCLIError(os.Stderr, os.Args[1:], err)
 		os.Exit(exitCode(err))
 	}

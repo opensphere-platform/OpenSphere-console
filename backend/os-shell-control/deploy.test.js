@@ -348,12 +348,9 @@ test('local-edge deploy binds every component-only override through exact source
   assert.match(featureOperationScript, /\[string\]\$ConsolePublicationEvidence = ''/);
   assert.match(featureOperationScript, /'-ConsolePublicationEvidence',\$ConsolePublicationEvidence/);
   assert.match(featureOperationScript, /'-ControlPublicationEvidence',\$ControlPublicationEvidence/);
-  assert.match(publisher, /\$releaseArtifacts\['osShellControlRelease'\]/);
-  assert.match(publisher, /userNamespacePolicy = 'required-hostUsers-false'/);
-  assert.match(publisher, /linux-userns\+rlimit-nproc\+namespace-resourcequota/);
+  assert.doesNotMatch(publisher, /osShellControlRelease|osShellRuntime/);
   assert.match(deployScript, /userNamespacePolicy = \$runtimeUserNamespacePolicy/);
   assert.match(deployScript, /linux-userns\+rlimit-nproc\+namespace-resourcequota/);
-  assert.doesNotMatch(publisher, /linux-rlimit-nproc-fixed-uid\+namespace-resourcequota/);
   assert.doesNotMatch(deployScript, /linux-rlimit-nproc-fixed-uid\+namespace-resourcequota/);
   assert.match(runtimeDockerfile, /-X main[.]webShellAgentSocketPath=\/run\/opensphere-shell\/channel\/agent[.]sock/);
   assert.match(runtimeDockerfile, /-X main[.]webShellAgentPublicKeyPath=\/run\/opensphere-shell\/channel\/agent-public-key[.]pem/);
@@ -399,8 +396,8 @@ test('0062 owner operation is projected-SA, bidirectional, signed-intent-first a
   assert.match(edgeSigning, /IeeeP1363FixedFieldConcatenation/);
   assert.match(edgeSigning, /ACL inheritance must be disabled/);
   assert.match(edgeSigning, /single unencrypted PKCS8 P-256 key/);
-  assert.match(publisher, /maxProcesses\s*=\s*256/);
-  assert.match(publisher, /globalPodLimit\s*=\s*8/);
+  assert.match(deployScript, /runtimeMaxProcesses\s*=\s*256/);
+  assert.match(deployScript, /runtimeGlobalPodLimit\s*=\s*8/);
   assert.match(admissionHarness, /--subresource=ephemeralcontainers/);
   assert.match(admissionHarness, /--subresource=resize/);
   assert.match(admissionHarness, /--as-group system:masters/);

@@ -265,7 +265,7 @@ func (server *agentServer) serveAgentSocket(ctx context.Context, listener net.Li
 
 func (server *agentServer) handleAgentConnection(parent context.Context, connection net.Conn) {
 	defer connection.Close()
-	_ = connection.SetDeadline(now().Add(35 * time.Second))
+	_ = connection.SetDeadline(time.Now().Add(35 * time.Second))
 	line, err := bufio.NewReader(io.LimitReader(connection, maxAgentMessage+1)).ReadBytes('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return
