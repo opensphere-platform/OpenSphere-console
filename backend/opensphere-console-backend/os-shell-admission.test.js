@@ -29,6 +29,23 @@ test('issues a <=15 second assertion bound to method, path, origin and CSRF resu
   assert.equal(result.assertion.includes('opaque'), false);
 });
 
+test('canonicalizes PostgREST UTC offsets before issuing the expiry projection', async () => {
+  const authorize = createOsShellAdmissionIssuer({ secret, now, ttlSeconds: 12 });
+  const postgrestSession = {
+    ...session,
+    row: {
+      idle_expires_at: '2026-08-15T00:10:00.000+00:00',
+      absolute_expires_at: '2026-08-15T00:30:00.000+00:00',
+    },
+  };
+  const result = await authorize(request(), async () => postgrestSession);
+  const claims = verifyOsShellAdmission(result.assertion, {
+    secret, now, method: 'POST', path: '/api/os-shell/sessions', origin: 'https://console.example.test',
+  });
+  assert.equal(claims.browserIdleExpiresAt, '2026-08-15T00:10:00.000Z');
+  assert.equal(claims.browserAbsoluteExpiresAt, '2026-08-15T00:30:00.000Z');
+});
+
 test('fails closed for degraded authority, missing permission and bearer input', async () => {
   const authorize = createOsShellAdmissionIssuer({ secret, now });
   await assert.rejects(() => authorize(request(), async () => ({ ...session, authorityDegraded: true })), (e) => e.code === 503);
