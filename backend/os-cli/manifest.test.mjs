@@ -55,6 +55,22 @@ test('the independent CLI artifact image compiles the manifest version', async (
   );
 });
 
+test('CLI publication authority requires the independent GitHub code owner', async () => {
+  const codeowners = await readFile(new URL('../../.github/CODEOWNERS', import.meta.url), 'utf8');
+  for (const authorityPath of [
+    '/scripts/Publish-LocalEdge.ps1',
+    '/backend/release/policies/build-authority-policy.json',
+    '/backend/dupa-control/release-build-authority-policy.test.js',
+    '/backend/os-cli/Dockerfile',
+    '/backend/os-cli/manifest.test.mjs',
+  ]) {
+    assert.match(
+      codeowners,
+      new RegExp(`^${authorityPath.replaceAll('.', '\\.')} @opensphere-platform @choimars$`, 'm'),
+    );
+  }
+});
+
 test('the macOS CLI is an optional build input that a release turns back into a requirement', async () => {
   const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
   const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
@@ -68,6 +84,11 @@ test('the macOS CLI is an optional build input that a release turns back into a 
   assert.match(cliDockerfile, /ARG CLI_REQUIRE_DARWIN=false/);
   assert.match(cliDockerfile, /FROM scratch AS cli-darwin-absent/);
   assert.doesNotMatch(cliDockerfile, /COPY --from=macos-cli/, 'the macOS context must not be mandatory');
+  assert.match(
+    cliDockerfile,
+    /LABEL org\.opencontainers\.image\.source="https:\/\/github\.com\/opensphere-platform\/OpenSphere-console"/,
+    'the CLI package must be linked to its canonical GitHub source instead of inheriting the nginx base-image source',
+  );
   assert.match(cliDockerfile, /if \[ "\$\{CLI_REQUIRE_DARWIN\}" = "true" \]/, 'a release must still fail without darwin');
   assert.doesNotMatch(rootDockerfile, /CLI_DARWIN_CONTEXT|CLI_REQUIRE_DARWIN/);
 

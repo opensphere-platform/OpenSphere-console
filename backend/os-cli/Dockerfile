@@ -40,6 +40,7 @@ RUN --mount=type=secret,id=cli_update_signing_key,required=false \
       "$([ "${CLI_REQUIRE_DARWIN}" = "true" ] && echo false || echo true)"
 
 FROM docker.io/nginxinc/nginx-unprivileged@sha256:592b23aa79a6e6c08ba4b20f1fff700e1328895705966722608e115d62e52d39
+LABEL org.opencontainers.image.source="https://github.com/opensphere-platform/OpenSphere-console"
 USER root
 RUN apk del --no-cache curl
 USER 101
