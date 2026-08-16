@@ -46,6 +46,7 @@ test('the independent CLI artifact image compiles the manifest version', async (
   const escapedVersion = releaseManifest.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const versionPattern = new RegExp(`main\\.version=${escapedVersion}`);
   assert.match(cliDockerfile, versionPattern);
+  assert.match(cliDockerfile, /COPY go\.mod go\.sum \.\//);
   assert.match(cliDockerfile, /CLI_UPDATE_SIGNING_PROFILE/);
   assert.match(cliDockerfile, /cli_update_signing_key/);
   assert.doesNotMatch(rootDockerfile, /backend\/os-cli|cli-manifest|cli-build|CLI_UPDATE_/);

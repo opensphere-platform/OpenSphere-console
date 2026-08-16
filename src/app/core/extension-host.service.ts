@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import { extensionRouteTarget, prioritizeRequestedHost } from './extension-load-order';
+import { OS_SHELL_STANDALONE_BOOT } from './boot-mode';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
 export type { PluginPage, NavNode } from '@opensphere/sdk';
@@ -168,6 +169,9 @@ export class ExtensionHostService {
   readonly apiBaseByPlugin = signal<Record<string, string>>({});
 
   async load(): Promise<void> {
+    if (OS_SHELL_STANDALONE_BOOT) {
+      throw new Error('ExternalExtensionsDisabledInStandaloneShell');
+    }
     this.startRegistryWatch();
     this.loadState.set('loading');
     // The management catalog is the same projection the icon picker writes.
@@ -305,6 +309,9 @@ export class ExtensionHostService {
   }
 
   private async loadOne(e: RegistryEntry, trustedKeys: Record<string, string>, hostApiVersion: string): Promise<void> {
+    if (OS_SHELL_STANDALONE_BOOT) {
+      throw new Error('ExternalExtensionsDisabledInStandaloneShell');
+    }
     let mod: PluginModule | undefined;
     if (this.loadingIds.has(e.id)) {
       this.failures.update((f) => [...f, { id: e.id, error: 'Host Contract cycle detected' }]);
@@ -371,6 +378,11 @@ export class ExtensionHostService {
       for (const p of perms) {
         if (!isKnownCapability(p)) throw new Error(`알 수 없는 권한 scope '${p}'`);
       }
+			// session:attach is a CBSS system-only capability. Ordinary signed
+			// Consumers fail before entry bytes are fetched or imported.
+			if (perms.includes('session:attach')) {
+				throw new Error("system capability 'session:attach'는 외부 Consumer에 부여할 수 없음");
+			}
 			if (manifest.contributions.page.enabled && !perms.includes('page:register')) {
 				throw new Error("page contribution에 'page:register' 권한 미선언");
 			}

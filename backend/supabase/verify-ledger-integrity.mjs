@@ -15,22 +15,44 @@
 //   4. 클라이언트가 보낸 prev_hash 는 무시된다
 //   5. 행이 사라지면 verify_event_ledger_chain() 이 그 지점을 지목한다
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const { canonicalPermissionRevision } = require('../opensphere-console-backend/os-shell-contract.js');
 const MIGRATIONS = path.join(here, 'migrations');
-const CONTAINER = 'os-ledger-verify';
+const CONTAINER = `os-ledger-verify-${process.pid}-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 const IMAGE = 'pgvector/pgvector:pg16';
 
 const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', ...opts });
 const psql = (sql, { stopOnError = true } = {}) =>
   sh('docker', ['exec', '-i', CONTAINER, 'psql', '-U', 'postgres', '-d', 'postgres',
     ...(stopOnError ? ['-v', 'ON_ERROR_STOP=1'] : []), '-t', '-A'], { input: sql });
+
+function psqlAsync(sql) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('docker', ['exec', '-i', CONTAINER, 'psql', '-U', 'postgres', '-d', 'postgres',
+      '-v', 'ON_ERROR_STOP=1', '-t', '-A'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (value) => { stdout += value; });
+    child.stderr.on('data', (value) => { stderr += value; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(Object.assign(new Error(`concurrent psql exited ${code}`), { stdout, stderr }));
+    });
+    child.stdin.end(sql);
+  });
+}
 
 // Supabase 관리형 스키마(auth/storage)와 역할은 마이그레이션 밖에서 만들어진다. 최소 스텁을 세운다.
 const PREP = `
@@ -39,6 +61,8 @@ CREATE ROLE supabase_admin LOGIN SUPERUSER; CREATE ROLE authenticator NOLOGIN;
 CREATE ROLE opensphere_ai_pipeline NOLOGIN; CREATE ROLE opensphere_ai_runtime NOLOGIN;
 CREATE ROLE opensphere_console_backend NOLOGIN; CREATE ROLE opensphere_external_channel_executor NOLOGIN;
 CREATE ROLE opensphere_notification_dispatcher NOLOGIN; CREATE ROLE opensphere_oaa_gateway NOLOGIN;
+CREATE ROLE opensphere_shell_api NOLOGIN; CREATE ROLE opensphere_shell_gateway NOLOGIN;
+CREATE ROLE opensphere_shell_reconciler NOLOGIN;
 CREATE SCHEMA IF NOT EXISTS extensions;
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
@@ -65,7 +89,7 @@ function mustReject(sql, label) {
     psql(sql);
   } catch (err) {
     rejected = true;
-    detail = String(err.stderr || err.stdout || err.message);
+    detail = [err.stderr, err.stdout, err.message].filter((value) => value !== undefined && value !== null).map(String).join('\n');
   }
   assert.ok(rejected, `${label}: 거부되어야 하는데 통과했다 — 원장이 열려 있다`);
   assert.match(detail, /append-only/, `${label}: 거부되긴 했으나 append-only 계약이 아닌 다른 이유였다`);
@@ -77,7 +101,7 @@ function mustRejectPermission(sql, label) {
   let detail = '';
   try { psql(sql); } catch (err) {
     rejected = true;
-    detail = String(err.stderr || err.stdout || err.message);
+    detail = [err.stderr, err.stdout, err.message].filter((value) => value !== undefined && value !== null).map(String).join('\n');
   }
   assert.ok(rejected, `${label}: least-privilege 경계를 넘어선 SQL이 통과했다`);
   assert.match(detail, /permission denied|violates row-level security/i,
@@ -88,7 +112,10 @@ function mustRejectPermission(sql, label) {
 function mustRejectContract(sql, label, pattern) {
   let rejected = false;
   let detail = '';
-  try { psql(sql); } catch (err) { rejected = true; detail = String(err.stderr || err.stdout || err.message); }
+  try { psql(sql); } catch (err) {
+    rejected = true;
+    detail = [err.stderr, err.stdout, err.message].filter((value) => value !== undefined && value !== null).map(String).join('\n');
+  }
   assert.ok(rejected, `${label}: 강제 계약을 우회했다`);
   assert.match(detail, pattern, `${label}: 예상 계약이 아닌 이유로 실패했다 — ${detail.slice(0, 300)}`);
   console.log(`  ✓ ${label} — 계약 거부됨`);
@@ -120,6 +147,321 @@ function verifyR2d2RoleMatrix() {
   mustRejectPermission('SET ROLE opensphere_oaa_incident_relay; SELECT count(*) FROM oaa.resource_node;', 'relay → graph read');
 
   mustRejectPermission('SET ROLE opensphere_console_backend; SELECT count(*) FROM oaa.observation;', 'Console Backend → observation read');
+}
+
+async function verifyShellSessionLedger() {
+  console.log('\nOS Shell DB 권한·fencing·ticket CAS 계약 (0061)');
+  const actor = '61000000-0000-4000-8000-000000000001';
+  const browserSession = '61000000-0000-4000-8000-000000000002';
+  const session = '61000000-0000-4000-8000-000000000003';
+  const otherActor = '61000000-0000-4000-8000-000000000004';
+  const otherBrowserSession = '61000000-0000-4000-8000-000000000005';
+  const digest = `sha256:${'6'.repeat(64)}`;
+  const ticketHash = `sha256:${'7'.repeat(64)}`;
+
+  psql(`INSERT INTO auth.users(id,email) VALUES('${actor}','shell-test@example.invalid');
+    INSERT INTO console.operator(user_id,status,display_name,credential_revision)
+      VALUES('${actor}','active','Shell Test',4);
+    INSERT INTO console.operator_role(user_id,role_id,reason)
+      SELECT '${actor}',id,'shell ledger runtime verification' FROM console.role WHERE code='console-operators';
+    INSERT INTO console.browser_session(
+      id,owner_id,handle_hash,csrf_hash,access_token_ciphertext,refresh_token_ciphertext,
+      assurance,persistence,status,credential_revision,activated_at,last_reauthenticated_at,
+      idle_expires_at,absolute_expires_at
+    ) VALUES('${browserSession}','${actor}','${'1'.repeat(64)}','${'2'.repeat(64)}','cipher-a','cipher-r',
+      'aal2','8h','active',4,clock_timestamp(),clock_timestamp(),
+      clock_timestamp()+interval '30 minutes',clock_timestamp()+interval '1 hour');
+    INSERT INTO auth.users(id,email) VALUES('${otherActor}','shell-cross-user@example.invalid');
+    INSERT INTO console.operator(user_id,status,display_name,credential_revision)
+      VALUES('${otherActor}','active','Shell Cross User',4);
+    INSERT INTO console.operator_role(user_id,role_id,reason)
+      SELECT '${otherActor}',id,'shell cross-user runtime verification' FROM console.role WHERE code='console-operators';
+    INSERT INTO console.browser_session(
+      id,owner_id,handle_hash,csrf_hash,access_token_ciphertext,refresh_token_ciphertext,
+      assurance,persistence,status,credential_revision,activated_at,last_reauthenticated_at,
+      idle_expires_at,absolute_expires_at
+    ) VALUES('${otherBrowserSession}','${otherActor}','${'3'.repeat(64)}','${'4'.repeat(64)}','cipher-b','cipher-br',
+      'aal2','8h','active',4,clock_timestamp(),clock_timestamp(),
+      clock_timestamp()+interval '30 minutes',clock_timestamp()+interval '1 hour');`);
+  const revision = psql(`SELECT console.current_shell_permission_revision('${actor}');`).trim();
+  const otherRevision = psql(`SELECT console.current_shell_permission_revision('${otherActor}');`).trim();
+  assert.match(revision, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(otherRevision, revision, 'equivalent role projection must be usable for a true cross-user binding test');
+  const projection = JSON.parse(psql(`SELECT json_build_object(
+      'credentialRevision',o.credential_revision,
+      'roles',(SELECT coalesce(json_agg(code ORDER BY code),'[]') FROM (
+        SELECT DISTINCT r.code FROM console.operator_role ur JOIN console.role r ON r.id=ur.role_id
+        WHERE ur.user_id=o.user_id AND (ur.expires_at IS NULL OR ur.expires_at>clock_timestamp())) roles),
+      'permissions',(SELECT coalesce(json_agg(code ORDER BY code),'[]') FROM (
+        SELECT DISTINCT p.code FROM console.operator_role ur
+        JOIN console.role_permission rp ON rp.role_id=ur.role_id JOIN console.permission p ON p.id=rp.permission_id
+        WHERE ur.user_id=o.user_id AND (ur.expires_at IS NULL OR ur.expires_at>clock_timestamp())) permissions)
+    )::text FROM console.operator o WHERE o.user_id='${actor}';`).trim());
+  assert.equal(canonicalPermissionRevision(projection), revision,
+    'Node and PostgreSQL canonical permissionRevision algorithms diverged');
+  const localEdgeEvidence = `{"authority":"kubernetes-workload","channel":"edge","componentSetDigest":"${digest}","gaEligible":false,"latestMigrationId":"0062","migrationSetDigest":"${digest}","publicationSha256":"${digest}","releaseIntentKeyId":"opensphere-edge-local-v1","releaseIntentSha256":"${digest}","releaseIntentSignatureSha256":"${digest}","sourceRevision":"${'a'.repeat(40)}"}`;
+  const edgeIdentity = 'system:serviceaccount:opensphere-console:opensphere-local-edge-release';
+  const enableOperation = '62000000-0000-4000-8000-000000000001';
+
+  mustRejectContract(`SET ROLE opensphere_shell_api;
+    SELECT * FROM console.create_shell_session('${session}','${browserSession}','${actor}',
+      'https://console.example.test','aal2','${revision}','shell-runtime-v1',
+      clock_timestamp()+interval '20 minutes',clock_timestamp()+interval '50 minutes',
+      '{"releaseEvidenceRef":"release://edge/0062","manifestSha256":"${digest}","keyId":"edge-local-1","runtimeImageDigest":"${digest}","osArtifactDigest":"${digest}","sessionPolicyRevision":"policy-v1"}'::jsonb);`,
+  'fresh 0062 kill switch → create', /ShellFeatureDisabled/);
+  mustRejectContract(`SET ROLE opensphere_console_backend;
+    SELECT * FROM console.set_shell_feature_state(true,1,'Browser owner attempted enable without release proof','${otherActor}');`,
+  'browser AAL2 owner → feature enable', /ShellFeatureBrowserEnableRequiresVerifiedRelease/);
+  psql(`SET ROLE opensphere_console_backend;
+    SELECT enabled FROM console.set_shell_feature_state_local_edge(true,1,'signed local edge release intent verified',
+      '${edgeIdentity}','${localEdgeEvidence}'::jsonb,'${enableOperation}'); RESET ROLE;`);
+  assert.equal(psql(`SELECT enabled::text||'|'||revision FROM console.shell_control_state WHERE singleton;`).trim(), 'true|2');
+  console.log('  ✓ browser AAL2 owner는 disable-only이며 signed release-controller만 gate를 열 수 있다');
+
+  const created = psql(`SET ROLE opensphere_shell_api;
+    SELECT session_id FROM console.create_shell_session(
+      '${session}','${browserSession}','${actor}','https://console.example.test','aal2','${revision}',
+      'shell-runtime-v1',clock_timestamp()+interval '20 minutes',clock_timestamp()+interval '50 minutes',
+      '{"releaseEvidenceRef":"release://edge/0061","manifestSha256":"${digest}","keyId":"edge-local-1","runtimeImageDigest":"${digest}","osArtifactDigest":"${digest}","sessionPolicyRevision":"policy-v1"}'::jsonb);
+    RESET ROLE;`).trim().split('\n').find((line) => line === session);
+  assert.equal(created, session, 'Shell API RPC did not create the durable session');
+
+  const replayCreateSql = `SET ROLE opensphere_shell_api;
+    SELECT session_id FROM console.create_shell_session(
+      '${session}','${browserSession}','${actor}','https://console.example.test','aal2','${revision}',
+      'shell-runtime-v1',clock_timestamp()+interval '19 minutes',clock_timestamp()+interval '49 minutes',
+      '{"releaseEvidenceRef":"release://edge/0061","manifestSha256":"${digest}","keyId":"edge-local-1","runtimeImageDigest":"${digest}","osArtifactDigest":"${digest}","sessionPolicyRevision":"policy-v1"}'::jsonb);
+    RESET ROLE;`;
+  const replayCreates = await Promise.all([psqlAsync(replayCreateSql), psqlAsync(replayCreateSql)]);
+  assert.equal(replayCreates.flatMap((output) => output.trim().split('\n').filter((line) => line === session)).length, 2,
+    'two API replicas did not resolve the same idempotent session intent');
+  assert.equal(psql(`SELECT count(*) FROM console.shell_session_event WHERE session_id='${session}' AND event_type='SessionCreated';`).trim(), '1');
+
+  const quotaSessions = ['61000000-0000-4000-8000-000000000006','61000000-0000-4000-8000-000000000007'];
+  const quotaAttempts = await Promise.allSettled(quotaSessions.map((candidate) => psqlAsync(`SET ROLE opensphere_shell_api;
+    SELECT session_id FROM console.create_shell_session(
+      '${candidate}','${browserSession}','${actor}','https://console.example.test','aal2','${revision}',
+      'shell-runtime-v1',clock_timestamp()+interval '20 minutes',clock_timestamp()+interval '50 minutes',
+      '{"releaseEvidenceRef":"release://edge/0061","manifestSha256":"${digest}","keyId":"edge-local-1","runtimeImageDigest":"${digest}","osArtifactDigest":"${digest}","sessionPolicyRevision":"policy-v1"}'::jsonb);
+    RESET ROLE;`)));
+  assert.equal(quotaAttempts.filter((attempt) => attempt.status === 'fulfilled').length, 1,
+    'per-actor quota admitted more than one concurrent second session');
+  assert.equal(quotaAttempts.filter((attempt) => attempt.status === 'rejected'
+    && /ShellActorSessionQuotaExceeded/.test(attempt.reason.stderr || '')).length, 1,
+  'per-actor quota did not return its stable code');
+  psql(`UPDATE console.shell_control_state SET global_active_limit=2 WHERE singleton;`);
+  mustRejectContract(`SET ROLE opensphere_shell_api;
+    SELECT * FROM console.create_shell_session('61000000-0000-4000-8000-000000000008','${otherBrowserSession}','${otherActor}',
+      'https://console.example.test','aal2','${otherRevision}','shell-runtime-v1',
+      clock_timestamp()+interval '20 minutes',clock_timestamp()+interval '50 minutes',
+      '{"releaseEvidenceRef":"release://edge/0061","manifestSha256":"${digest}","keyId":"edge-local-1","runtimeImageDigest":"${digest}","osArtifactDigest":"${digest}","sessionPolicyRevision":"policy-v1"}'::jsonb);`,
+  'global active session quota', /ShellGlobalSessionQuotaExceeded/);
+  psql(`UPDATE console.shell_control_state SET global_active_limit=8 WHERE singleton;`);
+  console.log('  ✓ API replica concurrency에서 idempotent replay, actor=2, global=8 quota가 원자적으로 강제됐다');
+
+  const claim = psql(`SET ROLE opensphere_shell_reconciler;
+    SELECT session_id||'|'||generation||'|'||fencing_epoch FROM console.claim_shell_sessions('shell-reconciler-test',1);
+    RESET ROLE;`).trim().split('\n').find((line) => line.startsWith(`${session}|`));
+  assert.equal(claim, `${session}|1|2`, 'Shell claim did not advance the fencing epoch');
+  psql(`SET ROLE opensphere_shell_reconciler;
+    SELECT session_id FROM console.transition_shell_session('${session}','${actor}','shell-reconciler-test',1,2,
+      'Pending','Provisioning','${revision}','runtime-uid-1','rv-1','PodAccepted');
+    SELECT session_id FROM console.register_shell_runtime('${session}','${actor}','shell-reconciler-test',1,2,
+      '${revision}','runtime-uid-1','rv-1','runtime-key-1','-----BEGIN PUBLIC KEY-----
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+-----END PUBLIC KEY-----','sha256:${'3'.repeat(64)}',
+      'wss://10.0.0.10:8443/v1/runtime/attach','sha256:${'4'.repeat(64)}',clock_timestamp()+interval '30 minutes');
+    SELECT session_id FROM console.register_shell_runtime('${session}','${actor}','shell-reconciler-test',1,2,
+      '${revision}','runtime-uid-1','rv-1','runtime-key-1','-----BEGIN PUBLIC KEY-----
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+-----END PUBLIC KEY-----','sha256:${'3'.repeat(64)}',
+      'wss://10.0.0.10:8443/v1/runtime/attach','sha256:${'4'.repeat(64)}',clock_timestamp()+interval '31 minutes');
+    SELECT session_id FROM console.transition_shell_session('${session}','${actor}','shell-reconciler-test',1,2,
+      'Provisioning','Ready','${revision}','runtime-uid-1','rv-2','RuntimeReady');
+    RESET ROLE;`);
+  assert.equal(psql(`SELECT count(*) FROM console.shell_session_event WHERE session_id='${session}' AND event_type='RuntimeRegistered';`).trim(), '1',
+    'idempotent runtime registration replay duplicated its lifecycle event');
+  mustRejectContract(`SET ROLE opensphere_shell_reconciler;
+    SELECT * FROM console.register_shell_runtime('${session}','${actor}','shell-reconciler-test',1,2,
+      '${revision}','runtime-uid-1','rv-1','runtime-key-1','-----BEGIN PUBLIC KEY-----
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+-----END PUBLIC KEY-----','sha256:${'3'.repeat(64)}',
+      'wss://10.0.0.10:8443/v1/runtime/attach','sha256:${'5'.repeat(64)}',clock_timestamp()+interval '30 minutes');`,
+  'runtime registration replay with changed credential hash', /changed immutable binding/i);
+
+  psql(`SET ROLE opensphere_shell_api;
+    SELECT ticket_hash FROM console.issue_shell_attach_ticket('${ticketHash}','${session}','${browserSession}',
+      '${actor}','https://console.example.test',1,2,'aal2','${revision}',clock_timestamp()+interval '20 seconds');
+    RESET ROLE;`);
+  mustRejectContract(`SET ROLE opensphere_shell_api;
+    SELECT * FROM console.issue_shell_attach_ticket('${`sha256:${'8'.repeat(64)}`}','${session}','${browserSession}',
+      '${actor}','https://console.example.test',1,2,'aal2','${revision}',clock_timestamp()+interval '31 seconds');`,
+  'attach ticket TTL > 30 seconds', /TTL must be at most 30 seconds/i);
+  assert.equal(psql(`SET ROLE opensphere_shell_gateway;
+    SELECT count(*) FROM console.resolve_shell_attach_binding('${ticketHash}','${session}','${browserSession}',
+      '${actor}','https://other-origin.example.test','aal2','${revision}'); RESET ROLE;`).trim().split('\n').includes('0'), true,
+  'origin-mismatched attach binding was resolved');
+  assert.equal(psql(`SET ROLE opensphere_shell_gateway;
+    SELECT count(*) FROM console.resolve_shell_attach_binding('${ticketHash}','${session}','${otherBrowserSession}',
+      '${otherActor}','https://console.example.test','aal2','${otherRevision}'); RESET ROLE;`).trim().split('\n').includes('0'), true,
+  'cross-user attach binding was resolved');
+  assert.equal(psql(`SELECT (consumed_at IS NULL)::text FROM console.shell_attach_ticket WHERE ticket_hash='${ticketHash}';`).trim(), 'true',
+    'cross-user/origin negative probes consumed the one-time ticket');
+  console.log('  ✓ cross-user와 origin mismatch가 ticket 소비 전에 fail-closed됐다');
+  const consumeSql = `SET ROLE opensphere_shell_gateway;
+    SELECT session_id FROM console.consume_shell_attach_ticket('${ticketHash}','${session}','${browserSession}',
+      '${actor}','https://console.example.test',1,2,'aal2','${revision}','gateway-replica');
+    RESET ROLE;`;
+  const attempts = await Promise.all([psqlAsync(consumeSql), psqlAsync(consumeSql)]);
+  const winners = attempts.flatMap((output) => output.trim().split('\n').filter((line) => line === session));
+  assert.equal(winners.length, 1, 'two gateway replicas consumed the same attach ticket');
+  assert.equal(psql(`SELECT count(*) FROM console.shell_attach_ticket
+    WHERE ticket_hash='${ticketHash}' AND consumed_at IS NOT NULL;`).trim(), '1');
+  console.log('  ✓ 두 gateway 연결의 동시 ticket CAS에서 정확히 하나만 성공했다');
+  assert.equal(psql(`SET ROLE opensphere_shell_api;
+    SELECT count(*) FROM console.authorize_shell_runtime_attach('sha256:${'4'.repeat(64)}','${ticketHash}',
+      '${session}','runtime-uid-1',1,2); RESET ROLE;`).trim().split('\n').includes('1'), true,
+  'runtime attach second-stage CAS did not authorize the consumed browser ticket');
+  const touchedIdle = psql(`SET ROLE opensphere_shell_gateway;
+    SELECT extract(epoch FROM (idle_expires_at-clock_timestamp()))::integer
+      FROM console.touch_shell_session_activity('${session}','${browserSession}','${actor}',
+        'https://console.example.test',1,2,'aal2','${revision}'); RESET ROLE;`).trim().split('\n')
+    .map(Number).find((value) => Number.isFinite(value));
+  assert.ok(touchedIdle >= 890 && touchedIdle <= 900, `trusted activity did not slide the 15 minute idle bound: ${touchedIdle}`);
+  assert.ok(new Date(psql(`SELECT idle_expires_at FROM console.shell_session WHERE session_id='${session}';`).trim())
+    <= new Date(psql(`SELECT absolute_expires_at FROM console.shell_session WHERE session_id='${session}';`).trim()),
+  'activity extended beyond the absolute session expiry');
+  console.log('  ✓ current gateway binding activity만 idle을 15분 sliding하고 absolute/browser expiry를 넘지 않았다');
+
+  for (const role of ['opensphere_shell_api','opensphere_shell_gateway','opensphere_shell_reconciler','opensphere_console_backend']) {
+    mustRejectPermission(`SET ROLE ${role}; SELECT count(*) FROM console.shell_session;`,
+      `${role} → shell_session raw SELECT`);
+    mustRejectPermission(`SET ROLE ${role}; UPDATE console.shell_session SET updated_at=clock_timestamp()
+      WHERE session_id='${session}';`, `${role} → shell_session raw UPDATE`);
+  }
+  mustRejectPermission(`SET ROLE opensphere_shell_gateway;
+    SELECT * FROM console.get_shell_session('${session}','${browserSession}','${actor}','${revision}');`,
+  'gateway → API-only get_shell_session RPC');
+  mustRejectContract(`SET ROLE opensphere_shell_reconciler;
+    SELECT * FROM console.transition_shell_session('${session}','${actor}','shell-reconciler-test',1,1,
+      'Ready','Terminating','${revision}',NULL,NULL,'StaleWorker');`, 'stale fencing epoch → transition', /claim, generation, epoch, lease|stale/i);
+
+  psql(`UPDATE console.shell_session SET lease_owner='quota-test-hold',lease_expires_at=clock_timestamp()+interval '1 hour',
+      heartbeat_at=clock_timestamp() WHERE session_id<>'${session}' AND observed_state='Pending';
+    UPDATE console.shell_session SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE session_id='${session}';`);
+  const recovered = psql(`SET ROLE opensphere_shell_reconciler;
+    SELECT session_id||'|'||generation||'|'||fencing_epoch FROM console.claim_shell_sessions('shell-reconciler-recovery',1);
+    SELECT session_id||'|'||generation||'|'||fencing_epoch||'|'||observed_state FROM console.reproject_shell_runtime(
+      '${session}','${actor}','shell-reconciler-recovery',1,3,'runtime-uid-1','LeaseFenceRecovered'); RESET ROLE;`).trim().split('\n');
+  assert.ok(recovered.includes(`${session}|2|3|Pending`), 'stale runtime was not reprojected with a new generation');
+  assert.equal(psql(`SELECT (runtime_uid IS NULL AND runtime_credential_hash IS NULL)::text FROM console.shell_session WHERE session_id='${session}';`).trim(), 'true');
+  console.log('  ✓ expired reconciler lease deletes/reprojects stale runtime authority with generation advance');
+
+  psql(`DELETE FROM console.operator_role WHERE user_id='${actor}';`);
+  const downgradedRevision = psql(`SELECT console.current_shell_permission_revision('${actor}');`).trim();
+  assert.notEqual(downgradedRevision, revision, 'role removal did not change canonical permissionRevision');
+  mustRejectContract(`SET ROLE opensphere_shell_gateway;
+    SELECT * FROM console.revalidate_shell_session('${session}','${browserSession}','${actor}',
+      'https://console.example.test',1,2,'aal2','${revision}');`, 'role downgrade → active stream revalidation', /permission revision changed/i);
+  console.log('  ✓ role 제거가 credential+effective projection digest를 즉시 바꾸고 기존 stream을 거부했다');
+
+  // Simulate an additive default-off upgrade over legacy 0061 active rows:
+  // the boolean is already false, but the owner operation must still drain.
+  psql(`UPDATE console.shell_control_state SET enabled=false WHERE singleton;`);
+  psql(`SET ROLE opensphere_console_backend;
+    SELECT enabled FROM console.set_shell_feature_state(false,2,'AAL2 owner disabled and requested fenced drain','${otherActor}'); RESET ROLE;`);
+  mustRejectContract(`SET ROLE opensphere_shell_api;
+    SELECT * FROM console.issue_shell_attach_ticket('sha256:${'9'.repeat(64)}','${session}','${browserSession}',
+      '${actor}','https://console.example.test',2,3,'aal2','${downgradedRevision}',clock_timestamp()+interval '20 seconds');`,
+  'feature disable → new attach ticket', /ShellFeatureDisabled/);
+  assert.equal(psql(`SELECT count(*) FROM console.shell_session WHERE observed_state<>'Terminated' AND desired_state='Terminated';`).trim(), '2');
+  psql(`UPDATE console.shell_session SET lease_expires_at=clock_timestamp()-interval '1 second'
+    WHERE observed_state<>'Terminated' AND lease_owner IS NOT NULL;`);
+  const drainClaims = psql(`SET ROLE opensphere_shell_reconciler;
+    SELECT session_id||'|'||actor_id||'|'||generation||'|'||fencing_epoch||'|'||observed_state
+      FROM console.claim_shell_sessions('shell-disable-drain',20); RESET ROLE;`).trim().split('\n')
+    .filter((line) => /^[0-9a-f-]+\|[0-9a-f-]+\|\d+\|\d+\|Pending$/.test(line));
+  assert.equal(drainClaims.length, 2, 'disable drain did not fence every active session');
+  for (const line of drainClaims) {
+    const [drainSession,drainActor,generation,epoch] = line.split('|');
+    const drainRevision = psql(`SELECT console.current_shell_permission_revision('${drainActor}');`).trim();
+    psql(`SET ROLE opensphere_shell_reconciler;
+      SELECT session_id FROM console.transition_shell_session('${drainSession}','${drainActor}','shell-disable-drain',
+        ${generation},${epoch},'Pending','Terminating','${drainRevision}',NULL,NULL,'FeatureDisabled');
+      SELECT session_id FROM console.transition_shell_session('${drainSession}','${drainActor}','shell-disable-drain',
+        ${generation},${epoch},'Terminating','Terminated','${drainRevision}',NULL,NULL,'RuntimeDeleted'); RESET ROLE;`);
+  }
+  const drained = psql(`SET ROLE opensphere_console_backend;
+    SELECT enabled::text||'|'||active_sessions||'|'||scale_down_allowed::text FROM console.get_shell_feature_state(); RESET ROLE;`)
+    .trim().split('\n').find((line) => /^(true|false)\|\d+\|(true|false)$/.test(line));
+  assert.equal(drained, 'false|0|true', 'feature disable did not produce a terminal scale-down receipt');
+  assert.equal(psql(`SELECT count(*) FROM console.shell_control_event WHERE event_type='DrainCompleted';`).trim(), '1');
+  psql(`SET ROLE opensphere_console_backend; SELECT * FROM console.get_shell_feature_state(); RESET ROLE;`);
+  assert.equal(psql(`SELECT count(*) FROM console.shell_control_event WHERE event_type='DrainCompleted';`).trim(), '1',
+    'repeated drain status read duplicated the append-only receipt');
+  console.log('  ✓ disable gate가 먼저 닫히고 fenced Terminating→Terminated 후에만 scaleDownAllowed receipt가 생성됐다');
+
+  mustRejectContract(`SET ROLE opensphere_console_backend;
+    SELECT * FROM console.set_shell_feature_state_local_edge(true,3,'invalid local edge owner identity',
+      'system:serviceaccount:default:attacker','${localEdgeEvidence}'::jsonb,'62000000-0000-4000-8000-000000000010');`,
+  'wrong local-edge workload identity → feature enable', /ShellFeatureLocalEdgeEvidenceInvalid/);
+  psql(`SET ROLE opensphere_console_backend;
+    SELECT enabled FROM console.set_shell_feature_state_local_edge(true,3,'signed local edge release intent verified',
+      '${edgeIdentity}','${localEdgeEvidence}'::jsonb,'62000000-0000-4000-8000-000000000011');
+    SELECT enabled FROM console.set_shell_feature_state_local_edge(true,4,'new signed local edge release intent refresh',
+      '${edgeIdentity}',jsonb_set('${localEdgeEvidence}'::jsonb,'{componentSetDigest}','"sha256:${'b'.repeat(64)}"'::jsonb),
+      '62000000-0000-4000-8000-000000000012');
+    SELECT enabled FROM console.set_shell_feature_state_local_edge(false,5,'signed local edge disable intent verified',
+      '${edgeIdentity}','${localEdgeEvidence}'::jsonb,'62000000-0000-4000-8000-000000000013');
+    SELECT * FROM console.get_shell_feature_state(); RESET ROLE;`);
+  assert.equal(psql(`SELECT enabled::text||'|'||revision||'|'||changed_identity FROM console.shell_control_state WHERE singleton;`).trim(),
+    'false|6|system:serviceaccount:opensphere-console:opensphere-local-edge-release');
+  assert.equal(psql(`SELECT count(*) FROM console.shell_control_event WHERE event_type='Enabled';`).trim(), '3',
+    'same-enabled new signed release intent did not refresh the durable authority event');
+  const claimSql = (token) => `SET ROLE opensphere_console_backend;
+    SELECT operation_phase FROM console.claim_shell_feature_scale_down(
+      '62000000-0000-4000-8000-000000000013',6,'${edgeIdentity}','${token}',120); RESET ROLE;`;
+  const scaleClaims = await Promise.allSettled([
+    psqlAsync(claimSql('62000000-0000-4000-8000-000000000014')),
+    psqlAsync(claimSql('62000000-0000-4000-8000-000000000015')),
+  ]);
+  assert.equal(scaleClaims.filter((entry) => entry.status === 'fulfilled').length, 1,
+    'two disable owners acquired the same scale-down fence');
+  assert.equal(scaleClaims.filter((entry) => entry.status === 'rejected'
+    && /ShellFeatureScaleDownClaimHeld/.test(entry.reason.stderr || '')).length, 1,
+  'losing scale-down owner did not receive the stable claim-held code');
+  const winningClaim = scaleClaims[0].status === 'fulfilled'
+    ? '62000000-0000-4000-8000-000000000014' : '62000000-0000-4000-8000-000000000015';
+  mustRejectContract(`SET ROLE opensphere_console_backend;
+    SELECT * FROM console.set_shell_feature_state_local_edge(true,6,'concurrent enable must not pass claimed disable',
+      '${edgeIdentity}','${localEdgeEvidence}'::jsonb,'62000000-0000-4000-8000-000000000016');`,
+  'concurrent enable → claimed scale-down', /ShellFeatureOperationConflict/);
+  const completedAt = psql(`SET ROLE opensphere_console_backend;
+    SELECT operation_phase FROM console.complete_shell_feature_scale_down(
+      '62000000-0000-4000-8000-000000000013',6,'${edgeIdentity}','${winningClaim}'); RESET ROLE;
+    SELECT operation_completed_at FROM console.shell_control_state WHERE singleton;`).trim().split('\n').at(-1);
+  const completedReplay = psql(`SET ROLE opensphere_console_backend;
+    SELECT operation_phase||'|'||operation_completed_at::text
+      FROM console.set_shell_feature_state_local_edge(false,5,'signed local edge disable intent verified',
+        '${edgeIdentity}','${localEdgeEvidence}'::jsonb,'62000000-0000-4000-8000-000000000013'); RESET ROLE;`)
+    .trim().split('\n').find((line) => line.startsWith('Completed|'));
+  assert.equal(completedReplay, `Completed|${completedAt}`,
+    'response-loss retry did not reproduce the durable Completed phase and timestamp');
+  assert.equal(psql(`SELECT count(*) FROM console.shell_control_event WHERE event_type='ScaleDownCompleted';`).trim(), '1',
+    'completed retry duplicated the scale-down completion event');
+  psql(`SET ROLE opensphere_console_backend;
+    SELECT enabled FROM console.set_shell_feature_state_local_edge(true,6,'enable only after scale down completed',
+      '${edgeIdentity}','${localEdgeEvidence}'::jsonb,'62000000-0000-4000-8000-000000000017'); RESET ROLE;`);
+  assert.equal(psql(`SELECT enabled::text||'|'||revision||'|'||operation_phase FROM console.shell_control_state WHERE singleton;`).trim(),
+    'true|7|Completed');
+  console.log('  ✓ signed evidence refresh, exclusive scale claim, completed-response-loss replay와 Enable-vs-Disable 직렬화가 원자적으로 닫혔다');
+
+  mustReject(`UPDATE console.shell_session_event SET reason_code='Tampered';`, 'Shell event UPDATE');
+  mustReject(`DELETE FROM console.shell_session_event;`, 'Shell event DELETE');
+  mustReject(`TRUNCATE console.shell_session_event;`, 'Shell event TRUNCATE');
+  mustReject(`SET session_replication_role='replica';
+    UPDATE console.shell_session_event SET reason_code='ReplicaTamper';`, 'replica role → Shell event UPDATE');
+  console.log('  ✓ Shell lifecycle event는 owner/replica 우회에도 append-only다');
 }
 
 function verifyR2d2RedteamHardening() {
@@ -527,18 +869,32 @@ function verifyAgentBinding() {
   console.log('  ✓ 에이전트 기록 추가 후에도 사슬 무결');
 }
 
-function main() {
-  console.log('원장 무결성 검증 (arch-002 L2-7)\n');
+async function main() {
+  console.log(`원장 무결성 검증 (arch-002 L2-7)\n  run: ${CONTAINER}\n`);
 
-  try { sh('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }); } catch { /* 없으면 그만 */ }
   sh('docker', ['run', '-d', '--name', CONTAINER, '-e', 'POSTGRES_PASSWORD=verify',
     '-e', 'POSTGRES_DB=postgres', IMAGE], { stdio: 'ignore' });
 
   try {
-    for (let i = 0; i < 60; i++) {
-      try { sh('docker', ['exec', CONTAINER, 'pg_isready', '-U', 'postgres'], { stdio: 'ignore' }); break; }
-      catch { execFileSync(process.execPath, ['-e', 'setTimeout(()=>{},1000)']); }
+    // pg_isready can briefly succeed during the image's initdb bootstrap just
+    // before PostgreSQL restarts. Require two consecutive probes with an actual
+    // SQL round-trip and a stable container restart count so PREP cannot race
+    // that planned restart (observed as docker exec exit 137 in CI).
+    let readyStreak = 0;
+    let restartCount = null;
+    for (let i = 0; i < 90 && readyStreak < 2; i++) {
+      try {
+        sh('docker', ['exec', CONTAINER, 'pg_isready', '-U', 'postgres'], { stdio: 'ignore' });
+        assert.equal(psql('SELECT 1;').trim(), '1');
+        const state = sh('docker', ['inspect', '--format', '{{.State.Running}}|{{.RestartCount}}', CONTAINER]).trim();
+        const [, running, currentRestartCount] = /^(true)\|(\d+)$/.exec(state) || [];
+        if (running !== 'true' || currentRestartCount === undefined) throw new Error(`PostgreSQL container is not stable: ${state}`);
+        readyStreak = restartCount === currentRestartCount ? readyStreak + 1 : 1;
+        restartCount = currentRestartCount;
+      } catch { readyStreak = 0; }
+      if (readyStreak < 2) execFileSync(process.execPath, ['-e', 'setTimeout(()=>{},1000)']);
     }
+    if (readyStreak < 2) throw new Error('PostgreSQL did not reach two consecutive stable readiness barriers');
     psql(PREP);
 
     // 전부 순서대로 적용한다. 하나라도 실패하면 여기서 멈춘다 —
@@ -548,6 +904,7 @@ function main() {
       psql(readFileSync(path.join(MIGRATIONS, file), 'utf8'));
     }
     console.log('  ✓ 마이그레이션 전량 적용 완료 (건너뛴 것 없음)\n');
+    await verifyShellSessionLedger();
     verifyR2d2RoleMatrix();
     verifyR2d2RedteamHardening();
     verifyR2d2ReconcileAndRetentionGates();
@@ -602,9 +959,10 @@ function main() {
     console.log('  ✓ 행이 사라지면 verify_event_ledger_chain() 이 첫 파손 chain_sequence=3을 지목한다');
 
     console.log('\n원장 무결성 검증 통과.');
+    console.log(JSON.stringify({ contract: 'opensphere-ledger-verifier-run/v1', run: CONTAINER, result: 'PASS' }));
   } finally {
     try { sh('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }); } catch { /* 정리 실패는 무시 */ }
   }
 }
 
-main();
+await main();

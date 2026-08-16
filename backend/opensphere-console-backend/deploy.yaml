@@ -126,6 +126,9 @@ spec:
             - name: installation-policy
               mountPath: /var/run/opensphere-installation
               readOnly: true
+            - name: shell-credential-authority-tls
+              mountPath: /var/run/opensphere-shell-credential-authority
+              readOnly: true
           env:
             - { name: APP_VERSION, value: "0.8.0-oaa-recovery-owner" }
             # fetch(kube API / secret read)가 kube CA 신뢰하도록
@@ -141,6 +144,16 @@ spec:
             - { name: R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "false" }
             - { name: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES, value: "" }
             - { name: R2D2_ENGINEERING_EXECUTION_ENABLED, value: "false" }
+            # CBSS remains fail-closed/default-off until the control/runtime
+            # exact-digest release and four separated internal TLS leaves are installed.
+            - { name: OS_SHELL_ADMISSION_ENABLED, value: "false" }
+            - { name: OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED, value: "false" }
+            - { name: OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE, value: /var/run/opensphere-shell-credential-authority/tls.crt }
+            - { name: OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE, value: /var/run/opensphere-shell-credential-authority/tls.key }
+            - name: OS_SHELL_ADMISSION_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: admission-secret, optional: true } }
+            - name: OS_SHELL_DELEGATION_SECRET
+              valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: delegation-secret, optional: true } }
             - { name: OAA_GATEWAY_URL, value: "http://opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local:8080" }
             - { name: DUPA_CONTROL_URL, value: "http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080" }
             # ADR-006 canonical runtime mode.
@@ -203,7 +216,7 @@ spec:
             - { name: EXTERNAL_CHANNEL_REQUIRE_AAL2, value: "true" }
             - name: EXTERNAL_CHANNEL_EXECUTOR_TOKEN
               valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: internal-token } }
-          ports: [{ containerPort: 8080 }]
+          ports: [{ name: http, containerPort: 8080 }, { name: shell-cred-tls, containerPort: 8444 }]
           # Serving readiness keeps the native management and diagnostic surface
           # routable while /readyz reports dependency degradation in detail.
           readinessProbe: { httpGet: { path: /serving-readyz, port: 8080 }, initialDelaySeconds: 2, periodSeconds: 5 }
@@ -218,6 +231,10 @@ spec:
         - name: installation-policy
           configMap:
             name: opensphere-installation-lock
+            optional: true
+        - name: shell-credential-authority-tls
+          secret:
+            secretName: opensphere-shell-credential-authority-tls
             optional: true
 ---
 apiVersion: v1

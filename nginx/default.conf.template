@@ -39,12 +39,12 @@ server {
     # CSP (Manifest v3 Host Contract): 인라인 스크립트·eval 금지.
     # - script-src blob: → Extension Host가 '검증된 바이트'(sha256+ECDSA)만 Blob URL로 import하는 경로
     # - style-src 'unsafe-inline' → Angular 컴포넌트 스타일 주입 방식상 필요
-    # - connect-src ${OS_AUTH_ORIGIN} → OIDC discovery/token/logout + self proxy/WebSocket
+    # - connect-src ${OS_AUTH_ORIGIN} → OIDC discovery/token/logout + self proxy/secure WebSocket
     # - frame-src https://ceph.triangles.com → Cluster Manager의 read-only Ceph Grafana 화면
     # 감사 P1-1: 'unsafe-eval' 제거(콘솔/플러그인은 eval 미사용 — src 내 eval/new Function 0건). worker-src도
     #   'self' blob:로 축소(data: 제거). eval이 필요한 흡수 대형앱(Headlamp 등)은 별도 격리 CSP zone으로
     #   분리해 도입할 것(전역 약화 금지).
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN} https://ceph.triangles.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} wss:; frame-src 'self' ${OS_AUTH_ORIGIN} https://ceph.triangles.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
     add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
@@ -57,6 +57,69 @@ server {
         proxy_pass http://$console_backend_upstream:8080/readyz;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # CBSS OS Shell browser attach. Console Backend authenticates the opaque
+    # browser session in an internal auth_request and returns a short-lived,
+    # method/path/origin-bound admission assertion. Browser credentials are
+    # removed before the dedicated gateway receives the WSS upgrade.
+    location ~ "^/api/os-shell/sessions/[A-Za-z0-9][A-Za-z0-9._:-]{7,127}/attach$" {
+        set $os_shell_original_method $request_method;
+        set $os_shell_original_uri $request_uri;
+        set $os_shell_original_origin "$scheme://$http_host";
+        auth_request /_os_shell_authn;
+        auth_request_set $os_shell_admission $upstream_http_x_os_shell_admission;
+        set $os_shell_gateway_upstream opensphere-shell-gateway.opensphere-console.svc.cluster.local;
+        proxy_pass http://$os_shell_gateway_upstream:8080$request_uri;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $os_conn_upgrade;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-OS-Shell-Admission $os_shell_admission;
+        proxy_set_header X-OS-Original-Origin $os_shell_original_origin;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # Session readiness/create/watch/terminate/ticket issue use the API mode.
+    # The same admission exchange applies and no opaque browser credential can
+    # cross into the control workload.
+    location /api/os-shell/ {
+        set $os_shell_original_method $request_method;
+        set $os_shell_original_uri $request_uri;
+        set $os_shell_original_origin "$scheme://$http_host";
+        auth_request /_os_shell_authn;
+        auth_request_set $os_shell_admission $upstream_http_x_os_shell_admission;
+        set $os_shell_api_upstream opensphere-shell-api.opensphere-console.svc.cluster.local;
+        proxy_pass http://$os_shell_api_upstream:8080$request_uri;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-OS-Shell-Admission $os_shell_admission;
+        proxy_set_header X-OS-Original-Origin $os_shell_original_origin;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # Internal-only browser-session admission. The assertion is captured by
+    # auth_request_set and is never returned to browser JavaScript.
+    location = /_os_shell_authn {
+        internal;
+        set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_backend_upstream:8080/api/internal/os-shell-authn;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-OS-Internal-Authn-Subrequest "os-shell-v1";
+        proxy_set_header X-OS-Original-Method $os_shell_original_method;
+        proxy_set_header X-OS-Original-URI $os_shell_original_uri;
+        proxy_set_header X-OS-Original-Origin $os_shell_original_origin;
+        proxy_set_header Authorization "";
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header X-OS-CSRF-Token $http_x_os_csrf_token;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
@@ -480,6 +543,55 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
+    # Opaque OS Shell renderer. `allow-same-origin` is intentionally absent on
+    # the parent iframe; this child receives terminal frames only through a
+    # transferred MessagePort and has no network capability of its own.
+    location ^~ /os-shell-frame/ {
+        try_files $uri =404;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'self' data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
+        # The sandbox deliberately gives this frame an opaque origin. The
+        # standalone parent uses COEP=require-corp, so this route must opt in
+        # explicitly while CSP frame-ancestors still limits embedding to this
+        # Console origin.
+        add_header Cross-Origin-Resource-Policy "cross-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), clipboard-read=(), clipboard-write=()" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-OS-Correlation-ID $os_correlation_id always;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+
+    # Extension-free OS Shell top-level realm. Unlike the ordinary Console
+    # document this response cannot execute Blob modules or workers and cannot
+    # be embedded/opened with a live opener relationship. The Angular image is
+    # reused, but its immutable startup mode never instantiates ExtensionHost.
+    location = /shell {
+        try_files /index.html =404;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; worker-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), clipboard-read=(), clipboard-write=()" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-OS-Correlation-ID $os_correlation_id always;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+
+    # Canonicalize the only accepted trailing-slash alias with a real
+    # navigation. Nginx URI normalization also collapses duplicate slashes and
+    # percent-decodes unreserved characters before exact location matching.
+    location = /shell/ {
+        # Keep the canonicalization on the browser-visible origin. Nginx
+        # otherwise expands the relative target with its internal 8443
+        # listener, which is not the localhost edge front-door port.
+        absolute_redirect off;
+        return 308 /shell;
+    }
+
     # 해시드 자산(main-<hash>.js 등)은 내용 불변 → 장기 immutable 캐시
     location ~* "-[A-Za-z0-9]{8,}\.(?:js|css)$" {
         add_header X-Content-Type-Options nosniff always;
@@ -494,7 +606,7 @@ server {
     # 새 해시 자산을 참조(구 index 캐시로 인한 'Failed to load module script' 빈 화면 방지).
     # add_header는 자식 location에서 부모를 '대체'하므로 CSP/nosniff를 여기서 다시 선언한다.
     location = /index.html {
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} ws: wss:; frame-src 'self' ${OS_AUTH_ORIGIN} https://ceph.triangles.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${OS_AUTH_ORIGIN} wss:; frame-src 'self' ${OS_AUTH_ORIGIN} https://ceph.triangles.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
         add_header X-Content-Type-Options nosniff always;
         add_header Referrer-Policy no-referrer always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;

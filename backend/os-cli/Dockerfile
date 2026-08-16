@@ -10,7 +10,7 @@ ARG CLI_UPDATE_TRUST_ID
 ARG CLI_UPDATE_TRUST_PUBLIC
 ARG CLI_REQUIRE_DARWIN
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY cmd ./cmd
 # Test natively for each Buildx target; only the downloadable binaries are
 # cross-compiled. This keeps the arm64 image build from executing an amd64 test.

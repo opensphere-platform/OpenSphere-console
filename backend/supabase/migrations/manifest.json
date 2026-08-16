@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0058",
-  "migrationCount": 57,
-  "setDigest": "sha256:2ebbb287ff0041b540a53a2d88b34cf3dd0940a1ac00199e30864103802a19ce",
+  "latestMigrationId": "0062",
+  "migrationCount": 61,
+  "setDigest": "sha256:b45104e1c748b7f8d7d66d1837c611674341da69c2d1228a5034f3d57269e83e",
   "migrations": [
     {
       "id": "0001",
@@ -402,6 +402,34 @@
       "name": "0058_change_request_payload_digest.sql",
       "path": "backend/supabase/migrations/0058_change_request_payload_digest.sql",
       "sha256": "40f488e9e4ab7d9cc5cf30bd883511702f991bdc9ef98a947be6087121bcdb63"
+    },
+    {
+      "id": "0059",
+      "predecessorMigrationId": "0058",
+      "name": "0059_r2d2_reconcile_session_read_projection.sql",
+      "path": "backend/supabase/migrations/0059_r2d2_reconcile_session_read_projection.sql",
+      "sha256": "d71eeba39c7b2237c4e0a478b2e448672fefc9e5bf42d6d35226cb855c5cb0e4"
+    },
+    {
+      "id": "0060",
+      "predecessorMigrationId": "0059",
+      "name": "0060_r2d2_reconcile_live_node_count.sql",
+      "path": "backend/supabase/migrations/0060_r2d2_reconcile_live_node_count.sql",
+      "sha256": "fdbe62ec1e564a5269c27f1e67dad265d46c46cff13fa86e9fcc1ce7135d7746"
+    },
+    {
+      "id": "0061",
+      "predecessorMigrationId": "0060",
+      "name": "0061_shell_session_ledger.sql",
+      "path": "backend/supabase/migrations/0061_shell_session_ledger.sql",
+      "sha256": "5bb566c70e0ebdb50aa3cab9498dbdc3d8f291c7ca963c341b6896fe0b4804d9"
+    },
+    {
+      "id": "0062",
+      "predecessorMigrationId": "0061",
+      "name": "0062_shell_session_quota_and_kill_switch.sql",
+      "path": "backend/supabase/migrations/0062_shell_session_quota_and_kill_switch.sql",
+      "sha256": "ed59833e6de7cbe309e1734696af46198351cbf94cd3490262dce848f1ba22af"
     }
   ]
 }
