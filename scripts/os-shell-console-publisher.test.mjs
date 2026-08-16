@@ -36,6 +36,17 @@ test('Console publisher closes source attribution and deployed prerequisite dige
   assert.match(source, /opensphere-local-os-shell-console-publication[.]json/);
 });
 
+test('dedicated publisher alone advances and verifies the Console edge pointer', () => {
+  const source = read('scripts/Publish-LocalEdgeOsShellConsole.ps1');
+  const publication = source.indexOf("Read-Publication -Path $combinedPath");
+  const advance = source.indexOf('imagetools create --tag "${consoleRepository}:edge"');
+  const verify = source.indexOf("$consoleEdgeAfter -ne $publishedDigest");
+  assert.ok(publication > 0 && advance > publication && verify > advance);
+  assert.match(source, /edgePointerBefore = \$consoleEdgeBefore/);
+  assert.match(source, /\['edgePointerAfter'\] = \$consoleEdgeAfter/);
+  assert.doesNotMatch(source, /backendRepository}:edge|controlRepository}:edge/);
+});
+
 test('Console component paths stay separate from privileged deployment tooling', () => {
   const boundary = read('scripts/os-shell-runtime-override-boundary.mjs');
   for (const relative of [
