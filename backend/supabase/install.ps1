@@ -510,23 +510,25 @@ ALTER ROLE supabase_storage_admin LOGIN PASSWORD '$escapedPostgresPassword';
 Invoke-SupabasePsql $supabaseServiceRoleSql
 
 # The initial manifest is intentionally applied before its Secret can exist.
-# Restart Auth and Storage now that their role passwords are valid; a pod that
-# failed its first database connection will otherwise remain in a long
-# CrashLoopBackOff window on an existing namespace. PostgREST is deliberately
-# deferred until the Console migrations create every schema named by
-# PGRST_DB_SCHEMAS. Waiting for it here deadlocks a fresh install because its
-# readiness endpoint remains 503 while `console` and `audit` do not yet exist.
+# Restart Auth now that its role password is valid; a pod that failed its first
+# database connection will otherwise remain in a long CrashLoopBackOff window.
+# Storage deliberately remains in its bounded PostgreSQL/PostgREST startup gate:
+# PostgREST cannot become Ready until the Console migrations create every schema
+# named by PGRST_DB_SCHEMAS, while Storage's own migration runner must execute
+# before those Console migrations. Requiring Storage readiness here would form a
+# fresh-install dependency cycle.
 if (-not $ExistingInstallation) {
-  foreach ($workload in @('opensphere-supabase-auth', 'opensphere-supabase-storage')) {
-    Invoke-Kubectl @('-n', $Namespace, 'rollout', 'restart', "deployment/$workload")
-    Invoke-Kubectl @('-n', $Namespace, 'rollout', 'status', "deployment/$workload", '--timeout=10m')
-  }
+  Invoke-Kubectl @('-n', $Namespace, 'rollout', 'restart', 'deployment/opensphere-supabase-auth')
+  Invoke-Kubectl @('-n', $Namespace, 'rollout', 'status', 'deployment/opensphere-supabase-auth', '--timeout=10m')
 }
 
 # Storage API ships and maintains its own schema migrations.  Execute the
-# version-matched migration runner from the running Storage image rather than
-# copying a private snapshot of Supabase-owned SQL into Console migrations.
+# version-matched migration runner from the running (not yet Ready) Storage
+# image rather than copying a private snapshot of Supabase-owned SQL into
+# Console migrations. The container's startup gate remains PID 1 while this
+# bounded exec initializes the Storage-owned schema.
 if (-not $ExistingInstallation) {
+  Invoke-Kubectl @('-n', $Namespace, 'wait', '--for=jsonpath={.status.phase}=Running', 'pod', '-l', 'app=opensphere-supabase-storage', '--timeout=10m')
   $storagePod = (& kubectl @kubectlArgs -n $Namespace get pod -l app=opensphere-supabase-storage -o "jsonpath={.items[0].metadata.name}")
   if (-not $storagePod) { throw "Supabase Storage pod not found" }
   Invoke-Kubectl @('-n', $Namespace, 'exec', $storagePod, '--', 'node', '/app/dist/scripts/migrate-call.js')

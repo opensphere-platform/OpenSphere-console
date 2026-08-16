@@ -39,6 +39,28 @@ test('fresh Supabase install checks ledger existence before reading migration ro
     'fresh-install preflight must remain read-only until the migration ledger bootstrap');
 });
 
+test('fresh Supabase bootstrap runs Storage migrations without waiting on its PostgREST readiness gate', () => {
+  const installer = readFileSync(path.join(here, 'install.ps1'), 'utf8');
+  const authReady = installer.indexOf(
+    "'rollout', 'status', 'deployment/opensphere-supabase-auth', '--timeout=10m'");
+  const storageRunning = installer.indexOf(
+    "'--for=jsonpath={.status.phase}=Running', 'pod', '-l', 'app=opensphere-supabase-storage'");
+  const storageMigration = installer.indexOf("'/app/dist/scripts/migrate-call.js'");
+  const consoleMigrations = installer.indexOf(
+    'Invoke-SupabaseMigrationPsql (Get-Content -Raw -LiteralPath $migration.FullName)');
+  const finalStorageReady = installer.lastIndexOf(
+    "foreach ($workload in @('opensphere-supabase-rest', 'opensphere-supabase-storage'))");
+
+  assert.ok(authReady >= 0 && storageRunning > authReady);
+  assert.ok(storageMigration > storageRunning && consoleMigrations > storageMigration);
+  assert.ok(finalStorageReady > consoleMigrations);
+
+  const bootstrapPrefix = installer.slice(authReady, storageMigration);
+  assert.doesNotMatch(bootstrapPrefix,
+    /rollout', 'status', 'deployment\/opensphere-supabase-storage'/,
+    'Storage readiness depends on PostgREST and must not gate its own schema bootstrap');
+});
+
 test('Storage startup gate is executable after a Windows checkout', () => {
   const dockerfile = readFileSync(path.join(here, 'images', 'storage', 'Dockerfile'), 'utf8');
   assert.match(dockerfile,
