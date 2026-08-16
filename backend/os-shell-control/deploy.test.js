@@ -303,6 +303,8 @@ test('local-edge deploy binds every component-only override through exact source
   assert.match(deployScript, /Set-BackendOsShellActivation -Image \$backend[.]image -SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend'[\s\S]*?-SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /Assert-ImageMetadata -Repository \$consoleRepository[\s\S]*?-SourceRevision \$consoleEvidence[.]sourceRevision/);
+  assert.match(deployScript, /Assert-ImageMetadata -Repository \$cliRepository[\s\S]*?-ExpectedPointerTag \$evidence[.]immutableTag/);
+  assert.match(deployScript, /Assert-ImageMetadata -Repository \$runtimeRepository[\s\S]*?if \(\$runtimePublicationPath\) \{ 'edge' \} else \{ \[string\]\$evidence[.]immutableTag \}/);
   assert.match(deployScript, /Assert-PrerequisiteDeployment -Deployment 'opensphere-console'[\s\S]*?-SourceRevision \(\[string\]\$consoleEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /Set-ConsoleApiActivation -SourceRevision \(\[string\]\$consoleEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /consoleSha256 = if \(\$consolePublicationPath\)/);
