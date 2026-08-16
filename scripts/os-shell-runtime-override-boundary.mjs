@@ -185,9 +185,11 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
   const componentPaths = [...runtimePaths, ...backendPaths, ...consolePaths, ...controlPaths];
   if (new Set(componentPaths).size !== componentPaths.length) throw new Error('component override path authorities overlap');
   const componentPathSet = new Set(componentPaths);
+  const platformSupersededPaths = new Set(platformRevision ? [...backendOverridePaths, ...consoleOverridePaths] : []);
   for (const [authority, paths] of Object.entries(evidenceChangedPaths)) {
     for (const path of paths) assertCanonicalRepositoryPath(path);
-    const rejected = paths.filter((path) => !componentPathSet.has(path) && !deploymentToolingPaths.includes(path));
+    const rejected = paths.filter((path) => !componentPathSet.has(path) && !deploymentToolingPaths.includes(path)
+      && !platformSupersededPaths.has(path));
     if (rejected.length) {
       throw new Error(`${authority} evidence changes source outside the composite component attribution: ${rejected.join(', ')}`);
     }
@@ -202,7 +204,7 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
     console: consoleRevision, control: controlRevision })) {
     if (!revision) continue;
     for (const path of evidenceChangedPaths[authority]) {
-      if (deploymentToolingPaths.includes(path)) continue;
+      if (deploymentToolingPaths.includes(path) || platformSupersededPaths.has(path)) continue;
       const authoritativeRevision = authorityForPath.get(path);
       // A later component publication may legitimately supersede a path that
       // appeared incidentally in an older cumulative evidence revision. The
