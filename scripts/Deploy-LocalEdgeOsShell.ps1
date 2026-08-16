@@ -964,11 +964,12 @@ Assert-ImageMetadata -Repository $consoleRepository -Image $console.image -Diges
 Assert-ImageMetadata -Repository $backendRepository -Image $backend.image -Digest $backend.digest `
   -SourceRevision $backendEvidence.sourceRevision -ReleaseTag $backendEvidence.releaseTag
 Assert-ImageMetadata -Repository $cliRepository -Image $cliArtifacts.image -Digest $cliArtifacts.digest `
-  -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag
+  -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag -ExpectedPointerTag $evidence.immutableTag
 Assert-ImageMetadata -Repository $controlRepository -Image $control.image -Digest $control.digest `
   -SourceRevision $controlEvidence.sourceRevision -ReleaseTag $controlEvidence.releaseTag
 Assert-ImageMetadata -Repository $runtimeRepository -Image $runtime.image -Digest $runtime.digest `
-  -SourceRevision $runtimeEvidence.sourceRevision -ReleaseTag $runtimeEvidence.releaseTag
+  -SourceRevision $runtimeEvidence.sourceRevision -ReleaseTag $runtimeEvidence.releaseTag `
+  -ExpectedPointerTag $(if ($runtimePublicationPath) { 'edge' } else { [string]$evidence.immutableTag })
 
 $head = (& git -C $consoleRoot rev-parse HEAD).Trim()
 $deploymentToolingSourceRevision = $head
