@@ -47,6 +47,18 @@ test('dedicated publisher alone advances and verifies the Console edge pointer',
   assert.doesNotMatch(source, /backendRepository}:edge|controlRepository}:edge/);
 });
 
+test('deployer activates a supplied Console override before prerequisite verification', () => {
+  const source = read('scripts/Deploy-LocalEdgeOsShell.ps1');
+  const requested = source.indexOf('$consoleActivationRequested = [bool]$consolePublicationPath');
+  const activate = source.indexOf('Set-ConsoleOsShellActivation -Image $console.image', requested);
+  const verify = source.indexOf("console = Assert-PrerequisiteDeployment -Deployment 'opensphere-console'", activate);
+  assert.ok(requested > 0 && activate > requested && verify > activate);
+  const helper = source.slice(source.indexOf('function Set-ConsoleOsShellActivation'), source.indexOf('function Set-BackendOsShellActivation'));
+  assert.match(helper, /containers[\s\S]*-like "\$\{repository\}@\*"/);
+  assert.match(helper, /image = \$Image/);
+  assert.match(helper, /rollout', 'status', 'deployment\/opensphere-console'/);
+});
+
 test('Console component paths stay separate from privileged deployment tooling', () => {
   const boundary = read('scripts/os-shell-runtime-override-boundary.mjs');
   for (const relative of [
