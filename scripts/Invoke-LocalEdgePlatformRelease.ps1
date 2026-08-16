@@ -90,7 +90,11 @@ try {
   do {
     $lockConfig = (Invoke-Checked kubectl -n opensphere-console get configmap opensphere-installation-lock -o json) |
       ConvertFrom-Json
-    $lock = [string]$lockConfig.data.'release-lock.json' | ConvertFrom-Json
+    $releaseLockProperty = $lockConfig.data.PSObject.Properties['release.json']
+    if (-not $releaseLockProperty -or -not [string]$releaseLockProperty.Value) {
+      throw 'Installation lock ConfigMap does not contain canonical release.json data.'
+    }
+    $lock = [string]$releaseLockProperty.Value | ConvertFrom-Json
     if ([string]$lock.releaseDigest -eq [string]$response.targetReleaseDigest) {
       Write-Host "[success] Installation lock observed exact target digest $($lock.releaseDigest)"
       [pscustomobject]@{
