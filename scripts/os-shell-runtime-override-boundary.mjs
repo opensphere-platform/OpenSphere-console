@@ -194,6 +194,15 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
     for (const path of evidenceChangedPaths[authority]) {
       if (deploymentToolingPaths.includes(path)) continue;
       const authoritativeRevision = authorityForPath.get(path);
+      // A later component publication may legitimately supersede a path that
+      // appeared incidentally in an older cumulative evidence revision. The
+      // reverse remains forbidden: a later non-owner evidence revision may
+      // never alter a path owned by an earlier component publication.
+      const authorityIsLater = revision !== authoritativeRevision
+        && spawnSync('git', ['-C', repository, 'merge-base', '--is-ancestor', revision, authoritativeRevision], {
+          encoding: 'utf8', windowsHide: true,
+        }).status === 0;
+      if (authorityIsLater) continue;
       const evidenceBlob = git(repository, ['rev-parse', `${revision}:${path}`]);
       const authoritativeBlob = git(repository, ['rev-parse', `${authoritativeRevision}:${path}`]);
       if (evidenceBlob !== authoritativeBlob) {
