@@ -46,6 +46,17 @@ test('Extension management separates first-level subShells from host-owned plugi
   assert.doesNotMatch(source, /@for \(r of registrations\(\); track r\.name\)/);
 });
 
+test('Plugin management lists Console-owned system plugins separately from Registry lifecycle controls', () => {
+  assert.match(source, /systemPluginDescriptors = computed\(\(\) => this\.systemPlugins\.list\(\)\)/);
+  assert.match(source, /pluginListCount = computed\(\(\) => this\.pluginRegistrationCount\(\) \+ this\.systemPluginDescriptors\(\)\.length\)/);
+  assert.match(source, /<h3>System Plugins<\/h3>/);
+  assert.match(source, /descriptor\.id === 'os-shell' \? 'OS Shell'/);
+  assert.match(source, /Console exact digest에 결속된 읽기 전용 항목/);
+  assert.match(source, /<h2>Registry Plugins<\/h2>/);
+  const systemSection = source.slice(source.indexOf('aria-label="System Plugins"'), source.indexOf('<h2>Registry Plugins<\/h2>'));
+  assert.doesNotMatch(systemSection, /run\('(?:enable|disable|uninstall)'/);
+});
+
 test('Topology includes Console-owned system plugins without treating them as installable Registry extensions', () => {
   assert.match(source, /SystemPluginRegistryService/);
   assert.match(source, /this\.systemPlugins\.list\(\)/);

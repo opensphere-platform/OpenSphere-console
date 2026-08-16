@@ -319,12 +319,48 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ pluginRegistrationCount() }}</span></button>
+        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ pluginListCount() }}</span></button>
         <clr-tab-content *clrIfActive="activeView() === 'plugins'">
           <div class="extension-view-intro">
-            <div><span class="view-kicker">HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
-            <p>plugin은 1단 메뉴 객체가 아닙니다. 각 plugin을 소유·호스팅하는 subShell 아래에 묶어 설치·활성화·검증 상태를 관리합니다.</p>
+            <div><span class="view-kicker">SYSTEM &amp; HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
+            <p>Console 내장 system plugin과 subShell이 소유·호스팅하는 Registry plugin을 권한 경계에 따라 분리해 표시합니다.</p>
           </div>
+          <section class="plugin-host-group" aria-label="System Plugins">
+            <header>
+              <div><span class="view-kicker">CONSOLE-OWNED</span><h3>System Plugins</h3></div>
+              <div class="plugin-host-coordinate"><span class="label label-info">system</span><code>cbss-main-shell</code><strong>{{ systemPluginDescriptors().length }} plugin</strong></div>
+            </header>
+            <div class="extension-table-wrap">
+              <table class="table extension-table" aria-label="Console system plugin 목록">
+                <thead>
+                  <tr>
+                    <th class="left">이름</th>
+                    <th class="left">유형</th>
+                    <th class="left">소유자</th>
+                    <th class="left">Route</th>
+                    <th class="left">Runtime adapter</th>
+                    <th class="left">수명주기</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (descriptor of systemPluginDescriptors(); track descriptor.id) {
+                    <tr>
+                      <td><strong>{{ descriptor.id === 'os-shell' ? 'OS Shell' : descriptor.id }}</strong><div class="state-detail"><code>{{ descriptor.id }}</code></div></td>
+                      <td><span class="label label-info">systemPlugin</span></td>
+                      <td><code>{{ descriptor.owner }}</code></td>
+                      <td><a [href]="descriptor.route"><code>{{ descriptor.route }}</code></a></td>
+                      <td><code>{{ descriptor.runtimeAdapterId || '—' }}</code></td>
+                      <td><span class="label label-success">Console 내장</span><div class="state-detail">Console exact digest에 결속된 읽기 전용 항목</div></td>
+                    </tr>
+                  } @empty {
+                    <tr><td colspan="6" class="os-sub">검증된 system plugin이 없습니다.</td></tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <div class="extension-view-intro"><div><span class="view-kicker">REGISTRY-MANAGED</span><h2>Registry Plugins</h2></div><p>{{ pluginRegistrationCount() }} plugin</p></div>
+          <p class="os-sub">Registry plugin은 1단 메뉴 객체가 아닙니다. 각 plugin을 소유·호스팅하는 subShell 아래에서 설치·활성화·검증 상태를 관리합니다.</p>
           @for (group of pluginHostGroups(); track group.hostRef) {
             <section class="plugin-host-group" [attr.aria-label]="group.hostLabel + ' plugins'">
               <header>
@@ -1238,6 +1274,8 @@ export class AdminPlugins implements OnInit {
   readonly pluginRegistrationCount = computed(() =>
     this.pluginHostGroups().reduce((total, group) => total + group.items.length, 0),
   );
+  readonly systemPluginDescriptors = computed(() => this.systemPlugins.list());
+  readonly pluginListCount = computed(() => this.pluginRegistrationCount() + this.systemPluginDescriptors().length);
 
   /** 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 상태(phase/reason 등). */
   readonly selected = signal<string | null>(null);
