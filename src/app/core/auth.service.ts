@@ -576,7 +576,7 @@ export class AuthService {
   private registerActivityHeartbeat(): void {
     const activity = (event: Event) => {
       if (!event.isTrusted) return;
-      this.queueActivityHeartbeat();
+      this.recordTrustedActivity();
     };
     window.addEventListener('pointerdown', activity, { passive: true });
     window.addEventListener('keydown', activity);
@@ -584,6 +584,11 @@ export class AuthService {
     document.addEventListener('visibilitychange', (event) => {
       if (document.visibilityState === 'visible') activity(event);
     });
+  }
+
+  /** Accept activity only from Host-owned surfaces that already verified a trusted browser event. */
+  recordTrustedActivity(): void {
+    this.queueActivityHeartbeat();
   }
 
   private queueActivityHeartbeat(): void {

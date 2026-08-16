@@ -3,6 +3,7 @@ import Terminal20 from '@carbon/icons/es/terminal/20';
 import { AuthService } from '../../core/auth.service';
 import { CarbonIcon } from '../../os/carbon-icon';
 import { OsShellReadinessService } from './os-shell-readiness.service';
+import { OsShellPanelStateService } from './os-shell-panel-state.service';
 
 @Component({
   selector: 'os-shell-launcher',
@@ -10,17 +11,19 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (eligible()) {
-      <a
+      <button
         class="os-shell-launcher"
-        href="/shell"
-        (click)="openStandalone($event)"
+        type="button"
+        (click)="panel.toggle()"
+        [class.active]="panel.open()"
         [class.blocked]="readiness.status().state === 'Blocked' || readiness.status().state === 'Disabled'"
         [title]="title()"
         aria-label="OS Shell"
+        [attr.aria-expanded]="panel.open()"
       >
         <os-cicon [icon]="iconTerminal" [size]="20" />
         <span class="state-dot" aria-hidden="true"></span>
-      </a>
+      </button>
     }
   `,
   styles: [`
@@ -28,7 +31,7 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
     .os-shell-launcher {
       position: relative; display: inline-flex; align-items: center; justify-content: center;
       width: 2.25rem; height: 2.25rem; border-radius: 4px; color: #c7d0e8;
-      text-decoration: none; background: transparent;
+      border: 0; text-decoration: none; background: transparent; cursor: pointer;
     }
     .os-shell-launcher:hover, .os-shell-launcher.active { color: #fff; background: rgba(255,255,255,.08); }
     .state-dot {
@@ -40,6 +43,7 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
 })
 export class OsShellLauncher {
   private readonly auth = inject(AuthService);
+  readonly panel = inject(OsShellPanelStateService);
   readonly readiness = inject(OsShellReadinessService);
   readonly iconTerminal = Terminal20;
   readonly eligible = computed(() => {
@@ -54,13 +58,5 @@ export class OsShellLauncher {
 
   constructor() {
     void this.readiness.refresh();
-  }
-
-  openStandalone(event: MouseEvent): void {
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
-    // A real navigation destroys any already-loaded external plugin realm.
-    // assign(), rather than replace(), preserves the browser Back entry.
-    window.location.assign('/shell');
   }
 }

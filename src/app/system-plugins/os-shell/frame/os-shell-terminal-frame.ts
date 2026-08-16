@@ -127,6 +127,14 @@ terminal.onData((data) => {
   post({ type: 'stdin', sequence: ++sequence, data });
 });
 
+const trustedActivity = (event: Event) => {
+  if (!attached || !port || !event.isTrusted) return;
+  post({ type: 'activity', sequence: ++sequence });
+};
+window.addEventListener('pointerdown', trustedActivity, { passive: true });
+window.addEventListener('keydown', trustedActivity);
+window.addEventListener('touchstart', trustedActivity, { passive: true });
+
 const observer = new ResizeObserver(() => {
   if (initialized) resize();
 });

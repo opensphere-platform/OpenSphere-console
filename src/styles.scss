@@ -58,13 +58,14 @@
   --os-header-height: 3rem;
 
   /* ── Z-index 레이어 스케일 (전역 오버레이 순서, 낮음→높음) ──
-   * OAA 에이전트 도킹 패널 < 퀵뷰 패널 드래그 그립 < 알림 토스트 < 전역 헤더(검색 포함) < 접근성 skip-link < 보안 MFA 재확인.
+   * OAA 에이전트 도킹 패널 < 퀵뷰 패널 드래그 그립 < OS Shell 하단 패널 < 알림 토스트 < 전역 헤더(검색 포함) < 접근성 skip-link < 보안 MFA 재확인.
    * 헤더는 이 스케일 중 가장 높은 콘텐츠 레이어여야 한다 — position:relative + z-index로 자체
    * stacking context를 형성해, 콘텐츠 영역의 Clarity datagrid sticky 헤더 등이 검색 드롭다운 위로
    * 새어나오는 레이어링 버그(콘솔 전역검색 vs datagrid 헤더)를 막는다. 값 자체보다 "순서"가 계약이므로
    * 매직넘버 대신 반드시 이 토큰을 통해서만 참조한다. */
   --os-z-oaa: 1000;
   --os-z-panel-grip: 1060;
+  --os-z-shell-panel: 1080;
   --os-z-notifications: 1100;
   --os-z-header: 1150;
   --os-z-skip-link: 2000;

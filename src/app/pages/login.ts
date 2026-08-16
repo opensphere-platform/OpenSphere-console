@@ -30,7 +30,7 @@ import { AuthService, SessionDuration } from '../core/auth.service';
             </select>
             <small>{{ durationHelp() }}</small>
           </label>
-          <p class="security-note">키보드·포인터 활동이 30분 동안 없으면 선택한 시간과 관계없이 다시 로그인해야 합니다. 백그라운드 조회는 활동으로 계산하지 않습니다.</p>
+          <p class="security-note">키보드·포인터 활동이 12시간 동안 없으면 다시 로그인해야 합니다. 유휴 시간은 선택한 세션 만료 시각을 넘지 않으며 백그라운드 조회는 활동으로 계산하지 않습니다.</p>
           <button type="submit" [disabled]="working()">{{ working() ? '로그인 중…' : '로그인' }}</button>
         </form>
       } @else {

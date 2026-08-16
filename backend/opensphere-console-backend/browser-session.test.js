@@ -177,6 +177,7 @@ test('uses a 24-hour default without removing shorter or trusted-device choices'
     password: 'not-persisted',
   });
   assert.equal(created.session.persistence, '24h');
+  assert.equal(created.session.idleExpiresAt, '2026-07-27T12:00:00.000Z');
   assert.equal(created.session.absoluteExpiresAt, '2026-07-28T00:00:00.000Z');
 });
 
@@ -222,7 +223,7 @@ test('background authentication does not extend idle time while explicit user ac
     method: 'POST',
   }));
   assert.equal(touched.session.lastSeenAt, '2026-07-27T00:10:00.000Z');
-  assert.equal(touched.session.idleExpiresAt, '2026-07-27T00:40:00.000Z');
+  assert.equal(touched.session.idleExpiresAt, '2026-07-27T12:10:00.000Z');
 });
 
 test('records exact expiry cause and removes stale sessions from active inventory', async () => {

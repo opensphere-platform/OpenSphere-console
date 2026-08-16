@@ -25,9 +25,14 @@ const routes = read('src/app/app.routes.ts');
 assert.doesNotMatch(routes, /path:\s*'shell'|OsShellPage|os-shell-page/);
 const mainShell = read('src/app/os/os-shell.ts');
 assert.match(mainShell, /<os-shell-launcher\s*\/>/);
+assert.match(mainShell, /<os-shell-panel\s*\/>/);
 const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
-assert.match(launcher, /window[.]location[.]assign\('\/shell'\)/);
+assert.match(launcher, /panel[.]toggle\(\)/);
+assert.doesNotMatch(launcher, /window[.]location[.]assign\('\/shell'\)/);
 assert.doesNotMatch(launcher, /routerLink/);
+const dockedPanel = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
+assert.match(dockedPanel, /href="\/shell" target="_blank" rel="noopener noreferrer"/);
+assert.match(dockedPanel, /position:\s*fixed;[\s\S]*bottom:\s*0;/);
 
 const bootMode = read('src/app/core/boot-mode.ts');
 const app = read('src/app/app.ts');

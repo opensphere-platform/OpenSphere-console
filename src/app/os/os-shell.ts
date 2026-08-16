@@ -26,6 +26,7 @@ import { OsOaaAgent } from './os-oaa-agent';
 import { OsSessionStepUp } from './os-session-step-up';
 import { OsR2d2Risk } from './os-r2d2-risk';
 import { OsShellLauncher } from '../system-plugins/os-shell/os-shell-launcher';
+import { OsShellPanel } from '../system-plugins/os-shell/os-shell-panel';
 
 interface NavItem {
   path: string;
@@ -60,6 +61,7 @@ interface NavTreeRoot {
     OsSessionStepUp,
     OsR2d2Risk,
     OsShellLauncher,
+    OsShellPanel,
     CarbonIcon,
     OsNavIcon,
   ],
@@ -162,6 +164,7 @@ interface NavTreeRoot {
         </main>
       </div>
     </div>
+    <os-shell-panel />
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
