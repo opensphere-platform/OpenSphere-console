@@ -446,6 +446,16 @@ function Get-SupabaseMigrationChecksum([string]$MigrationId) {
   return (($output | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | Select-Object -Last 1)
 }
 
+function Test-SupabaseMigrationLedgerExists {
+  $sql = "SELECT CASE WHEN to_regclass('console.schema_migration') IS NULL THEN 'absent' ELSE 'present' END;"
+  $output = @(Invoke-Kubectl @("-n", $Namespace, "exec", "-i", $pod, "--", "sh", "-ec", 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U supabase_admin -d postgres -tA -v ON_ERROR_STOP=1') $sql)
+  $state = (($output | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | Select-Object -Last 1)
+  if ($state -notin @('absent', 'present')) {
+    throw "Migration ledger existence query returned an invalid state: $state"
+  }
+  return $state -eq 'present'
+}
+
 function Get-TextSha256([string]$Value) {
   $sha = [Security.Cryptography.SHA256]::Create()
   try {
@@ -472,13 +482,20 @@ function Get-SupabaseMigrationChecksums([string]$Path) {
 }
 
 # Check immutable migration content before role maintenance, service restart or
-# schema execution. A drift must not disturb a healthy identity authority.
-foreach ($migration in $migrations) {
-  $migrationId = [IO.Path]::GetFileNameWithoutExtension($migration.Name)
-  $checksums = Get-SupabaseMigrationChecksums $migration.FullName
-  $recordedChecksum = Get-SupabaseMigrationChecksum $migrationId
-  if ($recordedChecksum -and $recordedChecksum -notin @($checksums.Canonical, $checksums.Crlf, $checksums.Raw)) {
-    throw "Migration checksum drift for ${migrationId}: live=$recordedChecksum canonical=$($checksums.Canonical)"
+# schema execution. A fresh database has no ledger until the bootstrap below;
+# an existing installation without its ledger is corrupt and must fail closed.
+$migrationLedgerExists = Test-SupabaseMigrationLedgerExists
+if ($ExistingInstallation -and -not $migrationLedgerExists) {
+  throw 'Existing Supabase installation is missing console.schema_migration'
+}
+if ($migrationLedgerExists) {
+  foreach ($migration in $migrations) {
+    $migrationId = [IO.Path]::GetFileNameWithoutExtension($migration.Name)
+    $checksums = Get-SupabaseMigrationChecksums $migration.FullName
+    $recordedChecksum = Get-SupabaseMigrationChecksum $migrationId
+    if ($recordedChecksum -and $recordedChecksum -notin @($checksums.Canonical, $checksums.Crlf, $checksums.Raw)) {
+      throw "Migration checksum drift for ${migrationId}: live=$recordedChecksum canonical=$($checksums.Canonical)"
+    }
   }
 }
 

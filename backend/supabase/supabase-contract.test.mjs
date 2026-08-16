@@ -19,6 +19,26 @@ test('Supabase installer delimits migration identifiers before punctuation', () 
   assert.doesNotMatch(installer, /Migration checksum drift for \$migrationId:/);
 });
 
+test('fresh Supabase install checks ledger existence before reading migration rows', () => {
+  const installer = readFileSync(path.join(here, 'install.ps1'), 'utf8');
+  assert.match(installer,
+    /to_regclass\('console\.schema_migration'\) IS NULL THEN 'absent' ELSE 'present'/);
+  assert.match(installer,
+    /\$migrationLedgerExists = Test-SupabaseMigrationLedgerExists/);
+  assert.match(installer,
+    /if \(\$ExistingInstallation -and -not \$migrationLedgerExists\) \{\s*throw 'Existing Supabase installation is missing console\.schema_migration'/);
+  assert.match(installer,
+    /if \(\$migrationLedgerExists\) \{\s*foreach \(\$migration in \$migrations\)/);
+
+  const preflight = installer.indexOf('$migrationLedgerExists = Test-SupabaseMigrationLedgerExists');
+  const guardedRead = installer.indexOf('if ($migrationLedgerExists) {', preflight);
+  const firstChecksumRead = installer.indexOf('Get-SupabaseMigrationChecksum $migrationId', guardedRead);
+  const ledgerBootstrap = installer.indexOf('Invoke-SupabaseMigrationPsql $migrationLedgerBootstrap');
+  assert.ok(preflight >= 0 && guardedRead > preflight && firstChecksumRead > guardedRead);
+  assert.ok(ledgerBootstrap > firstChecksumRead,
+    'fresh-install preflight must remain read-only until the migration ledger bootstrap');
+});
+
 test('Storage startup gate is executable after a Windows checkout', () => {
   const dockerfile = readFileSync(path.join(here, 'images', 'storage', 'Dockerfile'), 'utf8');
   assert.match(dockerfile,
