@@ -23,6 +23,7 @@ test('Console publisher closes source attribution and deployed prerequisite dige
     'status --short',
     'fetch --quiet --prune origin',
     'OS Shell Console source boundary verification failed',
+    'deployed Console publication',
     "Get-LiveDeploymentDigest -Deployment 'opensphere-console'",
     "Get-LiveDeploymentDigest -Deployment 'opensphere-console-backend'",
     "Get-LiveDeploymentDigest -Deployment $deployment",
