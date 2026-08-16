@@ -68,6 +68,11 @@ test('the macOS CLI is an optional build input that a release turns back into a 
   assert.match(cliDockerfile, /ARG CLI_REQUIRE_DARWIN=false/);
   assert.match(cliDockerfile, /FROM scratch AS cli-darwin-absent/);
   assert.doesNotMatch(cliDockerfile, /COPY --from=macos-cli/, 'the macOS context must not be mandatory');
+  assert.match(
+    cliDockerfile,
+    /LABEL org\.opencontainers\.image\.source="https:\/\/github\.com\/opensphere-platform\/OpenSphere-console"/,
+    'the CLI package must be linked to its canonical GitHub source instead of inheriting the nginx base-image source',
+  );
   assert.match(cliDockerfile, /if \[ "\$\{CLI_REQUIRE_DARWIN\}" = "true" \]/, 'a release must still fail without darwin');
   assert.doesNotMatch(rootDockerfile, /CLI_DARWIN_CONTEXT|CLI_REQUIRE_DARWIN/);
 
