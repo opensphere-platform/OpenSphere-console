@@ -12,6 +12,12 @@ const PATH = /^\/api\/os-shell\/(?:readiness|sessions(?:\/[0-9a-f-]{36}(?:\/atta
 function fail(code, msg) { throw { code, msg }; }
 function b64(value) { return Buffer.from(value).toString('base64url'); }
 
+function canonicalTimestamp(value, label) {
+  const parsed = Date.parse(String(value || ''));
+  if (!Number.isFinite(parsed)) fail(503, `${label} is unavailable`);
+  return new Date(parsed).toISOString();
+}
+
 function admissionSecret(value) {
   const text = String(value || '');
   let decoded;
@@ -64,8 +70,12 @@ function createOsShellAdmissionIssuer({ secret, now = () => Date.now(), ttlSecon
         csrfRequired, csrfVerified: csrfRequired,
         aal: actor.assurance === 'aal2' ? 'aal2' : 'aal1',
         credentialRevision, roles, permissions, permissionRevision,
-        browserIdleExpiresAt: session.row?.idle_expires_at,
-        browserAbsoluteExpiresAt: session.row?.absolute_expires_at,
+        // PostgREST serializes UTC timestamps with a `+00:00` suffix while the
+        // verifier deliberately accepts one canonical representation. Convert
+        // at the issuer boundary so equivalent database timestamps do not make
+        // every otherwise-valid browser admission fail as non-canonical.
+        browserIdleExpiresAt: canonicalTimestamp(session.row?.idle_expires_at, 'browser idle expiry'),
+        browserAbsoluteExpiresAt: canonicalTimestamp(session.row?.absolute_expires_at, 'browser absolute expiry'),
       }, key, now(), ttlSeconds),
       permissionRevision,
     };
