@@ -10,6 +10,7 @@ import { IconLibraryService } from '../os/icon-library.service';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PlatformReadinessService } from '../core/platform-readiness.service';
 import { SystemPluginRegistryService } from '../core/system-plugin-registry.service';
+import { CONSOLE_COMPOSITION_MANIFEST } from '../core/console-composition.manifest';
 import { buildExtensionManagementViews } from '../core/extension-view-model';
 import {
   PluginControlClient,
@@ -323,8 +324,33 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         <clr-tab-content *clrIfActive="activeView() === 'plugins'">
           <div class="extension-view-intro">
             <div><span class="view-kicker">SYSTEM &amp; HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
-            <p>Console 내장 system plugin과 subShell이 소유·호스팅하는 Registry plugin을 권한 경계에 따라 분리해 표시합니다.</p>
+            <p>Main Shell 핵심 표면, Console 내장 system plugin, subShell이 소유·호스팅하는 Registry plugin을 서로 다른 수명주기로 표시합니다.</p>
           </div>
+          <section class="plugin-host-group" aria-label="Console Core Surfaces">
+            <header>
+              <div><span class="view-kicker">MAIN SHELL CORE</span><h3>Core Surfaces</h3></div>
+              <div class="plugin-host-coordinate">
+                <span class="label">core</span>
+                <code>cbss-main-shell</code>
+                <strong>{{ coreSurfaceCount }} surface</strong>
+              </div>
+            </header>
+            <div class="extension-table-wrap">
+              <table class="table extension-table" aria-label="Console core surface 목록">
+                <thead><tr><th class="left">이름</th><th class="left">유형</th><th class="left">Route</th><th class="left">수명주기</th></tr></thead>
+                <tbody>
+                  @for (surface of coreSurfaces; track surface.id) {
+                    <tr>
+                      <td><strong>{{ surface.displayName }}</strong><div class="state-detail"><code>{{ surface.id }}</code></div></td>
+                      <td><span class="label">coreSurface</span></td>
+                      <td><a [href]="surface.route"><code>{{ surface.route }}</code></a></td>
+                      <td><span class="label label-success">필수</span><div class="state-detail">Main Shell release와 함께 유지</div></td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </section>
           <section class="plugin-host-group" aria-label="System Plugins">
             <header>
               <div><span class="view-kicker">CONSOLE-OWNED</span><h3>System Plugins</h3></div>
@@ -334,6 +360,13 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                 <strong>{{ systemPluginCount() }} plugin</strong>
               </div>
             </header>
+            @if (systemPluginFailures().length) {
+              <clr-alert clrAlertType="danger" [clrAlertClosable]="false">
+                <clr-alert-item>
+                  <span class="alert-text">System Plugin descriptor {{ systemPluginFailures().length }}건이 격리되었습니다. 다른 Console 표면은 계속 사용할 수 있습니다.</span>
+                </clr-alert-item>
+              </clr-alert>
+            }
             <div class="extension-table-wrap">
               <table class="table extension-table" aria-label="Console system plugin 목록">
                 <thead>
@@ -1275,7 +1308,7 @@ export class AdminPlugins implements OnInit {
   readonly extensionInstallImage = signal('');
   readonly extensionInstallReason = signal('');
   readonly pendingAction = signal<{ action: 'enable' | 'disable' | 'uninstall'; id: string } | null>(null);
-  readonly expandedSet = signal<Set<string>>(new Set(['console', 'system-plugins', 'bindings']));
+  readonly expandedSet = signal<Set<string>>(new Set(['console', 'core-surfaces', 'system-plugins', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
   readonly extensionViews = computed(() => buildExtensionManagementViews(this.catalog(), this.registrations()));
   readonly subShellRegistrations = computed(() => this.extensionViews().subShells);
@@ -1285,8 +1318,11 @@ export class AdminPlugins implements OnInit {
     this.pluginHostGroups().reduce((total, group) => total + group.items.length, 0),
   );
   readonly systemPluginDescriptors = computed(() => this.systemPlugins.list());
+  readonly systemPluginFailures = computed(() => this.systemPlugins.failures());
   readonly systemPluginCount = computed(() => this.systemPluginDescriptors().length);
   readonly totalPluginCount = computed(() => this.registryPluginCount() + this.systemPluginCount());
+  readonly coreSurfaces = CONSOLE_COMPOSITION_MANIFEST.coreSurfaces;
+  readonly coreSurfaceCount = this.coreSurfaces.length;
 
   /** 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 상태(phase/reason 등). */
   readonly selected = signal<string | null>(null);
@@ -1873,6 +1909,21 @@ export class AdminPlugins implements OnInit {
         actionable: false,
       })),
     };
+    const coreSurfaceRoot: TreeNode = {
+      id: 'core-surfaces',
+      label: 'Core Surfaces',
+      meta: 'Main Shell 필수 표면 · Console release-bound',
+      type: 'group',
+      actionable: false,
+      children: this.coreSurfaces.map((surface) => ({
+        id: surface.id,
+        label: surface.displayName,
+        meta: `${surface.route} · ${surface.lifecycle} · required`,
+        type: 'core',
+        children: [],
+        actionable: false,
+      })),
+    };
     const consoleNode: TreeNode = {
       id: 'console',
       label: 'console',
@@ -1880,6 +1931,7 @@ export class AdminPlugins implements OnInit {
       type: 'mainShell',
       actionable: false,
       children: [
+        coreSurfaceRoot,
         systemPluginRoot,
         ...subNodes,
         ...mainPlugins,
