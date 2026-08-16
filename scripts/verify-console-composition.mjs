@@ -11,7 +11,6 @@ export function verifyConsoleCompositionSource() {
   const registry = read('src', 'app', 'core', 'system-plugin-registry.service.ts');
   const routes = read('src', 'app', 'app.routes.ts');
   const r2d2Route = read('src', 'app', 'system-plugins', 'r2d2', 'r2d2.route.ts');
-  const manualTests = read('backend', 'dupa-control', 'manual-native.test.js');
 
   assert.match(manifest, /MANUAL_CORE_SURFACE/);
   assert.match(manifest, /kind:\s*'coreSurface'/);
@@ -28,7 +27,6 @@ export function verifyConsoleCompositionSource() {
   assert.match(r2d2Route, /import\('\.\.\/\.\.\/pages\/admin-oaa'\)/);
   assert.match(r2d2Route, /catch\(\(error:\s*unknown\)\s*=>/);
   assert.match(r2d2Route, /return SystemPluginUnavailable/);
-  assert.match(manualTests, /Manual is a Main Shell native page \(subShell\/plugin\/Consumer 아님\)/);
 
   const featureRoots = fs.readdirSync(path.join(repo, 'src', 'app', 'system-plugins'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())

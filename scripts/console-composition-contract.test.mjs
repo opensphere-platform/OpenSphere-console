@@ -13,11 +13,13 @@ test('Main Shell composition is closed and system plugins are isolated from Regi
 
   const composition = read('src', 'app', 'core', 'console-composition.manifest.ts');
   const admin = read('src', 'app', 'pages', 'admin-plugins.ts');
+  const verifier = read('scripts', 'verify-console-composition.mjs');
   assert.match(composition, /routes\.has\(surface\.route\)/);
   assert.match(composition, /routes\.has\(descriptor\.route\)/);
   assert.match(admin, /aria-label="Console Core Surfaces"/);
   assert.match(admin, /systemPluginFailures\(\)\.length/);
   assert.match(admin, /다른 Console 표면은 계속 사용할 수 있습니다/);
+  assert.doesNotMatch(verifier, /read\('backend'/);
 });
 
 test('Manual remains core while R2D2 is a lazy Console-owned system plugin', () => {
