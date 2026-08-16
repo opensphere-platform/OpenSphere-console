@@ -136,12 +136,22 @@ test('composite repository attribution rejects missing Console evidence, extra p
       repository, baseRevision, backendRevision, controlRevision, headRevision,
     }), /unbound source|outside the composite component attribution/);
 
+    const laterConsoleRevision = commit(repository, 'later Console-only override', Object.fromEntries(
+      consoleOverridePaths.map((path) => [path, `later Console contract ${path}\n`])));
+    git(repository, 'update-ref', 'refs/remotes/origin/main', laterConsoleRevision);
+    const laterConsole = verifyCompositeRepositoryBoundary({
+      repository, baseRevision, backendRevision, consoleRevision: laterConsoleRevision,
+      controlRevision, headRevision: laterConsoleRevision,
+    });
+    assert.deepEqual(laterConsole.consolePaths, consoleOverridePaths);
+
     git(repository, 'switch', '-c', 'extra-console-evidence', consoleRevision);
     const extraRevision = commit(repository, 'extra Console evidence path', {
       'backend/opensphere-console-backend/server.js': 'not a Console runtime input\n',
     });
     git(repository, 'update-ref', 'refs/remotes/origin/extra-console-evidence', extraRevision);
     git(repository, 'switch', 'main');
+    git(repository, 'update-ref', 'refs/remotes/origin/main', laterConsoleRevision);
     assert.throws(() => verifyCompositeRepositoryBoundary({
       repository, baseRevision, backendRevision, consoleRevision: extraRevision, controlRevision, headRevision,
     }), /outside the composite component attribution/);
