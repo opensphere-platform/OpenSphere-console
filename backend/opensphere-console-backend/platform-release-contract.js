@@ -10,7 +10,7 @@ const RELEASE_LOCK_API_VERSION = 'release.opensphere.io/v1alpha1';
 const RELEASE_LOCK_KIND = 'OpenSphereReleaseLock';
 const RELEASE_SCOPE_INTEGRATED = 'integrated';
 const RELEASE_SCOPE_COMPONENT = 'component';
-const APPROVAL_MODE_OWNER_MFA = 'owner-mfa';
+const APPROVAL_MODE_LOCAL_EDGE_AUTOMATION = 'local-edge-automation';
 const APPROVAL_MODE_CROSS_OPERATOR = 'cross-operator';
 // Setup is the installer authority. Its transactional bootstrap currently
 // permits edge only; candidate/stable remain blocked until the integrated
@@ -321,16 +321,16 @@ function validatePlatformReleaseDesiredState(value) {
 function platformReleaseApprovalPolicy(action, desiredState) {
   const validated = validatePlatformReleaseDesiredState(desiredState);
   const lock = validated.targetLock;
-  const ownerMfa = String(action || '').toLowerCase() === 'apply'
+  const localEdgeAutomation = String(action || '').toLowerCase() === 'apply'
     && lock.channel === 'edge'
     && lock.releaseScope === RELEASE_SCOPE_COMPONENT
     && canonicalJson(lock.trust) === canonicalJson(LOCAL_EDGE_TRUST);
-  return ownerMfa
+  return localEdgeAutomation
     ? {
-      mode: APPROVAL_MODE_OWNER_MFA,
+      mode: APPROVAL_MODE_LOCAL_EDGE_AUTOMATION,
       requiredHumanApprovals: 0,
       autoMerge: true,
-      rationale: 'localhost edge component apply is authorized by the initiating owner recent MFA',
+      rationale: 'localhost edge component apply is authorized by the docker-desktop local automation boundary',
     }
     : {
       mode: APPROVAL_MODE_CROSS_OPERATOR,
@@ -365,7 +365,7 @@ module.exports = {
   REQUIRED_COMPONENTS,
   RELEASE_SCOPE_INTEGRATED,
   RELEASE_SCOPE_COMPONENT,
-  APPROVAL_MODE_OWNER_MFA,
+  APPROVAL_MODE_LOCAL_EDGE_AUTOMATION,
   APPROVAL_MODE_CROSS_OPERATOR,
   canonicalJson,
   calculateReleaseDigest,
