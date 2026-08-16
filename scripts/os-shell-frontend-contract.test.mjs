@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative) => readFileSync(path.join(repo, relative), 'utf8');
 
-test('CBSS OS Shell is a default-off built-in full-page system plugin', () => {
+test('CBSS OS Shell is a default-off built-in docked system plugin with an isolated full-page fallback', () => {
   const descriptor = read('src/app/system-plugins/os-shell/os-shell.descriptor.ts');
   const routes = read('src/app/app.routes.ts');
   assert.match(descriptor, /owner:\s*'cbss-main-shell'/);
@@ -24,6 +24,38 @@ test('terminal is opaque and owns neither WebSocket nor credentials', () => {
   assert.doesNotMatch(surface, /allow-same-origin/);
   assert.doesNotMatch(frame, /WebSocket|fetch\(|Authorization|Bearer|ticket|localStorage|sessionStorage/);
   assert.match(frame, /MessagePort/);
+});
+
+test('trusted terminal interaction extends the Main Shell browser session without counting output as activity', () => {
+  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const protocol = read('src/app/system-plugins/os-shell/os-shell-protocol.ts');
+  const attach = read('src/app/system-plugins/os-shell/os-shell-attach.service.ts');
+  const auth = read('src/app/core/auth.service.ts');
+  assert.match(frame, /const trustedActivity = \(event: Event\)/);
+  assert.match(frame, /!event[.]isTrusted/);
+  assert.match(frame, /type: 'activity', sequence: \+\+sequence/);
+  assert.match(protocol, /frame[.]type === 'activity'/);
+  assert.match(attach, /frame[.]type === 'activity'[\s\S]*this[.]auth[.]recordTrustedActivity\(\)/);
+  assert.match(auth, /recordTrustedActivity\(\): void[\s\S]*this[.]queueActivityHeartbeat\(\)/);
+  const outputBoundary = frame.slice(frame.indexOf('function acceptHostFrame'), frame.indexOf("window.addEventListener('message'"));
+  assert.doesNotMatch(outputBoundary, /type: 'activity'/);
+});
+
+test('default Console entry opens an OCI-style docked panel and preserves the isolated full-page fallback', () => {
+  const shell = read('src/app/os/os-shell.ts');
+  const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
+  const panel = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
+  const state = read('src/app/system-plugins/os-shell/os-shell-panel-state.service.ts');
+  assert.match(shell, /<os-shell-panel \/>/);
+  assert.match(launcher, /panel[.]toggle\(\)/);
+  assert.match(launcher, /aria-expanded/);
+  assert.doesNotMatch(launcher, /window[.]location[.]assign|href="\/shell"/);
+  assert.match(panel, /position:\s*fixed;[\s\S]*bottom:\s*0;/);
+  assert.match(panel, /height:\s*clamp\(20rem, 42vh, 34rem\)/);
+  assert.match(panel, /href="\/shell" target="_blank" rel="noopener noreferrer"/);
+  assert.match(panel, /panel[.]toggleExpanded\(\)/);
+  assert.match(panel, /panel[.]close\(\)/);
+  assert.match(state, /readonly open = signal\(false\)/);
 });
 
 test('Host sends the one-time ticket as first WSS application frame', () => {
@@ -151,6 +183,7 @@ test('OS Shell uses an immutable extension-free top-level realm with full-naviga
   const app = read('src/app/app.ts');
   const host = read('src/app/core/extension-host.service.ts');
   const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
+  const panel = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
   const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
 
   assert.match(bootMode, /window[.]location[.]pathname === '\/shell'/);
@@ -161,9 +194,10 @@ test('OS Shell uses an immutable extension-free top-level realm with full-naviga
   assert.ok(startupGate > 0 && guestLoad > startupGate, 'external load must be unreachable in the Shell boot realm');
   assert.match(host, /async load\(\)[\s\S]*OS_SHELL_STANDALONE_BOOT[\s\S]*ExternalExtensionsDisabledInStandaloneShell/);
   assert.match(host, /private async loadOne[\s\S]*OS_SHELL_STANDALONE_BOOT[\s\S]*ExternalExtensionsDisabledInStandaloneShell/);
-  assert.match(launcher, /href="\/shell"/);
-  assert.match(launcher, /window[.]location[.]assign\('\/shell'\)/);
+  assert.match(launcher, /panel[.]toggle\(\)/);
+  assert.doesNotMatch(launcher, /window[.]location[.]assign\('\/shell'\)/);
   assert.doesNotMatch(launcher, /routerLink/);
+  assert.match(panel, /href="\/shell" target="_blank" rel="noopener noreferrer"/);
   assert.match(page, /window[.]location[.]assign\('\/'\)/);
   assert.doesNotMatch(page, /navigateByUrl|routerLink/);
 });
@@ -201,7 +235,9 @@ test('standalone Shell response severs opener/embed authority and cannot load gu
   // or open a popup, but real navigation destroys that realm; the response
   // additionally starts a new browsing-context group and rejects embedding.
   const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
+  const panel = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
   assert.doesNotMatch(launcher, /window[.]open|target="_blank"/);
+  assert.match(panel, /target="_blank" rel="noopener noreferrer"/);
   const routes = read('src/app/app.routes.ts');
   assert.doesNotMatch(routes, /path:\s*'shell'|os-shell-page/);
   assert.match(nginx, /location = \/shell\/[\s\S]*absolute_redirect off;[\s\S]*return 308 \/shell;/);

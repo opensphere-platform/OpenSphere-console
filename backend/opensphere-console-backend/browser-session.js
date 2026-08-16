@@ -9,7 +9,7 @@ const {
 } = require('crypto');
 
 const COOKIE_NAME = '__Host-opensphere_session';
-const IDLE_TTL_MS = 30 * 60 * 1000;
+const IDLE_TTL_MS = 12 * 60 * 60 * 1000;
 const PENDING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_DURATION = '24h';
 const DURATION_MS = Object.freeze({

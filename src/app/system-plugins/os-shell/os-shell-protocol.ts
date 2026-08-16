@@ -20,6 +20,7 @@ export function validFrameMessage(value: unknown): value is OsShellFrameMessage 
   if (frame.type === 'stdin') {
     return typeof frame.data === 'string' && new TextEncoder().encode(frame.data).byteLength <= MAX_STDIN_FRAME_BYTES;
   }
+  if (frame.type === 'activity') return true;
   if (frame.type === 'resize') {
     return Number.isInteger(frame.cols) && Number(frame.cols) >= MIN_COLS && Number(frame.cols) <= MAX_COLS
       && Number.isInteger(frame.rows) && Number(frame.rows) >= MIN_ROWS && Number(frame.rows) <= MAX_ROWS;

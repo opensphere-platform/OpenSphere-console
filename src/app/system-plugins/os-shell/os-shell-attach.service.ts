@@ -131,12 +131,16 @@ export class OsShellAttachService {
       }
       const sequence = Number(frame.sequence);
       if (sequence <= lastClientSequence) return;
+      lastClientSequence = sequence;
+      if (frame.type === 'activity') {
+        this.auth.recordTrustedActivity();
+        return;
+      }
       const size = frame.type === 'stdin' ? new TextEncoder().encode(frame.data ?? '').byteLength : 16;
       if (!rate.accept(size)) {
         handle.close('InputRateExceeded');
         return;
       }
-      lastClientSequence = sequence;
       if (frame.type === 'stdin' && size <= MAX_STDIN_FRAME_BYTES) {
         sendClientFrame({ type: 'stdin', sequence, data: frame.data });
       } else if (frame.type === 'resize') {

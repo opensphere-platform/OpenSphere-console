@@ -373,7 +373,7 @@ interface AuditEvent {
                     </clr-dg-row>
                   }
                   <clr-dg-placeholder>활성 브라우저 세션을 불러오지 못했거나 세션이 없습니다</clr-dg-placeholder>
-                  <clr-dg-footer>{{ auth.browserSessions().length }}개 브라우저 세션 · 유휴 제한 30분</clr-dg-footer>
+                  <clr-dg-footer>{{ auth.browserSessions().length }}개 브라우저 세션 · 유휴 제한 12시간</clr-dg-footer>
                 </clr-datagrid>
                 </div>
               </article>
@@ -405,7 +405,7 @@ interface AuditEvent {
                 <div><dt>현재 인증 보증</dt><dd><span class="label" [class.label-success]="auth.assurance() === 'aal2'">{{ auth.assurance() }}</span> {{ auth.assurance() === 'aal2' ? '비밀번호와 TOTP 검증 완료' : '비밀번호 인증만 완료' }}</dd></div>
                 <div><dt>TOTP 정책</dt><dd>관리자 변경 작업에 필수 <span class="label">Supabase Auth</span></dd></div>
                 <div><dt>브라우저 자격 보관</dt><dd>Secure HttpOnly 불투명 세션 쿠키 · Supabase 토큰은 Backend 암호화 보관</dd></div>
-                <div><dt>로그인 유지 정책</dt><dd>{{ persistenceLabel(auth.currentSession()?.persistence || '24h') }} · 실제 사용자 활동 기준 유휴 30분 제한</dd></div>
+                <div><dt>로그인 유지 정책</dt><dd>{{ persistenceLabel(auth.currentSession()?.persistence || '24h') }} · 실제 사용자 활동 기준 유휴 12시간 제한</dd></div>
               </dl>
               <h2>최근 세션 보안 이력</h2>
               <div class="credential-grid-scroll" tabindex="0" aria-label="최근 세션 보안 이력">

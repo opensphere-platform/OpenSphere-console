@@ -13,8 +13,9 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
   imports: [ClarityModule, OsShellTerminalSurface],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <section class="shell-page" aria-labelledby="os-shell-title">
-      <header class="shell-heading">
+    <section class="shell-page" [class.embedded]="embedded" aria-label="OS Shell session">
+      @if (!embedded) {
+        <header class="shell-heading">
         <div class="shell-identity">
           <div class="shell-mark" aria-hidden="true">&gt;_</div>
           <div>
@@ -32,7 +33,8 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
             <a class="btn btn-sm" href="/" (click)="leaveStandalone($event)">Console로 돌아가기</a>
           }
         </div>
-      </header>
+        </header>
+      }
 
       @if (message()) {
         <clr-alert [clrAlertType]="messageType()" [clrAlertClosable]="false">
@@ -107,6 +109,7 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
 })
 export class OsShellPage {
   @Input() standalone = false;
+  @Input() embedded = false;
   readonly readiness = inject(OsShellReadinessService);
   private readonly sessions = inject(OsShellSessionService);
   private readonly destroyRef = inject(DestroyRef);

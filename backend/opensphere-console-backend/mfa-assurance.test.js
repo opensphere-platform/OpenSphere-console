@@ -135,7 +135,8 @@ test('session lifetime defaults to 24 hours and idle extension requires real bro
   assert.match(authService, /window\.addEventListener\('keydown'/);
   assert.doesNotMatch(httpService, /touchSession/);
   assert.match(backend, /p === '\/api\/identity\/session\/touch'/);
-  assert.match(myInfo, /실제 사용자 활동 기준 유휴 30분 제한/);
+  assert.match(browserSession, /const IDLE_TTL_MS = 12 \* 60 \* 60 \* 1000/);
+  assert.match(myInfo, /실제 사용자 활동 기준 유휴 12시간 제한/);
 });
 
 test('login keeps the established card design and adds only the requested session duration option', () => {
