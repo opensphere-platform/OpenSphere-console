@@ -9,6 +9,7 @@ import { OsActionDialog } from '../os/os-action-dialog';
 import { IconLibraryService } from '../os/icon-library.service';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PlatformReadinessService } from '../core/platform-readiness.service';
+import { SystemPluginRegistryService } from '../core/system-plugin-registry.service';
 import { buildExtensionManagementViews } from '../core/extension-view-model';
 import {
   PluginControlClient,
@@ -41,12 +42,12 @@ interface StatusLayer {
   tone: 'success' | 'warning' | 'danger' | 'neutral';
 }
 
-/** 위계 트리 노드 — console(mainShell) → subShell/plugin, + Bindings 분기(§2.7 shell→plugin 귀속 시각화). */
+/** 위계 트리 노드 — console(mainShell) → systemPlugin/subShell/plugin, + Bindings 분기. */
 interface TreeNode {
   id: string;
   label: string;
   meta?: string;
-  type: 'mainShell' | 'subShell' | 'plugin' | 'core' | 'binding' | 'group';
+  type: 'mainShell' | 'systemPlugin' | 'subShell' | 'plugin' | 'core' | 'binding' | 'group';
   phase?: string | null;
   children: TreeNode[];
   actionable: boolean;
@@ -66,7 +67,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
   template: `
     <div class="os-page">
       <os-page-header title="Console Extensions" tag="Core Runtime">
-        <p>subShell과 plugin의 사용자 설정, 현재 서비스, 서명 검증, 워크로드와 Console 연결을 한곳에서 관리합니다.</p>
+        <p>Console 내장 system plugin과 subShell·plugin의 소유 관계, 현재 서비스, 서명 검증, 워크로드 연결을 한곳에서 관리합니다.</p>
       </os-page-header>
 
     @if (msg(); as m) {
@@ -349,7 +350,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         <button clrTabLink (click)="selectView('topology')">구성도 Topology</button>
         <clr-tab-content *clrIfActive="activeView() === 'topology'">
           <p class="os-sub">
-            shell → plugin 귀속 위계 (§2.7) — console(mainShell)가 subShell·plugin을 호스팅,
+            Console 직할 system plugin과 Registry 기반 shell → plugin 귀속 위계 —
             Bindings는 shell 귀속 예외 범주
           </p>
           <div class="tree">
@@ -364,7 +365,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
               @if (exp(root.id)) {
                 @for (c of root.children; track c.id) {
                   <div class="tn tn1">
-                    @if (c.type === 'subShell') {
+                    @if (c.children.length) {
                       <button class="caret" (click)="toggle(c.id)">{{ exp(c.id) ? '▾' : '▸' }}</button>
                     } @else {
                       <span class="caret-sp"></span>
@@ -396,11 +397,11 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                     }
                     <span class="tm">{{ c.meta }}</span>
                   </div>
-                  @if (exp(c.id) && c.type === 'subShell') {
+                  @if (exp(c.id) && c.children.length) {
                     @for (g of c.children; track g.id) {
                       <div class="tn tn2">
-                        <span class="caret-sp"></span><span class="tt tt-plugin">plugin</span>
-                        <span class="tl cc-sel" (click)="select(g.id)">{{ g.label }}</span>
+                        <span class="caret-sp"></span><span class="tt tt-{{ g.type }}" [class.tt-core]="g.type === 'systemPlugin'">{{ typeLabel(g.type) }}</span>
+                        <span class="tl" [class.cc-sel]="g.actionable" (click)="g.actionable && select(g.id)">{{ g.label }}</span>
                         @if (g.phase) {
                           <span class="label"
                             [class.label-success]="effectiveStateByName(g.id).tone === 'success'"
@@ -410,9 +411,11 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                         <span class="tm">{{ g.meta }}</span>
                       </div>
                     } @empty {
-                      <div class="tn tn2 empty">
-                        모듈 없음 — 이 shell에 귀속된 plugin 미배포 (Phase 2 예정)
-                      </div>
+                      @if (c.type === 'subShell') {
+                        <div class="tn tn2 empty">
+                          모듈 없음 — 이 shell에 귀속된 plugin 미배포 (Phase 2 예정)
+                        </div>
+                      }
                     }
                   }
                 }
@@ -420,9 +423,9 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             }
           </div>
           <p class="os-sub">
-            구성도는 Registry의 <code>kind</code>·<code>hostRef</code>와 동일 ID
-            Package·Registration 계약만 투영합니다. 계약을 충족하지 못한 항목은 추론하지 않고
-            ‘분류 확인 필요’로 관리합니다.
+            System Plugins는 Console exact digest에 결속된 검증된 내장 descriptor를 투영합니다.
+            동적 확장은 Registry의 <code>kind</code>·<code>hostRef</code>와 동일 ID
+            Package·Registration 계약만 투영하며, 계약을 충족하지 못한 항목은 추론하지 않습니다.
           </p>
         </clr-tab-content>
       </clr-tab>
@@ -1201,6 +1204,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
 export class AdminPlugins implements OnInit {
   private ctl = inject(PluginControlClient);
   private ext = inject(ExtensionHostService);
+  private systemPlugins = inject(SystemPluginRegistryService);
   private readinessApi = inject(PlatformReadinessService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
@@ -1225,7 +1229,7 @@ export class AdminPlugins implements OnInit {
   readonly extensionInstallImage = signal('');
   readonly extensionInstallReason = signal('');
   readonly pendingAction = signal<{ action: 'enable' | 'disable' | 'uninstall'; id: string } | null>(null);
-  readonly expandedSet = signal<Set<string>>(new Set(['console', 'bindings']));
+  readonly expandedSet = signal<Set<string>>(new Set(['console', 'system-plugins', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
   readonly extensionViews = computed(() => buildExtensionManagementViews(this.catalog(), this.registrations()));
   readonly subShellRegistrations = computed(() => this.extensionViews().subShells);
@@ -1777,7 +1781,7 @@ export class AdminPlugins implements OnInit {
     return this.registrations().find((r) => r.name === name)?.status.phase ?? null;
   }
 
-  // ── 구성도(Topology) 트리 — Registry kind/hostRef 계약의 순수 투영 ──
+  // ── 구성도(Topology) 트리 — Console system plugin + Registry kind/hostRef 투영 ──
   private buildTree(): TreeNode[] {
     const catalogByName = new Map(this.catalog().map((item) => [item.name, item]));
     const mk = (c: CatalogItem, type: TreeNode['type']): TreeNode => ({
@@ -1805,6 +1809,21 @@ export class AdminPlugins implements OnInit {
       const item = catalogByName.get(registration.name);
       return item ? [mk(item, 'plugin')] : [];
     });
+    const systemPluginRoot: TreeNode = {
+      id: 'system-plugins',
+      label: 'System Plugins',
+      meta: 'Console exact-digest 내장 기능',
+      type: 'group',
+      actionable: false,
+      children: this.systemPlugins.list().map((descriptor) => ({
+        id: descriptor.id,
+        label: descriptor.id === 'os-shell' ? 'OS Shell' : descriptor.id,
+        meta: `${descriptor.route} · ${descriptor.owner} · Console release-bound`,
+        type: 'systemPlugin',
+        children: [],
+        actionable: false,
+      })),
+    };
     const consoleNode: TreeNode = {
       id: 'console',
       label: 'console',
@@ -1812,6 +1831,7 @@ export class AdminPlugins implements OnInit {
       type: 'mainShell',
       actionable: false,
       children: [
+        systemPluginRoot,
         ...subNodes,
         ...mainPlugins,
       ],
@@ -1845,7 +1865,8 @@ export class AdminPlugins implements OnInit {
     this.expandedSet.set(s);
   }
   typeLabel(t: TreeNode['type']): string {
-    return t === 'group' ? '' : t;
+    if (t === 'group') return '';
+    return t === 'systemPlugin' ? 'system' : t;
   }
 
   rollbackAvailable(r: Registration): boolean {
