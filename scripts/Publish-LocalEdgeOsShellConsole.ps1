@@ -61,6 +61,15 @@ function Get-ComponentDigest {
   return $match.Groups[1].Value
 }
 
+function Get-RemoteDigest {
+  param([Parameter(Mandatory)][string]$Reference)
+  $output = & docker buildx imagetools inspect $Reference 2>$null
+  if ($LASTEXITCODE -ne 0) { throw "Image reference is not readable from GHCR: $Reference" }
+  $line = $output | Where-Object { $_ -match '^Digest:\s+(sha256:[0-9a-f]{64})$' } | Select-Object -First 1
+  if (-not $line) { throw "Could not parse registry digest for $Reference" }
+  return ([regex]::Match($line, 'sha256:[0-9a-f]{64}')).Value
+}
+
 function Get-LiveDeploymentDigest {
   param(
     [Parameter(Mandatory)][string]$Deployment,
@@ -146,6 +155,7 @@ foreach ($deployment in @('opensphere-shell-api', 'opensphere-shell-gateway', 'o
     throw "Live Control deployment $deployment differs from the supplied deployed publication evidence"
   }
 }
+$consoleEdgeBefore = Get-RemoteDigest -Reference "${consoleRepository}:edge"
 
 $targetMigrationPath = Join-Path $repoRoot 'backend\supabase\migrations\manifest.json'
 $targetMigration = Get-Content -Raw -LiteralPath $targetMigrationPath | ConvertFrom-Json
@@ -164,6 +174,7 @@ $scope = [ordered]@{
     osShellControl = [string]$control.Document.sourceRevision
   }
   targetRevision = $SourceRevision
+  edgePointerBefore = $consoleEdgeBefore
   changedPaths = @($consolePaths + @(
     'scripts/Deploy-LocalEdgeOsShell.ps1',
     'scripts/Publish-LocalEdgeOsShellConsole.ps1',
@@ -198,6 +209,12 @@ if ([string]$publishedMigration.sha256 -ne [string]$baseMigration.sha256 -or
     [string]$publishedMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
   throw 'OS Shell Console publication changed the base migration lineage'
 }
+$publishedDigest = Get-ComponentDigest -Publication $published.Document -Key 'console'
+& docker buildx imagetools create --tag "${consoleRepository}:edge" ([string]$published.Document.components.console.image)
+if ($LASTEXITCODE -ne 0) { throw 'Could not advance the OS Shell Console edge pointer' }
+$consoleEdgeAfter = Get-RemoteDigest -Reference "${consoleRepository}:edge"
+if ($consoleEdgeAfter -ne $publishedDigest) { throw 'OS Shell Console edge pointer does not match the published digest' }
+$scope['edgePointerAfter'] = $consoleEdgeAfter
 $consolePath = Join-Path $workspace 'opensphere-local-os-shell-console-publication.json'
 $scopePath = Join-Path $workspace 'opensphere-local-os-shell-console-scope.json'
 $published.Document | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $consolePath -Encoding utf8
