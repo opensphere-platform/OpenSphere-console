@@ -668,6 +668,42 @@ function Assert-PrerequisiteDeployment {
   }
 }
 
+function Set-ConsoleOsShellActivation {
+  param(
+    [Parameter(Mandatory)][string]$Image,
+    [Parameter(Mandatory)][string]$SourceRevision,
+    [Parameter(Mandatory)][string]$ReleaseEvidenceRef
+  )
+  $deployment = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console', '-o', 'json')) -join "`n") | ConvertFrom-Json
+  $repository = ($Image -split '@', 2)[0]
+  $containers = @($deployment.spec.template.spec.containers | Where-Object { [string]$_.image -like "${repository}@*" })
+  if ($containers.Count -ne 1) {
+    throw 'Console activation patch requires exactly one canonical repository container'
+  }
+  $patch = [ordered]@{
+    metadata = [ordered]@{ annotations = [ordered]@{
+      'opensphere.io/os-shell-source-revision' = $SourceRevision
+      'opensphere.io/os-shell-release-evidence' = $ReleaseEvidenceRef
+    } }
+    spec = [ordered]@{ template = [ordered]@{
+      metadata = [ordered]@{ annotations = [ordered]@{
+        'opensphere.io/os-shell-source-revision' = $SourceRevision
+        'opensphere.io/os-shell-release-evidence' = $ReleaseEvidenceRef
+      } }
+      spec = [ordered]@{ containers = @([ordered]@{
+        name = [string]$containers[0].name
+        image = $Image
+      }) }
+    } }
+  }
+  Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'patch', 'deployment/opensphere-console', '--type=strategic', '--patch', ($patch | ConvertTo-Json -Depth 10 -Compress)) | Out-Null
+  Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'rollout', 'status', 'deployment/opensphere-console', '--timeout=600s') | Out-Null
+  $activated = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console', '-o', 'json')) -join "`n") | ConvertFrom-Json
+  if (@($activated.spec.template.spec.containers | Where-Object { [string]$_.image -eq $Image }).Count -ne 1) {
+    throw 'Console activation did not converge to the exact published image'
+  }
+}
+
 function Set-BackendOsShellActivation {
   param(
     [Parameter(Mandatory)][string]$Image,
@@ -1248,6 +1284,11 @@ Ensure-SessionRegistryPullSecret
 Ensure-InternalTls
 
 Write-Host '[step 2/7] Verify reused prerequisites and activate the exact Backend digest'
+$consoleActivationRequested = [bool]$consolePublicationPath
+if ($consoleActivationRequested) {
+  Set-ConsoleOsShellActivation -Image $console.image -SourceRevision ([string]$consoleEvidence.sourceRevision) `
+    -ReleaseEvidenceRef $releaseEvidenceRef
+}
 $prerequisiteEvidence = [ordered]@{
   console = Assert-PrerequisiteDeployment -Deployment 'opensphere-console' -Image $console.image -Digest $console.digest `
     -SourceRevision ([string]$consoleEvidence.sourceRevision)
