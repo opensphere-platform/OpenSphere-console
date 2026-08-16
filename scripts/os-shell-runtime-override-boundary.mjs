@@ -10,6 +10,8 @@ export const runtimeInputPaths = Object.freeze([
 export const backendOverridePaths = Object.freeze([
   'backend/opensphere-console-backend/Dockerfile',
   'backend/opensphere-console-backend/local-edge-automation-token.test.js',
+  'backend/opensphere-console-backend/os-shell-admission.js',
+  'backend/opensphere-console-backend/os-shell-admission.test.js',
 ]);
 
 export const consoleOverridePaths = Object.freeze([
@@ -32,6 +34,8 @@ export const deploymentToolingPaths = Object.freeze([
   'scripts/Deploy-LocalEdgeOsShell.ps1',
   'scripts/Invoke-OsShellFeatureOperation.ps1',
   'scripts/Publish-LocalEdge.ps1',
+  'scripts/Publish-LocalEdgeOsShell.ps1',
+  'scripts/os-shell-component-publisher.test.mjs',
   'scripts/Test-OsShellEdgeSigning.ps1',
   'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/os-shell-edge-signing.ps1',

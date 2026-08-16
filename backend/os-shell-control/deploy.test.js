@@ -324,6 +324,8 @@ test('local-edge deploy binds every component-only override through exact source
   const backendPaths = [
     'backend/opensphere-console-backend/Dockerfile',
     'backend/opensphere-console-backend/local-edge-automation-token.test.js',
+    'backend/opensphere-console-backend/os-shell-admission.js',
+    'backend/opensphere-console-backend/os-shell-admission.test.js',
   ];
   const consolePaths = ['nginx/default.conf.template', 'scripts/os-shell-frontend-contract.test.mjs'];
   const controlPaths = [
