@@ -15,11 +15,13 @@ test('dedicated OS Shell publisher selects only Backend and Control', () => {
   assert.doesNotMatch(publisher, /'-Components', 'osShellRuntime'/);
 });
 
-test('publisher verifies deployed pointers, source attribution, ancestry and migration lineage before split evidence', () => {
+test('publisher verifies live exact digests, source attribution, ancestry and migration lineage before split evidence', () => {
   assert.match(publisher, /merge-base --is-ancestor/);
   assert.match(publisher, /os-shell-runtime-override-boundary\.mjs/);
-  assert.match(publisher, /opensphere-console-backend:edge/);
-  assert.match(publisher, /opensphere-console-os-shell-control:edge/);
+  assert.match(publisher, /Get-RemoteDigest -Reference "\$\{backendRepository\}:edge"/);
+  assert.match(publisher, /Get-RemoteDigest -Reference "\$\{controlRepository\}:edge"/);
+  assert.match(publisher, /Get-LiveDeploymentDigest -Deployment 'opensphere-console-backend'/);
+  assert.match(publisher, /'opensphere-shell-api', 'opensphere-shell-gateway', 'opensphere-shell-reconciler'/);
   assert.match(publisher, /targetMigration\.setDigest -ne \[string\]\$baseMigration\.setDigest/);
   assert.match(publisher, /components\.PSObject\.Properties\.Remove\('osShellControl'\)/);
   assert.match(publisher, /components\.PSObject\.Properties\.Remove\('backend'\)/);

@@ -82,6 +82,19 @@ function Get-ComponentDigest {
   return $match.Groups[1].Value
 }
 
+function Get-LiveDeploymentDigest {
+  param(
+    [Parameter(Mandatory)][string]$Deployment,
+    [Parameter(Mandatory)][string]$Repository
+  )
+  $image = (& kubectl --context docker-desktop -n opensphere-console get "deployment/$Deployment" `
+    -o 'jsonpath={.spec.template.spec.containers[0].image}').Trim()
+  if ($LASTEXITCODE -ne 0) { throw "Could not read live deployment $Deployment" }
+  $match = [regex]::Match($image, "^$([regex]::Escape($Repository))@(sha256:[a-f0-9]{64})$")
+  if (-not $match.Success) { throw "Live deployment $Deployment is not pinned to the canonical repository digest" }
+  return $match.Groups[1].Value
+}
+
 if (-not $SourceRevision) { $SourceRevision = (& git -C $repoRoot rev-parse HEAD).Trim() }
 if ($SourceRevision -notmatch '^[a-f0-9]{40}$' -or $SourceRevision -ne (& git -C $repoRoot rev-parse HEAD).Trim()) {
   throw 'SourceRevision must be the clean current Console HEAD'
@@ -126,10 +139,21 @@ if (($boundary.backendPaths -join ',') -ne 'backend/opensphere-console-backend/D
 
 $previousBackendDigest = Get-ComponentDigest -Publication $previousBackend.Document -Key 'backend'
 $previousControlDigest = Get-ComponentDigest -Publication $previousControl.Document -Key 'osShellControl'
-if ((Get-RemoteDigest -Reference "$registry/opensphere-console-backend:edge") -ne $previousBackendDigest -or
-    (Get-RemoteDigest -Reference "$registry/opensphere-console-os-shell-control:edge") -ne $previousControlDigest) {
-  throw 'Current Backend or Control edge pointer differs from the supplied deployed publication evidence'
+if ((& kubectl config current-context).Trim() -ne 'docker-desktop') {
+  throw 'OS Shell edge publication is restricted to the docker-desktop context'
 }
+$backendRepository = "$registry/opensphere-console-backend"
+$controlRepository = "$registry/opensphere-console-os-shell-control"
+if ((Get-LiveDeploymentDigest -Deployment 'opensphere-console-backend' -Repository $backendRepository) -ne $previousBackendDigest) {
+  throw 'Live Backend differs from the supplied deployed publication evidence'
+}
+foreach ($deployment in @('opensphere-shell-api', 'opensphere-shell-gateway', 'opensphere-shell-reconciler')) {
+  if ((Get-LiveDeploymentDigest -Deployment $deployment -Repository $controlRepository) -ne $previousControlDigest) {
+    throw "Live Control deployment $deployment differs from the supplied deployed publication evidence"
+  }
+}
+$backendEdgeBefore = Get-RemoteDigest -Reference "${backendRepository}:edge"
+$controlEdgeBefore = Get-RemoteDigest -Reference "${controlRepository}:edge"
 
 $targetMigrationPath = Join-Path $repoRoot 'backend\supabase\migrations\manifest.json'
 $targetMigration = Get-Content -Raw -LiteralPath $targetMigrationPath | ConvertFrom-Json
@@ -145,6 +169,10 @@ $scopeDeclaration = [ordered]@{
   comparisonBase = [ordered]@{
     backend = [string]$previousBackend.Document.sourceRevision
     osShellControl = [string]$previousControl.Document.sourceRevision
+  }
+  edgePointersBefore = [ordered]@{
+    backend = $backendEdgeBefore
+    osShellControl = $controlEdgeBefore
   }
   targetRevision = $SourceRevision
   changedPaths = @(
