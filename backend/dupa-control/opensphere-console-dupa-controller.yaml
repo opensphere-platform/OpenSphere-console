@@ -7,6 +7,27 @@ kind: Namespace
 metadata:
   name: opensphere-console
 ---
+# The controller's delivery evidence permissions are intentionally scoped to
+# the canonical platform namespaces.  A fresh cluster must create those
+# namespaces before Kubernetes can accept the read-only Roles below.  Argo CD
+# and Crossplane remain optional workloads; declaring their empty namespaces
+# does not install or activate either platform.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    app.kubernetes.io/part-of: opensphere-platform-delivery
+    opensphere.io/managed-by: platform-delivery
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crossplane-system
+  labels:
+    app.kubernetes.io/part-of: opensphere-platform-delivery
+    opensphere.io/managed-by: platform-delivery
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
