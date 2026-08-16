@@ -53,6 +53,11 @@ export class SystemPluginRegistryService {
     return this.descriptors.get(id);
   }
 
+  list(): readonly SystemPluginDescriptor[] {
+    this.initialize();
+    return Object.freeze([...this.descriptors.values()]);
+  }
+
   hasGrant(id: string, capability: Capability): boolean {
     return this.get(id)?.grantedCapabilities.includes(capability) === true;
   }
