@@ -24,7 +24,7 @@ import type { OsShellAttachState } from './os-shell.types';
         class="terminal-frame"
         src="/os-shell-frame/index.html"
         sandbox="allow-scripts"
-        title="OpenSphere OS Shell terminal"
+        title="OS Shell terminal"
         referrerpolicy="no-referrer"
         (load)="onFrameLoad()"
       ></iframe>

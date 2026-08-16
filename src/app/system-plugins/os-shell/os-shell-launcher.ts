@@ -16,7 +16,7 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
         (click)="openStandalone($event)"
         [class.blocked]="readiness.status().state === 'Blocked' || readiness.status().state === 'Disabled'"
         [title]="title()"
-        aria-label="OpenSphere OS Shell"
+        aria-label="OS Shell"
       >
         <os-cicon [icon]="iconTerminal" [size]="20" />
         <span class="state-dot" aria-hidden="true"></span>
@@ -49,7 +49,7 @@ export class OsShellLauncher {
   });
   readonly title = computed(() => {
     const state = this.readiness.status();
-    return state.ready ? 'OpenSphere OS Shell' : `OpenSphere OS Shell · ${state.blocker?.code ?? state.state}`;
+    return state.ready ? 'OS Shell' : `OS Shell · ${state.blocker?.code ?? state.state}`;
   });
 
   constructor() {

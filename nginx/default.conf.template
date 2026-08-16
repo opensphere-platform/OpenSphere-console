@@ -543,6 +543,11 @@ server {
     location ^~ /os-shell-frame/ {
         try_files $uri =404;
         add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'self' data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
+        # The sandbox deliberately gives this frame an opaque origin. The
+        # standalone parent uses COEP=require-corp, so this route must opt in
+        # explicitly while CSP frame-ancestors still limits embedding to this
+        # Console origin.
+        add_header Cross-Origin-Resource-Policy "cross-origin" always;
         add_header X-Content-Type-Options nosniff always;
         add_header Referrer-Policy no-referrer always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), clipboard-read=(), clipboard-write=()" always;

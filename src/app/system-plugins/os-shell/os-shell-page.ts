@@ -15,18 +15,23 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
   template: `
     <section class="shell-page" aria-labelledby="os-shell-title">
       <header class="shell-heading">
-        <div>
-          <div class="eyebrow">CBSS · SYSTEM PLUGIN</div>
-          <h1 id="os-shell-title">OpenSphere OS Shell</h1>
-          <p>Console과 동일한 권한·승인·감사 경계에서 실행되는 격리형 <code>os</code> 관리 Shell입니다.</p>
+        <div class="shell-identity">
+          <div class="shell-mark" aria-hidden="true">&gt;_</div>
+          <div>
+            <div class="eyebrow">CONSOLE TERMINAL</div>
+            <h1 id="os-shell-title">OS Shell</h1>
+            <p>현재 Console 권한으로 실행되는 격리형 <code>os</code> 관리 터미널</p>
+          </div>
         </div>
-        <div class="runtime-state" [attr.data-state]="readiness.status().state">
-          <span>Runtime</span><strong>{{ readiness.status().state }}</strong>
-          <small>{{ readiness.status().observedAt || '아직 관측되지 않음' }}</small>
+        <div class="shell-heading-actions">
+          <div class="runtime-state" [attr.data-state]="readiness.status().state">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span>Runtime</span><strong>{{ readiness.status().state }}</strong>
+          </div>
+          @if (standalone) {
+            <a class="btn btn-sm" href="/" (click)="leaveStandalone($event)">Console로 돌아가기</a>
+          }
         </div>
-        @if (standalone) {
-          <a class="btn btn-sm" href="/" (click)="leaveStandalone($event)">Console로 돌아가기</a>
-        }
       </header>
 
       @if (message()) {
@@ -61,7 +66,7 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
           </div>
           <div class="session-actions">
             @if (!session()) {
-              <button class="btn btn-primary" type="button" [disabled]="busy()" (click)="createSession()">Shell 시작</button>
+              <button class="btn btn-primary" type="button" [disabled]="busy()" (click)="createSession()">OS Shell 시작</button>
             } @else {
               <button class="btn btn-danger-outline" type="button" [disabled]="busy()" (click)="terminateSession()">세션 종료</button>
             }
@@ -86,7 +91,7 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
           <section class="empty-terminal">
             <code>$ os</code>
             <h2>관리 Shell 세션이 없습니다</h2>
-            <p>Shell 시작을 선택하면 CBSS가 server-owned runtime template으로 사용자 전용 세션을 준비합니다.</p>
+            <p>OS Shell 시작을 선택하면 사용자 전용 격리 세션을 준비합니다.</p>
           </section>
         }
       }

@@ -146,6 +146,7 @@ test('active runtime authorization is revalidated on a two-second cadence within
 });
 
 test('OS Shell uses an immutable extension-free top-level realm with full-navigation entry and exit', () => {
+  const appConfig = read('src/app/app.config.ts');
   const bootMode = read('src/app/core/boot-mode.ts');
   const app = read('src/app/app.ts');
   const host = read('src/app/core/extension-host.service.ts');
@@ -153,6 +154,7 @@ test('OS Shell uses an immutable extension-free top-level realm with full-naviga
   const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
 
   assert.match(bootMode, /window[.]location[.]pathname === '\/shell'/);
+  assert.match(appConfig, /OS_SHELL_STANDALONE_BOOT[\s\S]*withDisabledInitialNavigation\(\)/);
   assert.match(app, /OS_SHELL_STANDALONE_BOOT [??] null : inject\(ExtensionHostService\)/);
   const startupGate = app.indexOf('if (OS_SHELL_STANDALONE_BOOT || !this.ext) return;');
   const guestLoad = app.indexOf('void this.ext.load()');
@@ -164,6 +166,18 @@ test('OS Shell uses an immutable extension-free top-level realm with full-naviga
   assert.doesNotMatch(launcher, /routerLink/);
   assert.match(page, /window[.]location[.]assign\('\/'\)/);
   assert.doesNotMatch(page, /navigateByUrl|routerLink/);
+});
+
+test('opaque terminal frame remains isolated and explicitly satisfies parent COEP', () => {
+  const nginx = read('nginx/default.conf.template');
+  const start = nginx.indexOf('location ^~ /os-shell-frame/ {');
+  const end = nginx.indexOf('location = /shell {', start);
+  const frameLocation = nginx.slice(start, end);
+  const surface = read('src/app/system-plugins/os-shell/os-shell-terminal-surface.ts');
+  assert.match(frameLocation, /Cross-Origin-Resource-Policy "cross-origin"/);
+  assert.match(frameLocation, /frame-ancestors 'self'/);
+  assert.match(surface, /sandbox="allow-scripts"/);
+  assert.doesNotMatch(surface, /allow-same-origin/);
 });
 
 test('standalone Shell response severs opener/embed authority and cannot load guest execution surfaces', () => {
