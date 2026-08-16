@@ -1240,22 +1240,22 @@ Ensure-SessionNamespace
 Ensure-SessionRegistryPullSecret
 Ensure-InternalTls
 
-Write-Host '[step 2/7] Verify Console, Backend and CLI prerequisite exact digests'
+Write-Host '[step 2/7] Verify reused prerequisites and activate the exact Backend digest'
 $prerequisiteEvidence = [ordered]@{
   console = Assert-PrerequisiteDeployment -Deployment 'opensphere-console' -Image $console.image -Digest $console.digest `
     -SourceRevision ([string]$consoleEvidence.sourceRevision)
-  backend = Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend' -Image $backend.image -Digest $backend.digest `
-    -SourceRevision ([string]$backendEvidence.sourceRevision)
   cliArtifacts = Assert-PrerequisiteDeployment -Deployment 'os-cli' -Image $cliArtifacts.image -Digest $cliArtifacts.digest `
     -SourceRevision ([string]$evidence.sourceRevision)
 }
+Set-BackendOsShellActivation -Image $backend.image -SourceRevision ([string]$backendEvidence.sourceRevision) -ReleaseEvidenceRef $releaseEvidenceRef
+$prerequisiteEvidence['backend'] = Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend' `
+  -Image $backend.image -Digest $backend.digest -SourceRevision ([string]$backendEvidence.sourceRevision)
 
 Write-Host '[step 3/7] Apply committed Supabase migration lineage through additive 0062'
 & $migrationRunner -KubeContext $KubeContext -SourceRevision ([string]$evidence.sourceRevision)
 if ($LASTEXITCODE -ne 0) { throw "migrate-only.ps1 failed with exit code $LASTEXITCODE" }
 
-Write-Host '[step 4/7] Activate Backend admission and apply exact-digest OS Shell control manifest'
-Set-BackendOsShellActivation -Image $backend.image -SourceRevision ([string]$backendEvidence.sourceRevision) -ReleaseEvidenceRef $releaseEvidenceRef
+Write-Host '[step 4/7] Apply exact-digest OS Shell control manifest'
 $renderedManifest = $manifestSource.Replace($consolePlaceholder, $console.image).Replace($controlPlaceholder, $control.image).Replace($runtimePlaceholder, $runtime.image)
 if ($renderedManifest.Contains($consolePlaceholder) -or $renderedManifest.Contains($controlPlaceholder) -or $renderedManifest.Contains($runtimePlaceholder) -or
     $renderedManifest -match '(?m)^\s*image:\s*[^\s]+:(edge|latest)\s*$') {
