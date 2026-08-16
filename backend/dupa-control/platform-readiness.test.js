@@ -487,6 +487,27 @@ test('Delivery evidence reader is namespace-scoped and read-only', () => {
   assert.doesNotMatch(role, /verbs: \[[^\]]*(?:create|update|patch|delete)/);
 });
 
+test('fresh install creates optional platform namespaces before their evidence RBAC', () => {
+  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const documents = manifest.split(/^---\s*$/mu).map((document) => document.trim()).filter(Boolean);
+  const namespaceDocumentIndex = (name) => documents.findIndex((document) => (
+    /kind:\s*Namespace/.test(document)
+      && new RegExp(`metadata:\\s*\\n(?:[ \\t].*\\n)*?[ \\t]+name:\\s*${name}(?:\\s|$)`).test(document)
+  ));
+  const namespacedRbacDocumentIndex = (name) => documents.findIndex((document) => (
+    /kind:\s*(?:Role|RoleBinding)/.test(document)
+      && new RegExp(`namespace:\\s*${name}(?:\\s|$)`).test(document)
+  ));
+
+  for (const namespace of ['argocd', 'crossplane-system']) {
+    const namespaceIndex = namespaceDocumentIndex(namespace);
+    const rbacIndex = namespacedRbacDocumentIndex(namespace);
+    assert.notEqual(namespaceIndex, -1, `${namespace} Namespace must be part of the base manifest`);
+    assert.notEqual(rbacIndex, -1, `${namespace} evidence RBAC must remain namespace-scoped`);
+    assert.ok(namespaceIndex < rbacIndex, `${namespace} Namespace must precede its evidence RBAC`);
+  }
+});
+
 test('Platform readiness consumes the named HIS preflight probe instead of rebranding Observability evidence', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   assert.match(controller, /hisPreflight:\s*his, observability/);
