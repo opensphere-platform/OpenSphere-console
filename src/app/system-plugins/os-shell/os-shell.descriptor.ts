@@ -4,6 +4,8 @@ import type { SystemPluginDescriptor } from '../../core/system-plugin-registry.s
 export const OS_SHELL_SYSTEM_PLUGIN = Object.freeze({
   schemaVersion: 1,
   id: 'os-shell',
+  displayName: 'OS Shell',
+  category: 'Developer Tools',
   kind: 'systemPlugin',
   owner: 'cbss-main-shell',
   route: '/shell',

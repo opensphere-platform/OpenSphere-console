@@ -1,10 +1,15 @@
 import { Injectable, signal } from '@angular/core';
 import type { Capability } from '@opensphere/sdk';
 import { OS_SHELL_SYSTEM_PLUGIN } from '../system-plugins/os-shell/os-shell.descriptor';
+import { R2D2_SYSTEM_PLUGIN } from '../system-plugins/r2d2/r2d2.descriptor';
+
+export type SystemPluginCategory = 'Developer Tools' | 'AI Orchestration';
 
 export interface SystemPluginDescriptor {
   readonly schemaVersion: 1;
   readonly id: string;
+  readonly displayName: string;
+  readonly category: SystemPluginCategory;
   readonly kind: 'systemPlugin';
   readonly owner: string;
   readonly route: `/${string}`;
@@ -39,7 +44,7 @@ export class SystemPluginRegistryService {
   initialize(): void {
     if (this.initialized()) return;
     const failures: SystemPluginContractFailure[] = [];
-    for (const descriptor of [OS_SHELL_SYSTEM_PLUGIN] as readonly SystemPluginDescriptor[]) {
+    for (const descriptor of [OS_SHELL_SYSTEM_PLUGIN, R2D2_SYSTEM_PLUGIN] as readonly SystemPluginDescriptor[]) {
       const issue = this.validate(descriptor);
       if (issue) failures.push({ id: descriptor.id, ...issue });
       else this.descriptors.set(descriptor.id, Object.freeze(descriptor));
@@ -66,8 +71,11 @@ export class SystemPluginRegistryService {
     if (descriptor.schemaVersion !== 1 || descriptor.kind !== 'systemPlugin') {
       return { code: 'SystemPluginSchemaInvalid', detail: 'schemaVersion=1 and kind=systemPlugin are required.' };
     }
-    if (!ID.test(descriptor.id) || !descriptor.owner.trim()) {
-      return { code: 'SystemPluginIdentityInvalid', detail: 'id and owner must be closed, non-empty identifiers.' };
+    if (!ID.test(descriptor.id) || !descriptor.displayName.trim() || !descriptor.owner.trim()) {
+      return { code: 'SystemPluginIdentityInvalid', detail: 'id, displayName and owner must be closed, non-empty identifiers.' };
+    }
+    if (!['Developer Tools', 'AI Orchestration'].includes(descriptor.category)) {
+      return { code: 'SystemPluginCategoryInvalid', detail: 'category must be a supported Console-owned capability class.' };
     }
     if (!descriptor.route.startsWith('/') || descriptor.route.startsWith('/p/')) {
       return { code: 'SystemPluginRouteInvalid', detail: 'a CBSS system plugin must use a Host-owned route outside /p.' };
