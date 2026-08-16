@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$BasePublicationEvidence,
+  [Parameter(Mandatory)][string]$PreviousConsolePublicationEvidence,
   [Parameter(Mandatory)][string]$BackendPublicationEvidence,
   [Parameter(Mandatory)][string]$ControlPublicationEvidence,
   [string]$SourceRevision = '',
@@ -104,13 +105,17 @@ if ((& kubectl config current-context).Trim() -ne 'docker-desktop') {
 
 $base = Read-Publication -Path $BasePublicationEvidence `
   -ExpectedComponents @('backend', 'cliArtifacts', 'console', 'osShellControl', 'osShellRuntime') -Purpose 'base publication'
+$previousConsole = Read-Publication -Path $PreviousConsolePublicationEvidence `
+  -ExpectedComponents @('console') -Purpose 'deployed Console publication'
 $backend = Read-Publication -Path $BackendPublicationEvidence -ExpectedComponents @('backend') -Purpose 'deployed Backend publication'
 $control = Read-Publication -Path $ControlPublicationEvidence -ExpectedComponents @('osShellControl') -Purpose 'deployed Control publication'
-foreach ($revision in @([string]$backend.Document.sourceRevision, [string]$control.Document.sourceRevision, $SourceRevision)) {
+foreach ($revision in @([string]$previousConsole.Document.sourceRevision, [string]$backend.Document.sourceRevision,
+    [string]$control.Document.sourceRevision, $SourceRevision)) {
   & git -C $repoRoot merge-base --is-ancestor ([string]$base.Document.sourceRevision) $revision
   if ($LASTEXITCODE -ne 0) { throw "Target authority $revision does not descend from the base OS Shell publication" }
 }
-foreach ($revision in @([string]$backend.Document.sourceRevision, [string]$control.Document.sourceRevision)) {
+foreach ($revision in @([string]$previousConsole.Document.sourceRevision, [string]$backend.Document.sourceRevision,
+    [string]$control.Document.sourceRevision)) {
   & git -C $repoRoot merge-base --is-ancestor $revision $SourceRevision
   if ($LASTEXITCODE -ne 0) { throw "Target source does not descend from deployed component revision $revision" }
 }
@@ -128,8 +133,8 @@ $consoleRepository = "$registry/opensphere-console"
 $backendRepository = "$registry/opensphere-console-backend"
 $controlRepository = "$registry/opensphere-console-os-shell-control"
 if ((Get-LiveDeploymentDigest -Deployment 'opensphere-console' -Repository $consoleRepository) -ne
-    (Get-ComponentDigest -Publication $base.Document -Key 'console')) {
-  throw 'Live Console differs from the supplied deployed base publication evidence'
+    (Get-ComponentDigest -Publication $previousConsole.Document -Key 'console')) {
+  throw 'Live Console differs from the supplied deployed Console publication evidence'
 }
 if ((Get-LiveDeploymentDigest -Deployment 'opensphere-console-backend' -Repository $backendRepository) -ne
     (Get-ComponentDigest -Publication $backend.Document -Key 'backend')) {
@@ -154,7 +159,7 @@ if ((Get-CanonicalTextSha256 -Path $targetMigrationPath) -ne [string]$baseMigrat
 $scope = [ordered]@{
   requestIntent = 'deploy'
   comparisonBase = [ordered]@{
-    console = [string]$base.Document.sourceRevision
+    console = [string]$previousConsole.Document.sourceRevision
     backend = [string]$backend.Document.sourceRevision
     osShellControl = [string]$control.Document.sourceRevision
   }
