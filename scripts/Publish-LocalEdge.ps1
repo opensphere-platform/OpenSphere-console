@@ -223,6 +223,7 @@ function Assert-LocalEdgeImageMetadata {
     'io.opensphere.source-revision' = $ExpectedSourceRevision
     'io.opensphere.release-tag' = $ExpectedReleaseTag
     'org.opencontainers.image.version' = $ExpectedReleaseTag
+    'org.opencontainers.image.source' = 'https://github.com/opensphere-platform/OpenSphere-console'
     'opensphere.io/build-authority' = 'localhost'
     'opensphere.io/release-class' = 'pre-ga'
     'opensphere.io/ga-eligible' = 'false'
@@ -354,6 +355,7 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
     '--label', "io.opensphere.source-revision=$SourceRevision",
     '--label', "io.opensphere.release-tag=$releaseTag",
     '--label', "org.opencontainers.image.version=$releaseTag",
+    '--label', 'org.opencontainers.image.source=https://github.com/opensphere-platform/OpenSphere-console',
     '--label', 'opensphere.io/build-authority=localhost',
     '--label', 'opensphere.io/release-class=pre-ga',
     '--label', 'opensphere.io/ga-eligible=false',

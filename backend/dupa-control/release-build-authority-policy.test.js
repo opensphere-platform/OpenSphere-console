@@ -105,7 +105,7 @@ test('local edge promotion has one fail-closed OCI metadata preflight before any
   assert.match(publisher, /OCI platform mismatch/);
   for (const label of [
     'io.opensphere.channel', 'io.opensphere.source-revision', 'io.opensphere.release-tag',
-    'org.opencontainers.image.version', 'opensphere.io/build-authority',
+    'org.opencontainers.image.version', 'org.opencontainers.image.source', 'opensphere.io/build-authority',
     'opensphere.io/release-class', 'opensphere.io/ga-eligible',
   ]) assert.match(publisher, new RegExp(label.replaceAll('.', '\\.')));
 });
