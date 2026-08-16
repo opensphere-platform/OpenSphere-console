@@ -31,7 +31,7 @@ test('edge signing fails at the declared pwsh 7.2 boundary before Windows PowerS
 test('local-edge deploy joins completed kubectl output instead of binding -join as a parameter', () => {
   assert.doesNotMatch(deployScript, /= \(Invoke-Kubectl[^\r\n]+ -join [^\r\n]+\) \| ConvertFrom-Json/);
   assert.doesNotMatch(deployScript, /"\$repository@\*"/);
-  assert.equal((deployScript.match(/"\$\{repository\}@\*"/g) || []).length, 1);
+  assert.equal((deployScript.match(/"\$\{repository\}@\*"/g) || []).length, 2);
   assert.match(deployScript, /containerStatuses \| Where-Object \{ \[string\]\$_[.]name -eq \$boundContainerName \}/);
   assert.doesNotMatch(deployScript, /\$statuses\[0\][.]image -ne \$Image/);
   assert.match(deployScript, /PSObject[.]Properties\['serviceAccountName'\]/);
@@ -301,6 +301,8 @@ test('local-edge deploy binds every component-only override through exact source
   assert.match(deployScript, /osShellControl = \[string\]\$controlEvidence[.]sourceRevision/);
   assert.match(deployScript, /osShellRuntime = \[string\]\$runtimeEvidence[.]sourceRevision/);
   assert.match(deployScript, /Set-BackendOsShellActivation -Image \$backend[.]image -SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
+  assert.match(deployScript, /\$repository = \(\$Image -split '@', 2\)\[0\][\s\S]*?image = \$Image/);
+  assert.match(deployScript, /activation did not converge to the exact published image/);
   assert.ok(
     deployScript.indexOf('Set-BackendOsShellActivation -Image $backend.image')
       < deployScript.indexOf("$prerequisiteEvidence['backend'] = Assert-PrerequisiteDeployment"),

@@ -675,9 +675,10 @@ function Set-BackendOsShellActivation {
     [Parameter(Mandatory)][string]$ReleaseEvidenceRef
   )
   $deployment = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console-backend', '-o', 'json')) -join "`n") | ConvertFrom-Json
-  $containers = @($deployment.spec.template.spec.containers | Where-Object { [string]$_.image -eq $Image })
+  $repository = ($Image -split '@', 2)[0]
+  $containers = @($deployment.spec.template.spec.containers | Where-Object { [string]$_.image -like "${repository}@*" })
   if ($containers.Count -ne 1) {
-    throw 'Console Backend activation patch requires exactly one exact-image container'
+    throw 'Console Backend activation patch requires exactly one canonical repository container'
   }
   $patch = [ordered]@{
     metadata = [ordered]@{ annotations = [ordered]@{
@@ -692,6 +693,7 @@ function Set-BackendOsShellActivation {
       spec = [ordered]@{
         containers = @([ordered]@{
           name = [string]$containers[0].name
+          image = $Image
           env = @(
             [ordered]@{ name = 'OS_SHELL_ADMISSION_ENABLED'; value = 'true' },
             [ordered]@{ name = 'OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED'; value = 'true' },
@@ -719,6 +721,9 @@ function Set-BackendOsShellActivation {
   Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'rollout', 'status', 'deployment/opensphere-console-backend', '--timeout=600s') | Out-Null
   $activated = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console-backend', '-o', 'json')) -join "`n") | ConvertFrom-Json
   $activatedContainer = @($activated.spec.template.spec.containers | Where-Object { [string]$_.image -eq $Image })
+  if ($activatedContainer.Count -ne 1) {
+    throw 'Console Backend activation did not converge to the exact published image'
+  }
   foreach ($name in @('OS_SHELL_ADMISSION_ENABLED', 'OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED')) {
     $values = @($activatedContainer[0].env | Where-Object { [string]$_.name -eq $name })
     if ($values.Count -ne 1 -or [string]$values[0].value -ne 'true') {
