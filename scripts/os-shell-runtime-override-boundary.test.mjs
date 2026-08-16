@@ -181,7 +181,11 @@ test('platform bridge accepts squash-separated main while preserving exact OS Sh
     const baseRevision = commit(repository, 'OS Shell publication base', { 'OS-SHELL.md': 'base\n' });
     const controlFiles = Object.fromEntries(
       controlOverridePaths.map((path) => [path, `control contract ${path}\n`]));
-    const controlRevision = commit(repository, 'OS Shell control publication', controlFiles);
+    const controlRevision = commit(repository, 'OS Shell cumulative control publication', {
+      ...controlFiles,
+      ...Object.fromEntries(backendOverridePaths.map((path) => [path, `historical backend ${path}\n`])),
+      ...Object.fromEntries(consoleOverridePaths.map((path) => [path, `historical console ${path}\n`])),
+    });
     git(repository, 'switch', 'main');
     git(repository, 'reset', '--hard', commonRevision);
     const platformRevision = commit(repository, 'squash-equivalent canonical platform main', {
