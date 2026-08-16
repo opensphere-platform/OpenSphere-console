@@ -4,6 +4,7 @@ param(
   [Parameter(Mandatory)]
   [string]$PublicationEvidence,
   [string]$RuntimePublicationEvidence = '',
+  [string]$PlatformPublicationEvidence = '',
   [string]$BackendPublicationEvidence = '',
   [string]$ConsolePublicationEvidence = '',
   [string]$ControlPublicationEvidence = '',
@@ -914,8 +915,37 @@ if ($RuntimePublicationEvidence) {
   }
 }
 
+$platformPublicationPath = ''
+$platformEvidence = $null
+if ($PlatformPublicationEvidence) {
+  if ($BackendPublicationEvidence -or $ConsolePublicationEvidence) {
+    throw 'PlatformPublicationEvidence cannot be combined with legacy Backend or Console overrides'
+  }
+  $platformPublicationPath = (Resolve-Path -LiteralPath $PlatformPublicationEvidence).Path
+  if ($platformPublicationPath -eq $publicationPath -or
+      ($runtimePublicationPath -and $platformPublicationPath -eq $runtimePublicationPath)) {
+    throw 'PlatformPublicationEvidence must be a distinct component publication'
+  }
+  $platformEvidence = Get-Content -Raw -LiteralPath $platformPublicationPath | ConvertFrom-Json
+  Assert-EdgePublicationEnvelope -Evidence $platformEvidence -Purpose 'OS Shell Platform bridge'
+  $platformComponentKeys = @($platformEvidence.components.PSObject.Properties.Name | Sort-Object)
+  if (($platformComponentKeys -join ',') -ne 'backend,console') {
+    throw "Platform bridge requires exactly backend and console; received: $($platformComponentKeys -join ',')"
+  }
+  if ([string]$platformEvidence.sourceRevision -eq [string]$evidence.sourceRevision) {
+    throw 'Platform bridge SourceRevision must differ from the base OS Shell publication'
+  }
+  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
+  $platformMigration = $platformEvidence.artifacts.supabaseMigrationManifest
+  if (-not $platformMigration -or [string]$platformMigration.sha256 -ne [string]$baseMigration.sha256 -or
+      [string]$platformMigration.setDigest -ne [string]$baseMigration.setDigest -or
+      [string]$platformMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
+    throw 'Platform bridge changes the base Supabase migration lineage'
+  }
+}
+
 $backendPublicationPath = ''
-$backendEvidence = $evidence
+$backendEvidence = if ($platformEvidence) { $platformEvidence } else { $evidence }
 if ($BackendPublicationEvidence) {
   $backendPublicationPath = (Resolve-Path -LiteralPath $BackendPublicationEvidence).Path
   if ($backendPublicationPath -eq $publicationPath -or
@@ -941,7 +971,7 @@ if ($BackendPublicationEvidence) {
 }
 
 $consolePublicationPath = ''
-$consoleEvidence = $evidence
+$consoleEvidence = if ($platformEvidence) { $platformEvidence } else { $evidence }
 if ($ConsolePublicationEvidence) {
   $consolePublicationPath = (Resolve-Path -LiteralPath $ConsolePublicationEvidence).Path
   if ($consolePublicationPath -eq $publicationPath -or
@@ -1016,6 +1046,7 @@ $head = (& git -C $consoleRoot rev-parse HEAD).Trim()
 $deploymentToolingSourceRevision = $head
 $deploymentToolingAllowlist = @(
   'scripts/Deploy-LocalEdgeOsShell.ps1',
+  'scripts/Invoke-LocalEdgePlatformRelease.ps1',
   'scripts/os-shell-edge-signing.ps1',
   'scripts/Test-OsShellEdgeSigning.ps1',
   'scripts/Test-OsShellRuntimeAdmission.ps1',
@@ -1028,14 +1059,15 @@ $deploymentToolingAllowlist = @(
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
   'backend/os-shell-control/deploy.yaml',
-  'backend/os-shell-control/deploy.test.js'
+  'backend/os-shell-control/deploy.test.js',
+  'backend/opensphere-console-backend/platform-release.test.js'
 )
 $boundaryEvidence = $null
 $backendBoundaryEvidence = $null
 $consoleBoundaryEvidence = $null
 $controlBoundaryEvidence = $null
 $componentOverrideBoundary = $null
-if ($runtimePublicationPath -or $backendPublicationPath -or $consolePublicationPath -or $controlPublicationPath) {
+if ($runtimePublicationPath -or $platformPublicationPath -or $backendPublicationPath -or $consolePublicationPath -or $controlPublicationPath) {
   $boundaryVerifier = Join-Path $consoleRoot 'scripts\os-shell-runtime-override-boundary.mjs'
   if (-not (Test-Path -LiteralPath $boundaryVerifier)) { throw 'Component override boundary verifier is missing' }
   if ((& git -C $consoleRoot remote get-url origin).Trim() -ne 'https://github.com/opensphere-platform/OpenSphere-console.git') {
@@ -1046,6 +1078,7 @@ if ($runtimePublicationPath -or $backendPublicationPath -or $consolePublicationP
   $boundaryArguments = @($boundaryVerifier, '--repository', $consoleRoot, '--base',
     ([string]$evidence.sourceRevision), '--head', $head)
   if ($runtimePublicationPath) { $boundaryArguments += @('--runtime', ([string]$runtimeEvidence.sourceRevision)) }
+  if ($platformPublicationPath) { $boundaryArguments += @('--platform', ([string]$platformEvidence.sourceRevision)) }
   if ($backendPublicationPath) { $boundaryArguments += @('--backend', ([string]$backendEvidence.sourceRevision)) }
   if ($consolePublicationPath) { $boundaryArguments += @('--console', ([string]$consoleEvidence.sourceRevision)) }
   if ($controlPublicationPath) { $boundaryArguments += @('--control', ([string]$controlEvidence.sourceRevision)) }
@@ -1053,6 +1086,10 @@ if ($runtimePublicationPath -or $backendPublicationPath -or $consolePublicationP
   if ($LASTEXITCODE -ne 0) { throw 'Composite component override source boundary verification failed' }
   $componentOverrideBoundary = ($boundaryOutput -join "`n") | ConvertFrom-Json
   if ($runtimePublicationPath) { $boundaryEvidence = $componentOverrideBoundary }
+  if ($platformPublicationPath) {
+    $backendBoundaryEvidence = $componentOverrideBoundary
+    $consoleBoundaryEvidence = $componentOverrideBoundary
+  }
   if ($backendPublicationPath) { $backendBoundaryEvidence = $componentOverrideBoundary }
   if ($consolePublicationPath) { $consoleBoundaryEvidence = $componentOverrideBoundary }
   if ($controlPublicationPath) { $controlBoundaryEvidence = $componentOverrideBoundary }
@@ -1169,6 +1206,9 @@ $releaseOverrides = @()
 if ($runtimePublicationPath) {
   $releaseOverrides += "osShellRuntime/$([string]$runtimeEvidence.releaseTag)/$(([string]$runtimeEvidence.sourceRevision).Substring(0, 12))"
 }
+if ($platformPublicationPath) {
+  $releaseOverrides += "platform/$([string]$platformEvidence.releaseTag)/$(([string]$platformEvidence.sourceRevision).Substring(0, 12))"
+}
 if ($backendPublicationPath) {
   $releaseOverrides += "backend/$([string]$backendEvidence.releaseTag)/$(([string]$backendEvidence.sourceRevision).Substring(0, 12))"
 }
@@ -1207,6 +1247,7 @@ if ($PrepareTrustOnly) {
     releaseTag = [string]$evidence.releaseTag
     publicationEvidence = $publicationPath
     runtimePublicationEvidence = $runtimePublicationPath
+    platformPublicationEvidence = $platformPublicationPath
     backendPublicationEvidence = $backendPublicationPath
     consolePublicationEvidence = $consolePublicationPath
     controlPublicationEvidence = $controlPublicationPath
@@ -1654,6 +1695,7 @@ $receipt = [ordered]@{
   releaseTag = [string]$evidence.releaseTag
   publicationEvidence = $publicationPath
   runtimePublicationEvidence = $runtimePublicationPath
+  platformPublicationEvidence = $platformPublicationPath
   backendPublicationEvidence = $backendPublicationPath
   consolePublicationEvidence = $consolePublicationPath
   controlPublicationEvidence = $controlPublicationPath
