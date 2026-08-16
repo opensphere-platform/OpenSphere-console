@@ -66,7 +66,7 @@ test('CLI publication authority requires the independent GitHub code owner', asy
   ]) {
     assert.match(
       codeowners,
-      new RegExp(`^${authorityPath.replaceAll('.', '\\\\.')} @opensphere-platform @choimars$`, 'm'),
+      new RegExp(`^${authorityPath.replaceAll('.', '\\.')} @opensphere-platform @choimars$`, 'm'),
     );
   }
 });
