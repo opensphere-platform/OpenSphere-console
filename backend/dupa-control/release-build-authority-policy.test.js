@@ -82,6 +82,20 @@ test('local edge tag promotion preserves the exact single-platform manifest dige
   assert.match(publisher, /imagetools create --prefer-index=false --tag \$target/);
 });
 
+test('local edge retries reuse verified immutable source tags before any build can overwrite them', () => {
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+  const readLocal = publisher.indexOf('$existingLocalDigest = Get-RemoteDigest -Reference $localReference');
+  const validateLocal = publisher.indexOf('Assert-LocalEdgeImageMetadata -Repository $repository -Digest $existingLocalDigest');
+  const rejectLineage = publisher.indexOf('Immutable tag lineage mismatch:');
+  const reuseLocal = publisher.indexOf('$digests[$item.Key] = $existingLocalDigest');
+  const build = publisher.indexOf('Invoke-Checked docker @arguments');
+  assert.ok(readLocal > 0 && validateLocal > readLocal);
+  assert.ok(rejectLineage > validateLocal && reuseLocal > rejectLineage);
+  assert.ok(build > reuseLocal);
+  assert.match(publisher, /\$imagesToBuild\.Add\(\$item\)/);
+  assert.match(publisher, /Immutable publication is incomplete:/);
+});
+
 test('local edge promotion has one fail-closed OCI metadata preflight before any channel movement', () => {
   const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
   const preflight = publisher.indexOf('Assert-LocalEdgeImageMetadata -Repository $repository');

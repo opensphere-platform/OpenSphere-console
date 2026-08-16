@@ -303,14 +303,46 @@ $integratedAnchorBefore = if ($partialPublication -and ($images | Where-Object {
   $null
 }
 
-Write-Host "[step 04/06] Build and push $($images.Count) host-native images"
+Write-Host "[step 04/06] Reuse verified immutable images or build missing host-native images"
 Write-Host "[scope] $($images.Key -join ', ')"
 $digests = [ordered]@{}
-for ($index = 0; $index -lt $images.Count; $index += 1) {
-  $item = $images[$index]
+$imagesToBuild = [Collections.Generic.List[object]]::new()
+foreach ($item in $images) {
+  $repository = "$Registry/$($item.Image)"
+  $localReference = "${repository}:$localTag"
+  $versionReference = "${repository}:$releaseTag"
+  $existingLocalDigest = Get-RemoteDigest -Reference $localReference
+  $existingVersionDigest = Get-RemoteDigest -Reference $versionReference
+
+  if ($existingLocalDigest) {
+    Assert-LocalEdgeImageMetadata -Repository $repository -Digest $existingLocalDigest `
+      -ExpectedSourceRevision $SourceRevision -ExpectedReleaseTag $releaseTag `
+      -ExpectedPlatform $Platform
+  }
+  if ($existingVersionDigest) {
+    Assert-LocalEdgeImageMetadata -Repository $repository -Digest $existingVersionDigest `
+      -ExpectedSourceRevision $SourceRevision -ExpectedReleaseTag $releaseTag `
+      -ExpectedPlatform $Platform
+  }
+  if ($existingVersionDigest -and -not $existingLocalDigest) {
+    throw "Immutable publication is incomplete: $versionReference exists but $localReference is missing"
+  }
+  if ($existingLocalDigest -and $existingVersionDigest -and $existingLocalDigest -ne $existingVersionDigest) {
+    throw "Immutable tag lineage mismatch: $localReference is $existingLocalDigest but $versionReference is $existingVersionDigest"
+  }
+  if ($existingLocalDigest) {
+    $digests[$item.Key] = $existingLocalDigest
+    Write-Host "[reused] $localReference -> $existingLocalDigest"
+  } else {
+    $imagesToBuild.Add($item)
+  }
+}
+
+for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
+  $item = $imagesToBuild[$index]
   $repository = "$Registry/$($item.Image)"
   $metadataFile = Join-Path $metadataRoot "$($item.Image).json"
-  Write-Host ("[build {0:d2}/{1:d2}] {2}:{3}" -f ($index + 1), $images.Count, $repository, $localTag)
+  Write-Host ("[build {0:d2}/{1:d2}] {2}:{3}" -f ($index + 1), $imagesToBuild.Count, $repository, $localTag)
   $arguments = @(
     'buildx', 'build',
     '--platform', $Platform,
