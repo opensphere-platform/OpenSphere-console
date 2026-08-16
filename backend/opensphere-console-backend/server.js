@@ -81,6 +81,11 @@ const ARGOCD_VERIFICATION_PATH = 'platform-delivery/verification/opensphere-plat
 const ARGOCD_VERIFICATION_CONFIRMATION = 'bootstrap argocd verification';
 const RECONCILER_RECEIPT_TOKEN = process.env.RECONCILER_RECEIPT_TOKEN || '';
 const GITEA_TIMEOUT_MS = Number(process.env.GITEA_TIMEOUT_MS || 3000);
+const LOCAL_EDGE_AUTOMATION_SERVICE_ACCOUNT = process.env.LOCAL_EDGE_AUTOMATION_SERVICE_ACCOUNT
+  || 'system:serviceaccount:opensphere-console:opensphere-local-edge-release';
+const LOCAL_EDGE_AUTOMATION_AUDIENCE = process.env.LOCAL_EDGE_AUTOMATION_AUDIENCE
+  || 'opensphere-local-edge-release';
+const LOCAL_EDGE_AUTOMATION_ACTOR_ID = '00000000-0000-4000-8000-000000000005';
 const SUPABASE_BACKEND_ROLE = process.env.SUPABASE_BACKEND_ROLE || 'console-admins';
 const SUPABASE_BACKEND_DB_ROLE = process.env.SUPABASE_BACKEND_DB_ROLE || 'opensphere_console_backend';
 const SUPABASE_BACKEND_TOKEN_TTL_SEC = Number(process.env.SUPABASE_BACKEND_TOKEN_TTL_SEC || (24 * 60 * 60 * 30));
@@ -2587,9 +2592,43 @@ async function verifyLocalEdgeAutomation(req) {
   };
 }
 
-async function generatePlatformComponentTarget(actor, body = {}) {
+async function executeLocalEdgePlatformRelease(req, body = {}) {
+  const actor = await verifyLocalEdgeAutomation(req);
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || Object.keys(body).some((key) => !['reason', 'sourceRevision', 'components'].includes(key))) {
+    throw { code: 400, msg: 'local edge automation body contains unsupported fields' };
+  }
+  const reason = managementReason(body.reason);
+  if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+  const generated = await generatePlatformComponentTarget(actor, {
+    reason,
+    sourceRevision: body.sourceRevision,
+    components: body.components,
+  }, { localEdgeAutomation: true });
+  const proposal = await governedChange(actor, {
+    consumerId: PLATFORM_RELEASE_CONSUMER,
+    action: 'apply',
+    target: PLATFORM_RELEASE_TARGET,
+    reason,
+    desiredState: {
+      contract: 'opensphere.platform.release/v1',
+      previousReleaseDigest: generated.baseReleaseDigest,
+      targetLock: generated.targetLock,
+    },
+    idempotencyKey: `local-edge:${generated.targetLock.releaseDigest}`,
+  }, { localEdgeAutomation: true });
+  return {
+    ...proposal,
+    targetReleaseDigest: generated.targetLock.releaseDigest,
+    changedComponents: generated.targetLock.changedComponents,
+  };
+}
+
+async function generatePlatformComponentTarget(actor, body = {}, options = {}) {
   requireActorPermission(actor, 'console.git.change');
-  requireRecentAal2(actor, 'Platform Release component target generation');
+  if (options.localEdgeAutomation !== true) {
+    requireRecentAal2(actor, 'Platform Release component target generation');
+  }
   const reason = managementReason(body.reason);
   if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
   const installed = await installedPlatformRelease();
@@ -2630,9 +2669,13 @@ async function generatePlatformComponentTarget(actor, body = {}) {
   };
 }
 
-async function governedChange(actor, body = {}) {
+async function governedChange(actor, body = {}, options = {}) {
   requireActorPermission(actor, 'console.git.change');
-  if (GITEA_CHANGE_REQUIRE_AAL2 && actor.assurance !== 'aal2') throw { code: 403, msg: 'governed Gitea change requires MFA assurance aal2' };
+  const localEdgeAutomationRequest = options.localEdgeAutomation === true
+    && actor?.actorType === 'service';
+  if (!localEdgeAutomationRequest && GITEA_CHANGE_REQUIRE_AAL2 && actor.assurance !== 'aal2') {
+    throw { code: 403, msg: 'governed Gitea change requires MFA assurance aal2' };
+  }
   if (!GITEA_TOKEN || !GITEA_WEBHOOK_SECRET) throw { code: 503, msg: 'Gitea control-plane credentials are not configured' };
   const reason = managementReason(body.reason);
   if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
@@ -2648,7 +2691,6 @@ async function governedChange(actor, body = {}) {
   let releaseApprovalPolicy = null;
   let releaseDesiredState = null;
   if (consumerId === PLATFORM_RELEASE_CONSUMER) {
-    requireRecentAal2(actor, 'Platform Release request');
     if (!['apply', 'rollback'].includes(action.toLowerCase()) || target !== PLATFORM_RELEASE_TARGET) {
       throw { code: 400, msg: 'Platform Release permits only apply or rollback for opensphere-platform' };
     }
@@ -2666,6 +2708,10 @@ async function governedChange(actor, body = {}) {
       throw { code: 409, msg: 'requested Platform Release is already installed' };
     }
     releaseApprovalPolicy = platformReleaseApprovalPolicy(action, desiredState);
+    if (localEdgeAutomationRequest && releaseApprovalPolicy.mode !== 'local-edge-automation') {
+      throw { code: 403, msg: 'local edge automation can apply only a localhost edge component transition' };
+    }
+    if (!localEdgeAutomationRequest) requireRecentAal2(actor, 'Platform Release request');
     releaseDesiredState = desiredState;
     declaration = validateDeclaration(desiredState);
   }
@@ -2683,7 +2729,7 @@ async function governedChange(actor, body = {}) {
     body: {
       p_request_id: requestId,
       p_idempotency_key: idempotencyKey,
-      p_actor_type: 'human',
+      p_actor_type: actor?.actorType === 'service' ? 'service' : 'human',
       p_actor_id: actor.sub,
       p_action: `gitea:${action.toLowerCase()}`,
       p_target: target,
@@ -2746,7 +2792,7 @@ async function governedChange(actor, body = {}) {
       desiredRevision: desiredRevision || null,
       approvalPolicy: releaseApprovalPolicy,
     };
-    if (releaseApprovalPolicy?.mode === 'owner-mfa') {
+    if (releaseApprovalPolicy?.mode === 'local-edge-automation') {
       try {
         proposal.autoAuthorization = await authorizeLocalEdgeComponentRelease(actor, {
           requestId,
@@ -2777,23 +2823,26 @@ async function authorizeLocalEdgeComponentRelease(actor, {
   requestId, action, reason, desiredState, branch, pullNumber, reconciler,
 }) {
   const policy = platformReleaseApprovalPolicy(action, desiredState);
-  if (policy.mode !== 'owner-mfa' || policy.autoMerge !== true) {
-    throw { code: 409, msg: 'release is not eligible for owner MFA authorization' };
+  if (policy.mode !== 'local-edge-automation' || policy.autoMerge !== true) {
+    throw { code: 409, msg: 'release is not eligible for local edge automation' };
   }
-  requireRecentAal2(actor, 'local edge component release authorization');
+  const humanAuthorization = actor?.actorType !== 'service';
+  if (humanAuthorization) requireRecentAal2(actor, 'local edge component release authorization');
   if (!Number.isInteger(pullNumber) || pullNumber < 1) {
     throw { code: 502, msg: 'Gitea did not return a pull request number' };
   }
-  await restRequest('change_approval', {
-    method: 'POST',
-    body: {
-      request_id: requestId,
-      approver_id: actor.sub,
-      reason,
-      status: 'intent',
-    },
-    prefer: 'return=minimal',
-  });
+  if (humanAuthorization) {
+    await restRequest('change_approval', {
+      method: 'POST',
+      body: {
+        request_id: requestId,
+        approver_id: actor.sub,
+        reason,
+        status: 'intent',
+      },
+      prefer: 'return=minimal',
+    });
+  }
   let reviewId = null;
   try {
     const review = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/reviews`, {
@@ -2801,7 +2850,7 @@ async function authorizeLocalEdgeComponentRelease(actor, {
       authToken: GITEA_REVIEW_TOKEN,
       body: {
         event: 'APPROVED',
-        body: `Local edge component release authorized by owner ${actor.sub} with recent MFA; correlation ${requestId}. Reason: ${reason}`,
+        body: `Local edge component release authorized by ${humanAuthorization ? `Console owner ${actor.sub}` : LOCAL_EDGE_AUTOMATION_SERVICE_ACCOUNT}; correlation ${requestId}. Reason: ${reason}`,
       },
     });
     reviewId = Number.isInteger(review.body?.id) ? review.body.id : null;
@@ -2813,21 +2862,23 @@ async function authorizeLocalEdgeComponentRelease(actor, {
     const merged = pull.body?.state === 'closed' && pull.body?.merged === true;
     const mergeRevision = String(pull.body?.merge_commit_sha || '').toLowerCase();
     if (!merged || !/^[0-9a-f]{40,64}$/.test(mergeRevision)) {
-      throw { code: 502, msg: 'owner-authorized local edge pull request was not merged' };
+      throw { code: 502, msg: 'authorized local edge pull request was not merged' };
     }
     await assertVerifiedGovernedMerge(mergeRevision);
-    await restRequest('change_approval', {
-      method: 'PATCH',
-      query: `request_id=eq.${encodeURIComponent(requestId)}&approver_id=eq.${encodeURIComponent(actor.sub)}`,
-      body: {
-        status: 'applied',
-        gitea_review_id: reviewId,
-        error_code: null,
-        completed_at: new Date().toISOString(),
-      },
-      prefer: 'return=minimal',
-    });
-    await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'owner-mfa-authorized', reason, {
+    if (humanAuthorization) {
+      await restRequest('change_approval', {
+        method: 'PATCH',
+        query: `request_id=eq.${encodeURIComponent(requestId)}&approver_id=eq.${encodeURIComponent(actor.sub)}`,
+        body: {
+          status: 'applied',
+          gitea_review_id: reviewId,
+          error_code: null,
+          completed_at: new Date().toISOString(),
+        },
+        prefer: 'return=minimal',
+      });
+    }
+    await logAudit(actor, 'platform-release-edge-automation', requestId, 'local-edge-authorized', reason, {
       requestId,
       phase: 'authorized',
       targetType: 'platform-release',
@@ -2844,7 +2895,7 @@ async function authorizeLocalEdgeComponentRelease(actor, {
       });
     } catch (error) {
       reconciliationError = String(error?.msg || error).slice(0, 300);
-      await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'reconciliation-queue-failed', reason, {
+      await logAudit(actor, 'platform-release-edge-automation', requestId, 'reconciliation-queue-failed', reason, {
         requestId,
         phase: 'authorized',
         targetType: 'platform-release',
@@ -2862,22 +2913,24 @@ async function authorizeLocalEdgeComponentRelease(actor, {
       reconciliationError,
     };
   } catch (error) {
-    await restRequest('change_approval', {
-      method: 'PATCH',
-      query: `request_id=eq.${encodeURIComponent(requestId)}&approver_id=eq.${encodeURIComponent(actor.sub)}`,
-      body: {
-        status: 'failed',
-        gitea_review_id: reviewId,
-        error_code: String(error?.msg || 'owner-mfa-authorization-failed').slice(0, 180),
-        completed_at: new Date().toISOString(),
-      },
-      prefer: 'return=minimal',
-    }).catch(() => undefined);
-    await logAudit(actor, 'platform-release-edge-owner-authorization', requestId, 'failed', reason, {
+    if (humanAuthorization) {
+      await restRequest('change_approval', {
+        method: 'PATCH',
+        query: `request_id=eq.${encodeURIComponent(requestId)}&approver_id=eq.${encodeURIComponent(actor.sub)}`,
+        body: {
+          status: 'failed',
+          gitea_review_id: reviewId,
+          error_code: String(error?.msg || 'local-edge-authorization-failed').slice(0, 180),
+          completed_at: new Date().toISOString(),
+        },
+        prefer: 'return=minimal',
+      }).catch(() => undefined);
+    }
+    await logAudit(actor, 'platform-release-edge-automation', requestId, 'failed', reason, {
       requestId,
       phase: 'failed',
       targetType: 'platform-release',
-      payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, error: error?.msg || 'owner-mfa-authorization-failed' })),
+      payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, error: error?.msg || 'local-edge-authorization-failed' })),
     }).catch(() => undefined);
     throw error;
   }
@@ -4793,6 +4846,10 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'Platform component release target generation failed' });
       }
+    }
+    if (p === '/api/platform/releases/local-edge-automation' && req.method === 'POST') {
+      try { return json(res, 202, await executeLocalEdgePlatformRelease(req, await readBody(req))); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge Platform Release automation failed' }); }
     }
     if (p === '/api/platform/os-shell/feature-state' && req.method === 'GET') {
       try { const actor = await verifyConsoleAdmin(req); requireActorPermission(actor, 'console.identity.manage'); return json(res, 200, await osShellFeatureState()); }

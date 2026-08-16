@@ -155,7 +155,7 @@ test('component target rejects stale bases, hidden changes and non-local promoti
   assert.throws(() => validateReleaseLock(promoted), /channel is unsupported|localhost edge/);
 });
 
-test('only localhost edge component apply uses initiating owner MFA authorization', () => {
+test('only localhost edge component apply uses the Docker Desktop automation boundary', () => {
   const base = releaseLock();
   const component = buildComponentReleaseLock(base, {
     sourceRevision: 'b'.repeat(40),
@@ -167,10 +167,10 @@ test('only localhost edge component apply uses initiating owner MFA authorizatio
     targetLock: component,
   };
   assert.deepEqual(platformReleaseApprovalPolicy('apply', state), {
-    mode: 'owner-mfa',
+    mode: 'local-edge-automation',
     requiredHumanApprovals: 0,
     autoMerge: true,
-    rationale: 'localhost edge component apply is authorized by the initiating owner recent MFA',
+    rationale: 'localhost edge component apply is authorized by the docker-desktop local automation boundary',
   });
   assert.equal(platformReleaseApprovalPolicy('rollback', state).mode, 'cross-operator');
 
@@ -226,6 +226,7 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   const dockerfile = fs.readFileSync(path.join(directory, 'Dockerfile'), 'utf8');
   const migration = fs.readFileSync(path.join(directory, '..', 'supabase', 'migrations', '0033_platform_release_consumer.sql'), 'utf8');
   const ui = fs.readFileSync(path.join(directory, '..', '..', 'src', 'app', 'pages', 'admin-platform-release.ts'), 'utf8');
+  const deployer = fs.readFileSync(path.join(directory, '..', '..', 'scripts', 'Invoke-LocalEdgePlatformRelease.ps1'), 'utf8');
 
   assert.match(server, /validatePlatformReleaseDesiredState/);
   assert.match(server, /previousReleaseDigest !== installed\.summary\.releaseDigest/);
@@ -235,11 +236,18 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(server, /platform-release-component-target-generate[\s\S]*phase: 'intent'/);
   assert.doesNotMatch(server, /platform-release-component-target-generate[\s\S]*phase: 'planned'/);
   assert.match(server, /validateReleaseTransition\(installed\.lock, desiredState\.targetLock\)/);
-  assert.match(server, /requireRecentAal2\(actor, 'Platform Release request'\)/);
+  assert.match(server, /localEdgeAutomationRequest/);
+  assert.match(server, /if \(!localEdgeAutomationRequest\) requireRecentAal2\(actor, 'Platform Release request'\)/);
+  assert.match(server, /local edge automation can apply only a localhost edge component transition/);
+  assert.match(server, /p_actor_type: actor\?\.actorType === 'service' \? 'service' : 'human'/);
+  assert.match(server, /Object\.keys\(body\)\.some\(\(key\) => !\['reason', 'sourceRevision', 'components'\]\.includes\(key\)\)/);
   assert.match(server, /platformReleaseRuntimeStatus/);
   assert.match(server, /supportedChannels: \['edge'\]/);
   assert.match(server, /authorizeLocalEdgeComponentRelease/);
-  assert.match(server, /platform-release-edge-owner-authorization/);
+  assert.match(server, /platform-release-edge-automation/);
+  assert.match(server, /\/api\/platform\/releases\/local-edge-automation/);
+  assert.match(server, /authentication\.k8s\.io\/v1\/tokenreviews/);
+  assert.match(server, /LOCAL_EDGE_AUTOMATION_AUDIENCE/);
   assert.match(server, /reconciliationQueued/);
   assert.match(deploy, /name: platform-release-reconciler/);
   assert.match(deploy, /name: platform-release-executor/);
@@ -248,6 +256,13 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(deploy, /system:serviceaccount:kube-system:job-controller/);
   assert.match(deploy, /object\.spec\.template\.spec\.containers\[0\]\.env\.map\(e, e\.name\)/);
   assert.match(deploy, /resources: \["jobs"\][\s\S]*verbs: \["get", "create"\]/);
+  assert.match(deploy, /name: opensphere-local-edge-release/);
+  assert.match(deploy, /resources: \["tokenreviews"\][\s\S]*verbs: \["create"\]/);
+  assert.match(deployer, /OpenSphereEdgeComponentPublication/);
+  assert.match(deployer, /create token opensphere-local-edge-release/);
+  assert.match(deployer, /\/api\/platform\/releases\/local-edge-automation/);
+  assert.doesNotMatch(deployer, /kubectl\s+(?:apply|patch|set|replace|delete)/i);
+  assert.doesNotMatch(deployer, /SkipCertificateCheck|--insecure|-k\b/);
   assert.match(dockerfile, /COPY --from=setup-cli src \/app\/opensphere-setup-cli\/src/);
   assert.match(dockerfile, /registry\.k8s\.io\/kubectl@sha256:/);
   assert.match(dockerfile, /node:24-bookworm-slim@sha256:/);
