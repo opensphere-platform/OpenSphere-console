@@ -94,7 +94,11 @@ test('the shell proxies downloads to the independently ready CLI artifact servic
   const shellManifest = await readFile(new URL('../../deploy/opensphere-console.yaml', import.meta.url), 'utf8');
   const cliManifest = await readFile(new URL('./deploy.yaml', import.meta.url), 'utf8');
   const deployer = await readFile(new URL('../../scripts/Deploy-LocalEdgeCliArtifacts.ps1', import.meta.url), 'utf8');
-  assert.match(nginx, /location \/api\/cli\/[\s\S]*proxy_pass http:\/\/os-cli\.opensphere-console\.svc\.cluster\.local:8080\//);
+  const cliLocation = nginx.match(/location \/api\/cli\/ \{([\s\S]*?)\n    \}/)?.[1] ?? '';
+  assert.match(cliLocation, /set \$cli_artifact_upstream os-cli\.opensphere-console\.svc\.cluster\.local;/);
+  assert.match(cliLocation, /rewrite \^\/api\/cli\/\(\.\*\)\$ \/\$1 break;/);
+  assert.match(cliLocation, /proxy_pass http:\/\/\$cli_artifact_upstream:8080;/);
+  assert.doesNotMatch(cliLocation, /proxy_pass http:\/\/os-cli\.opensphere-console\.svc\.cluster\.local/);
   assert.match(nginx, /cli_artifact_service_unavailable/);
   assert.match(nginx, /Console UI remains available/);
   assert.doesNotMatch(nginx, /location \/api\/cli\/[\s\S]{0,500}try_files \$uri/);

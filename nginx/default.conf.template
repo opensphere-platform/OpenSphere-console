@@ -395,7 +395,13 @@ server {
         error_page 418 = @cli_method_not_allowed;
         if ($request_method !~ ^(GET|HEAD)$) { return 418; }
         proxy_intercept_errors on;
-        proxy_pass http://os-cli.opensphere-console.svc.cluster.local:8080/;
+        # os-cli is rolled out independently after the Main Shell. Resolve it at
+        # request time so a clean installation can start the Console before the
+        # optional artifact service exists. Preserve the historical prefix-strip
+        # contract: /api/cli/index.json is served as /index.json upstream.
+        set $cli_artifact_upstream os-cli.opensphere-console.svc.cluster.local;
+        rewrite ^/api/cli/(.*)$ /$1 break;
+        proxy_pass http://$cli_artifact_upstream:8080;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
