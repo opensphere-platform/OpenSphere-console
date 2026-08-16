@@ -165,7 +165,20 @@ Write-Host "[policy] build-authority=localhost, release-class=pre-ga, ga-eligibl
 
 Write-Host '[step 01/06] Prepare clean Console, SDK and governed Setup source'
 Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRevision
-Invoke-Checked git clone --depth 1 --branch main $SdkRepository $sdkCheckout
+$sdkSourceLockPath = Join-Path $consoleCheckout 'sdk-source.lock'
+$sdkSourceRevision = (Get-Content -LiteralPath $sdkSourceLockPath -Raw).Trim()
+if ($sdkSourceRevision -notmatch '^[0-9a-f]{40}$') {
+  throw 'The governed Console sdk-source.lock is invalid.'
+}
+Invoke-Checked git init $sdkCheckout
+Invoke-Checked git -C $sdkCheckout remote add origin $SdkRepository
+Invoke-Checked git -C $sdkCheckout fetch --depth 1 origin $sdkSourceRevision
+Invoke-Checked git -C $sdkCheckout checkout --detach $sdkSourceRevision
+$resolvedSdkSourceRevision = (& git -C $sdkCheckout rev-parse HEAD).Trim()
+if ($resolvedSdkSourceRevision -ne $sdkSourceRevision) {
+  throw "SDK checkout $resolvedSdkSourceRevision differs from governed lock $sdkSourceRevision."
+}
+Write-Host "[sdk] $sdkSourceRevision"
 $backendSelected = $Components.Count -eq 0 -or $Components -contains 'backend'
 $setupSourceRevision = ''
 if ($backendSelected) {
@@ -370,6 +383,9 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
       '--build-context', "setup-cli=$($item.SetupContext)",
       '--build-arg', "SETUP_SOURCE_REVISION=$setupSourceRevision"
     )
+  }
+  if ($item.Key -eq 'console') {
+    $arguments += @('--build-arg', "SDK_SOURCE_REVISION=$sdkSourceRevision")
   }
   $arguments += $item.Context
   Invoke-Checked docker @arguments
