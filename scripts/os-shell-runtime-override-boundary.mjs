@@ -16,7 +16,13 @@ export const backendOverridePaths = Object.freeze([
 
 export const consoleOverridePaths = Object.freeze([
   'nginx/default.conf.template',
+  'public/os-shell-frame/index.html',
   'scripts/os-shell-frontend-contract.test.mjs',
+  'src/app/app.config.ts',
+  'src/app/system-plugins/os-shell/os-shell-launcher.ts',
+  'src/app/system-plugins/os-shell/os-shell-page.scss',
+  'src/app/system-plugins/os-shell/os-shell-page.ts',
+  'src/app/system-plugins/os-shell/os-shell-terminal-surface.ts',
 ]);
 
 export const controlOverridePaths = Object.freeze([
@@ -35,7 +41,9 @@ export const deploymentToolingPaths = Object.freeze([
   'scripts/Invoke-OsShellFeatureOperation.ps1',
   'scripts/Publish-LocalEdge.ps1',
   'scripts/Publish-LocalEdgeOsShell.ps1',
+  'scripts/Publish-LocalEdgeOsShellConsole.ps1',
   'scripts/os-shell-component-publisher.test.mjs',
+  'scripts/os-shell-console-publisher.test.mjs',
   'scripts/Test-OsShellEdgeSigning.ps1',
   'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/os-shell-edge-signing.ps1',

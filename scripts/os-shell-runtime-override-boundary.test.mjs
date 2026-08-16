@@ -49,7 +49,7 @@ test('backend override accepts the shared admission source used by Backend and C
   assert.throws(() => assertBackendOverridePaths([...backendOverridePaths].reverse().concat(backendOverridePaths[0])), /exact closed set/);
 });
 
-test('console override accepts exactly the Nginx runtime input and its contract test', () => {
+test('console override accepts exactly the OS Shell UI, isolated frame and Nginx inputs', () => {
   assert.doesNotThrow(() => assertConsoleOverridePaths(consoleOverridePaths));
   assert.throws(() => assertConsoleOverridePaths([consoleOverridePaths[0]]), /exact closed set/);
   assert.throws(() => assertConsoleOverridePaths([...consoleOverridePaths, 'nginx/nginx.conf']), /exact closed set/);
@@ -109,10 +109,8 @@ test('composite repository attribution rejects missing Console evidence, extra p
       [backendOverridePaths[2]]: 'export const admission = true;\n',
       [backendOverridePaths[3]]: 'backend admission contract\n',
     });
-    const consoleRevision = commit(repository, 'console override', {
-      [consoleOverridePaths[0]]: 'absolute_redirect off;\n',
-      [consoleOverridePaths[1]]: 'console redirect contract\n',
-    });
+    const consoleRevision = commit(repository, 'console override', Object.fromEntries(
+      consoleOverridePaths.map((path) => [path, `console contract ${path}\n`])));
     const controlRevision = commit(repository, 'control override', Object.fromEntries(
       controlOverridePaths.map((path) => [path, `control contract ${path}\n`])));
     const headRevision = commit(repository, 'deployment tooling', {
