@@ -175,6 +175,7 @@ test('opaque terminal frame remains isolated and explicitly satisfies parent COE
   const frameLocation = nginx.slice(start, end);
   const surface = read('src/app/system-plugins/os-shell/os-shell-terminal-surface.ts');
   assert.match(frameLocation, /Cross-Origin-Resource-Policy "cross-origin"/);
+  assert.match(frameLocation, /Cross-Origin-Embedder-Policy "require-corp"/);
   assert.match(frameLocation, /frame-ancestors 'self'/);
   assert.match(surface, /sandbox="allow-scripts"/);
   assert.doesNotMatch(surface, /allow-same-origin/);
