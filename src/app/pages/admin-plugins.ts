@@ -350,10 +350,10 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                   @for (descriptor of systemPluginDescriptors(); track descriptor.id) {
                     <tr>
                       <td>
-                        <strong>{{ systemPluginDisplayName(descriptor.id) }}</strong>
+                        <strong>{{ descriptor.displayName }}</strong>
                         <div class="state-detail"><code>{{ descriptor.id }}</code></div>
                       </td>
-                      <td><span class="label label-info">systemPlugin</span></td>
+                      <td><span class="label label-info">systemPlugin</span><div class="state-detail">{{ descriptor.category }}</div></td>
                       <td><code>{{ descriptor.owner }}</code></td>
                       <td><a [href]="descriptor.route"><code>{{ descriptor.route }}</code></a></td>
                       <td><code>{{ descriptor.runtimeAdapterId || '—' }}</code></td>
@@ -1288,10 +1288,6 @@ export class AdminPlugins implements OnInit {
   readonly systemPluginCount = computed(() => this.systemPluginDescriptors().length);
   readonly totalPluginCount = computed(() => this.registryPluginCount() + this.systemPluginCount());
 
-  systemPluginDisplayName(id: string): string {
-    return id === 'os-shell' ? 'OS Shell' : id;
-  }
-
   /** 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 상태(phase/reason 등). */
   readonly selected = signal<string | null>(null);
   readonly selectedReg = computed<Registration | null>(() => {
@@ -1870,8 +1866,8 @@ export class AdminPlugins implements OnInit {
       actionable: false,
       children: this.systemPlugins.list().map((descriptor) => ({
         id: descriptor.id,
-        label: descriptor.id === 'os-shell' ? 'OS Shell' : descriptor.id,
-        meta: `${descriptor.route} · ${descriptor.owner} · Console release-bound`,
+        label: descriptor.displayName,
+        meta: `${descriptor.category} · ${descriptor.route} · ${descriptor.owner} · Console release-bound`,
         type: 'systemPlugin',
         children: [],
         actionable: false,
