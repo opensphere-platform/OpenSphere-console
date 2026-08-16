@@ -301,6 +301,11 @@ test('local-edge deploy binds every component-only override through exact source
   assert.match(deployScript, /osShellControl = \[string\]\$controlEvidence[.]sourceRevision/);
   assert.match(deployScript, /osShellRuntime = \[string\]\$runtimeEvidence[.]sourceRevision/);
   assert.match(deployScript, /Set-BackendOsShellActivation -Image \$backend[.]image -SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
+  assert.ok(
+    deployScript.indexOf('Set-BackendOsShellActivation -Image $backend.image')
+      < deployScript.indexOf("$prerequisiteEvidence['backend'] = Assert-PrerequisiteDeployment"),
+    'Backend override must roll out before its target prerequisite assertion',
+  );
   assert.match(deployScript, /Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend'[\s\S]*?-SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /Assert-ImageMetadata -Repository \$consoleRepository[\s\S]*?-SourceRevision \$consoleEvidence[.]sourceRevision/);
   assert.match(deployScript, /Assert-ImageMetadata -Repository \$cliRepository[\s\S]*?-ExpectedPointerTag \$evidence[.]immutableTag/);
