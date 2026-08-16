@@ -48,9 +48,12 @@ test('Extension management separates first-level subShells from host-owned plugi
 
 test('Plugin management lists Console-owned system plugins separately from Registry lifecycle controls', () => {
   assert.match(source, /systemPluginDescriptors = computed\(\(\) => this\.systemPlugins\.list\(\)\)/);
-  assert.match(source, /pluginListCount = computed\(\(\) => this\.pluginRegistrationCount\(\) \+ this\.systemPluginDescriptors\(\)\.length\)/);
+  assert.match(source, /registryPluginCount = computed\(\(\) =>/);
+  assert.match(source, /systemPluginCount = computed\(\(\) => this\.systemPluginDescriptors\(\)\.length\)/);
+  assert.match(source, /totalPluginCount = computed\(\(\) => this\.registryPluginCount\(\) \+ this\.systemPluginCount\(\)\)/);
   assert.match(source, /<h3>System Plugins<\/h3>/);
-  assert.match(source, /descriptor\.id === 'os-shell' \? 'OS Shell'/);
+  assert.match(source, /systemPluginDisplayName\(descriptor\.id\)/);
+  assert.match(source, /return id === 'os-shell' \? 'OS Shell' : id/);
   assert.match(source, /Console exact digest에 결속된 읽기 전용 항목/);
   assert.match(source, /<h2>Registry Plugins<\/h2>/);
   const systemSection = source.slice(source.indexOf('aria-label="System Plugins"'), source.indexOf('<h2>Registry Plugins<\/h2>'));
