@@ -3,7 +3,13 @@ import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
-import { extensionRouteTarget, prioritizeRequestedHost } from './extension-load-order';
+import {
+  extensionRouteTarget,
+  isTransientExtensionLoadError,
+  loadWithConcurrency,
+  prioritizeRequestedHost,
+  TRANSIENT_EXTENSION_RETRY_DELAY_MS,
+} from './extension-load-order';
 import { OS_SHELL_STANDALONE_BOOT } from './boot-mode';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
@@ -223,11 +229,15 @@ export class ExtensionHostService {
         // verification; establish it first, then continue normal background
         // activation of the remaining registry entries.
         await this.loadOne(orderedMainPlugins[0], reg.trustedKeys ?? {}, HOST_API_VERSION);
-        await Promise.all(orderedMainPlugins.slice(1)
-          .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+        await loadWithConcurrency(
+          orderedMainPlugins.slice(1),
+          (e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION),
+        );
       } else {
-        await Promise.all(orderedMainPlugins
-          .map((e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION)));
+        await loadWithConcurrency(
+          orderedMainPlugins,
+          (e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION),
+        );
       }
     } finally {
       this.loadState.set('ready');
@@ -325,15 +335,17 @@ export class ExtensionHostService {
     if (OS_SHELL_STANDALONE_BOOT) {
       throw new Error('ExternalExtensionsDisabledInStandaloneShell');
     }
-    let mod: PluginModule | undefined;
     if (this.loadingIds.has(e.id)) {
-      this.failures.update((f) => [...f, { id: e.id, error: 'Host Contract cycle detected' }]);
+      this.setPluginFailure(e.id, 'Host Contract cycle detected');
       this.setPluginLoadState(e.id, 'failed');
       return;
     }
     this.loadingIds.add(e.id);
     this.setPluginLoadState(e.id, 'loading');
     try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        let mod: PluginModule | undefined;
+        try {
       const hostRef = e.hostRef ?? 'main';
       const componentKind = e.componentKind ?? e.kind;
       if (hostRef !== 'main' && !this.registryEntries.some((candidate) => candidate.id === hostRef && (candidate.componentKind ?? candidate.kind) === 'subShell')) {
@@ -462,18 +474,30 @@ export class ExtensionHostService {
       if (requestedChild) {
         await this.loadOne(requestedChild, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION);
       }
-      await Promise.all(childEntries
-        .filter((child) => child !== requestedChild)
-        .map((child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION)));
+      await loadWithConcurrency(
+        childEntries.filter((child) => child !== requestedChild),
+        (child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION),
+      );
       await mod.activate(context);
       this.activeModules.set(e.id, mod);
       this.setPluginLoadState(e.id, 'ready');
+      this.clearPluginFailure(e.id);
       console.info(`[extension-host] plugin '${e.id}' 검증 통과(무결성·서명·호환·권한) 후 활성화`);
-    } catch (err) {
-      try { await mod?.deactivate?.(); } catch (cleanupError) { console.warn(`[extension-host] plugin '${e.id}' cleanup 실패:`, cleanupError); }
-      console.warn(`[extension-host] plugin '${e.id}' 제외:`, err);
-      this.failures.update((f) => [...f, { id: e.id, error: String(err) }]);
-      this.setPluginLoadState(e.id, 'failed');
+          return;
+        } catch (err) {
+          try { await mod?.deactivate?.(); } catch (cleanupError) { console.warn(`[extension-host] plugin '${e.id}' cleanup 실패:`, cleanupError); }
+          await this.deactivate(e.id);
+          if (attempt === 0 && isTransientExtensionLoadError(err)) {
+            console.warn(`[extension-host] plugin '${e.id}' 일시 적재 오류 — 한 번 재시도:`, err);
+            await new Promise<void>((resolve) => window.setTimeout(resolve, TRANSIENT_EXTENSION_RETRY_DELAY_MS));
+            continue;
+          }
+          console.warn(`[extension-host] plugin '${e.id}' 제외:`, err);
+          this.setPluginFailure(e.id, String(err));
+          this.setPluginLoadState(e.id, 'failed');
+          return;
+        }
+      }
     } finally {
       this.loadingIds.delete(e.id);
     }
@@ -489,6 +513,17 @@ export class ExtensionHostService {
 
   private setPluginLoadState(pluginId: string, state: PluginLoadState): void {
     this.pluginLoadStates.update((states) => ({ ...states, [pluginId]: state }));
+  }
+
+  private setPluginFailure(pluginId: string, error: string): void {
+    this.failures.update((failures) => [
+      ...failures.filter((failure) => failure.id !== pluginId),
+      { id: pluginId, error },
+    ]);
+  }
+
+  private clearPluginFailure(pluginId: string): void {
+    this.failures.update((failures) => failures.filter((failure) => failure.id !== pluginId));
   }
 
 	private fingerprint(entries: RegistryEntry[], trustedKeys: Record<string, string>): string {

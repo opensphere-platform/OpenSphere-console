@@ -25,6 +25,11 @@ test('Extension operations separate user intent, serving state, and verification
   assert.match(source, /this\.effectiveState\(registration\)\.tone === 'danger'/);
 });
 
+test('a currently visible page wins over a stale transient host failure', () => {
+  assert.match(source, /const menu = this\.menuState\(r\);[\s\S]*if \(hostFailure && !menu\.visible\)/);
+  assert.match(extensionHost, /this\.clearPluginFailure\(e\.id\)/);
+});
+
 test('Enabled registrations never present Enable as their primary lifecycle action', () => {
   assert.match(source, /@if \(r\.desiredState === 'Enabled'\)/);
   assert.match(source, /검증 다시 시도/);
