@@ -21,6 +21,14 @@ test('Extension Host reports loading and activates verified children before thei
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'ready'\)/);
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'failed'\)/);
   assert.match(extensionHost, /readonly hostChildProjections = signal/);
+  assert.match(extensionHost, /readonly registryUpdatePending = signal\(false\)/);
+  assert.match(extensionHost, /Registry update staged for the next document/);
+  assert.match(extensionHost, /if \(this\.registryUpdatePending\(\)\) return/);
+  assert.doesNotMatch(extensionHost, /window\.location\.reload\(\)/);
+  assert.match(extensionHost, /const artifactBase = `\/api\/plugins\/\$\{artifactServiceId\}`/);
+  assert.match(extensionHost, /entry가 검증된 release namespace 밖에 있음/);
+  assert.match(extensionHost, /apiBase: artifactBase/);
+  assert.match(extensionHost, /this\.verifyAssets\(artifactBase, e\.manifest, manifest\.assets\)/);
   assert.match(extensionHost, /reportProjections: reportChildProjections/);
   assert.match(extensionHost, /child projection element가 정의되지 않음/);
   assert.match(extensionHost, /child projection route가 canonical PFSS 경로가 아님/);

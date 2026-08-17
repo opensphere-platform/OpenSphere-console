@@ -64,24 +64,42 @@ test('one artifact trust failure is not multiplied into independent integration 
   assert.equal(statuses.navigation.reason, 'owned inside the subShell page');
 });
 
-test('a retryable recheck keeps the exact previously verified artifact serving', () => {
+test('a failed target revision keeps the exact previously verified artifact serving', () => {
   const prior = {
     id: 'shell-template',
+    keyId: 'trusted-v1',
     installedDigest: `sha256:${'a'.repeat(64)}`,
     manifestSha256: 'b'.repeat(64),
   };
   const pkg = {
     spec: {
-      image: { digest: prior.installedDigest },
-      manifest: { sha256: prior.manifestSha256 },
+      image: { digest: `sha256:${'c'.repeat(64)}` },
+      manifest: { sha256: 'd'.repeat(64) },
     },
   };
-  const enabled = { spec: { desiredState: 'Enabled' } };
+  const enabled = {
+    spec: { desiredState: 'Enabled' },
+    status: {
+      phase: 'Activated',
+      currentDigest: prior.installedDigest,
+      currentManifestSha256: prior.manifestSha256,
+      workload: { phase: 'Ready' },
+      verification: {
+        manifest: 'Verified', signature: 'Verified', entryDigest: 'Verified', permissions: 'Approved',
+      },
+    },
+  };
+  const trustedKeys = { 'trusted-v1': 'spki' };
 
-  assert.equal(retainableLastKnownGood(prior, pkg, enabled, 'ManifestUnreachable'), true);
-  assert.equal(retainableLastKnownGood(prior, pkg, enabled, 'UntrustedKey'), false);
-  assert.equal(retainableLastKnownGood(prior, pkg, { spec: { desiredState: 'Disabled' } }, 'ManifestUnreachable'), false);
-  assert.equal(retainableLastKnownGood({ ...prior, installedDigest: `sha256:${'c'.repeat(64)}` }, pkg, enabled, 'ManifestUnreachable'), false);
+  assert.equal(retainableLastKnownGood(prior, pkg, enabled, 'ManifestUnreachable', trustedKeys), true);
+  assert.equal(retainableLastKnownGood(prior, pkg, enabled, 'UntrustedKey', trustedKeys), true);
+  assert.equal(retainableLastKnownGood(prior, pkg, { spec: { desiredState: 'Disabled' } }, 'ManifestUnreachable', trustedKeys), false);
+  assert.equal(retainableLastKnownGood({ ...prior, installedDigest: `sha256:${'e'.repeat(64)}` }, pkg, enabled, 'ManifestUnreachable', trustedKeys), false);
+  assert.equal(retainableLastKnownGood(prior, pkg, enabled, 'ManifestUnreachable', {}), false);
+  assert.equal(retainableLastKnownGood(prior, pkg, enabled, 'ImageRevoked', trustedKeys), true);
+  assert.equal(retainableLastKnownGood(prior, {
+    spec: { image: { digest: prior.installedDigest } },
+  }, enabled, 'ImageRevoked', trustedKeys), false);
 });
 
 test('controller image includes the shared projection module and probes serving readiness', () => {
@@ -90,4 +108,11 @@ test('controller image includes the shared projection module and probes serving 
   assert.match(dockerfile, /COPY extension-projection\.js \/app\/extension-projection\.js/);
   assert.match(deployment, /readinessProbe:.*path: \/serving-readyz/);
   assert.doesNotMatch(deployment, /readinessProbe:.*path: \/readyz/);
+});
+
+test('last-known-good status preserves active release coordinates while a new target is staged', () => {
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  assert.match(controller, /delete reportedStatus\.preserveCurrentRelease/);
+  assert.match(controller, /const preserveCurrentRelease = status\.preserveCurrentRelease === true/);
+  assert.match(controller, /preserveCurrentRelease: true/);
 });
