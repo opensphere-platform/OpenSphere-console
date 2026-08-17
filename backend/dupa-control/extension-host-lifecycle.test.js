@@ -35,12 +35,14 @@ test('Extension Host reports loading and activates verified children before thei
 
   const childSelection = extensionHost.indexOf("const childEntries = manifest.kind === 'subShell'");
   const requestedChildLoad = extensionHost.indexOf('if (requestedChild)', childSelection);
-  const remainingChildLoad = extensionHost.indexOf('await Promise.all(childEntries', requestedChildLoad);
+  const remainingChildLoad = extensionHost.indexOf('await loadWithConcurrency(', requestedChildLoad);
   const parentActivate = extensionHost.indexOf('await mod.activate(context)', remainingChildLoad);
   assert.ok(childSelection >= 0, 'subShell child selection block must exist');
   assert.ok(requestedChildLoad > childSelection, 'a directly requested child must be selected explicitly');
   assert.ok(remainingChildLoad > requestedChildLoad, 'remaining children must join the verified host projection');
   assert.ok(parentActivate > remainingChildLoad, 'the parent must receive only the completed child activation projection');
+  assert.match(extensionHost, /isTransientExtensionLoadError\(err\)/);
+  assert.match(extensionHost, /this\.clearPluginFailure\(e\.id\)/);
 
   assert.match(pluginHost, /@else if \(loading\(\)\)/);
   assert.match(pluginHost, /this\.ext\.pluginLoadState\(this\.id\(\)\)/);

@@ -1547,15 +1547,15 @@ export class AdminPlugins implements OnInit {
         tone: 'warning',
       };
     }
+    const menu = this.menuState(r);
     const hostFailure = this.ext.failures().find((item) => item.id === r.name);
-    if (hostFailure) {
+    if (hostFailure && !menu.visible) {
       return {
         label: 'UI 적재 실패',
         detail: hostFailure.error,
         tone: 'danger',
       };
     }
-    const menu = this.menuState(r);
     const isSubShell = this.catalogItem(r.name)?.kind === 'subShell';
     const isHostedPlugin = (this.catalogItem(r.name)?.hostRef || 'main') !== 'main';
     if (isHostedPlugin && !menu.visible) {
