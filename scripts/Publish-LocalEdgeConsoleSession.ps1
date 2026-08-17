@@ -66,9 +66,10 @@ function Read-Publication {
       [bool]$document.gaEligible) {
     throw "$Component evidence is not canonical localhost edge publication evidence"
   }
-  $keys = @($document.components.PSObject.Properties.Name)
-  if ($keys.Count -ne 1 -or $keys[0] -ne $Component) {
-    throw "$Component evidence must contain exactly $Component"
+  $keys = @($document.components.PSObject.Properties.Name | Sort-Object)
+  $allowedKeySets = @($Component, 'backend,console')
+  if (($keys -join ',') -notin $allowedKeySets -or -not $document.components.PSObject.Properties[$Component]) {
+    throw "$Component evidence must contain $Component alone or the exact backend,console component set"
   }
   $image = [string]$document.components.$Component.image
   if ($image -notmatch "^$([regex]::Escape($registry))/opensphere-console(?:-backend)?@sha256:[a-f0-9]{64}$") {
