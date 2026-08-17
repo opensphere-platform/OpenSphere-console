@@ -139,14 +139,17 @@ test('session lifetime defaults to 24 hours and idle extension requires real bro
   assert.match(myInfo, /실제 사용자 활동 기준 유휴 12시간 제한/);
 });
 
-test('login keeps the established card design and adds only the requested session duration option', () => {
+test('login stays an authentication surface while account security owns future session persistence', () => {
   assert.doesNotMatch(login, /ClarityModule|clrForm|clr-input-container|clr-select-container/);
   assert.match(login, /border-radius:\.6rem;box-shadow:/);
-  assert.match(login, /name="session-duration"/);
-  assert.match(login, /브라우저를 닫을 때까지/);
-  assert.match(login, /8시간/);
-  assert.match(login, /24시간/);
-  assert.match(login, /7일 · 신뢰하는 개인 장치/);
+  assert.doesNotMatch(login, /name="session-duration"|\[\(ngModel\)\]="duration"/);
+  assert.match(login, /내 프로필의 보안 설정에 저장된 로그인 유지 정책/);
+  assert.match(myInfo, /id="session-persistence"/);
+  assert.match(myInfo, /다음 로그인부터 모든 브라우저에 같은 정책/);
+  assert.match(authService, /\/api\/identity\/session\/preference/);
+  assert.doesNotMatch(authService, /opensphere\.session\.duration|localStorage\.setItem\(SESSION_DURATION/);
+  assert.match(backend, /p === '\/api\/identity\/session\/preference' && req\.method === 'PUT'/);
+  assert.match(browserSession, /sessionPersistenceFromUser\(session\.user\)/);
 });
 
 test('browser admin requests resolve the HttpOnly session at the Console enforcement point', () => {

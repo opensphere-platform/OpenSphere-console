@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { AuthService, SessionDuration } from '../core/auth.service';
+import { AuthService } from '../core/auth.service';
 
 @Component({
   selector: 'os-login',
@@ -21,16 +21,7 @@ import { AuthService, SessionDuration } from '../core/auth.service';
           <label>비밀번호
             <input name="password" type="password" [(ngModel)]="password" autocomplete="current-password" required>
           </label>
-          <label>세션 유지 시간
-            <select name="session-duration" [(ngModel)]="duration">
-              <option value="24h">24시간 · 권장</option>
-              <option value="browser">브라우저를 닫을 때까지</option>
-              <option value="8h">8시간</option>
-              <option value="7d">7일 · 신뢰하는 개인 장치</option>
-            </select>
-            <small>{{ durationHelp() }}</small>
-          </label>
-          <p class="security-note">키보드·포인터 활동이 12시간 동안 없으면 다시 로그인해야 합니다. 유휴 시간은 선택한 세션 만료 시각을 넘지 않으며 백그라운드 조회는 활동으로 계산하지 않습니다.</p>
+          <p class="security-note">내 프로필의 보안 설정에 저장된 로그인 유지 정책이 적용됩니다. 실제 키보드·포인터 활동이 12시간 동안 없으면 다시 로그인해야 합니다.</p>
           <button type="submit" [disabled]="working()">{{ working() ? '로그인 중…' : '로그인' }}</button>
         </form>
       } @else {
@@ -44,7 +35,7 @@ import { AuthService, SessionDuration } from '../core/auth.service';
       }
     </section></main>
   `,
-  styles: [`main{min-height:100vh;display:grid;place-items:center;background:#f4f6fa;font-family:system-ui,sans-serif}section{width:min(26rem,calc(100vw - 3rem));padding:2.5rem;background:#fff;border:1px solid #d9e0ea;border-radius:.6rem;box-shadow:0 1rem 3rem #18243c14}h1{margin:.2rem 0 1rem}.eyebrow{color:#2468d4;font-size:.75rem;font-weight:700;letter-spacing:.08em}label{display:grid;gap:.4rem;margin:1rem 0;font-size:.9rem}input,select{box-sizing:border-box;width:100%;padding:.7rem;border:1px solid #aeb9c8;border-radius:.25rem;background:#fff;color:#172033;font:inherit}select{cursor:pointer}small,.security-note{color:#5f6b7a;font-size:.78rem;line-height:1.45}.security-note{margin:.25rem 0 0}button{margin-top:.75rem;width:100%;padding:.75rem;background:#0f62fe;color:#fff;border:0;border-radius:.25rem;font:inherit;cursor:pointer}.secondary{background:transparent;color:#315b8a;border:1px solid #aeb9c8}.error{padding:.75rem;color:#a2191f;background:#fff1f1;border:1px solid #f0b8b8}`],
+  styles: [`main{min-height:100vh;display:grid;place-items:center;background:#f4f6fa;font-family:system-ui,sans-serif}section{width:min(26rem,calc(100vw - 3rem));padding:2.5rem;background:#fff;border:1px solid #d9e0ea;border-radius:.6rem;box-shadow:0 1rem 3rem #18243c14}h1{margin:.2rem 0 1rem}.eyebrow{color:#2468d4;font-size:.75rem;font-weight:700;letter-spacing:.08em}label{display:grid;gap:.4rem;margin:1rem 0;font-size:.9rem}input{box-sizing:border-box;width:100%;padding:.7rem;border:1px solid #aeb9c8;border-radius:.25rem;background:#fff;color:#172033;font:inherit}.security-note{color:#5f6b7a;font-size:.78rem;line-height:1.45;margin:.25rem 0 0}button{margin-top:.75rem;width:100%;padding:.75rem;background:#0f62fe;color:#fff;border:0;border-radius:.25rem;font:inherit;cursor:pointer}.secondary{background:transparent;color:#315b8a;border:1px solid #aeb9c8}.error{padding:.75rem;color:#a2191f;background:#fff1f1;border:1px solid #f0b8b8}`],
 })
 export class LoginPage {
   readonly auth = inject(AuthService);
@@ -54,11 +45,10 @@ export class LoginPage {
   email = '';
   password = '';
   totp = '';
-  duration: SessionDuration = this.auth.sessionDurationPreference();
   async submit(): Promise<void> {
     this.error.set(''); this.working.set(true);
     try {
-      await this.auth.login(this.email, this.password, this.duration);
+      await this.auth.login(this.email, this.password);
       this.password = '';
       if (this.auth.mfaEnrollmentRequired()) await this.router.navigateByUrl('/me?tab=security&enroll=totp');
       else if (!this.auth.loginRequired()) await this.router.navigateByUrl(this.auth.consumeNavigationIntent());
@@ -82,15 +72,5 @@ export class LoginPage {
     this.totp = '';
     this.error.set('');
     this.auth.cancelMfaLogin();
-  }
-
-  durationHelp(): string {
-    switch (this.duration) {
-      case 'browser': return '공용 장치에 적합합니다. 브라우저 종료 시 세션 쿠키가 삭제됩니다.';
-      case '8h': return '짧은 운영 교대나 공용 관리 장치에 적합합니다.';
-      case '24h': return '기본 권장값입니다. 하루 동안 같은 장치에서 다시 로그인하는 횟수를 줄입니다.';
-      case '7d': return '개인 장치에서만 사용하십시오. 다른 장치의 세션은 내 프로필에서 폐기할 수 있습니다.';
-      default: return '세션 유지 시간을 선택하십시오.';
-    }
   }
 }

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createBrowserSessionManager, sha256 } = require('./browser-session');
 
-function harness({ verifiedFactor = false, operatorStatus = 'active' } = {}) {
+function harness({ verifiedFactor = false, operatorStatus = 'active', sessionPersistence = '24h' } = {}) {
   let row = null;
   const additionalRows = [];
   let currentTime = '2026-07-27T00:00:00.000Z';
@@ -66,7 +66,14 @@ function harness({ verifiedFactor = false, operatorStatus = 'active' } = {}) {
   };
   const authRequest = async (path, options = {}) => {
     if (path === '/token' && options.query === 'grant_type=password') {
-      return { access_token: 'access-a', refresh_token: 'refresh-a', user: { id: 'user' } };
+      return {
+        access_token: 'access-a',
+        refresh_token: 'refresh-a',
+        user: {
+          id: 'user',
+          user_metadata: sessionPersistence === null ? {} : { console_session_persistence: sessionPersistence },
+        },
+      };
     }
     if (path === '/token' && options.query === 'grant_type=refresh_token') {
       refreshCalls += 1;
@@ -179,6 +186,29 @@ test('uses a 24-hour default without removing shorter or trusted-device choices'
   assert.equal(created.session.persistence, '24h');
   assert.equal(created.session.idleExpiresAt, '2026-07-27T12:00:00.000Z');
   assert.equal(created.session.absoluteExpiresAt, '2026-07-28T00:00:00.000Z');
+});
+
+test('applies the Supabase account preference and ignores a legacy login-form override', async () => {
+  const h = harness({ sessionPersistence: '7d' });
+  const created = await h.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com',
+    password: 'not-persisted',
+    duration: 'browser',
+  });
+  assert.equal(created.session.persistence, '7d');
+  assert.match(created.cookies[0], /Max-Age=604800/);
+});
+
+test('falls back to the bounded 24-hour policy when account metadata is missing or invalid', async () => {
+  const missing = harness({ sessionPersistence: null });
+  assert.equal((await missing.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com', password: 'not-persisted',
+  })).session.persistence, '24h');
+
+  const invalid = harness({ sessionPersistence: 'forever' });
+  assert.equal((await invalid.manager.create(request({ method: 'POST' }), {
+    email: 'operator@example.com', password: 'not-persisted',
+  })).session.persistence, '24h');
 });
 
 test('authenticates through the opaque cookie and rejects a mutation without CSRF', async () => {

@@ -10,7 +10,13 @@ const { createNotificationApi } = require('./notification-api');
 const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
 const { normalizedEvent } = require('../notification-dispatcher/contract');
-const { createBrowserSessionManager } = require('./browser-session');
+const {
+  DEFAULT_DURATION: DEFAULT_SESSION_PERSISTENCE,
+  SESSION_PERSISTENCE_METADATA_KEY,
+  createBrowserSessionManager,
+  normalizeSessionPersistence,
+  sessionPersistenceFromUser,
+} = require('./browser-session');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
 const { createOsShellAdmissionIssuer } = require('./os-shell-admission');
@@ -3297,6 +3303,46 @@ async function getAuthUser(userId) {
   }
 }
 
+function sessionPreferenceProjection(user) {
+  return {
+    duration: sessionPersistenceFromUser(user),
+    defaultDuration: DEFAULT_SESSION_PERSISTENCE,
+    idleTimeoutHours: 12,
+    appliesTo: 'next-login',
+  };
+}
+
+async function readSessionPreference(actor) {
+  const user = await getAuthUser(actor.sub);
+  if (!user) throw { code: 503, msg: 'Supabase account preference is unavailable' };
+  return sessionPreferenceProjection(user);
+}
+
+async function updateSessionPreference(actor, body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'duration')) {
+    throw { code: 400, msg: 'session preference requires exactly duration' };
+  }
+  const selected = normalizeSessionPersistence(body.duration);
+  const current = await getAuthUser(actor.sub);
+  if (!current) throw { code: 503, msg: 'Supabase account preference is unavailable' };
+  const existingMetadata = current.user_metadata && typeof current.user_metadata === 'object'
+    && !Array.isArray(current.user_metadata) ? current.user_metadata : {};
+  const updated = await authAdminRequest(`/admin/users/${actor.sub}`, {
+    method: 'PUT',
+    body: {
+      user_metadata: {
+        ...existingMetadata,
+        [SESSION_PERSISTENCE_METADATA_KEY]: selected,
+      },
+    },
+  });
+  if (!updated?.id || updated.id !== actor.sub) {
+    throw { code: 503, msg: 'Supabase account preference update was not confirmed' };
+  }
+  return sessionPreferenceProjection(updated);
+}
+
 async function createAuthUser(email, displayName, options = {}) {
   const emailOnly = String(email || '').trim().toLowerCase();
   if (!emailOnly || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailOnly)) {
@@ -4307,6 +4353,20 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, await baselineMonitoring.dataHealth());
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'Baseline monitoring data health unavailable' });
+      }
+    }
+    if (p === '/api/identity/session/preference' && req.method === 'GET') {
+      try {
+        return json(res, 200, await readSessionPreference(await verifyAuthed(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Session preference unavailable' });
+      }
+    }
+    if (p === '/api/identity/session/preference' && req.method === 'PUT') {
+      try {
+        return json(res, 200, await updateSessionPreference(await verifyAuthed(req), await readBody(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Session preference update failed' });
       }
     }
     if (p === '/api/identity/session/login' && req.method === 'POST') {

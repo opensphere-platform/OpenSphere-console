@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
-import { AuthService, TotpEnrollment } from '../core/auth.service';
+import { AuthService, SessionDuration, TotpEnrollment } from '../core/auth.service';
 import { HttpService } from '../core/http.service';
 import { PerspectiveService } from '../core/perspective.service';
 import { OsPanel } from '../os/os-panel';
@@ -405,8 +405,21 @@ interface AuditEvent {
                 <div><dt>현재 인증 보증</dt><dd><span class="label" [class.label-success]="auth.assurance() === 'aal2'">{{ auth.assurance() }}</span> {{ auth.assurance() === 'aal2' ? '비밀번호와 TOTP 검증 완료' : '비밀번호 인증만 완료' }}</dd></div>
                 <div><dt>TOTP 정책</dt><dd>관리자 변경 작업에 필수 <span class="label">Supabase Auth</span></dd></div>
                 <div><dt>브라우저 자격 보관</dt><dd>Secure HttpOnly 불투명 세션 쿠키 · Supabase 토큰은 Backend 암호화 보관</dd></div>
-                <div><dt>로그인 유지 정책</dt><dd>{{ persistenceLabel(auth.currentSession()?.persistence || '24h') }} · 실제 사용자 활동 기준 유휴 12시간 제한</dd></div>
+                <div><dt>현재 세션 유지</dt><dd>{{ persistenceLabel(auth.currentSession()?.persistence || '24h') }} · 실제 사용자 활동 기준 유휴 12시간 제한</dd></div>
               </dl>
+              <h2>다음 로그인 기본값</h2>
+              <p class="section-lead">이 계정의 로그인 유지 방식을 저장합니다. 현재 열려 있는 세션은 바꾸지 않으며, 다음 로그인부터 모든 브라우저에 같은 정책이 적용됩니다.</p>
+              <form class="session-preference" (ngSubmit)="saveSessionPreference()">
+                <label for="session-persistence">로그인 유지 시간</label>
+                <select id="session-persistence" name="session-persistence" [(ngModel)]="sessionDurationDraft" [disabled]="busy()">
+                  <option value="browser">브라우저를 닫을 때까지</option>
+                  <option value="8h">8시간</option>
+                  <option value="24h">24시간 · 권장</option>
+                  <option value="7d">7일 · 신뢰하는 개인 장치</option>
+                </select>
+                <button class="btn btn-sm btn-primary" type="submit" [disabled]="busy() || sessionDurationDraft === auth.sessionDurationPreference()">설정 저장</button>
+              </form>
+              <p class="session-preference-help">{{ sessionPreferenceHelp(sessionDurationDraft) }} 유휴 12시간 제한은 모든 선택에 공통 적용됩니다.</p>
               <h2>최근 세션 보안 이력</h2>
               <div class="credential-grid-scroll" tabindex="0" aria-label="최근 세션 보안 이력">
                 <clr-datagrid>
@@ -590,6 +603,11 @@ interface AuditEvent {
       .kv-list dd { margin: 0; font-size: 0.7rem; color: var(--os-ink); }
       .kv-list.compact { max-width: 34rem; }
       .security-list { max-width: 58rem; }
+      .session-preference { display: grid; grid-template-columns: minmax(8rem, 12rem) minmax(14rem, 22rem) auto; align-items: center; gap: .6rem; max-width: 52rem; margin: .65rem 0 .35rem; }
+      .session-preference label { font-size: .7rem; font-weight: 600; }
+      .session-preference select { min-height: 1.8rem; padding: .25rem .45rem; border: 1px solid var(--os-hairline); background: var(--os-surface-0); color: var(--os-ink); }
+      .session-preference .btn { margin: 0; }
+      .session-preference-help { max-width: 58rem; margin: 0 0 1.25rem; color: var(--os-muted); font-size: .66rem; line-height: 1.45; }
       .mfa-enrollment { display: flex; align-items: center; gap: 1rem; margin: .75rem 0; }
       .mfa-enrollment img { width: 11rem; height: 11rem; border: 1px solid var(--os-hairline); }
       .qr-unavailable { display: grid; place-items: center; width: 11rem; height: 11rem; padding: 1rem; border: 1px solid var(--os-hairline); color: var(--os-ink-muted); text-align: center; }
@@ -638,6 +656,8 @@ interface AuditEvent {
         .profile-title-row h1 { white-space: normal; overflow-wrap: anywhere; }
         .profile-actions { flex-wrap: wrap; }
         .tab-section { padding: .8rem .8rem 1.5rem; }
+        .session-preference { grid-template-columns: 1fr; align-items: stretch; }
+        .session-preference .btn { justify-self: start; }
         .credential-toolbar { grid-template-columns: 1fr; align-items: stretch; }
         .credential-toolbar .btn, .credential-toolbar .btn-link { grid-column: auto; justify-self: start; }
         ::ng-deep .profile-page clr-tabs > .nav { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; }
@@ -683,6 +703,7 @@ export class MyInfo {
   tokenReason = '';
   revokeReason = '';
   totpCode = '';
+  sessionDurationDraft: SessionDuration = '24h';
   private forcedTotpEnrollmentStarted = false;
   deviceSearchText = '';
   tokenSearchText = '';
@@ -742,7 +763,39 @@ export class MyInfo {
   }
 
   async refresh(): Promise<void> {
-    await Promise.all([this.loadIdentity(), this.loadCredentials(), this.auth.loadBrowserSessions(), this.auth.loadSessionEvents(), this.loadAuthPolicy(), this.loadActivity()]);
+    await Promise.all([this.loadIdentity(), this.loadCredentials(), this.auth.loadBrowserSessions(), this.auth.loadSessionEvents(), this.loadSessionPreference(), this.loadAuthPolicy(), this.loadActivity()]);
+  }
+
+  private async loadSessionPreference(): Promise<void> {
+    try {
+      const preference = await this.auth.loadSessionPreference();
+      this.sessionDurationDraft = preference.duration;
+    } catch (error) {
+      this.message.set({ type: 'warning', text: `로그인 유지 설정을 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  }
+
+  async saveSessionPreference(): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
+    try {
+      const preference = await this.auth.updateSessionPreference(this.sessionDurationDraft);
+      this.sessionDurationDraft = preference.duration;
+      this.message.set({ type: 'success', text: `로그인 유지 기본값을 ${this.persistenceLabel(preference.duration)}(으)로 저장했습니다. 다음 로그인부터 적용됩니다.` });
+    } catch (error) {
+      this.message.set({ type: 'danger', text: `로그인 유지 설정 저장 실패: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  sessionPreferenceHelp(value: SessionDuration): string {
+    switch (value) {
+      case 'browser': return '공용 장치에 적합하며, 세션 쿠키를 영구 저장하지 않습니다.';
+      case '8h': return '짧은 운영 교대나 공용 관리 장치에 적합합니다.';
+      case '7d': return '신뢰하는 개인 장치에서만 사용하고, 분실 시 자격 증명 탭에서 세션을 종료하세요.';
+      default: return '일반적인 개인 운영 장치에 권장하는 기본값입니다.';
+    }
   }
 
   private async loadIdentity(): Promise<void> {
