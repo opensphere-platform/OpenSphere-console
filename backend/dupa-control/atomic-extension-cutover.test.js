@@ -121,6 +121,11 @@ test('edge publisher is fixed to the two affected images and stays separate from
 test('edge publisher builds both components before moving channel pointers', () => {
   const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
   assert.match(publisher, /Console main must equal fresh origin\/main/);
+  assert.match(publisher, /Installed release source is not the canonical Console repository/);
+  assert.match(publisher, /fetch --no-tags origin \$baseRevision/);
+  assert.match(publisher, /cat-file -e "\$\{baseRevision\}\^\{commit\}"/);
+  assert.match(publisher, /diff --name-only \$baseRevision \$sourceRevision/);
+  assert.doesNotMatch(publisher, /merge-base --is-ancestor/);
   assert.match(publisher, /worktree add --detach/);
   const controllerDigest = publisher.indexOf('$digests.dupaController =');
   const firstTagMove = publisher.indexOf('Set-RemoteTag -Repository', controllerDigest);
