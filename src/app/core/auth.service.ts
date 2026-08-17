@@ -2,8 +2,6 @@ import { Injectable, signal } from '@angular/core';
 import { createTotpQrCode } from './totp-qr';
 import { authBootstrapRetryDelay, isRetryableAuthBootstrapStatus } from './auth-bootstrap-recovery';
 
-const SESSION_DURATION_PREFERENCE_KEY = 'opensphere.session.duration.v2';
-const LEGACY_SESSION_DURATION_PREFERENCE_KEY = 'opensphere.session.duration';
 const DEFAULT_SESSION_DURATION: SessionDuration = '24h';
 const ACTIVITY_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -21,6 +19,13 @@ interface StepUpRequest {
 }
 
 export type SessionDuration = 'browser' | '8h' | '24h' | '7d';
+
+export interface SessionPreference {
+  duration: SessionDuration;
+  defaultDuration: SessionDuration;
+  idleTimeoutHours: number;
+  appliesTo: 'next-login';
+}
 
 export interface BrowserSession {
   id: string;
@@ -82,7 +87,7 @@ export class AuthService {
   readonly assurance = signal<'aal1' | 'aal2'>('aal1');
   readonly currentSession = signal<BrowserSession | null>(null);
   readonly browserSessions = signal<BrowserSession[]>([]);
-  readonly sessionDurationPreference = signal<SessionDuration>(this.loadDurationPreference());
+  readonly sessionDurationPreference = signal<SessionDuration>(DEFAULT_SESSION_DURATION);
   readonly mfaRequired = signal(false);
   readonly mfaEnrollmentRequired = signal(false);
   readonly passwordRecoveryState = signal<'idle' | 'ready' | 'completed' | 'error'>('idle');
@@ -290,19 +295,16 @@ export class AuthService {
     }
   }
 
-  async login(email: string, password: string, duration = this.sessionDurationPreference()): Promise<void> {
+  async login(email: string, password: string): Promise<void> {
     this.mfaEnrollmentRequired.set(false);
-    const selected = this.normalizeDuration(duration);
     const body = await this.api<{
       mfaRequired?: boolean;
       mfaEnrollmentRequired?: boolean;
       session?: BrowserSession;
     }>('/api/identity/session/login', {
       method: 'POST',
-      body: JSON.stringify({ email: email.trim(), password, duration: selected }),
+      body: JSON.stringify({ email: email.trim(), password }),
     }, false);
-    this.sessionDurationPreference.set(selected);
-    this.saveDurationPreference(selected);
     this.currentSession.set(body.session || null);
     this.mfaRequired.set(Boolean(body.mfaRequired));
     this.mfaEnrollmentRequired.set(Boolean(body.mfaEnrollmentRequired));
@@ -369,6 +371,24 @@ export class AuthService {
     const items = Array.isArray(result.items) ? result.items : [];
     this.sessionEvents.set(items);
     return items;
+  }
+
+  async loadSessionPreference(): Promise<SessionPreference> {
+    const body = await this.api<SessionPreference>('/api/identity/session/preference', { cache: 'no-store' });
+    const preference = this.parseSessionPreference(body);
+    this.sessionDurationPreference.set(preference.duration);
+    return preference;
+  }
+
+  async updateSessionPreference(duration: SessionDuration): Promise<SessionPreference> {
+    const selected = this.normalizeDuration(duration);
+    const body = await this.api<SessionPreference>('/api/identity/session/preference', {
+      method: 'PUT',
+      body: JSON.stringify({ duration: selected }),
+    });
+    const preference = this.parseSessionPreference(body);
+    this.sessionDurationPreference.set(preference.duration);
+    return preference;
   }
 
   async revokeBrowserSession(id: string): Promise<void> {
@@ -673,17 +693,14 @@ export class AuthService {
       : DEFAULT_SESSION_DURATION;
   }
 
-  private loadDurationPreference(): SessionDuration {
-    try {
-      const current = localStorage.getItem(SESSION_DURATION_PREFERENCE_KEY);
-      if (current) return this.normalizeDuration(current);
-      const legacy = localStorage.getItem(LEGACY_SESSION_DURATION_PREFERENCE_KEY);
-      return legacy && legacy !== '8h' ? this.normalizeDuration(legacy) : DEFAULT_SESSION_DURATION;
-    } catch { return DEFAULT_SESSION_DURATION; }
-  }
-
-  private saveDurationPreference(value: SessionDuration): void {
-    try { localStorage.setItem(SESSION_DURATION_PREFERENCE_KEY, value); } catch { /* optional preference */ }
+  private parseSessionPreference(value: SessionPreference): SessionPreference {
+    const duration = this.normalizeDuration(value?.duration);
+    const defaultDuration = this.normalizeDuration(value?.defaultDuration);
+    if (duration !== value?.duration || defaultDuration !== value?.defaultDuration
+      || value?.idleTimeoutHours !== 12 || value?.appliesTo !== 'next-login') {
+      throw new Error('서버의 로그인 세션 설정 응답이 올바르지 않습니다.');
+    }
+    return { duration, defaultDuration, idleTimeoutHours: 12, appliesTo: 'next-login' };
   }
 
   private errorText(body: ApiError, status: number): string {

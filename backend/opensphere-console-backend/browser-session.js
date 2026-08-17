@@ -12,6 +12,7 @@ const COOKIE_NAME = '__Host-opensphere_session';
 const IDLE_TTL_MS = 12 * 60 * 60 * 1000;
 const PENDING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_DURATION = '24h';
+const SESSION_PERSISTENCE_METADATA_KEY = 'console_session_persistence';
 const DURATION_MS = Object.freeze({
   browser: 24 * 60 * 60 * 1000,
   '8h': 8 * 60 * 60 * 1000,
@@ -60,10 +61,22 @@ function decodeSecret(value, key) {
   }
 }
 
-function duration(value) {
-  const normalized = String(value || DEFAULT_DURATION).trim();
+function normalizeSessionPersistence(value) {
+  const normalized = String(value || '').trim();
   if (!Object.hasOwn(DURATION_MS, normalized)) throw { code: 400, msg: 'unsupported session duration' };
   return normalized;
+}
+
+function sessionPersistenceFromUser(user) {
+  const value = user?.user_metadata?.[SESSION_PERSISTENCE_METADATA_KEY];
+  try {
+    return normalizeSessionPersistence(value || DEFAULT_DURATION);
+  } catch {
+    // Corrupt or legacy metadata must not grant a longer session. The product
+    // default is the closed, documented account policy until the user saves a
+    // supported value from My Profile.
+    return DEFAULT_DURATION;
+  }
 }
 
 function jwtExpiry(token) {
@@ -423,13 +436,16 @@ function createBrowserSessionManager({
   }
 
   async function create(req, credentials) {
-    const persistence = duration(credentials.duration);
     const session = await supabase('/token', {
       method: 'POST',
       query: 'grant_type=password',
       body: { email: String(credentials.email || '').trim(), password: String(credentials.password || '') },
     });
     if (!session.access_token || !session.refresh_token) throw { code: 502, msg: 'Supabase Auth returned no usable session' };
+    // Login is intentionally not a policy editor. The server applies the
+    // account preference returned by Supabase Auth and ignores legacy client
+    // duration fields during a rolling Console/Backend update.
+    const persistence = sessionPersistenceFromUser(session.user);
     const verified = await verifyToken(session.access_token);
     const factorState = verified.assurance === 'aal2'
       ? { user: session.user || {}, verifiedTotp: null }
@@ -957,7 +973,11 @@ function createBrowserSessionManager({
 
 module.exports = {
   COOKIE_NAME,
+  DEFAULT_DURATION,
+  SESSION_PERSISTENCE_METADATA_KEY,
   createBrowserSessionManager,
+  normalizeSessionPersistence,
   parseCookies,
+  sessionPersistenceFromUser,
   sha256,
 };
