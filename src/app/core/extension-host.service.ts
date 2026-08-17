@@ -74,6 +74,12 @@ interface RegistryEntry {
   hostCompat?: string;
   contributions?: NormalizedManifest['contributions'];
   icon?: string; // 1단 아이콘(Carbon 토큰명) — 관리자 오버라이드(spec.nav.icon). 서명 무관.
+  /** Content-addressed serving coordinate owned by DUPA. It is deliberately
+   * separate from the stable API service id so a rollout can never mix old
+   * registry pins with new artifact bytes. */
+  artifactServiceId?: string;
+  releaseRevision?: string;
+  retainedArtifactServiceIds?: string[];
 }
 
 interface VerifiedAsset {
@@ -124,6 +130,10 @@ export class ExtensionHostService {
   private registryWatch?: number;
   private registryEntries: RegistryEntry[] = [];
   private assetStyles = new Map<string, Set<HTMLStyleElement>>();
+  /** A live document is an immutable composition snapshot. Registry changes
+   * are discovered immediately but adopted only by a new document so custom
+   * elements from two releases are never mixed in one JavaScript realm. */
+  readonly registryUpdatePending = signal(false);
 
   /**
    * PluginHost가 Registry의 비동기 초기 적재를 실제 미등록 상태와 구분할 수 있게 한다.
@@ -225,16 +235,17 @@ export class ExtensionHostService {
   }
 
   /**
-   * reload — Admin Control이 설치/삭제한 뒤 호출(검토 §B.4). registry를 다시 읽고
-   * pages를 재구성한다. 이미 로드된 플러그인도 전 검증을 다시 거친다(B.1 런타임 방어 유지).
-   * 셸 이미지·파드는 불변 — registry 변화만으로 메뉴가 증감한다.
+   * reload — Registry 변경을 발견하되 활성 document의 조합은 바꾸지 않는다.
+   * CustomElementRegistry는 unregister를 지원하지 않으므로 이미 활성화된 guest를
+   * 같은 realm에서 교체하거나 document 전체를 강제 reload하면 원자적 구성과
+   * 사용자 작업 보존을 모두 깨뜨린다. 현재 document는 검증된 snapshot을 계속
+   * 사용하고, 다음 자연스러운 document 시작이 새 Registry snapshot을 채택한다.
    */
   async reload(): Promise<void> {
     await this.loadManagementInventory();
-    // CustomElementRegistry는 unregister를 지원하지 않는다. 활성 guest를 같은 document에서
-    // 재평가하면 이전 생성자와 새 번들이 섞이므로 registry 변경은 document 경계에서 교체한다.
     if (this.activeModules.size > 0) {
-      window.location.reload();
+      this.registryUpdatePending.set(true);
+      console.info('[extension-host] Registry update staged for the next document; current composition remains pinned');
       return;
     }
     await this.deactivateAll();
@@ -248,6 +259,7 @@ export class ExtensionHostService {
     this.pluginLoadStates.set({});
     this.hostChildProjections.set({});
     this.primarySubShellIds.set(new Set<string>());
+    this.registryUpdatePending.set(false);
     await this.load();
   }
 
@@ -295,6 +307,7 @@ export class ExtensionHostService {
   }
 
   private async refreshRegistryIfChanged(): Promise<void> {
+    if (this.registryUpdatePending()) return;
     try {
       const response = await fetchWithTimeout('/api/v1/registry', { cache: 'no-store' });
       if (!response.ok) return;
@@ -360,6 +373,12 @@ export class ExtensionHostService {
         if (!manifest.apiBase) throw new Error('활성 API contribution에 apiBase가 없음');
       }
 
+      const artifactServiceId = e.artifactServiceId || e.id;
+      if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(artifactServiceId)) {
+        throw new Error('Registry artifact service id가 유효하지 않음');
+      }
+      const artifactBase = `/api/plugins/${artifactServiceId}`;
+
       // ② 출처 서명 (분리 서명, manifest 바이트 전체)
       const spki = trustedKeys[e.keyId];
       if (!spki) throw new Error(`신뢰 키 '${e.keyId}' 없음`);
@@ -388,14 +407,17 @@ export class ExtensionHostService {
 			}
 
       // ⑤+⑥ 번들 무결성 + 검증된 바이트만 실행
-      const entryUrl = new URL(manifest.entry, new URL(e.manifest, location.origin)).href;
-      const bRes = await fetchWithTimeout(entryUrl, { cache: 'no-store' });
+      const entryUrl = new URL(manifest.entry, new URL(e.manifest, location.origin));
+      if (entryUrl.origin !== location.origin || !entryUrl.pathname.startsWith(`${artifactBase}/`)) {
+        throw new Error('entry가 검증된 release namespace 밖에 있음');
+      }
+      const bRes = await fetchWithTimeout(entryUrl.href, { cache: 'no-store' });
       if (!bRes.ok) throw new Error(`entry HTTP ${bRes.status}`);
       const code = await bRes.text();
       if ((await sha256Hex(code)) !== manifest.entrySha256) {
         throw new Error('번들 무결성 불일치 — manifest 핀과 다름');
       }
-      const verifiedAssets = await this.verifyAssets(e.id, e.manifest, manifest.assets);
+      const verifiedAssets = await this.verifyAssets(artifactBase, e.manifest, manifest.assets);
       const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
       try {
         mod = await import(/* @vite-ignore */ blobUrl) as PluginModule;
@@ -404,13 +426,23 @@ export class ExtensionHostService {
       }
       if (typeof mod.activate !== 'function') throw new Error('activate() export 없음 (§9 계약 위반)');
 
-      if (manifest.apiBase) {
-        const base = manifest.apiBase.replace(/\/$/, '');
+      const runtimeManifest: NormalizedManifest = manifest.apiBase
+        ? {
+            ...manifest,
+            apiBase: artifactBase,
+            contributions: {
+              ...manifest.contributions,
+              api: { ...manifest.contributions.api, basePath: artifactBase },
+            },
+          }
+        : manifest;
+      if (runtimeManifest.apiBase) {
+        const base = runtimeManifest.apiBase.replace(/\/$/, '');
         this.apiBaseByPlugin.update((m) => ({ ...m, [e.id]: base }));
       }
 
       // ⑦ 최소 권한 ctx
-      const context = this.contextFor(e.id, manifest, perms, hostApiVersion, trustedKeys, verifiedAssets);
+      const context = this.contextFor(e.id, runtimeManifest, perms, hostApiVersion, trustedKeys, verifiedAssets);
       if (typeof mod.activate !== 'function') throw new Error('activate() export 없음 (§9 계약 위반)');
 			if (manifest.manifestVersion === 3 && typeof mod.deactivate !== 'function') {
 				throw new Error('deactivate() export 없음 (Production lifecycle 계약 위반)');
@@ -474,6 +506,9 @@ export class ExtensionHostService {
 				hostCompat: entry.hostCompat,
 				hostApiVersion: entry.hostApiVersion,
 				contributions: entry.contributions,
+				artifactServiceId: entry.artifactServiceId,
+				releaseRevision: entry.releaseRevision,
+				retainedArtifactServiceIds: entry.retainedArtifactServiceIds,
 			})),
 		});
 	}
@@ -747,12 +782,11 @@ export class ExtensionHostService {
   }
 
   private async verifyAssets(
-    pluginId: string,
+    artifactBase: string,
     manifestUrl: string,
     declarations: readonly ManifestAsset[],
   ): Promise<ReadonlyMap<string, VerifiedAsset>> {
     const verified = new Map<string, VerifiedAsset>();
-    const canonicalAssetBase = `/api/plugins/${pluginId}/app/`;
     for (const declaration of declarations) {
       if (!/^[a-z][a-z0-9-]{0,63}$/.test(declaration.id) || verified.has(declaration.id)) {
         throw new Error(`asset id가 유효하지 않거나 중복됨: '${declaration.id}'`);
@@ -760,8 +794,8 @@ export class ExtensionHostService {
       if (!['module', 'style'].includes(declaration.type)) throw new Error(`asset '${declaration.id}' type이 유효하지 않음`);
       if (!/^[a-f0-9]{64}$/.test(declaration.sha256)) throw new Error(`asset '${declaration.id}' sha256이 유효하지 않음`);
       const url = new URL(declaration.path, new URL(manifestUrl, location.origin));
-      if (url.origin !== location.origin || !url.pathname.startsWith(canonicalAssetBase)) {
-        throw new Error(`asset '${declaration.id}'가 canonical app namespace 밖에 있음`);
+      if (url.origin !== location.origin || !url.pathname.startsWith(`${artifactBase}/`)) {
+        throw new Error(`asset '${declaration.id}'가 검증된 release namespace 밖에 있음`);
       }
       const response = await fetchWithTimeout(url, { cache: 'no-store' });
       if (!response.ok) throw new Error(`asset '${declaration.id}' HTTP ${response.status}`);

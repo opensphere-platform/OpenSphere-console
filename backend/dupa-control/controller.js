@@ -69,6 +69,9 @@ function foundationDevOverrideEnabled(env = process.env) {
 const FOUNDATION_ACTIVATION_DEV_OVERRIDE = foundationDevOverrideEnabled();
 // 셸(브라우저)이 플러그인 manifest/번들에 접근하는 경로 prefix (nginx 프록시 기준)
 const SHELL_API_PREFIX = '/api/plugins';
+const RELEASE_REVISION_LABEL = 'opensphere.io/dupa-revision';
+const RELEASE_IMAGE_ANNOTATION = 'opensphere.io/release-image-digest';
+const RELEASE_MANIFEST_ANNOTATION = 'opensphere.io/release-manifest-sha256';
 const MAX_BODY = 256 * 1024; // 요청 본문 상한(무제한 버퍼링 차단, 감사 H)
 const MODULE_DESCRIPTOR_LABEL = 'io.opensphere.module.descriptor';
 const MODULE_SIGNATURE_LABEL = 'io.opensphere.module.descriptor.signature';
@@ -386,6 +389,11 @@ function verifiedProxyTarget(pkg, reg) {
 async function proxyAuthorizationFromSharedState(id) {
   if (!safeName(id) || RESERVED_PROXY_SERVICE_IDS.has(id)) return false;
   try {
+    // Revision artifact aliases live in the shared Registry projection rather
+    // than as Package names. Hydrate before falling back to Package/Registration
+    // so every controller replica authorizes the same content-addressed route.
+    const snapshot = await extensionProjection.hydrate();
+    if ((snapshot?.registry?.plugins || []).some((plugin) => proxyIdsForPlugin(plugin).includes(id))) return true;
     const [pkg, reg] = await Promise.all([getPackage(id), getReg(id)]);
     return pkg.ok && reg.ok && verifiedProxyTarget(pkg.json, reg.json);
   } catch (error) {
@@ -561,12 +569,25 @@ async function setStatus(name, status, reg, pkg) {
   const workloadReportedReady = status.workloadReady === true;
   const reportedStatus = { ...status };
   delete reportedStatus.workloadReady;
+  delete reportedStatus.preserveCurrentRelease;
   const hostPending = phase === 'DependencyPending' && status.reason === 'HostPending';
-  const currentDigest = String(pkg?.spec?.image?.digest || '');
-  const currentManifestSha256 = String(pkg?.spec?.manifest?.sha256 || '');
+  const preserveCurrentRelease = status.preserveCurrentRelease === true;
+  const currentDigest = preserveCurrentRelease
+    ? String(reg?.status?.currentDigest || '')
+    : String(pkg?.spec?.image?.digest || '');
+  const currentManifestSha256 = preserveCurrentRelease
+    ? String(reg?.status?.currentManifestSha256 || '')
+    : String(pkg?.spec?.manifest?.sha256 || '');
   const resolution = pkg?.spec?.resolution || {};
-  const currentVersion = String(resolution.artifactVersion || '');
-  const currentCompatibilityVersion = String(resolution.compatibilityVersion || pkg?.spec?.version || '');
+  const currentVersion = preserveCurrentRelease
+    ? String(reg?.status?.currentVersion || reg?.status?.observedVersion || '')
+    : String(resolution.artifactVersion || '');
+  const currentCompatibilityVersion = preserveCurrentRelease
+    ? String(reg?.status?.currentCompatibilityVersion || '')
+    : String(resolution.compatibilityVersion || pkg?.spec?.version || '');
+  const releaseValue = (statusField, targetValue) => preserveCurrentRelease
+    ? String(reg?.status?.[statusField] || '')
+    : String(targetValue || '');
   const releaseChanged = Boolean(reg?.status?.currentDigest && reg.status.currentDigest !== currentDigest);
   return k8s('PATCH', `${crd('uipluginregistrations')}/${name}/status`, { status: {
     ...reportedStatus,
@@ -576,15 +597,19 @@ async function setStatus(name, status, reg, pkg) {
     currentManifestSha256,
     currentVersion,
     currentCompatibilityVersion,
-    currentBuildAuthority: String(resolution.buildAuthority || ''),
-    currentRequestedRef: String(resolution.requestedRef || ''),
-    currentRequestedChannel: String(resolution.requestedChannel || ''),
-    currentResolvedAt: String(resolution.resolvedAt || ''),
-    currentSource: String(resolution.source || ''),
-    currentRevision: String(resolution.revision || ''),
-    currentSignatureIdentity: String(resolution.signatureIdentity || ''),
-    currentEvidenceRefs: Array.isArray(resolution.evidenceRefs) ? resolution.evidenceRefs.map(String) : [],
-    currentRegistryCredentialsRequired: resolution.registryCredentialsRequired === true,
+    currentBuildAuthority: releaseValue('currentBuildAuthority', resolution.buildAuthority),
+    currentRequestedRef: releaseValue('currentRequestedRef', resolution.requestedRef),
+    currentRequestedChannel: releaseValue('currentRequestedChannel', resolution.requestedChannel),
+    currentResolvedAt: releaseValue('currentResolvedAt', resolution.resolvedAt),
+    currentSource: releaseValue('currentSource', resolution.source),
+    currentRevision: releaseValue('currentRevision', resolution.revision),
+    currentSignatureIdentity: releaseValue('currentSignatureIdentity', resolution.signatureIdentity),
+    currentEvidenceRefs: preserveCurrentRelease
+      ? (Array.isArray(reg?.status?.currentEvidenceRefs) ? reg.status.currentEvidenceRefs.map(String) : [])
+      : (Array.isArray(resolution.evidenceRefs) ? resolution.evidenceRefs.map(String) : []),
+    currentRegistryCredentialsRequired: preserveCurrentRelease
+      ? reg?.status?.currentRegistryCredentialsRequired === true
+      : resolution.registryCredentialsRequired === true,
     previousDigest: releaseChanged ? String(reg.status.currentDigest) : String(reg?.status?.previousDigest || ''),
     previousManifestSha256: releaseChanged ? String(reg.status.currentManifestSha256 || '') : String(reg?.status?.previousManifestSha256 || ''),
     previousVersion: releaseChanged ? String(reg.status.currentVersion || reg.status.observedVersion || '') : String(reg?.status?.previousVersion || ''),
@@ -753,7 +778,36 @@ function serviceAccountManifest(pkg, name) {
     automountServiceAccountToken: true,
   };
 }
-function deploymentManifest(pkg) {
+function releaseRevision(pkg) {
+  const pluginId = String(pkg?.metadata?.name || '');
+  const imageDigest = String(pkg?.spec?.image?.digest || '');
+  const manifestSha256 = String(pkg?.spec?.manifest?.sha256 || '');
+  if (!safeName(pluginId) || !/^sha256:[a-f0-9]{64}$/.test(imageDigest) || !/^[a-f0-9]{64}$/.test(manifestSha256)) {
+    throw Object.assign(new Error('release revision requires an exact plugin id, image digest and manifest digest'), {
+      reason: 'InvalidReleaseRevision',
+    });
+  }
+  const token = sha256(`${pluginId}\n${imageDigest}\n${manifestSha256}`).slice(0, 20);
+  const maxPrefixLength = 63 - '-r-'.length - token.length;
+  const prefix = pluginId.slice(0, maxPrefixLength).replace(/-+$/, '');
+  const resourceName = `${prefix}-r-${token}`;
+  return {
+    token,
+    resourceName,
+    deploymentName: resourceName,
+    serviceName: resourceName,
+    imageDigest,
+    manifestSha256,
+    selector: { app: pluginId, [RELEASE_REVISION_LABEL]: token },
+  };
+}
+function releaseAnnotations(revision) {
+  return {
+    [RELEASE_IMAGE_ANNOTATION]: revision.imageDigest,
+    [RELEASE_MANIFEST_ANNOTATION]: revision.manifestSha256,
+  };
+}
+function deploymentManifest(pkg, revision = releaseRevision(pkg)) {
   const name = pkg.metadata.name;
   const _d = pkg.spec.image.digest || '';
   // 감사 시정 S1(2026-07-06): 태그 fallback 제거 — digest는 reconcile에서 sha256: 강제 검증됨(InvalidDigest).
@@ -787,15 +841,22 @@ function deploymentManifest(pkg) {
   const readOnlyRootFilesystem = security.readOnlyRootFilesystem === true;
   return {
     apiVersion: 'apps/v1', kind: 'Deployment',
-    metadata: { name, namespace: NS, labels: { app: name, 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
+    metadata: {
+      name: revision.deploymentName,
+      namespace: NS,
+      labels: { app: name, 'opensphere.io/dupa-plugin': name, [RELEASE_REVISION_LABEL]: revision.token },
+      annotations: releaseAnnotations(revision),
+      ownerReferences: [ownerRef(pkg)],
+    },
     spec: {
       ...(autoscaling.enabled === true ? {} : { replicas }),
       strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
-      selector: { matchLabels: { app: name } },
+      selector: { matchLabels: revision.selector },
       template: {
         metadata: {
-          labels: { ...podLabels(pkg), app: name },
+          labels: { ...podLabels(pkg), ...revision.selector },
           annotations: {
+            ...releaseAnnotations(revision),
             'opensphere.io/log-enabled': String(logsEnabled),
             'opensphere.io/log-format': logsEnabled ? String(logContract.format || 'json') : 'text',
             'opensphere.io/log-schema': logsEnabled ? String(logContract.schema || 'opensphere.v1') : 'none',
@@ -847,17 +908,23 @@ function pdbManifest(pkg) {
     spec: { minAvailable, selector: { matchLabels: { app: name } } },
   };
 }
-function serviceManifest(pkg) {
+function serviceManifest(pkg, revision = releaseRevision(pkg), { stable = true } = {}) {
   const name = pkg.metadata.name;
   const port = Number(pkg.spec.runtime?.port) || 8080;
   return {
     apiVersion: 'v1', kind: 'Service',
-    metadata: { name, namespace: NS, labels: { app: name, 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
-    spec: { selector: { app: name }, ports: [{ name: 'http', port, targetPort: 'http' }] },
+    metadata: {
+      name: stable ? name : revision.serviceName,
+      namespace: NS,
+      labels: { app: name, 'opensphere.io/dupa-plugin': name, [RELEASE_REVISION_LABEL]: revision.token },
+      annotations: releaseAnnotations(revision),
+      ownerReferences: [ownerRef(pkg)],
+    },
+    spec: { selector: revision.selector, ports: [{ name: 'http', port, targetPort: 'http' }] },
   };
 }
 
-function hpaManifest(pkg) {
+function hpaManifest(pkg, revision = releaseRevision(pkg)) {
   const autoscaling = pkg.spec.runtime?.availability?.autoscaling;
   if (autoscaling?.enabled !== true) return null;
   const name = pkg.metadata.name;
@@ -865,7 +932,7 @@ function hpaManifest(pkg) {
     apiVersion: 'autoscaling/v2', kind: 'HorizontalPodAutoscaler',
     metadata: { name, namespace: NS, labels: { 'opensphere.io/dupa-plugin': name }, ownerReferences: [ownerRef(pkg)] },
     spec: {
-      scaleTargetRef: { apiVersion: 'apps/v1', kind: 'Deployment', name },
+      scaleTargetRef: { apiVersion: 'apps/v1', kind: 'Deployment', name: revision.deploymentName },
       minReplicas: Number(autoscaling.minReplicas) || 2,
       maxReplicas: Number(autoscaling.maxReplicas) || 4,
       behavior: {
@@ -957,6 +1024,7 @@ async function applyPermissionProfile(pkg, saName) {
 }
 async function applyWorkload(pkg) {
   const name = pkg.metadata.name;
+  const revision = releaseRevision(pkg);
   const sa = pluginServiceAccount(pkg);
   const saPath = `/api/v1/namespaces/${NS}/serviceaccounts`;
   const existingSa = await k8s('GET', `${saPath}/${sa.name}`);
@@ -968,11 +1036,25 @@ async function applyWorkload(pkg) {
     throw Object.assign(new Error(`declared ServiceAccount '${sa.name}' does not exist`), { reason: 'ServiceAccountNotFound' });
   }
   await applyPermissionProfile(pkg, sa.name);
-  for (const [plural, man] of [['deployments', deploymentManifest(pkg)], ['services', serviceManifest(pkg)]]) {
+  // A release is materialized under an immutable revision identity first.
+  // The stable Service is deliberately left untouched until this exact
+  // Deployment has converged and its signed artifacts have been verified.
+  for (const [plural, man] of [
+    ['deployments', deploymentManifest(pkg, revision)],
+    ['services', serviceManifest(pkg, revision, { stable: false })],
+  ]) {
     const base = `/apis/apps/v1/namespaces/${NS}/deployments`;
     const path = plural === 'deployments' ? base : `/api/v1/namespaces/${NS}/services`;
-    const exists = await k8s('GET', `${path}/${name}`);
-    if (exists.ok) await k8s('PATCH', `${path}/${name}`, man);
+    const resourceName = man.metadata.name;
+    const exists = await k8s('GET', `${path}/${resourceName}`);
+    if (exists.ok) {
+      const annotations = exists.json?.metadata?.annotations || {};
+      if (annotations[RELEASE_IMAGE_ANNOTATION] !== revision.imageDigest
+        || annotations[RELEASE_MANIFEST_ANNOTATION] !== revision.manifestSha256) {
+        throw Object.assign(new Error(`revision identity collision for ${resourceName}`), { reason: 'ReleaseRevisionCollision' });
+      }
+      await k8s('PATCH', `${path}/${resourceName}`, man);
+    }
     else await k8s('POST', path, man);
   }
   const pdbPath = `/apis/policy/v1/namespaces/${NS}/poddisruptionbudgets`;
@@ -981,7 +1063,7 @@ async function applyWorkload(pkg) {
   if (existingPdb.ok) await k8s('PATCH', `${pdbPath}/${name}`, pdb);
   else await k8s('POST', pdbPath, pdb);
   const optionalResources = [
-    ['/apis/autoscaling/v2/namespaces/' + NS + '/horizontalpodautoscalers', hpaManifest(pkg), 'HorizontalPodAutoscaler'],
+    ['/apis/autoscaling/v2/namespaces/' + NS + '/horizontalpodautoscalers', hpaManifest(pkg, revision), 'HorizontalPodAutoscaler'],
     ['/apis/networking.k8s.io/v1/namespaces/' + NS + '/networkpolicies', networkPolicyManifest(pkg), 'NetworkPolicy'],
   ];
   for (const [basePath, manifest, label] of optionalResources) {
@@ -989,6 +1071,55 @@ async function applyWorkload(pkg) {
     const existing = await k8s('GET', `${basePath}/${name}`);
     const result = existing.ok ? await k8s('PATCH', `${basePath}/${name}`, manifest) : await k8s('POST', basePath, manifest);
     if (!result.ok) throw Object.assign(new Error(`${label} apply failed (HTTP ${result.status})`), { reason: `${label}ApplyFailed` });
+  }
+  return revision;
+}
+async function activateWorkloadRevision(pkg, revision) {
+  const path = `/api/v1/namespaces/${NS}/services`;
+  const manifest = serviceManifest(pkg, revision, { stable: true });
+  const existing = await k8s('GET', `${path}/${pkg.metadata.name}`);
+  const result = existing.ok
+    ? await k8s('PATCH', `${path}/${pkg.metadata.name}`, manifest)
+    : await k8s('POST', path, manifest);
+  if (!result.ok) {
+    throw Object.assign(new Error(`active Service cutover failed (HTTP ${result.status})`), { reason: 'ActiveServiceCutoverFailed' });
+  }
+  return revision;
+}
+function managedReleaseResource(pkg, resource) {
+  const labels = resource?.metadata?.labels || {};
+  const owners = Array.isArray(resource?.metadata?.ownerReferences) ? resource.metadata.ownerReferences : [];
+  return labels['opensphere.io/dupa-plugin'] === pkg.metadata.name
+    && owners.some((owner) => owner.apiVersion === `${GROUP}/${V}`
+      && owner.kind === 'UIPluginPackage'
+      && owner.name === pkg.metadata.name
+      && owner.uid === pkg.metadata.uid
+      && owner.controller === true);
+}
+async function garbageCollectWorkloadRevisions(pkg, keepNames = [], { removeStable = false } = {}) {
+  const keep = new Set(keepNames.map(String));
+  const selector = encodeURIComponent(`opensphere.io/dupa-plugin=${pkg.metadata.name}`);
+  const resources = [
+    ['Deployment', `/apis/apps/v1/namespaces/${NS}/deployments`],
+    ['Service', `/api/v1/namespaces/${NS}/services`],
+  ];
+  for (const [kind, base] of resources) {
+    const listed = await k8s('GET', `${base}?labelSelector=${selector}`);
+    if (!listed.ok) throw Object.assign(new Error(`${kind} revision inventory failed (HTTP ${listed.status})`), { reason: 'RevisionInventoryFailed' });
+    for (const resource of listed.json?.items || []) {
+      const resourceName = String(resource?.metadata?.name || '');
+      const revisionToken = String(resource?.metadata?.labels?.[RELEASE_REVISION_LABEL] || '');
+      const isStableService = kind === 'Service' && resourceName === pkg.metadata.name;
+      const isLegacyDeployment = kind === 'Deployment' && resourceName === pkg.metadata.name && !revisionToken;
+      const isRevision = /^[a-f0-9]{20}$/.test(revisionToken);
+      if (isStableService && !removeStable) continue;
+      if (isRevision && keep.has(resourceName)) continue;
+      if (!isRevision && !isLegacyDeployment && !isStableService) continue;
+      if (!managedReleaseResource(pkg, resource)) {
+        throw Object.assign(new Error(`refusing to delete unverified ${kind}/${resourceName}`), { reason: 'RevisionOwnershipMismatch' });
+      }
+      await deleteManagedResource(`${base}/${resourceName}`, `${kind}/${resourceName}`);
+    }
   }
 }
 async function deleteManagedResource(path, label) {
@@ -1004,8 +1135,7 @@ async function deleteManagedResource(path, label) {
 
 async function deleteWorkload(pkg) {
   const name = pkg.metadata.name;
-  await deleteManagedResource(`/apis/apps/v1/namespaces/${NS}/deployments/${name}`, `Deployment/${name}`);
-  await deleteManagedResource(`/api/v1/namespaces/${NS}/services/${name}`, `Service/${name}`);
+  await garbageCollectWorkloadRevisions(pkg, [], { removeStable: true });
   await deleteManagedResource(`/apis/policy/v1/namespaces/${NS}/poddisruptionbudgets/${name}`, `PodDisruptionBudget/${name}`);
   await deleteManagedResource(`/apis/autoscaling/v2/namespaces/${NS}/horizontalpodautoscalers/${name}`, `HorizontalPodAutoscaler/${name}`);
   await deleteManagedResource(`/apis/networking.k8s.io/v1/namespaces/${NS}/networkpolicies/${name}`, `NetworkPolicy/${name}`);
@@ -1059,10 +1189,11 @@ function moduleDependencySpecifiers(source) {
   }
   return [...specifiers];
 }
-async function verifyPlugin(pkg) {
+async function verifyPlugin(pkg, serviceName = pkg.metadata.name) {
   const name = pkg.metadata.name;
   if (!safeName(name)) return { ok: false, reason: 'InvalidPluginName' };
-  const svc = `http://${name}.${NS}.svc.cluster.local:8080`;
+  if (!safeName(serviceName)) return { ok: false, reason: 'InvalidRevisionServiceName' };
+  const svc = `http://${serviceName}.${NS}.svc.cluster.local:8080`;
   // manifest reachable
   const manifestPath = String(pkg.spec.manifest.path || '/plugins/ui-shell.manifest.json');
   let mRes;
@@ -1655,7 +1786,13 @@ let publishedPlugins = [];
 // + (b) enabled workforce CLIDownload 바인딩 서비스 id. Main Shell native os-cli는 고정 /api/cli 경로를 사용한다.
 // reconcile 끝에서 published로 계산(루프 뒤). 전이 실패 시 직전 allowlist 유지(가용성).
 let proxyAllow = new Set();
-function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}) {
+function proxyIdsForPlugin(plugin) {
+  const ids = [plugin?.id, plugin?.artifactServiceId, ...(plugin?.retainedArtifactServiceIds || [])]
+    .map((value) => String(value || ''))
+    .filter((value) => safeName(value) && !RESERVED_PROXY_SERVICE_IDS.has(value));
+  return [...new Set(ids)];
+}
+function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}, release = {}) {
   const cli = pkg.spec.contributions?.cli?.enabled === true ? {
     namespace: pkg.spec.cli?.namespace || pkg.spec.contributions.cli.namespace,
     manifestPath: pkg.spec.cli?.manifestPath || pkg.spec.contributions.cli.manifestPath,
@@ -1684,6 +1821,11 @@ function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}) 
     buildAuthority: pkg.spec.resolution?.buildAuthority || '',
     sourceRevision: pkg.spec.resolution?.revision || '',
     evidenceRefs: pkg.spec.resolution?.evidenceRefs || [],
+    artifactServiceId: String(release.artifactServiceId || ''),
+    releaseRevision: String(release.releaseRevision || ''),
+    retainedArtifactServiceIds: [...new Set((release.retainedArtifactServiceIds || [])
+      .map(String)
+      .filter((id) => safeName(id) && id !== release.artifactServiceId))],
     currentChannelDigest: channel.currentChannelDigest || reg.status?.currentChannelDigest || '',
     updateState: channel.channelState || reg.status?.channelState || 'ChannelUnavailable',
     channelCheckedAt: channel.channelCheckedAt || reg.status?.channelCheckedAt || '',
@@ -1697,13 +1839,19 @@ function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}) 
     icon: pkg.spec.nav?.icon || '',
   };
 }
-function retainableLastKnownGood(prior, pkg, reg, reason) {
+function retainableLastKnownGood(prior, pkg, reg, reason, trustedKeys = _trustedKeys || {}) {
+  const priorKeyId = String(prior?.keyId || '');
   return Boolean(
     prior
     && reg?.spec?.desiredState === 'Enabled'
-    && retryableReason(reason)
-    && prior.installedDigest === pkg?.spec?.image?.digest
-    && prior.manifestSha256 === pkg?.spec?.manifest?.sha256
+    && (reason !== 'ImageRevoked' || prior.installedDigest !== pkg?.spec?.image?.digest)
+    && priorKeyId
+    && Object.hasOwn(trustedKeys, priorKeyId)
+    && verifiedActivatedRegistration(reg)
+    && /^sha256:[a-f0-9]{64}$/.test(String(prior.installedDigest || ''))
+    && /^[a-f0-9]{64}$/.test(String(prior.manifestSha256 || ''))
+    && prior.installedDigest === reg?.status?.currentDigest
+    && prior.manifestSha256 === reg?.status?.currentManifestSha256
   );
 }
 function catalogProjectionItems(items) {
@@ -1739,7 +1887,7 @@ function applyExtensionProjection(snapshot) {
   if (!snapshot) return;
   publishedPlugins = snapshot.registry.plugins.map((plugin) => ({ ...plugin }));
   publishedPluginCount = publishedPlugins.length;
-  proxyAllow = new Set(publishedPlugins.map((plugin) => plugin.id).filter((id) => !RESERVED_PROXY_SERVICE_IDS.has(id)));
+  proxyAllow = new Set(publishedPlugins.flatMap(proxyIdsForPlugin));
 }
 async function reconcile() {
   const [pkgs, regs] = await Promise.all([listPackages(), listRegs()]);
@@ -1751,6 +1899,7 @@ async function reconcile() {
   _trustedKeys = null; // 매 reconcile마다 신뢰키 재로드
   await loadTrustedKeys();
   const published = [];
+  const activatedRevisionKeeps = [];
   const regByName = Object.fromEntries(regs.json.items.map((reg) => [reg.metadata.name, reg]));
   // Support Profile readiness is a whole-platform fact, so it is resolved at most
   // once per pass and only when a PFS plugin actually asks to be activated.
@@ -1766,6 +1915,38 @@ async function reconcile() {
     const desired = reg.spec.desiredState;
     const channelEvidence = await installedChannelStatus(pkg);
     const updateStatus = (status) => setStatus(name, { ...channelEvidence, ...status }, reg, pkg);
+    const prior = priorPublishedByName[name];
+    const retainPriorRelease = async (reason, retryable = true) => {
+      if (!retainableLastKnownGood(prior, pkg, reg, reason)) return false;
+      published.push({
+        ...prior,
+        available: true,
+        servingMode: 'LastKnownGood',
+        servingReason: reason,
+      });
+      await updateStatus({
+        phase: 'Activated',
+        reason: '',
+        retryable,
+        workloadReady: true,
+        preserveCurrentRelease: true,
+        serving: {
+          phase: 'LastKnownGood',
+          reason,
+          observedAt: new Date().toISOString(),
+          digest: String(prior.installedDigest || ''),
+          manifestSha256: String(prior.manifestSha256 || ''),
+          artifactServiceId: String(prior.artifactServiceId || ''),
+          revision: String(prior.releaseRevision || ''),
+        },
+        revalidation: {
+          phase: retryable ? 'Pending' : 'Failed',
+          reason,
+          observedAt: new Date().toISOString(),
+        },
+      });
+      return true;
+    };
     if (!pkg) { await updateStatus({ phase: 'DependencyPending', reason: 'PackageNotFound', retryable: true }); continue; }
     const stableRelease = ['Ready', 'Activated'].includes(reg.status?.phase)
       && reg.status?.currentDigest === pkg.spec.image?.digest
@@ -1789,6 +1970,7 @@ async function reconcile() {
         continue;
       }
       if (channelEvidence.channelState === 'SecurityActionRequired') {
+        if (await retainPriorRelease('ImageRevoked', false)) continue;
         await updateStatus({ phase: 'Failed', reason: 'ImageRevoked', retryable: false });
         continue;
       }
@@ -1807,6 +1989,7 @@ async function reconcile() {
         const hostReady = hostPkg?.spec.kind === 'subShell' && hostReg?.spec.desiredState === 'Enabled'
           && ['Ready', 'Activated', 'Enabled'].includes(hostReg.status?.phase);
         if (!hostReady) {
+          if (await retainPriorRelease('HostPending')) continue;
           await updateStatus({
             phase: 'DependencyPending',
             reason: 'HostPending',
@@ -1824,41 +2007,24 @@ async function reconcile() {
         }
       }
       if (!stableRelease) await updateStatus({ phase: 'Installing', reason: '' });
-      await applyWorkload(pkg);
+      const revision = await applyWorkload(pkg);
       // ready 대기 (짧게)
       let ready = false;
-      for (let i = 0; i < 30 && !ready; i++) { ready = await workloadReady(pkg.metadata.name); if (!ready) await sleep(2000); }
-      if (!ready) { await updateStatus({ phase: 'Failed', reason: 'WorkloadNotReady', retryable: true }); continue; }
+      for (let i = 0; i < 30 && !ready; i++) { ready = await workloadReady(revision.deploymentName); if (!ready) await sleep(2000); }
+      if (!ready) {
+        if (!await retainPriorRelease('WorkloadNotReady')) {
+          await updateStatus({ phase: 'Failed', reason: 'WorkloadNotReady', retryable: true });
+        }
+        continue;
+      }
 
       if (!stableRelease) await updateStatus({ phase: 'Verifying', reason: '', retryable: false });
-      const v = await verifyPlugin(pkg);
+      // Verification is performed through the immutable revision Service, not
+      // through the stable active Service. The stable selector therefore still
+      // serves the previous verified release throughout staging and verification.
+      const v = await verifyPlugin(pkg, revision.serviceName);
       if (!v.ok) {
-        const prior = priorPublishedByName[name];
-        if (retainableLastKnownGood(prior, pkg, reg, v.reason)) {
-          published.push({
-            ...prior,
-            available: true,
-            servingMode: 'LastKnownGood',
-            servingReason: v.reason,
-          });
-          await updateStatus({
-            phase: 'Activated',
-            reason: '',
-            retryable: true,
-            workloadReady: true,
-            serving: {
-              phase: 'LastKnownGood',
-              reason: v.reason,
-              observedAt: new Date().toISOString(),
-            },
-            revalidation: {
-              phase: 'Pending',
-              reason: v.reason,
-              observedAt: new Date().toISOString(),
-            },
-          });
-          continue;
-        }
+        if (await retainPriorRelease(v.reason, retryableReason(v.reason))) continue;
         // The Deployment has already converged. A trust/manifest gate failure is
         // an artifact serving failure, not a Pod health failure.
         await updateStatus({
@@ -1930,6 +2096,7 @@ async function reconcile() {
       }
 
       if (admission && !admission.activationAllowed) {
+        if (await retainPriorRelease(admission.reason)) continue;
         await updateStatus(withAdmission({
           phase: 'DependencyPending',
           reason: admission.reason,
@@ -1938,12 +2105,32 @@ async function reconcile() {
         continue;
       }
 
-      // 통과 — registry에 '승인값 전사'(§B.5): manifestSha256/keyId는 controller 계산값이 아니라 CR값
-      const manifestUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/ui-shell.manifest.json`;
-      const sigUrl = `${SHELL_API_PREFIX}/${pkg.metadata.name}/plugins/${(pkg.spec.manifest.signaturePath || 'ui-shell.manifest.json.sig').split('/').pop()}`;
-      published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence));
+      // The only mutable runtime coordinate is the stable API Service selector.
+      // Artifact URLs remain pinned to the verified revision Service, so Registry
+      // publication and Kubernetes EndpointSlice propagation cannot mix bytes.
+      await activateWorkloadRevision(pkg, revision);
+      const retainedArtifactServiceIds = prior?.artifactServiceId === revision.serviceName
+        ? (prior.retainedArtifactServiceIds || []).slice(0, 1)
+        : prior?.artifactServiceId ? [prior.artifactServiceId] : [];
+      const manifestUrl = `${SHELL_API_PREFIX}/${revision.serviceName}/plugins/ui-shell.manifest.json`;
+      const sigUrl = `${SHELL_API_PREFIX}/${revision.serviceName}/plugins/${(pkg.spec.manifest.signaturePath || 'ui-shell.manifest.json.sig').split('/').pop()}`;
+      published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence, {
+        artifactServiceId: revision.serviceName,
+        releaseRevision: revision.token,
+        retainedArtifactServiceIds,
+      }));
+      activatedRevisionKeeps.push({ pkg, keepNames: [revision.serviceName, ...retainedArtifactServiceIds] });
       if (!stableRelease) await updateStatus(withAdmission({ phase: 'Ready', reason: '', manifestUrl, retryable: false }));
-      await updateStatus(withAdmission({ phase: 'Activated', reason: '', manifestUrl, retryable: false }));
+      await updateStatus(withAdmission({
+        phase: 'Activated', reason: '', manifestUrl, retryable: false,
+        serving: {
+          phase: 'Current', reason: '', observedAt: new Date().toISOString(),
+          digest: revision.imageDigest,
+          manifestSha256: revision.manifestSha256,
+          artifactServiceId: revision.serviceName,
+          revision: revision.token,
+        },
+      }));
       if (foundationUpdateAuthorizationConsumed) {
         const consumed = await setFoundationUpgradeAuthorization(null);
         if (!consumed.ok) {
@@ -1953,7 +2140,9 @@ async function reconcile() {
       }
     } catch (e) {
       const reason = e?.reason || String(e).slice(0, 120);
-      await updateStatus({ phase: 'Failed', reason, retryable: retryableReason(reason) });
+      if (!await retainPriorRelease(reason, retryableReason(reason))) {
+        await updateStatus({ phase: 'Failed', reason, retryable: retryableReason(reason) });
+      }
     }
   }
   const nextPublishedPlugins = published.map((plugin) => ({ ...plugin, available: true }));
@@ -1976,6 +2165,14 @@ async function reconcile() {
       registrations: { items: registrationItems },
     });
     applyExtensionProjection(snapshot);
+    // Only after the shared Registry snapshot points at the new immutable
+    // artifact service may revisions older than current+previous be reclaimed.
+    // Cleanup failure cannot roll back the already committed serving pointer;
+    // it is reported and retried on the next reconcile.
+    for (const release of activatedRevisionKeeps) {
+      try { await garbageCollectWorkloadRevisions(release.pkg, release.keepNames); }
+      catch (error) { console.error('[extension-release] revision cleanup deferred:', error?.reason || error?.message || error); }
+    }
   } catch (error) {
     // Serving stays on the previous shared LKG; an update failure must not
     // publish a process-local state that other replicas cannot observe.
@@ -1986,7 +2183,7 @@ async function reconcile() {
   //   (모든 UIPluginPackage 이름이 아니라) → Failed/Disabled/미검증 package는 자동 제외(403).
   //   reconcile 성공분으로만 교체(전이 실패 시 직전 allowlist 유지 → 가용성).
   // F-3: published plugin id 중 예약된 native 서비스 id(os-cli)와 충돌하는 것도 방어적으로 제외.
-  const allow = new Set(publishedPlugins.map((p) => p.id).filter((id) => !RESERVED_PROXY_SERVICE_IDS.has(id)));
+  const allow = new Set(publishedPlugins.flatMap(proxyIdsForPlugin));
   try {
     const cds = await listCliDownloads();
     for (const cd of cds.json?.items || []) {
@@ -3723,8 +3920,10 @@ module.exports = {
   auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
   isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses,
   moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems,
-  kubernetesApiBase, packageFromInspection, deploymentManifest, pdbManifest, serviceManifest, hpaManifest,
+  kubernetesApiBase, packageFromInspection, releaseRevision, releaseAnnotations,
+  deploymentManifest, pdbManifest, serviceManifest, hpaManifest,
   networkPolicyManifest, telemetryDescriptor, publishedPluginEntry,
+  proxyIdsForPlugin, managedReleaseResource,
   retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged,
   deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled,
   requiresDomainAdmission, crossplaneProviderProjection, parseModuleImageReference, runnablePlatformManifests,
