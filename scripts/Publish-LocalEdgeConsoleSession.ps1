@@ -3,6 +3,7 @@
 param(
   [Parameter(Mandatory)][string]$PreviousConsolePublicationEvidence,
   [Parameter(Mandatory)][string]$PreviousBackendPublicationEvidence,
+  [Parameter(Mandatory)][string]$SetupSourcePath,
   [string]$SourceRevision = '',
   [switch]$UseExistingRegistryLogin
 )
@@ -127,6 +128,18 @@ if ((& kubectl config current-context).Trim() -ne 'docker-desktop') {
   throw 'Component publication is restricted to docker-desktop'
 }
 
+$setupRoot = (Resolve-Path -LiteralPath $SetupSourcePath).Path
+$setupLock = (Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'backend\opensphere-console-backend\setup-source.lock')).Trim()
+if ($setupLock -notmatch '^[a-f0-9]{40}$' -or (& git -C $setupRoot rev-parse HEAD).Trim() -ne $setupLock) {
+  throw 'SetupSourcePath must be the exact Backend setup-source.lock revision'
+}
+if (& git -C $setupRoot status --short) { throw 'SetupSourcePath must be a clean detached source' }
+if ((& git -C $setupRoot remote get-url origin).Trim() -ne 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git') {
+  throw 'SetupSourcePath must use the canonical Setup origin'
+}
+Invoke-Checked git -C $setupRoot fetch --quiet --prune origin main
+Invoke-Checked git -C $setupRoot merge-base --is-ancestor $setupLock origin/main
+
 $previousConsole = Read-Publication -Path $PreviousConsolePublicationEvidence -Component 'console'
 $previousBackend = Read-Publication -Path $PreviousBackendPublicationEvidence -Component 'backend'
 $consoleBase = [string]$previousConsole.Document.sourceRevision
@@ -185,7 +198,11 @@ $scope = [ordered]@{
 Write-Host '[scope] Console session preference two-component publication'
 Write-Host ($scope | ConvertTo-Json -Depth 6)
 
-$parameters = @{ SourceRevision = $SourceRevision; Components = @('console', 'backend') }
+$parameters = @{
+  SourceRevision = $SourceRevision
+  Components = @('console', 'backend')
+  SetupSourcePath = $setupRoot
+}
 if ($UseExistingRegistryLogin) { $parameters.UseExistingRegistryLogin = $true }
 & $publisher @parameters
 if ($LASTEXITCODE -ne 0) { throw 'Governed component build/publish failed' }
