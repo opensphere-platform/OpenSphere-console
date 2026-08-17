@@ -108,3 +108,23 @@ test('reconcile verifies the immutable revision before the stable pointer and Re
   assert.ok(persisted > published);
   assert.ok(reclaimed > persisted);
 });
+
+test('edge publisher is fixed to the two affected images and stays separate from the integrated publisher', () => {
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
+  assert.match(publisher, /\$componentNames = @\('console', 'dupaController'\)/);
+  assert.match(publisher, /affectedImages = @\(\$repositories\.console, \$repositories\.dupaController\)/);
+  assert.match(publisher, /releaseScope = 'component'/);
+  assert.match(publisher, /fullReleaseJustification = \$null/);
+  assert.doesNotMatch(publisher, /Publish-LocalEdge\.ps1|Read-Host|PromptForChoice|MessageBox/);
+});
+
+test('edge publisher builds both components before moving channel pointers', () => {
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
+  assert.match(publisher, /Console main must equal fresh origin\/main/);
+  assert.match(publisher, /worktree add --detach/);
+  const controllerDigest = publisher.indexOf('$digests.dupaController =');
+  const firstTagMove = publisher.indexOf('Set-RemoteTag -Repository', controllerDigest);
+  assert.ok(controllerDigest > 0);
+  assert.ok(firstTagMove > controllerDigest);
+  assert.match(publisher, /bothImagesBuiltBeforeChannelMove = \$true/);
+});
