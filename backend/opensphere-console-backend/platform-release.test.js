@@ -297,10 +297,14 @@ test('session preference release publishes only the Console and Backend componen
 
   assert.match(publisher, /\[Parameter\(Mandatory\)\]\[string\]\$PreviousConsolePublicationEvidence/);
   assert.match(publisher, /\[Parameter\(Mandatory\)\]\[string\]\$PreviousBackendPublicationEvidence/);
+  assert.match(publisher, /\[Parameter\(Mandatory\)\]\[string\]\$SetupSourcePath/);
   assert.match(publisher, /\$components = @\('backend', 'console'\)/);
   assert.match(publisher, /Components = @\('console', 'backend'\)/);
   assert.match(publisher, /branch --show-current[\s\S]*-ne 'main'/);
   assert.match(publisher, /rev-parse origin\/main[\s\S]*-ne \$SourceRevision/);
+  assert.match(publisher, /SetupSourcePath must be the exact Backend setup-source\.lock revision/);
+  assert.match(publisher, /merge-base --is-ancestor \$setupLock origin\/main/);
+  assert.match(publisher, /SetupSourcePath = \$setupRoot/);
   assert.match(publisher, /src\/app\/core\/auth\.service\.ts/);
   assert.match(publisher, /backend\/opensphere-console-backend\/browser-session\.js/);
   assert.match(publisher, /Installation lock .* differs from supplied publication evidence/);
