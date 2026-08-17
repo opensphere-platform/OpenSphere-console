@@ -52,6 +52,7 @@ COPY opensphere-console-backend/server.js ./server.js
 COPY opensphere-console-backend/supabase-auth.js ./supabase-auth.js
 COPY opensphere-console-backend/cli-token-policy.js ./cli-token-policy.js
 COPY opensphere-console-backend/browser-session.js ./browser-session.js
+COPY opensphere-console-backend/profile-avatar.js ./profile-avatar.js
 COPY opensphere-console-backend/plugin-proxy-auth.js ./plugin-proxy-auth.js
 COPY opensphere-console-backend/r2d2-proxy-auth.js ./r2d2-proxy-auth.js
 COPY opensphere-console-backend/os-shell-contract.js ./os-shell-contract.js

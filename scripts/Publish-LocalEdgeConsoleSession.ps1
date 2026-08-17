@@ -16,24 +16,30 @@ $publisher = Join-Path $PSScriptRoot 'Publish-LocalEdge.ps1'
 $registry = 'ghcr.io/opensphere-platform'
 $components = @('backend', 'console')
 $featurePaths = @(
+  'backend/opensphere-console-backend/Dockerfile',
   'backend/opensphere-console-backend/browser-session.js',
   'backend/opensphere-console-backend/browser-session.test.js',
   'backend/opensphere-console-backend/mfa-assurance.test.js',
-  'backend/opensphere-console-backend/platform-release.test.js',
+  'backend/opensphere-console-backend/profile-avatar.js',
+  'backend/opensphere-console-backend/profile-avatar.test.js',
   'backend/opensphere-console-backend/server.js',
+  'package.json',
   'scripts/Publish-LocalEdgeConsoleSession.ps1',
   'src/app/core/auth.service.ts',
-  'src/app/pages/login.ts',
+  'src/app/os/os-shell.ts',
   'src/app/pages/my-info.ts'
 )
 $consoleImageInputs = @(
+  'package.json',
   'scripts/Publish-LocalEdgeConsoleSession.ps1',
   'src/app/core/auth.service.ts',
-  'src/app/pages/login.ts',
+  'src/app/os/os-shell.ts',
   'src/app/pages/my-info.ts'
 )
 $backendImageInputs = @(
+  'backend/opensphere-console-backend/Dockerfile',
   'backend/opensphere-console-backend/browser-session.js',
+  'backend/opensphere-console-backend/profile-avatar.js',
   'backend/opensphere-console-backend/server.js'
 )
 
@@ -163,7 +169,7 @@ foreach ($publication in @($previousConsole.Document, $previousBackend.Document)
   if ((Get-CanonicalTextSha256 -Path $migrationPath) -ne [string]$prior.sha256 -or
       [string]$migration.setDigest -ne [string]$prior.setDigest -or
       [string]$migration.latestMigrationId -ne [string]$prior.latestMigrationId) {
-    throw 'Session preference component release must not change the Supabase migration lineage'
+    throw 'Profile preference component release must not change the Supabase migration lineage'
   }
 }
 
@@ -195,7 +201,7 @@ $scope = [ordered]@{
   comparisonBase = [ordered]@{ console = $consoleBase; backend = $backendBase }
   targetRevision = $SourceRevision
 }
-Write-Host '[scope] Console session preference two-component publication'
+Write-Host '[scope] Console account-preference two-component publication'
 Write-Host ($scope | ConvertTo-Json -Depth 6)
 
 $parameters = @{
@@ -228,6 +234,6 @@ if ((Get-RemoteDigest -Reference "$registry/opensphere-console:edge") -ne $conso
 }
 $scopePath = Join-Path $workspace 'opensphere-local-console-session-scope.json'
 $scope | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $scopePath -Encoding utf8
-Write-Host '[success] Console session preference component publication completed'
+Write-Host '[success] Console account-preference component publication completed'
 Write-Host "[publication] $publicationPath"
 Write-Host "[scope] $scopePath"

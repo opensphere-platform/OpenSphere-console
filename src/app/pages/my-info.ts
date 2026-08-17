@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
-import { AuthService, SessionDuration, TotpEnrollment } from '../core/auth.service';
+import { AuthService, LinkedAvatarAccount, SessionDuration, TotpEnrollment } from '../core/auth.service';
 import { HttpService } from '../core/http.service';
 import { PerspectiveService } from '../core/perspective.service';
 import { OsPanel } from '../os/os-panel';
@@ -145,6 +145,38 @@ interface AuditEvent {
 
               <section>
                 <h2>사용자 기본 설정</h2>
+                <div class="avatar-preference">
+                  <div class="avatar-preview" aria-label="현재 프로필 사진">
+                    @if (auth.avatarUrl()) {
+                      <img [src]="auth.avatarUrl()" alt="" referrerpolicy="no-referrer" (error)="auth.avatarImageFailed(auth.avatarUrl())" />
+                    } @else {
+                      <span>{{ avatarInitial() }}</span>
+                    }
+                  </div>
+                  <div class="avatar-controls">
+                    <strong>프로필 사진</strong>
+                    <span class="avatar-source">{{ avatarSourceLabel() }}</span>
+                    <div class="avatar-actions">
+                      <input #avatarInput class="avatar-file" type="file" accept="image/png,image/jpeg,image/webp" (change)="changeAvatar($event)" />
+                      <button class="btn btn-sm btn-outline" type="button" (click)="avatarInput.click()" [disabled]="busy()">사진 변경</button>
+                      <button class="btn btn-sm btn-link" type="button" (click)="useInitialAvatar()" [disabled]="busy() || auth.profileAvatar().current.source === 'initial'">이니셜 사용</button>
+                    </div>
+                    <small>정사각형으로 자동 조정됩니다. PNG, JPEG, WebP · 최대 8MB</small>
+                  </div>
+                </div>
+                @if (auth.profileAvatar().linkedAccounts.length) {
+                  <div class="linked-avatars" aria-label="연결된 계정의 프로필 사진">
+                    <span class="linked-label">연결된 계정 사진</span>
+                    @for (account of auth.profileAvatar().linkedAccounts; track account.provider + ':' + account.url) {
+                      <button type="button" class="linked-avatar" (click)="selectLinkedAvatar(account)" [disabled]="busy() || linkedAvatarSelected(account)" [title]="avatarProviderLabel(account.provider) + ' 계정 사진 사용'">
+                        <img [src]="account.url" alt="" referrerpolicy="no-referrer" />
+                        <span>{{ avatarProviderLabel(account.provider) }}</span>
+                      </button>
+                    }
+                  </div>
+                } @else {
+                  <p class="avatar-empty">프로필 사진을 제공하는 연결 계정이 없습니다. 직접 사진을 올릴 수 있습니다.</p>
+                }
                 <dl class="kv-list">
                   <div><dt>시간대</dt><dd>{{ timeZone }}</dd></div>
                   <div><dt>기본 언어</dt><dd>{{ language }}</dd></div>
@@ -413,9 +445,15 @@ interface AuditEvent {
                 <label for="session-persistence">로그인 유지 시간</label>
                 <select id="session-persistence" name="session-persistence" [(ngModel)]="sessionDurationDraft" [disabled]="busy()">
                   <option value="browser">브라우저를 닫을 때까지</option>
+                  <option value="1h">1시간</option>
+                  <option value="4h">4시간</option>
                   <option value="8h">8시간</option>
+                  <option value="12h">12시간</option>
                   <option value="24h">24시간 · 권장</option>
+                  <option value="3d">3일 · 개인 장치</option>
                   <option value="7d">7일 · 신뢰하는 개인 장치</option>
+                  <option value="14d">14일 · 신뢰하는 개인 장치</option>
+                  <option value="30d">30일 · 장기 사용 개인 장치</option>
                 </select>
                 <button class="btn btn-sm btn-primary" type="submit" [disabled]="busy() || sessionDurationDraft === auth.sessionDurationPreference()">설정 저장</button>
               </form>
@@ -602,6 +640,22 @@ interface AuditEvent {
       .kv-list dt { font-size: 0.68rem; font-weight: 600; color: var(--os-ink); }
       .kv-list dd { margin: 0; font-size: 0.7rem; color: var(--os-ink); }
       .kv-list.compact { max-width: 34rem; }
+      .avatar-preference { display: flex; align-items: center; gap: .85rem; margin: .3rem 0 .65rem; }
+      .avatar-preview { display: grid; place-items: center; flex: 0 0 auto; width: 4rem; height: 4rem; border-radius: .55rem; overflow: hidden; color: #fff; font-size: 1.35rem; font-weight: 650; background: linear-gradient(135deg, #6e3ff4, #8a3ffc 48%, #bb6bd9); }
+      .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+      .avatar-controls { display: grid; gap: .18rem; min-width: 0; }
+      .avatar-controls strong { font-size: .72rem; }
+      .avatar-controls small, .avatar-source, .avatar-empty { color: var(--os-muted); font-size: .63rem; line-height: 1.4; }
+      .avatar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; }
+      .avatar-actions .btn { margin: 0; }
+      .avatar-file { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+      .linked-avatars { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; margin: 0 0 .55rem; }
+      .linked-label { flex-basis: 100%; color: var(--os-muted); font-size: .63rem; }
+      .linked-avatar { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .45rem .25rem .25rem; border: 1px solid var(--os-hairline); border-radius: .3rem; background: var(--os-surface-0); color: var(--os-ink); font-size: .64rem; cursor: pointer; }
+      .linked-avatar:hover:not(:disabled) { border-color: var(--os-accent); }
+      .linked-avatar:disabled { opacity: .62; cursor: default; }
+      .linked-avatar img { width: 1.55rem; height: 1.55rem; border-radius: .22rem; object-fit: cover; }
+      .avatar-empty { margin: 0 0 .65rem; }
       .security-list { max-width: 58rem; }
       .session-preference { display: grid; grid-template-columns: minmax(8rem, 12rem) minmax(14rem, 22rem) auto; align-items: center; gap: .6rem; max-width: 52rem; margin: .65rem 0 .35rem; }
       .session-preference label { font-size: .7rem; font-weight: 600; }
@@ -709,6 +763,7 @@ export class MyInfo {
   tokenSearchText = '';
   readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '—';
   readonly language = navigator.language || '—';
+  readonly avatarInitial = computed(() => (this.auth.user()?.trim()?.[0] ?? '?').toUpperCase());
 
   readonly expText = computed(() => {
     const exp = this.auth.tokenExp();
@@ -763,7 +818,7 @@ export class MyInfo {
   }
 
   async refresh(): Promise<void> {
-    await Promise.all([this.loadIdentity(), this.loadCredentials(), this.auth.loadBrowserSessions(), this.auth.loadSessionEvents(), this.loadSessionPreference(), this.loadAuthPolicy(), this.loadActivity()]);
+    await Promise.all([this.loadIdentity(), this.loadCredentials(), this.auth.loadProfileAvatar(), this.auth.loadBrowserSessions(), this.auth.loadSessionEvents(), this.loadSessionPreference(), this.loadAuthPolicy(), this.loadActivity()]);
   }
 
   private async loadSessionPreference(): Promise<void> {
@@ -792,8 +847,14 @@ export class MyInfo {
   sessionPreferenceHelp(value: SessionDuration): string {
     switch (value) {
       case 'browser': return '공용 장치에 적합하며, 세션 쿠키를 영구 저장하지 않습니다.';
-      case '8h': return '짧은 운영 교대나 공용 관리 장치에 적합합니다.';
-      case '7d': return '신뢰하는 개인 장치에서만 사용하고, 분실 시 자격 증명 탭에서 세션을 종료하세요.';
+      case '1h': return '일회성 점검이나 짧은 지원 작업에 적합합니다.';
+      case '4h': return '반일 이내의 관리 작업이나 공용 운영 장치에 적합합니다.';
+      case '8h': return '한 번의 운영 교대에 적합합니다.';
+      case '12h': return '긴 운영 교대나 하루 중 연속 작업에 적합합니다.';
+      case '3d': return '주말을 넘기지 않는 개인 장치 작업에 적합합니다.';
+      case '7d':
+      case '14d':
+      case '30d': return '신뢰하는 개인 장치에서만 사용하고, 분실 시 자격 증명 탭에서 세션을 종료하세요.';
       default: return '일반적인 개인 운영 장치에 권장하는 기본값입니다.';
     }
   }
@@ -883,9 +944,109 @@ export class MyInfo {
   persistenceLabel(value: string): string {
     switch (value) {
       case 'browser': return '브라우저 종료 시';
+      case '1h': return '1시간';
+      case '4h': return '4시간';
+      case '8h': return '8시간';
+      case '12h': return '12시간';
       case '24h': return '24시간';
+      case '3d': return '3일';
       case '7d': return '7일';
-      default: return '8시간';
+      case '14d': return '14일';
+      case '30d': return '30일';
+      default: return '24시간';
+    }
+  }
+
+  avatarSourceLabel(): string {
+    const current = this.auth.profileAvatar().current;
+    if (current.source === 'upload') return '직접 올린 사진';
+    if (current.source === 'linked') return `${this.avatarProviderLabel(current.provider || '')} 연결 계정`;
+    return '기본 이니셜';
+  }
+
+  avatarProviderLabel(provider: string): string {
+    const known: Record<string, string> = { github: 'GitHub', google: 'Google', azure: 'Microsoft', keycloak: 'Keycloak' };
+    return known[provider] || provider;
+  }
+
+  linkedAvatarSelected(account: LinkedAvatarAccount): boolean {
+    const current = this.auth.profileAvatar().current;
+    return current.source === 'linked' && current.provider === account.provider && current.url === account.url;
+  }
+
+  async selectLinkedAvatar(account: LinkedAvatarAccount): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
+    try {
+      await this.auth.selectLinkedAvatar(account);
+      this.message.set({ type: 'success', text: `${this.avatarProviderLabel(account.provider)} 연결 계정 사진을 적용했습니다.` });
+    } catch (error) {
+      this.message.set({ type: 'danger', text: `연결 계정 사진 적용 실패: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  async useInitialAvatar(): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
+    try {
+      await this.auth.useInitialAvatar();
+      this.message.set({ type: 'success', text: '프로필 사진을 기본 이니셜로 변경했습니다.' });
+    } catch (error) {
+      this.message.set({ type: 'danger', text: `프로필 사진 초기화 실패: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  async changeAvatar(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || this.busy()) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) {
+      this.message.set({ type: 'danger', text: 'PNG, JPEG, WebP 사진만 선택할 수 있으며 원본은 8MB 이하여야 합니다.' });
+      return;
+    }
+    this.busy.set(true);
+    try {
+      const dataBase64 = await this.squareAvatarBase64(file);
+      await this.auth.uploadProfileAvatar('image/webp', dataBase64);
+      this.message.set({ type: 'success', text: '새 프로필 사진을 저장했습니다.' });
+    } catch (error) {
+      this.message.set({ type: 'danger', text: `프로필 사진 저장 실패: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  private async squareAvatarBase64(file: File): Promise<string> {
+    const image = await createImageBitmap(file);
+    try {
+      if (!image.width || !image.height || image.width > 12000 || image.height > 12000) throw new Error('사진 크기가 올바르지 않습니다.');
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('브라우저가 사진 편집을 지원하지 않습니다.');
+      const crop = Math.min(image.width, image.height);
+      context.drawImage(image, (image.width - crop) / 2, (image.height - crop) / 2, crop, crop, 0, 0, size, size);
+      let blob: Blob | null = null;
+      for (const quality of [.86, .72, .58]) {
+        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', quality));
+        if (blob && blob.size <= 160 * 1024) break;
+      }
+      if (!blob || blob.type !== 'image/webp' || blob.size > 160 * 1024) throw new Error('사진을 안전한 크기로 변환하지 못했습니다.');
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('사진을 읽지 못했습니다.'));
+        reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+        reader.readAsDataURL(blob);
+      });
+    } finally {
+      image.close();
     }
   }
 

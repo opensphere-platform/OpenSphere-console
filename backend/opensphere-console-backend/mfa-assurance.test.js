@@ -16,6 +16,8 @@ const login = fs.readFileSync(path.join(root, 'src/app/pages/login.ts'), 'utf8')
 const nginx = fs.readFileSync(path.join(root, 'nginx/default.conf.template'), 'utf8');
 const setup = fs.readFileSync(path.join(root, 'src/app/pages/initial-setup.ts'), 'utf8');
 const myInfo = fs.readFileSync(path.join(root, 'src/app/pages/my-info.ts'), 'utf8');
+const osShell = fs.readFileSync(path.join(root, 'src/app/os/os-shell.ts'), 'utf8');
+const profileAvatar = fs.readFileSync(path.join(__dirname, 'profile-avatar.js'), 'utf8');
 const consoleAdmins = fs.readFileSync(path.join(root, 'src/app/pages/console-admins.ts'), 'utf8');
 const recoveryPage = fs.readFileSync(path.join(root, 'src/app/pages/password-recovery.ts'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'src/app/app.ts'), 'utf8');
@@ -145,11 +147,33 @@ test('login stays an authentication surface while account security owns future s
   assert.doesNotMatch(login, /name="session-duration"|\[\(ngModel\)\]="duration"/);
   assert.match(login, /내 프로필의 보안 설정에 저장된 로그인 유지 정책/);
   assert.match(myInfo, /id="session-persistence"/);
+  for (const option of ['browser', '1h', '4h', '8h', '12h', '24h', '3d', '7d', '14d', '30d']) {
+    assert.match(myInfo, new RegExp(`<option value="${option}">`));
+  }
+  assert.match(authService, /SESSION_DURATIONS[\s\S]*'browser', '1h', '4h', '8h', '12h', '24h', '3d', '7d', '14d', '30d'/);
   assert.match(myInfo, /다음 로그인부터 모든 브라우저에 같은 정책/);
   assert.match(authService, /\/api\/identity\/session\/preference/);
   assert.doesNotMatch(authService, /opensphere\.session\.duration|localStorage\.setItem\(SESSION_DURATION/);
   assert.match(backend, /p === '\/api\/identity\/session\/preference' && req\.method === 'PUT'/);
   assert.match(browserSession, /sessionPersistenceFromUser\(session\.user\)/);
+});
+
+test('profile settings own a private upload and exact linked-account avatar projection', () => {
+  assert.match(backend, /p === '\/api\/identity\/profile\/avatar' && req\.method === 'GET'/);
+  assert.match(backend, /p === '\/api\/identity\/profile\/avatar\/upload' && req\.method === 'POST'/);
+  assert.match(backend, /p === '\/api\/identity\/profile\/avatar\/content' && req\.method === 'GET'/);
+  assert.match(profileAvatar, /const AVATAR_BUCKET = 'console-uploads'/);
+  assert.match(profileAvatar, /parsed\.protocol !== 'https:' \|\| parsed\.username \|\| parsed\.password/);
+  assert.match(profileAvatar, /avatar selection is not a currently linked account/);
+  assert.match(profileAvatar, /const AVATAR_MAX_BYTES = 160 \* 1024/);
+  assert.match(authService, /loadProfileAvatar/);
+  assert.match(authService, /selectLinkedAvatar/);
+  assert.match(authService, /uploadProfileAvatar/);
+  assert.match(myInfo, /프로필 사진을 제공하는 연결 계정/);
+  assert.match(myInfo, /accept="image\/png,image\/jpeg,image\/webp"/);
+  assert.match(myInfo, /squareAvatarBase64/);
+  assert.match(osShell, /auth\.avatarUrl\(\)/);
+  assert.match(osShell, /referrerpolicy="no-referrer"/);
 });
 
 test('browser admin requests resolve the HttpOnly session at the Console enforcement point', () => {
