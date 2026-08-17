@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createBrowserSessionManager, sha256 } = require('./browser-session');
+const { createBrowserSessionManager, normalizeSessionPersistence, sha256 } = require('./browser-session');
 
 function harness({ verifiedFactor = false, operatorStatus = 'active', sessionPersistence = '24h' } = {}) {
   let row = null;
@@ -186,6 +186,16 @@ test('uses a 24-hour default without removing shorter or trusted-device choices'
   assert.equal(created.session.persistence, '24h');
   assert.equal(created.session.idleExpiresAt, '2026-07-27T12:00:00.000Z');
   assert.equal(created.session.absoluteExpiresAt, '2026-07-28T00:00:00.000Z');
+});
+
+test('accepts the exact expanded session-duration policy set and rejects unsupported values', () => {
+  const supported = ['browser', '1h', '4h', '8h', '12h', '24h', '3d', '7d', '14d', '30d'];
+  assert.deepEqual(supported.map(normalizeSessionPersistence), supported);
+  for (const invalid of ['', '2h', '2d', '60d', 'forever', null, undefined]) {
+    assert.throws(() => normalizeSessionPersistence(invalid), (error) => (
+      error.code === 400 && error.msg === 'unsupported session duration'
+    ));
+  }
 });
 
 test('applies the Supabase account preference and ignores a legacy login-form override', async () => {

@@ -93,7 +93,11 @@ interface NavTreeRoot {
           <!-- ACC식 계정 영역: 아바타 → Account profile / Log out (프로필 전용) -->
           <clr-dropdown class="os-account">
             <button class="os-avatar" clrDropdownTrigger [title]="auth.user()" aria-label="계정 메뉴">
-              <span class="os-avatar-badge">{{ initial() }}</span>
+              @if (auth.avatarUrl()) {
+                <img class="os-avatar-image" [src]="auth.avatarUrl()" alt="" referrerpolicy="no-referrer" (error)="auth.avatarImageFailed(auth.avatarUrl())" />
+              } @else {
+                <span class="os-avatar-badge">{{ initial() }}</span>
+              }
             </button>
             <clr-dropdown-menu *clrIfOpen clrPosition="bottom-right">
               <div class="os-account-id">{{ auth.user() }}</div>
@@ -285,6 +289,10 @@ interface NavTreeRoot {
         background:
           radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.35), transparent 28%),
           linear-gradient(135deg, #6e3ff4, #8a3ffc 48%, #bb6bd9);
+      }
+      .os-avatar-image {
+        display: block; width: 28px; height: 28px; border-radius: 4px;
+        object-fit: cover; background: var(--os-surface-1);
       }
       .os-account-id {
         padding: 0.5rem 1rem; max-width: 16rem;

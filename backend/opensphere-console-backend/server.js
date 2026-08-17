@@ -17,6 +17,15 @@ const {
   normalizeSessionPersistence,
   sessionPersistenceFromUser,
 } = require('./browser-session');
+const {
+  AVATAR_BUCKET,
+  AVATAR_MAX_BYTES,
+  AVATAR_METADATA_KEY,
+  avatarObjectPath,
+  avatarProjection,
+  validateAvatarSelection,
+  validateAvatarUpload,
+} = require('./profile-avatar');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
 const { createOsShellAdmissionIssuer } = require('./os-shell-admission');
@@ -3343,6 +3352,119 @@ async function updateSessionPreference(actor, body) {
   return sessionPreferenceProjection(updated);
 }
 
+function avatarStorageUrl(subject) {
+  const encodedPath = avatarObjectPath(subject).split('/').map((value) => encodeURIComponent(value)).join('/');
+  return `${SUPABASE_STORAGE_URL.replace(/\/$/, '')}/object/${AVATAR_BUCKET}/${encodedPath}`;
+}
+
+function avatarStorageHeaders(contentType = '') {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    accept: 'application/json',
+    ...(contentType ? { 'content-type': contentType } : {}),
+  };
+}
+
+async function avatarStorageRequest(subject, { method = 'GET', bytes = undefined, contentType = '' } = {}) {
+  if (!SUPABASE_SERVICE_ROLE_KEY) throw { code: 503, msg: 'avatar storage credential is unavailable' };
+  let response;
+  try {
+    response = await fetch(avatarStorageUrl(subject), {
+      method,
+      headers: {
+        ...avatarStorageHeaders(contentType),
+        ...(method === 'POST' ? { 'x-upsert': 'true' } : {}),
+      },
+      body: bytes,
+      signal: AbortSignal.timeout(SUPABASE_TIMEOUT_MS),
+    });
+  } catch {
+    throw { code: 503, msg: 'avatar storage is unavailable' };
+  }
+  if (method === 'DELETE' && response.status === 404) return null;
+  if (!response.ok) {
+    await response.arrayBuffer().catch(() => undefined);
+    throw { code: response.status >= 500 ? 503 : response.status, msg: 'avatar storage request failed' };
+  }
+  return response;
+}
+
+async function updateAvatarMetadata(subject, current, avatarMetadata) {
+  const existingMetadata = current.user_metadata && typeof current.user_metadata === 'object'
+    && !Array.isArray(current.user_metadata) ? current.user_metadata : {};
+  const nextMetadata = { ...existingMetadata };
+  if (avatarMetadata) nextMetadata[AVATAR_METADATA_KEY] = avatarMetadata;
+  else delete nextMetadata[AVATAR_METADATA_KEY];
+  const updated = await authAdminRequest(`/admin/users/${subject}`, {
+    method: 'PUT',
+    body: { user_metadata: nextMetadata },
+  });
+  if (!updated?.id || updated.id !== subject) throw { code: 503, msg: 'avatar preference update was not confirmed' };
+  return updated;
+}
+
+async function readProfileAvatar(actor) {
+  const user = await getAuthUser(actor.sub);
+  if (!user) throw { code: 503, msg: 'Supabase account avatar is unavailable' };
+  return avatarProjection(user);
+}
+
+async function updateProfileAvatar(actor, body) {
+  const current = await getAuthUser(actor.sub);
+  if (!current) throw { code: 503, msg: 'Supabase account avatar is unavailable' };
+  const before = avatarProjection(current);
+  const selected = validateAvatarSelection(body, before.linkedAccounts);
+  const updated = await updateAvatarMetadata(actor.sub, current, selected);
+  if (before.current.source === 'upload') {
+    await avatarStorageRequest(actor.sub, { method: 'DELETE' }).catch(() => undefined);
+  }
+  return avatarProjection(updated);
+}
+
+async function uploadProfileAvatar(actor, body) {
+  const current = await getAuthUser(actor.sub);
+  if (!current) throw { code: 503, msg: 'Supabase account avatar is unavailable' };
+  const upload = validateAvatarUpload(body);
+  await avatarStorageRequest(actor.sub, { method: 'POST', bytes: upload.bytes, contentType: upload.contentType });
+  try {
+    const updated = await updateAvatarMetadata(actor.sub, current, {
+      source: 'upload',
+      digest: upload.digest,
+      contentType: upload.contentType,
+    });
+    return avatarProjection(updated);
+  } catch (error) {
+    await avatarStorageRequest(actor.sub, { method: 'DELETE' }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function readProfileAvatarContent(actor) {
+  const user = await getAuthUser(actor.sub);
+  if (!user) throw { code: 503, msg: 'Supabase account avatar is unavailable' };
+  const profile = avatarProjection(user);
+  if (profile.current.source !== 'upload') throw { code: 404, msg: 'uploaded avatar is not selected' };
+  const response = await avatarStorageRequest(actor.sub);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > AVATAR_MAX_BYTES) throw { code: 502, msg: 'stored avatar size is invalid' };
+  const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  if (digest !== profile.current.digest) throw { code: 502, msg: 'stored avatar digest is invalid' };
+  return { bytes, ...profile.current };
+}
+
+function writeProfileAvatarContent(res, content) {
+  const etag = `\"${String(content.digest).slice('sha256:'.length)}\"`;
+  res.writeHead(200, {
+    'content-type': content.contentType,
+    'content-length': String(content.bytes.length),
+    'cache-control': 'private, max-age=300, must-revalidate',
+    'x-content-type-options': 'nosniff',
+    etag,
+  });
+  res.end(content.bytes);
+}
+
 async function createAuthUser(email, displayName, options = {}) {
   const emailOnly = String(email || '').trim().toLowerCase();
   if (!emailOnly || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailOnly)) {
@@ -4367,6 +4489,34 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, await updateSessionPreference(await verifyAuthed(req), await readBody(req)));
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'Session preference update failed' });
+      }
+    }
+    if (p === '/api/identity/profile/avatar' && req.method === 'GET') {
+      try {
+        return json(res, 200, await readProfileAvatar(await verifyAuthed(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Profile avatar unavailable' });
+      }
+    }
+    if (p === '/api/identity/profile/avatar' && req.method === 'PUT') {
+      try {
+        return json(res, 200, await updateProfileAvatar(await verifyAuthed(req), await readBody(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Profile avatar update failed' });
+      }
+    }
+    if (p === '/api/identity/profile/avatar/upload' && req.method === 'POST') {
+      try {
+        return json(res, 200, await uploadProfileAvatar(await verifyAuthed(req), await readBody(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Profile avatar upload failed' });
+      }
+    }
+    if (p === '/api/identity/profile/avatar/content' && req.method === 'GET') {
+      try {
+        return writeProfileAvatarContent(res, await readProfileAvatarContent(await verifyAuthed(req)));
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Profile avatar content unavailable' });
       }
     }
     if (p === '/api/identity/session/login' && req.method === 'POST') {

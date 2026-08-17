@@ -18,7 +18,21 @@ interface StepUpRequest {
   reject: (reason: Error) => void;
 }
 
-export type SessionDuration = 'browser' | '8h' | '24h' | '7d';
+export type SessionDuration =
+  | 'browser'
+  | '1h'
+  | '4h'
+  | '8h'
+  | '12h'
+  | '24h'
+  | '3d'
+  | '7d'
+  | '14d'
+  | '30d';
+
+const SESSION_DURATIONS: readonly SessionDuration[] = [
+  'browser', '1h', '4h', '8h', '12h', '24h', '3d', '7d', '14d', '30d',
+];
 
 export interface SessionPreference {
   duration: SessionDuration;
@@ -26,6 +40,29 @@ export interface SessionPreference {
   idleTimeoutHours: number;
   appliesTo: 'next-login';
 }
+
+export interface LinkedAvatarAccount {
+  provider: string;
+  url: string;
+}
+
+export interface ProfileAvatar {
+  source: 'initial' | 'linked' | 'upload';
+  provider: string | null;
+  url: string | null;
+  digest: string | null;
+  contentType: string | null;
+}
+
+export interface ProfileAvatarProjection {
+  current: ProfileAvatar;
+  linkedAccounts: LinkedAvatarAccount[];
+}
+
+const INITIAL_AVATAR: ProfileAvatarProjection = {
+  current: { source: 'initial', provider: null, url: null, digest: null, contentType: null },
+  linkedAccounts: [],
+};
 
 export interface BrowserSession {
   id: string;
@@ -88,6 +125,8 @@ export class AuthService {
   readonly currentSession = signal<BrowserSession | null>(null);
   readonly browserSessions = signal<BrowserSession[]>([]);
   readonly sessionDurationPreference = signal<SessionDuration>(DEFAULT_SESSION_DURATION);
+  readonly profileAvatar = signal<ProfileAvatarProjection>(INITIAL_AVATAR);
+  readonly avatarUrl = signal('');
   readonly mfaRequired = signal(false);
   readonly mfaEnrollmentRequired = signal(false);
   readonly passwordRecoveryState = signal<'idle' | 'ready' | 'completed' | 'error'>('idle');
@@ -391,6 +430,46 @@ export class AuthService {
     return preference;
   }
 
+  async loadProfileAvatar(): Promise<ProfileAvatarProjection> {
+    const profile = this.parseProfileAvatar(await this.api<ProfileAvatarProjection>(
+      '/api/identity/profile/avatar',
+      { cache: 'no-store' },
+    ));
+    this.applyProfileAvatar(profile);
+    return profile;
+  }
+
+  async selectLinkedAvatar(account: LinkedAvatarAccount): Promise<ProfileAvatarProjection> {
+    const profile = this.parseProfileAvatar(await this.api<ProfileAvatarProjection>('/api/identity/profile/avatar', {
+      method: 'PUT',
+      body: JSON.stringify({ source: 'linked', provider: account.provider, url: account.url }),
+    }));
+    this.applyProfileAvatar(profile);
+    return profile;
+  }
+
+  async useInitialAvatar(): Promise<ProfileAvatarProjection> {
+    const profile = this.parseProfileAvatar(await this.api<ProfileAvatarProjection>('/api/identity/profile/avatar', {
+      method: 'PUT',
+      body: JSON.stringify({ source: 'initial' }),
+    }));
+    this.applyProfileAvatar(profile);
+    return profile;
+  }
+
+  async uploadProfileAvatar(contentType: 'image/webp' | 'image/png' | 'image/jpeg', dataBase64: string): Promise<ProfileAvatarProjection> {
+    const profile = this.parseProfileAvatar(await this.api<ProfileAvatarProjection>('/api/identity/profile/avatar/upload', {
+      method: 'POST',
+      body: JSON.stringify({ contentType, dataBase64 }),
+    }));
+    this.applyProfileAvatar(profile);
+    return profile;
+  }
+
+  avatarImageFailed(url: string): void {
+    if (this.avatarUrl() === url) this.avatarUrl.set('');
+  }
+
   async revokeBrowserSession(id: string): Promise<void> {
     await this.api(`/api/identity/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (this.currentSession()?.id === id) {
@@ -591,6 +670,10 @@ export class AuthService {
     this.authorityWarning.set(body.authorityDegraded ? 'Supabase authorization state unavailable; cached read-only session is active.' : '');
     this.tokenExp.set(this.epoch(body.session?.absoluteExpiresAt));
     this.idleExp.set(this.epoch(body.session?.idleExpiresAt));
+    await this.loadProfileAvatar().catch(() => {
+      this.profileAvatar.set(INITIAL_AVATAR);
+      this.avatarUrl.set('');
+    });
   }
 
   private registerActivityHeartbeat(): void {
@@ -675,6 +758,8 @@ export class AuthService {
     this.assurance.set('aal1');
     this.currentSession.set(null);
     this.browserSessions.set([]);
+    this.profileAvatar.set(INITIAL_AVATAR);
+    this.avatarUrl.set('');
     this.mfaRequired.set(false);
     this.mfaEnrollmentRequired.set(false);
     this.stepUpRequired.set(false);
@@ -688,7 +773,7 @@ export class AuthService {
   }
 
   private normalizeDuration(value: unknown): SessionDuration {
-    return ['browser', '8h', '24h', '7d'].includes(String(value))
+    return SESSION_DURATIONS.includes(String(value) as SessionDuration)
       ? String(value) as SessionDuration
       : DEFAULT_SESSION_DURATION;
   }
@@ -701,6 +786,51 @@ export class AuthService {
       throw new Error('서버의 로그인 세션 설정 응답이 올바르지 않습니다.');
     }
     return { duration, defaultDuration, idleTimeoutHours: 12, appliesTo: 'next-login' };
+  }
+
+  private parseProfileAvatar(value: ProfileAvatarProjection): ProfileAvatarProjection {
+    const linkedAccounts = Array.isArray(value?.linkedAccounts)
+      ? value.linkedAccounts.map((candidate) => ({
+        provider: String(candidate?.provider || ''),
+        url: this.safeAvatarUrl(candidate?.url, 'linked'),
+      })).filter((candidate) => /^[a-z0-9][a-z0-9._-]{0,31}$/.test(candidate.provider) && Boolean(candidate.url)).slice(0, 8)
+      : [];
+    const source = value?.current?.source;
+    const provider = value?.current?.provider === null ? null : String(value?.current?.provider || '');
+    const url = this.safeAvatarUrl(value?.current?.url, source);
+    const digest = value?.current?.digest === null ? null : String(value?.current?.digest || '');
+    const contentType = value?.current?.contentType === null ? null : String(value?.current?.contentType || '');
+    if (source === 'initial' && provider === null && !url && digest === null && contentType === null) {
+      return { current: { source, provider, url: null, digest, contentType }, linkedAccounts };
+    }
+    if (source === 'linked' && provider && url && digest === null && contentType === null
+      && linkedAccounts.some((candidate) => candidate.provider === provider && candidate.url === url)) {
+      return { current: { source, provider, url, digest, contentType }, linkedAccounts };
+    }
+    if (source === 'upload' && provider === null && url.startsWith('/api/identity/profile/avatar/content?v=sha256%3A')
+      && /^sha256:[a-f0-9]{64}$/.test(digest || '') && ['image/webp', 'image/png', 'image/jpeg'].includes(contentType || '')) {
+      return { current: { source, provider, url, digest, contentType }, linkedAccounts };
+    }
+    throw new Error('서버의 프로필 사진 응답이 올바르지 않습니다.');
+  }
+
+  private safeAvatarUrl(value: unknown, source: unknown): string {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (source === 'upload') {
+      return /^\/api\/identity\/profile\/avatar\/content\?v=sha256%3A[a-f0-9]{64}$/.test(raw) ? raw : '';
+    }
+    try {
+      const parsed = new URL(raw);
+      return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? parsed.toString() : '';
+    } catch {
+      return '';
+    }
+  }
+
+  private applyProfileAvatar(profile: ProfileAvatarProjection): void {
+    this.profileAvatar.set(profile);
+    this.avatarUrl.set(profile.current.url || '');
   }
 
   private errorText(body: ApiError, status: number): string {
