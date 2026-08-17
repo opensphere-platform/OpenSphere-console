@@ -205,7 +205,8 @@ export class PluginHost {
   readonly failure = computed(() => this.ext.failures().find((f) => f.id === this.id()) ?? null);
   readonly loading = computed(() => {
     const pluginState = this.ext.pluginLoadState(this.id());
-    return pluginState === 'loading' || (pluginState === undefined && this.ext.loadState() === 'loading');
+    return pluginState === 'queued' || pluginState === 'loading'
+      || (pluginState === undefined && this.ext.loadState() === 'loading');
   });
   readonly runtimeError = signal<string>('');
   readonly management = signal<{ catalog: CatalogItem | null; registration: Registration | null } | null>(null);

@@ -1468,13 +1468,40 @@ export class AdminPlugins implements OnInit {
   workloadPhase(r: Registration): string {
     return r.status.workload?.phase || r.health || '미보고';
   }
+  extensionLoadFailureLabel(stage: string | undefined): string {
+    switch (stage) {
+      case 'manifest': return 'Manifest 검증 실패';
+      case 'signature': return '서명 검증 실패';
+      case 'entry': return '실행 파일 적재 실패';
+      case 'assets': return '화면 Asset 적재 실패';
+      case 'activation': return 'UI 활성화 실패';
+      default: return 'Extension 계약 검증 실패';
+    }
+  }
   menuState(r: Registration): { visible: boolean; label: string; reason: string } {
     const hostRef = this.catalogItem(r.name)?.hostRef || 'main';
     const loadedPage = this.ext.pages().find((page) => page.id === r.name);
     if (loadedPage) return { visible: true, label: '메뉴 노출', reason: `${loadedPage.navBand} · /p/${r.name}` };
     const failure = this.ext.failures().find((item) => item.id === r.name);
-    if (failure) return { visible: false, label: 'Host 적재 실패', reason: failure.error };
-    if (this.ext.loadState() === 'loading') return { visible: false, label: 'Host 적재 중', reason: 'Extension Host가 검증·등록하는 중' };
+    if (failure) return { visible: false, label: this.extensionLoadFailureLabel(failure.stage), reason: failure.error };
+    const pluginState = this.ext.pluginLoadState(r.name);
+    if (pluginState === 'queued') {
+      return {
+        visible: false,
+        label: hostRef === 'main' ? 'UI 적재 대기' : 'Plugin 적재 대기',
+        reason: hostRef === 'main' ? '독립 적재 순서를 기다리는 중' : `${hostRef} 화면을 막지 않고 백그라운드 순서를 기다리는 중`,
+      };
+    }
+    if (pluginState === 'loading') {
+      return {
+        visible: false,
+        label: hostRef === 'main' ? 'UI 적재 중' : 'Plugin 적재 중',
+        reason: hostRef === 'main' ? '이 SubShell만 독립적으로 검증·활성화하는 중' : `${hostRef}가 이 Plugin을 백그라운드에서 검증하는 중`,
+      };
+    }
+    if (pluginState === undefined && this.ext.loadState() === 'loading') {
+      return { visible: false, label: 'Registry 확인 중', reason: '설치 inventory와 Registry를 병렬로 확인하는 중' };
+    }
     if (r.status.phase === 'Failed') return { visible: false, label: '서비스 차단', reason: this.reasonText(r.status.reason) || '보안 검증 실패' };
     if (r.status.phase !== 'Activated') return { visible: false, label: '서비스 대기', reason: `Registration ${r.status.phase || '미보고'} 상태` };
     if (!this.catalogItem(r.name)?.nav) return { visible: false, label: '메뉴 미선언', reason: 'UIPluginPackage spec.nav가 없음' };
@@ -1491,8 +1518,14 @@ export class AdminPlugins implements OnInit {
           reason: `HostProjectionMissing — ${hostRef}가 ${this.extensionPageRoute(r)} 관리면을 승인하지 않았습니다. Host 업데이트가 필요합니다.`,
         };
       }
-      if (childState === 'loading') {
-        return { visible: false, label: 'Host 적재 중', reason: `${hostRef}가 child plugin을 검증·활성화하는 중` };
+      if (childState === 'queued' || childState === 'loading') {
+        return {
+          visible: false,
+          label: childState === 'queued' ? 'Plugin 적재 대기' : 'Plugin 적재 중',
+          reason: childState === 'queued'
+            ? `${hostRef} 화면을 막지 않고 background 순서를 기다리는 중`
+            : `${hostRef}가 child plugin을 검증·활성화하는 중`,
+        };
       }
       return { visible: false, label: 'Host 메뉴 미제공', reason: `${hostRef} child 활성화가 완료되지 않음` };
     }
@@ -1551,7 +1584,7 @@ export class AdminPlugins implements OnInit {
     const hostFailure = this.ext.failures().find((item) => item.id === r.name);
     if (hostFailure && !menu.visible) {
       return {
-        label: 'UI 적재 실패',
+        label: this.extensionLoadFailureLabel(hostFailure.stage),
         detail: hostFailure.error,
         tone: 'danger',
       };
@@ -1559,13 +1592,13 @@ export class AdminPlugins implements OnInit {
     const isSubShell = this.catalogItem(r.name)?.kind === 'subShell';
     const isHostedPlugin = (this.catalogItem(r.name)?.hostRef || 'main') !== 'main';
     if (isHostedPlugin && !menu.visible) {
-      if (this.ext.loadState() === 'loading' || this.ext.pluginLoadState(r.name) === 'loading') {
-        return { label: 'Host 적재 중', detail: menu.reason, tone: 'warning' };
+      if (['queued', 'loading'].includes(this.ext.pluginLoadState(r.name) || '')) {
+        return { label: 'Plugin 적재 중', detail: menu.reason, tone: 'warning' };
       }
       return { label: 'Host 연동 실패', detail: menu.reason, tone: 'danger' };
     }
     if (isSubShell && !menu.visible) {
-      if (this.ext.loadState() === 'loading') {
+      if (['queued', 'loading'].includes(this.ext.pluginLoadState(r.name) || '')) {
         return { label: 'UI 적재 중', detail: menu.reason, tone: 'warning' };
       }
       return {

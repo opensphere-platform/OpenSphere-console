@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import {
+  CHILD_EXTENSION_ACTIVATION_CONCURRENCY,
   extensionRouteTarget,
   isTransientExtensionLoadError,
   loadWithConcurrency,
@@ -36,8 +37,9 @@ export const SHELL_VERSION = '0.3.6';
 // 권한 scope 어휘(C1)·PluginPage·NavNode는 @opensphere/sdk가 SSOT(위에서 re-export).
 // 닫힌 집합 검증은 isKnownCapability().
 
-export interface PluginFailure { id: string; error: string; }
-export type PluginLoadState = 'loading' | 'ready' | 'failed';
+export type PluginLoadState = 'queued' | 'loading' | 'ready' | 'failed';
+export type ExtensionLoadStage = 'contract' | 'manifest' | 'signature' | 'entry' | 'assets' | 'activation';
+export interface PluginFailure { id: string; error: string; stage: ExtensionLoadStage; retryable: boolean; }
 export interface HostChildProjection {
   id: string;
   route: string;
@@ -45,6 +47,22 @@ export interface HostChildProjection {
 }
 export const HOST_API_VERSION = '1.0.0';
 const FETCH_TIMEOUT_MS = 15000;
+
+class ExtensionStageError extends Error {
+  constructor(readonly stage: ExtensionLoadStage, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = cause instanceof Error ? cause.name : 'ExtensionStageError';
+  }
+}
+
+async function atExtensionStage<T>(stage: ExtensionLoadStage, task: () => Promise<T>): Promise<T> {
+  try {
+    return await task();
+  } catch (error) {
+    if (error instanceof ExtensionStageError) throw error;
+    throw new ExtensionStageError(stage, error);
+  }
+}
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController();
@@ -131,10 +149,14 @@ export class ExtensionHostService {
   private router = inject(Router);
   private activeModules = new Map<string, PluginModule>();
   private pageOwners = new Map<string, string>();
-  private loadingIds = new Set<string>();
+  private inFlightLoads = new Map<string, Promise<void>>();
   private registryFingerprint = '';
   private registryWatch?: number;
+  private routeWatchStarted = false;
   private registryEntries: RegistryEntry[] = [];
+  private trustedKeys: Record<string, string> = {};
+  private artifactTextCache = new Map<string, Promise<string>>();
+  private hostProjectionDeclarations = new Map<string, readonly HostChildProjection[]>();
   private assetStyles = new Map<string, Set<HTMLStyleElement>>();
   /** A live document is an immutable composition snapshot. Registry changes
    * are discovered immediately but adopted only by a new document so custom
@@ -189,18 +211,22 @@ export class ExtensionHostService {
       throw new Error('ExternalExtensionsDisabledInStandaloneShell');
     }
     this.startRegistryWatch();
+    this.startRouteWatch();
     this.loadState.set('loading');
-    // The management catalog is the same projection the icon picker writes.
-    // Resolve it first so a stale Registry icon cannot overwrite the user's
-    // current selection while the first-level navigation is being composed.
-    await this.loadManagementInventory();
+    let backgroundChildren: RegistryEntry[] = [];
     try {
+      // Inventory and Registry are independent projections. Starting both at
+      // once removes a serial network gate while still awaiting inventory
+      // before icon precedence is committed below.
+      const managementLoad = this.loadManagementInventory();
       let reg: RegistryV3;
       try {
         const res = await fetchWithTimeout('/api/v1/registry', { cache: 'no-store' });
+        await managementLoad;
         if (!res.ok) return; // 레지스트리 없음 = 플러그인 0개로 기동
         reg = await res.json();
       } catch {
+        await managementLoad;
         return;
       }
       if (reg.version !== 3) {
@@ -208,6 +234,7 @@ export class ExtensionHostService {
         return;
       }
       const activePlugins = (reg.plugins ?? []).filter((entry) => entry.available === true);
+			this.trustedKeys = reg.trustedKeys ?? {};
 			this.primarySubShellIds.set(new Set(activePlugins
 				.filter((entry) => (entry.componentKind ?? entry.kind) === 'subShell' && (entry.hostRef ?? 'main') === 'main')
 				.map((entry) => entry.id)));
@@ -218,29 +245,45 @@ export class ExtensionHostService {
         ...current,
       }));
       this.registryEntries = activePlugins;
-      // Main Shell은 직속 consumer만 활성화한다. subShell의 child는 subShell-scoped host를 통해
-      // mountChild()로 활성화되어 위계와 capability 경계를 보존한다.
+      this.pluginLoadStates.update((states) => ({
+        ...states,
+        ...Object.fromEntries(activePlugins.map((entry) => [entry.id, 'queued' as PluginLoadState])),
+      }));
+      // First-level products form the foreground composition. Hosted children
+      // never block their parent page; they are verified after foreground
+      // readiness, with the current deep-link child retaining priority.
       const mainPlugins = activePlugins.filter((e) => (e.hostRef ?? 'main') === 'main');
       const orderedMainPlugins = prioritizeRequestedHost(mainPlugins, window.location.pathname);
-      const requestedHost = extensionRouteTarget(window.location.pathname).hostId;
-      if (requestedHost && orderedMainPlugins[0]?.id === requestedHost) {
-        // Cold deep links are an administrator-facing management surface. Do
-        // not make the requested product wait behind unrelated subShell
-        // verification; establish it first, then continue normal background
-        // activation of the remaining registry entries.
-        await this.loadOne(orderedMainPlugins[0], reg.trustedKeys ?? {}, HOST_API_VERSION);
-        await loadWithConcurrency(
-          orderedMainPlugins.slice(1),
-          (e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION),
-        );
+      const routeTarget = extensionRouteTarget(window.location.pathname);
+      const requestedParent = routeTarget.hostId
+        ? orderedMainPlugins.find((entry) => entry.id === routeTarget.hostId)
+        : undefined;
+      const requestedChild = routeTarget.childId
+        ? activePlugins.find((entry) => entry.id === routeTarget.childId && (entry.hostRef ?? 'main') === routeTarget.hostId)
+        : undefined;
+      if (requestedParent) {
+        await this.loadOne(requestedParent, this.trustedKeys, HOST_API_VERSION);
+        await Promise.all([
+          loadWithConcurrency(
+            orderedMainPlugins.filter((entry) => entry !== requestedParent),
+            (entry) => this.loadOne(entry, this.trustedKeys, HOST_API_VERSION),
+          ),
+          requestedChild
+            ? this.loadOne(requestedChild, this.trustedKeys, requestedParent.hostApiVersion ?? HOST_API_VERSION)
+            : Promise.resolve(),
+        ]);
       } else {
         await loadWithConcurrency(
           orderedMainPlugins,
-          (e) => this.loadOne(e, reg.trustedKeys ?? {}, HOST_API_VERSION),
+          (entry) => this.loadOne(entry, this.trustedKeys, HOST_API_VERSION),
         );
       }
+      backgroundChildren = activePlugins.filter((entry) =>
+        (entry.hostRef ?? 'main') !== 'main' && entry !== requestedChild,
+      );
     } finally {
       this.loadState.set('ready');
+      if (backgroundChildren.length) this.startBackgroundChildActivation(backgroundChildren);
     }
   }
 
@@ -316,6 +359,36 @@ export class ExtensionHostService {
     this.registryWatch = window.setInterval(() => void this.refreshRegistryIfChanged(), 30000);
   }
 
+  private startRouteWatch(): void {
+    if (this.routeWatchStarted) return;
+    this.routeWatchStarted = true;
+    this.router.events.subscribe((event) => {
+      if (event instanceof NavigationEnd) void this.ensureRequestedChild(event.urlAfterRedirects);
+    });
+  }
+
+  private startBackgroundChildActivation(entries: readonly RegistryEntry[]): void {
+    void loadWithConcurrency(
+      entries,
+      (entry) => this.loadOne(
+        entry,
+        this.trustedKeys,
+        this.registryEntries.find((candidate) => candidate.id === (entry.hostRef ?? ''))?.hostApiVersion ?? HOST_API_VERSION,
+      ),
+      CHILD_EXTENSION_ACTIVATION_CONCURRENCY,
+    ).catch((error) => console.warn('[extension-host] background child activation degraded:', error));
+  }
+
+  private async ensureRequestedChild(pathname: string): Promise<void> {
+    const target = extensionRouteTarget(pathname);
+    if (!target.hostId || !target.childId) return;
+    const parent = this.registryEntries.find((entry) => entry.id === target.hostId && (entry.hostRef ?? 'main') === 'main');
+    const child = this.registryEntries.find((entry) => entry.id === target.childId && (entry.hostRef ?? 'main') === target.hostId);
+    if (!parent || !child) return;
+    await this.loadOne(parent, this.trustedKeys, HOST_API_VERSION);
+    await this.loadOne(child, this.trustedKeys, parent.hostApiVersion ?? HOST_API_VERSION);
+  }
+
   private async refreshRegistryIfChanged(): Promise<void> {
     if (this.registryUpdatePending()) return;
     try {
@@ -335,15 +408,21 @@ export class ExtensionHostService {
     if (OS_SHELL_STANDALONE_BOOT) {
       throw new Error('ExternalExtensionsDisabledInStandaloneShell');
     }
-    if (this.loadingIds.has(e.id)) {
-      this.setPluginFailure(e.id, 'Host Contract cycle detected');
-      this.setPluginLoadState(e.id, 'failed');
-      return;
-    }
-    this.loadingIds.add(e.id);
-    this.setPluginLoadState(e.id, 'loading');
+    if (this.activeModules.has(e.id)) return;
+    const current = this.inFlightLoads.get(e.id);
+    if (current) return current;
+    const pending = this.performLoadOne(e, trustedKeys, hostApiVersion);
+    this.inFlightLoads.set(e.id, pending);
     try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      await pending;
+    } finally {
+      if (this.inFlightLoads.get(e.id) === pending) this.inFlightLoads.delete(e.id);
+    }
+  }
+
+  private async performLoadOne(e: RegistryEntry, trustedKeys: Record<string, string>, hostApiVersion: string): Promise<void> {
+    this.setPluginLoadState(e.id, 'loading');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
         let mod: PluginModule | undefined;
         try {
       const hostRef = e.hostRef ?? 'main';
@@ -351,17 +430,27 @@ export class ExtensionHostService {
       if (hostRef !== 'main' && !this.registryEntries.some((candidate) => candidate.id === hostRef && (candidate.componentKind ?? candidate.kind) === 'subShell')) {
         throw new Error(`hostRef '${hostRef}'가 Registry에 없거나 subShell이 아님`);
       }
+      if (hostRef !== 'main' && !this.activeModules.has(hostRef)) {
+        throw new Error(`hostRef '${hostRef}'가 아직 활성화되지 않음`);
+      }
       if (e.hostCompat && !semverSatisfies(hostApiVersion, e.hostCompat)) {
         throw new Error(`hostCompat '${e.hostCompat}'이 Host API ${hostApiVersion}과 비호환`);
       }
       await this.deactivate(e.id);
-      // ① manifest 무결성 (registry 핀)
-      const mRes = await fetchWithTimeout(e.manifest, { cache: 'no-store' });
-      if (!mRes.ok) throw new Error(`manifest HTTP ${mRes.status}`);
-      const mText = await mRes.text();
-      if ((await sha256Hex(mText)) !== e.manifestSha256) {
-        throw new Error('manifest 무결성 불일치 — 레지스트리 핀과 다름');
-      }
+      const spki = trustedKeys[e.keyId];
+      if (!spki) throw new Error(`신뢰 키 '${e.keyId}' 없음`);
+      // Manifest and detached signature are independent immutable artifacts.
+      // Fetch them together and retain the cryptographic checks below.
+      const [mText, sigB64] = await Promise.all([
+        atExtensionStage('manifest', () => this.fetchVerifiedArtifactText(
+          e.manifest,
+          e.manifestSha256,
+          'manifest',
+        )),
+        atExtensionStage('signature', async () => (
+          await this.fetchCachedArtifactText(e.signature, `signature:${e.manifestSha256}`, '서명 파일')
+        ).trim()),
+      ]);
       const raw = JSON.parse(mText);
       if (raw.manifestVersion !== 2 && raw.manifestVersion !== 3)
         throw new Error('manifestVersion 2/3 아님 (하위호환: v2·v3 수용)');
@@ -392,12 +481,9 @@ export class ExtensionHostService {
       const artifactBase = `/api/plugins/${artifactServiceId}`;
 
       // ② 출처 서명 (분리 서명, manifest 바이트 전체)
-      const spki = trustedKeys[e.keyId];
-      if (!spki) throw new Error(`신뢰 키 '${e.keyId}' 없음`);
-      const sRes = await fetchWithTimeout(e.signature, { cache: 'no-store' });
-      if (!sRes.ok) throw new Error(`서명 파일 HTTP ${sRes.status}`);
-      const sigB64 = (await sRes.text()).trim();
-      if (!(await verifyP256(spki, sigB64, mText))) throw new Error('manifest 서명 검증 실패');
+      if (!(await atExtensionStage('signature', () => verifyP256(spki, sigB64, mText)))) {
+        throw new ExtensionStageError('signature', new Error('manifest 서명 검증 실패'));
+      }
 
       // ③ 셸 호환성
       if (!semverSatisfies(SHELL_VERSION, manifest.shellCompat)) {
@@ -423,16 +509,20 @@ export class ExtensionHostService {
       if (entryUrl.origin !== location.origin || !entryUrl.pathname.startsWith(`${artifactBase}/`)) {
         throw new Error('entry가 검증된 release namespace 밖에 있음');
       }
-      const bRes = await fetchWithTimeout(entryUrl.href, { cache: 'no-store' });
-      if (!bRes.ok) throw new Error(`entry HTTP ${bRes.status}`);
-      const code = await bRes.text();
-      if ((await sha256Hex(code)) !== manifest.entrySha256) {
-        throw new Error('번들 무결성 불일치 — manifest 핀과 다름');
-      }
-      const verifiedAssets = await this.verifyAssets(artifactBase, e.manifest, manifest.assets);
+      const [code, verifiedAssets] = await Promise.all([
+        atExtensionStage('entry', () => this.fetchVerifiedArtifactText(
+          entryUrl.href,
+          manifest.entrySha256,
+          'entry',
+        )),
+        atExtensionStage('assets', () => this.verifyAssets(artifactBase, e.manifest, manifest.assets)),
+      ]);
       const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
       try {
-        mod = await import(/* @vite-ignore */ blobUrl) as PluginModule;
+        mod = await atExtensionStage(
+          'activation',
+          () => import(/* @vite-ignore */ blobUrl) as Promise<PluginModule>,
+        );
       } finally {
         URL.revokeObjectURL(blobUrl);
       }
@@ -459,27 +549,10 @@ export class ExtensionHostService {
 			if (manifest.manifestVersion === 3 && typeof mod.deactivate !== 'function') {
 				throw new Error('deactivate() export 없음 (Production lifecycle 계약 위반)');
 			}
-      const childEntries = manifest.kind === 'subShell'
-        ? this.registryEntries.filter((child) => (child.hostRef ?? 'main') === e.id)
-        : [];
-      const routeTarget = extensionRouteTarget(window.location.pathname);
-      const requestedChild = routeTarget.hostId === e.id
-        ? childEntries.find((child) => child.id === routeTarget.childId)
-        : undefined;
-      // The parent receives host.children() during activate(), so every child
-      // must finish its verified lifecycle first. loadOne() records a failed
-      // optional child without throwing; only successfully activated children
-      // are therefore projected into the parent context. Direct deep links
-      // still prioritize their requested child before the remaining children.
-      if (requestedChild) {
-        await this.loadOne(requestedChild, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION);
-      }
-      await loadWithConcurrency(
-        childEntries.filter((child) => child !== requestedChild),
-        (child) => this.loadOne(child, trustedKeys, manifest.hostApiVersion ?? HOST_API_VERSION),
-      );
-      await mod.activate(context);
+      await atExtensionStage('activation', async () => { await mod!.activate(context); });
       this.activeModules.set(e.id, mod);
+      if (hostRef !== 'main') this.refreshHostChildProjections(hostRef);
+      if (manifest.kind === 'subShell') this.refreshHostChildProjections(e.id);
       this.setPluginLoadState(e.id, 'ready');
       this.clearPluginFailure(e.id);
       console.info(`[extension-host] plugin '${e.id}' 검증 통과(무결성·서명·호환·권한) 후 활성화`);
@@ -487,19 +560,22 @@ export class ExtensionHostService {
         } catch (err) {
           try { await mod?.deactivate?.(); } catch (cleanupError) { console.warn(`[extension-host] plugin '${e.id}' cleanup 실패:`, cleanupError); }
           await this.deactivate(e.id);
-          if (attempt === 0 && isTransientExtensionLoadError(err)) {
+          const retryable = isTransientExtensionLoadError(err);
+          if (attempt === 0 && retryable) {
             console.warn(`[extension-host] plugin '${e.id}' 일시 적재 오류 — 한 번 재시도:`, err);
             await new Promise<void>((resolve) => window.setTimeout(resolve, TRANSIENT_EXTENSION_RETRY_DELAY_MS));
             continue;
           }
           console.warn(`[extension-host] plugin '${e.id}' 제외:`, err);
-          this.setPluginFailure(e.id, String(err));
+          this.setPluginFailure(
+            e.id,
+            err instanceof Error ? err.message : String(err),
+            err instanceof ExtensionStageError ? err.stage : 'contract',
+            retryable,
+          );
           this.setPluginLoadState(e.id, 'failed');
           return;
         }
-      }
-    } finally {
-      this.loadingIds.delete(e.id);
     }
   }
 
@@ -511,14 +587,27 @@ export class ExtensionHostService {
     return this.hostChildProjections()[hostRef]?.find((projection) => projection.id === childId);
   }
 
+  private refreshHostChildProjections(hostRef: string): void {
+    const declarations = this.hostProjectionDeclarations.get(hostRef) ?? [];
+    const approvedChildren = new Set(this.registryEntries
+      .filter((entry) => (entry.hostRef ?? 'main') === hostRef)
+      .map((entry) => entry.id));
+    const ready = declarations.filter((projection) =>
+      approvedChildren.has(projection.id)
+      && this.activeModules.has(projection.id)
+      && Boolean(customElements.get(projection.element)),
+    );
+    this.hostChildProjections.update((items) => ({ ...items, [hostRef]: ready }));
+  }
+
   private setPluginLoadState(pluginId: string, state: PluginLoadState): void {
     this.pluginLoadStates.update((states) => ({ ...states, [pluginId]: state }));
   }
 
-  private setPluginFailure(pluginId: string, error: string): void {
+  private setPluginFailure(pluginId: string, error: string, stage: ExtensionLoadStage, retryable: boolean): void {
     this.failures.update((failures) => [
       ...failures.filter((failure) => failure.id !== pluginId),
-      { id: pluginId, error },
+      { id: pluginId, error, stage, retryable },
     ]);
   }
 
@@ -549,6 +638,7 @@ export class ExtensionHostService {
 	}
 
   private async deactivate(pluginId: string): Promise<void> {
+    const owningHost = this.registryEntries.find((entry) => entry.id === pluginId)?.hostRef ?? 'main';
     const mod = this.activeModules.get(pluginId);
     if (mod) {
       try { await mod.deactivate?.(); } finally { this.activeModules.delete(pluginId); }
@@ -567,6 +657,8 @@ export class ExtensionHostService {
       }
       return next;
     });
+    this.hostProjectionDeclarations.delete(pluginId);
+    if (owningHost !== 'main') this.refreshHostChildProjections(owningHost);
     for (const style of this.assetStyles.get(pluginId) ?? []) style.remove();
     this.assetStyles.delete(pluginId);
     this.notif.clearSource(pluginId);
@@ -605,8 +697,8 @@ export class ExtensionHostService {
     const reportChildProjections = (input: unknown): void => {
       if (manifest.kind !== 'subShell') throw new Error('plugin은 child projection을 보고할 수 없음');
       if (!Array.isArray(input)) throw new Error('child projection 보고는 배열이어야 함');
-      const activeChildren = new Map(this.registryEntries
-        .filter((entry) => (entry.hostRef ?? 'main') === pluginId && this.activeModules.has(entry.id))
+      const approvedChildren = new Map(this.registryEntries
+        .filter((entry) => (entry.hostRef ?? 'main') === pluginId)
         .map((entry) => [entry.id, entry]));
       const projections: HostChildProjection[] = [];
       const seen = new Set<string>();
@@ -616,17 +708,20 @@ export class ExtensionHostService {
         const id = String(raw['id'] || '').trim();
         const route = String(raw['route'] || '').trim();
         const element = String(raw['element'] || '').trim();
-        if (!activeChildren.has(id)) throw new Error(`활성화·검증된 child가 아님: '${id}'`);
+        if (!approvedChildren.has(id)) throw new Error(`Registry가 승인한 child가 아님: '${id}'`);
         if (seen.has(id)) throw new Error(`child projection 중복: '${id}'`);
         const target = new URL(route, window.location.origin);
         if (target.origin !== window.location.origin || target.search || target.hash || !target.pathname.startsWith('/pfss/')) {
           throw new Error(`child projection route가 canonical PFSS 경로가 아님: '${route}'`);
         }
-        if (!element || !customElements.get(element)) throw new Error(`child projection element가 정의되지 않음: '${element}'`);
+        if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/.test(element)) {
+          throw new Error(`child projection element 이름이 유효하지 않음: '${element}'`);
+        }
         seen.add(id);
         projections.push({ id, route: target.pathname, element });
       }
-      this.hostChildProjections.update((items) => ({ ...items, [pluginId]: projections }));
+      this.hostProjectionDeclarations.set(pluginId, Object.freeze(projections));
+      this.refreshHostChildProjections(pluginId);
     };
     const loadedModules = new Map<string, Promise<unknown>>();
     const loadModule = (id: string): Promise<unknown> => {
@@ -760,11 +855,12 @@ export class ExtensionHostService {
       ...(manifest.kind === 'subShell' ? {
         host: {
           mountChild: childHost,
-          // A host must project only child modules that completed the verified
-          // activate() lifecycle. Registry presence alone is catalog/install
-          // inventory and must never become a visible host menu entry.
+          // The parent receives its approved inventory immediately and may
+          // declare canonical routes without waiting for child bundles. The
+          // Console exposes only declarations whose child later completes the
+          // verified activate() lifecycle.
           children: () => this.registryEntries
-            .filter((entry) => (entry.hostRef ?? 'main') === pluginId && this.activeModules.has(entry.id))
+            .filter((entry) => (entry.hostRef ?? 'main') === pluginId)
             .map((entry) => entry.id),
           reportProjections: reportChildProjections,
         },
@@ -816,29 +912,76 @@ export class ExtensionHostService {
     };
   }
 
+  private artifactCacheKey(url: string, identity: string): string {
+    return `${identity}:${new URL(url, location.origin).href}`;
+  }
+
+  private async fetchCachedArtifactText(url: string, identity: string, label: string): Promise<string> {
+    const cacheKey = this.artifactCacheKey(url, identity);
+    let pending = this.artifactTextCache.get(cacheKey);
+    if (!pending) {
+      pending = (async () => {
+        const response = await fetchWithTimeout(url, { cache: 'force-cache' });
+        if (!response.ok) throw new Error(`${label} HTTP ${response.status}`);
+        return response.text();
+      })();
+      this.artifactTextCache.set(cacheKey, pending);
+    }
+    try {
+      return await pending;
+    } catch (error) {
+      if (this.artifactTextCache.get(cacheKey) === pending) this.artifactTextCache.delete(cacheKey);
+      throw error;
+    }
+  }
+
+  private async fetchVerifiedArtifactText(url: string, expectedSha256: string, label: string): Promise<string> {
+    const identity = `sha256:${expectedSha256}`;
+    const cacheKey = this.artifactCacheKey(url, identity);
+    let text = await this.fetchCachedArtifactText(url, identity, label);
+    if ((await sha256Hex(text)) === expectedSha256) return text;
+
+    // A browser may still hold bytes from a legacy stable URL. One explicit
+    // revalidation avoids a false failure, but the expected Registry digest
+    // remains the only acceptance authority.
+    this.artifactTextCache.delete(cacheKey);
+    const response = await fetchWithTimeout(url, { cache: 'reload' });
+    if (!response.ok) throw new Error(`${label} HTTP ${response.status}`);
+    text = await response.text();
+    if ((await sha256Hex(text)) !== expectedSha256) {
+      throw new Error(`${label} 무결성 불일치 — 서명된 digest와 다름`);
+    }
+    this.artifactTextCache.set(cacheKey, Promise.resolve(text));
+    return text;
+  }
+
   private async verifyAssets(
     artifactBase: string,
     manifestUrl: string,
     declarations: readonly ManifestAsset[],
   ): Promise<ReadonlyMap<string, VerifiedAsset>> {
-    const verified = new Map<string, VerifiedAsset>();
+    const seen = new Set<string>();
     for (const declaration of declarations) {
-      if (!/^[a-z][a-z0-9-]{0,63}$/.test(declaration.id) || verified.has(declaration.id)) {
+      if (!/^[a-z][a-z0-9-]{0,63}$/.test(declaration.id) || seen.has(declaration.id)) {
         throw new Error(`asset id가 유효하지 않거나 중복됨: '${declaration.id}'`);
       }
+      seen.add(declaration.id);
       if (!['module', 'style'].includes(declaration.type)) throw new Error(`asset '${declaration.id}' type이 유효하지 않음`);
       if (!/^[a-f0-9]{64}$/.test(declaration.sha256)) throw new Error(`asset '${declaration.id}' sha256이 유효하지 않음`);
+    }
+    const entries = await Promise.all(declarations.map(async (declaration): Promise<[string, VerifiedAsset]> => {
       const url = new URL(declaration.path, new URL(manifestUrl, location.origin));
       if (url.origin !== location.origin || !url.pathname.startsWith(`${artifactBase}/`)) {
         throw new Error(`asset '${declaration.id}'가 검증된 release namespace 밖에 있음`);
       }
-      const response = await fetchWithTimeout(url, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`asset '${declaration.id}' HTTP ${response.status}`);
-      const text = await response.text();
-      if ((await sha256Hex(text)) !== declaration.sha256) throw new Error(`asset '${declaration.id}' 무결성 불일치`);
-      verified.set(declaration.id, { declaration, text });
-    }
-    return verified;
+      const text = await this.fetchVerifiedArtifactText(
+        url.href,
+        declaration.sha256,
+        `asset '${declaration.id}'`,
+      );
+      return [declaration.id, { declaration, text }];
+    }));
+    return new Map(entries);
   }
 }
 

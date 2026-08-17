@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
+  CHILD_EXTENSION_ACTIVATION_CONCURRENCY,
   extensionRouteTarget,
   isTransientExtensionLoadError,
   loadWithConcurrency,
@@ -74,19 +75,30 @@ test('only transport interruption and timeout errors are retryable', () => {
   assert.equal(isTransientExtensionLoadError(new Error('번들 무결성 불일치')), false);
 });
 
-test('host children finish bounded verified activation before their parent receives host.children()', () => {
+test('a parent subShell activates before hosted children continue in the background', () => {
   const source = readFileSync(path.join(here, 'extension-host.service.ts'), 'utf8');
-  const childActivation = source.indexOf('childEntries.filter((child) => child !== requestedChild)');
-  const parentActivation = source.indexOf('await mod.activate(context)');
-  assert.ok(childActivation >= 0);
-  assert.ok(parentActivation > childActivation);
-  assert.match(source, /await loadWithConcurrency\(/);
-  assert.match(source, /this\.activeModules\.has\(entry\.id\)/);
+  assert.equal(CHILD_EXTENSION_ACTIVATION_CONCURRENCY, 2);
+  assert.match(source, /this\.loadState\.set\('ready'\);[\s\S]*this\.startBackgroundChildActivation\(backgroundChildren\)/);
+  assert.match(source, /await atExtensionStage\('activation', async \(\) => \{ await mod!\.activate\(context\); \}\);[\s\S]*this\.activeModules\.set\(e\.id, mod\)/);
+  assert.doesNotMatch(source, /const childEntries = manifest\.kind/);
+  assert.match(source, /hostProjectionDeclarations\.set\(pluginId/);
+  assert.match(source, /this\.activeModules\.has\(projection\.id\)/);
+  assert.match(source, /children: \(\) => this\.registryEntries[\s\S]*\.filter\(\(entry\) => \(entry\.hostRef \?\? 'main'\) === pluginId\)/);
+});
+
+test('immutable artifacts reuse browser cache but remain digest verified', () => {
+  const source = readFileSync(path.join(here, 'extension-host.service.ts'), 'utf8');
+  assert.match(source, /fetchWithTimeout\(url, \{ cache: 'force-cache' \}\)/);
+  assert.match(source, /fetchWithTimeout\(url, \{ cache: 'reload' \}\)/);
+  assert.match(source, /sha256Hex\(text\)\) !== expectedSha256/);
+  assert.match(source, /Promise\.all\(declarations\.map/);
+  assert.match(source, /const \[mText, sigB64\] = await Promise\.all/);
+  assert.match(source, /const \[code, verifiedAssets\] = await Promise\.all/);
 });
 
 test('a successful retry clears stale failures and each failure id stays unique', () => {
   const source = readFileSync(path.join(here, 'extension-host.service.ts'), 'utf8');
-  assert.match(source, /attempt === 0 && isTransientExtensionLoadError\(err\)/);
+  assert.match(source, /const retryable = isTransientExtensionLoadError\(err\);[\s\S]*attempt === 0 && retryable/);
   assert.match(source, /this\.clearPluginFailure\(e\.id\)/);
   assert.match(source, /failures\.filter\(\(failure\) => failure\.id !== pluginId\)/);
 });

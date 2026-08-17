@@ -30,6 +30,17 @@ test('a currently visible page wins over a stale transient host failure', () => 
   assert.match(extensionHost, /this\.clearPluginFailure\(e\.id\)/);
 });
 
+test('loading and failures are reported per extension and by the actual failed stage', () => {
+  assert.match(source, /const pluginState = this\.ext\.pluginLoadState\(r\.name\)/);
+  assert.match(source, /pluginState === 'queued'/);
+  assert.match(source, /'UI 적재 대기' : 'Plugin 적재 대기'/);
+  assert.match(source, /label: hostRef === 'main' \? 'UI 적재 중' : 'Plugin 적재 중'/);
+  for (const label of ['Manifest 검증 실패', '서명 검증 실패', '실행 파일 적재 실패', '화면 Asset 적재 실패', 'UI 활성화 실패']) {
+    assert.ok(source.includes(label), `${label} 단계 표시가 필요하다`);
+  }
+  assert.doesNotMatch(source, /label: 'Host 적재 실패'/);
+});
+
 test('Enabled registrations never present Enable as their primary lifecycle action', () => {
   assert.match(source, /@if \(r\.desiredState === 'Enabled'\)/);
   assert.match(source, /검증 다시 시도/);
@@ -133,7 +144,7 @@ test('PFSS child plugins keep their host ownership across routes and navigation'
   assert.match(routes, /path: 'p\/postgres', redirectTo: 'pfss\/postgres'/);
   assert.match(routes, /matcher: pfssHostMatcher, component: PluginHost, data: \{ pluginId: 'foundation' \}/);
   assert.match(extensionHost, /hostRef: String\(item\['hostRef'\] \|\| 'main'\)/);
-  assert.match(extensionHost, /this\.activeModules\.has\(entry\.id\)/);
+  assert.match(extensionHost, /this\.activeModules\.has\(projection\.id\)/);
   assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
   assert.match(source, /const projection = hostRef === 'main' \? undefined : this\.ext\.hostChildProjection\(hostRef, r\.name\)/);
   assert.match(source, /if \(projection\) return projection\.route/);
@@ -142,11 +153,12 @@ test('PFSS child plugins keep their host ownership across routes and navigation'
   assert.match(perspectives, /id === 'foundation' \? '\/pfss\/foundation' : `\/p\/\$\{id\}`/);
 });
 
-test('a verified child is not reported available until its host acknowledges the real route and element', () => {
+test('a host may declare a child route early but Console exposes it only after verified activation', () => {
   assert.match(extensionHost, /readonly hostChildProjections = signal/);
   assert.match(extensionHost, /reportProjections: reportChildProjections/);
-  assert.match(extensionHost, /!customElements\.get\(element\)/);
-  assert.match(extensionHost, /this\.activeModules\.has\(entry\.id\)/);
+  assert.match(extensionHost, /hostProjectionDeclarations\.set\(pluginId/);
+  assert.match(extensionHost, /Boolean\(customElements\.get\(projection\.element\)\)/);
+  assert.match(extensionHost, /this\.activeModules\.has\(projection\.id\)/);
   assert.match(source, /HostProjectionMissing/);
   assert.match(source, /label: 'Host 연동 실패'/);
   assert.match(source, /this\.ext\.hostChildProjection\(hostRef, r\.name\)/);
