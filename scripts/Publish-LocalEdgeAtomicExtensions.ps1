@@ -83,15 +83,18 @@ $buildTag = "build-$($sourceRevision.Substring(0, 12))"
 
 $lockRaw = (Invoke-Checked kubectl -n opensphere-console get configmap opensphere-installation-lock -o 'jsonpath={.data.release\.json}') -join ''
 $installedLock = $lockRaw | ConvertFrom-Json
+if ([string]$installedLock.source -ne 'https://github.com/opensphere-platform/OpenSphere-console') {
+  throw 'Installed release source is not the canonical Console repository.'
+}
 $componentNames = @('console', 'dupaController')
 $changedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($componentName in $componentNames) {
   $componentProperty = $installedLock.components.PSObject.Properties[$componentName]
   $baseRevision = if ($componentProperty) { [string]$componentProperty.Value.sourceRevision } else { '' }
   if ($baseRevision -notmatch '^[0-9a-f]{40}$') { throw "Installed $componentName source revision is not canonical." }
-  & git -C $repoRoot merge-base --is-ancestor $baseRevision $sourceRevision
-  if ($LASTEXITCODE -ne 0) { throw "Installed $componentName source is not an ancestor of target main." }
-  foreach ($path in @(Invoke-Checked git -C $repoRoot diff --name-only "$baseRevision..$sourceRevision")) {
+  Invoke-Checked git -C $repoRoot fetch --no-tags origin $baseRevision | Out-Null
+  Invoke-Checked git -C $repoRoot cat-file -e "${baseRevision}^{commit}" | Out-Null
+  foreach ($path in @(Invoke-Checked git -C $repoRoot diff --name-only $baseRevision $sourceRevision)) {
     if ($path) { [void]$changedPaths.Add([string]$path) }
   }
 }
