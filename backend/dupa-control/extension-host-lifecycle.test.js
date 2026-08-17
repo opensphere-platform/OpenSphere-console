@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-test('Extension Host reports loading and activates verified children before their host overview', () => {
+test('Extension Host reports per-module loading and activates a host before background children', () => {
   const extensionHost = fs.readFileSync(
     path.join(__dirname, '..', '..', 'src', 'app', 'core', 'extension-host.service.ts'),
     'utf8',
@@ -17,6 +17,7 @@ test('Extension Host reports loading and activates verified children before thei
   assert.match(extensionHost, /this\.loadState\.set\('loading'\)/);
   assert.match(extensionHost, /finally \{\s*this\.loadState\.set\('ready'\)/);
   assert.match(extensionHost, /readonly pluginLoadStates = signal<Record<string, PluginLoadState>>\(\{\}\)/);
+  assert.match(extensionHost, /\[entry\.id, 'queued' as PluginLoadState\]/);
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'loading'\)/);
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'ready'\)/);
   assert.match(extensionHost, /this\.setPluginLoadState\(e\.id, 'failed'\)/);
@@ -30,17 +31,17 @@ test('Extension Host reports loading and activates verified children before thei
   assert.match(extensionHost, /apiBase: artifactBase/);
   assert.match(extensionHost, /this\.verifyAssets\(artifactBase, e\.manifest, manifest\.assets\)/);
   assert.match(extensionHost, /reportProjections: reportChildProjections/);
-  assert.match(extensionHost, /child projection element가 정의되지 않음/);
+  assert.match(extensionHost, /child projection element 이름이 유효하지 않음/);
+  assert.match(extensionHost, /Boolean\(customElements\.get\(projection\.element\)\)/);
   assert.match(extensionHost, /child projection route가 canonical PFSS 경로가 아님/);
 
-  const childSelection = extensionHost.indexOf("const childEntries = manifest.kind === 'subShell'");
-  const requestedChildLoad = extensionHost.indexOf('if (requestedChild)', childSelection);
-  const remainingChildLoad = extensionHost.indexOf('await loadWithConcurrency(', requestedChildLoad);
-  const parentActivate = extensionHost.indexOf('await mod.activate(context)', remainingChildLoad);
-  assert.ok(childSelection >= 0, 'subShell child selection block must exist');
-  assert.ok(requestedChildLoad > childSelection, 'a directly requested child must be selected explicitly');
-  assert.ok(remainingChildLoad > requestedChildLoad, 'remaining children must join the verified host projection');
-  assert.ok(parentActivate > remainingChildLoad, 'the parent must receive only the completed child activation projection');
+  assert.match(extensionHost, /const requestedChild = routeTarget\.childId/);
+  assert.match(extensionHost, /requestedChild[\s\S]*this\.loadOne\(requestedChild/);
+  assert.match(extensionHost, /this\.loadState\.set\('ready'\);[\s\S]*this\.startBackgroundChildActivation\(backgroundChildren\)/);
+  assert.match(extensionHost, /CHILD_EXTENSION_ACTIVATION_CONCURRENCY/);
+  assert.match(extensionHost, /hostProjectionDeclarations\.set\(pluginId/);
+  assert.match(extensionHost, /this\.activeModules\.has\(projection\.id\)/);
+  assert.doesNotMatch(extensionHost, /const childEntries = manifest\.kind/);
   assert.match(extensionHost, /isTransientExtensionLoadError\(err\)/);
   assert.match(extensionHost, /this\.clearPluginFailure\(e\.id\)/);
 

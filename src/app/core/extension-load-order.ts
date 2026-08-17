@@ -9,6 +9,7 @@ export interface ExtensionRouteTarget {
 }
 
 export const EXTENSION_ACTIVATION_CONCURRENCY = 3;
+export const CHILD_EXTENSION_ACTIVATION_CONCURRENCY = 2;
 export const TRANSIENT_EXTENSION_RETRY_DELAY_MS = 250;
 
 /**
