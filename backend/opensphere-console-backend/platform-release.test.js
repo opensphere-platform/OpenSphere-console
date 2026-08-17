@@ -288,3 +288,27 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(ui, /this\.status\(\)\?\.execution\.ready/);
   assert.match(ui, /component apply는 최고 관리자 MFA 정책/);
 });
+
+test('session preference release publishes only the Console and Backend component pair', () => {
+  const publisher = fs.readFileSync(
+    path.join(directory, '..', '..', 'scripts', 'Publish-LocalEdgeConsoleSession.ps1'),
+    'utf8',
+  );
+
+  assert.match(publisher, /\[Parameter\(Mandatory\)\]\[string\]\$PreviousConsolePublicationEvidence/);
+  assert.match(publisher, /\[Parameter\(Mandatory\)\]\[string\]\$PreviousBackendPublicationEvidence/);
+  assert.match(publisher, /\$components = @\('backend', 'console'\)/);
+  assert.match(publisher, /Components = @\('console', 'backend'\)/);
+  assert.match(publisher, /branch --show-current[\s\S]*-ne 'main'/);
+  assert.match(publisher, /rev-parse origin\/main[\s\S]*-ne \$SourceRevision/);
+  assert.match(publisher, /src\/app\/core\/auth\.service\.ts/);
+  assert.match(publisher, /backend\/opensphere-console-backend\/browser-session\.js/);
+  assert.match(publisher, /Installation lock .* differs from supplied publication evidence/);
+  assert.match(publisher, /must not change the Supabase migration lineage/);
+  assert.match(publisher, /affectedImages = @\([\s\S]*opensphere-console[\s\S]*opensphere-console-backend/);
+  assert.match(publisher, /releaseScope = 'component'/);
+  assert.match(publisher, /fullReleaseJustification = \$null/);
+  assert.match(publisher, /imagetools create --prefer-index=false --tag "\$registry\/opensphere-console:edge"/);
+  assert.doesNotMatch(publisher, /kubectl\s+(?:apply|patch|set|replace|delete)/i);
+  assert.doesNotMatch(publisher, /Components\s*=\s*@\('console',\s*'backend',/);
+});
