@@ -204,10 +204,15 @@ func camelPathToKebab(path string) string {
 }
 
 func validateToolManifest(manifest ToolManifest) error {
+	return validateToolManifestWithPFSSReleaseBinding(manifest, nil)
+}
+
+func validateToolManifestWithPFSSReleaseBinding(manifest ToolManifest, pfssBinding *pfssRegistryReleaseBinding) error {
 	if strings.TrimSpace(manifest.Kind) == "" || len(manifest.Tools) == 0 {
 		return commandContractError("CLI contribution manifest schema is invalid")
 	}
 	seenIDs := map[string]bool{}
+	seenCommandPrefixes := map[string]bool{}
 	for _, tool := range manifest.Tools {
 		if strings.TrimSpace(tool.Command) == "" || (strings.TrimSpace(tool.Path) == "" && len(tool.Components) == 0 && len(tool.Operations) == 0) {
 			return commandContractError("CLI contribution tool command/path is required")
@@ -218,6 +223,14 @@ func validateToolManifest(manifest ToolManifest) error {
 			}
 			seenIDs[tool.ID] = true
 		}
+		prefix := normalizedCommandPrefix(tool.Command)
+		if prefix == "" {
+			return commandContractError("CLI contribution tool command prefix is required: " + tool.Command)
+		}
+		if seenCommandPrefixes[prefix] {
+			return commandContractError("duplicate CLI contribution command prefix: " + prefix)
+		}
+		seenCommandPrefixes[prefix] = true
 		if tool.ExecutionClass != "" && !validExecutionClass(tool.ExecutionClass) {
 			return commandContractError("unknown executionClass: " + tool.ExecutionClass)
 		}
@@ -243,8 +256,271 @@ func validateToolManifest(manifest ToolManifest) error {
 		if isDynamicOperationWatch(tool) && !strings.EqualFold(strings.TrimSpace(tool.Method), http.MethodGet) {
 			return commandContractError("operation watch tool must use GET: " + tool.Command)
 		}
+		if err := validatePostgresOwnerTool(tool); err != nil {
+			return err
+		}
+	}
+	if manifest.CapabilityID == "data.sql.postgres" || hasPostgresOwnerTools(manifest) {
+		return validateFrozenPFSSManifest(manifest, pfssBinding)
 	}
 	return nil
+}
+
+func normalizedCommandPrefix(command string) string {
+	words := strings.Fields(strings.ToLower(command))
+	if len(words) > 0 && words[0] == "os" {
+		words = words[1:]
+	}
+	if len(words) == 0 {
+		return ""
+	}
+	prefix := make([]string, 0, len(words))
+	for _, word := range words {
+		if strings.HasPrefix(word, "--") || strings.HasPrefix(word, "<") || strings.HasPrefix(word, "(") {
+			break
+		}
+		prefix = append(prefix, word)
+	}
+	return strings.Join(prefix, " ")
+}
+
+func isPostgresOwnerTool(tool Tool) bool {
+	return tool.CapabilityID == "data.sql.postgres" ||
+		(tool.SemanticIdentity != nil && tool.SemanticIdentity.CapabilityID == "data.sql.postgres")
+}
+
+func hasPostgresOwnerTools(manifest ToolManifest) bool {
+	for _, tool := range manifest.Tools {
+		if isPostgresOwnerTool(tool) {
+			return true
+		}
+	}
+	return false
+}
+
+// frozenPFSSPublishedTools is the release-bound v1 projection.  It is
+// deliberately independent from an Owner-provided manifest: accepting a
+// self-consistent extra route or lifecycle would turn this thin client into a
+// second policy authority.  A new lifecycle requires an explicit CLI contract
+// version and digest projection update.
+type frozenPFSSPublishedTool struct {
+	ID, ActionID, Command, Method, Path, Risk, Scope, Confirmation string
+	PathParams                                                     []string
+	ExplicitAction                                                 bool
+}
+
+var frozenPFSSPublishedTools = []frozenPFSSPublishedTool{
+	{ID: "foundation.capabilities", ActionID: "capability.read", Command: "os foundation capabilities", Method: http.MethodGet, Path: "/api/foundation/oaa/postgres/capabilities", Risk: "R0"},
+	{ID: "foundation.readiness", ActionID: "readiness.read", Command: "os foundation readiness", Method: http.MethodGet, Path: "/api/foundation/oaa/postgres/readiness", Risk: "R0"},
+	{ID: "foundation.postgres.catalog", ActionID: "catalog.read", Command: "os foundation postgres catalog", Method: http.MethodGet, Path: "/api/foundation/oaa/postgres/catalog", Risk: "R0"},
+	{ID: "foundation.postgres.plan.create", ActionID: "cluster.plan", Command: "os foundation postgres plan create", Method: http.MethodPost, Path: "/api/foundation/oaa/postgres/durable-plan", Risk: "R2", Scope: "write-plan"},
+	{ID: "foundation.postgres.apply", ActionID: "cluster.create", Command: "os foundation postgres apply <planId>", Method: http.MethodPost, Path: "/api/foundation/oaa/postgres/durable-apply/{planId}", Risk: "R2", PathParams: []string{"planId"}, Confirmation: "exact-confirmation", ExplicitAction: true},
+	{ID: "foundation.postgres.status", ActionID: "cluster.status", Command: "os foundation postgres status <namespace> <name>", Method: http.MethodGet, Path: "/api/foundation/oaa/postgres/claims/{namespace}/{name}", Risk: "R0", PathParams: []string{"namespace", "name"}},
+	{ID: "foundation.operation.watch", ActionID: "operation.watch", Command: "os foundation operation watch <operationId>", Method: http.MethodGet, Path: "/api/foundation/oaa/operations/{operationId}", Risk: "R0", PathParams: []string{"operationId"}},
+}
+
+type pfssRegistryReleaseBinding struct {
+	PluginID        string
+	KeyID           string
+	ManifestSHA256  string
+	InstalledDigest string
+	SourceRevision  string
+}
+
+// expectedPFSSRegistryReleaseBinding closes PFSS discovery over the verified
+// installed Registry entry, rather than accepting release identity asserted by
+// the fetched Owner manifest itself.
+func expectedPFSSRegistryReleaseBinding(registry Registry, item RegistryItem, actualManifestSHA256 string) (*pfssRegistryReleaseBinding, error) {
+	if item.ID != "foundation" || !item.Available || item.CLI == nil || item.CLI.Namespace != "foundation" ||
+		!validLowerHex(item.ManifestSHA256, 64) || !validSHA256Digest(item.InstalledDigest) ||
+		!validLowerHex(item.SourceRevision, 40) || strings.TrimSpace(item.KeyID) == "" ||
+		item.ManifestSHA256 != actualManifestSHA256 {
+		return nil, commandContractError("PFSS Registry release identity is missing, malformed, or does not match the fetched manifest")
+	}
+	if _, trusted := registry.TrustedKeys[item.KeyID]; !trusted {
+		return nil, commandContractError("PFSS Registry release key is not trusted: " + item.KeyID)
+	}
+	return &pfssRegistryReleaseBinding{
+		PluginID: item.ID, KeyID: item.KeyID, ManifestSHA256: item.ManifestSHA256,
+		InstalledDigest: item.InstalledDigest, SourceRevision: item.SourceRevision,
+	}, nil
+}
+
+func validateFrozenPFSSManifest(manifest ToolManifest, pfssBinding *pfssRegistryReleaseBinding) error {
+	if manifest.Kind != "OpenSphereCLICommandManifest" || manifest.SchemaVersion != "v1" ||
+		manifest.CapabilityID != "data.sql.postgres" || manifest.ContractVersion != "v1" ||
+		!validLowerHex(manifest.SourceRevision, 40) {
+		return commandContractError("PFSS Owner manifest is not the release-bound v1 projection")
+	}
+	if pfssBinding == nil || pfssBinding.PluginID != "foundation" || manifest.SourceRevision != pfssBinding.SourceRevision {
+		return commandContractError("PFSS Owner manifest sourceRevision does not match the verified Foundation Registry release")
+	}
+	// The live Owner manifest does not yet publish descriptor/release digest
+	// fields backed by Registry authority.  Reject self-claimed values instead
+	// of treating them as release evidence; their introduction requires matching
+	// verified Registry fields and an explicit contract projection update.
+	if manifest.DescriptorDigest != "" || manifest.ReleaseDigest != "" {
+		return commandContractError("PFSS Owner manifest supplies unverified descriptor/release digest fields")
+	}
+	if len(manifest.Tools) != len(frozenPFSSPublishedTools) {
+		return commandContractError("PFSS Owner manifest must publish exactly the frozen v1 seven actions")
+	}
+	expected := make(map[string]frozenPFSSPublishedTool, len(frozenPFSSPublishedTools))
+	for _, tool := range frozenPFSSPublishedTools {
+		expected[tool.ActionID] = tool
+	}
+	for _, tool := range manifest.Tools {
+		published, ok := expected[tool.ActionID]
+		if !ok || tool.ID != published.ID || tool.Command != published.Command ||
+			tool.Method != published.Method || tool.Path != published.Path || tool.Risk != published.Risk ||
+			tool.Scope != published.Scope || tool.ExplicitAction != published.ExplicitAction ||
+			!sameStringSlice(tool.PathParams, published.PathParams) || tool.RequestType != "Instance" ||
+			tool.ContractVersion != "v1" || tool.SourceRevision != manifest.SourceRevision ||
+			tool.CapabilityID != "data.sql.postgres" || tool.SemanticIdentity == nil ||
+			tool.SemanticIdentity.ActionID != published.ActionID || tool.SemanticIdentity.CapabilityID != "data.sql.postgres" ||
+			tool.SemanticIdentity.RequestType != "Instance" || tool.SemanticIdentity.ToolID != published.ID ||
+			!matchesFrozenPFSSActionBinding(tool.ActionBinding, published) {
+			return commandContractError("PFSS Owner tool does not match the release-bound v1 action tuple: " + tool.Command)
+		}
+		delete(expected, tool.ActionID)
+	}
+	if len(expected) != 0 {
+		return commandContractError("PFSS Owner manifest omits a release-bound v1 action")
+	}
+	return nil
+}
+
+func matchesFrozenPFSSActionBinding(binding map[string]any, published frozenPFSSPublishedTool) bool {
+	if binding == nil || len(binding) != 2+boolCount(len(published.PathParams) > 0)+boolCount(published.Confirmation != "") {
+		return false
+	}
+	method, methodOK := actionBindingString(binding, "method")
+	path, pathOK := actionBindingString(binding, "path")
+	if !methodOK || !pathOK || method != published.Method || path != published.Path ||
+		!sameStringSlice(actionBindingStringSlice(binding, "pathParams"), published.PathParams) {
+		return false
+	}
+	confirmation, confirmationOK := actionBindingString(binding, "approval")
+	return (published.Confirmation == "" && !confirmationOK) || (published.Confirmation != "" && confirmationOK && confirmation == published.Confirmation)
+}
+
+func boolCount(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func validLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validSHA256Digest(value string) bool {
+	return strings.HasPrefix(value, "sha256:") && validLowerHex(strings.TrimPrefix(value, "sha256:"), 64)
+}
+
+// PFSS writes are only safe when the Owner supplies a closed schema. In
+// particular, do not fall back to legacy arbitrary --key value forwarding for
+// a plan or apply action, because that would turn the CLI into a second
+// PostgreSQL policy surface.
+func validatePostgresOwnerTool(tool Tool) error {
+	if !isPostgresOwnerTool(tool) {
+		return nil
+	}
+	identity := tool.SemanticIdentity
+	if identity == nil || strings.TrimSpace(tool.ActionID) == "" || strings.TrimSpace(tool.CapabilityID) == "" ||
+		identity.ActionID != tool.ActionID || identity.CapabilityID != tool.CapabilityID ||
+		identity.RequestType != tool.RequestType || identity.ToolID != tool.ID {
+		return commandContractError("PFSS owner semanticIdentity is incomplete or does not match its tool: " + tool.Command)
+	}
+	method, methodOK := actionBindingString(tool.ActionBinding, "method")
+	path, pathOK := actionBindingString(tool.ActionBinding, "path")
+	if !methodOK || !pathOK || !strings.EqualFold(method, tool.Method) || path != tool.Path ||
+		!sameStringSlice(actionBindingStringSlice(tool.ActionBinding, "pathParams"), tool.PathParams) {
+		return commandContractError("PFSS owner actionBinding does not match its command route: " + tool.Command)
+	}
+	if !strings.EqualFold(method, http.MethodGet) {
+		if err := validateClosedPFSSInputSchema(tool.InputSchema, tool.Command+" inputSchema"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateClosedPFSSInputSchema(schema *ToolInputSchema, location string) error {
+	if schema == nil || schema.Type != "object" {
+		return commandContractError("PFSS mutation requires a closed object inputSchema: " + location)
+	}
+	return validateClosedPFSSSchemaNode(schema, location)
+}
+
+func validateClosedPFSSSchemaNode(schema *ToolInputSchema, location string) error {
+	if schema == nil {
+		return commandContractError("PFSS inputSchema node is invalid: " + location)
+	}
+	switch schema.Type {
+	case "object":
+		if schema.AdditionalProperties == nil || *schema.AdditionalProperties {
+			return commandContractError("PFSS inputSchema object must set additionalProperties:false: " + location)
+		}
+		for name, property := range schema.Properties {
+			if err := validateClosedPFSSSchemaNode(property, location+"."+name); err != nil {
+				return err
+			}
+		}
+	case "array":
+		if schema.Items != nil {
+			return validateClosedPFSSSchemaNode(schema.Items, location+"[]")
+		}
+	}
+	return nil
+}
+
+func actionBindingString(binding map[string]any, key string) (string, bool) {
+	value, ok := binding[key]
+	text, textOK := value.(string)
+	text = strings.TrimSpace(text)
+	return text, ok && textOK && text != ""
+}
+
+func actionBindingStringSlice(binding map[string]any, key string) []string {
+	value, ok := binding[key]
+	if !ok || value == nil {
+		return nil
+	}
+	raw, ok := value.([]any)
+	if !ok {
+		return []string{"<invalid>"}
+	}
+	result := make([]string, 0, len(raw))
+	for _, item := range raw {
+		text, ok := item.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return []string{"<invalid>"}
+		}
+		result = append(result, text)
+	}
+	return result
+}
+
+func sameStringSlice(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func declaredWebShellAvailability(tool Tool) (bool, bool, error) {
@@ -435,7 +711,36 @@ func dynamicPollDuration(raw string, fallback, minimum, maximum time.Duration, o
 	return duration, nil
 }
 
+type ownerReceiptAction struct {
+	SemanticIdentity ToolSemanticIdentity
+	Method           string
+	Path             string
+	PathParams       []string
+	Approval         string
+}
+
+func ownerReceiptActions(manifest ToolManifest, pfssBinding *pfssRegistryReleaseBinding) ([]ownerReceiptAction, error) {
+	if err := validateFrozenPFSSManifest(manifest, pfssBinding); err != nil {
+		return nil, err
+	}
+	// The only v1 receipt-bearing mutation is the frozen cluster.create tuple.
+	// Do not derive this set from a manifest: a self-consistent unpublished
+	// update/delete action must not become receipt-verifiable by injection.
+	return []ownerReceiptAction{canonicalCreateReceiptAction()}, nil
+}
+
 func watchDynamicOperation(ctx context.Context, cfg Config, tool Tool, target string, flags map[string]string, out io.Writer) error {
+	return watchDynamicOperationWithActions(ctx, cfg, tool, []ownerReceiptAction{canonicalCreateReceiptAction()}, target, flags, out)
+}
+
+func canonicalCreateReceiptAction() ownerReceiptAction {
+	return ownerReceiptAction{
+		SemanticIdentity: ToolSemanticIdentity{ActionID: "cluster.create", CapabilityID: "data.sql.postgres", RequestType: "Instance", ToolID: "foundation.postgres.apply"},
+		Method:           http.MethodPost, Path: "/api/foundation/oaa/postgres/durable-apply/{planId}", PathParams: []string{"planId"}, Approval: "exact-confirmation",
+	}
+}
+
+func watchDynamicOperationWithActions(ctx context.Context, cfg Config, tool Tool, receiptActions []ownerReceiptAction, target string, flags map[string]string, out io.Writer) error {
 	interval, err := dynamicPollDuration(flags["interval"], 2*time.Second, 10*time.Millisecond, 5*time.Minute, "interval")
 	if err != nil {
 		return err
@@ -481,7 +786,7 @@ func watchDynamicOperation(ctx context.Context, cfg Config, tool Tool, target st
 		if dynamicOperationFailed(state) {
 			return &CLIError{Status: http.StatusConflict, Code: "OperationFailed", Message: "operation이 실패 terminal state에 도달했습니다: " + state, Details: map[string]any{"operation": operation}}
 		}
-		completed, completionErr := canonicalOperationCompleted(operation)
+		completed, completionErr := canonicalOperationCompletedForActions(operation, receiptActions)
 		if completionErr != nil {
 			return completionErr
 		}
@@ -526,6 +831,10 @@ func dynamicOperationFailed(state string) bool {
 }
 
 func canonicalOperationCompleted(operation map[string]any) (bool, error) {
+	return canonicalOperationCompletedForActions(operation, []ownerReceiptAction{canonicalCreateReceiptAction()})
+}
+
+func canonicalOperationCompletedForActions(operation map[string]any, receiptActions []ownerReceiptAction) (bool, error) {
 	value, found := operation["completion"]
 	if !found || value == nil {
 		return false, nil
@@ -555,7 +864,7 @@ func canonicalOperationCompleted(operation map[string]any) (bool, error) {
 	if !successDeclared || !success || !verifiedDeclared || !verified || !staleDeclared || stale || !receiptDeclared {
 		return false, operationEvidenceIncomplete(operation, "terminal completion의 success/verified/stale/receipt 증거가 불완전합니다")
 	}
-	if err := validateCanonicalOperationReceipt(operation, completion, receipt); err != nil {
+	if err := validateCanonicalOperationReceiptForActions(operation, completion, receipt, receiptActions); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -566,6 +875,10 @@ func operationEvidenceIncomplete(operation map[string]any, message string) error
 }
 
 func validateCanonicalOperationReceipt(operation, completion map[string]any, value any) error {
+	return validateCanonicalOperationReceiptForActions(operation, completion, value, []ownerReceiptAction{canonicalCreateReceiptAction()})
+}
+
+func validateCanonicalOperationReceiptForActions(operation, completion map[string]any, value any, receiptActions []ownerReceiptAction) error {
 	receipt, ok := value.(map[string]any)
 	if !ok || len(receipt) == 0 {
 		return operationEvidenceIncomplete(operation, "completion.receipt는 non-empty object여야 합니다")
@@ -589,25 +902,99 @@ func validateCanonicalOperationReceipt(operation, completion map[string]any, val
 	if _, err := time.Parse(time.RFC3339Nano, verifiedAt); err != nil {
 		return operationEvidenceIncomplete(operation, "receipt.verifiedAt은 유효한 ISO timestamp여야 합니다")
 	}
-	semanticIdentity, ok := receipt["semanticIdentity"].(map[string]any)
-	if !ok ||
-		!matchesString(semanticIdentity, "capabilityId", "data.sql.postgres") ||
-		!matchesString(semanticIdentity, "actionId", "cluster.create") ||
-		!matchesString(semanticIdentity, "toolId", "foundation.postgres.apply") {
-		return operationEvidenceIncomplete(operation, "receipt.semanticIdentity가 canonical PostgreSQL apply identity와 일치해야 합니다")
-	}
-	actionBinding, ok := receipt["actionBinding"].(map[string]any)
-	if !ok ||
-		!matchesString(actionBinding, "method", http.MethodPost) ||
-		!matchesString(actionBinding, "path", "/api/foundation/oaa/postgres/durable-apply/{planId}") {
-		return operationEvidenceIncomplete(operation, "receipt.actionBinding이 canonical durable apply binding과 일치해야 합니다")
+	semanticIdentity, semanticOK := receipt["semanticIdentity"].(map[string]any)
+	actionBinding, bindingOK := receipt["actionBinding"].(map[string]any)
+	if !semanticOK || !bindingOK || !matchesPublishedReceiptAction(semanticIdentity, actionBinding, receiptActions) {
+		return operationEvidenceIncomplete(operation, "receipt semanticIdentity/actionBinding이 Owner-published governed action과 일치해야 합니다")
 	}
 	ownerRevision, ownerRevisionOK := nonEmptyString(receipt["ownerEvidenceRevision"])
 	completionRevision, completionRevisionOK := nonEmptyString(completion["evidenceRevision"])
 	if !ownerRevisionOK || !completionRevisionOK || ownerRevision != completionRevision {
 		return operationEvidenceIncomplete(operation, "receipt.ownerEvidenceRevision이 completion.evidenceRevision과 일치해야 합니다")
 	}
+	if message := validateV1ReceiptEvidenceBinding(operation, receipt); message != "" {
+		return operationEvidenceIncomplete(operation, message)
+	}
 	return nil
+}
+
+// A v1 receipt is evidence, not a bag of advisory strings.  The operation and
+// receipt must each carry the same structured plan/action, actor, fencing and
+// postcondition evidence so a terminal watch cannot silently drop a binding.
+func validateV1ReceiptEvidenceBinding(operation, receipt map[string]any) string {
+	for _, field := range []string{"planDigest", "actionDigest"} {
+		operationValue, operationOK := nonEmptyString(operation[field])
+		receiptValue, receiptOK := nonEmptyString(receipt[field])
+		if !operationOK || !receiptOK || !validSHA256Digest(operationValue) || operationValue != receiptValue {
+			return "receipt." + field + "가 operation과 일치하는 sha256 digest여야 합니다"
+		}
+	}
+	for _, field := range []string{"actor", "fencing", "postcondition"} {
+		operationValue, operationOK := operation[field].(map[string]any)
+		receiptValue, receiptOK := receipt[field].(map[string]any)
+		if !operationOK || !receiptOK || !validV1ReceiptEvidenceObject(field, operationValue) || !validV1ReceiptEvidenceObject(field, receiptValue) || !sameJSONValue(operationValue, receiptValue) {
+			return "receipt." + field + "가 operation의 구조적 evidence binding과 일치해야 합니다"
+		}
+	}
+	return ""
+}
+
+func validV1ReceiptEvidenceObject(field string, value map[string]any) bool {
+	switch field {
+	case "actor":
+		_, idOK := nonEmptyString(value["id"])
+		_, bindingOK := nonEmptyString(value["binding"])
+		return idOK && bindingOK
+	case "fencing":
+		_, tokenOK := nonEmptyString(value["token"])
+		return tokenOK
+	case "postcondition":
+		_, targetOK := nonEmptyString(value["targetUid"])
+		_, versionOK := nonEmptyString(value["resourceVersion"])
+		return targetOK && versionOK && positiveInteger(value["generation"])
+	default:
+		return false
+	}
+}
+
+func positiveInteger(value any) bool {
+	switch number := value.(type) {
+	case int:
+		return number > 0
+	case int64:
+		return number > 0
+	case float64:
+		return number > 0 && number == float64(int64(number))
+	case json.Number:
+		parsed, err := number.Int64()
+		return err == nil && parsed > 0
+	default:
+		return false
+	}
+}
+
+func sameJSONValue(left, right any) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
+}
+
+func matchesPublishedReceiptAction(identity, binding map[string]any, actions []ownerReceiptAction) bool {
+	for _, action := range actions {
+		if matchesString(identity, "capabilityId", action.SemanticIdentity.CapabilityID) &&
+			matchesString(identity, "actionId", action.SemanticIdentity.ActionID) &&
+			matchesString(identity, "requestType", action.SemanticIdentity.RequestType) &&
+			matchesString(identity, "toolId", action.SemanticIdentity.ToolID) &&
+			matchesString(binding, "method", action.Method) &&
+			matchesString(binding, "path", action.Path) &&
+			sameStringSlice(actionBindingStringSlice(binding, "pathParams"), action.PathParams) {
+			approval, _ := actionBindingString(binding, "approval")
+			if approval == action.Approval {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func nonEmptyString(value any) (string, bool) {
