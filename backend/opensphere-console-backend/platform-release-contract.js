@@ -1,6 +1,6 @@
 'use strict';
 
-const { createHash } = require('crypto');
+const { createHash, createPublicKey, verify: verifySignature } = require('crypto');
 
 const PLATFORM_RELEASE_CONSUMER = 'platform-release';
 const PLATFORM_RELEASE_RECONCILER = 'platform-release-reconciler';
@@ -55,6 +55,10 @@ const SHA256_RE = /^sha256:[a-f0-9]{64}$/;
 const REVISION_RE = /^[a-f0-9]{40}$/;
 const IMAGE_RE =
   /^ghcr\.io\/opensphere-platform\/([a-z0-9][a-z0-9-]*)@sha256:[a-f0-9]{64}$/;
+const PFSS_COMPONENTS = Object.freeze(['backend', 'oaaGateway']);
+const COMPONENT_PUBLICATION_PUBLISHER = 'scripts/Publish-LocalEdgeBackendComponent.ps1';
+const PFSS_SIGNATURE_CONTRACT = 'opensphere-edge-detached-signature/v1';
+const PFSS_CANONICAL_SOURCE = 'https://github.com/opensphere-platform/OpenSphere-console';
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -76,6 +80,7 @@ function calculateReleaseDigest(lock) {
     ...(lock.releaseScope ? { releaseScope: lock.releaseScope } : {}),
     ...(lock.baseReleaseDigest ? { baseReleaseDigest: lock.baseReleaseDigest } : {}),
     ...(lock.changedComponents ? { changedComponents: lock.changedComponents } : {}),
+    ...(lock.componentPublication ? { componentPublication: lock.componentPublication } : {}),
   });
   return `sha256:${createHash('sha256').update(payload).digest('hex')}`;
 }
@@ -88,11 +93,192 @@ function assertClosedObject(value, allowed, label) {
   if (unknown.length) throw new Error(`${label} contains unsupported fields: ${unknown.join(', ')}`);
 }
 
+function assertExactObject(value, expected, label) {
+  assertClosedObject(value, expected, label);
+  const missing = expected.filter((key) => !Object.prototype.hasOwnProperty.call(value, key));
+  if (missing.length) throw new Error(`${label} is missing required fields: ${missing.join(', ')}`);
+}
+
+function sha256(value) {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function assertStringArray(value, label) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new Error(`${label} must be an array of strings`);
+  }
+}
+
+// Keep this byte-for-byte compatible with the installer binding.  The Console
+// does not create a second release ledger: the signed publisher statement is
+// carried inside the digest-pinned Platform Release lock that Setup verifies.
+function validateComponentPublicationBinding(value) {
+  const expected = [
+    'contract', 'publisher', 'publisherGitBlob', 'publisherSha256', 'documentSha256',
+    'signatureSha256', 'keyId', 'setupSourceRevision', 'setupSourceLockSha256',
+    'setupManifestProjectionGitBlob', 'setupManifestProjectionSha256', 'migrationSetDigest',
+    'platformRevision', 'inventorySha256', 'verificationSetDigest',
+  ];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== expected.sort().join(',')
+      || value.contract !== 'opensphere-edge-component-publication-binding/v1'
+      || value.publisher !== COMPONENT_PUBLICATION_PUBLISHER
+      || !/^[a-f0-9]{40,64}$/.test(value.publisherGitBlob || '')
+      || !['publisherSha256', 'documentSha256', 'signatureSha256', 'setupSourceLockSha256',
+        'setupManifestProjectionSha256', 'migrationSetDigest', 'inventorySha256',
+        'verificationSetDigest'].every((key) => SHA256_RE.test(String(value[key] || '')))
+      || value.keyId !== 'opensphere-edge-local-v1'
+      || !REVISION_RE.test(String(value.setupSourceRevision || ''))
+      || !/^[a-f0-9]{40,64}$/.test(value.setupManifestProjectionGitBlob || '')
+      || !REVISION_RE.test(String(value.platformRevision || ''))) {
+    throw new Error('component release publication binding is invalid');
+  }
+  return value;
+}
+
+function pfssOperationId(documentSha256) {
+  if (!SHA256_RE.test(String(documentSha256 || ''))) {
+    throw new Error('PFSS publication document digest is invalid');
+  }
+  return `pfss:${documentSha256.slice('sha256:'.length)}`;
+}
+
+// This is deliberately separate from release-lock generation.  It verifies
+// publisher evidence before any durable change request is opened, so a caller
+// cannot substitute a binding hash for the signed publication itself.
+function validatePfssPublicationSubmission(value, trustedPublicKeySpkiBase64) {
+  assertExactObject(value, [
+    'sourceRevision', 'components', 'componentPublication',
+    'publicationDocument', 'publicationSignature',
+  ], 'PFSS publication submission');
+  if (!REVISION_RE.test(String(value.sourceRevision || ''))) {
+    throw new Error('PFSS publication sourceRevision is invalid');
+  }
+  assertExactObject(value.components, PFSS_COMPONENTS, 'PFSS publication components');
+  for (const name of PFSS_COMPONENTS) {
+    if (typeof value.components[name] !== 'string') {
+      throw new Error(`PFSS publication component ${name} image is invalid`);
+    }
+    normalizeComponentImage(name, value.components[name]);
+  }
+  const binding = validateComponentPublicationBinding(value.componentPublication);
+  if (typeof value.publicationDocument !== 'string' || !value.publicationDocument.length) {
+    throw new Error('PFSS publication document must be the original compact JSON string');
+  }
+  if (typeof value.publicationSignature !== 'string' || !value.publicationSignature.length) {
+    throw new Error('PFSS publication signature must be the original compact JSON string');
+  }
+
+  let document;
+  let signature;
+  try {
+    document = JSON.parse(value.publicationDocument);
+    signature = JSON.parse(value.publicationSignature);
+  } catch {
+    throw new Error('PFSS publication evidence is not valid JSON');
+  }
+  if (JSON.stringify(document) !== value.publicationDocument
+    || JSON.stringify(signature) !== value.publicationSignature) {
+    throw new Error('PFSS publication evidence must retain its original compact JSON encoding');
+  }
+  const documentSha256 = sha256(value.publicationDocument);
+  const signatureSha256 = sha256(value.publicationSignature);
+  if (binding.documentSha256 !== documentSha256 || binding.signatureSha256 !== signatureSha256) {
+    throw new Error('PFSS publication binding digest differs from the supplied signed evidence');
+  }
+  assertExactObject(signature, [
+    'contract', 'algorithm', 'keyId', 'trustReference', 'publicKeySpkiSha256',
+    'documentSha256', 'signature', 'releaseClass', 'gaPromotionEligible',
+  ], 'PFSS detached signature');
+  if (signature.contract !== PFSS_SIGNATURE_CONTRACT
+    || signature.algorithm !== 'ES256-P1363'
+    || signature.keyId !== binding.keyId
+    || signature.documentSha256 !== documentSha256
+    || signature.releaseClass !== 'pre-ga'
+    || signature.gaPromotionEligible !== false
+    || !/^[A-Za-z0-9_-]+$/.test(signature.signature || '')) {
+    throw new Error('PFSS detached signature metadata is invalid');
+  }
+  if (typeof trustedPublicKeySpkiBase64 !== 'string' || !trustedPublicKeySpkiBase64.trim()) {
+    throw new Error('PFSS trusted P-256 SPKI is not configured');
+  }
+  let publicKey;
+  let spki;
+  try {
+    spki = Buffer.from(trustedPublicKeySpkiBase64, 'base64');
+    publicKey = createPublicKey({ key: spki, format: 'der', type: 'spki' });
+  } catch {
+    throw new Error('PFSS trusted P-256 SPKI is invalid');
+  }
+  if (publicKey.asymmetricKeyType !== 'ec'
+    || publicKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1'
+    || signature.publicKeySpkiSha256 !== sha256(spki)) {
+    throw new Error('PFSS detached signature trust root is invalid');
+  }
+  let verified = false;
+  try {
+    verified = verifySignature('sha256', Buffer.from(value.publicationDocument), {
+      key: publicKey,
+      dsaEncoding: 'ieee-p1363',
+    }, Buffer.from(signature.signature, 'base64url'));
+  } catch {
+    verified = false;
+  }
+  if (!verified) throw new Error('PFSS detached signature verification failed');
+
+  assertExactObject(document, [
+    'apiVersion', 'kind', 'publicationScope', 'channel', 'status', 'source',
+    'sourceRevision', 'releaseTag', 'immutableTag', 'buildAuthority', 'releaseClass',
+    'gaEligible', 'supportedPlatforms', 'components', 'changedPaths', 'affectedImages',
+    'releaseScope', 'fullReleaseJustification',
+  ], 'PFSS publication document');
+  if (document.apiVersion !== 'release.opensphere.io/v1alpha1'
+    || document.kind !== 'OpenSphereEdgeComponentPublication'
+    || document.publicationScope !== 'ComponentSet'
+    || document.channel !== 'edge'
+    || document.status !== 'Active'
+    || document.source !== PFSS_CANONICAL_SOURCE
+    || document.sourceRevision !== value.sourceRevision
+    || document.buildAuthority !== 'localhost'
+    || document.releaseClass !== 'pre-ga'
+    || document.gaEligible !== false
+    || document.releaseScope !== 'component'
+    || document.fullReleaseJustification !== null
+    || typeof document.releaseTag !== 'string'
+    || typeof document.immutableTag !== 'string') {
+    throw new Error('PFSS publication document root is invalid');
+  }
+  assertStringArray(document.supportedPlatforms, 'PFSS publication supportedPlatforms');
+  assertStringArray(document.changedPaths, 'PFSS publication changedPaths');
+  assertStringArray(document.affectedImages, 'PFSS publication affectedImages');
+  if (document.supportedPlatforms.length !== 1 || document.supportedPlatforms[0] !== 'linux/amd64'
+    || document.changedPaths.length === 0
+    || document.affectedImages.join(',') !== PFSS_COMPONENTS.join(',')) {
+    throw new Error('PFSS publication document component evidence is invalid');
+  }
+  assertExactObject(document.components, PFSS_COMPONENTS, 'PFSS publication document components');
+  for (const name of PFSS_COMPONENTS) {
+    const component = document.components[name];
+    assertExactObject(component, ['repository', 'image', 'sourceRevision'], `PFSS publication document component ${name}`);
+    if (component.repository !== COMPONENT_REPOSITORIES[name]
+      || component.image !== normalizeComponentImage(name, value.components[name])
+      || component.sourceRevision !== value.sourceRevision) {
+      throw new Error(`PFSS publication document component ${name} differs from the request`);
+    }
+  }
+  return {
+    binding,
+    documentSha256,
+    signatureSha256,
+    operationId: pfssOperationId(documentSha256),
+  };
+}
+
 function validateReleaseLock(lock) {
   assertClosedObject(lock, [
     'apiVersion', 'kind', 'channel', 'releaseDigest', 'resolvedAt', 'source',
     'sourceRevision', 'trust', 'releaseBom', 'components',
-    'releaseScope', 'baseReleaseDigest', 'changedComponents',
+    'releaseScope', 'baseReleaseDigest', 'changedComponents', 'componentPublication',
     'provenanceVerifiedAt', 'sbomVerifiedAt',
   ], 'targetLock');
   if (lock.apiVersion !== RELEASE_LOCK_API_VERSION || lock.kind !== RELEASE_LOCK_KIND) {
@@ -136,7 +322,8 @@ function validateReleaseLock(lock) {
     throw new Error('targetLock releaseScope is unsupported');
   }
   if (releaseScope === RELEASE_SCOPE_INTEGRATED
-    && (lock.baseReleaseDigest !== undefined || lock.changedComponents !== undefined)) {
+    && (lock.baseReleaseDigest !== undefined || lock.changedComponents !== undefined
+      || lock.componentPublication !== undefined)) {
     throw new Error('integrated targetLock cannot declare a component transition');
   }
   if (releaseScope === RELEASE_SCOPE_COMPONENT) {
@@ -157,6 +344,12 @@ function validateReleaseLock(lock) {
     }
     if (lock.releaseBom !== undefined) {
       throw new Error('component targetLock cannot claim a signed Release BOM');
+    }
+    if (lock.componentPublication !== undefined) {
+      if (canonicalChanged.join(',') !== PFSS_COMPONENTS.join(',')) {
+        throw new Error('PFSS component targetLock must change exactly backend,oaaGateway');
+      }
+      validateComponentPublicationBinding(lock.componentPublication);
     }
   }
   assertClosedObject(lock.components, REQUIRED_COMPONENTS, 'targetLock.components');
@@ -255,7 +448,7 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
   if (base.channel !== 'edge' || canonicalJson(base.trust) !== canonicalJson(LOCAL_EDGE_TRUST)) {
     throw new Error('component target generation requires an installed localhost edge release');
   }
-  assertClosedObject(evidence, ['sourceRevision', 'components'], 'componentEvidence');
+  assertClosedObject(evidence, ['sourceRevision', 'components', 'componentPublication'], 'componentEvidence');
   if (!REVISION_RE.test(String(evidence.sourceRevision || ''))) {
     throw new Error('componentEvidence sourceRevision is invalid');
   }
@@ -263,6 +456,11 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
   const changedComponents = Object.keys(evidence.components).sort();
   if (changedComponents.length === 0) {
     throw new Error('componentEvidence must contain at least one changed component');
+  }
+  const componentPublication = evidence.componentPublication === undefined ? undefined :
+    validateComponentPublicationBinding(evidence.componentPublication);
+  if (componentPublication && changedComponents.join(',') !== PFSS_COMPONENTS.join(',')) {
+    throw new Error('PFSS componentEvidence must change exactly backend,oaaGateway');
   }
   const components = structuredClone(base.components);
   for (const name of changedComponents) {
@@ -296,6 +494,7 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
     releaseScope: RELEASE_SCOPE_COMPONENT,
     baseReleaseDigest: base.releaseDigest,
     changedComponents,
+    ...(componentPublication ? { componentPublication } : {}),
     components,
   };
   target.releaseDigest = calculateReleaseDigest(target);
@@ -363,6 +562,8 @@ module.exports = {
   PLATFORM_RELEASE_CONTRACT,
   COMPONENT_REPOSITORIES,
   REQUIRED_COMPONENTS,
+  PFSS_COMPONENTS,
+  COMPONENT_PUBLICATION_PUBLISHER,
   RELEASE_SCOPE_INTEGRATED,
   RELEASE_SCOPE_COMPONENT,
   APPROVAL_MODE_LOCAL_EDGE_AUTOMATION,
@@ -370,6 +571,9 @@ module.exports = {
   canonicalJson,
   calculateReleaseDigest,
   buildComponentReleaseLock,
+  validateComponentPublicationBinding,
+  validatePfssPublicationSubmission,
+  pfssOperationId,
   validateReleaseLock,
   validateReleaseTransition,
   validatePlatformReleaseDesiredState,

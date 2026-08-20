@@ -139,6 +139,9 @@ spec:
             - name: shell-credential-authority-tls
               mountPath: /var/run/opensphere-shell-credential-authority
               readOnly: true
+            - name: pfss-dupa-trusted-keys
+              mountPath: /var/run/opensphere-dupa-trusted-keys
+              readOnly: true
           env:
             - { name: APP_VERSION, value: "0.8.0-oaa-recovery-owner" }
             # fetch(kube API / secret read)가 kube CA 신뢰하도록
@@ -148,6 +151,7 @@ spec:
             - { name: OAA_EMBED_DIM, value: "1536" }
             - { name: OAA_ALLOWED_NAMESPACES, value: "opensphere-console,opensphere-console-data,opensphere-console-change" }
             - { name: OAA_SCALE_MAX, value: "10" }
+            - { name: PFSS_COMPONENT_TRUSTED_KEYS_FILE, value: /var/run/opensphere-dupa-trusted-keys/trusted-keys.json }
             # Reviewed durable operations are enabled by operator acceptance.
             # Engineering source mutation remains an independent closed gate.
             - { name: R2D2_DURABLE_OPERATION_ENABLED, value: "true" }
@@ -246,6 +250,11 @@ spec:
           secret:
             secretName: opensphere-shell-credential-authority-tls
             optional: true
+        - name: pfss-dupa-trusted-keys
+          configMap:
+            name: dupa-trusted-keys
+            items:
+              - { key: trusted-keys.json, path: trusted-keys.json }
 ---
 apiVersion: v1
 kind: Service

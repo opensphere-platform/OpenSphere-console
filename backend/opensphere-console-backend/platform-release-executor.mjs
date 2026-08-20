@@ -30,6 +30,7 @@ const ATTEMPT = Number(process.env.ATTEMPT || 1);
 const EXPECTED_PREVIOUS_RELEASE_DIGEST = process.env.EXPECTED_PREVIOUS_RELEASE_DIGEST || '';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COMMIT_RE = /^[0-9a-f]{40,64}$/i;
+let attemptedComponentPublication = null;
 
 function encodedPath(value) {
   return String(value).split('/').map(encodeURIComponent).join('/');
@@ -117,6 +118,17 @@ function requiredPlatforms() {
   return platforms;
 }
 
+function componentPublicationReceipt(binding) {
+  if (!binding) return null;
+  return {
+    publisher: binding.publisher,
+    documentSha256: binding.documentSha256,
+    signatureSha256: binding.signatureSha256,
+    keyId: binding.keyId,
+    verificationSetDigest: binding.verificationSetDigest,
+  };
+}
+
 async function sendReceipt({ succeeded, result, desiredRevision, appliedRevision, evidence }) {
   const payload = {
     requestId: REQUEST_ID,
@@ -150,6 +162,7 @@ async function sendReceipt({ succeeded, result, desiredRevision, appliedRevision
 
 async function main() {
   const desired = await loadDesiredState();
+  attemptedComponentPublication = desired.targetLock.componentPublication || null;
   const current = readInstallationLock();
   if (!current || current.releaseDigest !== desired.previousReleaseDigest) {
     throw new Error('Platform Release request is stale; installation lock changed before execution');
@@ -180,6 +193,7 @@ async function main() {
       changed: result.changed,
       podCount: result.evidence?.podCount ?? null,
       serviceCount: result.evidence?.serviceCount ?? null,
+      componentPublication: componentPublicationReceipt(desired.targetLock.componentPublication),
       rollbackContract: 'Setup upgrade restores the previously verified release on failed target verification',
     },
   });
@@ -208,6 +222,7 @@ try {
       expectedPreviousReleaseDigest: EXPECTED_PREVIOUS_RELEASE_DIGEST || null,
       observedReleaseDigest,
       rollbackObserved: observedReleaseDigest === EXPECTED_PREVIOUS_RELEASE_DIGEST,
+      componentPublication: componentPublicationReceipt(attemptedComponentPublication),
     },
   }).catch((receiptError) => {
     console.error('[platform-release-executor] failure receipt rejected:', receiptError.message || receiptError);
