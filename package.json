@@ -19,7 +19,7 @@
     "test:os-shell-security-poc": "node --test backend/dupa-control/host-contract.test.js backend/opensphere-console-backend/os-shell-security-poc-contract.test.js backend/opensphere-console-backend/os-shell-contract.test.js backend/opensphere-console-backend/os-shell-database.test.js scripts/os-shell-frontend-contract.test.mjs",
     "test:os-shell-frontend": "node --test scripts/os-shell-frontend-contract.test.mjs",
     "test:web-shell-edge-mvp": "node --test scripts/web-shell-edge-mvp-contract.test.mjs",
-    "test:navigation-snapshot": "node --test src/app/core/console-navigation-snapshot.spec.ts"
+    "test:navigation-snapshot": "node --test src/app/core/console-navigation-snapshot.spec.ts src/app/core/r2d2-risk.service.spec.ts"
   },
   "private": true,
   "packageManager": "npm@11.6.2",
