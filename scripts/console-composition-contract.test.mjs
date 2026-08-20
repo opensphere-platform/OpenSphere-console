@@ -34,3 +34,11 @@ test('Manual remains core while R2D2 is a lazy Console-owned system plugin', () 
   assert.match(unavailable, /SYSTEM PLUGIN DEGRADED/);
   assert.match(unavailable, /Main Shell과 다른 Extension은 계속 사용할 수 있습니다/);
 });
+
+test('rolling Console revisions never cache a missing hashed asset as immutable', () => {
+  const nginx = read('nginx', 'default.conf.template');
+
+  assert.match(nginx, /location ~\* "-\[A-Za-z0-9\]\{8,\}\\\.\(\?:js\|css\)\$" \{[\s\S]*?try_files \$uri @missing_hashed_asset;/);
+  assert.match(nginx, /location @missing_hashed_asset \{[\s\S]*?Cache-Control "no-store, max-age=0" always;[\s\S]*?return 404;/);
+  assert.match(nginx, /Cache-Control "public, max-age=31536000, immutable" always;/);
+});
