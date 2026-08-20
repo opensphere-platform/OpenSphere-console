@@ -20,6 +20,15 @@ import (
 	"time"
 )
 
+func TestWebShellAgentUsesTheFixedRuntimeTemplateChannelPaths(t *testing.T) {
+	if webShellAgentSocketDefaultPath != "/run/opensphere-shell/channel/agent.sock" {
+		t.Fatalf("unexpected fixed Web Shell agent socket path: %q", webShellAgentSocketDefaultPath)
+	}
+	if webShellAgentPublicKeyDefaultPath != "/run/opensphere-shell/channel/agent-public-key.pem" {
+		t.Fatalf("unexpected fixed Web Shell agent public key path: %q", webShellAgentPublicKeyDefaultPath)
+	}
+}
+
 func TestWebShellAgentVerifiesBoundJWSAndDelegatedCredential(t *testing.T) {
 	now := time.Date(2026, 8, 15, 6, 0, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)

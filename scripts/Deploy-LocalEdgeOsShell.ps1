@@ -4,6 +4,7 @@ param(
   [Parameter(Mandatory)]
   [string]$PublicationEvidence,
   [string]$RuntimePublicationEvidence = '',
+  [string]$CliRuntimePublicationEvidence = '',
   [string]$PlatformPublicationEvidence = '',
   [string]$BackendPublicationEvidence = '',
   [string]$ConsolePublicationEvidence = '',
@@ -20,6 +21,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'local-edge-publication-core.psm1') -Force -ErrorAction Stop
 . (Join-Path $PSScriptRoot 'os-shell-tls-contract.ps1')
 . (Join-Path $PSScriptRoot 'os-shell-edge-signing.ps1')
 
@@ -84,15 +86,6 @@ $privateTlsProfiles = @(
 )
 $consoleRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
-function Invoke-Checked {
-  if ($args.Count -lt 1) { throw 'Invoke-Checked requires an executable.' }
-  $executable = [string]$args[0]
-  $arguments = @($args | Select-Object -Skip 1)
-  & $executable @arguments
-  if ($LASTEXITCODE -ne 0) {
-    throw "$executable failed with exit code $LASTEXITCODE"
-  }
-}
 
 function Invoke-Kubectl {
   param(
@@ -111,30 +104,6 @@ function Invoke-Kubectl {
   return @($output)
 }
 
-function Get-CanonicalTextSha256 {
-  param([Parameter(Mandatory)][string]$Path)
-  $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
-  $sha = [Security.Cryptography.SHA256]::Create()
-  try {
-    return 'sha256:' + ([BitConverter]::ToString(
-      $sha.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($text))
-    )).Replace('-', '').ToLowerInvariant()
-  } finally {
-    $sha.Dispose()
-  }
-}
-
-function Get-FileSha256 {
-  param([Parameter(Mandatory)][string]$Path)
-  $stream = [IO.File]::OpenRead($Path)
-  $sha = [Security.Cryptography.SHA256]::Create()
-  try {
-    return 'sha256:' + ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
-  } finally {
-    $sha.Dispose()
-    $stream.Dispose()
-  }
-}
 
 function Get-CanonicalObjectSha256 {
   param([Parameter(Mandatory)][object]$Value)
@@ -209,21 +178,6 @@ function Invoke-LocalEdgeShellFeatureOperation {
   }
 }
 
-function Get-RemoteDigest {
-  param([Parameter(Mandatory)][string]$Reference)
-  $previousPreference = $ErrorActionPreference
-  try {
-    $ErrorActionPreference = 'Continue'
-    $output = & docker buildx imagetools inspect $Reference 2>$null
-    $inspectExitCode = $LASTEXITCODE
-  } finally {
-    $ErrorActionPreference = $previousPreference
-  }
-  if ($inspectExitCode -ne 0) { return $null }
-  $line = $output | Where-Object { $_ -match '^Digest:\s+(sha256:[0-9a-f]{64})$' } | Select-Object -First 1
-  if (-not $line) { throw "Could not parse registry digest for $Reference" }
-  return ([regex]::Match($line, 'sha256:[0-9a-f]{64}')).Value
-}
 
 function Assert-ImageMetadata {
   param(
@@ -295,6 +249,61 @@ function Get-EvidenceComponent {
     image = [string]$component.image
     digest = $digestMatch.Groups[1].Value
   }
+}
+
+function Assert-EvidenceText($Value, [string]$Path, [string]$Pattern = '') {
+  if ($Value -isnot [string] -or ($Pattern -and $Value -notmatch $Pattern)) { throw "$Path has an invalid type or value" }
+}
+function Assert-EvidenceInteger($Value, [string]$Path) { if ($Value -isnot [int] -and $Value -isnot [long]) { throw "$Path must be an integer" } }
+function Assert-EvidenceBoolean($Value, [string]$Path) { if ($Value -isnot [bool]) { throw "$Path must be a boolean" } }
+function Assert-EvidenceStringArray($Value, [string]$Path, [string[]]$Expected = @()) {
+  if ($Value -isnot [Array] -or @(@($Value) | Where-Object { $_ -isnot [string] }).Count) { throw "$Path must be a string array" }
+  if (@($Expected).Count -and ((@($Value) -join "`0") -ne ($Expected -join "`0"))) { throw "$Path must be the exact string array" }
+}
+function Assert-PairOverrideSchema($Value) {
+  Assert-ExactObjectKeys -Value $Value -Keys @('apiVersion','kind','publicationScope','channel','status','source','sourceRevision','releaseTag','immutableTag','buildAuthority','releaseClass','gaEligible','supportedPlatforms','basePublication','components','changedPaths','affectedImages','reusedImages','releaseScope','fullReleaseJustification','artifacts') -Path 'CLI/runtime override'
+  foreach ($field in @(@{ n='apiVersion'; p='^release[.]opensphere[.]io/v1alpha1$' },@{ n='kind'; p='^OpenSphereEdgeComponentPublication$' },@{ n='publicationScope'; p='^ComponentSet$' },@{ n='channel'; p='^edge$' },@{ n='status'; p='^Active$' },@{ n='source'; p='^https://github[.]com/opensphere-platform/OpenSphere-console$' },@{ n='sourceRevision'; p='^[a-f0-9]{40}$' },@{ n='releaseTag'; p='^\d{12}$' },@{ n='immutableTag'; p='^local-[a-f0-9]{12}$' },@{ n='buildAuthority'; p='^localhost$' },@{ n='releaseClass'; p='^pre-ga$' },@{ n='releaseScope'; p='^component$' })) { Assert-EvidenceText $Value.($field.n) "CLI/runtime override.$($field.n)" $field.p }
+  Assert-EvidenceBoolean $Value.gaEligible 'CLI/runtime override.gaEligible'; if ($Value.gaEligible) { throw 'CLI/runtime override.gaEligible must be false' }; if ($null -ne $Value.fullReleaseJustification) { throw 'CLI/runtime override.fullReleaseJustification must be null' }; Assert-EvidenceStringArray $Value.supportedPlatforms 'CLI/runtime override.supportedPlatforms' @('linux/amd64'); Assert-EvidenceStringArray $Value.affectedImages 'CLI/runtime override.affectedImages' @('cliArtifacts','osShellRuntime'); Assert-EvidenceStringArray $Value.reusedImages 'CLI/runtime override.reusedImages' @('console','backend','osShellControl'); Assert-EvidenceStringArray $Value.changedPaths 'CLI/runtime override.changedPaths'
+  Assert-ExactObjectKeys -Value $Value.components -Keys @('cliArtifacts','osShellRuntime') -Path 'CLI/runtime override.components'
+  foreach ($entry in @(@{ key='cliArtifacts'; repo='opensphere-os-cli' },@{ key='osShellRuntime'; repo='opensphere-os-shell-runtime' })) { $component = $Value.components.PSObject.Properties[$entry.key].Value; Assert-ExactObjectKeys -Value $component -Keys @('repository','image','sourceRevision') -Path "CLI/runtime override.components.$($entry.key)"; Assert-EvidenceText $component.repository "CLI/runtime override.components.$($entry.key).repository" "^$([regex]::Escape($entry.repo))$"; Assert-EvidenceText $component.image "CLI/runtime override.components.$($entry.key).image" "^ghcr[.]io/opensphere-platform/$([regex]::Escape($entry.repo))@sha256:[a-f0-9]{64}$"; Assert-EvidenceText $component.sourceRevision "CLI/runtime override.components.$($entry.key).sourceRevision" '^[a-f0-9]{40}$' }
+  Assert-ExactObjectKeys -Value $Value.basePublication -Keys @('pathSha256','sourceRevision','releaseTag','sessionPolicyRevision','reused') -Path 'CLI/runtime override.basePublication'; Assert-EvidenceText $Value.basePublication.pathSha256 'CLI/runtime override.basePublication.pathSha256' '^sha256:[a-f0-9]{64}$'; Assert-EvidenceText $Value.basePublication.sourceRevision 'CLI/runtime override.basePublication.sourceRevision' '^[a-f0-9]{40}$'; Assert-EvidenceText $Value.basePublication.releaseTag 'CLI/runtime override.basePublication.releaseTag' '^\d{12}$'; Assert-EvidenceText $Value.basePublication.sessionPolicyRevision 'CLI/runtime override.basePublication.sessionPolicyRevision' '^[A-Za-z0-9._-]+$'; Assert-ExactObjectKeys -Value $Value.basePublication.reused -Keys @('console','backend','osShellControl') -Path 'CLI/runtime override.basePublication.reused'
+  foreach ($entry in @(@{ key='console'; repo='opensphere-console' },@{ key='backend'; repo='opensphere-console-backend' },@{ key='osShellControl'; repo='opensphere-console-os-shell-control' })) { $reuse = $Value.basePublication.reused.PSObject.Properties[$entry.key].Value; Assert-ExactObjectKeys -Value $reuse -Keys @('repository','image','digest','sourceRevision','releaseTag','platform') -Path "CLI/runtime override.basePublication.reused.$($entry.key)"; Assert-EvidenceText $reuse.repository "CLI/runtime override.basePublication.reused.$($entry.key).repository" "^$([regex]::Escape($entry.repo))$"; Assert-EvidenceText $reuse.image "CLI/runtime override.basePublication.reused.$($entry.key).image" "^ghcr[.]io/opensphere-platform/$([regex]::Escape($entry.repo))@sha256:[a-f0-9]{64}$"; Assert-EvidenceText $reuse.digest "CLI/runtime override.basePublication.reused.$($entry.key).digest" '^sha256:[a-f0-9]{64}$'; Assert-EvidenceText $reuse.sourceRevision "CLI/runtime override.basePublication.reused.$($entry.key).sourceRevision" '^[a-f0-9]{40}$'; Assert-EvidenceText $reuse.releaseTag "CLI/runtime override.basePublication.reused.$($entry.key).releaseTag" '^\d{12}$'; Assert-EvidenceText $reuse.platform "CLI/runtime override.basePublication.reused.$($entry.key).platform" '^linux/amd64$' }
+  Assert-ExactObjectKeys -Value $Value.artifacts -Keys @('supabaseMigrationManifest','osShellRelease') -Path 'CLI/runtime override.artifacts'; $migration = $Value.artifacts.supabaseMigrationManifest; Assert-ExactObjectKeys -Value $migration -Keys @('path','sha256','setDigest','latestMigrationId','migrationCount') -Path 'CLI/runtime override.artifacts.supabaseMigrationManifest'; Assert-EvidenceText $migration.path 'CLI/runtime override.artifacts.supabaseMigrationManifest.path' '^backend/supabase/migrations/manifest[.]json$'; foreach ($field in @('sha256','setDigest')) { Assert-EvidenceText $migration.$field "CLI/runtime override.artifacts.supabaseMigrationManifest.$field" '^sha256:[a-f0-9]{64}$' }; Assert-EvidenceText $migration.latestMigrationId 'CLI/runtime override.artifacts.supabaseMigrationManifest.latestMigrationId' '^\d{4}$'; Assert-EvidenceInteger $migration.migrationCount 'CLI/runtime override.artifacts.supabaseMigrationManifest.migrationCount'
+  $release = $Value.artifacts.osShellRelease; Assert-ExactObjectKeys -Value $release -Keys @('cliManifest','runtimeBinary','sessionPolicyRevision','baseSessionPolicyRevision') -Path 'CLI/runtime override.artifacts.osShellRelease'; Assert-EvidenceText $release.sessionPolicyRevision 'CLI/runtime override.artifacts.osShellRelease.sessionPolicyRevision' '^[A-Za-z0-9._-]+$'; Assert-EvidenceText $release.baseSessionPolicyRevision 'CLI/runtime override.artifacts.osShellRelease.baseSessionPolicyRevision' '^[A-Za-z0-9._-]+$'; $manifest = $release.cliManifest; Assert-ExactObjectKeys -Value $manifest -Keys @('image','imagePath','sha256','signatureAlgorithm','keyId') -Path 'CLI/runtime override.artifacts.osShellRelease.cliManifest'; Assert-EvidenceText $manifest.image 'CLI/runtime override.artifacts.osShellRelease.cliManifest.image' '^ghcr[.]io/opensphere-platform/opensphere-os-cli@sha256:[a-f0-9]{64}$'; Assert-EvidenceText $manifest.imagePath 'CLI/runtime override.artifacts.osShellRelease.cliManifest.imagePath' '^/srv/index[.]json$'; Assert-EvidenceText $manifest.sha256 'CLI/runtime override.artifacts.osShellRelease.cliManifest.sha256' '^sha256:[a-f0-9]{64}$'; Assert-EvidenceText $manifest.signatureAlgorithm 'CLI/runtime override.artifacts.osShellRelease.cliManifest.signatureAlgorithm' '^Ed25519$'; Assert-EvidenceText $manifest.keyId 'CLI/runtime override.artifacts.osShellRelease.cliManifest.keyId' '^opensphere-cli-[a-z0-9-]+$'; $binary = $release.runtimeBinary; Assert-ExactObjectKeys -Value $binary -Keys @('image','path','sha256') -Path 'CLI/runtime override.artifacts.osShellRelease.runtimeBinary'; Assert-EvidenceText $binary.image 'CLI/runtime override.artifacts.osShellRelease.runtimeBinary.image' '^ghcr[.]io/opensphere-platform/opensphere-os-shell-runtime@sha256:[a-f0-9]{64}$'; Assert-EvidenceText $binary.path 'CLI/runtime override.artifacts.osShellRelease.runtimeBinary.path' '^/usr/local/bin/os$'; Assert-EvidenceText $binary.sha256 'CLI/runtime override.artifacts.osShellRelease.runtimeBinary.sha256' '^sha256:[a-f0-9]{64}$'
+}
+
+function Assert-BaseText($Value, [string]$Path, [string]$Pattern = '') {
+  if ($Value -isnot [string] -or ($Pattern -and $Value -notmatch $Pattern)) { throw "$Path has an invalid type or value" }
+}
+function Assert-BaseInteger($Value, [string]$Path) { if ($Value -isnot [int] -and $Value -isnot [long]) { throw "$Path must be an integer" } }
+function Assert-BaseBoolean($Value, [string]$Path) { if ($Value -isnot [bool]) { throw "$Path must be a boolean" } }
+function Assert-BaseStringArray($Value, [string]$Path, [string[]]$Expected) {
+  if ($Value -isnot [Array] -or @($Value).Count -ne @($Expected).Count -or @(@($Value) | Where-Object { $_ -isnot [string] }).Count -or ((@($Value) -join "`0") -ne ($Expected -join "`0"))) { throw "$Path must be the exact string array" }
+}
+function Assert-BaseMigrationSchema($Value, [string]$Path) {
+  Assert-ExactObjectKeys -Value $Value -Keys @('path','sha256','setDigest','latestMigrationId','migrationCount') -Path $Path
+  Assert-BaseText $Value.path "$Path.path" '^backend/supabase/migrations/manifest[.]json$'; Assert-BaseText $Value.sha256 "$Path.sha256" '^sha256:[a-f0-9]{64}$'; Assert-BaseText $Value.setDigest "$Path.setDigest" '^sha256:[a-f0-9]{64}$'; Assert-BaseText $Value.latestMigrationId "$Path.latestMigrationId" '^\d{4}$'; Assert-BaseInteger $Value.migrationCount "$Path.migrationCount"
+}
+function Assert-BaseCliManifestSchema($Value, [string]$Path) {
+  Assert-ExactObjectKeys -Value $Value -Keys @('image','imagePath','sha256','signatureAlgorithm','keyId') -Path $Path
+  Assert-BaseText $Value.image "$Path.image" '^ghcr[.]io/opensphere-platform/opensphere-os-cli@sha256:[a-f0-9]{64}$'; Assert-BaseText $Value.imagePath "$Path.imagePath" '^/srv/index[.]json$'; Assert-BaseText $Value.sha256 "$Path.sha256" '^sha256:[a-f0-9]{64}$'; Assert-BaseText $Value.signatureAlgorithm "$Path.signatureAlgorithm" '^Ed25519$'; Assert-BaseText $Value.keyId "$Path.keyId" '^opensphere-cli-[a-z0-9-]+$'
+}
+function Assert-BaseRuntimeBinarySchema($Value, [string]$Path) {
+  Assert-ExactObjectKeys -Value $Value -Keys @('image','path','sha256') -Path $Path
+  Assert-BaseText $Value.image "$Path.image" '^ghcr[.]io/opensphere-platform/opensphere-os-shell-runtime@sha256:[a-f0-9]{64}$'; Assert-BaseText $Value.path "$Path.path" '^/usr/local/bin/os$'; Assert-BaseText $Value.sha256 "$Path.sha256" '^sha256:[a-f0-9]{64}$'
+}
+function Assert-BasePublicationSchema($Value) {
+  Assert-ExactObjectKeys -Value $Value -Keys @('apiVersion','kind','publicationScope','channel','status','releaseTag','immutableTag','source','sourceRevision','artifacts','buildAuthority','releaseClass','gaEligible','supportedPlatforms','components') -Path 'base'
+  Assert-BaseText $Value.apiVersion 'base.apiVersion' '^release[.]opensphere[.]io/v1alpha1$'; Assert-BaseText $Value.kind 'base.kind' '^OpenSphereEdgeComponentPublication$'; Assert-BaseText $Value.publicationScope 'base.publicationScope' '^ComponentSet$'; Assert-BaseText $Value.channel 'base.channel' '^edge$'; Assert-BaseText $Value.status 'base.status' '^Active$'; Assert-BaseText $Value.releaseTag 'base.releaseTag' '^\d{12}$'; Assert-BaseText $Value.immutableTag 'base.immutableTag' '^local-[a-f0-9]{12}$'; Assert-BaseText $Value.source 'base.source' '^https://github[.]com/opensphere-platform/OpenSphere-console$'; Assert-BaseText $Value.sourceRevision 'base.sourceRevision' '^[a-f0-9]{40}$'; Assert-BaseText $Value.buildAuthority 'base.buildAuthority' '^localhost$'; Assert-BaseText $Value.releaseClass 'base.releaseClass' '^pre-ga$'; Assert-BaseBoolean $Value.gaEligible 'base.gaEligible'; if ($Value.gaEligible) { throw 'base.gaEligible must be false' }; Assert-BaseStringArray $Value.supportedPlatforms 'base.supportedPlatforms' @('linux/amd64')
+  Assert-ExactObjectKeys -Value $Value.components -Keys @('console','backend','cliArtifacts','osShellControl','osShellRuntime') -Path 'base.components'
+  foreach ($entry in @(@{ key='console'; repo='opensphere-console'; inputs=$true },@{ key='backend'; repo='opensphere-console-backend'; inputs=$false },@{ key='cliArtifacts'; repo='opensphere-os-cli'; inputs=$false },@{ key='osShellControl'; repo='opensphere-console-os-shell-control'; inputs=$false },@{ key='osShellRuntime'; repo='opensphere-os-shell-runtime'; inputs=$false })) {
+    $component = $Value.components.PSObject.Properties[$entry.key].Value; $keys = if ($entry.inputs) { @('repository','image','sourceRevision','inputs') } else { @('repository','image','sourceRevision') }
+    Assert-ExactObjectKeys -Value $component -Keys $keys -Path "base.components.$($entry.key)"; Assert-BaseText $component.repository "base.components.$($entry.key).repository" "^$([regex]::Escape($entry.repo))$"; Assert-BaseText $component.image "base.components.$($entry.key).image" "^ghcr[.]io/opensphere-platform/$([regex]::Escape($entry.repo))@sha256:[a-f0-9]{64}$"; Assert-BaseText $component.sourceRevision "base.components.$($entry.key).sourceRevision" '^[a-f0-9]{40}$'
+    if ($entry.inputs) { Assert-ExactObjectKeys -Value $component.inputs -Keys @('sdk') -Path 'base.components.console.inputs'; Assert-ExactObjectKeys -Value $component.inputs.sdk -Keys @('repository','sourceRevision') -Path 'base.components.console.inputs.sdk'; Assert-BaseText $component.inputs.sdk.repository 'base.components.console.inputs.sdk.repository' '^https://github[.]com/opensphere-platform/OpenSphere-SDK[.]git$'; Assert-BaseText $component.inputs.sdk.sourceRevision 'base.components.console.inputs.sdk.sourceRevision' '^[a-f0-9]{40}$' }
+  }
+  Assert-ExactObjectKeys -Value $Value.artifacts -Keys @('sdkSource','supabaseMigrationManifest','osShellRelease','osShellControlRelease') -Path 'base.artifacts'; Assert-ExactObjectKeys -Value $Value.artifacts.sdkSource -Keys @('repository','sourceRevision') -Path 'base.artifacts.sdkSource'; Assert-BaseText $Value.artifacts.sdkSource.repository 'base.artifacts.sdkSource.repository' '^https://github[.]com/opensphere-platform/OpenSphere-SDK[.]git$'; Assert-BaseText $Value.artifacts.sdkSource.sourceRevision 'base.artifacts.sdkSource.sourceRevision' '^[a-f0-9]{40}$'; Assert-BaseMigrationSchema $Value.artifacts.supabaseMigrationManifest 'base.artifacts.supabaseMigrationManifest'
+  Assert-ExactObjectKeys -Value $Value.artifacts.osShellRelease -Keys @('cliManifest','runtimeBinary','runtimeTemplate','sessionPolicyRevision','runtimeProcessPolicy') -Path 'base.artifacts.osShellRelease'; Assert-BaseCliManifestSchema $Value.artifacts.osShellRelease.cliManifest 'base.artifacts.osShellRelease.cliManifest'; Assert-BaseRuntimeBinarySchema $Value.artifacts.osShellRelease.runtimeBinary 'base.artifacts.osShellRelease.runtimeBinary'; Assert-BaseText $Value.artifacts.osShellRelease.sessionPolicyRevision 'base.artifacts.osShellRelease.sessionPolicyRevision' '^[A-Za-z0-9._-]+$'
+  foreach ($releasePath in @('base.artifacts.osShellRelease','base.artifacts.osShellControlRelease')) { $release = if ($releasePath -match 'osShellRelease$') { $Value.artifacts.osShellRelease } else { $Value.artifacts.osShellControlRelease }; $keys = if ($releasePath -match 'osShellRelease$') { @('cliManifest','runtimeBinary','runtimeTemplate','sessionPolicyRevision','runtimeProcessPolicy') } else { @('runtimeTemplate','runtimeProcessPolicy') }; Assert-ExactObjectKeys -Value $release -Keys $keys -Path $releasePath; Assert-ExactObjectKeys -Value $release.runtimeTemplate -Keys @('path','sha256') -Path "$releasePath.runtimeTemplate"; Assert-BaseText $release.runtimeTemplate.path "$releasePath.runtimeTemplate.path" '^backend/os-shell-control/runtime-template[.]js$'; Assert-BaseText $release.runtimeTemplate.sha256 "$releasePath.runtimeTemplate.sha256" '^sha256:[a-f0-9]{64}$'; Assert-ExactObjectKeys -Value $release.runtimeProcessPolicy -Keys @('maxProcesses','globalPodLimit','userNamespacePolicy','enforcement') -Path "$releasePath.runtimeProcessPolicy"; Assert-BaseInteger $release.runtimeProcessPolicy.maxProcesses "$releasePath.runtimeProcessPolicy.maxProcesses"; Assert-BaseInteger $release.runtimeProcessPolicy.globalPodLimit "$releasePath.runtimeProcessPolicy.globalPodLimit"; Assert-BaseText $release.runtimeProcessPolicy.userNamespacePolicy "$releasePath.runtimeProcessPolicy.userNamespacePolicy" '^required-hostUsers-false$'; Assert-BaseText $release.runtimeProcessPolicy.enforcement "$releasePath.runtimeProcessPolicy.enforcement" '^linux-userns[+]rlimit-nproc[+]namespace-resourcequota$' }
 }
 
 function Assert-EdgePublicationEnvelope {
@@ -883,6 +892,7 @@ if (-not $nodeArchitectures.Count -or @($nodeArchitectures | Where-Object { $_ -
 
 $publicationPath = (Resolve-Path -LiteralPath $PublicationEvidence).Path
 $evidence = Get-Content -Raw -LiteralPath $publicationPath | ConvertFrom-Json
+Assert-BasePublicationSchema $evidence
 Assert-EdgePublicationEnvelope -Evidence $evidence -Purpose 'OS Shell base'
 $componentKeys = @($evidence.components.PSObject.Properties.Name | Sort-Object)
 if (($componentKeys -join ',') -ne 'backend,cliArtifacts,console,osShellControl,osShellRuntime') {
@@ -891,6 +901,46 @@ if (($componentKeys -join ',') -ne 'backend,cliArtifacts,console,osShellControl,
 
 $runtimePublicationPath = ''
 $runtimeEvidence = $evidence
+$cliRuntimePublicationPath = ''
+$cliRuntimeEvidence = $evidence
+if ($CliRuntimePublicationEvidence) {
+  $cliRuntimePublicationPath = (Resolve-Path -LiteralPath $CliRuntimePublicationEvidence).Path
+  if ($cliRuntimePublicationPath -eq $publicationPath) { throw 'CliRuntimePublicationEvidence must be distinct from base publication' }
+  $cliRuntimeEvidence = Get-Content -Raw -LiteralPath $cliRuntimePublicationPath | ConvertFrom-Json
+  Assert-PairOverrideSchema $cliRuntimeEvidence
+  Assert-EdgePublicationEnvelope -Evidence $cliRuntimeEvidence -Purpose 'OS Shell CLI/runtime override'
+  if ((@($cliRuntimeEvidence.components.PSObject.Properties.Name | Sort-Object) -join ',') -ne 'cliArtifacts,osShellRuntime') { throw 'CLI/runtime override requires exactly cliArtifacts,osShellRuntime' }
+  & git -C $consoleRoot merge-base --is-ancestor ([string]$evidence.sourceRevision) ([string]$cliRuntimeEvidence.sourceRevision)
+  if ($LASTEXITCODE -ne 0) { throw 'CLI/runtime override SourceRevision is not a descendant of base OS Shell publication' }
+  $baseMigration = $evidence.artifacts.supabaseMigrationManifest; $overrideMigration = $cliRuntimeEvidence.artifacts.supabaseMigrationManifest
+  if (-not $overrideMigration -or [string]$overrideMigration.sha256 -ne [string]$baseMigration.sha256 -or [string]$overrideMigration.setDigest -ne [string]$baseMigration.setDigest -or [string]$overrideMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) { throw 'CLI/runtime override changes base Supabase migration lineage' }
+  $baseSessionPolicyRevision = [string]$evidence.artifacts.osShellRelease.sessionPolicyRevision
+  $overrideOsShellRelease = $cliRuntimeEvidence.artifacts.osShellRelease
+  if ($baseSessionPolicyRevision -notmatch '^[A-Za-z0-9._-]+$' -or -not $overrideOsShellRelease -or
+      [string]$overrideOsShellRelease.cliManifest.image -ne [string]$cliRuntimeEvidence.components.cliArtifacts.image -or
+      [string]$overrideOsShellRelease.runtimeBinary.image -ne [string]$cliRuntimeEvidence.components.osShellRuntime.image -or
+      [string]$overrideOsShellRelease.runtimeBinary.sha256 -notmatch '^sha256:[a-f0-9]{64}$' -or
+      [string]$overrideOsShellRelease.sessionPolicyRevision -ne $baseSessionPolicyRevision -or
+      [string]$overrideOsShellRelease.baseSessionPolicyRevision -ne $baseSessionPolicyRevision) {
+    throw 'CLI/runtime override OS Shell binary identity or canonical session policy evidence is absent or inconsistent'
+  }
+  if ([string]$cliRuntimeEvidence.basePublication.pathSha256 -ne (Get-CanonicalTextSha256 -Path $publicationPath) -or
+      [string]$cliRuntimeEvidence.basePublication.sourceRevision -ne [string]$evidence.sourceRevision -or
+      [string]$cliRuntimeEvidence.basePublication.releaseTag -ne [string]$evidence.releaseTag -or
+      [string]$cliRuntimeEvidence.basePublication.sessionPolicyRevision -ne $baseSessionPolicyRevision) {
+    throw 'CLI/runtime override base publication binding differs from the canonical base evidence file'
+  }
+  foreach ($entry in @(@{ key='console'; repo='opensphere-console' },@{ key='backend'; repo='opensphere-console-backend' },@{ key='osShellControl'; repo='opensphere-console-os-shell-control' })) {
+    $baseComponent = $evidence.components.PSObject.Properties[$entry.key].Value
+    $reused = $cliRuntimeEvidence.basePublication.reused.PSObject.Properties[$entry.key].Value
+    $baseDigest = [regex]::Match([string]$baseComponent.image, '@(sha256:[a-f0-9]{64})$').Groups[1].Value
+    if ([string]$reused.repository -ne [string]$baseComponent.repository -or [string]$reused.image -ne [string]$baseComponent.image -or
+        [string]$reused.digest -ne $baseDigest -or [string]$reused.sourceRevision -ne [string]$baseComponent.sourceRevision -or
+        [string]$reused.releaseTag -ne [string]$evidence.releaseTag -or [string]$reused.platform -ne 'linux/amd64') {
+      throw "CLI/runtime override reused $($entry.key) projection differs from the canonical base evidence"
+    }
+  }
+}
 if ($RuntimePublicationEvidence) {
   $runtimePublicationPath = (Resolve-Path -LiteralPath $RuntimePublicationEvidence).Path
   if ($runtimePublicationPath -eq $publicationPath) {
@@ -1027,20 +1077,22 @@ if ($ControlPublicationEvidence) {
 
 $console = Get-EvidenceComponent -Evidence $consoleEvidence -Key 'console' -Repository $consoleRepository
 $backend = Get-EvidenceComponent -Evidence $backendEvidence -Key 'backend' -Repository $backendRepository
-$cliArtifacts = Get-EvidenceComponent -Evidence $evidence -Key 'cliArtifacts' -Repository $cliRepository
+$cliArtifacts = Get-EvidenceComponent -Evidence $cliRuntimeEvidence -Key 'cliArtifacts' -Repository $cliRepository
 $control = Get-EvidenceComponent -Evidence $controlEvidence -Key $controlComponent -Repository $controlRepository
-$runtime = Get-EvidenceComponent -Evidence $runtimeEvidence -Key $runtimeComponent -Repository $runtimeRepository
+$runtime = Get-EvidenceComponent -Evidence $(if ($CliRuntimePublicationEvidence) { $cliRuntimeEvidence } else { $runtimeEvidence }) -Key $runtimeComponent -Repository $runtimeRepository
+$effectiveRuntimeSourceRevision = if ($CliRuntimePublicationEvidence) { [string]$cliRuntimeEvidence.sourceRevision } else { [string]$runtimeEvidence.sourceRevision }
+$effectiveRuntimeReleaseTag = if ($CliRuntimePublicationEvidence) { [string]$cliRuntimeEvidence.releaseTag } else { [string]$runtimeEvidence.releaseTag }
 Assert-ImageMetadata -Repository $consoleRepository -Image $console.image -Digest $console.digest `
   -SourceRevision $consoleEvidence.sourceRevision -ReleaseTag $consoleEvidence.releaseTag -ExpectedPointerTag $consoleEvidence.immutableTag
 Assert-ImageMetadata -Repository $backendRepository -Image $backend.image -Digest $backend.digest `
   -SourceRevision $backendEvidence.sourceRevision -ReleaseTag $backendEvidence.releaseTag
 Assert-ImageMetadata -Repository $cliRepository -Image $cliArtifacts.image -Digest $cliArtifacts.digest `
-  -SourceRevision $evidence.sourceRevision -ReleaseTag $evidence.releaseTag -ExpectedPointerTag $evidence.immutableTag
+  -SourceRevision $cliRuntimeEvidence.sourceRevision -ReleaseTag $cliRuntimeEvidence.releaseTag -ExpectedPointerTag $cliRuntimeEvidence.immutableTag
 Assert-ImageMetadata -Repository $controlRepository -Image $control.image -Digest $control.digest `
   -SourceRevision $controlEvidence.sourceRevision -ReleaseTag $controlEvidence.releaseTag
 Assert-ImageMetadata -Repository $runtimeRepository -Image $runtime.image -Digest $runtime.digest `
-  -SourceRevision $runtimeEvidence.sourceRevision -ReleaseTag $runtimeEvidence.releaseTag `
-  -ExpectedPointerTag $(if ($runtimePublicationPath) { 'edge' } else { [string]$evidence.immutableTag })
+  -SourceRevision $effectiveRuntimeSourceRevision -ReleaseTag $effectiveRuntimeReleaseTag `
+  -ExpectedPointerTag $(if ($runtimePublicationPath -or $cliRuntimePublicationPath) { 'edge' } else { [string]$evidence.immutableTag })
 
 $head = (& git -C $consoleRoot rev-parse HEAD).Trim()
 $deploymentToolingSourceRevision = $head
@@ -1052,6 +1104,8 @@ $deploymentToolingAllowlist = @(
   'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/Invoke-OsShellFeatureOperation.ps1',
   'scripts/Publish-LocalEdge.ps1',
+  'scripts/Publish-LocalEdgeOsShellArtifacts.ps1',
+  'scripts/local-edge-publication-core.psm1',
   'scripts/Publish-LocalEdgeOsShell.ps1',
   'scripts/Publish-LocalEdgeOsShellConsole.ps1',
   'scripts/os-shell-component-publisher.test.mjs',
@@ -1147,7 +1201,7 @@ if ([string]$migrationArtifact.setDigest -ne [string]$migrationManifest.setDiges
     [string]$migrationArtifact.latestMigrationId -ne [string]$migrationManifest.latestMigrationId) {
   throw 'Migration lineage evidence differs from the committed manifest'
 }
-$osShellRelease = $evidence.artifacts.osShellRelease
+$osShellRelease = $cliRuntimeEvidence.artifacts.osShellRelease
 $osShellControlRelease = if ($controlPublicationPath) {
   $controlEvidence.artifacts.osShellControlRelease
 } else {
@@ -1162,6 +1216,9 @@ if (-not $osShellRelease -or
     [string]$osShellRelease.cliManifest.keyId -ne 'opensphere-cli-local-dev-v1' -or
     [string]$osShellRelease.sessionPolicyRevision -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') {
   throw 'OS Shell signed CLI manifest or session policy evidence is absent or inconsistent'
+}
+if ($CliRuntimePublicationEvidence -and [string]$osShellRelease.sessionPolicyRevision -ne [string]$evidence.artifacts.osShellRelease.sessionPolicyRevision) {
+  throw 'CLI/runtime override session policy revision differs from the canonical base publication'
 }
 if (-not $osShellControlRelease -or
     [string]$osShellControlRelease.runtimeTemplate.path -ne 'backend/os-shell-control/runtime-template.js' -or
@@ -1206,6 +1263,9 @@ $releaseOverrides = @()
 if ($runtimePublicationPath) {
   $releaseOverrides += "osShellRuntime/$([string]$runtimeEvidence.releaseTag)/$(([string]$runtimeEvidence.sourceRevision).Substring(0, 12))"
 }
+if ($cliRuntimePublicationPath) {
+  $releaseOverrides += "cliArtifacts+osShellRuntime/$([string]$cliRuntimeEvidence.releaseTag)/$(([string]$cliRuntimeEvidence.sourceRevision).Substring(0, 12))"
+}
 if ($platformPublicationPath) {
   $releaseOverrides += "platform/$([string]$platformEvidence.releaseTag)/$(([string]$platformEvidence.sourceRevision).Substring(0, 12))"
 }
@@ -1247,6 +1307,7 @@ if ($PrepareTrustOnly) {
     releaseTag = [string]$evidence.releaseTag
     publicationEvidence = $publicationPath
     runtimePublicationEvidence = $runtimePublicationPath
+    cliRuntimePublicationEvidence = $cliRuntimePublicationPath
     platformPublicationEvidence = $platformPublicationPath
     backendPublicationEvidence = $backendPublicationPath
     consolePublicationEvidence = $consolePublicationPath
@@ -1256,7 +1317,8 @@ if ($PrepareTrustOnly) {
       backend = [string]$backendEvidence.sourceRevision
       console = [string]$consoleEvidence.sourceRevision
       osShellControl = [string]$controlEvidence.sourceRevision
-      osShellRuntime = [string]$runtimeEvidence.sourceRevision
+      cliArtifacts = [string]$cliRuntimeEvidence.sourceRevision
+      osShellRuntime = $effectiveRuntimeSourceRevision
     }
     preparedAt = [DateTimeOffset]::UtcNow.ToString('o')
     privateSecrets = @($privateTlsProfiles | ForEach-Object { "$ControlNamespace/$($_.Secret)" })
@@ -1597,13 +1659,16 @@ $releaseProfile = [ordered]@{
       else { Get-FileSha256 -Path $publicationPath }
     runtimeSha256 = if ($runtimePublicationPath) { Get-FileSha256 -Path $runtimePublicationPath }
       else { Get-FileSha256 -Path $publicationPath }
+    cliRuntimeSha256 = if ($cliRuntimePublicationPath) { Get-FileSha256 -Path $cliRuntimePublicationPath }
+      else { Get-FileSha256 -Path $publicationPath }
   }
   sourceRevisions = [ordered]@{
     base = [string]$evidence.sourceRevision
     console = [string]$consoleEvidence.sourceRevision
     backend = [string]$backendEvidence.sourceRevision
     osShellControl = [string]$controlEvidence.sourceRevision
-    osShellRuntime = [string]$runtimeEvidence.sourceRevision
+    cliArtifacts = [string]$cliRuntimeEvidence.sourceRevision
+    osShellRuntime = $effectiveRuntimeSourceRevision
     deploymentTooling = $deploymentToolingSourceRevision
   }
   images = $componentImages
@@ -1695,6 +1760,7 @@ $receipt = [ordered]@{
   releaseTag = [string]$evidence.releaseTag
   publicationEvidence = $publicationPath
   runtimePublicationEvidence = $runtimePublicationPath
+  cliRuntimePublicationEvidence = $cliRuntimePublicationPath
   platformPublicationEvidence = $platformPublicationPath
   backendPublicationEvidence = $backendPublicationPath
   consolePublicationEvidence = $consolePublicationPath
@@ -1704,7 +1770,8 @@ $receipt = [ordered]@{
     backend = [string]$backendEvidence.sourceRevision
     console = [string]$consoleEvidence.sourceRevision
     osShellControl = [string]$controlEvidence.sourceRevision
-    osShellRuntime = [string]$runtimeEvidence.sourceRevision
+    cliArtifacts = [string]$cliRuntimeEvidence.sourceRevision
+    osShellRuntime = $effectiveRuntimeSourceRevision
   }
   runtimeOverrideBoundary = $boundaryEvidence
   backendOverrideBoundary = $backendBoundaryEvidence

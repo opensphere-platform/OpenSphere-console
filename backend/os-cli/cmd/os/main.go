@@ -54,10 +54,14 @@ type CLIContribution struct {
 }
 
 type RegistryItem struct {
-	ID        string           `json:"id"`
-	Name      string           `json:"name"`
-	Available bool             `json:"available"`
-	CLI       *CLIContribution `json:"cli,omitempty"`
+	ID              string           `json:"id"`
+	Name            string           `json:"name"`
+	Available       bool             `json:"available"`
+	ManifestSHA256  string           `json:"manifestSha256,omitempty"`
+	KeyID           string           `json:"keyId,omitempty"`
+	InstalledDigest string           `json:"installedDigest,omitempty"`
+	SourceRevision  string           `json:"sourceRevision,omitempty"`
+	CLI             *CLIContribution `json:"cli,omitempty"`
 }
 
 type Registry struct {
@@ -69,26 +73,39 @@ type Registry struct {
 }
 
 type Tool struct {
-	ID              string               `json:"id,omitempty"`
-	Command         string               `json:"command"`
-	Method          string               `json:"method"`
-	Path            string               `json:"path"`
-	Components      map[string]ToolRoute `json:"components"`
-	Operations      map[string]ToolRoute `json:"operations"`
-	Description     string               `json:"description"`
-	Risk            string               `json:"risk"`
-	Scope           string               `json:"scope"`
-	InputSchema     *ToolInputSchema     `json:"inputSchema,omitempty"`
-	PathParams      []string             `json:"pathParams,omitempty"`
-	SupportsFile    bool                 `json:"supportsFile,omitempty"`
-	ExplicitAction  bool                 `json:"explicitAction,omitempty"`
-	ContractVersion string               `json:"contractVersion,omitempty"`
-	SourceRevision  string               `json:"sourceRevision,omitempty"`
-	RequestType     string               `json:"requestType,omitempty"`
-	ExecutionClass  string               `json:"executionClass,omitempty"`
-	Availability    *ToolAvailability    `json:"availability,omitempty"`
-	WebShell        *ToolWebShellPolicy  `json:"webShell,omitempty"`
-	ActionBinding   map[string]any       `json:"actionBinding,omitempty"`
+	ID               string                `json:"id,omitempty"`
+	ActionID         string                `json:"actionId,omitempty"`
+	CapabilityID     string                `json:"capabilityId,omitempty"`
+	Command          string                `json:"command"`
+	Method           string                `json:"method"`
+	Path             string                `json:"path"`
+	Components       map[string]ToolRoute  `json:"components"`
+	Operations       map[string]ToolRoute  `json:"operations"`
+	Description      string                `json:"description"`
+	Risk             string                `json:"risk"`
+	Scope            string                `json:"scope"`
+	InputSchema      *ToolInputSchema      `json:"inputSchema,omitempty"`
+	PathParams       []string              `json:"pathParams,omitempty"`
+	SupportsFile     bool                  `json:"supportsFile,omitempty"`
+	ExplicitAction   bool                  `json:"explicitAction,omitempty"`
+	ContractVersion  string                `json:"contractVersion,omitempty"`
+	SourceRevision   string                `json:"sourceRevision,omitempty"`
+	RequestType      string                `json:"requestType,omitempty"`
+	ExecutionClass   string                `json:"executionClass,omitempty"`
+	Availability     *ToolAvailability     `json:"availability,omitempty"`
+	WebShell         *ToolWebShellPolicy   `json:"webShell,omitempty"`
+	SemanticIdentity *ToolSemanticIdentity `json:"semanticIdentity,omitempty"`
+	ActionBinding    map[string]any        `json:"actionBinding,omitempty"`
+}
+
+// ToolSemanticIdentity is owner-published provenance. The CLI only compares
+// it with the manifest's action binding; it never derives PostgreSQL actions
+// or routes locally.
+type ToolSemanticIdentity struct {
+	ActionID     string `json:"actionId,omitempty"`
+	CapabilityID string `json:"capabilityId,omitempty"`
+	RequestType  string `json:"requestType,omitempty"`
+	ToolID       string `json:"toolId,omitempty"`
 }
 
 type ToolAvailability struct {
@@ -119,11 +136,14 @@ type ToolRoute struct {
 }
 
 type ToolManifest struct {
-	Kind            string `json:"kind"`
-	SchemaVersion   string `json:"schemaVersion,omitempty"`
-	ContractVersion string `json:"contractVersion,omitempty"`
-	SourceRevision  string `json:"sourceRevision,omitempty"`
-	Tools           []Tool `json:"tools"`
+	Kind             string `json:"kind"`
+	SchemaVersion    string `json:"schemaVersion,omitempty"`
+	CapabilityID     string `json:"capabilityId,omitempty"`
+	ContractVersion  string `json:"contractVersion,omitempty"`
+	SourceRevision   string `json:"sourceRevision,omitempty"`
+	DescriptorDigest string `json:"descriptorDigest,omitempty"`
+	ReleaseDigest    string `json:"releaseDigest,omitempty"`
+	Tools            []Tool `json:"tools"`
 }
 
 func defaults() Config {
@@ -443,9 +463,16 @@ func join(base, path string) string {
 }
 
 func pretty(out io.Writer, b []byte) error {
-	var dst bytes.Buffer
-	if json.Indent(&dst, b, "", "  ") == nil {
-		_, err := fmt.Fprintln(out, dst.String())
+	decoder := json.NewDecoder(bytes.NewReader(b))
+	decoder.UseNumber()
+	var value any
+	var trailing any
+	if decoder.Decode(&value) == nil && decoder.Decode(&trailing) == io.EOF {
+		canonical, err := json.MarshalIndent(value, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, string(canonical))
 		return err
 	}
 	_, err := out.Write(append(b, '\n'))
@@ -888,12 +915,19 @@ func validateRegistry(reg Registry) error {
 	if reg.Version != 3 || reg.Capabilities == nil || reg.Plugins == nil || reg.Templates == nil || reg.TrustedKeys == nil {
 		return errors.New("Console Registry schema is invalid or unsupported")
 	}
+	seenCLINamespaces := map[string]bool{}
 	for _, plugin := range reg.Plugins {
 		if plugin.ID == "" || plugin.Name == "" {
 			return errors.New("Console Registry contains an invalid plugin entry")
 		}
 		if plugin.CLI != nil && (plugin.CLI.Namespace == "" || plugin.CLI.ManifestPath == "" || plugin.CLI.APIBase == "") {
 			return errors.New("Console Registry contains an invalid CLI contribution")
+		}
+		if plugin.Available && plugin.CLI != nil {
+			if seenCLINamespaces[plugin.CLI.Namespace] {
+				return errors.New("Console Registry contains duplicate available CLI namespace: " + plugin.CLI.Namespace)
+			}
+			seenCLINamespaces[plugin.CLI.Namespace] = true
 		}
 	}
 	return nil
@@ -1397,9 +1431,12 @@ func dynamic(ctx context.Context, cfg Config, args []string, in io.Reader, out, 
 		return err
 	}
 	var contribution *CLIContribution
-	for _, item := range reg.Plugins {
+	var contributionItem *RegistryItem
+	for index := range reg.Plugins {
+		item := &reg.Plugins[index]
 		if item.Available && item.CLI != nil && item.CLI.Namespace == ns {
 			contribution = item.CLI
+			contributionItem = item
 			break
 		}
 	}
@@ -1422,7 +1459,15 @@ func dynamic(ctx context.Context, cfg Config, args []string, in io.Reader, out, 
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return err
 	}
-	if err := validateToolManifest(manifest); err != nil {
+	var pfssBinding *pfssRegistryReleaseBinding
+	if hasPostgresOwnerTools(manifest) {
+		manifestDigest := sha256.Sum256(manifestBytes)
+		pfssBinding, err = expectedPFSSRegistryReleaseBinding(reg, *contributionItem, hex.EncodeToString(manifestDigest[:]))
+		if err != nil {
+			return err
+		}
+	}
+	if err := validateToolManifestWithPFSSReleaseBinding(manifest, pfssBinding); err != nil {
 		return err
 	}
 	if len(args) == 1 || args[1] == "manifest" {
@@ -1432,13 +1477,9 @@ func dynamic(ctx context.Context, cfg Config, args []string, in io.Reader, out, 
 		return printDynamicCommandHelp(out, ns, args[1:], manifest)
 	}
 	commandWords := nonFlagArgs(args[1:])
-	var selected *Tool
-	for i := range manifest.Tools {
-		words := toolCommandPrefix(manifest.Tools[i].Command, ns)
-		if len(words) > 0 && len(commandWords) >= len(words) && strings.Join(words, " ") == strings.Join(commandWords[:len(words)], " ") {
-			selected = &manifest.Tools[i]
-			break
-		}
+	selected, selectionErr := selectDynamicTool(manifest.Tools, ns, commandWords)
+	if selectionErr != nil {
+		return selectionErr
 	}
 	if selected == nil {
 		available := make([]string, 0, len(manifest.Tools))
@@ -1533,17 +1574,52 @@ func dynamic(ctx context.Context, cfg Config, args []string, in io.Reader, out, 
 		body, contentType = bytes.NewReader(encoded), "application/json"
 	}
 	if isDynamicOperationWatch(*selected) {
+		if hasPostgresOwnerTools(manifest) {
+			receiptActions, contractErr := ownerReceiptActions(manifest, pfssBinding)
+			if contractErr != nil {
+				return contractErr
+			}
+			return watchDynamicOperationWithActions(ctx, cfg, *selected, receiptActions, target, flags, out)
+		}
 		return watchDynamicOperation(ctx, cfg, *selected, target, flags, out)
 	}
-	response, status, err := request(cfg, method, target, body, contentType)
+	response, status, responseContentType, err := requestWithContentType(cfg, method, target, body, contentType)
 	if err != nil {
 		return err
 	}
 	if err := requireOK(response, status); err != nil {
 		return err
 	}
+	if err := requireJSONResponse(responseContentType, "Owner API"); err != nil {
+		return err
+	}
 	_ = errOut
 	return renderOutput(cfg, out, response)
+}
+
+func selectDynamicTool(tools []Tool, ns string, commandWords []string) (*Tool, error) {
+	var selected *Tool
+	selectedLength := -1
+	selectedCandidates := 0
+	for i := range tools {
+		words := toolCommandPrefix(tools[i].Command, ns)
+		if len(words) > 0 && len(commandWords) >= len(words) && strings.Join(words, " ") == strings.Join(commandWords[:len(words)], " ") {
+			if len(words) > selectedLength {
+				selected = &tools[i]
+				selectedLength = len(words)
+				selectedCandidates = 1
+			} else if len(words) == selectedLength {
+				selectedCandidates++
+			}
+		}
+	}
+	if selected == nil {
+		return nil, nil
+	}
+	if selectedCandidates != 1 {
+		return nil, commandContractError("ambiguous dynamic command prefix: " + strings.Join(commandWords[:selectedLength], " "))
+	}
+	return selected, nil
 }
 
 func toolCommandPrefix(command, ns string) []string {
