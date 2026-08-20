@@ -20,6 +20,7 @@ test('first-level subShell navigation preloads the Carbon icon library', () => {
 test('flat first-level navigation delegates selected and fallback icons to one projector', () => {
   assert.match(shellSource, /<os-nav-icon clrVerticalNavIcon \[token\]="iconTokenFor\(item\)" \[fallback\]="fallbackIconFor\(item\)"/);
   assert.match(shellSource, /return this\.pluginIconToken\(pluginIdFromRoute\(path\)\)/);
+  assert.doesNotMatch(shellSource, /os-plugin-badge|>plugin<\/span>/);
 });
 
 test('contributed nav-tree roots receive the owning subShell selected icon', () => {

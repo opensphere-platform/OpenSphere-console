@@ -130,9 +130,6 @@ interface NavTreeRoot {
               <a clrVerticalNavLink [routerLink]="item.path" routerLinkActive="active">
                 <os-nav-icon clrVerticalNavIcon [token]="iconTokenFor(item)" [fallback]="fallbackIconFor(item)" />
                 {{ item.label }}
-                @if (item.plugin) {
-                  <span class="badge os-plugin-badge">plugin</span>
-                }
               </a>
             }
             <!-- 플러그인이 기여한 재귀 메뉴 트리(임의 깊이·동적) — DUPA nav 기여 -->
@@ -206,10 +203,6 @@ interface NavTreeRoot {
       .os-thin {
         font-weight: 200;
         opacity: 0.85;
-      }
-      .os-plugin-badge {
-        margin-left: 0.3rem;
-        opacity: 0.8;
       }
       /* 우측 액션 영역 — 절대중앙 검색과 무관하게 오른쪽 끝으로. */
       .header-actions {
