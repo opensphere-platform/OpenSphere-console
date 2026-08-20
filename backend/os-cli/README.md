@@ -71,6 +71,37 @@ os platform update apply <plan-id>
 `ghcr.io/another-owner/custom-template:edge`처럼 registry/owner를 명시하면 입력을
 변경하지 않고 그대로 전달하며, 최종 허용 여부는 Extension 공급망 정책이 판단한다.
 
+## PFSS PostgreSQL Owner commands
+
+PFSS PostgreSQL은 Registry가 게시한 Foundation Owner manifest만 호출한다. CLI는 PostgreSQL
+catalog, profile, lifecycle 또는 승인 규칙을 자체적으로 만들지 않으며, Owner가 게시하지 않은
+update/delete/cancel/rollback 명령도 제공하지 않는다.
+
+```text
+os foundation capabilities
+os foundation readiness
+os foundation postgres catalog
+os foundation postgres status <namespace> <name>
+os foundation postgres plan create [Owner-published typed options]
+os foundation postgres apply <planId> [Owner-published typed options]
+os foundation operation watch <operationId> [--interval DURATION] [--timeout DURATION]
+```
+
+PFSS write command는 Owner manifest의 closed `inputSchema`가 있어야 실행된다. 알 수 없는
+option은 거부되고, secret 입력은 argv가 아니라 Owner가 허용한 file/stdin 경로로만 전달된다.
+현재 CLI는 release-bound v1의 고정된 7개 action tuple만 수락한다. manifest의 contract/source/
+digest projection, method·path·risk·confirmation·semantic identity가 모두 일치하지 않으면
+실행하지 않으며, 새 lifecycle은 해당 projection 갱신 전까지 사용할 수 없다.
+PFSS release binding은 `/api/v1/registry`의 verified Foundation entry만 사용한다. CLI는 선택된
+entry의 `keyId`, `manifestSha256`, `installedDigest`, `sourceRevision`이 모두 형식·trust key·fetched
+manifest bytes에 일치할 때만 Owner manifest를 수락하며, manifest의 `sourceRevision`도 그 entry와
+정확히 일치해야 한다. 현 Owner manifest에 Registry-authoritative descriptor/release digest가 없으므로
+이 두 self-claimed field는 허용하지 않는다. 추후 도입하려면 Registry의 검증된 release identity에
+동일 필드를 추가하고 contract projection을 함께 갱신해야 한다.
+`operation watch`는 Owner가 게시한 governed action의 semantic identity와 action binding에
+일치하는 verified receipt가 있을 때만 완료를 표시한다. JSON output은 Owner의 plan/action digest,
+actor, operation ID, fencing, postcondition, receipt를 그대로 보존한다.
+
 ## 승인형 변경
 
 ```text
