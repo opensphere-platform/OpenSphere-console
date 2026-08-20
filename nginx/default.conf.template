@@ -594,12 +594,21 @@ server {
 
     # 해시드 자산(main-<hash>.js 등)은 내용 불변 → 장기 immutable 캐시
     location ~* "-[A-Za-z0-9]{8,}\.(?:js|css)$" {
+        # RollingUpdate 동안 새 index와 이전 Pod가 잠시 공존할 수 있다.
+        # 이전 Pod에 없는 새 hash 자산은 절대 immutable 404로 캐시하지 않는다.
+        try_files $uri @missing_hashed_asset;
         add_header X-Content-Type-Options nosniff always;
         add_header Referrer-Policy no-referrer always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
         add_header X-OS-Correlation-ID $os_correlation_id always;
         add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location @missing_hashed_asset {
+        add_header X-Content-Type-Options nosniff always;
+        add_header Cache-Control "no-store, max-age=0" always;
+        return 404;
     }
 
     # index.html(문서)은 캐시 금지 → 배포로 자산 해시가 바뀌어도 항상 최신 index를 받아
