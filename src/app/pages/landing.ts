@@ -4,6 +4,7 @@ import { ExtensionHostService } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
 import { routeForPlugin } from '../core/perspectives';
 import { SERVICE_REALIZATION_LAYERS } from '../architecture/service-realization.model';
+import { LandingFoundations } from './landing-foundations';
 
 interface IndexLink {
   path: string;
@@ -40,7 +41,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
 
 @Component({
   selector: 'os-landing',
-  imports: [RouterLink],
+  imports: [RouterLink, LandingFoundations],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
@@ -94,6 +95,8 @@ const PERSPECTIVES: PerspectiveDef[] = [
           </div>
         </article>
       </section>
+
+      <os-landing-foundations />
 
       <section class="model-section" aria-labelledby="model-title">
         <div class="section-heading">
