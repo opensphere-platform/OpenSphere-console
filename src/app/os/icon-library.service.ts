@@ -59,4 +59,11 @@ export class IconLibraryService {
     if (!this.loaded()) { this.ensure(); return null; }
     return this.byToken.get(IconLibraryService.norm(token)) ?? null;
   }
+
+  /** Already-loaded lookup. Navigation uses this so rendering a menu never
+   * downloads the 2600+ icon metadata chunk. The explicit picker owns ensure(). */
+  peekSvg(token: string | undefined | null): string | null {
+    if (!token || !this.loaded()) return null;
+    return this.byToken.get(IconLibraryService.norm(token)) ?? null;
+  }
 }

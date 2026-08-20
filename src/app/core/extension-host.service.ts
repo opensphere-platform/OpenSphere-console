@@ -1,16 +1,20 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import {
-  CHILD_EXTENSION_ACTIVATION_CONCURRENCY,
   extensionRouteTarget,
   isTransientExtensionLoadError,
-  loadWithConcurrency,
-  prioritizeRequestedHost,
   TRANSIENT_EXTENSION_RETRY_DELAY_MS,
 } from './extension-load-order';
+import { ExtensionProjectionStore } from './extension-projection.store';
+import {
+  buildConsoleNavigationSnapshot,
+  ConsoleNavigationSnapshot,
+  CONSOLE_NAVIGATION_STORAGE_KEY,
+  parseStoredConsoleNavigationSnapshot,
+} from './console-navigation-snapshot';
 import { OS_SHELL_STANDALONE_BOOT } from './boot-mode';
 import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
 import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
@@ -147,6 +151,8 @@ export class ExtensionHostService {
   private http = inject(HttpService);
   private notif = inject(NotificationService);
   private router = inject(Router);
+  private projections = inject(ExtensionProjectionStore);
+  private readonly cachedNavigationSnapshot = this.readStoredNavigationSnapshot();
   private activeModules = new Map<string, PluginModule>();
   private pageOwners = new Map<string, string>();
   private inFlightLoads = new Map<string, Promise<void>>();
@@ -185,10 +191,14 @@ export class ExtensionHostService {
   /** Host-owned projection. Unlike pages, this inventory survives inactive or
    * degraded serving contributions and never causes guest assets to load. */
   readonly managementInventory = signal<ManagementInventoryItem[]>([]);
-  /** Enabled, verified Registry entries that are allowed to own the Console's
-   * first-level product navigation. Plugins and disabled subShells never enter
-   * this set; their lifecycle remains available only on management/host pages. */
-  readonly primarySubShellIds = signal<ReadonlySet<string>>(new Set<string>());
+  /**
+   * Atomic, display-only first-level navigation. A validated last-known value
+   * is available before any guest executes; a live Registry + control
+   * projection replaces it in one signal commit. It never grants execution.
+   */
+  readonly navigationSnapshot = signal<ConsoleNavigationSnapshot | null>(this.cachedNavigationSnapshot);
+  readonly navigationItems = computed(() => this.navigationSnapshot()?.items ?? []);
+  readonly navigationSource = signal<'empty' | 'cached' | 'live'>(this.cachedNavigationSnapshot ? 'cached' : 'empty');
   readonly failures = signal<PluginFailure[]>([]);
   /** 플러그인별 기여 내비 트리(nav:contribute) — pluginId → 재귀 NavNode[] */
   readonly navTrees = signal<Record<string, NavNode[]>>({});
@@ -197,7 +207,9 @@ export class ExtensionHostService {
   /** Plugin/subShell manual sources contributed at runtime. */
   readonly manualContributions = signal<Record<string, ManualContribution>>({});
   /** 플러그인별 1단 아이콘(Carbon 토큰명) — registry(spec.nav.icon 전사)에서. pluginId → token */
-  readonly pluginIcons = signal<Record<string, string>>({});
+  readonly pluginIcons = signal<Record<string, string>>(Object.fromEntries(
+    this.cachedNavigationSnapshot?.items.map((item) => [item.id, item.icon]) ?? [],
+  ));
   /**
    * 플러그인별 API base(manifest.apiBase, 셸이 검증 파이프라인에서 이미 아는 값) — pluginId → base.
    * PluginHost가 마운트 직전 window.__OSP_NG_API_BASE__를 여기서 재설정해 크로스 플러그인 오염을 차단한다
@@ -213,16 +225,16 @@ export class ExtensionHostService {
     this.startRegistryWatch();
     this.startRouteWatch();
     this.loadState.set('loading');
-    let backgroundChildren: RegistryEntry[] = [];
     try {
       // Inventory and Registry are independent projections. Starting both at
       // once removes a serial network gate while still awaiting inventory
       // before icon precedence is committed below.
       const managementLoad = this.loadManagementInventory();
       let reg: RegistryV3;
+      let managementAvailable = false;
       try {
         const res = await fetchWithTimeout('/api/v1/registry', { cache: 'no-store' });
-        await managementLoad;
+        managementAvailable = await managementLoad;
         if (!res.ok) return; // 레지스트리 없음 = 플러그인 0개로 기동
         reg = await res.json();
       } catch {
@@ -235,9 +247,6 @@ export class ExtensionHostService {
       }
       const activePlugins = (reg.plugins ?? []).filter((entry) => entry.available === true);
 			this.trustedKeys = reg.trustedKeys ?? {};
-			this.primarySubShellIds.set(new Set(activePlugins
-				.filter((entry) => (entry.componentKind ?? entry.kind) === 'subShell' && (entry.hostRef ?? 'main') === 'main')
-				.map((entry) => entry.id)));
 			this.registryFingerprint = this.fingerprint(activePlugins, reg.trustedKeys ?? {});
       // 1단 아이콘 맵(registry 전사값). registry에는 Enabled 플러그인만 들어오므로 그대로 사용.
       this.pluginIcons.update((current) => ({
@@ -249,41 +258,14 @@ export class ExtensionHostService {
         ...states,
         ...Object.fromEntries(activePlugins.map((entry) => [entry.id, 'queued' as PluginLoadState])),
       }));
-      // First-level products form the foreground composition. Hosted children
-      // never block their parent page; they are verified after foreground
-      // readiness, with the current deep-link child retaining priority.
-      const mainPlugins = activePlugins.filter((e) => (e.hostRef ?? 'main') === 'main');
-      const orderedMainPlugins = prioritizeRequestedHost(mainPlugins, window.location.pathname);
-      const routeTarget = extensionRouteTarget(window.location.pathname);
-      const requestedParent = routeTarget.hostId
-        ? orderedMainPlugins.find((entry) => entry.id === routeTarget.hostId)
-        : undefined;
-      const requestedChild = routeTarget.childId
-        ? activePlugins.find((entry) => entry.id === routeTarget.childId && (entry.hostRef ?? 'main') === routeTarget.hostId)
-        : undefined;
-      if (requestedParent) {
-        await this.loadOne(requestedParent, this.trustedKeys, HOST_API_VERSION);
-        await Promise.all([
-          loadWithConcurrency(
-            orderedMainPlugins.filter((entry) => entry !== requestedParent),
-            (entry) => this.loadOne(entry, this.trustedKeys, HOST_API_VERSION),
-          ),
-          requestedChild
-            ? this.loadOne(requestedChild, this.trustedKeys, requestedParent.hostApiVersion ?? HOST_API_VERSION)
-            : Promise.resolve(),
-        ]);
-      } else {
-        await loadWithConcurrency(
-          orderedMainPlugins,
-          (entry) => this.loadOne(entry, this.trustedKeys, HOST_API_VERSION),
-        );
-      }
-      backgroundChildren = activePlugins.filter((entry) =>
-        (entry.hostRef ?? 'main') !== 'main' && entry !== requestedChild,
-      );
+      if (managementAvailable) this.publishNavigationSnapshot(activePlugins);
+
+      // Guest code is route-scoped. Menu composition is already complete from
+      // the atomic snapshot, so a page reload no longer verifies or activates
+      // unrelated subShells and hosted plugins.
+      await this.ensureRequestedRoute(window.location.pathname);
     } finally {
       this.loadState.set('ready');
-      if (backgroundChildren.length) this.startBackgroundChildActivation(backgroundChildren);
     }
   }
 
@@ -295,7 +277,8 @@ export class ExtensionHostService {
    * 사용하고, 다음 자연스러운 document 시작이 새 Registry snapshot을 채택한다.
    */
   async reload(): Promise<void> {
-    await this.loadManagementInventory();
+    const managementAvailable = await this.loadManagementInventory(true);
+    if (managementAvailable && this.registryEntries.length) this.publishNavigationSnapshot(this.registryEntries);
     if (this.activeModules.size > 0) {
       this.registryUpdatePending.set(true);
       console.info('[extension-host] Registry update staged for the next document; current composition remains pinned');
@@ -311,37 +294,27 @@ export class ExtensionHostService {
     this.apiBaseByPlugin.set({});
     this.pluginLoadStates.set({});
     this.hostChildProjections.set({});
-    this.primarySubShellIds.set(new Set<string>());
     this.registryUpdatePending.set(false);
     await this.load();
   }
 
-  private async loadManagementInventory(): Promise<void> {
+  private async loadManagementInventory(force = false): Promise<boolean> {
     try {
-      const [catalogResponse, registrationResponse] = await Promise.all([
-        fetchWithTimeout('/api/admin/plugins/catalog', { cache: 'no-store' }),
-        fetchWithTimeout('/api/admin/plugins/registrations', { cache: 'no-store' }),
-      ]);
-      if (!catalogResponse.ok || !registrationResponse.ok) return;
-      const catalog = await catalogResponse.json() as { items?: Array<Record<string, unknown>> };
-      const registrations = await registrationResponse.json() as { items?: Array<Record<string, unknown>> };
-      const registrationByName = new Map((registrations.items || []).map((item) => [String(item['name'] || ''), item]));
-      const items: ManagementInventoryItem[] = (catalog.items || []).flatMap((item) => {
-        const id = String(item['name'] || '');
+      const result = await this.projections.refresh(force);
+      const registrationByName = new Map(this.projections.registrations().map((item) => [item.name, item]));
+      const items: ManagementInventoryItem[] = this.projections.catalog().flatMap((item) => {
+        const id = item.name;
         if (!id) return [];
-        const nav = item['nav'] && typeof item['nav'] === 'object' ? item['nav'] as Record<string, unknown> : {};
         const registration = registrationByName.get(id);
-        const status = registration?.['status'] && typeof registration['status'] === 'object'
-          ? registration['status'] as Record<string, unknown> : {};
         return [{
           id,
-          title: String(item['displayName'] || id),
-          navBand: String(nav['band'] || '운영 Operate'),
-          hostRef: String(item['hostRef'] || 'main'),
-          kind: item['kind'] === 'subShell' ? 'subShell' : 'plugin',
-          icon: String(nav['icon'] || ''),
-          desiredState: String(registration?.['desiredState'] || ''),
-          phase: String(status['phase'] || 'NotInstalled'),
+          title: item.displayName || id,
+          navBand: item.nav?.band || '운영 Operate',
+          hostRef: item.hostRef || 'main',
+          kind: item.kind,
+          icon: item.nav?.icon || '',
+          desiredState: registration?.desiredState || '',
+          phase: registration?.status.phase || 'NotInstalled',
         }];
       });
       this.managementInventory.set(items);
@@ -349,8 +322,10 @@ export class ExtensionHostService {
         ...current,
         ...Object.fromEntries(items.map((item) => [item.id, item.icon || ''])),
       }));
+      return result.catalogAvailable;
     } catch (error) {
       console.warn('[extension-host] management inventory unavailable:', error);
+      return this.projections.catalogLoaded();
     }
   }
 
@@ -363,30 +338,47 @@ export class ExtensionHostService {
     if (this.routeWatchStarted) return;
     this.routeWatchStarted = true;
     this.router.events.subscribe((event) => {
-      if (event instanceof NavigationEnd) void this.ensureRequestedChild(event.urlAfterRedirects);
+      if (event instanceof NavigationEnd) void this.ensureRequestedRoute(event.urlAfterRedirects);
     });
   }
 
-  private startBackgroundChildActivation(entries: readonly RegistryEntry[]): void {
-    void loadWithConcurrency(
-      entries,
-      (entry) => this.loadOne(
-        entry,
-        this.trustedKeys,
-        this.registryEntries.find((candidate) => candidate.id === (entry.hostRef ?? ''))?.hostApiVersion ?? HOST_API_VERSION,
-      ),
-      CHILD_EXTENSION_ACTIVATION_CONCURRENCY,
-    ).catch((error) => console.warn('[extension-host] background child activation degraded:', error));
+  private async ensureRequestedRoute(pathname: string): Promise<void> {
+    const target = extensionRouteTarget(pathname);
+    if (!target.hostId) return;
+    const parent = this.registryEntries.find((entry) => entry.id === target.hostId && (entry.hostRef ?? 'main') === 'main');
+    if (!parent) return;
+    await this.loadOne(parent, this.trustedKeys, HOST_API_VERSION);
+    if (!target.childId) return;
+    const child = this.registryEntries.find((entry) => entry.id === target.childId && (entry.hostRef ?? 'main') === target.hostId);
+    if (!child) return;
+    await this.loadOne(child, this.trustedKeys, parent.hostApiVersion ?? HOST_API_VERSION);
   }
 
-  private async ensureRequestedChild(pathname: string): Promise<void> {
-    const target = extensionRouteTarget(pathname);
-    if (!target.hostId || !target.childId) return;
-    const parent = this.registryEntries.find((entry) => entry.id === target.hostId && (entry.hostRef ?? 'main') === 'main');
-    const child = this.registryEntries.find((entry) => entry.id === target.childId && (entry.hostRef ?? 'main') === target.hostId);
-    if (!parent || !child) return;
-    await this.loadOne(parent, this.trustedKeys, HOST_API_VERSION);
-    await this.loadOne(child, this.trustedKeys, parent.hostApiVersion ?? HOST_API_VERSION);
+  private readStoredNavigationSnapshot(): ConsoleNavigationSnapshot | null {
+    try {
+      return parseStoredConsoleNavigationSnapshot(window.localStorage.getItem(CONSOLE_NAVIGATION_STORAGE_KEY));
+    } catch {
+      return null;
+    }
+  }
+
+  private publishNavigationSnapshot(activePlugins: readonly RegistryEntry[]): void {
+    const snapshot = buildConsoleNavigationSnapshot(
+      activePlugins,
+      this.managementInventory(),
+      this.registryFingerprint,
+    );
+    this.navigationSnapshot.set(snapshot);
+    this.navigationSource.set('live');
+    this.pluginIcons.update((current) => ({
+      ...current,
+      ...Object.fromEntries(snapshot.items.map((item) => [item.id, item.icon])),
+    }));
+    try {
+      window.localStorage.setItem(CONSOLE_NAVIGATION_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (error) {
+      console.warn('[extension-host] navigation snapshot persistence unavailable:', error);
+    }
   }
 
   private async refreshRegistryIfChanged(): Promise<void> {

@@ -3,7 +3,6 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from './carbon-icon';
 import { OsNavIcon } from './os-nav-icon';
-import { IconLibraryService } from './icon-library.service';
 import Menu20 from '@carbon/icons/es/menu/20';
 import Dashboard16 from '@carbon/icons/es/dashboard/16';
 import Application16 from '@carbon/icons/es/application/16';
@@ -366,15 +365,6 @@ export class OsShell {
   readonly auth = inject(AuthService);
   readonly psp = inject(PerspectiveService);
   private ext = inject(ExtensionHostService);
-  private iconLib = inject(IconLibraryService);
-
-  constructor() {
-    // First-level navigation can be composed before an administrator opens
-    // the icon picker. Preload the same Carbon metadata used by that picker
-    // so a selected non-curated icon is available on the nav's first render
-    // instead of remaining on the Application fallback for the whole session.
-    void this.iconLib.ensure();
-  }
 
   /** 아바타 이니셜 — 사용자명 첫 글자(대문자). */
   readonly initial = computed(() => (this.auth.user()?.trim()?.[0] ?? '?').toUpperCase());
@@ -436,7 +426,7 @@ export class OsShell {
     // 밴드 → 항목 수집(하드코딩 빈 밴드 없음 — native + 등록 플러그인에서만)
     const byBand = new Map<string, NavItem[]>();
     for (const nb of OsShell.NATIVE) byBand.set(nb.band, [...nb.items]);
-    for (const p of this.ext.pages().filter((page) => this.ext.primarySubShellIds().has(page.id))) {
+    for (const p of this.ext.navigationItems()) {
       if (trees[p.id]) {
         if (!byBand.has(p.navBand)) byBand.set(p.navBand, []); // 트리만 기여하는 밴드도 등장
         continue;
@@ -460,8 +450,8 @@ export class OsShell {
   treesForBand(band: string): NavTreeRoot[] {
     const trees = this.ext.navTrees();
     return this.ext
-      .pages()
-      .filter((p) => this.ext.primarySubShellIds().has(p.id) && p.navBand === band && trees[p.id])
+      .navigationItems()
+      .filter((p) => p.navBand === band && trees[p.id])
       .flatMap((p) => trees[p.id].map((node) => ({ ownerId: p.id, node })));
   }
 }

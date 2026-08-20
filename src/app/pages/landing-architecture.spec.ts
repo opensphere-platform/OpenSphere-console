@@ -89,7 +89,7 @@ test('architecture body copy uses the enlarged readability step', () => {
 });
 
 test('Perspective navigation remains Registry-derived and phantom-route free', () => {
-  assert.match(source, /new Set\(this\.ext\.pages\(\)\.map/);
+  assert.match(source, /new Set\(this\.ext\.navigationItems\(\)\.map/);
   assert.match(source, /routeForPlugin\(perspective\.pluginId\)/);
   assert.match(source, /registered\.has\(perspective\.pluginId\)/);
   assert.match(shell, /홈 · 10P × 6L/);

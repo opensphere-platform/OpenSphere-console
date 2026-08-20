@@ -9,8 +9,9 @@ import { OsRawIcon } from './os-raw-icon';
  * Main Shell navigation icon projection.
  *
  * Curated Carbon tokens render through the compact descriptor catalog. Tokens
- * outside that catalog use the same full metadata library as the management
- * icon picker. A missing or unresolved token always falls back explicitly.
+ * outside that catalog use the full metadata library only when it is already
+ * available (for example after opening the icon picker). Navigation itself
+ * never triggers that large download. A missing token falls back explicitly.
  */
 @Component({
   selector: 'os-nav-icon',
@@ -33,7 +34,7 @@ export class OsNavIcon {
 
   rawSvg(): string | null {
     if (!this.token || iconByToken(this.token)) return null;
-    return this.iconLibrary.getSvg(this.token);
+    return this.iconLibrary.peekSvg(this.token);
   }
 
   descriptor(): CarbonIconDescriptor {

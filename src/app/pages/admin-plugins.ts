@@ -21,8 +21,8 @@ import {
   RegistryCredentialStatus,
   ImageRevocation,
   IntegrationStatus,
-  ExtensionProjectionStatus,
 } from '../core/plugin-control-client.service';
+import { ExtensionProjectionStore } from '../core/extension-projection.store';
 
 interface EffectiveExtensionState {
   label: string;
@@ -303,7 +303,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
 
     <clr-tabs>
       <clr-tab>
-        <button clrTabLink (click)="selectView('subshells')">SubShells <span class="view-count">{{ subShellRegistrations().length }}</span></button>
+        <button clrTabLink (click)="selectView('subshells')">SubShells <span class="view-count">{{ subShellMetric() }}</span></button>
         <clr-tab-content *clrIfActive="activeView() === 'subshells'">
           <div class="extension-view-intro">
             <div><span class="view-kicker">FIRST-LEVEL OPERATING SHELLS</span><h2>SubShell 관리</h2></div>
@@ -315,12 +315,12 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             <span><i class="status-dot warning"></i>서비스 유지 또는 처리 대기</span>
             <span><i class="status-dot danger"></i>서비스 차단 — 운영자 조치 필요</span>
           </div>
-          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: subShellRegistrations(), emptyText: '설치된 subShell이 없습니다.', showHost: false, showIcon: true }" />
+          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: subShellRegistrations(), emptyText: registrationsLoaded() ? '설치된 subShell이 없습니다.' : 'Extension 목록을 불러오는 중입니다.', showHost: false, showIcon: true }" />
         </clr-tab-content>
       </clr-tab>
 
       <clr-tab>
-        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ totalPluginCount() }}</span></button>
+        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ pluginMetric() }}</span></button>
         <clr-tab-content *clrIfActive="activeView() === 'plugins'">
           <div class="extension-view-intro">
             <div><span class="view-kicker">SYSTEM &amp; HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
@@ -1282,6 +1282,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
 })
 export class AdminPlugins implements OnInit {
   private ctl = inject(PluginControlClient);
+  private projections = inject(ExtensionProjectionStore);
   private ext = inject(ExtensionHostService);
   private systemPlugins = inject(SystemPluginRegistryService);
   private readinessApi = inject(PlatformReadinessService);
@@ -1290,8 +1291,8 @@ export class AdminPlugins implements OnInit {
   readonly iconLib = inject(IconLibraryService);
   readonly activeView = signal<ExtensionManagementView>(this.normalizeView(this.route.snapshot.paramMap.get('view')));
 
-  readonly catalog = signal<CatalogItem[]>([]);
-  readonly registrations = signal<Registration[]>([]);
+  readonly catalog = this.projections.catalog;
+  readonly registrations = this.projections.registrations;
   readonly events = signal<AuditEvent[]>([]);
   readonly bindings = signal<Binding[]>([]);
   readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
@@ -1299,11 +1300,13 @@ export class AdminPlugins implements OnInit {
   readonly installing = signal(false);
   readonly pendingRollback = signal<string | null>(null);
   readonly foundationActivationAllowed = signal(false);
-  readonly catalogLoaded = signal(false);
-  readonly registrationsLoaded = signal(false);
+  readonly catalogLoaded = this.projections.catalogLoaded;
+  readonly registrationsLoaded = this.projections.registrationsLoaded;
   readonly bindingsLoaded = signal(false);
-  readonly projectionStatus = signal<ExtensionProjectionStatus | null>(null);
-  readonly dataWarning = signal<string | null>(null);
+  readonly projectionStatus = this.projections.projectionStatus;
+  private readonly coreDataWarning = signal<string | null>(null);
+  private readonly operationalDataWarning = signal<string | null>(null);
+  readonly dataWarning = computed(() => [this.coreDataWarning(), this.operationalDataWarning()].filter(Boolean).join(' ') || null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
   readonly extensionInstallImage = signal('');
   readonly extensionInstallReason = signal('');
@@ -1352,7 +1355,7 @@ export class AdminPlugins implements OnInit {
     return this.catalog().find((c) => c.name === name)?.nav?.icon || 'application';
   }
   extensionIconSvg(name: string): string {
-    return this.iconLib.getSvg(this.extensionIconToken(name)) || '';
+    return this.iconLib.peekSvg(this.extensionIconToken(name)) || '';
   }
   async chooseIcon(token: string): Promise<void> {
     const n = this.selected();
@@ -1483,20 +1486,28 @@ export class AdminPlugins implements OnInit {
     const loadedPage = this.ext.pages().find((page) => page.id === r.name);
     if (loadedPage) return { visible: true, label: '메뉴 노출', reason: `${loadedPage.navBand} · /p/${r.name}` };
     const failure = this.ext.failures().find((item) => item.id === r.name);
+    const navigation = this.ext.navigationItems().find((item) => item.id === r.name);
+    if (hostRef === 'main' && navigation) {
+      return {
+        visible: true,
+        label: failure ? `메뉴 노출 · ${this.extensionLoadFailureLabel(failure.stage)}` : '메뉴 노출',
+        reason: failure ? failure.error : `${navigation.navBand} · ${navigation.route} · 화면은 요청 시 적재`,
+      };
+    }
     if (failure) return { visible: false, label: this.extensionLoadFailureLabel(failure.stage), reason: failure.error };
     const pluginState = this.ext.pluginLoadState(r.name);
     if (pluginState === 'queued') {
       return {
         visible: false,
-        label: hostRef === 'main' ? 'UI 적재 대기' : 'Plugin 적재 대기',
-        reason: hostRef === 'main' ? '독립 적재 순서를 기다리는 중' : `${hostRef} 화면을 막지 않고 백그라운드 순서를 기다리는 중`,
+        label: hostRef === 'main' ? '탐색 스냅샷 확인 중' : '요청 시 적재',
+        reason: hostRef === 'main' ? 'Registry와 탐색 projection을 동기화하는 중' : `${hostRef}가 이 Plugin 경로를 열 때 검증·활성화`,
       };
     }
     if (pluginState === 'loading') {
       return {
         visible: false,
-        label: hostRef === 'main' ? 'UI 적재 중' : 'Plugin 적재 중',
-        reason: hostRef === 'main' ? '이 SubShell만 독립적으로 검증·활성화하는 중' : `${hostRef}가 이 Plugin을 백그라운드에서 검증하는 중`,
+        label: hostRef === 'main' ? '요청 화면 적재 중' : '요청 Plugin 적재 중',
+        reason: hostRef === 'main' ? '현재 요청한 SubShell만 검증·활성화하는 중' : `${hostRef}가 현재 요청한 child plugin을 검증·활성화하는 중`,
       };
     }
     if (pluginState === undefined && this.ext.loadState() === 'loading') {
@@ -1521,10 +1532,10 @@ export class AdminPlugins implements OnInit {
       if (childState === 'queued' || childState === 'loading') {
         return {
           visible: false,
-          label: childState === 'queued' ? 'Plugin 적재 대기' : 'Plugin 적재 중',
+          label: childState === 'queued' ? '요청 시 적재' : '요청 Plugin 적재 중',
           reason: childState === 'queued'
-            ? `${hostRef} 화면을 막지 않고 background 순서를 기다리는 중`
-            : `${hostRef}가 child plugin을 검증·활성화하는 중`,
+            ? `${hostRef}의 해당 경로를 열 때만 검증·활성화`
+            : `${hostRef}가 현재 요청한 child plugin을 검증·활성화하는 중`,
         };
       }
       return { visible: false, label: 'Host 메뉴 미제공', reason: `${hostRef} child 활성화가 완료되지 않음` };
@@ -1582,7 +1593,7 @@ export class AdminPlugins implements OnInit {
     }
     const menu = this.menuState(r);
     const hostFailure = this.ext.failures().find((item) => item.id === r.name);
-    if (hostFailure && !menu.visible) {
+    if (hostFailure) {
       return {
         label: this.extensionLoadFailureLabel(hostFailure.stage),
         detail: hostFailure.error,
@@ -1593,13 +1604,17 @@ export class AdminPlugins implements OnInit {
     const isHostedPlugin = (this.catalogItem(r.name)?.hostRef || 'main') !== 'main';
     if (isHostedPlugin && !menu.visible) {
       if (['queued', 'loading'].includes(this.ext.pluginLoadState(r.name) || '')) {
-        return { label: 'Plugin 적재 중', detail: menu.reason, tone: 'warning' };
+        return {
+          label: this.ext.pluginLoadState(r.name) === 'queued' ? '요청 시 적재' : 'Plugin 적재 중',
+          detail: menu.reason,
+          tone: this.ext.pluginLoadState(r.name) === 'queued' ? 'success' : 'warning',
+        };
       }
       return { label: 'Host 연동 실패', detail: menu.reason, tone: 'danger' };
     }
     if (isSubShell && !menu.visible) {
       if (['queued', 'loading'].includes(this.ext.pluginLoadState(r.name) || '')) {
-        return { label: 'UI 적재 중', detail: menu.reason, tone: 'warning' };
+        return { label: this.ext.pluginLoadState(r.name) === 'queued' ? '탐색 동기화 중' : '요청 화면 적재 중', detail: menu.reason, tone: 'warning' };
       }
       return {
         label: 'UI 활성화 실패',
@@ -1641,7 +1656,7 @@ export class AdminPlugins implements OnInit {
       { label: '사용자 설정', value: this.desiredStateLabel(r), detail: this.desiredStateDetail(r), tone: r.desiredState === 'Enabled' ? 'success' : 'neutral' },
       { label: 'Artifact 검증', value: this.verificationGate(r).label, detail: this.verificationGate(r).detail, tone: this.verificationGate(r).tone },
       { label: '워크로드', value: workload, detail: '실제 Pod · Service readiness', tone: workload === 'Ready' ? 'success' : workload === 'Degraded' || workload === 'NotReady' ? 'danger' : 'warning' },
-      { label: '페이지 서비스', value: menu.label, detail: menu.reason, tone: menu.visible ? 'success' : r.status.phase === 'Failed' ? 'danger' : 'warning' },
+      { label: '페이지 서비스', value: menu.label, detail: menu.reason, tone: this.ext.failures().some((failure) => failure.id === r.name) ? 'danger' : menu.visible ? 'success' : r.status.phase === 'Failed' ? 'danger' : 'warning' },
     ];
   }
   /** 검증 실패 사유(reason) 한글 설명. */
@@ -1721,7 +1736,6 @@ export class AdminPlugins implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
-    void this.iconLib.ensure();
     this.route.paramMap.subscribe((params) => {
       const requested = params.get('view');
       const normalized = this.normalizeView(requested);
@@ -1730,7 +1744,7 @@ export class AdminPlugins implements OnInit {
         void this.router.navigate(['/manage/extensions', normalized], { replaceUrl: true });
       }
     });
-    await this.refresh();
+    await this.refresh(false);
   }
 
   selectView(view: ExtensionManagementView): void {
@@ -1745,11 +1759,23 @@ export class AdminPlugins implements OnInit {
       : 'subshells';
   }
 
-  async refresh(): Promise<void> {
-    const names = ['Catalog', 'Registration', '감사 이력', 'Binding', '플랫폼 준비 상태', 'Registry 자격증명', 'Digest 철회'];
+  async refresh(force = true): Promise<void> {
+    void this.refreshOperationalData();
+    const result = await this.projections.refresh(force);
+    const issues = [...result.issues];
+    if (issues.length) {
+      const retained = this.catalogLoaded() || this.registrationsLoaded();
+      this.coreDataWarning.set(`${issues.join(', ')} 조회 실패 — ${retained ? '마지막 정상 값을 유지합니다.' : '유효한 상태 스냅샷이 아직 없습니다. 0건으로 간주하지 않습니다.'}`);
+    } else if (this.projectionStatus()?.state === 'stale') {
+      this.coreDataWarning.set(`공유 Extension 스냅샷이 오래되었습니다. 마지막 정상 값(${this.projectionStatus()?.observedAt || '시각 미보고'})을 표시합니다.`);
+    } else {
+      this.coreDataWarning.set(null);
+    }
+  }
+
+  private async refreshOperationalData(): Promise<void> {
+    const names = ['감사 이력', 'Binding', '플랫폼 준비 상태', 'Registry 자격증명', 'Digest 철회'];
     const results = await Promise.allSettled([
-      this.ctl.catalogSnapshot(),
-      this.ctl.registrationsSnapshot(),
       this.ctl.events(),
       this.ctl.bindings(),
       this.readinessApi.status(),
@@ -1757,39 +1783,19 @@ export class AdminPlugins implements OnInit {
       this.ctl.revocations(),
     ]);
     const issues: string[] = [];
-    const [catalog, registrations, events, bindings, readiness, registry, revocations] = results;
-    if (catalog.status === 'fulfilled') {
-      this.catalog.set(catalog.value.items);
-      this.catalogLoaded.set(true);
-      this.projectionStatus.set(catalog.value.projection);
-    } else issues.push(names[0]);
-    if (registrations.status === 'fulfilled') {
-      this.registrations.set(registrations.value.items);
-      this.registrationsLoaded.set(true);
-      this.projectionStatus.set(registrations.value.projection);
-    } else issues.push(names[1]);
-    if (events.status === 'fulfilled') this.events.set(events.value); else issues.push(names[2]);
+    const [events, bindings, readiness, registry, revocations] = results;
+    if (events.status === 'fulfilled') this.events.set(events.value); else issues.push(names[0]);
     if (bindings.status === 'fulfilled') {
       this.bindings.set(bindings.value);
       this.bindingsLoaded.set(true);
-    } else issues.push(names[3]);
+    } else issues.push(names[1]);
     if (readiness.status === 'fulfilled') this.foundationActivationAllowed.set(readiness.value.admission.foundationActivationAllowed === true);
-    else issues.push(names[4]);
-    if (registry.status === 'fulfilled') this.registryStatus.set(registry.value); else issues.push(names[5]);
-    if (revocations.status === 'fulfilled') this.revocations.set(revocations.value); else issues.push(names[6]);
-
-    if (issues.length) {
-      const retained = this.catalogLoaded() || this.registrationsLoaded();
-      if (retained && (catalog.status === 'rejected' || registrations.status === 'rejected')) {
-        const previous = this.projectionStatus();
-        this.projectionStatus.set({ ...(previous || { ready: true }), state: 'stale', reason: 'ControlApiUnavailable' });
-      }
-      this.dataWarning.set(`${issues.join(', ')} 조회 실패 — ${retained ? '마지막 정상 값을 유지합니다.' : '유효한 상태 스냅샷이 아직 없습니다. 0건으로 간주하지 않습니다.'}`);
-    } else if (this.projectionStatus()?.state === 'stale') {
-      this.dataWarning.set(`공유 Extension 스냅샷이 오래되었습니다. 마지막 정상 값(${this.projectionStatus()?.observedAt || '시각 미보고'})을 표시합니다.`);
-    } else {
-      this.dataWarning.set(null);
-    }
+    else issues.push(names[2]);
+    if (registry.status === 'fulfilled') this.registryStatus.set(registry.value); else issues.push(names[3]);
+    if (revocations.status === 'fulfilled') this.revocations.set(revocations.value); else issues.push(names[4]);
+    this.operationalDataWarning.set(issues.length
+      ? `${issues.join(', ')} 조회 실패 — 핵심 Extension 목록과 독립적으로 다시 시도할 수 있습니다.`
+      : null);
   }
 
   async configureRegistryCredentials(username: string, token: string, reason: string): Promise<void> {
@@ -1860,6 +1866,14 @@ export class AdminPlugins implements OnInit {
 
   catalogMetric(): string {
     return this.catalogLoaded() ? String(this.catalog().length) : '—';
+  }
+
+  subShellMetric(): string {
+    return this.registrationsLoaded() ? String(this.subShellRegistrations().length) : '—';
+  }
+
+  pluginMetric(): string {
+    return this.registrationsLoaded() ? String(this.totalPluginCount()) : '—';
   }
 
   failedCount(): number {

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./admin-plugins.ts', import.meta.url), 'utf8');
 const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts', import.meta.url), 'utf8');
+const projectionStore = fs.readFileSync(new URL('../core/extension-projection.store.ts', import.meta.url), 'utf8');
 const routes = fs.readFileSync(new URL('../app.routes.ts', import.meta.url), 'utf8');
 const extensionHost = fs.readFileSync(new URL('../core/extension-host.service.ts', import.meta.url), 'utf8');
 const shell = fs.readFileSync(new URL('../os/os-shell.ts', import.meta.url), 'utf8');
@@ -25,16 +26,17 @@ test('Extension operations separate user intent, serving state, and verification
   assert.match(source, /this\.effectiveState\(registration\)\.tone === 'danger'/);
 });
 
-test('a currently visible page wins over a stale transient host failure', () => {
-  assert.match(source, /const menu = this\.menuState\(r\);[\s\S]*if \(hostFailure && !menu\.visible\)/);
+test('an activation failure remains visible even when navigation stays available', () => {
+  assert.match(source, /const menu = this\.menuState\(r\);[\s\S]*if \(hostFailure\)/);
+  assert.match(source, /메뉴 노출 · \$\{this\.extensionLoadFailureLabel\(failure\.stage\)\}/);
   assert.match(extensionHost, /this\.clearPluginFailure\(e\.id\)/);
 });
 
 test('loading and failures are reported per extension and by the actual failed stage', () => {
   assert.match(source, /const pluginState = this\.ext\.pluginLoadState\(r\.name\)/);
   assert.match(source, /pluginState === 'queued'/);
-  assert.match(source, /'UI 적재 대기' : 'Plugin 적재 대기'/);
-  assert.match(source, /label: hostRef === 'main' \? 'UI 적재 중' : 'Plugin 적재 중'/);
+  assert.match(source, /'탐색 스냅샷 확인 중' : '요청 시 적재'/);
+  assert.match(source, /label: hostRef === 'main' \? '요청 화면 적재 중' : '요청 Plugin 적재 중'/);
   for (const label of ['Manifest 검증 실패', '서명 검증 실패', '실행 파일 적재 실패', '화면 Asset 적재 실패', 'UI 활성화 실패']) {
     assert.ok(source.includes(label), `${label} 단계 표시가 필요하다`);
   }
@@ -49,11 +51,16 @@ test('Enabled registrations never present Enable as their primary lifecycle acti
 
 test('an unavailable control projection is unknown or stale, never a false zero', () => {
   assert.match(source, /return '—'/);
+  assert.match(source, /SubShells <span class="view-count">\{\{ subShellMetric\(\) \}\}<\/span>/);
+  assert.match(source, /Plugins <span class="view-count">\{\{ pluginMetric\(\) \}\}<\/span>/);
+  assert.match(source, /registrationsLoaded\(\) \? String\(this\.subShellRegistrations\(\)\.length\) : '—'/);
   assert.match(source, /Promise\.allSettled/);
   assert.match(source, /마지막 정상 값을 유지합니다/);
   assert.match(client, /ExtensionProjectionStatus/);
   assert.match(client, /catalogSnapshot/);
   assert.match(client, /registrationsSnapshot/);
+  assert.match(projectionStore, /private inFlight/);
+  assert.match(source, /void this\.refreshOperationalData\(\);[\s\S]*await this\.projections\.refresh\(force\)/);
 });
 
 test('Extension management separates first-level subShells from host-owned plugins', () => {
@@ -122,11 +129,18 @@ test('SubShell management projects the selected Carbon icon without a redundant 
 });
 
 test('the catalog icon selected in management wins when first-level navigation is composed', () => {
-  assert.match(extensionHost, /await this\.loadManagementInventory\(\)/);
+  assert.match(extensionHost, /const managementLoad = this\.loadManagementInventory\(\)/);
   assert.match(extensionHost, /\.\.\.Object\.fromEntries\(activePlugins\.map[\s\S]*\.\.\.current/);
   assert.match(extensionHost, /\.\.\.current,[\s\S]*\.\.\.Object\.fromEntries\(items\.map/);
   assert.match(shell, /<os-nav-icon clrVerticalNavIcon \[token\]="iconTokenFor\(item\)"/);
-  assert.match(navIcon, /return this\.iconLibrary\.getSvg\(this\.token\)/);
+  assert.match(navIcon, /return this\.iconLibrary\.peekSvg\(this\.token\)/);
+});
+
+test('inactive routes are healthy on-demand lifecycle states, not UI or Host failures', () => {
+  assert.match(source, /label: childState === 'queued' \? '요청 시 적재' : '요청 Plugin 적재 중'/);
+  assert.match(source, /화면은 요청 시 적재/);
+  assert.match(source, /tone: this\.ext\.pluginLoadState\(r\.name\) === 'queued' \? 'success' : 'warning'/);
+  assert.doesNotMatch(source, /백그라운드 순서를 기다리는 중|background 순서를 기다리는 중/);
 });
 
 test('every Extension management tab has a reloadable canonical route', () => {
@@ -143,7 +157,7 @@ test('PFSS child plugins keep their host ownership across routes and navigation'
   assert.match(routes, /path: 'p\/opensearch', redirectTo: 'pfss\/opensearch'/);
   assert.match(routes, /path: 'p\/postgres', redirectTo: 'pfss\/postgres'/);
   assert.match(routes, /matcher: pfssHostMatcher, component: PluginHost, data: \{ pluginId: 'foundation' \}/);
-  assert.match(extensionHost, /hostRef: String\(item\['hostRef'\] \|\| 'main'\)/);
+  assert.match(extensionHost, /hostRef: item\.hostRef \|\| 'main'/);
   assert.match(extensionHost, /this\.activeModules\.has\(projection\.id\)/);
   assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
   assert.match(source, /const projection = hostRef === 'main' \? undefined : this\.ext\.hostChildProjection\(hostRef, r\.name\)/);

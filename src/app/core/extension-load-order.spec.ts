@@ -4,21 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
-  CHILD_EXTENSION_ACTIVATION_CONCURRENCY,
   extensionRouteTarget,
   isTransientExtensionLoadError,
-  loadWithConcurrency,
-  prioritizeRequestedHost,
 } from './extension-load-order.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-
-const registry = [
-  { id: 'cluster-manager', hostRef: 'main' },
-  { id: 'foundation', hostRef: 'main' },
-  { id: 'postgres', hostRef: 'foundation' },
-  { id: 'gitlab', hostRef: 'main' },
-];
 
 test('canonical plugin deep links identify both host and child ownership', () => {
   assert.deepEqual(extensionRouteTarget('/p/foundation/postgres/install'), {
@@ -36,37 +26,6 @@ test('canonical plugin deep links identify both host and child ownership', () =>
   assert.deepEqual(extensionRouteTarget('/manage/extensions/plugins'), { hostId: '', childId: '' });
 });
 
-test('cold extension activation prioritizes only the requested main subShell', () => {
-  assert.deepEqual(
-    prioritizeRequestedHost(registry, '/p/foundation/postgres').map((entry) => entry.id),
-    ['foundation', 'cluster-manager', 'postgres', 'gitlab'],
-  );
-  assert.deepEqual(
-    prioritizeRequestedHost(registry, '/pfss/postgres/admin').map((entry) => entry.id),
-    ['foundation', 'cluster-manager', 'postgres', 'gitlab'],
-  );
-  assert.deepEqual(
-    prioritizeRequestedHost(registry, '/manage/extensions/subshells').map((entry) => entry.id),
-    registry.map((entry) => entry.id),
-  );
-});
-
-test('extension activation is bounded and completes every registry entry', async () => {
-  let active = 0;
-  let maximum = 0;
-  const completed: number[] = [];
-  await loadWithConcurrency([0, 1, 2, 3, 4, 5, 6], async (entry) => {
-    active += 1;
-    maximum = Math.max(maximum, active);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    completed.push(entry);
-    active -= 1;
-  }, 3);
-  assert.equal(maximum, 3);
-  assert.deepEqual(completed.toSorted((left, right) => left - right), [0, 1, 2, 3, 4, 5, 6]);
-  await assert.rejects(() => loadWithConcurrency([1], async () => undefined, 0), /positive integer/);
-});
-
 test('only transport interruption and timeout errors are retryable', () => {
   assert.equal(isTransientExtensionLoadError(new DOMException('signal is aborted without reason', 'AbortError')), true);
   assert.equal(isTransientExtensionLoadError({ name: 'HttpRequestTimeoutError', message: 'request timed out after 15000ms' }), true);
@@ -75,15 +34,25 @@ test('only transport interruption and timeout errors are retryable', () => {
   assert.equal(isTransientExtensionLoadError(new Error('번들 무결성 불일치')), false);
 });
 
-test('a parent subShell activates before hosted children continue in the background', () => {
+test('only the requested subShell route activates while unrelated guests remain queued', () => {
   const source = readFileSync(path.join(here, 'extension-host.service.ts'), 'utf8');
-  assert.equal(CHILD_EXTENSION_ACTIVATION_CONCURRENCY, 2);
-  assert.match(source, /this\.loadState\.set\('ready'\);[\s\S]*this\.startBackgroundChildActivation\(backgroundChildren\)/);
+  assert.match(source, /await this\.ensureRequestedRoute\(window\.location\.pathname\)/);
+  assert.match(source, /NavigationEnd\) void this\.ensureRequestedRoute\(event\.urlAfterRedirects\)/);
+  assert.doesNotMatch(source, /startBackgroundChildActivation|backgroundChildren/);
+  assert.doesNotMatch(source, /orderedMainPlugins|loadWithConcurrency\(\s*mainPlugins/);
   assert.match(source, /await atExtensionStage\('activation', async \(\) => \{ await mod!\.activate\(context\); \}\);[\s\S]*this\.activeModules\.set\(e\.id, mod\)/);
   assert.doesNotMatch(source, /const childEntries = manifest\.kind/);
   assert.match(source, /hostProjectionDeclarations\.set\(pluginId/);
   assert.match(source, /this\.activeModules\.has\(projection\.id\)/);
   assert.match(source, /children: \(\) => this\.registryEntries[\s\S]*\.filter\(\(entry\) => \(entry\.hostRef \?\? 'main'\) === pluginId\)/);
+});
+
+test('first-level navigation is hydrated and atomically replaced without guest activation', () => {
+  const source = readFileSync(path.join(here, 'extension-host.service.ts'), 'utf8');
+  assert.match(source, /navigationSnapshot = signal<ConsoleNavigationSnapshot \| null>\(this\.cachedNavigationSnapshot\)/);
+  assert.match(source, /buildConsoleNavigationSnapshot\([\s\S]*this\.navigationSnapshot\.set\(snapshot\)/);
+  assert.match(source, /localStorage\.setItem\(CONSOLE_NAVIGATION_STORAGE_KEY, JSON\.stringify\(snapshot\)\)/);
+  assert.match(source, /It never grants execution/);
 });
 
 test('immutable artifacts reuse browser cache but remain digest verified', () => {
