@@ -1,43 +1,55 @@
-import { ChangeDetectionStrategy, Component, inject, Input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Input, signal } from '@angular/core';
 import Application16 from '@carbon/icons/es/application/16';
 import { CarbonIcon, CarbonIconDescriptor } from './carbon-icon';
 import { iconByToken } from './carbon-icon-catalog';
-import { IconLibraryService } from './icon-library.service';
-import { OsRawIcon } from './os-raw-icon';
+
+const CARBON_ICON_TOKEN = /^[a-z0-9][a-z0-9-]{0,95}$/;
 
 /**
  * Main Shell navigation icon projection.
  *
- * Curated Carbon tokens render through the compact descriptor catalog. Tokens
- * outside that catalog use the full metadata library only when it is already
- * available (for example after opening the icon picker). Navigation itself
- * never triggers that large download. A missing token falls back explicitly.
+ * Curated Carbon tokens render through the compact descriptor catalog. Every
+ * other selectable token is a build-generated static SVG asset, so a document
+ * requests only the icons it actually displays. Rendering never depends on
+ * whether the administrator happened to open the 2600-icon picker first.
  */
 @Component({
   selector: 'os-nav-icon',
-  imports: [CarbonIcon, OsRawIcon],
+  imports: [CarbonIcon],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
-    @if (rawSvg(); as svg) {
-      <os-rawicon [svg]="svg" [size]="size" />
+    @if (descriptorForToken(); as icon) {
+      <os-cicon [icon]="icon" [size]="size" />
+    } @else if (assetUrl(); as url) {
+      <img class="os-nav-icon-asset" [src]="url" alt="" [style.width.px]="size" [style.height.px]="size" (error)="assetFailed()" />
     } @else {
-      <os-cicon [icon]="descriptor()" [size]="size" />
+      <os-cicon [icon]="fallback" [size]="size" />
     }
   `,
+  styles: [`
+    .os-nav-icon-asset { display: block; object-fit: contain; opacity: 0.76; }
+  `],
 })
 export class OsNavIcon {
-  @Input() token = '';
+  private currentToken = '';
+  private readonly failedToken = signal('');
+  @Input() set token(value: string) {
+    const next = String(value || '');
+    if (next !== this.currentToken) this.failedToken.set('');
+    this.currentToken = next;
+  }
+  get token(): string { return this.currentToken; }
   @Input() fallback: CarbonIconDescriptor = Application16;
   @Input() size = 20;
 
-  private readonly iconLibrary = inject(IconLibraryService);
-
-  rawSvg(): string | null {
-    if (!this.token || iconByToken(this.token)) return null;
-    return this.iconLibrary.peekSvg(this.token);
+  descriptorForToken(): CarbonIconDescriptor | null {
+    return iconByToken(this.currentToken);
   }
 
-  descriptor(): CarbonIconDescriptor {
-    return iconByToken(this.token) ?? this.fallback;
+  assetUrl(): string | null {
+    if (!CARBON_ICON_TOKEN.test(this.currentToken) || this.failedToken() === this.currentToken) return null;
+    return `/assets/carbon-icons/${encodeURIComponent(this.currentToken)}.svg`;
   }
+
+  assetFailed(): void { this.failedToken.set(this.currentToken); }
 }

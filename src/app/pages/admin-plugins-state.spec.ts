@@ -121,10 +121,10 @@ test('Topology includes Console-owned system plugins without treating them as in
 
 test('SubShell management projects the selected Carbon icon without a redundant Host column', () => {
   assert.match(source, /let-showHost="showHost" let-showIcon="showIcon"/);
-  assert.match(source, /subShellRegistrations\(\)[\s\S]*showHost: false, showIcon: true/);
+  assert.match(source, /orderedSubShellRegistrations\(\)[\s\S]*showHost: false, showIcon: true/);
   assert.match(source, /group\.items[\s\S]*showHost: true, showIcon: false/);
   assert.match(source, /@if \(showHost\) \{ <th class="left">소속 Host<\/th> \}/);
-  assert.match(source, /<os-rawicon \[svg\]="extensionIconSvg\(r\.name\)" \[size\]="20" \/>/);
+  assert.match(source, /<os-nav-icon \[token\]="extensionIconToken\(r\.name\)" \[size\]="20" \/>/);
   assert.match(source, /extensionIconToken\(name: string\)/);
 });
 
@@ -133,7 +133,16 @@ test('the catalog icon selected in management wins when first-level navigation i
   assert.match(extensionHost, /\.\.\.Object\.fromEntries\(activePlugins\.map[\s\S]*\.\.\.current/);
   assert.match(extensionHost, /\.\.\.current,[\s\S]*\.\.\.Object\.fromEntries\(items\.map/);
   assert.match(shell, /<os-nav-icon clrVerticalNavIcon \[token\]="iconTokenFor\(item\)"/);
-  assert.match(navIcon, /return this\.iconLibrary\.peekSvg\(this\.token\)/);
+  assert.match(navIcon, /assets\/carbon-icons/);
+});
+
+test('SubShell navigation order and optional menu label are explicit management controls', () => {
+  assert.match(source, /cdkDropList[\s\S]*cdkDrag/);
+  assert.match(source, /cdkDropListDropped\)="dropSubShell\(\$event\)"/);
+  assert.match(source, /setNavigationOrder\(this\.orderedSubShellRegistrations\(\)\.map/);
+  assert.match(source, /menuLabelOverride\(\)/);
+  assert.match(source, /비워서 저장하면 원래 이름/);
+  assert.match(source, /setNavigation\(id, \{ labelOverride: value \}\)/);
 });
 
 test('inactive routes are healthy on-demand lifecycle states, not UI or Host failures', () => {

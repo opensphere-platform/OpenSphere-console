@@ -141,6 +141,7 @@ export interface ManagementInventoryItem {
   hostRef: string;
   kind?: 'subShell' | 'plugin';
   icon?: string;
+  order?: number;
   desiredState?: string;
   phase?: string;
 }
@@ -308,11 +309,12 @@ export class ExtensionHostService {
         const registration = registrationByName.get(id);
         return [{
           id,
-          title: item.displayName || id,
+          title: item.nav?.labelOverride?.trim() || item.displayName || id,
           navBand: item.nav?.band || '운영 Operate',
           hostRef: item.hostRef || 'main',
           kind: item.kind,
           icon: item.nav?.icon || '',
+          order: item.nav?.order,
           desiredState: registration?.desiredState || '',
           phase: registration?.status.phase || 'NotInstalled',
         }];

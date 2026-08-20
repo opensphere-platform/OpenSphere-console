@@ -52,6 +52,7 @@ Thumbs.db
 /backend/os-cli/release/
 /audit-evidence/
 /visual-qa/
+/public/assets/carbon-icons/
 /docs/audit-evidence/**/*.png
 /docs/audit-evidence/**/*.jpg
 /docs/audit-evidence/**/*.jpeg

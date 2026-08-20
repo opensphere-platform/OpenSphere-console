@@ -3,9 +3,9 @@
   "version": "0.3.6",
   "scripts": {
     "ng": "ng",
-    "prestart": "node scripts/build-os-shell-terminal-frame.mjs",
+    "prestart": "node scripts/generate-carbon-icon-assets.mjs && node scripts/build-os-shell-terminal-frame.mjs",
     "start": "ng serve",
-    "prebuild": "node scripts/build-os-shell-terminal-frame.mjs && node scripts/verify-console-composition.mjs && node scripts/verify-os-shell-system-plugin.mjs && node scripts/verify-manual-ui.mjs --source",
+    "prebuild": "node scripts/generate-carbon-icon-assets.mjs && node scripts/build-os-shell-terminal-frame.mjs && node scripts/verify-console-composition.mjs && node scripts/verify-os-shell-system-plugin.mjs && node scripts/verify-manual-ui.mjs --source",
     "build": "ng build",
     "postbuild": "node scripts/verify-os-shell-system-plugin.mjs --dist && node scripts/verify-manual-ui.mjs --dist dist/opensphere-console/browser",
     "manual:seed": "node backend/opensphere-console-oaa-gateway/scripts/build-manual-seed.js",
@@ -19,7 +19,8 @@
     "test:os-shell-security-poc": "node --test backend/dupa-control/host-contract.test.js backend/opensphere-console-backend/os-shell-security-poc-contract.test.js backend/opensphere-console-backend/os-shell-contract.test.js backend/opensphere-console-backend/os-shell-database.test.js scripts/os-shell-frontend-contract.test.mjs",
     "test:os-shell-frontend": "node --test scripts/os-shell-frontend-contract.test.mjs",
     "test:web-shell-edge-mvp": "node --test scripts/web-shell-edge-mvp-contract.test.mjs",
-    "test:navigation-snapshot": "node --test src/app/core/console-navigation-snapshot.spec.ts src/app/core/r2d2-risk.service.spec.ts"
+    "test:navigation-snapshot": "node --test src/app/core/console-navigation-snapshot.spec.ts src/app/core/r2d2-risk.service.spec.ts",
+    "test:carbon-icons": "node --test scripts/carbon-icon-assets.test.mjs"
   },
   "private": true,
   "packageManager": "npm@11.6.2",

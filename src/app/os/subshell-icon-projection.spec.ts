@@ -11,8 +11,8 @@ const navIconSource = readFileSync(path.join(here, 'os-nav-icon.ts'), 'utf8');
 
 test('first-level subShell navigation never preloads the full Carbon icon library', () => {
   assert.doesNotMatch(shellSource, /IconLibraryService|iconLib\.ensure\(\)/);
-  assert.match(navIconSource, /return this\.iconLibrary\.peekSvg\(this\.token\)/);
-  assert.doesNotMatch(navIconSource, /return this\.iconLibrary\.getSvg\(this\.token\)/);
+  assert.doesNotMatch(navIconSource, /IconLibraryService|metadata\.json/);
+  assert.match(navIconSource, /assets\/carbon-icons/);
 });
 
 test('flat first-level navigation delegates selected and fallback icons to one projector', () => {
@@ -29,8 +29,8 @@ test('contributed nav-tree roots receive the owning subShell selected icon', () 
   assert.match(navNodeSource, /<os-nav-icon clrVerticalNavIcon \[token\]="iconToken"/);
 });
 
-test('the shared navigation icon projector owns curated, already-loaded and fallback resolution', () => {
-  assert.match(navIconSource, /if \(!this\.token \|\| iconByToken\(this\.token\)\) return null/);
-  assert.match(navIconSource, /return this\.iconLibrary\.peekSvg\(this\.token\)/);
-  assert.match(navIconSource, /return iconByToken\(this\.token\) \?\? this\.fallback/);
+test('the shared navigation icon projector owns curated, static asset and fallback resolution', () => {
+  assert.match(navIconSource, /return iconByToken\(this\.currentToken\)/);
+  assert.match(navIconSource, /CARBON_ICON_TOKEN\.test\(this\.currentToken\)/);
+  assert.match(navIconSource, /this\.failedToken\.set\(this\.currentToken\)/);
 });

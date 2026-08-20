@@ -102,6 +102,33 @@
   --clr-card-border-radius: var(--os-radius);   /* 10px → 4px (플랫) */
 }
 
+/* SubShell first-level navigation editor. Kept page-scoped here because the
+ * existing management component is intentionally close to its style budget. */
+os-admin-plugins .subshell-menu-editor { margin: 0.8rem 0; border: 1px solid var(--os-hairline); background: var(--os-canvas, #fff); }
+os-admin-plugins .subshell-menu-editor > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 0.7rem 0.85rem; border-bottom: 1px solid var(--os-hairline); }
+os-admin-plugins .subshell-menu-editor h3 { margin: 0.1rem 0 0; font-size: 0.9rem; }
+os-admin-plugins .subshell-menu-editor > header p { max-width: 48rem; margin: 0; color: var(--os-muted); font-size: 0.68rem; }
+os-admin-plugins .subshell-menu-band { display: grid; grid-template-columns: 11rem minmax(0, 1fr); border-bottom: 1px solid var(--os-hairline); }
+os-admin-plugins .subshell-menu-band:last-child { border-bottom: 0; }
+os-admin-plugins .subshell-menu-band > strong { padding: 0.75rem 0.85rem; color: var(--os-muted); font-size: 0.68rem; }
+os-admin-plugins .subshell-menu-row { display: grid; grid-template-columns: 1.8rem 1.5rem minmax(0, 1fr) auto; align-items: center; gap: 0.5rem; min-height: 2.9rem; padding: 0.35rem 0.65rem; border-bottom: 1px solid var(--os-hairline); background: var(--os-canvas, #fff); }
+os-admin-plugins .subshell-menu-row:last-child { border-bottom: 0; }
+.subshell-menu-row.cdk-drag-preview { border: 1px solid var(--os-accent); background: var(--os-canvas, #fff); box-shadow: 0 0.35rem 1rem rgb(0 0 0 / 18%); }
+os-admin-plugins .subshell-menu-row.cdk-drag-placeholder { opacity: 0.28; }
+os-admin-plugins .subshell-menu-row > span { display: flex; min-width: 0; flex-direction: column; }
+os-admin-plugins .subshell-menu-row small { overflow: hidden; color: var(--os-muted); font-size: 0.62rem; text-overflow: ellipsis; white-space: nowrap; }
+os-admin-plugins .subshell-menu-handle { border: 0; background: transparent; color: var(--os-muted); cursor: grab; font-weight: 700; }
+os-admin-plugins .subshell-menu-handle:active { cursor: grabbing; }
+os-admin-plugins .cc-menu-label { display: flex; align-items: center; gap: 0.55rem; margin: 0.5rem 0 0.2rem; }
+os-admin-plugins .cc-menu-label label { min-width: 5.5rem; color: var(--os-muted); font-size: 0.68rem; }
+os-admin-plugins .cc-menu-label .clr-input { flex: 1 1 auto; max-width: 28rem; }
+@media (max-width: 760px) {
+  os-admin-plugins .subshell-menu-editor > header { flex-direction: column; }
+  os-admin-plugins .subshell-menu-band { grid-template-columns: 1fr; }
+  os-admin-plugins .subshell-menu-band > strong { padding-bottom: 0.3rem; }
+  os-admin-plugins .cc-menu-label { align-items: stretch; flex-direction: column; }
+}
+
 /* OAA desktop dock contract.
  *
  * The panel itself is fixed so that its transcript can own the viewport height.

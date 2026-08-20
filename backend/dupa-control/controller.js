@@ -367,6 +367,24 @@ const extensionProjection = new ExtensionProjectionCoordinator({ k8s, namespace:
 const isCorePkg = (pkg) => (pkg?.metadata?.labels?.['opensphere.io/scope'] || '').startsWith('main-shell');
 const getPackage = (n) => k8s('GET', `${crd('uipluginpackages')}/${n}`);
 const getReg = (n) => k8s('GET', `${crd('uipluginregistrations')}/${n}`);
+async function refreshExtensionManagementProjection() {
+  const current = extensionProjection.requireCurrent();
+  const [packages, registrations] = await Promise.all([listPackages(), listRegs()]);
+  if (!packages.ok || !registrations.ok) {
+    throw Object.assign(new Error('extension management projection refresh failed'), {
+      code: 503,
+      reason: 'ExtensionProjectionRefreshFailed',
+    });
+  }
+  const snapshot = await extensionProjection.persist({
+    ...current,
+    observedAt: new Date().toISOString(),
+    catalog: { items: catalogProjectionItems(packages.json?.items) },
+    registrations: { items: registrationProjectionItems(registrations.json?.items) },
+  });
+  applyExtensionProjection(snapshot);
+  return snapshot;
+}
 function verifiedActivatedRegistration(reg) {
   const status = reg?.status || {};
   return reg?.spec?.desiredState === 'Enabled'
@@ -1175,6 +1193,43 @@ async function workloadReady(name) {
 // RFC1123 라벨만 허용 — CR이 임의 호스트명을 주입해 controller가 엉뚱한 svc로 fetch하는 것 차단.
 const SAFE_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 function safeName(n) { return typeof n === 'string' && SAFE_NAME.test(n); }
+const NAV_ICON_TOKEN = /^[a-z0-9][a-z0-9-]{0,95}$/;
+function navigationSettingsPatch(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, reason: 'InvalidNavigationSettings' };
+  const keys = Object.keys(body);
+  if (!keys.length || keys.some((key) => !['icon', 'labelOverride'].includes(key))) {
+    return { ok: false, reason: 'InvalidNavigationSettings' };
+  }
+  const nav = {};
+  if (Object.hasOwn(body, 'icon')) {
+    if (typeof body.icon !== 'string' || (body.icon && !NAV_ICON_TOKEN.test(body.icon))) {
+      return { ok: false, reason: 'InvalidNavigationIcon' };
+    }
+    nav.icon = body.icon;
+  }
+  if (Object.hasOwn(body, 'labelOverride')) {
+    if (typeof body.labelOverride !== 'string') return { ok: false, reason: 'InvalidNavigationLabel' };
+    const label = body.labelOverride.trim();
+    if (label.length > 80 || /[\u0000-\u001f\u007f]/.test(label)) return { ok: false, reason: 'InvalidNavigationLabel' };
+    nav.labelOverride = label || null;
+  }
+  return { ok: true, nav };
+}
+function navigationOrderPlan(packages, registrations, ids) {
+  if (!Array.isArray(ids) || ids.length > 64 || ids.some((id) => !safeName(id)) || new Set(ids).size !== ids.length) {
+    return { ok: false, reason: 'InvalidNavigationOrder' };
+  }
+  const registered = new Set((registrations || []).map((registration) => registration?.metadata?.name).filter(safeName));
+  const eligible = (packages || [])
+    .filter((pkg) => pkg?.spec?.kind === 'subShell' && (pkg?.spec?.hostRef || 'main') === 'main'
+      && registered.has(pkg?.metadata?.name))
+    .map((pkg) => pkg.metadata.name)
+    .sort();
+  if (ids.length !== eligible.length || [...ids].sort().some((id, index) => id !== eligible[index])) {
+    return { ok: false, reason: 'NavigationOrderInventoryMismatch' };
+  }
+  return { ok: true, items: ids.map((id, order) => ({ id, order })) };
+}
 function moduleDependencySpecifiers(source) {
   const specifiers = new Set();
   const text = String(source || '');
@@ -3867,14 +3922,78 @@ const server = http.createServer(async (req, res) => {
       return json(res, 202, { accepted: true, id, desiredState: desired });
     }
 
-    // 1단 아이콘 지정 — UIPluginPackage spec.nav.icon 패치(서명 무관 오버라이드). 패치 후 reconcile로 registry 즉시 반영.
+    if (p === '/api/admin/plugins/navigation-order' && req.method === 'PUT') {
+      const body = await readBody(req).catch(() => ({}));
+      if (Object.keys(body).length !== 1 || !Object.hasOwn(body, 'ids')) {
+        return json(res, 400, { error: 'InvalidNavigationOrder', opId });
+      }
+      const [packages, registrations] = await Promise.all([listPackages(), listRegs()]);
+      if (!packages.ok || !registrations.ok) {
+        return json(res, 503, { error: 'NavigationInventoryUnavailable', opId });
+      }
+      const plan = navigationOrderPlan(packages.json?.items, registrations.json?.items, body.ids);
+      if (!plan.ok) return json(res, 409, { error: plan.reason, opId });
+      const packageById = new Map((packages.json?.items || []).map((pkg) => [pkg.metadata?.name, pkg]));
+      const applied = [];
+      for (const item of plan.items) {
+        const result = await k8s('PATCH', `${crd('uipluginpackages')}/${item.id}`, { spec: { nav: { order: item.order } } });
+        if (!result.ok) {
+          for (const completed of applied.reverse()) {
+            const previous = packageById.get(completed.id)?.spec?.nav?.order;
+            await k8s('PATCH', `${crd('uipluginpackages')}/${completed.id}`, {
+              spec: { nav: { order: Number.isInteger(previous) ? previous : null } },
+            }).catch(() => null);
+          }
+          await durableAudit(actor, 'set-navigation-order', 'main-shell', 'error', `HTTP ${result.status}`, opId);
+          return json(res, result.status >= 500 ? 502 : result.status, { error: 'NavigationOrderPatchFailed', opId });
+        }
+        applied.push(item);
+      }
+      await refreshExtensionManagementProjection();
+      await durableAudit(actor, 'set-navigation-order', 'main-shell', 'accepted', plan.items.map((item) => item.id).join(','), opId);
+      reconcile().catch((error) => console.error('reconcile error', error));
+      return json(res, 200, { accepted: true, ids: plan.items.map((item) => item.id), opId });
+    }
+
+    // 1단 메뉴 표현 설정 — 원본 package identity와 분리된 관리자 icon/label override.
+    const navigationMatch = p.match(/^\/api\/admin\/plugins\/packages\/([a-z0-9-]+)\/navigation$/);
+    if (navigationMatch && req.method === 'POST') {
+      const [, id] = navigationMatch;
+      const body = await readBody(req).catch(() => ({}));
+      const patch = navigationSettingsPatch(body);
+      if (!patch.ok) return json(res, 400, { error: patch.reason, opId });
+      const current = await getPackage(id);
+      if (!current.ok) return json(res, current.status === 404 ? 404 : 502, { error: 'NavigationPackageUnavailable', opId });
+      if (current.json?.spec?.kind !== 'subShell' || (current.json?.spec?.hostRef || 'main') !== 'main') {
+        return json(res, 409, { error: 'NavigationSettingsRequireFirstLevelSubShell', opId });
+      }
+      const result = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: { nav: patch.nav } });
+      if (!result.ok) {
+        await durableAudit(actor, 'set-navigation', id, 'error', `HTTP ${result.status}`, opId);
+        return json(res, result.status >= 500 ? 502 : result.status, { error: 'NavigationSettingsPatchFailed', opId });
+      }
+      await refreshExtensionManagementProjection();
+      await durableAudit(actor, 'set-navigation', id, 'accepted', JSON.stringify(patch.nav), opId);
+      reconcile().catch((error) => console.error('reconcile error', error));
+      return json(res, 200, { accepted: true, id, navigation: result.json?.spec?.nav || patch.nav, opId });
+    }
+
+    // 하위 호환 아이콘 endpoint. 신규 UI는 /navigation을 사용한다.
     const im = p.match(/^\/api\/admin\/plugins\/packages\/([a-z0-9-]+)\/icon$/);
     if (im && req.method === 'POST') {
       const [, id] = im;
       const body = await readBody(req).catch(() => ({}));
-      const icon = String(body.icon || '').slice(0, 64);
+      const settings = navigationSettingsPatch({ icon: body.icon });
+      if (!settings.ok) return json(res, 400, { error: settings.reason, opId });
+      const current = await getPackage(id);
+      if (!current.ok) return json(res, current.status === 404 ? 404 : 502, { error: 'NavigationPackageUnavailable', opId });
+      if (current.json?.spec?.kind !== 'subShell' || (current.json?.spec?.hostRef || 'main') !== 'main') {
+        return json(res, 409, { error: 'NavigationSettingsRequireFirstLevelSubShell', opId });
+      }
+      const icon = settings.nav.icon;
       const r = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: { nav: { icon } } });
       if (!r.ok) { console.error(`[err] op=${opId} set-icon ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, 'set-icon', id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
+      await refreshExtensionManagementProjection();
       await durableAudit(actor, 'set-icon', id, 'accepted', icon, opId);
       reconcile().catch((e) => console.error('reconcile error', e));
       return json(res, 202, { accepted: true, id, icon });
@@ -3920,6 +4039,7 @@ module.exports = {
   auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
   isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses,
   moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems,
+  navigationSettingsPatch, navigationOrderPlan,
   kubernetesApiBase, packageFromInspection, releaseRevision, releaseAnnotations,
   deploymentManifest, pdbManifest, serviceManifest, hpaManifest,
   networkPolicyManifest, telemetryDescriptor, publishedPluginEntry,
