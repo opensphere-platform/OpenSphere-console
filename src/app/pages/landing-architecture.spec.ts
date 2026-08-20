@@ -108,6 +108,21 @@ test('main index adds exactly four foundation concept tabs with keyboard semanti
   }
 });
 
+test('foundation concepts remain readable and contained across viewport widths', () => {
+  assert.match(foundationSource, /:host \{[^}]*min-width:0;[^}]*max-width:100%/);
+  assert.match(foundationSource, /\.foundation-docs \{[^}]*max-width:100%;[^}]*overflow:hidden/);
+  assert.match(
+    foundationSource,
+    /\.foundation-tabs \{[^}]*repeat\(auto-fit,minmax\(13rem,1fr\)\)/,
+  );
+  assert.match(
+    foundationSource,
+    /\.ai-pipeline \{[^}]*repeat\(auto-fit,minmax\(10\.5rem,1fr\)\)/,
+  );
+  assert.match(foundationSource, /\.document-intro \{[^}]*background:var\(--os-surface-1\)/);
+  assert.doesNotMatch(foundationSource, /background:#161616|background:#393939/);
+});
+
 test('Service Stack documentation defines HISS CBSS PFSS owners and hard boundaries', () => {
   for (const term of [
     'Host Infrastructure Service Stack',
