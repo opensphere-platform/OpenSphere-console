@@ -53,6 +53,7 @@ const {
   PLATFORM_RELEASE_TARGET,
   buildComponentReleaseLock,
   platformReleaseApprovalPolicy,
+  validatePfssPublicationSubmission,
   validatePlatformReleaseDesiredState,
   validateReleaseTransition,
   releaseSummary,
@@ -2639,6 +2640,118 @@ async function executeLocalEdgePlatformRelease(req, body = {}) {
   };
 }
 
+async function executePfssLocalEdgePlatformRelease(req, body = {}) {
+  const actor = await verifyLocalEdgeAutomation(req);
+  const expected = [
+    'operationId', 'reason', 'sourceRevision', 'components', 'componentPublication',
+    'publicationDocument', 'publicationSignature',
+  ];
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || Object.keys(body).length !== expected.length
+    || Object.keys(body).some((key) => !expected.includes(key))) {
+    throw { code: 400, msg: 'PFSS local edge automation body contains unsupported fields' };
+  }
+  const reason = managementReason(body.reason);
+  if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+  const trustedSpki = String(process.env.PFSS_COMPONENT_PUBLIC_KEY_SPKI_BASE64 || '').trim();
+  if (!trustedSpki) throw { code: 503, msg: 'PFSS trusted P-256 SPKI is not configured' };
+  let publication;
+  try {
+    publication = validatePfssPublicationSubmission({
+      sourceRevision: body.sourceRevision,
+      components: body.components,
+      componentPublication: body.componentPublication,
+      publicationDocument: body.publicationDocument,
+      publicationSignature: body.publicationSignature,
+    }, trustedSpki);
+  } catch (error) {
+    throw { code: 400, msg: error.message };
+  }
+  if (body.operationId !== publication.operationId) {
+    throw { code: 400, msg: 'PFSS operationId does not bind the signed publication document' };
+  }
+  // This admission precedes target generation and governedChange. Invalid
+  // evidence therefore has zero durable write effects.
+  const generated = await generatePlatformComponentTarget(actor, {
+    reason,
+    sourceRevision: body.sourceRevision,
+    components: body.components,
+    componentPublication: publication.binding,
+  }, { localEdgeAutomation: true });
+  const proposal = await governedChange(actor, {
+    consumerId: PLATFORM_RELEASE_CONSUMER,
+    action: 'apply',
+    target: PLATFORM_RELEASE_TARGET,
+    reason,
+    desiredState: {
+      contract: 'opensphere.platform.release/v1',
+      previousReleaseDigest: generated.baseReleaseDigest,
+      targetLock: generated.targetLock,
+    },
+    // Document-derived before POST: response loss resumes through GET only.
+    idempotencyKey: publication.operationId,
+  }, { localEdgeAutomation: true });
+  return {
+    ...proposal,
+    operationId: publication.operationId,
+    targetReleaseDigest: generated.targetLock.releaseDigest,
+    changedComponents: generated.targetLock.changedComponents,
+    componentPublication: {
+      documentSha256: publication.documentSha256,
+      signatureSha256: publication.signatureSha256,
+      publisher: publication.binding.publisher,
+    },
+  };
+}
+
+async function localEdgePlatformReleaseReceipt(req, requestId) {
+  await verifyLocalEdgeAutomation(req);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(requestId || ''))) {
+    throw { code: 400, msg: 'local edge release requestId is invalid' };
+  }
+  const status = await platformReleaseStatus();
+  const change = status.changes.find((entry) => entry.request_id === requestId);
+  if (!change) throw { code: 404, msg: 'local edge release request is unavailable' };
+  const receipt = change.receipt || null;
+  return {
+    contract: 'opensphere.platform.release.local-edge-receipt/v1',
+    requestId,
+    status: change.status,
+    execution: change.execution || null,
+    receipt: receipt ? {
+      operationId: receipt.operation_id,
+      succeeded: receipt.succeeded,
+      result: receipt.result,
+      evidence: receipt.evidence || {},
+      receivedAt: receipt.received_at,
+    } : null,
+  };
+}
+
+async function pfssLocalEdgePlatformReleaseResume(req, identifier) {
+  await verifyLocalEdgeAutomation(req);
+  const value = String(identifier || '');
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    return { operationId: null, ...(await localEdgePlatformReleaseReceipt(req, value)) };
+  }
+  if (!/^pfss:[a-f0-9]{64}$/.test(value)) {
+    throw { code: 400, msg: 'PFSS operationId or requestId is invalid' };
+  }
+  const rows = await restRequest('change_request', {
+    query: `select=request_id,status,target&idempotency_key=eq.${encodeURIComponent(value)}&limit=1`,
+  });
+  const change = Array.isArray(rows) ? rows[0] : null;
+  if (!change || change.target !== PLATFORM_RELEASE_TARGET) {
+    throw { code: 404, msg: 'PFSS governed Platform request is unavailable' };
+  }
+  const receipt = await localEdgePlatformReleaseReceipt(req, change.request_id);
+  return {
+    operationId: value,
+    ...receipt,
+    targetReleaseDigest: receipt.receipt?.evidence?.installedReleaseDigest || null,
+  };
+}
+
 async function generatePlatformComponentTarget(actor, body = {}, options = {}) {
   requireActorPermission(actor, 'console.git.change');
   if (options.localEdgeAutomation !== true) {
@@ -2650,8 +2763,9 @@ async function generatePlatformComponentTarget(actor, body = {}, options = {}) {
   let targetLock;
   try {
     targetLock = buildComponentReleaseLock(installed.lock, {
-      sourceRevision: body.sourceRevision,
-      components: body.components,
+    sourceRevision: body.sourceRevision,
+    components: body.components,
+    componentPublication: body.componentPublication,
     });
   } catch (error) {
     throw { code: 400, msg: error.message };
@@ -5060,6 +5174,20 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/platform/releases/local-edge-automation' && req.method === 'POST') {
       try { return json(res, 202, await executeLocalEdgePlatformRelease(req, await readBody(req))); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge Platform Release automation failed' }); }
+    }
+    if (p === '/api/platform/releases/local-edge-automation/pfss' && req.method === 'POST') {
+      try { return json(res, 202, await executePfssLocalEdgePlatformRelease(req, await readBody(req))); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'PFSS local edge Platform Release automation failed' }); }
+    }
+    const pfssLocalEdgeResume = p.match(/^\/api\/platform\/releases\/local-edge-automation\/pfss\/([^/]+)$/);
+    if (pfssLocalEdgeResume && req.method === 'GET') {
+      try { return json(res, 200, await pfssLocalEdgePlatformReleaseResume(req, decodeURIComponent(pfssLocalEdgeResume[1]))); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'PFSS local edge Platform Release resume unavailable' }); }
+    }
+    const localEdgeReceipt = p.match(/^\/api\/platform\/releases\/local-edge-automation\/([0-9a-f-]+)$/i);
+    if (localEdgeReceipt && req.method === 'GET') {
+      try { return json(res, 200, await localEdgePlatformReleaseReceipt(req, localEdgeReceipt[1])); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'local edge Platform Release receipt unavailable' }); }
     }
     if (p === '/api/platform/os-shell/feature-state' && req.method === 'GET') {
       try { const actor = await verifyConsoleAdmin(req); requireActorPermission(actor, 'console.identity.manage'); return json(res, 200, await osShellFeatureState()); }

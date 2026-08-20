@@ -4,11 +4,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { createHash, generateKeyPairSync, sign } = require('crypto');
 const {
   COMPONENT_REPOSITORIES,
   REQUIRED_COMPONENTS,
+  PFSS_COMPONENTS,
   buildComponentReleaseLock,
   calculateReleaseDigest,
+  pfssOperationId,
+  validatePfssPublicationSubmission,
   validateReleaseLock,
   validateReleaseTransition,
   validatePlatformReleaseDesiredState,
@@ -24,6 +28,80 @@ const {
 const directory = __dirname;
 const revision = 'a'.repeat(40);
 const digest = (character) => `sha256:${character.repeat(64)}`;
+
+function componentPublication() {
+  return {
+    contract: 'opensphere-edge-component-publication-binding/v1',
+    publisher: 'scripts/Publish-LocalEdgeBackendComponent.ps1',
+    publisherGitBlob: '1'.repeat(40),
+    publisherSha256: digest('1'),
+    documentSha256: digest('2'),
+    signatureSha256: digest('3'),
+    keyId: 'opensphere-edge-local-v1',
+    setupSourceRevision: '4'.repeat(40),
+    setupSourceLockSha256: digest('4'),
+    setupManifestProjectionGitBlob: '5'.repeat(40),
+    setupManifestProjectionSha256: digest('5'),
+    migrationSetDigest: digest('6'),
+    platformRevision: '7'.repeat(40),
+    inventorySha256: digest('7'),
+    verificationSetDigest: digest('8'),
+  };
+}
+
+function pfssEvidence() {
+  return {
+    sourceRevision: 'b'.repeat(40),
+    componentPublication: componentPublication(),
+    components: {
+      backend: { image: digest('e'), registryCredentialsRequired: false },
+      oaaGateway: { image: digest('f'), registryCredentialsRequired: false },
+    },
+  };
+}
+
+const sha256 = (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
+
+function signedPfssSubmission() {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const sourceRevision = 'b'.repeat(40);
+  const components = {
+    backend: `ghcr.io/opensphere-platform/opensphere-console-backend@${digest('e')}`,
+    oaaGateway: `ghcr.io/opensphere-platform/opensphere-console-oaa-gateway@${digest('f')}`,
+  };
+  const document = JSON.stringify({
+    apiVersion: 'release.opensphere.io/v1alpha1', kind: 'OpenSphereEdgeComponentPublication',
+    publicationScope: 'ComponentSet', channel: 'edge', status: 'Active',
+    source: 'https://github.com/opensphere-platform/OpenSphere-console', sourceRevision,
+    releaseTag: '202608201200', immutableTag: '202608201200', buildAuthority: 'localhost',
+    releaseClass: 'pre-ga', gaEligible: false, supportedPlatforms: ['linux/amd64'],
+    components: {
+      backend: { repository: 'opensphere-console-backend', image: components.backend, sourceRevision },
+      oaaGateway: { repository: 'opensphere-console-oaa-gateway', image: components.oaaGateway, sourceRevision },
+    },
+    changedPaths: ['backend/opensphere-console-backend/server.js'],
+    affectedImages: ['backend', 'oaaGateway'], releaseScope: 'component', fullReleaseJustification: null,
+  });
+  const spki = publicKey.export({ type: 'spki', format: 'der' });
+  const documentSha256 = sha256(document);
+  const envelope = {
+    contract: 'opensphere-edge-detached-signature/v1', algorithm: 'ES256-P1363',
+    keyId: 'opensphere-edge-local-v1',
+    trustReference: 'configmap://opensphere-console/dupa-trusted-keys#opensphere-edge-local-v1',
+    documentSha256, publicKeySpkiSha256: sha256(spki),
+    signature: sign('sha256', Buffer.from(document), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url'),
+    releaseClass: 'pre-ga', gaPromotionEligible: false,
+  };
+  const publicationSignature = JSON.stringify(envelope);
+  const binding = componentPublication();
+  binding.documentSha256 = documentSha256;
+  binding.signatureSha256 = sha256(publicationSignature);
+  binding.platformRevision = sourceRevision;
+  return {
+    sourceRevision, components, componentPublication: binding, publicationDocument: document,
+    publicationSignature, trustedSpki: spki.toString('base64'),
+  };
+}
 
 function releaseLock() {
   const hexCharacters = '0123456789abcdef';
@@ -108,24 +186,18 @@ test('Platform Release contract accepts only the complete canonical exact-digest
 
 test('Console generates an atomic component target from the installed complete lock', () => {
   const base = releaseLock();
-  const target = buildComponentReleaseLock(base, {
-    sourceRevision: 'b'.repeat(40),
-    components: {
-      backend: {
-        image: digest('f'),
-        registryCredentialsRequired: false,
-      },
-    },
-  }, new Date('2026-07-30T12:34:56.000Z'));
+  const target = buildComponentReleaseLock(base, pfssEvidence(), new Date('2026-07-30T12:34:56.000Z'));
   assert.equal(target.releaseScope, 'component');
   assert.equal(target.baseReleaseDigest, base.releaseDigest);
-  assert.deepEqual(target.changedComponents, ['backend']);
+  assert.deepEqual(target.changedComponents, PFSS_COMPONENTS);
   assert.equal(target.components.console.image, base.components.console.image);
   assert.equal(
     target.components.backend.image,
-    `ghcr.io/opensphere-platform/opensphere-console-backend@${digest('f')}`,
+    `ghcr.io/opensphere-platform/opensphere-console-backend@${digest('e')}`,
   );
   assert.equal(target.components.backend.sourceRevision, 'b'.repeat(40));
+  assert.equal(target.components.oaaGateway.sourceRevision, 'b'.repeat(40));
+  assert.equal(target.componentPublication.documentSha256, digest('2'));
   assert.equal(target.resolvedAt, '2026-07-30T12:34:56.000Z');
   assert.equal(Object.keys(target.components).length, REQUIRED_COMPONENTS.length);
   assert.equal(validateReleaseTransition(base, target), target);
@@ -133,10 +205,7 @@ test('Console generates an atomic component target from the installed complete l
 
 test('component target rejects stale bases, hidden changes and non-local promotion', () => {
   const base = releaseLock();
-  const target = buildComponentReleaseLock(base, {
-    sourceRevision: 'b'.repeat(40),
-    components: { backend: { image: digest('f') } },
-  });
+  const target = buildComponentReleaseLock(base, pfssEvidence());
 
   const stale = structuredClone(target);
   stale.baseReleaseDigest = digest('e');
@@ -153,14 +222,76 @@ test('component target rejects stale bases, hidden changes and non-local promoti
   promoted.channel = 'candidate';
   promoted.releaseDigest = calculateReleaseDigest(promoted);
   assert.throws(() => validateReleaseLock(promoted), /channel is unsupported|localhost edge/);
+
+  const missingOaa = pfssEvidence();
+  delete missingOaa.components.oaaGateway;
+  assert.throws(() => buildComponentReleaseLock(base, missingOaa), /exactly backend,oaaGateway/);
+
+  const forgedBinding = pfssEvidence();
+  forgedBinding.componentPublication.publisher = 'scripts/attacker.ps1';
+  assert.throws(() => buildComponentReleaseLock(base, forgedBinding), /publication binding/);
+});
+
+test('generic local-edge component transitions remain valid without PFSS publication evidence', () => {
+  const base = releaseLock();
+  const target = buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: { console: { image: digest('e') } },
+  });
+  assert.deepEqual(target.changedComponents, ['console']);
+  assert.equal(target.componentPublication, undefined);
+  assert.equal(validateReleaseTransition(base, target), target);
+});
+
+test('PFSS admits only the original P-256 signed two-image publication and derives a durable operation id', () => {
+  const submission = signedPfssSubmission();
+  const admitted = validatePfssPublicationSubmission({
+    sourceRevision: submission.sourceRevision,
+    components: submission.components,
+    componentPublication: submission.componentPublication,
+    publicationDocument: submission.publicationDocument,
+    publicationSignature: submission.publicationSignature,
+  }, submission.trustedSpki);
+  assert.equal(admitted.operationId, pfssOperationId(admitted.documentSha256));
+  assert.equal(admitted.binding.documentSha256, submission.componentPublication.documentSha256);
+  assert.equal(admitted.documentSha256, sha256(submission.publicationDocument));
+});
+
+test('PFSS rejects closed-schema, type, digest, and source substitutions before a governed write', () => {
+  const original = signedPfssSubmission();
+  const cases = [
+    ['extra root field', (value) => { value.extra = true; }],
+    ['missing component', (value) => { delete value.components.oaaGateway; }],
+    ['component type', (value) => { value.components.backend = 7; }],
+    ['publication digest substitution', (value) => { value.componentPublication.documentSha256 = digest('0'); }],
+    ['publication source mismatch', (value) => { value.sourceRevision = 'c'.repeat(40); }],
+    ['detached signature substitution', (value) => {
+      const signature = JSON.parse(value.publicationSignature);
+      signature.signature = signature.signature.slice(0, -1) + (signature.signature.endsWith('A') ? 'B' : 'A');
+      value.publicationSignature = JSON.stringify(signature);
+    }],
+  ];
+  for (const [name, mutate] of cases) {
+    const value = {
+      sourceRevision: original.sourceRevision,
+      components: structuredClone(original.components),
+      componentPublication: structuredClone(original.componentPublication),
+      publicationDocument: original.publicationDocument,
+      publicationSignature: original.publicationSignature,
+    };
+    mutate(value);
+    let writes = 0;
+    assert.throws(() => {
+      validatePfssPublicationSubmission(value, original.trustedSpki);
+      writes += 1; // The server calls governedChange only after this admission returns.
+    }, Error, name);
+    assert.equal(writes, 0, `${name} must reject before a governed write`);
+  }
 });
 
 test('only localhost edge component apply uses the Docker Desktop automation boundary', () => {
   const base = releaseLock();
-  const component = buildComponentReleaseLock(base, {
-    sourceRevision: 'b'.repeat(40),
-    components: { backend: { image: digest('f') } },
-  });
+  const component = buildComponentReleaseLock(base, pfssEvidence());
   const state = {
     contract: 'opensphere.platform.release/v1',
     previousReleaseDigest: base.releaseDigest,
@@ -240,12 +371,17 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(server, /if \(!localEdgeAutomationRequest\) requireRecentAal2\(actor, 'Platform Release request'\)/);
   assert.match(server, /local edge automation can apply only a localhost edge component transition/);
   assert.match(server, /p_actor_type: actor\?\.actorType === 'service' \? 'service' : 'human'/);
-  assert.match(server, /Object\.keys\(body\)\.some\(\(key\) => !\['reason', 'sourceRevision', 'components'\]\.includes\(key\)\)/);
+  assert.match(server, /\['reason', 'sourceRevision', 'components'\]/);
+  assert.match(server, /\/api\/platform\/releases\/local-edge-automation\/pfss/);
+  assert.match(server, /validatePfssPublicationSubmission/);
+  assert.match(server, /PFSS_COMPONENT_PUBLIC_KEY_SPKI_BASE64/);
+  assert.match(server, /idempotencyKey: publication\.operationId/);
   assert.match(server, /platformReleaseRuntimeStatus/);
   assert.match(server, /supportedChannels: \['edge'\]/);
   assert.match(server, /authorizeLocalEdgeComponentRelease/);
   assert.match(server, /platform-release-edge-automation/);
   assert.match(server, /\/api\/platform\/releases\/local-edge-automation/);
+  assert.match(server, /localEdgePlatformReleaseReceipt/);
   assert.match(server, /authentication\.k8s\.io\/v1\/tokenreviews/);
   assert.match(server, /LOCAL_EDGE_AUTOMATION_AUDIENCE/);
   assert.match(server, /reconciliationQueued/);
