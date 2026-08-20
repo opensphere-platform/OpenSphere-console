@@ -86,7 +86,55 @@ test('PostgreSQL plan is durable, expiring, revision-bound, and consumed into mo
   assert.equal(accepted.phase, 'AwaitingApproval');
   assert.equal(f.rows[0].action, 'create-postgres-cluster');
   assert.equal(f.rows[0].precondition.target.request.database, 'r2d2_e2e');
+  assert.equal(f.rows[0].precondition.planId, planned.planId);
+  assert.equal(f.rows[0].precondition.planDigest, planned.planDigest);
+  assert.equal(f.rows[0].precondition.actionDigest, f.rows[0].descriptor_digest);
+  assert.equal(accepted.planId, planned.planId);
+  assert.equal(accepted.planDigest, planned.planDigest);
+  assert.equal(accepted.actionDigest, f.rows[0].descriptor_digest);
+  assert.equal(accepted.toolId, 'foundation.postgres.apply');
+  assert.deepEqual(accepted.semanticIdentity, {
+    capabilityId: 'data.sql.postgres', requestType: 'Instance',
+    actionId: 'cluster.create', toolId: 'foundation.postgres.apply',
+  });
+  assert.deepEqual(accepted.actionBinding, {
+    method: 'POST', path: '/api/foundation/oaa/postgres/durable-apply/{planId}',
+    pathParams: ['planId'], approval: 'exact-confirmation',
+  });
+  assert.equal(JSON.stringify(accepted).includes('owner.foundation.postgres.create'), false);
   assert.equal(f.plans[0].consumed_operation_id, accepted.operationId);
+});
+
+test('PFSS create accept/list/get projections never leak the internal worker descriptor alias', async () => {
+  const f = fixture();
+  const target = {
+    name: 'r2d2-e2e-pg', namespace: 'opensphere-foundation', alias: 'R2D2 E2E PostgreSQL',
+    database: 'r2d2_e2e', owner: 'r2d2_e2e', plan: 'postgresql-dev-single',
+    postgresVersion: '18.4', deletionPolicy: 'Retain',
+  };
+  const plan = await f.api.plan({}, { action: 'create-postgres-cluster', target, reason: 'PFSS PostgreSQL configuration' });
+  const accepted = await f.api.accept({ headers: {} }, { planId: plan.planId, confirmation: plan.expectedConfirmation });
+  const responses = [];
+  const json = (_res, status, body) => { responses.push({ status, body }); return true; };
+  await f.api.handle({ method: 'GET' }, {}, '/api/oaa/operations', async () => ({}), json);
+  await f.api.handle({ method: 'GET' }, {}, `/api/oaa/operations/${accepted.operationId}`, async () => ({}), json);
+  assert.deepEqual(responses.map((item) => item.status), [200, 200]);
+  for (const projection of [accepted, responses[0].body.operations[0], responses[1].body]) {
+    const serialized = JSON.stringify(projection);
+    assert.equal(serialized.includes('owner.foundation.postgres.create'), false);
+    assert.equal(projection.toolId, 'foundation.postgres.apply');
+    assert.equal(projection.semanticIdentity.toolId, 'foundation.postgres.apply');
+    assert.equal(projection.actionBinding.path, '/api/foundation/oaa/postgres/durable-apply/{planId}');
+  }
+});
+
+test('PostgreSQL create admission cannot bypass the durable owner-bound plan', async () => {
+  const f = fixture();
+  await assert.rejects(
+    () => f.api.accept({ headers: {} }, { action: 'create-postgres-cluster' }),
+    (error) => error?.code === 409 && /requires an unexpired owner-bound planId/.test(error?.msg),
+  );
+  assert.equal(f.rows.length, 0);
 });
 
 test('PostgreSQL durable plan cannot cross authenticated sessions', async () => {
@@ -116,4 +164,38 @@ test('generic operation approval cannot activate an Engineering Remediation prop
   f.rows.push({ operation_id: '66666666-6666-4666-8666-666666666666', action: 'engineering-remediation', descriptor_digest: `sha256:${'f'.repeat(64)}`, requested_risk_class: 'R2' });
   await assert.rejects(() => f.api.approve({}, f.rows[0].operation_id, { confirmation: 'anything' }),
     (error) => error?.code === 409 && /not activated/.test(error?.msg));
+});
+
+test('approval is rejected after the operation deadline instead of creating a stale approval path', async () => {
+  const f = fixture();
+  const operationId = '77777777-7777-4777-8777-777777777777';
+  f.rows.push({
+    operation_id: operationId, action: 'rollback-image', phase: 'AwaitingApproval',
+    actor_id: '33333333-3333-4333-8333-333333333333', requested_risk_class: 'R2',
+    descriptor_digest: `sha256:${'a'.repeat(64)}`, deadline_at: '2026-08-09T23:59:59Z',
+  });
+  await assert.rejects(
+    () => f.api.approve({}, operationId, { confirmation: `approve R2D2 operation ${operationId} sha256:${'a'.repeat(64)}` }),
+    (error) => error?.code === 409 && /deadline exceeded/.test(error?.msg),
+  );
+  assert.equal(f.approvals.length, 0);
+});
+
+test('public operation history exposes only durable downstream receipt evidence, never an owner response body', () => {
+  const f = fixture();
+  const operation = f.api.publicOperation({
+    operation_id: '88888888-8888-4888-8888-888888888888', action: 'create-postgres-cluster',
+    descriptor_digest: `sha256:${'d'.repeat(64)}`,
+    precondition: { planId: 'pgplan-99999999-9999-4999-8999-999999999999', planDigest: `sha256:${'e'.repeat(64)}` },
+    result: { downstream: {
+      operationId: 'foundation-owner-op-1', idempotencyKey: 'durable-key',
+      receiptDigest: `sha256:${'f'.repeat(64)}`, reconciled: true,
+    } },
+  });
+  assert.equal(operation.downstreamOperationId, 'foundation-owner-op-1');
+  assert.deepEqual(operation.downstreamReceipt, {
+    operationId: 'foundation-owner-op-1', idempotencyKey: 'durable-key',
+    receiptDigest: `sha256:${'f'.repeat(64)}`, reconciled: true,
+  });
+  assert.equal(JSON.stringify(operation).includes('credential'), false);
 });

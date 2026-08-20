@@ -4,6 +4,68 @@ const TERMINAL_FAILURES = new Set([
   'Failed', 'VerificationFailed', 'AuthorizationExpired', 'PreflightBlocked', 'Cancelled', 'TimedOut', 'RolledBack',
 ]);
 
+// This is intentionally a coverage denominator, not a second capability
+// registry. PFSS remains the only owner that can make a row available by
+// advertising the required closed Owner API action. Keeping unavailable rows
+// here makes an omission visible to a natural-language client without giving
+// it a fallback (CLI, kubectl, SQL, or a guessed HTTP route).
+const POSTGRES_LIFECYCLE_MATRIX = Object.freeze([
+  Object.freeze({ id: 'capability.read', requestType: 'Instance', ownerAction: 'capability.read', ownerToolId: 'foundation.capabilities', r2d2Tool: 'oaa.foundation.postgres.capabilities', cliCommand: 'os foundation capabilities', riskClass: 'R0', lifecycle: ['discovery'] }),
+  Object.freeze({ id: 'readiness.read', requestType: 'Instance', ownerAction: 'readiness.read', ownerToolId: 'foundation.readiness', r2d2Tool: 'oaa.foundation.postgres.readiness', cliCommand: 'os foundation readiness', riskClass: 'R0', lifecycle: ['health'] }),
+  Object.freeze({ id: 'catalog.read', requestType: 'Instance', ownerAction: 'catalog.read', ownerToolId: 'foundation.postgres.catalog', r2d2Tool: 'oaa.foundation.postgres.catalog', cliCommand: 'os foundation postgres catalog', riskClass: 'R0', lifecycle: ['catalog'] }),
+  Object.freeze({ id: 'cluster.plan', requestType: 'Instance', ownerAction: 'cluster.plan', ownerToolId: 'foundation.postgres.plan.create', r2d2Tool: 'oaa.foundation.postgres.plan', cliCommand: 'os foundation postgres plan create', riskClass: 'R2', lifecycle: ['create.plan', 'create.validate'] }),
+  Object.freeze({ id: 'cluster.create', requestType: 'Instance', ownerAction: 'cluster.create', ownerToolId: 'foundation.postgres.apply', r2d2Tool: 'oaa.foundation.postgres.claim.create', cliCommand: 'os foundation postgres apply <planId>', riskClass: 'R2', lifecycle: ['create.approval', 'create.apply'], ownerRoute: '/api/foundation/oaa/postgres/durable-apply/{planId}' }),
+  Object.freeze({ id: 'cluster.status', requestType: 'Instance', ownerAction: 'cluster.status', ownerToolId: 'foundation.postgres.status', r2d2Tool: 'oaa.foundation.postgres.status', cliCommand: 'os foundation postgres status <namespace> <name>', riskClass: 'R0', lifecycle: ['status'] }),
+  Object.freeze({ id: 'operation.watch', requestType: 'Instance', ownerAction: 'operation.watch', ownerToolId: 'foundation.operation.watch', r2d2Tool: 'oaa.foundation.postgres.operation.watch', cliCommand: 'os foundation operation watch <operationId>', riskClass: 'R0', lifecycle: ['postcondition', 'receipt.history'] }),
+  Object.freeze({ id: 'database', requestType: 'Database', ownerAction: null, ownerToolId: null, r2d2Tool: null, cliCommand: null, riskClass: 'R2', lifecycle: ['database.plan', 'database.apply', 'database.status'], proposed: true }),
+  Object.freeze({ id: 'access', requestType: 'Access', ownerAction: null, ownerToolId: null, r2d2Tool: null, cliCommand: null, riskClass: 'R2', lifecycle: ['access.plan', 'access.apply', 'access.status'], proposed: true }),
+  Object.freeze({ id: 'update', requestType: 'Instance', ownerAction: null, ownerToolId: null, r2d2Tool: null, cliCommand: null, riskClass: 'R2', lifecycle: ['update.plan', 'update.apply'], proposed: true }),
+  Object.freeze({ id: 'delete', requestType: 'Instance', ownerAction: null, ownerToolId: null, r2d2Tool: null, cliCommand: null, riskClass: 'R3', lifecycle: ['delete.plan', 'delete.apply'], proposed: true }),
+  Object.freeze({ id: 'cancel', requestType: 'Instance', ownerAction: null, ownerToolId: null, r2d2Tool: null, cliCommand: null, riskClass: 'R2', lifecycle: ['cancel'], proposed: true }),
+  Object.freeze({ id: 'rollback', requestType: 'Instance', ownerAction: null, ownerToolId: null, r2d2Tool: null, cliCommand: null, riskClass: 'R3', lifecycle: ['rollback'], proposed: true }),
+]);
+
+function operationRisk(capabilities, actionId) {
+  const action = Array.isArray(capabilities?.actions)
+    ? capabilities.actions.find((item) => item && String(item.actionId) === actionId)
+    : null;
+  return action ? String(action.riskClass || '') : null;
+}
+
+function lifecycleCoverage(capabilities) {
+  const operations = new Set([
+    ...(Array.isArray(capabilities?.operations) ? capabilities.operations.map(String) : []),
+    ...(Array.isArray(capabilities?.actions) ? capabilities.actions.map((item) => String(item?.actionId || '')).filter(Boolean) : []),
+  ]);
+  const requestTypes = new Set(Array.isArray(capabilities?.supportedRequestTypes)
+    ? capabilities.supportedRequestTypes.map(String)
+    : []);
+  return POSTGRES_LIFECYCLE_MATRIX.map((entry) => {
+    const requestTypePublished = requestTypes.size === 0 || requestTypes.has(entry.requestType);
+    const published = entry.proposed !== true && requestTypePublished && operations.has(entry.ownerAction);
+    const advertisedRisk = operationRisk(capabilities, entry.ownerAction);
+    // An older Owner projection may not include action detail.  Once it does,
+    // an R0/R1 advertisement may never lower this matrix's canonical risk.
+    const riskMismatch = advertisedRisk !== null && advertisedRisk !== entry.riskClass;
+    const available = published && !riskMismatch;
+    return {
+      ...entry,
+      available,
+      supportState: available ? 'owner-facade' : 'unavailable',
+      ...(available ? {} : {
+        blocker: {
+          code: riskMismatch ? 'POSTGRES_OWNER_RISK_MISMATCH' : 'POSTGRES_OWNER_OPERATION_UNAVAILABLE',
+          message: riskMismatch
+            ? `PFSS advertises ${entry.ownerAction} as ${advertisedRisk || 'unknown'}, not canonical ${entry.riskClass}.`
+            : entry.proposed === true
+              ? `PFSS has not published a typed ${entry.id} lifecycle operation.`
+              : `PFSS does not publish the typed ${entry.ownerAction} operation.`,
+        },
+      }),
+    };
+  });
+}
+
 function nextActionFromBlocker(blocker, fallback) {
   const remediation = blocker?.remediation || {};
   return {
@@ -26,6 +88,7 @@ function capabilityAvailability(capabilities) {
     database: area('database', ['database.plan', 'database.create'].some((id) => operations.has(id))),
     access: area('access', ['access.plan', 'access.create', 'credential.create'].some((id) => operations.has(id))),
     day2: area('day2', [...operations].some((id) => /^(?:cluster\.(?:scale|upgrade|failover)|extension\.|backup\.|restore\.)/.test(id))),
+    lifecycle: lifecycleCoverage(capabilities),
   };
 }
 
@@ -97,16 +160,34 @@ function completionReceiptValidation(operation, completion) {
   if (!validIsoTimestamp(receiptObject?.verifiedAt)) reasons.push('verified_at_invalid');
   const identity = receiptObject?.semanticIdentity;
   if (identity?.capabilityId !== 'data.sql.postgres'
+    || identity?.requestType !== 'Instance'
     || identity?.actionId !== 'cluster.create'
     || identity?.toolId !== 'foundation.postgres.apply') reasons.push('semantic_identity_mismatch');
   const binding = receiptObject?.actionBinding;
   if (binding?.method !== 'POST'
-    || binding?.path !== '/api/foundation/oaa/postgres/durable-apply/{planId}') reasons.push('action_binding_mismatch');
+    || binding?.path !== '/api/foundation/oaa/postgres/durable-apply/{planId}'
+    || !Array.isArray(binding?.pathParams)
+    || binding.pathParams.length !== 1
+    || binding.pathParams[0] !== 'planId'
+    || binding?.approval !== 'exact-confirmation') reasons.push('action_binding_mismatch');
   const evidenceRevision = String(completion?.evidenceRevision || '').trim();
   if (completion?.stale !== false) reasons.push('completion_stale_or_missing');
   if (!evidenceRevision
     || String(receiptObject?.ownerEvidenceRevision || '').trim() !== evidenceRevision) reasons.push('evidence_revision_mismatch');
   return { valid: reasons.length === 0, receipt: receiptObject, reasons };
+}
+
+function canonicalCreateEvidence(operation, receipt) {
+  const planId = String(operation?.planId || '').trim();
+  const planDigest = String(operation?.planDigest || '').trim();
+  const actionDigest = String(operation?.actionDigest || operation?.descriptorDigest || '').trim();
+  return {
+    semanticIdentity: receipt?.semanticIdentity || null,
+    actionBinding: receipt?.actionBinding || null,
+    ...(planId ? { planId } : {}),
+    ...(planDigest ? { planDigest } : {}),
+    ...(actionDigest ? { actionDigest } : {}),
+  };
 }
 
 function operationWorkflow(operation) {
@@ -125,6 +206,7 @@ function operationWorkflow(operation) {
   if (canonicallyComplete) return {
     phase: 'Ready', terminal: true, success: true,
     verified: true, receipt,
+    ownerEvidence: canonicalCreateEvidence(operation, receipt),
     message: 'Canonical owner completion and its non-empty verified receipt prove that postconditions are satisfied.',
   };
   if (completion?.terminal === true && completion?.success === false) {
@@ -169,4 +251,7 @@ function operationWorkflow(operation) {
   };
 }
 
-module.exports = { capabilityAvailability, completionReceiptValidation, readinessDecision, operationWorkflow };
+module.exports = {
+  POSTGRES_LIFECYCLE_MATRIX, capabilityAvailability, completionReceiptValidation,
+  canonicalCreateEvidence, lifecycleCoverage, readinessDecision, operationWorkflow,
+};

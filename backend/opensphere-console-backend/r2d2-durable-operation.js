@@ -225,7 +225,12 @@ function authorizeAtExecution(operation, session, approvals = []) {
   if (operation.requiredAssurance === 'aal2' && session.assurance !== 'aal2') {
     return { allowed: false, phase: 'authorization_expired', code: 'AssuranceExpired' };
   }
-  const activeApprovers = [...new Set(approvals.filter((item) => !item.revokedAt && item.assurance === 'aal2').map((item) => String(item.approverId)))];
+  // Approval-specific expiry is deliberately not inferred here: the frozen
+  // Owner contract has not published one. Revocation, the operation deadline,
+  // approver session revalidation, and descriptor binding remain mandatory.
+  const activeApprovers = [...new Set(approvals
+    .filter((item) => !item.revokedAt && !item.revoked_at && item.assurance === 'aal2')
+    .map((item) => String(item.approverId || item.approver_id)))];
   if (operation.riskClass === 'R2' && activeApprovers.length < 1) {
     return { allowed: false, phase: 'preflight_blocked', code: 'ApprovalRequired' };
   }
@@ -344,6 +349,25 @@ class DurableOperationWorker {
       const downstreamKey = `${operation.operationId}:${operation.descriptorDigest}`;
       let receipt;
       let ownerCalled = false;
+      const persistDownstreamReceipt = async (ownerReceipt, reconciled) => {
+        const operationId = String(ownerReceipt?.operationId || ownerReceipt?.operation_id || '').trim();
+        if (!operationId) {
+          throw Object.assign(new Error('owner response lacks a durable operation ID'), { code: 'OwnerReceiptOperationIdMissing' });
+        }
+        if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(operationId)) {
+          throw Object.assign(new Error('owner response has an invalid durable operation ID'), { code: 'OwnerReceiptOperationIdInvalid' });
+        }
+        const evidence = {
+          operationId,
+          idempotencyKey: downstreamKey,
+          receiptDigest: digest(ownerReceipt),
+          reconciled: reconciled === true,
+        };
+        await requireLease();
+        const persisted = await this.deps.store.recordDownstreamReceipt?.(operation.operationId, evidence);
+        if (persisted === false) throw Object.assign(new Error('durable operation claim lease was lost'), { code: 'ClaimLeaseLost' });
+        return evidence;
+      };
       if (!resumingUncertainOwnerCall) {
         const live = await this.deps.authority.read(operation.target, authorization.accessToken);
         const preflight = checkLivePreconditions(operation, live);
@@ -378,13 +402,15 @@ class DurableOperationWorker {
         }
       }
       if (phase === 'executing') {
-        await step('verifying', 'receipt', 'succeeded', { receiptDigest: digest(receipt), downstreamKey });
+        const evidence = await persistDownstreamReceipt(receipt, false);
+        await step('verifying', 'receipt', 'succeeded', evidence);
       } else if (phase === 'verifying') {
         receipt = await this.deps.owners.reconcile(operation.ownerRoute, downstreamKey, operation.target, authorization.accessToken);
         if (!receipt) {
           await step('inconclusive', 'reconcile', 'inconclusive', { code: 'OwnerReceiptUnavailableDuringVerificationResume' });
           return { phase, ownerCalled, code: 'OwnerReceiptUnavailableDuringVerificationResume' };
         }
+        await persistDownstreamReceipt(receipt, true);
       } else if (phase !== 'verifying') {
         if (phase === 'ambiguous') await step('reconciling', 'reconcile', 'running', { downstreamKey });
         await requireLease();
@@ -393,7 +419,8 @@ class DurableOperationWorker {
           await step('inconclusive', 'reconcile', 'inconclusive', { code: 'OwnerOutcomeUnknown' });
           return { phase, ownerCalled, code: 'OwnerOutcomeUnknown' };
         }
-        await step('verifying', 'receipt', 'succeeded', { receiptDigest: digest(receipt), downstreamKey });
+        const evidence = await persistDownstreamReceipt(receipt, true);
+        await step('verifying', 'receipt', 'succeeded', evidence);
       }
       await requireLease();
       const verified = await this.deps.verifiers.verify(operation.verifierId, operation.target, receipt, authorization.accessToken);

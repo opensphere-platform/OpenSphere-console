@@ -5,17 +5,52 @@ const { planOperation, bindOperation, expectedPostcondition, digest } = require(
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function publicOperation(row) {
+const PFSS_POSTGRES_CREATE_PUBLIC = Object.freeze({
+  toolId: 'foundation.postgres.apply',
+  semanticIdentity: Object.freeze({
+    capabilityId: 'data.sql.postgres', requestType: 'Instance',
+    actionId: 'cluster.create', toolId: 'foundation.postgres.apply',
+  }),
+  actionBinding: Object.freeze({
+    method: 'POST', path: '/api/foundation/oaa/postgres/durable-apply/{planId}',
+    pathParams: ['planId'], approval: 'exact-confirmation',
+  }),
+});
+
+function publicPostgresCreateProjection(row) {
+  if (row.action !== 'create-postgres-cluster') return {};
   return {
-    operationId: row.operation_id, action: row.action, target: row.precondition?.target || null,
+    toolId: PFSS_POSTGRES_CREATE_PUBLIC.toolId,
+    semanticIdentity: { ...PFSS_POSTGRES_CREATE_PUBLIC.semanticIdentity },
+    actionBinding: { ...PFSS_POSTGRES_CREATE_PUBLIC.actionBinding },
+  };
+}
+
+function publicOperation(row) {
+  const precondition = row.precondition || {};
+  const postgresCreate = publicPostgresCreateProjection(row);
+  return {
+    operationId: row.operation_id, action: row.action, target: precondition.target || null,
     phase: row.phase, executionState: row.execution_state, verificationState: row.verification_state,
     riskClass: row.requested_risk_class || row.risk_class, requiredAssurance: row.required_assurance,
     incidentId: row.incident_id || null, descriptorRevision: row.descriptor_revision,
-    toolId: row.tool_id, verifierId: row.verifier_id, attempt: Number(row.attempt || 0),
+    toolId: postgresCreate.toolId || row.tool_id, verifierId: row.verifier_id, attempt: Number(row.attempt || 0),
     result: row.result || {}, errorCode: row.error_code || null,
     createdAt: row.created_at, updatedAt: row.updated_at, deadlineAt: row.deadline_at,
+    // These are immutable plan/action bindings, not a second plan ledger. They
+    // let every channel retain the canonical owner result lineage without
+    // copying secrets or an owner response body into Console history.
+    planId: precondition.planId || null,
+    planDigest: precondition.planDigest || null,
+    actionDigest: precondition.actionDigest || row.descriptor_digest || null,
+    downstreamOperationId: row.downstream_operation_id || row.result?.downstream?.operationId || null,
+    downstreamReceipt: row.result?.downstream || null,
     approvalConfirmation: row.phase === 'AwaitingApproval' && row.action !== 'engineering-remediation'
       ? `approve R2D2 operation ${row.operation_id} ${row.descriptor_digest}` : null,
+    ...(postgresCreate.semanticIdentity ? {
+      semanticIdentity: postgresCreate.semanticIdentity,
+      actionBinding: postgresCreate.actionBinding,
+    } : {}),
   };
 }
 
@@ -94,9 +129,12 @@ function createR2d2OperationApi(options) {
       requestBody = { action: storedPlan.action, target: storedPlan.request_payload.target,
         reason: storedPlan.request_payload.reason, confirmation: body.confirmation };
     }
+    if (String(requestBody.action || '') === 'create-postgres-cluster' && !storedPlan) {
+      throw { code: 409, msg: 'PFSS PostgreSQL create requires an unexpired owner-bound planId' };
+    }
     const target = resolvedTarget || await resolveTarget(String(requestBody.action || ''), requestBody.target || {}, auth);
     const bound = bindOperation({ ...requestBody, target });
-    const idempotencyKey = storedPlan?.plan_id || String(req.headers['x-os-idempotency-key'] || body.idempotencyKey || '').trim();
+    const idempotencyKey = storedPlan?.plan_id || String(req.headers['x-os-idempotency-key'] || body?.idempotencyKey || '').trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(idempotencyKey)) throw { code: 400, msg: 'valid idempotency key required' };
     const deadline = new Date(now().getTime() + Math.max(60000, Math.min(3600000, Number(body.deadlineMs || 600000))));
     const approvalRequired = ['R2', 'R3'].includes(bound.riskClass);
@@ -112,7 +150,13 @@ function createR2d2OperationApi(options) {
       authz_revision: String(actor.credentialRevision || actor.authzRevision || 0),
       deadline_at: deadline.toISOString(), execution_state: approvalRequired ? 'awaiting_approval' : 'accepted',
       verification_state: 'pending', precondition: { target: bound.target, ownerRoute: bound.ownerRoute, requiredPermission: bound.requiredPermission,
-        confirmationDigest: bound.confirmationDigest, humanConfirmation: String(body.confirmation) },
+        confirmationDigest: bound.confirmationDigest, humanConfirmation: String(body.confirmation),
+        ...(storedPlan ? {
+          planId: storedPlan.plan_id,
+          planDigest: storedPlan.plan_digest,
+          actionDigest: bound.descriptorDigest,
+        } : { actionDigest: bound.descriptorDigest }),
+      },
       expected_postcondition: expectedPostcondition(bound),
       incident_id: UUID.test(String(body.incidentId || '')) ? body.incidentId : null,
     });
@@ -134,6 +178,8 @@ function createR2d2OperationApi(options) {
     if (operation.action === 'engineering-remediation') {
       throw { code: 409, msg: 'Engineering Remediation approval and execution are not activated' };
     }
+    if (operation.phase !== 'AwaitingApproval') throw { code: 409, msg: 'operation is not awaiting approval' };
+    if (Date.parse(operation.deadline_at || '') <= now().getTime()) throw { code: 409, msg: 'operation deadline exceeded; create a new plan' };
     const approverId = String(actor.sub || actor.subject || '');
     const approverSessionId = String(actor.browserSessionId || actor.authSessionId || '');
     if (!UUID.test(approverId)) throw { code: 401, msg: 'stable approver UUID required' };
@@ -267,6 +313,20 @@ function createRestWorkerStore(restRequest, workerId, claimEpoch) {
         prefer: 'return=representation',
       });
       if (!rows?.[0]) throw Object.assign(new Error('durable operation claim lease was lost'), { code: 'ClaimLeaseLost' });
+    },
+    async recordDownstreamReceipt(operationId, evidence) {
+      const rows = await request('module_operation', {
+        method: 'PATCH',
+        query: `operation_id=eq.${encodeURIComponent(operationId)}&claim_owner=eq.${encodeURIComponent(workerId)}&claim_epoch=eq.${claimEpoch}&select=operation_id`,
+        body: {
+          downstream_operation_id: evidence.operationId,
+          result: { downstream: evidence },
+          updated_at: new Date().toISOString(),
+        },
+        prefer: 'return=representation',
+      });
+      if (!rows?.[0]) throw Object.assign(new Error('durable operation claim lease was lost'), { code: 'ClaimLeaseLost' });
+      return true;
     },
     async setPhase(operationId, phase) {
       const mapped = PHASE_TO_DB[phase]; if (!mapped) throw new Error(`unmapped operation phase ${phase}`);

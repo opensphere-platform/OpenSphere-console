@@ -1,7 +1,10 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { capabilityAvailability, readinessDecision, operationWorkflow } = require('./r2d2-postgres-workflow');
+const {
+  POSTGRES_LIFECYCLE_MATRIX, capabilityAvailability, lifecycleCoverage,
+  readinessDecision, operationWorkflow,
+} = require('./r2d2-postgres-workflow');
 
 const capabilities = { capability: 'data.sql.postgres', operations: ['catalog.read','cluster.plan','cluster.create','operation.watch'] };
 const OPERATION_ID = '8a3f9d41-1b4e-4d71-9d36-71c0cb73af52';
@@ -14,6 +17,9 @@ const readiness = (overrides = {}) => ({
 });
 const canonicalSuccess = () => ({
   operationId: OPERATION_ID,
+  planId: 'pgplan-11111111-1111-4111-8111-111111111111',
+  planDigest: `sha256:${'b'.repeat(64)}`,
+  actionDigest: `sha256:${'c'.repeat(64)}`,
   phase: 'Succeeded',
   stage: 'Ready',
   verificationState: 'succeeded',
@@ -96,8 +102,26 @@ test('operation receipt maps to the stable conversational workflow vocabulary', 
   assert.equal(operationWorkflow({ phase: 'Reconciling', stage: 'RuntimeProvisioning' }).phase, 'Reconciling');
   const complete = operationWorkflow(canonicalSuccess());
   assert.equal(complete.phase, 'Ready'); assert.equal(complete.success, true); assert.equal(complete.verified, true);
+  assert.equal(complete.ownerEvidence.semanticIdentity.toolId, 'foundation.postgres.apply');
+  assert.equal(complete.ownerEvidence.actionBinding.path, '/api/foundation/oaa/postgres/durable-apply/{planId}');
+  assert.equal(complete.ownerEvidence.planId, 'pgplan-11111111-1111-4111-8111-111111111111');
+  assert.equal(complete.ownerEvidence.planDigest, `sha256:${'b'.repeat(64)}`);
+  assert.equal(complete.ownerEvidence.actionDigest, `sha256:${'c'.repeat(64)}`);
   assert.equal(operationWorkflow({ phase: 'VerificationFailed' }).phase, 'Failed');
   assert.equal(operationWorkflow({ phase: 'Inconclusive' }).phase, 'Unknown');
+});
+
+test('canonical PostgreSQL receipt projection retains the external Owner identity and never an R2D2 adapter alias', () => {
+  const workflow = operationWorkflow(canonicalSuccess());
+  assert.deepEqual(workflow.ownerEvidence.semanticIdentity, {
+    capabilityId: 'data.sql.postgres', requestType: 'Instance',
+    actionId: 'cluster.create', toolId: 'foundation.postgres.apply',
+  });
+  assert.deepEqual(workflow.ownerEvidence.actionBinding, {
+    method: 'POST', path: '/api/foundation/oaa/postgres/durable-apply/{planId}',
+    pathParams: ['planId'], approval: 'exact-confirmation',
+  });
+  assert.equal(JSON.stringify(workflow).includes('owner.foundation.postgres.create'), false);
 });
 
 test('success-like stage and phase never bypass canonical verified completion receipt', () => {
@@ -150,6 +174,12 @@ test('canonical receipt requires succeeded verification, ISO time, durable apply
   const impossibleTime = canonicalSuccess(); impossibleTime.completion.receipt.verifiedAt = '2026-02-30T01:02:03.000Z'; fixtures.push([impossibleTime, 'verified_at_invalid']);
   const badBinding = canonicalSuccess(); badBinding.completion.receipt.actionBinding.path = '/api/foundation/oaa/postgres/apply'; fixtures.push([badBinding, 'action_binding_mismatch']);
   const badMethod = canonicalSuccess(); badMethod.completion.receipt.actionBinding.method = 'GET'; fixtures.push([badMethod, 'action_binding_mismatch']);
+  const databaseRequest = canonicalSuccess(); databaseRequest.completion.receipt.semanticIdentity.requestType = 'Database'; fixtures.push([databaseRequest, 'semantic_identity_mismatch']);
+  const accessRequest = canonicalSuccess(); accessRequest.completion.receipt.semanticIdentity.requestType = 'Access'; fixtures.push([accessRequest, 'semantic_identity_mismatch']);
+  const wrongPathParam = canonicalSuccess(); wrongPathParam.completion.receipt.actionBinding.pathParams = ['operationId']; fixtures.push([wrongPathParam, 'action_binding_mismatch']);
+  const missingPathParam = canonicalSuccess(); delete missingPathParam.completion.receipt.actionBinding.pathParams; fixtures.push([missingPathParam, 'action_binding_mismatch']);
+  const extraPathParam = canonicalSuccess(); extraPathParam.completion.receipt.actionBinding.pathParams = ['planId', 'operationId']; fixtures.push([extraPathParam, 'action_binding_mismatch']);
+  const missingApproval = canonicalSuccess(); delete missingApproval.completion.receipt.actionBinding.approval; fixtures.push([missingApproval, 'action_binding_mismatch']);
   const stale = canonicalSuccess(); stale.completion.stale = true; fixtures.push([stale, 'completion_stale_or_missing']);
   const stringReceipt = canonicalSuccess(); stringReceipt.completion.receipt = 'non-empty'; fixtures.push([stringReceipt, 'receipt_object_missing']);
   const arrayReceipt = canonicalSuccess(); arrayReceipt.completion.receipt = [{ operationId: OPERATION_ID }]; fixtures.push([arrayReceipt, 'receipt_object_missing']);
@@ -173,4 +203,63 @@ test('Database, Access and Day-2 remain explicit stable blockers until the owner
   assert.equal(available.database.available, true);
   assert.equal(available.access.available, true);
   assert.equal(available.day2.available, true);
+});
+
+test('lifecycle coverage is exactly the seven published Owner actions plus fail-closed proposals', () => {
+  const published = {
+    capability: 'data.sql.postgres',
+    operations: ['catalog.read', 'cluster.plan', 'cluster.create', 'cluster.status', 'operation.watch'],
+    supportedRequestTypes: ['Instance'],
+    actions: [
+      ['capability.read', 'R0'], ['readiness.read', 'R0'], ['catalog.read', 'R0'],
+      ['cluster.plan', 'R2'], ['cluster.create', 'R2'], ['cluster.status', 'R0'], ['operation.watch', 'R0'],
+    ].map(([actionId, riskClass]) => ({ actionId, riskClass })),
+  };
+  const coverage = lifecycleCoverage(published);
+  assert.equal(capabilityAvailability(published).lifecycle.length, POSTGRES_LIFECYCLE_MATRIX.length);
+  const actual = coverage.filter((row) => row.proposed !== true);
+  assert.equal(actual.length, 7);
+  assert.equal(POSTGRES_LIFECYCLE_MATRIX.length, 13);
+  assert.ok(actual.every((row) => row.available && row.supportState === 'owner-facade'));
+  const create = actual.find((row) => row.id === 'cluster.create');
+  assert.equal(create.ownerToolId, 'foundation.postgres.apply');
+  assert.equal(create.r2d2Tool, 'oaa.foundation.postgres.claim.create');
+  assert.equal(create.ownerRoute, '/api/foundation/oaa/postgres/durable-apply/{planId}');
+  const database = coverage.find((row) => row.requestType === 'Database');
+  const access = coverage.find((row) => row.requestType === 'Access');
+  assert.equal(database.available, false);
+  assert.equal(database.supportState, 'unavailable');
+  assert.equal(access.available, false);
+  assert.equal(access.supportState, 'unavailable');
+  for (const row of coverage.filter((item) => item.proposed === true)) {
+    assert.equal(row.available, false);
+    assert.equal(row.supportState, 'unavailable');
+    assert.equal(row.blocker.code, 'POSTGRES_OWNER_OPERATION_UNAVAILABLE');
+  }
+});
+
+test('each unpublished update/delete/cancel/rollback lifecycle action remains unavailable at the action level', () => {
+  const coverage = lifecycleCoverage({
+    capability: 'data.sql.postgres', supportedRequestTypes: ['Instance'],
+    operations: ['cluster.create'], actions: [{ actionId: 'cluster.create', riskClass: 'R2' }],
+  });
+  for (const id of ['update', 'delete', 'cancel', 'rollback']) {
+    const row = coverage.find((item) => item.id === id);
+    assert.equal(row.available, false, id);
+    assert.equal(row.supportState, 'unavailable', id);
+    assert.equal(row.r2d2Tool, null, id);
+    assert.equal(row.cliCommand, null, id);
+    assert.equal(row.blocker.code, 'POSTGRES_OWNER_OPERATION_UNAVAILABLE', id);
+  }
+});
+
+test('a published Owner risk downgrade fails closed without inventing an alternate action route', () => {
+  const coverage = lifecycleCoverage({
+    capability: 'data.sql.postgres', operations: ['cluster.create'],
+    actions: [{ actionId: 'cluster.create', riskClass: 'R0' }],
+  });
+  const create = coverage.find((row) => row.id === 'cluster.create');
+  assert.equal(create.available, false);
+  assert.equal(create.blocker.code, 'POSTGRES_OWNER_RISK_MISMATCH');
+  assert.equal(create.r2d2Tool, 'oaa.foundation.postgres.claim.create');
 });
