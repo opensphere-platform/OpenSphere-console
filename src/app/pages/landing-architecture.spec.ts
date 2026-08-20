@@ -170,6 +170,29 @@ test('foundation concepts use the approved local pictogram set without a runtime
   assert.equal((foundationSource.match(/class="section-pictogram"[\s\S]{0,160}width="70" height="70"/g) || []).length, 4);
 });
 
+test('CBSS products use their approved local product logos without decorative tiles or a runtime CDN', () => {
+  const logos = [
+    'supabase-icon.svg',
+    'gitea.svg',
+    'beszel-light.svg',
+  ];
+  for (const logo of logos) {
+    assert.match(foundationModel, new RegExp(`/assets/product-logos/${logo.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}`));
+    const logoPath = new URL(`../../../public/assets/product-logos/${logo}`, import.meta.url);
+    assert.equal(fs.existsSync(logoPath), true, `${logo} must ship with the Console image`);
+    const svg = fs.readFileSync(logoPath, 'utf8');
+    assert.match(svg, /<svg[^>]+viewBox=/);
+    assert.doesNotMatch(svg, /<script|<foreignObject|\son\w+=|<(?:image|use)[^>]+(?:href|src)=/i);
+  }
+  assert.equal((foundationModel.match(/productLogo: '\/assets\/product-logos\//g) || []).length, 3);
+  assert.equal((foundationModel.match(/productLogoAlt: '[^']+ product logo'/g) || []).length, 3);
+  assert.match(foundationSource, /@if \(component\.productLogo\)/);
+  assert.match(foundationSource, /<img \[src\]="component\.productLogo" \[alt\]="component\.productLogoAlt \?\? component\.id" width="36" height="36" style="object-fit:contain"/);
+  assert.doesNotMatch(`${foundationSource}\n${foundationModel}`, /logos\.opl\.io\.kr|cdn\.statically\.io/);
+  assert.doesNotMatch(foundationSource, /product-logo[^}]*background:/);
+  assert.match(foundationSource, /원자적 구성을 지탱하는 네 가지 설계 계약/);
+});
+
 test('Service Stack documentation defines HISS CBSS PFSS owners and hard boundaries', () => {
   for (const term of [
     'Host Infrastructure Service Stack',

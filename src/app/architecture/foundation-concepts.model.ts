@@ -20,6 +20,8 @@ export interface ArchitectureDefinition {
   owns: readonly string[];
   excludes: readonly string[];
   evidence: string;
+  productLogo?: string;
+  productLogoAlt?: string;
 }
 
 export interface LifecycleDefinition {
@@ -100,6 +102,8 @@ export const CBSS_COMPONENTS: readonly ArchitectureDefinition[] = [
     owns: ['AuthN session·MFA', 'RLS-protected data', 'append-only audit', 'operation and receipt state'],
     excludes: ['Kubernetes actual state', 'Git merge authority', 'host monitoring controller'],
     evidence: 'RLS negative, revoke, append/read correlation, backup/restore',
+    productLogo: '/assets/product-logos/supabase-icon.svg',
+    productLogoAlt: 'Supabase product logo',
   },
   {
     id: 'Gitea',
@@ -108,6 +112,8 @@ export const CBSS_COMPONENTS: readonly ArchitectureDefinition[] = [
     owns: ['change proposal', 'reviewed merge revision', 'desired manifest lineage', 'revert source'],
     excludes: ['workload runtime truth', '브라우저의 직접 apply', '감사 DB 대체'],
     evidence: 'proposal→review→merge→executor→receipt correlation',
+    productLogo: '/assets/product-logos/gitea.svg',
+    productLogoAlt: 'Gitea product logo',
   },
   {
     id: 'Beszel',
@@ -116,6 +122,8 @@ export const CBSS_COMPONENTS: readonly ArchitectureDefinition[] = [
     owns: ['host metrics', 'resource trend', 'observation freshness', 'diagnostic projection'],
     excludes: ['desired-state write', 'alert만으로 자동 mutation', 'Supabase audit 대체'],
     evidence: 'freshness, scrape coverage, read-only identity, degraded-state projection',
+    productLogo: '/assets/product-logos/beszel-light.svg',
+    productLogoAlt: 'Beszel product logo',
   },
 ] as const;
 

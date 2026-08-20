@@ -130,7 +130,14 @@ import {
               <div class="definition-grid definition-grid-three compact-cards">
                 @for (component of cbssComponents; track component.id) {
                   <section class="definition-card">
-                    <header><span>{{ component.id }}</span><h4>{{ component.name }}</h4></header>
+                    <header>
+                      @if (component.productLogo) {
+                        <img [src]="component.productLogo" [alt]="component.productLogoAlt ?? component.id" width="36" height="36" style="object-fit:contain" />
+                      } @else {
+                        <span>{{ component.id }}</span>
+                      }
+                      <h4>{{ component.name }}</h4>
+                    </header>
                     <p>{{ component.role }}</p>
                     <dl>
                       <div><dt>Boundary</dt><dd>{{ component.excludes.join(' · ') }}</dd></div>
