@@ -7,6 +7,11 @@ const realizationModel = fs.readFileSync(
   new URL('../architecture/service-realization.model.ts', import.meta.url),
   'utf8',
 );
+const foundationSource = fs.readFileSync(new URL('./landing-foundations.ts', import.meta.url), 'utf8');
+const foundationModel = fs.readFileSync(
+  new URL('../architecture/foundation-concepts.model.ts', import.meta.url),
+  'utf8',
+);
 const shell = fs.readFileSync(new URL('../os/os-shell.ts', import.meta.url), 'utf8');
 const search = fs.readFileSync(new URL('../core/search.service.ts', import.meta.url), 'utf8');
 
@@ -89,4 +94,86 @@ test('Perspective navigation remains Registry-derived and phantom-route free', (
   assert.match(source, /registered\.has\(perspective\.pluginId\)/);
   assert.match(shell, /홈 · 10P × 6L/);
   assert.match(search, /홈 · 10P × 6L/);
+});
+
+test('main index adds exactly four foundation concept tabs with keyboard semantics', () => {
+  assert.match(source, /<os-landing-foundations/);
+  assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|ai-lifecycle)'/g) || []).length, 4);
+  assert.match(foundationSource, /role="tablist"/);
+  assert.match(foundationSource, /role="tab"/);
+  assert.match(foundationSource, /role="tabpanel"/);
+  assert.match(foundationSource, /aria-selected/);
+  for (const key of ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End']) {
+    assert.match(foundationSource, new RegExp(key));
+  }
+});
+
+test('Service Stack documentation defines HISS CBSS PFSS owners and hard boundaries', () => {
+  for (const term of [
+    'Host Infrastructure Service Stack',
+    'Console Backbone Service Stack',
+    'Platform Foundation Service Stack',
+    'Supabase',
+    'Gitea',
+    'Beszel',
+    'Operator',
+  ]) {
+    assert.match(`${foundationModel}\n${foundationSource}`, new RegExp(term));
+  }
+  assert.match(foundationSource, /왜 관리 도구와 대상 리소스를 완전히 분리하는가/);
+  assert.match(foundationModel, /Main Shell의 직접 kubectl\/SQL 변경/);
+  assert.match(foundationModel, /관측 결과를 근거로 한 무승인 자동 변경/);
+});
+
+test('DUPA documentation preserves host ownership and separates Runtime Units from plugins', () => {
+  assert.match(foundationSource, /Dynamic UI Plugin Architecture/);
+  assert.match(foundationSource, /서명된 신뢰 코드 실행/);
+  assert.match(foundationSource, /hostRef=&lt;subShell&gt;/);
+  assert.match(foundationSource, /기능적 유형/);
+  assert.match(foundationSource, /설치 schema의 새로운 kind가 아닙니다/);
+  assert.match(foundationModel, /OpenSphere Agent Runtime/);
+  assert.match(foundationModel, /Runtime Unit/);
+  assert.match(foundationModel, /Pod \/ KubeVirt Agent Playground/);
+  assert.match(foundationModel, /요청 격리보다 약한 Driver로 자동 하향/);
+});
+
+test('control pillars use one capability owner and keep OAA CLI Shell as surfaces', () => {
+  for (const term of [
+    'OpenSphere AI Agent',
+    'OpenSphere CLI',
+    'OpenSphere OS Shell',
+    'Capability & Owner API',
+    'Plan · Approval · Operation',
+    'Audit · Receipt · Recovery',
+  ]) {
+    assert.match(foundationModel, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.match(foundationSource, /표면은 authority가 아닙니다/);
+  assert.match(foundationSource, /PFSS PostgreSQL plan → approval → durable apply → watch → receipt/);
+  assert.match(foundationModel, /service account fallback/);
+  assert.match(foundationModel, /raw kubectl\/SQL/);
+});
+
+test('AI lifecycle distinguishes current runtime from target model and playground contracts', () => {
+  const aiLifecycle = foundationModel.slice(
+    foundationModel.indexOf('export const AI_LIFECYCLE'),
+    foundationModel.indexOf('export const MODEL_LOCATIONS'),
+  );
+  assert.equal((aiLifecycle.match(/step: '0[1-7]', title:/g) || []).length, 7);
+  for (const term of [
+    'Source & Curate',
+    'Train & Adapt',
+    'Evaluate & Admit',
+    'Allocate & Serve',
+    'Assign & Run',
+    'Observe & Govern',
+    'Replace & Retire',
+  ]) {
+    assert.match(foundationModel, new RegExp(term.replace('&', '&')));
+  }
+  assert.match(foundationSource, /R2D2 Native Runtime/);
+  assert.match(foundationSource, /AgentRunRead v1/);
+  assert.match(foundationSource, /DEFERRED/);
+  assert.match(foundationSource, /No automatic downgrade/);
+  assert.match(foundationSource, /AI-Workbench UI나 Agent workspace/);
 });
