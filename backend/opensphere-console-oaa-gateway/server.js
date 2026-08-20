@@ -3846,17 +3846,15 @@ function oaaActionBindings() {
       title: 'Create a PFSS PostgreSQL cluster through the PostgresClaim owner contract', intent: 'create-foundation-postgres',
       toolId: 'oaa.foundation.postgres.claim.create', controlPlane: 'foundation-owner-facade',
       riskLevel: 'high', confirmation: 'required',
-      confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+      confirmationTemplate: 'owner plan expectedConfirmation',
       requiredInputs: bindingInput({
-        name: 'claim name', namespace: 'Foundation-managed namespace', alias: 'human display name',
-        database: 'initial database name', owner: 'initial database owner', plan: 'Available PostgreSQL AddOnPlan',
-        postgresVersion: 'Available PostgresRuntimeCatalog version', deletionPolicy: OAA_POSTGRES_DELETION_POLICIES.join(' | '),
-        storageSize: 'optional binary quantity such as 20Gi', storageClass: 'optional StorageClass name',
+        planId: 'exact durable plan ID returned by the PFSS owner',
+        planDigest: 'exact sha256 plan digest returned by the PFSS owner',
         reason: 'human management reason (8+ chars)',
-        confirm: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+        confirm: 'exact owner plan expectedConfirmation',
       }),
       permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['oaa:action:execute:high'], namespaceScope: ['opensphere-foundation'] },
-      audit: { eventType: 'foundation-postgres-claim-create', targetTemplate: 'PostgresClaim/<namespace>/<name>' },
+      audit: { eventType: 'foundation-postgres-claim-create', targetTemplate: 'PostgresClaim/plan/<planId>' },
       citations: [{ sourceId: 'console-docs/oaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
@@ -4414,17 +4412,10 @@ function oaaToolManifest() {
         channel: 'owner-control-plane', readOnly: false,
         endpoint: toolEndpoint('POST', '/api/oaa/actions/bindings/execute'),
         riskLevel: 'high', confirmation: 'required',
-        confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+        confirmationTemplate: 'owner plan expectedConfirmation',
         inputSchema: schemaObject({
-          name: deploymentField, namespace: nsField,
-          alias: { type: 'string', minLength: 1, maxLength: 160 },
-          database: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_$]{0,62}$' },
-          owner: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_$]{0,62}$' },
-          plan: deploymentField,
-          postgresVersion: { type: 'string', pattern: '^\\d+(?:\\.\\d+)?$' },
-          deletionPolicy: { type: 'string', enum: OAA_POSTGRES_DELETION_POLICIES },
-          storageSize: { type: 'string', pattern: '^[0-9]+(?:Mi|Gi|Ti)$', required: false },
-          storageClass: { ...deploymentField, required: false },
+          planId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$' },
+          planDigest: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
           confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
         }),
         auditEventType: 'foundation-postgres-claim-create',
@@ -6247,7 +6238,10 @@ function foundationPostgresClarification(status, values) {
 
 function foundationPostgresPlanMessage(plan, request) {
   const expected = String(plan?.expectedConfirmation || '');
-  const actionInputs = { ...request, reason: 'PFSS PostgreSQL cluster provisioning approved' };
+  const actionInputs = {
+    planId: String(plan?.planId || ''), planDigest: String(plan?.planDigest || ''),
+    reason: 'PFSS PostgreSQL cluster provisioning approved',
+  };
   return [
     'Foundation owner Admission dry-run이 통과했습니다. 아직 클러스터를 생성하지 않았습니다.',
     '',
@@ -6255,6 +6249,8 @@ function foundationPostgresPlanMessage(plan, request) {
     `작업: ${plan.action}`,
     `Plan: ${request.plan}`,
     `PostgreSQL: ${request.postgresVersion}`,
+    `Durable plan ID: ${actionInputs.planId}`,
+    `Durable plan digest: ${actionInputs.planDigest}`,
     `Postcondition: ${plan.postcondition}`,
     ...(Array.isArray(plan.warnings) && plan.warnings.length ? ['', '경고:', ...plan.warnings.map((warning) => `- ${warning}`)] : []),
     '',
@@ -6959,20 +6955,15 @@ async function executeOwnerControlAction(toolId, inputs, actor) {
     owner = 'Foundation control plane'; target = `IdentityDirectoryClaim/opensphere-foundation/${name}`;
     response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/oaa/identity-directory/claims/release', actor, { name, confirm: inputs.confirm, reason }, owner, 120000);
   } else if (toolId === 'oaa.foundation.postgres.claim.create') {
-    const request = normalizeFoundationPostgresRequest(inputs);
-    const expected = foundationPostgresConfirmation(request);
-    requireConfirm(inputs.confirm, expected);
-    owner = 'PFSS PostgreSQL owner'; target = `FoundationClaim/${request.namespace}/${request.name}`;
-    const plan = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/operations/plan', actor, {
-      action: 'create-postgres-cluster', target: request, reason,
-    }, 'Console durable PostgreSQL planner', 30000);
-    if (plan.expectedConfirmation !== expected || !plan.planId) throw { code: 409, msg: 'durable PostgreSQL plan binding changed; plan again' };
-    response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/oaa/operations', actor, {
-      planId: plan.planId, confirmation: expected,
-    }, 'Console durable operation ledger', 30000);
+    const binding = foundationPostgresApplyBinding(inputs);
+    owner = 'PFSS PostgreSQL owner'; target = `PostgresClaim/plan/${binding.planId}`;
+    response = await fixedOwnerPost(FOUNDATION_CONTROL_URL,
+      `/api/foundation/oaa/postgres/durable-apply/${encodeURIComponent(binding.planId)}`, actor,
+      { planDigest: binding.planDigest, confirmation: binding.confirmation, reason }, owner, 120000);
+    assertFoundationPostgresApplyResponse(response, binding);
     response = {
-      ...response, planId: plan.planId, planDigest: plan.planDigest, expiresAt: plan.expiresAt,
-      postconditions: plan.postconditions || [
+      ...response, planId: binding.planId, planDigest: binding.planDigest,
+      postconditions: response.postconditions || [
         'FoundationClaim Bound with observedGeneration current',
         'PostgresClaim Ready=True with observedGeneration current',
       ],
@@ -7240,8 +7231,44 @@ function normalizeFoundationPostgresRequest(inputs) {
   };
 }
 
-function foundationPostgresConfirmation(request) {
-  return `create PostgreSQL cluster ${request.namespace}/${request.name} plan ${request.plan} version ${request.postgresVersion}`;
+function foundationPostgresApplyBinding(inputs) {
+  requireClosedOwnerInputs(inputs, ['planId', 'planDigest', 'confirm', 'reason']);
+  const planId = String(inputs.planId || '').trim();
+  const planDigest = String(inputs.planDigest || '').trim();
+  const confirmation = String(inputs.confirm || '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(planId)) throw { code: 400, msg: 'planId must be the exact durable Owner plan ID' };
+  if (!/^sha256:[0-9a-f]{64}$/.test(planDigest)) throw { code: 400, msg: 'planDigest must be the exact durable Owner digest' };
+  if (!confirmation) throw { code: 400, msg: 'exact owner plan confirmation is required' };
+  return { planId, planDigest, confirmation };
+}
+
+function assertFoundationPostgresApplyResponse(response, binding) {
+  const identity = response?.semanticIdentity;
+  const actionBinding = response?.actionBinding;
+  const canonicalIdentity = identity?.capabilityId === 'data.sql.postgres'
+    && identity?.requestType === 'Instance' && identity?.actionId === 'cluster.create'
+    && identity?.toolId === 'foundation.postgres.apply';
+  const canonicalBinding = actionBinding?.method === 'POST'
+    && actionBinding?.path === '/api/foundation/oaa/postgres/durable-apply/{planId}'
+    && Array.isArray(actionBinding?.pathParams) && actionBinding.pathParams.length === 1
+    && actionBinding.pathParams[0] === 'planId' && actionBinding?.approval === 'exact-confirmation';
+  if (String(response?.planId || '') !== binding.planId
+    || String(response?.planDigest || '') !== binding.planDigest
+    || response?.toolId !== 'foundation.postgres.apply' || !canonicalIdentity || !canonicalBinding) {
+    throw { code: 409, msg: 'PFSS durable apply response no longer matches the exact Owner plan binding' };
+  }
+  return response;
+}
+
+function assertFoundationPostgresPlanResponse(response) {
+  const planId = String(response?.planId || '').trim();
+  const planDigest = String(response?.planDigest || '').trim();
+  const expectedConfirmation = String(response?.expectedConfirmation || '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(planId)
+    || !/^sha256:[0-9a-f]{64}$/.test(planDigest) || !expectedConfirmation) {
+    throw { code: 409, msg: 'PFSS durable plan response lacks exact planId, planDigest, or expectedConfirmation' };
+  }
+  return response;
 }
 
 async function foundationPostgresStatusRead(actor) {
@@ -7266,11 +7293,12 @@ async function foundationPostgresStatusRead(actor) {
 async function foundationPostgresPlanRead(inputs, actor) {
   assertPermission(actor, 'oaa.action.execute.high');
   const request = normalizeFoundationPostgresRequest(inputs);
-  const projection = redactProjection(await fixedOwnerPost(
-    CONSOLE_IDENTITY_URL, '/api/oaa/operations/plan', actor,
-    { action: 'create-postgres-cluster', target: request, reason: String(inputs.reason || '') },
-    'Console durable PostgreSQL planner', 30000,
+  const plan = assertFoundationPostgresPlanResponse(await fixedOwnerPost(
+    FOUNDATION_CONTROL_URL, '/api/foundation/oaa/postgres/durable-plan', actor,
+    { ...request, reason: String(inputs.reason || '') },
+    'PFSS PostgreSQL owner durable planner', 30000,
   ));
+  const projection = redactProjection(plan);
   audit(actor, 'foundation-postgres-plan', `FoundationClaim/${request.namespace}/${request.name}`, 'ok', `${request.plan}/${request.postgresVersion}`);
   return projection;
 }

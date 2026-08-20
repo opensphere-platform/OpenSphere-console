@@ -63,6 +63,14 @@ test('execution authorization is revalidated and R3 requires two distinct AAL2 p
   assert.equal(authorizeAtExecution(operation, { ...session, authzRevision: 'r2' }, []).code, 'AuthorizationRevisionChanged');
 });
 
+test('revoked approval is never counted as active while approval-specific expiry remains an Owner-contract blocker', () => {
+  const operation = { actorId: 'actor', action: 'rollback-image', authzRevision: 'r1', requiredAssurance: 'aal2', riskClass: 'R2', requiredPermission: 'oaa.action.execute.high' };
+  const session = { active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['oaa.action.execute.high'] };
+  assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2', revokedAt: '2026-08-10T00:00:00Z' }]).code, 'ApprovalRequired');
+  assert.equal(authorizeAtExecution(operation, session, [{ approver_id: 'a', assurance: 'aal2', revoked_at: '2026-08-10T00:00:00Z' }]).code, 'ApprovalRequired');
+  assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }]).allowed, true);
+});
+
 test('live UID/generation/resource/desired revisions are authoritative preconditions', () => {
   const operation = { target: request().target };
   const live = { ...request().target, fresh: true, snapshotComplete: true };
@@ -140,6 +148,36 @@ test('worker performs durable preflight, owner call and authoritative verificati
   assert.equal(JSON.stringify(fixture.steps).includes('secret'), false);
 });
 
+test('owner operation identity and reconcile-safe receipt digest are retained without storing an owner response body', async () => {
+  const receipts = [];
+  const fixture = workerFixture({
+    store: {
+      appendStep: async (_id, item) => fixture.steps.push(item), setPhase: async (_id, phase) => fixture.phases.push(phase),
+      getApprovals: async () => [], heartbeat: async () => true,
+      recordDownstreamIntent: async () => {}, recordDownstreamReceipt: async (_id, evidence) => { receipts.push(evidence); return true; },
+    },
+    owners: { invoke: async () => ({ operationId: 'owner-pg-1', credential: 'must-not-persist' }), reconcile: async () => null },
+  });
+  const result = await fixture.worker.process(operation());
+  assert.equal(result.phase, 'succeeded');
+  assert.deepEqual(receipts, [{
+    operationId: 'owner-pg-1', idempotencyKey: `op-1:${operation().descriptorDigest}`,
+    receiptDigest: receipts[0].receiptDigest, reconciled: false,
+  }]);
+  assert.match(receipts[0].receiptDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(JSON.stringify({ receipts, steps: fixture.steps }).includes('must-not-persist'), false);
+});
+
+test('an owner response cannot place credential-like text in durable operation history', async () => {
+  let verified = 0;
+  const fixture = workerFixture({
+    owners: { invoke: async () => ({ operationId: 'postgres://user:secret@example.invalid/db' }), reconcile: async () => null },
+    verifiers: { verify: async () => { verified += 1; return { status: 'succeeded' }; } },
+  });
+  await assert.rejects(() => fixture.worker.process(operation()), (error) => error?.code === 'OwnerReceiptOperationIdInvalid');
+  assert.equal(verified, 0);
+});
+
 test('revoked session blocks without owner invocation', async () => {
   let called = 0;
   const fixture = workerFixture({
@@ -187,6 +225,27 @@ test('ambiguous owner outcome reconciles by idempotency key without a second mut
   assert.equal(reconciles, 1);
 });
 
+test('response-loss reconciliation preserves the recovered owner operation ID and never replays', async () => {
+  const receipts = []; let invokes = 0;
+  const fixture = workerFixture({
+    store: {
+      appendStep: async (_id, item) => fixture.steps.push(item), setPhase: async (_id, phase) => fixture.phases.push(phase),
+      getApprovals: async () => [], heartbeat: async () => true,
+      recordDownstreamReceipt: async (_id, evidence) => { receipts.push(evidence); return true; },
+    },
+    owners: {
+      invoke: async () => { invokes += 1; throw new Error('must not replay'); },
+      reconcile: async () => ({ operationId: 'owner-recovered' }),
+    },
+  });
+  const result = await fixture.worker.process({ ...operation(), phase: 'ambiguous' });
+  assert.equal(result.phase, 'succeeded');
+  assert.equal(invokes, 0);
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].operationId, 'owner-recovered');
+  assert.equal(receipts[0].reconciled, true);
+});
+
 test('owner 200 with unmet postcondition is verification_failed', async () => {
   const fixture = workerFixture({ verifiers: { verify: async () => ({ status: 'failed', observed: { ready: false } }) } });
   const result = await fixture.worker.process(operation());
@@ -205,6 +264,21 @@ test('claim lease loss fences the worker before owner mutation', async () => {
   });
   await assert.rejects(() => fixture.worker.process(operation()), /claim lease was lost/);
   assert.equal(invoked, 0);
+});
+
+test('a stale fence after an owner response prevents receipt/history write and verification', async () => {
+  let invoked = 0; let verified = 0;
+  const fixture = workerFixture({
+    store: {
+      appendStep: async () => {}, setPhase: async () => {}, getApprovals: async () => [], heartbeat: async () => true,
+      recordDownstreamIntent: async () => {}, recordDownstreamReceipt: async () => false,
+    },
+    owners: { invoke: async () => { invoked += 1; return { operationId: 'owner-late' }; }, reconcile: async () => null },
+    verifiers: { verify: async () => { verified += 1; return { status: 'succeeded' }; } },
+  });
+  await assert.rejects(() => fixture.worker.process(operation()), (error) => error?.code === 'ClaimLeaseLost');
+  assert.equal(invoked, 1);
+  assert.equal(verified, 0);
 });
 
 test('expired executing claim resumes from ambiguous reconciliation without replay', async () => {
