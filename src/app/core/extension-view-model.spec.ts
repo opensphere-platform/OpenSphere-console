@@ -37,3 +37,12 @@ test('plugin with an unknown hostRef is a contract violation, never attached to 
   assert.deepEqual(views.pluginGroups, []);
   assert.deepEqual(views.unclassified, [registration]);
 });
+
+test('subShell management rows follow the persisted navigation order', () => {
+  const catalog = [
+    { name: 'alpha', displayName: 'Alpha', kind: 'subShell' as const, hostRef: 'main', nav: { order: 8 } },
+    { name: 'zeta', displayName: 'Zeta', kind: 'subShell' as const, hostRef: 'main', nav: { order: 1 } },
+  ];
+  const views = buildExtensionManagementViews(catalog, [{ name: 'alpha' }, { name: 'zeta' }]);
+  assert.deepEqual(views.subShells.map((item) => item.name), ['zeta', 'alpha']);
+});

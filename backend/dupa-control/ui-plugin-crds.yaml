@@ -91,6 +91,13 @@ spec:
                     band: { type: string }
                     label: { type: string }
                     icon: { type: string }   # 1단 아이콘(Carbon 토큰명, 관리자 오버라이드)
+                    labelOverride:
+                      type: string
+                      maxLength: 80
+                    order:
+                      type: integer
+                      minimum: 0
+                      maximum: 63
                 manifest:
                   type: object
                   required: [path, sha256]

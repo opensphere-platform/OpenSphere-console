@@ -5,7 +5,7 @@ import { HttpService } from './http.service';
  *  사용자 신원은 X-OpenSphere-User로 전달(audit·권한). 셸 nginx가 controller로 프록시. */
 export interface CatalogItem {
   name: string; displayName: string; version: string; owner: string;
-  description: string; nav?: { band: string; label: string; icon?: string };
+  description: string; nav?: { band: string; label: string; icon?: string; labelOverride?: string; order?: number };
   shellCompat: string; permissions: string[];
   kind: 'subShell' | 'plugin'; hostRef: string; hostApiVersion?: string; hostCompat: string;
   contributions: Record<string, unknown>;
@@ -200,5 +200,23 @@ export class PluginControlClient {
     return this.http.request(`/api/admin/plugins/packages/${id}/icon`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ icon }),
     }).then((r) => { if (!r.ok) throw new Error(`set-icon HTTP ${r.status}`); return r.json(); });
+  }
+  /** Main Shell 1단 메뉴 표현 설정. 빈 labelOverride는 원래 displayName 사용. */
+  setNavigation(id: string, settings: { icon?: string; labelOverride?: string }) {
+    return this.http.request(`/api/admin/plugins/packages/${id}/navigation`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings),
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(`set-navigation HTTP ${r.status}: ${JSON.stringify(await r.json().catch(() => ({})))}`);
+      return r.json();
+    });
+  }
+  /** 설치된 Main Shell subShell의 구역별 메뉴 순서를 한 요청으로 저장. */
+  setNavigationOrder(ids: readonly string[]) {
+    return this.http.request('/api/admin/plugins/navigation-order', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids }),
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(`set-navigation-order HTTP ${r.status}: ${JSON.stringify(await r.json().catch(() => ({})))}`);
+      return r.json();
+    });
   }
 }

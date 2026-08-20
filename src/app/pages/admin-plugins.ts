@@ -2,8 +2,10 @@ import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } 
 import { NgTemplateOutlet } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
+import { CdkDrag, CdkDragDrop, CdkDragHandle, CdkDropList, moveItemInArray } from '@angular/cdk/drag-drop';
 import { OsPageHeader } from '../os/os-page-header';
 import { OsRawIcon } from '../os/os-raw-icon';
+import { OsNavIcon } from '../os/os-nav-icon';
 import { OsPanel } from '../os/os-panel';
 import { OsActionDialog } from '../os/os-action-dialog';
 import { IconLibraryService } from '../os/icon-library.service';
@@ -43,6 +45,11 @@ interface StatusLayer {
   tone: 'success' | 'warning' | 'danger' | 'neutral';
 }
 
+interface SubShellNavigationGroup {
+  band: string;
+  items: Registration[];
+}
+
 /** 위계 트리 노드 — console(mainShell) → systemPlugin/subShell/plugin, + Bindings 분기. */
 interface TreeNode {
   id: string;
@@ -64,7 +71,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [NgTemplateOutlet, RouterLink, ClarityModule, OsPageHeader, OsRawIcon, OsPanel, OsActionDialog],
+  imports: [NgTemplateOutlet, RouterLink, ClarityModule, CdkDropList, CdkDrag, CdkDragHandle, OsPageHeader, OsRawIcon, OsNavIcon, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
       <os-page-header title="Console Extensions" tag="Core Runtime">
@@ -230,7 +237,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                   <div class="extension-identity">
                     @if (showIcon) {
                       <span class="extension-identity-icon" [title]="extensionIconToken(r.name)">
-                        <os-rawicon [svg]="extensionIconSvg(r.name)" [size]="20" />
+                        <os-nav-icon [token]="extensionIconToken(r.name)" [size]="20" />
                       </span>
                     }
                     <div>
@@ -315,7 +322,30 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             <span><i class="status-dot warning"></i>서비스 유지 또는 처리 대기</span>
             <span><i class="status-dot danger"></i>서비스 차단 — 운영자 조치 필요</span>
           </div>
-          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: subShellRegistrations(), emptyText: registrationsLoaded() ? '설치된 subShell이 없습니다.' : 'Extension 목록을 불러오는 중입니다.', showHost: false, showIcon: true }" />
+          <section class="subshell-menu-editor" aria-labelledby="subshell-menu-editor-title">
+            <header>
+              <div><span class="view-kicker">MAIN SHELL NAVIGATION</span><h3 id="subshell-menu-editor-title">1단 메뉴 순서</h3></div>
+              <p>같은 메뉴 구역 안에서 행을 끌어 위·아래로 이동합니다. 저장된 순서는 관리 목록과 좌측 1단 메뉴에 함께 적용됩니다.</p>
+            </header>
+            @for (group of subShellNavigationGroups(); track group.band) {
+              <div class="subshell-menu-band">
+                <strong>{{ group.band }}</strong>
+                <div cdkDropList [cdkDropListData]="group.items" [cdkDropListDisabled]="navigationOrderSaving()" (cdkDropListDropped)="dropSubShell($event)">
+                  @for (r of group.items; track r.name) {
+                    <div class="subshell-menu-row" cdkDrag [cdkDragData]="r">
+                      <button type="button" class="subshell-menu-handle" cdkDragHandle aria-label="메뉴 순서 이동">⋮⋮</button>
+                      <os-nav-icon [token]="extensionIconToken(r.name)" [size]="20" />
+                      <span><strong>{{ menuDisplayLabel(r.name) }}</strong><small>{{ displayName(r.name) }} · <code>{{ r.name }}</code></small></span>
+                      <button type="button" class="btn btn-sm btn-link" (click)="select(r.name)">표시 설정</button>
+                    </div>
+                  }
+                </div>
+              </div>
+            } @empty {
+              <p class="empty-view">{{ registrationsLoaded() ? '설치된 SubShell이 없습니다.' : 'Extension 목록을 불러오는 중입니다.' }}</p>
+            }
+          </section>
+          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: orderedSubShellRegistrations(), emptyText: registrationsLoaded() ? '설치된 subShell이 없습니다.' : 'Extension 목록을 불러오는 중입니다.', showHost: false, showIcon: true }" />
         </clr-tab-content>
       </clr-tab>
 
@@ -820,27 +850,42 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             </clr-accordion-content>
           </clr-accordion-panel>
 
-          <clr-accordion-panel>
-            <clr-accordion-title>메뉴 아이콘</clr-accordion-title>
-            <clr-accordion-description>{{ iconToken() || '기본 아이콘' }}</clr-accordion-description>
-            <clr-accordion-content *clrIfExpanded>
-              <div class="cc-iconpick">
-                <input class="cc-iconsearch" type="search" placeholder="Carbon 아이콘 검색…"
-                       [value]="iconQuery()" (input)="iconQuery.set($any($event.target).value)" />
-                <div class="cc-iconpick-note">
-                  {{ iconLib.list().length ? (iconMatchCount() + '개 일치' + (iconMatchCount() > iconList().length ? (' · 상위 ' + iconList().length + '개 표시') : '')) : '라이브러리 로딩 중…' }}
+          @if (selectedIsFirstLevelSubShell()) {
+            <clr-accordion-panel>
+              <clr-accordion-title>메뉴 표시 이름</clr-accordion-title>
+              <clr-accordion-description>{{ menuDisplayLabel(selected() || '') }}</clr-accordion-description>
+              <clr-accordion-content *clrIfExpanded>
+                <div class="cc-menu-label">
+                  <label for="subshell-menu-label">표시 이름</label>
+                  <input id="subshell-menu-label" #menuLabel class="clr-input" maxlength="80" [value]="menuLabelOverride()" [placeholder]="selectedOriginalLabel()" />
+                  <button type="button" class="btn btn-sm btn-primary" (click)="saveMenuLabel(menuLabel.value)">저장</button>
                 </div>
-                <div class="cc-iconpick-grid">
-                  <button type="button" class="cc-iconbtn" [class.sel]="!iconToken()" title="기본(자동)" (click)="chooseIcon('')">∅</button>
-                  @for (c of iconList(); track c.token) {
-                    <button type="button" class="cc-iconbtn" [class.sel]="iconToken() === c.token" [title]="c.label" (click)="chooseIcon(c.token)">
-                      <os-rawicon [svg]="c.svg" [size]="24" />
-                    </button>
-                  }
+                <p class="os-sub">비워서 저장하면 원래 이름 <strong>{{ selectedOriginalLabel() }}</strong>을 표시합니다.</p>
+              </clr-accordion-content>
+            </clr-accordion-panel>
+
+            <clr-accordion-panel>
+              <clr-accordion-title>메뉴 아이콘</clr-accordion-title>
+              <clr-accordion-description>{{ iconToken() || '기본 아이콘' }}</clr-accordion-description>
+              <clr-accordion-content *clrIfExpanded>
+                <div class="cc-iconpick">
+                  <input class="cc-iconsearch" type="search" placeholder="Carbon 아이콘 검색…"
+                         [value]="iconQuery()" (input)="iconQuery.set($any($event.target).value)" />
+                  <div class="cc-iconpick-note">
+                    {{ iconLib.list().length ? (iconMatchCount() + '개 일치' + (iconMatchCount() > iconList().length ? (' · 상위 ' + iconList().length + '개 표시') : '')) : '라이브러리 로딩 중…' }}
+                  </div>
+                  <div class="cc-iconpick-grid">
+                    <button type="button" class="cc-iconbtn" [class.sel]="!iconToken()" title="기본(자동)" (click)="chooseIcon('')">∅</button>
+                    @for (c of iconList(); track c.token) {
+                      <button type="button" class="cc-iconbtn" [class.sel]="iconToken() === c.token" [title]="c.label" (click)="chooseIcon(c.token)">
+                        <os-rawicon [svg]="c.svg" [size]="24" />
+                      </button>
+                    }
+                  </div>
                 </div>
-              </div>
-            </clr-accordion-content>
-          </clr-accordion-panel>
+              </clr-accordion-content>
+            </clr-accordion-panel>
+          }
         </clr-accordion>
 
         <div class="cc-actions" aria-label="Extension lifecycle actions">
@@ -1315,6 +1360,38 @@ export class AdminPlugins implements OnInit {
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
   readonly extensionViews = computed(() => buildExtensionManagementViews(this.catalog(), this.registrations()));
   readonly subShellRegistrations = computed(() => this.extensionViews().subShells);
+  readonly navigationOrderSaving = signal(false);
+  private readonly navigationOrderDraft = signal<Record<string, readonly string[]>>({});
+  readonly orderedSubShellRegistrations = computed(() => {
+    const rows = this.subShellRegistrations();
+    const draft = this.navigationOrderDraft();
+    const groups = new Map<string, Registration[]>();
+    for (const row of rows) {
+      const band = this.menuBand(row.name);
+      const group = groups.get(band) || [];
+      group.push(row);
+      groups.set(band, group);
+    }
+    const known = ['운영 Operate', '구축 Build', '전달 Deliver', '지능 Intelligence'];
+    const bands = [...known.filter((band) => groups.has(band)), ...[...groups.keys()].filter((band) => !known.includes(band)).sort()];
+    return bands.flatMap((band) => {
+      const group = groups.get(band) || [];
+      const desired = draft[band];
+      if (!desired) return group;
+      const byName = new Map(group.map((row) => [row.name, row]));
+      return desired.map((name) => byName.get(name)).filter((row): row is Registration => Boolean(row));
+    });
+  });
+  readonly subShellNavigationGroups = computed<SubShellNavigationGroup[]>(() => {
+    const groups = new Map<string, Registration[]>();
+    for (const row of this.orderedSubShellRegistrations()) {
+      const band = this.menuBand(row.name);
+      const items = groups.get(band) || [];
+      items.push(row);
+      groups.set(band, items);
+    }
+    return [...groups].map(([band, items]) => ({ band, items }));
+  });
   readonly pluginHostGroups = computed(() => this.extensionViews().pluginGroups);
   readonly unclassifiedRegistrations = computed(() => this.extensionViews().unclassified);
   readonly registryPluginCount = computed(() =>
@@ -1354,19 +1431,65 @@ export class AdminPlugins implements OnInit {
   extensionIconToken(name: string): string {
     return this.catalog().find((c) => c.name === name)?.nav?.icon || 'application';
   }
-  extensionIconSvg(name: string): string {
-    return this.iconLib.peekSvg(this.extensionIconToken(name)) || '';
-  }
   async chooseIcon(token: string): Promise<void> {
     const n = this.selected();
     if (!n) return;
     try {
-      await this.ctl.setIcon(n, token);
-      await this.refresh();    // catalog 갱신(현재 선택 표시)
-      await this.ext.reload(); // registry 재로딩 → 1단 아이콘 즉시 갱신
+      await this.ctl.setNavigation(n, { icon: token });
+      await this.ext.reload(); // 관리 projection + 메뉴 snapshot을 한 번에 갱신
       this.msg.set({ type: 'success', text: `아이콘 변경: ${token || '(기본)'}` });
     } catch (e) {
       this.msg.set({ type: 'danger', text: String(e) });
+    }
+  }
+  selectedIsFirstLevelSubShell(): boolean {
+    const item = this.catalogItem(this.selected() || '');
+    return item?.kind === 'subShell' && (item.hostRef || 'main') === 'main';
+  }
+  menuLabelOverride(): string {
+    return this.catalogItem(this.selected() || '')?.nav?.labelOverride || '';
+  }
+  selectedOriginalLabel(): string {
+    const item = this.catalogItem(this.selected() || '');
+    return item?.displayName || item?.name || '';
+  }
+  menuDisplayLabel(name: string): string {
+    const item = this.catalogItem(name);
+    return item?.nav?.labelOverride?.trim() || item?.displayName || name;
+  }
+  menuBand(name: string): string {
+    return this.catalogItem(name)?.nav?.band || '운영 Operate';
+  }
+  async saveMenuLabel(value: string): Promise<void> {
+    const id = this.selected();
+    if (!id) return;
+    try {
+      await this.ctl.setNavigation(id, { labelOverride: value });
+      await this.ext.reload();
+      this.msg.set({ type: 'success', text: value.trim() ? `메뉴 표시 이름 변경: ${value.trim()}` : '메뉴 표시 이름을 원래 이름으로 복원했습니다.' });
+    } catch (error) {
+      this.msg.set({ type: 'danger', text: String(error) });
+    }
+  }
+  async dropSubShell(event: CdkDragDrop<Registration[]>): Promise<void> {
+    if (event.previousIndex === event.currentIndex || this.navigationOrderSaving()) return;
+    const reordered = [...event.container.data];
+    moveItemInArray(reordered, event.previousIndex, event.currentIndex);
+    const band = reordered.length ? this.menuBand(reordered[0].name) : '';
+    if (!band) return;
+    const previousDraft = this.navigationOrderDraft();
+    this.navigationOrderDraft.set({ ...previousDraft, [band]: reordered.map((row) => row.name) });
+    this.navigationOrderSaving.set(true);
+    try {
+      await this.ctl.setNavigationOrder(this.orderedSubShellRegistrations().map((row) => row.name));
+      await this.ext.reload();
+      this.navigationOrderDraft.set({});
+      this.msg.set({ type: 'success', text: `${band} 메뉴 순서를 저장했습니다.` });
+    } catch (error) {
+      this.navigationOrderDraft.set(previousDraft);
+      this.msg.set({ type: 'danger', text: String(error) });
+    } finally {
+      this.navigationOrderSaving.set(false);
     }
   }
   selectedLabel(): string {

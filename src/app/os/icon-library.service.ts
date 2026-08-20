@@ -25,8 +25,16 @@ export class IconLibraryService {
   ensure(): Promise<void> {
     if (this.loaded()) return Promise.resolve();
     if (this.loading) return this.loading;
-    this.loading = import('@carbon/icons/metadata.json')
-      .then((mod: any) => {
+    this.loading = Promise.all([
+      import('@carbon/icons/metadata.json'),
+      fetch('/assets/carbon-icons/catalog.json', { cache: 'force-cache' }).then(async (response) => {
+        if (!response.ok) throw new Error(`Carbon icon asset catalog HTTP ${response.status}`);
+        const value = await response.json() as { version?: unknown; tokens?: unknown };
+        if (value.version !== 1 || !Array.isArray(value.tokens)) throw new Error('Carbon icon asset catalog invalid');
+        return new Set(value.tokens.filter((token): token is string => typeof token === 'string'));
+      }),
+    ])
+      .then(([mod, available]: [any, Set<string>]) => {
         const data = mod.default ?? mod;
         const icons: any[] = data.icons ?? [];
         const list: IconEntry[] = [];
@@ -37,6 +45,7 @@ export class IconLibraryService {
           const svg = IconLibraryService.clean(asset.source || '');
           if (!svg) continue;
           const token: string = ic.name;
+          if (!available.has(token)) continue;
           list.push({
             token,
             label: ic.friendlyName || token,

@@ -33,6 +33,25 @@ export interface NavigationInventoryEntry {
   hostRef: string;
   kind?: 'subShell' | 'plugin';
   icon?: string;
+  order?: number;
+}
+
+export const CONSOLE_NAVIGATION_BAND_ORDER = ['운영 Operate', '구축 Build', '전달 Deliver', '지능 Intelligence'] as const;
+
+function bandRank(value: string): number {
+  const rank = CONSOLE_NAVIGATION_BAND_ORDER.indexOf(value as typeof CONSOLE_NAVIGATION_BAND_ORDER[number]);
+  return rank < 0 ? CONSOLE_NAVIGATION_BAND_ORDER.length : rank;
+}
+
+export function compareNavigationInventoryEntries(left: NavigationInventoryEntry, right: NavigationInventoryEntry): number {
+  const band = bandRank(left.navBand) - bandRank(right.navBand)
+    || (bandRank(left.navBand) === CONSOLE_NAVIGATION_BAND_ORDER.length
+      ? left.navBand.localeCompare(right.navBand)
+      : 0);
+  if (band) return band;
+  const leftOrder = Number.isInteger(left.order) && Number(left.order) >= 0 ? Number(left.order) : Number.MAX_SAFE_INTEGER;
+  const rightOrder = Number.isInteger(right.order) && Number(right.order) >= 0 ? Number(right.order) : Number.MAX_SAFE_INTEGER;
+  return leftOrder - rightOrder || left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
 }
 
 const ID = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -125,7 +144,7 @@ export function buildConsoleNavigationSnapshot(
     .map((entry) => [entry.id, entry]));
   const seen = new Set<string>();
   const items: ConsoleNavigationItem[] = [];
-  for (const inventory of inventoryEntries) {
+  for (const inventory of [...inventoryEntries].sort(compareNavigationInventoryEntries)) {
     const registry = activeById.get(inventory.id);
     if (!registry || seen.has(inventory.id)) continue;
     if (inventory.kind !== 'subShell' || inventory.hostRef !== 'main') continue;

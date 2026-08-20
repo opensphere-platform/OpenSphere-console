@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
-const { extensionInstallTransition } = require('./controller');
+const { extensionInstallTransition, navigationSettingsPatch, navigationOrderPlan } = require('./controller');
 
 const extensionPackage = (kind = 'subShell', hostRef = 'main') => ({
   metadata: { name: 'cluster-manager' },
@@ -145,4 +145,38 @@ test('Backend serving readiness and verified-session outage cache are dependency
 test('DUPA runtime image contains every local controller module', () => {
   const dockerfile = read('backend', 'dupa-control', 'Dockerfile');
   assert.match(dockerfile, /COPY foundation-establishment\.js \/app\/foundation-establishment\.js/);
+});
+
+test('first-level navigation settings accept closed icon and optional label overrides', () => {
+  assert.deepEqual(navigationSettingsPatch({ icon: 'logo--gitlab', labelOverride: '  Source Control  ' }), {
+    ok: true,
+    nav: { icon: 'logo--gitlab', labelOverride: 'Source Control' },
+  });
+  assert.deepEqual(navigationSettingsPatch({ labelOverride: '   ' }), {
+    ok: true,
+    nav: { labelOverride: null },
+  });
+  assert.equal(navigationSettingsPatch({ icon: '<svg onload=alert(1)>' }).reason, 'InvalidNavigationIcon');
+  assert.equal(navigationSettingsPatch({ labelOverride: 'bad\nlabel' }).reason, 'InvalidNavigationLabel');
+  assert.equal(navigationSettingsPatch({ icon: 'application', authority: 'guest' }).reason, 'InvalidNavigationSettings');
+});
+
+test('navigation order is a closed permutation of installed Main Shell subShells', () => {
+  const packages = [
+    { metadata: { name: 'alpha' }, spec: { kind: 'subShell', hostRef: 'main' } },
+    { metadata: { name: 'beta' }, spec: { kind: 'subShell', hostRef: 'main' } },
+    { metadata: { name: 'nested' }, spec: { kind: 'plugin', hostRef: 'alpha' } },
+  ];
+  const registrations = [
+    { metadata: { name: 'alpha' } },
+    { metadata: { name: 'beta' } },
+    { metadata: { name: 'nested' } },
+  ];
+  assert.deepEqual(navigationOrderPlan(packages, registrations, ['beta', 'alpha']), {
+    ok: true,
+    items: [{ id: 'beta', order: 0 }, { id: 'alpha', order: 1 }],
+  });
+  assert.equal(navigationOrderPlan(packages, registrations, ['alpha']).reason, 'NavigationOrderInventoryMismatch');
+  assert.equal(navigationOrderPlan(packages, registrations, ['alpha', 'alpha']).reason, 'InvalidNavigationOrder');
+  assert.equal(navigationOrderPlan(packages, registrations, ['alpha', 'nested']).reason, 'NavigationOrderInventoryMismatch');
 });

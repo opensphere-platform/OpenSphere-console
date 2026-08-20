@@ -3,6 +3,7 @@ export interface ExtensionCatalogIdentity {
   displayName: string;
   kind: 'subShell' | 'plugin';
   hostRef: string;
+  nav?: { band?: string; labelOverride?: string; order?: number };
 }
 
 export interface ExtensionRegistrationIdentity {
@@ -27,7 +28,12 @@ export function buildExtensionManagementViews<TRegistration extends ExtensionReg
 ): ExtensionManagementViews<TRegistration> {
   const catalogByName = new Map(catalog.map((item) => [item.name, item]));
   const labelOf = (name: string) => catalogByName.get(name)?.displayName || name;
-  const byLabel = (left: TRegistration, right: TRegistration) => labelOf(left.name).localeCompare(labelOf(right.name));
+  const orderOf = (name: string) => {
+    const value = catalogByName.get(name)?.nav?.order;
+    return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : Number.MAX_SAFE_INTEGER;
+  };
+  const byLabel = (left: TRegistration, right: TRegistration) => orderOf(left.name) - orderOf(right.name)
+    || labelOf(left.name).localeCompare(labelOf(right.name));
   const subShells: TRegistration[] = [];
   const pluginsByHost = new Map<string, TRegistration[]>();
   const unclassified: TRegistration[] = [];
