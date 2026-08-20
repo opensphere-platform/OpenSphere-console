@@ -15,6 +15,8 @@ export class R2d2RiskService {
   readonly risk = signal<R2d2GlobalRisk>({ active: 0, severityRank: 0, state: 'unknown', observedAt: null });
   readonly routeIncidentCount = signal(0);
   private timer: ReturnType<typeof setInterval> | null = null;
+  private eventRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshInFlight: Promise<void> | null = null;
   private events: EventSource | null = null;
   private navigation: Subscription | null = null;
 
@@ -29,7 +31,7 @@ export class R2d2RiskService {
     this.timer = setInterval(() => void this.refresh(), 30_000);
     if (typeof EventSource !== 'undefined') {
       this.events = new EventSource('/api/oaa/incidents/stream', { withCredentials: true });
-      const update = () => void this.refresh();
+      const update = () => this.scheduleEventRefresh();
       for (const event of ['incident_detected','incident_activated','incident_severity_changed','incident_recovering','incident_resolved','incident_suspended','incident_resumed','snapshot-resync']) {
         this.events.addEventListener(event, update);
       }
@@ -41,13 +43,24 @@ export class R2d2RiskService {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.eventRefreshTimer) clearTimeout(this.eventRefreshTimer);
+    this.eventRefreshTimer = null;
     this.events?.close();
     this.events = null;
     this.navigation?.unsubscribe();
     this.navigation = null;
   }
 
-  async refresh(): Promise<void> {
+  refresh(): Promise<void> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    const request = this.loadRisk().finally(() => {
+      if (this.refreshInFlight === request) this.refreshInFlight = null;
+    });
+    this.refreshInFlight = request;
+    return request;
+  }
+
+  private async loadRisk(): Promise<void> {
     try {
       const response = await this.http.request('/api/oaa/operational/status', { cache: 'no-store' });
       if (!response.ok) {
@@ -57,6 +70,14 @@ export class R2d2RiskService {
       const value = await response.json() as { risk?: { active?: number; severityRank?: number }; graph?: { observedAt?: string | null }; flags?: { globalRisk?: boolean } };
       this.risk.set({ active: Number(value.risk?.active || 0), severityRank: Number(value.risk?.severityRank || 0), state: value.flags?.globalRisk ? 'known' : 'disabled', observedAt: value.graph?.observedAt || null });
     } catch { this.risk.update((value) => ({ ...value, state: 'degraded' })); }
+  }
+
+  private scheduleEventRefresh(): void {
+    if (this.eventRefreshTimer) return;
+    this.eventRefreshTimer = setTimeout(() => {
+      this.eventRefreshTimer = null;
+      void this.refresh();
+    }, 250);
   }
 
   private async refreshContext(route: string): Promise<void> {
