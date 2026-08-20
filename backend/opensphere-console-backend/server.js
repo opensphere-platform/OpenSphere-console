@@ -2640,6 +2640,118 @@ async function executeLocalEdgePlatformRelease(req, body = {}) {
   };
 }
 
+const PFSS_COMPONENT_TRUSTED_KEYS_FILE = String(process.env.PFSS_COMPONENT_TRUSTED_KEYS_FILE || '').trim();
+const PFSS_COMPONENT_TRUSTED_KEYS_CANONICAL_FILE = '/var/run/opensphere-dupa-trusted-keys/trusted-keys.json';
+const PFSS_COMPONENT_TRUSTED_KEY_ID = 'opensphere-edge-local-v1';
+
+// JSON.parse silently accepts duplicate object names. Trust documents must not:
+// an ambiguous keyId must never select a last-wins public key.
+function parseJsonWithoutDuplicateKeys(raw, label) {
+  if (typeof raw !== 'string') throw new Error(`${label} is not text`);
+  let offset = 0;
+  const whitespace = () => { while (/\s/.test(raw[offset] || '')) offset += 1; };
+  const string = () => {
+    const start = offset;
+    if (raw[offset] !== '"') throw new Error(`${label} has an invalid JSON string`);
+    offset += 1;
+    while (offset < raw.length) {
+      const character = raw[offset++];
+      if (character === '"') return JSON.parse(raw.slice(start, offset));
+      if (character === '\\') {
+        if (offset >= raw.length) break;
+        if (raw[offset] === 'u') offset += 5;
+        else offset += 1;
+      } else if (character < ' ') break;
+    }
+    throw new Error(`${label} has an invalid JSON string`);
+  };
+  const value = () => {
+    whitespace();
+    if (raw[offset] === '{') {
+      offset += 1; whitespace();
+      const object = {};
+      const keys = new Set();
+      if (raw[offset] === '}') { offset += 1; return object; }
+      while (true) {
+        whitespace(); const key = string();
+        if (keys.has(key)) throw new Error(`${label} contains a duplicate key: ${key}`);
+        keys.add(key); whitespace();
+        if (raw[offset++] !== ':') throw new Error(`${label} has an invalid JSON object`);
+        object[key] = value(); whitespace();
+        if (raw[offset] === '}') { offset += 1; return object; }
+        if (raw[offset++] !== ',') throw new Error(`${label} has an invalid JSON object`);
+      }
+    }
+    if (raw[offset] === '[') {
+      offset += 1; whitespace(); const array = [];
+      if (raw[offset] === ']') { offset += 1; return array; }
+      while (true) {
+        array.push(value()); whitespace();
+        if (raw[offset] === ']') { offset += 1; return array; }
+        if (raw[offset++] !== ',') throw new Error(`${label} has an invalid JSON array`);
+      }
+    }
+    if (raw[offset] === '"') return string();
+    const start = offset;
+    while (offset < raw.length && !/[\s,\]\}]/.test(raw[offset])) offset += 1;
+    try { return JSON.parse(raw.slice(start, offset)); }
+    catch { throw new Error(`${label} has an invalid JSON value`); }
+  };
+  const parsed = value(); whitespace();
+  if (offset !== raw.length) throw new Error(`${label} has trailing data`);
+  return parsed;
+}
+
+function pfssTrustedKeyUnavailable(message) {
+  const error = new Error(message);
+  error.code = 503;
+  return error;
+}
+
+function loadPfssTrustedPublicKeySpki() {
+  if (PFSS_COMPONENT_TRUSTED_KEYS_FILE !== PFSS_COMPONENT_TRUSTED_KEYS_CANONICAL_FILE) {
+    throw pfssTrustedKeyUnavailable('PFSS trusted-key file path is not canonical');
+  }
+  let document;
+  try {
+    document = parseJsonWithoutDuplicateKeys(
+      fs.readFileSync(PFSS_COMPONENT_TRUSTED_KEYS_FILE, 'utf8'),
+      'PFSS trusted-key document',
+    );
+  } catch (error) {
+    throw pfssTrustedKeyUnavailable(`PFSS trusted-key document is unavailable: ${error.message}`);
+  }
+  if (!document || typeof document !== 'object' || Array.isArray(document)
+    || Object.keys(document).length !== 1 || !Object.prototype.hasOwnProperty.call(document, 'trustedKeys')
+    || !document.trustedKeys || typeof document.trustedKeys !== 'object' || Array.isArray(document.trustedKeys)) {
+    throw pfssTrustedKeyUnavailable('PFSS trusted-key document schema is invalid');
+  }
+  const keys = document.trustedKeys;
+  for (const [keyId, spkiBase64] of Object.entries(keys)) {
+    if (!/^[a-z][a-z0-9.-]{2,127}$/.test(keyId) || typeof spkiBase64 !== 'string'
+      || !/^[A-Za-z0-9+/]+={0,2}$/.test(spkiBase64)) {
+      throw pfssTrustedKeyUnavailable('PFSS trusted-key entry is invalid');
+    }
+  }
+  const selected = keys[PFSS_COMPONENT_TRUSTED_KEY_ID];
+  if (typeof selected !== 'string') {
+    throw pfssTrustedKeyUnavailable(`PFSS trusted key ${PFSS_COMPONENT_TRUSTED_KEY_ID} is unavailable`);
+  }
+  let spki;
+  let publicKey;
+  try {
+    spki = Buffer.from(selected, 'base64');
+    if (spki.toString('base64') !== selected) throw new Error('non-canonical base64');
+    publicKey = createPublicKey({ key: spki, format: 'der', type: 'spki' });
+  } catch {
+    throw pfssTrustedKeyUnavailable('PFSS trusted key is not a valid SPKI');
+  }
+  if (publicKey.asymmetricKeyType !== 'ec' || publicKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1') {
+    throw pfssTrustedKeyUnavailable('PFSS trusted key is not P-256');
+  }
+  return selected;
+}
+
 async function executePfssLocalEdgePlatformRelease(req, body = {}) {
   const actor = await verifyLocalEdgeAutomation(req);
   const expected = [
@@ -2653,8 +2765,9 @@ async function executePfssLocalEdgePlatformRelease(req, body = {}) {
   }
   const reason = managementReason(body.reason);
   if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
-  const trustedSpki = String(process.env.PFSS_COMPONENT_PUBLIC_KEY_SPKI_BASE64 || '').trim();
-  if (!trustedSpki) throw { code: 503, msg: 'PFSS trusted P-256 SPKI is not configured' };
+  let trustedSpki;
+  try { trustedSpki = loadPfssTrustedPublicKeySpki(); }
+  catch (error) { throw { code: 503, msg: error.message }; }
   let publication;
   try {
     publication = validatePfssPublicationSubmission({

@@ -4,7 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { createHash, generateKeyPairSync, sign } = require('crypto');
+const vm = require('vm');
+const { createHash, createPublicKey, generateKeyPairSync, sign } = require('crypto');
 const {
   COMPONENT_REPOSITORIES,
   REQUIRED_COMPONENTS,
@@ -101,6 +102,86 @@ function signedPfssSubmission() {
     sourceRevision, components, componentPublication: binding, publicationDocument: document,
     publicationSignature, trustedSpki: spki.toString('base64'),
   };
+}
+
+function loadPfssTrustedKeyFromServer(raw, filePath = '/var/run/opensphere-dupa-trusted-keys/trusted-keys.json') {
+  const server = fs.readFileSync(path.join(directory, 'server.js'), 'utf8');
+  const start = server.indexOf('const PFSS_COMPONENT_TRUSTED_KEYS_FILE');
+  const end = server.indexOf('\nasync function executePfssLocalEdgePlatformRelease', start);
+  assert.ok(start >= 0 && end > start, 'PFSS trusted-key loader must remain an isolated pre-write boundary');
+  const context = {
+    Buffer,
+    Error,
+    JSON,
+    Object,
+    Array,
+    Set,
+    String,
+    createPublicKey,
+    fs: { readFileSync: () => raw },
+    process: { env: { PFSS_COMPONENT_TRUSTED_KEYS_FILE: filePath } },
+  };
+  vm.runInNewContext(`${server.slice(start, end)}; globalThis.result = loadPfssTrustedPublicKeySpki();`, context);
+  return context.result;
+}
+
+function pfssTrustProjectionFromBackendDeployment(yaml) {
+  const deployment = yaml.split(/^---$/m).find((document) => document.includes('kind: Deployment')
+    && document.includes('name: opensphere-console-backend'));
+  assert.ok(deployment, 'Console Backend Deployment is present');
+  const lines = deployment.split(/\r?\n/);
+  const between = (start, end) => {
+    const from = lines.findIndex((line) => line.trim() === start);
+    const to = lines.findIndex((line, index) => index > from && line.trim() === end);
+    assert.ok(from >= 0 && to > from, `${start} section is structurally present`);
+    return lines.slice(from + 1, to);
+  };
+  const mounts = [];
+  let mount;
+  for (const line of between('volumeMounts:', 'env:')) {
+    const name = line.match(/^            - name: (\S+)$/);
+    const field = line.match(/^              (mountPath|readOnly): (\S+)$/);
+    if (name) { mount = { name: name[1] }; mounts.push(mount); }
+    else if (field && mount) mount[field[1]] = field[2] === 'true' ? true : field[2] === 'false' ? false : field[2];
+  }
+  const volumes = [];
+  let volume;
+  for (const line of lines.slice(lines.findIndex((entry) => entry.trim() === 'volumes:') + 1)) {
+    if (/^---$/.test(line)) break;
+    const name = line.match(/^        - name: (\S+)$/);
+    const configMap = line.match(/^            name: (\S+)$/);
+    const item = line.match(/^              - \{ key: ([^,]+), path: ([^ }]+) \}$/);
+    if (name) { volume = { name: name[1] }; volumes.push(volume); }
+    else if (line.trim() === 'configMap:' && volume) volume.configMap = {};
+    else if (configMap && volume?.configMap) volume.configMap.name = configMap[1];
+    else if (item && volume?.configMap) {
+      volume.configMap.items ||= [];
+      volume.configMap.items.push({ key: item[1], path: item[2] });
+    }
+  }
+  const env = lines.find((line) => line.includes('PFSS_COMPONENT_TRUSTED_KEYS_FILE'));
+  const envPath = env?.match(/value: (\S+)\s*\}$/)?.[1];
+  return {
+    mounts: mounts.filter((entry) => entry.name.startsWith('pfss-')),
+    volumes: volumes.filter((entry) => entry.name.startsWith('pfss-')),
+    envPath,
+  };
+}
+
+function validatePfssTrustProjection(projection) {
+  assert.deepEqual(projection.mounts, [{
+    name: 'pfss-dupa-trusted-keys',
+    mountPath: '/var/run/opensphere-dupa-trusted-keys',
+    readOnly: true,
+  }], 'PFSS has exactly one read-only trusted-key mount');
+  assert.deepEqual(projection.volumes, [{
+    name: 'pfss-dupa-trusted-keys',
+    configMap: {
+      name: 'dupa-trusted-keys',
+      items: [{ key: 'trusted-keys.json', path: 'trusted-keys.json' }],
+    },
+  }], 'PFSS has exactly one projected trusted-key ConfigMap item');
+  assert.equal(projection.envPath, '/var/run/opensphere-dupa-trusted-keys/trusted-keys.json');
 }
 
 function releaseLock() {
@@ -289,6 +370,25 @@ test('PFSS rejects closed-schema, type, digest, and source substitutions before 
   }
 });
 
+test('PFSS selects only one P-256 key from the mounted DUPA trusted-key document and fails closed', () => {
+  const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const spki = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+  const valid = JSON.stringify({ trustedKeys: {
+    'opensphere-plugins-v1': spki,
+    'opensphere-edge-local-v1': spki,
+  } });
+  assert.equal(loadPfssTrustedKeyFromServer(valid), spki);
+  assert.throws(
+    () => loadPfssTrustedKeyFromServer(JSON.stringify({ trustedKeys: { 'opensphere-plugins-v1': spki } })),
+    (error) => error.code === 503 && /unavailable/.test(error.message),
+    'missing edge key maps to the PFSS endpoint\'s 503 fail-closed boundary',
+  );
+  assert.throws(() => loadPfssTrustedKeyFromServer(`{"trustedKeys":{"opensphere-edge-local-v1":"${spki}","opensphere-edge-local-v1":"${spki}"}}`), /duplicate key/);
+  assert.throws(() => loadPfssTrustedKeyFromServer('{"trustedKeys":'), /invalid JSON|unavailable/);
+  assert.throws(() => loadPfssTrustedKeyFromServer(JSON.stringify({ trustedKeys: { 'opensphere-edge-local-v1': spki }, extra: true })), /schema/);
+  assert.throws(() => loadPfssTrustedKeyFromServer(valid, '/tmp/trusted-keys.json'), /path is not canonical/);
+});
+
 test('only localhost edge component apply uses the Docker Desktop automation boundary', () => {
   const base = releaseLock();
   const component = buildComponentReleaseLock(base, pfssEvidence());
@@ -374,7 +474,10 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(server, /\['reason', 'sourceRevision', 'components'\]/);
   assert.match(server, /\/api\/platform\/releases\/local-edge-automation\/pfss/);
   assert.match(server, /validatePfssPublicationSubmission/);
-  assert.match(server, /PFSS_COMPONENT_PUBLIC_KEY_SPKI_BASE64/);
+  assert.match(server, /PFSS_COMPONENT_TRUSTED_KEYS_FILE/);
+  assert.match(server, /loadPfssTrustedPublicKeySpki/);
+  assert.match(server, /code: 503/);
+  assert.doesNotMatch(server, /PFSS_COMPONENT_PUBLIC_KEY_SPKI_BASE64/);
   assert.match(server, /idempotencyKey: publication\.operationId/);
   assert.match(server, /platformReleaseRuntimeStatus/);
   assert.match(server, /supportedChannels: \['edge'\]/);
@@ -423,6 +526,27 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(ui, /최고 관리자 MFA로 승인·병합/);
   assert.match(ui, /this\.status\(\)\?\.execution\.ready/);
   assert.match(ui, /component apply는 최고 관리자 MFA 정책/);
+});
+
+test('PFSS workload trust projection rejects all five manifest mutations', () => {
+  const deploy = fs.readFileSync(path.join(directory, 'deploy.yaml'), 'utf8');
+  const projection = pfssTrustProjectionFromBackendDeployment(deploy);
+  validatePfssTrustProjection(projection);
+  const mutations = [
+    ['wrong ConfigMap name', (value) => { value.volumes[0].configMap.name = 'wrong-trusted-keys'; }],
+    ['wrong ConfigMap key', (value) => { value.volumes[0].configMap.items[0].key = 'wrong-keys.json'; }],
+    ['wrong mount path', (value) => { value.mounts[0].mountPath = '/tmp/trusted-keys'; }],
+    ['writable mount', (value) => { value.mounts[0].readOnly = false; }],
+    ['extra PFSS volume and mount', (value) => {
+      value.mounts.push(structuredClone(value.mounts[0]));
+      value.volumes.push(structuredClone(value.volumes[0]));
+    }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const candidate = structuredClone(projection);
+    mutate(candidate);
+    assert.throws(() => validatePfssTrustProjection(candidate), assert.AssertionError, name);
+  }
 });
 
 test('session preference release publishes only the Console and Backend component pair', () => {
