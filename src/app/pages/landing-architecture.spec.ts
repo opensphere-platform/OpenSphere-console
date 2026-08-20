@@ -124,6 +124,7 @@ test('foundation concepts remain readable and contained across viewport widths',
 });
 
 test('foundation concepts enlarge body copy without changing the title line', () => {
+  assert.match(foundationSource, /<h2 id="foundation-docs-title">원자적 구성을 지탱하는 네 가지 설계 계약<\/h2>/);
   assert.match(
     foundationSource,
     /\.foundation-heading h2,\.section-title h3 \{[^}]*font-size:1\.28rem/,
@@ -138,6 +139,34 @@ test('foundation concepts enlarge body copy without changing the title line', ()
   );
   assert.match(foundationSource, /\.definition-card>p \{[^}]*font-size:var\(--fd-body\)/);
   assert.match(foundationSource, /\.definition-card dd \{[^}]*font-size:var\(--fd-detail\)/);
+});
+
+test('foundation concepts use the approved local pictogram set without a runtime CDN dependency', () => {
+  const pictograms = [
+    'cloud-infrastructure-management.svg',
+    'connected-ecosystem.svg',
+    'control-tower.svg',
+    'ai-governance-lifecycle-factsheet.svg',
+  ];
+  for (const pictogram of pictograms) {
+    assert.match(foundationModel, new RegExp(`/assets/pictograms/${pictogram.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}`));
+    assert.equal(
+      fs.existsSync(new URL(`../../../public/assets/pictograms/${pictogram}`, import.meta.url)),
+      true,
+      `${pictogram} must ship with the Console image`,
+    );
+    const svg = fs.readFileSync(
+      new URL(`../../../public/assets/pictograms/${pictogram}`, import.meta.url),
+      'utf8',
+    );
+    assert.match(svg, /^<svg[^>]+viewBox="0 0 32 32"/);
+    assert.doesNotMatch(svg, /<script|<foreignObject|\son\w+=|(?:href|src)=/i);
+  }
+  assert.equal((foundationSource.match(/class="tab-pictogram"/g) || []).length, 1);
+  assert.equal((foundationSource.match(/class="section-pictogram"/g) || []).length, 4);
+  assert.doesNotMatch(`${foundationSource}\n${foundationModel}`, /pictograms\.opl\.io\.kr|cdn\.statically\.io/);
+  assert.match(foundationSource, /class="tab-pictogram"[\s\S]{0,120}width="44" height="44"/);
+  assert.equal((foundationSource.match(/class="section-pictogram"[\s\S]{0,160}width="70" height="70"/g) || []).length, 4);
 });
 
 test('Service Stack documentation defines HISS CBSS PFSS owners and hard boundaries', () => {
