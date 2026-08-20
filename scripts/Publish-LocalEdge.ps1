@@ -14,81 +14,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $componentMode = $PSBoundParameters.ContainsKey('Components')
-
-function Invoke-Checked {
-  if ($args.Count -lt 1) {
-    throw 'Invoke-Checked requires an executable.'
-  }
-  $executable = [string]$args[0]
-  $arguments = @($args | Select-Object -Skip 1)
-  & $executable @arguments
-  if ($LASTEXITCODE -ne 0) {
-    throw "$executable failed with exit code $LASTEXITCODE"
-  }
-}
-
-function Get-CanonicalTextSha256 {
-  param([Parameter(Mandatory)][string]$Path)
-  $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
-  $sha = [Security.Cryptography.SHA256]::Create()
-  try {
-    return 'sha256:' + ([BitConverter]::ToString(
-      $sha.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($text))
-    )).Replace('-', '').ToLowerInvariant()
-  } finally {
-    $sha.Dispose()
-  }
-}
-
-function Get-RemoteDigest {
-  param([Parameter(Mandatory)][string]$Reference)
-
-  $previousErrorActionPreference = $ErrorActionPreference
-  try {
-    # A missing tag is the expected first-publication state. Windows
-    # PowerShell can promote native stderr to a terminating ErrorRecord while
-    # the script-wide preference is Stop, so inspect it under Continue and
-    # decide from the native exit code below.
-    $ErrorActionPreference = 'Continue'
-    $output = & docker buildx imagetools inspect $Reference 2>$null
-    $inspectExitCode = $LASTEXITCODE
-  } finally {
-    $ErrorActionPreference = $previousErrorActionPreference
-  }
-  if ($inspectExitCode -ne 0) {
-    return $null
-  }
-  $line = $output | Where-Object { $_ -match '^Digest:\s+(sha256:[0-9a-f]{64})$' } | Select-Object -First 1
-  if (-not $line) {
-    throw "Could not parse registry digest for $Reference"
-  }
-  return ([regex]::Match($line, 'sha256:[0-9a-f]{64}')).Value
-}
-
-function Set-RemoteTag {
-  param(
-    [Parameter(Mandatory)][string]$Repository,
-    [Parameter(Mandatory)][string]$Digest,
-    [Parameter(Mandatory)][string]$Tag,
-    [switch]$Immutable
-  )
-
-  $target = "${Repository}:$Tag"
-  $existing = Get-RemoteDigest -Reference $target
-  if ($Immutable -and $existing -and $existing -ne $Digest) {
-    throw "Immutable tag collision: $target is $existing, expected $Digest"
-  }
-  if ($existing -ne $Digest) {
-    # A single-platform local edge digest must remain the tag digest. Without
-    # --prefer-index=false Buildx wraps it in a new OCI index and silently
-    # violates the immutable digest recorded in the release BOM.
-    Invoke-Checked docker buildx imagetools create --prefer-index=false --tag $target "${Repository}@${Digest}"
-  }
-  $actual = Get-RemoteDigest -Reference $target
-  if ($actual -ne $Digest) {
-    throw "Tag verification failed: $target is $actual, expected $Digest"
-  }
-}
+Import-Module (Join-Path $PSScriptRoot 'local-edge-publication-core.psm1') -Force -ErrorAction Stop
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $SourceRevision) {
@@ -136,13 +62,9 @@ if ($dirty) {
   throw 'The Console worktree must be clean before publishing local edge.'
 }
 
-$epochText = (& git -C $repoRoot show -s --format=%ct $SourceRevision).Trim()
-if ($epochText -notmatch '^\d+$') {
-  throw "Could not resolve commit timestamp for $SourceRevision"
-}
-$seoulOffset = [TimeSpan]::FromHours(9)
-$releaseTag = [DateTimeOffset]::FromUnixTimeSeconds([long]$epochText).ToOffset($seoulOffset).ToString('yyyyMMddHHmm')
-$localTag = "local-$($SourceRevision.Substring(0, 12))"
+$releaseIdentity = Get-LocalEdgeReleaseIdentity -RepositoryPath $repoRoot -SourceRevision $SourceRevision
+$releaseTag = [string]$releaseIdentity.releaseTag
+$localTag = [string]$releaseIdentity.immutableTag
 
 $platformRoot = Split-Path $repoRoot -Parent
 $workspace = Join-Path $platformRoot ".codex-tmp\local-edge-$($SourceRevision.Substring(0, 12))"
@@ -171,17 +93,6 @@ if ($sdkSourceRevision -notmatch '^[0-9a-f]{40}$') {
   throw 'The governed Console sdk-source.lock is invalid.'
 }
 
-function Get-FileSha256 {
-  param([Parameter(Mandatory)][string]$Path)
-  $stream = [IO.File]::OpenRead($Path)
-  $sha = [Security.Cryptography.SHA256]::Create()
-  try {
-    return 'sha256:' + ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
-  } finally {
-    $sha.Dispose()
-    $stream.Dispose()
-  }
-}
 New-Item -ItemType Directory -Path $sdkCheckout | Out-Null
 Invoke-Checked git -C $sdkCheckout init
 Invoke-Checked git -C $sdkCheckout remote add origin $SdkRepository
@@ -222,55 +133,6 @@ if ($backendSelected) {
   Write-Host "[setup] $setupSourceRevision"
 }
 
-function Assert-LocalEdgeImageMetadata {
-  param(
-    [Parameter(Mandatory)][string]$Repository,
-    [Parameter(Mandatory)][string]$Digest,
-    [Parameter(Mandatory)][string]$ExpectedSourceRevision,
-    [Parameter(Mandatory)][string]$ExpectedReleaseTag,
-    [Parameter(Mandatory)][string]$ExpectedPlatform,
-    [string]$ExpectedSdkSourceRevision = ''
-  )
-
-  $reference = "${Repository}@${Digest}"
-  $raw = & docker buildx imagetools inspect --format '{{json .Image}}' $reference
-  if ($LASTEXITCODE -ne 0) {
-    throw "OCI metadata inspection failed for $reference"
-  }
-  try {
-    $image = ($raw -join "`n") | ConvertFrom-Json
-  } catch {
-    throw "OCI metadata inspection returned invalid JSON for ${reference}: $($_.Exception.Message)"
-  }
-  $actualPlatform = "$([string]$image.os)/$([string]$image.architecture)"
-  if ($actualPlatform -ne $ExpectedPlatform) {
-    throw "OCI platform mismatch for ${reference}: $actualPlatform, expected $ExpectedPlatform"
-  }
-  $expectedLabels = [ordered]@{
-    'io.opensphere.channel' = 'edge'
-    'io.opensphere.source-revision' = $ExpectedSourceRevision
-    'io.opensphere.release-tag' = $ExpectedReleaseTag
-    'org.opencontainers.image.version' = $ExpectedReleaseTag
-    'opensphere.io/build-authority' = 'localhost'
-    'opensphere.io/release-class' = 'pre-ga'
-    'opensphere.io/ga-eligible' = 'false'
-  }
-  if ($ExpectedSdkSourceRevision) {
-    $expectedLabels['io.opensphere.sdk-source-revision'] = $ExpectedSdkSourceRevision
-  }
-  foreach ($entry in $expectedLabels.GetEnumerator()) {
-    $property = $image.config.Labels.PSObject.Properties[$entry.Key]
-    $actual = if ($property) { [string]$property.Value } else { '' }
-    if ($actual -ne [string]$entry.Value) {
-      throw "OCI label mismatch for ${reference}: $($entry.Key)='$actual', expected '$($entry.Value)'"
-    }
-  }
-  $remoteDigest = Get-RemoteDigest -Reference $reference
-  if ($remoteDigest -ne $Digest) {
-    throw "OCI digest mismatch for ${reference}: $remoteDigest, expected $Digest"
-  }
-  Write-Host "[preflight] $reference metadata and $ExpectedPlatform runtime verified"
-}
 
 Write-Host '[step 02/06] Declare the CLI platforms this host can build'
 # The macOS CLI reaches the Keychain through cgo against Security.framework, so it
@@ -416,16 +278,26 @@ $isExactOsShellPublication = $images.Count -eq $osShellComponentKeys.Count `
   -and @($osShellComponentKeys | Where-Object { -not $requestedComponents.Contains($_) }).Count -eq 0
 if ($isExactOsShellPublication) {
   $cliManifestEvidencePath = Join-Path $metadataRoot 'opensphere-os-cli-index.json'
+  $runtimeBinaryEvidencePath = Join-Path $metadataRoot 'opensphere-os-shell-runtime-os'
   $cliEvidenceContainer = "opensphere-cli-evidence-$([guid]::NewGuid().ToString('N'))"
+  $runtimeEvidenceContainer = "opensphere-runtime-evidence-$([guid]::NewGuid().ToString('N'))"
   $cliEvidenceContainerCreated = $false
+  $runtimeEvidenceContainerCreated = $false
   try {
     Invoke-Checked docker create --name $cliEvidenceContainer `
       "$Registry/opensphere-os-cli@$($digests.cliArtifacts)"
     $cliEvidenceContainerCreated = $true
     Invoke-Checked docker cp "${cliEvidenceContainer}:/srv/index.json" $cliManifestEvidencePath
+    Invoke-Checked docker create --name $runtimeEvidenceContainer `
+      "$Registry/opensphere-os-shell-runtime@$($digests.osShellRuntime)"
+    $runtimeEvidenceContainerCreated = $true
+    Invoke-Checked docker cp "${runtimeEvidenceContainer}:/usr/local/bin/os" $runtimeBinaryEvidencePath
   } finally {
     if ($cliEvidenceContainerCreated) {
       Invoke-Checked docker container rm $cliEvidenceContainer
+    }
+    if ($runtimeEvidenceContainerCreated) {
+      Invoke-Checked docker container rm $runtimeEvidenceContainer
     }
   }
   $cliManifestEvidence = Get-Content -Raw -LiteralPath $cliManifestEvidencePath | ConvertFrom-Json
@@ -438,6 +310,11 @@ if ($isExactOsShellPublication) {
       }).Count) {
     throw 'The exact cliArtifacts image does not contain a canonical signed local-edge manifest'
   }
+  $linuxAmd64Cli = @($cliManifestEvidence.links | Where-Object { [string]$_.os -eq 'linux' -and [string]$_.arch -eq 'amd64' })
+  $runtimeBinarySha256 = Get-FileSha256 -Path $runtimeBinaryEvidencePath
+  if ($linuxAmd64Cli.Count -ne 1 -or [string]$linuxAmd64Cli[0].sha256 -ne $runtimeBinarySha256.Substring('sha256:'.Length)) {
+    throw 'The exact runtime image /usr/local/bin/os differs from the signed linux/amd64 CLI manifest entry'
+  }
   $runtimeTemplatePath = Join-Path $consoleCheckout 'backend\os-shell-control\runtime-template.js'
   $osShellReleaseArtifact = [ordered]@{
     cliManifest = [ordered]@{
@@ -446,6 +323,11 @@ if ($isExactOsShellPublication) {
       sha256 = Get-FileSha256 -Path $cliManifestEvidencePath
       signatureAlgorithm = [string]$cliManifestEvidence.signature.algorithm
       keyId = [string]$cliManifestEvidence.signature.keyId
+    }
+    runtimeBinary = [ordered]@{
+      image = "$Registry/opensphere-os-shell-runtime@$($digests.osShellRuntime)"
+      path = '/usr/local/bin/os'
+      sha256 = $runtimeBinarySha256
     }
     runtimeTemplate = [ordered]@{
       path = 'backend/os-shell-control/runtime-template.js'

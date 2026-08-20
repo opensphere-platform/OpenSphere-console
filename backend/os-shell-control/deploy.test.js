@@ -17,6 +17,7 @@ const backendServer = fs.readFileSync(path.join(__dirname, '..', 'opensphere-con
 const backendDeploy = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
 const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 const runtimeDockerfile = fs.readFileSync(path.join(__dirname, '..', 'os-cli', 'Dockerfile.runtime'), 'utf8');
+const cliDockerfile = fs.readFileSync(path.join(__dirname, '..', 'os-cli', 'Dockerfile'), 'utf8');
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
 const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && doc.metadata?.name === name && (!namespace || doc.metadata?.namespace === namespace));
 
@@ -299,7 +300,10 @@ test('local-edge deploy binds every component-only override through exact source
   assert.match(deployScript, /backend = \[string\]\$backendEvidence[.]sourceRevision/);
   assert.match(deployScript, /console = \[string\]\$consoleEvidence[.]sourceRevision/);
   assert.match(deployScript, /osShellControl = \[string\]\$controlEvidence[.]sourceRevision/);
-  assert.match(deployScript, /osShellRuntime = \[string\]\$runtimeEvidence[.]sourceRevision/);
+  assert.match(deployScript, /\$effectiveRuntimeSourceRevision = if \(\$CliRuntimePublicationEvidence\)/);
+  assert.match(deployScript, /osShellRuntime = \$effectiveRuntimeSourceRevision/);
+  assert.match(deployScript, /CLI\/runtime override session policy revision differs from the canonical base publication/);
+  assert.match(deployScript, /cliRuntimePublicationEvidence = \$cliRuntimePublicationPath/);
   assert.match(deployScript, /Set-BackendOsShellActivation -Image \$backend[.]image -SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend'[\s\S]*?-SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
   assert.match(deployScript, /Assert-ImageMetadata -Repository \$consoleRepository[\s\S]*?-SourceRevision \$consoleEvidence[.]sourceRevision/);
@@ -318,7 +322,8 @@ test('local-edge deploy binds every component-only override through exact source
   assert.doesNotMatch(toolingBlock, /backend[\\/]opensphere-console-backend[\\/](Dockerfile|local-edge-automation-token[.]test[.]js)/);
   const boundary = await import(pathToFileURL(path.join(__dirname, '..', '..', 'scripts', 'os-shell-runtime-override-boundary.mjs')).href);
   const declaredToolingPaths = [...toolingBlock.matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
-  assert.deepEqual(declaredToolingPaths, [...boundary.deploymentToolingPaths].sort());
+  assert.deepEqual(declaredToolingPaths, [...boundary.deploymentToolingPaths,
+    'scripts/Publish-LocalEdgeOsShellArtifacts.ps1', 'scripts/local-edge-publication-core.psm1'].sort());
   assert.ok(declaredToolingPaths.includes('scripts/Invoke-OsShellFeatureOperation.ps1'));
   const runtimePaths = ['backend/os-cli/cmd/os-shell-runtime/agent.go', 'backend/os-cli/Dockerfile.runtime'];
   const backendPaths = [
@@ -355,8 +360,19 @@ test('local-edge deploy binds every component-only override through exact source
   assert.match(deployScript, /linux-userns\+rlimit-nproc\+namespace-resourcequota/);
   assert.doesNotMatch(publisher, /linux-rlimit-nproc-fixed-uid\+namespace-resourcequota/);
   assert.doesNotMatch(deployScript, /linux-rlimit-nproc-fixed-uid\+namespace-resourcequota/);
-  assert.match(runtimeDockerfile, /-X main[.]webShellAgentSocketPath=\/run\/opensphere-shell\/channel\/agent[.]sock/);
-  assert.match(runtimeDockerfile, /-X main[.]webShellAgentPublicKeyPath=\/run\/opensphere-shell\/channel\/agent-public-key[.]pem/);
+  const cliBuildProjection = (source, output) => {
+    const match = source.match(/CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="([^"]+)" -o \/out\/[^ ]+ \.\/cmd\/os(?=\s|$)/);
+    assert.ok(match, `missing canonical linux/amd64 CLI build projection for ${output}`);
+    return `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="${match[1]}" -o ${output} ./cmd/os`;
+  };
+  const canonicalCliBuild = cliBuildProjection(cliDockerfile, '<cli-output>');
+  const assertExactCliBuildProjection = (source) => assert.equal(cliBuildProjection(source, '<cli-output>'), canonicalCliBuild);
+  assertExactCliBuildProjection(runtimeDockerfile);
+  const runtimeCliBuild = cliBuildProjection(runtimeDockerfile, '<cli-output>');
+  assert.doesNotMatch(runtimeCliBuild, /webShellAgent(Socket|PublicKey)Path/);
+  assert.throws(() => assertExactCliBuildProjection(runtimeDockerfile.replace(
+    'main.version=0.8.2', 'main.version=0.8.2 -X main.webShellAgentSocketPath=/tmp/forged.sock',
+  )), assert.AssertionError);
 });
 
 test('0062 owner operation is projected-SA, bidirectional, signed-intent-first and has no argv browser credential', () => {

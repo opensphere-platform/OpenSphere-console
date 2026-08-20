@@ -22,19 +22,21 @@ import (
 )
 
 const (
-	webShellAgentContract   = "opensphere-web-shell-agent/v1"
-	webShellContextContract = "opensphere-web-shell-context/v2"
-	webShellAgentTransport  = "__opensphere_web_shell_agent_transport__"
-	webShellAgentMaxMessage = 12 << 20
-	webShellProxyMaxBody    = 1 << 20
-	webShellProxyMaxReply   = 8 << 20
+	webShellAgentContract             = "opensphere-web-shell-agent/v1"
+	webShellContextContract           = "opensphere-web-shell-context/v2"
+	webShellAgentTransport            = "__opensphere_web_shell_agent_transport__"
+	webShellAgentMaxMessage           = 12 << 20
+	webShellProxyMaxBody              = 1 << 20
+	webShellProxyMaxReply             = 8 << 20
+	webShellAgentSocketDefaultPath    = "/run/opensphere-shell/channel/agent.sock"
+	webShellAgentPublicKeyDefaultPath = "/run/opensphere-shell/channel/agent-public-key.pem"
 )
 
 // These fixed, non-environment paths are part of the operator-interactive
 // runtime template. Tests replace them in-process; users cannot select a
 // different authority with argv, environment variables, or ~/.os/config.json.
-var webShellAgentSocketPath = "/run/opensphere-shell/agent.sock"
-var webShellAgentPublicKeyPath = "/run/opensphere-shell/agent-public-key.pem"
+var webShellAgentSocketPath = webShellAgentSocketDefaultPath
+var webShellAgentPublicKeyPath = webShellAgentPublicKeyDefaultPath
 var webShellAgentNow = time.Now
 var webShellConsoleAPIURL = "https://opensphere-shell-console-api.opensphere-console.svc.cluster.local:8445"
 
