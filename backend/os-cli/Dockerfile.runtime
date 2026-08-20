@@ -1,4 +1,6 @@
 FROM docker.io/library/golang@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7c3a92bfcc4e7ed55b18c2 AS build
+ARG CLI_UPDATE_TRUST_ID
+ARG CLI_UPDATE_TRUST_PUBLIC
 WORKDIR /src
 RUN apk add --no-cache bash && adduser -S -D -u 65531 runtime-test
 COPY go.mod go.sum ./
@@ -9,9 +11,7 @@ RUN go test ./cmd/os-shell-runtime ./cmd/os && \
     OPENSPHERE_SHELL_PID_STRESS_TEST=true su runtime-test -s /bin/sh -c '/tmp/os-shell-runtime.test -test.run=TestPTYProcessLimitForkStress -test.count=1' && \
     CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/opensphere-os-shell-runtime.exe ./cmd/os-shell-runtime && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.1.0" -o /out/opensphere-os-shell-runtime ./cmd/os-shell-runtime && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
-      -ldflags="-s -w -X main.version=0.8.2 -X main.webShellAgentSocketPath=/run/opensphere-shell/channel/agent.sock -X main.webShellAgentPublicKeyPath=/run/opensphere-shell/channel/agent-public-key.pem" \
-      -o /out/os ./cmd/os
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.2 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/os ./cmd/os
 
 FROM docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 ARG OPENSPHERE_VERSION=dev
