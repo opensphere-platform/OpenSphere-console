@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-test('Extension Host reports per-module loading and activates a host before background children', () => {
+test('Extension Host reports per-route loading and leaves unrelated guests inactive', () => {
   const extensionHost = fs.readFileSync(
     path.join(__dirname, '..', '..', 'src', 'app', 'core', 'extension-host.service.ts'),
     'utf8',
@@ -35,10 +35,10 @@ test('Extension Host reports per-module loading and activates a host before back
   assert.match(extensionHost, /Boolean\(customElements\.get\(projection\.element\)\)/);
   assert.match(extensionHost, /child projection route가 canonical PFSS 경로가 아님/);
 
-  assert.match(extensionHost, /const requestedChild = routeTarget\.childId/);
-  assert.match(extensionHost, /requestedChild[\s\S]*this\.loadOne\(requestedChild/);
-  assert.match(extensionHost, /this\.loadState\.set\('ready'\);[\s\S]*this\.startBackgroundChildActivation\(backgroundChildren\)/);
-  assert.match(extensionHost, /CHILD_EXTENSION_ACTIVATION_CONCURRENCY/);
+  assert.match(extensionHost, /await this\.ensureRequestedRoute\(window\.location\.pathname\)/);
+  assert.match(extensionHost, /if \(!target\.childId\) return;[\s\S]*this\.loadOne\(child/);
+  assert.doesNotMatch(extensionHost, /startBackgroundChildActivation|backgroundChildren|CHILD_EXTENSION_ACTIVATION_CONCURRENCY/);
+  assert.match(extensionHost, /readonly navigationSnapshot = signal<ConsoleNavigationSnapshot \| null>/);
   assert.match(extensionHost, /hostProjectionDeclarations\.set\(pluginId/);
   assert.match(extensionHost, /this\.activeModules\.has\(projection\.id\)/);
   assert.doesNotMatch(extensionHost, /const childEntries = manifest\.kind/);

@@ -15,23 +15,27 @@ const extensionPackage = (kind = 'subShell', hostRef = 'main') => ({
 });
 const extensionRegistration = (desiredState) => ({ spec: { desiredState } });
 
-test('management inventory survives inactive serving but never becomes first-level navigation', () => {
+test('atomic navigation projection survives inactive serving without activating guest code', () => {
   const host = read('src', 'app', 'core', 'extension-host.service.ts');
+  const projectionStore = read('src', 'app', 'core', 'extension-projection.store.ts');
+  const navigation = read('src', 'app', 'core', 'console-navigation-snapshot.ts');
   const page = read('src', 'app', 'pages', 'plugin-host.ts');
   const shell = read('src', 'app', 'os', 'os-shell.ts');
   assert.match(host, /readonly managementInventory = signal<ManagementInventoryItem\[\]>/);
-  assert.match(host, /\/api\/admin\/plugins\/catalog/);
-  assert.match(host, /\/api\/admin\/plugins\/registrations/);
+  assert.match(projectionStore, /catalogSnapshot\(\)/);
+  assert.match(projectionStore, /registrationsSnapshot\(\)/);
   assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
-  assert.match(host, /readonly primarySubShellIds = signal<ReadonlySet<string>>/);
-  assert.match(host, /\(entry\.componentKind \?\? entry\.kind\) === 'subShell'/);
-  assert.match(host, /\(entry\.hostRef \?\? 'main'\) === 'main'/);
-  assert.match(shell, /this\.ext\.pages\(\)\.filter\(\(page\) => this\.ext\.primarySubShellIds\(\)\.has\(page\.id\)\)/);
+  assert.match(navigation, /\(entry\.componentKind \?\? entry\.kind\) === 'subShell'/);
+  assert.match(navigation, /\(entry\.hostRef \?\? 'main'\) === 'main'/);
+  assert.match(host, /readonly navigationItems = computed/);
+  assert.match(shell, /for \(const p of this\.ext\.navigationItems\(\)\)/);
+  assert.match(host, /await this\.ensureRequestedRoute\(window\.location\.pathname\)/);
+  assert.doesNotMatch(host, /startBackgroundChildActivation|backgroundChildren/);
   assert.match(page, /MODULE MANAGEMENT/);
   assert.match(page, /Installed/);
   assert.match(page, /Activated/);
   assert.match(page, /Ready/);
-  assert.doesNotMatch(host, /managementInventory[\s\S]{0,300}loadOne\(/);
+  assert.doesNotMatch(navigation, /loadOne|activate\(/);
 });
 
 test('Delivery evidence reads only its owner runtime and canonical Application', () => {

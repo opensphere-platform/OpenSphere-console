@@ -581,15 +581,15 @@ export class Landing {
   });
 
   readonly extCards = computed<IndexLink[]>(() =>
-    this.ext.pages().map((page) => ({
-      path: routeForPlugin(page.id),
+    this.ext.navigationItems().map((page) => ({
+      path: page.route,
       title: page.title,
       sub: `${page.navBand} · ${page.id}`,
     })),
   );
 
   readonly perspectiveCards = computed(() => {
-    const registered = new Set(this.ext.pages().map((page) => page.id));
+    const registered = new Set(this.ext.navigationItems().map((page) => page.id));
     return PERSPECTIVES.map((perspective) => ({
       ...perspective,
       live: registered.has(perspective.pluginId),

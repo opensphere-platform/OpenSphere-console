@@ -79,8 +79,8 @@ export class SearchService {
   /** 즉시 로컬 인덱스(정적 + 동적 플러그인 페이지 + 워크스페이스) — "이동" 표면 */
   readonly index = computed<SearchResult[]>(() => [
     ...this.STATIC,
-    ...this.ext.pages().map((p) => ({
-      label: p.title, sublabel: `플러그인 · ${p.navBand}`, path: `/p/${p.id}`, kind: 'plugin' as const,
+    ...this.ext.navigationItems().map((p) => ({
+      label: p.title, sublabel: `SubShell · ${p.navBand}`, path: p.route, kind: 'plugin' as const,
     })),
     ...this.psp.allowedWorkspaces().map((w) => ({
       label: `${w.label} Workspace`, sublabel: w.desc, path: '/', kind: 'workspace' as const,
