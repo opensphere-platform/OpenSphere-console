@@ -9,6 +9,8 @@ export interface FoundationConceptTab {
   label: string;
   eyebrow: string;
   summary: string;
+  pictogram: string;
+  pictogramAlt: string;
 }
 
 export interface ArchitectureDefinition {
@@ -34,24 +36,32 @@ export const FOUNDATION_CONCEPT_TABS: readonly FoundationConceptTab[] = [
     label: 'Service Stacks',
     eyebrow: 'SS · HISS · CBSS · PFSS',
     summary: '실행 기반, Console 권위, 공유 Platform capability를 서로 다른 lifecycle owner로 분리합니다.',
+    pictogram: '/assets/pictograms/cloud-infrastructure-management.svg',
+    pictogramAlt: 'Cloud infrastructure connected to three managed service nodes',
   },
   {
     id: 'dupa',
     label: 'DUPA',
     eyebrow: 'Dynamic UI Plugin Architecture',
     summary: 'Main Shell, subShell, plugin과 Agent Runtime의 동적 결합 경계를 정의합니다.',
+    pictogram: '/assets/pictograms/connected-ecosystem.svg',
+    pictogramAlt: 'Independent components connected as one ecosystem',
   },
   {
     id: 'control-pillars',
     label: 'Control Pillars',
     eyebrow: 'OAA · OSC · OSS',
     summary: 'Agent, CLI, Shell이라는 세 접근면을 하나의 owner·operation·evidence 계약으로 연결합니다.',
+    pictogram: '/assets/pictograms/control-tower.svg',
+    pictogramAlt: 'One control point connected to three operating surfaces',
   },
   {
     id: 'ai-lifecycle',
     label: 'AI Lifecycle',
     eyebrow: 'Model · GPU · Agent · Replacement',
     summary: '모델의 반입부터 학습, 검증, serving, 업무 배치, 교체와 폐기까지를 통제합니다.',
+    pictogram: '/assets/pictograms/ai-governance-lifecycle-factsheet.svg',
+    pictogramAlt: 'AI governance lifecycle recorded on a factsheet',
   },
 ] as const;
 

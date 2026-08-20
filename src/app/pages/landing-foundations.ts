@@ -43,9 +43,13 @@ import {
             (click)="selectTab(tab.id)"
             (keydown)="onTabKeydown($event, index)"
           >
-            <span>0{{ index + 1 }}</span>
-            <strong>{{ tab.label }}</strong>
-            <small>{{ tab.eyebrow }}</small>
+            <span class="tab-pictogram" aria-hidden="true">
+              <img [src]="tab.pictogram" alt="" width="44" height="44" />
+            </span>
+            <span class="tab-copy">
+              <strong>{{ tab.label }}</strong>
+              <small>{{ tab.eyebrow }}</small>
+            </span>
           </button>
         }
       </div>
@@ -59,10 +63,14 @@ import {
             aria-labelledby="foundation-tab-service-stacks"
           >
             <section class="document-intro">
-              <div>
-                <span class="section-index">SS</span>
-                <p class="foundation-eyebrow">Service Stack</p>
-                <h3>같이 설치되는 묶음이 아니라, 하나의 운영 책임으로 닫히는 서비스 단위</h3>
+              <div class="document-intro-heading">
+                <span class="section-pictogram">
+                  <img [src]="tabs[0].pictogram" [alt]="tabs[0].pictogramAlt" width="70" height="70" />
+                </span>
+                <div>
+                  <p class="foundation-eyebrow">Service Stack</p>
+                  <h3>같이 설치되는 묶음이 아니라, 하나의 운영 책임으로 닫히는 서비스 단위</h3>
+                </div>
               </div>
               <p>
                 Service Stack은 repository나 화면의 분류가 아닙니다. 독립된 lifecycle owner, 권한,
@@ -174,10 +182,14 @@ import {
         @case ('dupa') {
           <article class="foundation-panel" id="foundation-panel-dupa" role="tabpanel" aria-labelledby="foundation-tab-dupa">
             <section class="document-intro">
-              <div>
-                <span class="section-index">D</span>
-                <p class="foundation-eyebrow">Dynamic UI Plugin Architecture</p>
-                <h3>독립 출하 단위를 신뢰 계약으로 조립하는 Console 확장 구조</h3>
+              <div class="document-intro-heading">
+                <span class="section-pictogram">
+                  <img [src]="tabs[1].pictogram" [alt]="tabs[1].pictogramAlt" width="70" height="70" />
+                </span>
+                <div>
+                  <p class="foundation-eyebrow">Dynamic UI Plugin Architecture</p>
+                  <h3>독립 출하 단위를 신뢰 계약으로 조립하는 Console 확장 구조</h3>
+                </div>
               </div>
               <p>
                 DUPA는 iframe sandbox나 frontend bundler가 아닙니다. 독립 image의 subShell·plugin을 선언하고,
@@ -264,7 +276,12 @@ import {
         @case ('control-pillars') {
           <article class="foundation-panel" id="foundation-panel-control-pillars" role="tabpanel" aria-labelledby="foundation-tab-control-pillars">
             <section class="document-intro">
-              <div><span class="section-index">3</span><p class="foundation-eyebrow">OpenSphere control surfaces</p><h3>세 기둥은 서로 다른 UX를 제공하지만 같은 구조 하중을 받습니다</h3></div>
+              <div class="document-intro-heading">
+                <span class="section-pictogram">
+                  <img [src]="tabs[2].pictogram" [alt]="tabs[2].pictogramAlt" width="70" height="70" />
+                </span>
+                <div><p class="foundation-eyebrow">OpenSphere control surfaces</p><h3>세 기둥은 서로 다른 UX를 제공하지만 같은 구조 하중을 받습니다</h3></div>
+              </div>
               <p>OAA, OSC, OSS가 각자 lifecycle과 권위를 가지면 세 개의 control plane이 됩니다. OpenSphere는 이들을 동일한 capability owner, identity, operation, audit라는 보로 연결합니다.</p>
             </section>
 
@@ -310,7 +327,12 @@ import {
         @case ('ai-lifecycle') {
           <article class="foundation-panel" id="foundation-panel-ai-lifecycle" role="tabpanel" aria-labelledby="foundation-tab-ai-lifecycle">
             <section class="document-intro">
-              <div><span class="section-index">AI</span><p class="foundation-eyebrow">Agent & model lifecycle</p><h3>모델을 “호출하는 기능”이 아니라 교체 가능한 운영 자원으로 관리합니다</h3></div>
+              <div class="document-intro-heading">
+                <span class="section-pictogram">
+                  <img [src]="tabs[3].pictogram" [alt]="tabs[3].pictogramAlt" width="70" height="70" />
+                </span>
+                <div><p class="foundation-eyebrow">Agent & model lifecycle</p><h3>모델을 “호출하는 기능”이 아니라 교체 가능한 운영 자원으로 관리합니다</h3></div>
+              </div>
               <p>OpenSphere의 AI lifecycle은 학습만 뜻하지 않습니다. data/model provenance, GPU 할당, evaluation gate, serving binding, Agent 업무 투입, 관측과 안전한 교체까지 하나의 연속된 owner/evidence 계약입니다.</p>
             </section>
 
@@ -370,17 +392,19 @@ import {
     .foundation-heading>p,.section-title>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:.8rem; line-height:1.6; text-align:right; }
     .foundation-eyebrow { margin:0 0 .45rem; color:var(--os-accent); font-size:.58rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
     .foundation-tabs { display:grid; grid-template-columns:repeat(auto-fit,minmax(13rem,1fr)); gap:1px; width:100%; min-width:0; border:1px solid var(--fd-line); background:var(--fd-line); }
-    .foundation-tabs button { display:grid; grid-template-columns:auto minmax(0,1fr); grid-template-rows:auto auto; gap:.18rem .65rem; min-width:0; min-height:5rem; padding:.85rem; border:0; background:var(--os-canvas); color:inherit; font:inherit; text-align:left; cursor:pointer; }
+    .foundation-tabs button { display:grid; grid-template-columns:3.5rem minmax(0,1fr); align-items:center; gap:.8rem; min-width:0; min-height:6.4rem; padding:.85rem; border:0; background:var(--os-canvas); color:inherit; font:inherit; text-align:left; cursor:pointer; }
     .foundation-tabs button:hover { background:var(--os-surface-1); }
     .foundation-tabs button.active { box-shadow:inset 0 3px var(--os-accent); background:var(--os-accent-subtle); }
     .foundation-tabs button:focus-visible { outline:2px solid var(--os-accent); outline-offset:-2px; }
-    .foundation-tabs span { grid-row:1/span 2; color:var(--os-accent); font:.62rem var(--os-font-mono); }
-    .foundation-tabs strong { overflow-wrap:anywhere; font-size:.82rem; line-height:1.35; }
-    .foundation-tabs small { overflow-wrap:anywhere; color:var(--os-ink-muted); font-size:.65rem; line-height:1.45; }
+    .tab-pictogram,.section-pictogram { display:grid; place-items:center; background:#f4f4f4; }
+    .tab-pictogram { width:3.5rem; height:3.5rem; }
+    .tab-copy { display:grid; gap:.22rem; min-width:0; }
+    .foundation-tabs strong { overflow-wrap:anywhere; font-size:.88rem; line-height:1.35; }
+    .foundation-tabs small { overflow-wrap:anywhere; color:var(--os-ink-muted); font-size:.7rem; line-height:1.45; }
     .foundation-panel { width:100%; min-width:0; max-width:100%; border:1px solid var(--fd-line); border-top:0; overflow:hidden; background:var(--os-canvas); line-height:1.55; }
     .document-intro { align-items:start; padding:1.35rem 1.25rem; border-bottom:1px solid var(--fd-line); border-left:4px solid var(--os-accent); background:var(--os-surface-1); color:var(--os-ink); }
-    .document-intro>div { display:grid; grid-template-columns:auto minmax(0,1fr); gap:0 .8rem; min-width:0; max-width:54rem; }
-    .document-intro .section-index { grid-row:1/span 2; color:var(--os-accent); font:300 2rem/1 var(--os-font-mono); }
+    .document-intro>.document-intro-heading { display:grid; grid-template-columns:5.6rem minmax(0,1fr); align-items:center; gap:1rem; min-width:0; }
+    .section-pictogram { width:5.6rem; height:5.6rem; }
     .document-intro .foundation-eyebrow { color:var(--os-accent); }
     .document-intro h3 { margin:0; overflow-wrap:anywhere; font-size:clamp(1.05rem,1.7vw,1.4rem); font-weight:500; line-height:1.35; }
     .document-intro>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:.8rem; line-height:1.7; }
