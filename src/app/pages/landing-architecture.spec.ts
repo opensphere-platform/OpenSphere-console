@@ -123,6 +123,23 @@ test('foundation concepts remain readable and contained across viewport widths',
   assert.doesNotMatch(foundationSource, /background:#161616|background:#393939/);
 });
 
+test('foundation concepts enlarge body copy without changing the title line', () => {
+  assert.match(
+    foundationSource,
+    /\.foundation-heading h2,\.section-title h3 \{[^}]*font-size:1\.28rem/,
+  );
+  assert.match(
+    foundationSource,
+    /\.foundation-heading>p,\.section-title>p \{[^}]*font-size:\.8rem/,
+  );
+  assert.match(
+    foundationSource,
+    /--fd-body:\.88rem; --fd-detail:\.8rem; --fd-label:\.68rem; --fd-card-title:\.94rem/,
+  );
+  assert.match(foundationSource, /\.definition-card>p \{[^}]*font-size:var\(--fd-body\)/);
+  assert.match(foundationSource, /\.definition-card dd \{[^}]*font-size:var\(--fd-detail\)/);
+});
+
 test('Service Stack documentation defines HISS CBSS PFSS owners and hard boundaries', () => {
   for (const term of [
     'Host Infrastructure Service Stack',
