@@ -130,7 +130,14 @@ import {
               <div class="definition-grid definition-grid-three compact-cards">
                 @for (component of cbssComponents; track component.id) {
                   <section class="definition-card">
-                    <header><span>{{ component.id }}</span><h4>{{ component.name }}</h4></header>
+                    <header>
+                      @if (component.productLogo) {
+                        <img [src]="component.productLogo" [alt]="component.productLogoAlt ?? component.id" width="36" height="36" style="object-fit:contain" />
+                      } @else {
+                        <span>{{ component.id }}</span>
+                      }
+                      <h4>{{ component.name }}</h4>
+                    </header>
                     <p>{{ component.role }}</p>
                     <dl>
                       <div><dt>Boundary</dt><dd>{{ component.excludes.join(' · ') }}</dd></div>
@@ -396,7 +403,7 @@ import {
     .foundation-tabs button:hover { background:var(--os-surface-1); }
     .foundation-tabs button.active { box-shadow:inset 0 3px var(--os-accent); background:var(--os-accent-subtle); }
     .foundation-tabs button:focus-visible { outline:2px solid var(--os-accent); outline-offset:-2px; }
-    .tab-pictogram,.section-pictogram { display:grid; place-items:center; background:#f4f4f4; }
+    .tab-pictogram,.section-pictogram { display:grid; place-items:center; }
     .tab-pictogram { width:3.5rem; height:3.5rem; }
     .tab-copy { display:grid; gap:.22rem; min-width:0; }
     .foundation-tabs strong { overflow-wrap:anywhere; font-size:.88rem; line-height:1.35; }
