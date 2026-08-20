@@ -396,7 +396,7 @@ import {
     .foundation-tabs button:hover { background:var(--os-surface-1); }
     .foundation-tabs button.active { box-shadow:inset 0 3px var(--os-accent); background:var(--os-accent-subtle); }
     .foundation-tabs button:focus-visible { outline:2px solid var(--os-accent); outline-offset:-2px; }
-    .tab-pictogram,.section-pictogram { display:grid; place-items:center; background:#f4f4f4; }
+    .tab-pictogram,.section-pictogram { display:grid; place-items:center; }
     .tab-pictogram { width:3.5rem; height:3.5rem; }
     .tab-copy { display:grid; gap:.22rem; min-width:0; }
     .foundation-tabs strong { overflow-wrap:anywhere; font-size:.88rem; line-height:1.35; }

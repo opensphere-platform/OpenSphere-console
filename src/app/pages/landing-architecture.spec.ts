@@ -165,6 +165,7 @@ test('foundation concepts use the approved local pictogram set without a runtime
   assert.equal((foundationSource.match(/class="tab-pictogram"/g) || []).length, 1);
   assert.equal((foundationSource.match(/class="section-pictogram"/g) || []).length, 4);
   assert.doesNotMatch(`${foundationSource}\n${foundationModel}`, /pictograms\.opl\.io\.kr|cdn\.statically\.io/);
+  assert.doesNotMatch(foundationSource, /\.tab-pictogram,\.section-pictogram \{[^}]*background:/);
   assert.match(foundationSource, /class="tab-pictogram"[\s\S]{0,120}width="44" height="44"/);
   assert.equal((foundationSource.match(/class="section-pictogram"[\s\S]{0,160}width="70" height="70"/g) || []).length, 4);
 });
