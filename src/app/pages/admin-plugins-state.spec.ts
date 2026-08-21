@@ -35,8 +35,8 @@ test('an activation failure remains visible even when navigation stays available
 test('loading and failures are reported per extension and by the actual failed stage', () => {
   assert.match(source, /const pluginState = this\.ext\.pluginLoadState\(r\.name\)/);
   assert.match(source, /pluginState === 'queued'/);
-  assert.match(source, /'탐색 스냅샷 확인 중' : '요청 시 적재'/);
-  assert.match(source, /label: hostRef === 'main' \? '요청 화면 적재 중' : '요청 Plugin 적재 중'/);
+  assert.match(source, /label: '탐색 스냅샷 확인 중'/);
+  assert.match(source, /label: '요청 화면 적재 중'/);
   for (const label of ['Manifest 검증 실패', '서명 검증 실패', '실행 파일 적재 실패', '화면 Asset 적재 실패', 'UI 활성화 실패']) {
     assert.ok(source.includes(label), `${label} 단계 표시가 필요하다`);
   }
@@ -166,9 +166,10 @@ test('a forced projection refresh queues one fresh read behind stale in-flight w
 });
 
 test('inactive routes are healthy on-demand lifecycle states, not UI or Host failures', () => {
-  assert.match(source, /label: childState === 'queued' \? '요청 시 적재' : '요청 Plugin 적재 중'/);
+  assert.match(source, /label: 'Host 메뉴 노출'/);
   assert.match(source, /화면은 요청 시 적재/);
   assert.match(source, /tone: this\.ext\.pluginLoadState\(r\.name\) === 'queued' \? 'success' : 'warning'/);
+  assert.doesNotMatch(source, /label: childState === 'queued' \? '요청 시 적재'/);
   assert.doesNotMatch(source, /백그라운드 순서를 기다리는 중|background 순서를 기다리는 중/);
 });
 
@@ -187,7 +188,7 @@ test('PFSS child plugins keep their host ownership across routes and navigation'
   assert.match(routes, /path: 'p\/postgres', redirectTo: 'pfss\/postgres'/);
   assert.match(routes, /matcher: pfssHostMatcher, component: PluginHost, data: \{ pluginId: 'foundation' \}/);
   assert.match(extensionHost, /hostRef: item\.hostRef \|\| 'main'/);
-  assert.match(extensionHost, /this\.activeModules\.has\(projection\.id\)/);
+  assert.match(extensionHost, /declarations\.filter\(\(projection\) => approvedChildren\.has\(projection\.id\)\)/);
   assert.doesNotMatch(shell, /this\.ext\.managementInventory\(\)/);
   assert.match(source, /const projection = hostRef === 'main' \? undefined : this\.ext\.hostChildProjection\(hostRef, r\.name\)/);
   assert.match(source, /if \(projection\) return projection\.route/);
@@ -196,14 +197,14 @@ test('PFSS child plugins keep their host ownership across routes and navigation'
   assert.match(perspectives, /id === 'foundation' \? '\/pfss\/foundation' : `\/p\/\$\{id\}`/);
 });
 
-test('a host may declare a child route early but Console exposes it only after verified activation', () => {
+test('a verified host declaration exposes Registry-approved navigation before child execution', () => {
   assert.match(extensionHost, /readonly hostChildProjections = signal/);
   assert.match(extensionHost, /reportProjections: reportChildProjections/);
   assert.match(extensionHost, /hostProjectionDeclarations\.set\(pluginId/);
-  assert.match(extensionHost, /Boolean\(customElements\.get\(projection\.element\)\)/);
-  assert.match(extensionHost, /this\.activeModules\.has\(projection\.id\)/);
-  assert.match(source, /HostProjectionMissing/);
-  assert.match(source, /label: 'Host 연동 실패'/);
+  assert.match(extensionHost, /approvedChildren\.has\(projection\.id\)/);
+  assert.doesNotMatch(extensionHost, /Boolean\(customElements\.get\(projection\.element\)\)/);
+  assert.doesNotMatch(extensionHost, /approvedChildren\.has\(projection\.id\)[\s\S]{0,120}this\.activeModules\.has\(projection\.id\)/);
+  assert.match(source, /label: 'Host 메뉴 노출'/);
   assert.match(source, /this\.ext\.hostChildProjection\(hostRef, r\.name\)/);
   assert.match(source, /\{\{ menuState\(r\)\.reason \}\}/);
 });

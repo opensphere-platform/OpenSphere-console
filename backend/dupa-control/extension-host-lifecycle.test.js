@@ -32,7 +32,7 @@ test('Extension Host reports per-route loading and leaves unrelated guests inact
   assert.match(extensionHost, /this\.verifyAssets\(artifactBase, e\.manifest, manifest\.assets\)/);
   assert.match(extensionHost, /reportProjections: reportChildProjections/);
   assert.match(extensionHost, /child projection element 이름이 유효하지 않음/);
-  assert.match(extensionHost, /Boolean\(customElements\.get\(projection\.element\)\)/);
+  assert.match(extensionHost, /declarations\.filter\(\(projection\) => approvedChildren\.has\(projection\.id\)\)/);
   assert.match(extensionHost, /child projection route가 canonical PFSS 경로가 아님/);
 
   assert.match(extensionHost, /await this\.ensureRequestedRoute\(window\.location\.pathname\)/);
@@ -40,7 +40,7 @@ test('Extension Host reports per-route loading and leaves unrelated guests inact
   assert.doesNotMatch(extensionHost, /startBackgroundChildActivation|backgroundChildren|CHILD_EXTENSION_ACTIVATION_CONCURRENCY/);
   assert.match(extensionHost, /readonly navigationSnapshot = signal<ConsoleNavigationSnapshot \| null>/);
   assert.match(extensionHost, /hostProjectionDeclarations\.set\(pluginId/);
-  assert.match(extensionHost, /this\.activeModules\.has\(projection\.id\)/);
+  assert.doesNotMatch(extensionHost, /approvedChildren\.has\(projection\.id\)[\s\S]{0,120}this\.activeModules\.has\(projection\.id\)/);
   assert.doesNotMatch(extensionHost, /const childEntries = manifest\.kind/);
   assert.match(extensionHost, /isTransientExtensionLoadError\(err\)/);
   assert.match(extensionHost, /this\.clearPluginFailure\(e\.id\)/);

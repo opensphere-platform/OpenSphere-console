@@ -182,10 +182,11 @@ export class ExtensionHostService {
    */
   readonly pluginLoadStates = signal<Record<string, PluginLoadState>>({});
   /**
-   * Child bundle activation is not the same as a usable product surface.
-   * A subShell must explicitly acknowledge the canonical route and the
-   * Custom Element it compiled for each child before Console reports that
-   * child as available.
+   * Host-owned presentation metadata. A verified subShell acknowledges each
+   * Registry-approved child route and compiled Custom Element name here.
+   * The declaration makes navigation available without executing the child;
+   * loadOne() still performs signature, digest, permission and activation
+   * checks only when that child route is selected.
    */
   readonly hostChildProjections = signal<Record<string, readonly HostChildProjection[]>>({});
   readonly pages = signal<PluginPage[]>([]);
@@ -586,12 +587,13 @@ export class ExtensionHostService {
     const approvedChildren = new Set(this.registryEntries
       .filter((entry) => (entry.hostRef ?? 'main') === hostRef)
       .map((entry) => entry.id));
-    const ready = declarations.filter((projection) =>
-      approvedChildren.has(projection.id)
-      && this.activeModules.has(projection.id)
-      && Boolean(customElements.get(projection.element)),
-    );
-    this.hostChildProjections.update((items) => ({ ...items, [hostRef]: ready }));
+    // A verified host declaration is presentation metadata, not proof that the
+    // child guest has already executed. Keeping it behind activeModules made
+    // menus disappear until the user opened the very route that the menu was
+    // supposed to expose. Execution remains fail-closed in loadOne(); here we
+    // only project Registry-approved child routes declared by the verified host.
+    const approved = declarations.filter((projection) => approvedChildren.has(projection.id));
+    this.hostChildProjections.update((items) => ({ ...items, [hostRef]: approved }));
   }
 
   private setPluginLoadState(pluginId: string, state: PluginLoadState): void {

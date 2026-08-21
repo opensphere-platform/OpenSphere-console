@@ -7,6 +7,7 @@ const { configuredProviderModel, lexicalKnowledgeQuery, requiresLiveAgentTools }
 const { createConversationStore } = require('./conversation-store');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
+const { projectExtensionPresentation } = require('./extension-presentation');
 const {
   KubernetesLeaseElector,
   OperationalGraphStore,
@@ -3487,6 +3488,7 @@ function controlToolsSystemMessage() {
       `Action binding schema: ${bindings.schema}. Action binding IDs: ${bindings.bindings.map((b) => b.id).join(', ')}.`,
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/osaa/tools/k8s/*.',
       'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HIS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
+      'When Registry Plugins are described as 요청 시 적재 or missing from a Host screen, call the extension presentation status tool. Distinguish host-owned menu eligibility from route-scoped child UI activation, and never restart, reinstall, or enable entries that Registry reports as healthy.',
       'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HIS is telemetry authority.',
       'Platform recovery status is structured evidence, not proof that a restore executor exists. The current owner supports sanitized status and isolated-drill planning only; never claim that backup restore can be executed unless drill-request and evidence-promote capabilities are both advertised.',
       'The provider may call only the permission-filtered read tools supplied with this request. Treat their returned data as current evidence and cite what was actually observed.',
@@ -3807,6 +3809,17 @@ function osaaActionBindings() {
       riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
       permission: { roles: ['authenticated'], scopes: ['osaa:system:read'] },
       audit: { eventType: 'registry-read', targetTemplate: 'opensphere/registry' },
+      citations: [{ sourceId: 'opensphere-docs/constitution-0002-registry', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0002-레지스트리.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:extension-presentation-status',
+      namespace: 'opensphere', sourceId: 'opensphere-docs/constitution-0002-registry',
+      sectionId: 'manual-section:opensphere-docs/constitution-0002-registry#registry-api',
+      title: 'Diagnose Registry Plugin menu and lazy UI presentation state', intent: 'diagnose-extension-presentation',
+      toolId: 'osaa.extension.presentation.status', controlPlane: 'dupa-registry-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: ['authenticated'], scopes: ['osaa:system:read'] },
+      audit: { eventType: 'extension-presentation-status-read', targetTemplate: 'opensphere/extensions/presentation' },
       citations: [{ sourceId: 'opensphere-docs/constitution-0002-registry', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0002-레지스트리.md' }],
     }),
     mk({
@@ -4381,6 +4394,14 @@ function osaaToolManifest() {
         endpoint: toolEndpoint('POST', '/api/osaa/tools/registry'),
         riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
         auditEventType: 'registry-read',
+      },
+      {
+        id: 'osaa.extension.presentation.status',
+        name: 'Diagnose Registry Plugin host navigation and lazy UI activation',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/osaa/tools/extensions/presentation'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'extension-presentation-status-read',
       },
       {
         id: 'osaa.foundation.status',
@@ -5147,6 +5168,7 @@ const TOOL_PERMISSION = {
   'osaa.observability.logs.query': 'osaa.logs.read',
   'osaa.observability.traces.query': 'osaa.logs.read',
   'osaa.registry.read': 'osaa.system.read',
+  'osaa.extension.presentation.status': 'osaa.system.read',
   'osaa.foundation.status': 'osaa.system.read',
   'osaa.foundation.postgres.status': 'osaa.system.read',
   'osaa.foundation.postgres.plan': 'osaa.action.execute.high',
@@ -5836,6 +5858,9 @@ async function executeActionBinding(body = {}, actor = null) {
     case 'osaa.registry.read':
       result = await registryRead(actor);
       break;
+    case 'osaa.extension.presentation.status':
+      result = await extensionPresentationStatusRead(actor);
+      break;
     case 'osaa.foundation.status':
       result = await foundationStatusRead(actor);
       break;
@@ -6380,6 +6405,7 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     limit: { type: 'integer', minimum: 1, maximum: 100 },
   });
   add('osaa.system.read', 'get_opensphere_registry', 'Read the current Main Shell native Registry projection from its owning DUPA API. Treat it as discovery and activation state, not Kubernetes runtime truth.', {});
+  add('osaa.system.read', 'get_extension_presentation_status', 'Diagnose Registry Plugin presentation. Distinguish Host-owned menu eligibility from route-scoped child UI activation; use this when the UI says 요청 시 적재 or a hosted plugin menu appears missing. This tool does not claim browser DOM visibility.', {});
   add('osaa.system.read', 'get_foundation_status', 'Read Foundation models, engine states, consumer claims, bindings, and controller readiness from the Foundation owner API.', {});
   add('osaa.system.read', 'get_foundation_postgres_status', 'Read the PFSS data.sql.postgres owner projection: approved runtimes and plans, managed namespaces, PostgresClaims, and realized clusters. Use this before discussing PostgreSQL provisioning; do not confuse the postgres UI plugin Deployment with a database cluster.', {});
   add('osaa.action.execute.high', 'plan_foundation_postgres_cluster', 'Validate a complete PFSS PostgreSQL cluster request through the typed owner Admission dry-run. Returns the exact human approval phrase and postcondition; it does not create the cluster.', {
@@ -7197,11 +7223,27 @@ async function catalogEntitySearch(input, actor) {
 async function registryRead(actor) {
   assertPermission(actor, 'osaa.system.read');
   const registry = redactProjection(await dupaGet('/api/v1/registry', actor));
-  const count = Array.isArray(registry?.items)
-    ? registry.items.length
-    : (Array.isArray(registry?.registrations) ? registry.registrations.length : null);
+  const count = Array.isArray(registry?.plugins)
+    ? registry.plugins.length
+    : (Array.isArray(registry?.items)
+      ? registry.items.length
+      : (Array.isArray(registry?.registrations) ? registry.registrations.length : null));
   audit(actor, 'registry-read', 'opensphere/registry', 'ok', count === null ? 'registry projection read' : `${count} entries`);
   return { action: 'registry-read', authority: 'Main Shell DUPA owner API', count, registry };
+}
+
+async function extensionPresentationStatusRead(actor) {
+  assertPermission(actor, 'osaa.system.read');
+  const registry = redactProjection(await dupaGet('/api/v1/registry', actor));
+  const projection = projectExtensionPresentation(registry);
+  audit(
+    actor,
+    'extension-presentation-status-read',
+    'opensphere/extensions/presentation',
+    'ok',
+    `${projection.summary.menuEligible}/${projection.summary.total} menu eligible; ${projection.summary.blocked} blocked`,
+  );
+  return { action: 'extension-presentation-status-read', ...projection };
 }
 
 async function foundationStatusRead(actor) {
@@ -7383,6 +7425,10 @@ async function executeAgentTool(name, args, actor, context = {}) {
     case 'get_opensphere_registry':
       assertPermission(actor, 'osaa.system.read');
       result = await registryRead(actor);
+      break;
+    case 'get_extension_presentation_status':
+      assertPermission(actor, 'osaa.system.read');
+      result = await extensionPresentationStatusRead(actor);
       break;
     case 'get_foundation_status':
       assertPermission(actor, 'osaa.system.read');
@@ -8742,6 +8788,12 @@ const server = http.createServer(async (req, res) => {
       const actor = await verifyAuthed(req);
       assertPermission(actor, 'osaa.system.read');
       return json(res, 200, await registryRead(actor));
+    }
+    if (url.pathname === '/api/osaa/tools/extensions/presentation' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.system.read');
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await extensionPresentationStatusRead(actor));
     }
     if (url.pathname === '/api/osaa/tools/foundation/status' && req.method === 'POST') {
       const actor = await verifyAuthed(req);

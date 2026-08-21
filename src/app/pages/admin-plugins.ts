@@ -1616,7 +1616,8 @@ export class AdminPlugins implements OnInit {
     }
   }
   menuState(r: Registration): { visible: boolean; label: string; reason: string } {
-    const hostRef = this.catalogItem(r.name)?.hostRef || 'main';
+    const catalog = this.catalogItem(r.name);
+    const hostRef = catalog?.hostRef || 'main';
     const loadedPage = this.ext.pages().find((page) => page.id === r.name);
     if (loadedPage) return { visible: true, label: '메뉴 노출', reason: `${loadedPage.navBand} · /p/${r.name}` };
     const failure = this.ext.failures().find((item) => item.id === r.name);
@@ -1630,18 +1631,45 @@ export class AdminPlugins implements OnInit {
     }
     if (failure) return { visible: false, label: this.extensionLoadFailureLabel(failure.stage), reason: failure.error };
     const pluginState = this.ext.pluginLoadState(r.name);
+    if (hostRef !== 'main') {
+      if (pluginState === undefined && this.ext.loadState() === 'loading') {
+        return { visible: false, label: 'Registry 확인 중', reason: '설치 inventory와 Registry를 병렬로 확인하는 중' };
+      }
+      if (r.status.phase === 'Failed') return { visible: false, label: '서비스 차단', reason: this.reasonText(r.status.reason) || '보안 검증 실패' };
+      if (r.status.phase !== 'Activated') return { visible: false, label: '서비스 대기', reason: `Registration ${r.status.phase || '미보고'} 상태` };
+      if (!catalog?.nav) return { visible: false, label: '메뉴 미선언', reason: 'UIPluginPackage spec.nav가 없음' };
+
+      const host = this.registrations().find((item) => item.name === hostRef);
+      if (!host || host.desiredState !== 'Enabled' || host.status.phase !== 'Activated') {
+        return {
+          visible: false,
+          label: 'Host 서비스 대기',
+          reason: host ? `${hostRef} Registration ${host.status.phase || '미보고'} 상태` : `${hostRef} Registration을 찾을 수 없음`,
+        };
+      }
+
+      const projection = this.ext.hostChildProjection(hostRef, r.name);
+      const route = projection?.route || this.extensionPageRoute(r);
+      if (pluginState === 'loading') {
+        return { visible: true, label: 'Host 메뉴 노출 · 화면 적재 중', reason: `${route} · 선택한 child UI를 검증·활성화하는 중` };
+      }
+      if (pluginState === 'ready') {
+        return { visible: true, label: 'Host 메뉴 사용 가능', reason: `${route} · ${projection?.element || 'child UI 활성화 완료'}` };
+      }
+      return { visible: true, label: 'Host 메뉴 노출', reason: `${route} · 화면은 선택 시 적재` };
+    }
     if (pluginState === 'queued') {
       return {
         visible: false,
-        label: hostRef === 'main' ? '탐색 스냅샷 확인 중' : '요청 시 적재',
-        reason: hostRef === 'main' ? 'Registry와 탐색 projection을 동기화하는 중' : `${hostRef}가 이 Plugin 경로를 열 때 검증·활성화`,
+        label: '탐색 스냅샷 확인 중',
+        reason: 'Registry와 탐색 projection을 동기화하는 중',
       };
     }
     if (pluginState === 'loading') {
       return {
         visible: false,
-        label: hostRef === 'main' ? '요청 화면 적재 중' : '요청 Plugin 적재 중',
-        reason: hostRef === 'main' ? '현재 요청한 SubShell만 검증·활성화하는 중' : `${hostRef}가 현재 요청한 child plugin을 검증·활성화하는 중`,
+        label: '요청 화면 적재 중',
+        reason: '현재 요청한 SubShell만 검증·활성화하는 중',
       };
     }
     if (pluginState === undefined && this.ext.loadState() === 'loading') {
@@ -1649,31 +1677,7 @@ export class AdminPlugins implements OnInit {
     }
     if (r.status.phase === 'Failed') return { visible: false, label: '서비스 차단', reason: this.reasonText(r.status.reason) || '보안 검증 실패' };
     if (r.status.phase !== 'Activated') return { visible: false, label: '서비스 대기', reason: `Registration ${r.status.phase || '미보고'} 상태` };
-    if (!this.catalogItem(r.name)?.nav) return { visible: false, label: '메뉴 미선언', reason: 'UIPluginPackage spec.nav가 없음' };
-    if (hostRef !== 'main') {
-      const childState = this.ext.pluginLoadState(r.name);
-      if (childState === 'ready') {
-        const projection = this.ext.hostChildProjection(hostRef, r.name);
-        if (projection) {
-          return { visible: true, label: 'Host 메뉴 사용 가능', reason: `${projection.route} · ${projection.element}` };
-        }
-        return {
-          visible: false,
-          label: 'Host 연동 실패',
-          reason: `HostProjectionMissing — ${hostRef}가 ${this.extensionPageRoute(r)} 관리면을 승인하지 않았습니다. Host 업데이트가 필요합니다.`,
-        };
-      }
-      if (childState === 'queued' || childState === 'loading') {
-        return {
-          visible: false,
-          label: childState === 'queued' ? '요청 시 적재' : '요청 Plugin 적재 중',
-          reason: childState === 'queued'
-            ? `${hostRef}의 해당 경로를 열 때만 검증·활성화`
-            : `${hostRef}가 현재 요청한 child plugin을 검증·활성화하는 중`,
-        };
-      }
-      return { visible: false, label: 'Host 메뉴 미제공', reason: `${hostRef} child 활성화가 완료되지 않음` };
-    }
+    if (!catalog?.nav) return { visible: false, label: '메뉴 미선언', reason: 'UIPluginPackage spec.nav가 없음' };
     return { visible: false, label: '메뉴 미노출', reason: 'Activated이지만 Extension Host pages registry에 적재되지 않음' };
   }
   pageReady(r: Registration): boolean {

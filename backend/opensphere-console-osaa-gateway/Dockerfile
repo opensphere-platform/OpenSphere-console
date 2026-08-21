@@ -11,6 +11,7 @@ COPY conversation-store.js /app/conversation-store.js
 COPY kubernetes-resource-catalog.js /app/kubernetes-resource-catalog.js
 COPY manual-seed-reconcile.js /app/manual-seed-reconcile.js
 COPY agent-control-readiness.js /app/agent-control-readiness.js
+COPY extension-presentation.js /app/extension-presentation.js
 COPY operational-graph.js /app/operational-graph.js
 COPY incident-engine.js /app/incident-engine.js
 COPY r2d2-operational-runtime.js /app/r2d2-operational-runtime.js
