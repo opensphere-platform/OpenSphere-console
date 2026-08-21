@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
 const {
   MAX_CONTEXT_CHARS,
   contextWindow,
@@ -48,4 +49,9 @@ test('one conversation serializes turns before provider execution', () => {
   assert.match(source, /role='user' AND status='pending'/);
   assert.match(source, /turn_request_id<>\$2/);
   assert.match(source, /another conversation turn is still in progress/);
+});
+
+test('gateway runtime image contains the durable conversation store', () => {
+  const dockerfile = readFileSync(join(__dirname, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /^COPY conversation-store\.js \/app\/conversation-store\.js$/m);
 });
