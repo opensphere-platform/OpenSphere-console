@@ -197,9 +197,9 @@ try {
     Set-RemoteTag -Repository $repositories[$componentName] -Digest $digests[$componentName] -Tag edge
   }
 
-  $components = [ordered]@{}
+  $publicationComponents = [ordered]@{}
   foreach ($componentName in $componentNames) {
-    $components[$componentName] = [ordered]@{
+    $publicationComponents[$componentName] = [ordered]@{
       image = "$($repositories[$componentName])@$($digests[$componentName])"
       sourceRevision = $sourceRevision
     }
@@ -224,7 +224,7 @@ try {
     releaseClass = 'pre-ga'
     gaEligible = $false
     supportedPlatforms = @('linux/amd64')
-    components = $components
+    components = $publicationComponents
     verification = [ordered]@{
       atomicCutoverContracts = 'PASS'
       imageDigests = 'PASS'

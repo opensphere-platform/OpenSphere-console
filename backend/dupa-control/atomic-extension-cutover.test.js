@@ -116,6 +116,8 @@ test('edge publisher supports an exact affected-component subset and stays separ
   assert.match(publisher, /if \(\$componentNames -contains 'console'\)/);
   assert.match(publisher, /if \(\$componentNames -contains 'dupaController'\)/);
   assert.match(publisher, /affectedImages = @\(\$componentNames \| ForEach-Object \{ \$repositories\[\$_\] \}\)/);
+  assert.doesNotMatch(publisher, /\$components\s*=\s*\[ordered\]@\{/i);
+  assert.match(publisher, /\$publicationComponents\s*=\s*\[ordered\]@\{/);
   assert.match(publisher, /releaseScope = 'component'/);
   assert.match(publisher, /fullReleaseJustification = \$null/);
   assert.doesNotMatch(publisher, /Publish-LocalEdge\.ps1|Read-Host|PromptForChoice|MessageBox/);
