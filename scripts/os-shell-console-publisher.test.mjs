@@ -27,12 +27,14 @@ test('Console publisher closes source attribution and deployed prerequisite dige
     "Get-LiveDeploymentDigest -Deployment 'opensphere-console'",
     "Get-LiveDeploymentDigest -Deployment 'opensphere-console-backend'",
     "Get-LiveDeploymentDigest -Deployment $deployment",
-    'Target source changes the deployed OS Shell migration lineage',
+    'Target source differs from the deployed Backend migration authority',
   ]) {
     const index = source.indexOf(gate);
     assert.ok(index >= 0 && index < publish, `${gate} must precede publication`);
   }
   assert.match(source, /--backend[\s\S]*--console[\s\S]*--control[\s\S]*--head/);
+  assert.match(source, /\$migrationAuthority = \$backend[.]Document[.]artifacts[.]supabaseMigrationManifest/);
+  assert.doesNotMatch(source, /\$baseMigration = \$base[.]Document[.]artifacts[.]supabaseMigrationManifest/);
   assert.match(source, /opensphere-local-os-shell-console-publication[.]json/);
 });
 
