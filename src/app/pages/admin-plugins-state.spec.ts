@@ -137,12 +137,22 @@ test('the catalog icon selected in management wins when first-level navigation i
 });
 
 test('SubShell navigation order and optional menu label are explicit management controls', () => {
-  assert.match(source, /cdkDropList[\s\S]*cdkDrag/);
+  assert.match(source, /cdkDropList/);
+  assert.match(source, /cdkDrag/);
   assert.match(source, /cdkDropListDropped\)="dropSubShell\(\$event\)"/);
+  assert.match(source, /Extension · 1단 메뉴/);
+  assert.match(source, /extension-order-handle/);
+  assert.doesNotMatch(source, /MAIN SHELL NAVIGATION/);
+  assert.doesNotMatch(source, /subshell-menu-editor/);
   assert.match(source, /setNavigationOrder\(this\.orderedSubShellRegistrations\(\)\.map/);
   assert.match(source, /menuLabelOverride\(\)/);
   assert.match(source, /비워서 저장하면 원래 이름/);
   assert.match(source, /setNavigation\(id, \{ labelOverride: value \}\)/);
+  assert.ok(
+    source.indexOf('aria-label="1단 메뉴 표시 설정"')
+      < source.indexOf('aria-labelledby="cc-integrations-title"'),
+    'SubShell menu settings must be presented before Console integration status'
+  );
 });
 
 test('inactive routes are healthy on-demand lifecycle states, not UI or Host failures', () => {

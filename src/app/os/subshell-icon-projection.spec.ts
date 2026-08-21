@@ -34,3 +34,7 @@ test('the shared navigation icon projector owns curated, static asset and fallba
   assert.match(navIconSource, /CARBON_ICON_TOKEN\.test\(this\.currentToken\)/);
   assert.match(navIconSource, /this\.failedToken\.set\(this\.currentToken\)/);
 });
+
+test('first-level navigation keeps a readable gap between the projected icon and menu label', () => {
+  assert.match(navIconSource, /:host-context\(\.os-nav\) \{ margin-inline-end: 0\.4rem; \}/);
+});
