@@ -153,12 +153,18 @@ $consoleEdgeBefore = Get-RemoteDigest -Reference "${consoleRepository}:edge"
 
 $targetMigrationPath = Join-Path $repoRoot 'backend\supabase\migrations\manifest.json'
 $targetMigration = Get-Content -Raw -LiteralPath $targetMigrationPath | ConvertFrom-Json
-$migrationAuthority = $backend.Document.artifacts.supabaseMigrationManifest
-if (-not $migrationAuthority -or
-    (Get-CanonicalTextSha256 -Path $targetMigrationPath) -ne [string]$migrationAuthority.sha256 -or
-    [string]$targetMigration.setDigest -ne [string]$migrationAuthority.setDigest -or
-    [string]$targetMigration.latestMigrationId -ne [string]$migrationAuthority.latestMigrationId) {
+$backendMigrationBlob = (& git -C $repoRoot rev-parse `
+  "$([string]$backend.Document.sourceRevision):backend/supabase/migrations/manifest.json").Trim()
+$targetMigrationBlob = (& git -C $repoRoot rev-parse `
+  "${SourceRevision}:backend/supabase/migrations/manifest.json").Trim()
+if ($LASTEXITCODE -ne 0 -or $backendMigrationBlob -notmatch '^[a-f0-9]{40}$' -or
+    $targetMigrationBlob -notmatch '^[a-f0-9]{40}$' -or $targetMigrationBlob -ne $backendMigrationBlob) {
   throw 'Target source differs from the deployed Backend migration authority'
+}
+$migrationAuthority = [ordered]@{
+  sha256 = Get-CanonicalTextSha256 -Path $targetMigrationPath
+  setDigest = [string]$targetMigration.setDigest
+  latestMigrationId = [string]$targetMigration.latestMigrationId
 }
 
 $scope = [ordered]@{
