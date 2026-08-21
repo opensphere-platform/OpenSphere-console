@@ -214,8 +214,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       </clr-accordion-panel>
     </clr-accordion>
 
-    <ng-template #extensionStatusRow let-r let-showHost="showHost" let-showIcon="showIcon" let-navigation="navigation">
-      <tr cdkDrag [cdkDragData]="r" [cdkDragDisabled]="!navigation">
+    <ng-template #extensionStatusCells let-r let-showHost="showHost" let-showIcon="showIcon" let-navigation="navigation">
         <td class="left">
           <div class="extension-identity">
             @if (navigation) {
@@ -288,7 +287,6 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             </button>
           }
         </td>
-      </tr>
     </ng-template>
 
     <ng-template #extensionStatusTable let-items let-emptyText="emptyText" let-showHost="showHost" let-showIcon="showIcon" let-navigation="navigation">
@@ -318,7 +316,9 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
               >
                 <tr class="extension-band-row"><td colspan="8"><strong>{{ group.band }}</strong><span class="state-detail">행을 끌어 좌측 1단 메뉴 순서를 변경합니다.</span></td></tr>
                 @for (r of group.items; track r.name) {
-                  <ng-container *ngTemplateOutlet="extensionStatusRow; context: { $implicit: r, showHost: false, showIcon: true, navigation: true }" />
+                  <tr cdkDrag cdkDragLockAxis="y" [cdkDragData]="r">
+                    <ng-container *ngTemplateOutlet="extensionStatusCells; context: { $implicit: r, showHost: false, showIcon: true, navigation: true }" />
+                  </tr>
                 }
               </tbody>
             } @empty {
@@ -327,7 +327,9 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
           } @else {
             <tbody>
               @for (r of items; track r.name) {
-                <ng-container *ngTemplateOutlet="extensionStatusRow; context: { $implicit: r, showHost: showHost, showIcon: showIcon, navigation: false }" />
+                <tr>
+                  <ng-container *ngTemplateOutlet="extensionStatusCells; context: { $implicit: r, showHost: showHost, showIcon: showIcon, navigation: false }" />
+                </tr>
               } @empty {
                 <tr><td [attr.colspan]="showHost ? 9 : 8" class="os-sub">{{ emptyText }}</td></tr>
               }

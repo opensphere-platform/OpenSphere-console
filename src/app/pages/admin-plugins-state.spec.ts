@@ -145,6 +145,9 @@ test('SubShell navigation order and optional menu label are explicit management 
   assert.doesNotMatch(source, /MAIN SHELL NAVIGATION/);
   assert.doesNotMatch(source, /subshell-menu-editor/);
   assert.match(source, /setNavigationOrder\(this\.orderedSubShellRegistrations\(\)\.map/);
+  assert.match(source, /@for \(r of group\.items; track r\.name\) \{\s*<tr cdkDrag cdkDragLockAxis="y"/);
+  assert.match(source, /<ng-template #extensionStatusCells/);
+  assert.doesNotMatch(source, /<ng-template #extensionStatusCells[^>]*>\s*<tr cdkDrag/);
   assert.match(source, /menuLabelOverride\(\)/);
   assert.match(source, /비워서 저장하면 원래 이름/);
   assert.match(source, /setNavigation\(id, \{ labelOverride: value \}\)/);
@@ -153,6 +156,13 @@ test('SubShell navigation order and optional menu label are explicit management 
       < source.indexOf('aria-labelledby="cc-integrations-title"'),
     'SubShell menu settings must be presented before Console integration status'
   );
+});
+
+test('a forced projection refresh queues one fresh read behind stale in-flight work', () => {
+  assert.match(projectionStore, /private forcedAfterInFlight/);
+  assert.match(projectionStore, /if \(!force\) return this\.inFlight/);
+  assert.match(projectionStore, /const active = this\.inFlight;[\s\S]*\.then\(\(\) => this\.refresh\(true\)\)/);
+  assert.match(projectionStore, /if \(this\.forcedAfterInFlight === forced\) this\.forcedAfterInFlight = null/);
 });
 
 test('inactive routes are healthy on-demand lifecycle states, not UI or Host failures', () => {
