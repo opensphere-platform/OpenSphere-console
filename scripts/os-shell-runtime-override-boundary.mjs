@@ -114,14 +114,37 @@ function git(repository, args) {
 }
 
 function requireAncestor(repository, ancestor, descendant, label) {
-  const result = spawnSync('git', ['-C', repository, 'merge-base', '--is-ancestor', ancestor, descendant], { windowsHide: true });
-  if (result.status !== 0) throw new Error(`${label} is not a descendant of the base publication`);
+  if (!isAncestor(repository, ancestor, descendant)) {
+    throw new Error(`${label} is not a descendant of the required source authority`);
+  }
+}
+
+function isAncestor(repository, ancestor, descendant) {
+  return spawnSync('git', ['-C', repository, 'merge-base', '--is-ancestor', ancestor, descendant], {
+    windowsHide: true,
+  }).status === 0;
 }
 
 function changedPaths(repository, from, to) {
   const output = execFileSync('git', ['-C', repository, 'diff', '--no-renames', '--name-only', '-z', from, to],
     { encoding: 'buffer', windowsHide: true });
   return output.length ? output.toString('utf8').split('\0').filter(Boolean) : [];
+}
+
+function runtimePathsAtRevision(repository, revision) {
+  const output = execFileSync('git', ['-C', repository, 'ls-tree', '-r', '--name-only', '-z', revision, '--',
+    'backend/os-cli/cmd/os-shell-runtime', ...runtimeInputPaths], { encoding: 'buffer', windowsHide: true });
+  return output.length ? output.toString('utf8').split('\0').filter(Boolean).sort() : [];
+}
+
+function nearestHeadAncestor(repository, revisions, headRevision) {
+  const candidates = [...new Set(revisions.filter(Boolean))].filter((revision) => isAncestor(repository, revision, headRevision));
+  if (!candidates.length) throw new Error('deployment HEAD has no canonical component source ancestor');
+  return candidates.sort((left, right) => {
+    const leftDistance = Number(git(repository, ['rev-list', '--count', `${left}..${headRevision}`]));
+    const rightDistance = Number(git(repository, ['rev-list', '--count', `${right}..${headRevision}`]));
+    return leftDistance - rightDistance;
+  })[0];
 }
 
 function requireCanonicalOrigin(repository) {
@@ -152,36 +175,63 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
   }
   requireCanonicalOrigin(repository);
   for (const [name, revision] of Object.entries(revisions)) requireCanonicalOriginRevision(repository, revision, name);
-  if (platformRevision) requireAncestor(repository, platformRevision, headRevision, 'deployment HEAD');
-  else requireAncestor(repository, baseRevision, headRevision, 'deployment HEAD');
+  const baseIsHeadAncestor = isAncestor(repository, baseRevision, headRevision);
+  const headAnchorRevision = platformRevision || (baseIsHeadAncestor ? baseRevision : nearestHeadAncestor(repository,
+    [runtimeRevision, backendRevision, consoleRevision, controlRevision], headRevision));
+  requireAncestor(repository, headAnchorRevision, headRevision, 'deployment HEAD');
 
   const evidenceChangedPaths = {};
+  const independentComponentAuthorities = [];
   let runtimePaths = [];
   if (runtimeRevision) {
-    requireAncestor(repository, baseRevision, runtimeRevision, 'runtime override');
-    evidenceChangedPaths.runtime = changedPaths(repository, baseRevision, runtimeRevision);
-    runtimePaths = evidenceChangedPaths.runtime.filter(isRuntimeInputPath);
+    if (isAncestor(repository, baseRevision, runtimeRevision)) {
+      evidenceChangedPaths.runtime = changedPaths(repository, baseRevision, runtimeRevision);
+      runtimePaths = evidenceChangedPaths.runtime.filter(isRuntimeInputPath);
+    } else {
+      requireAncestor(repository, runtimeRevision, headRevision, 'runtime override');
+      runtimePaths = runtimePathsAtRevision(repository, runtimeRevision);
+      evidenceChangedPaths.runtime = [...runtimePaths];
+      independentComponentAuthorities.push('runtime');
+    }
     assertRuntimeOverridePaths(runtimePaths);
   }
   let backendPaths = [];
   if (backendRevision) {
-    requireAncestor(repository, baseRevision, backendRevision, 'backend override');
-    evidenceChangedPaths.backend = changedPaths(repository, baseRevision, backendRevision);
-    backendPaths = evidenceChangedPaths.backend.filter((path) => backendOverridePaths.includes(path));
+    if (isAncestor(repository, baseRevision, backendRevision)) {
+      evidenceChangedPaths.backend = changedPaths(repository, baseRevision, backendRevision);
+      backendPaths = evidenceChangedPaths.backend.filter((path) => backendOverridePaths.includes(path));
+    } else {
+      requireAncestor(repository, backendRevision, headRevision, 'backend override');
+      backendPaths = [...backendOverridePaths];
+      evidenceChangedPaths.backend = [...backendPaths];
+      independentComponentAuthorities.push('backend');
+    }
     assertBackendOverridePaths(backendPaths);
   }
   let consolePaths = [];
   if (consoleRevision) {
-    requireAncestor(repository, baseRevision, consoleRevision, 'console override');
-    evidenceChangedPaths.console = changedPaths(repository, baseRevision, consoleRevision);
-    consolePaths = evidenceChangedPaths.console.filter((path) => consoleOverridePaths.includes(path));
+    if (isAncestor(repository, baseRevision, consoleRevision)) {
+      evidenceChangedPaths.console = changedPaths(repository, baseRevision, consoleRevision);
+      consolePaths = evidenceChangedPaths.console.filter((path) => consoleOverridePaths.includes(path));
+    } else {
+      requireAncestor(repository, consoleRevision, headRevision, 'console override');
+      consolePaths = [...consoleOverridePaths];
+      evidenceChangedPaths.console = [...consolePaths];
+      independentComponentAuthorities.push('console');
+    }
     assertConsoleOverridePaths(consolePaths);
   }
   let controlPaths = [];
   if (controlRevision) {
-    requireAncestor(repository, baseRevision, controlRevision, 'control override');
-    evidenceChangedPaths.control = changedPaths(repository, baseRevision, controlRevision);
-    controlPaths = evidenceChangedPaths.control.filter((path) => controlOverridePaths.includes(path));
+    if (isAncestor(repository, baseRevision, controlRevision)) {
+      evidenceChangedPaths.control = changedPaths(repository, baseRevision, controlRevision);
+      controlPaths = evidenceChangedPaths.control.filter((path) => controlOverridePaths.includes(path));
+    } else {
+      requireAncestor(repository, controlRevision, headRevision, 'control override');
+      controlPaths = [...controlOverridePaths];
+      evidenceChangedPaths.control = [...controlPaths];
+      independentComponentAuthorities.push('control');
+    }
     assertControlOverridePaths(controlPaths);
   }
   const componentPaths = [...runtimePaths, ...backendPaths, ...consolePaths, ...controlPaths];
@@ -212,10 +262,7 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
       // appeared incidentally in an older cumulative evidence revision. The
       // reverse remains forbidden: a later non-owner evidence revision may
       // never alter a path owned by an earlier component publication.
-      const authorityIsLater = revision !== authoritativeRevision
-        && spawnSync('git', ['-C', repository, 'merge-base', '--is-ancestor', revision, authoritativeRevision], {
-          encoding: 'utf8', windowsHide: true,
-        }).status === 0;
+      const authorityIsLater = revision !== authoritativeRevision && isAncestor(repository, revision, authoritativeRevision);
       if (authorityIsLater) continue;
       const evidenceBlob = git(repository, ['rev-parse', `${revision}:${path}`]);
       const authoritativeBlob = git(repository, ['rev-parse', `${authoritativeRevision}:${path}`]);
@@ -224,12 +271,8 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
       }
     }
   }
-  const headPaths = changedPaths(repository, platformRevision || baseRevision, headRevision);
-  assertHeadPaths(headPaths, platformRevision ? [] : componentPaths);
-  if (!platformRevision) {
-    const missingHeadPaths = componentPaths.filter((path) => !headPaths.includes(path));
-    if (missingHeadPaths.length) throw new Error(`deployment HEAD is missing attributed component source: ${missingHeadPaths.join(', ')}`);
-  }
+  const headPaths = changedPaths(repository, headAnchorRevision, headRevision);
+  assertHeadPaths(headPaths, componentPaths);
   for (const path of componentPaths) {
     const sourceRevision = authorityForPath.get(path);
     const sourceBlob = git(repository, ['rev-parse', `${sourceRevision}:${path}`]);
@@ -240,7 +283,8 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
   const upstreamRevision = git(repository, ['rev-parse', upstream]);
   if (headRevision !== upstreamRevision) throw new Error(`deployment HEAD is not the exact pushed upstream revision ${upstream}`);
   return {
-    baseRevision, runtimeRevision, platformRevision, backendRevision, consoleRevision, controlRevision, headRevision, upstream,
+    baseRevision, runtimeRevision, platformRevision, backendRevision, consoleRevision, controlRevision, headRevision,
+    headAnchorRevision, independentComponentAuthorities, upstream,
     runtimePaths, backendPaths, consolePaths, controlPaths,
     evidenceChangedPaths,
     toolingPaths: headPaths.filter((path) => deploymentToolingPaths.includes(path)),

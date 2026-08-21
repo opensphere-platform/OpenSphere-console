@@ -45,4 +45,5 @@ test('deployer follows the exact live Backend migration authority across compone
   assert.match(deployer, /Console override source/);
   assert.match(deployer, /AllowPlatformReleaseTag/);
   assert.doesNotMatch(deployer, /override changes the base Supabase migration lineage/);
+  assert.doesNotMatch(deployer, /Runtime override SourceRevision is not a descendant of the base OS Shell publication/);
 });
