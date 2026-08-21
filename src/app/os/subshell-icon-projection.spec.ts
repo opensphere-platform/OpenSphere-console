@@ -38,7 +38,9 @@ test('the shared navigation icon projector owns curated, static asset and fallba
 
 test('first-level navigation keeps a readable gap between the projected icon and menu label', () => {
   assert.match(globalStyles, /\.os-nav \.nav-link > os-nav-icon,/);
-  assert.match(globalStyles, /flex: 0 0 20px !important; width: 20px !important; height: 20px !important; min-width: 20px !important;/);
+  assert.match(navIconSource, /@Input\(\) size = 15;/);
+  assert.match(globalStyles, /flex: 0 0 15px !important; width: 15px !important; height: 15px !important; min-width: 15px !important;/);
+  assert.match(globalStyles, /\.os-nav os-nav-icon os-cicon svg \{ width: 15px !important; height: 15px !important; \}/);
   assert.match(globalStyles, /margin-inline-end: 0\.65rem !important;/);
   assert.doesNotMatch(navIconSource, /:host-context\(\.os-nav\).*margin-inline-end/);
 });
