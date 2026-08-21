@@ -247,7 +247,7 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
             <div class="osaa-compose-right">
               <span class="osaa-model-chip" [title]="modelLabel()">
                 <os-cicon [icon]="iconModel" [size]="14" />
-                {{ activeModel() }}
+                {{ displayModel() }}
                 <os-cicon [icon]="iconChevronDown" [size]="14" />
               </span>
               <button class="osaa-compose-tool" type="button" [class.osaa-listening]="listening()" (click)="toggleVoiceInput()" title="음성 입력" aria-label="음성 입력">
@@ -499,8 +499,10 @@ export class OsOsaaAgent implements OnDestroy {
     const last = [...this.messages()].reverse().find((m) => m.role === 'assistant' && m.meta);
     return last?.meta || 'deepseek-v4-flash';
   });
-  readonly activeModel = computed(() => {
-    const meta = this.modelLabel();
+  readonly displayModel = computed(() => {
+    const lastProviderTurn = [...this.messages()].reverse().find((message) =>
+      message.role === 'assistant' && message.meta && !/^opensphere\s*\/\s*osaa-control-tools\b/i.test(message.meta));
+    const meta = lastProviderTurn?.meta || 'deepseek-v4-flash';
     const parts = meta.split('/').map((part) => part.trim()).filter(Boolean);
     return parts.length > 1 ? parts[1] : parts[0] || 'deepseek-v4-flash';
   });
@@ -741,7 +743,6 @@ export class OsOsaaAgent implements OnDestroy {
           conversationId: this.currentId() || undefined,
           clientRequestId: crypto.randomUUID(),
           message: text,
-          model: this.activeModel(),
           context: this.pageContext(),
           includeEnvironment: this.includeEnvironment(),
           source: 'console-osaa-agent',

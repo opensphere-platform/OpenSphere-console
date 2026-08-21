@@ -51,6 +51,13 @@ test('one conversation serializes turns before provider execution', () => {
   assert.match(source, /another conversation turn is still in progress/);
 });
 
+test('successful provider responses repair the conversation model projection', () => {
+  const source = readFileSync(require.resolve('./conversation-store'), 'utf8');
+  assert.match(source, /response\?\.modelAuthority === 'provider'/);
+  assert.match(source, /SET model_id=COALESCE\(\$2,model_id\)/);
+  assert.doesNotMatch(source, /response\?\.modelAuthority === 'execution-profile'[\s\S]*?SET model_id/);
+});
+
 test('gateway runtime image contains the durable conversation store', () => {
   const dockerfile = readFileSync(join(__dirname, 'Dockerfile'), 'utf8');
   assert.match(dockerfile, /^COPY conversation-store\.js \/app\/conversation-store\.js$/m);
