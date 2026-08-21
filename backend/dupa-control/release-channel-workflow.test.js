@@ -72,6 +72,8 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   assert.match(localEdgePublisher, /Advance selected component tags without moving a partial Console anchor/);
   assert.match(localEdgePublisher, /opensphere-local-component-publication-\$\(\$item\.Key\)\.json/);
   assert.match(localEdgePublisher, /\$singleComponentBom\['components'\] = \[ordered\]@\{/);
+  assert.match(localEdgePublisher, /AdvanceOsShellUxConsoleEdge requires exactly console and osShellRuntime components/);
+  assert.match(localEdgePublisher, /-not \$partialPublication -or \$AdvanceOsShellUxConsoleEdge/);
 });
 
 test('retag-only promotion workflow is absent because channel identity is immutable image metadata', () => {
