@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$Registry = 'ghcr.io/opensphere-platform',
+  [ValidateSet('console', 'dupaController')]
+  [string[]]$Components = @('console', 'dupaController'),
   [switch]$UseExistingRegistryLogin
 )
 
@@ -86,7 +88,8 @@ $installedLock = $lockRaw | ConvertFrom-Json
 if ([string]$installedLock.source -ne 'https://github.com/opensphere-platform/OpenSphere-console') {
   throw 'Installed release source is not the canonical Console repository.'
 }
-$componentNames = @('console', 'dupaController')
+$componentNames = @($Components | Sort-Object -Unique)
+if (-not $componentNames.Count) { throw 'At least one affected component is required.' }
 $changedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($componentName in $componentNames) {
   $componentProperty = $installedLock.components.PSObject.Properties[$componentName]
@@ -156,25 +159,29 @@ try {
     '--label', 'io.opensphere.image-platform=linux/amd64'
   )
 
-  $consoleMetadata = Join-Path $metadataRoot 'console.json'
-  $consoleArgs = @(
-    'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
-    '--metadata-file', $consoleMetadata, '--tag', "$($repositories.console):$buildTag",
-    '--build-arg', "SDK_SOURCE_REVISION=$sdkRevision"
-  ) + $labels + @('--file', (Join-Path $consoleCheckout 'Dockerfile'), $buildRoot)
-  Invoke-Checked docker @consoleArgs | Out-Null
-  $digests.console = [string](Get-Content -Raw $consoleMetadata | ConvertFrom-Json).'containerimage.digest'
+  if ($componentNames -contains 'console') {
+    $consoleMetadata = Join-Path $metadataRoot 'console.json'
+    $consoleArgs = @(
+      'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
+      '--metadata-file', $consoleMetadata, '--tag', "$($repositories.console):$buildTag",
+      '--build-arg', "SDK_SOURCE_REVISION=$sdkRevision"
+    ) + $labels + @('--file', (Join-Path $consoleCheckout 'Dockerfile'), $buildRoot)
+    Invoke-Checked docker @consoleArgs | Out-Null
+    $digests.console = [string](Get-Content -Raw $consoleMetadata | ConvertFrom-Json).'containerimage.digest'
+  }
 
-  $controllerMetadata = Join-Path $metadataRoot 'dupa-controller.json'
-  $controllerArgs = @(
-    'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
-    '--metadata-file', $controllerMetadata, '--tag', "$($repositories.dupaController):$buildTag"
-  ) + $labels + @(
-    '--file', (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile'),
-    (Join-Path $consoleCheckout 'backend\dupa-control')
-  )
-  Invoke-Checked docker @controllerArgs | Out-Null
-  $digests.dupaController = [string](Get-Content -Raw $controllerMetadata | ConvertFrom-Json).'containerimage.digest'
+  if ($componentNames -contains 'dupaController') {
+    $controllerMetadata = Join-Path $metadataRoot 'dupa-controller.json'
+    $controllerArgs = @(
+      'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
+      '--metadata-file', $controllerMetadata, '--tag', "$($repositories.dupaController):$buildTag"
+    ) + $labels + @(
+      '--file', (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile'),
+      (Join-Path $consoleCheckout 'backend\dupa-control')
+    )
+    Invoke-Checked docker @controllerArgs | Out-Null
+    $digests.dupaController = [string](Get-Content -Raw $controllerMetadata | ConvertFrom-Json).'containerimage.digest'
+  }
 
   foreach ($componentName in $componentNames) {
     if ([string]$digests[$componentName] -notmatch '^sha256:[0-9a-f]{64}$') {
@@ -203,9 +210,9 @@ try {
     publicationScope = 'ComponentSet'
     channel = 'edge'
     status = 'Active'
-    requestIntent = 'Atomically update the Console extension host and its DUPA release controller.'
+    requestIntent = "Publish only the affected atomic extension components: $($componentNames -join ', ')."
     changedPaths = @($changedPaths | Sort-Object)
-    affectedImages = @($repositories.console, $repositories.dupaController)
+    affectedImages = @($componentNames | ForEach-Object { $repositories[$_] })
     releaseScope = 'component'
     fullReleaseJustification = $null
     releaseTag = $releaseTag
@@ -221,7 +228,7 @@ try {
     verification = [ordered]@{
       atomicCutoverContracts = 'PASS'
       imageDigests = 'PASS'
-      bothImagesBuiltBeforeChannelMove = $true
+      allAffectedImagesBuiltBeforeChannelMove = $true
     }
   }
   $publicationPath = Join-Path $outputRoot 'opensphere-atomic-extension-publication.json'
