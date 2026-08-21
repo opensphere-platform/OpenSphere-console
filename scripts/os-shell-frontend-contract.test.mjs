@@ -29,6 +29,13 @@ test('terminal is opaque and owns neither WebSocket nor credentials', () => {
 test('attached OS Shell visibly signals input readiness with a focused blinking cursor', () => {
   const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
   assert.match(frame, /cursorBlink:\s*true/);
+  assert.match(frame, /cursorInactiveStyle:\s*'outline'/);
+  assert.match(frame, /cursor:\s*'#fdd13a'/);
+  assert.match(frame, /cursorAccent:\s*'#101010'/);
+  assert.match(frame, /selectionBackground:\s*'#78a9ff'/);
+  assert.match(frame, /selectionForeground:\s*'#101010'/);
+  assert.match(frame, /selectionInactiveBackground:\s*'#4589ff'/);
+  assert.match(frame, /root[.]addEventListener\('pointerdown',[\s\S]*terminal[.]focus\(\)/);
   assert.match(frame, /cursorStyle:\s*'block'/);
   assert.match(frame, /case 'attached':[\s\S]*terminal[.]options[.]disableStdin = false;[\s\S]*terminal[.]focus\(\)/);
   assert.doesNotMatch(frame, /cursorBlink:\s*false/);
