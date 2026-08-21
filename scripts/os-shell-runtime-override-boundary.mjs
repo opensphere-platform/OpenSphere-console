@@ -13,6 +13,7 @@ export const backendOverridePaths = Object.freeze([
   'backend/opensphere-console-backend/local-edge-automation-token.test.js',
   'backend/opensphere-console-backend/os-shell-admission.js',
   'backend/opensphere-console-backend/os-shell-admission.test.js',
+  'backend/opensphere-console-backend/server.js',
 ]);
 
 export const consoleOverridePaths = Object.freeze([

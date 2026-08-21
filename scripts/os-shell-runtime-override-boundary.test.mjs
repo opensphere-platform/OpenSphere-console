@@ -109,6 +109,7 @@ test('composite repository attribution rejects missing owners while ignoring unr
       [backendOverridePaths[1]]: 'backend token contract\n',
       [backendOverridePaths[2]]: 'export const admission = true;\n',
       [backendOverridePaths[3]]: 'backend admission contract\n',
+      [backendOverridePaths[4]]: 'backend server contract\n',
     });
     const consoleRevision = commit(repository, 'console override', Object.fromEntries(
       consoleOverridePaths.map((path) => [path, `console contract ${path}\n`])));
