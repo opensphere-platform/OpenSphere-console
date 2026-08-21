@@ -11,12 +11,12 @@ OpenSphere Manual의 유일한 제품 소유자는 Main Shell인 `OpenSphere-con
 | 사용자 화면과 문서 리더 | `src/app/pages/manual.ts`, route `/manual` |
 | 전역 진입점과 통합 검색 | Main Shell header, `src/app/core/search.service.ts` |
 | 정본 Help Center 문서 | `docs/manual/*.md` |
-| 릴리스 seed 생성 | `backend/opensphere-console-oaa-gateway/scripts/build-manual-seed.js` |
+| 릴리스 seed 생성 | `backend/opensphere-console-osaa-gateway/scripts/build-manual-seed.js` |
 | 검색·문서 API 소비 계약 | `src/app/core/manual.service.ts` |
-| 내구 저장·검색 실행 | Console-owned OAA Gateway와 Supabase `oaa` Manual Registry |
+| 내구 저장·검색 실행 | Console-owned OSAA Gateway와 Supabase `osaa` Manual Registry |
 | 회귀 방지 | `backend/dupa-control/manual-native.test.js` |
 
-OAA Gateway가 별도 workload로 실행되는 것은 보안·서버 실행 격리를 위한 구현 경계다. Manual의 제품 소유권을 OAA, Data & Identity authority 또는 별도 Extension으로 이전하지 않는다.
+OSAA Gateway가 별도 workload로 실행되는 것은 보안·서버 실행 격리를 위한 구현 경계다. Manual의 제품 소유권을 OSAA, Data & Identity authority 또는 별도 Extension으로 이전하지 않는다.
 
 ## Lifecycle 불변식
 
@@ -38,7 +38,7 @@ OAA Gateway가 별도 workload로 실행되는 것은 보안·서버 실행 격�
 | `server.js` Kubernetes proxy | 폐기. Manual은 Console의 `ManualService`와 인증된 Manual Registry API만 소비 |
 | `ui-shell`, `uipluginpackage.yaml`, RBAC, 별도 Docker image | 폐기. Manual은 Extension이 아님 |
 | `/p/menual` route | 폐기. redirect 없음 |
-| `OAH agent CLI` 초안 | 폐기. 현재 OAA action binding·Console-native `os` 계약은 `OAA-MANUAL-KNOWLEDGE-DATA-MODEL.md`와 CLI 정본이 소유 |
+| `OAH agent CLI` 초안 | 폐기. 현재 OSAA action binding·Console-native `os` 계약은 `OSAA-MANUAL-KNOWLEDGE-DATA-MODEL.md`와 CLI 정본이 소유 |
 
 따라서 독립 `OpenSphere-shell-menual` 저장소는 보존·빌드·배포 대상이 아니며 workspace에서 삭제한다. 같은 기능을 다른 이름의 Manual subShell로 다시 만들지 않는다.
 
@@ -56,5 +56,5 @@ readiness가 없는 구형 매니페스트의 재적용을 거부한다. 계약 
 1. `docs/manual/*.md` 또는 상위 권위 문서를 수정한다.
 2. `npm run manual:seed`로 릴리스 seed를 재생성한다.
 3. Manual 회귀 테스트와 Console production build를 통과시킨다.
-4. Console 및 Console-owned OAA Gateway 이미지를 동일 release 단위로 배포한다.
-5. 브라우저에서 `/manual`, 검색, 문서 리더와 OAA citation을 검증한다.
+4. Console 및 Console-owned OSAA Gateway 이미지를 동일 release 단위로 배포한다.
+5. 브라우저에서 `/manual`, 검색, 문서 리더와 OSAA citation을 검증한다.

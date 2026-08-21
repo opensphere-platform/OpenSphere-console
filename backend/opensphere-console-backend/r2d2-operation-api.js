@@ -154,14 +154,14 @@ function createR2d2OperationApi(options) {
   }
 
   async function handle(req, res, pathname, bodyReader, json) {
-    if (pathname === '/api/oaa/operations/plan' && req.method === 'POST') return json(res, 200, await plan(req, await bodyReader(req)));
-    if (pathname === '/api/oaa/operations' && req.method === 'POST') return json(res, 202, await accept(req, await bodyReader(req)));
-    if (pathname === '/api/oaa/operations' && req.method === 'GET') {
+    if (pathname === '/api/osaa/operations/plan' && req.method === 'POST') return json(res, 200, await plan(req, await bodyReader(req)));
+    if (pathname === '/api/osaa/operations' && req.method === 'POST') return json(res, 202, await accept(req, await bodyReader(req)));
+    if (pathname === '/api/osaa/operations' && req.method === 'GET') {
       await authenticate(req); return json(res, 200, { operations: (await store.list()).map(publicOperation) });
     }
-    const approval = pathname.match(/^\/api\/oaa\/operations\/([0-9a-f-]{36})\/approvals$/i);
+    const approval = pathname.match(/^\/api\/osaa\/operations\/([0-9a-f-]{36})\/approvals$/i);
     if (approval && req.method === 'POST') return json(res, 200, await approve(req, approval[1], await bodyReader(req)));
-    const operation = pathname.match(/^\/api\/oaa\/operations\/([0-9a-f-]{36})$/i);
+    const operation = pathname.match(/^\/api\/osaa\/operations\/([0-9a-f-]{36})$/i);
     if (operation && req.method === 'GET') {
       await authenticate(req); const row = await store.get(operation[1]);
       if (!row) return json(res, 404, { error: 'operation not found' });

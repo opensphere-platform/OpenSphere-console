@@ -157,7 +157,7 @@ backend/cli-download 디렉터리 삭제됨, clidownload-os.yaml 부재(테스�
 
 - Backbone 3기둥 Ready·PVC Bound이나, storage class RWO(local-path 계열)로 **노드 소실 HA 없음**, 오프노드 백업 반출·restore 훈련 미재검증(요청서 자인). — 전체 Console 운영 승인 시 별도 증거 필요.
 - Angular initial bundle 4.22MB(3MB budget 초과), `admin-plugins` style 4KB+597B 초과 — 성능 부채(빌드 실패 아님).
-- **F-7(증거 불일치)**: 감사요청서 §4는 "Node test 53/53 fail 0"을 제시하나, 현재 트리에서 `node --test backend/dupa-control/`를 실행하면 `oaa-gateway-tier.test.js`가 **실패**한다(누락 파일 `src/app/os/os-oaa-agent.ts` 참조). CLI 관련 스위트(`main-shell-base` 7/7, `security` 12/12)는 전부 통과하므로 **CLI 통합 자체는 무결**하나, "fail 0" 증거 라인은 전체 디렉터리 기준으로는 현재 성립하지 않는다(무관 OAA 기능의 미완결).
+- **F-7(증거 불일치)**: 감사요청서 §4는 "Node test 53/53 fail 0"을 제시하나, 현재 트리에서 `node --test backend/dupa-control/`를 실행하면 `osaa-gateway-tier.test.js`가 **실패**한다(누락 파일 `src/app/os/os-osaa-agent.ts` 참조). CLI 관련 스위트(`main-shell-base` 7/7, `security` 12/12)는 전부 통과하므로 **CLI 통합 자체는 무결**하나, "fail 0" 증거 라인은 전체 디렉터리 기준으로는 현재 성립하지 않는다(무관 OSAA 기능의 미완결).
 
 ---
 
@@ -171,7 +171,7 @@ backend/cli-download 디렉터리 삭제됨, clidownload-os.yaml 부재(테스�
 | F-4 | Low | native CLI 아티팩트에 detached 서명 없음(SHA-256만). plugin 표준(sha256+ECDSA) 대비 낮은 provenance | `index.json`, `nginx.conf` |
 | F-5 | Low | `role grant/revoke`가 내구 감사 미기록(콘솔과 공유 갭). CLI가 감사 공백을 계승·확대 | `server.mjs:486-504` |
 | F-6 | Low | Deployment에 `seccompProfile: RuntimeDefault` 미지정, PDB/NetworkPolicy/topologySpread 부재(2 replica 동일 노드 가능) | `deploy.yaml` |
-| F-7 | Info | 요청서의 "Node 53/53 fail 0"이 현재 트리에서 미성립(무관 oaa 테스트 실패). CLI 스위트는 전부 통과 | `oaa-gateway-tier.test.js` |
+| F-7 | Info | 요청서의 "Node 53/53 fail 0"이 현재 트리에서 미성립(무관 osaa 테스트 실패). CLI 스위트는 전부 통과 | `osaa-gateway-tier.test.js` |
 | F-8 | Nit | `registry()`의 `*kind=="" \|\| *output=="json" && *kind==""` 조건 중복(dead logic) | `main.go:322` |
 
 ---
@@ -187,7 +187,7 @@ backend/cli-download 디렉터리 삭제됨, clidownload-os.yaml 부재(테스�
 ### Console production completeness: ACCEPT WITH CONDITIONS
 Backbone 3기둥이 Ready이고 읽기전용 표면과 쓰기 503 게이트가 정확히 동작하나, 완결 승인에는:
 1. Backbone 오프노드 백업 반출 + 실제 restore 훈련 증거(요청서 자인 잔여 위험).
-2. (F-7) 전체 테스트 스위트 green 복구(oaa-gateway-tier 미완결 해소) 또는 감사 증거의 범위 정정.
+2. (F-7) 전체 테스트 스위트 green 복구(osaa-gateway-tier 미완결 해소) 또는 감사 증거의 범위 정정.
 3. bundle budget 부채의 감사 기록/개선 계획.
 
 이들은 CLI 범위 밖 잔여 항목으로, native CLI 통합의 무결성과는 독립적이다.

@@ -233,10 +233,10 @@ if ($LASTEXITCODE -ne 0) { $secretExists = $false }
 if (-not $secretExists) {
   $postgresPassword = New-RandomSafePassword 36
   $backendPassword = New-RandomSafePassword 36
-  $oaaGatewayPassword = New-RandomSafePassword 36
-  $oaaObserverPassword = New-RandomSafePassword 36
-  $oaaRelayPassword = New-RandomSafePassword 36
-  $oaaMaintenancePassword = New-RandomSafePassword 36
+  $osaaGatewayPassword = New-RandomSafePassword 36
+  $osaaObserverPassword = New-RandomSafePassword 36
+  $osaaRelayPassword = New-RandomSafePassword 36
+  $osaaMaintenancePassword = New-RandomSafePassword 36
   $aiRuntimePassword = New-RandomSafePassword 36
   $aiPipelinePassword = New-RandomSafePassword 36
   $shellApiPassword = New-RandomSafePassword 36
@@ -259,10 +259,10 @@ if (-not $secretExists) {
     stringData = @{
       'postgres-password' = $postgresPassword
       'backend-password' = $backendPassword
-      'oaa-gateway-password' = $oaaGatewayPassword
-      'oaa-observer-password' = $oaaObserverPassword
-      'oaa-relay-password' = $oaaRelayPassword
-      'oaa-maintenance-password' = $oaaMaintenancePassword
+      'osaa-gateway-password' = $osaaGatewayPassword
+      'osaa-observer-password' = $osaaObserverPassword
+      'osaa-relay-password' = $osaaRelayPassword
+      'osaa-maintenance-password' = $osaaMaintenancePassword
       'ai-runtime-password' = $aiRuntimePassword
       'ai-pipeline-password' = $aiPipelinePassword
       'shell-api-password' = $shellApiPassword
@@ -286,10 +286,10 @@ if (-not $secretExists) {
 # Existing installations gain only the missing scoped credentials. Existing
 # values are never rotated implicitly.
 $requiredScopedSecrets = @{
-  'oaa-gateway-password' = 36
-  'oaa-observer-password' = 36
-  'oaa-relay-password' = 36
-  'oaa-maintenance-password' = 36
+  'osaa-gateway-password' = 36
+  'osaa-observer-password' = 36
+  'osaa-relay-password' = 36
+  'osaa-maintenance-password' = 36
   'ai-runtime-password' = 36
   'ai-pipeline-password' = 36
   'shell-api-password' = 36
@@ -313,10 +313,10 @@ if (-not $browserSessionKeyB64) {
   Invoke-Kubectl @("-n", $Namespace, "patch", "secret", "opensphere-supabase-secrets", "--type=merge", "-p", $patch)
   $browserSessionKeyB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.browser-session-key}")
 }
-$oaaGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-gateway-password}")
-$oaaObserverPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-observer-password}")
-$oaaRelayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-relay-password}")
-$oaaMaintenancePasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.oaa-maintenance-password}")
+$osaaGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.osaa-gateway-password}")
+$osaaObserverPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.osaa-observer-password}")
+$osaaRelayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.osaa-relay-password}")
+$osaaMaintenancePasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.osaa-maintenance-password}")
 $shellApiPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-api-password}")
 $shellGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-gateway-password}")
 $shellReconcilerPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-reconciler-password}")
@@ -343,26 +343,26 @@ data:
 "@
 Invoke-Kubectl @("apply", "-f", "-") $runtimeSecret
 
-$oaaRuntimeSecret = @"
+$osaaRuntimeSecret = @"
 apiVersion: v1
 kind: Secret
 metadata:
-  name: opensphere-oaa-runtime
+  name: opensphere-osaa-runtime
   namespace: opensphere-console
   labels:
-    opensphere.io/secret-scope: oaa-gateway-only
+    opensphere.io/secret-scope: osaa-gateway-only
 type: Opaque
 data:
-  pg-password: $oaaGatewayPasswordB64
-  observer-pg-password: $oaaObserverPasswordB64
-  relay-pg-password: $oaaRelayPasswordB64
-  maintenance-pg-password: $oaaMaintenancePasswordB64
+  pg-password: $osaaGatewayPasswordB64
+  observer-pg-password: $osaaObserverPasswordB64
+  relay-pg-password: $osaaRelayPasswordB64
+  maintenance-pg-password: $osaaMaintenancePasswordB64
 stringData:
-  observer-pg-user: opensphere_oaa_observer
-  relay-pg-user: opensphere_oaa_incident_relay
-  maintenance-pg-user: opensphere_oaa_maintenance
+  observer-pg-user: opensphere_osaa_observer
+  relay-pg-user: opensphere_osaa_incident_relay
+  maintenance-pg-user: opensphere_osaa_maintenance
 "@
-Invoke-Kubectl @("apply", "-f", "-") $oaaRuntimeSecret
+Invoke-Kubectl @("apply", "-f", "-") $osaaRuntimeSecret
 
 # Each Shell control-plane process receives exactly one constrained database
 # login. These Secrets intentionally contain no Supabase owner/JWT/service key.
@@ -602,20 +602,20 @@ if (-not $ExistingInstallation) {
 
 $backendPassword = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.backend-password}")
 $backendPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($backendPassword))
-$oaaGatewayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($oaaGatewayPasswordB64))
-$oaaObserverPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($oaaObserverPasswordB64))
-$oaaRelayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($oaaRelayPasswordB64))
-$oaaMaintenancePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($oaaMaintenancePasswordB64))
+$osaaGatewayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($osaaGatewayPasswordB64))
+$osaaObserverPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($osaaObserverPasswordB64))
+$osaaRelayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($osaaRelayPasswordB64))
+$osaaMaintenancePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($osaaMaintenancePasswordB64))
 $aiRuntimePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aiRuntimePasswordB64))
 $aiPipelinePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aiPipelinePasswordB64))
 $shellApiPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($shellApiPasswordB64))
 $shellGatewayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($shellGatewayPasswordB64))
 $shellReconcilerPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($shellReconcilerPasswordB64))
 $escapedBackendPassword = $backendPassword.Replace("'", "''")
-$escapedOaaGatewayPassword = $oaaGatewayPassword.Replace("'", "''")
-$escapedOaaObserverPassword = $oaaObserverPassword.Replace("'", "''")
-$escapedOaaRelayPassword = $oaaRelayPassword.Replace("'", "''")
-$escapedOaaMaintenancePassword = $oaaMaintenancePassword.Replace("'", "''")
+$escapedOsaaGatewayPassword = $osaaGatewayPassword.Replace("'", "''")
+$escapedOsaaObserverPassword = $osaaObserverPassword.Replace("'", "''")
+$escapedOsaaRelayPassword = $osaaRelayPassword.Replace("'", "''")
+$escapedOsaaMaintenancePassword = $osaaMaintenancePassword.Replace("'", "''")
 $escapedAiRuntimePassword = $aiRuntimePassword.Replace("'", "''")
 $escapedAiPipelinePassword = $aiPipelinePassword.Replace("'", "''")
 $escapedShellApiPassword = $shellApiPassword.Replace("'", "''")
@@ -637,44 +637,44 @@ END
 `$`$;
 DO `$`$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_oaa_gateway') THEN
-    CREATE ROLE opensphere_oaa_gateway LOGIN PASSWORD '$escapedOaaGatewayPassword'
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_osaa_gateway') THEN
+    CREATE ROLE opensphere_osaa_gateway LOGIN PASSWORD '$escapedOsaaGatewayPassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   ELSE
-    ALTER ROLE opensphere_oaa_gateway LOGIN PASSWORD '$escapedOaaGatewayPassword'
+    ALTER ROLE opensphere_osaa_gateway LOGIN PASSWORD '$escapedOsaaGatewayPassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
 END
 `$`$;
 DO `$`$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_oaa_observer') THEN
-    CREATE ROLE opensphere_oaa_observer LOGIN PASSWORD '$escapedOaaObserverPassword'
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_osaa_observer') THEN
+    CREATE ROLE opensphere_osaa_observer LOGIN PASSWORD '$escapedOsaaObserverPassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   ELSE
-    ALTER ROLE opensphere_oaa_observer LOGIN PASSWORD '$escapedOaaObserverPassword'
+    ALTER ROLE opensphere_osaa_observer LOGIN PASSWORD '$escapedOsaaObserverPassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
 END
 `$`$;
 DO `$`$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_oaa_incident_relay') THEN
-    CREATE ROLE opensphere_oaa_incident_relay LOGIN PASSWORD '$escapedOaaRelayPassword'
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_osaa_incident_relay') THEN
+    CREATE ROLE opensphere_osaa_incident_relay LOGIN PASSWORD '$escapedOsaaRelayPassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   ELSE
-    ALTER ROLE opensphere_oaa_incident_relay LOGIN PASSWORD '$escapedOaaRelayPassword'
+    ALTER ROLE opensphere_osaa_incident_relay LOGIN PASSWORD '$escapedOsaaRelayPassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
 END
 `$`$;
 DO `$`$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_oaa_maintenance') THEN
-    CREATE ROLE opensphere_oaa_maintenance LOGIN PASSWORD '$escapedOaaMaintenancePassword'
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_osaa_maintenance') THEN
+    CREATE ROLE opensphere_osaa_maintenance LOGIN PASSWORD '$escapedOsaaMaintenancePassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   ELSE
-    ALTER ROLE opensphere_oaa_maintenance LOGIN PASSWORD '$escapedOaaMaintenancePassword'
+    ALTER ROLE opensphere_osaa_maintenance LOGIN PASSWORD '$escapedOsaaMaintenancePassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
 END

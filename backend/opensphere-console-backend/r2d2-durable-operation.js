@@ -25,34 +25,34 @@ const DESCRIPTORS = Object.freeze({
     verifierId: 'authority.workload.rollout', riskClass: 'R1', assurance: 'aal1',
     targetKind: 'Deployment', confirmationTemplate: 'restart <kind> <namespace>/<name>',
     ownerRoute: 'cluster-manager/workloads', allowedNamespaces: ['opensphere-*'],
-    permission: 'oaa.action.execute.high',
+    permission: 'osaa.action.execute.high',
   }),
   'scale-workload': Object.freeze({
     descriptorId: 'opensphere.workload.scale', revision: '1', toolId: 'owner.workload.scale',
     verifierId: 'authority.workload.replicas', riskClass: 'R1', assurance: 'aal1',
     targetKind: 'Deployment', confirmationTemplate: 'scale <kind> <namespace>/<name> to <replicas>',
-    ownerRoute: 'cluster-manager/workloads', allowedNamespaces: ['opensphere-*'], permission: 'oaa.action.execute.high',
+    ownerRoute: 'cluster-manager/workloads', allowedNamespaces: ['opensphere-*'], permission: 'osaa.action.execute.high',
   }),
   'rollback-image': Object.freeze({
     descriptorId: 'opensphere.release.rollback', revision: '1', toolId: 'owner.release.rollback',
     verifierId: 'authority.release.exact-digest', riskClass: 'R2', assurance: 'aal2',
     targetKind: 'Deployment', confirmationTemplate: 'rollback image <kind> <namespace>/<name> container <container> to <image>',
     ownerRoute: 'foundation/platform-release', allowedNamespaces: ['opensphere-*'],
-    permission: 'oaa.action.execute.high',
+    permission: 'osaa.action.execute.high',
   }),
   'run-cronjob': Object.freeze({
     descriptorId: 'opensphere.cronjob.run', revision: '1', toolId: 'owner.cronjob.run-once',
     verifierId: 'authority.job.completed', riskClass: 'R2', assurance: 'aal2',
     targetKind: 'CronJob', confirmationTemplate: 'run cronjob <namespace>/<name>',
     ownerRoute: 'cluster-manager/workloads', allowedNamespaces: ['opensphere-*'],
-    permission: 'oaa.action.execute.high',
+    permission: 'osaa.action.execute.high',
   }),
   'owner-recover': Object.freeze({
     descriptorId: 'opensphere.owner.recover', revision: '1', toolId: 'owner.recovery.execute',
     verifierId: 'owner.recovery.postcondition', riskClass: 'R2', assurance: 'aal2',
     targetKind: 'Capability', confirmationTemplate: 'recover HIS <name>',
     ownerRoute: 'cluster-manager/his', allowedNamespaces: [''],
-    permission: 'oaa.action.execute.high',
+    permission: 'osaa.action.execute.high',
   }),
   'retry-delivery': Object.freeze({
     descriptorId: 'opensphere.notification.retry', revision: '1', toolId: 'owner.notification.retry',
@@ -67,7 +67,7 @@ const DESCRIPTORS = Object.freeze({
     targetKind: 'FoundationClaim',
     confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
     ownerRoute: 'foundation/postgres', allowedNamespaces: ['opensphere-*'],
-    permission: 'oaa.action.execute.high',
+    permission: 'osaa.action.execute.high',
   }),
 });
 

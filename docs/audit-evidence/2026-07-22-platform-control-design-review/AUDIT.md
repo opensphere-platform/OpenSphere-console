@@ -74,7 +74,7 @@
 ![Integrations](06-integrations.png)
 
 - consumer id, schema, bucket 문자열이 붙어서 읽힌다(`Extensionsextensions`,
-  `oaaoperation-artifacts`).
+  `osaaoperation-artifacts`).
 - `Unknown`과 `NotConfigured`가 반복되지만 영향·소유자·마지막 성공·remediation이 없다.
 - consumer별 상세 화면에서 declared/observed revision, Supabase scope, Gitea path,
   reconciler, HIS Binding과 최근 operation을 연결해야 한다.

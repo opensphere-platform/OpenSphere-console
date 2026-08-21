@@ -60,7 +60,7 @@ CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service
 CREATE ROLE supabase_admin LOGIN SUPERUSER; CREATE ROLE authenticator NOLOGIN;
 CREATE ROLE opensphere_ai_pipeline NOLOGIN; CREATE ROLE opensphere_ai_runtime NOLOGIN;
 CREATE ROLE opensphere_console_backend NOLOGIN; CREATE ROLE opensphere_external_channel_executor NOLOGIN;
-CREATE ROLE opensphere_notification_dispatcher NOLOGIN; CREATE ROLE opensphere_oaa_gateway NOLOGIN;
+CREATE ROLE opensphere_notification_dispatcher NOLOGIN; CREATE ROLE opensphere_osaa_gateway NOLOGIN;
 CREATE ROLE opensphere_shell_api NOLOGIN; CREATE ROLE opensphere_shell_gateway NOLOGIN;
 CREATE ROLE opensphere_shell_reconciler NOLOGIN;
 CREATE SCHEMA IF NOT EXISTS extensions;
@@ -123,30 +123,30 @@ function mustRejectContract(sql, label, pattern) {
 
 function verifyR2d2RoleMatrix() {
   console.log('\nR2D2 DB 역할 허용·거부 matrix (0046~0053)');
-  psql(`SET ROLE opensphere_oaa_observer;
-    INSERT INTO oaa.source_health(cluster_id,source,configured,epistemic_state,snapshot_complete,updated_at)
+  psql(`SET ROLE opensphere_osaa_observer;
+    INSERT INTO osaa.source_health(cluster_id,source,configured,epistemic_state,snapshot_complete,updated_at)
     VALUES ('role-test','Kubernetes',true,'known',true,clock_timestamp()); RESET ROLE;`);
   console.log('  ✓ observer는 source health projection을 기록할 수 있다');
-  mustRejectPermission('SET ROLE opensphere_oaa_observer; SELECT count(*) FROM console.module_operation;', 'observer → module_operation');
+  mustRejectPermission('SET ROLE opensphere_osaa_observer; SELECT count(*) FROM console.module_operation;', 'observer → module_operation');
 
-  psql('SET ROLE opensphere_oaa_api; SELECT count(*) FROM oaa.source_health; RESET ROLE;');
+  psql('SET ROLE opensphere_osaa_api; SELECT count(*) FROM osaa.source_health; RESET ROLE;');
   console.log('  ✓ API 역할은 operational projection을 조회할 수 있다');
-  mustRejectPermission(`SET ROLE opensphere_oaa_api;
-    INSERT INTO oaa.source_health(cluster_id,source,configured,epistemic_state,snapshot_complete,updated_at)
+  mustRejectPermission(`SET ROLE opensphere_osaa_api;
+    INSERT INTO osaa.source_health(cluster_id,source,configured,epistemic_state,snapshot_complete,updated_at)
     VALUES ('role-test','Gitea',true,'known',true,clock_timestamp());`, 'API → projection write');
 
-  psql(`SET ROLE opensphere_oaa_maintenance;
-    SELECT count(*) FROM oaa.source_health;
-    INSERT INTO oaa.slo_sample(sampled_at,metric,value,labels) VALUES(clock_timestamp(),'coverage_ratio',1,'{}'); RESET ROLE;`);
+  psql(`SET ROLE opensphere_osaa_maintenance;
+    SELECT count(*) FROM osaa.source_health;
+    INSERT INTO osaa.slo_sample(sampled_at,metric,value,labels) VALUES(clock_timestamp(),'coverage_ratio',1,'{}'); RESET ROLE;`);
   console.log('  ✓ maintenance는 partition/SLO 계약 범위만 사용할 수 있다');
-  mustRejectPermission(`SET ROLE opensphere_oaa_maintenance;
-    UPDATE oaa.source_health SET blocker_code='tamper' WHERE cluster_id='role-test';`, 'maintenance → observer projection write');
+  mustRejectPermission(`SET ROLE opensphere_osaa_maintenance;
+    UPDATE osaa.source_health SET blocker_code='tamper' WHERE cluster_id='role-test';`, 'maintenance → observer projection write');
 
-  psql('SET ROLE opensphere_oaa_incident_relay; SELECT count(*) FROM oaa.incident_outbox; RESET ROLE;');
+  psql('SET ROLE opensphere_osaa_incident_relay; SELECT count(*) FROM osaa.incident_outbox; RESET ROLE;');
   console.log('  ✓ relay는 incident outbox를 조회할 수 있다');
-  mustRejectPermission('SET ROLE opensphere_oaa_incident_relay; SELECT count(*) FROM oaa.resource_node;', 'relay → graph read');
+  mustRejectPermission('SET ROLE opensphere_osaa_incident_relay; SELECT count(*) FROM osaa.resource_node;', 'relay → graph read');
 
-  mustRejectPermission('SET ROLE opensphere_console_backend; SELECT count(*) FROM oaa.observation;', 'Console Backend → observation read');
+  mustRejectPermission('SET ROLE opensphere_console_backend; SELECT count(*) FROM osaa.observation;', 'Console Backend → observation read');
 }
 
 async function verifyShellSessionLedger() {
@@ -467,21 +467,21 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 function verifyR2d2RedteamHardening() {
   console.log('\nR2D2 red-team 시정 강제계약 (0053)');
   const observationPartition = psql(`SELECT c.oid::regclass::text FROM pg_inherits i
-    JOIN pg_class c ON c.oid=i.inhrelid WHERE i.inhparent='oaa.observation'::regclass ORDER BY c.relname DESC LIMIT 1;`).trim();
+    JOIN pg_class c ON c.oid=i.inhrelid WHERE i.inhparent='osaa.observation'::regclass ORDER BY c.relname DESC LIMIT 1;`).trim();
   const sloPartition = psql(`SELECT c.oid::regclass::text FROM pg_inherits i
-    JOIN pg_class c ON c.oid=i.inhrelid WHERE i.inhparent='oaa.slo_sample'::regclass ORDER BY c.relname DESC LIMIT 1;`).trim();
-  for (const role of ['opensphere_oaa_gateway','opensphere_oaa_observer']) {
-    mustRejectPermission(`SET ROLE ${role}; UPDATE oaa.observation SET severity='info';`, `${role} → observation parent UPDATE`);
-    mustRejectPermission(`SET ROLE ${role}; DELETE FROM oaa.observation;`, `${role} → observation parent DELETE`);
-    mustRejectPermission(`SET ROLE ${role}; TRUNCATE oaa.observation;`, `${role} → observation parent TRUNCATE`);
+    JOIN pg_class c ON c.oid=i.inhrelid WHERE i.inhparent='osaa.slo_sample'::regclass ORDER BY c.relname DESC LIMIT 1;`).trim();
+  for (const role of ['opensphere_osaa_gateway','opensphere_osaa_observer']) {
+    mustRejectPermission(`SET ROLE ${role}; UPDATE osaa.observation SET severity='info';`, `${role} → observation parent UPDATE`);
+    mustRejectPermission(`SET ROLE ${role}; DELETE FROM osaa.observation;`, `${role} → observation parent DELETE`);
+    mustRejectPermission(`SET ROLE ${role}; TRUNCATE osaa.observation;`, `${role} → observation parent TRUNCATE`);
     mustRejectPermission(`SET ROLE ${role}; UPDATE ${observationPartition} SET severity='info';`, `${role} → observation partition UPDATE`);
     mustRejectPermission(`SET ROLE ${role}; DELETE FROM ${observationPartition};`, `${role} → observation partition DELETE`);
     mustRejectPermission(`SET ROLE ${role}; TRUNCATE ${observationPartition};`, `${role} → observation partition TRUNCATE`);
   }
-  for (const role of ['opensphere_oaa_gateway','opensphere_oaa_maintenance']) {
-    mustRejectPermission(`SET ROLE ${role}; UPDATE oaa.slo_sample SET value=0;`, `${role} → SLO parent UPDATE`);
-    mustRejectPermission(`SET ROLE ${role}; DELETE FROM oaa.slo_sample;`, `${role} → SLO parent DELETE`);
-    mustRejectPermission(`SET ROLE ${role}; TRUNCATE oaa.slo_sample;`, `${role} → SLO parent TRUNCATE`);
+  for (const role of ['opensphere_osaa_gateway','opensphere_osaa_maintenance']) {
+    mustRejectPermission(`SET ROLE ${role}; UPDATE osaa.slo_sample SET value=0;`, `${role} → SLO parent UPDATE`);
+    mustRejectPermission(`SET ROLE ${role}; DELETE FROM osaa.slo_sample;`, `${role} → SLO parent DELETE`);
+    mustRejectPermission(`SET ROLE ${role}; TRUNCATE osaa.slo_sample;`, `${role} → SLO parent TRUNCATE`);
     mustRejectPermission(`SET ROLE ${role}; UPDATE ${sloPartition} SET value=0;`, `${role} → SLO partition UPDATE`);
     mustRejectPermission(`SET ROLE ${role}; DELETE FROM ${sloPartition};`, `${role} → SLO partition DELETE`);
     mustRejectPermission(`SET ROLE ${role}; TRUNCATE ${sloPartition};`, `${role} → SLO partition TRUNCATE`);
@@ -489,26 +489,26 @@ function verifyR2d2RedteamHardening() {
   console.log('  ✓ evidence parent·동적 partition의 role×UPDATE/DELETE/TRUNCATE matrix가 fail-closed다');
 
   mustReject(`SET session_replication_role='replica';
-    UPDATE oaa.slo_sample SET value=0 WHERE metric='coverage_ratio';`, 'replica role → SLO append-only UPDATE');
+    UPDATE osaa.slo_sample SET value=0 WHERE metric='coverage_ratio';`, 'replica role → SLO append-only UPDATE');
   mustReject(`SET session_replication_role='replica';
-    DELETE FROM oaa.slo_sample WHERE metric='coverage_ratio';`, 'replica role → SLO append-only DELETE');
-  mustReject(`SET session_replication_role='replica'; TRUNCATE oaa.slo_sample;`, 'replica role → SLO append-only TRUNCATE');
+    DELETE FROM osaa.slo_sample WHERE metric='coverage_ratio';`, 'replica role → SLO append-only DELETE');
+  mustReject(`SET session_replication_role='replica'; TRUNCATE osaa.slo_sample;`, 'replica role → SLO append-only TRUNCATE');
   console.log('  ✓ ENABLE ALWAYS append-only trigger는 session_replication_role=replica 우회를 막는다');
 
-  mustRejectPermission(`SET ROLE opensphere_oaa_observer;
-    INSERT INTO oaa.incident(cluster_id,fingerprint,incident_type,status,severity,confidence,cause_status,title,
+  mustRejectPermission(`SET ROLE opensphere_osaa_observer;
+    INSERT INTO osaa.incident(cluster_id,fingerprint,incident_type,status,severity,confidence,cause_status,title,
       first_detected_at,last_observed_at,primary_node_id,summary,fencing_epoch)
     VALUES('raw-write','${`sha256:${'9'.repeat(64)}`}','raw','active','high',1,'confirmed','raw',clock_timestamp(),clock_timestamp(),'n','raw',1);`,
   'observer → raw incident INSERT');
-  mustRejectPermission(`SET ROLE opensphere_oaa_observer; UPDATE oaa.incident SET status='resolved';`,
+  mustRejectPermission(`SET ROLE opensphere_osaa_observer; UPDATE osaa.incident SET status='resolved';`,
     'observer → raw incident UPDATE');
-  mustRejectPermission(`SET ROLE opensphere_oaa_observer;
-    INSERT INTO oaa.incident_timeline(incident_id,sequence,transition,to_status,transition_sequence,fencing_epoch,reason_code,evidence_digest)
-    SELECT incident_id,999,'raw','active',999,fencing_epoch,'raw','${`sha256:${'8'.repeat(64)}`}' FROM oaa.incident LIMIT 1;`,
+  mustRejectPermission(`SET ROLE opensphere_osaa_observer;
+    INSERT INTO osaa.incident_timeline(incident_id,sequence,transition,to_status,transition_sequence,fencing_epoch,reason_code,evidence_digest)
+    SELECT incident_id,999,'raw','active',999,fencing_epoch,'raw','${`sha256:${'8'.repeat(64)}`}' FROM osaa.incident LIMIT 1;`,
   'observer → raw incident timeline INSERT');
   for (const table of ['incident','incident_timeline','incident_evidence','incident_impact','incident_outbox']) {
-    mustRejectPermission(`SET ROLE opensphere_oaa_observer; DELETE FROM oaa.${table};`, `observer → raw ${table} DELETE`);
-    mustRejectPermission(`SET ROLE opensphere_oaa_observer; TRUNCATE oaa.${table};`, `observer → raw ${table} TRUNCATE`);
+    mustRejectPermission(`SET ROLE opensphere_osaa_observer; DELETE FROM osaa.${table};`, `observer → raw ${table} DELETE`);
+    mustRejectPermission(`SET ROLE opensphere_osaa_observer; TRUNCATE osaa.${table};`, `observer → raw ${table} TRUNCATE`);
   }
   console.log('  ✓ incident 5-table 상태·timeline·evidence·impact·outbox는 fenced RPC 외 raw DML이 없다');
 
@@ -524,7 +524,7 @@ function verifyR2d2RedteamHardening() {
   console.log('  ✓ R2/R3 submitter와 승인자의 DB-level separation of duties가 강제된다');
 
   const pathSetting = psql(`SELECT array_to_string(proconfig,',') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-    WHERE n.nspname='oaa' AND p.proname='propose_engineering_remediation_v2';`).trim();
+    WHERE n.nspname='osaa' AND p.proname='propose_engineering_remediation_v2';`).trim();
   assert.doesNotMatch(pathSetting, /public/, 'Engineering SECURITY DEFINER search_path still includes public');
   console.log('  ✓ Engineering SECURITY DEFINER search_path에서 public이 제거됐다');
 }
@@ -534,15 +534,15 @@ function verifyR2d2ReconcileAndRetentionGates() {
   const session = '14141414-1414-4414-8414-141414141414';
   const nodeId = 'kubernetes:Deployment:opensphere-console:barrier-test';
   const authorityRevision = `sha256:${'5'.repeat(64)}`;
-  const epoch = Number(psql(`SET ROLE opensphere_oaa_observer;
-    SELECT oaa.claim_observer_epoch('barrier-test','barrier-verifier','barrier-lease',120); RESET ROLE;`)
+  const epoch = Number(psql(`SET ROLE opensphere_osaa_observer;
+    SELECT osaa.claim_observer_epoch('barrier-test','barrier-verifier','barrier-lease',120); RESET ROLE;`)
     .trim().split('\n').find((line) => /^\d+$/u.test(line)));
   assert.ok(epoch > 0, 'barrier verifier could not claim a fence');
-  psql(`SET ROLE opensphere_oaa_observer;
-    INSERT INTO oaa.reconcile_session(reconcile_session_id,cluster_id,source,collector_id,fencing_epoch,
+  psql(`SET ROLE opensphere_osaa_observer;
+    INSERT INTO osaa.reconcile_session(reconcile_session_id,cluster_id,source,collector_id,fencing_epoch,
       collection_epoch,expected_scope_count,completed_scope_count,snapshot_complete)
     VALUES('${session}','barrier-test','kubernetes','barrier-verifier',${epoch},1,1,1,false);
-    INSERT INTO oaa.resource_node(cluster_id,node_id,node_type,canonical_id,authority,authority_uid,display_name,
+    INSERT INTO osaa.resource_node(cluster_id,node_id,node_type,canonical_id,authority,authority_uid,display_name,
       namespace,health,epistemic_state,attributes,fencing_epoch,collection_epoch,stream_sequence,source_revision,
       reconcile_session_id,snapshot_complete,observed_at,expires_at)
     VALUES('barrier-test','${nodeId}','Deployment','deployment/barrier-test','kubernetes','uid-barrier','barrier-test',
@@ -550,52 +550,52 @@ function verifyR2d2ReconcileAndRetentionGates() {
     RESET ROLE;`);
   const material = ['complete-reconcile-v2',session,'1','1','1',authorityRevision,nodeId].join('\n');
   const completeDigest = `sha256:${createHash('sha256').update(material, 'utf8').digest('hex')}`;
-  mustRejectContract(`SET ROLE opensphere_oaa_observer;
-    SELECT oaa.complete_reconcile_session_v2('${session}',1,1,false,'${authorityRevision}','${completeDigest}');`,
+  mustRejectContract(`SET ROLE opensphere_osaa_observer;
+    SELECT osaa.complete_reconcile_session_v2('${session}',1,1,false,'${authorityRevision}','${completeDigest}');`,
   'page token 미소진 reconcile', /incomplete reconcile scope\/page barrier/i);
-  mustRejectContract(`SET ROLE opensphere_oaa_observer;
-    SELECT oaa.complete_reconcile_session_v2('${session}',1,0,true,'${authorityRevision}','${completeDigest}');`,
+  mustRejectContract(`SET ROLE opensphere_osaa_observer;
+    SELECT osaa.complete_reconcile_session_v2('${session}',1,0,true,'${authorityRevision}','${completeDigest}');`,
   'DB 관측 수와 불일치한 reconcile', /observed resource count mismatch/i);
-  mustRejectContract(`SET ROLE opensphere_oaa_observer;
-    SELECT oaa.complete_reconcile_session_v2('${session}',1,1,true,'${authorityRevision}','${`sha256:${'4'.repeat(64)}`}');`,
+  mustRejectContract(`SET ROLE opensphere_osaa_observer;
+    SELECT osaa.complete_reconcile_session_v2('${session}',1,1,true,'${authorityRevision}','${`sha256:${'4'.repeat(64)}`}');`,
   '완전성 digest 불일치 reconcile', /completeness digest mismatch/i);
-  assert.equal(psql(`SELECT snapshot_complete FROM oaa.reconcile_session WHERE reconcile_session_id='${session}';`).trim(), 'f',
+  assert.equal(psql(`SELECT snapshot_complete FROM osaa.reconcile_session WHERE reconcile_session_id='${session}';`).trim(), 'f',
     'failed barrier incorrectly marked the snapshot complete');
-  assert.match(psql(`SET ROLE opensphere_oaa_observer;
-    SELECT oaa.complete_reconcile_session_v2('${session}',1,1,true,'${authorityRevision}','${completeDigest}'); RESET ROLE;`), /t/,
+  assert.match(psql(`SET ROLE opensphere_osaa_observer;
+    SELECT osaa.complete_reconcile_session_v2('${session}',1,1,true,'${authorityRevision}','${completeDigest}'); RESET ROLE;`), /t/,
   'valid independent completeness evidence did not cross the barrier');
   assert.equal(psql(`SELECT snapshot_complete||'|'||observed_resource_count||'|'||page_token_exhausted
-    FROM oaa.reconcile_session WHERE reconcile_session_id='${session}';`).trim(), 'true|1|true');
-  mustRejectPermission(`SET ROLE opensphere_oaa_observer; SELECT oaa.complete_reconcile_session('${session}',1);`,
+    FROM osaa.reconcile_session WHERE reconcile_session_id='${session}';`).trim(), 'true|1|true');
+  mustRejectPermission(`SET ROLE opensphere_osaa_observer; SELECT osaa.complete_reconcile_session('${session}',1);`,
     'legacy collector-count-only reconcile RPC');
   console.log('  ✓ 독립 DB count·page exhaustion·authority revision·digest가 모두 맞아야 reconcile이 완료된다');
 
   const exportId = '15151515-1515-4515-8515-151515151515';
   const holdId = '16161616-1616-4616-8616-161616161616';
-  psql(`CREATE TABLE oaa.slo_sample_202401 PARTITION OF oaa.slo_sample
+  psql(`CREATE TABLE osaa.slo_sample_202401 PARTITION OF osaa.slo_sample
     FOR VALUES FROM ('2024-01-01T00:00:00Z') TO ('2024-02-01T00:00:00Z');
-    SELECT oaa.harden_evidence_partition('oaa.slo_sample_202401'::regclass,'slo_sample');
-    INSERT INTO oaa.evidence_partition_export(export_id,stream,range_start,range_end,row_count,object_ref,
+    SELECT osaa.harden_evidence_partition('osaa.slo_sample_202401'::regclass,'slo_sample');
+    INSERT INTO osaa.evidence_partition_export(export_id,stream,range_start,range_end,row_count,object_ref,
       object_digest,verified_at,verified_by)
     VALUES('${exportId}','slo_sample','2024-01-01T00:00:00Z','2024-02-01T00:00:00Z',0,
       's3://r2d2-evidence/slo-202401','${`sha256:${'3'.repeat(64)}`}',clock_timestamp(),'ledger-verifier');`);
-  mustRejectContract(`SET ROLE opensphere_oaa_maintenance;
-    ALTER TABLE oaa.slo_sample DETACH PARTITION oaa.slo_sample_202401;`, 'maintenance direct partition DDL', /must be owner|permission denied/i);
-  mustRejectContract(`SET ROLE opensphere_oaa_maintenance;
-    SELECT oaa.purge_evidence_partition('slo_sample','slo_sample_202401','2024-01-01T00:00:00Z','2024-02-01T00:00:00Z','${exportId}');`,
+  mustRejectContract(`SET ROLE opensphere_osaa_maintenance;
+    ALTER TABLE osaa.slo_sample DETACH PARTITION osaa.slo_sample_202401;`, 'maintenance direct partition DDL', /must be owner|permission denied/i);
+  mustRejectContract(`SET ROLE opensphere_osaa_maintenance;
+    SELECT osaa.purge_evidence_partition('slo_sample','slo_sample_202401','2024-01-01T00:00:00Z','2024-02-01T00:00:00Z','${exportId}');`,
   'restore 미검증 partition purge', /verified export and restore proof required/i);
-  psql(`UPDATE oaa.evidence_partition_export SET restored_at=clock_timestamp() WHERE export_id='${exportId}';
-    INSERT INTO oaa.evidence_legal_hold(hold_id,stream,range_start,range_end,reason,created_by)
+  psql(`UPDATE osaa.evidence_partition_export SET restored_at=clock_timestamp() WHERE export_id='${exportId}';
+    INSERT INTO osaa.evidence_legal_hold(hold_id,stream,range_start,range_end,reason,created_by)
     VALUES('${holdId}','slo_sample','2024-01-01T00:00:00Z','2024-02-01T00:00:00Z','redteam retention legal hold','ledger-verifier');`);
-  mustRejectContract(`SET ROLE opensphere_oaa_maintenance;
-    SELECT oaa.purge_evidence_partition('slo_sample','slo_sample_202401','2024-01-01T00:00:00Z','2024-02-01T00:00:00Z','${exportId}');`,
+  mustRejectContract(`SET ROLE opensphere_osaa_maintenance;
+    SELECT osaa.purge_evidence_partition('slo_sample','slo_sample_202401','2024-01-01T00:00:00Z','2024-02-01T00:00:00Z','${exportId}');`,
   'legal hold partition purge', /active legal hold blocks purge/i);
-  psql(`UPDATE oaa.evidence_legal_hold SET active=false,released_by='ledger-verifier',released_at=clock_timestamp()
+  psql(`UPDATE osaa.evidence_legal_hold SET active=false,released_by='ledger-verifier',released_at=clock_timestamp()
     WHERE hold_id='${holdId}';`);
-  assert.match(psql(`SET ROLE opensphere_oaa_maintenance;
-    SELECT oaa.purge_evidence_partition('slo_sample','slo_sample_202401','2024-01-01T00:00:00Z','2024-02-01T00:00:00Z','${exportId}'); RESET ROLE;`), /t/,
+  assert.match(psql(`SET ROLE opensphere_osaa_maintenance;
+    SELECT osaa.purge_evidence_partition('slo_sample','slo_sample_202401','2024-01-01T00:00:00Z','2024-02-01T00:00:00Z','${exportId}'); RESET ROLE;`), /t/,
   'fully evidenced partition purge did not complete');
-  assert.equal(psql(`SELECT to_regclass('oaa.slo_sample_202401') IS NULL;`).trim(), 't');
+  assert.equal(psql(`SELECT to_regclass('osaa.slo_sample_202401') IS NULL;`).trim(), 't');
   console.log('  ✓ restore proof·legal hold·30일·exact child 검사가 실제 DETACH/DROP과 원자 결속된다');
 }
 
@@ -639,48 +639,48 @@ function verifyR2d2DurabilityAndRemediation() {
   const mismatch = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const assessment = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   const remediation = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
-  const patchText = '--- a/backend/opensphere-console-oaa-gateway/server.js\n+++ b/backend/opensphere-console-oaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const patchText = '--- a/backend/opensphere-console-osaa-gateway/server.js\n+++ b/backend/opensphere-console-osaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
   const patchDigest = `sha256:${createHash('sha256').update(patchText).digest('hex')}`;
-  psql(`INSERT INTO oaa.observer_fence(cluster_id,fencing_epoch,collector_id,lease_identity,lease_expires_at)
+  psql(`INSERT INTO osaa.observer_fence(cluster_id,fencing_epoch,collector_id,lease_identity,lease_expires_at)
     VALUES('local',1,'ledger-verifier','ledger-verifier',clock_timestamp()+interval '1 hour')
     ON CONFLICT(cluster_id) DO UPDATE SET fencing_epoch=1,collector_id='ledger-verifier',lease_identity='ledger-verifier',lease_expires_at=clock_timestamp()+interval '1 hour';
-    INSERT INTO oaa.incident(
+    INSERT INTO osaa.incident(
       incident_id,cluster_id,fingerprint,incident_type,status,severity,confidence,cause_status,title,
       first_detected_at,last_observed_at,primary_node_id,rule_revision,summary,fencing_epoch
     ) VALUES('${incident}','local','${digestA}','digest_drift','active','high',1,'confirmed','digest drift',
       clock_timestamp(),clock_timestamp(),'node:deployment','r2d2-correlation-v1','exact digest mismatch',1);
-    INSERT INTO oaa.mismatch(mismatch_id,incident_id,cluster_id,subject_node_id,mismatch_type,epistemic_state,
+    INSERT INTO osaa.mismatch(mismatch_id,incident_id,cluster_id,subject_node_id,mismatch_type,epistemic_state,
       expected_digest,actual_digest,evidence_digest)
     VALUES('${mismatch}','${incident}','local','node:deployment','exact_image_digest','known','${digestA}','${digestB}','${digestC}');
-    INSERT INTO oaa.remediation_assessment(assessment_id,mismatch_id,incident_id,minimum_ladder_step,lower_steps,
+    INSERT INTO osaa.remediation_assessment(assessment_id,mismatch_id,incident_id,minimum_ladder_step,lower_steps,
       engineering_required,rationale,policy_revision,evidence_digest)
     VALUES('${assessment}','${mismatch}','${incident}',5,
       '[{"step":0,"status":"exhausted"},{"step":1,"status":"exhausted"},{"step":2,"status":"exhausted"},{"step":3,"status":"exhausted"},{"step":4,"status":"exhausted"}]',
       true,'lower recovery ladder exhausted','r2d2-remediation-v1','${digestC}');`);
-  const proposalSql = `SELECT stage||'|'||remediation_request_id FROM oaa.propose_engineering_remediation_v2(
+  const proposalSql = `SELECT stage||'|'||remediation_request_id FROM osaa.propose_engineering_remediation_v2(
     '${remediation}','r2d2-remediation-proposal-db','${actor}','aal2','ffffffff-ffff-4fff-8fff-ffffffffffff','9',
     '${assessment}','${incident}','https://gitea.opensphere.local/opensphere/OpenSphere-console.git',
-    '${'1'.repeat(40)}',ARRAY['backend/opensphere-console-oaa-gateway/'],'${patchDigest}',
-    $patch$${patchText}$patch$,ARRAY['backend/opensphere-console-oaa-gateway/server.js'],'${digestB}',
-    'known mismatch requires bounded source repair','R2',ARRAY['oaaGateway'],ARRAY['opensphere-console-oaa-gateway'],
+    '${'1'.repeat(40)}',ARRAY['backend/opensphere-console-osaa-gateway/'],'${patchDigest}',
+    $patch$${patchText}$patch$,ARRAY['backend/opensphere-console-osaa-gateway/server.js'],'${digestB}',
+    'known mismatch requires bounded source repair','R2',ARRAY['osaaGateway'],ARRAY['opensphere-console-osaa-gateway'],
     ARRAY['unit','contract','integration','security'],'component',NULL::text,'edge','localhost','${'2'.repeat(40)}',
     ARRAY['${digestA}'],'${digestC}',clock_timestamp()+interval '1 hour');`;
   const proposalResult = psql(`SET ROLE opensphere_console_backend; ${proposalSql} RESET ROLE;`)
     .trim().split('\n').find((line) => line.startsWith('proposed|'));
   assert.equal(proposalResult, `proposed|${remediation}`, 'atomic remediation proposal did not persist');
-  assert.equal(psql(`SELECT count(*) FROM console.module_operation mo JOIN oaa.engineering_remediation_request er
+  assert.equal(psql(`SELECT count(*) FROM console.module_operation mo JOIN osaa.engineering_remediation_request er
     ON er.operation_id=mo.operation_id WHERE er.remediation_request_id='${remediation}'
       AND mo.phase='AwaitingApproval' AND er.stage='proposed';`).trim(), '1',
     'remediation request and durable operation were not atomically correlated');
   console.log('  ✓ proposal와 durable operation이 하나의 DB transaction으로 상관 결속된다');
-  assert.equal(psql(`SELECT count(*) FROM oaa.remediation_patch_artifact
+  assert.equal(psql(`SELECT count(*) FROM osaa.remediation_patch_artifact
     WHERE remediation_request_id='${remediation}' AND patch_digest='${patchDigest}';`).trim(), '1',
     'exact patch artifact was not committed atomically with proposal');
   console.log('  ✓ exact unified diff artifact가 proposal과 원자적으로 결속된다');
-  const remediationOperation = psql(`SELECT operation_id FROM oaa.engineering_remediation_request
+  const remediationOperation = psql(`SELECT operation_id FROM osaa.engineering_remediation_request
     WHERE remediation_request_id='${remediation}';`).trim();
   assert.match(psql(`SET ROLE opensphere_console_backend;
-    SELECT stage FROM oaa.record_engineering_remediation_approval(
+    SELECT stage FROM osaa.record_engineering_remediation_approval(
       '${remediation}','source_patch','${approver}','aal2','${digestC}','${digestB}',clock_timestamp()+interval '30 minutes');
     RESET ROLE;`).trim(), /approved/, 'patch-bound approval did not activate the dedicated lifecycle');
   assert.equal(psql(`SELECT count(*) FROM console.claim_module_operation('generic-owner-worker',3,10)
@@ -688,23 +688,23 @@ function verifyR2d2DurabilityAndRemediation() {
     'Engineering Remediation escaped into the generic owner-facade worker');
   console.log('  ✓ Engineering Remediation은 승인 후에도 generic owner worker에서 격리된다');
   assert.equal(psql(`SET ROLE opensphere_console_backend;
-    SELECT count(*) FROM oaa.claim_engineering_remediation('engineering-worker',4,5)
+    SELECT count(*) FROM osaa.claim_engineering_remediation('engineering-worker',4,5)
       WHERE remediation_request_id='${remediation}'; RESET ROLE;`).trim().split('\n').includes('1'), true,
     'approved remediation was not claimable by the dedicated worker');
   assert.equal(psql(`SET ROLE opensphere_console_backend;
-    SELECT oaa.heartbeat_engineering_remediation('${remediation}','engineering-worker',4); RESET ROLE;`).trim().split('\n').includes('t'), true,
+    SELECT osaa.heartbeat_engineering_remediation('${remediation}','engineering-worker',4); RESET ROLE;`).trim().split('\n').includes('t'), true,
     'dedicated remediation lease heartbeat failed');
   assert.match(psql(`SET ROLE opensphere_console_backend;
-    SELECT stage FROM oaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
+    SELECT stage FROM osaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
       'approved','sandboxed','{"network":"none","credentials":0}'::jsonb,'${digestA}'); RESET ROLE;`).trim(), /sandboxed/,
     'fenced Engineering Remediation stage did not advance');
   for (const [from, to] of [['sandboxed','patched'],['patched','testing'],['testing','ready_to_commit'],['ready_to_commit','committed'],['committed','building']]) {
     psql(`SET ROLE opensphere_console_backend;
-      SELECT stage FROM oaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
+      SELECT stage FROM osaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
         '${from}','${to}','{}'::jsonb,'${digestA}'); RESET ROLE;`);
   }
   assert.match(psql(`SET ROLE opensphere_console_backend;
-    SELECT source_revision FROM oaa.record_engineering_build_evidence(
+    SELECT source_revision FROM osaa.record_engineering_build_evidence(
       '${remediation}','engineering-worker',4,'${'3'.repeat(40)}','${patchDigest}',
       '{"unit":{"status":"passed"}}'::jsonb,'${digestA}','${digestB}','${digestC}',
       ARRAY['${digestA}'],'localhost','${digestB}'); RESET ROLE;`).trim(), /3{40}/,
@@ -712,37 +712,37 @@ function verifyR2d2DurabilityAndRemediation() {
   let staleBuildRejected = false;
   try {
     psql(`SET ROLE opensphere_console_backend;
-      SELECT source_revision FROM oaa.record_engineering_build_evidence(
+      SELECT source_revision FROM osaa.record_engineering_build_evidence(
         '${remediation}','engineering-worker',5,'${'3'.repeat(40)}','${patchDigest}',
         '{}'::jsonb,'${digestA}','${digestB}','${digestC}',ARRAY['${digestA}'],'localhost','${digestB}');`);
   } catch (error) { staleBuildRejected = /build evidence claim was lost/.test(String(error.stderr || error.message)); }
   assert.ok(staleBuildRejected, 'stale Engineering Remediation worker appended build evidence');
   psql(`SET ROLE opensphere_console_backend;
-    SELECT stage FROM oaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
+    SELECT stage FROM osaa.advance_engineering_remediation('${remediation}','engineering-worker',4,
       'building','build_failed','{"code":"BuilderFailed"}'::jsonb,'${digestA}'); RESET ROLE;`);
-  assert.equal(psql(`SELECT (claim_owner IS NULL)::text||'|'||stage FROM oaa.engineering_remediation_request
+  assert.equal(psql(`SELECT (claim_owner IS NULL)::text||'|'||stage FROM osaa.engineering_remediation_request
     WHERE remediation_request_id='${remediation}';`).trim(), 'true|build_failed',
     'build failure did not release its claim');
   assert.equal(psql(`SELECT phase||'|'||execution_state FROM console.module_operation
     WHERE operation_id='${remediationOperation}';`).trim(), 'Failed|failed',
     'build failure did not terminate the durable operation');
-  psql(`UPDATE oaa.engineering_remediation_request SET stage='verifying',claim_owner='deploy-worker',claim_epoch=8,
+  psql(`UPDATE osaa.engineering_remediation_request SET stage='verifying',claim_owner='deploy-worker',claim_epoch=8,
     lease_expires_at=clock_timestamp()+interval '30 seconds' WHERE remediation_request_id='${remediation}';`);
   assert.match(psql(`SET ROLE opensphere_console_backend;
-    SELECT status FROM oaa.record_engineering_deployment_verification(
+    SELECT status FROM osaa.record_engineering_deployment_verification(
       '${remediation}','deploy-worker',8,'${remediationOperation}',ARRAY['${digestA}'],ARRAY['${digestB}'],
       '${digestA}','${digestB}','{"passed":false}'::jsonb,'{"passed":false}'::jsonb,false,'failed'); RESET ROLE;`).trim(), /failed/,
     'fenced deployment verification was not accepted');
   let staleVerificationRejected = false;
   try {
     psql(`SET ROLE opensphere_console_backend;
-      SELECT status FROM oaa.record_engineering_deployment_verification(
+      SELECT status FROM osaa.record_engineering_deployment_verification(
         '${remediation}','deploy-worker',9,'${remediationOperation}',ARRAY['${digestA}'],ARRAY['${digestA}'],
         '${digestA}','${digestA}','{"passed":true}'::jsonb,'{"passed":true}'::jsonb,false,'succeeded');`);
   } catch (error) { staleVerificationRejected = /deployment verification claim was lost/.test(String(error.stderr || error.message)); }
   assert.ok(staleVerificationRejected, 'stale Engineering Remediation worker appended deployment verification');
   console.log('  ✓ scoped approval→claim→stage·build·verification fencing과 실패 종결이 연결된다');
-  mustRejectPermission(`SET ROLE opensphere_oaa_api; ${proposalSql}`, 'API role → remediation proposal mutation');
+  mustRejectPermission(`SET ROLE opensphere_osaa_api; ${proposalSql}`, 'API role → remediation proposal mutation');
 }
 
 /**
@@ -818,7 +818,7 @@ function verifyApprovalBinding() {
  * 에이전트 행위가 사람과 같은 원장에 결속되는가.
  *
  * 제품 주장은 "에이전트가 판단 앞에서 멈춘다" 이다. 멈췄다는 사실이 감사 원장 밖에 있으면
- * 사후에 확인할 수 없으므로 주장이 성립하지 않는다. 0034 이전에는 oaa.* 어느 테이블도
+ * 사후에 확인할 수 없으므로 주장이 성립하지 않는다. 0034 이전에는 osaa.* 어느 테이블도
  * audit.event 에 쓰지 않았다.
  */
 function verifyAgentBinding() {
@@ -831,32 +831,32 @@ function verifyAgentBinding() {
   const before = Number(psql(`SELECT count(*) FROM audit.event WHERE actor_type='service';`).trim());
 
   // ① 성공한 도구 실행이 원장에 남는가.
-  psql(`INSERT INTO oaa.tool_run
+  psql(`INSERT INTO osaa.tool_run
       (request_id, actor_id, tool_id, target, permission_code, reason, status, result_digest, completed_at)
     VALUES ('${REQ_OK}','${OPERATOR}','catalog.read','registration/developer',
-      'oaa.system.read','카탈로그 조회','applied','sha256:${'a'.repeat(64)}', now());`);
+      'osaa.system.read','카탈로그 조회','applied','sha256:${'a'.repeat(64)}', now());`);
   const applied = psql(`SELECT action || '|' || actor_type || '|' || phase || '|' || result || '|' || reason
     FROM audit.event WHERE correlation_id='${REQ_OK}';`).trim();
   assert.equal(applied,
-    'agent.tool.catalog.read|service|applied|agent-tool-applied|카탈로그 조회 [permission:oaa.system.read]',
+    'agent.tool.catalog.read|service|applied|agent-tool-applied|카탈로그 조회 [permission:osaa.system.read]',
     `에이전트 실행이 원장에 기대한 형태로 남지 않았다 (실제: ${applied || '(행 없음)'})`);
   console.log('  ✓ 에이전트 도구 실행이 원장에 남는다 — actor_type=service, 권한 코드 포함');
 
   // ② **차단된** 실행이 원장에 남는가. 이것이 이 단계의 핵심이다.
-  psql(`INSERT INTO oaa.tool_run
+  psql(`INSERT INTO osaa.tool_run
       (request_id, actor_id, tool_id, target, permission_code, reason, status, completed_at)
     VALUES ('${REQ_BLOCK}','${OPERATOR}','change.approve','request/33333333-3333-4333-8333-333333333333',
-      'oaa.action.execute.high','에이전트는 결재할 수 없습니다','blocked', now());`);
+      'osaa.action.execute.high','에이전트는 결재할 수 없습니다','blocked', now());`);
   const blocked = psql(`SELECT phase || '|' || result || '|' || reason
     FROM audit.event WHERE correlation_id='${REQ_BLOCK}';`).trim();
   assert.equal(blocked,
-    'failed|agent-tool-blocked|에이전트는 결재할 수 없습니다 [permission:oaa.action.execute.high]',
+    'failed|agent-tool-blocked|에이전트는 결재할 수 없습니다 [permission:osaa.action.execute.high]',
     `정책이 막은 사실이 원장에 남지 않았다 (실제: ${blocked || '(행 없음)'})`);
   console.log('  ✓ 정책이 막은 사실이 원장에 남는다 — result=agent-tool-blocked');
 
   // ③ 중간 상태는 원장을 오염시키지 않는다.
-  psql(`INSERT INTO oaa.tool_run (request_id, actor_id, tool_id, target, permission_code, status)
-    VALUES ('66666666-6666-4666-8666-666666666666','${OPERATOR}','x.y','t','oaa.chat.use','intent');`);
+  psql(`INSERT INTO osaa.tool_run (request_id, actor_id, tool_id, target, permission_code, status)
+    VALUES ('66666666-6666-4666-8666-666666666666','${OPERATOR}','x.y','t','osaa.chat.use','intent');`);
   assert.equal(psql(`SELECT count(*) FROM audit.event WHERE correlation_id='66666666-6666-4666-8666-666666666666';`).trim(),
     '0', '중간 상태(intent)가 원장에 새어 들어갔다');
   console.log('  ✓ 중간 상태(intent)는 원장에 남지 않는다');

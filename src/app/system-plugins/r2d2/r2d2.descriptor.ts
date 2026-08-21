@@ -8,11 +8,11 @@ export const R2D2_SYSTEM_PLUGIN = Object.freeze({
   category: 'AI Orchestration',
   kind: 'systemPlugin',
   owner: 'cbss-main-shell',
-  route: '/manage/oaa',
+  route: '/manage/osaa',
   requestedCapabilities: [],
   grantedCapabilities: [],
   defaultEnabled: false,
   sessionClass: 'governed-orchestration',
-  runtimeAdapterId: 'cbss.oaa-gateway',
+  runtimeAdapterId: 'cbss.osaa-gateway',
   releaseAuthority: 'opensphere-console-exact-digest',
 } as const satisfies SystemPluginDescriptor);

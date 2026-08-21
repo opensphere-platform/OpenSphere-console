@@ -8,12 +8,12 @@ import path from 'node:path';
 // 새어나오는 레이어링 버그(§console-search-layering) 재발 방지.
 //
 // 이 스펙은 실제 렌더 트리 대신 소스(styles.scss + os-shell/os-search/os-panel/
-// os-notifications/os-oaa-agent)를 정적으로 검사한다 — 이 저장소의 테스트 러너(node --test)에는
+// os-notifications/os-osaa-agent)를 정적으로 검사한다 — 이 저장소의 테스트 러너(node --test)에는
 // Angular TestBed/브라우저 레이아웃 엔진이 없기 때문. 계약이 검증하는 불변식:
 //   1) 전역 z-index 레이어 스케일 토큰(--os-z-*)이 styles.scss :root에 오름차순으로 존재한다.
 //   2) os-shell.ts .header가 position:relative + z-index:var(--os-z-header)로
 //      자체 stacking context를 형성한다(수정 전에는 z-index가 아예 없었다 — 버그의 근본 원인).
-//   3) 헤더 레이어가 OAA·패널그립·알림 위, skip-link 아래에 위치한다.
+//   3) 헤더 레이어가 OSAA·패널그립·알림 위, skip-link 아래에 위치한다.
 //   4) 각 전역 오버레이 컴포넌트가 매직넘버가 아니라 공유 토큰을 참조한다.
 //
 // 수정 전 상태에서는 (2)가 거짓이라 이 스펙은 실패했다.
@@ -30,7 +30,7 @@ const osShellTs = read('src/app/os/os-shell.ts');
 const osSearchTs = read('src/app/os/os-search.ts');
 const osPanelTs = read('src/app/os/os-panel.ts');
 const osNotificationsTs = read('src/app/os/os-notifications.ts');
-const osOaaAgentTs = read('src/app/os/os-oaa-agent.ts');
+const osOsaaAgentTs = read('src/app/os/os-osaa-agent.ts');
 const osSessionStepUpTs = read('src/app/os/os-session-step-up.ts');
 const osShellPanelTs = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
 
@@ -42,13 +42,13 @@ function tokenValue(css: string, name: string): number {
 
 test('z-index 레이어 스케일 토큰이 :root에 정의되어 있다', () => {
   const rootBlock = stylesScss.slice(stylesScss.indexOf(':root'), stylesScss.indexOf('\n}\n', stylesScss.indexOf(':root')));
-  for (const name of ['os-z-oaa', 'os-z-panel-grip', 'os-z-shell-panel', 'os-z-notifications', 'os-z-header', 'os-z-skip-link', 'os-z-security-step-up']) {
+  for (const name of ['os-z-osaa', 'os-z-panel-grip', 'os-z-shell-panel', 'os-z-notifications', 'os-z-header', 'os-z-skip-link', 'os-z-security-step-up']) {
     assert.ok(rootBlock.includes(`--${name}:`), `:root must declare --${name}`);
   }
 });
 
-test('레이어 순서 불변식: OAA < 패널그립 < OS Shell < 알림 < 헤더 < skip-link < MFA 재확인', () => {
-  const oaa = tokenValue(stylesScss, 'os-z-oaa');
+test('레이어 순서 불변식: OSAA < 패널그립 < OS Shell < 알림 < 헤더 < skip-link < MFA 재확인', () => {
+  const osaa = tokenValue(stylesScss, 'os-z-osaa');
   const grip = tokenValue(stylesScss, 'os-z-panel-grip');
   const shellPanel = tokenValue(stylesScss, 'os-z-shell-panel');
   const notif = tokenValue(stylesScss, 'os-z-notifications');
@@ -56,7 +56,7 @@ test('레이어 순서 불변식: OAA < 패널그립 < OS Shell < 알림 < 헤�
   const skip = tokenValue(stylesScss, 'os-z-skip-link');
   const stepUp = tokenValue(stylesScss, 'os-z-security-step-up');
 
-  assert.ok(oaa < grip, `OAA(${oaa}) < 패널그립(${grip})`);
+  assert.ok(osaa < grip, `OSAA(${osaa}) < 패널그립(${grip})`);
   assert.ok(grip < shellPanel, `패널그립(${grip}) < OS Shell(${shellPanel})`);
   assert.ok(shellPanel < notif, `OS Shell(${shellPanel}) < 알림(${notif})`);
   assert.ok(notif < header, `알림(${notif}) < 헤더(${header}) — 헤더/검색이 알림 토스트 위에 있어야 한다`);
@@ -90,7 +90,7 @@ test('os-shell .os-skip-link는 공유 skip-link 토큰을 쓰고, 여전히 헤
   assert.match(osShellTs, /\.os-skip-link\s*\{[^}]*z-index:\s*var\(--os-z-skip-link\);/s);
 });
 
-test('전역 오버레이 컴포넌트(패널그립·알림·OAA)가 공유 레이어 토큰을 참조한다(매직넘버 금지)', () => {
+test('전역 오버레이 컴포넌트(패널그립·알림·OSAA)가 공유 레이어 토큰을 참조한다(매직넘버 금지)', () => {
   assert.match(
     osPanelTs,
     /\.os-panel-grip\s*\{[^}]*z-index:\s*var\(--os-z-panel-grip/s,
@@ -102,9 +102,9 @@ test('전역 오버레이 컴포넌트(패널그립·알림·OAA)가 공유 레�
     'os-notifications 토스트는 var(--os-z-notifications)를 참조해야 한다',
   );
   assert.match(
-    osOaaAgentTs,
-    /\.oaa-panel\s*\{[^}]*z-index:\s*var\(--os-z-oaa/s,
-    'os-oaa-agent 도킹 패널은 var(--os-z-oaa)를 참조해야 한다',
+    osOsaaAgentTs,
+    /\.osaa-panel\s*\{[^}]*z-index:\s*var\(--os-z-osaa/s,
+    'os-osaa-agent 도킹 패널은 var(--os-z-osaa)를 참조해야 한다',
   );
   assert.match(
     osShellPanelTs,

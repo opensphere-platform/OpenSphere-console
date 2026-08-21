@@ -7,7 +7,7 @@ import { R2d2RiskService } from '../core/r2d2-risk.service';
   imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <a routerLink="/manage/oaa" class="r2d2-risk" [class.attention]="risk.risk().severityRank >= 2" [class.critical]="risk.risk().severityRank >= 3"
+    <a routerLink="/manage/osaa" class="r2d2-risk" [class.attention]="risk.risk().severityRank >= 2" [class.critical]="risk.risk().severityRank >= 3"
       [attr.aria-label]="label()" [title]="label()">
       <span class="r2d2-mark">R2</span>
       @if (risk.risk().state === 'known') { <strong>{{ risk.risk().active }}</strong>@if (risk.routeIncidentCount()) { <em>{{ risk.routeIncidentCount() }}</em> } }

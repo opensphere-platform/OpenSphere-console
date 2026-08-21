@@ -111,7 +111,7 @@ const AUDIT_READ_LIMIT = Number(process.env.SUPABASE_AUDIT_READ_LIMIT || 200);
 // unauthenticated one-shot bootstrap route and is not a reason to weaken the
 // normal Console policy boundary.
 const SUPABASE_REQUIRE_AAL2 = String(process.env.SUPABASE_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
-const OAA_ACTION_REQUIRE_AAL2 = String(process.env.OAA_ACTION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
+const OSAA_ACTION_REQUIRE_AAL2 = String(process.env.OSAA_ACTION_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
 const R2D2_DURABLE_OPERATION_ENABLED = process.env.R2D2_DURABLE_OPERATION_ENABLED === 'true';
 const R2D2_ENGINEERING_PROPOSAL_ENABLED = process.env.R2D2_ENGINEERING_PROPOSAL_ENABLED === 'true';
 const R2D2_ENGINEERING_PROPOSAL_REPOSITORIES = String(process.env.R2D2_ENGINEERING_PROPOSAL_REPOSITORIES || '')
@@ -127,8 +127,8 @@ const R2D2_OPERATION_WORKER_ID = String(process.env.R2D2_OPERATION_WORKER_ID || 
 const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env.R2D2_OPERATION_POLL_MS || 3000) || 3000));
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
-const OAA_GATEWAY_URL = (process.env.OAA_GATEWAY_URL || 'http://opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
-const FOUNDATION_CONTROL_URL = (process.env.FOUNDATION_CONTROL_URL || 'http://foundation-oaa-owner.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const OSAA_GATEWAY_URL = (process.env.OSAA_GATEWAY_URL || 'http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const FOUNDATION_CONTROL_URL = (process.env.FOUNDATION_CONTROL_URL || 'http://foundation-osaa-owner.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
 const INSTALLATION_CONFIG_FILE = process.env.INSTALLATION_CONFIG_FILE || DEFAULT_INSTALLATION_CONFIG_FILE;
 const CLI_TOKEN_ISSUER = 'opensphere-cli';
@@ -145,21 +145,21 @@ const NOTIFICATION_REQUIRE_AAL2 = String(process.env.NOTIFICATION_REQUIRE_AAL2 |
 const EXTERNAL_CHANNEL_EXECUTOR_URL = (process.env.EXTERNAL_CHANNEL_EXECUTOR_URL || 'http://opensphere-external-channel-executor.opensphere-console.svc.cluster.local:8082').replace(/\/$/, '');
 const EXTERNAL_CHANNEL_EXECUTOR_TOKEN = process.env.EXTERNAL_CHANNEL_EXECUTOR_TOKEN || '';
 const EXTERNAL_CHANNEL_REQUIRE_AAL2 = String(process.env.EXTERNAL_CHANNEL_REQUIRE_AAL2 || 'true').toLowerCase() !== 'false';
-const OAA_NAMESPACE = process.env.OAA_NAMESPACE || 'opensphere-console';
-const OAA_KEY_NAMESPACE = process.env.OAA_KEY_NAMESPACE || 'opensphere-oaa-credentials';
+const OSAA_NAMESPACE = process.env.OSAA_NAMESPACE || 'opensphere-console';
+const OSAA_KEY_NAMESPACE = process.env.OSAA_KEY_NAMESPACE || 'opensphere-osaa-credentials';
 const K8S_API = 'https://kubernetes.default.svc';
-const OAA_KEY_LABEL = 'opensphere.io/oaa-llm-key';
-const OAA_PART_LABEL = 'opensphere.io/part-of';
-const OAA_KEY_ID_RE = /^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$/;
-const OAA_PROVIDER_RE = /^[a-z0-9][a-z0-9.-]{0,62}$/;
-const OAA_MODEL_RE = /^[A-Za-z0-9._:/-]{1,128}$/;
-const OAA_EMBED_DIM = Math.max(16, Math.min(4096, Number(process.env.OAA_EMBED_DIM || 1536) || 1536));
-const OAA_SCALE_MAX = Math.max(1, Math.min(100, Number(process.env.OAA_SCALE_MAX || 10) || 10));
-const OAA_ALLOWED_NAMESPACES = new Set((process.env.OAA_ALLOWED_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change')
+const OSAA_KEY_LABEL = 'opensphere.io/osaa-llm-key';
+const OSAA_PART_LABEL = 'opensphere.io/part-of';
+const OSAA_KEY_ID_RE = /^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$/;
+const OSAA_PROVIDER_RE = /^[a-z0-9][a-z0-9.-]{0,62}$/;
+const OSAA_MODEL_RE = /^[A-Za-z0-9._:/-]{1,128}$/;
+const OSAA_EMBED_DIM = Math.max(16, Math.min(4096, Number(process.env.OSAA_EMBED_DIM || 1536) || 1536));
+const OSAA_SCALE_MAX = Math.max(1, Math.min(100, Number(process.env.OSAA_SCALE_MAX || 10) || 10));
+const OSAA_ALLOWED_NAMESPACES = new Set((process.env.OSAA_ALLOWED_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change')
   .split(',').map((value) => value.trim()).filter(Boolean));
-const OAA_K8S_NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
-const OAA_IMAGE_DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]*@sha256:[0-9a-f]{64}$/;
-const OAA_RESOURCE_CONTRACT = Object.freeze({
+const OSAA_K8S_NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+const OSAA_IMAGE_DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]*@sha256:[0-9a-f]{64}$/;
+const OSAA_RESOURCE_CONTRACT = Object.freeze({
   configmap: { kind: 'ConfigMap', apiVersion: 'v1' }, service: { kind: 'Service', apiVersion: 'v1' },
   persistentvolumeclaim: { kind: 'PersistentVolumeClaim', apiVersion: 'v1' },
   deployment: { kind: 'Deployment', apiVersion: 'apps/v1' }, statefulset: { kind: 'StatefulSet', apiVersion: 'apps/v1' },
@@ -167,10 +167,10 @@ const OAA_RESOURCE_CONTRACT = Object.freeze({
   ingress: { kind: 'Ingress', apiVersion: 'networking.k8s.io/v1' }, networkpolicy: { kind: 'NetworkPolicy', apiVersion: 'networking.k8s.io/v1' },
   horizontalpodautoscaler: { kind: 'HorizontalPodAutoscaler', apiVersion: 'autoscaling/v2' }, poddisruptionbudget: { kind: 'PodDisruptionBudget', apiVersion: 'policy/v1' },
 });
-const OAA_WORKLOAD_KINDS = new Set(['deployment', 'statefulset', 'daemonset']);
-const OAA_SCALABLE_KINDS = new Set(['deployment', 'statefulset']);
-const OAA_APPLY_KINDS = new Set(Object.keys(OAA_RESOURCE_CONTRACT));
-const OAA_DELETE_KINDS = new Set([...OAA_APPLY_KINDS].filter((kind) => kind !== 'persistentvolumeclaim'));
+const OSAA_WORKLOAD_KINDS = new Set(['deployment', 'statefulset', 'daemonset']);
+const OSAA_SCALABLE_KINDS = new Set(['deployment', 'statefulset']);
+const OSAA_APPLY_KINDS = new Set(Object.keys(OSAA_RESOURCE_CONTRACT));
+const OSAA_DELETE_KINDS = new Set([...OSAA_APPLY_KINDS].filter((kind) => kind !== 'persistentvolumeclaim'));
 
 const CONSOLE_ROLE_GROUPS = new Set(
   (process.env.CONSOLE_ROLE_GROUPS || 'console-admins,console-operators,console-viewers')
@@ -789,14 +789,14 @@ async function verifyConsoleAdmin(req, options = {}) {
   return assertConsoleAdminActor(await verifyAuthed(req), { ...options, requireAal2 });
 }
 
-async function verifyOaaIdentityOwner(req, options = {}) {
+async function verifyOsaaIdentityOwner(req, options = {}) {
   const actor = await verifyAuthed(req);
   if (!actor.groups?.includes(SUPABASE_BACKEND_ROLE)) throw { code: 403, msg: `requires ${SUPABASE_BACKEND_ROLE}` };
   requireActorPermission(actor, 'console.identity.manage');
   // Inventory reads are permission-gated and PII-minimized. Mutations never
   // receive the optional non-MFA bootstrap exception used by the interactive
   // Console during first-install recovery.
-  if (options.requireAal2 === true) requireRecentAal2(actor, 'OAA identity owner action');
+  if (options.requireAal2 === true) requireRecentAal2(actor, 'OSAA identity owner action');
   return actor;
 }
 
@@ -966,7 +966,7 @@ const r2d2OperationApi = createR2d2OperationApi({
     if (action === 'create-postgres-cluster') {
       let response;
       try {
-        response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/plan`, {
+        response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/plan`, {
           method: 'POST', headers: { authorization: `Bearer ${auth.accessToken}`, 'content-type': 'application/json' },
           body: JSON.stringify(requested || {}), signal: AbortSignal.timeout(15000),
         });
@@ -1039,29 +1039,29 @@ async function verifyExternalChannelAdmin(req) {
   return actor;
 }
 
-async function verifyOaaNotificationOwner(req, options = {}) {
+async function verifyOsaaNotificationOwner(req, options = {}) {
   const actor = await verifyAuthed(req);
   requireActorPermission(actor, options.mutation === true ? 'console.notification.manage' : 'console.notification.read');
   if (options.mutation === true && actor.assurance !== 'aal2') {
-    throw { code: 403, msg: 'OAA notification owner action requires MFA assurance aal2' };
+    throw { code: 403, msg: 'OSAA notification owner action requires MFA assurance aal2' };
   }
   return actor;
 }
 
-async function verifyOaaRecoveryOwner(req) {
+async function verifyOsaaRecoveryOwner(req) {
   const actor = await verifyAuthed(req);
   requireActorPermission(actor, 'console.recovery.read');
   return actor;
 }
 
-async function oaaNotificationStatus(rawLimit) {
+async function osaaNotificationStatus(rawLimit) {
   const limit = Number(rawLimit || 50);
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw { code: 400, msg: 'notification delivery limit must be 1-100' };
   const [summary, channels, rules, deliveries] = await Promise.all([
     notificationApi.summary(), notificationApi.channels(), notificationApi.rules(), notificationApi.deliveries({ limit }),
   ]);
   return {
-    schema: 'oaa-notification-owner-status.opensphere.io/v1alpha1',
+    schema: 'osaa-notification-owner-status.opensphere.io/v1alpha1',
     owner: 'Console Notification Delivery / Supabase',
     observedAt: new Date().toISOString(),
     summary,
@@ -1091,40 +1091,40 @@ async function oaaNotificationStatus(rawLimit) {
   };
 }
 
-function requireClosedOaaNotificationBody(body, allowed) {
-  if (!body || Array.isArray(body) || typeof body !== 'object') throw { code: 400, msg: 'OAA notification owner body must be an object' };
+function requireClosedOsaaNotificationBody(body, allowed) {
+  if (!body || Array.isArray(body) || typeof body !== 'object') throw { code: 400, msg: 'OSAA notification owner body must be an object' };
   const extra = Object.keys(body).filter((key) => !allowed.includes(key));
-  if (extra.length) throw { code: 400, msg: `OAA notification owner action contains unsupported inputs: ${extra.join(', ')}` };
+  if (extra.length) throw { code: 400, msg: `OSAA notification owner action contains unsupported inputs: ${extra.join(', ')}` };
 }
 
-async function oaaNotificationOwnerAction(actor, rawBody) {
+async function osaaNotificationOwnerAction(actor, rawBody) {
   const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {};
   const action = String(body.action || '').trim().toLowerCase();
-  const reason = requireOaaText(body.reason, 'management reason');
+  const reason = requireOsaaText(body.reason, 'management reason');
   if (action === 'set-channel-enabled') {
-    requireClosedOaaNotificationBody(body, ['action', 'channelId', 'enabled', 'confirm', 'reason']);
+    requireClosedOsaaNotificationBody(body, ['action', 'channelId', 'enabled', 'confirm', 'reason']);
     const channelId = uuid(body.channelId, 'notification channel id');
     if (typeof body.enabled !== 'boolean') throw { code: 400, msg: 'enabled must be boolean' };
     const verb = body.enabled ? 'enable' : 'disable';
-    requireExactOaaConfirmation(body.confirm, `${verb} notification channel ${channelId}`);
+    requireExactOsaaConfirmation(body.confirm, `${verb} notification channel ${channelId}`);
     await notificationApi.setChannelEnabled(actor, channelId, body.enabled, { reason });
     return { accepted: true, owner: 'Console Notification Delivery / Supabase', target: `NotificationChannel/${channelId}`, enabled: body.enabled };
   }
   if (action === 'test-channel') {
-    requireClosedOaaNotificationBody(body, ['action', 'channelId', 'confirm', 'reason']);
+    requireClosedOsaaNotificationBody(body, ['action', 'channelId', 'confirm', 'reason']);
     const channelId = uuid(body.channelId, 'notification channel id');
-    requireExactOaaConfirmation(body.confirm, `test notification channel ${channelId}`);
+    requireExactOsaaConfirmation(body.confirm, `test notification channel ${channelId}`);
     const result = await notificationApi.testChannel(actor, channelId, { reason });
     return { accepted: Boolean(result?.accepted), owner: 'Console Notification Delivery / Supabase', target: `NotificationChannel/${channelId}`, status: result?.accepted ? 'accepted' : 'rejected' };
   }
   if (action === 'retry-delivery') {
-    requireClosedOaaNotificationBody(body, ['action', 'deliveryId', 'confirm', 'reason']);
+    requireClosedOsaaNotificationBody(body, ['action', 'deliveryId', 'confirm', 'reason']);
     const deliveryId = uuid(body.deliveryId, 'notification delivery id');
-    requireExactOaaConfirmation(body.confirm, `retry notification delivery ${deliveryId}`);
+    requireExactOsaaConfirmation(body.confirm, `retry notification delivery ${deliveryId}`);
     await notificationApi.retryDelivery(actor, deliveryId, { reason });
     return { accepted: true, owner: 'Console Notification Delivery / Supabase', target: `NotificationDelivery/${deliveryId}`, status: 'queued' };
   }
-  throw { code: 400, msg: 'OAA notification action must be set-channel-enabled, test-channel, or retry-delivery' };
+  throw { code: 400, msg: 'OSAA notification action must be set-channel-enabled, test-channel, or retry-delivery' };
 }
 
 async function insertNotificationEvent(req, body) {
@@ -1186,17 +1186,17 @@ async function publishBeszelNotificationEvent(req, body) {
   });
 }
 
-const OAA_ACTION_POLICY = Object.freeze({
-  'oaa.k8s.deployment.restart': { permission: 'oaa.action.execute.high', risk: 'high', targetType: 'kubernetes-deployment', action: 'apply' },
-  'oaa.k8s.deployment.scale': { permission: 'oaa.action.execute.high', risk: 'high', targetType: 'kubernetes-deployment', action: 'apply' },
-  'oaa.k8s.workload.restart': { permission: 'oaa.action.execute.high', risk: 'high', targetType: 'kubernetes-workload', action: 'apply' },
-  'oaa.k8s.workload.scale': { permission: 'oaa.action.execute.high', risk: 'high', targetType: 'kubernetes-workload', action: 'apply' },
-  'oaa.k8s.workload.update-image': { permission: 'oaa.action.execute.high', risk: 'high', targetType: 'kubernetes-workload', action: 'apply' },
-  'oaa.k8s.workload.rollback-image': { permission: 'oaa.action.execute.high', risk: 'critical', targetType: 'kubernetes-workload', action: 'rollback' },
-  'oaa.k8s.resource.apply': { permission: 'oaa.action.execute.high', risk: 'high', targetType: 'kubernetes-resource', action: 'apply' },
-  'oaa.k8s.resource.delete': { permission: 'oaa.action.execute.high', risk: 'critical', targetType: 'kubernetes-resource', action: 'delete' },
-  'oaa.k8s.cronjob.run': { permission: 'oaa.action.execute.high', risk: 'high', targetType: 'kubernetes-cronjob', action: 'apply' },
-  'oaa.k8s.cronjob.suspend': { permission: 'oaa.action.execute.high', risk: 'high', targetType: 'kubernetes-cronjob', action: 'configure' },
+const OSAA_ACTION_POLICY = Object.freeze({
+  'osaa.k8s.deployment.restart': { permission: 'osaa.action.execute.high', risk: 'high', targetType: 'kubernetes-deployment', action: 'apply' },
+  'osaa.k8s.deployment.scale': { permission: 'osaa.action.execute.high', risk: 'high', targetType: 'kubernetes-deployment', action: 'apply' },
+  'osaa.k8s.workload.restart': { permission: 'osaa.action.execute.high', risk: 'high', targetType: 'kubernetes-workload', action: 'apply' },
+  'osaa.k8s.workload.scale': { permission: 'osaa.action.execute.high', risk: 'high', targetType: 'kubernetes-workload', action: 'apply' },
+  'osaa.k8s.workload.update-image': { permission: 'osaa.action.execute.high', risk: 'high', targetType: 'kubernetes-workload', action: 'apply' },
+  'osaa.k8s.workload.rollback-image': { permission: 'osaa.action.execute.high', risk: 'critical', targetType: 'kubernetes-workload', action: 'rollback' },
+  'osaa.k8s.resource.apply': { permission: 'osaa.action.execute.high', risk: 'high', targetType: 'kubernetes-resource', action: 'apply' },
+  'osaa.k8s.resource.delete': { permission: 'osaa.action.execute.high', risk: 'critical', targetType: 'kubernetes-resource', action: 'delete' },
+  'osaa.k8s.cronjob.run': { permission: 'osaa.action.execute.high', risk: 'high', targetType: 'kubernetes-cronjob', action: 'apply' },
+  'osaa.k8s.cronjob.suspend': { permission: 'osaa.action.execute.high', risk: 'high', targetType: 'kubernetes-cronjob', action: 'configure' },
 });
 
 function actorHasPermission(actor, permission) {
@@ -1207,40 +1207,40 @@ function requireActorPermission(actor, permission) {
   if (!actorHasPermission(actor, permission)) throw { code: 403, msg: `requires ${permission}` };
 }
 
-function oaaTarget(value) {
+function osaaTarget(value) {
   const target = String(value || '').trim();
-  if (!target || target.length > 300 || /[\r\n]/.test(target)) throw { code: 400, msg: 'invalid OAA action target' };
+  if (!target || target.length > 300 || /[\r\n]/.test(target)) throw { code: 400, msg: 'invalid OSAA action target' };
   return target;
 }
 
-function oaaInputObject(value) {
-  if (!value || Array.isArray(value) || typeof value !== 'object') throw { code: 400, msg: 'OAA action inputs must be an object' };
+function osaaInputObject(value) {
+  if (!value || Array.isArray(value) || typeof value !== 'object') throw { code: 400, msg: 'OSAA action inputs must be an object' };
   return { ...value };
 }
 
-function oaaNamespace(value) {
+function osaaNamespace(value) {
   const namespace = String(value || '').trim();
-  if (!OAA_K8S_NAME_RE.test(namespace) || !OAA_ALLOWED_NAMESPACES.has(namespace)) throw { code: 400, msg: 'OAA action namespace is not allowlisted' };
+  if (!OSAA_K8S_NAME_RE.test(namespace) || !OSAA_ALLOWED_NAMESPACES.has(namespace)) throw { code: 400, msg: 'OSAA action namespace is not allowlisted' };
   return namespace;
 }
 
-function oaaName(value, label = 'name') {
+function osaaName(value, label = 'name') {
   const name = String(value || '').trim();
-  if (!OAA_K8S_NAME_RE.test(name)) throw { code: 400, msg: `invalid OAA ${label}` };
+  if (!OSAA_K8S_NAME_RE.test(name)) throw { code: 400, msg: `invalid OSAA ${label}` };
   return name;
 }
 
-function oaaKind(value, allowed) {
+function osaaKind(value, allowed) {
   const kind = String(value || '').trim().toLowerCase().replace(/[._-]/g, '');
-  if (!allowed.has(kind)) throw { code: 400, msg: 'OAA Kubernetes kind is outside the action allowlist' };
+  if (!allowed.has(kind)) throw { code: 400, msg: 'OSAA Kubernetes kind is outside the action allowlist' };
   return kind;
 }
 
-function requireExactOaaConfirmation(actual, expected) {
+function requireExactOsaaConfirmation(actual, expected) {
   if (String(actual || '').trim() !== expected) throw { code: 400, msg: `confirmation required: ${expected}` };
 }
 
-function requireOaaText(value, label, minimum = 8) {
+function requireOsaaText(value, label, minimum = 8) {
   const text = String(value || '').trim();
   if (text.length < minimum || text.length > 2000) throw { code: 400, msg: `${label} must be ${minimum}-2000 characters` };
   return text;
@@ -1252,14 +1252,14 @@ function validatePinnedManifestImages(kind, manifest) {
   if (kind === 'cronjob') podSpec = manifest.spec?.jobTemplate?.spec?.template?.spec;
   if (!podSpec) return;
   for (const container of [...(podSpec.initContainers || []), ...(podSpec.containers || [])]) {
-    if (!OAA_K8S_NAME_RE.test(String(container?.name || ''))) throw { code: 400, msg: 'workload manifest container name is invalid' };
-    if (!OAA_IMAGE_DIGEST_RE.test(String(container?.image || ''))) throw { code: 400, msg: 'OAA workload manifests require repository@sha256 digest-pinned images' };
+    if (!OSAA_K8S_NAME_RE.test(String(container?.name || ''))) throw { code: 400, msg: 'workload manifest container name is invalid' };
+    if (!OSAA_IMAGE_DIGEST_RE.test(String(container?.image || ''))) throw { code: 400, msg: 'OSAA workload manifests require repository@sha256 digest-pinned images' };
   }
 }
 
-function validateOaaManifest(kind, namespace, name, value) {
+function validateOsaaManifest(kind, namespace, name, value) {
   if (!value || Array.isArray(value) || typeof value !== 'object') throw { code: 400, msg: 'manifest must be a Kubernetes JSON object' };
-  const contract = OAA_RESOURCE_CONTRACT[kind];
+  const contract = OSAA_RESOURCE_CONTRACT[kind];
   if (!contract || value.kind !== contract.kind || value.apiVersion !== contract.apiVersion) throw { code: 400, msg: 'manifest apiVersion/kind does not match the allowlisted resource contract' };
   if (value.metadata?.namespace !== namespace || value.metadata?.name !== name) throw { code: 400, msg: 'manifest metadata must match the confirmed namespace and name' };
   if (value.status !== undefined) throw { code: 400, msg: 'manifest status is observed state and may not be submitted' };
@@ -1269,58 +1269,58 @@ function validateOaaManifest(kind, namespace, name, value) {
   return value;
 }
 
-function validateOaaActionInputs(toolId, rawInputs) {
-  const inputs = oaaInputObject(rawInputs);
-  const namespace = oaaNamespace(inputs.namespace);
-  const name = oaaName(inputs.name || inputs.deployment, 'resource name');
+function validateOsaaActionInputs(toolId, rawInputs) {
+  const inputs = osaaInputObject(rawInputs);
+  const namespace = osaaNamespace(inputs.namespace);
+  const name = osaaName(inputs.name || inputs.deployment, 'resource name');
   let kind = 'deployment';
   let rollbackOf = null;
-  if (toolId === 'oaa.k8s.deployment.restart') {
-    requireExactOaaConfirmation(inputs.confirm, `restart deployment ${namespace}/${name}`);
-  } else if (toolId === 'oaa.k8s.deployment.scale') {
+  if (toolId === 'osaa.k8s.deployment.restart') {
+    requireExactOsaaConfirmation(inputs.confirm, `restart deployment ${namespace}/${name}`);
+  } else if (toolId === 'osaa.k8s.deployment.scale') {
     const replicas = Number(inputs.replicas);
-    if (!Number.isInteger(replicas) || replicas < 0 || replicas > OAA_SCALE_MAX) throw { code: 400, msg: `replicas must be between 0 and ${OAA_SCALE_MAX}` };
+    if (!Number.isInteger(replicas) || replicas < 0 || replicas > OSAA_SCALE_MAX) throw { code: 400, msg: `replicas must be between 0 and ${OSAA_SCALE_MAX}` };
     inputs.replicas = replicas;
-    requireExactOaaConfirmation(inputs.confirm, `scale deployment ${namespace}/${name} to ${replicas}`);
-  } else if (toolId === 'oaa.k8s.workload.restart') {
-    kind = oaaKind(inputs.kind, OAA_WORKLOAD_KINDS);
-    requireExactOaaConfirmation(inputs.confirm, `restart ${kind} ${namespace}/${name}`);
-  } else if (toolId === 'oaa.k8s.workload.scale') {
-    kind = oaaKind(inputs.kind, OAA_SCALABLE_KINDS);
+    requireExactOsaaConfirmation(inputs.confirm, `scale deployment ${namespace}/${name} to ${replicas}`);
+  } else if (toolId === 'osaa.k8s.workload.restart') {
+    kind = osaaKind(inputs.kind, OSAA_WORKLOAD_KINDS);
+    requireExactOsaaConfirmation(inputs.confirm, `restart ${kind} ${namespace}/${name}`);
+  } else if (toolId === 'osaa.k8s.workload.scale') {
+    kind = osaaKind(inputs.kind, OSAA_SCALABLE_KINDS);
     const replicas = Number(inputs.replicas);
-    if (!Number.isInteger(replicas) || replicas < 0 || replicas > OAA_SCALE_MAX) throw { code: 400, msg: `replicas must be between 0 and ${OAA_SCALE_MAX}` };
+    if (!Number.isInteger(replicas) || replicas < 0 || replicas > OSAA_SCALE_MAX) throw { code: 400, msg: `replicas must be between 0 and ${OSAA_SCALE_MAX}` };
     inputs.replicas = replicas;
-    requireExactOaaConfirmation(inputs.confirm, `scale ${kind} ${namespace}/${name} to ${replicas}`);
-  } else if (toolId === 'oaa.k8s.workload.update-image' || toolId === 'oaa.k8s.workload.rollback-image') {
-    kind = oaaKind(inputs.kind, OAA_WORKLOAD_KINDS);
-    inputs.container = oaaName(inputs.container, 'container name');
+    requireExactOsaaConfirmation(inputs.confirm, `scale ${kind} ${namespace}/${name} to ${replicas}`);
+  } else if (toolId === 'osaa.k8s.workload.update-image' || toolId === 'osaa.k8s.workload.rollback-image') {
+    kind = osaaKind(inputs.kind, OSAA_WORKLOAD_KINDS);
+    inputs.container = osaaName(inputs.container, 'container name');
     inputs.image = String(inputs.image || '').trim();
-    if (!OAA_IMAGE_DIGEST_RE.test(inputs.image)) throw { code: 400, msg: 'image must be pinned as repository@sha256:<64 hex>' };
+    if (!OSAA_IMAGE_DIGEST_RE.test(inputs.image)) throw { code: 400, msg: 'image must be pinned as repository@sha256:<64 hex>' };
     const verb = toolId.endsWith('rollback-image') ? 'rollback' : 'update';
-    requireExactOaaConfirmation(inputs.confirm, `${verb} image ${kind} ${namespace}/${name} container ${inputs.container} to ${inputs.image}`);
+    requireExactOsaaConfirmation(inputs.confirm, `${verb} image ${kind} ${namespace}/${name} container ${inputs.container} to ${inputs.image}`);
     if (verb === 'rollback') {
       rollbackOf = uuid(inputs.rollbackOf, 'rollbackOf request id');
       inputs.rollbackOf = rollbackOf;
     }
-  } else if (toolId === 'oaa.k8s.resource.apply') {
-    kind = oaaKind(inputs.kind, OAA_APPLY_KINDS);
-    inputs.manifest = validateOaaManifest(kind, namespace, name, inputs.manifest);
-    requireExactOaaConfirmation(inputs.confirm, `apply ${kind} ${namespace}/${name}`);
-  } else if (toolId === 'oaa.k8s.resource.delete') {
-    kind = oaaKind(inputs.kind, OAA_DELETE_KINDS);
-    inputs.impact = requireOaaText(inputs.impact, 'impact assessment');
-    inputs.recoveryPlan = requireOaaText(inputs.recoveryPlan, 'recovery plan');
-    inputs.backupReference = requireOaaText(inputs.backupReference, 'backup reference', 3);
-    requireExactOaaConfirmation(inputs.confirm, `delete ${kind} ${namespace}/${name}`);
-  } else if (toolId === 'oaa.k8s.cronjob.run') {
+  } else if (toolId === 'osaa.k8s.resource.apply') {
+    kind = osaaKind(inputs.kind, OSAA_APPLY_KINDS);
+    inputs.manifest = validateOsaaManifest(kind, namespace, name, inputs.manifest);
+    requireExactOsaaConfirmation(inputs.confirm, `apply ${kind} ${namespace}/${name}`);
+  } else if (toolId === 'osaa.k8s.resource.delete') {
+    kind = osaaKind(inputs.kind, OSAA_DELETE_KINDS);
+    inputs.impact = requireOsaaText(inputs.impact, 'impact assessment');
+    inputs.recoveryPlan = requireOsaaText(inputs.recoveryPlan, 'recovery plan');
+    inputs.backupReference = requireOsaaText(inputs.backupReference, 'backup reference', 3);
+    requireExactOsaaConfirmation(inputs.confirm, `delete ${kind} ${namespace}/${name}`);
+  } else if (toolId === 'osaa.k8s.cronjob.run') {
     kind = 'cronjob';
-    requireExactOaaConfirmation(inputs.confirm, `run cronjob ${namespace}/${name}`);
-  } else if (toolId === 'oaa.k8s.cronjob.suspend') {
+    requireExactOsaaConfirmation(inputs.confirm, `run cronjob ${namespace}/${name}`);
+  } else if (toolId === 'osaa.k8s.cronjob.suspend') {
     kind = 'cronjob';
     if (typeof inputs.suspend !== 'boolean') throw { code: 400, msg: 'suspend must be boolean' };
-    requireExactOaaConfirmation(inputs.confirm, `set cronjob ${namespace}/${name} suspend ${inputs.suspend}`);
+    requireExactOsaaConfirmation(inputs.confirm, `set cronjob ${namespace}/${name} suspend ${inputs.suspend}`);
   } else {
-    throw { code: 403, msg: 'OAA tool has no executable input contract' };
+    throw { code: 403, msg: 'OSAA tool has no executable input contract' };
   }
   inputs.namespace = namespace;
   inputs.name = name;
@@ -1328,46 +1328,46 @@ function validateOaaActionInputs(toolId, rawInputs) {
   return { inputs, target: `${kind}:${namespace}/${name}`, rollbackOf };
 }
 
-async function requireOaaLifecycleGate(authorization) {
+async function requireOsaaLifecycleGate(authorization) {
   let response;
   try {
     response = await fetch(`${DUPA_CONTROL_URL}/api/admin/platform-readiness/status`, {
       headers: { authorization: String(authorization || ''), accept: 'application/json' }, signal: AbortSignal.timeout(5000),
     });
   } catch {
-    throw { code: 503, msg: 'OAA lifecycle authority is unavailable' };
+    throw { code: 503, msg: 'OSAA lifecycle authority is unavailable' };
   }
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw { code: response.status === 401 || response.status === 403 ? response.status : 503, msg: body.error || 'OAA lifecycle gate is unavailable' };
+  if (!response.ok) throw { code: response.status === 401 || response.status === 403 ? response.status : 503, msg: body.error || 'OSAA lifecycle gate is unavailable' };
   const prerequisites = Array.isArray(body.prerequisites) ? body.prerequisites : [];
   const clusterManager = prerequisites.find((item) => item.key === 'cluster-manager');
   const hisPreflight = prerequisites.find((item) => item.key === 'his-preflight');
-  if (!clusterManager?.ready || !hisPreflight?.ready) throw { code: 409, msg: 'OAA mutations require Cluster Manager Activated and HIS Preflight Ready' };
+  if (!clusterManager?.ready || !hisPreflight?.ready) throw { code: 409, msg: 'OSAA mutations require Cluster Manager Activated and HIS Preflight Ready' };
   return { clusterManager: true, hisPreflight: true, observedAt: body.observedAt || null };
 }
 
-// OAA never receives Kubernetes write credentials. A non-read OAA request is
+// OSAA never receives Kubernetes write credentials. A non-read OSAA request is
 // materialized as a governed Gitea proposal through the same adapter used by
 // the native Change Control screen.
-async function submitOaaAction(actor, body = {}, authorization = '') {
+async function submitOsaaAction(actor, body = {}, authorization = '') {
   const toolId = String(body.toolId || '').trim();
-  const policy = OAA_ACTION_POLICY[toolId];
-  if (!policy) throw { code: 403, msg: 'OAA tool is not an approved Console control-plane action' };
-  await requireOaaLifecycleGate(authorization);
+  const policy = OSAA_ACTION_POLICY[toolId];
+  if (!policy) throw { code: 403, msg: 'OSAA tool is not an approved Console control-plane action' };
+  await requireOsaaLifecycleGate(authorization);
   requireActorPermission(actor, policy.permission);
-  if (OAA_ACTION_REQUIRE_AAL2 && ['high', 'critical'].includes(policy.risk) && actor.assurance !== 'aal2') {
-    throw { code: 403, msg: 'high-risk OAA action requires MFA assurance aal2' };
+  if (OSAA_ACTION_REQUIRE_AAL2 && ['high', 'critical'].includes(policy.risk) && actor.assurance !== 'aal2') {
+    throw { code: 403, msg: 'high-risk OSAA action requires MFA assurance aal2' };
   }
   const reason = managementReason(body.reason);
   if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
-  const validated = validateOaaActionInputs(toolId, body.inputs);
-  const target = oaaTarget(validated.target);
+  const validated = validateOsaaActionInputs(toolId, body.inputs);
+  const target = osaaTarget(validated.target);
   const inputs = validated.inputs;
   const payloadDigest = toHashHex(canonicalJson({ toolId, target, inputs, bindingId: body.bindingId || '' }));
   const proposal = await governedChange(actor, {
-    consumerId: 'oaa-gateway', action: policy.action || 'apply', target, reason,
+    consumerId: 'osaa-gateway', action: policy.action || 'apply', target, reason,
     desiredState: { toolId, target, inputs, bindingId: body.bindingId || '', requiredPermission: policy.permission },
-    idempotencyKey: `oaa:${payloadDigest}:${actor.sub}`.slice(0, 200),
+    idempotencyKey: `osaa:${payloadDigest}:${actor.sub}`.slice(0, 200),
     ...(validated.rollbackOf ? { rollbackOf: validated.rollbackOf } : {}),
   });
   return {
@@ -1387,11 +1387,11 @@ async function resolveDurableExecutionSession(sessionId, actorId) {
     ? await browserSessions.resolveForDurableExecution(sessionId, actorId)
     : { active: false, code: 'BrowserSessionUnavailable' };
   if (browser.active) {
-    if (!browser.permissions?.includes('oaa.action.execute.high')) {
+    if (!browser.permissions?.includes('osaa.action.execute.high')) {
       try {
         const actor = await resolveConsoleActor(actorId, { credential_revision: browser.authzRevision });
         if (actor.groups.includes(SUPABASE_BACKEND_ROLE) || actor.groups.includes('console-admins')) {
-          browser.permissions = [...new Set([...(browser.permissions || []), 'oaa.action.execute.high', 'console.notification.manage'])];
+          browser.permissions = [...new Set([...(browser.permissions || []), 'osaa.action.execute.high', 'console.notification.manage'])];
         }
       } catch { return { active: false, actorId, code: 'AuthorizationAuthorityUnavailable' }; }
     }
@@ -1415,7 +1415,7 @@ async function resolveDurableExecutionSession(sessionId, actorId) {
   const accessToken = cliToken({ sub: actorId, jti: row.id, typ: 'cli_session', device_id: row.device_id,
     credential_revision: row.credential_revision, exp: expiry });
   const permissions = actor.groups.includes(SUPABASE_BACKEND_ROLE) || actor.groups.includes('console-admins')
-    ? ['oaa.action.execute.high', 'console.notification.manage'] : [];
+    ? ['osaa.action.execute.high', 'console.notification.manage'] : [];
   return { active: true, actorId, assurance: 'aal1', permissions,
     authzRevision: String(row.credential_revision), accessToken, lastReauthenticatedAt: null };
 }
@@ -1423,7 +1423,7 @@ async function resolveDurableExecutionSession(sessionId, actorId) {
 async function durableAuthorityRead(target, accessToken) {
   if (target.kind === 'FoundationClaim' && target.request) {
     try {
-      const response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/plan`, {
+      const response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/plan`, {
         method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
         body: JSON.stringify(target.request), signal: AbortSignal.timeout(15000),
       });
@@ -1443,7 +1443,7 @@ async function durableAuthorityRead(target, accessToken) {
   }
   if (target.kind === 'Capability') {
     try {
-      const response = await fetch(`${OAA_GATEWAY_URL}/api/oaa/durable/owner/status`, {
+      const response = await fetch(`${OSAA_GATEWAY_URL}/api/osaa/durable/owner/status`, {
         method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
         body: JSON.stringify({ id: target.name }), signal: AbortSignal.timeout(8000),
       });
@@ -1455,7 +1455,7 @@ async function durableAuthorityRead(target, accessToken) {
   }
   let response;
   try {
-    response = await fetch(`${OAA_GATEWAY_URL}/api/oaa/tools/k8s/resource`, {
+    response = await fetch(`${OSAA_GATEWAY_URL}/api/osaa/tools/k8s/resource`, {
       method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ kind: String(target.kind || '').toLowerCase(), namespace: target.namespace, name: target.name }),
       signal: AbortSignal.timeout(8000),
@@ -1472,19 +1472,19 @@ async function durableAuthorityRead(target, accessToken) {
 }
 
 const DURABLE_TOOL_MAP = Object.freeze({
-  'owner.workload.restart': { toolId: 'oaa.k8s.workload.restart', action: 'apply' },
-  'owner.workload.scale': { toolId: 'oaa.k8s.workload.scale', action: 'apply' },
-  'owner.release.rollback': { toolId: 'oaa.k8s.workload.rollback-image', action: 'rollback' },
-  'owner.cronjob.run-once': { toolId: 'oaa.k8s.cronjob.run', action: 'apply' },
+  'owner.workload.restart': { toolId: 'osaa.k8s.workload.restart', action: 'apply' },
+  'owner.workload.scale': { toolId: 'osaa.k8s.workload.scale', action: 'apply' },
+  'owner.release.rollback': { toolId: 'osaa.k8s.workload.rollback-image', action: 'rollback' },
+  'owner.cronjob.run-once': { toolId: 'osaa.k8s.cronjob.run', action: 'apply' },
 });
 
 async function durableOwnerInvoke(_route, payload, accessToken) {
   const actor = await verifyAuthed({ method: 'POST', headers: { authorization: `Bearer ${accessToken}` } });
   if (payload.toolId === 'owner.foundation.postgres.create') {
-    requireActorPermission(actor, 'oaa.action.execute.high');
+    requireActorPermission(actor, 'osaa.action.execute.high');
     let response;
     try {
-      response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/apply`, {
+      response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/apply`, {
         method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json',
           'x-idempotency-key': payload.idempotencyKey },
         body: JSON.stringify({ ...(payload.target.request || {}), reason: payload.reason, confirm: payload.confirmation }),
@@ -1510,7 +1510,7 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
   if (payload.toolId === 'owner.recovery.execute') {
     let response;
     try {
-      response = await fetch(`${OAA_GATEWAY_URL}/api/oaa/durable/owner/recover`, {
+      response = await fetch(`${OSAA_GATEWAY_URL}/api/osaa/durable/owner/recover`, {
         method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
         body: JSON.stringify({ id: payload.target.name, reason: payload.reason, confirmation: payload.confirmation, idempotencyKey: payload.idempotencyKey }),
         signal: AbortSignal.timeout(120000),
@@ -1524,8 +1524,8 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
   }
   const mapping = DURABLE_TOOL_MAP[payload.toolId];
   if (!mapping) throw Object.assign(new Error('owner tool is not registered'), { code: 'OwnerToolNotRegistered' });
-  requireActorPermission(actor, 'oaa.action.execute.high');
-  await requireOaaLifecycleGate(`Bearer ${accessToken}`);
+  requireActorPermission(actor, 'osaa.action.execute.high');
+  await requireOsaaLifecycleGate(`Bearer ${accessToken}`);
   const target = payload.target;
   const inputs = { kind: String(target.kind).toLowerCase(), namespace: target.namespace, name: target.name,
     targetUid: target.uid, targetGeneration: target.generation, targetResourceVersion: target.resourceVersion,
@@ -1535,9 +1535,9 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
   let proposal;
   try {
     proposal = await governedChange(actor, {
-      consumerId: 'oaa-gateway', action: mapping.action, target: `${inputs.kind}:${target.namespace}/${target.name}`,
+      consumerId: 'osaa-gateway', action: mapping.action, target: `${inputs.kind}:${target.namespace}/${target.name}`,
       reason: payload.reason, desiredState: { toolId: mapping.toolId, target: `${inputs.kind}:${target.namespace}/${target.name}`,
-        inputs, durableOperationId: payload.operationId, requiredPermission: 'oaa.action.execute.high' },
+        inputs, durableOperationId: payload.operationId, requiredPermission: 'osaa.action.execute.high' },
       idempotencyKey: payload.idempotencyKey,
     });
   } catch (error) {
@@ -1552,7 +1552,7 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
 async function durableOwnerReconcile(route, downstreamKey, target = {}, accessToken = '') {
   if (route === 'foundation/postgres') {
     try {
-      const response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/oaa/postgres/claims/${encodeURIComponent(target.namespace)}/${encodeURIComponent(target.name)}`, {
+      const response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/claims/${encodeURIComponent(target.namespace)}/${encodeURIComponent(target.name)}`, {
         headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }, signal: AbortSignal.timeout(10000),
       });
       const status = await response.json().catch(() => ({}));
@@ -1565,7 +1565,7 @@ async function durableOwnerReconcile(route, downstreamKey, target = {}, accessTo
   }
   if (route === 'cluster-manager/his') {
     try {
-      const response = await fetch(`${OAA_GATEWAY_URL}/api/oaa/durable/owner/status`, {
+      const response = await fetch(`${OSAA_GATEWAY_URL}/api/osaa/durable/owner/status`, {
         method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
         body: JSON.stringify({ id: target.name }), signal: AbortSignal.timeout(8000),
       });
@@ -1584,7 +1584,7 @@ const durableDelay = (milliseconds) => new Promise((resolve) => setTimeout(resol
 
 async function durableGatewayPost(path, payload, accessToken, timeoutMs = 8000) {
   try {
-    const response = await fetch(`${OAA_GATEWAY_URL}${path}`, {
+    const response = await fetch(`${OSAA_GATEWAY_URL}${path}`, {
       method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
       body: JSON.stringify(payload), signal: AbortSignal.timeout(timeoutMs),
     });
@@ -1629,7 +1629,7 @@ async function durableVerify(verifierId, target, receipt, accessToken) {
   }
   if (verifierId === 'authority.release.exact-digest') {
     while (Date.now() < deadline) {
-      const rollout = await durableGatewayPost('/api/oaa/tools/k8s/rollout', { namespace: target.namespace, name: target.name }, accessToken);
+      const rollout = await durableGatewayPost('/api/osaa/tools/k8s/rollout', { namespace: target.namespace, name: target.name }, accessToken);
       const imageIds = (rollout?.pods || []).flatMap((pod) => pod.containers || [])
         .filter((container) => container.name === target.container).map((container) => container.imageID || '');
       const exactIds = imageIds.length > 0 && imageIds.every((imageId) => imageId.endsWith(`@${target.digest}`) || imageId.endsWith(target.digest));
@@ -1642,7 +1642,7 @@ async function durableVerify(verifierId, target, receipt, accessToken) {
     const jobName = receipt?.evidence?.name;
     if (!jobName) return { status: 'inconclusive', observed: { code: 'JobReceiptMissing' } };
     while (Date.now() < deadline) {
-      const body = await durableGatewayPost('/api/oaa/tools/k8s/resource', { kind: 'job', namespace: target.namespace, name: jobName }, accessToken);
+      const body = await durableGatewayPost('/api/osaa/tools/k8s/resource', { kind: 'job', namespace: target.namespace, name: jobName }, accessToken);
       const job = body?.resource;
       if (Number(job?.succeeded || 0) >= Number(job?.completions || 1)) return { status: 'succeeded', observed: { job: jobName, completionTime: job.completionTime || null } };
       if (Number(job?.failed || 0) > 0) return { status: 'failed', observed: { job: jobName, failed: job.failed } };
@@ -1766,7 +1766,7 @@ async function recoveryEvidence() {
     return {
       ...normalized,
       // Compatibility aliases retained for the existing Data & Identity and
-      // Gitea management screens while OAA consumes the typed restore map.
+      // Gitea management screens while OSAA consumes the typed restore map.
       supabase: normalized.restore.supabaseDatabase,
       storage: normalized.restore.supabaseStorage,
       gitea: normalized.restore.gitea,
@@ -1776,9 +1776,9 @@ async function recoveryEvidence() {
   }
 }
 
-async function oaaRecoveryCapabilities() {
+async function osaaRecoveryCapabilities() {
   return {
-    apiVersion: 'opensphere.io/oaa-recovery-owner/v1',
+    apiVersion: 'opensphere.io/osaa-recovery-owner/v1',
     owner: 'Console Platform Recovery / Supabase + Gitea',
     capabilities: ['status-read', 'plan-read'],
     // This Backend is a read/plan owner only. A future signed executor must
@@ -1788,14 +1788,14 @@ async function oaaRecoveryCapabilities() {
   };
 }
 
-async function oaaRecoveryStatus() {
+async function osaaRecoveryStatus() {
   return buildRecoveryOwnerStatus(await recoveryEvidence(), { executorAvailable: false });
 }
 
-async function oaaRecoveryPlan(rawBody) {
+async function osaaRecoveryPlan(rawBody) {
   const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {};
   const extra = Object.keys(body).filter((key) => key !== 'component');
-  if (extra.length) throw { code: 400, msg: `OAA recovery plan contains unsupported inputs: ${extra.join(', ')}` };
+  if (extra.length) throw { code: 400, msg: `OSAA recovery plan contains unsupported inputs: ${extra.join(', ')}` };
   return buildRecoveryPlan(await recoveryEvidence(), body.component || 'all', { executorAvailable: false });
 }
 
@@ -3666,39 +3666,39 @@ async function k8sRequest(method, apiPath, body = undefined, contentType = 'appl
   return { ok: response.ok, status: response.status, body: parsed };
 }
 
-function oaaKeySecretName(id) {
-  return `oaa-llm-${id}`;
+function osaaKeySecretName(id) {
+  return `osaa-llm-${id}`;
 }
 
-function oaaKeyMeta(secret) {
+function osaaKeyMeta(secret) {
   const annotations = secret?.metadata?.annotations || {};
   return {
-    id: annotations['opensphere.io/oaa-key-id'] || String(secret?.metadata?.name || '').replace(/^oaa-llm-/, ''),
-    provider: annotations['opensphere.io/oaa-provider'] || '',
-    displayName: annotations['opensphere.io/oaa-display-name'] || '',
-    baseUrl: annotations['opensphere.io/oaa-base-url'] || '',
-    defaultModel: annotations['opensphere.io/oaa-default-model'] || '',
-    embeddingModel: annotations['opensphere.io/oaa-embedding-model'] || '',
-    enabled: annotations['opensphere.io/oaa-enabled'] !== 'false',
-    keyFingerprint: annotations['opensphere.io/oaa-key-fingerprint'] || '',
+    id: annotations['opensphere.io/osaa-key-id'] || String(secret?.metadata?.name || '').replace(/^osaa-llm-/, ''),
+    provider: annotations['opensphere.io/osaa-provider'] || '',
+    displayName: annotations['opensphere.io/osaa-display-name'] || '',
+    baseUrl: annotations['opensphere.io/osaa-base-url'] || '',
+    defaultModel: annotations['opensphere.io/osaa-default-model'] || '',
+    embeddingModel: annotations['opensphere.io/osaa-embedding-model'] || '',
+    enabled: annotations['opensphere.io/osaa-enabled'] !== 'false',
+    keyFingerprint: annotations['opensphere.io/osaa-key-fingerprint'] || '',
     secretRef: secret?.metadata?.name || '',
-    updatedAt: annotations['opensphere.io/oaa-updated-at'] || secret?.metadata?.creationTimestamp || '',
-    updatedBy: annotations['opensphere.io/oaa-updated-by'] || '',
-    validationStatus: annotations['opensphere.io/oaa-validation-status'] || 'untested',
-    validationMessage: annotations['opensphere.io/oaa-validation-message'] || 'Provider connection has not been tested.',
-    validatedAt: annotations['opensphere.io/oaa-validated-at'] || '',
-    validationLatencyMs: Number(annotations['opensphere.io/oaa-validation-latency-ms'] || 0) || 0,
+    updatedAt: annotations['opensphere.io/osaa-updated-at'] || secret?.metadata?.creationTimestamp || '',
+    updatedBy: annotations['opensphere.io/osaa-updated-by'] || '',
+    validationStatus: annotations['opensphere.io/osaa-validation-status'] || 'untested',
+    validationMessage: annotations['opensphere.io/osaa-validation-message'] || 'Provider connection has not been tested.',
+    validatedAt: annotations['opensphere.io/osaa-validated-at'] || '',
+    validationLatencyMs: Number(annotations['opensphere.io/osaa-validation-latency-ms'] || 0) || 0,
   };
 }
 
-function safeOaaValidationMessage(value) {
+function safeOsaaValidationMessage(value) {
   return String(value || '')
     .replace(/sk-[A-Za-z0-9_-]+/g, '[redacted]')
     .replace(/[\r\n]+/g, ' ')
     .slice(0, 240);
 }
 
-async function probeOaaProviderCredential(meta, apiKey) {
+async function probeOsaaProviderCredential(meta, apiKey) {
   const validatedAt = new Date().toISOString();
   if (!meta.enabled) return { status: 'disabled', message: 'Key is disabled.', validatedAt, latencyMs: 0 };
   if (!apiKey) return { status: 'invalid', message: 'Secret has no API key material.', validatedAt, latencyMs: 0 };
@@ -3734,7 +3734,7 @@ async function probeOaaProviderCredential(meta, apiKey) {
       return { status: 'invalid', message: 'Provider rejected the credential.', validatedAt, latencyMs };
     }
     if (!response.ok) {
-      const detail = safeOaaValidationMessage(body?.error?.message || body?.message || `Provider HTTP ${response.status}`);
+      const detail = safeOsaaValidationMessage(body?.error?.message || body?.message || `Provider HTTP ${response.status}`);
       return { status: response.status === 429 ? 'degraded' : 'provider-error', message: detail, validatedAt, latencyMs };
     }
     const modelIds = Array.isArray(body?.data) ? body.data.map((item) => String(item?.id || '')).filter(Boolean) : [];
@@ -3748,7 +3748,7 @@ async function probeOaaProviderCredential(meta, apiKey) {
     }
     if (meta.embeddingModel) {
       const embeddingRequest = { model: meta.embeddingModel, input: 'OpenSphere embedding readiness probe' };
-      if (meta.provider === 'openai' || /text-embedding-3/i.test(meta.embeddingModel)) embeddingRequest.dimensions = OAA_EMBED_DIM;
+      if (meta.provider === 'openai' || /text-embedding-3/i.test(meta.embeddingModel)) embeddingRequest.dimensions = OSAA_EMBED_DIM;
       const embeddingResponse = await fetch(embeddingsUrl, {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json', 'content-type': 'application/json' },
@@ -3758,7 +3758,7 @@ async function probeOaaProviderCredential(meta, apiKey) {
       const embeddingBody = await embeddingResponse.json().catch(() => ({}));
       const embeddingLatencyMs = Date.now() - started;
       if (!embeddingResponse.ok) {
-        const detail = safeOaaValidationMessage(embeddingBody?.error?.message || embeddingBody?.message || `HTTP ${embeddingResponse.status}`);
+        const detail = safeOsaaValidationMessage(embeddingBody?.error?.message || embeddingBody?.message || `HTTP ${embeddingResponse.status}`);
         return {
           status: 'embedding-unavailable',
           message: `Chat credential is valid, but embedding model ${meta.embeddingModel} is unavailable (${detail}).`,
@@ -3767,10 +3767,10 @@ async function probeOaaProviderCredential(meta, apiKey) {
         };
       }
       const vector = embeddingBody?.data?.[0]?.embedding;
-      if (!Array.isArray(vector) || vector.length !== OAA_EMBED_DIM || vector.some((value) => !Number.isFinite(Number(value)))) {
+      if (!Array.isArray(vector) || vector.length !== OSAA_EMBED_DIM || vector.some((value) => !Number.isFinite(Number(value)))) {
         return {
           status: 'embedding-invalid',
-          message: `Embedding model ${meta.embeddingModel} returned an invalid vector dimension; expected ${OAA_EMBED_DIM}.`,
+          message: `Embedding model ${meta.embeddingModel} returned an invalid vector dimension; expected ${OSAA_EMBED_DIM}.`,
           validatedAt,
           latencyMs: embeddingLatencyMs,
         };
@@ -3786,57 +3786,57 @@ async function probeOaaProviderCredential(meta, apiKey) {
   } catch (error) {
     return {
       status: 'unreachable',
-      message: safeOaaValidationMessage(error?.name === 'TimeoutError' ? 'Provider validation timed out.' : 'Provider could not be reached.'),
+      message: safeOsaaValidationMessage(error?.name === 'TimeoutError' ? 'Provider validation timed out.' : 'Provider could not be reached.'),
       validatedAt,
       latencyMs: Date.now() - started,
     };
   }
 }
 
-function oaaValidationAnnotations(validation) {
+function osaaValidationAnnotations(validation) {
   return {
-    'opensphere.io/oaa-validation-status': validation.status,
-    'opensphere.io/oaa-validation-message': safeOaaValidationMessage(validation.message),
-    'opensphere.io/oaa-validated-at': validation.validatedAt,
-    'opensphere.io/oaa-validation-latency-ms': String(validation.latencyMs || 0),
+    'opensphere.io/osaa-validation-status': validation.status,
+    'opensphere.io/osaa-validation-message': safeOsaaValidationMessage(validation.message),
+    'opensphere.io/osaa-validated-at': validation.validatedAt,
+    'opensphere.io/osaa-validation-latency-ms': String(validation.latencyMs || 0),
   };
 }
 
-async function validateOaaKeySecret(actor, secret, reason = 'Operator requested provider credential validation') {
-  const meta = oaaKeyMeta(secret);
-  if (!OAA_KEY_ID_RE.test(meta.id)) throw { code: 400, msg: 'invalid LLM key id' };
+async function validateOsaaKeySecret(actor, secret, reason = 'Operator requested provider credential validation') {
+  const meta = osaaKeyMeta(secret);
+  if (!OSAA_KEY_ID_RE.test(meta.id)) throw { code: 400, msg: 'invalid LLM key id' };
   const apiKey = Buffer.from(String(secret?.data?.api_key || ''), 'base64').toString('utf8');
-  const validation = await probeOaaProviderCredential(meta, apiKey);
-  const itemPath = `/api/v1/namespaces/${encodeURIComponent(OAA_KEY_NAMESPACE)}/secrets/${encodeURIComponent(oaaKeySecretName(meta.id))}`;
-  const annotations = { ...(secret?.metadata?.annotations || {}), ...oaaValidationAnnotations(validation) };
+  const validation = await probeOsaaProviderCredential(meta, apiKey);
+  const itemPath = `/api/v1/namespaces/${encodeURIComponent(OSAA_KEY_NAMESPACE)}/secrets/${encodeURIComponent(osaaKeySecretName(meta.id))}`;
+  const annotations = { ...(secret?.metadata?.annotations || {}), ...osaaValidationAnnotations(validation) };
   const patched = await k8sRequest('PATCH', itemPath, { metadata: { annotations } }, 'application/merge-patch+json');
-  if (!patched.ok) throw { code: 502, msg: `OAA credential validation state write failed (Kubernetes HTTP ${patched.status})` };
+  if (!patched.ok) throw { code: 502, msg: `OSAA credential validation state write failed (Kubernetes HTTP ${patched.status})` };
   let auditRecorded = true;
   try {
-    await logAudit(actor, 'oaa-llm-key-validate', meta.id, validation.status, reason, {
+    await logAudit(actor, 'osaa-llm-key-validate', meta.id, validation.status, reason, {
       requestId: newOpId(),
       phase: 'observed',
-      targetType: 'oaa-llm-credential',
+      targetType: 'osaa-llm-credential',
       payloadDigest: toHashHex(canonicalJson({ id: meta.id, status: validation.status, validatedAt: validation.validatedAt })),
     });
   } catch (error) {
     auditRecorded = false;
-    console.error('[oaa-validation-audit] validation state persisted but audit write failed:', error?.message || error);
+    console.error('[osaa-validation-audit] validation state persisted but audit write failed:', error?.message || error);
   }
-  return { validation, item: oaaKeyMeta({ ...secret, metadata: { ...secret.metadata, annotations } }), auditRecorded };
+  return { validation, item: osaaKeyMeta({ ...secret, metadata: { ...secret.metadata, annotations } }), auditRecorded };
 }
 
-async function validateStoredOaaKey(actor, id) {
+async function validateStoredOsaaKey(actor, id) {
   const keyId = String(id || '').trim();
-  if (!OAA_KEY_ID_RE.test(keyId)) throw { code: 400, msg: 'invalid LLM key id' };
-  const itemPath = `/api/v1/namespaces/${encodeURIComponent(OAA_KEY_NAMESPACE)}/secrets/${encodeURIComponent(oaaKeySecretName(keyId))}`;
+  if (!OSAA_KEY_ID_RE.test(keyId)) throw { code: 400, msg: 'invalid LLM key id' };
+  const itemPath = `/api/v1/namespaces/${encodeURIComponent(OSAA_KEY_NAMESPACE)}/secrets/${encodeURIComponent(osaaKeySecretName(keyId))}`;
   const response = await k8sRequest('GET', itemPath);
   if (response.status === 404) throw { code: 404, msg: 'LLM key not found' };
-  if (!response.ok) throw { code: 502, msg: `OAA credential lookup failed (Kubernetes HTTP ${response.status})` };
-  return validateOaaKeySecret(actor, response.body);
+  if (!response.ok) throw { code: 502, msg: `OSAA credential lookup failed (Kubernetes HTTP ${response.status})` };
+  return validateOsaaKeySecret(actor, response.body);
 }
 
-function oaaKeyInput(body, existing = null) {
+function osaaKeyInput(body, existing = null) {
   const id = String(body?.id || '').trim();
   const provider = String(body?.provider || '').trim().toLowerCase();
   const displayName = String(body?.displayName || id || provider).trim();
@@ -3845,37 +3845,37 @@ function oaaKeyInput(body, existing = null) {
   const defaultModel = String(body?.defaultModel || '').trim();
   const embeddingModel = String(body?.embeddingModel || '').trim();
   const reason = managementReason(body?.reason);
-  if (!OAA_KEY_ID_RE.test(id)) throw { code: 400, msg: 'invalid LLM key id' };
-  if (!OAA_PROVIDER_RE.test(provider)) throw { code: 400, msg: 'invalid LLM provider' };
+  if (!OSAA_KEY_ID_RE.test(id)) throw { code: 400, msg: 'invalid LLM key id' };
+  if (!OSAA_PROVIDER_RE.test(provider)) throw { code: 400, msg: 'invalid LLM provider' };
   if ((!existing || apiKey) && apiKey.length < 8) throw { code: 400, msg: 'API key must be at least 8 characters' };
   if (displayName.length > 120) throw { code: 400, msg: 'displayName exceeds 120 characters' };
   if (baseUrl.length > 400) throw { code: 400, msg: 'baseUrl exceeds 400 characters' };
-  if (defaultModel && !OAA_MODEL_RE.test(defaultModel)) throw { code: 400, msg: 'invalid defaultModel' };
-  if (embeddingModel && !OAA_MODEL_RE.test(embeddingModel)) throw { code: 400, msg: 'invalid embeddingModel' };
+  if (defaultModel && !OSAA_MODEL_RE.test(defaultModel)) throw { code: 400, msg: 'invalid defaultModel' };
+  if (embeddingModel && !OSAA_MODEL_RE.test(embeddingModel)) throw { code: 400, msg: 'invalid embeddingModel' };
   if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
   return { id, provider, displayName, apiKey, baseUrl, defaultModel, embeddingModel, enabled: body?.enabled !== false, reason };
 }
 
-async function listOaaKeys(actor) {
-  const path = `/api/v1/namespaces/${encodeURIComponent(OAA_KEY_NAMESPACE)}/secrets?labelSelector=${encodeURIComponent(`${OAA_KEY_LABEL}=true`)}`;
+async function listOsaaKeys(actor) {
+  const path = `/api/v1/namespaces/${encodeURIComponent(OSAA_KEY_NAMESPACE)}/secrets?labelSelector=${encodeURIComponent(`${OSAA_KEY_LABEL}=true`)}`;
   const response = await k8sRequest('GET', path);
-  if (!response.ok) throw { code: 502, msg: `OAA credential inventory unavailable (Kubernetes HTTP ${response.status})` };
-  return { items: (response.body?.items || []).map(oaaKeyMeta).sort((left, right) => left.id.localeCompare(right.id)) };
+  if (!response.ok) throw { code: 502, msg: `OSAA credential inventory unavailable (Kubernetes HTTP ${response.status})` };
+  return { items: (response.body?.items || []).map(osaaKeyMeta).sort((left, right) => left.id.localeCompare(right.id)) };
 }
 
-async function upsertOaaKey(actor, body) {
+async function upsertOsaaKey(actor, body) {
   const requestedId = String(body?.id || '').trim();
-  if (!OAA_KEY_ID_RE.test(requestedId)) throw { code: 400, msg: 'invalid LLM key id' };
-  const name = oaaKeySecretName(requestedId);
-  const itemPath = `/api/v1/namespaces/${encodeURIComponent(OAA_KEY_NAMESPACE)}/secrets/${encodeURIComponent(name)}`;
+  if (!OSAA_KEY_ID_RE.test(requestedId)) throw { code: 400, msg: 'invalid LLM key id' };
+  const name = osaaKeySecretName(requestedId);
+  const itemPath = `/api/v1/namespaces/${encodeURIComponent(OSAA_KEY_NAMESPACE)}/secrets/${encodeURIComponent(name)}`;
   const current = await k8sRequest('GET', itemPath);
-  if (!current.ok && current.status !== 404) throw { code: 502, msg: `OAA credential lookup failed (Kubernetes HTTP ${current.status})` };
+  if (!current.ok && current.status !== 404) throw { code: 502, msg: `OSAA credential lookup failed (Kubernetes HTTP ${current.status})` };
   const existing = current.ok ? current.body : null;
-  const input = oaaKeyInput(body, existing);
+  const input = osaaKeyInput(body, existing);
   const requestId = newOpId();
   const fingerprint = input.apiKey
     ? toHashHex(input.apiKey).slice(0, 16)
-    : String(existing?.metadata?.annotations?.['opensphere.io/oaa-key-fingerprint'] || '');
+    : String(existing?.metadata?.annotations?.['opensphere.io/osaa-key-fingerprint'] || '');
   const payloadDigest = toHashHex(canonicalJson({
     id: input.id,
     provider: input.provider,
@@ -3886,33 +3886,33 @@ async function upsertOaaKey(actor, body) {
     enabled: input.enabled,
     credentialChanged: Boolean(input.apiKey),
   }));
-  const action = existing ? 'oaa-llm-key-rotate' : 'oaa-llm-key-create';
-  await logAudit(actor, action, input.id, 'attempt', input.reason, { requestId, phase: 'intent', targetType: 'oaa-llm-credential', payloadDigest });
+  const action = existing ? 'osaa-llm-key-rotate' : 'osaa-llm-key-create';
+  await logAudit(actor, action, input.id, 'attempt', input.reason, { requestId, phase: 'intent', targetType: 'osaa-llm-credential', payloadDigest });
   const now = new Date().toISOString();
   const annotations = {
-    'opensphere.io/oaa-key-id': input.id,
-    'opensphere.io/oaa-provider': input.provider,
-    'opensphere.io/oaa-display-name': input.displayName,
-    'opensphere.io/oaa-base-url': input.baseUrl,
-    'opensphere.io/oaa-default-model': input.defaultModel,
-    'opensphere.io/oaa-embedding-model': input.embeddingModel,
-    'opensphere.io/oaa-enabled': String(input.enabled),
-    'opensphere.io/oaa-key-fingerprint': fingerprint,
-    'opensphere.io/oaa-updated-at': now,
-    'opensphere.io/oaa-updated-by': String(actor.username || actor.sub).slice(0, 200),
-    'opensphere.io/oaa-change-reason': input.reason.slice(0, 500),
-    'opensphere.io/oaa-request-id': requestId,
+    'opensphere.io/osaa-key-id': input.id,
+    'opensphere.io/osaa-provider': input.provider,
+    'opensphere.io/osaa-display-name': input.displayName,
+    'opensphere.io/osaa-base-url': input.baseUrl,
+    'opensphere.io/osaa-default-model': input.defaultModel,
+    'opensphere.io/osaa-embedding-model': input.embeddingModel,
+    'opensphere.io/osaa-enabled': String(input.enabled),
+    'opensphere.io/osaa-key-fingerprint': fingerprint,
+    'opensphere.io/osaa-updated-at': now,
+    'opensphere.io/osaa-updated-by': String(actor.username || actor.sub).slice(0, 200),
+    'opensphere.io/osaa-change-reason': input.reason.slice(0, 500),
+    'opensphere.io/osaa-request-id': requestId,
   };
   const metadata = {
     name,
-    namespace: OAA_KEY_NAMESPACE,
-    labels: { [OAA_PART_LABEL]: 'opensphere-oaa', [OAA_KEY_LABEL]: 'true' },
+    namespace: OSAA_KEY_NAMESPACE,
+    labels: { [OSAA_PART_LABEL]: 'opensphere-osaa', [OSAA_KEY_LABEL]: 'true' },
     annotations,
   };
   let applied;
   try {
     if (!existing) {
-      applied = await k8sRequest('POST', `/api/v1/namespaces/${encodeURIComponent(OAA_KEY_NAMESPACE)}/secrets`, {
+      applied = await k8sRequest('POST', `/api/v1/namespaces/${encodeURIComponent(OSAA_KEY_NAMESPACE)}/secrets`, {
         apiVersion: 'v1', kind: 'Secret', metadata, type: 'Opaque', stringData: { api_key: input.apiKey },
       });
       if (applied.status === 409) {
@@ -3921,34 +3921,34 @@ async function upsertOaaKey(actor, body) {
     } else {
       applied = await k8sRequest('PATCH', itemPath, { metadata, ...(input.apiKey ? { stringData: { api_key: input.apiKey } } : {}) }, 'application/merge-patch+json');
     }
-    if (!applied.ok) throw { code: 502, msg: `OAA credential apply failed (Kubernetes HTTP ${applied.status})` };
-    await logAudit(actor, action, input.id, 'ok', input.reason, { requestId, phase: 'applied', targetType: 'oaa-llm-credential', payloadDigest });
+    if (!applied.ok) throw { code: 502, msg: `OSAA credential apply failed (Kubernetes HTTP ${applied.status})` };
+    await logAudit(actor, action, input.id, 'ok', input.reason, { requestId, phase: 'applied', targetType: 'osaa-llm-credential', payloadDigest });
     const secretForValidation = {
       metadata: { ...metadata, creationTimestamp: existing?.metadata?.creationTimestamp || now },
       data: { api_key: input.apiKey ? Buffer.from(input.apiKey, 'utf8').toString('base64') : existing?.data?.api_key || '' },
     };
-    const validationResult = await validateOaaKeySecret(actor, secretForValidation, 'Automatic validation after credential save');
+    const validationResult = await validateOsaaKeySecret(actor, secretForValidation, 'Automatic validation after credential save');
     return { created: !existing, item: validationResult.item, validation: validationResult.validation, auditRecorded: validationResult.auditRecorded, requestId };
   } catch (error) {
-    await logAudit(actor, action, input.id, 'failed', input.reason, { requestId, phase: 'failed', targetType: 'oaa-llm-credential', payloadDigest }).catch(() => undefined);
+    await logAudit(actor, action, input.id, 'failed', input.reason, { requestId, phase: 'failed', targetType: 'osaa-llm-credential', payloadDigest }).catch(() => undefined);
     throw error;
   }
 }
 
-async function deleteOaaKey(actor, id, reasonValue) {
+async function deleteOsaaKey(actor, id, reasonValue) {
   const keyId = String(id || '').trim();
   const reason = managementReason(reasonValue);
-  if (!OAA_KEY_ID_RE.test(keyId)) throw { code: 400, msg: 'invalid LLM key id' };
+  if (!OSAA_KEY_ID_RE.test(keyId)) throw { code: 400, msg: 'invalid LLM key id' };
   if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
   const requestId = newOpId();
   const payloadDigest = toHashHex(canonicalJson({ id: keyId, action: 'delete' }));
-  await logAudit(actor, 'oaa-llm-key-delete', keyId, 'attempt', reason, { requestId, phase: 'intent', targetType: 'oaa-llm-credential', payloadDigest });
-  const response = await k8sRequest('DELETE', `/api/v1/namespaces/${encodeURIComponent(OAA_KEY_NAMESPACE)}/secrets/${encodeURIComponent(oaaKeySecretName(keyId))}`);
+  await logAudit(actor, 'osaa-llm-key-delete', keyId, 'attempt', reason, { requestId, phase: 'intent', targetType: 'osaa-llm-credential', payloadDigest });
+  const response = await k8sRequest('DELETE', `/api/v1/namespaces/${encodeURIComponent(OSAA_KEY_NAMESPACE)}/secrets/${encodeURIComponent(osaaKeySecretName(keyId))}`);
   if (!response.ok && response.status !== 404) {
-    await logAudit(actor, 'oaa-llm-key-delete', keyId, 'failed', reason, { requestId, phase: 'failed', targetType: 'oaa-llm-credential', payloadDigest }).catch(() => undefined);
-    throw { code: 502, msg: `OAA credential delete failed (Kubernetes HTTP ${response.status})` };
+    await logAudit(actor, 'osaa-llm-key-delete', keyId, 'failed', reason, { requestId, phase: 'failed', targetType: 'osaa-llm-credential', payloadDigest }).catch(() => undefined);
+    throw { code: 502, msg: `OSAA credential delete failed (Kubernetes HTTP ${response.status})` };
   }
-  await logAudit(actor, 'oaa-llm-key-delete', keyId, response.status === 404 ? 'ok-noop' : 'ok', reason, { requestId, phase: 'applied', targetType: 'oaa-llm-credential', payloadDigest });
+  await logAudit(actor, 'osaa-llm-key-delete', keyId, response.status === 404 ? 'ok-noop' : 'ok', reason, { requestId, phase: 'applied', targetType: 'osaa-llm-credential', payloadDigest });
   return { deleted: response.status !== 404, requestId };
 }
 async function apiEntities() {
@@ -4094,16 +4094,16 @@ async function requireAdminContinuity(targetUserId) {
   }
 }
 
-function requireClosedOaaIdentityBody(body, allowed) {
-  if (!body || Array.isArray(body) || typeof body !== 'object') throw { code: 400, msg: 'OAA identity owner body must be an object' };
+function requireClosedOsaaIdentityBody(body, allowed) {
+  if (!body || Array.isArray(body) || typeof body !== 'object') throw { code: 400, msg: 'OSAA identity owner body must be an object' };
   const extra = Object.keys(body).filter((key) => !allowed.includes(key));
-  if (extra.length) throw { code: 400, msg: `OAA identity owner action contains unsupported inputs: ${extra.join(', ')}` };
+  if (extra.length) throw { code: 400, msg: `OSAA identity owner action contains unsupported inputs: ${extra.join(', ')}` };
 }
 
-async function oaaIdentityStatus() {
+async function osaaIdentityStatus() {
   const value = await identityPayload();
   return {
-    schema: 'oaa-identity-owner-status.opensphere.io/v1alpha1',
+    schema: 'osaa-identity-owner-status.opensphere.io/v1alpha1',
     owner: 'Console Data & Identity / Supabase',
     observedAt: value.meta?.time || new Date().toISOString(),
     // Email and recovery links are intentionally excluded from LLM-facing
@@ -4119,12 +4119,12 @@ async function oaaIdentityStatus() {
   };
 }
 
-async function oaaIdentityOwnerAction(actor, rawBody) {
+async function osaaIdentityOwnerAction(actor, rawBody) {
   const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {};
   const action = String(body.action || '').trim().toLowerCase();
-  const reason = requireOaaText(body.reason, 'management reason');
+  const reason = requireOsaaText(body.reason, 'management reason');
   if (action === 'create') {
-    requireClosedOaaIdentityBody(body, ['action', 'email', 'username', 'displayName', 'roles', 'confirm', 'reason']);
+    requireClosedOsaaIdentityBody(body, ['action', 'email', 'username', 'displayName', 'roles', 'confirm', 'reason']);
     const email = String(body.email || '').trim().toLowerCase();
     const username = String(body.username || '').trim().toLowerCase();
     const displayName = String(body.displayName || '').trim();
@@ -4133,12 +4133,12 @@ async function oaaIdentityOwnerAction(actor, rawBody) {
     if (!displayName || displayName.length > 120) throw { code: 400, msg: 'displayName must be 1-120 characters' };
     const roleCodes = [...new Set((Array.isArray(body.roles) ? body.roles : []).map((role) => String(role || '').trim()).filter(Boolean))];
     if (roleCodes.length > 3 || roleCodes.some((role) => !isRoleAllowed(role))) throw { code: 400, msg: 'roles must be a subset of the canonical Console role catalog' };
-    requireExactOaaConfirmation(body.confirm, `create Console user ${username}`);
+    requireExactOsaaConfirmation(body.confirm, `create Console user ${username}`);
     const roles = await listRoles();
     const roleIds = await roleByCodeToId(roles);
     if (roleCodes.some((role) => !roleIds.has(role))) throw { code: 503, msg: 'canonical Console role catalog is incomplete' };
     const opId = newOpId();
-    await logAudit(actor, 'oaa-identity-user-create', username, 'attempt', reason, { requestId: opId, phase: 'intent', targetType: 'console-identity-user' });
+    await logAudit(actor, 'osaa-identity-user-create', username, 'attempt', reason, { requestId: opId, phase: 'intent', targetType: 'console-identity-user' });
     let created;
     try {
       created = await createAuthUser(email, displayName, { username });
@@ -4157,34 +4157,34 @@ async function oaaIdentityOwnerAction(actor, rawBody) {
         await restRequest('operator', { method: 'DELETE', query: `user_id=eq.${created.id}`, prefer: 'return=minimal' }).catch(() => undefined);
         await authAdminRequest(`/admin/users/${created.id}`, { method: 'DELETE' }).catch(() => undefined);
       }
-      await logAudit(actor, 'oaa-identity-user-create', username, 'failed', reason, { requestId: opId, phase: 'applied', targetType: 'console-identity-user' }).catch(() => undefined);
+      await logAudit(actor, 'osaa-identity-user-create', username, 'failed', reason, { requestId: opId, phase: 'applied', targetType: 'console-identity-user' }).catch(() => undefined);
       if (error?.code === 422) throw { code: 409, msg: 'Console user already exists' };
       throw error;
     }
-    await logAudit(actor, 'oaa-identity-user-create', created.id, 'ok', reason, { requestId: opId, phase: 'applied', targetType: 'console-identity-user' });
+    await logAudit(actor, 'osaa-identity-user-create', created.id, 'ok', reason, { requestId: opId, phase: 'applied', targetType: 'console-identity-user' });
     return { accepted: true, owner: 'Console Data & Identity / Supabase', target: `ConsoleUser/${created.id}`, user: { id: created.id, username, displayName, enabled: true, roles: roleCodes } };
   }
   if (action === 'set-enabled') {
-    requireClosedOaaIdentityBody(body, ['action', 'userId', 'enabled', 'confirm', 'reason']);
+    requireClosedOsaaIdentityBody(body, ['action', 'userId', 'enabled', 'confirm', 'reason']);
     const userId = uuid(body.userId, 'Console user id');
     if (typeof body.enabled !== 'boolean') throw { code: 400, msg: 'enabled must be boolean' };
     const verb = body.enabled ? 'enable' : 'disable';
-    requireExactOaaConfirmation(body.confirm, `${verb} Console user ${userId}`);
+    requireExactOsaaConfirmation(body.confirm, `${verb} Console user ${userId}`);
     await mutateEnabled({ actor, userId, enabled: body.enabled, reason });
     return { accepted: true, owner: 'Console Data & Identity / Supabase', target: `ConsoleUser/${userId}`, enabled: body.enabled };
   }
   if (action === 'role') {
-    requireClosedOaaIdentityBody(body, ['action', 'userId', 'role', 'operation', 'confirm', 'reason']);
+    requireClosedOsaaIdentityBody(body, ['action', 'userId', 'role', 'operation', 'confirm', 'reason']);
     const userId = uuid(body.userId, 'Console user id');
     const role = String(body.role || '').trim();
     const operation = String(body.operation || '').trim().toLowerCase();
     if (!isRoleAllowed(role)) throw { code: 400, msg: 'role is outside the canonical Console role catalog' };
     if (!['add', 'remove'].includes(operation)) throw { code: 400, msg: 'role operation must be add or remove' };
-    requireExactOaaConfirmation(body.confirm, `${operation} Console role ${role} for user ${userId}`);
+    requireExactOsaaConfirmation(body.confirm, `${operation} Console role ${role} for user ${userId}`);
     await mutateGroup({ actor, userId, op: operation, roleName: role, reason });
     return { accepted: true, owner: 'Console Data & Identity / Supabase', target: `ConsoleUser/${userId}/Role/${role}`, operation };
   }
-  throw { code: 400, msg: 'OAA identity action must be create, set-enabled, or role' };
+  throw { code: 400, msg: 'OSAA identity action must be create, set-enabled, or role' };
 }
 
 async function cliEnrollmentCreate(body) {
@@ -4381,7 +4381,7 @@ const server = http.createServer(async (req, res) => {
         });
       }
     }
-    if (p.startsWith('/api/oaa/remediations/')) {
+    if (p.startsWith('/api/osaa/remediations/')) {
       try {
         const handled = await r2d2RemediationApi.handle(req, res, p, readBody, json);
         if (handled !== false) return;
@@ -4390,7 +4390,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, status, { error: e?.msg || e?.message || 'R2D2 Engineering Remediation request failed' }, { 'cache-control': 'no-store' });
       }
     }
-    if (p.startsWith('/api/oaa/operations')) {
+    if (p.startsWith('/api/osaa/operations')) {
       try {
         const handled = await r2d2OperationApi.handle(req, res, p, readBody, json);
         if (handled !== false) return;
@@ -4749,124 +4749,124 @@ const server = http.createServer(async (req, res) => {
         return json(res, authErrorStatus(e), { error: e.msg || 'auth backend unavailable' });
       }
     }
-    // OAA provider credentials are a Console management write, not a Gateway
+    // OSAA provider credentials are a Console management write, not a Gateway
     // mutation.  The Backend is the policy/audit enforcement point and writes
-    // only the OAA-labelled Kubernetes Secret; the Gateway remains read-only.
-    if (p === '/api/oaa/admin/llm-keys' && req.method === 'GET') {
-      try { const actor = await verifyConsoleAdmin(req); return json(res, 200, await listOaaKeys(actor)); }
-      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OAA credential inventory unavailable' }); }
+    // only the OSAA-labelled Kubernetes Secret; the Gateway remains read-only.
+    if (p === '/api/osaa/admin/llm-keys' && req.method === 'GET') {
+      try { const actor = await verifyConsoleAdmin(req); return json(res, 200, await listOsaaKeys(actor)); }
+      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA credential inventory unavailable' }); }
     }
-    if (p === '/api/oaa/admin/llm-keys' && req.method === 'POST') {
+    if (p === '/api/osaa/admin/llm-keys' && req.method === 'POST') {
       try {
         const actor = await verifyConsoleAdmin(req);
-        const out = await upsertOaaKey(actor, await readBody(req));
+        const out = await upsertOsaaKey(actor, await readBody(req));
         return json(res, out.created ? 201 : 200, out);
-      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OAA credential save failed' }); }
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA credential save failed' }); }
     }
-    const oaaKeyTestPath = p.match(/^\/api\/oaa\/admin\/llm-keys\/([a-z0-9-]+)\/test$/);
-    if (oaaKeyTestPath && req.method === 'POST') {
+    const osaaKeyTestPath = p.match(/^\/api\/osaa\/admin\/llm-keys\/([a-z0-9-]+)\/test$/);
+    if (osaaKeyTestPath && req.method === 'POST') {
       try {
         const actor = await verifyConsoleAdmin(req);
-        return json(res, 200, await validateStoredOaaKey(actor, oaaKeyTestPath[1]));
-      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OAA credential validation failed' }); }
+        return json(res, 200, await validateStoredOsaaKey(actor, osaaKeyTestPath[1]));
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA credential validation failed' }); }
     }
-    const oaaKeyPath = p.match(/^\/api\/oaa\/admin\/llm-keys\/([a-z0-9-]+)$/);
-    if (oaaKeyPath && req.method === 'DELETE') {
+    const osaaKeyPath = p.match(/^\/api\/osaa\/admin\/llm-keys\/([a-z0-9-]+)$/);
+    if (osaaKeyPath && req.method === 'DELETE') {
       try {
         const actor = await verifyConsoleAdmin(req);
-        return json(res, 200, await deleteOaaKey(actor, oaaKeyPath[1], url.searchParams.get('reason')));
-      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OAA credential delete failed' }); }
+        return json(res, 200, await deleteOsaaKey(actor, osaaKeyPath[1], url.searchParams.get('reason')));
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA credential delete failed' }); }
     }
-    // OAA is not an audit authority.  It forwards evidence through this
+    // OSAA is not an audit authority.  It forwards evidence through this
     // Console Backend endpoint so every tool/retrieval event is persisted in
     // the canonical append-only audit.event chain under the verified caller.
-    if (p === '/api/oaa/audit' && req.method === 'POST') {
+    if (p === '/api/osaa/audit' && req.method === 'POST') {
       try {
         const actor = await verifyAuthed(req);
         const body = await readBody(req);
         const action = String(body.action || '').trim();
         const target = String(body.target || '').trim();
         const result = String(body.result || '').trim();
-        const reason = String(body.reason || '').trim() || 'OAA read/planning operation';
+        const reason = String(body.reason || '').trim() || 'OSAA read/planning operation';
         if (!action || !target || !result) throw { code: 400, msg: 'action, target and result are required' };
         const requestId = body.requestId && /^[0-9a-f-]{36}$/i.test(String(body.requestId)) ? body.requestId : newOpId();
         return json(res, 201, await logAudit(actor, action.slice(0, 160), target.slice(0, 300), result.slice(0, 64), reason.slice(0, 1000), {
           requestId,
           phase: body.phase || 'applied',
-          targetType: String(body.targetType || 'oaa').slice(0, 120),
+          targetType: String(body.targetType || 'osaa').slice(0, 120),
           payloadDigest: body.payloadDigest ? String(body.payloadDigest).replace(/^sha256:/, '') : undefined,
         }));
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA audit unavailable' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA audit unavailable' });
       }
     }
-    if (p === '/api/oaa/actions/submit' && req.method === 'POST') {
+    if (p === '/api/osaa/actions/submit' && req.method === 'POST') {
       try {
         const actor = await verifyAuthed(req);
-        return json(res, 202, await submitOaaAction(actor, await readBody(req), req.headers.authorization));
+        return json(res, 202, await submitOsaaAction(actor, await readBody(req), req.headers.authorization));
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA action submission failed' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA action submission failed' });
       }
     }
-    if (p === '/api/oaa/owner/identity/status' && req.method === 'GET') {
+    if (p === '/api/osaa/owner/identity/status' && req.method === 'GET') {
       try {
-        await verifyOaaIdentityOwner(req);
-        return json(res, 200, await oaaIdentityStatus());
+        await verifyOsaaIdentityOwner(req);
+        return json(res, 200, await osaaIdentityStatus());
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA identity owner status unavailable' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA identity owner status unavailable' });
       }
     }
-    if (p === '/api/oaa/owner/identity/actions' && req.method === 'POST') {
+    if (p === '/api/osaa/owner/identity/actions' && req.method === 'POST') {
       try {
-        const actor = await verifyOaaIdentityOwner(req, { requireAal2: true });
-        return json(res, 202, await oaaIdentityOwnerAction(actor, await readBody(req)));
+        const actor = await verifyOsaaIdentityOwner(req, { requireAal2: true });
+        return json(res, 202, await osaaIdentityOwnerAction(actor, await readBody(req)));
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA identity owner action failed' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA identity owner action failed' });
       }
     }
-    if (p === '/api/oaa/owner/notifications/status' && req.method === 'GET') {
+    if (p === '/api/osaa/owner/notifications/status' && req.method === 'GET') {
       try {
-        await verifyOaaNotificationOwner(req);
-        return json(res, 200, await oaaNotificationStatus(url.searchParams.get('limit')));
+        await verifyOsaaNotificationOwner(req);
+        return json(res, 200, await osaaNotificationStatus(url.searchParams.get('limit')));
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA notification owner status unavailable' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA notification owner status unavailable' });
       }
     }
-    if (p === '/api/oaa/owner/notifications/actions' && req.method === 'POST') {
+    if (p === '/api/osaa/owner/notifications/actions' && req.method === 'POST') {
       try {
-        const actor = await verifyOaaNotificationOwner(req, { mutation: true });
-        return json(res, 202, await oaaNotificationOwnerAction(actor, await readBody(req)));
+        const actor = await verifyOsaaNotificationOwner(req, { mutation: true });
+        return json(res, 202, await osaaNotificationOwnerAction(actor, await readBody(req)));
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA notification owner action failed' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA notification owner action failed' });
       }
     }
-    if (p === '/api/oaa/owner/recovery/capabilities' && req.method === 'GET') {
+    if (p === '/api/osaa/owner/recovery/capabilities' && req.method === 'GET') {
       try {
-        await verifyOaaRecoveryOwner(req);
-        return json(res, 200, await oaaRecoveryCapabilities());
+        await verifyOsaaRecoveryOwner(req);
+        return json(res, 200, await osaaRecoveryCapabilities());
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA recovery owner capabilities unavailable' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA recovery owner capabilities unavailable' });
       }
     }
-    if (p === '/api/oaa/owner/recovery/status' && req.method === 'GET') {
+    if (p === '/api/osaa/owner/recovery/status' && req.method === 'GET') {
       try {
-        const actor = await verifyOaaRecoveryOwner(req);
-        const result = await oaaRecoveryStatus();
-        await logAudit(actor, 'oaa-recovery-status', 'PlatformRecovery/all', 'ok', 'OAA recovery status read', { targetType: 'platform-recovery' });
+        const actor = await verifyOsaaRecoveryOwner(req);
+        const result = await osaaRecoveryStatus();
+        await logAudit(actor, 'osaa-recovery-status', 'PlatformRecovery/all', 'ok', 'OSAA recovery status read', { targetType: 'platform-recovery' });
         return json(res, 200, result);
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA recovery owner status unavailable' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA recovery owner status unavailable' });
       }
     }
-    if (p === '/api/oaa/owner/recovery/plan' && req.method === 'POST') {
+    if (p === '/api/osaa/owner/recovery/plan' && req.method === 'POST') {
       try {
-        const actor = await verifyOaaRecoveryOwner(req);
+        const actor = await verifyOsaaRecoveryOwner(req);
         const body = await readBody(req);
-        const result = await oaaRecoveryPlan(body);
-        await logAudit(actor, 'oaa-recovery-plan', `PlatformRecovery/${result.component}`, 'ok', 'OAA non-destructive recovery plan read', { targetType: 'platform-recovery' });
+        const result = await osaaRecoveryPlan(body);
+        await logAudit(actor, 'osaa-recovery-plan', `PlatformRecovery/${result.component}`, 'ok', 'OSAA non-destructive recovery plan read', { targetType: 'platform-recovery' });
         return json(res, 200, result);
       } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'OAA recovery owner plan unavailable' });
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA recovery owner plan unavailable' });
       }
     }
     // Notification events are server-to-server only. Browser and plugin UI
@@ -5008,7 +5008,7 @@ const server = http.createServer(async (req, res) => {
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'Gitea webhook rejected' }); }
     }
     // An approved reconciler reports an observed result with a dedicated
-    // server-to-server credential. Browsers and OAA cannot call this path.
+    // server-to-server credential. Browsers and OSAA cannot call this path.
     if (p === '/api/platform/reconcile/next' && req.method === 'POST') {
       try { return json(res, 200, await claimReconcileWork(req, await readBody(req))); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'reconcile work claim rejected' }); }

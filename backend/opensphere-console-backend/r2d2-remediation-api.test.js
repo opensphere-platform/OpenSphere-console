@@ -11,12 +11,12 @@ const incidentId = '44444444-4444-4444-8444-444444444444';
 const exact = (character) => `sha256:${character.repeat(64)}`;
 
 function body() {
-  const patchText = '--- a/backend/opensphere-console-oaa-gateway/server.js\n+++ b/backend/opensphere-console-oaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const patchText = '--- a/backend/opensphere-console-osaa-gateway/server.js\n+++ b/backend/opensphere-console-osaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
   return {
     incidentId, repositoryId: 'console', repository: REPOSITORIES.console.url,
-    baseRevision: 'a'.repeat(40), allowedPaths: ['backend/opensphere-console-oaa-gateway/'],
+    baseRevision: 'a'.repeat(40), allowedPaths: ['backend/opensphere-console-osaa-gateway/'],
     patchText, patchDigest: exact('b'), reason: 'known runtime mismatch requires a bounded source repair',
-    riskLevel: 'R2', affectedComponents: ['oaaGateway'], affectedImages: ['opensphere-console-oaa-gateway'],
+    riskLevel: 'R2', affectedComponents: ['osaaGateway'], affectedImages: ['opensphere-console-osaa-gateway'],
     requiredTests: ['unit','contract','integration','security'], releaseScope: 'component',
     targetChannel: 'edge', buildAuthority: 'localhost', rollbackRevision: 'c'.repeat(40),
     rollbackImageDigests: [exact('d')], approvalExpiresAt: '2999-01-01T00:00:00Z',
@@ -60,7 +60,7 @@ test('proposal is patch-bound, session-bound and cannot activate repository or d
   assert.equal(persisted[0].actorId, actorId);
   assert.equal(persisted[0].authSessionId, sessionId);
   assert.equal(persisted[0].patchDigest, patchTextDigest(body().patchText));
-  assert.deepEqual(persisted[0].patchArtifact.changedFiles, ['backend/opensphere-console-oaa-gateway/server.js']);
+  assert.deepEqual(persisted[0].patchArtifact.changedFiles, ['backend/opensphere-console-osaa-gateway/server.js']);
   assert.match(persisted[0].approvalBindingDigest, /^sha256:[0-9a-f]{64}$/);
   assert.deepEqual(result.activation, {
     proposalOnly: true, approvalApi: false, workerReady: false,
@@ -129,7 +129,7 @@ test('dedicated worker store keeps claim fencing and expected deployment evidenc
       remediation_request_id: requestId, assessment_id: assessmentId, incident_id: incidentId,
       operation_id: operationId, repository: REPOSITORIES.console.url, base_revision: 'a'.repeat(40),
       allowed_paths: ['backend/'], patch_digest: exact('b'), reason: 'bounded repair', risk_level: 'R2',
-      affected_components: ['oaaGateway'], affected_images: ['opensphere-console-oaa-gateway'],
+      affected_components: ['osaaGateway'], affected_images: ['opensphere-console-osaa-gateway'],
       required_tests: ['unit'], release_scope: 'component', target_channel: 'edge', build_authority: 'localhost',
       rollback_revision: 'c'.repeat(40), rollback_image_digests: [exact('d')],
       approval_binding_digest: exact('e'), approval_expires_at: '2999-01-01T00:00:00Z', stage: 'approved',

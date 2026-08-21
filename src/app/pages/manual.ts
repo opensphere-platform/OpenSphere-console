@@ -34,7 +34,7 @@ interface ManualBlock {
  * Manual — Main Shell native Help Center.
  *
  * The visual hierarchy intentionally follows Oracle Help Center while the content remains owned by
- * the OAA Manual Registry. The retired OpenSphere-shell-menual package is migration input only.
+ * the OSAA Manual Registry. The retired OpenSphere-shell-menual package is migration input only.
  * All document text is rendered through interpolation; no innerHTML or trusted HTML bypass exists.
  */
 @Component({

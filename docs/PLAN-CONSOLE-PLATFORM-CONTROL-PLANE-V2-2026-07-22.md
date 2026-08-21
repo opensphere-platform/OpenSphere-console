@@ -4,9 +4,9 @@
 |---|---|
 | 문서 상태 | **채택된 정본 · Platform Control Plane 2차 구현 기준선** |
 | 작성일 | 2026-07-22 |
-| 대상 | OpenSphere Console `/manage/*`, Console Backend, Supabase, Gitea, HIS Observability Binding, OAA, Manual, subShell 연계 |
+| 대상 | OpenSphere Console `/manage/*`, Console Backend, Supabase, Gitea, HIS Observability Binding, OSAA, Manual, subShell 연계 |
 | 상위 결정 | `migration-adr-006` — **Supabase Data & Identity Authority + Gitea Declarative Change Authority** |
-| 변경 대상 | 사용자 노출 `/manage/backbone`, legacy `/api/admin/backbone/*`, CBS 명칭·namespace·OAA 잔재 |
+| 변경 대상 | 사용자 노출 `/manage/backbone`, legacy `/api/admin/backbone/*`, CBS 명칭·namespace·OSAA 잔재 |
 | 비목표 | Supabase Studio 복제, Gitea를 workforce SCM으로 사용, 브라우저에 privileged credential 제공 |
 
 ---
@@ -54,7 +54,7 @@ reconciler가 등록되기 전에는 변경을 `Applied`로 표시하지 않고 
 | 플랫폼 제어 기반 | Overview | `/manage/platform-control` | `Platform Control Plane` |
 | 플랫폼 제어 기반 | Data & Identity | `/manage/data-identity` | `Data & Identity — Supabase` |
 | 플랫폼 제어 기반 | 상태 변경 관리 | `/manage/state-changes` | `플랫폼 상태 변경 관리` |
-| 플랫폼 제어 기반 | OAA Gateway | `/manage/oaa` | `OAA Gateway` |
+| 플랫폼 제어 기반 | OSAA Gateway | `/manage/osaa` | `OSAA Gateway` |
 | 플랫폼 제어 기반 | Observability | `/manage/observability` | `Observability Integration — HIS-provided` |
 
 `Supabase`, `Gitea` 제품 이름은 숨기지 않는다. 메뉴의 역할 이름 옆 badge와 페이지 제목에 명시해 사용자가 실제 공급 기술과 버전을 즉시 알 수 있게 한다.
@@ -66,7 +66,7 @@ Gitea가 모든 데이터를 복제해 보관하는 구조는 채택하지 않�
 | 정보 | 단일 권위 | 설명 |
 |---|---|---|
 | 운영자, session, RBAC, 사용자 설정, object metadata, 관리 감사 | Supabase | 관계·검색·보안 정책·고빈도 기록에 적합 |
-| 선언형 설정, Manual 원문, OAA tool/binding 선언, subShell descriptor, diff/review/revert | Gitea | 사람이 검토 가능한 변경 내용과 이력 |
+| 선언형 설정, Manual 원문, OSAA tool/binding 선언, subShell descriptor, diff/review/revert | Gitea | 사람이 검토 가능한 변경 내용과 이력 |
 | 현재 workload/resource 상태 | Kubernetes API | 실행 현실의 권위 |
 | 지표·로그·trace | **HIS Observability**가 소유하는 Prometheus-compatible/log/trace backend | 시간계열·대용량 운영 증거. Console은 Binding을 통한 소비자 |
 | 명령 인가, reason, MFA, idempotency, 권위 간 연결 | Console Backend | 유일한 Policy Enforcement Point |
@@ -104,12 +104,12 @@ Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea �
 - object/byte 수, 증감, 정책, public exposure, 실패, orphan, retention, backup 증거가 없다.
 - Gitea는 설명 문장으로만 존재하고 관리 표면은 없다.
 
-#### Step 4 — OAA 연계
+#### Step 4 — OSAA 연계
 
-![현재 OAA](audit-evidence/2026-07-22-supabase-gitea-plan/04-oaa-current.png)
+![현재 OSAA](audit-evidence/2026-07-22-supabase-gitea-plan/04-osaa-current.png)
 
 - UI와 runtime 설정에 `CBS consumer workload`, `opensphere-backbone`, 기존 PostgreSQL/RustFS/Gitea 설명이 남아 있다.
-- Supabase `oaa` schema와 실제 Gateway runtime의 소유·연결 상태를 한 화면에서 입증하지 못한다.
+- Supabase `osaa` schema와 실제 Gateway runtime의 소유·연결 상태를 한 화면에서 입증하지 못한다.
 
 #### Step 5 — 현재 감사
 
@@ -129,7 +129,7 @@ Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea �
 | 변경 요청 | `console.change_request`에 actor/action/target/reason/status/Git/K8s correlation 보유 | 핵심 기반 존재 |
 | 감사 | `audit.event`에 request/correlation/phase/result/commit/operation/hash chain 보유 | UI 투영 부족 |
 | 상관관계 RPC | `begin_change`, `record_change_commit`, `record_reconcile_result` | intent/commit/reconcile 연결 기반 존재 |
-| OAA | `oaa` schema에 document, chunk, retrieval trace, tool run, ACL/RLS 보유 | 실제 관리 가시성 부족 |
+| OSAA | `osaa` schema에 document, chunk, retrieval trace, tool run, ACL/RLS 보유 | 실제 관리 가시성 부족 |
 | Gitea 관측 | Observability에 repo/user/org/issues/releases/access/memory Prometheus query 존재 | 전용 관리면으로 재사용 가능 |
 | Gitea API | legacy controller의 `/api/admin/backbone/gitea*`는 anonymous/public read 수준 | 보안·기능 모두 교체 필요 |
 | Observability 연계 | Console이 `monitoring` namespace의 Prometheus service를 직접 찾아 query/targets를 호출 | HIS Binding을 통하지 않는 직접 결합 |
@@ -140,7 +140,7 @@ Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea �
 - Dupa Controller에 `/api/admin/backbone/status|detail|yaml|events|pg|pg/rows|pg/function*|controller|claims|gitea*|install`이 남아 있다.
 - generic PostgreSQL row/DDL 기능은 Gitea 선언형 write path를 우회하므로 새 UI로 가져오면 안 된다.
 - 이전 PostgreSQL/RustFS/Gitea bootstrap은 `archive/legacy-cbs/backend-backbone/`으로 격리한다. 활성 build/deploy/seed 경로가 아니다.
-- OAA Gateway와 Nginx에 `opensphere-backbone` DNS/namespace, `BACKBONE_NS`, CBS 설명이 남아 있다.
+- OSAA Gateway와 Nginx에 `opensphere-backbone` DNS/namespace, `BACKBONE_NS`, CBS 설명이 남아 있다.
 - 기존 `BACKBONE-ARCHITECTURE.md`는 superseded notice 아래에 구 구조 전체를 보존하고 있어 runtime 문서로 오인될 수 있다.
 - Dupa Controller가 `monitoring.coreos.com` 리소스에 광역 create/update/patch/delete 권한을 보유하고 ServiceMonitor를 직접 생성할 수 있다.
 - Observability API가 `monitoring` namespace의 service DNS를 직접 탐색한다. 이는 HIS가 소유해야 할 endpoint·tenant·credential·capability 계약을 우회한다.
@@ -166,7 +166,7 @@ Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea �
 
 ```mermaid
 flowchart LR
-  OP["Operator / os CLI / subShell / OAA"] --> AUTH["Supabase Auth"]
+  OP["Operator / os CLI / subShell / OSAA"] --> AUTH["Supabase Auth"]
   OP --> BE["Console Backend\nPolicy Enforcement Point"]
   AUTH --> BE
   BE --> SB["Supabase\nData · Identity · Audit · Runtime Projection"]
@@ -193,7 +193,7 @@ flowchart LR
 /manage/data-identity?correlation=<id>
 /manage/state-changes?correlation=<id>
 /manage/audit?correlation=<id>
-/manage/oaa?correlation=<id>
+/manage/osaa?correlation=<id>
 /manage/extensions/<consumer>?correlation=<id>
 ```
 
@@ -240,7 +240,7 @@ flowchart LR
 | Advisors | RLS disabled/missing policy, exposed sensitive columns, unused/duplicate index, slow query, insecure function/search path | approved linter/advisor queries |
 | Audit & Changes | event volume, hash-chain continuity, phase gap, actor/source/category, correlated changes | `audit.event` + `console.change_request` |
 | Security & DR | key/cert rotation metadata, secret age, network policy, DB/object backup, last restore drill, RPO/RTO | Secret metadata only + policy/evidence store |
-| Integrations | Manual/OAA/subShell별 schema, bucket, auth, last operation, error | consumer contract projection |
+| Integrations | Manual/OSAA/subShell별 schema, bucket, auth, last operation, error | consumer contract projection |
 
 #### 제한
 
@@ -328,18 +328,18 @@ Intent → Authorized → PR Opened → Reviewed → Committed
 
 - time, actor/display name, actor type, source, action, risk, result
 - request/correlation ID, Gitea repo/PR/commit, Kubernetes operation
-- Manual/OAA/subShell consumer ID, cluster, namespace, target
+- Manual/OSAA/subShell consumer ID, cluster, namespace, target
 - missing phase, unknown, failed, rolled back, break-glass
 
 표시 원칙:
 
 - UUID 옆에 현재 display name과 actor type을 표시하되 UUID가 정본임을 유지한다.
-- OAA retrieval/Manual ingest와 같은 고빈도 event는 기본 grouping하고 raw event drill-down을 제공한다.
+- OSAA retrieval/Manual ingest와 같은 고빈도 event는 기본 grouping하고 raw event drill-down을 제공한다.
 - event hash/prev hash 연속성 검증 상태와 독립 export 상태를 표시한다.
 
 ---
 
-## 5. Manual, OAA, subShell 통합 계약
+## 5. Manual, OSAA, subShell 통합 계약
 
 ### 5.1 Manual
 
@@ -348,18 +348,18 @@ Gitea Markdown/YAML 원문
   → review/merge/commit
   → signed ingest job
   → Supabase document/version/section/chunk/embedding
-  → Manual UI + OAA retrieval
+  → Manual UI + OSAA retrieval
 ```
 
 관리 화면은 repo/path, commit, source hash, ingest status, document/chunk count, embedding model/revision, ACL, last successful ingest, stale/drift 상태를 표시한다.
 
-### 5.2 OAA
+### 5.2 OSAA
 
-- OAA knowledge, retrieval trace, tool run은 Supabase가 소유한다.
+- OSAA knowledge, retrieval trace, tool run은 Supabase가 소유한다.
 - tool/capability/action binding 선언은 Gitea에서 review한다.
-- OAA Gateway에는 Kubernetes write RBAC를 주지 않는다.
+- OSAA Gateway에는 Kubernetes write RBAC를 주지 않는다.
 - 변경 요청은 Console Backend에서 current permission, MFA, scope, reason을 검증한 후 Gitea PR/commit으로 보낸다.
-- OAA 페이지에 `Knowledge lineage`, `Tool governance`, `Recent executions`, `Change correlation`을 추가한다.
+- OSAA 페이지에 `Knowledge lineage`, `Tool governance`, `Recent executions`, `Change correlation`을 추가한다.
 - `CBS consumer workload`, `BACKBONE_NS`, 기존 PostgreSQL/RustFS seed 설명을 제거한다.
 
 ### 5.3 subShell consumer contract
@@ -373,10 +373,10 @@ Gitea Markdown/YAML 원문
 | Storage | bucket/prefix, policy, object/bytes, retention, backup class |
 | Change | Gitea repo/ref/path, branch policy, approval, reconciler, desired/applied SHA, drift |
 | Manual | repo/path, ingest target, source hash, document/chunk count, ACL, stale state |
-| OAA | capability/tool binding, permission, risk, confirmation, last retrieval/run |
+| OSAA | capability/tool binding, permission, risk, confirmation, last retrieval/run |
 | Operations | metrics/logs/traces source, health, SLO, incident, last live evidence |
 
-Extensions/subShell detail 페이지는 이 contract를 요약하고, Data & Identity/Change Control/Audit/OAA 화면으로 consumer filter를 유지한 deep link를 제공한다.
+Extensions/subShell detail 페이지는 이 contract를 요약하고, Data & Identity/Change Control/Audit/OSAA 화면으로 consumer filter를 유지한 deep link를 제공한다.
 
 ---
 
@@ -399,7 +399,7 @@ Extensions/subShell detail 페이지는 이 contract를 요약하고, Data & Ide
 | `GET /api/admin/change-control/reconciliation` | desired/observed pipeline |
 | `GET /api/admin/change-control/webhooks` | delivery/verification/retry evidence |
 | `GET /api/admin/changes/:requestId/timeline` | 단일 E2E timeline |
-| `GET /api/admin/integrations/consumers` | Manual/OAA/subShell contract |
+| `GET /api/admin/integrations/consumers` | Manual/OSAA/subShell contract |
 | `GET /api/admin/observability/binding` | HIS Binding, capability, condition, freshness. Secret 원문 제외 |
 | `GET /api/admin/observability/summary` | Binding 범위 내 metrics/logs/traces/alerts 요약 |
 | `GET /api/admin/observability/query` | Binding이 허용한 scope/template 기반 read query. 임의 provider 탐색 금지 |
@@ -575,13 +575,13 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 
 ### 9.4 배포 이름과 namespace
 
-사용자-facing 명칭은 첫 단계에서 제거한다. 물리 namespace 변경은 service DNS, NetworkPolicy, Secret, PVC/backup, OAA cutover가 결합되므로 별도 gate로 수행한다.
+사용자-facing 명칭은 첫 단계에서 제거한다. 물리 namespace 변경은 service DNS, NetworkPolicy, Secret, PVC/backup, OSAA cutover가 결합되므로 별도 gate로 수행한다.
 
 권장 최종 경계:
 
 - `opensphere-console-data`: Supabase data/auth/storage 계열
 - `opensphere-console-change`: Gitea, webhook/reconciler adapter
-- `opensphere-console`: Console Backend, OAA Gateway 등 Console-owned workload
+- `opensphere-console`: Console Backend, OSAA Gateway 등 Console-owned workload
 
 현재 `opensphere-cbs`, `opensphere-backbone`, `BACKBONE_NS`는 transition alias로만 허용하고 신규 코드·문서·metric label에는 추가하지 않는다.
 
@@ -611,7 +611,7 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 
 - 새 세 route와 메뉴
 - `/manage/backbone` redirect
-- OAA/CBS 문구 및 Backend error/service name 정리
+- OSAA/CBS 문구 및 Backend error/service name 정리
 - dangerous legacy PG DDL endpoint 제거 또는 hard-disabled
 - legacy API usage telemetry
 - `Observability Integration — HIS-provided` 명칭과 connection state UI
@@ -692,20 +692,20 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 - audit intent 없이 외부 부작용 0건
 - rollback이 새 change request로 연결됨
 
-### Phase 6 — Manual/OAA/subShell 통합
+### Phase 6 — Manual/OSAA/subShell 통합
 
 산출물:
 
 - Manual content lineage
-- OAA tool/binding/change correlation
+- OSAA tool/binding/change correlation
 - subShell consumer contract와 deep link
-- Extensions 상세의 identity/data/change/manual/OAA/operations 카드
+- Extensions 상세의 identity/data/change/manual/OSAA/operations 카드
 - 각 consumer의 ObservabilityClaim/Binding 상태와 capability/freshness projection
 
 게이트:
 
 - Manual commit→ingest→citation lineage 확인
-- OAA가 직접 Kubernetes write하지 않음
+- OSAA가 직접 Kubernetes write하지 않음
 - subShell별 schema/bucket/repo/path/reconciler/telemetry 누락을 UI가 경고
 - consumer filter를 유지한 cross-page E2E 통과
 - PFS를 경유하지 않고 HIS Binding으로 telemetry source가 연결됨
@@ -739,7 +739,7 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 | Gitea | private repo read, protected branch, PR approval, signed commit, webhook invalid/replay |
 | Change | intent failure, Gitea success/DB failure, reconcile timeout, duplicate callback, revert |
 | Audit | phase continuity, hash chain, actor resolution, correlation filter, export redaction |
-| Manual/OAA | source hash, ACL-before-ranking, citation, tool permission, no direct K8s write |
+| Manual/OSAA | source hash, ACL-before-ranking, citation, tool permission, no direct K8s write |
 | subShell | missing contract, drift, stale manual, revoked principal, cross-page deep link |
 | Accessibility | keyboard tabs/table/tree, focus-visible, status non-color cue, screen-reader label |
 | DR | Supabase DB/object, Gitea DB/repo/LFS, Secret restore 후 correlation integrity |
@@ -755,15 +755,15 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 | Control overview | 신규 `src/app/pages/admin-platform-control.ts` |
 | Change Control UI | 신규 `src/app/pages/admin-change-control.ts` |
 | Audit | `src/app/pages/admin-audit.ts` |
-| OAA/Manual/Extensions | `src/app/pages/admin-oaa.ts`, `src/app/pages/manual.ts`, `src/app/pages/admin-plugins.ts` 및 subShell detail |
+| OSAA/Manual/Extensions | `src/app/pages/admin-osaa.ts`, `src/app/pages/manual.ts`, `src/app/pages/admin-plugins.ts` 및 subShell detail |
 | HIS Observability UI | `src/app/pages/admin-observability.ts` — 관리 화면이 아니라 Binding 소비·상태 표면으로 개편 |
 | Backend aggregation | `backend/opensphere-console-backend/server.js`를 domain router/adapter로 분리 |
 | Supabase migrations | `backend/supabase/migrations/`의 read model, correlation, consumer contract |
 | Gitea legacy | `backend/dupa-control/controller.js`의 `/api/admin/backbone/*` 제거·이관 |
 | HIS 경계 정리 | `backend/dupa-control/controller.js`의 monitoring CRD 광역 RBAC, ServiceMonitor 직접 생성, service DNS 탐색 제거 |
-| OAA runtime | `backend/opensphere-console-oaa-gateway/server.js`, deploy manifest, seed |
+| OSAA runtime | `backend/opensphere-console-osaa-gateway/server.js`, deploy manifest, seed |
 | Reverse proxy | `nginx/default.conf.template` |
-| Deployment | `backend/supabase/`, `backend/gitea/`, `backend/opensphere-console-oaa-gateway/deploy.yaml`, `backend/opensphere-console-backend/deploy.yaml`, namespace/NetworkPolicy/Secret/backup manifests |
+| Deployment | `backend/supabase/`, `backend/gitea/`, `backend/opensphere-console-osaa-gateway/deploy.yaml`, `backend/opensphere-console-backend/deploy.yaml`, namespace/NetworkPolicy/Secret/backup manifests |
 | Tests | route/session, API contract, RLS, webhook, correlation, browser E2E, DR evidence |
 
 Console Backend의 단일 `server.js`에 모든 collector/adapter를 계속 추가하지 않는다. 최소 다음 경계로 분리한다.
@@ -791,7 +791,7 @@ observability/direct-evidence
 - [ ] Gitea page가 repo/PR/commit/webhook/reconcile/drift/supply-chain/DR의 현재값·추세·증거를 제공한다.
 - [ ] 모든 management write가 reason, actor, current permission, MFA, request ID, Gitea revision, reconcile result를 가진다.
 - [ ] audit intent가 없으면 외부 write가 실행되지 않는다.
-- [ ] Manual/OAA/subShell이 consumer contract로 연결되고 lineage와 권한을 확인할 수 있다.
+- [ ] Manual/OSAA/subShell이 consumer contract로 연결되고 lineage와 권한을 확인할 수 있다.
 - [ ] Console은 HIS Observability를 설치·구성하지 않고 Claim/Binding 계약만 사용한다.
 - [ ] Binding 부재·대기·정상·저하·상실·거부 상태에서 UI, freshness, 기능 gate가 정의대로 반응한다.
 - [ ] Binding이 없어도 bootstrap/recovery와 direct evidence가 동작하며 시계열 기능을 가장하지 않는다.

@@ -2426,17 +2426,17 @@ async function giteaHealth() {
     return r.ok;
   } catch { return false; }
 }
-// OAA is a native Console capability. The controller observes its readiness but
+// OSAA is a native Console capability. The controller observes its readiness but
 // does not own it or grant it a direct Kubernetes mutation path.
-const OAA_GATEWAY_URL = process.env.OAA_GATEWAY_URL || 'http://opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local:8080';
-async function oaaGatewayReadiness() {
+const OSAA_GATEWAY_URL = process.env.OSAA_GATEWAY_URL || 'http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080';
+async function osaaGatewayReadiness() {
   try {
-    const r = await fetch(`${OAA_GATEWAY_URL}/readyz`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(3000) });
+    const r = await fetch(`${OSAA_GATEWAY_URL}/readyz`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(3000) });
     let body = null;
     try { body = await r.json(); } catch { body = null; }
-    return { ready: r.ok === true, components: body?.components || null, reason: body?.reason || (r.ok ? null : 'oaa_gateway_not_ready') };
+    return { ready: r.ok === true, components: body?.components || null, reason: body?.reason || (r.ok ? null : 'osaa_gateway_not_ready') };
   } catch {
-    return { ready: false, components: null, reason: 'oaa_gateway_unreachable' };
+    return { ready: false, components: null, reason: 'osaa_gateway_unreachable' };
   }
 }
 // ── Observability: HIS Binding consumer only ───────────────────────────────
@@ -2459,12 +2459,12 @@ async function platformControlReadiness() {
   const supabase = await fetch(`${CONSOLE_IDENTITY_URL}/readyz`, { signal: AbortSignal.timeout(3000) })
     .then((response) => ({ ready: response.ok, reason: response.ok ? '' : `Console Backend HTTP ${response.status}` }))
     .catch(() => ({ ready: false, reason: 'Console Backend Supabase readiness unavailable' }));
-  const [gitea, oaa] = await Promise.all([giteaHealth(), oaaGatewayReadiness()]);
-  const ready = supabase.ready && gitea && oaa.ready;
+  const [gitea, osaa] = await Promise.all([giteaHealth(), osaaGatewayReadiness()]);
+  const ready = supabase.ready && gitea && osaa.ready;
   return {
     ready, required: true,
-    supabase, gitea: { ready: gitea }, oaa,
-    reason: ready ? '' : 'Supabase Data & Identity, State Change Authority, and OAA readiness are required',
+    supabase, gitea: { ready: gitea }, osaa,
+    reason: ready ? '' : 'Supabase Data & Identity, State Change Authority, and OSAA readiness are required',
   };
 }
 function bindingConsumer(binding) {
@@ -2692,24 +2692,24 @@ function deploymentReadyResult(ns, name, resource) {
   };
 }
 
-function requireOaaOwnerPermission(actor, permission) {
+function requireOsaaOwnerPermission(actor, permission) {
   if (!actor?.permissions?.includes(permission)) throw { code: 403, msg: `requires ${permission}` };
 }
 
-function requireClosedOaaExtensionBody(body, allowed) {
-  if (!body || Array.isArray(body) || typeof body !== 'object') throw { code: 400, msg: 'OAA Extension owner body must be an object' };
+function requireClosedOsaaExtensionBody(body, allowed) {
+  if (!body || Array.isArray(body) || typeof body !== 'object') throw { code: 400, msg: 'OSAA Extension owner body must be an object' };
   const extra = Object.keys(body).filter((key) => !allowed.includes(key));
-  if (extra.length) throw { code: 400, msg: `OAA Extension owner action contains unsupported inputs: ${extra.join(', ')}` };
+  if (extra.length) throw { code: 400, msg: `OSAA Extension owner action contains unsupported inputs: ${extra.join(', ')}` };
 }
 
-function requireOaaExtensionConfirmation(actual, expected) {
+function requireOsaaExtensionConfirmation(actual, expected) {
   if (String(actual || '').trim() !== expected) throw { code: 400, msg: `confirmation required: ${expected}` };
 }
 
-function oaaExtensionInspectionProjection(inspection) {
+function osaaExtensionInspectionProjection(inspection) {
   const descriptor = inspection?.descriptor || {};
   return {
-    schema: 'oaa-extension-inspection.opensphere.io/v1alpha1',
+    schema: 'osaa-extension-inspection.opensphere.io/v1alpha1',
     owner: 'DUPA Extension Host',
     image: inspection.image, repository: inspection.repository, digest: inspection.digest,
     resolvedAt: inspection.resolvedAt, source: inspection.source, revision: inspection.revision,
@@ -2785,7 +2785,7 @@ async function mainShellBaselineStatus() {
     [NS, 'opensphere-console'],
     [NS, 'opensphere-console-backend'],
     [NS, 'opensphere-console-dupa-controller'],
-    [NS, 'opensphere-console-oaa-gateway'],
+    [NS, 'opensphere-console-osaa-gateway'],
   ];
   const results = await Promise.all(targets.map(([ns, name]) =>
     k8s('GET', `/apis/apps/v1/namespaces/${ns}/deployments/${name}`).then((r) => deploymentReadyResult(ns, name, r))));
@@ -3184,8 +3184,8 @@ async function platformReadinessStatus() {
     condition('SecurityPolicy', securityPolicy.ready, securityPolicy.ready ? 'Verified' : 'PolicyEvidenceMissing', securityPolicy.reason || 'Security and policy evidence verified', [securityPolicy]),
   ];
   const prerequisites = [
-    { key: 'platform-control', label: 'Platform Control Ready', ready: platformControl.ready, detail: platformControl.ready ? 'Supabase · Gitea · OAA ready' : platformControl.reason, route: '/manage/platform-control' },
-    { key: 'main-shell', label: 'Main Shell Baseline Ready', ready: mainShell.ready, detail: mainShell.ready ? 'Console native baseline ready' : 'Console/Auth/Backend/DUPA/OAA workload incomplete', route: '/manage/observability' },
+    { key: 'platform-control', label: 'Platform Control Ready', ready: platformControl.ready, detail: platformControl.ready ? 'Supabase · Gitea · OSAA ready' : platformControl.reason, route: '/manage/platform-control' },
+    { key: 'main-shell', label: 'Main Shell Baseline Ready', ready: mainShell.ready, detail: mainShell.ready ? 'Console native baseline ready' : 'Console/Auth/Backend/DUPA/OSAA workload incomplete', route: '/manage/observability' },
     { key: 'cluster-manager', label: 'Cluster Manager Activated', ready: clusterManager.ready, detail: `${clusterManager.phase} · workload ${clusterManager.workload}`, route: '/manage/extensions' },
     { key: 'his-preflight', label: 'HIS Preflight Ready', ready: his.ready, detail: his.ready ? `${his.realizationLayer} ${his.core.ready}/${his.core.total} core Ready · checked ${his.checkedAt}` : (his.reason || his.state), route: '/p/cluster-manager/his/his' },
   ];
@@ -3428,56 +3428,56 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(permitted ? 204 : 403); return res.end();
     }
 
-    // OAA Extension supply-chain owner facade.  It is deliberately separate
+    // OSAA Extension supply-chain owner facade.  It is deliberately separate
     // from the generic Admin API so the owning controller can re-evaluate the
     // canonical permission, MFA assurance, closed schema and exact digest.
-    if (p.startsWith('/api/oaa/owner/extensions/')) {
-      let oaaActor;
-      try { oaaActor = await verifyAuthed(req); }
+    if (p.startsWith('/api/osaa/owner/extensions/')) {
+      let osaaActor;
+      try { osaaActor = await verifyAuthed(req); }
       catch (e) {
         const numeric = e && typeof e.code === 'number';
         return json(res, numeric ? e.code : 502, { error: numeric ? (e.msg || 'unauthorized') : 'auth backend error', opId });
       }
       try {
-        if (p === '/api/oaa/owner/extensions/security' && req.method === 'GET') {
-          requireOaaOwnerPermission(oaaActor, 'console.extension.security.read');
+        if (p === '/api/osaa/owner/extensions/security' && req.method === 'GET') {
+          requireOsaaOwnerPermission(osaaActor, 'console.extension.security.read');
           const items = (await listImageRevocations()).map((item) => ({
             repository: item.repository, digest: item.digest,
             replacementDigest: item.replacement_digest || '', reason: item.reason,
             revokedAt: item.revoked_at,
           }));
           return json(res, 200, {
-            schema: 'oaa-extension-security-status.opensphere.io/v1alpha1',
+            schema: 'osaa-extension-security-status.opensphere.io/v1alpha1',
             owner: 'DUPA Extension Host / Supabase append-only revocation ledger',
             observedAt: new Date().toISOString(), items,
           });
         }
-        if (p === '/api/oaa/owner/extensions/inspect' && req.method === 'POST') {
-          requireOaaOwnerPermission(oaaActor, 'console.extension.security.read');
+        if (p === '/api/osaa/owner/extensions/inspect' && req.method === 'POST') {
+          requireOsaaOwnerPermission(osaaActor, 'console.extension.security.read');
           const body = await readBody(req);
-          requireClosedOaaExtensionBody(body, ['image']);
+          requireClosedOsaaExtensionBody(body, ['image']);
           const parsed = parseModuleImageReference(body.image);
-          if (parsed.channel) throw { code: 400, msg: 'OAA inspection requires repository@sha256:digest' };
-          return json(res, 200, oaaExtensionInspectionProjection(await inspectModuleImage(`${parsed.repository}@${parsed.reference}`)));
+          if (parsed.channel) throw { code: 400, msg: 'OSAA inspection requires repository@sha256:digest' };
+          return json(res, 200, osaaExtensionInspectionProjection(await inspectModuleImage(`${parsed.repository}@${parsed.reference}`)));
         }
-        if (p === '/api/oaa/owner/extensions/revoke' && req.method === 'POST') {
-          requireOaaOwnerPermission(oaaActor, 'console.extension.security.manage');
-          if (oaaActor.assurance !== 'aal2') throw { code: 403, msg: 'OAA Extension revocation requires MFA assurance aal2' };
+        if (p === '/api/osaa/owner/extensions/revoke' && req.method === 'POST') {
+          requireOsaaOwnerPermission(osaaActor, 'console.extension.security.manage');
+          if (osaaActor.assurance !== 'aal2') throw { code: 403, msg: 'OSAA Extension revocation requires MFA assurance aal2' };
           const body = await readBody(req);
-          requireClosedOaaExtensionBody(body, ['image', 'replacementImage', 'confirm', 'reason']);
+          requireClosedOsaaExtensionBody(body, ['image', 'replacementImage', 'confirm', 'reason']);
           const reason = String(body.reason || '').trim();
           if (reason.length < 8 || reason.length > 2000) throw { code: 400, msg: 'revocation reason must be 8-2000 characters' };
           const parsed = parseModuleImageReference(body.image);
           if (parsed.channel) throw { code: 400, msg: 'revocation requires repository@sha256:digest' };
           const image = `${parsed.repository}@${parsed.reference}`;
-          requireOaaExtensionConfirmation(body.confirm, `revoke extension image ${image}`);
+          requireOsaaExtensionConfirmation(body.confirm, `revoke extension image ${image}`);
           let replacementDigest = '';
           if (body.replacementImage) {
             const replacement = parseModuleImageReference(body.replacementImage);
             if (replacement.channel || replacement.repository !== parsed.repository) throw { code: 400, msg: 'replacement must be an exact digest in the same repository' };
             replacementDigest = replacement.reference;
           }
-          const item = await revokeImage({ repository: parsed.repository, digest: parsed.reference, replacementDigest, actor: oaaActor, reason, opId });
+          const item = await revokeImage({ repository: parsed.repository, digest: parsed.reference, replacementDigest, actor: osaaActor, reason, opId });
           reconcile().catch((e) => console.error('reconcile error', e));
           return json(res, 201, {
             accepted: true, owner: 'DUPA Extension Host / Supabase append-only revocation ledger',
@@ -3492,8 +3492,8 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         const duplicate = /already revoked/i.test(String(e?.message || e?.msg || ''));
         return json(res, duplicate ? 409 : Number(e?.code) || 503, {
-          error: duplicate ? 'ImageAlreadyRevoked' : e?.reason || e?.msg || 'OAAExtensionOwnerFailed',
-          message: e?.message || e?.msg || 'OAA Extension owner action failed', opId,
+          error: duplicate ? 'ImageAlreadyRevoked' : e?.reason || e?.msg || 'OSAAExtensionOwnerFailed',
+          message: e?.message || e?.msg || 'OSAA Extension owner action failed', opId,
         });
       }
     }
@@ -3521,7 +3521,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Console mutations require the three explicit authorities (Supabase,
-    // Gitea, OAA). Read-only surfaces remain available while this gate is closed.
+    // Gitea, OSAA). Read-only surfaces remain available while this gate is closed.
     if (p.startsWith('/api/admin/') && p !== '/api/admin/events' && p !== '/api/admin/extensions/inspect' && req.method !== 'GET') {
       const state = await platformControlReadiness();
       if (!state.ready) return json(res, 503, { error: 'Platform Control authorities unavailable', platformControl: state, opId });

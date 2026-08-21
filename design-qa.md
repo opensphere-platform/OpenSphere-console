@@ -1,20 +1,20 @@
-# Design QA — OAA and shared side panels
+# Design QA — OSAA and shared side panels
 
 Date: 2026-07-23 KST
 
 ## Visual sources
 
 - Reference: `C:/Users/cmars/AppData/Local/Temp/codex-clipboard-efbd084d-8395-4508-bebd-d12cf335abee.png`
-- Final OAA capture: `visual-qa/oaa-panel-v27.png`
+- Final OSAA capture: `visual-qa/osaa-panel-v27.png`
 - Shared-form cross-check: `visual-qa/console-admin-panel-v27.png`
-- Full-height comparison: `visual-qa/oaa-panel-comparison-v27.png`
-- Focused form comparison: `visual-qa/oaa-panel-focused-comparison-v27.png`
+- Full-height comparison: `visual-qa/osaa-panel-comparison-v27.png`
+- Focused form comparison: `visual-qa/osaa-panel-focused-comparison-v27.png`
 
 ## Capture conditions
 
 - Reference pixels: 1146 × 1080.
 - Implementation pixels: 2705 × 1713 in the user's authenticated Chrome session.
-- State: `/manage/oaa` → `LLM Keys` → `Key 추가`, with zero configured provider keys.
+- State: `/manage/osaa` → `LLM Keys` → `Key 추가`, with zero configured provider keys.
 - Full-height comparison: reference panel cropped from x=29 and implementation panel cropped from x≈1856; both normalized to 1000 px height.
 - Focused comparison: the populated form regions were cropped and normalized to 1000 px width so control geometry and information density could be judged at equal visual scale.
 
@@ -35,34 +35,34 @@ Date: 2026-07-23 KST
 
 ## Interaction and state verification
 
-- Authenticated navigation to `/manage/oaa` succeeded.
+- Authenticated navigation to `/manage/osaa` succeeded.
 - Gateway, tool manifest, action bindings, knowledge stats, and LLM key administration loaded.
-- `GET /api/oaa/admin/llm-keys` returned HTTP 200; no OAA permission alert was rendered.
+- `GET /api/osaa/admin/llm-keys` returned HTTP 200; no OSAA permission alert was rendered.
 - `Key 추가` opened the panel; `취소` closed it; reopening succeeded.
 - ID and API-key fields remained unfilled by the browser credential manager. The form uses `autocomplete="off"`, while the secret field uses `autocomplete="new-password"`.
 - The disabled Save state is correct while required values and the governance reason are absent.
-- `/manage/console-admins` → `사용자 생성` confirmed that the shared full-width form contract also applies outside OAA.
+- `/manage/console-admins` → `사용자 생성` confirmed that the shared full-width form contract also applies outside OSAA.
 
 ## Error review
 
-- No visible OAA error or stale permission alert remained in the rendered DOM.
-- Deployment/request logs showed OAA health and administration requests returning HTTP 200, including `/api/oaa/admin/llm-keys`.
-- Separate `/api/admin/plugins/events` 401 entries came from other stale browser tabs and are unrelated to the OAA panel flow.
-- Kubernetes rollout completed with 2/2 ready replicas on `opensphere-console:oaa-panel-v27`.
+- No visible OSAA error or stale permission alert remained in the rendered DOM.
+- Deployment/request logs showed OSAA health and administration requests returning HTTP 200, including `/api/osaa/admin/llm-keys`.
+- Separate `/api/admin/plugins/events` 401 entries came from other stale browser tabs and are unrelated to the OSAA panel flow.
+- Kubernetes rollout completed with 2/2 ready replicas on `opensphere-console:osaa-panel-v27`.
 
 ## Comparison history
 
 1. Initial capture showed narrow controls, credential-manager autofill, inline actions, and an obsolete `opensphere-console-admins` permission message.
-2. The OAA form was reorganized into responsive task sections, secret autofill was blocked, and authorization copy was aligned to the Supabase `console-admins` role.
+2. The OSAA form was reorganized into responsive task sections, secret autofill was blocked, and authorization copy was aligned to the Supabase `console-admins` role.
 3. Cross-page verification exposed that a page-scoped width rule did not reliably affect projected panel content.
-4. The width contract was moved to the shared `os-panel` facade using Clarity's native full-width class and verified on both OAA and Console administrator forms.
+4. The width contract was moved to the shared `os-panel` facade using Clarity's native full-width class and verified on both OSAA and Console administrator forms.
 5. The deployment readiness probe timeout was raised to five seconds because its static contract checks legitimately exceeded the previous one-second default; the final rollout reached 2/2 ready.
 
 ## Findings
 
 - P0: none.
 - P1: none.
-- P2: none remaining for the requested panel consistency and OAA form flow.
+- P2: none remaining for the requested panel consistency and OSAA form flow.
 
 final result: passed
 
@@ -381,20 +381,20 @@ final result: passed
 
 ---
 
-# OAA Composer Design QA
+# OSAA Composer Design QA
 
 - Source visual truth: `C:\Users\cmars\AppData\Local\Temp\codex-clipboard-af66cc7b-770a-47f1-a521-923e2b245e65.png`
-- Implementation screenshot: `D:\@PROJECT\OpenSphere\OpenSphere-Platform-V2\OpenSphere-console\artifacts\oaa-composer-implementation-busy.png`
-- Combined comparison: `D:\@PROJECT\OpenSphere\OpenSphere-Platform-V2\OpenSphere-console\artifacts\oaa-composer-comparison-busy.png`
+- Implementation screenshot: `D:\@PROJECT\OpenSphere\OpenSphere-Platform-V2\OpenSphere-console\artifacts\osaa-composer-implementation-busy.png`
+- Combined comparison: `D:\@PROJECT\OpenSphere\OpenSphere-Platform-V2\OpenSphere-console\artifacts\osaa-composer-comparison-busy.png`
 - Browser viewport: 2705 × 1769 CSS px, device pixel ratio 1
 - Source pixels: 920 × 145
 - Implementation component pixels/CSS size: 583 × 145 at device pixel ratio 1
-- Density normalization: both captures are 1×. Width differs intentionally because the implementation is constrained to the responsive OAA dock; component height and interaction state are matched.
-- State: authenticated Console, OAA dock open, completion request in progress, stop control visible
+- Density normalization: both captures are 1×. Width differs intentionally because the implementation is constrained to the responsive OSAA dock; component height and interaction state are matched.
+- State: authenticated Console, OSAA dock open, completion request in progress, stop control visible
 
 ## Full-view comparison evidence
 
-The implementation preserves the source hierarchy: one rounded white composer, large borderless prompt area, lower control rail, left context controls, right model/voice controls, and a circular dark stop action. It is placed at the bottom of the existing OAA dock without obscuring the thread.
+The implementation preserves the source hierarchy: one rounded white composer, large borderless prompt area, lower control rail, left context controls, right model/voice controls, and a circular dark stop action. It is placed at the bottom of the existing OSAA dock without obscuring the thread.
 
 ## Focused region comparison evidence
 
@@ -406,11 +406,11 @@ The combined comparison image evaluates the composer only because the supplied s
 - Spacing and layout rhythm: 145px composer height matches the source; responsive dock width is intentional. Internal vertical rhythm and circular action sizing are consistent.
 - Colors and visual tokens: white surface, neutral hairline, muted placeholder, dark primary action, and orange context indicator are aligned with the source while using Console-compatible tokens.
 - Image and icon fidelity: no raster assets are required. All controls use Carbon icons already owned by the product; no handcrafted SVG or text-glyph substitute was introduced.
-- Copy and content: `무엇이든 요청하세요` matches the source. `환경 컨텍스트` intentionally replaces `전체 액세스` because OAA remains governed and does not grant unrestricted mutation access.
+- Copy and content: `무엇이든 요청하세요` matches the source. `환경 컨텍스트` intentionally replaces `전체 액세스` because OSAA remains governed and does not grant unrestricted mutation access.
 
 ## Interaction verification
 
-- Enter submitted a real OAA request and returned `OAA chat ready.` from DeepSeek.
+- Enter submitted a real OSAA request and returned `OSAA chat ready.` from DeepSeek.
 - Shift+Enter produced `첫째 줄\n둘째 줄` without submitting.
 - Busy state exposed the stop control.
 - Voice control uses the browser SpeechRecognition capability when available and reports an explicit unsupported state otherwise.

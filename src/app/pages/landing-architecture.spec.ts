@@ -222,7 +222,7 @@ test('DUPA documentation preserves host ownership and separates Runtime Units fr
   assert.match(foundationModel, /요청 격리보다 약한 Driver로 자동 하향/);
 });
 
-test('control pillars use one capability owner and keep OAA CLI Shell as surfaces', () => {
+test('control pillars use one capability owner and keep OSAA CLI Shell as surfaces', () => {
   for (const term of [
     'OpenSphere AI Agent',
     'OpenSphere CLI',

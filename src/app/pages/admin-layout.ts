@@ -152,7 +152,7 @@ export class AdminLayout {
   };
   readonly r2d2Item = {
     label: 'R2D2',
-    route: '/manage/oaa',
+    route: '/manage/osaa',
     icon: Activity16,
   };
   readonly expanded = signal<Record<string, boolean>>({});

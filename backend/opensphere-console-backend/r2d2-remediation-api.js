@@ -132,11 +132,11 @@ function createR2d2RemediationApi(options) {
   }
 
   async function handle(req, res, pathname, bodyReader, json) {
-    const proposal = pathname.match(/^\/api\/oaa\/remediations\/assessments\/([0-9a-f-]{36})\/proposals$/i);
+    const proposal = pathname.match(/^\/api\/osaa\/remediations\/assessments\/([0-9a-f-]{36})\/proposals$/i);
     if (proposal && req.method === 'POST') {
       return json(res, 202, await propose(req, proposal[1], await bodyReader(req)));
     }
-    const approval = pathname.match(/^\/api\/oaa\/remediations\/([0-9a-f-]{36})\/approvals\/(source|deployment)$/i);
+    const approval = pathname.match(/^\/api\/osaa\/remediations\/([0-9a-f-]{36})\/approvals\/(source|deployment)$/i);
     if (approval && req.method === 'POST') {
       return json(res, 202, await approve(req, approval[1], approval[2] === 'source' ? 'source_patch' : 'deployment', await bodyReader(req)));
     }
@@ -147,7 +147,7 @@ function createR2d2RemediationApi(options) {
 }
 
 function createRestRemediationStore(restRequest) {
-  const request = (resource, options = {}) => restRequest(resource, { ...options, profile: 'oaa' });
+  const request = (resource, options = {}) => restRequest(resource, { ...options, profile: 'osaa' });
   return {
     async propose(input) {
       const rows = await request('rpc/propose_engineering_remediation_v2', {
@@ -244,19 +244,19 @@ function workerRequest(row, operation, patchArtifact) {
 }
 
 function createRestRemediationWorkerStore(restRequest, workerId, claimEpoch) {
-  const oaa = (resource, options = {}) => restRequest(resource, { ...options, profile: 'oaa' });
+  const osaa = (resource, options = {}) => restRequest(resource, { ...options, profile: 'osaa' });
   const consoleRequest = (resource, options = {}) => restRequest(resource, { ...options, profile: 'console' });
   const requests = new Map();
   const stages = new Map();
   return {
     async claim(limit = 5) {
-      const rows = await oaa('rpc/claim_engineering_remediation', {
+      const rows = await osaa('rpc/claim_engineering_remediation', {
         method: 'POST', body: { p_worker: workerId, p_claim_epoch: claimEpoch, p_limit: limit },
       });
       return Promise.all((rows || []).map(async (row) => {
         const [operations, artifacts] = await Promise.all([
           consoleRequest('module_operation', { query: `operation_id=eq.${encodeURIComponent(row.operation_id)}&select=*` }),
-          oaa('remediation_patch_artifact', { query: `remediation_request_id=eq.${encodeURIComponent(row.remediation_request_id)}&select=*` }),
+          osaa('remediation_patch_artifact', { query: `remediation_request_id=eq.${encodeURIComponent(row.remediation_request_id)}&select=*` }),
         ]);
         const mapped = workerRequest(row, operations?.[0], artifacts?.[0]);
         requests.set(mapped.remediationRequestId, mapped); stages.set(mapped.remediationRequestId, mapped.stage);
@@ -264,7 +264,7 @@ function createRestRemediationWorkerStore(restRequest, workerId, claimEpoch) {
       }));
     },
     async heartbeat(id) {
-      return oaa('rpc/heartbeat_engineering_remediation', { method: 'POST', body: {
+      return osaa('rpc/heartbeat_engineering_remediation', { method: 'POST', body: {
         p_remediation_request_id: id, p_worker: workerId, p_claim_epoch: claimEpoch,
       } });
     },
@@ -279,7 +279,7 @@ function createRestRemediationWorkerStore(restRequest, workerId, claimEpoch) {
     async stage(id, next, evidence = {}) {
       const current = stages.get(id);
       if (!current) throw new Error('Engineering Remediation worker stage is unknown');
-      const row = await oaa('rpc/advance_engineering_remediation', { method: 'POST', body: {
+      const row = await osaa('rpc/advance_engineering_remediation', { method: 'POST', body: {
         p_remediation_request_id: id, p_worker: workerId, p_claim_epoch: claimEpoch,
         p_expected_stage: current, p_next_stage: next, p_evidence: evidence,
         p_evidence_digest: digest(evidence),
@@ -292,7 +292,7 @@ function createRestRemediationWorkerStore(restRequest, workerId, claimEpoch) {
       const tests = Object.fromEntries((evidence.tests || []).map((item) => [item.id, {
         status: item.status, evidenceDigest: item.evidenceDigest || null,
       }]));
-      await oaa('rpc/record_engineering_build_evidence', { method: 'POST', body: {
+      await osaa('rpc/record_engineering_build_evidence', { method: 'POST', body: {
         p_remediation_request_id: id, p_worker: workerId, p_claim_epoch: claimEpoch,
         p_source_revision: evidence.sourceRevision, p_patch_digest: evidence.patchDigest,
         p_test_evidence: tests, p_sbom_digest: evidence.sbomDigest,
@@ -303,7 +303,7 @@ function createRestRemediationWorkerStore(restRequest, workerId, claimEpoch) {
     },
     async recordDeploymentVerification(id, evidence) {
       const request = requests.get(id); if (!request) throw new Error('Engineering Remediation request is not claimed');
-      await oaa('rpc/record_engineering_deployment_verification', { method: 'POST', body: {
+      await osaa('rpc/record_engineering_deployment_verification', { method: 'POST', body: {
         p_remediation_request_id: id, p_worker: workerId, p_claim_epoch: claimEpoch,
         p_operation_id: request.operationId,
         p_expected_image_digests: evidence.expectedImageDigests || evidence.imageDigests || [],

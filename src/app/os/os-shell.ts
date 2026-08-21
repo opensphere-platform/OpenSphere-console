@@ -21,7 +21,7 @@ import { pluginIdFromRoute, routeForPlugin } from '../core/perspectives';
 import { OsNavNode } from './os-nav-node';
 import { OsSearch } from './os-search';
 import { OsNotifications } from './os-notifications';
-import { OsOaaAgent } from './os-oaa-agent';
+import { OsOsaaAgent } from './os-osaa-agent';
 import { OsSessionStepUp } from './os-session-step-up';
 import { OsR2d2Risk } from './os-r2d2-risk';
 import { OsShellLauncher } from '../system-plugins/os-shell/os-shell-launcher';
@@ -56,7 +56,7 @@ interface NavTreeRoot {
     OsNavNode,
     OsSearch,
     OsNotifications,
-    OsOaaAgent,
+    OsOsaaAgent,
     OsSessionStepUp,
     OsR2d2Risk,
     OsShellLauncher,
@@ -86,7 +86,7 @@ interface NavTreeRoot {
           <a class="os-header-manual" routerLink="/manual" routerLinkActive="active" title="Manual" aria-label="Manual">
             <os-cicon [icon]="iconManual" [size]="18" />
           </a>
-          <os-oaa-agent />
+          <os-osaa-agent />
           <os-notifications />
           <!-- 콘솔 관리는 1단 nav 하단 항목으로 이동(Model A). 헤더는 프로필 전용. -->
           <!-- ACC식 계정 영역: 아바타 → Account profile / Log out (프로필 전용) -->
@@ -175,7 +175,7 @@ interface NavTreeRoot {
        * 이게 없으면 헤더는 stacking context를 형성하지 못해 자식(os-search 드롭다운 등)의 z-index가
        * 문서 전체가 아니라 헤더 로컬 범위에서만 유효해지고, 콘텐츠 영역의 datagrid sticky 헤더처럼
        * DOM 순서상 뒤에 오는 요소가 그 위로 새어나올 수 있다(레이어링 회귀 버그).
-       * --os-z-header는 OAA/패널 그립/알림 위, skip-link 아래(styles.scss 레이어 스케일 참고). */
+       * --os-z-header는 OSAA/패널 그립/알림 위, skip-link 아래(styles.scss 레이어 스케일 참고). */
       .header {
         position: relative;
         z-index: var(--os-z-header);

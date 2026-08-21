@@ -28,7 +28,7 @@ if (contract.schema !== 'manual-ui.opensphere.io/v1' || contract.contract !== CO
 
 const forbidden = [
   'os-source-chips',
-  'OAA Manual Registry 소스/문서 탐색 및 검색',
+  'OSAA Manual Registry 소스/문서 탐색 및 검색',
   "redirectTo: 'p/manual'",
 ];
 

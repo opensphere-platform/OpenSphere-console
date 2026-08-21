@@ -134,7 +134,7 @@ interface SecView {
       /* 입력창 바로 아래 드롭다운 — OCI: 입력과 동일 너비·좌측정렬·radius4·shadow.
        * z-index:1001은 :host stacking context 내부(os-search-field 등) 로컬 순서 —
        * .header가 var(--os-z-header)로 자체 stacking context를 형성하므로 이 드롭다운은
-       * 항상 헤더의 순위(OAA·패널그립·알림 위, skip-link 아래)로 캡핑되어 문서 전체로 새어나가지 않는다. */
+       * 항상 헤더의 순위(OSAA·패널그립·알림 위, skip-link 아래)로 캡핑되어 문서 전체로 새어나가지 않는다. */
       .os-search-drop {
         position: absolute; top: calc(100% + 5px); left: 0;
         width: 100%; background: #fdfdfc; border: 1px solid #e0e3ea;

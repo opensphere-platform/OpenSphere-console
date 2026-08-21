@@ -15,7 +15,7 @@ test('opaque browser session is exchanged server-side for the R2D2 Gateway', asy
   const result = await authorizeR2d2ProxyRequest(request({
     'x-os-internal-authn-subrequest': 'r2d2-proxy-v1',
     'x-os-original-method': 'GET',
-    'x-os-original-uri': '/api/oaa/health',
+    'x-os-original-uri': '/api/osaa/health',
     cookie: '__Host-opensphere_session=opaque',
   }), {
     authenticateBrowser: async (forwarded) => {
@@ -25,7 +25,7 @@ test('opaque browser session is exchanged server-side for the R2D2 Gateway', asy
     verifyBearer: async () => { throw new Error('bearer verifier must not run'); },
   });
 
-  assert.deepEqual(calls, [['GET', '/api/oaa/health', '__Host-opensphere_session=opaque']]);
+  assert.deepEqual(calls, [['GET', '/api/osaa/health', '__Host-opensphere_session=opaque']]);
   assert.deepEqual(result, {
     authorization: 'Bearer short-lived-supabase-token',
     source: 'browser-session',
@@ -37,7 +37,7 @@ test('original R2D2 mutation method and CSRF evidence reach session enforcement'
   await authorizeR2d2ProxyRequest(request({
     'x-os-internal-authn-subrequest': 'r2d2-proxy-v1',
     'x-os-original-method': 'POST',
-    'x-os-original-uri': '/api/oaa/chat',
+    'x-os-original-uri': '/api/osaa/chat',
     'x-os-csrf-token': 'csrf-value',
     origin: 'https://localhost:1114',
   }), {
@@ -90,7 +90,7 @@ test('nginx mediates R2D2 credentials and keeps the opaque cookie out of the Gat
   assert.match(nginx, /proxy_pass http:\/\/\$console_backend_upstream:8080\/api\/internal\/r2d2-proxy-authn;/);
   assert.match(nginx, /proxy_set_header X-OS-Original-Method \$r2d2_original_method;/);
   const gatewayLocation = nginx.slice(
-    nginx.indexOf('location /api/oaa/'),
+    nginx.indexOf('location /api/osaa/'),
     nginx.indexOf('location = /_r2d2_authn'),
   );
   assert.ok(gatewayLocation.length > 0, 'R2D2 Gateway proxy location is missing');
@@ -101,7 +101,7 @@ test('nginx mediates R2D2 credentials and keeps the opaque cookie out of the Gat
 
 test('nginx gives the authenticated R2D2 chat endpoint its bounded long-response window', () => {
   const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
-  const chatLocation = nginx.match(/location = \/api\/oaa\/chat \{[\s\S]*?\n    \}/)?.[0] || '';
+  const chatLocation = nginx.match(/location = \/api\/osaa\/chat \{[\s\S]*?\n    \}/)?.[0] || '';
   assert.match(chatLocation, /auth_request \/_r2d2_authn;/);
   assert.match(chatLocation, /proxy_read_timeout 120s;/);
   assert.match(chatLocation, /proxy_set_header Cookie "";/);
@@ -110,10 +110,10 @@ test('nginx gives the authenticated R2D2 chat endpoint its bounded long-response
 
 test('nginx keeps Engineering Remediation proposal writes on Console Backend', () => {
   const nginx = fs.readFileSync(path.resolve(__dirname, '../../nginx/default.conf.template'), 'utf8');
-  const location = nginx.match(/location \^~ \/api\/oaa\/remediations\/ \{[\s\S]*?\n    \}/)?.[0] || '';
+  const location = nginx.match(/location \^~ \/api\/osaa\/remediations\/ \{[\s\S]*?\n    \}/)?.[0] || '';
   assert.match(location, /opensphere-console-backend/);
   assert.match(location, /proxy_set_header Authorization ""/);
-  assert.doesNotMatch(location, /opensphere-console-oaa-gateway/);
+  assert.doesNotMatch(location, /opensphere-console-osaa-gateway/);
 });
 
 test('Console Backend runtime image contains the R2D2 authentication mediator', () => {

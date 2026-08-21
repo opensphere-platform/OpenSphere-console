@@ -75,7 +75,7 @@
 - 신규: 새 StatefulSet(정본 이름) + kanidm-tls(SNI 재발급 필요 시) + Services(`-core`,`-ext`).
 - 복원: `kanidmd database restore` → 도메인·oauth2 client(opensphere-console)·groups scope·사용자 확인.
 - 검증: **실제 로그인 성공**(admin+일반), groups 클레임, JWKS(ES256) 서명검증.
-- **cert SNI 의존**: BFF/backend/controller/oaa가 `kanidm.opensphere-console-auth.svc`(SNI)로 TLS 검증. 이름/ns 변경 시 **SNI·JWKS URL·CA 경로를 모든 소비자에서 동시 갱신** 필요.
+- **cert SNI 의존**: BFF/backend/controller/osaa가 `kanidm.opensphere-console-auth.svc`(SNI)로 TLS 검증. 이름/ns 변경 시 **SNI·JWKS URL·CA 경로를 모든 소비자에서 동시 갱신** 필요.
 
 ## 6. kanidm ns 결정(권고)
 
@@ -86,8 +86,8 @@
 - `controller.js`: `BACKBONE_NS`(opensphere-backbone→opensphere-cbs), bbWorkloads의 workload/PVC/secret 이름(backbone-*→opensphere-cbs-*), 연결 env 기본값, GITEA_URL.
 - `admin-backbone.ts`/`backbone-graph.ts`: 컴포넌트 키/표시명.
 - backbone bootstrap yaml·servicemonitors: 이름/ns/셀렉터.
-- 테스트(`main-shell-base` 3기둥 이름, `oaa-gateway-tier` bbWorkloads 단언, `backbone-required`): 새 이름으로 갱신.
-- kanidm 소비자 DNS/SNI/JWKS: BFF·backend·controller·oaa·console-services — kanidm 이름 변경분만.
+- 테스트(`main-shell-base` 3기둥 이름, `osaa-gateway-tier` bbWorkloads 단언, `backbone-required`): 새 이름으로 갱신.
+- kanidm 소비자 DNS/SNI/JWKS: BFF·backend·controller·osaa·console-services — kanidm 이름 변경분만.
 
 ## 8. 롤백
 

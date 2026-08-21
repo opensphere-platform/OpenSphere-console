@@ -100,7 +100,7 @@ function buildRecoveryOwnerStatus(rawEvidence, options = {}) {
   const blockers = componentBlockers(evidence);
   if (!executorAvailable) blockers.push('recovery_drill_executor_unavailable');
   return {
-    apiVersion: 'opensphere.io/oaa-recovery-owner/v1',
+    apiVersion: 'opensphere.io/osaa-recovery-owner/v1',
     owner: 'Console Platform Recovery / Supabase + Gitea',
     observedAt: evidence.observedAt || options.observedAt || new Date().toISOString(),
     capabilities: [...RECOVERY_OWNER_CAPABILITIES],
@@ -155,7 +155,7 @@ function buildRecoveryPlan(rawEvidence, component = 'all', options = {}) {
     restore: status.evidence.restore[key],
   }]));
   return {
-    apiVersion: 'opensphere.io/oaa-recovery-plan/v1',
+    apiVersion: 'opensphere.io/osaa-recovery-plan/v1',
     owner: status.owner,
     component: selected,
     targetMode: 'isolated-non-destructive-drill',

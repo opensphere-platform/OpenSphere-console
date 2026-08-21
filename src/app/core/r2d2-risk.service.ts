@@ -30,7 +30,7 @@ export class R2d2RiskService {
       .subscribe((event) => void this.refreshContext(event.urlAfterRedirects));
     this.timer = setInterval(() => void this.refresh(), 30_000);
     if (typeof EventSource !== 'undefined') {
-      this.events = new EventSource('/api/oaa/incidents/stream', { withCredentials: true });
+      this.events = new EventSource('/api/osaa/incidents/stream', { withCredentials: true });
       const update = () => this.scheduleEventRefresh();
       for (const event of ['incident_detected','incident_activated','incident_severity_changed','incident_recovering','incident_resolved','incident_suspended','incident_resumed','snapshot-resync']) {
         this.events.addEventListener(event, update);
@@ -62,7 +62,7 @@ export class R2d2RiskService {
 
   private async loadRisk(): Promise<void> {
     try {
-      const response = await this.http.request('/api/oaa/operational/status', { cache: 'no-store' });
+      const response = await this.http.request('/api/osaa/operational/status', { cache: 'no-store' });
       if (!response.ok) {
         this.risk.set({ active: 0, severityRank: 0, state: response.status === 503 ? 'disabled' : 'degraded', observedAt: null });
         return;
@@ -82,7 +82,7 @@ export class R2d2RiskService {
 
   private async refreshContext(route: string): Promise<void> {
     try {
-      const response = await this.http.request(`/api/oaa/context?route=${encodeURIComponent(route)}`, { cache: 'no-store' });
+      const response = await this.http.request(`/api/osaa/context?route=${encodeURIComponent(route)}`, { cache: 'no-store' });
       if (!response.ok) { this.routeIncidentCount.set(0); return; }
       const value = await response.json() as { incidents?: unknown[] };
       this.routeIncidentCount.set(value.incidents?.length || 0);

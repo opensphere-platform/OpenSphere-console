@@ -14,8 +14,8 @@ function adminChildPath(route: `/${string}`): string {
 /** Lazy loading keeps an R2D2 UI failure inside its Console-owned surface. */
 export const R2D2_ADMIN_ROUTE: Route = {
   path: adminChildPath(R2D2_SYSTEM_PLUGIN.route),
-  loadComponent: () => import('../../pages/admin-oaa')
-    .then((module) => module.AdminOaa)
+  loadComponent: () => import('../../pages/admin-osaa')
+    .then((module) => module.AdminOsaa)
     .catch((error: unknown) => {
       console.error('R2D2 system plugin surface failed to load', error);
       return SystemPluginUnavailable;

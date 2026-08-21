@@ -145,10 +145,10 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # OAA credential administration is a Console Backend policy/audit write.
+    # OSAA credential administration is a Console Backend policy/audit write.
     # Keep this more-specific location ahead of the read-only Gateway proxy so
     # create/rotate/delete never enter the Gateway's forbidden mutation path.
-    location ^~ /api/oaa/admin/llm-keys {
+    location ^~ /api/osaa/admin/llm-keys {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_backend_upstream:8080$request_uri;
         proxy_set_header X-Forwarded-Host $host;
@@ -166,7 +166,7 @@ server {
     # in-cluster-only probe targets.
     # Durable management operations are owned by Console Backend because it
     # alone can revalidate the opaque browser session at execution time.
-    location ^~ /api/oaa/operations {
+    location ^~ /api/osaa/operations {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_backend_upstream:8080$request_uri;
         proxy_set_header X-Forwarded-Host $host;
@@ -178,7 +178,7 @@ server {
 
     # Patch-bound Engineering Remediation proposals are Console Backend-owned
     # policy writes. They never pass through the read-only R2D2 Gateway.
-    location ^~ /api/oaa/remediations/ {
+    location ^~ /api/osaa/remediations/ {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_backend_upstream:8080$request_uri;
         proxy_set_header X-Forwarded-Host $host;
@@ -187,13 +187,13 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    location = /api/oaa/incidents/stream {
+    location = /api/osaa/incidents/stream {
         set $r2d2_original_method $request_method;
         set $r2d2_original_uri $request_uri;
         auth_request /_r2d2_authn;
         auth_request_set $r2d2_authorization $upstream_http_x_os_r2d2_authorization;
-        set $oaa_gateway_upstream opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local;
-        proxy_pass http://$oaa_gateway_upstream:8080$request_uri;
+        set $osaa_gateway_upstream opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local;
+        proxy_pass http://$osaa_gateway_upstream:8080$request_uri;
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_cache off;
@@ -205,13 +205,13 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    location = /api/oaa/chat {
+    location = /api/osaa/chat {
         set $r2d2_original_method $request_method;
         set $r2d2_original_uri $request_uri;
         auth_request /_r2d2_authn;
         auth_request_set $r2d2_authorization $upstream_http_x_os_r2d2_authorization;
-        set $oaa_gateway_upstream opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local;
-        proxy_pass http://$oaa_gateway_upstream:8080$request_uri;
+        set $osaa_gateway_upstream opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local;
+        proxy_pass http://$osaa_gateway_upstream:8080$request_uri;
         proxy_read_timeout 120s;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
@@ -221,13 +221,13 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    location /api/oaa/ {
+    location /api/osaa/ {
         set $r2d2_original_method $request_method;
         set $r2d2_original_uri $request_uri;
         auth_request /_r2d2_authn;
         auth_request_set $r2d2_authorization $upstream_http_x_os_r2d2_authorization;
-        set $oaa_gateway_upstream opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local;
-        proxy_pass http://$oaa_gateway_upstream:8080$request_uri;
+        set $osaa_gateway_upstream opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local;
+        proxy_pass http://$osaa_gateway_upstream:8080$request_uri;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
         proxy_set_header X-OS-Id-Token "";
@@ -333,17 +333,17 @@ server {
     }
 
     # Avoid nginx's implicit directory redirect (which previously pointed at
-    # the retired :8443 auth host). The Manual Registry is owned by OAA.
+    # the retired :8443 auth host). The Manual Registry is owned by OSAA.
     location = /api/manual {
-        set $oaa_gateway_upstream opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local;
-        proxy_pass http://$oaa_gateway_upstream:8080/api/manual/sources;
+        set $osaa_gateway_upstream opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local;
+        proxy_pass http://$osaa_gateway_upstream:8080/api/manual/sources;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
     location /api/manual/ {
-        set $oaa_gateway_upstream opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local;
-        proxy_pass http://$oaa_gateway_upstream:8080$request_uri;
+        set $osaa_gateway_upstream opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local;
+        proxy_pass http://$osaa_gateway_upstream:8080$request_uri;
         proxy_set_header X-OpenSphere-User "";
         proxy_set_header X-OpenSphere-Actor "";
         proxy_set_header X-OS-Id-Token "";

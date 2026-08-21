@@ -289,10 +289,10 @@ import {
                 </span>
                 <div><p class="foundation-eyebrow">OpenSphere control surfaces</p><h3>세 기둥은 서로 다른 UX를 제공하지만 같은 구조 하중을 받습니다</h3></div>
               </div>
-              <p>OAA, OSC, OSS가 각자 lifecycle과 권위를 가지면 세 개의 control plane이 됩니다. OpenSphere는 이들을 동일한 capability owner, identity, operation, audit라는 보로 연결합니다.</p>
+              <p>OSAA, OSC, OSS가 각자 lifecycle과 권위를 가지면 세 개의 control plane이 됩니다. OpenSphere는 이들을 동일한 capability owner, identity, operation, audit라는 보로 연결합니다.</p>
             </section>
 
-            <div class="structure-frame" aria-label="OAA OSC OSS pillars connected by control beams">
+            <div class="structure-frame" aria-label="OSAA OSC OSS pillars connected by control beams">
               <div class="beam beam-top"><span>Capability Registry · Owner API · Semantic action parity</span></div>
               <div class="pillars">
                 @for (pillar of controlPillars; track pillar.id) {
@@ -312,7 +312,7 @@ import {
             <section class="document-section">
               <div class="section-title"><div><p class="foundation-eyebrow">One command, one owner</p><h3>같은 PostgreSQL 변경을 세 표면이 처리하는 방법</h3></div><p>입력 방식만 다르고 plan, approval, apply, operation과 receipt는 PFSS PostgreSQL owner가 하나만 생성합니다.</p></div>
               <div class="parity-flow">
-                <div><span>OAA</span><strong>“cluster를 이 옵션으로 만들어 줘”</strong><small>자연어 → closed action</small></div>
+                <div><span>OSAA</span><strong>“cluster를 이 옵션으로 만들어 줘”</strong><small>자연어 → closed action</small></div>
                 <div><span>OSC</span><strong>os foundation postgres plan create</strong><small>typed flags → JSON</small></div>
                 <div><span>OSS</span><strong>OS Shell에서 같은 os 명령 실행</strong><small>bounded terminal session</small></div>
                 <b>↓</b>
@@ -325,7 +325,7 @@ import {
               <div class="tradeoff-grid three-tradeoffs">
                 <section><span class="positive">CLI</span><h4>AI 친화적인 가장 작은 안정 계약</h4><p>CLI는 terminal UI가 아니라 discoverable command tree, stable JSON, exit code와 stdin/stdout을 가진 protocol adapter입니다. 사람·automation·agent가 같은 계약을 재사용할 수 있습니다.</p></section>
                 <section><span class="positive">Shell</span><h4>Console 안의 재현 가능한 운영 환경</h4><p>브라우저만으로 표현하기 어려운 진단과 조합을 제공하되, identity·TTL·network·resource·audit가 묶인 일회성 runtime이어야 합니다.</p></section>
-                <section><span class="caution">Limit</span><h4>표면은 authority가 아닙니다</h4><p>CLI에만 존재하는 business logic, Shell의 raw cluster-admin, OAA의 shadow ledger가 생기면 세 기둥은 보에서 분리되고 원자적 구조가 무너집니다.</p></section>
+                <section><span class="caution">Limit</span><h4>표면은 authority가 아닙니다</h4><p>CLI에만 존재하는 business logic, Shell의 raw cluster-admin, OSAA의 shadow ledger가 생기면 세 기둥은 보에서 분리되고 원자적 구조가 무너집니다.</p></section>
               </div>
             </section>
           </article>

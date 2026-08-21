@@ -101,24 +101,24 @@ test('approval completion converges authoritative merged PR state without relyin
   assert.match(server, /async function convergeGovernedMerge/);
 });
 
-test('OAA mutations are typed, exact-confirmed, digest-pinned, and never direct', () => {
-  assert.match(server, /'oaa\.k8s\.resource\.apply'/);
-  assert.match(server, /'oaa\.k8s\.resource\.delete'/);
-  assert.match(server, /'oaa\.k8s\.workload\.rollback-image'/);
-  assert.match(server, /requireExactOaaConfirmation/);
-  assert.match(server, /OAA_IMAGE_DIGEST_RE/);
+test('OSAA mutations are typed, exact-confirmed, digest-pinned, and never direct', () => {
+  assert.match(server, /'osaa\.k8s\.resource\.apply'/);
+  assert.match(server, /'osaa\.k8s\.resource\.delete'/);
+  assert.match(server, /'osaa\.k8s\.workload\.rollback-image'/);
+  assert.match(server, /requireExactOsaaConfirmation/);
+  assert.match(server, /OSAA_IMAGE_DIGEST_RE/);
   assert.match(server, /impact assessment/);
-  assert.match(server, /consumerId: 'oaa-gateway', action: policy\.action/);
+  assert.match(server, /consumerId: 'osaa-gateway', action: policy\.action/);
   assert.match(server, /action must be apply, delete, configure, or rollback/);
-  assert.doesNotMatch(server.slice(server.indexOf('async function submitOaaAction'), server.indexOf('async function requireSupabase')), /k8s\(|K8S_API|PATCH.*deployments/);
+  assert.doesNotMatch(server.slice(server.indexOf('async function submitOsaaAction'), server.indexOf('async function requireSupabase')), /k8s\(|K8S_API|PATCH.*deployments/);
 });
 
-test('OAA Backend lifecycle gate is inside action submission and absent from provider credential probing', () => {
-  const submit = server.slice(server.indexOf('async function submitOaaAction'), server.indexOf('async function requireSupabase'));
-  const probe = server.slice(server.indexOf('async function probeOaaProviderCredential'), server.indexOf('async function validateOaaCredential'));
-  assert.match(submit, /await requireOaaLifecycleGate\(authorization\)/);
-  assert.doesNotMatch(submit, /oaa\.knowledge\.ingest-manual/);
-  assert.doesNotMatch(probe, /requireOaaLifecycleGate|\btoolId\b/);
+test('OSAA Backend lifecycle gate is inside action submission and absent from provider credential probing', () => {
+  const submit = server.slice(server.indexOf('async function submitOsaaAction'), server.indexOf('async function requireSupabase'));
+  const probe = server.slice(server.indexOf('async function probeOsaaProviderCredential'), server.indexOf('async function validateOsaaCredential'));
+  assert.match(submit, /await requireOsaaLifecycleGate\(authorization\)/);
+  assert.doesNotMatch(submit, /osaa\.knowledge\.ingest-manual/);
+  assert.doesNotMatch(probe, /requireOsaaLifecycleGate|\btoolId\b/);
 });
 
 test('Supabase session projection carries the legacy Cluster Manager admin alias without changing canonical RBAC', () => {
@@ -128,28 +128,28 @@ test('Supabase session projection carries the legacy Cluster Manager admin alias
   assert.match(server, /console-admins,console-operators,console-viewers/);
 });
 
-test('OAA identity owner is permission-gated, mutation-AAL2, PII-minimized, and preserves administrator continuity', () => {
-  const verify = server.slice(server.indexOf('async function verifyOaaIdentityOwner'), server.indexOf('function managementReason'));
-  const status = server.slice(server.indexOf('async function oaaIdentityStatus'), server.indexOf('async function oaaIdentityOwnerAction'));
-  const action = server.slice(server.indexOf('async function oaaIdentityOwnerAction'), server.indexOf('async function cliEnrollmentCreate'));
+test('OSAA identity owner is permission-gated, mutation-AAL2, PII-minimized, and preserves administrator continuity', () => {
+  const verify = server.slice(server.indexOf('async function verifyOsaaIdentityOwner'), server.indexOf('function managementReason'));
+  const status = server.slice(server.indexOf('async function osaaIdentityStatus'), server.indexOf('async function osaaIdentityOwnerAction'));
+  const action = server.slice(server.indexOf('async function osaaIdentityOwnerAction'), server.indexOf('async function cliEnrollmentCreate'));
   assert.match(verify, /console\.identity\.manage/);
   assert.match(verify, /options\.requireAal2 === true\) requireRecentAal2/);
-  assert.match(action, /requireClosedOaaIdentityBody/);
-  assert.match(action, /requireExactOaaConfirmation/);
+  assert.match(action, /requireClosedOsaaIdentityBody/);
+  assert.match(action, /requireExactOsaaConfirmation/);
   assert.doesNotMatch(action, /createRecoveryLink|action_link|onboardingPath/);
   assert.doesNotMatch(status, /email:/);
   assert.match(server, /actor\.sub === operator\.user_id/);
   assert.doesNotMatch(server, /actor\.user_id === operator\.user_id/);
   assert.match(server, /last active Console administrator cannot be disabled or demoted/);
-  assert.match(server, /\/api\/oaa\/owner\/identity\/status/);
-  assert.match(server, /\/api\/oaa\/owner\/identity\/actions/);
-  assert.match(server, /verifyOaaIdentityOwner\(req, \{ requireAal2: true \}\)/);
+  assert.match(server, /\/api\/osaa\/owner\/identity\/status/);
+  assert.match(server, /\/api\/osaa\/owner\/identity\/actions/);
+  assert.match(server, /verifyOsaaIdentityOwner\(req, \{ requireAal2: true \}\)/);
 });
 
-test('OAA recovery owner is read/plan only and cannot expose a script as an executor', () => {
-  assert.match(server, /\/api\/oaa\/owner\/recovery\/capabilities/);
-  assert.match(server, /\/api\/oaa\/owner\/recovery\/status/);
-  assert.match(server, /\/api\/oaa\/owner\/recovery\/plan/);
+test('OSAA recovery owner is read/plan only and cannot expose a script as an executor', () => {
+  assert.match(server, /\/api\/osaa\/owner\/recovery\/capabilities/);
+  assert.match(server, /\/api\/osaa\/owner\/recovery\/status/);
+  assert.match(server, /\/api\/osaa\/owner\/recovery\/plan/);
   assert.match(server, /console\.recovery\.read/);
   assert.match(recoveryOwner, /RECOVERY_OWNER_CAPABILITIES = Object\.freeze\(\['status-read', 'plan-read'\]\)/);
   assert.match(recoveryOwner, /No signed recovery-drill executor is configured/);

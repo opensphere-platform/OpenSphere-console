@@ -60,19 +60,19 @@ test('notification migration isolates ciphertext and dispatcher-only RPCs', () =
   assert.match(migration, /GRANT UPDATE ON console\.notification_channel TO opensphere_notification_dispatcher/);
 });
 
-test('OAA notification owner facade is sanitized, permission-gated, AAL2, and closed-schema', () => {
+test('OSAA notification owner facade is sanitized, permission-gated, AAL2, and closed-schema', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const verify = source.slice(source.indexOf('async function verifyOaaNotificationOwner'), source.indexOf('async function publishNotificationEvent'));
-  const status = source.slice(source.indexOf('async function oaaNotificationStatus'), source.indexOf('function requireClosedOaaNotificationBody'));
-  const action = source.slice(source.indexOf('async function oaaNotificationOwnerAction'), source.indexOf('async function publishNotificationEvent'));
+  const verify = source.slice(source.indexOf('async function verifyOsaaNotificationOwner'), source.indexOf('async function publishNotificationEvent'));
+  const status = source.slice(source.indexOf('async function osaaNotificationStatus'), source.indexOf('function requireClosedOsaaNotificationBody'));
+  const action = source.slice(source.indexOf('async function osaaNotificationOwnerAction'), source.indexOf('async function publishNotificationEvent'));
   assert.match(verify, /console\.notification\.read/);
   assert.match(verify, /console\.notification\.manage/);
   assert.match(verify, /actor\.assurance !== 'aal2'/);
   assert.match(status, /Message bodies, titles, routes, provider message IDs and recipients are/);
   assert.doesNotMatch(status, /title:|route:|providerMessageId:|target:/);
-  assert.match(action, /requireClosedOaaNotificationBody/);
-  assert.match(action, /requireExactOaaConfirmation/);
+  assert.match(action, /requireClosedOsaaNotificationBody/);
+  assert.match(action, /requireExactOsaaConfirmation/);
   assert.doesNotMatch(action, /testRecipient|smtp|password|secret/i);
-  assert.match(source, /\/api\/oaa\/owner\/notifications\/status/);
-  assert.match(source, /\/api\/oaa\/owner\/notifications\/actions/);
+  assert.match(source, /\/api\/osaa\/owner\/notifications\/status/);
+  assert.match(source, /\/api\/osaa\/owner\/notifications\/actions/);
 });

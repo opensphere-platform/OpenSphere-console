@@ -599,7 +599,7 @@ func validateCanonicalOperationReceipt(operation, completion map[string]any, val
 	actionBinding, ok := receipt["actionBinding"].(map[string]any)
 	if !ok ||
 		!matchesString(actionBinding, "method", http.MethodPost) ||
-		!matchesString(actionBinding, "path", "/api/foundation/oaa/postgres/durable-apply/{planId}") {
+		!matchesString(actionBinding, "path", "/api/foundation/osaa/postgres/durable-apply/{planId}") {
 		return operationEvidenceIncomplete(operation, "receipt.actionBinding이 canonical durable apply binding과 일치해야 합니다")
 	}
 	ownerRevision, ownerRevisionOK := nonEmptyString(receipt["ownerEvidenceRevision"])

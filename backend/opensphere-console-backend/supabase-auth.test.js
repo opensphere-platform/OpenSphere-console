@@ -26,8 +26,8 @@ test('Supabase verifier joins live operator and role state', async () => {
     fetch: async (url) => url.includes('/operator?')
       ? response([{ status: 'active', credential_revision: 2 }])
       : response([{ expires_at: null, role: { code: 'console-admins', role_permission: [
-        { permission: { code: 'oaa.knowledge.read' } },
-        { permission: { code: 'oaa.system.read' } },
+        { permission: { code: 'osaa.knowledge.read' } },
+        { permission: { code: 'osaa.system.read' } },
       ] } }]),
   });
   const actor = await verifier(token(secret));
@@ -35,7 +35,7 @@ test('Supabase verifier joins live operator and role state', async () => {
   assert.equal(actor.assurance, 'aal2');
   assert.equal(actor.credentialRevision, 2);
   assert.deepEqual(actor.groups, ['console-admins']);
-  assert.deepEqual(actor.permissions, ['oaa.knowledge.read', 'oaa.system.read']);
+  assert.deepEqual(actor.permissions, ['osaa.knowledge.read', 'osaa.system.read']);
 });
 
 test('Supabase verifier rejects disabled operators and revoked credential revisions', async () => {

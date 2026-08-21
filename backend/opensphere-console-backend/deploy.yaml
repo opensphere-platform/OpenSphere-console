@@ -3,10 +3,10 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: opensphere-oaa-credentials
+  name: opensphere-osaa-credentials
   labels:
     app.kubernetes.io/part-of: opensphere-console
-    opensphere.io/scope: oaa-provider-credentials
+    opensphere.io/scope: osaa-provider-credentials
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
@@ -81,30 +81,30 @@ subjects:
 # no rules so a normal apply removes its former namespace-wide Secret custody.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: opensphere-console-backend-oaa-credentials, namespace: opensphere-console }
+metadata: { name: opensphere-console-backend-osaa-credentials, namespace: opensphere-console }
 rules: []
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: { name: opensphere-console-backend-oaa-credentials, namespace: opensphere-console }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-oaa-credentials }
+metadata: { name: opensphere-console-backend-osaa-credentials, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-osaa-credentials }
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
-# OAA provider credential custody. The Console Backend is the authenticated
-# policy/audit enforcement point; its code allowlists only `oaa-llm-<id>`
-# Secrets carrying the OAA label. Provider credentials are isolated from every
-# Console runtime/auth/TLS Secret; the OAA Gateway remains a read-only consumer.
+# OSAA provider credential custody. The Console Backend is the authenticated
+# policy/audit enforcement point; its code allowlists only `osaa-llm-<id>`
+# Secrets carrying the OSAA label. Provider credentials are isolated from every
+# Console runtime/auth/TLS Secret; the OSAA Gateway remains a read-only consumer.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: opensphere-console-backend-oaa-credentials, namespace: opensphere-oaa-credentials }
+metadata: { name: opensphere-console-backend-osaa-credentials, namespace: opensphere-osaa-credentials }
 rules:
   - { apiGroups: [""], resources: ["secrets"], verbs: ["get", "list", "create", "patch", "update", "delete"] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: { name: opensphere-console-backend-oaa-credentials, namespace: opensphere-oaa-credentials }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-oaa-credentials }
+metadata: { name: opensphere-console-backend-osaa-credentials, namespace: opensphere-osaa-credentials }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-osaa-credentials }
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
@@ -140,14 +140,14 @@ spec:
               mountPath: /var/run/opensphere-shell-credential-authority
               readOnly: true
           env:
-            - { name: APP_VERSION, value: "0.8.0-oaa-recovery-owner" }
+            - { name: APP_VERSION, value: "0.8.0-osaa-recovery-owner" }
             # fetch(kube API / secret read)가 kube CA 신뢰하도록
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
-            - { name: OAA_NAMESPACE, value: opensphere-console }
-            - { name: OAA_KEY_NAMESPACE, value: opensphere-oaa-credentials }
-            - { name: OAA_EMBED_DIM, value: "1536" }
-            - { name: OAA_ALLOWED_NAMESPACES, value: "opensphere-console,opensphere-console-data,opensphere-console-change" }
-            - { name: OAA_SCALE_MAX, value: "10" }
+            - { name: OSAA_NAMESPACE, value: opensphere-console }
+            - { name: OSAA_KEY_NAMESPACE, value: opensphere-osaa-credentials }
+            - { name: OSAA_EMBED_DIM, value: "1536" }
+            - { name: OSAA_ALLOWED_NAMESPACES, value: "opensphere-console,opensphere-console-data,opensphere-console-change" }
+            - { name: OSAA_SCALE_MAX, value: "10" }
             # Reviewed durable operations are enabled by operator acceptance.
             # Engineering source mutation remains an independent closed gate.
             - { name: R2D2_DURABLE_OPERATION_ENABLED, value: "true" }
@@ -164,7 +164,7 @@ spec:
               valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: admission-secret, optional: true } }
             - name: OS_SHELL_DELEGATION_SECRET
               valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: delegation-secret, optional: true } }
-            - { name: OAA_GATEWAY_URL, value: "http://opensphere-console-oaa-gateway.opensphere-console.svc.cluster.local:8080" }
+            - { name: OSAA_GATEWAY_URL, value: "http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080" }
             - { name: DUPA_CONTROL_URL, value: "http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080" }
             # ADR-006 canonical runtime mode.
             - { name: AUTH_PROVIDER, value: supabase }
@@ -188,14 +188,14 @@ spec:
             - name: BESZEL_WEBHOOK_TOKEN
               valueFrom: { secretKeyRef: { name: opensphere-baseline-monitoring-reader, key: webhook-token, optional: true } }
             # Declarative Change Authority. Values are projected only into the
-            # Console Backend; browser, OAA and Gitea repository contents never
+            # Console Backend; browser, OSAA and Gitea repository contents never
             # receive this scoped token or the webhook/reconciler credentials.
             - { name: GITEA_URL, value: "http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000" }
             - { name: GITEA_ORGANIZATION, value: opensphere }
             - { name: GITEA_REPOSITORY, value: platform-declarations }
             - { name: GITEA_DEFAULT_BRANCH, value: main }
-            - { name: GITEA_RECONCILER_NAME, value: oaa-governed-adapter }
-            - { name: GITEA_RECONCILER_NAMES, value: "oaa-governed-adapter,ceph-prerequisite-reconciler,foundation-bootstrap-reconciler,platform-release-reconciler" }
+            - { name: GITEA_RECONCILER_NAME, value: osaa-governed-adapter }
+            - { name: GITEA_RECONCILER_NAMES, value: "osaa-governed-adapter,ceph-prerequisite-reconciler,foundation-bootstrap-reconciler,platform-release-reconciler" }
             - { name: GITEA_CHANGE_REQUIRE_AAL2, value: "true" }
             - { name: GITEA_REQUIRE_VERIFIED_MERGE, value: "true" }
             - name: GITEA_TOKEN

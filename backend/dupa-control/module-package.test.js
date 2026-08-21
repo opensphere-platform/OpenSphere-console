@@ -296,13 +296,13 @@ test('Console and CLI use one installation API and preserve immutable installati
   assert.match(crd, /client: \{ type: string, enum: \['cli:os', 'console:web'\] \}/);
 });
 
-test('OAA Extension security facade is exact-digest, permission-gated, AAL2, and credential-free', () => {
+test('OSAA Extension security facade is exact-digest, permission-gated, AAL2, and credential-free', () => {
   const source = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
-  const owner = source.slice(source.indexOf("if (p.startsWith('/api/oaa/owner/extensions/'))"), source.indexOf('// ── 인증 게이트'));
+  const owner = source.slice(source.indexOf("if (p.startsWith('/api/osaa/owner/extensions/'))"), source.indexOf('// ── 인증 게이트'));
   assert.match(owner, /console\.extension\.security\.read/);
   assert.match(owner, /console\.extension\.security\.manage/);
-  assert.match(owner, /oaaActor\.assurance !== 'aal2'/);
-  assert.match(owner, /requireClosedOaaExtensionBody/);
+  assert.match(owner, /osaaActor\.assurance !== 'aal2'/);
+  assert.match(owner, /requireClosedOsaaExtensionBody/);
   assert.match(owner, /if \(parsed\.channel\)/);
   assert.match(owner, /revoke extension image \$\{image\}/);
   assert.doesNotMatch(owner, /registryToken|password|apiKey|credential\s*:/i);

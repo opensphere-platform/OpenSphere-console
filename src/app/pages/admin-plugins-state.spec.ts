@@ -90,8 +90,8 @@ test('Plugin management lists Console-owned system plugins separately from Regis
   assert.match(r2d2Descriptor, /id:\s*'r2d2'/);
   assert.match(r2d2Descriptor, /displayName:\s*'R2D2'/);
   assert.match(r2d2Descriptor, /category:\s*'AI Orchestration'/);
-  assert.match(r2d2Descriptor, /route:\s*'\/manage\/oaa'/);
-  assert.match(r2d2Descriptor, /runtimeAdapterId:\s*'cbss\.oaa-gateway'/);
+  assert.match(r2d2Descriptor, /route:\s*'\/manage\/osaa'/);
+  assert.match(r2d2Descriptor, /runtimeAdapterId:\s*'cbss\.osaa-gateway'/);
   assert.match(r2d2Route, /loadComponent/);
   assert.match(r2d2Route, /catch\(\(error: unknown\) =>/);
   assert.match(r2d2Route, /return SystemPluginUnavailable/);

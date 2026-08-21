@@ -61,7 +61,7 @@ kubectl dry-run          deployment/os-cli configured · poddisruptionbudget/os-
 ### 2.2 설계 결정 필요
 
 - **F-1 (Windows secure store)**: PAT를 OS 자격증명 저장소(DPAPI/Keychain/libsecret)로 이전하는 근본 수정. **현재 `CGO_ENABLED=0` 정적 교차빌드(재현성 근거)와 충돌** — Keychain/Secret Service 접근은 통상 cgo/외부 바이너리 호출을 요구한다. cgo 없는 구현 방식(순수 Go DPAPI, `security`/`secret-tool` 셸아웃, OS-key 파생 암호화 등)을 **ADR로 확정한 뒤** 구현해야 한다. 이번에는 F-2(argv 노출)만 축소했고, config는 여전히 0600 평문(unix)이다.
-- **F-7 (OAA 테스트)**: `oaa-gateway-tier.test.js`가 누락 파일 `src/app/os/os-oaa-agent.ts`를 참조해 실패. 한편 `main-shell-base.test.js`는 base shell에 OAA agent가 **없어야** 한다고 단언 → OAA 기능의 정본 상태(지원/제거)가 코드·테스트 간 모순. **제품 판단**이 필요하므로 임의 복구·삭제하지 않음. CLI 관련 스위트(main-shell-base·security)는 전부 통과.
+- **F-7 (OSAA 테스트)**: `osaa-gateway-tier.test.js`가 누락 파일 `src/app/os/os-osaa-agent.ts`를 참조해 실패. 한편 `main-shell-base.test.js`는 base shell에 OSAA agent가 **없어야** 한다고 단언 → OSAA 기능의 정본 상태(지원/제거)가 코드·테스트 간 모순. **제품 판단**이 필요하므로 임의 복구·삭제하지 않음. CLI 관련 스위트(main-shell-base·security)는 전부 통과.
 - **F-9 (토큰 발행 절차) — 대부분 구현, 완전 자동 로그인만 잔여**: 콘솔 발급 UI(`/manage/cli`)와 CLI 브라우저 로그인(`os login --web`)을 구현했다(§1). 다만 **완전 자동 loopback PKCE 로그인**(OCI `session authenticate`처럼 토큰 붙여넣기 없이 브라우저 인증만으로 완료)은 미구현 — Kanidm이 `grant_types_supported: ["authorization_code"]`만 광고하고 device-code grant가 없으며, native/loopback `redirect_uri`(예: `http://127.0.0.1:<port>/callback`)를 OIDC 클라이언트 `opensphere-console`에 등록하는 **IdP 변경**이 필요하기 때문. 현재 `--web`는 IdP 변경 없이 동작하는 콘솔-assisted 방식이다. 또한 새 발급 UI의 **라이브 렌더/실제 mint 흐름**은 OIDC 로그인 뒤에서만 확인 가능하므로(감사 브라우저 검사와 동일 제약) 프로덕션 빌드 컴파일·번들 포함까지만 검증했다. 배포 반영은 콘솔 이미지 재빌드 필요.
 
 ## 3. 다음 액션 제안
@@ -70,7 +70,7 @@ kubectl dry-run          deployment/os-cli configured · poddisruptionbudget/os-
 2. **F-1 ADR**: cgo 없는 secure-store 방식 결정 → WP-1 secure store 구현.
 3. **F-9 UI**: `/manage/cli`에 PAT mint/list/revoke UI(백엔드 기존) + `os login` device-code 플로우 추가.
 4. **F-4 서명 파이프라인 + CLI 이미지 재빌드**로 소스 변경을 배포 아티팩트에 반영.
-5. **F-7 제품 판단**: OAA 정본 여부 확정 후 테스트/참조 정합.
+5. **F-7 제품 판단**: OSAA 정본 여부 확정 후 테스트/참조 정합.
 
 ## 4. 변경 파일 목록
 

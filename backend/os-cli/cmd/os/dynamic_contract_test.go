@@ -171,7 +171,7 @@ func foundationCompletionFixture(operationID string) map[string]any {
 			"capabilityId": "data.sql.postgres", "requestType": "Instance",
 			"actionId": "operation.watch", "toolId": "foundation.operation.watch",
 		},
-		"actionBinding": map[string]any{"method": "GET", "path": "/api/foundation/oaa/operations/{operationId}", "pathParams": []any{"operationId"}},
+		"actionBinding": map[string]any{"method": "GET", "path": "/api/foundation/osaa/operations/{operationId}", "pathParams": []any{"operationId"}},
 		"completion": map[string]any{
 			"terminal": true, "success": true, "verified": true, "state": "Succeeded",
 			"stale": false, "evidenceRevision": evidenceRevision,
@@ -183,7 +183,7 @@ func foundationCompletionFixture(operationID string) map[string]any {
 					"actionId": "cluster.create", "toolId": "foundation.postgres.apply",
 				},
 				"actionBinding": map[string]any{
-					"method": "POST", "path": "/api/foundation/oaa/postgres/durable-apply/{planId}",
+					"method": "POST", "path": "/api/foundation/osaa/postgres/durable-apply/{planId}",
 					"pathParams": []any{"planId"}, "approval": "exact-confirmation",
 				},
 				"ownerEvidenceRevision": evidenceRevision,
@@ -306,7 +306,7 @@ func TestCanonicalFoundationCompletionReceiptRejectsMissingOrMismatchedEvidence(
 			operation["completion"].(map[string]any)["receipt"].(map[string]any)["actionBinding"].(map[string]any)["method"] = "GET"
 		}},
 		{name: "binding path mismatch", mutate: func(operation map[string]any) {
-			operation["completion"].(map[string]any)["receipt"].(map[string]any)["actionBinding"].(map[string]any)["path"] = "/api/foundation/oaa/postgres/durable-plan"
+			operation["completion"].(map[string]any)["receipt"].(map[string]any)["actionBinding"].(map[string]any)["path"] = "/api/foundation/osaa/postgres/durable-plan"
 		}},
 		{name: "evidence revision mismatch", mutate: func(operation map[string]any) {
 			operation["completion"].(map[string]any)["receipt"].(map[string]any)["ownerEvidenceRevision"] = "older-revision"
