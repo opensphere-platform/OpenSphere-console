@@ -548,7 +548,9 @@ server {
     # transferred MessagePort and has no network capability of its own.
     location ^~ /os-shell-frame/ {
         try_files $uri =404;
-        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'self' data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
+        # xterm's DOM renderer generates per-instance cursor, selection, and ANSI palette
+        # rules. Permit those styles only inside this sandboxed, network-disabled frame.
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'self' data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
         # The sandbox deliberately gives this frame an opaque origin. The
         # standalone parent uses COEP=require-corp, so this route must opt in
         # explicitly while CSP frame-ancestors still limits embedding to this
