@@ -23,6 +23,7 @@ const terminal = new Terminal({
   convertEol: false,
   cursorBlink: true,
   cursorStyle: 'block',
+  cursorInactiveStyle: 'outline',
   disableStdin: true,
   fontFamily: 'IBM Plex Mono, Cascadia Code, ui-monospace, monospace',
   fontSize: 14,
@@ -32,8 +33,11 @@ const terminal = new Terminal({
   theme: {
     background: '#101010',
     foreground: '#f4f4f4',
-    cursor: '#78a9ff',
-    selectionBackground: '#264f78',
+    cursor: '#fdd13a',
+    cursorAccent: '#101010',
+    selectionBackground: '#78a9ff',
+    selectionForeground: '#101010',
+    selectionInactiveBackground: '#4589ff',
   },
 });
 const fit = new FitAddon();
@@ -199,6 +203,10 @@ terminal.attachCustomKeyEventHandler((event) => {
 terminal.onData((data) => {
   if (!attached || !port) return;
   queueInput(data);
+});
+
+root.addEventListener('pointerdown', () => {
+  if (attached) terminal.focus();
 });
 
 const trustedActivity = (event: Event) => {
