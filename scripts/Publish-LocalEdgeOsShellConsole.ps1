@@ -122,16 +122,6 @@ $previousConsole = Read-Publication -Path $PreviousConsolePublicationEvidence `
   -ExpectedComponents @('console') -Purpose 'deployed Console publication'
 $backend = Read-Publication -Path $BackendPublicationEvidence -ExpectedComponents @('backend') -Purpose 'deployed Backend publication'
 $control = Read-Publication -Path $ControlPublicationEvidence -ExpectedComponents @('osShellControl') -Purpose 'deployed Control publication'
-foreach ($revision in @([string]$previousConsole.Document.sourceRevision, [string]$backend.Document.sourceRevision,
-    [string]$control.Document.sourceRevision, $SourceRevision)) {
-  & git -C $repoRoot merge-base --is-ancestor ([string]$base.Document.sourceRevision) $revision
-  if ($LASTEXITCODE -ne 0) { throw "Target authority $revision does not descend from the base OS Shell publication" }
-}
-foreach ($revision in @([string]$previousConsole.Document.sourceRevision, [string]$backend.Document.sourceRevision,
-    [string]$control.Document.sourceRevision)) {
-  & git -C $repoRoot merge-base --is-ancestor $revision $SourceRevision
-  if ($LASTEXITCODE -ne 0) { throw "Target source does not descend from deployed component revision $revision" }
-}
 
 $boundaryOutput = & node $boundaryVerifier --repository $repoRoot --base ([string]$base.Document.sourceRevision) `
   --backend ([string]$backend.Document.sourceRevision) --console $SourceRevision `

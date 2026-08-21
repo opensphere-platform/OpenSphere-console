@@ -33,6 +33,8 @@ test('Console publisher closes source attribution and deployed prerequisite dige
     assert.ok(index >= 0 && index < publish, `${gate} must precede publication`);
   }
   assert.match(source, /--backend[\s\S]*--console[\s\S]*--control[\s\S]*--head/);
+  assert.doesNotMatch(source, /merge-base --is-ancestor/);
+  assert.doesNotMatch(source, /does not descend from deployed component revision/);
   assert.match(source, /\$migrationAuthority = \$backend[.]Document[.]artifacts[.]supabaseMigrationManifest/);
   assert.doesNotMatch(source, /\$baseMigration = \$base[.]Document[.]artifacts[.]supabaseMigrationManifest/);
   assert.match(source, /opensphere-local-os-shell-console-publication[.]json/);
