@@ -21,6 +21,7 @@ export interface ExtensionProjectionRefreshResult {
 export class ExtensionProjectionStore {
   private readonly control = inject(PluginControlClient);
   private inFlight: Promise<ExtensionProjectionRefreshResult> | null = null;
+  private forcedAfterInFlight: Promise<ExtensionProjectionRefreshResult> | null = null;
 
   readonly catalog = signal<CatalogItem[]>([]);
   readonly registrations = signal<Registration[]>([]);
@@ -31,7 +32,21 @@ export class ExtensionProjectionStore {
   refresh(force = false): Promise<ExtensionProjectionRefreshResult> {
     // A manual refresh starts new I/O only after the current read settles.
     // `force` means "do not reuse settled state", never "duplicate in-flight".
-    if (this.inFlight) return this.inFlight;
+    if (this.inFlight) {
+      if (!force) return this.inFlight;
+      if (!this.forcedAfterInFlight) {
+        const active = this.inFlight;
+        const queued = active
+          .catch(() => null)
+          .then(() => this.refresh(true));
+        let forced!: Promise<ExtensionProjectionRefreshResult>;
+        forced = queued.finally(() => {
+          if (this.forcedAfterInFlight === forced) this.forcedAfterInFlight = null;
+        });
+        this.forcedAfterInFlight = forced;
+      }
+      return this.forcedAfterInFlight;
+    }
     if (!force && this.catalogLoaded() && this.registrationsLoaded()) {
       return Promise.resolve({ catalogAvailable: true, registrationsAvailable: true, issues: [] });
     }
