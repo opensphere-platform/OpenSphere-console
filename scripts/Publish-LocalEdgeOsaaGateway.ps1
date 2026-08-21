@@ -113,6 +113,7 @@ try {
   Invoke-Checked git -C $repoRoot worktree add --detach $checkout $sourceRevision | Out-Null
   Invoke-Checked node --test `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\conversation-store.test.js') `
+    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\extension-presentation.test.js') `
     (Join-Path $checkout 'scripts\osaa-gateway-publisher.test.mjs') | Out-Null
 
   if (-not $UseExistingRegistryLogin) {

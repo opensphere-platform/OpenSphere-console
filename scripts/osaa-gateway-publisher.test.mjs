@@ -12,6 +12,7 @@ test('OSAA Gateway publisher is exact component-only edge tooling', () => {
   assert.match(publisher, /affectedImages=@\(\$repository\)/);
   assert.match(publisher, /exactAffectedComponentSet=@\('osaaGateway'\)/);
   assert.match(publisher, /unchangedComponentBuildCount=0/);
+  assert.match(publisher, /extension-presentation\.test\.js/);
   assert.doesNotMatch(publisher, /Publish-LocalEdge[.]ps1/);
 });
 

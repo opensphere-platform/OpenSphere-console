@@ -43,7 +43,8 @@ test('only the requested subShell route activates while unrelated guests remain 
   assert.match(source, /await atExtensionStage\('activation', async \(\) => \{ await mod!\.activate\(context\); \}\);[\s\S]*this\.activeModules\.set\(e\.id, mod\)/);
   assert.doesNotMatch(source, /const childEntries = manifest\.kind/);
   assert.match(source, /hostProjectionDeclarations\.set\(pluginId/);
-  assert.match(source, /this\.activeModules\.has\(projection\.id\)/);
+  assert.match(source, /declarations\.filter\(\(projection\) => approvedChildren\.has\(projection\.id\)\)/);
+  assert.doesNotMatch(source, /approvedChildren\.has\(projection\.id\)[\s\S]{0,120}this\.activeModules\.has\(projection\.id\)/);
   assert.match(source, /children: \(\) => this\.registryEntries[\s\S]*\.filter\(\(entry\) => \(entry\.hostRef \?\? 'main'\) === pluginId\)/);
 });
 
