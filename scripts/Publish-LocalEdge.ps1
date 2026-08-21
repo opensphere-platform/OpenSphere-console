@@ -7,6 +7,7 @@ param(
   [string]$SetupRepository = 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git',
   [string]$SetupSourcePath = '',
   [switch]$UseExistingRegistryLogin,
+  [switch]$AdvanceOsShellUxConsoleEdge,
   [ValidateSet('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend', 'dupaController', 'osaaGateway', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
   [string[]]$Components = @('console', 'backend', 'dupaController', 'osaaGateway', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
 )
@@ -316,6 +317,10 @@ $integratedPublication = $images.Count -eq $canonicalImages.Count `
   -and @($images | Where-Object { $_.Key -in $auxiliaryComponentKeys }).Count -eq 0 `
   -and @($canonicalImages | Where-Object { -not $requestedComponents.Contains($_.Key) }).Count -eq 0
 $partialPublication = -not $integratedPublication
+$osShellUxComponentSet = (@($images.Key | Sort-Object) -join ',') -eq 'console,osShellRuntime'
+if ($AdvanceOsShellUxConsoleEdge -and -not $osShellUxComponentSet) {
+  throw 'AdvanceOsShellUxConsoleEdge requires exactly console and osShellRuntime components'
+}
 $integratedAnchorBefore = if ($partialPublication -and ($images | Where-Object { $_.Key -eq 'console' })) {
   Get-RemoteDigest -Reference "$Registry/opensphere-console:edge"
 } else {
@@ -500,10 +505,10 @@ foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
   Set-RemoteTag -Repository "$Registry/$($item.Image)" -Digest $digests[$item.Key] -Tag edge
 }
 $console = $images | Where-Object { $_.Key -eq 'console' }
-if ($console -and -not $partialPublication) {
+if ($console -and (-not $partialPublication -or $AdvanceOsShellUxConsoleEdge)) {
   Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
 }
-if ($console -and $partialPublication) {
+if ($console -and $partialPublication -and -not $AdvanceOsShellUxConsoleEdge) {
   $integratedAnchorAfter = Get-RemoteDigest -Reference "$Registry/opensphere-console:edge"
   if ($integratedAnchorAfter -ne $integratedAnchorBefore) {
     throw "Partial publication moved the integrated Console edge anchor: before=$integratedAnchorBefore after=$integratedAnchorAfter"
@@ -511,7 +516,7 @@ if ($console -and $partialPublication) {
 }
 
 foreach ($item in $images) {
-  $verificationTag = if ($partialPublication -and $item.Key -eq 'console') { $localTag } else { 'edge' }
+  $verificationTag = if ($partialPublication -and $item.Key -eq 'console' -and -not $AdvanceOsShellUxConsoleEdge) { $localTag } else { 'edge' }
   $actual = Get-RemoteDigest -Reference "$Registry/$($item.Image):$verificationTag"
   if ($actual -ne $digests[$item.Key]) {
     throw "Final publication verification failed for $($item.Image):$verificationTag"
