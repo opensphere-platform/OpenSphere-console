@@ -74,6 +74,7 @@ COPY opensphere-console-backend/recovery-owner.js ./recovery-owner.js
 COPY opensphere-console-backend/foundation-bootstrap-contract.js ./foundation-bootstrap-contract.js
 COPY opensphere-console-backend/foundation-bootstrap-bundle.js ./foundation-bootstrap-bundle.js
 COPY opensphere-console-backend/foundation-bootstrap-reconciler.js ./foundation-bootstrap-reconciler.js
+COPY opensphere-console-backend/platform-release-agent-identity-cutover.js ./platform-release-agent-identity-cutover.js
 COPY opensphere-console-backend/platform-release-contract.js ./platform-release-contract.js
 COPY opensphere-console-backend/platform-release-reconciler.js ./platform-release-reconciler.js
 COPY opensphere-console-backend/platform-release-executor.mjs ./platform-release-executor.mjs

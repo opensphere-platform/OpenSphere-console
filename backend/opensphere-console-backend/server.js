@@ -2322,7 +2322,12 @@ function parseInstalledPlatformRelease(configMap) {
   let lock;
   try { lock = JSON.parse(raw); }
   catch { throw { code: 503, msg: 'managed installation lock is invalid JSON' }; }
-  try { return { lock, summary: releaseSummary(lock) }; }
+  try {
+    return {
+      lock,
+      summary: releaseSummary(lock, { allowInstalledAgentIdentityCutover: true }),
+    };
+  }
   catch (error) { throw { code: 503, msg: `managed installation lock is invalid: ${error.message}` }; }
 }
 

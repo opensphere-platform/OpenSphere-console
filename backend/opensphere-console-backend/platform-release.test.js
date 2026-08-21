@@ -13,7 +13,12 @@ const {
   validateReleaseTransition,
   validatePlatformReleaseDesiredState,
   platformReleaseApprovalPolicy,
+  releaseSummary,
 } = require('./platform-release-contract');
+const {
+  LEGACY_INSTALLED_AGENT_COMPONENTS,
+  CANONICAL_AGENT_COMPONENTS,
+} = require('./platform-release-agent-identity-cutover');
 const executorImage = `ghcr.io/opensphere-platform/opensphere-console-backend@sha256:${'f'.repeat(64)}`;
 process.env.EXECUTOR_IMAGE = executorImage;
 const {
@@ -53,6 +58,24 @@ function releaseLock() {
       },
     ])),
   };
+  lock.releaseDigest = calculateReleaseDigest(lock);
+  return lock;
+}
+
+function legacyInstalledReleaseLock() {
+  const lock = releaseLock();
+  const components = Object.fromEntries(Object.entries(lock.components)
+    .filter(([name]) => !Object.hasOwn(CANONICAL_AGENT_COMPONENTS, name)));
+  for (const [legacyName, repository] of Object.entries(LEGACY_INSTALLED_AGENT_COMPONENTS)) {
+    const canonicalName = legacyName === 'oaaGateway' ? 'osaaGateway' : 'osaaGovernedAdapter';
+    const source = lock.components[canonicalName];
+    components[legacyName] = {
+      ...source,
+      repository,
+      image: `ghcr.io/opensphere-platform/${repository}@${source.image.split('@')[1]}`,
+    };
+  }
+  lock.components = components;
   lock.releaseDigest = calculateReleaseDigest(lock);
   return lock;
 }
@@ -129,6 +152,55 @@ test('Console generates an atomic component target from the installed complete l
   assert.equal(target.resolvedAt, '2026-07-30T12:34:56.000Z');
   assert.equal(Object.keys(target.components).length, REQUIRED_COMPONENTS.length);
   assert.equal(validateReleaseTransition(base, target), target);
+});
+
+test('installed pre-OSAA lock can build only one complete canonical OSAA cutover target', () => {
+  const base = legacyInstalledReleaseLock();
+  assert.throws(() => validateReleaseLock(base), /component set/);
+  assert.equal(releaseSummary(base, {
+    allowInstalledAgentIdentityCutover: true,
+  }).componentCount, REQUIRED_COMPONENTS.length);
+  const target = buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: {
+      osaaGateway: { image: digest('e') },
+      osaaGovernedAdapter: { image: digest('f') },
+    },
+  }, new Date('2026-08-21T00:00:00.000Z'));
+
+  assert.deepEqual(target.changedComponents, ['osaaGateway', 'osaaGovernedAdapter']);
+  assert.equal(Object.keys(target.components).length, REQUIRED_COMPONENTS.length);
+  assert.equal(Object.hasOwn(target.components, 'oaaGateway'), false);
+  assert.equal(Object.hasOwn(target.components, 'oaaGovernedAdapter'), false);
+  assert.equal(target.components.osaaGateway.repository, 'opensphere-console-osaa-gateway');
+  assert.equal(target.components.osaaGovernedAdapter.repository, 'opensphere-osaa-governed-adapter');
+  assert.equal(validateReleaseTransition(base, target), target);
+
+  assert.throws(() => buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: { osaaGateway: { image: digest('e') } },
+  }), /both canonical agent components/);
+
+  assert.throws(() => buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: { oaaGateway: { image: digest('e') } },
+  }), /unsupported fields/);
+
+  const wrongRepository = legacyInstalledReleaseLock();
+  wrongRepository.components.oaaGateway.repository = 'opensphere-console-osaa-gateway';
+  wrongRepository.releaseDigest = calculateReleaseDigest(wrongRepository);
+  assert.throws(
+    () => buildComponentReleaseLock(wrongRepository, {
+      sourceRevision: 'b'.repeat(40),
+      components: {
+        osaaGateway: { image: digest('e') },
+        osaaGovernedAdapter: { image: digest('f') },
+      },
+    }),
+    /canonical exact-digest image/,
+  );
+
+  assert.throws(() => validateReleaseTransition(base, releaseLock()), /one-way OSAA component transition/);
 });
 
 test('component target rejects stale bases, hidden changes and non-local promotion', () => {
@@ -266,6 +338,7 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.doesNotMatch(deployer, /kubectl\s+(?:apply|patch|set|replace|delete)/i);
   assert.doesNotMatch(deployer, /SkipCertificateCheck|--insecure|-k\b/);
   assert.match(dockerfile, /COPY --from=setup-cli src \/app\/opensphere-setup-cli\/src/);
+  assert.match(dockerfile, /COPY opensphere-console-backend\/platform-release-agent-identity-cutover\.js/);
   assert.match(dockerfile, /registry\.k8s\.io\/kubectl@sha256:/);
   assert.match(dockerfile, /node:24-bookworm-slim@sha256:/);
   assert.match(dockerfile, /powershell-7\.5\.7-linux-\$\{PS_ARCH\}\.tar\.gz/);

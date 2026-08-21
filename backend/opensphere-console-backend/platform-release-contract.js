@@ -1,6 +1,14 @@
 'use strict';
 
 const { createHash } = require('crypto');
+const {
+  CANONICAL_AGENT_COMPONENTS,
+  legacyInstalledComponentMap,
+  canonicalNameForInstalledComponent,
+  installedNameForCanonicalComponent,
+  isAgentIdentityCutover,
+  hasLegacyInstalledAgentIdentity,
+} = require('./platform-release-agent-identity-cutover');
 
 const PLATFORM_RELEASE_CONSUMER = 'platform-release';
 const PLATFORM_RELEASE_RECONCILER = 'platform-release-reconciler';
@@ -51,6 +59,7 @@ const COMPONENT_REPOSITORIES = Object.freeze({
   recovery: 'opensphere-console-recovery',
 });
 const REQUIRED_COMPONENTS = Object.freeze(Object.keys(COMPONENT_REPOSITORIES));
+const LEGACY_INSTALLED_COMPONENT_REPOSITORIES = legacyInstalledComponentMap(COMPONENT_REPOSITORIES);
 const SHA256_RE = /^sha256:[a-f0-9]{64}$/;
 const REVISION_RE = /^[a-f0-9]{40}$/;
 const IMAGE_RE =
@@ -88,7 +97,27 @@ function assertClosedObject(value, allowed, label) {
   if (unknown.length) throw new Error(`${label} contains unsupported fields: ${unknown.join(', ')}`);
 }
 
-function validateReleaseLock(lock) {
+function installedComponentProfile(components, { allowInstalledAgentIdentityCutover = false } = {}) {
+  const names = Object.keys(components ?? {});
+  const canonicalNames = Object.keys(COMPONENT_REPOSITORIES);
+  if (names.length === canonicalNames.length
+    && canonicalNames.every((name) => names.includes(name))) {
+    return { names: canonicalNames, repositories: COMPONENT_REPOSITORIES, agentIdentity: 'canonical' };
+  }
+  const legacyNames = Object.keys(LEGACY_INSTALLED_COMPONENT_REPOSITORIES);
+  if (allowInstalledAgentIdentityCutover
+    && names.length === legacyNames.length
+    && legacyNames.every((name) => names.includes(name))) {
+    return {
+      names: legacyNames,
+      repositories: LEGACY_INSTALLED_COMPONENT_REPOSITORIES,
+      agentIdentity: 'installed-pre-osaa',
+    };
+  }
+  return null;
+}
+
+function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false } = {}) {
   assertClosedObject(lock, [
     'apiVersion', 'kind', 'channel', 'releaseDigest', 'resolvedAt', 'source',
     'sourceRevision', 'trust', 'releaseBom', 'components',
@@ -147,25 +176,34 @@ function validateReleaseLock(lock) {
       throw new Error('component targetLock baseReleaseDigest is invalid');
     }
     const changed = lock.changedComponents;
+    const componentProfile = installedComponentProfile(lock.components, {
+      allowInstalledAgentIdentityCutover,
+    });
+    const allowedChanged = componentProfile?.names ?? REQUIRED_COMPONENTS;
     const canonicalChanged = Array.isArray(changed) ? [...new Set(changed)].sort() : [];
     if (!Array.isArray(changed)
       || changed.length === 0
       || changed.length !== canonicalChanged.length
       || changed.some((name, index) => name !== canonicalChanged[index])
-      || changed.some((name) => !REQUIRED_COMPONENTS.includes(name))) {
+      || changed.some((name) => !allowedChanged.includes(name))) {
       throw new Error('component targetLock changedComponents must be a non-empty canonical sorted set');
     }
     if (lock.releaseBom !== undefined) {
       throw new Error('component targetLock cannot claim a signed Release BOM');
     }
   }
-  assertClosedObject(lock.components, REQUIRED_COMPONENTS, 'targetLock.components');
+  const componentProfile = installedComponentProfile(lock.components, {
+    allowInstalledAgentIdentityCutover,
+  });
+  if (!componentProfile) throw new Error('targetLock component set is incomplete or unsupported');
+  const { names: expectedNames, repositories } = componentProfile;
+  assertClosedObject(lock.components, expectedNames, 'targetLock.components');
   const names = Object.keys(lock.components).sort();
-  if (names.length !== REQUIRED_COMPONENTS.length
-    || names.some((name, index) => name !== [...REQUIRED_COMPONENTS].sort()[index])) {
+  if (names.length !== expectedNames.length
+    || names.some((name, index) => name !== [...expectedNames].sort()[index])) {
     throw new Error('targetLock component set is incomplete or unsupported');
   }
-  for (const name of REQUIRED_COMPONENTS) {
+  for (const name of expectedNames) {
     const component = lock.components[name];
     assertClosedObject(component, [
       'repository', 'image', 'sourceRevision', 'registryCredentialsRequired',
@@ -173,7 +211,7 @@ function validateReleaseLock(lock) {
     const image = String(component.image || '');
     const match = image.match(IMAGE_RE);
     if (!match || component.repository !== match[1]
-      || component.repository !== COMPONENT_REPOSITORIES[name]) {
+      || component.repository !== repositories[name]) {
       throw new Error(`targetLock component ${name} is not a canonical exact-digest image`);
     }
     if (!REVISION_RE.test(String(component.sourceRevision || ''))) {
@@ -208,9 +246,13 @@ function sameComponent(left, right) {
 }
 
 function validateReleaseTransition(baseLock, targetLock) {
-  const base = validateReleaseLock(baseLock);
+  const base = validateReleaseLock(baseLock, { allowInstalledAgentIdentityCutover: true });
   const target = validateReleaseLock(targetLock);
+  const installedPreOsaa = hasLegacyInstalledAgentIdentity(base.components);
   if ((target.releaseScope || RELEASE_SCOPE_INTEGRATED) !== RELEASE_SCOPE_COMPONENT) {
+    if (installedPreOsaa) {
+      throw new Error('installed pre-OSAA lock requires the one-way OSAA component transition');
+    }
     return target;
   }
   if (target.baseReleaseDigest !== base.releaseDigest) {
@@ -219,14 +261,24 @@ function validateReleaseTransition(baseLock, targetLock) {
   if (target.channel !== base.channel || canonicalJson(target.trust) !== canonicalJson(base.trust)) {
     throw new Error('component targetLock channel or trust differs from its base release');
   }
-  const baseNames = Object.keys(base.components).sort();
+  const cutover = isAgentIdentityCutover(base.components, target.components);
+  if (cutover) {
+    const required = Object.keys(CANONICAL_AGENT_COMPONENTS);
+    if (!required.every((name) => target.changedComponents.includes(name))) {
+      throw new Error('OSAA identity cutover must change both canonical agent components together');
+    }
+  }
+  const baseNames = Object.keys(base.components)
+    .map((name) => cutover ? canonicalNameForInstalledComponent(name) : name)
+    .sort();
   const targetNames = Object.keys(target.components).sort();
   if (canonicalJson(baseNames) !== canonicalJson(targetNames)) {
     throw new Error('component targetLock cannot change the installed component set');
   }
   const changed = new Set(target.changedComponents);
   for (const name of targetNames) {
-    const differs = !sameComponent(base.components[name], target.components[name]);
+    const installedName = cutover ? installedNameForCanonicalComponent(name) : name;
+    const differs = !sameComponent(base.components[installedName], target.components[name]);
     if (changed.has(name) && !differs) {
       throw new Error(`component targetLock changed component ${name} is identical to the base release`);
     }
@@ -251,7 +303,7 @@ function normalizeComponentImage(name, value) {
 }
 
 function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
-  const base = validateReleaseLock(baseLock);
+  const base = validateReleaseLock(baseLock, { allowInstalledAgentIdentityCutover: true });
   if (base.channel !== 'edge' || canonicalJson(base.trust) !== canonicalJson(LOCAL_EDGE_TRUST)) {
     throw new Error('component target generation requires an installed localhost edge release');
   }
@@ -264,7 +316,18 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
   if (changedComponents.length === 0) {
     throw new Error('componentEvidence must contain at least one changed component');
   }
-  const components = structuredClone(base.components);
+  const cutover = hasLegacyInstalledAgentIdentity(base.components);
+  if (cutover) {
+    const required = Object.keys(CANONICAL_AGENT_COMPONENTS);
+    if (!required.every((name) => changedComponents.includes(name))) {
+      throw new Error('OSAA identity cutover must change both canonical agent components together');
+    }
+  }
+  const components = Object.fromEntries(Object.entries(base.components)
+    .map(([name, component]) => [
+      cutover ? canonicalNameForInstalledComponent(name) : name,
+      structuredClone(component),
+    ]));
   for (const name of changedComponents) {
     if (!REQUIRED_COMPONENTS.includes(name)) {
       throw new Error(`componentEvidence contains unsupported component ${name}`);
@@ -280,7 +343,8 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
       image: normalizeComponentImage(name, item.image),
       sourceRevision: evidence.sourceRevision,
       registryCredentialsRequired: item.registryCredentialsRequired
-        ?? base.components[name].registryCredentialsRequired
+        ?? base.components[cutover ? installedNameForCanonicalComponent(name) : name]
+          .registryCredentialsRequired
         ?? false,
     };
   }
@@ -340,8 +404,8 @@ function platformReleaseApprovalPolicy(action, desiredState) {
     };
 }
 
-function releaseSummary(lock) {
-  const validated = validateReleaseLock(lock);
+function releaseSummary(lock, options = {}) {
+  const validated = validateReleaseLock(lock, options);
   return {
     channel: validated.channel,
     releaseDigest: validated.releaseDigest,
