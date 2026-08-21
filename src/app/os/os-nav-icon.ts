@@ -27,6 +27,8 @@ const CARBON_ICON_TOKEN = /^[a-z0-9][a-z0-9-]{0,95}$/;
     }
   `,
   styles: [`
+    :host { display: inline-flex; align-items: center; flex: 0 0 auto; }
+    :host-context(.os-nav) { margin-inline-end: 0.4rem; }
     .os-nav-icon-asset { display: block; object-fit: contain; opacity: 0.76; }
   `],
 })

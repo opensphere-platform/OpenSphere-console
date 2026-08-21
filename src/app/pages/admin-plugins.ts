@@ -214,12 +214,89 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       </clr-accordion-panel>
     </clr-accordion>
 
-    <ng-template #extensionStatusTable let-items let-emptyText="emptyText" let-showHost="showHost" let-showIcon="showIcon">
+    <ng-template #extensionStatusRow let-r let-showHost="showHost" let-showIcon="showIcon" let-navigation="navigation">
+      <tr cdkDrag [cdkDragData]="r" [cdkDragDisabled]="!navigation">
+        <td class="left">
+          <div class="extension-identity">
+            @if (navigation) {
+              <button type="button" class="btn btn-sm btn-link extension-order-handle" cdkDragHandle aria-label="메뉴 순서 이동">⋮⋮</button>
+            }
+            @if (showIcon) {
+              <span class="extension-identity-icon" [title]="extensionIconToken(r.name)">
+                <os-nav-icon [token]="extensionIconToken(r.name)" [size]="20" />
+              </span>
+            }
+            <div>
+              <button type="button" class="extension-link" (click)="select(r.name)">{{ navigation ? menuDisplayLabel(r.name) : displayName(r.name) }}</button>
+              <div class="state-detail">
+                @if (navigation) { {{ displayName(r.name) }} · }
+                {{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span>
+              </div>
+            </div>
+          </div>
+        </td>
+        @if (showHost) {
+          <td class="left">
+            <strong>{{ extensionParentLabel(r) }}</strong>
+            <div class="state-detail os-mono">{{ extensionParentRef(r) }}</div>
+          </td>
+        }
+        <td>
+          <span class="label" [class.label-success]="r.desiredState === 'Enabled'" [class.label-warning]="r.desiredState === 'Installed'">{{ desiredStateLabel(r) }}</span>
+          <div class="state-detail">{{ desiredStateDetail(r) }}</div>
+        </td>
+        <td>
+          <span
+            class="label"
+            [class.label-success]="effectiveState(r).tone === 'success'"
+            [class.label-warning]="effectiveState(r).tone === 'warning'"
+            [class.label-danger]="effectiveState(r).tone === 'danger'"
+            >{{ effectiveState(r).label }}</span
+          >
+          <div class="state-detail">{{ effectiveState(r).detail }}</div>
+        </td>
+        <td>
+          <span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span>
+          <div class="state-detail">Pod · Service</div>
+        </td>
+        <td>
+          <span class="label" [class.label-success]="verificationGate(r).tone === 'success'" [class.label-warning]="verificationGate(r).tone === 'warning'" [class.label-danger]="verificationGate(r).tone === 'danger'">{{ verificationGate(r).label }}</span>
+          <div class="state-detail">{{ verificationGate(r).detail }}</div>
+        </td>
+        <td class="left">
+          <strong>{{ artifactVersion(r) }}</strong>
+          <div class="state-detail">{{ r.status.currentRequestedChannel || 'exact' }} · {{ buildAuthorityLabel(r.status.currentBuildAuthority) }}</div>
+          <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
+        </td>
+        <td>
+          <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
+          <div class="state-detail">{{ menuState(r).reason }}</div>
+          <div class="state-detail">{{ integrationSummary(r) }}</div>
+        </td>
+        <td class="extension-actions">
+          <button class="btn btn-sm btn-link" (click)="select(r.name)">{{ navigation ? '표시 설정' : 'Details' }}</button>
+          @if (r.desiredState === 'Enabled') {
+            <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
+          } @else {
+            <button
+              class="btn btn-sm btn-success-outline"
+              [disabled]="activationLocked(r.name)"
+              [title]="activationLockReason(r.name) || ''"
+              (click)="run('enable', r.name)"
+            >
+              Enable
+            </button>
+          }
+        </td>
+      </tr>
+    </ng-template>
+
+    <ng-template #extensionStatusTable let-items let-emptyText="emptyText" let-showHost="showHost" let-showIcon="showIcon" let-navigation="navigation">
       <div class="extension-table-wrap">
-        <table class="table extension-table" [class.extension-table--with-host]="showHost">
+        <table class="table extension-table" [class.extension-table--with-host]="showHost" [class.extension-table--navigation]="navigation">
           <thead>
             <tr>
-              <th class="left">Extension</th>
+              <th class="left">{{ navigation ? 'Extension · 1단 메뉴' : 'Extension' }}</th>
               @if (showHost) { <th class="left">소속 Host</th> }
               <th>사용자 설정</th>
               <th>현재 서비스</th>
@@ -230,80 +307,32 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
               <th>작업</th>
             </tr>
           </thead>
-          <tbody>
-            @for (r of items; track r.name) {
-              <tr>
-                <td class="left">
-                  <div class="extension-identity">
-                    @if (showIcon) {
-                      <span class="extension-identity-icon" [title]="extensionIconToken(r.name)">
-                        <os-nav-icon [token]="extensionIconToken(r.name)" [size]="20" />
-                      </span>
-                    }
-                    <div>
-                      <button type="button" class="extension-link" (click)="select(r.name)">{{ displayName(r.name) }}</button>
-                      <div class="state-detail">{{ extensionKind(r) }} · <span class="os-mono">{{ r.name }}</span></div>
-                    </div>
-                  </div>
-                </td>
-                @if (showHost) {
-                  <td class="left">
-                    <strong>{{ extensionParentLabel(r) }}</strong>
-                    <div class="state-detail os-mono">{{ extensionParentRef(r) }}</div>
-                  </td>
+          @if (navigation) {
+            @for (group of subShellNavigationGroups(); track group.band) {
+              <tbody
+                cdkDropList
+                [attr.aria-label]="group.band + ' 메뉴 순서'"
+                [cdkDropListData]="group.items"
+                [cdkDropListDisabled]="navigationOrderSaving()"
+                (cdkDropListDropped)="dropSubShell($event)"
+              >
+                <tr class="extension-band-row"><td colspan="8"><strong>{{ group.band }}</strong><span class="state-detail">행을 끌어 좌측 1단 메뉴 순서를 변경합니다.</span></td></tr>
+                @for (r of group.items; track r.name) {
+                  <ng-container *ngTemplateOutlet="extensionStatusRow; context: { $implicit: r, showHost: false, showIcon: true, navigation: true }" />
                 }
-                <td>
-                  <span class="label" [class.label-success]="r.desiredState === 'Enabled'" [class.label-warning]="r.desiredState === 'Installed'">{{ desiredStateLabel(r) }}</span>
-                  <div class="state-detail">{{ desiredStateDetail(r) }}</div>
-                </td>
-                <td>
-                  <span
-                    class="label"
-                    [class.label-success]="effectiveState(r).tone === 'success'"
-                    [class.label-warning]="effectiveState(r).tone === 'warning'"
-                    [class.label-danger]="effectiveState(r).tone === 'danger'"
-                    >{{ effectiveState(r).label }}</span
-                  >
-                  <div class="state-detail">{{ effectiveState(r).detail }}</div>
-                </td>
-                <td>
-                  <span class="label" [class.label-success]="workloadPhase(r) === 'Ready'" [class.label-danger]="workloadPhase(r) === 'Degraded' || workloadPhase(r) === 'NotReady'">{{ workloadPhase(r) }}</span>
-                  <div class="state-detail">Pod · Service</div>
-                </td>
-                <td>
-                  <span class="label" [class.label-success]="verificationGate(r).tone === 'success'" [class.label-warning]="verificationGate(r).tone === 'warning'" [class.label-danger]="verificationGate(r).tone === 'danger'">{{ verificationGate(r).label }}</span>
-                  <div class="state-detail">{{ verificationGate(r).detail }}</div>
-                </td>
-                <td class="left">
-                  <strong>{{ artifactVersion(r) }}</strong>
-                  <div class="state-detail">{{ r.status.currentRequestedChannel || 'exact' }} · {{ buildAuthorityLabel(r.status.currentBuildAuthority) }}</div>
-                  <div class="os-mono" [title]="r.status.currentDigest || 'digest 미보고'">{{ shortDigest(r.status.currentDigest) }}</div>
-                </td>
-                <td>
-                  <span class="label" [class.label-success]="menuState(r).visible" [class.label-warning]="!menuState(r).visible">{{ menuState(r).label }}</span>
-                  <div class="state-detail">{{ menuState(r).reason }}</div>
-                  <div class="state-detail">{{ integrationSummary(r) }}</div>
-                </td>
-                <td class="extension-actions">
-                  <button class="btn btn-sm btn-link" (click)="select(r.name)">Details</button>
-                  @if (r.desiredState === 'Enabled') {
-                    <button class="btn btn-sm" (click)="run('disable', r.name)">Disable</button>
-                  } @else {
-                    <button
-                      class="btn btn-sm btn-success-outline"
-                      [disabled]="activationLocked(r.name)"
-                      [title]="activationLockReason(r.name) || ''"
-                      (click)="run('enable', r.name)"
-                    >
-                      Enable
-                    </button>
-                  }
-                </td>
-              </tr>
+              </tbody>
             } @empty {
-              <tr><td [attr.colspan]="showHost ? 9 : 8" class="os-sub">{{ emptyText }}</td></tr>
+              <tbody><tr><td colspan="8" class="os-sub">{{ emptyText }}</td></tr></tbody>
             }
-          </tbody>
+          } @else {
+            <tbody>
+              @for (r of items; track r.name) {
+                <ng-container *ngTemplateOutlet="extensionStatusRow; context: { $implicit: r, showHost: showHost, showIcon: showIcon, navigation: false }" />
+              } @empty {
+                <tr><td [attr.colspan]="showHost ? 9 : 8" class="os-sub">{{ emptyText }}</td></tr>
+              }
+            </tbody>
+          }
         </table>
       </div>
     </ng-template>
@@ -322,30 +351,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             <span><i class="status-dot warning"></i>서비스 유지 또는 처리 대기</span>
             <span><i class="status-dot danger"></i>서비스 차단 — 운영자 조치 필요</span>
           </div>
-          <section class="subshell-menu-editor" aria-labelledby="subshell-menu-editor-title">
-            <header>
-              <div><span class="view-kicker">MAIN SHELL NAVIGATION</span><h3 id="subshell-menu-editor-title">1단 메뉴 순서</h3></div>
-              <p>같은 메뉴 구역 안에서 행을 끌어 위·아래로 이동합니다. 저장된 순서는 관리 목록과 좌측 1단 메뉴에 함께 적용됩니다.</p>
-            </header>
-            @for (group of subShellNavigationGroups(); track group.band) {
-              <div class="subshell-menu-band">
-                <strong>{{ group.band }}</strong>
-                <div cdkDropList [cdkDropListData]="group.items" [cdkDropListDisabled]="navigationOrderSaving()" (cdkDropListDropped)="dropSubShell($event)">
-                  @for (r of group.items; track r.name) {
-                    <div class="subshell-menu-row" cdkDrag [cdkDragData]="r">
-                      <button type="button" class="subshell-menu-handle" cdkDragHandle aria-label="메뉴 순서 이동">⋮⋮</button>
-                      <os-nav-icon [token]="extensionIconToken(r.name)" [size]="20" />
-                      <span><strong>{{ menuDisplayLabel(r.name) }}</strong><small>{{ displayName(r.name) }} · <code>{{ r.name }}</code></small></span>
-                      <button type="button" class="btn btn-sm btn-link" (click)="select(r.name)">표시 설정</button>
-                    </div>
-                  }
-                </div>
-              </div>
-            } @empty {
-              <p class="empty-view">{{ registrationsLoaded() ? '설치된 SubShell이 없습니다.' : 'Extension 목록을 불러오는 중입니다.' }}</p>
-            }
-          </section>
-          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: orderedSubShellRegistrations(), emptyText: registrationsLoaded() ? '설치된 subShell이 없습니다.' : 'Extension 목록을 불러오는 중입니다.', showHost: false, showIcon: true }" />
+          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: orderedSubShellRegistrations(), emptyText: registrationsLoaded() ? '설치된 subShell이 없습니다.' : 'Extension 목록을 불러오는 중입니다.', showHost: false, showIcon: true, navigation: true }" />
         </clr-tab-content>
       </clr-tab>
 
@@ -781,6 +787,45 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
           }
         </div>
 
+        @if (selectedIsFirstLevelSubShell()) {
+          <clr-accordion class="cc-secondary cc-menu-settings" aria-label="1단 메뉴 표시 설정">
+            <clr-accordion-panel>
+              <clr-accordion-title>메뉴 표시 이름</clr-accordion-title>
+              <clr-accordion-description>{{ menuDisplayLabel(selected() || '') }}</clr-accordion-description>
+              <clr-accordion-content *clrIfExpanded>
+                <div class="cc-menu-label">
+                  <label for="subshell-menu-label">표시 이름</label>
+                  <input id="subshell-menu-label" #menuLabel class="clr-input" maxlength="80" [value]="menuLabelOverride()" [placeholder]="selectedOriginalLabel()" />
+                  <button type="button" class="btn btn-sm btn-primary" (click)="saveMenuLabel(menuLabel.value)">저장</button>
+                </div>
+                <p class="os-sub">비워서 저장하면 원래 이름 <strong>{{ selectedOriginalLabel() }}</strong>을 표시합니다.</p>
+              </clr-accordion-content>
+            </clr-accordion-panel>
+
+            <clr-accordion-panel>
+              <clr-accordion-title>메뉴 아이콘</clr-accordion-title>
+              <clr-accordion-description>{{ iconToken() || '기본 아이콘' }}</clr-accordion-description>
+              <clr-accordion-content *clrIfExpanded>
+                <div class="cc-iconpick">
+                  <input class="cc-iconsearch" type="search" placeholder="Carbon 아이콘 검색…"
+                         [value]="iconQuery()" (input)="iconQuery.set($any($event.target).value)" />
+                  <div class="cc-iconpick-note">
+                    {{ iconLib.list().length ? (iconMatchCount() + '개 일치' + (iconMatchCount() > iconList().length ? (' · 상위 ' + iconList().length + '개 표시') : '')) : '라이브러리 로딩 중…' }}
+                  </div>
+                  <div class="cc-iconpick-grid">
+                    <button type="button" class="cc-iconbtn" [class.sel]="!iconToken()" title="기본(자동)" (click)="chooseIcon('')">∅</button>
+                    @for (c of iconList(); track c.token) {
+                      <button type="button" class="cc-iconbtn" [class.sel]="iconToken() === c.token" [title]="c.label" (click)="chooseIcon(c.token)">
+                        <os-rawicon [svg]="c.svg" [size]="24" />
+                      </button>
+                    }
+                  </div>
+                </div>
+              </clr-accordion-content>
+            </clr-accordion-panel>
+          </clr-accordion>
+        }
+
         <section class="cc-integrations" aria-labelledby="cc-integrations-title">
           <div class="cc-section-head">
             <div><h3 id="cc-integrations-title">Console 연동 상태</h3><p>메뉴·페이지·API·검색·문서·관측 신호를 각각 확인합니다.</p></div>
@@ -850,42 +895,6 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             </clr-accordion-content>
           </clr-accordion-panel>
 
-          @if (selectedIsFirstLevelSubShell()) {
-            <clr-accordion-panel>
-              <clr-accordion-title>메뉴 표시 이름</clr-accordion-title>
-              <clr-accordion-description>{{ menuDisplayLabel(selected() || '') }}</clr-accordion-description>
-              <clr-accordion-content *clrIfExpanded>
-                <div class="cc-menu-label">
-                  <label for="subshell-menu-label">표시 이름</label>
-                  <input id="subshell-menu-label" #menuLabel class="clr-input" maxlength="80" [value]="menuLabelOverride()" [placeholder]="selectedOriginalLabel()" />
-                  <button type="button" class="btn btn-sm btn-primary" (click)="saveMenuLabel(menuLabel.value)">저장</button>
-                </div>
-                <p class="os-sub">비워서 저장하면 원래 이름 <strong>{{ selectedOriginalLabel() }}</strong>을 표시합니다.</p>
-              </clr-accordion-content>
-            </clr-accordion-panel>
-
-            <clr-accordion-panel>
-              <clr-accordion-title>메뉴 아이콘</clr-accordion-title>
-              <clr-accordion-description>{{ iconToken() || '기본 아이콘' }}</clr-accordion-description>
-              <clr-accordion-content *clrIfExpanded>
-                <div class="cc-iconpick">
-                  <input class="cc-iconsearch" type="search" placeholder="Carbon 아이콘 검색…"
-                         [value]="iconQuery()" (input)="iconQuery.set($any($event.target).value)" />
-                  <div class="cc-iconpick-note">
-                    {{ iconLib.list().length ? (iconMatchCount() + '개 일치' + (iconMatchCount() > iconList().length ? (' · 상위 ' + iconList().length + '개 표시') : '')) : '라이브러리 로딩 중…' }}
-                  </div>
-                  <div class="cc-iconpick-grid">
-                    <button type="button" class="cc-iconbtn" [class.sel]="!iconToken()" title="기본(자동)" (click)="chooseIcon('')">∅</button>
-                    @for (c of iconList(); track c.token) {
-                      <button type="button" class="cc-iconbtn" [class.sel]="iconToken() === c.token" [title]="c.label" (click)="chooseIcon(c.token)">
-                        <os-rawicon [svg]="c.svg" [size]="24" />
-                      </button>
-                    }
-                  </div>
-                </div>
-              </clr-accordion-content>
-            </clr-accordion-panel>
-          }
         </clr-accordion>
 
         <div class="cc-actions" aria-label="Extension lifecycle actions">
