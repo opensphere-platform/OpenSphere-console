@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
@@ -12,42 +13,27 @@ const {
   PLATFORM_RELEASE_CONSUMER,
   PLATFORM_RELEASE_RECONCILER,
   PLATFORM_RELEASE_TARGET,
+  validateBootstrapAInitializerCleanup,
   validatePlatformReleaseDesiredState,
 } = require('./platform-release-contract.js');
+const { requestJson: internalAuthorityRequest } =
+  require('./platform-release-internal-transport.js');
 
-const BACKEND_URL = (process.env.CONSOLE_BACKEND_URL
-  || 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
-const GITEA_URL = (process.env.GITEA_URL
-  || 'http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000').replace(/\/$/, '');
 const GITEA_ORGANIZATION = process.env.GITEA_ORGANIZATION || 'opensphere';
 const GITEA_REPOSITORY = process.env.GITEA_REPOSITORY || 'platform-declarations';
 const GITEA_PATH = String(process.env.GITEA_PATH || 'platform-release').replace(/^\/+|\/+$/g, '');
-const GITEA_TOKEN = process.env.GITEA_TOKEN || '';
-const RECONCILER_TOKEN = process.env.RECONCILER_TOKEN || '';
+const IDENTITY_TOKEN_PATH = process.env.IDENTITY_TOKEN_PATH
+  || '/var/run/secrets/opensphere-platform-release-identity/token';
 const REQUEST_ID = process.env.REQUEST_ID || '';
 const GIT_COMMIT_SHA = process.env.GIT_COMMIT_SHA || '';
 const ATTEMPT = Number(process.env.ATTEMPT || 1);
 const EXPECTED_PREVIOUS_RELEASE_DIGEST = process.env.EXPECTED_PREVIOUS_RELEASE_DIGEST || '';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COMMIT_RE = /^[0-9a-f]{40,64}$/i;
-
-function encodedPath(value) {
-  return String(value).split('/').map(encodeURIComponent).join('/');
-}
+let activeBootstrapRequestId = null;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function jsonRequest(url, options = {}) {
-  const { timeoutMs = 15000, ...fetchOptions } = options;
-  const response = await fetch(url, { ...fetchOptions, signal: AbortSignal.timeout(timeoutMs) });
-  const text = await response.text();
-  let body;
-  try { body = text ? JSON.parse(text) : {}; }
-  catch { body = { raw: text }; }
-  if (!response.ok) throw new Error(body?.error || body?.message || `HTTP ${response.status}`);
-  return body;
 }
 
 function validateManifest(manifest) {
@@ -66,18 +52,29 @@ function validateManifest(manifest) {
   return desired;
 }
 
+function receiptIdentityToken() {
+  return readFileSync(IDENTITY_TOKEN_PATH, 'utf8').trim();
+}
+
 async function loadDesiredState() {
-  if (!UUID_RE.test(REQUEST_ID) || !COMMIT_RE.test(GIT_COMMIT_SHA)
-    || !GITEA_TOKEN || !RECONCILER_TOKEN) {
+  if (!UUID_RE.test(REQUEST_ID) || !COMMIT_RE.test(GIT_COMMIT_SHA)) {
     throw new Error('Platform Release executor identity or credentials are unavailable');
   }
   const path = `${GITEA_PATH}/requests/${REQUEST_ID}.json`;
-  const file = await jsonRequest(
-    `${GITEA_URL}/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}`
-      + `/contents/${encodedPath(path)}?ref=${encodeURIComponent(GIT_COMMIT_SHA)}`,
-    { headers: { authorization: `token ${GITEA_TOKEN}`, accept: 'application/json' } },
-  );
+  const file = await internalAuthorityRequest('/api/platform/reconcile/manifest', {
+    method: 'POST',
+    authorization: `Bearer ${receiptIdentityToken()}`,
+    body: { reconciler: PLATFORM_RELEASE_RECONCILER, requestId: REQUEST_ID },
+  });
+  if (file.contract !== 'opensphere-platform-release-manifest-projection/v1'
+    || file.requestId !== REQUEST_ID || file.gitCommitSha !== GIT_COMMIT_SHA
+    || file.gitRepo !== `${GITEA_ORGANIZATION}/${GITEA_REPOSITORY}` || file.path !== path
+    || !/^sha256:[a-f0-9]{64}$/.test(String(file.contentSha256 || ''))) {
+    throw new Error('internal release manifest projection differs from the executor binding');
+  }
   const raw = Buffer.from(String(file.content || '').replace(/\s/g, ''), 'base64').toString('utf8');
+  const observed = `sha256:${createHash('sha256').update(raw).digest('hex')}`;
+  if (observed !== file.contentSha256) throw new Error('internal release manifest projection hash mismatch');
   return validateManifest(JSON.parse(raw));
 }
 
@@ -131,13 +128,10 @@ async function sendReceipt({ succeeded, result, desiredRevision, appliedRevision
   let last;
   for (let attempt = 1; attempt <= 60; attempt += 1) {
     try {
-      return await jsonRequest(`${BACKEND_URL}/api/platform/reconcile/receipt`, {
+      return await internalAuthorityRequest('/api/platform/reconcile/receipt', {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-opensphere-reconciler-token': RECONCILER_TOKEN,
-        },
-        body: JSON.stringify(payload),
+        authorization: `Bearer ${receiptIdentityToken()}`,
+        body: payload,
         timeoutMs: 20000,
       });
     } catch (error) {
@@ -150,6 +144,7 @@ async function sendReceipt({ succeeded, result, desiredRevision, appliedRevision
 
 async function main() {
   const desired = await loadDesiredState();
+  activeBootstrapRequestId = desired.targetLock.componentPublication?.bootstrapFrom?.requestId || null;
   const current = readInstallationLock();
   if (!current || current.releaseDigest !== desired.previousReleaseDigest) {
     throw new Error('Platform Release request is stale; installation lock changed before execution');
@@ -163,6 +158,12 @@ async function main() {
   if (!installed || installed.releaseDigest !== desired.targetLock.releaseDigest) {
     throw new Error('Platform Release executor finished without the requested installation lock');
   }
+  const bootstrapAInitializerCleanup = activeBootstrapRequestId
+    ? validateBootstrapAInitializerCleanup(result.evidence?.bootstrapAInitializerCleanup, {
+      bootstrapFrom: desired.targetLock.componentPublication.bootstrapFrom,
+      targetReleaseDigest: desired.targetLock.releaseDigest,
+    })
+    : null;
   await sendReceipt({
     succeeded: true,
     result: result.changed
@@ -176,6 +177,16 @@ async function main() {
       previousReleaseDigest: current.releaseDigest,
       installedReleaseDigest: installed.releaseDigest,
       sourceRevision: installed.sourceRevision,
+      componentPublication: installed.componentPublication || null,
+      ...(activeBootstrapRequestId ? {
+        bootstrapConvergence: {
+          handoffState: 'BootstrapApplied',
+          convergenceState: 'Converged',
+          foundationFeatureGate: 'Open',
+          bootstrapRequestId: activeBootstrapRequestId,
+        },
+        bootstrapAInitializerCleanup,
+      } : {}),
       platforms,
       changed: result.changed,
       podCount: result.evidence?.podCount ?? null,
@@ -208,6 +219,14 @@ try {
       expectedPreviousReleaseDigest: EXPECTED_PREVIOUS_RELEASE_DIGEST || null,
       observedReleaseDigest,
       rollbackObserved: observedReleaseDigest === EXPECTED_PREVIOUS_RELEASE_DIGEST,
+      ...(activeBootstrapRequestId ? {
+        bootstrapConvergence: {
+          handoffState: 'BootstrapApplied',
+          convergenceState: 'Failed',
+          foundationFeatureGate: 'Closed',
+          bootstrapRequestId: activeBootstrapRequestId,
+        },
+      } : {}),
     },
   }).catch((receiptError) => {
     console.error('[platform-release-executor] failure receipt rejected:', receiptError.message || receiptError);
