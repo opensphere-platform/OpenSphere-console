@@ -116,6 +116,7 @@ try {
   Invoke-Checked node --test `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\conversation-store.test.js') `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\extension-presentation.test.js') `
+    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-prompt-boundary.test.js') `
     (Join-Path $checkout 'scripts\osaa-gateway-publisher.test.mjs') | Out-Null
 
   if (-not $UseExistingRegistryLogin) {
