@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'scripts', 'Publish-LocalEdgeBackendBridge.ps1'), 'utf8');
 
 test('backend bridge publisher is component-only and emits governed evidence', () => {
-  assert.match(source, /Publish the Console Backend installed-lock bridge required for the one-way OAA to OSAA cutover/);
+  assert.match(source, /Publish the Console Backend installed-lock bridge required for the one-way legacy agent identity to OSAA cutover/);
   assert.match(source, /affectedImages = @\(\$repository\)/);
   assert.match(source, /releaseScope = 'component'/);
   assert.match(source, /fullReleaseJustification = \$null/);
