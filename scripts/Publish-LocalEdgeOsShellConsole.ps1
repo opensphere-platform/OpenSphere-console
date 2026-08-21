@@ -163,11 +163,12 @@ $consoleEdgeBefore = Get-RemoteDigest -Reference "${consoleRepository}:edge"
 
 $targetMigrationPath = Join-Path $repoRoot 'backend\supabase\migrations\manifest.json'
 $targetMigration = Get-Content -Raw -LiteralPath $targetMigrationPath | ConvertFrom-Json
-$baseMigration = $base.Document.artifacts.supabaseMigrationManifest
-if ((Get-CanonicalTextSha256 -Path $targetMigrationPath) -ne [string]$baseMigration.sha256 -or
-    [string]$targetMigration.setDigest -ne [string]$baseMigration.setDigest -or
-    [string]$targetMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
-  throw 'Target source changes the deployed OS Shell migration lineage'
+$migrationAuthority = $backend.Document.artifacts.supabaseMigrationManifest
+if (-not $migrationAuthority -or
+    (Get-CanonicalTextSha256 -Path $targetMigrationPath) -ne [string]$migrationAuthority.sha256 -or
+    [string]$targetMigration.setDigest -ne [string]$migrationAuthority.setDigest -or
+    [string]$targetMigration.latestMigrationId -ne [string]$migrationAuthority.latestMigrationId) {
+  throw 'Target source differs from the deployed Backend migration authority'
 }
 
 $scope = [ordered]@{
@@ -208,10 +209,10 @@ $workspace = Join-Path (Split-Path $repoRoot -Parent) ".codex-tmp\local-edge-$($
 $combinedPath = Join-Path $workspace 'opensphere-local-component-publication.json'
 $published = Read-Publication -Path $combinedPath -ExpectedComponents @('console') -Purpose 'new OS Shell Console publication'
 $publishedMigration = $published.Document.artifacts.supabaseMigrationManifest
-if ([string]$publishedMigration.sha256 -ne [string]$baseMigration.sha256 -or
-    [string]$publishedMigration.setDigest -ne [string]$baseMigration.setDigest -or
-    [string]$publishedMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
-  throw 'OS Shell Console publication changed the base migration lineage'
+if ([string]$publishedMigration.sha256 -ne [string]$migrationAuthority.sha256 -or
+    [string]$publishedMigration.setDigest -ne [string]$migrationAuthority.setDigest -or
+    [string]$publishedMigration.latestMigrationId -ne [string]$migrationAuthority.latestMigrationId) {
+  throw 'OS Shell Console publication differs from the deployed Backend migration authority'
 }
 $publishedDigest = Get-ComponentDigest -Publication $published.Document -Key 'console'
 & docker buildx imagetools create --tag "${consoleRepository}:edge" ([string]$published.Document.components.console.image)
