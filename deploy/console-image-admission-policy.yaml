@@ -26,7 +26,7 @@ spec:
         object.metadata.namespace in [
           'opensphere-console', 'opensphere-console-data',
           'opensphere-console-change', 'opensphere-console-recovery',
-          'opensphere-oaa-credentials', 'opensphere-foundation',
+          'opensphere-osaa-credentials', 'opensphere-foundation',
           'opensphere-system'
         ]
   validations:
@@ -66,7 +66,7 @@ spec:
         object.metadata.namespace in [
           'opensphere-console', 'opensphere-console-data',
           'opensphere-console-change', 'opensphere-console-recovery',
-          'opensphere-oaa-credentials', 'opensphere-foundation',
+          'opensphere-osaa-credentials', 'opensphere-foundation',
           'opensphere-system'
         ]
   validations:

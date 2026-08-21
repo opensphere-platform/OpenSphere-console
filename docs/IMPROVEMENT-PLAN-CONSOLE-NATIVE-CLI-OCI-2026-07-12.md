@@ -162,7 +162,7 @@
 
 담당: Console QA / 각 기능 소유자
 
-- 누락된 `os-oaa-agent.ts`를 계약에 맞게 복구하거나, 제거가 정본이면 OAA stale test와 참조를 함께 삭제한다.
+- 누락된 `os-osaa-agent.ts`를 계약에 맞게 복구하거나, 제거가 정본이면 OSAA stale test와 참조를 함께 삭제한다.
 - `npm test`에 모든 지원 기능 test를 명시적으로 포함하고 CI에서 테스트 인벤토리 누락을 검사한다.
 - CLI의 중복 `registry()` 조건을 제거한다.
 - Angular initial bundle 4.22MB와 component style budget 초과에 owner·기한·분할 목표를 부여한다.
@@ -170,7 +170,7 @@
 완료 기준:
 
 - 공식 전체 테스트 명령이 fail 0이며 감사 문서의 테스트 수와 CI 결과가 일치한다.
-- OAA 기능 상태가 `지원/미지원` 중 하나로 정본 문서와 코드에서 일치한다.
+- OSAA 기능 상태가 `지원/미지원` 중 하나로 정본 문서와 코드에서 일치한다.
 
 ### WP-7. Backbone 복구·내구성
 
@@ -313,7 +313,7 @@ root
 
 | 단계 | 목표 기간 | 필수 작업 | 종료 조건 |
 |---|---:|---|---|
-| P0 — 즉시 위험 축소 | 0~2일 | WP-2 예약 service 차단, F-8 정리, OAA test 판정, OCI credential 인벤토리, 두 번째 break-glass 생성, FIDO/bypass 준비 | 경계 우회 차단, 테스트 범위 확정, credential owner 식별, 단일 관리자 장애 제거 |
+| P0 — 즉시 위험 축소 | 0~2일 | WP-2 예약 service 차단, F-8 정리, OSAA test 판정, OCI credential 인벤토리, 두 번째 break-glass 생성, FIDO/bypass 준비 | 경계 우회 차단, 테스트 범위 확정, credential owner 식별, 단일 관리자 장애 제거 |
 | P1 — CLI 무조건 승인 | 3~7일 | WP-1 secure store·stdin, scoped/short PAT, WP-3 role audit | F-1/F-2/F-3/F-5 해소, CLI 감사 재검증 PASS |
 | P2 — 공급망·런타임 | 2주 | WP-4 서명, WP-5 Pod hardening, 전체 CI green | signed artifact, 보안·가용성 테스트 통과 |
 | P3 — OCI 최소권한 전환 | 2~4주 | WP-8 compartment/group/policy/dynamic group, WP-9 credential 이전, WP-11 위임 관리자 역할 분리 | 개인 tenancy/domain superuser 없이 일상 운영·OpenSphere 배포 성공 |

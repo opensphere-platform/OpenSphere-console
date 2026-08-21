@@ -55,8 +55,8 @@ test('HIS owner recovery is a closed R2 capability with an exact human confirmat
 });
 
 test('execution authorization is revalidated and R3 requires two distinct AAL2 people', () => {
-  const operation = { actorId: 'actor', action: 'rollback-image', authzRevision: 'r1', requiredAssurance: 'aal2', riskClass: 'R3', requiredPermission: 'oaa.action.execute.high' };
-  const session = { active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['oaa.action.execute.high'], accessToken: 'memory-only' };
+  const operation = { actorId: 'actor', action: 'rollback-image', authzRevision: 'r1', requiredAssurance: 'aal2', riskClass: 'R3', requiredPermission: 'osaa.action.execute.high' };
+  const session = { active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['osaa.action.execute.high'], accessToken: 'memory-only' };
   assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }]).code, 'TwoPersonApprovalRequired');
   assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }, { approverId: 'a', assurance: 'aal2' }]).allowed, false);
   assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }, { approverId: 'b', assurance: 'aal2' }]).allowed, true);
@@ -79,7 +79,7 @@ function workerFixture(overrides = {}) {
       appendStep: async (_id, item) => steps.push(item), setPhase: async (_id, phase) => phases.push(phase),
       getApprovals: async () => [], heartbeat: async () => true,
     },
-    sessions: { resolve: async () => ({ active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['oaa.action.execute.high'], accessToken: 'secret' }) },
+    sessions: { resolve: async () => ({ active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['osaa.action.execute.high'], accessToken: 'secret' }) },
     authority: { read: async () => ({ ...request().target, fresh: true, snapshotComplete: true }) },
     owners: { invoke: async () => { calls += 1; return { operationId: 'owner-1' }; }, reconcile: async () => null },
     verifiers: { verify: async () => ({ status: 'succeeded', observed: { ready: true } }) },
@@ -113,7 +113,7 @@ test('all initial management scenarios bind to a closed owner and authoritative 
       },
       sessions: { resolve: async () => ({
         active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2',
-        permissions: ['oaa.action.execute.high', 'console.notification.manage'], accessToken: 'memory-only',
+        permissions: ['osaa.action.execute.high', 'console.notification.manage'], accessToken: 'memory-only',
       }) },
       authority: { read: async () => ({ ...op.target, fresh: true, snapshotComplete: true }) },
       owners: {
@@ -161,8 +161,8 @@ test('independent AAL2 approver can execute an R2 plan initiated by an active CL
 			heartbeat: async () => true, recordDownstreamIntent: async () => {},
 		},
 		sessions: { resolve: async (sessionId) => sessionId === 'browser-approval'
-			? { active: true, actorId: 'approver', assurance: 'aal2', authzRevision: 'r2', permissions: ['oaa.action.execute.high'], accessToken: 'approver-token' }
-			: { active: true, actorId: 'actor', assurance: 'aal1', authzRevision: 'r1', permissions: ['oaa.action.execute.high'], accessToken: 'cli-token' } },
+			? { active: true, actorId: 'approver', assurance: 'aal2', authzRevision: 'r2', permissions: ['osaa.action.execute.high'], accessToken: 'approver-token' }
+			: { active: true, actorId: 'actor', assurance: 'aal1', authzRevision: 'r1', permissions: ['osaa.action.execute.high'], accessToken: 'cli-token' } },
 		authority: { read: async () => ({ ...op.target, fresh: true, snapshotComplete: true }) },
 		owners: { invoke: async (_route, _payload, token) => { ownerToken = token; return { operationId: 'owner-pg' }; }, reconcile: async () => null },
 		verifiers: { verify: async () => ({ status: 'succeeded', observed: { ready: true } }) },

@@ -124,12 +124,12 @@ jobs:
           - image: opensphere-console-dupa-controller
             context: OpenSphere-console/backend/dupa-control
             file: OpenSphere-console/backend/dupa-control/Dockerfile
-          - image: opensphere-console-oaa-gateway
-            context: OpenSphere-console/backend/opensphere-console-oaa-gateway
-            file: OpenSphere-console/backend/opensphere-console-oaa-gateway/Dockerfile
-          - image: opensphere-oaa-governed-adapter
-            context: OpenSphere-console/backend/oaa-governed-adapter
-            file: OpenSphere-console/backend/oaa-governed-adapter/Dockerfile
+          - image: opensphere-console-osaa-gateway
+            context: OpenSphere-console/backend/opensphere-console-osaa-gateway
+            file: OpenSphere-console/backend/opensphere-console-osaa-gateway/Dockerfile
+          - image: opensphere-osaa-governed-adapter
+            context: OpenSphere-console/backend/osaa-governed-adapter
+            file: OpenSphere-console/backend/osaa-governed-adapter/Dockerfile
           - image: opensphere-console-notification-dispatcher
             context: OpenSphere-console/backend/notification-dispatcher
             file: OpenSphere-console/backend/notification-dispatcher/Dockerfile
@@ -309,8 +309,8 @@ jobs:
             opensphere-console
             opensphere-console-backend
             opensphere-console-dupa-controller
-            opensphere-console-oaa-gateway
-            opensphere-oaa-governed-adapter
+            opensphere-console-osaa-gateway
+            opensphere-osaa-governed-adapter
             opensphere-console-notification-dispatcher
             opensphere-console-recovery
             opensphere-console-gitea
@@ -324,8 +324,8 @@ jobs:
             console
             backend
             dupaController
-            oaaGateway
-            oaaGovernedAdapter
+            osaaGateway
+            osaaGovernedAdapter
             notificationDispatcher
             recovery
             gitea
@@ -428,8 +428,8 @@ jobs:
           images=(
             opensphere-console-backend
             opensphere-console-dupa-controller
-            opensphere-console-oaa-gateway
-            opensphere-oaa-governed-adapter
+            opensphere-console-osaa-gateway
+            opensphere-osaa-governed-adapter
             opensphere-console-notification-dispatcher
             opensphere-console-recovery
             opensphere-console-gitea
@@ -442,8 +442,8 @@ jobs:
           component_keys=(
             backend
             dupaController
-            oaaGateway
-            oaaGovernedAdapter
+            osaaGateway
+            osaaGovernedAdapter
             notificationDispatcher
             recovery
             gitea

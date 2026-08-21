@@ -26,7 +26,7 @@ repository, and registers the signed pull-request webhook. Generated token,
 webhook and reconciler credentials are only written to
 `opensphere-console/opensphere-gitea-control-plane`; they are never printed.
 
-The Console Backend consumes that Secret. Browser clients, OAA, and the Gitea
+The Console Backend consumes that Secret. Browser clients, OSAA, and the Gitea
 repository never receive the values.
 
 `configure-signing.ps1` provisions the server-only SSH signing key used by

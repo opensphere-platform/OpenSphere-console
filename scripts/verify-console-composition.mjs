@@ -22,9 +22,9 @@ export function verifyConsoleCompositionSource() {
   assert.doesNotMatch(registry, /\[OS_SHELL_SYSTEM_PLUGIN, R2D2_SYSTEM_PLUGIN\]/);
 
   assert.match(routes, /R2D2_ADMIN_ROUTE/);
-  assert.doesNotMatch(routes, /import\s*\{\s*AdminOaa\s*\}/);
+  assert.doesNotMatch(routes, /import\s*\{\s*AdminOsaa\s*\}/);
   assert.match(r2d2Route, /R2D2_SYSTEM_PLUGIN\.route/);
-  assert.match(r2d2Route, /import\('\.\.\/\.\.\/pages\/admin-oaa'\)/);
+  assert.match(r2d2Route, /import\('\.\.\/\.\.\/pages\/admin-osaa'\)/);
   assert.match(r2d2Route, /catch\(\(error:\s*unknown\)\s*=>/);
   assert.match(r2d2Route, /return SystemPluginUnavailable/);
 

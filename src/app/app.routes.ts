@@ -65,7 +65,7 @@ export const routes: Routes = [
   { path: 'auth/recovery', component: PasswordRecoveryPage },
   { path: '', component: Landing },
   { path: 'me', component: MyInfo },
-  // Manual — Main Shell 네이티브 페이지(subShell/plugin/Consumer 아님). OAA Manual Registry
+  // Manual — Main Shell 네이티브 페이지(subShell/plugin/Consumer 아님). OSAA Manual Registry
   // (/api/manual/*)를 ManualService로 직접 소비. 딥링크 `/manual?doc=<sourceId>`.
   { path: 'manual', component: ManualPage, canActivate: [authenticatedGuard] },
   // `/shell` is intentionally absent. Nginx serves it as an extension-free

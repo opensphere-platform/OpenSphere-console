@@ -7,7 +7,7 @@
 
 ## 결론
 
-13개 최상위 관리 화면을 현재 로그인 세션에서 전수 확인했으며 모두 정상 진입했다. 자동 로그아웃, 로그인 벽, HTTP 4xx/5xx 오류 문구는 재현되지 않았다. 기존에 강점이 있던 Control Plane/Data & Identity/Change Control의 다면 탭 구조는 유지하고, 상대적으로 약했던 Catalog/APIs/CLI/Extensions/관리자/역할/OAA/Observability/알림/감사 화면에는 공통 상태 레일과 작업 도구를 적용했다.
+13개 최상위 관리 화면을 현재 로그인 세션에서 전수 확인했으며 모두 정상 진입했다. 자동 로그아웃, 로그인 벽, HTTP 4xx/5xx 오류 문구는 재현되지 않았다. 기존에 강점이 있던 Control Plane/Data & Identity/Change Control의 다면 탭 구조는 유지하고, 상대적으로 약했던 Catalog/APIs/CLI/Extensions/관리자/역할/OSAA/Observability/알림/감사 화면에는 공통 상태 레일과 작업 도구를 적용했다.
 
 페이지의 역할은 다음처럼 분리된다.
 
@@ -38,7 +38,7 @@
 | 7 | Platform Control Plane | 정상·주의 1건 | Supabase/Gitea 연결 정상, 4/4 Console probe, 복구 증거 3건 검토 필요, HIS 미구성 상태를 사실대로 표시 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-07-platform-control.png) |
 | 8 | Data & Identity | 정상·주의 1건 | Supabase 3/3 준비, Auth/Database/API/Storage/Security & DR/Integrations 탭, 복구 증거 주의 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-08-data-identity.png) |
 | 9 | Change Control | 정상 | Gitea 연결, 보호 브랜치·서명 커밋·직접 push 차단, 변경 여정과 공급망/DR 탭 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-09-change-control.png) |
-| 10 | OAA Gateway | 정상·Degraded | Gateway reachable, 지식 48/281, 도구 12, 바인딩 8, LLM key 0을 기능 장애와 구분 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-10-oaa.png) |
+| 10 | OSAA Gateway | 정상·Degraded | Gateway reachable, 지식 48/281, 도구 12, 바인딩 8, LLM key 0을 기능 장애와 구분 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-10-osaa.png) |
 | 11 | HIS Observability | 조건부 정상 | HIS 소유권, Binding `NotConfigured`, telemetry 미활성, Console 직접 증거 2/2를 분리 표시 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-11-observability.png) |
 | 12 | 알림 | 정상 | 500건 상태 레일, 전체/안읽음/주의 이상 필터, 검색, 읽음 처리 작업 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-12-notifications.png) |
 | 13 | 감사 로그 | 정상 | 최근 200건, 승인 성공/실패 거부 필터, 행위자·동작·대상·사유 검색, 읽기 쉬운 시각 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-13-audit.png) |
@@ -50,7 +50,7 @@
 - Catalog 검색에 `supabase`를 입력했을 때 13건에서 3건으로 필터링되었다.
 - 알림의 `주의 이상` 필터는 현재 경고·오류가 없으므로 0건 빈 상태를 표시했다.
 - 감사의 `실패·거부` 필터는 최근 200건이 모두 승인되어 0건 빈 상태를 표시했다.
-- Extensions `Installed`, Data & Identity `Security & DR`, Change Control `Supply Chain`, OAA `LLM Keys` 심층 탭이 정상 전환되었다.
+- Extensions `Installed`, Data & Identity `Security & DR`, Change Control `Supply Chain`, OSAA `LLM Keys` 심층 탭이 정상 전환되었다.
 - `/manage/platform-readiness` 접근은 `/manage/platform-control`로 이동했으며 로그인 벽 없이 Control Plane을 표시했다.
 - 13개 화면 순회 중 인증 세션 이탈과 사용자 노출 HTTP 4xx/5xx 오류는 없었다.
 
@@ -65,7 +65,7 @@
 
 - 알림과 감사 표는 데이터 밀도가 높다. 긴 제목·대상 값은 향후 행 상세 패널 또는 확장 행을 도입하면 탐색 부담을 더 줄일 수 있다.
 - 한국어와 영문 운영 용어가 혼재한다. 제품 고유명과 계약 필드는 영문을 유지하되 일반 동작 용어의 번역 사전을 별도로 고정할 필요가 있다.
-- API 목록 0건, 복구 증거 검토 필요, OAA provider key 0건, HIS Binding 미구성은 실제 운영 데이터/조건의 후속 과제다.
+- API 목록 0건, 복구 증거 검토 필요, OSAA provider key 0건, HIS Binding 미구성은 실제 운영 데이터/조건의 후속 과제다.
 - 스크린샷과 DOM 검증으로 제목 구조, 레이블, 텍스트 상태, 컨트롤 노출은 확인했지만 스크린리더 실제 낭독 순서, 전 구간 키보드 탭 순서, 확대 400%, 자동 색 대비는 별도 전문 접근성 시험 범위다.
 
 ## 검증 및 배포 결과

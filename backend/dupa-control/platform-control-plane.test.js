@@ -37,14 +37,14 @@ test('Console management uses Clarity mixed tree navigation with direct overview
   );
   assert.match(
     layout,
-    /r2d2Item = \{[\s\S]{0,120}label: 'R2D2',[\s\S]{0,80}route: '\/manage\/oaa'/,
+    /r2d2Item = \{[\s\S]{0,120}label: 'R2D2',[\s\S]{0,80}route: '\/manage\/osaa'/,
   );
   const treeGroups = layout.slice(
     layout.indexOf('readonly groups:'),
     layout.indexOf('constructor()'),
   );
   assert.doesNotMatch(treeGroups, /route: '\/manage\/extensions'/);
-  assert.doesNotMatch(treeGroups, /route: '\/manage\/oaa'/);
+  assert.doesNotMatch(treeGroups, /route: '\/manage\/osaa'/);
   assert.match(overview, /title="콘솔 관리" tag="Overview · Core Admin"/);
   assert.match(overview, /routerLink="\/manage\/extensions"/);
 });
@@ -56,13 +56,13 @@ test('all Console management surfaces share task context, status and filtering c
   const admins = read('src', 'app', 'pages', 'console-admins.ts');
   const roles = read('src', 'app', 'pages', 'admin-roles.ts');
   const extensions = read('src', 'app', 'pages', 'admin-plugins.ts');
-  const oaa = read('src', 'app', 'pages', 'admin-oaa.ts');
+  const osaa = read('src', 'app', 'pages', 'admin-osaa.ts');
   const observability = read('src', 'app', 'pages', 'admin-observability.ts');
   const notifications = read('src', 'app', 'pages', 'admin-notifications.ts');
   const audit = read('src', 'app', 'pages', 'admin-audit.ts');
   assert.match(styles, /\.manage-status-rail/);
   assert.match(styles, /\.manage-toolbar/);
-  for (const source of [catalog, apis, admins, roles, extensions, oaa, observability, notifications, audit]) {
+  for (const source of [catalog, apis, admins, roles, extensions, osaa, observability, notifications, audit]) {
     assert.match(source, /manage-status-rail/);
   }
   assert.match(catalog, /Catalog 검색/);
@@ -135,13 +135,13 @@ test('DUPA active runtime depends on Supabase audit and never ships legacy data 
   assert.doesNotMatch(deployment, /BACKBONE_PG_|BACKBONE_S3_/);
 });
 
-test('OAA runs in the Console namespace and HIS remains the telemetry owner', () => {
-  const gateway = read('backend', 'opensphere-console-oaa-gateway', 'server.js');
+test('OSAA runs in the Console namespace and HIS remains the telemetry owner', () => {
+  const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
   const nginx = read('nginx', 'default.conf.template');
   const plan = read('docs', 'PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md');
-  assert.match(gateway, /const OAA_NAMESPACE = process\.env\.OAA_NAMESPACE \|\| 'opensphere-console'/);
+  assert.match(gateway, /const OSAA_NAMESPACE = process\.env\.OSAA_NAMESPACE \|\| 'opensphere-console'/);
   assert.doesNotMatch(gateway, /BACKBONE_NS/);
-  assert.match(nginx, /opensphere-console-oaa-gateway\.opensphere-console\.svc\.cluster\.local/);
+  assert.match(nginx, /opensphere-console-osaa-gateway\.opensphere-console\.svc\.cluster\.local/);
   assert.match(plan, /Binding이 없어도 bootstrap·진단·연결 복구 화면은 동작/);
   assert.match(plan, /Console은 Prometheus\/Operator\/CRD\/retention\/scrape\/Alertmanager를 설치·구성·운영하지 않는다/);
 });

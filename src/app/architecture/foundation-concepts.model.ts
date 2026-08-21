@@ -52,7 +52,7 @@ export const FOUNDATION_CONCEPT_TABS: readonly FoundationConceptTab[] = [
   {
     id: 'control-pillars',
     label: 'Control Pillars',
-    eyebrow: 'OAA · OSC · OSS',
+    eyebrow: 'OSAA · OSC · OSS',
     summary: 'Agent, CLI, Shell이라는 세 접근면을 하나의 owner·operation·evidence 계약으로 연결합니다.',
     pictogram: '/assets/pictograms/control-tower.svg',
     pictogramAlt: 'One control point connected to three operating surfaces',
@@ -235,8 +235,8 @@ export const AGENT_RUNTIME_SPECTRUM: readonly ArchitectureDefinition[] = [
 
 export const CONTROL_PILLARS: readonly ArchitectureDefinition[] = [
   {
-    id: 'OAA',
-    name: 'OSA / OAA · OpenSphere AI Agent (R2D2)',
+    id: 'OSAA',
+    name: 'OSA / OSAA · OpenSphere AI Agent (R2D2)',
     role: '자연어 의도를 capability inventory의 closed action으로 변환하고 위험·승인·evidence를 해석합니다.',
     owns: ['intent interpretation', 'capability selection', 'explanation', 'operation observation'],
     excludes: ['owner API 우회', 'raw kubectl/SQL', '자체 shadow approval store'],

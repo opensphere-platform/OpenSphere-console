@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { projectNotification, IncidentNotificationRelay } = require('../opensphere-console-oaa-gateway/r2d2-incident-relay');
+const { projectNotification, IncidentNotificationRelay } = require('../opensphere-console-osaa-gateway/r2d2-incident-relay');
 
 function row(overrides = {}) { return { outbox_id: 'o1', incident_id: 'i1', transition_sequence: 2, event_type: 'incident_resolved', payload: { status: 'resolved', severity: 'warning', primaryNodeId: 'node' }, created_at: '2026-08-10T00:00:00Z', attempt_count: 1, ...overrides }; }
 
@@ -9,7 +9,7 @@ test('material transition maps to stable idempotent notification source', () => 
   const projected = projectNotification(row());
   assert.equal(projected.sourceId, 'i1:2');
   assert.equal(projected.sourceType, 'r2d2_incident');
-  assert.equal(projected.route, '/manage/oaa?incident=i1');
+  assert.equal(projected.route, '/manage/osaa?incident=i1');
   assert.match(projected.evidenceDigest, /^sha256:[0-9a-f]{64}$/);
 });
 

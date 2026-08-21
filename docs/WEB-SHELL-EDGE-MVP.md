@@ -17,7 +17,7 @@ edge milestone.
 - **releaseScope**: component.
 - **affectedImages**: console, backend, cliArtifacts, osShellControl,
   osShellRuntime.
-- **reusedImages**: all Foundation, OAA/R2D2, recovery, notification, Gitea,
+- **reusedImages**: all Foundation, OSAA/R2D2, recovery, notification, Gitea,
   Supabase, and other unchanged Console component digests.
 - **fullReleaseJustification**: null.
 - GitHub Actions never builds or moves the edge channel.

@@ -86,7 +86,7 @@ test('native manual.ts consumes ManualService and implements the Help Center lan
   assert.match(manualPage, /type ManualBand = 'operate' \| 'build' \| 'deliver'/);
   assert.match(manualPage, /manual-band-\$\{band\}/);
   // The old admin-facing Manual Registry table must never return as the user-facing /manual page.
-  // Registry operation remains in /manage/oaa; /manual is exclusively the Help Center and reader.
+  // Registry operation remains in /manage/osaa; /manual is exclusively the Help Center and reader.
   assert.doesNotMatch(
     manualPage,
     /OsDatagrid|OsPanel|os-datagrid|os-panel|os-source-chips|sourceFilter\(|R2D2 Manual Registry 소스\/문서 탐색 및 검색/,
@@ -121,7 +121,7 @@ test('build, image, and Kubernetes admission gates reject the retired Manual UI'
 });
 
 test('bundled Manual Registry provides ten readable Perspective documents and never ingests legacy docs.ts', () => {
-  const seed = JSON.parse(read('backend', 'opensphere-console-oaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'));
+  const seed = JSON.parse(read('backend', 'opensphere-console-osaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'));
   const perspectiveDocs = seed.documents.filter((doc) => doc.tags?.includes('perspective-home'));
 
   assert.equal(perspectiveDocs.length, 10);

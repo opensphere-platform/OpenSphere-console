@@ -1,7 +1,7 @@
 # Local Kubernetes runtime overlay. Build after `npm run build` from the
 # Console directory; keep the current verified shell image's entrypoint and
 # CLI artifacts while replacing the compiled UI and nginx routing template.
-FROM opensphere-console:oaa-agent-v1
+FROM opensphere-console:osaa-agent-v1
 COPY dist/opensphere-console/browser/ /usr/share/nginx/html/
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 RUN set -eu; \

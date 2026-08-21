@@ -51,7 +51,7 @@ test('unauthenticated 428 is not retried', async () => {
 
 test('R2D2 chat owns a bounded long-response timeout and exposes timeout failures', () => {
   const httpSource = fs.readFileSync(path.join(import.meta.dirname, 'http.service.ts'), 'utf8');
-  const agentSource = fs.readFileSync(path.join(import.meta.dirname, '..', 'os', 'os-oaa-agent.ts'), 'utf8');
+  const agentSource = fs.readFileSync(path.join(import.meta.dirname, '..', 'os', 'os-osaa-agent.ts'), 'utf8');
   assert.match(httpSource, /export class HttpRequestTimeoutError/);
   assert.match(httpSource, /timeoutMs\?: number/);
   assert.match(agentSource, /R2D2_CHAT_TIMEOUT_MS = 120000/);

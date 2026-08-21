@@ -26,7 +26,7 @@ Authority: 워크로드/네임스페이스/이미지/태그 명명의 단일 기
 | kanidm(StatefulSet) / opensphere-console-auth | opensphere-console-kanidm | **opensphere-console** | `…/opensphere-console-kanidm` | 검증 upstream(Kanidm 1.4.6) **byte-equivalent mirror** |
 | console-backend / opensphere-system | opensphere-console-backend | **opensphere-console** | `…/opensphere-console-backend` | OpenSphere 소스 빌드 |
 | dupa-registry-controller / opensphere-system | opensphere-console-dupa-controller | **opensphere-console** | `…/opensphere-console-dupa-controller` | OpenSphere 소스 빌드 |
-| oaa-gateway / opensphere-backbone | opensphere-console-oaa-gateway | **opensphere-console** | `…/opensphere-console-oaa-gateway` | OpenSphere 소스 빌드 |
+| osaa-gateway / opensphere-backbone | opensphere-console-osaa-gateway | **opensphere-console** | `…/opensphere-console-osaa-gateway` | OpenSphere 소스 빌드 |
 | backbone-postgres / opensphere-backbone | opensphere-cbs-postgresql | **opensphere-cbs** | `…/opensphere-cbs-postgresql` | curated build(PostgreSQL 19b1 + pgvector 0.8.5) |
 | backbone-rustfs / opensphere-backbone | opensphere-cbs-rustfs | **opensphere-cbs** | `…/opensphere-cbs-rustfs` | curated build(RustFS) |
 | backbone-gitea / opensphere-backbone | opensphere-cbs-gitea | **opensphere-cbs** | `…/opensphere-cbs-gitea` | curated build(Gitea) |
@@ -66,7 +66,7 @@ postgresql:
 ## 7. 실행 순서(안전) — 데이터 손실 방지
 
 1. **표준 확정**(이 문서). ← 지금.
-2. **무상태 이름/디렉터리/파일 정렬**(auth·backend·dupa-controller·oaa-gateway): 이름·DNS·이미지·소스 dir. ← 1차 적용(진행 중).
+2. **무상태 이름/디렉터리/파일 정렬**(auth·backend·dupa-controller·osaa-gateway): 이름·DNS·이미지·소스 dir. ← 1차 적용(진행 중).
 3. **ns 정렬(코드/매니페스트)**: namespace 필드 + 모든 `<svc>.<ns>.svc` DNS 갱신. 라이브는 신규 ns 생성 후 컷오버.
 4. **상태저장(cbs-*·kanidm) 마이그레이션**: StatefulSet 이름 변경은 `<pvc>-<sts>-<n>` 를 바꿔 데이터가 분리된다. **백업 → 신규 워크로드 → 복원 → 검증** 창을 확보한 뒤에만 수행. 비운 채 재생성 금지.
 

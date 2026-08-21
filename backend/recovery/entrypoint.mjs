@@ -304,7 +304,7 @@ async function ensureRoles(roles, connection) {
 async function restoreDatabase(dump, profile, archivedRoles) {
   return postgresScratch(async (connection) => {
     const requiredRoles = profile === 'supabase'
-      ? ['anon', 'authenticated', 'service_role', 'authenticator', 'supabase_auth_admin', 'supabase_storage_admin', 'opensphere_console_backend', 'opensphere_oaa_gateway']
+      ? ['anon', 'authenticated', 'service_role', 'authenticator', 'supabase_auth_admin', 'supabase_storage_admin', 'opensphere_console_backend', 'opensphere_osaa_gateway']
       : ['gitea'];
     await ensureRoles([...requiredRoles, ...(archivedRoles || [])], connection);
     await shell('pg_restore', ['--exit-on-error', '--no-owner', '--no-privileges', '--host', connection.host, '--port', connection.port, '--username', connection.user, '--dbname', 'postgres', dump]);

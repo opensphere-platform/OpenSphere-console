@@ -21,7 +21,7 @@ file alone can never create recovery evidence. `decommission.approved` stays
 false until an independent human approval is recorded. The Console must show
 every gap as a gate.
 
-Schema `v3` declares an evidence freshness policy. The OAA recovery owner
+Schema `v3` declares an evidence freshness policy. The OSAA recovery owner
 returns only checksum-present/verified flags, structured restore assertions and
 freshness; it never returns the vault location or checksum values. Its
 capability set remains deliberately limited to `status-read` and `plan-read`:
@@ -57,4 +57,4 @@ The target Secret is an existing operator-owned Secret supplied to Setup as
 `bucket`, `region`, `access_key`, `secret_key`, `encryption_key` (at least 32
 bytes) and `ca.crt`. Setup copies only those keys to the data, change and
 isolated-drill namespaces. It never puts them into a release lock, a ConfigMap,
-an environment report or an OAA response.
+an environment report or an OSAA response.

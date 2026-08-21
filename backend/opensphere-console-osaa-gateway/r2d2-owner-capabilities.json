@@ -1,0 +1,26 @@
+{
+  "apiVersion": "opensphere.io/r2d2-owner-capabilities/v1",
+  "ownerComponent": "opensphere-console-osaa-gateway",
+  "ownerApiRevision": "v1",
+  "tools": [
+    "osaa.catalog.entities.list",
+    "osaa.control-plane.status",
+    "osaa.environment.read",
+    "osaa.evidence.retention.update",
+    "osaa.evidence.status",
+    "osaa.foundation.postgres.claim.create",
+    "osaa.foundation.postgres.plan",
+    "osaa.foundation.postgres.status",
+    "osaa.k8s.cluster.pods.summary",
+    "osaa.k8s.deployment.rollout",
+    "osaa.k8s.events.list",
+    "osaa.k8s.logs.tail",
+    "osaa.k8s.pods.list",
+    "osaa.k8s.resource.describe",
+    "osaa.k8s.resource.get",
+    "osaa.k8s.resources.list",
+    "osaa.k8s.services.list",
+    "osaa.knowledge.ingest-manual",
+    "osaa.knowledge.search"
+  ]
+}

@@ -4,7 +4,7 @@ const { createHash } = require('crypto');
 const path = require('path');
 
 const REPOSITORIES = Object.freeze({
-  console: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-console.git', allowedPaths: ['backend/', 'src/', 'nginx/', 'docs/'], components: ['console', 'consoleBackend', 'oaaGateway'] }),
+  console: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-console.git', allowedPaths: ['backend/', 'src/', 'nginx/', 'docs/'], components: ['console', 'consoleBackend', 'osaaGateway'] }),
   setup: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-Setup-CLI.git', allowedPaths: ['src/', 'deploy/', 'tests/', 'docs/'], components: ['setup'] }),
   clusterManager: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-shell-clusterManager.git', allowedPaths: ['src/', 'backend/', 'tests/'], components: ['clusterManager'] }),
   foundation: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-shell-foundation.git', allowedPaths: ['src/', 'backend/', 'tests/'], components: ['foundation'] }),

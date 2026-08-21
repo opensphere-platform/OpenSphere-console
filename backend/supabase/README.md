@@ -4,7 +4,7 @@ Canonical decision:
 `_DOCS_/10-의사결정/migration-adr-006-console-supabase-data-identity-backbone.md`.
 
 This directory is the active OpenSphere Console data and identity authority.
-It is installed by `OpenSphere-Setup-CLI` before Gitea, Backend, OAA and the
+It is installed by `OpenSphere-Setup-CLI` before Gitea, Backend, OSAA and the
 Main Shell.
 
 ## Components
@@ -16,7 +16,7 @@ Main Shell.
 - `install.ps1`: Secret creation/reuse, workload rollout, Supabase Storage
   migration and every sorted Console SQL migration.
 - `migrations/0001...0023`: canonical subject, RBAC, settings, audit, change
-  correlation, notification delivery, OAA control/evidence and recovery owner
+  correlation, notification delivery, OSAA control/evidence and recovery owner
   contracts.
 - `verify.mjs`: static manifest, migration, security-boundary and proxy checks.
 
@@ -27,7 +27,7 @@ omitted by a hand-maintained filename list.
 ## Authority boundary
 
 - `auth.users.id` is the canonical human subject.
-- PostgreSQL owns Console state, RBAC, audit and OAA ledger data.
+- PostgreSQL owns Console state, RBAC, audit and OSAA ledger data.
 - Supabase Storage owns Console object data and metadata.
 - Gitea remains a separate declarative desired-state and signed-history
   authority; Supabase stores change correlation, not Git history.
@@ -35,7 +35,7 @@ omitted by a hand-maintained filename list.
   defensive layer.
 
 Only the publishable anonymous key may reach browser code. The service-role
-key, PostgreSQL passwords and constrained Backend/OAA database credentials
+key, PostgreSQL passwords and constrained Backend/OSAA database credentials
 remain server-side Kubernetes Secrets.
 
 ## Normal installation

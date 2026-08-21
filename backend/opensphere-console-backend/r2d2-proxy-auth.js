@@ -7,7 +7,7 @@ function originalR2d2Request(req) {
   if (!SAFE_METHOD.test(method)) throw { code: 405, msg: 'unsupported R2D2 proxy method' };
   return {
     method,
-    url: String(req.headers['x-os-original-uri'] || '/api/oaa/'),
+    url: String(req.headers['x-os-original-uri'] || '/api/osaa/'),
     headers: req.headers,
   };
 }

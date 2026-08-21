@@ -69,7 +69,7 @@
 |---|---|
 | F-1 (Windows secure store) | DPAPI/Keychain 접근이 현재 `CGO_ENABLED=0` 정적 교차빌드(재현성 근거)와 충돌 → cgo-free 방식 ADR 결정 후 구현. 이번엔 F-2(argv)만 축소 |
 | F-4 (artifact 서명) | 릴리스/CI 파이프라인(build→sign→verify) + digest 참조 복원과 함께 처리 |
-| F-7 (OAA 테스트) | `oaa-gateway-tier.test.js`가 누락 `os-oaa-agent.ts` 참조로 실패, base-shell 테스트는 OAA 부재를 요구 → 정본 상태 모순, **제품 판단** 필요(CLI 스위트는 전부 통과) |
+| F-7 (OSAA 테스트) | `osaa-gateway-tier.test.js`가 누락 `os-osaa-agent.ts` 참조로 실패, base-shell 테스트는 OSAA 부재를 요구 → 정본 상태 모순, **제품 판단** 필요(CLI 스위트는 전부 통과) |
 | F-9 완전 자동 로그인 | Kanidm이 `grant_types_supported:["authorization_code"]`만 광고(device-code 없음). loopback PKCE redirect_uri 등록은 IdP 변경 필요. `--web`는 IdP 변경 없이 동작하는 콘솔-assisted 방식 |
 | WP-7 / WP-8~11 | Backbone restore drill(운영), OCI IAM/DR/FinOps(테넌시 콘솔 조작·자격증명 입력 필요 — 수행 불가) |
 
@@ -92,7 +92,7 @@
 - 태그 참조는 로컬 kind 한정 편의이며, digest 고정 복원 전까지 공급망 provenance가 약화된 상태다(F-4와 함께 해소).
 - 새 CLI 바이너리·발급 UI는 서명되지 않았다(F-4 미구현).
 - role 감사는 로그 스택(Loki) 수집 기반이며, PostgreSQL append-only durable + DB 미연결 시 fail-closed는 WP-3 후속이다.
-- 워킹 트리에는 **본 세션과 무관한 동시 변경**(`backend/oaa-gateway/manual-seeds/*`, `…/scripts/build-manual-seed.js`, `docs/AUDIT-REQUEST-CONSOLE-NATIVE-CLI-2026-07-12.md`, `docs/MAIN-SHELL-BASELINE.md` 삭제, `docs/BACKBONE-ARCHITECTURE.md`, `docs/OBSERVABILITY-ARCHITECTURE.md`)이 존재한다. 이는 본 작업이 아니며 커밋하지 않았다.
+- 워킹 트리에는 **본 세션과 무관한 동시 변경**(`backend/osaa-gateway/manual-seeds/*`, `…/scripts/build-manual-seed.js`, `docs/AUDIT-REQUEST-CONSOLE-NATIVE-CLI-2026-07-12.md`, `docs/MAIN-SHELL-BASELINE.md` 삭제, `docs/BACKBONE-ARCHITECTURE.md`, `docs/OBSERVABILITY-ARCHITECTURE.md`)이 존재한다. 이는 본 작업이 아니며 커밋하지 않았다.
 
 ## 8. 변경 파일 목록 (감사 기준 코드)
 
