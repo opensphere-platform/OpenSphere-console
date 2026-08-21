@@ -28,6 +28,10 @@ test('terminal is opaque and owns neither WebSocket nor credentials', () => {
 
 test('attached OS Shell visibly signals input readiness with a focused blinking cursor', () => {
   const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const nginx = read('nginx/default.conf.template');
+  const locationStart = nginx.indexOf('location ^~ /os-shell-frame/ {');
+  const locationEnd = nginx.indexOf('location = /shell {', locationStart);
+  const frameLocation = nginx.slice(locationStart, locationEnd);
   assert.match(frame, /cursorBlink:\s*true/);
   assert.match(frame, /cursorInactiveStyle:\s*'outline'/);
   assert.match(frame, /cursor:\s*'#fdd13a'/);
@@ -39,6 +43,10 @@ test('attached OS Shell visibly signals input readiness with a focused blinking 
   assert.match(frame, /cursorStyle:\s*'block'/);
   assert.match(frame, /case 'attached':[\s\S]*terminal[.]options[.]disableStdin = false;[\s\S]*terminal[.]focus\(\)/);
   assert.doesNotMatch(frame, /cursorBlink:\s*false/);
+  assert.match(frameLocation, /style-src 'self' 'unsafe-inline'/);
+  assert.match(frameLocation, /script-src 'self'/);
+  assert.match(frameLocation, /connect-src 'none'/);
+  assert.doesNotMatch(frameLocation, /script-src[^;]*'unsafe-inline'/);
 });
 
 test('terminal preserves upstream selection, copy and paste UX across the isolated frame', () => {
