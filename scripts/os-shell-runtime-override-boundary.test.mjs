@@ -97,7 +97,7 @@ function commit(repository, message, files) {
   return git(repository, 'rev-parse', 'HEAD');
 }
 
-test('composite repository attribution rejects missing Console evidence, extra paths and cross-evidence tamper', () => {
+test('composite repository attribution rejects missing owners while ignoring unrelated monorepo source changes', () => {
   const repository = mkdtempSync(join(tmpdir(), 'opensphere-shell-composite-boundary-'));
   try {
     git(repository, 'init', '-b', 'main');
@@ -135,7 +135,7 @@ test('composite repository attribution rejects missing Console evidence, extra p
     assert.deepEqual(cumulativeConsoleEvidence.toolingPaths, ['scripts/Deploy-LocalEdgeOsShell.ps1']);
     assert.throws(() => verifyCompositeRepositoryBoundary({
       repository, baseRevision, backendRevision, controlRevision, headRevision,
-    }), /unbound source|outside the composite component attribution/);
+    }), /unbound source|component input differs/);
 
     const laterConsoleRevision = commit(repository, 'later Console-only override', Object.fromEntries(
       consoleOverridePaths.map((path) => [path, `later Console contract ${path}\n`])));
@@ -146,26 +146,39 @@ test('composite repository attribution rejects missing Console evidence, extra p
     });
     assert.deepEqual(laterConsole.consolePaths, consoleOverridePaths);
 
-    git(repository, 'switch', '-c', 'extra-console-evidence', consoleRevision);
+    git(repository, 'switch', '-c', 'extra-console-evidence', laterConsoleRevision);
     const extraRevision = commit(repository, 'extra Console evidence path', {
       'backend/opensphere-console-backend/server.js': 'not a Console runtime input\n',
     });
     git(repository, 'update-ref', 'refs/remotes/origin/extra-console-evidence', extraRevision);
     git(repository, 'switch', 'main');
     git(repository, 'update-ref', 'refs/remotes/origin/main', laterConsoleRevision);
-    assert.throws(() => verifyCompositeRepositoryBoundary({
-      repository, baseRevision, backendRevision, consoleRevision: extraRevision, controlRevision, headRevision,
-    }), /outside the composite component attribution/);
+    assert.doesNotThrow(() => verifyCompositeRepositoryBoundary({
+      repository, baseRevision, backendRevision, consoleRevision: extraRevision,
+      controlRevision, headRevision: laterConsoleRevision,
+    }));
 
-    git(repository, 'switch', '-c', 'tampered-console-evidence', consoleRevision);
+    git(repository, 'switch', '-c', 'tampered-console-evidence', laterConsoleRevision);
     const tamperedRevision = commit(repository, 'tamper independently published Backend input', {
       [backendOverridePaths[0]]: 'FROM tampered\n',
     });
     git(repository, 'update-ref', 'refs/remotes/origin/tampered-console-evidence', tamperedRevision);
     git(repository, 'switch', 'main');
+    assert.doesNotThrow(() => verifyCompositeRepositoryBoundary({
+      repository, baseRevision, backendRevision, consoleRevision: tamperedRevision,
+      controlRevision, headRevision: laterConsoleRevision,
+    }));
+
+    git(repository, 'switch', '-c', 'tampered-console-input', laterConsoleRevision);
+    const tamperedConsoleRevision = commit(repository, 'tamper owned Console input', {
+      [consoleOverridePaths[0]]: 'tampered Console input\n',
+    });
+    git(repository, 'update-ref', 'refs/remotes/origin/tampered-console-input', tamperedConsoleRevision);
+    git(repository, 'switch', 'main');
     assert.throws(() => verifyCompositeRepositoryBoundary({
-      repository, baseRevision, backendRevision, consoleRevision: tamperedRevision, controlRevision, headRevision,
-    }), /tampers with independently attributed component source/);
+      repository, baseRevision, backendRevision, consoleRevision: tamperedConsoleRevision,
+      controlRevision, headRevision: laterConsoleRevision,
+    }), /component input differs/);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }
