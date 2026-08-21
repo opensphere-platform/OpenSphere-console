@@ -7618,7 +7618,7 @@ async function chatCompletion(body, actor) {
   if (extensionPresentationIntent) {
     systemMessages.push({
       role: 'system',
-      content: 'This request matches the Registry Plugin presentation incident. Use the canonical extension-presentation-status evidence before any general Kubernetes inference. Treat 요청 시 적재 as child UI activation timing, not proof of menu ineligibility. Do not propose restart, reinstall, or enable when the projection reports no blocker.',
+      content: 'This request matches the Registry Plugin presentation incident. Answer from the canonical extension-presentation-status evidence. Treat 요청 시 적재 as child UI activation timing, not proof of menu ineligibility. Do not cite unrelated Kubernetes workload readiness as a cause, and do not propose restart, reinstall, or enable when the projection reports no blocker.',
     });
   }
   try {
@@ -7642,7 +7642,7 @@ async function chatCompletion(body, actor) {
     console.warn('[osaa-actions] suggestions skipped:', e.message || e);
   }
   try {
-    if (body.includeEnvironment !== false) {
+    if (body.includeEnvironment !== false && !extensionPresentationIntent) {
       environment = await environmentSnapshot(body, actor);
       evidenceMessages.push(environmentSystemMessage(environment));
     }

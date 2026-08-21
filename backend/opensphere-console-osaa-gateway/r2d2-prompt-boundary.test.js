@@ -83,6 +83,8 @@ test('Registry Plugin presentation incidents select the canonical deterministic 
   assert.match(server, /verified-extension-presentation-status/);
   assert.match(server, /encoding: 'deterministic-preflight'/);
   assert.match(server, /!extensionPresentationEvidence/);
+  assert.match(server, /body\.includeEnvironment !== false && !extensionPresentationIntent/);
+  assert.match(server, /Do not cite unrelated Kubernetes workload readiness as a cause/);
 });
 
 test('lexical retrieval separates canonical identifiers from Korean particles', () => {
