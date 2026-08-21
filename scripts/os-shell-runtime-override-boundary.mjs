@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 export const runtimeInputPaths = Object.freeze([
   'backend/os-cli/Dockerfile.runtime',
+  'backend/os-cli/manifest.test.mjs',
 ]);
 
 export const backendOverridePaths = Object.freeze([
@@ -38,6 +39,7 @@ export const controlOverridePaths = Object.freeze([
 export const canonicalConsoleOrigin = 'https://github.com/opensphere-platform/OpenSphere-console.git';
 
 export const deploymentToolingPaths = Object.freeze([
+  'backend/dupa-control/release-channel-workflow.test.js',
   'backend/os-shell-control/deploy.test.js',
   'backend/os-shell-control/deploy.yaml',
   'scripts/Deploy-LocalEdgeOsShell.ps1',

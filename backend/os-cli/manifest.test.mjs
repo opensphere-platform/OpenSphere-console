@@ -42,10 +42,16 @@ test('release manifest is hydrated from the exact compiled CLI artifacts', async
 test('the independent CLI artifact image compiles the manifest version', async () => {
   const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
   const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
+  const runtimeDockerfile = await readFile(new URL('./Dockerfile.runtime', import.meta.url), 'utf8');
   const releaseManifest = JSON.parse(await readFile(new URL('./index.json', import.meta.url), 'utf8'));
   const escapedVersion = releaseManifest.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const versionPattern = new RegExp(`main\\.version=${escapedVersion}`);
   assert.match(cliDockerfile, versionPattern);
+  assert.match(runtimeDockerfile, /COPY go[.]mod go[.]sum index[.]json [.][\\/]/);
+  assert.match(runtimeDockerfile, /OS_CLI_VERSION="\$\(sed [^\r\n]+ index[.]json\)"/);
+  assert.match(runtimeDockerfile, /-X main[.]osCLIVersion=\$\{OS_CLI_VERSION\}/);
+  assert.match(runtimeDockerfile, /-X main[.]version=\$\{OS_CLI_VERSION\}/);
+  assert.doesNotMatch(runtimeDockerfile, /main[.]osCLIVersion=0[.]8[.]2/);
   assert.match(cliDockerfile, /COPY go\.mod go\.sum \.\//);
   assert.match(cliDockerfile, /CLI_UPDATE_SIGNING_PROFILE/);
   assert.match(cliDockerfile, /cli_update_signing_key/);

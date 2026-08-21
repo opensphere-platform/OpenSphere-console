@@ -54,11 +54,12 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   // No component selector means the governed integrated release. An explicit
   // selector narrows the publication without weakening the full-release default.
   assert.match(localEdgePublisher, /\[string\[\]\]\$Components = @\('console', 'backend',/);
-  assert.match(localEdgePublisher, /\$canonicalImages = @\(\$allImages \| Where-Object \{ \$_\.Key -ne 'cliArtifacts' \}\)/);
+  assert.match(localEdgePublisher, /\$auxiliaryComponentKeys = @\('cliArtifacts', 'osShellControl', 'osShellRuntime'\)/);
+  assert.match(localEdgePublisher, /\$canonicalImages = @\(\$allImages \| Where-Object \{ \$_\.Key -notin \$auxiliaryComponentKeys \}\)/);
   assert.match(localEdgePublisher, /\$partialPublication = -not \$integratedPublication/);
   assert.match(localEdgePublisher, /Where-Object \{ \$requestedComponents\.Contains\(\$_.Key\) \}/);
   assert.match(localEdgePublisher, /OpenSphereEdgeComponentPublication/);
-  assert.match(localEdgePublisher, /ValidateSet\('console', 'cliArtifacts', 'backend'/);
+  assert.match(localEdgePublisher, /ValidateSet\('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend'/);
   assert.match(localEdgePublisher, /Key = 'cliArtifacts'; Image = 'opensphere-os-cli'/);
   assert.match(localEdgePublisher, /\$componentEvidence = \[ordered\]@\{\}/);
   assert.match(localEdgePublisher, /\[string\]\$SetupSourcePath = ''/);
@@ -69,6 +70,8 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   assert.match(localEdgePublisher, /differs from governed lock/);
   assert.doesNotMatch(localEdgePublisher, /\$components = \[ordered\]@\{\}/i);
   assert.match(localEdgePublisher, /Advance selected component tags without moving a partial Console anchor/);
+  assert.match(localEdgePublisher, /opensphere-local-component-publication-\$\(\$item\.Key\)\.json/);
+  assert.match(localEdgePublisher, /\$singleComponentBom\['components'\] = \[ordered\]@\{/);
 });
 
 test('retag-only promotion workflow is absent because channel identity is immutable image metadata', () => {

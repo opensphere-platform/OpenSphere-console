@@ -82,6 +82,24 @@ func TestRuntimeBindingIsClosedAndRejectsKubeVirt(t *testing.T) {
 	}
 }
 
+func TestShellEnvironmentBrandsPromptWithEmbeddedOSVersion(t *testing.T) {
+	previous := osCLIVersion
+	osCLIVersion = "0.8.2"
+	t.Cleanup(func() { osCLIVersion = previous })
+
+	environment := shellEnvironment(fixedConsoleAPIURL)
+	wanted := "PS1=oss-0.8.2$ "
+	count := 0
+	for _, value := range environment {
+		if value == wanted {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("OS Shell prompt must be exact and unique: count=%d env=%q", count, environment)
+	}
+}
+
 func TestConsoleAPIExecutionEndpointIsNotTheBrowserOrigin(t *testing.T) {
 	t.Setenv("OPENSPHERE_SHELL_CONSOLE_API_URL", fixedConsoleAPIURL)
 	endpoint, err := loadConsoleAPIURL()
