@@ -24,6 +24,7 @@ export const consoleOverridePaths = Object.freeze([
   'src/app/core/system-plugin-registry.service.ts',
   'src/app/pages/admin-plugins-state.spec.ts',
   'src/app/pages/admin-plugins.ts',
+  'src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts',
   'src/app/system-plugins/os-shell/os-shell-launcher.ts',
   'src/app/system-plugins/os-shell/os-shell-page.scss',
   'src/app/system-plugins/os-shell/os-shell-page.ts',
