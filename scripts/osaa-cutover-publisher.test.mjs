@@ -17,6 +17,10 @@ test('OSAA publisher has one exact six-component cutover profile', () => {
 });
 
 test('OSAA publisher requires the installed bridge and emits component evidence', () => {
+  assert.match(source, /get deployment opensphere-console-backend -o json/);
+  assert.match(source, /status[.]readyReplicas -ne \[int\]\$backendDeployment[.]spec[.]replicas/);
+  assert.match(source, /opensphere-console-backend@sha256/);
+  assert.match(source, /io[.]opensphere[.]source-revision/);
   assert.match(source, /minimumBridgeRevision = '125922f96634572763c040924c8c4f3fe72af167'/);
   assert.match(source, /merge-base --is-ancestor \$minimumBridgeRevision \$bridgeRevision/);
   assert.match(source, /merge-base --is-ancestor \$bridgeRevision \$sourceRevision/);
