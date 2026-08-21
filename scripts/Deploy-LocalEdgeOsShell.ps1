@@ -940,10 +940,6 @@ if ($RuntimePublicationEvidence) {
   if (($runtimeComponentKeys -join ',') -ne 'osShellRuntime') {
     throw "Runtime override requires exactly osShellRuntime; received: $($runtimeComponentKeys -join ',')"
   }
-  & git -C $consoleRoot merge-base --is-ancestor ([string]$evidence.sourceRevision) ([string]$runtimeEvidence.sourceRevision)
-  if ($LASTEXITCODE -ne 0) {
-    throw 'Runtime override SourceRevision is not a descendant of the base OS Shell publication'
-  }
 }
 
 $platformPublicationPath = ''

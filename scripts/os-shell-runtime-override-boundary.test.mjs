@@ -223,3 +223,57 @@ test('platform bridge accepts squash-separated main while preserving exact OS Sh
     rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test('independent component publications bridge a squash-separated live base without weakening blob ownership', () => {
+  const repository = mkdtempSync(join(tmpdir(), 'opensphere-shell-independent-components-'));
+  try {
+    git(repository, 'init', '-b', 'main');
+    git(repository, 'config', 'user.name', 'OpenSphere Test');
+    git(repository, 'config', 'user.email', 'test@opensphere.local');
+    const commonRevision = commit(repository, 'common root', { 'README.md': 'common\n' });
+    git(repository, 'switch', '-c', 'os-shell');
+    const baseRevision = commit(repository, 'live OS Shell base', { 'OS-SHELL.md': 'live base\n' });
+    const controlRevision = commit(repository, 'live Control publication', Object.fromEntries(
+      controlOverridePaths.map((path) => [path, `control contract ${path}\n`])));
+
+    git(repository, 'switch', 'main');
+    git(repository, 'reset', '--hard', commonRevision);
+    commit(repository, 'canonical squash-equivalent Control source', Object.fromEntries(
+      controlOverridePaths.map((path) => [path, `control contract ${path}\n`])));
+    const backendRevision = commit(repository, 'canonical Backend publication', Object.fromEntries(
+      backendOverridePaths.map((path) => [path, `backend contract ${path}\n`])));
+    const consoleRevision = commit(repository, 'canonical Console publication', Object.fromEntries(
+      consoleOverridePaths.map((path) => [path, `console contract ${path}\n`])));
+    const runtimeRevision = commit(repository, 'canonical Runtime publication', Object.fromEntries(
+      validRuntime.map((path) => [path, `runtime contract ${path}\n`])));
+    const headRevision = commit(repository, 'reviewed deployment tooling', {
+      'scripts/Deploy-LocalEdgeOsShell.ps1': '# deployment tooling\n',
+    });
+    git(repository, 'remote', 'add', 'origin', canonicalConsoleOrigin);
+    git(repository, 'update-ref', 'refs/remotes/origin/os-shell', controlRevision);
+    git(repository, 'update-ref', 'refs/remotes/origin/main', headRevision);
+    git(repository, 'branch', '--set-upstream-to=origin/main', 'main');
+
+    const valid = verifyCompositeRepositoryBoundary({
+      repository, baseRevision, runtimeRevision, backendRevision, consoleRevision, controlRevision, headRevision,
+    });
+    assert.equal(valid.headAnchorRevision, runtimeRevision);
+    assert.deepEqual(valid.independentComponentAuthorities, ['runtime', 'backend', 'console']);
+    assert.deepEqual(valid.runtimePaths, [...validRuntime].sort());
+    assert.deepEqual(valid.backendPaths, backendOverridePaths);
+    assert.deepEqual(valid.consolePaths, consoleOverridePaths);
+    assert.deepEqual(valid.controlPaths, controlOverridePaths);
+    assert.deepEqual(valid.toolingPaths, ['scripts/Deploy-LocalEdgeOsShell.ps1']);
+
+    const tamperedHead = commit(repository, 'tamper Runtime after publication', {
+      [validRuntime[0]]: 'tampered runtime contract\n',
+    });
+    git(repository, 'update-ref', 'refs/remotes/origin/main', tamperedHead);
+    assert.throws(() => verifyCompositeRepositoryBoundary({
+      repository, baseRevision, runtimeRevision, backendRevision, consoleRevision, controlRevision,
+      headRevision: tamperedHead,
+    }), /unbound source|component input differs/);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
