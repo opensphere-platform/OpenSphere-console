@@ -41,6 +41,6 @@ test('first-level navigation keeps a readable gap between the projected icon and
   assert.match(navIconSource, /@Input\(\) size = 20;/);
   assert.match(globalStyles, /flex: 0 0 20px !important; width: 20px !important; height: 20px !important; min-width: 20px !important;/);
   assert.match(globalStyles, /\.os-nav os-nav-icon os-cicon svg \{ width: 20px !important; height: 20px !important; \}/);
-  assert.match(globalStyles, /margin-inline-end: 15px !important;/);
+  assert.match(globalStyles, /margin-inline-end: 10px !important;/);
   assert.doesNotMatch(navIconSource, /:host-context\(\.os-nav\).*margin-inline-end/);
 });
