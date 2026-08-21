@@ -259,10 +259,13 @@ body code, body kbd, body pre, body samp, .os-mono { font-family: var(--os-font-
 .os-nav .nav-trigger > os-cicon,
 .os-nav a[clrVerticalNavLink] > os-rawicon,
 .os-nav .nav-link > os-rawicon,
-.os-nav .nav-trigger > os-rawicon {
-  flex: 0 0 20px; width: 20px !important; height: 20px !important; min-width: 20px !important;
+.os-nav .nav-trigger > os-rawicon,
+.os-nav a[clrVerticalNavLink] > os-nav-icon,
+.os-nav .nav-link > os-nav-icon,
+.os-nav .nav-trigger > os-nav-icon {
+  flex: 0 0 20px !important; width: 20px !important; height: 20px !important; min-width: 20px !important;
   display: inline-flex !important; align-items: center; justify-content: center;
-  margin-inline-end: 0.65rem;   /* 아이콘-텍스트 간격(os-cicon·os-rawicon 일관) */
+  margin-inline-end: 0.65rem !important;   /* 아이콘-텍스트 간격(os-cicon·os-rawicon·os-nav-icon 일관) */
 }
 .os-nav os-cicon svg, .os-nav os-rawicon svg { display: block; width: 20px !important; height: 20px !important; }
 
