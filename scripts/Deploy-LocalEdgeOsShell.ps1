@@ -134,13 +134,22 @@ function Get-SourceMigrationEvidence {
   if ([int]$manifest.schemaVersion -ne 2 -or
       [string]$manifest.setDigest -notmatch '^sha256:[a-f0-9]{64}$' -or
       [string]$manifest.latestMigrationId -notmatch '^\d{4}$' -or
-      [int]$manifest.migrationCount -le 0) {
+      [int]$manifest.migrationCount -le 0 -or
+      @($manifest.migrations).Count -ne [int]$manifest.migrationCount) {
     throw "Migration manifest at source revision $Revision is not canonical"
   }
   return [ordered]@{
     setDigest = [string]$manifest.setDigest
     latestMigrationId = [string]$manifest.latestMigrationId
     migrationCount = [int]$manifest.migrationCount
+    migrations = @($manifest.migrations | ForEach-Object {
+      [ordered]@{
+        id = [string]$_.id
+        predecessorMigrationId = if ($null -eq $_.predecessorMigrationId) { $null } else { [string]$_.predecessorMigrationId }
+        name = [string]$_.name
+        sha256 = [string]$_.sha256
+      }
+    })
   }
 }
 
@@ -155,6 +164,30 @@ function Assert-MigrationAuthorityMatch {
       [string]$Candidate.latestMigrationId -ne [string]$Authority.latestMigrationId -or
       [int]$Candidate.migrationCount -ne [int]$Authority.migrationCount) {
     throw "$Purpose differs from the live Backend migration authority"
+  }
+}
+
+function Assert-MigrationAuthorityCompatible {
+  param(
+    [Parameter(Mandatory)]$Authority,
+    [Parameter(Mandatory)]$Candidate,
+    [Parameter(Mandatory)][string]$Purpose
+  )
+  $authorityEntries = @($Authority.migrations)
+  $candidateEntries = @($Candidate.migrations)
+  if ($candidateEntries.Count -le 0 -or $candidateEntries.Count -gt $authorityEntries.Count -or
+      $candidateEntries.Count -ne [int]$Candidate.migrationCount) {
+    throw "$Purpose is not a migration prefix of the live Backend authority"
+  }
+  for ($index = 0; $index -lt $candidateEntries.Count; $index++) {
+    $authorityEntry = $authorityEntries[$index]
+    $candidateEntry = $candidateEntries[$index]
+    if ([string]$candidateEntry.id -ne [string]$authorityEntry.id -or
+        [string]$candidateEntry.predecessorMigrationId -ne [string]$authorityEntry.predecessorMigrationId -or
+        [string]$candidateEntry.name -ne [string]$authorityEntry.name -or
+        [string]$candidateEntry.sha256 -ne [string]$authorityEntry.sha256) {
+      throw "$Purpose diverges from the live Backend migration authority at index $index"
+    }
   }
 }
 
@@ -1026,9 +1059,10 @@ if ($ControlPublicationEvidence) {
 
 # Migration authority follows the exact live Backend component. Console,
 # Control, CLI and Runtime images do not own the Supabase migration lifecycle.
-# A newer Platform Release may therefore advance Backend migrations after the
-# original five-component OS Shell base was published. Bind every new UI or
-# Runtime source to that live Backend manifest instead of an obsolete base.
+# A newer Backend release may advance migrations after an independently
+# published Console or Runtime image. Those component sources remain valid only
+# when their complete migration inventory is an exact prefix of the live
+# Backend authority; divergence and rollback remain fail-closed.
 $migrationAuthority = Get-SourceMigrationEvidence -Revision ([string]$backendEvidence.sourceRevision)
 $backendMigrationArtifact = $null
 $backendArtifactsProperty = $backendEvidence.PSObject.Properties['artifacts']
@@ -1049,8 +1083,8 @@ if ($ConsolePublicationEvidence -or $PlatformPublicationEvidence) {
 }
 foreach ($candidate in $migrationCandidates) {
   $sourceMigration = Get-SourceMigrationEvidence -Revision ([string]$candidate.Evidence.sourceRevision)
-  Assert-MigrationAuthorityMatch -Authority $migrationAuthority -Candidate $sourceMigration -Purpose $candidate.Name
-  Assert-MigrationAuthorityMatch -Authority $migrationAuthority `
+  Assert-MigrationAuthorityCompatible -Authority $migrationAuthority -Candidate $sourceMigration -Purpose $candidate.Name
+  Assert-MigrationAuthorityMatch -Authority $sourceMigration `
     -Candidate $candidate.Evidence.artifacts.supabaseMigrationManifest `
     -Purpose "$($candidate.Name) publication evidence"
 }
@@ -1161,7 +1195,11 @@ if ($LASTEXITCODE -ne 0 -or $authorityManifestBlob -notmatch '^[a-f0-9]{40,64}$'
     $workingManifestBlob -ne $authorityManifestBlob) {
   throw 'Committed migration manifest does not match the live Backend source authority'
 }
-$migrationArtifact = $migrationAuthority
+$migrationArtifact = [ordered]@{
+  setDigest = [string]$migrationAuthority.setDigest
+  latestMigrationId = [string]$migrationAuthority.latestMigrationId
+  migrationCount = [int]$migrationAuthority.migrationCount
+}
 $migrationManifest = Get-Content -Raw -LiteralPath $migrationManifestPath | ConvertFrom-Json
 $migration0061 = @($migrationManifest.migrations | Where-Object { [string]$_.name -eq '0061_shell_session_ledger.sql' })
 $migration0062 = @($migrationManifest.migrations | Where-Object { [string]$_.name -eq '0062_shell_session_quota_and_kill_switch.sql' })
