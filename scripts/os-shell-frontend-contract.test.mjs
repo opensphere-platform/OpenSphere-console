@@ -26,6 +26,14 @@ test('terminal is opaque and owns neither WebSocket nor credentials', () => {
   assert.match(frame, /MessagePort/);
 });
 
+test('attached OS Shell visibly signals input readiness with a focused blinking cursor', () => {
+  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  assert.match(frame, /cursorBlink:\s*true/);
+  assert.match(frame, /cursorStyle:\s*'block'/);
+  assert.match(frame, /case 'attached':[\s\S]*terminal[.]options[.]disableStdin = false;[\s\S]*terminal[.]focus\(\)/);
+  assert.doesNotMatch(frame, /cursorBlink:\s*false/);
+});
+
 test('trusted terminal interaction extends the Main Shell browser session without counting output as activity', () => {
   const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
   const protocol = read('src/app/system-plugins/os-shell/os-shell-protocol.ts');
