@@ -68,7 +68,11 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
           </div>
           <div class="session-actions">
             @if (!session()) {
-              <button class="btn btn-primary" type="button" [disabled]="busy()" (click)="createSession()">OS Shell 시작</button>
+              @if (messageType() === 'danger') {
+                <button class="btn btn-primary" type="button" [disabled]="busy()" (click)="createSession()">다시 시작</button>
+              } @else {
+                <span class="auto-start" role="status">호출 즉시 자동 시작 중</span>
+              }
             } @else {
               <button class="btn btn-danger-outline" type="button" [disabled]="busy()" (click)="terminateSession()">세션 종료</button>
             }
@@ -92,8 +96,8 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
         } @else {
           <section class="empty-terminal">
             <code>$ os</code>
-            <h2>관리 Shell 세션이 없습니다</h2>
-            <p>OS Shell 시작을 선택하면 사용자 전용 격리 세션을 준비합니다.</p>
+            <h2>사용자 전용 격리 세션을 준비하고 있습니다</h2>
+            <p>OS Shell 호출과 함께 세션 생성과 연결을 자동으로 시작합니다.</p>
           </section>
         }
       }
@@ -218,10 +222,13 @@ export class OsShellPage {
       if (resumable) {
         this.session.set(resumable);
         if (!ATTACHABLE_STATES.has(resumable.observedState)) this.schedulePoll();
+        return;
       }
     } catch {
-      // A not-yet-deployed list endpoint leaves the honest no-session state.
+      // Session creation remains idempotent and quota-fenced when a transient
+      // list failure prevents the client from finding a resumable session.
     }
+    await this.createSession();
   }
 
   private schedulePoll(): void {

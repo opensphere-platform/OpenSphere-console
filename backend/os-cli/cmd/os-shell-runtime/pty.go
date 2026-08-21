@@ -26,6 +26,14 @@ const internalPTYSubprotocol = "opensphere.pty.internal.v1"
 
 var configuredPTYListenAddr = defaultPTYListenAddr
 
+func shellEnvironment(consoleAPIURL string) []string {
+	return []string{
+		"HOME=/home/opensphere", "PATH=/usr/local/bin:/usr/bin:/bin", "TERM=xterm-256color",
+		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "SHELL=/bin/bash", "PS1=oss-" + osCLIVersion + "$ ",
+		"OS_CONSOLE=" + consoleAPIURL,
+	}
+}
+
 type ptyServer struct {
 	binding       runtimeBinding
 	consoleAPIURL string
@@ -177,10 +185,7 @@ func (server *ptyServer) handleAttach(w http.ResponseWriter, request *http.Reque
 	}
 	bind.InternalToken = ""
 	command := exec.CommandContext(ctx, "/bin/bash", "--noprofile", "--norc")
-	command.Env = []string{
-		"HOME=/home/opensphere", "PATH=/usr/local/bin:/usr/bin:/bin", "TERM=xterm-256color",
-		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "SHELL=/bin/bash", "OS_CONSOLE=" + server.consoleAPIURL,
-	}
+	command.Env = shellEnvironment(server.consoleAPIURL)
 	if info, err := os.Stat("/home/opensphere"); err == nil && info.IsDir() {
 		command.Dir = "/home/opensphere"
 	} else {

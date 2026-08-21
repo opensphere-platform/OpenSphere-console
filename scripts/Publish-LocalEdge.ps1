@@ -7,7 +7,7 @@ param(
   [string]$SetupRepository = 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git',
   [string]$SetupSourcePath = '',
   [switch]$UseExistingRegistryLogin,
-  [ValidateSet('console', 'cliArtifacts', 'backend', 'dupaController', 'osaaGateway', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
+  [ValidateSet('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend', 'dupaController', 'osaaGateway', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
   [string[]]$Components = @('console', 'backend', 'dupaController', 'osaaGateway', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
 )
 
@@ -289,6 +289,10 @@ $allImages = @(
   # build and rollout. They are intentionally not added to the 13-component
   # Platform Release lock merely to decouple an Angular UI build.
   [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile') },
+  # CBSS OS Shell images are auxiliary component workloads. Selecting one may
+  # never expand a local edge change into the 13-image integrated release.
+  [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\os-shell-control\Dockerfile') },
+  [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile.runtime') },
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'); SetupContext = $setupCheckout },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway\Dockerfile') },
@@ -302,13 +306,14 @@ $allImages = @(
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
   [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
 )
-$canonicalImages = @($allImages | Where-Object { $_.Key -ne 'cliArtifacts' })
+$auxiliaryComponentKeys = @('cliArtifacts', 'osShellControl', 'osShellRuntime')
+$canonicalImages = @($allImages | Where-Object { $_.Key -notin $auxiliaryComponentKeys })
 $requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
 $images = @($allImages | Where-Object { $requestedComponents.Contains($_.Key) })
 if (-not $images.Count) { throw 'At least one Console component must be selected.' }
 $integratedPublication = $images.Count -eq $canonicalImages.Count `
-  -and -not ($images.Key -contains 'cliArtifacts') `
+  -and @($images | Where-Object { $_.Key -in $auxiliaryComponentKeys }).Count -eq 0 `
   -and @($canonicalImages | Where-Object { -not $requestedComponents.Contains($_.Key) }).Count -eq 0
 $partialPublication = -not $integratedPublication
 $integratedAnchorBefore = if ($partialPublication -and ($images | Where-Object { $_.Key -eq 'console' })) {
@@ -387,6 +392,9 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
   if ($item.Key -eq 'console') {
     $arguments += @('--build-arg', "SDK_SOURCE_REVISION=$sdkSourceRevision")
   }
+  if ($item.Key -eq 'osShellRuntime') {
+    $arguments += @('--build-arg', "OPENSPHERE_VERSION=$releaseTag")
+  }
   $arguments += $item.Context
   Invoke-Checked docker @arguments
   $metadata = Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json
@@ -438,6 +446,21 @@ $releaseArtifacts = [ordered]@{
     migrationCount = [int]$migrationManifest.migrationCount
   }
 }
+if ($requestedComponents.Contains('osShellControl')) {
+  $runtimeTemplatePath = Join-Path $consoleCheckout 'backend\os-shell-control\runtime-template.js'
+  $releaseArtifacts['osShellControlRelease'] = [ordered]@{
+    runtimeTemplate = [ordered]@{
+      path = 'backend/os-shell-control/runtime-template.js'
+      sha256 = Get-CanonicalTextSha256 -Path $runtimeTemplatePath
+    }
+    runtimeProcessPolicy = [ordered]@{
+      maxProcesses = 256
+      globalPodLimit = 8
+      userNamespacePolicy = 'required-hostUsers-false'
+      enforcement = 'linux-userns+rlimit-nproc+namespace-resourcequota'
+    }
+  }
+}
 $bom = [ordered]@{
   apiVersion = 'release.opensphere.io/v1alpha1'
   kind = $partialPublication ? 'OpenSphereEdgeComponentPublication' : 'OpenSphereReleaseBOM'
@@ -457,6 +480,20 @@ $bom = [ordered]@{
 }
 $bomPath = Join-Path $workspace ($partialPublication ? 'opensphere-local-component-publication.json' : 'opensphere-local-release-bom.json')
 $bom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bomPath -Encoding utf8
+if ($partialPublication) {
+  foreach ($item in $images) {
+    $singleComponentBom = [ordered]@{}
+    foreach ($entry in $bom.GetEnumerator()) {
+      $singleComponentBom[$entry.Key] = $entry.Value
+    }
+    $singleComponentBom['components'] = [ordered]@{
+      $item.Key = $componentEvidence[$item.Key]
+    }
+    $singleComponentPath = Join-Path $workspace "opensphere-local-component-publication-$($item.Key).json"
+    $singleComponentBom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $singleComponentPath -Encoding utf8
+    Write-Host "[component evidence] $singleComponentPath"
+  }
+}
 
 Write-Host '[step 06/06] Advance selected component tags without moving a partial Console anchor'
 foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {

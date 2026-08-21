@@ -14,6 +14,7 @@ const validRuntime = [
   'backend/os-cli/cmd/os-shell-runtime/agent.go',
   'backend/os-cli/cmd/os-shell-runtime/runtime_directory.go',
   'backend/os-cli/Dockerfile.runtime',
+  'backend/os-cli/manifest.test.mjs',
 ];
 
 test('runtime override is closed over runtime source and its dedicated build overlay only', () => {

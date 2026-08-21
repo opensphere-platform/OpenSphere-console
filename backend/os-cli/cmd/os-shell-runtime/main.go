@@ -19,7 +19,10 @@ const (
 	cliAudience         = "opensphere-os-cli"
 )
 
-var version = "dev"
+var (
+	version      = "dev"
+	osCLIVersion = "dev"
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

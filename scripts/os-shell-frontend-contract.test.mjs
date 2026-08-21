@@ -130,7 +130,7 @@ test('Nginx mediates API/WSS through dedicated admission and control upstreams',
 test('ordinary Extension Host rejects system-only attach before bundle fetch', () => {
   const host = read('src/app/core/extension-host.service.ts');
   const rejection = host.indexOf("perms.includes('session:attach')");
-  const entryFetch = host.indexOf("fetchWithTimeout(entryUrl");
+  const entryFetch = host.indexOf('this.fetchVerifiedArtifactText(', rejection);
   assert.ok(rejection > 0 && entryFetch > rejection);
 });
 
@@ -145,6 +145,15 @@ test('Console refresh resumes only the current actor session and reconnect alway
   assert.match(attach, /retryCount >= 2/);
   assert.match(attach, /attachTicket = ''/);
   assert.doesNotMatch(attach, /localStorage|sessionStorage|indexedDB/);
+});
+
+test('opening OS Shell immediately resumes or creates a session without a second start action', () => {
+  const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
+  assert.match(page, /if \(resumable\) \{[\s\S]*this[.]session[.]set\(resumable\);[\s\S]*return;/);
+  assert.match(page, /await this[.]createSession\(\);/);
+  assert.match(page, /호출 즉시 자동 시작 중/);
+  assert.doesNotMatch(page, />OS Shell 시작<\/button>/);
+  assert.match(page, />다시 시작<\/button>/);
 });
 
 test('session create retains one client idempotency key across response loss and relies on DB quotas, not UI clicks', () => {
