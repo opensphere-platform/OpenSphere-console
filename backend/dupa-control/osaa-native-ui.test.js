@@ -246,6 +246,9 @@ test('OSAA chat delegates provider key selection to Gateway instead of hard-codi
 
   assert.doesNotMatch(agent, /keyId:\s*['"]deepseek['"]/);
   assert.match(agent, /conversationId: this\.currentId\(\) \|\| undefined,[\s\S]*clientRequestId: crypto\.randomUUID\(\),[\s\S]*message: text,[\s\S]*context: this\.pageContext\(\),[\s\S]*source: 'console-osaa-agent'/);
+  assert.doesNotMatch(agent, /model:\s*this\.(?:activeModel|displayModel)\(\)/);
+  assert.doesNotMatch(agent, /readonly activeModel\s*=/);
+  assert.match(agent, /readonly displayModel = computed\([\s\S]*?osaa-control-tools/);
   assert.doesNotMatch(agent, /messages:\s*payloadMessages|sessionId:\s*this\.currentId\(\)/);
 });
 

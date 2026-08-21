@@ -3,7 +3,7 @@ const fs = require('fs');
 const { createHash, randomUUID } = require('crypto');
 const { Pool } = require('pg');
 const { normalizeProviderToolCalls } = require('./provider-tool-calls');
-const { lexicalKnowledgeQuery, requiresLiveAgentTools } = require('./chat-runtime-policy');
+const { configuredProviderModel, lexicalKnowledgeQuery, requiresLiveAgentTools } = require('./chat-runtime-policy');
 const { createConversationStore } = require('./conversation-store');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
@@ -5915,6 +5915,7 @@ function commandResponse(started, message, result = null) {
     keyId: 'osaa-tools',
     provider: 'opensphere',
     model: 'osaa-control-tools',
+    modelAuthority: 'execution-profile',
     message,
     usage: null,
     latencyMs: Date.now() - started,
@@ -7549,8 +7550,7 @@ async function chatCompletion(body, actor) {
   const source = usageSource(body.source, 'console-osaa-agent');
   const sessionId = String(body.sessionId || '').slice(0, 200);
   const baseUrl = (key.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
-  const model = String(body.model || key.defaultModel || 'deepseek-v4-flash').trim();
-  if (!MODEL_RE.test(model)) throw { code: 400, msg: 'invalid model' };
+  const model = configuredProviderModel(key.defaultModel, body.model);
   const requestId = randomUUID();
   const started = Date.now();
   const agentRunRecorded = await beginAgentRun({ id: requestId, actor, sessionId, requestText: latestUserContent(baseMessages), key, model });
@@ -7768,6 +7768,7 @@ async function chatCompletion(body, actor) {
     keyId: key.id,
     provider: key.provider,
     model: providerModel,
+    modelAuthority: 'provider',
     message: content,
     usage,
     usageRecorded,

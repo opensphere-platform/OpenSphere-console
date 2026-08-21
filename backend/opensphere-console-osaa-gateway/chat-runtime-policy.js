@@ -24,4 +24,25 @@ function lexicalKnowledgeQuery(query) {
   return [...new Set(identifiers.map((value) => value.trim()).filter(Boolean))].join(' ') || text;
 }
 
-module.exports = { lexicalKnowledgeQuery, requiresLiveAgentTools };
+// The configured credential owns the provider model. Browser response metadata
+// (including the built-in `osaa-control-tools` execution profile) is display
+// data and must never become model-selection authority for the next turn.
+function configuredProviderModel(defaultModel, requestedModel = '') {
+  const configured = String(defaultModel || '').trim();
+  if (!/^[A-Za-z0-9._:/-]{1,128}$/.test(configured)) {
+    const error = new Error('configured provider model is unavailable');
+    error.code = 503;
+    error.errorCode = 'configured_provider_model_unavailable';
+    throw error;
+  }
+  const requested = String(requestedModel || '').trim();
+  if (requested && requested !== configured) {
+    const error = new Error('requested model does not match the configured provider model');
+    error.code = 400;
+    error.errorCode = 'provider_model_override_rejected';
+    throw error;
+  }
+  return configured;
+}
+
+module.exports = { configuredProviderModel, lexicalKnowledgeQuery, requiresLiveAgentTools };

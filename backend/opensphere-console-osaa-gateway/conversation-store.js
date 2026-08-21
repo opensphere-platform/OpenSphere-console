@@ -291,6 +291,9 @@ function createConversationStore(pool) {
 
   async function completeTurn(actor, turn, response) {
     const owner = ownerId(actor);
+    const providerModelId = response?.modelAuthority === 'provider'
+      ? String(response?.model || '').trim().slice(0, 120) || null
+      : null;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -329,9 +332,10 @@ function createConversationStore(pool) {
       `, [turn.conversationId, turn.clientRequestId]);
       await client.query(`
         UPDATE osaa.conversation
-        SET last_message_at=clock_timestamp(), updated_at=clock_timestamp()
+        SET model_id=COALESCE($2,model_id),
+            last_message_at=clock_timestamp(), updated_at=clock_timestamp()
         WHERE id=$1
-      `, [turn.conversationId]);
+      `, [turn.conversationId, providerModelId]);
       await client.query('COMMIT');
       return responseFromAssistant(inserted.rows[0]);
     } catch (error) {
