@@ -124,6 +124,40 @@ function Get-CanonicalTextSha256 {
   }
 }
 
+function Get-SourceMigrationEvidence {
+  param([Parameter(Mandatory)][string]$Revision)
+  $relativePath = 'backend/supabase/migrations/manifest.json'
+  $raw = & git -C $consoleRoot show "${Revision}:$relativePath"
+  if ($LASTEXITCODE -ne 0) { throw "Could not read migration manifest at source revision $Revision" }
+  try { $manifest = ($raw -join "`n") | ConvertFrom-Json }
+  catch { throw "Migration manifest at source revision $Revision is invalid JSON" }
+  if ([int]$manifest.schemaVersion -ne 2 -or
+      [string]$manifest.setDigest -notmatch '^sha256:[a-f0-9]{64}$' -or
+      [string]$manifest.latestMigrationId -notmatch '^\d{4}$' -or
+      [int]$manifest.migrationCount -le 0) {
+    throw "Migration manifest at source revision $Revision is not canonical"
+  }
+  return [ordered]@{
+    setDigest = [string]$manifest.setDigest
+    latestMigrationId = [string]$manifest.latestMigrationId
+    migrationCount = [int]$manifest.migrationCount
+  }
+}
+
+function Assert-MigrationAuthorityMatch {
+  param(
+    [Parameter(Mandatory)]$Authority,
+    [Parameter(Mandatory)]$Candidate,
+    [Parameter(Mandatory)][string]$Purpose
+  )
+  if (-not $Candidate -or
+      [string]$Candidate.setDigest -ne [string]$Authority.setDigest -or
+      [string]$Candidate.latestMigrationId -ne [string]$Authority.latestMigrationId -or
+      [int]$Candidate.migrationCount -ne [int]$Authority.migrationCount) {
+    throw "$Purpose differs from the live Backend migration authority"
+  }
+}
+
 function Get-FileSha256 {
   param([Parameter(Mandatory)][string]$Path)
   $stream = [IO.File]::OpenRead($Path)
@@ -300,7 +334,8 @@ function Get-EvidenceComponent {
 function Assert-EdgePublicationEnvelope {
   param(
     [Parameter(Mandatory)]$Evidence,
-    [Parameter(Mandatory)][string]$Purpose
+    [Parameter(Mandatory)][string]$Purpose,
+    [switch]$AllowPlatformReleaseTag
   )
   if ([string]$Evidence.apiVersion -ne 'release.opensphere.io/v1alpha1' -or
       [string]$Evidence.kind -ne 'OpenSphereEdgeComponentPublication' -or
@@ -319,7 +354,10 @@ function Assert-EdgePublicationEnvelope {
   if ($platforms.Count -ne 1 -or $platforms[0] -ne 'linux/amd64') {
     throw "$Purpose publication must contain exactly the linux/amd64 edge platform"
   }
-  if ([string]$Evidence.immutableTag -ne "local-$(([string]$Evidence.sourceRevision).Substring(0, 12))") {
+  $localTag = "local-$(([string]$Evidence.sourceRevision).Substring(0, 12))"
+  $immutableTag = [string]$Evidence.immutableTag
+  if ($immutableTag -ne $localTag -and
+      -not ($AllowPlatformReleaseTag -and $immutableTag -eq [string]$Evidence.releaseTag)) {
     throw "$Purpose publication immutableTag is not derived from its committed SourceRevision"
   }
 }
@@ -906,13 +944,6 @@ if ($RuntimePublicationEvidence) {
   if ($LASTEXITCODE -ne 0) {
     throw 'Runtime override SourceRevision is not a descendant of the base OS Shell publication'
   }
-  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
-  $runtimeMigration = $runtimeEvidence.artifacts.supabaseMigrationManifest
-  if (-not $runtimeMigration -or [string]$runtimeMigration.sha256 -ne [string]$baseMigration.sha256 -or
-      [string]$runtimeMigration.setDigest -ne [string]$baseMigration.setDigest -or
-      [string]$runtimeMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
-    throw 'Runtime override changes the base Supabase migration lineage'
-  }
 }
 
 $platformPublicationPath = ''
@@ -927,20 +958,13 @@ if ($PlatformPublicationEvidence) {
     throw 'PlatformPublicationEvidence must be a distinct component publication'
   }
   $platformEvidence = Get-Content -Raw -LiteralPath $platformPublicationPath | ConvertFrom-Json
-  Assert-EdgePublicationEnvelope -Evidence $platformEvidence -Purpose 'OS Shell Platform bridge'
+  Assert-EdgePublicationEnvelope -Evidence $platformEvidence -Purpose 'OS Shell Platform bridge' -AllowPlatformReleaseTag
   $platformComponentKeys = @($platformEvidence.components.PSObject.Properties.Name | Sort-Object)
   if (($platformComponentKeys -join ',') -ne 'backend,console') {
     throw "Platform bridge requires exactly backend and console; received: $($platformComponentKeys -join ',')"
   }
   if ([string]$platformEvidence.sourceRevision -eq [string]$evidence.sourceRevision) {
     throw 'Platform bridge SourceRevision must differ from the base OS Shell publication'
-  }
-  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
-  $platformMigration = $platformEvidence.artifacts.supabaseMigrationManifest
-  if (-not $platformMigration -or [string]$platformMigration.sha256 -ne [string]$baseMigration.sha256 -or
-      [string]$platformMigration.setDigest -ne [string]$baseMigration.setDigest -or
-      [string]$platformMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
-    throw 'Platform bridge changes the base Supabase migration lineage'
   }
 }
 
@@ -953,20 +977,13 @@ if ($BackendPublicationEvidence) {
     throw 'BackendPublicationEvidence must be a distinct component-only publication'
   }
   $backendEvidence = Get-Content -Raw -LiteralPath $backendPublicationPath | ConvertFrom-Json
-  Assert-EdgePublicationEnvelope -Evidence $backendEvidence -Purpose 'OS Shell backend override'
+  Assert-EdgePublicationEnvelope -Evidence $backendEvidence -Purpose 'OS Shell backend override' -AllowPlatformReleaseTag
   $backendComponentKeys = @($backendEvidence.components.PSObject.Properties.Name | Sort-Object)
   if (($backendComponentKeys -join ',') -ne 'backend') {
     throw "Backend override requires exactly backend; received: $($backendComponentKeys -join ',')"
   }
   if ([string]$backendEvidence.sourceRevision -eq [string]$evidence.sourceRevision) {
     throw 'Backend override SourceRevision must differ from the base OS Shell publication'
-  }
-  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
-  $backendMigration = $backendEvidence.artifacts.supabaseMigrationManifest
-  if (-not $backendMigration -or [string]$backendMigration.sha256 -ne [string]$baseMigration.sha256 -or
-      [string]$backendMigration.setDigest -ne [string]$baseMigration.setDigest -or
-      [string]$backendMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
-    throw 'Backend override changes the base Supabase migration lineage'
   }
 }
 
@@ -987,13 +1004,6 @@ if ($ConsolePublicationEvidence) {
   }
   if ([string]$consoleEvidence.sourceRevision -eq [string]$evidence.sourceRevision) {
     throw 'Console override SourceRevision must differ from the base OS Shell publication'
-  }
-  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
-  $consoleMigration = $consoleEvidence.artifacts.supabaseMigrationManifest
-  if (-not $consoleMigration -or [string]$consoleMigration.sha256 -ne [string]$baseMigration.sha256 -or
-      [string]$consoleMigration.setDigest -ne [string]$baseMigration.setDigest -or
-      [string]$consoleMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
-    throw 'Console override changes the base Supabase migration lineage'
   }
 }
 
@@ -1016,13 +1026,36 @@ if ($ControlPublicationEvidence) {
   if ([string]$controlEvidence.sourceRevision -eq [string]$evidence.sourceRevision) {
     throw 'Control override SourceRevision must differ from the base OS Shell publication'
   }
-  $baseMigration = $evidence.artifacts.supabaseMigrationManifest
-  $controlMigration = $controlEvidence.artifacts.supabaseMigrationManifest
-  if (-not $controlMigration -or [string]$controlMigration.sha256 -ne [string]$baseMigration.sha256 -or
-      [string]$controlMigration.setDigest -ne [string]$baseMigration.setDigest -or
-      [string]$controlMigration.latestMigrationId -ne [string]$baseMigration.latestMigrationId) {
-    throw 'Control override changes the base Supabase migration lineage'
-  }
+}
+
+# Migration authority follows the exact live Backend component. Console,
+# Control, CLI and Runtime images do not own the Supabase migration lifecycle.
+# A newer Platform Release may therefore advance Backend migrations after the
+# original five-component OS Shell base was published. Bind every new UI or
+# Runtime source to that live Backend manifest instead of an obsolete base.
+$migrationAuthority = Get-SourceMigrationEvidence -Revision ([string]$backendEvidence.sourceRevision)
+$backendMigrationArtifact = if ($backendEvidence.artifacts) {
+  $backendEvidence.artifacts.supabaseMigrationManifest
+} else {
+  $null
+}
+if ($backendMigrationArtifact) {
+  Assert-MigrationAuthorityMatch -Authority $migrationAuthority -Candidate $backendMigrationArtifact `
+    -Purpose 'Backend publication migration evidence'
+}
+$migrationCandidates = @()
+if ($RuntimePublicationEvidence) {
+  $migrationCandidates += [ordered]@{ Name = 'Runtime override source'; Evidence = $runtimeEvidence }
+}
+if ($ConsolePublicationEvidence -or $PlatformPublicationEvidence) {
+  $migrationCandidates += [ordered]@{ Name = 'Console override source'; Evidence = $consoleEvidence }
+}
+foreach ($candidate in $migrationCandidates) {
+  $sourceMigration = Get-SourceMigrationEvidence -Revision ([string]$candidate.Evidence.sourceRevision)
+  Assert-MigrationAuthorityMatch -Authority $migrationAuthority -Candidate $sourceMigration -Purpose $candidate.Name
+  Assert-MigrationAuthorityMatch -Authority $migrationAuthority `
+    -Candidate $candidate.Evidence.artifacts.supabaseMigrationManifest `
+    -Purpose "$($candidate.Name) publication evidence"
 }
 
 $console = Get-EvidenceComponent -Evidence $consoleEvidence -Key 'console' -Repository $consoleRepository

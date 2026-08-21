@@ -37,3 +37,12 @@ test('deployer records the dedicated publisher and its contract as privileged to
   assert.match(deployer, /'scripts\/Publish-LocalEdgeOsShell\.ps1'/);
   assert.match(deployer, /'scripts\/os-shell-component-publisher\.test\.mjs'/);
 });
+
+test('deployer follows the exact live Backend migration authority across component overrides', () => {
+  assert.match(deployer, /function Get-SourceMigrationEvidence/);
+  assert.match(deployer, /\$migrationAuthority = Get-SourceMigrationEvidence -Revision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
+  assert.match(deployer, /Runtime override source/);
+  assert.match(deployer, /Console override source/);
+  assert.match(deployer, /AllowPlatformReleaseTag/);
+  assert.doesNotMatch(deployer, /override changes the base Supabase migration lineage/);
+});
