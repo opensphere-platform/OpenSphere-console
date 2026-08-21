@@ -8,9 +8,23 @@ const LIVE_OPERATION_PATTERNS = [
   /(?:현재|지금|실시간|실제\s*(?:운영|클러스터|환경)|운영\s*(?:상태|환경)|상태\s*(?:확인|점검|조회)|정상\s*(?:인지|여부)|헬스|레디니스|장애|오류|에러|실패|위험|인시던트|로그|이벤트|파드|포드|디플로이먼트|배포\s*상태|롤아웃|재시작|스케일|클러스터|네임스페이스|리소스\s*(?:상태|목록|조회)|진단|원인\s*(?:분석|파악)|점검해|확인해|조회해)/u,
 ];
 
+const EXTENSION_PRESENTATION_PATTERNS = [
+  /\bregistry\s+plugins?\b/i,
+  /요청\s*시\s*적재/u,
+  /(?:plugin|plugins|플러그인).*(?:화면|메뉴).*(?:표시|노출)/iu,
+];
+
+function requiresExtensionPresentationStatus(query) {
+  const text = String(query || '').trim();
+  return text.length > 0 && EXTENSION_PRESENTATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 function requiresLiveAgentTools(query) {
   const text = String(query || '').trim();
-  return text.length > 0 && LIVE_OPERATION_PATTERNS.some((pattern) => pattern.test(text));
+  return text.length > 0 && (
+    LIVE_OPERATION_PATTERNS.some((pattern) => pattern.test(text)) ||
+    requiresExtensionPresentationStatus(text)
+  );
 }
 
 // PostgreSQL's `simple` text search does not split a Korean particle from an
@@ -45,4 +59,9 @@ function configuredProviderModel(defaultModel, requestedModel = '') {
   return configured;
 }
 
-module.exports = { configuredProviderModel, lexicalKnowledgeQuery, requiresLiveAgentTools };
+module.exports = {
+  configuredProviderModel,
+  lexicalKnowledgeQuery,
+  requiresExtensionPresentationStatus,
+  requiresLiveAgentTools,
+};

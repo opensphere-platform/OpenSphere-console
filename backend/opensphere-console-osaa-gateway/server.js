@@ -3,7 +3,12 @@ const fs = require('fs');
 const { createHash, randomUUID } = require('crypto');
 const { Pool } = require('pg');
 const { normalizeProviderToolCalls } = require('./provider-tool-calls');
-const { configuredProviderModel, lexicalKnowledgeQuery, requiresLiveAgentTools } = require('./chat-runtime-policy');
+const {
+  configuredProviderModel,
+  lexicalKnowledgeQuery,
+  requiresExtensionPresentationStatus,
+  requiresLiveAgentTools,
+} = require('./chat-runtime-policy');
 const { createConversationStore } = require('./conversation-store');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
@@ -7608,6 +7613,14 @@ async function chatCompletion(body, actor) {
   const systemMessages = [operationalAnswerPolicySystemMessage(), controlToolsSystemMessage(), untrustedEvidencePolicySystemMessage()];
   const evidenceMessages = [];
   const userContent = latestUserContent(baseMessages);
+  const extensionPresentationIntent = requiresExtensionPresentationStatus(userContent);
+  let extensionPresentationEvidence = null;
+  if (extensionPresentationIntent) {
+    systemMessages.push({
+      role: 'system',
+      content: 'This request matches the Registry Plugin presentation incident. Use the canonical extension-presentation-status evidence before any general Kubernetes inference. Treat 요청 시 적재 as child UI activation timing, not proof of menu ineligibility. Do not propose restart, reinstall, or enable when the projection reports no blocker.',
+    });
+  }
   try {
     sources = await searchKnowledge(userContent, OSAA_RAG_TOP_K, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
     if (sources.length) evidenceMessages.push(knowledgeSystemMessage(sources));
@@ -7636,11 +7649,28 @@ async function chatCompletion(body, actor) {
   } catch (e) {
     console.warn('[osaa-env] snapshot skipped:', e.message || e);
   }
+  if (extensionPresentationIntent) {
+    try {
+      extensionPresentationEvidence = await executeAgentTool(
+        'get_extension_presentation_status',
+        {},
+        actor,
+        { source, sessionId, runId: agentRunRecorded ? requestId : null },
+      );
+      evidenceMessages.push(untrustedEvidenceMessage(
+        'verified-extension-presentation-status',
+        extensionPresentationEvidence,
+        24000,
+      ));
+    } catch (e) {
+      console.warn('[osaa-extension-presentation] deterministic preflight skipped:', e.message || e.msg || e);
+    }
+  }
   messages = [...systemMessages, ...baseMessages, ...evidenceMessages];
   const maxTokens = Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024));
   const liveToolMode = requiresLiveAgentTools(userContent);
   let tools = [];
-  if (liveToolMode) {
+  if (liveToolMode && !extensionPresentationEvidence) {
     const [observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
       osaaObservabilityCapabilities(actor), osaaHisOwnerCapabilities(actor), osaaCephOwnerCapabilities(actor), osaaRecoveryOwnerCapabilities(actor),
     ]);
@@ -7652,9 +7682,25 @@ async function chatCompletion(body, actor) {
   let content = '';
   let providerModel = model;
   let rounds = 0;
-  const toolTrace = [];
+  const toolTrace = extensionPresentationEvidence ? [{
+    round: 0,
+    name: 'get_extension_presentation_status',
+    status: 'succeeded',
+    target: 'opensphere/get_extension_presentation_status',
+    encoding: 'deterministic-preflight',
+    cached: false,
+  }] : [];
   const toolResultCache = new Map();
   const verifiedToolEvidence = new Map();
+  if (extensionPresentationEvidence) {
+    const signature = toolCallSignature('get_extension_presentation_status', {});
+    toolResultCache.set(signature, { output: extensionPresentationEvidence, ok: true });
+    verifiedToolEvidence.set(signature, {
+      tool: 'get_extension_presentation_status',
+      arguments: {},
+      result: extensionPresentationEvidence,
+    });
+  }
   let agentStepIndex = 0;
   try {
   while (rounds < AGENT_MAX_TOOL_ROUNDS) {
@@ -7825,7 +7871,10 @@ async function chatCompletion(body, actor) {
       maxToolRounds: AGENT_MAX_TOOL_ROUNDS,
       maxToolCalls: AGENT_MAX_TOOL_CALLS,
       maxTotalTokens: AGENT_MAX_TOTAL_TOKENS,
-      toolsAvailable: tools.map((tool) => tool.function.name),
+      toolsAvailable: [...new Set([
+        ...tools.map((tool) => tool.function.name),
+        ...(extensionPresentationEvidence ? ['get_extension_presentation_status'] : []),
+      ])],
       toolCalls: toolTrace,
       mutationsRequireExplicitCommand: true,
       evidenceRecorded: agentRunRecorded,

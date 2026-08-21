@@ -7,7 +7,12 @@ const {
   normalizeConversationMessages, untrustedEvidencePolicySystemMessage, untrustedEvidenceMessage,
   untrustedToolEvidenceContent,
 } = require('./r2d2-prompt-boundary');
-const { configuredProviderModel, lexicalKnowledgeQuery, requiresLiveAgentTools } = require('./chat-runtime-policy');
+const {
+  configuredProviderModel,
+  lexicalKnowledgeQuery,
+  requiresExtensionPresentationStatus,
+  requiresLiveAgentTools,
+} = require('./chat-runtime-policy');
 
 test('provider model authority stays with the configured credential, never response metadata', () => {
   assert.equal(configuredProviderModel('deepseek-v4-flash'), 'deepseek-v4-flash');
@@ -67,6 +72,17 @@ test('knowledge questions do not receive live operational tools', () => {
   assert.equal(requiresLiveAgentTools('What is PFSS?'), false);
   assert.equal(requiresLiveAgentTools('현재 PFSS 상태를 확인해줘'), true);
   assert.equal(requiresLiveAgentTools('Check the current cluster health'), true);
+  assert.equal(requiresLiveAgentTools('Registry Plugins가 요청 시 적재라고 나오고 화면에 표시되지 않아'), true);
+});
+
+test('Registry Plugin presentation incidents select the canonical deterministic preflight', () => {
+  assert.equal(requiresExtensionPresentationStatus('PFSS가 뭔지 알아?'), false);
+  assert.equal(requiresExtensionPresentationStatus('Registry Plugins 전부가 요청 시 적재를 표시한다'), true);
+  assert.equal(requiresExtensionPresentationStatus('플러그인 메뉴가 화면에 표시되지 않는다'), true);
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(server, /verified-extension-presentation-status/);
+  assert.match(server, /encoding: 'deterministic-preflight'/);
+  assert.match(server, /!extensionPresentationEvidence/);
 });
 
 test('lexical retrieval separates canonical identifiers from Korean particles', () => {
