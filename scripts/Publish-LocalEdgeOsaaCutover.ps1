@@ -81,9 +81,12 @@ foreach ($required in @('backend','console','dupaController','recovery','supabas
 if ('osaaGateway' -in $installedKeys -or 'osaaGovernedAdapter' -in $installedKeys) {
   throw 'Installed lock already contains a canonical OSAA identity.'
 }
-if ([string]$installedLock.components.backend.sourceRevision -cne $sourceRevision) {
-  throw 'The Backend installed-lock bridge must be deployed from this exact source before OSAA cutover publication.'
-}
+$bridgeRevision = [string]$installedLock.components.backend.sourceRevision
+if ($bridgeRevision -notmatch '^[a-f0-9]{40}$') { throw 'The installed Backend bridge revision is invalid.' }
+Invoke-Checked git -C $repoRoot fetch --no-tags origin $bridgeRevision | Out-Null
+$minimumBridgeRevision = '125922f96634572763c040924c8c4f3fe72af167'
+Invoke-Checked git -C $repoRoot merge-base --is-ancestor $minimumBridgeRevision $bridgeRevision | Out-Null
+Invoke-Checked git -C $repoRoot merge-base --is-ancestor $bridgeRevision $sourceRevision | Out-Null
 
 $legacyGateway = @($installedLock.components.PSObject.Properties | Where-Object {
   [string]$_.Value.repository -like 'opensphere-console-*-gateway' -and [string]$_.Value.repository -notlike '*-osaa-*'
