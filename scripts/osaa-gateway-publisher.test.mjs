@@ -19,6 +19,8 @@ test('publisher binds clean canonical main and exact digest tags', () => {
   assert.match(publisher, /branch --show-current/);
   assert.match(publisher, /rev-parse refs\/remotes\/origin\/main/);
   assert.match(publisher, /--provenance=mode=max/);
+  assert.match(publisher, /--label opensphere\.io\/release-class=pre-ga/);
+  assert.doesNotMatch(publisher, /opensphere\.io\.release-class/);
   assert.match(publisher, /Set-RemoteTag -Repository \$repository -Digest \$digest -Tag \$releaseTag -Immutable/);
   assert.match(publisher, /Set-RemoteTag -Repository \$repository -Digest \$digest -Tag edge/);
 });
