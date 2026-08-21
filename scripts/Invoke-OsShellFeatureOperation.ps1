@@ -144,8 +144,8 @@ if (-not $trustedSpki -or -not (Test-OsShellEdgeSignedDocument -DocumentPath $pr
 $profile = [IO.File]::ReadAllText($profilePath) | ConvertFrom-Json
 if ([string]$profile.contract -ne 'opensphere-os-shell-composite-release-profile/v1' -or
     [string]$profile.channel -ne 'edge' -or [bool]$profile.gaPromotionEligible -or
-    [string]$profile.migration.latestMigrationId -ne '0063') {
-  throw 'Disable signed profile is not the active 0063 edge contract'
+    [string]$profile.migration.latestMigrationId -notmatch '^\d{4}$') {
+  throw 'Disable signed profile is not bound to a canonical migration ledger revision'
 }
 $publicationPath = (Resolve-Path -LiteralPath $PublicationEvidence).Path
 $publicationSha256 = Get-FileSha256 -Path $publicationPath

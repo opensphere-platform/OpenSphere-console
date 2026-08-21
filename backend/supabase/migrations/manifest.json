@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0063",
-  "migrationCount": 62,
-  "setDigest": "sha256:38761a10068ec43eb05a3a8e6d9975b63ef420a65f00296b626ee119d39cd17e",
+  "latestMigrationId": "0064",
+  "migrationCount": 63,
+  "setDigest": "sha256:27217e662e365b22510e24e75dba23087828a5eff74d6f9540fc1705cb5a17c3",
   "migrations": [
     {
       "id": "0001",
@@ -437,6 +437,13 @@
       "name": "0063_osaa_canonical_identity_and_conversations.sql",
       "path": "backend/supabase/migrations/0063_osaa_canonical_identity_and_conversations.sql",
       "sha256": "338166751382583fffa17ebd0777b4d06421b4da21de9eddab0f4cc972279360"
+    },
+    {
+      "id": "0064",
+      "predecessorMigrationId": "0063",
+      "name": "0064_shell_feature_release_ledger_contract.sql",
+      "path": "backend/supabase/migrations/0064_shell_feature_release_ledger_contract.sql",
+      "sha256": "3157ea33d445c6325601752d832c07f650fff90ed1ac9d89260dbac5d4e9e667"
     }
   ]
 }

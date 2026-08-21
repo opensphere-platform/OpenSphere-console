@@ -189,6 +189,15 @@ test('0062 makes create quota/idempotency and feature drain one atomic RPC-only 
   assert.doesNotMatch(sql, /GRANT (SELECT|INSERT|UPDATE|DELETE)/);
 });
 
+test('0064 binds local-edge feature evidence to the actual append-only migration ledger', () => {
+  const sql = readFileSync(path.join(here, 'migrations', '0064_shell_feature_release_ledger_contract.sql'), 'utf8');
+  assert.match(sql, /FROM console[.]schema_migration/);
+  assert.match(sql, /ORDER BY migration_id DESC/);
+  assert.match(sql, /latestMigrationId' IS DISTINCT FROM v_latest_migration_id/);
+  assert.match(sql, /sourceRevision' IS DISTINCT FROM v_latest_source_revision/);
+  assert.doesNotMatch(sql, /latestMigrationId'<>\s*'006[234]'/);
+});
+
 test('actual PostgreSQL verifier uses an isolated per-run container and cleans only its own authority', () => {
   const verifier = readFileSync(path.join(here, 'verify-ledger-integrity.mjs'), 'utf8');
   assert.match(verifier, /os-ledger-verify-\$\{process[.]pid\}-\$\{randomUUID/);

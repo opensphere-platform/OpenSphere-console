@@ -27,6 +27,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { canonicalPermissionRevision } = require('../opensphere-console-backend/os-shell-contract.js');
 const MIGRATIONS = path.join(here, 'migrations');
+const MIGRATION_FILES = readdirSync(MIGRATIONS).filter((file) => file.endsWith('.sql')).sort();
+const LATEST_MIGRATION_ID = MIGRATION_FILES.at(-1).slice(0, 4);
 const CONTAINER = `os-ledger-verify-${process.pid}-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 const IMAGE = 'pgvector/pgvector:pg16';
 
@@ -199,7 +201,7 @@ async function verifyShellSessionLedger() {
     )::text FROM console.operator o WHERE o.user_id='${actor}';`).trim());
   assert.equal(canonicalPermissionRevision(projection), revision,
     'Node and PostgreSQL canonical permissionRevision algorithms diverged');
-  const localEdgeEvidence = `{"authority":"kubernetes-workload","channel":"edge","componentSetDigest":"${digest}","gaEligible":false,"latestMigrationId":"0062","migrationSetDigest":"${digest}","publicationSha256":"${digest}","releaseIntentKeyId":"opensphere-edge-local-v1","releaseIntentSha256":"${digest}","releaseIntentSignatureSha256":"${digest}","sourceRevision":"${'a'.repeat(40)}"}`;
+  const localEdgeEvidence = `{"authority":"kubernetes-workload","channel":"edge","componentSetDigest":"${digest}","gaEligible":false,"latestMigrationId":"${LATEST_MIGRATION_ID}","migrationSetDigest":"${digest}","publicationSha256":"${digest}","releaseIntentKeyId":"opensphere-edge-local-v1","releaseIntentSha256":"${digest}","releaseIntentSignatureSha256":"${digest}","sourceRevision":"${'a'.repeat(40)}"}`;
   const edgeIdentity = 'system:serviceaccount:opensphere-console:opensphere-local-edge-release';
   const enableOperation = '62000000-0000-4000-8000-000000000001';
 
@@ -900,8 +902,15 @@ async function main() {
     // 전부 순서대로 적용한다. 하나라도 실패하면 여기서 멈춘다 —
     // 배포 설치기(Invoke-SupabaseMigrationPsql)도 ON_ERROR_STOP 으로 같은 동작을 하므로,
     // 이 하네스가 통과하지 못하는 마이그레이션 집합은 배포도 통과하지 못한다.
-    for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
-      psql(readFileSync(path.join(MIGRATIONS, file), 'utf8'));
+    for (const file of MIGRATION_FILES) {
+      const sql = readFileSync(path.join(MIGRATIONS, file), 'utf8');
+      psql(sql);
+      if (file >= '0026_schema_migration_ledger.sql') {
+        const migrationId = file.slice(0, -4);
+        const sha256 = createHash('sha256').update(sql.replace(/\r\n/gu, '\n'), 'utf8').digest('hex');
+        psql(`INSERT INTO console.schema_migration(migration_id,sha256,source_revision,executor)
+          VALUES('${migrationId}','${sha256}','${'a'.repeat(40)}',current_user);`);
+      }
     }
     console.log('  ✓ 마이그레이션 전량 적용 완료 (건너뛴 것 없음)\n');
     await verifyShellSessionLedger();
