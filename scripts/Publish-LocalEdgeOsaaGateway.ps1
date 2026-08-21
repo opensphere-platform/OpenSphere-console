@@ -132,7 +132,7 @@ try {
     --label org.opencontainers.image.source=https://github.com/opensphere-platform/OpenSphere-console `
     --label opensphere.io/build-authority=localhost `
     --label opensphere.io/release-class=pre-ga `
-    --label opensphere.io.ga-eligible=false `
+    --label opensphere.io/ga-eligible=false `
     --file (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\Dockerfile') `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway') | Out-Null
   $digest = [string](Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json).'containerimage.digest'
