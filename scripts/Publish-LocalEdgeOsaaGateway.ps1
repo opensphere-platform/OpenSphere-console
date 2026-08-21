@@ -84,16 +84,18 @@ $baseRevision = [string]$installedGateway.Value.sourceRevision
 if ($baseRevision -notmatch '^[a-f0-9]{40}$') { throw 'Installed OSAA Gateway source revision is invalid.' }
 Invoke-Checked git -C $repoRoot fetch --no-tags origin $baseRevision | Out-Null
 Invoke-Checked git -C $repoRoot merge-base --is-ancestor $baseRevision $sourceRevision | Out-Null
-$changedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $baseRevision $sourceRevision)
+$allChangedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $baseRevision $sourceRevision)
 $allowedPublisherPaths = @(
   'scripts/Publish-LocalEdgeOsaaGateway.ps1',
   'scripts/osaa-gateway-publisher.test.mjs'
 )
-$unsupported = @($changedPaths | Where-Object {
-  $_ -notlike 'backend/opensphere-console-osaa-gateway/*' -and $_ -notin $allowedPublisherPaths
+$componentChangedPaths = @($allChangedPaths | Where-Object {
+  $_ -like 'backend/opensphere-console-osaa-gateway/*'
 })
-if (-not $changedPaths.Count -or $unsupported.Count) {
-  throw "OSAA Gateway component scope contains unsupported paths: $($unsupported -join ', ')"
+$publisherChangedPaths = @($allChangedPaths | Where-Object { $_ -in $allowedPublisherPaths })
+$changedPaths = @($componentChangedPaths + $publisherChangedPaths | Sort-Object -Unique)
+if (-not $componentChangedPaths.Count) {
+  throw 'OSAA Gateway component scope has no runtime changes since the installed Gateway revision.'
 }
 
 $epoch = [long](((Invoke-Checked git -C $repoRoot show -s --format=%ct $sourceRevision) -join '').Trim())

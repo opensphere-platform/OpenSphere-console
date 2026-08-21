@@ -9,6 +9,9 @@ const publisher = readFileSync(`${root}/scripts/Publish-LocalEdgeOsaaGateway.ps1
 test('OSAA Gateway publisher is exact component-only edge tooling', () => {
   assert.match(publisher, /Installed release does not contain the canonical OSAA Gateway component/);
   assert.match(publisher, /backend\/opensphere-console-osaa-gateway\/\*/);
+  assert.match(publisher, /\$componentChangedPaths/);
+  assert.match(publisher, /\$allChangedPaths/);
+  assert.doesNotMatch(publisher, /component scope contains unsupported paths/);
   assert.match(publisher, /affectedImages=@\(\$repository\)/);
   assert.match(publisher, /exactAffectedComponentSet=@\('osaaGateway'\)/);
   assert.match(publisher, /unchangedComponentBuildCount=0/);
