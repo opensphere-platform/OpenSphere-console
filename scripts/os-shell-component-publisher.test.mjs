@@ -41,6 +41,9 @@ test('deployer records the dedicated publisher and its contract as privileged to
 test('deployer follows the exact live Backend migration authority across component overrides', () => {
   assert.match(deployer, /function Get-SourceMigrationEvidence/);
   assert.match(deployer, /\$migrationAuthority = Get-SourceMigrationEvidence -Revision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
+  assert.match(deployer, /rev-parse "\$\(\$backendEvidence[.]sourceRevision\):backend\/supabase\/migrations\/manifest[.]json"/);
+  assert.match(deployer, /-SourceRevision \(\[string\]\$backendEvidence[.]sourceRevision\)/);
+  assert.doesNotMatch(deployer, /latestMigrationId -ne '0062'/);
   assert.match(deployer, /Runtime override source/);
   assert.match(deployer, /Console override source/);
   assert.match(deployer, /AllowPlatformReleaseTag/);
