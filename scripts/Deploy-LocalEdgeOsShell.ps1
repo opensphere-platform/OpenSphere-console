@@ -1151,16 +1151,17 @@ $migrationRunner = Join-Path $consoleRoot 'backend\supabase\migrate-only.ps1'
 foreach ($path in @($migration0061Path, $migration0062Path, $migrationManifestPath, $migrationRunner)) {
   if (-not (Test-Path -LiteralPath $path)) { throw "Required committed migration input is missing: $path" }
 }
-& git -C $consoleRoot cat-file -e "$($evidence.sourceRevision):backend/supabase/migrations/0061_shell_session_ledger.sql"
-if ($LASTEXITCODE -ne 0) { throw 'Migration 0061_shell_session_ledger.sql is not committed in SourceRevision' }
-& git -C $consoleRoot cat-file -e "$($evidence.sourceRevision):backend/supabase/migrations/0062_shell_session_quota_and_kill_switch.sql"
-if ($LASTEXITCODE -ne 0) { throw 'Migration 0062_shell_session_quota_and_kill_switch.sql is not committed in SourceRevision' }
-$migrationArtifact = $evidence.artifacts.supabaseMigrationManifest
-if (-not $migrationArtifact -or
-    [string]$migrationArtifact.path -ne 'backend/supabase/migrations/manifest.json' -or
-    [string]$migrationArtifact.sha256 -ne (Get-CanonicalTextSha256 -Path $migrationManifestPath)) {
-  throw 'Committed migration manifest does not match publication evidence'
+& git -C $consoleRoot cat-file -e "$($backendEvidence.sourceRevision):backend/supabase/migrations/0061_shell_session_ledger.sql"
+if ($LASTEXITCODE -ne 0) { throw 'Migration 0061_shell_session_ledger.sql is not committed in the Backend authority' }
+& git -C $consoleRoot cat-file -e "$($backendEvidence.sourceRevision):backend/supabase/migrations/0062_shell_session_quota_and_kill_switch.sql"
+if ($LASTEXITCODE -ne 0) { throw 'Migration 0062_shell_session_quota_and_kill_switch.sql is not committed in the Backend authority' }
+$authorityManifestBlob = (& git -C $consoleRoot rev-parse "$($backendEvidence.sourceRevision):backend/supabase/migrations/manifest.json").Trim()
+$workingManifestBlob = (& git -C $consoleRoot hash-object -- $migrationManifestPath).Trim()
+if ($LASTEXITCODE -ne 0 -or $authorityManifestBlob -notmatch '^[a-f0-9]{40,64}$' -or
+    $workingManifestBlob -ne $authorityManifestBlob) {
+  throw 'Committed migration manifest does not match the live Backend source authority'
 }
+$migrationArtifact = $migrationAuthority
 $migrationManifest = Get-Content -Raw -LiteralPath $migrationManifestPath | ConvertFrom-Json
 $migration0061 = @($migrationManifest.migrations | Where-Object { [string]$_.name -eq '0061_shell_session_ledger.sql' })
 $migration0062 = @($migrationManifest.migrations | Where-Object { [string]$_.name -eq '0062_shell_session_quota_and_kill_switch.sql' })
@@ -1169,12 +1170,12 @@ $migration0062Digest = (Get-CanonicalTextSha256 -Path $migration0062Path).Substr
 if ($migration0061.Count -ne 1 -or [string]$migration0061[0].sha256 -ne $migration0061Digest) {
   throw 'Migration 0061 is absent from or inconsistent with the canonical migration manifest'
 }
-if ($migration0062.Count -ne 1 -or [string]$migration0062[0].sha256 -ne $migration0062Digest -or
-    [string]$migrationManifest.latestMigrationId -ne '0062') {
-  throw 'Migration 0062 is not the exact latest migration in the canonical migration manifest'
+if ($migration0062.Count -ne 1 -or [string]$migration0062[0].sha256 -ne $migration0062Digest) {
+  throw 'Migration 0062 is absent from or inconsistent with the canonical migration manifest'
 }
 if ([string]$migrationArtifact.setDigest -ne [string]$migrationManifest.setDigest -or
-    [string]$migrationArtifact.latestMigrationId -ne [string]$migrationManifest.latestMigrationId) {
+    [string]$migrationArtifact.latestMigrationId -ne [string]$migrationManifest.latestMigrationId -or
+    [int]$migrationArtifact.migrationCount -ne [int]$migrationManifest.migrationCount) {
   throw 'Migration lineage evidence differs from the committed manifest'
 }
 $osShellRelease = $evidence.artifacts.osShellRelease
@@ -1370,8 +1371,8 @@ Set-BackendOsShellActivation -Image $backend.image -SourceRevision ([string]$bac
 $prerequisiteEvidence['backend'] = Assert-PrerequisiteDeployment -Deployment 'opensphere-console-backend' `
   -Image $backend.image -Digest $backend.digest -SourceRevision ([string]$backendEvidence.sourceRevision)
 
-Write-Host '[step 3/7] Apply committed Supabase migration lineage through additive 0062'
-& $migrationRunner -KubeContext $KubeContext -SourceRevision ([string]$evidence.sourceRevision)
+Write-Host "[step 3/7] Apply committed Supabase migration lineage through Backend authority $($migrationAuthority.latestMigrationId)"
+& $migrationRunner -KubeContext $KubeContext -SourceRevision ([string]$backendEvidence.sourceRevision)
 if ($LASTEXITCODE -ne 0) { throw "migrate-only.ps1 failed with exit code $LASTEXITCODE" }
 
 Write-Host '[step 4/7] Apply exact-digest OS Shell control manifest'
