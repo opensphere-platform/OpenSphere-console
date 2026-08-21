@@ -2520,7 +2520,7 @@ async function setOsShellFeatureStateLocalEdge(req, body) {
   const evidenceKeys = Object.keys(body.evidence).sort();
   if (evidenceKeys.join(',') !== 'authority,channel,componentSetDigest,gaEligible,latestMigrationId,migrationSetDigest,publicationSha256,releaseIntentKeyId,releaseIntentSha256,releaseIntentSignatureSha256,sourceRevision'
     || body.evidence.authority !== 'kubernetes-workload' || body.evidence.channel !== 'edge'
-    || body.evidence.gaEligible !== false || body.evidence.latestMigrationId !== '0063'
+    || body.evidence.gaEligible !== false || !/^\d{4}$/.test(String(body.evidence.latestMigrationId || ''))
     || !/^sha256:[a-f0-9]{64}$/.test(String(body.evidence.componentSetDigest || ''))
     || !/^sha256:[a-f0-9]{64}$/.test(String(body.evidence.publicationSha256 || ''))
     || !/^sha256:[a-f0-9]{64}$/.test(String(body.evidence.migrationSetDigest || ''))

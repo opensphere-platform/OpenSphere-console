@@ -8,6 +8,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'scripts', 'Publish-LocalEdgeBackendBridge.ps1'), 'utf8');
 const backend = fs.readFileSync(path.join(root, 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
 const featureOperation = fs.readFileSync(path.join(root, 'scripts', 'Invoke-OsShellFeatureOperation.ps1'), 'utf8');
+const migration = fs.readFileSync(path.join(root, 'backend', 'supabase', 'migrations',
+  '0064_shell_feature_release_ledger_contract.sql'), 'utf8');
 
 test('backend bridge publisher is component-only and emits governed evidence', () => {
   assert.match(source, /Publish the Console Backend component required by the current local-edge release control contracts/);
@@ -19,11 +21,13 @@ test('backend bridge publisher is component-only and emits governed evidence', (
   assert.doesNotMatch(source, /opensphere-console-(?:dupa-controller|osaa-gateway|recovery)/);
 });
 
-test('backend and release owner enforce the current 0063 OS Shell feature contract', () => {
-  assert.match(backend, /body[.]evidence[.]latestMigrationId !== '0063'/);
-  assert.doesNotMatch(backend, /body[.]evidence[.]latestMigrationId !== '0062'/);
-  assert.match(featureOperation, /profile[.]migration[.]latestMigrationId -ne '0063'/);
-  assert.doesNotMatch(featureOperation, /active 0062 edge contract/);
+test('backend, release owner, and database use the append-only migration ledger contract', () => {
+  assert.match(backend, /latestMigrationId \|\| ''\)\)/);
+  assert.doesNotMatch(backend, /latestMigrationId !== '006[234]'/);
+  assert.match(featureOperation, /latestMigrationId -notmatch '\^\\d\{4\}\$'/);
+  assert.match(migration, /FROM console[.]schema_migration[\s\S]*ORDER BY migration_id DESC/);
+  assert.match(migration, /latestMigrationId' IS DISTINCT FROM v_latest_migration_id/);
+  assert.match(migration, /sourceRevision' IS DISTINCT FROM v_latest_source_revision/);
 });
 
 test('backend bridge publisher binds canonical main, setup lock and exact digest', () => {
