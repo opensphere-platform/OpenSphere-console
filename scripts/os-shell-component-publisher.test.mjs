@@ -47,6 +47,8 @@ test('deployer follows the exact live Backend migration authority across compone
   assert.match(deployer, /\$candidateEntries[.]Count -gt \$authorityEntries[.]Count/);
   assert.match(deployer, /candidateEntry[.]sha256 -ne \[string\]\$authorityEntry[.]sha256/);
   assert.match(deployer, /Assert-MigrationAuthorityMatch -Authority \$sourceMigration/);
+  assert.match(deployer, /featureOperationEvidence = \[ordered\]@\{[\s\S]*sourceRevision = \[string\]\$backendEvidence[.]sourceRevision/);
+  assert.doesNotMatch(deployer, /featureOperationEvidence = \[ordered\]@\{[\s\S]*sourceRevision = \[string\]\$consoleEvidence[.]sourceRevision/);
   assert.doesNotMatch(deployer, /latestMigrationId -ne '0062'/);
   assert.match(deployer, /Runtime override source/);
   assert.match(deployer, /Console override source/);

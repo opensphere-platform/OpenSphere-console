@@ -1736,7 +1736,7 @@ $featureOperationEvidence = [ordered]@{
   releaseIntentKeyId = $SigningKeyId
   releaseIntentSha256 = $signedProfile.DocumentSha256
   releaseIntentSignatureSha256 = $signedProfile.SignatureSha256
-  sourceRevision = [string]$consoleEvidence.sourceRevision
+  sourceRevision = [string]$backendEvidence.sourceRevision
 }
 Write-Host '[owner] Open durable gate only after the signed release intent and trust verification converge'
 $enableOperationId = New-FeatureOperationId -Kind Enable -ReleaseIntentSha256 $signedProfile.DocumentSha256
@@ -1785,7 +1785,7 @@ $receipt = [ordered]@{
     predecessor = '0061_shell_session_ledger'
     migrationCount = [int]$migrationManifest.migrationCount
     manifestSetDigest = [string]$migrationManifest.setDigest
-    sourceRevision = [string]$evidence.sourceRevision
+    sourceRevision = [string]$backendEvidence.sourceRevision
   }
   images = $componentImages
   releaseEvidence = [ordered]@{
