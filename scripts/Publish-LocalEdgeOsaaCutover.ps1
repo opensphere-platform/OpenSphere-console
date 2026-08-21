@@ -81,7 +81,19 @@ foreach ($required in @('backend','console','dupaController','recovery','supabas
 if ('osaaGateway' -in $installedKeys -or 'osaaGovernedAdapter' -in $installedKeys) {
   throw 'Installed lock already contains a canonical OSAA identity.'
 }
-$bridgeRevision = [string]$installedLock.components.backend.sourceRevision
+$backendDeployment = ((Invoke-Checked kubectl -n opensphere-console get deployment opensphere-console-backend -o json) -join "`n") | ConvertFrom-Json
+$backendContainer = @($backendDeployment.spec.template.spec.containers | Where-Object { [string]$_.name -eq 'api' })
+if ($backendContainer.Count -ne 1 -or [int]$backendDeployment.status.observedGeneration -ne [int]$backendDeployment.metadata.generation -or
+    [int]$backendDeployment.status.readyReplicas -ne [int]$backendDeployment.spec.replicas) {
+  throw 'The live Console Backend bridge must have one exact api container and all replicas Ready.'
+}
+$bridgeImage = [string]$backendContainer[0].image
+if ($bridgeImage -notmatch '^ghcr[.]io/opensphere-platform/opensphere-console-backend@sha256:[a-f0-9]{64}$') {
+  throw 'The live Console Backend bridge image is not an exact canonical digest.'
+}
+$bridgeMetadataRaw = Invoke-Checked docker buildx imagetools inspect --format '{{json .Image}}' $bridgeImage
+$bridgeMetadata = (($bridgeMetadataRaw -join "`n") | ConvertFrom-Json)
+$bridgeRevision = [string]$bridgeMetadata.config.Labels.'io.opensphere.source-revision'
 if ($bridgeRevision -notmatch '^[a-f0-9]{40}$') { throw 'The installed Backend bridge revision is invalid.' }
 Invoke-Checked git -C $repoRoot fetch --no-tags origin $bridgeRevision | Out-Null
 $minimumBridgeRevision = '125922f96634572763c040924c8c4f3fe72af167'
