@@ -169,7 +169,7 @@ try {
     publicationScope = 'ComponentSet'
     channel = 'edge'
     status = 'Active'
-    requestIntent = 'Publish the Console Backend installed-lock bridge required for the one-way legacy agent identity to OSAA cutover.'
+    requestIntent = 'Publish the Console Backend component required by the current local-edge release control contracts.'
     changedPaths = @($changedPaths | Sort-Object -Unique)
     affectedImages = @($repository)
     releaseScope = 'component'
