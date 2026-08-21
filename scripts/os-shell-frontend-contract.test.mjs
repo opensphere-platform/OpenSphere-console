@@ -34,6 +34,26 @@ test('attached OS Shell visibly signals input readiness with a focused blinking 
   assert.doesNotMatch(frame, /cursorBlink:\s*false/);
 });
 
+test('terminal preserves upstream selection, copy and paste UX across the isolated frame', () => {
+  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  assert.match(frame, /rightClickSelectsWord:\s*true/);
+  assert.match(frame, /attachCustomKeyEventHandler/);
+  assert.match(frame, /key === 'c' && \(event[.]shiftKey \|\| terminal[.]hasSelection\(\)\)[\s\S]*return false/);
+  assert.match(frame, /primaryModifier && key === 'v'[\s\S]*return false/);
+  assert.match(frame, /event[.]key === 'Insert' && \(event[.]ctrlKey \|\| event[.]shiftKey\)/);
+});
+
+test('long paste is UTF-8 chunked and paced instead of being silently discarded', () => {
+  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  assert.match(frame, /const MAX_PENDING_STDIN_BYTES = 256 \* 1024/);
+  assert.match(frame, /const STDIN_DRAIN_INTERVAL_MS = 160/);
+  assert.match(frame, /function splitInput\(data: string\)/);
+  assert.match(frame, /chunkBytes \+ symbolBytes > MAX_STDIN_FRAME_BYTES/);
+  assert.match(frame, /pendingInput[.]push\([.][.][.]splitInput\(data\)\)/);
+  assert.match(frame, /window[.]setTimeout\([\s\S]*STDIN_DRAIN_INTERVAL_MS/);
+  assert.doesNotMatch(frame, /byteLength > MAX_STDIN_FRAME_BYTES\) return/);
+});
+
 test('trusted terminal interaction extends the Main Shell browser session without counting output as activity', () => {
   const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
   const protocol = read('src/app/system-plugins/os-shell/os-shell-protocol.ts');
