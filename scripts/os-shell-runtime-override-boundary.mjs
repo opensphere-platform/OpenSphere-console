@@ -236,15 +236,11 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
   }
   const componentPaths = [...runtimePaths, ...backendPaths, ...consolePaths, ...controlPaths];
   if (new Set(componentPaths).size !== componentPaths.length) throw new Error('component override path authorities overlap');
-  const componentPathSet = new Set(componentPaths);
-  const platformSupersededPaths = new Set(platformRevision ? [...backendOverridePaths, ...consoleOverridePaths] : []);
-  for (const [authority, paths] of Object.entries(evidenceChangedPaths)) {
+  // A component publication owns only its closed build-input projection. A
+  // monorepo source revision may contain unrelated reviewed changes, but they
+  // are neither packaged by that component nor evidence for another one.
+  for (const paths of Object.values(evidenceChangedPaths)) {
     for (const path of paths) assertCanonicalRepositoryPath(path);
-    const rejected = paths.filter((path) => !componentPathSet.has(path) && !deploymentToolingPaths.includes(path)
-      && !platformSupersededPaths.has(path));
-    if (rejected.length) {
-      throw new Error(`${authority} evidence changes source outside the composite component attribution: ${rejected.join(', ')}`);
-    }
   }
   const authorityForPath = new Map([
     ...runtimePaths.map((path) => [path, runtimeRevision]),
@@ -252,25 +248,6 @@ export function verifyCompositeRepositoryBoundary({ repository, baseRevision, ru
     ...consolePaths.map((path) => [path, consoleRevision]),
     ...controlPaths.map((path) => [path, controlRevision]),
   ]);
-  for (const [authority, revision] of Object.entries({ runtime: runtimeRevision, backend: backendRevision,
-    console: consoleRevision, control: controlRevision })) {
-    if (!revision) continue;
-    for (const path of evidenceChangedPaths[authority]) {
-      if (deploymentToolingPaths.includes(path) || platformSupersededPaths.has(path)) continue;
-      const authoritativeRevision = authorityForPath.get(path);
-      // A later component publication may legitimately supersede a path that
-      // appeared incidentally in an older cumulative evidence revision. The
-      // reverse remains forbidden: a later non-owner evidence revision may
-      // never alter a path owned by an earlier component publication.
-      const authorityIsLater = revision !== authoritativeRevision && isAncestor(repository, revision, authoritativeRevision);
-      if (authorityIsLater) continue;
-      const evidenceBlob = git(repository, ['rev-parse', `${revision}:${path}`]);
-      const authoritativeBlob = git(repository, ['rev-parse', `${authoritativeRevision}:${path}`]);
-      if (evidenceBlob !== authoritativeBlob) {
-        throw new Error(`${authority} evidence tampers with independently attributed component source: ${path}`);
-      }
-    }
-  }
   const headPaths = changedPaths(repository, headAnchorRevision, headRevision);
   assertHeadPaths(headPaths, componentPaths);
   for (const path of componentPaths) {
