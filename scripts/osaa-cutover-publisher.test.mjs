@@ -17,7 +17,9 @@ test('OSAA publisher has one exact six-component cutover profile', () => {
 });
 
 test('OSAA publisher requires the installed bridge and emits component evidence', () => {
-  assert.match(source, /components[.]backend[.]sourceRevision -cne \$sourceRevision/);
+  assert.match(source, /minimumBridgeRevision = '125922f96634572763c040924c8c4f3fe72af167'/);
+  assert.match(source, /merge-base --is-ancestor \$minimumBridgeRevision \$bridgeRevision/);
+  assert.match(source, /merge-base --is-ancestor \$bridgeRevision \$sourceRevision/);
   assert.match(source, /legacyGateway/);
   assert.match(source, /osaaGateway/);
   assert.match(source, /requestIntent='Publish only the six components required/);
