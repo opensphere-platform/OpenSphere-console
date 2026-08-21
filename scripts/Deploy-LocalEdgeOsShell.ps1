@@ -1030,10 +1030,11 @@ if ($ControlPublicationEvidence) {
 # original five-component OS Shell base was published. Bind every new UI or
 # Runtime source to that live Backend manifest instead of an obsolete base.
 $migrationAuthority = Get-SourceMigrationEvidence -Revision ([string]$backendEvidence.sourceRevision)
-$backendMigrationArtifact = if ($backendEvidence.artifacts) {
-  $backendEvidence.artifacts.supabaseMigrationManifest
-} else {
-  $null
+$backendMigrationArtifact = $null
+$backendArtifactsProperty = $backendEvidence.PSObject.Properties['artifacts']
+if ($backendArtifactsProperty -and $backendArtifactsProperty.Value) {
+  $backendMigrationProperty = $backendArtifactsProperty.Value.PSObject.Properties['supabaseMigrationManifest']
+  if ($backendMigrationProperty) { $backendMigrationArtifact = $backendMigrationProperty.Value }
 }
 if ($backendMigrationArtifact) {
   Assert-MigrationAuthorityMatch -Authority $migrationAuthority -Candidate $backendMigrationArtifact `
