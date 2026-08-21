@@ -41,7 +41,7 @@ export class OsNavIcon {
   }
   get token(): string { return this.currentToken; }
   @Input() fallback: CarbonIconDescriptor = Application16;
-  @Input() size = 15;
+  @Input() size = 20;
 
   descriptorForToken(): CarbonIconDescriptor | null {
     return iconByToken(this.currentToken);
