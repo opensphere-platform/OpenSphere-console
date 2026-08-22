@@ -1403,7 +1403,7 @@ os-landing-foundations {
   .capability-grid h4 { margin: .65rem 0 0; font-size: var(--fd-card-title); line-height: 1.35; }
   .capability-grid p { margin: .55rem 0 0; color: var(--os-ink); font-size: var(--fd-body); line-height: 1.55; }
   .capability-grid small { display: block; margin-top: .65rem; padding-top: .55rem; border-top: 1px solid var(--fd-line); color: var(--os-ink-muted); font-size: var(--fd-detail); line-height: 1.5; }
-  .ai-pipeline { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+  .foundation-panel .ai-pipeline { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
   .engine-architecture { margin: 1rem 1.25rem; border: 1px solid var(--fd-line); background: var(--fd-line); }
   .engine-layer-heading { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; padding: .8rem 1rem; background: var(--os-surface-1); }
   .engine-layer-heading span { color: var(--os-accent); font: 700 var(--fd-label) var(--os-font-mono); letter-spacing: .06em; }
@@ -1457,7 +1457,7 @@ os-landing-foundations {
   os-landing .architecture-capability-grid,
   os-landing-foundations .capability-grid,
   os-landing-foundations .capability-grid-six,
-  os-landing-foundations .ai-pipeline { grid-template-columns: 1fr; }
+  os-landing-foundations .foundation-panel .ai-pipeline { grid-template-columns: 1fr; }
   os-landing-foundations {
     .engine-surface-grid { grid-template-columns: 1fr; }
     .engine-architecture { margin: 1rem; }
