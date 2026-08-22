@@ -20,7 +20,7 @@ function fixture(actor = {}) {
     approve: async (id, item) => approvals.push({ operation_id: id, approver_id: item.approverId, assurance: item.assurance, approval_digest: item.approvalDigest }),
     approvals: async (id) => approvals.filter((a) => a.operation_id === id), queue: async (id) => { rows.find((r) => r.operation_id === id).phase = 'Queued'; },
   };
-  const api = createR2d2OperationApi({ enabled: true, authenticate: async () => ({ actor: { sub: '11111111-1111-4111-8111-111111111111', assurance: 'aal2', browserSessionId: '22222222-2222-4222-8222-222222222222', credentialRevision: 3, ...actor } }), store,
+  const api = createR2d2OperationApi({ enabled: true, authenticate: async () => ({ actor: { sub: '11111111-1111-4111-8111-111111111111', assurance: 'aal2', browserSessionId: '22222222-2222-4222-8222-222222222222', credentialRevision: 3, lastReauthenticatedAt: '2026-08-09T23:59:00.000Z', ...actor } }), store,
     resolveTarget: async (action, target) => action === 'create-postgres-cluster'
       ? { kind: 'FoundationClaim', namespace: target.namespace, name: target.name, uid: 'pending:owner-revision',
         generation: 0, resourceVersion: 'catalog-rv:runtime-rv', request: { ...target } }
@@ -39,6 +39,15 @@ test('operation acceptance persists only digests/session identity and queues R1'
   });
   assert.equal(JSON.stringify(rows).includes('forged'), false);
   assert.equal(JSON.stringify(rows).includes('Bearer'), false); assert.equal(JSON.stringify(rows).includes('accessToken'), false);
+});
+
+test('R1 acceptance requires the requesting administrator to have recent AAL2', async () => {
+  const f = fixture({ lastReauthenticatedAt: '2026-08-09T23:50:00.000Z' });
+  await assert.rejects(
+    () => f.api.accept({ headers: { 'x-os-idempotency-key': 'request-stale-aal2' } }, request()),
+    (error) => error?.code === 428 && error?.errorCode === 'recent_aal2_required',
+  );
+  assert.equal(f.rows.length, 0);
 });
 test('R2 remains awaiting approval until an AAL2 approval', async () => {
   const actor = {}; const f = fixture(actor); const body = request('rollback-image'); body.target.namespace = 'opensphere-console'; body.confirmation = exactConfirmation(DESCRIPTORS['rollback-image'], body.target);

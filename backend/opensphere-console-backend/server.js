@@ -31,10 +31,11 @@ const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
 const { createOsShellAdmissionIssuer } = require('./os-shell-admission');
 const { createOsShellCredentialExchange } = require('./os-shell-delegation');
 const { validateLocalEdgeAutomationTokenClaims } = require('./local-edge-automation-token');
+const { LOCAL_EDGE_R1_MODE, localEdgeR1ApprovalPolicy } = require('./local-edge-r1-approval');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
 const { createModuleOperationApi } = require('./module-operation-api');
 const { createR2d2OperationApi, createRestOperationStore, createRestWorkerStore } = require('./r2d2-operation-api');
-const { DurableOperationWorker } = require('./r2d2-durable-operation');
+const { DESCRIPTORS: R2D2_DURABLE_DESCRIPTORS, DurableOperationWorker } = require('./r2d2-durable-operation');
 const { createR2d2RemediationApi, createRestRemediationStore } = require('./r2d2-remediation-api');
 const {
   DEFAULT_INSTALLATION_CONFIG_FILE,
@@ -1532,6 +1533,8 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
     confirm: payload.confirmation };
   if (payload.toolId === 'owner.workload.scale') inputs.replicas = target.replicas;
   if (payload.toolId === 'owner.release.rollback') { inputs.container = target.container; inputs.image = target.image; }
+  const descriptor = Object.values(R2D2_DURABLE_DESCRIPTORS)
+    .find((candidate) => candidate.toolId === payload.toolId);
   let proposal;
   try {
     proposal = await governedChange(actor, {
@@ -1539,7 +1542,7 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
       reason: payload.reason, desiredState: { toolId: mapping.toolId, target: `${inputs.kind}:${target.namespace}/${target.name}`,
         inputs, durableOperationId: payload.operationId, requiredPermission: 'osaa.action.execute.high' },
       idempotencyKey: payload.idempotencyKey,
-    });
+    }, { durableDescriptor: descriptor || null, durableOwnerRoute: _route });
   } catch (error) {
     if (Number(error?.code) >= 500) error.ambiguous = true;
     throw error;
@@ -2709,6 +2712,7 @@ async function governedChange(actor, body = {}, options = {}) {
   if (!target || target.length > 300 || /[\r\n]/.test(target)) throw { code: 400, msg: 'invalid governed change target' };
   let declaration = validateDeclaration(body.desiredState);
   let releaseApprovalPolicy = null;
+  let localEdgeR1Policy = null;
   let releaseDesiredState = null;
   if (consumerId === PLATFORM_RELEASE_CONSUMER) {
     if (!['apply', 'rollback'].includes(action.toLowerCase()) || target !== PLATFORM_RELEASE_TARGET) {
@@ -2735,6 +2739,19 @@ async function governedChange(actor, body = {}, options = {}) {
     releaseDesiredState = desiredState;
     declaration = validateDeclaration(desiredState);
   }
+  if (options.durableDescriptor) {
+    const installed = await installedPlatformRelease();
+    localEdgeR1Policy = localEdgeR1ApprovalPolicy({
+      publicUrl: CONSOLE_PUBLIC_URL,
+      installedSummary: installed.summary,
+      descriptor: options.durableDescriptor,
+      ownerRoute: options.durableOwnerRoute,
+      consumerId,
+      action,
+      desiredState: declaration.value,
+    });
+    if (localEdgeR1Policy) requireRecentAal2(actor, 'local edge R1 OSAA operation authorization');
+  }
   validateChangeTemplate(body, declaration);
   const contractRows = await restRequest('consumer_contract', { query: `select=consumer_id,gitea_repository,gitea_path,reconciler&consumer_id=eq.${encodeURIComponent(consumerId)}` });
   const contract = Array.isArray(contractRows) ? contractRows[0] : null;
@@ -2759,13 +2776,34 @@ async function governedChange(actor, body = {}, options = {}) {
   });
   const change = Array.isArray(started) ? started[0] : started;
   if (!change?.request_id) throw { code: 503, msg: 'governed change intent was not persisted' };
-  if (change.request_id !== requestId) return {
-    accepted: true,
-    duplicate: true,
-    requestId: change.request_id,
-    status: change.status,
-    approvalPolicy: releaseApprovalPolicy,
-  };
+  if (change.request_id !== requestId) {
+    const duplicate = {
+      accepted: true,
+      duplicate: true,
+      requestId: change.request_id,
+      status: change.status,
+      approvalPolicy: releaseApprovalPolicy || localEdgeR1Policy,
+    };
+    if (localEdgeR1Policy?.mode === LOCAL_EDGE_R1_MODE
+        && ['authorized', 'intent', 'unknown'].includes(String(change.status || '').toLowerCase())) {
+      const executions = await restRequest('change_execution', {
+        query: `select=branch,pull_number,reconciler&request_id=eq.${encodeURIComponent(change.request_id)}&limit=1`,
+      });
+      const execution = Array.isArray(executions) ? executions[0] : null;
+      if (execution?.branch && Number(execution.pull_number) > 0) {
+        duplicate.autoAuthorization = await authorizeLocalEdgeR1Operation(actor, {
+          policy: localEdgeR1Policy,
+          requestId: change.request_id,
+          reason,
+          branch: execution.branch,
+          pullNumber: Number(execution.pull_number),
+          reconciler: execution.reconciler || GITEA_RECONCILER_NAME,
+        });
+        duplicate.status = duplicate.autoAuthorization.merged ? 'committed' : change.status;
+      }
+    }
+    return duplicate;
+  }
 
   const branch = `control/${requestId}`;
   const sourcePath = String(contract.gitea_path || `${consumerId}/`).replace(/^\/+/, '').replace(/\/+$/, '');
@@ -2810,7 +2848,7 @@ async function governedChange(actor, body = {}, options = {}) {
       accepted: true, requestId, status: 'authorized', branch, rollbackOf,
       pullRequest: { number: pull.body?.number || null, url: pull.body?.html_url || null },
       desiredRevision: desiredRevision || null,
-      approvalPolicy: releaseApprovalPolicy,
+      approvalPolicy: releaseApprovalPolicy || localEdgeR1Policy,
     };
     if (releaseApprovalPolicy?.mode === 'local-edge-automation') {
       try {
@@ -2832,6 +2870,17 @@ async function governedChange(actor, body = {}, options = {}) {
         };
       }
     }
+    if (localEdgeR1Policy?.mode === LOCAL_EDGE_R1_MODE) {
+      proposal.autoAuthorization = await authorizeLocalEdgeR1Operation(actor, {
+        policy: localEdgeR1Policy,
+        requestId,
+        reason,
+        branch,
+        pullNumber: Number(pull.body?.number || 0),
+        reconciler: contract.reconciler || GITEA_RECONCILER_NAME,
+      });
+      proposal.status = proposal.autoAuthorization.merged ? 'committed' : 'authorized';
+    }
     return proposal;
   } catch (error) {
     await restRequest('rpc/record_change_failure', { method: 'POST', body: { p_request_id: requestId, p_result: 'gitea-proposal-failed', p_error: String(error?.msg || 'Gitea proposal failed').slice(0, 1800) } }).catch(() => undefined);
@@ -2846,40 +2895,95 @@ async function authorizeLocalEdgeComponentRelease(actor, {
   if (policy.mode !== 'local-edge-automation' || policy.autoMerge !== true) {
     throw { code: 409, msg: 'release is not eligible for local edge automation' };
   }
+  const authorizer = actor?.actorType !== 'service'
+    ? `Console owner ${actor.sub}`
+    : LOCAL_EDGE_AUTOMATION_SERVICE_ACCOUNT;
+  return authorizeLocalEdgeGovernedChange(actor, {
+    policy,
+    requestId,
+    reason,
+    branch,
+    pullNumber,
+    reconciler,
+    defaultReconciler: PLATFORM_RELEASE_RECONCILER,
+    recentAal2Operation: 'local edge component release authorization',
+    auditAction: 'platform-release-edge-automation',
+    targetType: 'platform-release',
+    reviewBody: `Local edge component release authorized by ${authorizer}; correlation ${requestId}. Reason: ${reason}`,
+  });
+}
+
+async function authorizeLocalEdgeR1Operation(actor, {
+  policy, requestId, reason, branch, pullNumber, reconciler,
+}) {
+  if (policy?.mode !== LOCAL_EDGE_R1_MODE || policy.autoMerge !== true) {
+    throw { code: 409, msg: 'operation is not eligible for local edge R1 authorization' };
+  }
+  if (actor?.actorType === 'service') {
+    throw { code: 403, msg: 'local edge R1 requires the requesting human administrator' };
+  }
+  return authorizeLocalEdgeGovernedChange(actor, {
+    policy,
+    requestId,
+    reason,
+    branch,
+    pullNumber,
+    reconciler,
+    defaultReconciler: GITEA_RECONCILER_NAME,
+    recentAal2Operation: 'local edge R1 OSAA operation authorization',
+    auditAction: 'osaa-r1-edge-authorization',
+    targetType: 'osaa-r1-workload',
+    reviewBody: `Local edge R1 OSAA operation authorized by Console owner ${actor.sub}; correlation ${requestId}. Reason: ${reason}`,
+  });
+}
+
+async function authorizeLocalEdgeGovernedChange(actor, {
+  policy, requestId, reason, branch, pullNumber, reconciler, defaultReconciler,
+  recentAal2Operation, auditAction, targetType, reviewBody,
+}) {
+  if (!policy?.autoMerge || !String(policy.mode || '').startsWith('local-edge-')) {
+    throw { code: 409, msg: 'governed change is not eligible for local edge authorization' };
+  }
   const humanAuthorization = actor?.actorType !== 'service';
-  if (humanAuthorization) requireRecentAal2(actor, 'local edge component release authorization');
+  if (humanAuthorization) requireRecentAal2(actor, recentAal2Operation);
+  if (!GITEA_REVIEW_TOKEN) throw { code: 503, msg: 'Gitea review credential is not configured' };
   if (!Number.isInteger(pullNumber) || pullNumber < 1) {
     throw { code: 502, msg: 'Gitea did not return a pull request number' };
   }
   if (humanAuthorization) {
     await restRequest('change_approval', {
       method: 'POST',
+      query: 'on_conflict=request_id,approver_id',
       body: {
         request_id: requestId,
         approver_id: actor.sub,
         reason,
         status: 'intent',
       },
-      prefer: 'return=minimal',
+      prefer: 'resolution=merge-duplicates,return=minimal',
     });
   }
   let reviewId = null;
   try {
-    const review = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/reviews`, {
-      method: 'POST',
-      authToken: GITEA_REVIEW_TOKEN,
-      body: {
-        event: 'APPROVED',
-        body: `Local edge component release authorized by ${humanAuthorization ? `Console owner ${actor.sub}` : LOCAL_EDGE_AUTOMATION_SERVICE_ACCOUNT}; correlation ${requestId}. Reason: ${reason}`,
-      },
-    });
-    reviewId = Number.isInteger(review.body?.id) ? review.body.id : null;
-    await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/merge`, {
-      method: 'POST',
-      body: { Do: 'merge', delete_branch_after_merge: false },
-    });
-    const pull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}`);
-    const merged = pull.body?.state === 'closed' && pull.body?.merged === true;
+    let pull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}`);
+    let merged = pull.body?.state === 'closed' && pull.body?.merged === true;
+    if (!merged) {
+      const review = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/reviews`, {
+        method: 'POST',
+        authToken: GITEA_REVIEW_TOKEN,
+        body: {
+          event: 'APPROVED',
+          body: reviewBody,
+        },
+      });
+      reviewId = Number.isInteger(review.body?.id) ? review.body.id : null;
+      await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}/merge`, {
+        method: 'POST',
+        body: { Do: 'merge', delete_branch_after_merge: false },
+      });
+      pull = await giteaRequest(`/api/v1/repos/${encodeURIComponent(GITEA_ORGANIZATION)}/${encodeURIComponent(GITEA_REPOSITORY)}/pulls/${pullNumber}`);
+      merged = pull.body?.state === 'closed' && pull.body?.merged === true;
+    }
     const mergeRevision = String(pull.body?.merge_commit_sha || '').toLowerCase();
     if (!merged || !/^[0-9a-f]{40,64}$/.test(mergeRevision)) {
       throw { code: 502, msg: 'authorized local edge pull request was not merged' };
@@ -2898,10 +3002,10 @@ async function authorizeLocalEdgeComponentRelease(actor, {
         prefer: 'return=minimal',
       });
     }
-    await logAudit(actor, 'platform-release-edge-automation', requestId, 'local-edge-authorized', reason, {
+    await logAudit(actor, auditAction, requestId, 'local-edge-authorized', reason, {
       requestId,
       phase: 'authorized',
-      targetType: 'platform-release',
+      targetType,
       payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, mergeRevision, mode: policy.mode })),
     });
     let reconciliationError = null;
@@ -2911,14 +3015,14 @@ async function authorizeLocalEdgeComponentRelease(actor, {
         branch,
         mergeRevision,
         repository: giteaRepoName(),
-        reconciler: reconciler || PLATFORM_RELEASE_RECONCILER,
+        reconciler: reconciler || defaultReconciler,
       });
     } catch (error) {
       reconciliationError = String(error?.msg || error).slice(0, 300);
-      await logAudit(actor, 'platform-release-edge-automation', requestId, 'reconciliation-queue-failed', reason, {
+      await logAudit(actor, auditAction, requestId, 'reconciliation-queue-failed', reason, {
         requestId,
         phase: 'authorized',
-        targetType: 'platform-release',
+        targetType,
         payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, mergeRevision, reconciliationError })),
       }).catch(() => undefined);
     }
@@ -2946,10 +3050,10 @@ async function authorizeLocalEdgeComponentRelease(actor, {
         prefer: 'return=minimal',
       }).catch(() => undefined);
     }
-    await logAudit(actor, 'platform-release-edge-automation', requestId, 'failed', reason, {
+    await logAudit(actor, auditAction, requestId, 'failed', reason, {
       requestId,
       phase: 'failed',
-      targetType: 'platform-release',
+      targetType,
       payloadDigest: toHashHex(canonicalJson({ requestId, pullNumber, error: error?.msg || 'local-edge-authorization-failed' })),
     }).catch(() => undefined);
     throw error;

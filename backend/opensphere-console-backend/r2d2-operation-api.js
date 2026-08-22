@@ -96,6 +96,14 @@ function createR2d2OperationApi(options) {
     }
     const target = resolvedTarget || await resolveTarget(String(requestBody.action || ''), requestBody.target || {}, auth);
     const bound = bindOperation({ ...requestBody, target });
+    if (bound.riskClass === 'R1' && bound.requiredAssurance === 'aal2') {
+      const reauthenticatedAt = Date.parse(actor.lastReauthenticatedAt || '');
+      if (actor.assurance !== 'aal2' || !Number.isFinite(reauthenticatedAt)
+          || now().getTime() - reauthenticatedAt > 5 * 60 * 1000) {
+        throw { code: 428, errorCode: 'recent_aal2_required',
+          msg: 'local edge R1 OSAA operation requires MFA assurance aal2 verified within the last 5 minutes' };
+      }
+    }
     const idempotencyKey = storedPlan?.plan_id || String(req.headers['x-os-idempotency-key'] || body.idempotencyKey || '').trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(idempotencyKey)) throw { code: 400, msg: 'valid idempotency key required' };
     const deadline = new Date(now().getTime() + Math.max(60000, Math.min(3600000, Number(body.deadlineMs || 600000))));

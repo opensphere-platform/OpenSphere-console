@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const server = read('opensphere-console-backend/server.js');
 const deploy = read('opensphere-console-backend/deploy.yaml');
+const dockerfile = read('opensphere-console-backend/Dockerfile');
 const governance = read('supabase/migrations/0009_platform_control_governance.sql');
 const approvals = read('supabase/migrations/0010_change_approval.sql');
 const reconcileRetry = read('supabase/migrations/0028_change_reconcile_retry.sql');
@@ -111,6 +112,20 @@ test('OSAA mutations are typed, exact-confirmed, digest-pinned, and never direct
   assert.match(server, /consumerId: 'osaa-gateway', action: policy\.action/);
   assert.match(server, /action must be apply, delete, configure, or rollback/);
   assert.doesNotMatch(server.slice(server.indexOf('async function submitOsaaAction'), server.indexOf('async function requireSupabase')), /k8s\(|K8S_API|PATCH.*deployments/);
+});
+
+test('durable local-edge R1 uses one recent-AAL2 administrator without bypassing governed reconciliation', () => {
+  const governed = server.slice(server.indexOf('async function governedChange'), server.indexOf('async function approveGovernedChange'));
+  assert.match(server, /localEdgeR1ApprovalPolicy/);
+  assert.match(server, /local edge R1 OSAA operation authorization/);
+  assert.match(server, /async function authorizeLocalEdgeR1Operation/);
+  assert.match(server, /async function authorizeLocalEdgeGovernedChange/);
+  assert.match(dockerfile, /COPY opensphere-console-backend\/local-edge-r1-approval\.js \.\/local-edge-r1-approval\.js/);
+  assert.match(governed, /LOCAL_EDGE_R1_MODE/);
+  assert.match(governed, /authToken: GITEA_REVIEW_TOKEN/);
+  assert.match(governed, /await assertVerifiedGovernedMerge\(mergeRevision\)/);
+  assert.match(governed, /await convergeGovernedMerge/);
+  assert.doesNotMatch(governed, /kubectl|K8S_API|PATCH.*deployments/i);
 });
 
 test('OSAA Backend lifecycle gate is inside action submission and absent from provider credential probing', () => {

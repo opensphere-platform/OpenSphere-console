@@ -21,15 +21,17 @@ const PHASE_TRANSITIONS = Object.freeze({
 
 const DESCRIPTORS = Object.freeze({
   'restart-workload': Object.freeze({
-    descriptorId: 'opensphere.workload.restart', revision: '1', toolId: 'owner.workload.restart',
-    verifierId: 'authority.workload.rollout', riskClass: 'R1', assurance: 'aal1',
+    descriptorId: 'opensphere.workload.restart', revision: '2', toolId: 'owner.workload.restart',
+    governedToolId: 'osaa.k8s.workload.restart',
+    verifierId: 'authority.workload.rollout', riskClass: 'R1', assurance: 'aal2',
     targetKind: 'Deployment', confirmationTemplate: 'restart <kind> <namespace>/<name>',
     ownerRoute: 'cluster-manager/workloads', allowedNamespaces: ['opensphere-*'],
     permission: 'osaa.action.execute.high',
   }),
   'scale-workload': Object.freeze({
-    descriptorId: 'opensphere.workload.scale', revision: '1', toolId: 'owner.workload.scale',
-    verifierId: 'authority.workload.replicas', riskClass: 'R1', assurance: 'aal1',
+    descriptorId: 'opensphere.workload.scale', revision: '2', toolId: 'owner.workload.scale',
+    governedToolId: 'osaa.k8s.workload.scale',
+    verifierId: 'authority.workload.replicas', riskClass: 'R1', assurance: 'aal2',
     targetKind: 'Deployment', confirmationTemplate: 'scale <kind> <namespace>/<name> to <replicas>',
     ownerRoute: 'cluster-manager/workloads', allowedNamespaces: ['opensphere-*'], permission: 'osaa.action.execute.high',
   }),
@@ -212,7 +214,7 @@ function expectedPostcondition(operation) {
   }
 }
 
-function authorizeAtExecution(operation, session, approvals = []) {
+function authorizeAtExecution(operation, session, approvals = [], now = Date.now()) {
   if (!session?.active || String(session.actorId) !== String(operation.actorId)) {
     return { allowed: false, phase: 'authorization_expired', code: 'AuthorizationExpired' };
   }
@@ -224,6 +226,12 @@ function authorizeAtExecution(operation, session, approvals = []) {
   }
   if (operation.requiredAssurance === 'aal2' && session.assurance !== 'aal2') {
     return { allowed: false, phase: 'authorization_expired', code: 'AssuranceExpired' };
+  }
+  if (operation.requiredAssurance === 'aal2') {
+    const reauthenticatedAt = Date.parse(session.lastReauthenticatedAt || '');
+    if (!Number.isFinite(reauthenticatedAt) || now - reauthenticatedAt > 5 * 60 * 1000) {
+      return { allowed: false, phase: 'authorization_expired', code: 'RecentAssuranceRequired' };
+    }
   }
   const activeApprovers = [...new Set(approvals.filter((item) => !item.revokedAt && item.assurance === 'aal2').map((item) => String(item.approverId)))];
   if (operation.riskClass === 'R2' && activeApprovers.length < 1) {
@@ -308,11 +316,12 @@ class DurableOperationWorker {
       const [session, approvals] = await Promise.all([
         this.deps.sessions.resolve(operation.authSessionId, operation.actorId), this.deps.store.getApprovals(operation.operationId),
       ]);
-      let authorization = authorizeAtExecution(operation, session, approvals);
+      let authorization = authorizeAtExecution(operation, session, approvals, this.now().getTime());
       // A CLI credential is intentionally aal1. For R2/R3, an independent AAL2
       // approver may become the execution identity only after the original
       // actor/session/permission/revision checks passed up to AssuranceExpired.
-      if (!authorization.allowed && authorization.code === 'AssuranceExpired' && ['R2', 'R3'].includes(operation.riskClass)) {
+      if (!authorization.allowed && ['AssuranceExpired', 'RecentAssuranceRequired'].includes(authorization.code)
+          && ['R2', 'R3'].includes(operation.riskClass)) {
         const activeApprovalCount = new Set(approvals.filter((item) => !item.revokedAt && item.assurance === 'aal2')
           .map((item) => String(item.approverId))).size;
         const requiredApprovalCount = operation.riskClass === 'R3' ? 2 : 1;
@@ -320,7 +329,10 @@ class DurableOperationWorker {
           if (approval.revokedAt || approval.assurance !== 'aal2' || !approval.authSessionId
               || String(approval.approverId) === String(operation.actorId)) continue;
           const approverSession = await this.deps.sessions.resolve(approval.authSessionId, approval.approverId);
+          const approverReauthenticatedAt = Date.parse(approverSession?.lastReauthenticatedAt || '');
           if (!approverSession?.active || approverSession.assurance !== 'aal2'
+              || !Number.isFinite(approverReauthenticatedAt)
+              || this.now().getTime() - approverReauthenticatedAt > 5 * 60 * 1000
               || String(approverSession.authzRevision || '') !== String(approval.authzRevision || '')
               || !new Set(approverSession.permissions || []).has(operation.requiredPermission)) continue;
           authorization = { allowed: true, phase: 'preflighting', code: 'AuthorizedByIndependentApprover',

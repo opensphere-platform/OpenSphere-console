@@ -6,6 +6,59 @@ const {
   DESCRIPTORS, exactConfirmation, bindOperation, authorizeAtExecution,
   checkLivePreconditions, DurableOperationWorker,
 } = require('./r2d2-durable-operation');
+const {
+  LOCAL_EDGE_R1_MODE,
+  localhostHttps,
+  localEdgeR1ApprovalPolicy,
+} = require('./local-edge-r1-approval');
+
+const localEdgeDescriptor = Object.freeze({
+  riskClass: 'R1', assurance: 'aal2', ownerRoute: 'cluster-manager/workloads',
+  governedToolId: 'osaa.k8s.workload.restart',
+});
+
+function localEdgeCandidate(overrides = {}) {
+  return {
+    publicUrl: 'https://localhost:1114',
+    installedSummary: { channel: 'edge', buildAuthority: 'localhost', releaseClass: 'pre-ga' },
+    descriptor: localEdgeDescriptor,
+    ownerRoute: 'cluster-manager/workloads',
+    consumerId: 'osaa-gateway',
+    action: 'apply',
+    desiredState: {
+      toolId: 'osaa.k8s.workload.restart',
+      durableOperationId: '123e4567-e89b-42d3-a456-426614174000',
+      inputs: { confirm: 'restart deployment opensphere-console/backend' },
+    },
+    ...overrides,
+  };
+}
+
+test('R1 single-admin automation is restricted to localhost HTTPS edge operations', () => {
+  const policy = localEdgeR1ApprovalPolicy(localEdgeCandidate());
+  assert.equal(policy.mode, LOCAL_EDGE_R1_MODE);
+  assert.equal(policy.requiredHumanApprovals, 1);
+  assert.equal(policy.approvingHuman, 'requesting-admin');
+  assert.equal(policy.autoMerge, true);
+  assert.equal(localhostHttps('https://127.0.0.1:1114'), true);
+  assert.equal(localhostHttps('http://localhost:1114'), false);
+});
+
+test('R1 single-admin automation fails closed outside its exact authority boundary', () => {
+  const denied = [
+    { publicUrl: 'https://console.example.com' },
+    { installedSummary: { channel: 'ga', buildAuthority: 'github-actions', releaseClass: 'ga' } },
+    { descriptor: { ...localEdgeDescriptor, riskClass: 'R2' } },
+    { descriptor: { ...localEdgeDescriptor, assurance: 'aal1' } },
+    { ownerRoute: 'foundation/platform-release' },
+    { consumerId: 'platform-release' },
+    { action: 'rollback' },
+    { desiredState: { ...localEdgeCandidate().desiredState, toolId: 'osaa.k8s.workload.rollback-image' } },
+    { desiredState: { ...localEdgeCandidate().desiredState, durableOperationId: 'not-an-operation' } },
+    { desiredState: { ...localEdgeCandidate().desiredState, inputs: { confirm: '' } } },
+  ];
+  for (const override of denied) assert.equal(localEdgeR1ApprovalPolicy(localEdgeCandidate(override)), null);
+});
 
 function request(action = 'restart-workload') {
   const descriptor = DESCRIPTORS[action];
@@ -30,6 +83,7 @@ test('closed binder selects only release descriptor values', () => {
   assert.equal(out.toolId, 'owner.workload.restart');
   assert.equal(out.target.uid, 'uid-1');
   assert.equal(out.riskClass, 'R1');
+  assert.equal(out.requiredAssurance, 'aal2');
 });
 
 test('binder rejects missing human exact confirmation and arbitrary action', () => {
@@ -56,11 +110,13 @@ test('HIS owner recovery is a closed R2 capability with an exact human confirmat
 
 test('execution authorization is revalidated and R3 requires two distinct AAL2 people', () => {
   const operation = { actorId: 'actor', action: 'rollback-image', authzRevision: 'r1', requiredAssurance: 'aal2', riskClass: 'R3', requiredPermission: 'osaa.action.execute.high' };
-  const session = { active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['osaa.action.execute.high'], accessToken: 'memory-only' };
-  assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }]).code, 'TwoPersonApprovalRequired');
-  assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }, { approverId: 'a', assurance: 'aal2' }]).allowed, false);
-  assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }, { approverId: 'b', assurance: 'aal2' }]).allowed, true);
-  assert.equal(authorizeAtExecution(operation, { ...session, authzRevision: 'r2' }, []).code, 'AuthorizationRevisionChanged');
+  const now = Date.parse('2026-08-23T00:00:00.000Z');
+  const session = { active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['osaa.action.execute.high'], accessToken: 'memory-only', lastReauthenticatedAt: '2026-08-22T23:59:00.000Z' };
+  assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }], now).code, 'TwoPersonApprovalRequired');
+  assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }, { approverId: 'a', assurance: 'aal2' }], now).allowed, false);
+  assert.equal(authorizeAtExecution(operation, session, [{ approverId: 'a', assurance: 'aal2' }, { approverId: 'b', assurance: 'aal2' }], now).allowed, true);
+  assert.equal(authorizeAtExecution(operation, { ...session, authzRevision: 'r2' }, [], now).code, 'AuthorizationRevisionChanged');
+  assert.equal(authorizeAtExecution(operation, { ...session, lastReauthenticatedAt: '2026-08-22T23:50:00.000Z' }, [], now).code, 'RecentAssuranceRequired');
 });
 
 test('live UID/generation/resource/desired revisions are authoritative preconditions', () => {
@@ -79,7 +135,7 @@ function workerFixture(overrides = {}) {
       appendStep: async (_id, item) => steps.push(item), setPhase: async (_id, phase) => phases.push(phase),
       getApprovals: async () => [], heartbeat: async () => true,
     },
-    sessions: { resolve: async () => ({ active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['osaa.action.execute.high'], accessToken: 'secret' }) },
+    sessions: { resolve: async () => ({ active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2', permissions: ['osaa.action.execute.high'], accessToken: 'secret', lastReauthenticatedAt: new Date().toISOString() }) },
     authority: { read: async () => ({ ...request().target, fresh: true, snapshotComplete: true }) },
     owners: { invoke: async () => { calls += 1; return { operationId: 'owner-1' }; }, reconcile: async () => null },
     verifiers: { verify: async () => ({ status: 'succeeded', observed: { ready: true } }) },
@@ -114,6 +170,7 @@ test('all initial management scenarios bind to a closed owner and authoritative 
       sessions: { resolve: async () => ({
         active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2',
         permissions: ['osaa.action.execute.high', 'console.notification.manage'], accessToken: 'memory-only',
+        lastReauthenticatedAt: new Date().toISOString(),
       }) },
       authority: { read: async () => ({ ...op.target, fresh: true, snapshotComplete: true }) },
       owners: {
@@ -161,7 +218,7 @@ test('independent AAL2 approver can execute an R2 plan initiated by an active CL
 			heartbeat: async () => true, recordDownstreamIntent: async () => {},
 		},
 		sessions: { resolve: async (sessionId) => sessionId === 'browser-approval'
-			? { active: true, actorId: 'approver', assurance: 'aal2', authzRevision: 'r2', permissions: ['osaa.action.execute.high'], accessToken: 'approver-token' }
+			? { active: true, actorId: 'approver', assurance: 'aal2', authzRevision: 'r2', permissions: ['osaa.action.execute.high'], accessToken: 'approver-token', lastReauthenticatedAt: new Date().toISOString() }
 			: { active: true, actorId: 'actor', assurance: 'aal1', authzRevision: 'r1', permissions: ['osaa.action.execute.high'], accessToken: 'cli-token' } },
 		authority: { read: async () => ({ ...op.target, fresh: true, snapshotComplete: true }) },
 		owners: { invoke: async (_route, _payload, token) => { ownerToken = token; return { operationId: 'owner-pg' }; }, reconcile: async () => null },
