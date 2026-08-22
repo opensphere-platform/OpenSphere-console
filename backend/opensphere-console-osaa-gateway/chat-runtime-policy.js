@@ -33,6 +33,10 @@ const OS_SHELL_DIAGNOSIS_PATTERNS = [
   /(?:HTTP\s*500|readiness|세션|attach|WebSocket|터미널).*(?:OS\s*Shell|OSS)/iu,
 ];
 
+const FOUNDATION_POSTGRES_DOMAIN_PATTERN = /(?:\bPFSS\b|foundation).*(?:\bPostgreSQL\b|\bPostgres\b|포스트그레스)|(?:\bPostgreSQL\b|\bPostgres\b|포스트그레스).*?(?:\bPFSS\b|foundation)/iu;
+const FOUNDATION_POSTGRES_STATUS_PATTERN = /(?:현재|운영\s*중|인스턴스|존재|있는가|있나|몇\s*개|상태|목록|조회|확인|current|running|instance|exist|status|list|check)/iu;
+const FOUNDATION_POSTGRES_MUTATION_PATTERN = /(?:구성|설치|생성|프로비저닝|만들|create|configure|install|provision|delete|삭제)/iu;
+
 function requiresExtensionPresentationStatus(query) {
   const text = String(query || '').trim();
   return text.length > 0 && EXTENSION_PRESENTATION_PATTERNS.some((pattern) => pattern.test(text));
@@ -51,6 +55,14 @@ function requiresManualAccessDiagnosis(query) {
 function requiresOsShellDiagnosis(query) {
   const text = String(query || '').trim();
   return text.length > 0 && OS_SHELL_DIAGNOSIS_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function requiresFoundationPostgresStatus(query) {
+  const text = String(query || '').trim();
+  return text.length > 0
+    && FOUNDATION_POSTGRES_DOMAIN_PATTERN.test(text)
+    && FOUNDATION_POSTGRES_STATUS_PATTERN.test(text)
+    && !FOUNDATION_POSTGRES_MUTATION_PATTERN.test(text);
 }
 
 function requiresLiveAgentTools(query) {
@@ -101,6 +113,7 @@ module.exports = {
   lexicalKnowledgeQuery,
   requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
+  requiresFoundationPostgresStatus,
   requiresManualAccessDiagnosis,
   requiresOsShellDiagnosis,
   requiresLiveAgentTools,

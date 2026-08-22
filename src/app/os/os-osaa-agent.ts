@@ -43,15 +43,6 @@ interface OsaaConcept {
   authorityTier?: number | null;
   sourceIds?: string[];
 }
-interface OsaaSuggestedAction {
-  id: string;
-  title: string;
-  intent: string;
-  toolId: string;
-  riskLevel: string;
-  confirmation: string;
-  command: string;
-}
 interface OsaaUsage {
   inputTokens: number;
   outputTokens: number;
@@ -68,7 +59,6 @@ interface OsaaMessage {
   meta?: string;
   sources?: OsaaSource[];
   concepts?: OsaaConcept[];
-  actions?: OsaaSuggestedAction[];
   usage?: OsaaUsage;
 }
 interface OsaaSession {
@@ -89,7 +79,6 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
  * 동일 출처 `/api/osaa/chat`만 HttpService로 호출하며, 인증은 Console Backend의 불투명
  * HttpOnly 세션과 CSRF 정책을 따른다. 브라우저 JavaScript가 bearer token을 직접 조립하지 않는다.
  * API 키는 이 컴포넌트에 저장·표시되지 않는다(키 관리는 /manage 백본 관리 화면의 서버측 책임).
- * 제안 행동(suggestedActions)은 입력창에 명령을 채워 넣을 뿐 — Kubernetes를 직접 변경하는 우회 경로가 아니다.
  * 실제 비-read 실행은 게이트웨이(서버) 단계에서 확인/감사 후에만 이루어지며, Cluster Manager Activated +
  * HIS Preflight Ready 이전에는 서버가 모든 Kubernetes mutation/action tool을 제공하지 않는다
  * (CONSTITUTION-0004 §4.2, fail-closed — 이 컴포넌트는 UI 제안일 뿐 gate를 대체하지 않는다).
@@ -194,20 +183,6 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
                       <div class="osaa-source">
                         <span class="osaa-source-title" [title]="c.summary || c.id">{{ c.name }}</span>
                         <span class="osaa-source-ref" [title]="c.id">{{ c.type }}{{ c.authorityTier == null ? '' : ' T' + c.authorityTier }}</span>
-                      </div>
-                    }
-                  </div>
-                }
-                @if (m.actions?.length) {
-                  <div class="osaa-sources osaa-actions-list" aria-label="R2D2 suggested actions">
-                    <div class="osaa-sources-title">Suggested Actions</div>
-                    @for (a of m.actions || []; track a.id) {
-                      <div class="osaa-action-card">
-                        <div>
-                          <span class="osaa-source-title" [title]="a.id">{{ a.title }}</span>
-                          <span class="osaa-source-ref" [title]="a.toolId">{{ a.intent }} / {{ a.riskLevel }} / {{ a.confirmation }}</span>
-                        </div>
-                        <button type="button" class="osaa-use-action" (click)="useSuggestedAction(a)">Use</button>
                       </div>
                     }
                   </div>
@@ -435,17 +410,6 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
         max-width: 13rem; overflow: hidden; text-overflow: ellipsis;
         color: #718096; font-family: monospace; white-space: nowrap;
       }
-      .osaa-actions-list { gap: 0.38rem; }
-      .osaa-action-card {
-        display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.45rem; align-items: center;
-        border: 1px solid #dde5ef; border-radius: 6px; background: #fbfcff; padding: 0.45rem 0.5rem;
-      }
-      .osaa-action-card > div { min-width: 0; display: grid; gap: 0.1rem; }
-      .osaa-use-action {
-        border: 1px solid #c9d4e4; background: #fff; color: #1f2733; border-radius: 4px;
-        height: 1.55rem; padding: 0 0.5rem; font-size: 0.6rem; cursor: pointer;
-      }
-      .osaa-use-action:hover { border-color: #1f6feb; color: #1f6feb; }
       .osaa-thinking { display: inline-flex; gap: 0.22rem; align-items: center; min-width: 48px; min-height: 31px; }
       .osaa-thinking span {
         width: 6px; height: 6px; border-radius: 50%; background: #6b7280;
@@ -759,9 +723,8 @@ export class OsOsaaAgent implements OnDestroy {
       }
       const sourceCount = Array.isArray(body.sources) ? body.sources.length : 0;
       const conceptCount = Array.isArray(body.concepts?.concepts) ? body.concepts.concepts.length : 0;
-      const actionCount = Array.isArray(body.suggestedActions) ? body.suggestedActions.length : 0;
       const envCount = Array.isArray(body.environment?.namespaces) ? body.environment.namespaces.length : 0;
-      const meta = `${body.provider || 'llm'} / ${body.model || ''} / ${body.latencyMs || 0}ms${sourceCount ? ` / sources ${sourceCount}` : ''}${conceptCount ? ` / concepts ${conceptCount}` : ''}${actionCount ? ` / actions ${actionCount}` : ''}${envCount ? ` / env ${envCount}` : ''}`;
+      const meta = `${body.provider || 'llm'} / ${body.model || ''} / ${body.latencyMs || 0}ms${sourceCount ? ` / sources ${sourceCount}` : ''}${conceptCount ? ` / concepts ${conceptCount}` : ''}${envCount ? ` / env ${envCount}` : ''}`;
       this.currentId.set(String(body.conversationId || this.currentId()));
       this.messages.update((items) => [...items, {
         id: String(body.assistantMessage?.id || 'a-' + Date.now()),
@@ -771,7 +734,6 @@ export class OsOsaaAgent implements OnDestroy {
         usage: this.normalizeUsage(body.usage, body.usageRecorded),
         sources: this.normalizeSources(body.sources),
         concepts: this.normalizeConcepts(body.concepts?.concepts),
-        actions: this.normalizeSuggestedActions(body.suggestedActions),
       }]);
       await this.refreshHistory(false);
     } catch (e: any) {
@@ -784,13 +746,6 @@ export class OsOsaaAgent implements OnDestroy {
       if (this.activeRequest === request) this.activeRequest = null;
       this.busy.set(false);
     }
-  }
-
-  /** 제안 행동은 명령을 입력창에 채우기만 한다 — 여기서 직접 실행/변형하지 않는다(비-read 실행은
-   *  서버 게이트웨이의 확인/감사 절차를 거쳐야 함). */
-  useSuggestedAction(action: OsaaSuggestedAction): void {
-    this.draft = action.command || `/action ${action.id}`;
-    this.error.set('');
   }
 
   relativeTime(value: string): string {
@@ -862,19 +817,6 @@ export class OsOsaaAgent implements OnDestroy {
     })).filter((c) => c.id);
   }
 
-  private normalizeSuggestedActions(value: unknown): OsaaSuggestedAction[] {
-    if (!Array.isArray(value)) return [];
-    return value.slice(0, 4).map((raw: any) => ({
-      id: String(raw?.id || ''),
-      title: String(raw?.title || raw?.id || 'Action'),
-      intent: String(raw?.intent || ''),
-      toolId: String(raw?.toolId || ''),
-      riskLevel: String(raw?.riskLevel || 'read'),
-      confirmation: String(raw?.confirmation || 'none'),
-      command: String(raw?.command || ''),
-    })).filter((a) => a.id && a.command);
-  }
-
   private normalizeUsage(value: unknown, recorded: unknown): OsaaUsage | undefined {
     if (!value || typeof value !== 'object') return undefined;
     const raw = value as Record<string, unknown>;
@@ -906,7 +848,6 @@ export class OsOsaaAgent implements OnDestroy {
       meta: role === 'assistant' ? `${provider} / ${model} / ${latency}ms` : undefined,
       sources: this.normalizeSources(raw['sources'] || response['sources']),
       concepts: this.normalizeConcepts(raw['concepts'] || (response['concepts'] as any)?.concepts),
-      actions: this.normalizeSuggestedActions(raw['actions'] || response['suggestedActions']),
       usage: this.normalizeUsage(raw['usage'] || response['usage'], response['usageRecorded']),
     };
   }

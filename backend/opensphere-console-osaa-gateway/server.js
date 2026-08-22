@@ -8,6 +8,7 @@ const {
   lexicalKnowledgeQuery,
   requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
+  requiresFoundationPostgresStatus,
   requiresManualAccessDiagnosis,
   requiresOsShellDiagnosis,
   requiresLiveAgentTools,
@@ -3479,9 +3480,12 @@ function operationalAnswerPolicySystemMessage() {
     role: 'system',
     content: [
       'OpenSphere Operational Answer Contract:',
-      'For OpenSphere operations, installation, preflight, Kubernetes, plugin, Data & Identity, Change Control, Foundation, or OSAA troubleshooting questions, separate the answer into: 확인한 현재 클러스터 사실, 문서 기반 판단, 필요한 조치, 승인 필요한 작업.',
+      'Answer the user\'s exact question first in one to three sentences. Use headings, tables, and multi-part reports only when they materially improve a complex answer; never use them by default.',
+      'For status or existence questions, state one of these conclusions first: confirmed present, confirmed absent, or not currently verifiable. Then cite only the decisive live evidence.',
       'Use the attached live environment snapshot as the primary source for current runtime facts. If the live snapshot is unavailable or incomplete, explicitly say which live fact could not be verified.',
       'Do not infer namespaces, pods, services, deployments, CRDs, readiness, install state, or action results from manuals alone. Manuals describe intended design; live snapshot/tool results describe current reality.',
+      'Do not expose internal tool IDs, /action commands, or proposed follow-up actions unless the user explicitly asks what to do next or asks to execute a change.',
+      'Do not repeat the same uncertainty in multiple sections. Failure to observe a resource is not evidence that the resource is absent.',
       'Before recommending a write/apply/install/delete/restart/scale action, state the read-only evidence first and mark the action as a proposal unless an explicit OSAA action endpoint result is present.',
       'Never claim that kubectl, apply, install, delete, restart, scale, or secret rotation was executed unless an explicit tool/action result is present in this conversation.',
       'Samba-AD Preflight identity-claim-binding BLOCK means the typed IdentityDirectoryClaim/IdentityDirectoryBinding contract is not ready. Existing generic FoundationClaim/FoundationBinding CRDs alone do not satisfy that typed identity directory contract.',
@@ -5663,41 +5667,6 @@ function actionCommandForBinding(binding, query = '') {
   return `/action ${binding.id}${jsonText}${expected ? ` confirm ${expected}` : ''}`;
 }
 
-async function suggestActionBindings({ query = '', sources = [], conceptGraph = null } = {}) {
-  // Never suggest write actions while the mutation gate is closed (CONSTITUTION-0004 §4.2).
-  const manifest = await gatedActionBindingsFromStore();
-  const sourceIds = new Set((sources || []).map((s) => s.sourceId).filter(Boolean));
-  for (const c of conceptGraph?.concepts || []) {
-    for (const id of c.sourceIds || []) sourceIds.add(id);
-  }
-  const terms = String(query || '').toLowerCase().split(/[^a-z0-9가-힣_-]+/).filter((x) => x.length >= 3);
-  const scored = [];
-  for (const b of manifest.bindings || []) {
-    if (b.valid === false) continue;
-    let score = 0;
-    if (sourceIds.has(b.sourceId)) score += 10;
-    const hay = [b.id, b.title, b.intent, b.toolId, b.sourceId, b.sectionId, b.controlPlane].filter(Boolean).join(' ').toLowerCase();
-    for (const term of terms) if (hay.includes(term)) score += 2;
-    if (b.riskLevel === 'read') score += 2;
-    if (b.confirmation === 'none') score += 1;
-    if (score <= 1) continue;
-    scored.push({ binding: b, score });
-  }
-  scored.sort((a, b) => b.score - a.score || String(a.binding.id).localeCompare(String(b.binding.id)));
-  return scored.slice(0, 4).map(({ binding, score }) => ({
-    id: binding.id,
-    title: binding.title,
-    intent: binding.intent,
-    toolId: binding.toolId,
-    sourceId: binding.sourceId,
-    riskLevel: binding.riskLevel,
-    confirmation: binding.confirmation,
-    confirmationTemplate: binding.confirmationTemplate || '',
-    command: actionCommandForBinding(binding, query),
-    score,
-  }));
-}
-
 async function getActionBinding(id) {
   const wanted = String(id || '').trim();
   if (!wanted) throw { code: 400, msg: 'bindingId required' };
@@ -6436,17 +6405,51 @@ async function foundationPostgresConversation(messages, actor) {
   });
 }
 
+function foundationPostgresStatusMessage(status) {
+  const claims = Array.isArray(status?.claims) ? status.claims : [];
+  const clusters = Array.isArray(status?.clusters) ? status.clusters : [];
+  const readyClaims = claims.filter((claim) => claim?.ready === true
+    && Number(claim?.observedGeneration || 0) >= Number(claim?.generation || 0));
+  if (!readyClaims.length) {
+    const pending = claims.length ? ` 준비 중이거나 비정상인 Claim은 ${claims.length}개입니다.` : '';
+    return `현재 PFSS PostgreSQL에서 Ready로 확인된 운영 인스턴스는 없습니다.${pending}`;
+  }
+  const details = readyClaims.map((claim) => {
+    const clusterName = String(claim?.clusterRef?.name || `pgc-${claim.name || ''}`);
+    const clusterNamespace = String(claim?.clusterRef?.namespace || claim?.namespace || '');
+    const cluster = clusters.find((item) => item?.name === clusterName && item?.namespace === clusterNamespace);
+    const instanceText = cluster && Number(cluster.instances) > 0 ? `, ${Number(cluster.instances)}개 인스턴스` : '';
+    return `- ${claim.namespace}/${claim.name}: Ready, PostgreSQL ${claim.postgresVersion || cluster?.postgresVersion || 'version 미표시'}${instanceText}`;
+  });
+  return [
+    `현재 PFSS PostgreSQL 운영 인스턴스가 ${readyClaims.length}개 있습니다.`,
+    ...details,
+    `확인 기준: PFSS owner API ${status?.refreshedAt || '현재 조회'}`,
+  ].join('\n');
+}
+
+async function foundationPostgresStatusConversation(messages, actor) {
+  const query = latestUserContent(messages);
+  if (!requiresFoundationPostgresStatus(query)) return null;
+  const started = Date.now();
+  try {
+    const status = await foundationPostgresStatusRead(actor);
+    return commandResponse(started, foundationPostgresStatusMessage(status), {
+      schema: 'r2d2.foundation-postgres-status/v1', phase: 'Observed', status,
+    });
+  } catch (error) {
+    const reason = String(error?.msg || error?.message || 'owner API unavailable');
+    return commandResponse(started, `현재 PFSS PostgreSQL 운영 인스턴스 존재 여부를 확정할 수 없습니다. ${reason}. 이 조회 실패는 인스턴스가 없다는 뜻이 아닙니다.`, {
+      schema: 'r2d2.foundation-postgres-status/v1', phase: 'Unavailable', error: reason,
+    });
+  }
+}
+
 function conceptGraphSystemMessage(graph) {
   const concepts = (graph?.concepts || []).slice(0, 12);
   if (!concepts.length) return null;
   const relations = (graph?.relations || []).slice(0, 24);
   return untrustedEvidenceMessage('manual-concept-graph', { concepts, relations }, 10000);
-}
-
-function actionSuggestionsSystemMessage(actions) {
-  const items = (actions || []).slice(0, 4);
-  if (!items.length) return null;
-  return untrustedEvidenceMessage('deterministic-action-suggestions', items, 7000);
 }
 
 const AGENT_MAX_TOOL_ROUNDS = 4;
@@ -7960,6 +7963,8 @@ async function chatCompletion(body, actor) {
   const baseMessages = normalizeMessages(body);
   const commandOut = await handleSlashCommand(latestUserContent(baseMessages), body, actor);
   if (commandOut) return commandOut;
+  const foundationPostgresStatusOut = await foundationPostgresStatusConversation(baseMessages, actor);
+  if (foundationPostgresStatusOut) return foundationPostgresStatusOut;
   const foundationPostgresOut = await foundationPostgresConversation(baseMessages, actor);
   if (foundationPostgresOut) return foundationPostgresOut;
   const key = await loadEnabledKey(String(body.keyId || '').trim());
@@ -7972,7 +7977,6 @@ async function chatCompletion(body, actor) {
   const agentRunRecorded = await beginAgentRun({ id: requestId, actor, sessionId, requestText: latestUserContent(baseMessages), key, model });
   let sources = [];
   let conceptGraph = null;
-  let suggestedActions = [];
   let messages = baseMessages;
   let environment = null;
   const systemMessages = [operationalAnswerPolicySystemMessage(), controlToolsSystemMessage(), untrustedEvidencePolicySystemMessage()];
@@ -8011,13 +8015,6 @@ async function chatCompletion(body, actor) {
       if (msg) evidenceMessages.push(msg);
     } catch (e) {
       console.warn('[osaa-concepts] graph skipped:', e.message || e);
-    }
-    try {
-      suggestedActions = await suggestActionBindings({ query: userContent, sources, conceptGraph });
-      const msg = actionSuggestionsSystemMessage(suggestedActions);
-      if (msg) evidenceMessages.push(msg);
-    } catch (e) {
-      console.warn('[osaa-actions] suggestions skipped:', e.message || e);
     }
   }
   try {
@@ -8385,7 +8382,6 @@ async function chatCompletion(body, actor) {
         sourceId: r.sourceId,
       })),
     } : null,
-    suggestedActions,
     environment: environment ? {
       time: environment.time,
       namespaces: environment.namespaces.map((ns) => ({

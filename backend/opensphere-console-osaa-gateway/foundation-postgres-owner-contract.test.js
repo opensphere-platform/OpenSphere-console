@@ -50,6 +50,4 @@ test('PFSS PostgreSQL confirmation is sourced from the owner plan and fully boun
   assert.match(source, /확인 문구는 owner plan이 반환한 값/);
   assert.match(source, /replace\(\/<plan>\/g, String\(inputs\.plan \|\| ''\)\)/);
   assert.match(source, /replace\(\/<postgresVersion>\/g, String\(inputs\.postgresVersion \|\| ''\)\)/);
-  assert.doesNotMatch(source, /key === 'his-binding'/);
-  assert.match(source, /key === 'his-preflight'/);
 });

@@ -311,7 +311,6 @@ function createConversationStore(pool) {
         response: Object.fromEntries(Object.entries(response || {}).filter(([key]) => key !== 'message')),
         sources: Array.isArray(response?.sources) ? response.sources : [],
         concepts: response?.concepts?.concepts || [],
-        actions: Array.isArray(response?.suggestedActions) ? response.suggestedActions : [],
         usage: response?.usage || null,
       };
       const inserted = await client.query(`

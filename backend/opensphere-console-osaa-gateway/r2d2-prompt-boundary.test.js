@@ -12,6 +12,7 @@ const {
   lexicalKnowledgeQuery,
   requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
+  requiresFoundationPostgresStatus,
   requiresManualAccessDiagnosis,
   requiresOsShellDiagnosis,
   requiresLiveAgentTools,
@@ -88,6 +89,20 @@ test('knowledge questions do not receive live operational tools', () => {
   assert.equal(requiresOsShellDiagnosis('OsShellControlPlaneUnavailable'), true);
   assert.equal(requiresOsShellDiagnosis('OS Shell readiness API가 HTTP 500이다'), true);
   assert.equal(requiresOsShellDiagnosis('OS Shell이 왜 필요한가?'), false);
+  assert.equal(requiresFoundationPostgresStatus('현재 pfss postgres 운영중인 인스턴스가 있는가?'), true);
+  assert.equal(requiresFoundationPostgresStatus('PFSS PostgreSQL 클러스터를 생성해줘'), false);
+});
+
+test('automatic suggested actions are absent and status answers use the deterministic PFSS owner path', () => {
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const store = fs.readFileSync(path.join(__dirname, 'conversation-store.js'), 'utf8');
+  assert.doesNotMatch(server, /suggestActionBindings/);
+  assert.doesNotMatch(server, /suggestedActions/);
+  assert.doesNotMatch(server, /deterministic-action-suggestions/);
+  assert.doesNotMatch(store, /suggestedActions/);
+  assert.match(server, /foundationPostgresStatusConversation\(baseMessages, actor\)/);
+  assert.match(server, /현재 PFSS PostgreSQL 운영 인스턴스가/);
+  assert.match(server, /Failure to observe a resource is not evidence that the resource is absent/);
 });
 
 test('durable operation completion is available to the live read-tool loop', () => {

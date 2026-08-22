@@ -127,15 +127,13 @@ test('OSAA desktop dock reserves Main Shell workspace instead of overlaying it',
   assert.match(styles, /@media \(max-width:\s*720px\)[\s\S]*?body\.osaa-agent-open\s+\.content-container\s*\{[\s\S]*?margin-right:\s*0/);
 });
 
-test('os-osaa-agent.ts never offers a direct UI path to execute Kubernetes mutations — suggested actions are proposals only', () => {
+test('os-osaa-agent.ts does not render or hydrate automatic suggested actions', () => {
   const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
 
-  assert.match(agent, /interface OsaaSuggestedAction/);
-  assert.match(agent, /useSuggestedAction\(action: OsaaSuggestedAction\):\s*void\s*\{/);
-  // Using a suggested action only fills the compose draft — it never calls fetch()/exec/apply itself.
-  const useFn = agent.match(/useSuggestedAction\(action: OsaaSuggestedAction\): void \{[\s\S]*?\n  \}/)?.[0] || '';
-  assert.match(useFn, /this\.draft = action\.command/);
-  assert.doesNotMatch(useFn, /fetch\(|kubectl|apply\(|exec\(/);
+  assert.doesNotMatch(agent, /Suggested Actions/);
+  assert.doesNotMatch(agent, /OsaaSuggestedAction/);
+  assert.doesNotMatch(agent, /suggestedActions/);
+  assert.doesNotMatch(agent, /useSuggestedAction/);
   assert.doesNotMatch(agent, /\/api\/osaa\/actions\//);
   assert.doesNotMatch(agent, /\/api\/osaa\/tools\//);
 });
