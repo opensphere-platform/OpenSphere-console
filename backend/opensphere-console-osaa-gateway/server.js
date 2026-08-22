@@ -6,6 +6,7 @@ const { normalizeProviderToolCalls } = require('./provider-tool-calls');
 const {
   configuredProviderModel,
   lexicalKnowledgeQuery,
+  requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
@@ -7725,6 +7726,7 @@ async function chatCompletion(body, actor) {
   const systemMessages = [operationalAnswerPolicySystemMessage(), controlToolsSystemMessage(), untrustedEvidencePolicySystemMessage()];
   const evidenceMessages = [];
   const userContent = latestUserContent(baseMessages);
+  const canonicalSourceIntent = requiresCanonicalSourceTools(userContent);
   const extensionPresentationIntent = requiresExtensionPresentationStatus(userContent);
   let extensionPresentationEvidence = null;
   if (extensionPresentationIntent) {
@@ -7733,28 +7735,30 @@ async function chatCompletion(body, actor) {
       content: 'This request matches the Registry Plugin presentation incident. Answer from the canonical extension-presentation-status evidence. Treat 요청 시 적재 as child UI activation timing, not proof of menu ineligibility. Do not cite unrelated Kubernetes workload readiness as a cause, and do not propose restart, reinstall, or enable when the projection reports no blocker.',
     });
   }
-  try {
-    sources = await searchKnowledge(userContent, OSAA_RAG_TOP_K, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
-    if (sources.length) evidenceMessages.push(knowledgeSystemMessage(sources));
-  } catch (e) {
-    console.warn('[osaa-rag] search skipped:', e.message || e);
+  if (!canonicalSourceIntent) {
+    try {
+      sources = await searchKnowledge(userContent, OSAA_RAG_TOP_K, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
+      if (sources.length) evidenceMessages.push(knowledgeSystemMessage(sources));
+    } catch (e) {
+      console.warn('[osaa-rag] search skipped:', e.message || e);
+    }
+    try {
+      conceptGraph = await listManualConceptGraph(userContent, 24, actor);
+      const msg = conceptGraphSystemMessage(conceptGraph);
+      if (msg) evidenceMessages.push(msg);
+    } catch (e) {
+      console.warn('[osaa-concepts] graph skipped:', e.message || e);
+    }
+    try {
+      suggestedActions = await suggestActionBindings({ query: userContent, sources, conceptGraph });
+      const msg = actionSuggestionsSystemMessage(suggestedActions);
+      if (msg) evidenceMessages.push(msg);
+    } catch (e) {
+      console.warn('[osaa-actions] suggestions skipped:', e.message || e);
+    }
   }
   try {
-    conceptGraph = await listManualConceptGraph(userContent, 24, actor);
-    const msg = conceptGraphSystemMessage(conceptGraph);
-    if (msg) evidenceMessages.push(msg);
-  } catch (e) {
-    console.warn('[osaa-concepts] graph skipped:', e.message || e);
-  }
-  try {
-    suggestedActions = await suggestActionBindings({ query: userContent, sources, conceptGraph });
-    const msg = actionSuggestionsSystemMessage(suggestedActions);
-    if (msg) evidenceMessages.push(msg);
-  } catch (e) {
-    console.warn('[osaa-actions] suggestions skipped:', e.message || e);
-  }
-  try {
-    if (body.includeEnvironment !== false && !extensionPresentationIntent) {
+    if (body.includeEnvironment !== false && !extensionPresentationIntent && !canonicalSourceIntent) {
       environment = await environmentSnapshot(body, actor);
       evidenceMessages.push(environmentSystemMessage(environment));
     }
@@ -7782,7 +7786,10 @@ async function chatCompletion(body, actor) {
   const maxTokens = Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024));
   const liveToolMode = requiresLiveAgentTools(userContent);
   let tools = [];
-  if (liveToolMode && !extensionPresentationEvidence) {
+  if (canonicalSourceIntent) {
+    tools = agentToolDefinitions(actor, new Set(), new Set(), new Set(), new Set())
+      .filter((tool) => SOURCE_TOOL_NAMES.has(tool.function.name));
+  } else if (liveToolMode && !extensionPresentationEvidence) {
     const [observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
       osaaObservabilityCapabilities(actor), osaaHisOwnerCapabilities(actor), osaaCephOwnerCapabilities(actor), osaaRecoveryOwnerCapabilities(actor),
     ]);
@@ -7967,7 +7974,7 @@ async function chatCompletion(body, actor) {
   const sourceGrounding = groundCanonicalSourceAnswer(
     content,
     Array.from(verifiedToolEvidence.values()),
-    { redactText: redactToolText },
+    { redactText: redactToolText, required: canonicalSourceIntent },
   );
   content = sourceGrounding.content;
   if (sourceGrounding.applied) {

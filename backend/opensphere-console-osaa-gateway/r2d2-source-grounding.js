@@ -151,7 +151,40 @@ function sourceEvidenceAppendix(records, options = {}) {
 
 function groundCanonicalSourceAnswer(content, values, options = {}) {
   const records = sourceRecords(values);
-  if (!records.length) return { content: String(content || ''), applied: false, state: 'not-applicable', violations: [], citations: [] };
+  if (!records.length) {
+    if (options.required === true) return {
+      content: '### 정본 소스 답변을 차단했습니다\n\n요청에 필요한 canonical source 도구가 실제 호출되지 않았습니다. 모델의 기억이나 대화 이력으로 소스 사실을 대신하지 않습니다.',
+      applied: true,
+      state: 'source-evidence-missing',
+      evidenceIncomplete: true,
+      violations: [{ kind: 'missing-source-tool-evidence', value: 'no canonical source tool result' }],
+      citations: [],
+    };
+    return { content: String(content || ''), applied: false, state: 'not-applicable', violations: [], citations: [] };
+  }
+
+  const hasFileEvidence = records.some((entry) => (
+    entry.tool === 'read_opensphere_source' && normalizeText(entry.result.text)
+  ) || (
+    entry.tool === 'search_opensphere_source' && Array.isArray(entry.result.items)
+  ));
+  if (options.required === true && !hasFileEvidence) {
+    const appendix = sourceEvidenceAppendix(records, options);
+    return {
+      content: [
+        '### 정본 소스 답변을 차단했습니다',
+        '',
+        'catalog 또는 revision 정보만으로는 소스 코드 사실을 입증할 수 없습니다. exact-revision read/search 결과가 없어 모델 설명을 제공하지 않습니다.',
+        '',
+        appendix.markdown,
+      ].join('\n'),
+      applied: true,
+      state: 'source-file-evidence-missing',
+      evidenceIncomplete: true,
+      violations: [{ kind: 'missing-source-file-evidence', value: 'no exact-revision read/search result' }],
+      citations: appendix.citations,
+    };
+  }
 
   const evidenceRanges = evidenceLineRanges(records);
   const corpus = sourceTextCorpus(records);

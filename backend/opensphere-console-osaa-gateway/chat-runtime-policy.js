@@ -15,16 +15,28 @@ const EXTENSION_PRESENTATION_PATTERNS = [
   /(?:plugin|plugins|플러그인).*(?:화면|메뉴).*(?:표시|노출)/iu,
 ];
 
+const CANONICAL_SOURCE_PATTERNS = [
+  /\b(?:canonical\s+source|source\s+catalog|source\s+(?:revision|code|file)|exact\s+revision|repository\s+(?:source|code)|read_opensphere_source|search_opensphere_source)\b/i,
+  /(?:정본\s*(?:소스|원문|코드)|소스\s*(?:코드|파일|원문).*(?:검색|조회|읽|확인)|(?:리포지토리|저장소).*(?:소스|코드|revision|리비전|커밋)|정확한\s*행\s*범위)/iu,
+  /\b[0-9a-f]{40}\b/i,
+];
+
 function requiresExtensionPresentationStatus(query) {
   const text = String(query || '').trim();
   return text.length > 0 && EXTENSION_PRESENTATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function requiresCanonicalSourceTools(query) {
+  const text = String(query || '').trim();
+  return text.length > 0 && CANONICAL_SOURCE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function requiresLiveAgentTools(query) {
   const text = String(query || '').trim();
   return text.length > 0 && (
     LIVE_OPERATION_PATTERNS.some((pattern) => pattern.test(text)) ||
-    requiresExtensionPresentationStatus(text)
+    requiresExtensionPresentationStatus(text) ||
+    requiresCanonicalSourceTools(text)
   );
 }
 
@@ -63,6 +75,7 @@ function configuredProviderModel(defaultModel, requestedModel = '') {
 module.exports = {
   configuredProviderModel,
   lexicalKnowledgeQuery,
+  requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
   requiresLiveAgentTools,
 };

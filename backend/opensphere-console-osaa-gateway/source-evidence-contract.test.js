@@ -24,6 +24,9 @@ test('OSAA exposes canonical source catalog, revision, read and search as read-o
   assert.match(gateway, /\/api\/osaa\/tools\/source\/search/);
   assert.match(gateway, /first read the canonical source catalog, resolve the repository branch to an exact GitHub revision/);
   assert.match(gateway, /groundCanonicalSourceAnswer/);
+  assert.match(gateway, /requiresCanonicalSourceTools/);
+  assert.match(gateway, /filter\(\(tool\) => SOURCE_TOOL_NAMES\.has\(tool\.function\.name\)\)/);
+  assert.match(gateway, /required: canonicalSourceIntent/);
   assert.match(gatewayImage, /COPY r2d2-source-grounding\.js \/app\/r2d2-source-grounding\.js/);
 });
 

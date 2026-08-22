@@ -10,6 +10,7 @@ const {
 const {
   configuredProviderModel,
   lexicalKnowledgeQuery,
+  requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
@@ -75,6 +76,10 @@ test('knowledge questions do not receive live operational tools', () => {
   assert.equal(requiresLiveAgentTools('Registry Plugins가 요청 시 적재라고 나오고 화면에 표시되지 않아'), true);
   assert.equal(requiresLiveAgentTools('작업 결과를 확인해줘'), true);
   assert.equal(requiresLiveAgentTools('operation 03979adf-3300-4057-847e-26cc228ebbe1 결과는?'), true);
+  assert.equal(requiresCanonicalSourceTools('정본 소스에서 정확한 행 범위를 읽어라'), true);
+  assert.equal(requiresCanonicalSourceTools('canonical source catalog and exact revision을 사용해'), true);
+  assert.equal(requiresCanonicalSourceTools('revision 0a3ba02414276e72d1ae08bb0c93ededd8335275의 파일을 읽어라'), true);
+  assert.equal(requiresCanonicalSourceTools('PFSS의 구조를 설명해줘'), false);
 });
 
 test('durable operation completion is available to the live read-tool loop', () => {
