@@ -134,7 +134,7 @@ try {
   Invoke-Checked npm --prefix $sdkCheckout install --no-audit --no-fund | Out-Null
   Invoke-Checked npm --prefix $sdkCheckout run build | Out-Null
   Invoke-Checked npm --prefix $consoleCheckout ci --no-audit --no-fund --legacy-peer-deps | Out-Null
-  Invoke-Checked npm --prefix $consoleCheckout run build -- --configuration production | Out-Null
+  Invoke-Checked npm --prefix $consoleCheckout run build -- --configuration=production | Out-Null
 
   if (-not $UseExistingRegistryLogin) {
     $token = ((Invoke-Checked gh auth token) -join '').Trim()
