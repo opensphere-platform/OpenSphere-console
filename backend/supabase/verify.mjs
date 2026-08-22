@@ -31,6 +31,7 @@ const cephPrerequisiteConsumer = read('migrations', '0023_ceph_prerequisite_cons
 const aiConsumerContract = read('migrations', '0024_ai_consumer_contract.sql');
 const externalChannelsBackup = read('migrations', '0025_external_channels_backup.sql');
 const migrationLedger = read('migrations', '0026_schema_migration_ledger.sql');
+const agentVerificationEvidence = read('migrations', '0068_osaa_agent_verification_evidence.sql');
 const externalChannelReasonPolicy = read('migrations', '0027_external_channel_reason_policy.sql');
 const browserSessionAndMonitoring = read('migrations', '0029_browser_session_and_baseline_monitoring.sql');
 const moduleOperationLedger = read('migrations', '0035_module_operation_ledger.sql');
@@ -199,6 +200,9 @@ assert.match(agentControlPlane, /FOR UPDATE OF o SKIP LOCKED/);
 assert.match(agentControlPlane, /retrieval_trace_append_only/);
 assert.match(agentControlPlane, /tool_run_append_only/);
 assert.match(agentControlPlane, /REVOKE UPDATE, DELETE, TRUNCATE ON oaa\.retrieval_trace, oaa\.tool_run, oaa\.agent_step/);
+assert.match(agentVerificationEvidence, /DROP CONSTRAINT IF EXISTS agent_step_step_kind_check/);
+assert.match(agentVerificationEvidence, /'retrieval', 'llm', 'tool', 'verification'/);
+assert.match(agentVerificationEvidence, /deterministic server-owned grounding or postcondition evidence/);
 assert.match(cliTokenScope, /scope IN \('console-read', 'console-change', 'console-admin'\)/);
 assert.match(knowledgeRevisions, /ADD COLUMN IF NOT EXISTS document_revision/);
 assert.match(knowledgeRevisions, /UNIQUE \(document_id, document_revision, chunk_index\)/);

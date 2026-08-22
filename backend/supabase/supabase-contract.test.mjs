@@ -127,6 +127,13 @@ test('migration manifest is the digest-bound canonical inventory', () => {
   assert.equal(manifest.setDigest, `sha256:${createHash('sha256').update(material, 'utf8').digest('hex')}`);
 });
 
+test('OSAA deterministic verification is accepted as append-only agent evidence', () => {
+  const sql = readFileSync(path.join(here, 'migrations', '0068_osaa_agent_verification_evidence.sql'), 'utf8');
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS agent_step_step_kind_check/);
+  assert.match(sql, /CHECK \(step_kind IN \('retrieval', 'llm', 'tool', 'verification'\)\)/);
+  assert.doesNotMatch(sql, /DROP TRIGGER|DISABLE TRIGGER|UPDATE oaa[.]agent_step|DELETE FROM oaa[.]agent_step/i);
+});
+
 test('component-scoped migration runner provisions only scoped Shell DB credentials and never rolls workloads', () => {
   const runner = readFileSync(path.join(here, 'migrate-only.ps1'), 'utf8');
   assert.match(runner, /manifest\.json/);
