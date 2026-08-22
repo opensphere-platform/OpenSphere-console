@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {
+  clearStaleLazyChunkRetry,
+  isStaleLazyChunkError,
+  recoverStaleLazyChunkOnce,
+} from '../system-plugins/system-plugin-lazy-recovery.ts';
 
 const source = fs.readFileSync(new URL('./admin-plugins.ts', import.meta.url), 'utf8');
 const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts', import.meta.url), 'utf8');
@@ -97,6 +102,34 @@ test('Plugin management lists Console-owned system plugins separately from Regis
   assert.match(r2d2Route, /return SystemPluginUnavailable/);
   const systemSection = source.slice(source.indexOf('aria-label="System Plugins"'), source.indexOf('<h2>Registry Plugins<\/h2>'));
   assert.doesNotMatch(systemSection, /run\('(?:enable|disable|uninstall)'/);
+});
+
+test('a stale system-plugin lazy chunk reloads once without hiding a persistent failure', () => {
+  const values = new Map<string, string>();
+  let reloads = 0;
+  const browser = {
+    location: {
+      href: 'https://localhost:1114/manage/osaa',
+      reload: () => { reloads += 1; },
+    },
+    sessionStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    },
+  };
+  const staleError = new TypeError('Failed to fetch dynamically imported module: https://localhost:1114/chunk-old.js');
+
+  assert.equal(isStaleLazyChunkError(staleError), true);
+  assert.equal(recoverStaleLazyChunkOnce('r2d2', staleError, browser), true);
+  assert.equal(reloads, 1);
+  assert.equal(recoverStaleLazyChunkOnce('r2d2', staleError, browser), false);
+  assert.equal(reloads, 1);
+  assert.equal(recoverStaleLazyChunkOnce('r2d2', new Error('component initialization failed'), browser), false);
+
+  clearStaleLazyChunkRetry('r2d2', browser);
+  assert.equal(recoverStaleLazyChunkOnce('r2d2', staleError, browser), true);
+  assert.equal(reloads, 2);
 });
 
 test('Topology includes Console-owned system plugins without treating them as installable Registry extensions', () => {

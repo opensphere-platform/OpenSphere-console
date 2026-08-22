@@ -31,6 +31,7 @@ test('Manual remains core while R2D2 is a lazy Console-owned system plugin', () 
   assert.match(routes, /path:\s*'manual',\s*component:\s*ManualPage/);
   assert.match(routes, /R2D2_ADMIN_ROUTE/);
   assert.match(r2d2, /loadComponent/);
+  assert.match(r2d2, /recoverStaleLazyChunkOnce\(R2D2_SYSTEM_PLUGIN\.id, error\)/);
   assert.match(r2d2, /systemPluginId:\s*R2D2_SYSTEM_PLUGIN\.id/);
   assert.match(unavailable, /SYSTEM PLUGIN DEGRADED/);
   assert.match(unavailable, /Main Shell과 다른 Extension은 계속 사용할 수 있습니다/);

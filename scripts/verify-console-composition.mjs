@@ -26,6 +26,7 @@ export function verifyConsoleCompositionSource() {
   assert.match(r2d2Route, /R2D2_SYSTEM_PLUGIN\.route/);
   assert.match(r2d2Route, /import\('\.\.\/\.\.\/pages\/admin-osaa'\)/);
   assert.match(r2d2Route, /catch\(\(error:\s*unknown\)\s*=>/);
+  assert.match(r2d2Route, /recoverStaleLazyChunkOnce\(R2D2_SYSTEM_PLUGIN\.id, error\)/);
   assert.match(r2d2Route, /return SystemPluginUnavailable/);
 
   const featureRoots = fs.readdirSync(path.join(repo, 'src', 'app', 'system-plugins'), { withFileTypes: true })
