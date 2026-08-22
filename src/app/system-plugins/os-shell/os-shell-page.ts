@@ -146,12 +146,15 @@ export class OsShellPage {
   async refresh(): Promise<void> {
     this.busy.set(true);
     this.message.set('');
+    let resumeOrCreate = false;
     try {
       const readiness = await this.readiness.refresh();
       if (readiness.ready && this.session()) await this.pollSession();
+      else if (readiness.ready) resumeOrCreate = true;
     } finally {
       this.busy.set(false);
     }
+    if (resumeOrCreate) await this.resumeOrCreateSession();
   }
 
   async createSession(): Promise<void> {
@@ -216,6 +219,10 @@ export class OsShellPage {
   private async initialize(): Promise<void> {
     const readiness = await this.readiness.refresh();
     if (!readiness.ready) return;
+    await this.resumeOrCreateSession();
+  }
+
+  private async resumeOrCreateSession(): Promise<void> {
     try {
       const existing = await this.sessions.list();
       const resumable = existing.find((item) => !TERMINAL_STATES.has(item.observedState));

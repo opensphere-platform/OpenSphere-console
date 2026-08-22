@@ -194,6 +194,8 @@ test('opening OS Shell immediately resumes or creates a session without a second
   const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
   assert.match(page, /if \(resumable\) \{[\s\S]*this[.]session[.]set\(resumable\);[\s\S]*return;/);
   assert.match(page, /await this[.]createSession\(\);/);
+  assert.match(page, /else if \(readiness[.]ready\) resumeOrCreate = true;[\s\S]*if \(resumeOrCreate\) await this[.]resumeOrCreateSession\(\);/);
+  assert.match(page, /private async resumeOrCreateSession\(\): Promise<void>/);
   assert.match(page, /호출 즉시 자동 시작 중/);
   assert.doesNotMatch(page, />OS Shell 시작<\/button>/);
   assert.match(page, />다시 시작<\/button>/);
