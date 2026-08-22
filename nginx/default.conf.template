@@ -176,13 +176,15 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # Patch-bound Engineering Remediation proposals are Console Backend-owned
-    # policy writes. They never pass through the read-only R2D2 Gateway.
+    # Patch-bound Engineering Remediation is Console Backend-owned. Browser
+    # requests use the opaque session cookie; the narrowly scoped local-edge
+    # Repair Runner supplies a Kubernetes ServiceAccount bearer which must
+    # reach Backend TokenReview. Neither path enters the read-only Gateway.
     location ^~ /api/osaa/remediations/ {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_backend_upstream:8080$request_uri;
         proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header Authorization "";
+        proxy_set_header Authorization $http_authorization;
         proxy_set_header X-OS-Idempotency-Key $http_x_os_idempotency_key;
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }

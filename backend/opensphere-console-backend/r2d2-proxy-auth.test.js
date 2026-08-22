@@ -126,11 +126,11 @@ test('nginx authenticates Manual browser requests before forwarding them to the 
   }
 });
 
-test('nginx keeps Engineering Remediation proposal writes on Console Backend', () => {
+test('nginx keeps Engineering Remediation on Backend and preserves the scoped Repair Runner bearer', () => {
   const nginx = fs.readFileSync(path.resolve(__dirname, '../../nginx/default.conf.template'), 'utf8');
   const location = nginx.match(/location \^~ \/api\/osaa\/remediations\/ \{[\s\S]*?\n    \}/)?.[0] || '';
   assert.match(location, /opensphere-console-backend/);
-  assert.match(location, /proxy_set_header Authorization ""/);
+  assert.match(location, /proxy_set_header Authorization \$http_authorization/);
   assert.doesNotMatch(location, /opensphere-console-osaa-gateway/);
 });
 
