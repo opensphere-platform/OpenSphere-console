@@ -63,11 +63,12 @@ test('unified diff artifact is byte-bounded, credential-free, path-closed and ex
   assert.throws(() => validatePatchArtifact(text, { ...approved, patchDigest: image }), /differs from approval/);
 });
 
-test('build evidence is bound to patch, authority, tests, SBOM, provenance, signature and exact digest', () => {
+test('edge build evidence is bound to patch, authority, tests, provenance, exact digest and optional supply-chain evidence', () => {
   const approved = envelope();
   const evidence = { sourceRevision: sha, patchDigest: patch, buildAuthority: 'localhost', imageDigests: [image], sbomDigest: image, provenanceDigest: image, signatureDigest: image, releaseLockDigest: image,
     tests: ['unit','contract','security'].map((id) => ({ id, status: 'passed' })) };
   assert.equal(validateBuildEvidence(approved, evidence).valid, true);
+  assert.equal(validateBuildEvidence(approved, { ...evidence, sbomDigest: null, signatureDigest: null }).valid, true);
   assert.throws(() => validateBuildEvidence(approved, { ...evidence, patchDigest: image }), /approved patch/);
   assert.throws(() => validateBuildEvidence(approved, { ...evidence, tests: [] }), /tests are incomplete/);
 });
@@ -139,9 +140,9 @@ test('source remediation runs only an approved exact patch in an ephemeral crede
   const request = executionRequest();
   const fixture = workerFixture(request);
   const out = await fixture.worker.build(request, { patchDigest: request.patchDigest, artifactRef: 'db:patch-1' });
-  assert.equal(out.status, 'awaiting_deploy_approval');
+  assert.equal(out.status, 'deploying');
   assert.deepEqual(fixture.stages.map((item) => item.stage), [
-    'sandboxed', 'patched', 'testing', 'ready_to_commit', 'committed', 'building', 'built', 'awaiting_deploy_approval',
+    'sandboxed', 'patched', 'testing', 'ready_to_commit', 'committed', 'building', 'built', 'deploying',
   ]);
   assert.equal(fixture.builds.length, 1);
   assert.equal(fixture.destroyed(), 1);
@@ -240,7 +241,7 @@ test('approval revocation after commit prevents image build', async () => {
   assert.equal(fixture.destroyed(), 1);
 });
 
-test('deployment approval is separately bound to built digests and failed postcondition rolls back exact inputs', async () => {
+test('local edge deployment reuses the exact work-unit approval and failed postcondition rolls back exact inputs', async () => {
   const request = executionRequest({ stage: 'deploying' });
   const build = {
     sourceRevision: sha, patchDigest: request.patchDigest, buildAuthority: 'localhost', imageDigests: [image],
@@ -251,7 +252,7 @@ test('deployment approval is separately bound to built digests and failed postco
   const fixture = workerFixture(request, {
     store: {
       heartbeat: async () => true,
-      getApprovals: async () => executionApprovals(request, 'deployment', binding),
+      getApprovals: async () => executionApprovals(request, 'source_patch', request.approvalBindingDigest),
       block: async (_id, code) => fixture.stages.push({ stage: 'blocked', code }),
       stage: async (_id, stage, evidence) => fixture.stages.push({ stage, evidence }),
       recordBuildEvidence: async () => {},
@@ -273,3 +274,8 @@ test('deployment approval is separately bound to built digests and failed postco
   assert.deepEqual(rollbackInput.rollbackImageDigests, request.rollbackImageDigests);
   assert.deepEqual(fixture.stages.map((item) => item.stage), ['verifying', 'rolling_back', 'rolled_back']);
 });
+
+// Keep the activated Repair Runner contracts in the existing canonical npm
+// test entry instead of creating a second, easy-to-skip test lane.
+require('./r2d2-repair-runner-contract.test');
+require('./r2d2-repair-runner-api.test');

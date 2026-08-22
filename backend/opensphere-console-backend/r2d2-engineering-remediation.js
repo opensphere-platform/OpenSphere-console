@@ -8,6 +8,12 @@ const REPOSITORIES = engineeringRepositoryPolicy();
 const TEST_COMMANDS = Object.freeze(new Set(['unit', 'contract', 'integration', 'security', 'migration', 'ui-e2e', 'supply-chain']));
 const STAGES = Object.freeze(['proposed','awaiting_approval','approved','sandboxed','patched','testing','test_failed','ready_to_commit','committed','building','build_failed','built','awaiting_deploy_approval','deploying','verifying','inconclusive','succeeded','rolling_back','rolled_back','failed','cancelled']);
 const APPROVAL_SCOPES = Object.freeze(['source_patch', 'deployment']);
+const VERIFICATION_PROFILES = Object.freeze({
+  'authenticated-health': '/',
+  'manual-route': '/manual',
+  'registry-plugins': '/manage/extensions/plugins',
+  'osaa-admin': '/manage/osaa',
+});
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -47,6 +53,9 @@ function approvalBinding(envelope) {
     fullReleaseJustification: envelope.fullReleaseJustification || null,
     targetChannel: envelope.targetChannel, buildAuthority: envelope.buildAuthority,
     rollbackRevision: envelope.rollbackRevision, rollbackImageDigests: envelope.rollbackImageDigests,
+    approvalMode: envelope.approvalMode,
+    verificationProfile: envelope.verificationProfile,
+    verificationRoute: envelope.verificationRoute,
     approvalExpiresAt: envelope.approvalExpiresAt,
   });
 }
@@ -67,6 +76,11 @@ function validateEnvelope(input, policy = REPOSITORIES) {
   if (input.targetChannel === 'edge' && input.buildAuthority !== 'localhost') throw new Error('edge build authority must be localhost');
   if (['candidate','stable','ga'].includes(input.targetChannel) && input.buildAuthority !== 'github-actions') throw new Error('promoted channel build authority must be github-actions');
   if (input.releaseScope === 'integrated' && String(input.fullReleaseJustification || '').trim().length < 20) throw new Error('integrated release requires technical justification');
+  const approvalMode = input.targetChannel === 'edge' && input.releaseScope === 'component'
+    ? 'local-edge-supervised' : 'two-stage';
+  const verificationProfile = String(input.verificationProfile || 'authenticated-health');
+  const verificationRoute = VERIFICATION_PROFILES[verificationProfile];
+  if (!verificationRoute) throw new Error('verification profile is not registered');
   const affectedComponents = [...new Set(input.affectedComponents || [])];
   if (!affectedComponents.length || affectedComponents.some((item) => !repository.components.includes(item))) throw new Error('affected component is outside repository policy');
   const affectedImages = [...new Set(input.affectedImages || [])];
@@ -76,7 +90,8 @@ function validateEnvelope(input, policy = REPOSITORIES) {
   for (const item of rollbackImageDigests) assertDigest(item, 'rollbackImageDigest');
   const expires = Date.parse(input.approvalExpiresAt);
   if (!Number.isFinite(expires) || expires <= Date.now()) throw new Error('approvalExpiresAt must be a future timestamp');
-  const envelope = { ...input, reason, allowedPaths, requiredTests, affectedComponents, affectedImages, rollbackImageDigests };
+  const envelope = { ...input, approvalMode, verificationProfile, verificationRoute,
+    reason, allowedPaths, requiredTests, affectedComponents, affectedImages, rollbackImageDigests };
   envelope.approvalBindingDigest = approvalBinding(envelope);
   return envelope;
 }
@@ -127,7 +142,14 @@ function validatePatchArtifact(patchText, envelope) {
 
 function validateBuildEvidence(envelope, evidence) {
   assertSha(evidence.sourceRevision, 'sourceRevision');
-  for (const field of ['patchDigest','sbomDigest','provenanceDigest','signatureDigest','releaseLockDigest']) assertDigest(evidence[field], field);
+  for (const field of ['patchDigest','provenanceDigest','releaseLockDigest']) assertDigest(evidence[field], field);
+  if (envelope.targetChannel === 'edge') {
+    for (const field of ['sbomDigest','signatureDigest']) {
+      if (evidence[field] != null) assertDigest(evidence[field], field);
+    }
+  } else {
+    for (const field of ['sbomDigest','signatureDigest']) assertDigest(evidence[field], field);
+  }
   if (evidence.patchDigest !== envelope.patchDigest) throw new Error('built patch differs from approved patch');
   if (evidence.buildAuthority !== envelope.buildAuthority) throw new Error('build authority differs from approval');
   for (const image of evidence.imageDigests || []) assertDigest(image, 'imageDigest');
@@ -153,9 +175,9 @@ function deploymentApprovalBinding(envelope, build) {
     sourceRevision: build.sourceRevision,
     patchDigest: build.patchDigest,
     imageDigests: [...build.imageDigests].sort(),
-    sbomDigest: build.sbomDigest,
+    sbomDigest: build.sbomDigest || null,
     provenanceDigest: build.provenanceDigest,
-    signatureDigest: build.signatureDigest,
+    signatureDigest: build.signatureDigest || null,
     releaseLockDigest: build.releaseLockDigest,
     releaseScope: envelope.releaseScope,
     targetChannel: envelope.targetChannel,
@@ -221,6 +243,14 @@ class EngineeringRemediationWorker {
   }
 
   async authorize(request, scope, bindingDigest) {
+    if (this.deps.authorizer) {
+      const authorization = await this.deps.authorizer.authorize(request, scope, bindingDigest);
+      if (!authorization?.allowed) {
+        await this.deps.store.block(request.remediationRequestId, authorization?.code || 'AuthorizationDenied');
+        return null;
+      }
+      return authorization;
+    }
     const [session, approvals] = await Promise.all([
       this.deps.sessions.resolve(request.authSessionId, request.actorId),
       this.deps.store.getApprovals(request.operationId),
@@ -303,6 +333,14 @@ class EngineeringRemediationWorker {
       const deployBinding = deploymentApprovalBinding(request, evidence);
       await this.deps.store.recordBuildEvidence(request.remediationRequestId, evidence, checked.evidenceDigest);
       await advance('built', { buildEvidenceDigest: checked.evidenceDigest, releaseLockDigest: evidence.releaseLockDigest });
+      if (request.approvalMode === 'local-edge-supervised') {
+        await this.requireLease(request.remediationRequestId);
+        if (!await this.authorize(request, 'source_patch', request.approvalBindingDigest)) {
+          return { status: 'blocked', code: 'AuthorizationRevokedBeforeDeploy' };
+        }
+        await advance('deploying', { deploymentBindingDigest: deployBinding, approvalMode: request.approvalMode });
+        return { status: 'deploying', build: evidence, deploymentBindingDigest: deployBinding };
+      }
       await advance('awaiting_deploy_approval', { deploymentBindingDigest: deployBinding });
       return { status: 'awaiting_deploy_approval', build: evidence, deploymentBindingDigest: deployBinding };
     } catch (error) {
@@ -320,7 +358,9 @@ class EngineeringRemediationWorker {
   async deploy(request, build) {
     if (request.stage !== 'deploying') throw new Error('deployment worker requires deploying stage');
     const binding = deploymentApprovalBinding(request, build);
-    if (!await this.authorize(request, 'deployment', binding)) return { status: 'blocked' };
+    const approvalScope = request.approvalMode === 'local-edge-supervised' ? 'source_patch' : 'deployment';
+    const approvalBindingDigest = approvalScope === 'source_patch' ? request.approvalBindingDigest : binding;
+    if (!await this.authorize(request, approvalScope, approvalBindingDigest)) return { status: 'blocked' };
     await this.requireLease(request.remediationRequestId);
     const receipt = await this.deps.deployer.deploy({ request, build, bindingDigest: binding });
     await this.deps.store.stage(request.remediationRequestId, 'verifying', { receiptDigest: digest(receipt) });
@@ -352,7 +392,7 @@ class EngineeringRemediationWorker {
 }
 
 module.exports = {
-  REPOSITORIES, TEST_COMMANDS, STAGES, APPROVAL_SCOPES, digest, patchTextDigest, normalizedRelativePath, assessRemediation,
+  REPOSITORIES, TEST_COMMANDS, STAGES, APPROVAL_SCOPES, VERIFICATION_PROFILES, digest, patchTextDigest, normalizedRelativePath, assessRemediation,
   approvalBinding, validateEnvelope, approvalStillValid, sandboxSpec, validatePatchFiles,
   validatePatchArtifact, validateBuildEvidence, verifyDeployment, deploymentApprovalBinding, exactEngineeringConfirmation,
   approvalsSatisfied, authorizeEngineeringExecution, EngineeringRemediationWorker,

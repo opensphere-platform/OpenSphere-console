@@ -158,7 +158,7 @@ spec:
               mountPath: /var/run/opensphere-shell-credential-authority
               readOnly: true
           env:
-            - { name: APP_VERSION, value: "0.8.0-osaa-recovery-owner" }
+            - { name: APP_VERSION, value: "202608230312" }
             # fetch(kube API / secret read)가 kube CA 신뢰하도록
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
             - { name: OSAA_NAMESPACE, value: opensphere-console }
@@ -166,12 +166,14 @@ spec:
             - { name: OSAA_EMBED_DIM, value: "1536" }
             - { name: OSAA_ALLOWED_NAMESPACES, value: "opensphere-console,opensphere-console-data,opensphere-console-change" }
             - { name: OSAA_SCALE_MAX, value: "10" }
-            # Reviewed durable operations are enabled by operator acceptance.
-            # Engineering source mutation remains an independent closed gate.
+            # Reviewed durable operations and exact patch-bound local edge
+            # Engineering Remediation are enabled by operator acceptance. The
+            # execution path remains closed until a fresh Repair Runner lease is
+            # visible; no static worker-ready override exists.
             - { name: R2D2_DURABLE_OPERATION_ENABLED, value: "true" }
-            - { name: R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "false" }
-            - { name: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES, value: "" }
-            - { name: R2D2_ENGINEERING_EXECUTION_ENABLED, value: "false" }
+            - { name: R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "true" }
+            - { name: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES, value: "console" }
+            - { name: R2D2_ENGINEERING_EXECUTION_ENABLED, value: "true" }
             # OS Shell owns these durable feature gates. If its ConfigMap is absent,
             # optional key projection omits the variables and Backend remains
             # fail-closed/default-off. A Backend-only apply must never reset an

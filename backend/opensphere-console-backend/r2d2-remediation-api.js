@@ -7,6 +7,13 @@ const {
 } = require('./r2d2-engineering-remediation');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const OSAA_ENGINEERING_ACTOR_ID = '00000000-0000-4000-8000-000000000006';
+const BROWSER_MARKERS = Object.freeze({
+  'authenticated-health': 'os-shell',
+  'manual-route': '[data-manual-contract="console-help-center-v2"]',
+  'registry-plugins': 'os-admin-plugins',
+  'osaa-admin': 'os-admin-osaa',
+});
 
 function publicRemediation(row, executionEnabled = false, workerReady = false) {
   return {
@@ -14,6 +21,7 @@ function publicRemediation(row, executionEnabled = false, workerReady = false) {
     assessmentId: row.assessment_id,
     incidentId: row.incident_id,
     operationId: row.operation_id,
+    operatorId: row.operator_id,
     repository: row.repository,
     baseRevision: row.base_revision,
     allowedPaths: row.allowed_paths,
@@ -30,6 +38,9 @@ function publicRemediation(row, executionEnabled = false, workerReady = false) {
     rollbackRevision: row.rollback_revision,
     rollbackImageDigests: row.rollback_image_digests,
     approvalBindingDigest: row.approval_binding_digest,
+    approvalMode: row.approval_mode,
+    verificationProfile: row.verification_profile,
+    verificationRoute: row.verification_route,
     approvalExpiresAt: row.approval_expires_at,
     stage: row.stage,
     createdAt: row.created_at,
@@ -57,6 +68,31 @@ function createR2d2RemediationApi(options) {
     }
     return [repositoryId, REPOSITORIES[repositoryId]];
   })));
+  const currentWorkerReady = async () => typeof workerReady === 'function'
+    ? (await workerReady()) === true : workerReady === true;
+
+  async function status(req) {
+    await authenticate(req, { requireAal2: false });
+    const ready = executionEnabled && await currentWorkerReady();
+    return {
+      schema: 'osaa-engineering-remediation-status.opensphere.io/v1alpha1',
+      proposalEnabled,
+      executionEnabled,
+      workerReady: ready,
+      repositories: Object.keys(proposalPolicy),
+      approvalMode: executionEnabled ? 'local-edge-supervised' : 'disabled',
+      capabilities: {
+        diagnose: true,
+        propose: proposalEnabled,
+        approveExactWorkUnit: executionEnabled,
+        repositoryWrite: ready,
+        componentBuild: ready,
+        exactDigestDeploy: ready,
+        browserVerification: ready,
+        rollback: ready,
+      },
+    };
+  }
 
   async function propose(req, assessmentId, body) {
     if (!proposalEnabled) throw { code: 503, msg: 'R2D2 Engineering Remediation proposal intake is not activated' };
@@ -66,9 +102,9 @@ function createR2d2RemediationApi(options) {
     if (!UUID.test(String(assessmentId || ''))) throw { code: 400, msg: 'valid assessment id required' };
     const session = await authenticate(req, { requireAal2: true });
     const actor = session.actor || session;
-    const actorId = String(actor.sub || actor.subject || '');
+    const operatorId = String(actor.sub || actor.subject || '');
     const authSessionId = String(actor.browserSessionId || actor.authSessionId || '');
-    if (!UUID.test(actorId) || !UUID.test(authSessionId)) {
+    if (!UUID.test(operatorId) || !UUID.test(authSessionId)) {
       throw { code: 401, msg: 'stable actor and managed browser session UUIDs are required' };
     }
     const incidentId = String(body?.incidentId || '');
@@ -90,14 +126,15 @@ function createR2d2RemediationApi(options) {
     const row = await store.propose({
       ...envelope,
       assessmentId,
-      actorId,
+      actorId: OSAA_ENGINEERING_ACTOR_ID,
+      operatorId,
       assurance: actor.assurance || 'aal1',
       authSessionId,
       authzRevision: String(actor.credentialRevision || actor.authzRevision || 0),
       idempotencyKey,
       patchArtifact,
     });
-    return publicRemediation(row, executionEnabled, workerReady);
+    return publicRemediation(row, executionEnabled, await currentWorkerReady());
   }
 
   async function approve(req, remediationRequestId, scope, body) {
@@ -128,10 +165,46 @@ function createR2d2RemediationApi(options) {
       approvalDigest: digest({ remediationRequestId, scope, approverId, bindingDigest, confirmation: body.confirmation, expiresAt: new Date(expiry).toISOString() }),
       expiresAt: new Date(expiry).toISOString(),
     });
-    return publicRemediation(row, executionEnabled, workerReady);
+    return publicRemediation(row, executionEnabled, await currentWorkerReady());
+  }
+
+  async function recordBrowserVerification(req, remediationRequestId, body) {
+    if (!executionEnabled) throw { code: 503, msg: 'R2D2 Engineering Remediation execution is not activated' };
+    if (!UUID.test(String(remediationRequestId || ''))) throw { code: 400, msg: 'valid remediation request id required' };
+    const session = await authenticate(req, { requireAal2: true });
+    const actor = session.actor || session; const operatorId = String(actor.sub || actor.subject || '');
+    const request = await store.get(remediationRequestId);
+    if (!request) throw { code: 404, msg: 'Engineering Remediation request not found' };
+    if (operatorId !== String(request.operatorId || '')) throw { code: 403, msg: 'only the approving operator browser may verify this repair' };
+    if (request.stage !== 'verifying') throw { code: 409, msg: 'repair is not awaiting browser verification' };
+    const allowed = ['verificationProfile','verificationRoute','observedSourceRevision','marker','markerPresent','consoleErrorCount','networkFailureCount'];
+    const extra = Object.keys(body && typeof body === 'object' && !Array.isArray(body) ? body : {}).filter((key) => !allowed.includes(key));
+    if (extra.length) throw { code: 400, msg: `browser verification contains unsupported fields: ${extra.join(', ')}` };
+    const build = await store.latestBuild(remediationRequestId);
+    const consoleErrorCount = Number(body?.consoleErrorCount); const networkFailureCount = Number(body?.networkFailureCount);
+    if (body?.verificationProfile !== request.verificationProfile || body?.verificationRoute !== request.verificationRoute
+      || body?.marker !== BROWSER_MARKERS[request.verificationProfile]
+      || body?.observedSourceRevision !== build?.sourceRevision
+      || !Number.isInteger(consoleErrorCount) || consoleErrorCount < 0
+      || !Number.isInteger(networkFailureCount) || networkFailureCount < 0) {
+      throw { code: 400, msg: 'browser verification differs from the approved fixed profile or exact source revision' };
+    }
+    const evidence = {
+      remediationRequestId, operatorId, verificationProfile: request.verificationProfile,
+      verificationRoute: request.verificationRoute, observedSourceRevision: build.sourceRevision,
+      marker: body.marker, markerPresent: body.markerPresent === true,
+      consoleErrorCount, networkFailureCount,
+    };
+    evidence.passed = evidence.markerPresent && consoleErrorCount === 0 && networkFailureCount === 0;
+    evidence.evidenceDigest = digest(evidence);
+    const row = await store.recordBrowserVerification(evidence);
+    return { accepted: true, passed: evidence.passed, evidenceDigest: evidence.evidenceDigest, observedAt: row?.observed_at || null };
   }
 
   async function handle(req, res, pathname, bodyReader, json) {
+    if (pathname === '/api/osaa/remediations/status' && req.method === 'GET') {
+      return json(res, 200, await status(req), { 'cache-control': 'no-store' });
+    }
     const proposal = pathname.match(/^\/api\/osaa\/remediations\/assessments\/([0-9a-f-]{36})\/proposals$/i);
     if (proposal && req.method === 'POST') {
       return json(res, 202, await propose(req, proposal[1], await bodyReader(req)));
@@ -140,22 +213,27 @@ function createR2d2RemediationApi(options) {
     if (approval && req.method === 'POST') {
       return json(res, 202, await approve(req, approval[1], approval[2] === 'source' ? 'source_patch' : 'deployment', await bodyReader(req)));
     }
+    const browserVerification = pathname.match(/^\/api\/osaa\/remediations\/([0-9a-f-]{36})\/browser-verifications$/i);
+    if (browserVerification && req.method === 'POST') {
+      return json(res, 202, await recordBrowserVerification(req, browserVerification[1], await bodyReader(req)));
+    }
     return false;
   }
 
-  return { propose, approve, handle, publicRemediation };
+  return { status, propose, approve, recordBrowserVerification, handle, publicRemediation };
 }
 
 function createRestRemediationStore(restRequest) {
   const request = (resource, options = {}) => restRequest(resource, { ...options, profile: 'osaa' });
   return {
     async propose(input) {
-      const rows = await request('rpc/propose_engineering_remediation_v2', {
+      const rows = await request('rpc/propose_engineering_remediation_v3', {
         method: 'POST',
         body: {
           p_remediation_request_id: input.remediationRequestId,
           p_idempotency_key: input.idempotencyKey,
-          p_actor_id: input.actorId,
+          p_agent_actor_id: input.actorId,
+          p_operator_id: input.operatorId,
           p_assurance: input.assurance,
           p_auth_session_id: input.authSessionId,
           p_authz_revision: input.authzRevision,
@@ -180,6 +258,9 @@ function createRestRemediationStore(restRequest) {
           p_rollback_revision: input.rollbackRevision,
           p_rollback_image_digests: input.rollbackImageDigests,
           p_approval_binding_digest: input.approvalBindingDigest,
+          p_approval_mode: input.approvalMode,
+          p_verification_profile: input.verificationProfile,
+          p_verification_route: input.verificationRoute,
           p_approval_expires_at: input.approvalExpiresAt,
         },
       });
@@ -192,6 +273,8 @@ function createRestRemediationStore(restRequest) {
       const row = rows?.[0];
       return row ? {
         ...row, remediationRequestId: row.remediation_request_id, operationId: row.operation_id,
+        operatorId: row.operator_id, approvalMode: row.approval_mode,
+        verificationProfile: row.verification_profile, verificationRoute: row.verification_route,
         approvalBindingDigest: row.approval_binding_digest, approvalExpiresAt: row.approval_expires_at,
         deploymentBindingDigest: row.deployment_binding_digest, riskLevel: row.risk_level,
         patchDigest: row.patch_digest, baseRevision: row.base_revision, allowedPaths: row.allowed_paths,
@@ -220,6 +303,16 @@ function createRestRemediationStore(restRequest) {
       } });
       return Array.isArray(rows) ? rows[0] : rows;
     },
+    async recordBrowserVerification(input) {
+      const rows = await request('engineering_browser_verification', { method: 'POST', body: [{
+        remediation_request_id: input.remediationRequestId, operator_id: input.operatorId,
+        verification_profile: input.verificationProfile, verification_route: input.verificationRoute,
+        observed_source_revision: input.observedSourceRevision, marker: input.marker,
+        console_error_count: input.consoleErrorCount, network_failure_count: input.networkFailureCount,
+        passed: input.passed, evidence_digest: input.evidenceDigest,
+      }], prefer: 'return=representation' });
+      return Array.isArray(rows) ? rows[0] : rows;
+    },
   };
 }
 
@@ -235,7 +328,10 @@ function workerRequest(row, operation, patchArtifact) {
     rollbackImageDigests: row.rollback_image_digests, approvalBindingDigest: row.approval_binding_digest,
     approvalExpiresAt: row.approval_expires_at, deploymentBindingDigest: row.deployment_binding_digest,
     deploymentApprovalExpiresAt: row.deployment_approval_expires_at, stage: row.stage,
-    actorId: operation?.actor_id, authSessionId: operation?.auth_session_id, authzRevision: operation?.authz_revision,
+    approvalMode: row.approval_mode, operatorId: row.operator_id,
+    verificationProfile: row.verification_profile, verificationRoute: row.verification_route,
+    actorId: row.operator_id, agentActorId: operation?.actor_id,
+    authSessionId: operation?.auth_session_id, authzRevision: operation?.authz_revision,
     patchArtifact: patchArtifact ? {
       patchDigest: patchArtifact.patch_digest, patchText: patchArtifact.patch_text,
       changedFiles: patchArtifact.changed_paths, evidenceDigest: patchArtifact.evidence_digest,
@@ -319,5 +415,5 @@ function createRestRemediationWorkerStore(restRequest, workerId, claimEpoch) {
 
 module.exports = {
   createR2d2RemediationApi, createRestRemediationStore, createRestRemediationWorkerStore,
-  workerRequest, publicRemediation,
+  workerRequest, publicRemediation, OSAA_ENGINEERING_ACTOR_ID,
 };

@@ -47,6 +47,19 @@ interface OsaaControlPlaneStatus {
   unavailable: string[];
   agentControl: AgentControlReadiness;
 }
+interface OsaaEngineeringStatus {
+  schema: string;
+  proposalEnabled: boolean;
+  executionEnabled: boolean;
+  workerReady: boolean;
+  repositories: string[];
+  approvalMode: 'local-edge-supervised' | 'disabled';
+  capabilities: {
+    diagnose: boolean; propose: boolean; approveExactWorkUnit: boolean;
+    repositoryWrite: boolean; componentBuild: boolean; exactDigestDeploy: boolean;
+    browserVerification: boolean; rollback: boolean;
+  };
+}
 interface R2d2OperationalStatus {
   clusterId: string;
   graph: { total: number; fresh: number; observedAt: string | null };
@@ -335,7 +348,7 @@ interface OsaaActionBindingManifest {
           <div class="r2d2-target-badges" aria-label="R2D2 목표 상태">
             <span>Target model</span>
             <span>Phased enablement</span>
-            <span class="guarded">Operational runtime ON · Engineering Remediation OFF</span>
+            <span class="guarded">Operational runtime ON · Engineering {{ engineeringStatus()?.workerReady ? 'READY' : (engineeringStatus()?.executionEnabled ? 'RUNNER 대기' : 'OFF') }}</span>
           </div>
         </div>
         <aside class="r2d2-position-card" aria-label="현재 위치와 최종 목표">
@@ -344,9 +357,9 @@ interface OsaaActionBindingManifest {
             <li class="done"><span>01</span><div><strong>관측 기반</strong><small>runtime projection · owner API · HIS</small></div></li>
             <li class="active"><span>02</span><div><strong>상황 이해</strong><small>graph · coverage · incident · impact</small></div></li>
             <li><span>03</span><div><strong>운영 복구</strong><small>governed capability · postcondition</small></div></li>
-            <li><span>04</span><div><strong>Engineering Remediation</strong><small>source · build · exact digest deploy</small></div></li>
+            <li [class.done]="engineeringStatus()?.workerReady"><span>04</span><div><strong>Engineering Remediation</strong><small>source · build · exact digest deploy</small></div></li>
           </ol>
-          <p>관측·상황 이해·승인 기반 운영 복구는 활성화했습니다. 소스 수정·빌드·배포를 수행하는 Engineering Remediation은 별도 구현·평가·사용자 승인 전까지 fail-closed를 유지합니다.</p>
+          <p>관측·상황 이해·승인 기반 운영 복구와 exact patch-bound Engineering Remediation을 연결했습니다. 실제 source·build·배포 권한은 Windows local edge Repair Runner의 짧은 lease가 살아 있을 때만 열립니다.</p>
         </aside>
       </section>
 
@@ -381,7 +394,7 @@ interface OsaaActionBindingManifest {
                 <dt>세계 모델</dt><dd>{{ live.graph.fresh === live.graph.total && live.graph.total > 0 ? 'fresh' : (live.graph.total ? 'partial/stale' : 'unknown') }}</dd>
                 <dt>판단 모델</dt><dd>{{ live.flags.incident ? 'deterministic correlation enabled' : 'disabled' }}</dd>
                 <dt>수행 모델</dt><dd>durable operation · execution-time authorization</dd>
-                <dt>Engineering Remediation</dt><dd>proposal-only · 운영 활성화 전 fail-closed</dd>
+                <dt>Engineering Remediation</dt><dd>{{ engineeringStatus()?.workerReady ? 'local edge Repair Runner ready' : (engineeringStatus()?.executionEnabled ? 'enabled · runner lease 대기' : 'fail-closed') }}</dd>
               </dl>
             </article>
           </div>
@@ -469,7 +482,7 @@ interface OsaaActionBindingManifest {
                 <tr><td class="os-mono">{{ shortId(request.remediationRequestId) }}</td><td>{{ request.riskLevel }}</td><td>{{ request.stage }}</td><td>{{ request.affectedComponents.join(', ') || '-' }}</td><td class="os-mono">{{ shortId(request.patchDigest) }}</td><td>{{ request.targetChannel }} · {{ request.buildAuthority }}</td><td>{{ formatDateTime(request.updatedAt) }}</td></tr>
               }
             </tbody></table></div>
-            @if (!meta.remediations.length) { <p class="r2d2-empty">Engineering Remediation 요청이 없습니다. 임의 source 수정·build·deploy 권한은 활성화되지 않습니다.</p> }
+            @if (!meta.remediations.length) { <p class="r2d2-empty">Engineering Remediation 요청이 없습니다. 임의 명령은 허용하지 않으며, OSAA가 제안한 exact patch work unit만 사용자 승인 후 실행됩니다.</p> }
           </article>
         }
       </section>
@@ -540,15 +553,15 @@ interface OsaaActionBindingManifest {
           <li><span>02</span><div><strong>런타임 복구</strong><p>restart · scale · CronJob one-off</p></div><small>DURABLE OPERATION</small></li>
           <li><span>03</span><div><strong>검증된 산출물 복구</strong><p>이전에 검증된 exact digest rollback</p></div><small>RELEASE POLICY</small></li>
           <li><span>04</span><div><strong>선언 상태 복구</strong><p>allowlist된 config · desired-state 변경</p></div><small>GITEA CHANGE LANE</small></li>
-          <li class="future"><span>05</span><div><strong>Engineering Remediation</strong><p>격리된 source patch · test · build</p></div><small>FUTURE / APPROVAL</small></li>
-          <li class="future"><span>06</span><div><strong>공급망 배포</strong><p>signed evidence · exact digest deploy · rollback</p></div><small>CONSTITUTION-0005</small></li>
+          <li [class.future]="!engineeringStatus()?.executionEnabled"><span>05</span><div><strong>Engineering Remediation</strong><p>격리된 source patch · test · component build</p></div><small>EXACT WORK UNIT</small></li>
+          <li [class.future]="!engineeringStatus()?.executionEnabled"><span>06</span><div><strong>공급망 배포</strong><p>provenance · exact digest deploy · browser verify · rollback</p></div><small>CONSTITUTION-0005</small></li>
         </ol>
       </section>
 
       <section class="r2d2-section r2d2-engineering" aria-labelledby="r2d2-engineering-title">
         <div class="r2d2-section-heading">
           <div><span class="r2d2-kicker">05 · ENGINEERING REMEDIATION</span><h2 id="r2d2-engineering-title">관리자 허락은 포괄 권한이 아니라 정확한 patch와 결과물에 결속됩니다.</h2></div>
-          <p>이 capability는 아직 활성화되지 않았습니다. 구조적 확장점을 미리 고정해 이후 재설계 비용을 줄입니다.</p>
+          <p>OSAA service principal이 요청하고 현재 사용자가 exact patch work unit을 승인합니다. 한 번의 local edge 승인으로 등록된 test·component build·exact digest 배포·검증·롤백을 수행합니다.</p>
         </div>
         <div class="r2d2-engineering-flow" aria-label="Engineering Remediation 안전 흐름">
           <div><span>1</span><strong>Evidence</strong><small>불일치 재현과 원인 후보 고정</small></div>
@@ -1403,6 +1416,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
   readonly healthBusy = signal(false);
   readonly controlPlaneStatus = signal<OsaaControlPlaneStatus | null>(null);
   readonly controlPlaneError = signal('');
+  readonly engineeringStatus = signal<OsaaEngineeringStatus | null>(null);
   readonly operationalStatus = signal<R2d2OperationalStatus | null>(null);
   readonly graphNodes = signal<R2d2GraphNode[]>([]);
   readonly incidents = signal<R2d2Incident[]>([]);
@@ -1535,8 +1549,17 @@ export class AdminOsaa implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     await this.loadHealth();
-    await Promise.all([this.loadOperationalIntelligence(), this.loadLlmKeys(), this.loadLlmUsage(), this.loadAgentEvidence(), this.loadKnowledgeStats(), this.loadToolManifest(), this.loadActionBindings()]);
-    this.timer = setInterval(() => { void this.loadHealth(true); void this.loadOperationalIntelligence(true); }, 15000);
+    await Promise.all([this.loadOperationalIntelligence(), this.loadEngineeringStatus(), this.loadLlmKeys(), this.loadLlmUsage(), this.loadAgentEvidence(), this.loadKnowledgeStats(), this.loadToolManifest(), this.loadActionBindings()]);
+    this.timer = setInterval(() => { void this.loadHealth(true); void this.loadOperationalIntelligence(true); void this.loadEngineeringStatus(); }, 15000);
+  }
+
+  async loadEngineeringStatus(): Promise<void> {
+    try {
+      const response = await this.http.request('/api/osaa/remediations/status', { cache: 'no-store' });
+      this.engineeringStatus.set(response.ok ? await response.json() as OsaaEngineeringStatus : null);
+    } catch {
+      this.engineeringStatus.set(null);
+    }
   }
   ngOnDestroy(): void {
     if (this.timer) clearInterval(this.timer);

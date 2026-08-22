@@ -30,6 +30,8 @@ function fixture(enabled = true, executionEnabled = false, workerReady = false, 
   const rowFor = (input, stage = 'proposed') => ({
     remediation_request_id: input.remediationRequestId, assessment_id: input.assessmentId,
     incident_id: input.incidentId, operation_id: '55555555-5555-4555-8555-555555555555',
+    operator_id: input.operatorId, approval_mode: input.approvalMode,
+    verification_profile: input.verificationProfile, verification_route: input.verificationRoute,
     repository: input.repository, base_revision: input.baseRevision, allowed_paths: input.allowedPaths,
     patch_digest: input.patchDigest, reason: input.reason, risk_level: input.riskLevel,
     affected_components: input.affectedComponents, affected_images: input.affectedImages,
@@ -42,8 +44,9 @@ function fixture(enabled = true, executionEnabled = false, workerReady = false, 
   const store = { propose: async (input) => {
     persisted.push(input);
     return rowFor(input);
-  }, get: async () => persisted[0], latestBuild: async () => null,
-  approveScoped: async (input) => { approvals.push(input); return rowFor(persisted[0], 'approved'); } };
+  }, get: async () => persisted[0], latestBuild: async () => persisted[0]?.build || null,
+  approveScoped: async (input) => { approvals.push(input); return rowFor(persisted[0], 'approved'); },
+  recordBrowserVerification: async (input) => ({ ...input, observed_at: 'now' }) };
   const api = createR2d2RemediationApi({
     proposalEnabled: enabled, executionEnabled, workerReady,
     proposalRepositories: ['console'],
@@ -57,11 +60,13 @@ function fixture(enabled = true, executionEnabled = false, workerReady = false, 
 test('proposal is patch-bound, session-bound and cannot activate repository or delivery execution', async () => {
   const { api, persisted } = fixture();
   const result = await api.propose({ headers: { 'x-os-idempotency-key': 'remediation-proposal-1' } }, assessmentId, body());
-  assert.equal(persisted[0].actorId, actorId);
+  assert.equal(persisted[0].operatorId, actorId);
+  assert.equal(persisted[0].actorId, '00000000-0000-4000-8000-000000000006');
   assert.equal(persisted[0].authSessionId, sessionId);
   assert.equal(persisted[0].patchDigest, patchTextDigest(body().patchText));
   assert.deepEqual(persisted[0].patchArtifact.changedFiles, ['backend/opensphere-console-osaa-gateway/server.js']);
   assert.match(persisted[0].approvalBindingDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(persisted[0].approvalMode, 'local-edge-supervised');
   assert.deepEqual(result.activation, {
     proposalOnly: true, approvalApi: false, workerReady: false,
     repositoryWrite: false, build: false, publish: false, deploy: false,
@@ -96,6 +101,51 @@ test('execution capability is reported only when both approval API and an execut
     proposalOnly: false, approvalApi: true, workerReady: true,
     repositoryWrite: true, build: true, publish: true, deploy: true,
   });
+});
+
+test('authenticated status exposes the real Repair Runner gate without claiming readiness early', async () => {
+  const waiting = fixture(true, true, false);
+  assert.deepEqual(await waiting.api.status({}), {
+    schema: 'osaa-engineering-remediation-status.opensphere.io/v1alpha1',
+    proposalEnabled: true,
+    executionEnabled: true,
+    workerReady: false,
+    repositories: ['console'],
+    approvalMode: 'local-edge-supervised',
+    capabilities: {
+      diagnose: true, propose: true, approveExactWorkUnit: true,
+      repositoryWrite: false, componentBuild: false, exactDigestDeploy: false,
+      browserVerification: false, rollback: false,
+    },
+  });
+  const ready = fixture(true, true, async () => true);
+  const status = await ready.api.status({});
+  assert.equal(status.workerReady, true);
+  assert.equal(status.capabilities.exactDigestDeploy, true);
+});
+
+test('browser verification is exact-profile, exact-source and approving-operator bound', async () => {
+  const prepared = fixture(true, true, true);
+  const created = await prepared.api.propose({ headers: { 'x-os-idempotency-key': 'remediation-proposal-1' } }, assessmentId,
+    { ...body(), verificationProfile: 'manual-route' });
+  prepared.persisted[0].stage = 'verifying';
+  prepared.persisted[0].verificationProfile = 'manual-route';
+  prepared.persisted[0].verificationRoute = '/manual';
+  prepared.persisted[0].operatorId = actorId;
+  prepared.persisted[0].approval_mode = 'local-edge-supervised';
+  prepared.persisted[0].verification_profile = 'manual-route';
+  prepared.persisted[0].verification_route = '/manual';
+  prepared.api.publicRemediation;
+  prepared.persisted[0].build = { sourceRevision: 'f'.repeat(40) };
+  const verified = await prepared.api.recordBrowserVerification({}, created.remediationRequestId, {
+    verificationProfile: 'manual-route', verificationRoute: '/manual', observedSourceRevision: 'f'.repeat(40),
+    marker: '[data-manual-contract="console-help-center-v2"]', markerPresent: true, consoleErrorCount: 0, networkFailureCount: 0,
+  });
+  assert.equal(verified.passed, true);
+  await assert.rejects(() => prepared.api.recordBrowserVerification({}, created.remediationRequestId, {
+    verificationProfile: 'manual-route', verificationRoute: '/manual', observedSourceRevision: 'e'.repeat(40),
+    marker: '[data-manual-contract="console-help-center-v2"]', markerPresent: true, consoleErrorCount: 0, networkFailureCount: 0,
+  }), (error) => error?.code === 400);
 });
 
 test('proposal intake is default-off and rejects arbitrary source scope', async () => {

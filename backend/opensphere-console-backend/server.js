@@ -37,6 +37,7 @@ const { createModuleOperationApi } = require('./module-operation-api');
 const { createR2d2OperationApi, createRestOperationStore, createRestWorkerStore } = require('./r2d2-operation-api');
 const { DESCRIPTORS: R2D2_DURABLE_DESCRIPTORS, DurableOperationWorker } = require('./r2d2-durable-operation');
 const { createR2d2RemediationApi, createRestRemediationStore } = require('./r2d2-remediation-api');
+const { createR2d2RepairRunnerApi } = require('./r2d2-repair-runner-api');
 const { createCanonicalSourceEvidence } = require('./osaa-source-authority');
 const {
   DEFAULT_INSTALLATION_CONFIG_FILE,
@@ -1035,10 +1036,17 @@ const r2d2OperationApi = createR2d2OperationApi({
   },
 });
 
+const r2d2RepairRunnerApi = createR2d2RepairRunnerApi({
+  executionEnabled: R2D2_ENGINEERING_EXECUTION_ENABLED,
+  authenticateAutomation: verifyLocalEdgeAutomation,
+  restRequest,
+  resolveSession: resolveDurableExecutionSession,
+});
 const r2d2RemediationApi = createR2d2RemediationApi({
   proposalEnabled: R2D2_ENGINEERING_PROPOSAL_ENABLED,
   proposalRepositories: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES,
   executionEnabled: R2D2_ENGINEERING_EXECUTION_ENABLED,
+  workerReady: () => r2d2RepairRunnerApi.ready(),
   authenticate: async (req) => {
     if (!browserSessions) throw { code: 503, msg: 'managed browser session broker unavailable' };
     const session = await browserSessions.authenticate(req);
@@ -1418,7 +1426,7 @@ async function resolveDurableExecutionSession(sessionId, actorId) {
       try {
         const actor = await resolveConsoleActor(actorId, { credential_revision: browser.authzRevision });
         if (actor.groups.includes(SUPABASE_BACKEND_ROLE) || actor.groups.includes('console-admins')) {
-          browser.permissions = [...new Set([...(browser.permissions || []), 'osaa.action.execute.high', 'console.notification.manage', 'console.backup.restore'])];
+          browser.permissions = [...new Set([...(browser.permissions || []), 'osaa.action.execute.high', 'console.notification.manage', 'console.backup.restore', 'r2d2.engineering.execute'])];
         }
       } catch { return { active: false, actorId, code: 'AuthorizationAuthorityUnavailable' }; }
     }
@@ -2989,6 +2997,23 @@ async function authorizeLocalEdgeComponentRelease(actor, {
     targetType: 'platform-release',
     reviewBody: `Local edge component release authorized by ${authorizer}; correlation ${requestId}. Reason: ${reason}`,
   });
+}
+
+async function previewLocalEdgePlatformRelease(req, body = {}) {
+  const actor = await verifyLocalEdgeAutomation(req);
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || Object.keys(body).some((key) => !['reason', 'sourceRevision', 'components'].includes(key))) {
+    throw { code: 400, msg: 'local edge automation preview body contains unsupported fields' };
+  }
+  const reason = managementReason(body.reason);
+  if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+  const generated = await generatePlatformComponentTarget(actor, {
+    reason, sourceRevision: body.sourceRevision, components: body.components,
+  }, { localEdgeAutomation: true });
+  return {
+    preview: true, targetReleaseDigest: generated.targetLock.releaseDigest,
+    changedComponents: generated.targetLock.changedComponents,
+  };
 }
 
 async function authorizeLocalEdgeR1Operation(actor, {
@@ -4574,6 +4599,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (p.startsWith('/api/osaa/remediations/')) {
       try {
+        const runnerHandled = await r2d2RepairRunnerApi.handle(req, res, p, readBody, json);
+        if (runnerHandled !== false) return;
         const handled = await r2d2RemediationApi.handle(req, res, p, readBody, json);
         if (handled !== false) return;
       } catch (e) {
@@ -5290,6 +5317,13 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, await generatePlatformComponentTarget(actor, await readBody(req)));
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'Platform component release target generation failed' });
+      }
+    }
+    if (p === '/api/platform/releases/local-edge-automation/preview' && req.method === 'POST') {
+      try {
+        return json(res, 200, await previewLocalEdgePlatformRelease(req, await readBody(req)), { 'cache-control': 'no-store' });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || e.message || 'local edge component release preview failed' });
       }
     }
     if (p === '/api/platform/releases/local-edge-automation' && req.method === 'POST') {

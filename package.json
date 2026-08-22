@@ -20,7 +20,8 @@
     "test:os-shell-frontend": "node --test scripts/os-shell-frontend-contract.test.mjs",
     "test:web-shell-edge-mvp": "node --test scripts/web-shell-edge-mvp-contract.test.mjs",
     "test:navigation-snapshot": "node --test src/app/core/console-navigation-snapshot.spec.ts src/app/core/r2d2-risk.service.spec.ts",
-    "test:carbon-icons": "node --test scripts/carbon-icon-assets.test.mjs"
+    "test:carbon-icons": "node --test scripts/carbon-icon-assets.test.mjs",
+    "test:r2d2-repair-runner": "node --test scripts/r2d2-local-edge-repair-runner.test.mjs backend/opensphere-console-backend/r2d2-engineering-remediation.test.js"
   },
   "private": true,
   "packageManager": "npm@11.6.2",
