@@ -16,6 +16,11 @@ const ROLLOUT_TIMEOUT_MS = Math.max(30000, Math.min(600000, Number(process.env.R
 const MAX_REPLICAS = Math.max(1, Math.min(100, Number(process.env.OSAA_SCALE_MAX || 10) || 10));
 const ALLOWED_NAMESPACES = new Set((process.env.ALLOWED_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change')
   .split(',').map((value) => value.trim()).filter(Boolean));
+const RECOVERY_DRILL_NAMESPACE = 'opensphere-console-recovery';
+const RECOVERY_DRILL_TARGETS = Object.freeze({
+  'opensphere-supabase-recovery-drill': 'supabase',
+  'opensphere-gitea-recovery-drill': 'gitea',
+});
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const SA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount';
 const NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
@@ -202,7 +207,9 @@ async function loadManifest(work) {
   const digest = `sha256:${sha256(canonicalJson(desiredState))}`;
   if (manifest?.metadata?.payloadDigest !== digest) throw new Error('governed manifest payload digest mismatch');
   if (manifest?.spec?.target !== work.target || manifest?.spec?.reason !== work.reason) throw new Error('governed manifest claim mismatch');
-  if (desiredState.requiredPermission !== 'osaa.action.execute.high') throw new Error('desiredState permission contract mismatch');
+  const requiredPermission = desiredState.toolId === 'osaa.recovery.drill.run'
+    ? 'console.backup.restore' : 'osaa.action.execute.high';
+  if (desiredState.requiredPermission !== requiredPermission) throw new Error('desiredState permission contract mismatch');
   if (!['apply', 'delete', 'configure', 'rollback'].includes(manifest.spec.action)) throw new Error('unsupported governed action');
   return manifest;
 }
@@ -345,6 +352,57 @@ async function runCronJob(manifest) {
   return { toolId: desiredState.toolId, operation: existing ? 'already-created' : 'created', kind: 'Job', namespace, name: jobName, sourceCronJob: name, resourceVersion: created.metadata?.resourceVersion || null };
 }
 
+async function runRecoveryDrill(manifest) {
+  const desiredState = manifest.spec.desiredState;
+  const inputs = desiredState?.inputs && typeof desiredState.inputs === 'object' && !Array.isArray(desiredState.inputs)
+    ? desiredState.inputs : {};
+  const allowedInputs = new Set(['kind', 'namespace', 'name', 'targetUid', 'targetGeneration', 'targetResourceVersion', 'confirm', 'component']);
+  const extra = Object.keys(inputs).filter((key) => !allowedInputs.has(key));
+  if (extra.length) throw new Error(`recovery drill contains unsupported inputs: ${extra.join(', ')}`);
+  const namespace = String(inputs.namespace || '');
+  const name = targetName(inputs.name, 'recovery drill CronJob');
+  const component = String(inputs.component || '').trim().toLowerCase();
+  if (namespace !== RECOVERY_DRILL_NAMESPACE || RECOVERY_DRILL_TARGETS[name] !== component) {
+    throw new Error('recovery drill target is outside the fixed template contract');
+  }
+  exactConfirmation(inputs, `run recovery drill ${component}`);
+  const durableOperationId = String(desiredState.durableOperationId || '').trim().toLowerCase();
+  if (!UUID_RE.test(durableOperationId)) throw new Error('recovery drill durable operation id is invalid');
+  const cronjob = await kubernetes('GET', resourcePath('cronjob', namespace, name));
+  if (String(cronjob.metadata?.uid || '') !== String(inputs.targetUid || '')
+      || String(cronjob.metadata?.resourceVersion || '') !== String(inputs.targetResourceVersion || '')) {
+    throw new Error('recovery drill CronJob revision changed after planning');
+  }
+  const jobName = `${name.slice(0, 43)}-osaa-${manifest.metadata.requestId.slice(0, 8)}`.replace(/-+$/g, '');
+  const spec = JSON.parse(JSON.stringify(cronjob.spec?.jobTemplate?.spec || {}));
+  const containers = spec.template?.spec?.containers;
+  if (!Array.isArray(containers) || containers.length !== 1 || containers[0].name !== 'recovery') {
+    throw new Error('recovery drill CronJob template shape is invalid');
+  }
+  const env = Array.isArray(containers[0].env) ? containers[0].env : [];
+  if (env.some((item) => item?.name === 'RECOVERY_OPERATION_ID')) throw new Error('recovery operation id must be injected only by the reconciler');
+  containers[0].env = [...env, { name: 'RECOVERY_OPERATION_ID', value: durableOperationId }];
+  const job = {
+    apiVersion: 'batch/v1', kind: 'Job',
+    metadata: {
+      name: jobName, namespace,
+      labels: { 'opensphere.io/osaa-source-cronjob': name, 'opensphere.io/recovery-component': component },
+      annotations: { 'opensphere.io/osaa-request-id': manifest.metadata.requestId, 'opensphere.io/durable-operation-id': durableOperationId },
+    },
+    spec,
+  };
+  const existing = await kubernetes('GET', resourcePath('job', namespace, jobName)).catch((error) => {
+    if (error?.status === 404) return null;
+    throw error;
+  });
+  const created = existing || await kubernetes('POST', resourcePath('job', namespace), job);
+  return {
+    toolId: desiredState.toolId, operation: existing ? 'already-created' : 'created', kind: 'Job',
+    namespace, name: jobName, sourceCronJob: name, component, durableOperationId,
+    resourceVersion: created.metadata?.resourceVersion || null,
+  };
+}
+
 async function suspendCronJob(manifest) {
   const desiredState = manifest.spec.desiredState;
   const { inputs, namespace, name } = resourceTarget({ ...desiredState, inputs: { ...(desiredState.inputs || {}), kind: 'cronjob' } }, new Set(['cronjob']));
@@ -388,6 +446,7 @@ async function applyManifest(manifest) {
     return deleteResource(manifest);
   }
   if (toolId === 'osaa.k8s.cronjob.run') return runCronJob(manifest);
+  if (toolId === 'osaa.recovery.drill.run') return runRecoveryDrill(manifest);
   if (toolId === 'osaa.k8s.cronjob.suspend') return suspendCronJob(manifest);
   throw new Error(`unsupported OSAA governed tool: ${toolId}`);
 }
@@ -433,7 +492,7 @@ const server = http.createServer((req, res) => {
   const path = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname;
   const body = {
     service: 'opensphere-osaa-governed-adapter', reconciler: RECONCILER_NAME,
-    ready: Boolean(GITEA_TOKEN && RECONCILER_TOKEN), supportedTools: 10,
+    ready: Boolean(GITEA_TOKEN && RECONCILER_TOKEN), supportedTools: 11,
     startedAt, lastClaimAt, lastSuccessAt, activeRequestId, lastError: lastError ? 'reconciler_error' : null,
   };
   if (path === '/healthz') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true })); }
@@ -446,4 +505,4 @@ if (require.main === module) {
   server.listen(PORT, () => { console.log(`[osaa-reconciler] ${RECONCILER_NAME} listening :${PORT}`); void pollLoop(); });
 }
 
-module.exports = { canonicalJson, deploymentTarget, resourceTarget, resourcePath, rolloutComplete, workloadRolloutComplete, validateManifest, sha256 };
+module.exports = { canonicalJson, deploymentTarget, resourceTarget, resourcePath, rolloutComplete, workloadRolloutComplete, validateManifest, sha256, runRecoveryDrill };

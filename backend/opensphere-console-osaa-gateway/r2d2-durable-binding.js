@@ -8,6 +8,7 @@ function durableBindingRequest(binding, inputs) {
   if (toolId === 'osaa.k8s.workload.scale') return { action: 'scale-workload', target: { namespace: inputs.namespace, name: inputs.name, replicas: inputs.replicas } };
   if (toolId === 'osaa.k8s.workload.rollback-image') return { action: 'rollback-image', target: { namespace: inputs.namespace, name: inputs.name, container: inputs.container, image: inputs.image } };
   if (toolId === 'osaa.k8s.cronjob.run') return { action: 'run-cronjob', target: { namespace: inputs.namespace, name: inputs.name } };
+  if (toolId === 'osaa.recovery.drill.run') return { action: 'run-recovery-drill', target: { component: inputs.component } };
   if (toolId === 'osaa.notification.delivery.retry') return { action: 'retry-delivery', target: { deliveryId: inputs.deliveryId } };
   if (toolId === 'osaa.his.lifecycle' && String(inputs.action || '').toLowerCase() === 'recover') return { action: 'owner-recover', target: { id: inputs.id } };
   return null;

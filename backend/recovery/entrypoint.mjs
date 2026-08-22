@@ -227,14 +227,15 @@ async function publishEvidence(mutator) {
   await kubeRequest('PATCH', path, { data: { 'recovery-evidence.json': JSON.stringify(next, null, 2) } });
 }
 
-function backupEvidence(run, component, entries) {
+function backupEvidence(run, component, entries, manifestKey) {
   return (current) => {
     const next = structuredClone(current && typeof current === 'object' ? current : {});
     next.policy = next.policy || { maxEvidenceAgeSeconds: 86400, targetMode: 'isolated-non-destructive-drill' };
     next.backup = next.backup || { supabase: {}, gitea: {} };
     next.backup.supabase = next.backup.supabase || {};
     next.backup.gitea = next.backup.gitea || {};
-    const summarize = (entry) => ({ sha256: entry.plaintextSha256, verified: true, verifiedAt: isoNow(), runId: run.id });
+    const summarize = (entry) => ({ sha256: entry.plaintextSha256, verified: true, verifiedAt: isoNow(),
+      runId: run.id, manifestKey });
     if (component === 'supabase') {
       next.backup.supabase.database = summarize(artifact(entries, 'supabase.pg.dump'));
       next.backup.supabase.storage = summarize(artifact(entries, 'supabase-storage.tgz'));
@@ -250,7 +251,8 @@ function drillEvidence(component, checks) {
     const next = structuredClone(current && typeof current === 'object' ? current : {});
     next.policy = next.policy || { maxEvidenceAgeSeconds: 86400, targetMode: 'isolated-non-destructive-drill' };
     next.restore = next.restore || {};
-    const restored = { state: 'Verified', verifiedAt: isoNow(), assertions: checks.map((item) => item.assertion), checks };
+    const restored = { state: 'Verified', verifiedAt: isoNow(), operationId: recoveryOperationId(),
+      assertions: checks.map((item) => item.assertion), checks };
     if (component === 'supabase') {
       next.restore.supabase = restored;
     } else {
@@ -258,6 +260,37 @@ function drillEvidence(component, checks) {
     }
     return next;
   };
+}
+
+function recoveryOperationId() {
+  const value = required('RECOVERY_OPERATION_ID').toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+    throw new Error('RECOVERY_OPERATION_ID must be a durable operation UUID');
+  }
+  return value;
+}
+
+function safeManifestKey(value) {
+  const key = String(value || '').trim();
+  if (key.length < 3 || key.length > 600 || key.startsWith('/') || key.split('/').includes('..')
+      || !/^[A-Za-z0-9][A-Za-z0-9._/-]*\/manifest\.json$/.test(key)) {
+    throw new Error('Recovery manifest key is outside the owner-staged S3 contract');
+  }
+  return key;
+}
+
+async function recoveryManifestKey(component) {
+  const explicit = optional('RECOVERY_MANIFEST_KEY');
+  if (explicit) return safeManifestKey(explicit);
+  const path = `/api/v1/namespaces/${encodeURIComponent(EVIDENCE_NAMESPACE)}/configmaps/${encodeURIComponent(EVIDENCE_NAME)}`;
+  const configMap = await kubeRequest('GET', path);
+  let evidence;
+  try { evidence = JSON.parse(configMap?.data?.['recovery-evidence.json'] || '{}'); }
+  catch { throw new Error('Recovery evidence document is invalid JSON'); }
+  const value = component === 'supabase'
+    ? evidence?.backup?.supabase?.database?.manifestKey
+    : evidence?.backup?.gitea?.manifestKey;
+  return safeManifestKey(value);
 }
 
 function numberCheck(assertion, observed, expected = '>=1') {
@@ -351,7 +384,7 @@ async function backupSupabase() {
   const manifest = join(archiveRoot, 'manifest.json');
   await writeFile(manifest, JSON.stringify(run, null, 2), { mode: 0o600 });
   await upload(manifest, `${prefix}/manifest.json`);
-  await publishEvidence(backupEvidence(run, 'supabase', entries));
+  await publishEvidence(backupEvidence(run, 'supabase', entries, `${prefix}/manifest.json`));
   return { id, manifestKey: `${prefix}/manifest.json`, artifacts: entries.length };
 }
 
@@ -383,7 +416,7 @@ async function backupGitea() {
   const manifest = join(archiveRoot, 'manifest.json');
   await writeFile(manifest, JSON.stringify(run, null, 2), { mode: 0o600 });
   await upload(manifest, `${prefix}/manifest.json`);
-  await publishEvidence(backupEvidence(run, 'gitea', entries));
+  await publishEvidence(backupEvidence(run, 'gitea', entries, `${prefix}/manifest.json`));
   return { id, manifestKey: `${prefix}/manifest.json`, artifacts: entries.length };
 }
 
@@ -409,7 +442,7 @@ async function loadDrill(manifestKey, expectedComponent) {
 }
 
 async function drillSupabase() {
-  const loaded = await loadDrill(required('RECOVERY_MANIFEST_KEY'), 'supabase');
+  const loaded = await loadDrill(await recoveryManifestKey('supabase'), 'supabase');
   try {
     const archivedRoles = JSON.parse(await readFile(join(loaded.root, 'supabase-roles.json'), 'utf8')).roles;
     const databaseChecks = await restoreDatabase(join(loaded.root, 'supabase.pg.dump'), 'supabase', archivedRoles);
@@ -420,7 +453,8 @@ async function drillSupabase() {
     const storageChecks = [numberCheck('restored object files', count)];
     await publishEvidence((current) => {
       const next = drillEvidence('supabase', databaseChecks)(current);
-      next.restore.storage = { state: storageChecks.every((item) => item.verdict === 'Verified') ? 'Verified' : 'AttentionRequired', verifiedAt: isoNow(), assertions: storageChecks.map((item) => item.assertion), checks: storageChecks };
+      next.restore.storage = { state: storageChecks.every((item) => item.verdict === 'Verified') ? 'Verified' : 'AttentionRequired',
+        verifiedAt: isoNow(), operationId: recoveryOperationId(), assertions: storageChecks.map((item) => item.assertion), checks: storageChecks };
       return next;
     });
     return { component: 'supabase', databaseChecks, storageChecks };
@@ -428,7 +462,7 @@ async function drillSupabase() {
 }
 
 async function drillGitea() {
-  const loaded = await loadDrill(required('RECOVERY_MANIFEST_KEY'), 'gitea');
+  const loaded = await loadDrill(await recoveryManifestKey('gitea'), 'gitea');
   try {
     const archivedRoles = JSON.parse(await readFile(join(loaded.root, 'gitea-roles.json'), 'utf8')).roles;
     const databaseChecks = await restoreDatabase(join(loaded.root, 'gitea.pg.dump'), 'gitea', archivedRoles);
@@ -474,4 +508,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   });
 }
 
-export { decryptFile, encryptFile };
+export { decryptFile, encryptFile, safeManifestKey };

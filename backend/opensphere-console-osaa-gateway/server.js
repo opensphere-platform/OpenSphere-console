@@ -118,7 +118,7 @@ const R2D2_MAINTENANCE_INTERVAL_MS = Math.max(3600000, Math.min(604800000, Numbe
 const OSAA_ACTION_SUBMISSION_ENABLED = process.env.OSAA_ACTION_SUBMISSION_ENABLED === 'true';
 const OSAA_EMBED_KEY_ID = String(process.env.OSAA_EMBED_KEY_ID || '').trim();
 const OSAA_MANUAL_SEED_PATH = process.env.OSAA_MANUAL_SEED_PATH || '/app/manual-seeds/opensphere-core-manuals.json';
-const OSAA_ENV_NAMESPACES = (process.env.OSAA_ENV_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change,opensphere-foundation,opensphere-system')
+const OSAA_ENV_NAMESPACES = (process.env.OSAA_ENV_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change,opensphere-console-recovery,opensphere-foundation,opensphere-system')
   .split(',').map((x) => x.trim()).filter(Boolean).slice(0, 8);
 const OSAA_MUTATION_NAMESPACES = (process.env.OSAA_MUTATION_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change')
   .split(',').map((x) => x.trim()).filter((x) => OSAA_ENV_NAMESPACES.includes(x)).slice(0, 8);
@@ -143,9 +143,10 @@ const OSAA_POSTGRES_DELETION_POLICIES = Object.freeze(['Retain', 'Delete']);
 const OSAA_CONSOLE_ROLES = Object.freeze(['console-admins', 'console-operators', 'console-viewers']);
 const OSAA_EVIDENCE_STREAMS = Object.freeze(['agent_run', 'agent_step', 'tool_run', 'retrieval_trace', 'llm_usage_event', 'runtime_event']);
 const OSAA_RECOVERY_COMPONENTS = Object.freeze(['all', 'supabase-database', 'supabase-storage', 'gitea']);
+const OSAA_RECOVERY_DRILL_COMPONENTS = Object.freeze(['supabase', 'gitea']);
 const OSAA_DURABLE_PLAN_ACTIONS = Object.freeze([
   'restart-workload', 'scale-workload', 'rollback-image',
-  'run-cronjob', 'owner-recover', 'retry-delivery',
+  'run-cronjob', 'run-recovery-drill', 'owner-recover', 'retry-delivery',
 ]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OSAA_EXTENSION_IMAGE_RE = /^ghcr\.io\/opensphere-platform\/[a-z0-9._-]+@sha256:[0-9a-f]{64}$/;
@@ -3508,11 +3509,11 @@ function controlToolsSystemMessage() {
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/osaa/tools/k8s/*.',
       'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HIS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
       'When Registry Plugins are described as 요청 시 적재 or missing from a Host screen, call the extension presentation status tool. Distinguish host-owned menu eligibility from route-scoped child UI activation, and never restart, reinstall, or enable entries that Registry reports as healthy.',
-      'When the operator asks for a restart, scale, rollback, CronJob run, owner recovery, or notification retry plan, call plan_durable_operation first. Report the live exact target, risk class, required assurance, expected confirmation, and postcondition. Planning never submits or executes an operation, and OSAA must never copy the returned confirmation into an action call.',
-      'When the operator asks what happened to a durable operation or supplies an operation UUID, call get_osaa_operation. Report its current phase, approval state, execution steps, and postcondition verification from the ledger; never infer completion from action acceptance.',
+      'When the operator asks for a restart, scale, rollback, CronJob run, isolated recovery drill, owner recovery, or notification retry plan, call plan_durable_operation first. Report the live exact target, risk class, required assurance, expected confirmation, and postcondition. Planning never submits or executes an operation, and OSAA must never copy the returned confirmation into an action call.',
+      'Call get_osaa_operation only when the operator supplied a valid operation UUID or an accepted action in this conversation returned one. Never call it during planning alone. Report its current phase, approval state, execution steps, and postcondition verification from the ledger; never infer completion from action acceptance.',
       'For source-level diagnosis, first read the canonical source catalog, resolve the repository branch to an exact GitHub revision, then search or read only that revision. Cite repository ID, 40-character revision, path, and line range. Never substitute Gitea, a workspace checkout, a stale manual snippet, or model memory for canonical source evidence; report inaccessible repositories and complete=false searches as coverage gaps.',
       'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HIS is telemetry authority.',
-      'Platform recovery status is structured evidence, not proof that a restore executor exists. The current owner supports sanitized status and isolated-drill planning only; never claim that backup restore can be executed unless drill-request and evidence-promote capabilities are both advertised.',
+      'Platform recovery status is structured evidence, not proof that a restore succeeded. A recovery drill is executable only through the fixed supabase or gitea CronJob target, the durable operation ledger, AAL2 exact confirmation, reviewed change reconciliation, and operation-correlated evidence promotion. Never request archive bytes, credentials, URLs, commands, or an arbitrary manifest.',
       'The provider may call only the permission-filtered read tools supplied with this request. Treat their returned data as current evidence and cite what was actually observed.',
       mutationNote,
       'Action safety rules: admin token required, target namespace/kind must be allowlisted, resource names must be RFC1123-safe, and exact confirmation text is required.',
@@ -3780,6 +3781,18 @@ function osaaActionBindings() {
       riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({ component: OSAA_RECOVERY_COMPONENTS.join(' | ') }),
       permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:recovery:read'] },
       audit: { eventType: 'recovery-owner-plan', targetTemplate: 'PlatformRecovery/<component>' },
+      citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:recovery-drill-run',
+      namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#platform-recovery-owner-control',
+      title: 'Run one fixed isolated platform recovery drill', intent: 'run-recovery-drill',
+      toolId: 'osaa.recovery.drill.run', controlPlane: 'durable-osce+gitea+fixed-recovery-cronjob',
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'run recovery drill <component>',
+      requiredInputs: bindingInput({ component: OSAA_RECOVERY_DRILL_COMPONENTS.join(' | '), reason: 'human management reason (8+ chars)', confirm: 'run recovery drill <component>' }),
+      permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:backup:restore'] },
+      audit: { eventType: 'recovery-drill-run', targetTemplate: 'PlatformRecovery/<component>' },
       citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
@@ -4390,6 +4403,16 @@ function osaaToolManifest() {
         auditEventType: 'recovery-owner-plan',
       },
       {
+        id: 'osaa.recovery.drill.run',
+        name: 'Submit one fixed isolated recovery drill through the durable OSCE operation ledger',
+        channel: 'owner-control-plane', readOnly: false,
+        endpoint: toolEndpoint('POST', '/api/osaa/actions/bindings/execute'),
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'run recovery drill <component>',
+        inputSchema: schemaObject({ component: { type: 'string', enum: OSAA_RECOVERY_DRILL_COMPONENTS },
+          confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 } }),
+        auditEventType: 'recovery-drill-run',
+      },
+      {
         id: 'osaa.observability.logs.query',
         name: 'Query redacted centralized logs through the HIS owner API',
         channel: 'owner-control-plane', readOnly: true,
@@ -4911,6 +4934,7 @@ function osaaToolManifest() {
           container: { ...deploymentField, required: false },
           image: { type: 'string', pattern: OSAA_EXTENSION_IMAGE_RE.source, required: false },
           deliveryId: { type: 'string', pattern: UUID_RE.source, required: false },
+          component: { type: 'string', enum: OSAA_RECOVERY_DRILL_COMPONENTS, required: false },
         }),
         auditEventType: 'durable-operation-plan',
       },
@@ -5245,6 +5269,7 @@ const TOOL_PERMISSION = {
   'osaa.evidence.retention.update': 'osaa.evidence.manage',
   'osaa.recovery.status': 'console.recovery.read',
   'osaa.recovery.plan': 'console.recovery.read',
+  'osaa.recovery.drill.run': 'console.backup.restore',
   'osaa.observability.logs.query': 'osaa.logs.read',
   'osaa.observability.traces.query': 'osaa.logs.read',
   'osaa.registry.read': 'osaa.system.read',
@@ -5474,7 +5499,9 @@ async function gatedToolManifestForActor(actor) {
       .filter((tool) => tool.id !== 'osaa.ceph.connect' || cephOwnerCapabilities.has('connect-from-import'))
       .filter((tool) => tool.id !== 'osaa.ceph.disconnect' || cephOwnerCapabilities.has('disconnect'))
       .filter((tool) => tool.id !== 'osaa.recovery.status' || recoveryOwnerCapabilities.has('status-read'))
-      .filter((tool) => tool.id !== 'osaa.recovery.plan' || recoveryOwnerCapabilities.has('plan-read')),
+      .filter((tool) => tool.id !== 'osaa.recovery.plan' || recoveryOwnerCapabilities.has('plan-read'))
+      .filter((tool) => tool.id !== 'osaa.recovery.drill.run'
+        || (recoveryOwnerCapabilities.has('drill-request') && recoveryOwnerCapabilities.has('evidence-promote'))),
   };
   return {
     ...filterToolManifestForActor(capabilityGated, actor), lifecycle,
@@ -5718,6 +5745,7 @@ function bindingConfirmationExpected(binding, inputs = {}) {
     .replace(/<channelId>/g, String(inputs.channelId || ''))
     .replace(/<deliveryId>/g, String(inputs.deliveryId || ''));
   expected = expected
+    .replace(/<component>/g, String(inputs.component || ''))
     .replace(/<stream>/g, String(inputs.stream || ''))
     .replace(/<retentionDays>/g, String(inputs.retentionDays ?? ''))
     .replace(/<importRef>/g, String(inputs.importRef || ''))
@@ -6522,6 +6550,7 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     container: name,
     image: { type: 'string', pattern: OSAA_EXTENSION_IMAGE_RE.source },
     deliveryId: { type: 'string', pattern: UUID_RE.source },
+    component: { type: 'string', enum: OSAA_RECOVERY_DRILL_COMPONENTS },
   }, ['action']);
   add('osaa.system.read', 'search_catalog_entities', 'Search the canonical OpenSphere catalog projection. Use this to relate services, owners, APIs, and declared platform components to live resources.', {
     filter: { type: 'string', maxLength: 200 },
@@ -6684,7 +6713,7 @@ async function durableOperationStatusRead(inputs, actor) {
 
 async function durableOperationPlanRead(inputs, actor) {
   assertPermission(actor, 'osaa.system.read');
-  requireClosedOwnerInputs(inputs, ['action', 'namespace', 'name', 'replicas', 'container', 'image', 'deliveryId']);
+  requireClosedOwnerInputs(inputs, ['action', 'namespace', 'name', 'replicas', 'container', 'image', 'deliveryId', 'component']);
   const action = String(inputs.action || '').trim().toLowerCase();
   if (!OSAA_DURABLE_PLAN_ACTIONS.includes(action)) throw { code: 400, msg: 'action is outside the durable planning contract' };
 
@@ -6709,6 +6738,11 @@ async function durableOperationPlanRead(inputs, actor) {
     const deliveryId = String(inputs.deliveryId || '').trim().toLowerCase();
     if (!UUID_RE.test(deliveryId)) throw { code: 400, msg: 'deliveryId must be a UUID' };
     target.deliveryId = deliveryId;
+  }
+  if (action === 'run-recovery-drill') {
+    const component = String(inputs.component || '').trim().toLowerCase();
+    if (!OSAA_RECOVERY_DRILL_COMPONENTS.includes(component)) throw { code: 400, msg: 'recovery drill component must be supabase or gitea' };
+    target.component = component;
   }
 
   const projection = redactProjection(await fixedOwnerPost(

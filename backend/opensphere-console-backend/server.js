@@ -128,6 +128,11 @@ const OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE = process.env.OS_SHELL_CREDENTIAL_
 const OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE || '';
 const R2D2_OPERATION_WORKER_ID = String(process.env.R2D2_OPERATION_WORKER_ID || process.env.HOSTNAME || `backend-${process.pid}`).slice(0, 128);
 const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env.R2D2_OPERATION_POLL_MS || 3000) || 3000));
+const RECOVERY_DRILL_TARGETS = Object.freeze({
+  supabase: Object.freeze({ namespace: 'opensphere-console-recovery', name: 'opensphere-supabase-recovery-drill', mode: 'drill-supabase' }),
+  gitea: Object.freeze({ namespace: 'opensphere-console-recovery', name: 'opensphere-gitea-recovery-drill', mode: 'drill-gitea' }),
+});
+const RECOVERY_OPERATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OSAA_GATEWAY_URL = (process.env.OSAA_GATEWAY_URL || 'http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
@@ -988,6 +993,13 @@ const r2d2OperationApi = createR2d2OperationApi({
         resourceVersion: targetRevision, request: JSON.parse(JSON.stringify(requested || {})),
       };
     }
+    let recoveryDrillTarget = null;
+    if (action === 'run-recovery-drill') {
+      const component = String(requested.component || '').trim().toLowerCase();
+      const fixed = RECOVERY_DRILL_TARGETS[component];
+      if (!fixed) throw { code: 400, msg: 'recovery drill component must be supabase or gitea' };
+      recoveryDrillTarget = { kind: 'CronJob', ...fixed, request: { component } };
+    }
     const targetByAction = {
       'restart-workload': { kind: 'Deployment', namespace: requested.namespace, name: requested.name },
       'scale-workload': { kind: 'Deployment', namespace: requested.namespace, name: requested.name, replicas: requested.replicas },
@@ -995,11 +1007,22 @@ const r2d2OperationApi = createR2d2OperationApi({
         container: requested.container, image: requested.image,
         digest: String(requested.image || '').match(/@(sha256:[0-9a-f]{64})$/)?.[1] || requested.digest },
       'run-cronjob': { kind: 'CronJob', namespace: requested.namespace, name: requested.name },
+      'run-recovery-drill': recoveryDrillTarget,
       'owner-recover': { kind: 'Capability', namespace: '', name: requested.name || requested.id },
       'retry-delivery': { kind: 'NotificationDelivery', namespace: '', name: requested.name || requested.deliveryId },
     };
     const candidate = targetByAction[action];
     if (!candidate) throw { code: 400, msg: 'unsupported durable operation action' };
+    if (action === 'run-recovery-drill') {
+      const recovery = await osaaRecoveryStatus();
+      const component = candidate.request.component;
+      const backupReady = component === 'supabase'
+        ? recovery.evidence.backup.supabaseDatabase.verified && recovery.evidence.backup.supabaseDatabase.checksumRecorded
+          && recovery.evidence.backup.supabaseStorage.verified && recovery.evidence.backup.supabaseStorage.checksumRecorded
+        : recovery.evidence.backup.gitea.verified && recovery.evidence.backup.gitea.checksumRecorded;
+      if (!recovery.execution.available) throw { code: 409, msg: 'fixed recovery drill executor is not deployed' };
+      if (!backupReady) throw { code: 409, msg: `${component} recovery drill requires a verified encrypted backup first` };
+    }
     const live = await durableAuthorityRead(candidate, auth.accessToken);
     if (!live?.fresh || !live?.snapshotComplete || !live?.uid) throw { code: 409, msg: 'exact live target could not be resolved' };
     return {
@@ -1395,7 +1418,7 @@ async function resolveDurableExecutionSession(sessionId, actorId) {
       try {
         const actor = await resolveConsoleActor(actorId, { credential_revision: browser.authzRevision });
         if (actor.groups.includes(SUPABASE_BACKEND_ROLE) || actor.groups.includes('console-admins')) {
-          browser.permissions = [...new Set([...(browser.permissions || []), 'osaa.action.execute.high', 'console.notification.manage'])];
+          browser.permissions = [...new Set([...(browser.permissions || []), 'osaa.action.execute.high', 'console.notification.manage', 'console.backup.restore'])];
         }
       } catch { return { active: false, actorId, code: 'AuthorizationAuthorityUnavailable' }; }
     }
@@ -1419,7 +1442,7 @@ async function resolveDurableExecutionSession(sessionId, actorId) {
   const accessToken = cliToken({ sub: actorId, jti: row.id, typ: 'cli_session', device_id: row.device_id,
     credential_revision: row.credential_revision, exp: expiry });
   const permissions = actor.groups.includes(SUPABASE_BACKEND_ROLE) || actor.groups.includes('console-admins')
-    ? ['osaa.action.execute.high', 'console.notification.manage'] : [];
+    ? ['osaa.action.execute.high', 'console.notification.manage', 'console.backup.restore'] : [];
   return { active: true, actorId, assurance: 'aal1', permissions,
     authzRevision: String(row.credential_revision), accessToken, lastReauthenticatedAt: null };
 }
@@ -1480,6 +1503,7 @@ const DURABLE_TOOL_MAP = Object.freeze({
   'owner.workload.scale': { toolId: 'osaa.k8s.workload.scale', action: 'apply' },
   'owner.release.rollback': { toolId: 'osaa.k8s.workload.rollback-image', action: 'rollback' },
   'owner.cronjob.run-once': { toolId: 'osaa.k8s.cronjob.run', action: 'apply' },
+  'owner.recovery.drill-run': { toolId: 'osaa.recovery.drill.run', action: 'apply' },
 });
 
 async function durableOwnerInvoke(_route, payload, accessToken) {
@@ -1528,7 +1552,9 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
   }
   const mapping = DURABLE_TOOL_MAP[payload.toolId];
   if (!mapping) throw Object.assign(new Error('owner tool is not registered'), { code: 'OwnerToolNotRegistered' });
-  requireActorPermission(actor, 'osaa.action.execute.high');
+  const descriptor = Object.values(R2D2_DURABLE_DESCRIPTORS)
+    .find((candidate) => candidate.toolId === payload.toolId);
+  requireActorPermission(actor, descriptor?.permission || 'osaa.action.execute.high');
   await requireOsaaLifecycleGate(`Bearer ${accessToken}`);
   const target = payload.target;
   const inputs = { kind: String(target.kind).toLowerCase(), namespace: target.namespace, name: target.name,
@@ -1536,14 +1562,13 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
     confirm: payload.confirmation };
   if (payload.toolId === 'owner.workload.scale') inputs.replicas = target.replicas;
   if (payload.toolId === 'owner.release.rollback') { inputs.container = target.container; inputs.image = target.image; }
-  const descriptor = Object.values(R2D2_DURABLE_DESCRIPTORS)
-    .find((candidate) => candidate.toolId === payload.toolId);
+  if (payload.toolId === 'owner.recovery.drill-run') inputs.component = target.request?.component;
   let proposal;
   try {
     proposal = await governedChange(actor, {
       consumerId: 'osaa-gateway', action: mapping.action, target: `${inputs.kind}:${target.namespace}/${target.name}`,
       reason: payload.reason, desiredState: { toolId: mapping.toolId, target: `${inputs.kind}:${target.namespace}/${target.name}`,
-        inputs, durableOperationId: payload.operationId, requiredPermission: 'osaa.action.execute.high' },
+        inputs, durableOperationId: payload.operationId, requiredPermission: descriptor?.permission || 'osaa.action.execute.high' },
       idempotencyKey: payload.idempotencyKey,
     }, { durableDescriptor: descriptor || null, durableOwnerRoute: _route });
   } catch (error) {
@@ -1622,7 +1647,7 @@ async function durableVerify(verifierId, target, receipt, accessToken) {
     return { status: 'inconclusive', observed: { code: 'PFSSPostgresStillProvisioning', owner: 'PFSS',
       stage: last?.evidence?.stage || 'Unknown' } };
   }
-  if (['authority.workload.rollout','authority.release.exact-digest','authority.job.completed'].includes(verifierId) && receipt?.idempotencyKey) {
+  if (['authority.workload.rollout','authority.release.exact-digest','authority.job.completed','authority.recovery.evidence'].includes(verifierId) && receipt?.idempotencyKey) {
     let reconciled = receipt;
     while (Date.now() < deadline) {
       reconciled = await durableOwnerReconcile('cluster-manager/workloads', receipt.idempotencyKey, target, accessToken) || reconciled;
@@ -1655,6 +1680,36 @@ async function durableVerify(verifierId, target, receipt, accessToken) {
       await durableDelay(1500);
     }
     return { status: 'failed', observed: { code: 'JobCompletionTimeout', job: jobName } };
+  }
+  if (verifierId === 'authority.recovery.evidence') {
+    const jobName = receipt?.evidence?.name;
+    const durableOperationId = receipt?.evidence?.durableOperationId;
+    const component = target.request?.component;
+    if (!jobName || !RECOVERY_OPERATION_ID_RE.test(String(durableOperationId || '')) || !RECOVERY_DRILL_TARGETS[component]) {
+      return { status: 'inconclusive', observed: { code: 'RecoveryDrillReceiptMissing' } };
+    }
+    const recoveryDeadline = Date.now() + 9 * 60 * 1000;
+    while (Date.now() < recoveryDeadline) {
+      const body = await durableGatewayPost('/api/osaa/tools/k8s/resource', {
+        kind: 'job', namespace: RECOVERY_DRILL_TARGETS[component].namespace, name: jobName,
+      }, accessToken);
+      const job = body?.resource;
+      if (Number(job?.failed || 0) > 0) return { status: 'failed', observed: { code: 'RecoveryDrillJobFailed', job: jobName } };
+      if (Number(job?.succeeded || 0) >= Number(job?.completions || 1)) {
+        const recovery = await osaaRecoveryStatus();
+        const rows = component === 'supabase'
+          ? [recovery.evidence.restore.supabaseDatabase, recovery.evidence.restore.supabaseStorage]
+          : [recovery.evidence.restore.gitea];
+        const verified = rows.every((row) => row.state === 'Verified' && row.evidenceQuality === 'verified'
+          && row.operationId === durableOperationId);
+        return verified
+          ? { status: 'succeeded', observed: { job: jobName, component, operationId: durableOperationId,
+            generatedAt: recovery.evidence.generatedAt } }
+          : { status: 'failed', observed: { code: 'RecoveryEvidenceNotPromoted', job: jobName, component } };
+      }
+      await durableDelay(3000);
+    }
+    return { status: 'failed', observed: { code: 'RecoveryDrillTimeout', job: jobName, component } };
   }
   const live = await durableAuthorityRead(target, accessToken);
   if (!live.fresh) return { status: 'inconclusive', observed: { code: 'AuthorityUnavailable' } };
@@ -1782,27 +1837,47 @@ async function recoveryEvidence() {
   }
 }
 
+async function recoveryExecutorAvailable() {
+  try {
+    const templates = await Promise.all(Object.values(RECOVERY_DRILL_TARGETS).map(async (target) => ({
+      target,
+      cronjob: await k8sGet(`/apis/batch/v1/namespaces/${target.namespace}/cronjobs/${target.name}`),
+    })));
+    return templates.every(({ target, cronjob }) => {
+      const containers = cronjob?.spec?.jobTemplate?.spec?.template?.spec?.containers;
+      const recovery = Array.isArray(containers) && containers.length === 1 ? containers[0] : null;
+      const mode = Array.isArray(recovery?.env)
+        ? recovery.env.find((item) => item?.name === 'RECOVERY_MODE')?.value
+        : null;
+      return cronjob?.spec?.suspend === true
+        && recovery?.name === 'recovery'
+        && /^ghcr[.]io\/opensphere-platform\/opensphere-console-recovery@sha256:[a-f0-9]{64}$/.test(String(recovery?.image || ''))
+        && mode === target.mode;
+    });
+  } catch {
+    return false;
+  }
+}
+
 async function osaaRecoveryCapabilities() {
+  const executorAvailable = await recoveryExecutorAvailable();
   return {
     apiVersion: 'opensphere.io/osaa-recovery-owner/v1',
     owner: 'Console Platform Recovery / Supabase + Gitea',
-    capabilities: ['status-read', 'plan-read'],
-    // This Backend is a read/plan owner only. A future signed executor must
-    // advertise drill-request/evidence-promote before the Gateway exposes
-    // either mutation; scripts or arbitrary shell are never a capability.
-    executionAvailable: false,
+    capabilities: ['status-read', 'plan-read', 'drill-request', 'evidence-promote'],
+    executionAvailable: executorAvailable,
   };
 }
 
 async function osaaRecoveryStatus() {
-  return buildRecoveryOwnerStatus(await recoveryEvidence(), { executorAvailable: false });
+  return buildRecoveryOwnerStatus(await recoveryEvidence(), { executorAvailable: await recoveryExecutorAvailable() });
 }
 
 async function osaaRecoveryPlan(rawBody) {
   const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {};
   const extra = Object.keys(body).filter((key) => key !== 'component');
   if (extra.length) throw { code: 400, msg: `OSAA recovery plan contains unsupported inputs: ${extra.join(', ')}` };
-  return buildRecoveryPlan(await recoveryEvidence(), body.component || 'all', { executorAvailable: false });
+  return buildRecoveryPlan(await recoveryEvidence(), body.component || 'all', { executorAvailable: await recoveryExecutorAvailable() });
 }
 
 async function supabaseStatus() {

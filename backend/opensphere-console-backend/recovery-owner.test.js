@@ -41,14 +41,23 @@ test('a successful declaration cannot overrule incomplete restore assertions', (
   assert.equal(status.ready, false);
 });
 
-test('read and plan capabilities stay available while execution fails closed', () => {
+test('recovery capabilities remain explicit while a missing deployment fails execution closed', () => {
   const evidence = normalizedRecoveryEvidence(raw, '2026-07-23T01:00:00Z');
   const status = buildRecoveryOwnerStatus(evidence);
   const plan = buildRecoveryPlan(evidence, 'gitea');
-  assert.deepEqual(status.capabilities, ['status-read', 'plan-read']);
+  assert.deepEqual(status.capabilities, ['status-read', 'plan-read', 'drill-request', 'evidence-promote']);
   assert.equal(status.execution.available, false);
   assert.ok(status.blockers.includes('recovery_drill_executor_unavailable'));
   assert.equal(plan.executable, false);
   assert.match(plan.steps.map((step) => step.description).join(' '), /repositories, LFS data/);
   assert.throws(() => buildRecoveryPlan(evidence, 'production'), (error) => error?.code === 400 && /component must be one of/.test(error?.msg));
+});
+
+test('a deployed fixed executor exposes an executable isolated drill without changing evidence verdicts', () => {
+  const evidence = normalizedRecoveryEvidence(raw, '2026-07-23T01:00:00Z');
+  const status = buildRecoveryOwnerStatus(evidence, { executorAvailable: true });
+  const plan = buildRecoveryPlan(evidence, 'supabase-database', { executorAvailable: true });
+  assert.equal(status.execution.available, true);
+  assert.equal(plan.executable, true);
+  assert.equal(plan.targetMode, 'isolated-non-destructive-drill');
 });

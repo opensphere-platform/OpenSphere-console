@@ -15,6 +15,7 @@ const gitea = read('gitea/bootstrap/gitea.yaml');
 const bootstrap = read('gitea/bootstrap/control-plane-bootstrap.ps1');
 const recoveryOwner = read('opensphere-console-backend/recovery-owner.js');
 const recoveryPermissions = read('supabase/migrations/0022_oaa_recovery_owner_permissions.sql');
+const recoveryDrillOperation = read('supabase/migrations/0069_osaa_recovery_drill_operation.sql');
 
 test('governed change state is Supabase-only and RLS protected', () => {
   for (const table of ['consumer_contract', 'observability_claim', 'change_execution', 'change_outbox', 'gitea_webhook_receipt', 'reconcile_receipt']) {
@@ -161,16 +162,21 @@ test('OSAA identity owner is permission-gated, mutation-AAL2, PII-minimized, and
   assert.match(server, /verifyOsaaIdentityOwner\(req, \{ requireAal2: true \}\)/);
 });
 
-test('OSAA recovery owner is read/plan only and cannot expose a script as an executor', () => {
+test('OSAA recovery owner exposes only the fixed governed drill contract and never a script executor', () => {
   assert.match(server, /\/api\/osaa\/owner\/recovery\/capabilities/);
   assert.match(server, /\/api\/osaa\/owner\/recovery\/status/);
   assert.match(server, /\/api\/osaa\/owner\/recovery\/plan/);
   assert.match(server, /console\.recovery\.read/);
-  assert.match(recoveryOwner, /RECOVERY_OWNER_CAPABILITIES = Object\.freeze\(\['status-read', 'plan-read'\]\)/);
-  assert.match(recoveryOwner, /No signed recovery-drill executor is configured/);
+  assert.match(recoveryOwner, /RECOVERY_OWNER_CAPABILITIES = Object\.freeze\(\['status-read', 'plan-read', 'drill-request', 'evidence-promote'\]\)/);
+  assert.match(recoveryOwner, /isolated-non-destructive-drill/);
+  assert.match(recoveryOwner, /AAL2 \+ exact confirmation \+ independent Gitea approval/);
   assert.doesNotMatch(recoveryOwner, /exec\(|spawn\(|kubectl|powershell/i);
   assert.match(recoveryPermissions, /console\.recovery\.read/);
   assert.match(recoveryPermissions, /console\.backup\.restore permission remains reserved/);
+  assert.match(recoveryDrillOperation, /run-recovery-drill/);
+  assert.match(recoveryDrillOperation, /reuses the canonical module_operation ledger/i);
+  assert.match(recoveryDrillOperation, /one of two release-owned[\s\S]*CronJob templates/i);
+  assert.match(recoveryDrillOperation, /operation-correlated evidence/i);
 });
 
 test('reconciler receipts remain server-to-server only', () => {

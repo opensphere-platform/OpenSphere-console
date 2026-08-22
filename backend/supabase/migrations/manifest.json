@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0068",
-  "migrationCount": 67,
-  "setDigest": "sha256:aaba0b7cff6aa8b226376606993df012862df28c5cbf22db49ab3e21668b1333",
+  "latestMigrationId": "0069",
+  "migrationCount": 68,
+  "setDigest": "sha256:268edececbc6f10a813d48dde15828ecdb5531456b97176fb3a74e7539c1ff78",
   "migrations": [
     {
       "id": "0001",
@@ -472,6 +472,13 @@
       "name": "0068_osaa_agent_verification_evidence.sql",
       "path": "backend/supabase/migrations/0068_osaa_agent_verification_evidence.sql",
       "sha256": "64e55f32a9087300cb91ec0fea63293396f61cb03fb01afe229660a8017cad03"
+    },
+    {
+      "id": "0069",
+      "predecessorMigrationId": "0068",
+      "name": "0069_osaa_recovery_drill_operation.sql",
+      "path": "backend/supabase/migrations/0069_osaa_recovery_drill_operation.sql",
+      "sha256": "003ce1b254fc6fab746e667524dab7c3a71b8c3da8879f5ba0b77ff66dd11cd6"
     }
   ]
 }

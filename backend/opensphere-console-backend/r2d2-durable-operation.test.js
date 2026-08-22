@@ -75,6 +75,12 @@ function request(action = 'restart-workload') {
         database: 'r2d2_e2e', owner: 'r2d2_e2e', plan: 'postgresql-dev-single', postgresVersion: '18.4', deletionPolicy: 'Retain' },
     });
   }
+  if (action === 'run-recovery-drill') {
+    Object.assign(target, {
+      namespace: 'opensphere-console-recovery', name: 'opensphere-supabase-recovery-drill',
+      request: { component: 'supabase' },
+    });
+  }
   return { action, target, confirmation: exactConfirmation(descriptor, target), reason: 'operator requested recovery' };
 }
 
@@ -119,6 +125,15 @@ test('execution authorization is revalidated and R3 requires two distinct AAL2 p
   assert.equal(authorizeAtExecution(operation, { ...session, lastReauthenticatedAt: '2026-08-22T23:50:00.000Z' }, [], now).code, 'RecentAssuranceRequired');
 });
 
+test('platform recovery drill is a closed R2 operation over a fixed CronJob target', () => {
+  const input = request('run-recovery-drill');
+  input.confirmation = exactConfirmation(DESCRIPTORS['run-recovery-drill'], input.target);
+  const bound = bindOperation(input);
+  assert.equal(bound.expectedConfirmation, 'run recovery drill supabase');
+  assert.equal(bound.ownerRoute, 'recovery/isolated-drill');
+  assert.equal(bound.requiredPermission, 'console.backup.restore');
+});
+
 test('live UID/generation/resource/desired revisions are authoritative preconditions', () => {
   const operation = { target: request().target };
   const live = { ...request().target, fresh: true, snapshotComplete: true };
@@ -153,7 +168,7 @@ test('all initial management scenarios bind to a closed owner and authoritative 
   const scenarios = Object.keys(DESCRIPTORS);
   assert.deepEqual(scenarios, [
     'restart-workload', 'scale-workload', 'rollback-image',
-    'run-cronjob', 'owner-recover', 'retry-delivery', 'create-postgres-cluster',
+    'run-cronjob', 'run-recovery-drill', 'owner-recover', 'retry-delivery', 'create-postgres-cluster',
   ]);
   for (const [index, action] of scenarios.entries()) {
     const op = { ...operation(action), operationId: `scenario-${index}` };
@@ -169,7 +184,7 @@ test('all initial management scenarios bind to a closed owner and authoritative 
       },
       sessions: { resolve: async () => ({
         active: true, actorId: 'actor', authzRevision: 'r1', assurance: 'aal2',
-        permissions: ['osaa.action.execute.high', 'console.notification.manage'], accessToken: 'memory-only',
+        permissions: ['osaa.action.execute.high', 'console.notification.manage', 'console.backup.restore'], accessToken: 'memory-only',
         lastReauthenticatedAt: new Date().toISOString(),
       }) },
       authority: { read: async () => ({ ...op.target, fresh: true, snapshotComplete: true }) },

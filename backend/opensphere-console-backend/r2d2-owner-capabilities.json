@@ -23,6 +23,7 @@
     "osaa.notification.status",
     "osaa.platform.readiness.preflight",
     "osaa.platform.readiness.verify",
+    "osaa.recovery.drill.run",
     "osaa.recovery.plan",
     "osaa.recovery.status"
   ]

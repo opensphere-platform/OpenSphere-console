@@ -49,6 +49,13 @@ const DESCRIPTORS = Object.freeze({
     ownerRoute: 'cluster-manager/workloads', allowedNamespaces: ['opensphere-*'],
     permission: 'osaa.action.execute.high',
   }),
+  'run-recovery-drill': Object.freeze({
+    descriptorId: 'opensphere.recovery.drill.run', revision: '1', toolId: 'owner.recovery.drill-run',
+    verifierId: 'authority.recovery.evidence', riskClass: 'R2', assurance: 'aal2',
+    targetKind: 'CronJob', confirmationTemplate: 'run recovery drill <component>',
+    ownerRoute: 'recovery/isolated-drill', allowedNamespaces: ['opensphere-console-recovery'],
+    permission: 'console.backup.restore',
+  }),
   'owner-recover': Object.freeze({
     descriptorId: 'opensphere.owner.recover', revision: '1', toolId: 'owner.recovery.execute',
     verifierId: 'owner.recovery.postcondition', riskClass: 'R2', assurance: 'aal2',
@@ -95,7 +102,8 @@ function exactConfirmation(descriptor, target) {
     .replace(/<revision>/g, String(target.desiredRevision || ''))
     .replace(/<replicas>/g, String(target.replicas ?? ''))
     .replace(/<plan>/g, String(target.request?.plan || ''))
-    .replace(/<postgresVersion>/g, String(target.request?.postgresVersion || ''));
+    .replace(/<postgresVersion>/g, String(target.request?.postgresVersion || ''))
+    .replace(/<component>/g, String(target.request?.component || ''));
 }
 
 function namespaceAllowed(namespace, patterns) {
@@ -134,6 +142,11 @@ function planOperation(request, registry = DESCRIPTORS) {
   }
   if (action === 'owner-recover' && !String(target.desiredRevision || '')) {
     throw Object.assign(new Error('owner recovery requires a desired revision'), { code: 'DesiredRevisionRequired' });
+  }
+  if (action === 'run-recovery-drill') {
+    if (!['supabase', 'gitea'].includes(String(target.request?.component || ''))) {
+      throw Object.assign(new Error('recovery drill component must be supabase or gitea'), { code: 'RecoveryComponentRequired' });
+    }
   }
   if (action === 'create-postgres-cluster') {
     const request = target.request || {};
@@ -202,6 +215,9 @@ function expectedPostcondition(operation) {
       return { ...common, container: target.container, exactDigest: target.digest };
     case 'authority.job.completed':
       return { ...common, ownerReceiptRequired: true, terminalCondition: 'Complete' };
+    case 'authority.recovery.evidence':
+      return { ...common, ownerReceiptRequired: true, terminalCondition: 'Complete',
+        component: target.request?.component || null, structuredEvidenceVerified: true };
     case 'owner.recovery.postcondition':
       return { ...common, desiredRevision: target.desiredRevision, allowedStates: ['ready', 'deployed', 'healthy'] };
     case 'owner.notification.delivery':

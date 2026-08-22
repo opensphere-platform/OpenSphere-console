@@ -245,6 +245,201 @@ spec:
             - { name: target, secret: { secretName: opensphere-platform-recovery-target, defaultMode: 288 } }
             - { name: work, emptyDir: { sizeLimit: 20Gi } }
 ---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: opensphere-recovery-drill-job-boundary
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [jobs]
+  validations:
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:opensphere-console:osaa-governed-adapter'
+        && object.metadata.namespace == 'opensphere-console-recovery'
+        && (
+          object.metadata.name.startsWith('opensphere-supabase-recovery-drill-osaa-')
+          || object.metadata.name.startsWith('opensphere-gitea-recovery-drill-osaa-')
+        )
+      message: "only the governed adapter may create fixed recovery drill Jobs"
+    - expression: >-
+        object.spec.template.spec.serviceAccountName == 'opensphere-platform-recovery'
+        && size(object.spec.template.spec.containers) == 1
+          && object.spec.template.spec.containers[0].name == 'recovery'
+          && object.spec.template.spec.containers[0].image.matches(
+            '^ghcr[.]io/opensphere-platform/opensphere-console-recovery@sha256:[a-f0-9]{64}$'
+          )
+          && object.spec.template.spec.containers[0].env.exists(e,
+            e.name == 'RECOVERY_OPERATION_ID'
+            && has(e.value)
+            && e.value.matches('^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+          )
+          && object.spec.template.spec.containers[0].env.exists(e,
+            e.name == 'RECOVERY_MODE'
+            && has(e.value)
+            && e.value in ['drill-supabase', 'drill-gitea']
+          )
+          && object.spec.template.spec.containers[0].env.all(e,
+            !has(e.valueFrom)
+            || !has(e.valueFrom.secretKeyRef)
+            || e.valueFrom.secretKeyRef.name == 'opensphere-platform-recovery-target'
+          )
+          && size(object.spec.template.spec.volumes) == 2
+          && object.spec.template.spec.volumes.all(v,
+            (has(v.secret) && v.secret.secretName == 'opensphere-platform-recovery-target')
+            || has(v.emptyDir)
+          )
+          && (!has(object.spec.template.spec.hostNetwork) || !object.spec.template.spec.hostNetwork)
+          && (!has(object.spec.template.spec.hostPID) || !object.spec.template.spec.hostPID)
+          && (!has(object.spec.template.spec.hostIPC) || !object.spec.template.spec.hostIPC)
+      message: "recovery Job shape, image, credentials, and isolation must match the fixed template"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: opensphere-recovery-drill-job-boundary
+spec:
+  policyName: opensphere-recovery-drill-job-boundary
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: opensphere-console-recovery
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: opensphere-supabase-recovery-drill
+  namespace: opensphere-console-recovery
+  labels:
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/recovery-component: supabase
+    opensphere.io/recovery-mode: isolated-drill
+spec:
+  suspend: true
+  schedule: "0 0 1 1 *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 2400
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: opensphere-console
+            opensphere.io/recovery-component: supabase
+            opensphere.io/recovery-mode: isolated-drill
+        spec:
+          restartPolicy: Never
+          serviceAccountName: opensphere-platform-recovery
+          imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: recovery
+              image: __OPENSPHERE_RECOVERY_IMAGE__
+              imagePullPolicy: IfNotPresent
+              env:
+                - { name: RECOVERY_MODE, value: drill-supabase }
+                - { name: RECOVERY_EVIDENCE_NAMESPACE, value: opensphere-console }
+                - { name: RECOVERY_EVIDENCE_NAME, value: opensphere-platform-recovery-evidence }
+                - { name: RECOVERY_S3_ENDPOINT, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: endpoint } } }
+                - { name: RECOVERY_S3_BUCKET, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: bucket } } }
+                - { name: RECOVERY_S3_REGION, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: region } } }
+                - { name: RECOVERY_S3_ACCESS_KEY, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: access_key } } }
+                - { name: RECOVERY_S3_SECRET_KEY, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: secret_key } } }
+                - { name: RECOVERY_ENCRYPTION_KEY, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: encryption_key } } }
+                - { name: AWS_CA_BUNDLE, value: /run/recovery-target/ca.crt }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              resources:
+                requests: { cpu: 250m, memory: 512Mi }
+                limits: { cpu: "2", memory: 2Gi }
+              volumeMounts:
+                - { name: target, mountPath: /run/recovery-target, readOnly: true }
+                - { name: work, mountPath: /work }
+          volumes:
+            - { name: target, secret: { secretName: opensphere-platform-recovery-target, defaultMode: 288 } }
+            - { name: work, emptyDir: { sizeLimit: 20Gi } }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: opensphere-gitea-recovery-drill
+  namespace: opensphere-console-recovery
+  labels:
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/recovery-component: gitea
+    opensphere.io/recovery-mode: isolated-drill
+spec:
+  suspend: true
+  schedule: "0 0 1 1 *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 2400
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: opensphere-console
+            opensphere.io/recovery-component: gitea
+            opensphere.io/recovery-mode: isolated-drill
+        spec:
+          restartPolicy: Never
+          serviceAccountName: opensphere-platform-recovery
+          imagePullSecrets: [{ name: opensphere-ghcr-pull }]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: recovery
+              image: __OPENSPHERE_RECOVERY_IMAGE__
+              imagePullPolicy: IfNotPresent
+              env:
+                - { name: RECOVERY_MODE, value: drill-gitea }
+                - { name: RECOVERY_EVIDENCE_NAMESPACE, value: opensphere-console }
+                - { name: RECOVERY_EVIDENCE_NAME, value: opensphere-platform-recovery-evidence }
+                - { name: RECOVERY_S3_ENDPOINT, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: endpoint } } }
+                - { name: RECOVERY_S3_BUCKET, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: bucket } } }
+                - { name: RECOVERY_S3_REGION, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: region } } }
+                - { name: RECOVERY_S3_ACCESS_KEY, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: access_key } } }
+                - { name: RECOVERY_S3_SECRET_KEY, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: secret_key } } }
+                - { name: RECOVERY_ENCRYPTION_KEY, valueFrom: { secretKeyRef: { name: opensphere-platform-recovery-target, key: encryption_key } } }
+                - { name: AWS_CA_BUNDLE, value: /run/recovery-target/ca.crt }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              resources:
+                requests: { cpu: 250m, memory: 512Mi }
+                limits: { cpu: "2", memory: 2Gi }
+              volumeMounts:
+                - { name: target, mountPath: /run/recovery-target, readOnly: true }
+                - { name: work, mountPath: /work }
+          volumes:
+            - { name: target, secret: { secretName: opensphere-platform-recovery-target, defaultMode: 288 } }
+            - { name: work, emptyDir: { sizeLimit: 20Gi } }
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:

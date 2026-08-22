@@ -10,6 +10,8 @@ test('only the initial closed management scenarios map to durable operations', (
   { action: 'restart-workload', target: { namespace: 'opensphere-console', name: 'console' } });
   assert.deepEqual(durableBindingRequest({ toolId: 'osaa.notification.delivery.retry' }, { deliveryId: 'delivery-1' }),
     { action: 'retry-delivery', target: { deliveryId: 'delivery-1' } });
+  assert.deepEqual(durableBindingRequest({ toolId: 'osaa.recovery.drill.run' }, { component: 'supabase' }),
+    { action: 'run-recovery-drill', target: { component: 'supabase' } });
   assert.equal(durableBindingRequest({ toolId: 'osaa.k8s.resource.delete' }, {}), null);
 });
 

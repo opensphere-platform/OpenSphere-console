@@ -23,12 +23,16 @@ test('recovery executor is encrypted, operator-gated and writes only bounded evi
   assert.match(executor, /ensureRoles/);
   assert.match(executor, /opensphere-platform-recovery-evidence/);
   assert.match(executor, /No S3 credential, encryption key or archive content/);
-  assert.equal((manifest.match(/suspend: true/g) ?? []).length, 2);
+  assert.equal((manifest.match(/suspend: true/g) ?? []).length, 4);
   assert.match(manifest, /resourceNames: \["opensphere-platform-recovery-evidence"\]/);
   assert.match(manifest, /opensphere-console-recovery/);
   assert.match(manifest, /opensphere-supabase-storage/);
   assert.match(manifest, /opensphere-gitea/);
   assert.match(manifest, /opensphere-platform-recovery-quiesce-reader/);
+  assert.match(manifest, /opensphere-supabase-recovery-drill/);
+  assert.match(manifest, /opensphere-gitea-recovery-drill/);
+  assert.match(executor, /RECOVERY_OPERATION_ID/);
+  assert.match(executor, /manifestKey/);
   assert.match(manifest, /__OPENSPHERE_RECOVERY_IMAGE__/);
   assert.doesNotMatch(manifest, /opensphere-cbs|opensphere-backbone|kanidm/i);
 });

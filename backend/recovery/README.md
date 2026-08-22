@@ -1,9 +1,10 @@
 # OpenSphere Platform Recovery Evidence
 
-`opensphere-platform-recovery-evidence` is the Console's read-only recovery
-evidence contract. It contains only checksums, verification times and approval
-state. Archive locations, S3 credentials, archive contents and the AES-GCM
-encryption key stay outside the Console API, Git and the ConfigMap.
+`opensphere-platform-recovery-evidence` is the Console's recovery evidence
+contract. It contains checksums, verification times, opaque owner-staged
+manifest keys and operation correlation. The Console/OSAA projection removes
+the manifest keys and checksum values; S3 credentials, archive contents and the
+AES-GCM encryption key never enter the Console API, Git or operation ledger.
 
 The contract is authoritative for the Console readiness view only when all of
 the following are true:
@@ -24,9 +25,10 @@ every gap as a gate.
 Schema `v3` declares an evidence freshness policy. The OSAA recovery owner
 returns only checksum-present/verified flags, structured restore assertions and
 freshness; it never returns the vault location or checksum values. Its
-capability set remains deliberately limited to `status-read` and `plan-read`:
-the executor is a separate, digest-pinned Kubernetes Job and cannot be invoked
-from chat or a Console request.
+capability set is `status-read`, `plan-read`, `drill-request` and
+`evidence-promote`. A drill request is accepted only through the durable OSCE
+operation ledger and maps to one of the two release-owned CronJobs. OSAA cannot
+supply a command, URL, archive, Secret, environment variable or Job manifest.
 
 ## Executor boundary
 
@@ -58,3 +60,11 @@ The target Secret is an existing operator-owned Secret supplied to Setup as
 bytes) and `ca.crt`. Setup copies only those keys to the data, change and
 isolated-drill namespaces. It never puts them into a release lock, a ConfigMap,
 an environment report or an OSAA response.
+
+The two drill CronJobs are also shipped `suspend: true`; they are templates,
+not schedules. After a verified backup exists, the durable `run-recovery-drill`
+operation resolves the live template UID and revision, requires AAL2 exact
+confirmation plus its R2 approval, and lets the reviewed reconciler create one
+Job. Admission rejects any other recovery Job shape. Success requires both the
+Job terminal condition and `RECOVERY_OPERATION_ID`-matched structured restore
+evidence; an old successful drill cannot satisfy a new operation.

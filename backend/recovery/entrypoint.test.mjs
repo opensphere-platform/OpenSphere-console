@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decryptFile, encryptFile } from './entrypoint.mjs';
+import { decryptFile, encryptFile, safeManifestKey } from './entrypoint.mjs';
 
 test('recovery archive encryption is authenticated and rejects ciphertext tampering', async () => {
   const previous = process.env.RECOVERY_ENCRYPTION_KEY;
@@ -26,4 +26,11 @@ test('recovery archive encryption is authenticated and rejects ciphertext tamper
     else process.env.RECOVERY_ENCRYPTION_KEY = previous;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('recovery drill accepts only an owner-staged relative manifest key', () => {
+  assert.equal(safeManifestKey('opensphere-recovery/v1/run-1/supabase/manifest.json'),
+    'opensphere-recovery/v1/run-1/supabase/manifest.json');
+  assert.throws(() => safeManifestKey('https://example.test/archive/manifest.json'), /outside the owner-staged/);
+  assert.throws(() => safeManifestKey('../private/manifest.json'), /outside the owner-staged/);
 });

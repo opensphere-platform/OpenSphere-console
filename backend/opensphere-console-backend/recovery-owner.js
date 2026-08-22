@@ -1,5 +1,5 @@
 const RECOVERY_COMPONENTS = Object.freeze(['all', 'supabase-database', 'supabase-storage', 'gitea']);
-const RECOVERY_OWNER_CAPABILITIES = Object.freeze(['status-read', 'plan-read']);
+const RECOVERY_OWNER_CAPABILITIES = Object.freeze(['status-read', 'plan-read', 'drill-request', 'evidence-promote']);
 
 function bounded(value, maximum = 240) {
   return String(value ?? '').slice(0, maximum);
@@ -25,6 +25,7 @@ function normalizedRestoreUnit(value) {
     state: attention ? 'AttentionRequired' : (String(row.state || 'Unknown') === 'Verified' ? 'Verified' : 'AttentionRequired'),
     declaredState: bounded(row.state || 'Unknown', 40),
     verifiedAt: row.verifiedAt || null,
+    operationId: /^[0-9a-f-]{36}$/i.test(String(row.operationId || '')) ? String(row.operationId) : null,
     assertions: (Array.isArray(row.assertions) ? row.assertions : []).slice(0, 20).map((item) => bounded(item)),
     checks,
     evidenceQuality: attention ? 'insufficient' : 'verified',
@@ -111,7 +112,7 @@ function buildRecoveryOwnerStatus(rawEvidence, options = {}) {
       available: executorAvailable,
       mode: 'isolated-non-destructive-drill',
       approval: 'AAL2 + exact confirmation + independent Gitea approval',
-      reason: executorAvailable ? null : 'No signed recovery-drill executor is configured.',
+      reason: executorAvailable ? null : 'The fixed recovery-drill executor is not deployed.',
     },
   };
 }
@@ -154,12 +155,18 @@ function buildRecoveryPlan(rawEvidence, component = 'all', options = {}) {
     backup: status.evidence.backup[key],
     restore: status.evidence.restore[key],
   }]));
+  const backupReady = Object.values(selectedState)
+    .every((item) => item.backup.verified === true && item.backup.checksumRecorded === true);
   return {
     apiVersion: 'opensphere.io/osaa-recovery-plan/v1',
     owner: status.owner,
     component: selected,
     targetMode: 'isolated-non-destructive-drill',
-    executable: status.execution.available,
+    executable: status.execution.available && backupReady,
+    preflightBlockers: [
+      ...(status.execution.available ? [] : ['recovery_drill_executor_unavailable']),
+      ...(backupReady ? [] : [`${selected}_verified_backup_required`]),
+    ],
     blockers: status.blockers,
     selectedState,
     steps: planSteps(selected).map((description, index) => ({ order: index + 1, description })),

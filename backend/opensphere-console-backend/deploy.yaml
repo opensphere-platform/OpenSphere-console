@@ -77,6 +77,24 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-con
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
+# Recovery executor readiness is derived from two exact suspended CronJob
+# templates. The Backend cannot list Jobs, read logs, or mutate this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-backend-recovery-template-reader, namespace: opensphere-console-recovery }
+rules:
+  - apiGroups: [batch]
+    resources: [cronjobs]
+    resourceNames: [opensphere-supabase-recovery-drill, opensphere-gitea-recovery-drill]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-backend-recovery-template-reader, namespace: opensphere-console-recovery }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-recovery-template-reader }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
+---
 # Upgrade revocation: retain the legacy Role name in the Console namespace with
 # no rules so a normal apply removes its former namespace-wide Secret custody.
 apiVersion: rbac.authorization.k8s.io/v1
