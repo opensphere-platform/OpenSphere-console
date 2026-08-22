@@ -505,7 +505,8 @@ spec:
         resources: ["jobs"]
   validations:
     - expression: >-
-        object.spec.template.spec.serviceAccountName != 'platform-release-executor'
+        !has(object.spec.template.spec.serviceAccountName)
+        || object.spec.template.spec.serviceAccountName != 'platform-release-executor'
         || (
           request.userInfo.username == 'system:serviceaccount:opensphere-console:platform-release-reconciler'
           && object.metadata.namespace == 'opensphere-console'

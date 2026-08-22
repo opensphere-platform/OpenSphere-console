@@ -30,6 +30,22 @@ const directory = __dirname;
 const revision = 'a'.repeat(40);
 const digest = (character) => `sha256:${character.repeat(64)}`;
 
+test('release Job admission applies only to the reserved executor service account', () => {
+  const deploy = fs.readFileSync(path.join(directory, 'deploy.yaml'), 'utf8');
+  const policyStart = deploy.indexOf('metadata: { name: platform-release-executor-job-boundary }');
+  const bindingStart = deploy.indexOf(
+    'kind: ValidatingAdmissionPolicyBinding',
+    policyStart,
+  );
+  assert.ok(policyStart >= 0 && bindingStart > policyStart);
+  const expression = deploy.slice(policyStart, bindingStart);
+
+  assert.match(expression,
+    /!has\(object\.spec\.template\.spec\.serviceAccountName\)\s*\|\|\s*object\.spec\.template\.spec\.serviceAccountName != 'platform-release-executor'/);
+  assert.match(expression,
+    /\|\| \(\s*request\.userInfo\.username == 'system:serviceaccount:opensphere-console:platform-release-reconciler'/);
+});
+
 function releaseLock() {
   const hexCharacters = '0123456789abcdef';
   const lock = {
