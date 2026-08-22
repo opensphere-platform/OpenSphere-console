@@ -8,6 +8,8 @@ const {
   lexicalKnowledgeQuery,
   requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
+  requiresManualAccessDiagnosis,
+  requiresOsShellDiagnosis,
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
 const { createConversationStore } = require('./conversation-store');
@@ -26,6 +28,12 @@ const {
   untrustedToolEvidenceContent,
 } = require('./r2d2-prompt-boundary');
 const { SOURCE_TOOL_NAMES, groundCanonicalSourceAnswer } = require('./r2d2-source-grounding');
+const {
+  OS_SHELL_DEPLOYMENTS,
+  buildManualAccessDiagnosis,
+  buildOsShellDiagnosis,
+  renderSurfaceDiagnosis,
+} = require('./r2d2-surface-diagnostics');
 const { replayQuery, authorizationFingerprint } = require('./r2d2-sse-contract');
 const { durableBindingRequest, durableIdempotencyKey } = require('./r2d2-durable-binding');
 const {
@@ -3832,6 +3840,28 @@ function osaaActionBindings() {
       citations: [{ sourceId: 'opensphere-docs/constitution-0002-registry', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0002-레지스트리.md' }],
     }),
     mk({
+      id: 'manual-action:opensphere:manual-access-diagnosis',
+      namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#manual-owner-control',
+      title: 'Diagnose Manual authentication, authorization, and Registry access', intent: 'diagnose-manual-access',
+      toolId: 'osaa.diagnostics.manual.access', controlPlane: 'osaa-gateway-manual-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: ['authenticated'], scopes: ['osaa:system:read'] },
+      audit: { eventType: 'manual-access-diagnosis', targetTemplate: 'ConsoleSurface/manual' },
+      citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
+      id: 'manual-action:opensphere:os-shell-diagnosis',
+      namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#os-shell-owner-control',
+      title: 'Diagnose OS Shell feature, gate, workload, Service, and browser readiness stages', intent: 'diagnose-os-shell',
+      toolId: 'osaa.diagnostics.os-shell', controlPlane: 'osaa-gateway-os-shell-diagnostic-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({ browserStatus: 'optional same-session readiness HTTP status' }),
+      permission: { roles: ['authenticated'], scopes: ['osaa:system:read'] },
+      audit: { eventType: 'os-shell-diagnosis', targetTemplate: 'ConsoleSurface/os-shell' },
+      citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
       id: 'manual-action:opensphere:foundation-status',
       namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#foundation-owner-control',
@@ -4411,6 +4441,23 @@ function osaaToolManifest() {
         endpoint: toolEndpoint('POST', '/api/osaa/tools/extensions/presentation'),
         riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
         auditEventType: 'extension-presentation-status-read',
+      },
+      {
+        id: 'osaa.diagnostics.manual.access',
+        name: 'Diagnose Manual authentication, authorization, and Registry access',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/osaa/tools/diagnostics/manual'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'manual-access-diagnosis',
+      },
+      {
+        id: 'osaa.diagnostics.os-shell',
+        name: 'Diagnose OS Shell feature, gates, workloads, Services, and browser readiness stage',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/osaa/tools/diagnostics/os-shell'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({ browserStatus: { type: 'integer', minimum: 100, maximum: 599, required: false } }),
+        auditEventType: 'os-shell-diagnosis',
       },
       {
         id: 'osaa.foundation.status',
@@ -5178,6 +5225,8 @@ const TOOL_PERMISSION = {
   'osaa.observability.traces.query': 'osaa.logs.read',
   'osaa.registry.read': 'osaa.system.read',
   'osaa.extension.presentation.status': 'osaa.system.read',
+  'osaa.diagnostics.manual.access': 'osaa.system.read',
+  'osaa.diagnostics.os-shell': 'osaa.system.read',
   'osaa.foundation.status': 'osaa.system.read',
   'osaa.foundation.postgres.status': 'osaa.system.read',
   'osaa.foundation.postgres.plan': 'osaa.action.execute.high',
@@ -5875,6 +5924,12 @@ async function executeActionBinding(body = {}, actor = null) {
     case 'osaa.extension.presentation.status':
       result = await extensionPresentationStatusRead(actor);
       break;
+    case 'osaa.diagnostics.manual.access':
+      result = await manualAccessDiagnosisRead(actor);
+      break;
+    case 'osaa.diagnostics.os-shell':
+      result = await osShellDiagnosisRead(inputs, actor);
+      break;
     case 'osaa.foundation.status':
       result = await foundationStatusRead(actor);
       break;
@@ -6441,6 +6496,10 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
   });
   add('osaa.system.read', 'get_opensphere_registry', 'Read the current Main Shell native Registry projection from its owning DUPA API. Treat it as discovery and activation state, not Kubernetes runtime truth.', {});
   add('osaa.system.read', 'get_extension_presentation_status', 'Diagnose Registry Plugin presentation. Distinguish Host-owned menu eligibility from route-scoped child UI activation; use this when the UI says 요청 시 적재 or a hosted plugin menu appears missing. This tool does not claim browser DOM visibility.', {});
+  add('osaa.system.read', 'diagnose_manual_access', 'Deterministically distinguish Manual authentication, osaa.knowledge.read authorization, and the current actor-visible Manual Registry projection. Use this for /manual 401, 403, permission, or loading failures.', {});
+  add('osaa.system.read', 'diagnose_os_shell', 'Deterministically inspect the durable OS Shell feature state, signed control gates, required Deployments and Services, then locate the first failed stage. Supply browserStatus only when the same-session /api/os-shell/readiness HTTP status is known.', {
+    browserStatus: { type: 'integer', minimum: 100, maximum: 599 },
+  });
   add('osaa.system.read', 'get_foundation_status', 'Read Foundation models, engine states, consumer claims, bindings, and controller readiness from the Foundation owner API.', {});
   add('osaa.system.read', 'get_foundation_postgres_status', 'Read the PFSS data.sql.postgres owner projection: approved runtimes and plans, managed namespaces, PostgresClaims, and realized clusters. Use this before discussing PostgreSQL provisioning; do not confuse the postgres UI plugin Deployment with a database cluster.', {});
   add('osaa.action.execute.high', 'plan_foundation_postgres_cluster', 'Validate a complete PFSS PostgreSQL cluster request through the typed owner Admission dry-run. Returns the exact human approval phrase and postcondition; it does not create the cluster.', {
@@ -7344,6 +7403,82 @@ async function extensionPresentationStatusRead(actor) {
   return { action: 'extension-presentation-status-read', ...projection };
 }
 
+async function manualAccessDiagnosisRead(actor) {
+  assertPermission(actor, 'osaa.system.read');
+  const permission = hasPermission(actor, 'osaa.knowledge.read');
+  let registryProbe = { ok: false, error: 'osaa.knowledge.read is unavailable' };
+  if (permission) {
+    try {
+      const sources = await listManualSources(actor);
+      registryProbe = { ok: true, sourceCount: Array.isArray(sources.items) ? sources.items.length : 0 };
+    } catch (error) {
+      registryProbe = { ok: false, error: error?.msg || error?.message || String(error) };
+    }
+  }
+  const diagnosis = buildManualAccessDiagnosis({ authenticated: true, permission, registryProbe });
+  audit(actor, 'manual-access-diagnosis', 'ConsoleSurface/manual', diagnosis.ready ? 'ok' : 'attention',
+    `${diagnosis.state}:${diagnosis.rootCause || 'ready'}`);
+  return { action: 'manual-access-diagnosis', observedAt: new Date().toISOString(), ...diagnosis };
+}
+
+function shellWorkloadProjection(item) {
+  return {
+    name: String(item?.metadata?.name || ''),
+    desired: Number(item?.spec?.replicas || 0),
+    ready: Number(item?.status?.readyReplicas || 0),
+    available: Number(item?.status?.availableReplicas || 0),
+    updated: Number(item?.status?.updatedReplicas || 0),
+    image: String(item?.spec?.template?.spec?.containers?.[0]?.image || ''),
+  };
+}
+
+async function osShellDiagnosisRead(inputs, actor) {
+  assertPermission(actor, 'osaa.system.read');
+  requireClosedOwnerInputs(inputs, ['browserStatus']);
+  const browserStatus = inputs.browserStatus == null ? null : Number(inputs.browserStatus);
+  if (browserStatus != null && (!Number.isInteger(browserStatus) || browserStatus < 100 || browserStatus > 599)) {
+    throw { code: 400, msg: 'browserStatus must be an HTTP status from 100 to 599' };
+  }
+  const [featureResult, deploymentList, serviceList, gateResult] = await Promise.all([
+    backendGet('/api/platform/os-shell/feature-state', actor)
+      .then((value) => ({ ok: true, value }))
+      .catch((error) => ({ ok: false, error: error?.msg || error?.message || String(error) })),
+    k8sGet('/apis/apps/v1/namespaces/opensphere-console/deployments'),
+    k8sGet('/api/v1/namespaces/opensphere-console/services'),
+    k8sGet('/api/v1/namespaces/opensphere-console/configmaps/opensphere-shell-control-gates'),
+  ]);
+  const deployments = (deploymentList.items || [])
+    .filter((item) => OS_SHELL_DEPLOYMENTS.includes(String(item?.metadata?.name || '')))
+    .map(shellWorkloadProjection);
+  const services = (serviceList.items || []).map((item) => ({ name: String(item?.metadata?.name || '') }));
+  const gateData = gateResult.ok ? gateResult.json?.data || {} : {};
+  const diagnosis = buildOsShellDiagnosis({
+    featureState: featureResult,
+    gates: gateResult.ok ? {
+      available: true,
+      admissionEnabled: String(gateData['admission-enabled'] || '').toLowerCase() === 'true',
+      credentialAuthorityEnabled: String(gateData['credential-authority-enabled'] || '').toLowerCase() === 'true',
+    } : { available: false, error: gateResult.error || `HTTP ${gateResult.status}` },
+    deployments,
+    services,
+    browserStatus,
+  });
+  const projection = {
+    action: 'os-shell-diagnosis',
+    observedAt: new Date().toISOString(),
+    ...diagnosis,
+    evidence: {
+      deploymentListStatus: deploymentList.status,
+      serviceListStatus: serviceList.status,
+      gateStatus: gateResult.status,
+      workloads: deployments,
+    },
+  };
+  audit(actor, 'os-shell-diagnosis', 'ConsoleSurface/os-shell', diagnosis.ready ? 'ok' : 'attention',
+    `${diagnosis.state}:${diagnosis.rootCause || diagnosis.failureStage || 'ready'}`);
+  return projection;
+}
+
 async function foundationStatusRead(actor) {
   if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
   let response;
@@ -7548,6 +7683,14 @@ async function executeAgentTool(name, args, actor, context = {}) {
       assertPermission(actor, 'osaa.system.read');
       result = await extensionPresentationStatusRead(actor);
       break;
+    case 'diagnose_manual_access':
+      assertPermission(actor, 'osaa.system.read');
+      result = await manualAccessDiagnosisRead(actor);
+      break;
+    case 'diagnose_os_shell':
+      assertPermission(actor, 'osaa.system.read');
+      result = await osShellDiagnosisRead(input, actor);
+      break;
     case 'get_foundation_status':
       assertPermission(actor, 'osaa.system.read');
       result = await foundationStatusRead(actor);
@@ -7728,14 +7871,25 @@ async function chatCompletion(body, actor) {
   const userContent = latestUserContent(baseMessages);
   const canonicalSourceIntent = requiresCanonicalSourceTools(userContent);
   const extensionPresentationIntent = requiresExtensionPresentationStatus(userContent);
+  const manualAccessDiagnosisIntent = requiresManualAccessDiagnosis(userContent);
+  const osShellDiagnosisIntent = requiresOsShellDiagnosis(userContent);
+  const surfaceDiagnosisIntent = manualAccessDiagnosisIntent || osShellDiagnosisIntent;
   let extensionPresentationEvidence = null;
+  let surfaceDiagnosisEvidence = null;
+  let surfaceDiagnosisToolName = null;
   if (extensionPresentationIntent) {
     systemMessages.push({
       role: 'system',
       content: 'This request matches the Registry Plugin presentation incident. Answer from the canonical extension-presentation-status evidence. Treat 요청 시 적재 as child UI activation timing, not proof of menu ineligibility. Do not cite unrelated Kubernetes workload readiness as a cause, and do not propose restart, reinstall, or enable when the projection reports no blocker.',
     });
   }
-  if (!canonicalSourceIntent) {
+  if (surfaceDiagnosisIntent) {
+    systemMessages.push({
+      role: 'system',
+      content: 'This request matches a deterministic Console surface diagnosis. Report the first failed stage from the verified diagnosis, keep unobservable browser state explicit, and do not replace the owner evidence with a generic restart or reinstall suggestion.',
+    });
+  }
+  if (!canonicalSourceIntent && !surfaceDiagnosisIntent) {
     try {
       sources = await searchKnowledge(userContent, OSAA_RAG_TOP_K, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
       if (sources.length) evidenceMessages.push(knowledgeSystemMessage(sources));
@@ -7758,7 +7912,7 @@ async function chatCompletion(body, actor) {
     }
   }
   try {
-    if (body.includeEnvironment !== false && !extensionPresentationIntent && !canonicalSourceIntent) {
+    if (body.includeEnvironment !== false && !extensionPresentationIntent && !canonicalSourceIntent && !surfaceDiagnosisIntent) {
       environment = await environmentSnapshot(body, actor);
       evidenceMessages.push(environmentSystemMessage(environment));
     }
@@ -7782,6 +7936,28 @@ async function chatCompletion(body, actor) {
       console.warn('[osaa-extension-presentation] deterministic preflight skipped:', e.message || e.msg || e);
     }
   }
+  if (surfaceDiagnosisIntent) {
+    try {
+      surfaceDiagnosisToolName = manualAccessDiagnosisIntent ? 'diagnose_manual_access' : 'diagnose_os_shell';
+      const statusMatch = userContent.match(/HTTP\s*([1-5][0-9]{2})/i);
+      const args = surfaceDiagnosisToolName === 'diagnose_os_shell' && statusMatch
+        ? { browserStatus: Number(statusMatch[1]) }
+        : {};
+      surfaceDiagnosisEvidence = await executeAgentTool(
+        surfaceDiagnosisToolName,
+        args,
+        actor,
+        { source, sessionId, runId: agentRunRecorded ? requestId : null },
+      );
+      evidenceMessages.push(untrustedEvidenceMessage(
+        'verified-surface-diagnosis',
+        surfaceDiagnosisEvidence,
+        24000,
+      ));
+    } catch (e) {
+      console.warn('[osaa-surface-diagnosis] deterministic preflight skipped:', e.message || e.msg || e);
+    }
+  }
   messages = [...systemMessages, ...baseMessages, ...evidenceMessages];
   const maxTokens = Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024));
   const liveToolMode = requiresLiveAgentTools(userContent);
@@ -7789,7 +7965,7 @@ async function chatCompletion(body, actor) {
   if (canonicalSourceIntent) {
     tools = agentToolDefinitions(actor, new Set(), new Set(), new Set(), new Set())
       .filter((tool) => SOURCE_TOOL_NAMES.has(tool.function.name));
-  } else if (liveToolMode && !extensionPresentationEvidence) {
+  } else if (liveToolMode && !extensionPresentationEvidence && !surfaceDiagnosisEvidence) {
     const [observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities] = await Promise.all([
       osaaObservabilityCapabilities(actor), osaaHisOwnerCapabilities(actor), osaaCephOwnerCapabilities(actor), osaaRecoveryOwnerCapabilities(actor),
     ]);
@@ -7801,14 +7977,15 @@ async function chatCompletion(body, actor) {
   let content = '';
   let providerModel = model;
   let rounds = 0;
-  const toolTrace = extensionPresentationEvidence ? [{
-    round: 0,
-    name: 'get_extension_presentation_status',
-    status: 'succeeded',
-    target: 'opensphere/get_extension_presentation_status',
-    encoding: 'deterministic-preflight',
-    cached: false,
-  }] : [];
+  const toolTrace = [];
+  if (extensionPresentationEvidence) toolTrace.push({
+    round: 0, name: 'get_extension_presentation_status', status: 'succeeded',
+    target: 'opensphere/get_extension_presentation_status', encoding: 'deterministic-preflight', cached: false,
+  });
+  if (surfaceDiagnosisEvidence) toolTrace.push({
+    round: 0, name: surfaceDiagnosisToolName, status: 'succeeded',
+    target: `opensphere/${surfaceDiagnosisToolName}`, encoding: 'deterministic-preflight', cached: false,
+  });
   const toolResultCache = new Map();
   const verifiedToolEvidence = new Map();
   if (extensionPresentationEvidence) {
@@ -7818,6 +7995,19 @@ async function chatCompletion(body, actor) {
       tool: 'get_extension_presentation_status',
       arguments: {},
       result: extensionPresentationEvidence,
+    });
+  }
+  if (surfaceDiagnosisEvidence) {
+    const statusMatch = userContent.match(/HTTP\s*([1-5][0-9]{2})/i);
+    const args = surfaceDiagnosisToolName === 'diagnose_os_shell' && statusMatch
+      ? { browserStatus: Number(statusMatch[1]) }
+      : {};
+    const signature = toolCallSignature(surfaceDiagnosisToolName, args);
+    toolResultCache.set(signature, { output: surfaceDiagnosisEvidence, ok: true });
+    verifiedToolEvidence.set(signature, {
+      tool: surfaceDiagnosisToolName,
+      arguments: args,
+      result: surfaceDiagnosisEvidence,
     });
   }
   let agentStepIndex = 0;
@@ -7971,6 +8161,27 @@ async function chatCompletion(body, actor) {
     if (agentRunRecorded) await finishAgentRun(requestId, 'failed', toolTrace.length, error.errorCode || error.code || 'agent_loop_failed');
     throw error;
   }
+  const surfaceDiagnosis = {
+    applied: Boolean(surfaceDiagnosisEvidence),
+    state: surfaceDiagnosisEvidence?.state || null,
+    rootCause: surfaceDiagnosisEvidence?.rootCause || null,
+    failureStage: surfaceDiagnosisEvidence?.failureStage || null,
+  };
+  if (surfaceDiagnosisEvidence) {
+    content = renderSurfaceDiagnosis(surfaceDiagnosisEvidence);
+    audit(actor, 'surface-diagnosis-grounding', `AgentRun/${requestId}`,
+      surfaceDiagnosisEvidence.ready ? 'ok' : 'attention',
+      `${surfaceDiagnosisEvidence.surface}:${surfaceDiagnosis.state}:${surfaceDiagnosis.rootCause || surfaceDiagnosis.failureStage || 'ready'}`);
+    if (agentRunRecorded) await recordAgentStep({
+      runId: requestId,
+      index: agentStepIndex++,
+      kind: 'verification',
+      status: 'succeeded',
+      input: { tool: surfaceDiagnosisToolName },
+      output: surfaceDiagnosis,
+      metadata: { verifier: 'surface-diagnosis-grounding/v1', deterministic: true },
+    });
+  }
   const sourceGrounding = groundCanonicalSourceAnswer(
     content,
     Array.from(verifiedToolEvidence.values()),
@@ -8017,6 +8228,7 @@ async function chatCompletion(body, actor) {
       toolsAvailable: [...new Set([
         ...tools.map((tool) => tool.function.name),
         ...(extensionPresentationEvidence ? ['get_extension_presentation_status'] : []),
+        ...(surfaceDiagnosisEvidence ? [surfaceDiagnosisToolName] : []),
       ])],
       toolCalls: toolTrace,
       mutationsRequireExplicitCommand: true,
@@ -8028,6 +8240,7 @@ async function chatCompletion(body, actor) {
         violations: sourceGrounding.violations.length,
         citations: sourceGrounding.citations,
       },
+      surfaceDiagnosis,
     },
     sources: sources.map((s) => ({
       title: s.title,
@@ -9010,6 +9223,15 @@ const server = http.createServer(async (req, res) => {
       assertPermission(actor, 'osaa.system.read');
       requireClosedOwnerInputs(await readBody(req), []);
       return json(res, 200, await extensionPresentationStatusRead(actor));
+    }
+    if (url.pathname === '/api/osaa/tools/diagnostics/manual' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await manualAccessDiagnosisRead(actor));
+    }
+    if (url.pathname === '/api/osaa/tools/diagnostics/os-shell' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await osShellDiagnosisRead(await readBody(req), actor));
     }
     if (url.pathname === '/api/osaa/tools/foundation/status' && req.method === 'POST') {
       const actor = await verifyAuthed(req);

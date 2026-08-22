@@ -12,6 +12,8 @@ const {
   lexicalKnowledgeQuery,
   requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
+  requiresManualAccessDiagnosis,
+  requiresOsShellDiagnosis,
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
 
@@ -80,6 +82,12 @@ test('knowledge questions do not receive live operational tools', () => {
   assert.equal(requiresCanonicalSourceTools('canonical source catalog and exact revision을 사용해'), true);
   assert.equal(requiresCanonicalSourceTools('revision 0a3ba02414276e72d1ae08bb0c93ededd8335275의 파일을 읽어라'), true);
   assert.equal(requiresCanonicalSourceTools('PFSS의 구조를 설명해줘'), false);
+  assert.equal(requiresManualAccessDiagnosis('Manual을 조회할 권한이 없습니다.'), true);
+  assert.equal(requiresManualAccessDiagnosis('/manual 페이지가 403으로 실패한다'), true);
+  assert.equal(requiresManualAccessDiagnosis('Manual의 설계 원칙을 설명해줘'), false);
+  assert.equal(requiresOsShellDiagnosis('OsShellControlPlaneUnavailable'), true);
+  assert.equal(requiresOsShellDiagnosis('OS Shell readiness API가 HTTP 500이다'), true);
+  assert.equal(requiresOsShellDiagnosis('OS Shell이 왜 필요한가?'), false);
 });
 
 test('durable operation completion is available to the live read-tool loop', () => {

@@ -21,6 +21,18 @@ const CANONICAL_SOURCE_PATTERNS = [
   /\b[0-9a-f]{40}\b/i,
 ];
 
+const MANUAL_ACCESS_DIAGNOSIS_PATTERNS = [
+  /Manual을\s*조회할\s*권한이\s*없/u,
+  /(?:\/manual|manual).*(?:401|403|권한|접근|오류|에러|실패)/iu,
+  /(?:401|403|권한|접근).*(?:\/manual|manual)/iu,
+];
+
+const OS_SHELL_DIAGNOSIS_PATTERNS = [
+  /OsShellControlPlaneUnavailable/i,
+  /OS\s*Shell.*(?:HTTP\s*500|readiness|시작할\s*수\s*없|연결\s*실패|터미널|WebSocket)/iu,
+  /(?:HTTP\s*500|readiness|세션|attach|WebSocket|터미널).*(?:OS\s*Shell|OSS)/iu,
+];
+
 function requiresExtensionPresentationStatus(query) {
   const text = String(query || '').trim();
   return text.length > 0 && EXTENSION_PRESENTATION_PATTERNS.some((pattern) => pattern.test(text));
@@ -31,12 +43,24 @@ function requiresCanonicalSourceTools(query) {
   return text.length > 0 && CANONICAL_SOURCE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+function requiresManualAccessDiagnosis(query) {
+  const text = String(query || '').trim();
+  return text.length > 0 && MANUAL_ACCESS_DIAGNOSIS_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function requiresOsShellDiagnosis(query) {
+  const text = String(query || '').trim();
+  return text.length > 0 && OS_SHELL_DIAGNOSIS_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 function requiresLiveAgentTools(query) {
   const text = String(query || '').trim();
   return text.length > 0 && (
     LIVE_OPERATION_PATTERNS.some((pattern) => pattern.test(text)) ||
     requiresExtensionPresentationStatus(text) ||
-    requiresCanonicalSourceTools(text)
+    requiresCanonicalSourceTools(text) ||
+    requiresManualAccessDiagnosis(text) ||
+    requiresOsShellDiagnosis(text)
   );
 }
 
@@ -77,5 +101,7 @@ module.exports = {
   lexicalKnowledgeQuery,
   requiresCanonicalSourceTools,
   requiresExtensionPresentationStatus,
+  requiresManualAccessDiagnosis,
+  requiresOsShellDiagnosis,
   requiresLiveAgentTools,
 };

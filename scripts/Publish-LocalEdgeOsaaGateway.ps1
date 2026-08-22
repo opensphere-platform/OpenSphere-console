@@ -118,6 +118,7 @@ try {
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\extension-presentation.test.js') `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-prompt-boundary.test.js') `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-source-grounding.test.js') `
+    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-surface-diagnostics.test.js') `
     (Join-Path $checkout 'scripts\osaa-gateway-publisher.test.mjs') | Out-Null
 
   if (-not $UseExistingRegistryLogin) {
