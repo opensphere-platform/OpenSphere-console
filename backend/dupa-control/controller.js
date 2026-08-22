@@ -1349,7 +1349,11 @@ async function verifyPlugin(pkg, serviceName = pkg.metadata.name) {
   // ④ shellCompat / permissions (정적 검사)
   if (manifest.shellCompat !== pkg.spec.shellCompat) return { ok: false, reason: 'ShellCompatDrift' };
   if (JSON.stringify([...(manifest.permissions || [])].sort()) !== JSON.stringify([...(pkg.spec.permissions || [])].sort())) return { ok: false, reason: 'PermissionDrift' };
-  if ((manifest.apiBase || '') !== (pkg.spec.api?.basePath || '')) return { ok: false, reason: 'ApiBaseDrift' };
+  const apiBase = packageApiBase(pkg);
+  if ((manifest.apiBase || '') !== apiBase) return { ok: false, reason: 'ApiBaseDrift' };
+  // spec.contributions.api is the signed Host Contract. spec.api is retained
+  // only as a legacy input shape and, when present, may not contradict it.
+  if (pkg.spec.api?.basePath && pkg.spec.api.basePath !== apiBase) return { ok: false, reason: 'ApiBaseDrift' };
   const canonicalApiBase = `/api/plugins/${name}`;
   if (manifest.apiBase && manifest.apiBase.replace(/\/$/, '') !== canonicalApiBase) return { ok: false, reason: 'ApiNamespaceViolation' };
   if (manifest.contributions.api?.enabled && manifest.contributions.api.basePath?.replace(/\/$/, '') !== canonicalApiBase) {
@@ -1847,7 +1851,7 @@ function packageFromInspection(inspection) {
       },
       nav: d.nav || { band: d.kind === 'subShell' ? '구축 Build' : 'Extensions', label: d.displayName },
       manifest: d.manifest, trust: d.trust, shellCompat: d.shellCompat, permissions: d.permissions,
-      permissionProfile: d.permissionProfile, runtime: d.runtime, api: d.api,
+      permissionProfile: d.permissionProfile, runtime: d.runtime,
       ...(d.contributions?.cli?.enabled ? { cli: { namespace: d.contributions.cli.namespace, manifestPath: d.contributions.cli.manifestPath } } : {}),
       contributions: d.contributions,
     },
@@ -1909,6 +1913,11 @@ let publishedPlugins = [];
 // + (b) enabled workforce CLIDownload 바인딩 서비스 id. Main Shell native os-cli는 고정 /api/cli 경로를 사용한다.
 // reconcile 끝에서 published로 계산(루프 뒤). 전이 실패 시 직전 allowlist 유지(가용성).
 let proxyAllow = new Set();
+function packageApiBase(pkg) {
+  return pkg?.spec?.contributions?.api?.enabled === true
+    ? String(pkg.spec.contributions.api.basePath || '')
+    : '';
+}
 function proxyIdsForPlugin(plugin) {
   const ids = [plugin?.id, plugin?.artifactServiceId, ...(plugin?.retainedArtifactServiceIds || [])]
     .map((value) => String(value || ''))
@@ -1919,7 +1928,7 @@ function publishedPluginEntry(pkg, manifestUrl, sigUrl, reg = {}, channel = {}, 
   const cli = pkg.spec.contributions?.cli?.enabled === true ? {
     namespace: pkg.spec.cli?.namespace || pkg.spec.contributions.cli.namespace,
     manifestPath: pkg.spec.cli?.manifestPath || pkg.spec.contributions.cli.manifestPath,
-    apiBase: pkg.spec.api?.basePath || pkg.spec.contributions.api?.basePath || '',
+    apiBase: packageApiBase(pkg),
   } : undefined;
   return {
     id: pkg.metadata.name,
@@ -4150,7 +4159,7 @@ module.exports = {
   navigationSettingsPatch, navigationOrderPlan, navigationPreferenceFromRecord, effectivePackageNavigation,
   kubernetesApiBase, packageFromInspection, releaseRevision, releaseAnnotations,
   deploymentManifest, pdbManifest, serviceManifest, hpaManifest,
-  networkPolicyManifest, telemetryDescriptor, publishedPluginEntry,
+  networkPolicyManifest, telemetryDescriptor, publishedPluginEntry, packageApiBase,
   proxyIdsForPlugin, managedReleaseResource,
   retainableLastKnownGood, allowedCLIResourcePath, condition, deploymentRolloutConverged,
   deploymentReadyResult, normalizeHisStatus, hisPreflightEvidence, foundationDevOverrideEnabled,

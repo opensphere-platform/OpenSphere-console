@@ -56,6 +56,8 @@ test('accepts SDK module package and materializes digest-pinned package', () => 
   assert.equal(pkg.spec.resolution.resolvedDigest, digest);
   assert.equal(pkg.spec.resolution.registryCredentialsRequired, true);
   assert.equal(pkg.spec.resolution.evidenceRefs.length, 2);
+  assert.equal(pkg.spec.api, undefined, 'package does not duplicate contributions.api');
+  assert.equal(pkg.spec.contributions.api.basePath, '/api/plugins/cluster-manager');
 });
 
 test('binds attestations to an OpenSphere repository main-branch workflow', () => {

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { validContributions, validCapabilities, integrationStatuses, verifiedProxyTarget } = require('./controller.js');
+const { validContributions, validCapabilities, integrationStatuses, verifiedProxyTarget, packageApiBase } = require('./controller.js');
 
 const contributions = {
   page: { enabled: true },
@@ -22,6 +22,15 @@ test('Host Contract contributions require explicit disabled reasons', () => {
 
 test('Host Contract rejects enabled API outside the same-origin API plane', () => {
   assert.equal(validContributions({ ...contributions, api: { enabled: true, basePath: 'https://example.test' } }), false);
+});
+
+test('signed contribution is the single API base authority', () => {
+  const pkg = { spec: { contributions } };
+  assert.equal(packageApiBase(pkg), '/api/plugins/sample');
+  assert.equal(packageApiBase({ spec: { api: { basePath: '/legacy' }, contributions } }), '/api/plugins/sample');
+  assert.equal(packageApiBase({
+    spec: { contributions: { ...contributions, api: { enabled: false, reason: 'not shipped' } } },
+  }), '');
 });
 
 test('runtime contributions require the matching closed-set capability', () => {
@@ -55,7 +64,7 @@ test('extension uninstall retains its registration after a non-idempotent worklo
   assert.match(controller, /async function deleteManagedResource\(path, label\)/);
   assert.match(controller, /if \(result\.ok \|\| result\.status === 404\) return/);
   assert.match(controller, /reason: 'UninstallDeleteFailed'/);
-  assert.match(controller, /await deleteManagedResource\(`\/apis\/apps\/v1\/namespaces\/\$\{NS\}\/deployments\/\$\{name\}`/);
+  assert.match(controller, /await garbageCollectWorkloadRevisions\(pkg, \[\], \{ removeStable: true \}\)/);
   assert.match(controller, /await deleteWorkload\(pkg\);\s+await k8s\('DELETE', `\$\{crd\('uipluginregistrations'\)\}\/\$\{name\}`\);/);
 });
 
