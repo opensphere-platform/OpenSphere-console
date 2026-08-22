@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "latestMigrationId": "0068",
   "migrationCount": 67,
-  "setDigest": "sha256:b6ffae0e6c2cc1be1ad33e7600e7a443a403d5fc90f2d97d567e256cc51bdb93",
+  "setDigest": "sha256:918fc188192f67149d0c8aa631526771582249d58cca12cc2561698109c2b7f3",
   "migrations": [
     {
       "id": "0001",
@@ -471,7 +471,7 @@
       "predecessorMigrationId": "0067",
       "name": "0068_osaa_agent_verification_evidence.sql",
       "path": "backend/supabase/migrations/0068_osaa_agent_verification_evidence.sql",
-      "sha256": "890d6add3880ce369f0bd5c6203710b0c7bf07a68b2efcad606b023adfa87579"
+      "sha256": "0c081a58c4070cace9c89135f2375058bb0a1b93d52337e361d87c21d6ec47bd"
     }
   ]
 }
