@@ -1635,7 +1635,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
     this.engineeringRequestsBusy.set(true);
     if (!silent) this.engineeringRequestError.set('');
     try {
-      const response = await this.http.request('/api/osaa/remediations', { cache: 'no-store' });
+      const response = await this.http.request('/api/osaa/remediations/', { cache: 'no-store' });
       const body = await response.json().catch(() => ({})) as { remediations?: EngineeringRemediation[]; error?: string };
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
       const requests = Array.isArray(body.remediations) ? body.remediations : [];

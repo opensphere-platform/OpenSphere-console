@@ -147,6 +147,17 @@ test('Backend routes both remediation collection and item paths to the governed 
   assert.match(server, /p === '\/api\/osaa\/remediations' \|\| p\.startsWith\('\/api\/osaa\/remediations\/'\)/u);
 });
 
+test('remediation collection accepts the browser-safe trailing-slash route', async () => {
+  const { api } = fixture(true, true, true);
+  let status = 0; let payload = null;
+  const handled = await api.handle({ method: 'GET' }, {}, '/api/osaa/remediations/', async () => ({}), (_res, code, bodyValue) => {
+    status = code; payload = bodyValue; return true;
+  });
+  assert.equal(handled, true);
+  assert.equal(status, 200);
+  assert.deepEqual(payload.remediations, []);
+});
+
 test('browser verification is exact-profile, exact-source and approving-operator bound', async () => {
   const prepared = fixture(true, true, true);
   const created = await prepared.api.propose({ headers: { 'x-os-idempotency-key': 'remediation-proposal-1' } }, assessmentId,

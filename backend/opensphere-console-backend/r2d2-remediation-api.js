@@ -244,7 +244,7 @@ function createR2d2RemediationApi(options) {
     if (pathname === '/api/osaa/remediations/status' && req.method === 'GET') {
       return json(res, 200, await status(req), { 'cache-control': 'no-store' });
     }
-    if (pathname === '/api/osaa/remediations' && req.method === 'GET') {
+    if ((pathname === '/api/osaa/remediations' || pathname === '/api/osaa/remediations/') && req.method === 'GET') {
       return json(res, 200, await list(req), { 'cache-control': 'no-store' });
     }
     const detail = pathname.match(/^\/api\/osaa\/remediations\/([0-9a-f-]{36})$/i);
