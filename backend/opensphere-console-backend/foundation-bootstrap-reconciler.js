@@ -201,15 +201,39 @@ function assertCatalogSupplyChain(catalog) {
   return status;
 }
 
-async function applyCatalogResource(resource) {
+async function applyCatalogResource(resource, dependencies = {}) {
   validateCatalogDocument(resource);
+  const request = dependencies.request || kubernetesRequest;
+  const get = dependencies.get || kubernetesGet;
+
+  // FoundationModel is the operator-owned desired-state object. The bootstrap
+  // catalog may seed it once, but must never re-apply defaults over a live
+  // model. In particular spec.parameters.engines is operational data, not a
+  // release field. Every other closed-catalog resource remains reconciled.
+  if (resource.kind === 'FoundationModel') {
+    try {
+      return { operation: 'preserved', object: await get(resource.path) };
+    } catch (error) {
+      if (Number(error?.status) !== 404) throw error;
+    }
+    const createQuery = `fieldManager=${encodeURIComponent(FOUNDATION_BOOTSTRAP_RECONCILER)}`;
+    const object = await request(
+      'PATCH',
+      `${resource.path}?${createQuery}`,
+      resource.document,
+      'application/apply-patch+yaml',
+    );
+    return { operation: 'created', object };
+  }
+
   const query = `fieldManager=${encodeURIComponent(FOUNDATION_BOOTSTRAP_RECONCILER)}&force=true`;
-  return kubernetesRequest(
+  const object = await request(
     'PATCH',
     `${resource.path}?${query}`,
     resource.document,
     'application/apply-patch+yaml',
   );
+  return { operation: 'applied', object };
 }
 
 async function waitForContracts() {
@@ -542,6 +566,7 @@ module.exports = {
   catalogSupplyChainStatus,
   assertCatalogSupplyChain,
   validateGovernedManifest,
+  applyCatalogResource,
   applyFoundationBootstrap,
   reconcilerReadiness,
 };

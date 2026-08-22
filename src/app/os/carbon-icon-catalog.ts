@@ -1,5 +1,5 @@
 // 큐레이션 Carbon 아이콘 카탈로그 — 1단 shell 아이콘 지정용(기본값 + 설치 시 사용자 선택).
-//   token = @carbon/icons 경로명(예 'container-registry'). UIPluginPackage spec.nav.icon 에 이 token 저장.
+//   token = @carbon/icons 경로명(예 'container-registry'). Console navigation preference에 저장하고 Catalog에 투영.
 //   셸/피커가 token → 디스크립터로 매핑. 목록은 검색 가능한 그리드로 노출.
 import Kubernetes16 from '@carbon/icons/es/kubernetes/16';
 import ContainerRegistry16 from '@carbon/icons/es/container-registry/16';

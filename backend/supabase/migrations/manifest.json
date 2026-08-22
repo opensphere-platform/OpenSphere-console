@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0064",
-  "migrationCount": 63,
-  "setDigest": "sha256:27217e662e365b22510e24e75dba23087828a5eff74d6f9540fc1705cb5a17c3",
+  "latestMigrationId": "0065",
+  "migrationCount": 64,
+  "setDigest": "sha256:db2d5714293cf5e3bd6111dc15c49b0b769a639bbf4f186e1f2daa513a56ff54",
   "migrations": [
     {
       "id": "0001",
@@ -444,6 +444,13 @@
       "name": "0064_shell_feature_release_ledger_contract.sql",
       "path": "backend/supabase/migrations/0064_shell_feature_release_ledger_contract.sql",
       "sha256": "3157ea33d445c6325601752d832c07f650fff90ed1ac9d89260dbac5d4e9e667"
+    },
+    {
+      "id": "0065",
+      "predecessorMigrationId": "0064",
+      "name": "0065_extension_navigation_preference_authority.sql",
+      "path": "backend/supabase/migrations/0065_extension_navigation_preference_authority.sql",
+      "sha256": "18efda4189fac41e690627d7b8b6e0af7967e8556f978504858527f7d631691f"
     }
   ]
 }

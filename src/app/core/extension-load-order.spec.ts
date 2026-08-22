@@ -53,6 +53,8 @@ test('only the requested subShell route activates while unrelated guests remain 
   assert.match(source, /declarations\.filter\(\(projection\) => approvedChildren\.has\(projection\.id\)\)/);
   assert.doesNotMatch(source, /approvedChildren\.has\(projection\.id\)[\s\S]{0,120}this\.activeModules\.has\(projection\.id\)/);
   assert.match(source, /children: \(\) => this\.registryEntries[\s\S]*\.filter\(\(entry\) => \(entry\.hostRef \?\? 'main'\) === pluginId\)/);
+  assert.match(source, /const projection = \(this\.hostChildProjections\(\)\[target\.hostId\]/);
+  assert.match(source, /const childId = projection\?\.id \|\| target\.childId/);
 });
 
 test('first-level navigation is hydrated and atomically replaced without guest activation', () => {

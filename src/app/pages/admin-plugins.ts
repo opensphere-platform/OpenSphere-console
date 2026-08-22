@@ -1424,7 +1424,7 @@ export class AdminPlugins implements OnInit {
   select(name: string): void { this.selected.set(name); this.iconLib.ensure(); }
   closePanel(): void { this.selected.set(null); }
 
-  // ── 1단 아이콘 선택(IBM Carbon **전체 라이브러리**) — 기본값 + 사용자 선택. spec.nav.icon 패치 → registry → 셸 반영. ──
+  // ── 1단 아이콘 선택(IBM Carbon **전체 라이브러리**) — signed Package와 분리된 Console preference → registry → 셸 반영. ──
   readonly iconQuery = signal('');
   private readonly ICON_CAP = 300; // 한 번에 렌더할 최대 개수(2600+ 전체 DOM 방지) — 검색으로 좁힘.
   /** 검색어 일치 전체 개수(표시용). */

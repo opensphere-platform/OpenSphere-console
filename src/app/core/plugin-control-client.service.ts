@@ -195,7 +195,7 @@ export class PluginControlClient {
   disable(id: string, reason: string) { return this.act(id, 'disable', reason); }
   uninstall(id: string, reason: string) { return this.act(id, 'uninstall', reason); }
   rollback(id: string, reason: string) { return this.act(id, 'rollback', reason); }
-  /** 1단 아이콘 지정 — UIPluginPackage spec.nav.icon 패치(Carbon 토큰명). 빈 문자열=기본 아이콘. */
+  /** 1단 아이콘 지정 — durable Console navigation preference(Carbon 토큰명). 빈 문자열=기본 아이콘. */
   setIcon(id: string, icon: string) {
     return this.http.request(`/api/admin/plugins/packages/${id}/icon`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ icon }),

@@ -394,7 +394,11 @@ spec:
           || (request.kind.kind == 'Role' && object.metadata.namespace == 'opensphere-foundation' && object.metadata.name == 'foundation-control-plane-deployer')
           || (request.kind.kind == 'RoleBinding' && object.metadata.namespace == 'opensphere-foundation' && object.metadata.name == 'foundation-control-plane-deployer')
           || (request.kind.kind == 'Deployment' && object.metadata.namespace == 'opensphere-system' && object.metadata.name == 'foundation-control-plane')
-          || (request.kind.kind == 'FoundationModel' && object.metadata.name in ['identity', 'data', 'observability'])
+          || (
+            request.kind.kind == 'FoundationModel'
+            && request.operation == 'CREATE'
+            && object.metadata.name in ['identity', 'data', 'observability']
+          )
           || (request.kind.kind == 'FoundationModuleDescriptor' && object.metadata.name == 'identity')
           || (
             request.kind.kind == 'FoundationClaim'

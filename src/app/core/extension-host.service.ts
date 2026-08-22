@@ -102,7 +102,7 @@ interface RegistryEntry {
   hostApiVersion?: string;
   hostCompat?: string;
   contributions?: NormalizedManifest['contributions'];
-  icon?: string; // 1단 아이콘(Carbon 토큰명) — 관리자 오버라이드(spec.nav.icon). 서명 무관.
+  icon?: string; // 1단 아이콘(Carbon 토큰명) — Console preference가 투영한 표시값. 서명/실행 권위와 무관.
   /** Content-addressed serving coordinate owned by DUPA. It is deliberately
    * separate from the stable API service id so a rollout can never mix old
    * registry pins with new artifact bytes. */
@@ -209,7 +209,7 @@ export class ExtensionHostService {
   readonly searchProviders = signal<Record<string, SearchProvider>>({});
   /** Plugin/subShell manual sources contributed at runtime. */
   readonly manualContributions = signal<Record<string, ManualContribution>>({});
-  /** 플러그인별 1단 아이콘(Carbon 토큰명) — registry(spec.nav.icon 전사)에서. pluginId → token */
+  /** 플러그인별 1단 아이콘(Carbon 토큰명) — Registry/Catalog의 effective navigation 투영. pluginId → token */
   readonly pluginIcons = signal<Record<string, string>>(Object.fromEntries(
     this.cachedNavigationSnapshot?.items.map((item) => [item.id, item.icon]) ?? [],
   ));
@@ -353,7 +353,16 @@ export class ExtensionHostService {
     if (!parent) return;
     await this.loadOne(parent, this.trustedKeys, HOST_API_VERSION);
     if (!target.childId) return;
-    const child = this.registryEntries.find((entry) => entry.id === target.childId && (entry.hostRef ?? 'main') === target.hostId);
+    // A host owns its public child route. The route segment is therefore not
+    // required to equal the Package id (for example /pfss/psmdb is owned by
+    // UIPluginPackage/percona-psmdb). Resolve the verified host declaration
+    // after activating the parent, then load the exact Registry child.
+    const currentPath = pathname.replace(/\/+$/, '') || '/';
+    const projection = (this.hostChildProjections()[target.hostId] ?? [])
+      .filter((candidate) => currentPath === candidate.route || currentPath.startsWith(`${candidate.route}/`))
+      .sort((left, right) => right.route.length - left.route.length)[0];
+    const childId = projection?.id || target.childId;
+    const child = this.registryEntries.find((entry) => entry.id === childId && (entry.hostRef ?? 'main') === target.hostId);
     if (!child) return;
     await this.loadOne(child, this.trustedKeys, parent.hostApiVersion ?? HOST_API_VERSION);
   }

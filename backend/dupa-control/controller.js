@@ -249,6 +249,67 @@ async function supabaseRequest(method, resource, { profile = 'console', query = 
   }
   return jsonBody;
 }
+
+// UIPluginPackage.spec.nav is part of the signed module descriptor and is
+// therefore an immutable package default. Operator-owned presentation values
+// live in the existing durable console.plugin_meta authority instead of being
+// written back into that package. This separation is what keeps an image
+// update from erasing a label, icon or order chosen in Console administration.
+function navigationPreferenceFromRecord(record) {
+  const raw = record?.navigation;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const preference = {};
+  if (Object.hasOwn(raw, 'icon') && typeof raw.icon === 'string'
+    && (raw.icon === '' || /^[a-z0-9][a-z0-9-]{0,95}$/.test(raw.icon))) {
+    preference.icon = raw.icon;
+  }
+  if (Object.hasOwn(raw, 'labelOverride')
+    && (raw.labelOverride === null
+      || (typeof raw.labelOverride === 'string' && raw.labelOverride.length <= 80
+        && !/[\u0000-\u001f\u007f]/.test(raw.labelOverride)))) {
+    preference.labelOverride = raw.labelOverride;
+  }
+  if (Number.isInteger(raw.order) && raw.order >= 0 && raw.order <= 63) preference.order = raw.order;
+  return Object.keys(preference).length ? preference : null;
+}
+
+async function listNavigationPreferences() {
+  const query = new URLSearchParams({ select: 'plugin_id,record', order: 'plugin_id.asc' }).toString();
+  const rows = await supabaseRequest('GET', 'plugin_meta', { query });
+  return new Map((Array.isArray(rows) ? rows : []).flatMap((row) => {
+    if (!safeName(row?.plugin_id)) return [];
+    const preference = navigationPreferenceFromRecord(row.record);
+    return preference ? [[row.plugin_id, preference]] : [];
+  }));
+}
+
+async function saveNavigationPreferences(updates, actor) {
+  const ids = [...new Set((updates || []).map((item) => item?.id).filter(safeName))];
+  if (ids.length !== updates.length) {
+    throw Object.assign(new Error('invalid navigation preference update'), { code: 400, reason: 'InvalidNavigationSettings' });
+  }
+  const query = new URLSearchParams({ select: 'plugin_id,record', order: 'plugin_id.asc' }).toString();
+  const rows = await supabaseRequest('GET', 'plugin_meta', { query });
+  const currentById = new Map((Array.isArray(rows) ? rows : []).map((row) => [row.plugin_id, row.record || {}]));
+  const body = updates.map(({ id, navigation }) => ({
+    plugin_id: id,
+    record: {
+      ...(currentById.get(id) || {}),
+      navigation: {
+        ...(navigationPreferenceFromRecord(currentById.get(id) || {}) || {}),
+        ...navigation,
+      },
+    },
+    updated_by: auditActorId(actor),
+    updated_at: new Date().toISOString(),
+  }));
+  await supabaseRequest('POST', 'plugin_meta', {
+    query: 'on_conflict=plugin_id',
+    body,
+    prefer: 'resolution=merge-duplicates,return=representation',
+  });
+  return listNavigationPreferences();
+}
 async function findImageRevocation(repository, digest) {
   const query = new URLSearchParams({
     select: 'repository,digest,replacement_digest,actor_label,reason,operation_id,revoked_at',
@@ -369,7 +430,11 @@ const getPackage = (n) => k8s('GET', `${crd('uipluginpackages')}/${n}`);
 const getReg = (n) => k8s('GET', `${crd('uipluginregistrations')}/${n}`);
 async function refreshExtensionManagementProjection() {
   const current = extensionProjection.requireCurrent();
-  const [packages, registrations] = await Promise.all([listPackages(), listRegs()]);
+  const [packages, registrations, navigationPreferences] = await Promise.all([
+    listPackages(),
+    listRegs(),
+    listNavigationPreferences(),
+  ]);
   if (!packages.ok || !registrations.ok) {
     throw Object.assign(new Error('extension management projection refresh failed'), {
       code: 503,
@@ -379,7 +444,7 @@ async function refreshExtensionManagementProjection() {
   const snapshot = await extensionProjection.persist({
     ...current,
     observedAt: new Date().toISOString(),
-    catalog: { items: catalogProjectionItems(packages.json?.items) },
+    catalog: { items: catalogProjectionItems(packages.json?.items, navigationPreferences, current.catalog?.items) },
     registrations: { items: registrationProjectionItems(registrations.json?.items) },
   });
   applyExtensionProjection(snapshot);
@@ -1791,7 +1856,10 @@ function packageFromInspection(inspection) {
 async function upsertPackage(pkg) {
   const existing = await getPackage(pkg.metadata.name);
   if (!existing.ok) return k8s('POST', crd('uipluginpackages'), pkg);
-  // The signed module descriptor is authoritative for the entire package spec.
+  // The signed module descriptor is authoritative for the entire package spec,
+  // including its default navigation declaration. Operator presentation values
+  // are deliberately absent here and live in console.plugin_meta, so replacing
+  // the package can no longer erase them.
   // A merge patch preserves keys omitted by a newer descriptor (for example the
   // old contributions.cli.reason after CLI becomes enabled), which then causes
   // ContributionDrift against the runtime manifest. Replace the resource so
@@ -1909,13 +1977,37 @@ function retainableLastKnownGood(prior, pkg, reg, reason, trustedKeys = _trusted
     && prior.manifestSha256 === reg?.status?.currentManifestSha256
   );
 }
-function catalogProjectionItems(items) {
-  return (items || []).map((pkg) => ({
-    name: pkg.metadata.name,
-    core: isCorePkg(pkg),
-    scope: pkg.metadata.labels?.['opensphere.io/scope'] || null,
-    ...pkg.spec,
-  }));
+function priorNavigationPreference(priorCatalogItems, id) {
+  const nav = (priorCatalogItems || []).find((item) => item?.name === id)?.nav;
+  if (!nav || typeof nav !== 'object') return null;
+  return navigationPreferenceFromRecord({ navigation: nav });
+}
+
+function effectivePackageNavigation(pkg, preferences, priorCatalogItems = []) {
+  const id = pkg?.metadata?.name;
+  const preference = preferences instanceof Map
+    ? preferences.get(id)
+    : priorNavigationPreference(priorCatalogItems, id);
+  if (!preference) return pkg;
+  return {
+    ...pkg,
+    spec: {
+      ...pkg.spec,
+      nav: { ...(pkg.spec?.nav || {}), ...preference },
+    },
+  };
+}
+
+function catalogProjectionItems(items, preferences = new Map(), priorCatalogItems = []) {
+  return (items || []).map((source) => {
+    const pkg = effectivePackageNavigation(source, preferences, priorCatalogItems);
+    return {
+      name: pkg.metadata.name,
+      core: isCorePkg(pkg),
+      scope: pkg.metadata.labels?.['opensphere.io/scope'] || null,
+      ...pkg.spec,
+    };
+  });
 }
 function registrationProjectionItems(items) {
   return (items || []).map((x) => {
@@ -1947,8 +2039,19 @@ function applyExtensionProjection(snapshot) {
 async function reconcile() {
   const [pkgs, regs] = await Promise.all([listPackages(), listRegs()]);
   if (!pkgs.ok || !regs.ok) return;
+  const priorProjection = extensionProjection.current();
+  let navigationPreferences = null;
+  try {
+    navigationPreferences = await listNavigationPreferences();
+  } catch (error) {
+    // Package/workload reconciliation may continue, but presentation must not
+    // silently fall back to descriptor defaults. The last shared projection is
+    // retained until the durable preference authority becomes readable again.
+    console.error('[navigation-preferences] durable authority unavailable; retaining last projection:', error?.message || error);
+  }
+  const priorCatalogItems = priorProjection?.catalog?.items || [];
   const priorPublishedByName = Object.fromEntries(
-    (extensionProjection.current()?.registry?.plugins || []).map((plugin) => [plugin.id, plugin])
+    (priorProjection?.registry?.plugins || []).map((plugin) => [plugin.id, plugin])
   );
   const pkgByName = Object.fromEntries(pkgs.json.items.map((p) => [p.metadata.name, p]));
   _trustedKeys = null; // 매 reconcile마다 신뢰키 재로드
@@ -2169,7 +2272,8 @@ async function reconcile() {
         : prior?.artifactServiceId ? [prior.artifactServiceId] : [];
       const manifestUrl = `${SHELL_API_PREFIX}/${revision.serviceName}/plugins/ui-shell.manifest.json`;
       const sigUrl = `${SHELL_API_PREFIX}/${revision.serviceName}/plugins/${(pkg.spec.manifest.signaturePath || 'ui-shell.manifest.json.sig').split('/').pop()}`;
-      published.push(publishedPluginEntry(pkg, manifestUrl, sigUrl, reg, channelEvidence, {
+      const presentationPackage = effectivePackageNavigation(pkg, navigationPreferences, priorCatalogItems);
+      published.push(publishedPluginEntry(presentationPackage, manifestUrl, sigUrl, reg, channelEvidence, {
         artifactServiceId: revision.serviceName,
         releaseRevision: revision.token,
         retainedArtifactServiceIds,
@@ -2216,7 +2320,7 @@ async function reconcile() {
         plugins: nextPublishedPlugins,
         templates: [],
       },
-      catalog: { items: catalogProjectionItems(pkgs.json?.items) },
+      catalog: { items: catalogProjectionItems(pkgs.json?.items, navigationPreferences, priorCatalogItems) },
       registrations: { items: registrationItems },
     });
     applyExtensionProjection(snapshot);
@@ -3933,21 +4037,14 @@ const server = http.createServer(async (req, res) => {
       }
       const plan = navigationOrderPlan(packages.json?.items, registrations.json?.items, body.ids);
       if (!plan.ok) return json(res, 409, { error: plan.reason, opId });
-      const packageById = new Map((packages.json?.items || []).map((pkg) => [pkg.metadata?.name, pkg]));
-      const applied = [];
-      for (const item of plan.items) {
-        const result = await k8s('PATCH', `${crd('uipluginpackages')}/${item.id}`, { spec: { nav: { order: item.order } } });
-        if (!result.ok) {
-          for (const completed of applied.reverse()) {
-            const previous = packageById.get(completed.id)?.spec?.nav?.order;
-            await k8s('PATCH', `${crd('uipluginpackages')}/${completed.id}`, {
-              spec: { nav: { order: Number.isInteger(previous) ? previous : null } },
-            }).catch(() => null);
-          }
-          await durableAudit(actor, 'set-navigation-order', 'main-shell', 'error', `HTTP ${result.status}`, opId);
-          return json(res, result.status >= 500 ? 502 : result.status, { error: 'NavigationOrderPatchFailed', opId });
-        }
-        applied.push(item);
+      try {
+        await saveNavigationPreferences(
+          plan.items.map((item) => ({ id: item.id, navigation: { order: item.order } })),
+          actor,
+        );
+      } catch (error) {
+        await durableAudit(actor, 'set-navigation-order', 'main-shell', 'error', error?.reason || error?.message, opId);
+        return json(res, Number(error?.code) || 503, { error: error?.reason || 'NavigationPreferenceWriteFailed', opId });
       }
       await refreshExtensionManagementProjection();
       await durableAudit(actor, 'set-navigation-order', 'main-shell', 'accepted', plan.items.map((item) => item.id).join(','), opId);
@@ -3955,7 +4052,9 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { accepted: true, ids: plan.items.map((item) => item.id), opId });
     }
 
-    // 1단 메뉴 표현 설정 — 원본 package identity와 분리된 관리자 icon/label override.
+    // 1단 메뉴 표현 설정 — signed Package가 아니라 durable Console
+    // preference에 기록한다. Package update와 관리자 설정의 쓰기 권위가
+    // 물리적으로 분리되어 어느 쪽도 다른 쪽을 덮을 수 없다.
     const navigationMatch = p.match(/^\/api\/admin\/plugins\/packages\/([a-z0-9-]+)\/navigation$/);
     if (navigationMatch && req.method === 'POST') {
       const [, id] = navigationMatch;
@@ -3967,15 +4066,21 @@ const server = http.createServer(async (req, res) => {
       if (current.json?.spec?.kind !== 'subShell' || (current.json?.spec?.hostRef || 'main') !== 'main') {
         return json(res, 409, { error: 'NavigationSettingsRequireFirstLevelSubShell', opId });
       }
-      const result = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: { nav: patch.nav } });
-      if (!result.ok) {
-        await durableAudit(actor, 'set-navigation', id, 'error', `HTTP ${result.status}`, opId);
-        return json(res, result.status >= 500 ? 502 : result.status, { error: 'NavigationSettingsPatchFailed', opId });
+      let preferences;
+      try { preferences = await saveNavigationPreferences([{ id, navigation: patch.nav }], actor); }
+      catch (error) {
+        await durableAudit(actor, 'set-navigation', id, 'error', error?.reason || error?.message, opId);
+        return json(res, Number(error?.code) || 503, { error: error?.reason || 'NavigationPreferenceWriteFailed', opId });
       }
       await refreshExtensionManagementProjection();
       await durableAudit(actor, 'set-navigation', id, 'accepted', JSON.stringify(patch.nav), opId);
       reconcile().catch((error) => console.error('reconcile error', error));
-      return json(res, 200, { accepted: true, id, navigation: result.json?.spec?.nav || patch.nav, opId });
+      return json(res, 200, {
+        accepted: true,
+        id,
+        navigation: { ...(current.json?.spec?.nav || {}), ...(preferences.get(id) || patch.nav) },
+        opId,
+      });
     }
 
     // 하위 호환 아이콘 endpoint. 신규 UI는 /navigation을 사용한다.
@@ -3991,12 +4096,15 @@ const server = http.createServer(async (req, res) => {
         return json(res, 409, { error: 'NavigationSettingsRequireFirstLevelSubShell', opId });
       }
       const icon = settings.nav.icon;
-      const r = await k8s('PATCH', `${crd('uipluginpackages')}/${id}`, { spec: { nav: { icon } } });
-      if (!r.ok) { console.error(`[err] op=${opId} set-icon ${id} k8s ${r.status}:`, JSON.stringify(r.json).slice(0, 200)); await durableAudit(actor, 'set-icon', id, 'error', `HTTP ${r.status}`, opId); return json(res, r.status >= 500 ? 502 : r.status, { error: 'upstream error', status: r.status, opId }); }
+      try { await saveNavigationPreferences([{ id, navigation: { icon } }], actor); }
+      catch (error) {
+        await durableAudit(actor, 'set-icon', id, 'error', error?.reason || error?.message, opId);
+        return json(res, Number(error?.code) || 503, { error: error?.reason || 'NavigationPreferenceWriteFailed', opId });
+      }
       await refreshExtensionManagementProjection();
       await durableAudit(actor, 'set-icon', id, 'accepted', icon, opId);
       reconcile().catch((e) => console.error('reconcile error', e));
-      return json(res, 202, { accepted: true, id, icon });
+      return json(res, 200, { accepted: true, id, icon });
     }
     json(res, 404, { error: 'not found' });
   } catch (e) {
@@ -4039,7 +4147,7 @@ module.exports = {
   auditCounters: () => ({ failures: auditPersistFailures, lastFailure: auditLastFailure, pending: _k8sEventsPending, seen: seenEvents.size }),
   isAdminGroups, safeName, validContributions, validCapabilities, integrationStatuses,
   moduleDescriptorIssues, moduleDependencySpecifiers, catalogProjectionItems, registrationProjectionItems,
-  navigationSettingsPatch, navigationOrderPlan,
+  navigationSettingsPatch, navigationOrderPlan, navigationPreferenceFromRecord, effectivePackageNavigation,
   kubernetesApiBase, packageFromInspection, releaseRevision, releaseAnnotations,
   deploymentManifest, pdbManifest, serviceManifest, hpaManifest,
   networkPolicyManifest, telemetryDescriptor, publishedPluginEntry,

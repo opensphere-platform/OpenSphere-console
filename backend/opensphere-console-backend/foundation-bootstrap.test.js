@@ -29,6 +29,7 @@ const {
   catalogSupplyChainStatus,
   assertCatalogSupplyChain,
   validateGovernedManifest,
+  applyCatalogResource,
 } = require('./foundation-bootstrap-reconciler');
 
 test('Foundation bootstrap template is a closed reviewed consumer contract', () => {
@@ -149,6 +150,47 @@ test('Foundation governed manifest cannot alter catalog, target, identity, or pa
   assert.equal(FOUNDATION_BOOTSTRAP_RECONCILER, 'foundation-bootstrap-reconciler');
 });
 
+test('Foundation bootstrap preserves an existing operator-owned model exactly', async () => {
+  const data = loadFoundationBootstrapCatalog().find((item) => item.kind === 'FoundationModel' && item.name === 'data');
+  const existing = {
+    apiVersion: 'foundation.opensphere.io/v1alpha1',
+    kind: 'FoundationModel',
+    metadata: { name: 'data', resourceVersion: '77' },
+    spec: {
+      model: 'data',
+      desiredState: 'Installed',
+      parameters: {
+        engines: {
+          postgres: { enabled: true }, psmdb: { enabled: true }, valkey: { enabled: true },
+          rustfs: { enabled: true }, opensearch: { enabled: true },
+        },
+      },
+    },
+  };
+  let writes = 0;
+  const result = await applyCatalogResource(data, {
+    get: async () => structuredClone(existing),
+    request: async () => { writes += 1; throw new Error('must not write'); },
+  });
+  assert.equal(result.operation, 'preserved');
+  assert.deepEqual(result.object, existing);
+  assert.equal(writes, 0);
+});
+
+test('Foundation bootstrap creates a missing model without force ownership', async () => {
+  const data = loadFoundationBootstrapCatalog().find((item) => item.kind === 'FoundationModel' && item.name === 'data');
+  const calls = [];
+  const missing = Object.assign(new Error('not found'), { status: 404 });
+  const result = await applyCatalogResource(data, {
+    get: async () => { throw missing; },
+    request: async (...args) => { calls.push(args); return { metadata: { name: 'data' } }; },
+  });
+  assert.equal(result.operation, 'created');
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1], /fieldManager=foundation-bootstrap-reconciler$/);
+  assert.doesNotMatch(calls[0][1], /force=true/);
+});
+
 test('Foundation deployment readiness is generation and replica exact', () => {
   const ready = {
     metadata: { generation: 4 },
@@ -220,7 +262,7 @@ test('Console release wires the Foundation template, dedicated runtime, least-pr
   assert.match(deploy, /name: foundation-bootstrap-closed-catalog/);
   assert.match(deploy, /resources: \["foundationclaims"\][\s\S]{0,80}verbs: \["get", "create", "patch"\]/);
   assert.match(deploy, /resources: \["foundationbindings"\][\s\S]{0,60}verbs: \["get"\]/);
-  assert.match(deploy, /FoundationModel' && object\.metadata\.name in \['identity', 'data', 'observability'\]/);
+  assert.match(deploy, /request\.kind\.kind == 'FoundationModel'[\s\S]{0,100}request\.operation == 'CREATE'[\s\S]{0,120}object\.metadata\.name in \['identity', 'data', 'observability'\]/);
   assert.match(deploy, /FoundationClaim'[\s\S]{0,180}foundation-bootstrap-observability/);
   assert.match(deploy, /foundation-bootstrap-reconciler may mutate only the signed closed Foundation catalog/);
   assert.match(migration, /'foundation-bootstrap-reconciler'/);

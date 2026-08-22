@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs } = require('./controller');
+const { moduleDescriptorIssues, packageFromInspection, deploymentManifest, hpaManifest, networkPolicyManifest, telemetryDescriptor, publishedPluginEntry, parseModuleImageReference, runnablePlatformManifests, governedSourceRepository, canonicalModuleRepository, attestationArguments, localEdgeMetadataIssues, localEdgeEvidenceRefs, catalogProjectionItems, navigationPreferenceFromRecord } = require('./controller');
 
 const controllerSource = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
 const controllerManifest = fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8');
@@ -223,6 +223,38 @@ test('package updates replace the signed spec so removed contribution fields can
   assert.match(upsertFlow, /k8s\('PUT'/);
   assert.match(upsertFlow, /resourceVersion: existing\.json\.metadata\.resourceVersion/);
   assert.doesNotMatch(upsertFlow, /k8s\('PATCH'/);
+});
+
+test('package replacement cannot erase operator navigation preferences', () => {
+  const first = packageFromInspection({
+    descriptor,
+    repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager',
+    digest: `sha256:${'b'.repeat(64)}`,
+  });
+  const preference = navigationPreferenceFromRecord({
+    navigation: { icon: 'app-connectivity', labelOverride: 'PF Service Stack', order: 2 },
+  });
+  const before = catalogProjectionItems([first], new Map([[descriptor.id, preference]]))[0];
+
+  const updatedDescriptor = structuredClone(descriptor);
+  updatedDescriptor.version = '1.1.0';
+  updatedDescriptor.nav = { band: '구축 Build', label: 'New descriptor default', icon: 'application' };
+  const replacement = packageFromInspection({
+    descriptor: updatedDescriptor,
+    repository: 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager',
+    digest: `sha256:${'c'.repeat(64)}`,
+  });
+  const after = catalogProjectionItems([replacement], new Map([[descriptor.id, preference]]))[0];
+
+  assert.deepEqual(before.nav, {
+    ...first.spec.nav,
+    icon: 'app-connectivity', labelOverride: 'PF Service Stack', order: 2,
+  });
+  assert.deepEqual(after.nav, {
+    ...updatedDescriptor.nav,
+    icon: 'app-connectivity', labelOverride: 'PF Service Stack', order: 2,
+  });
+  assert.deepEqual(replacement.spec.nav, updatedDescriptor.nav, 'signed package remains free of operator-owned values');
 });
 
 test('hardened runtime materializes Pod security, availability, network and scrape policy', () => {
