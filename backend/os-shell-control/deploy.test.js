@@ -280,11 +280,11 @@ test('local-edge deploy binds every component-only override through exact source
   assert.match(deployScript, /Backend override requires exactly backend/);
   assert.match(deployScript, /Console override requires exactly console/);
   assert.match(deployScript, /Control override requires exactly osShellControl/);
-  assert.match(deployScript, /Runtime override changes the base Supabase migration lineage/);
-  assert.match(deployScript, /Platform bridge changes the base Supabase migration lineage/);
-  assert.match(deployScript, /Backend override changes the base Supabase migration lineage/);
-  assert.match(deployScript, /Console override changes the base Supabase migration lineage/);
-  assert.match(deployScript, /Control override changes the base Supabase migration lineage/);
+  assert.match(deployScript, /Runtime override source/);
+  assert.match(deployScript, /Console override source/);
+  assert.match(deployScript, /Assert-MigrationAuthorityCompatible -Authority \$migrationAuthority/);
+  assert.match(deployScript, /Backend publication migration evidence/);
+  assert.match(deployScript, /complete migration inventory is an exact prefix/);
   assert.match(deployScript, /os-shell-runtime-override-boundary[.]mjs/);
   assert.match(deployScript, /'--base',\s*\r?\n?\s*\(\[string\]\$evidence[.]sourceRevision\)/);
   assert.match(deployScript, /@\('--runtime', \(\[string\]\$runtimeEvidence[.]sourceRevision\)\)/);
@@ -322,6 +322,9 @@ test('local-edge deploy binds every component-only override through exact source
   const featureEvidenceBlock = /\$featureOperationEvidence = \[ordered\]@\{([\s\S]*?)\r?\n\}/.exec(deployScript)?.[1] || '';
   assert.doesNotMatch(featureEvidenceBlock, /consolePublicationSha256|backendPublicationSha256/);
   assert.match(featureEvidenceBlock, /publicationSha256 = Get-FileSha256 -Path \$publicationPath/);
+  assert.match(featureEvidenceBlock, /sourceRevision = \$migrationLedgerSourceRevision/);
+  assert.match(deployScript, /SELECT migration_id\|\|''\|''\|\|source_revision FROM console[.]schema_migration/);
+  assert.match(deployScript, /migrationLedgerId[.]Split\('_',2\)\[0\].*migrationManifest[.]latestMigrationId/s);
   assert.match(deployScript, /backendOverrideBoundary = \$backendBoundaryEvidence/);
   assert.match(deployScript, /consoleOverrideBoundary = \$consoleBoundaryEvidence/);
   assert.match(deployScript, /controlOverrideBoundary = \$controlBoundaryEvidence/);
@@ -353,9 +356,10 @@ test('local-edge deploy binds every component-only override through exact source
     assert.throws(() => boundary.assertBackendOverridePaths([escape, backendPaths[1]]), /canonical repository|exact closed set/);
   }
   assert.match(featureOperationScript, /\[string\]\$ConsolePublicationEvidence = ''/);
-  assert.match(featureOperationScript, /'-ConsolePublicationEvidence',\$ConsolePublicationEvidence/);
-  assert.match(featureOperationScript, /'-ControlPublicationEvidence',\$ControlPublicationEvidence/);
-  assert.doesNotMatch(publisher, /osShellControlRelease|osShellRuntime/);
+  assert.match(featureOperationScript, /\$arguments[.]ConsolePublicationEvidence = \$ConsolePublicationEvidence/);
+  assert.match(featureOperationScript, /\$arguments[.]ControlPublicationEvidence = \$ControlPublicationEvidence/);
+  assert.match(featureOperationScript, /Deploy-LocalEdgeOsShell[.]ps1'\) @arguments/);
+  assert.doesNotMatch(publisher, /artifacts[.]osShellControlRelease|artifacts[.]osShellRuntime/);
   assert.match(deployScript, /userNamespacePolicy = \$runtimeUserNamespacePolicy/);
   assert.match(deployScript, /linux-userns\+rlimit-nproc\+namespace-resourcequota/);
   assert.doesNotMatch(deployScript, /linux-rlimit-nproc-fixed-uid\+namespace-resourcequota/);
@@ -388,7 +392,8 @@ test('0062 owner operation is projected-SA, bidirectional, signed-intent-first a
     < featureOperationScript.indexOf("'scale',\"deployment/$deployment\""));
   assert.match(featureOperationScript, /operationPhase='Completed'/);
   assert.match(deployScript, /0062_shell_session_quota_and_kill_switch[.]sql/);
-  assert.match(deployScript, /latestMigrationId -ne '0062'/);
+  assert.doesNotMatch(deployScript, /latestMigrationId -ne '006[0-9]'/);
+  assert.match(deployScript, /migrationLedgerId[.]Split\('_',2\)\[0\].*migrationManifest[.]latestMigrationId/s);
   assert.ok(deployScript.indexOf('New-OsShellEdgeSignedDocument') < deployScript.indexOf('Invoke-LocalEdgeShellFeatureOperation -Enabled $true'));
   assert.match(deployScript, /Invoke-OsShellFeatureOperation[.]ps1'\) -Operation Disable/);
   assert.match(deployScript, /-RecoverySignedProfile \$profilePath -RecoverySignature \$signaturePath/);

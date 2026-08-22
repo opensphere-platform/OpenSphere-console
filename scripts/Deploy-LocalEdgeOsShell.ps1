@@ -1116,12 +1116,15 @@ $deploymentToolingAllowlist = @(
   'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/Invoke-OsShellFeatureOperation.ps1',
   'scripts/Publish-LocalEdge.ps1',
+  'scripts/Publish-LocalEdgeConsole.ps1',
   'scripts/Publish-LocalEdgeOsShell.ps1',
   'scripts/Publish-LocalEdgeOsShellConsole.ps1',
   'scripts/os-shell-component-publisher.test.mjs',
   'scripts/os-shell-console-publisher.test.mjs',
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
+  'scripts/backend-bridge-publisher.test.mjs',
+  'backend/dupa-control/release-channel-workflow.test.js',
   'backend/os-shell-control/deploy.yaml',
   'backend/os-shell-control/deploy.test.js',
   'backend/opensphere-console-backend/platform-release.test.js'
@@ -1412,6 +1415,21 @@ $prerequisiteEvidence['backend'] = Assert-PrerequisiteDeployment -Deployment 'op
 Write-Host "[step 3/7] Apply committed Supabase migration lineage through Backend authority $($migrationAuthority.latestMigrationId)"
 & $migrationRunner -KubeContext $KubeContext -SourceRevision ([string]$backendEvidence.sourceRevision)
 if ($LASTEXITCODE -ne 0) { throw "migrate-only.ps1 failed with exit code $LASTEXITCODE" }
+$migrationDataNamespace = 'opensphere-console-data'
+$migrationPod = ((Invoke-Kubectl -Arguments @('-n',$migrationDataNamespace,'get','pod','-l',
+  'app=opensphere-supabase-postgres','-o','jsonpath={.items[0].metadata.name}')) -join '').Trim()
+if (-not $migrationPod) { throw 'Supabase migration ledger Pod is unavailable' }
+$migrationLedgerCommand = 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U supabase_admin -d postgres -tA -v ON_ERROR_STOP=1 -c "SELECT migration_id||''|''||source_revision FROM console.schema_migration ORDER BY migration_id DESC LIMIT 1;"'
+$migrationLedgerLine = ((Invoke-Kubectl -Arguments @('-n',$migrationDataNamespace,'exec',$migrationPod,'--','sh','-ec',
+  $migrationLedgerCommand)) | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ } | Select-Object -Last 1)
+$migrationLedgerParts = @([string]$migrationLedgerLine -split '\|', 2)
+$migrationLedgerId = if ($migrationLedgerParts.Count -eq 2) { $migrationLedgerParts[0] } else { '' }
+$migrationLedgerSourceRevision = if ($migrationLedgerParts.Count -eq 2) { $migrationLedgerParts[1] } else { '' }
+if ($migrationLedgerId -notmatch '^[0-9]{4}_[a-z0-9_]+$' -or
+    $migrationLedgerId.Split('_',2)[0] -ne [string]$migrationManifest.latestMigrationId -or
+    $migrationLedgerSourceRevision -notmatch '^[a-f0-9]{40}$') {
+  throw 'Live Supabase migration ledger authority does not match the committed migration manifest'
+}
 
 Write-Host '[step 4/7] Apply exact-digest OS Shell control manifest'
 $renderedManifest = $manifestSource.Replace($consolePlaceholder, $console.image).Replace($controlPlaceholder, $control.image).Replace($runtimePlaceholder, $runtime.image)
@@ -1736,7 +1754,7 @@ $featureOperationEvidence = [ordered]@{
   releaseIntentKeyId = $SigningKeyId
   releaseIntentSha256 = $signedProfile.DocumentSha256
   releaseIntentSignatureSha256 = $signedProfile.SignatureSha256
-  sourceRevision = [string]$backendEvidence.sourceRevision
+  sourceRevision = $migrationLedgerSourceRevision
 }
 Write-Host '[owner] Open durable gate only after the signed release intent and trust verification converge'
 $enableOperationId = New-FeatureOperationId -Kind Enable -ReleaseIntentSha256 $signedProfile.DocumentSha256
@@ -1747,6 +1765,7 @@ if ([bool]$featureOperation.state.enabled -ne $true -or [long]$featureOperation.
   throw 'OS Shell feature gate opened with a non-canonical state'
 }
 try {
+$latestMigrationEntry = @($migrationManifest.migrations | Select-Object -Last 1)[0]
 $receipt = [ordered]@{
   apiVersion = 'release.opensphere.io/v1alpha1'
   kind = 'OpenSphereEdgeAuxiliaryDeploymentReceipt'
@@ -1781,11 +1800,11 @@ $receipt = [ordered]@{
   controlOverrideBoundary = $controlBoundaryEvidence
   deployedAt = [DateTimeOffset]::UtcNow.ToString('o')
   migration = [ordered]@{
-    id = '0062_shell_session_quota_and_kill_switch'
-    predecessor = '0061_shell_session_ledger'
+    id = $migrationLedgerId
+    predecessor = [string]$latestMigrationEntry.predecessorMigrationId
     migrationCount = [int]$migrationManifest.migrationCount
     manifestSetDigest = [string]$migrationManifest.setDigest
-    sourceRevision = [string]$backendEvidence.sourceRevision
+    sourceRevision = $migrationLedgerSourceRevision
   }
   images = $componentImages
   releaseEvidence = [ordered]@{
