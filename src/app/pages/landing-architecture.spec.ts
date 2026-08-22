@@ -8,6 +8,7 @@ const realizationModel = fs.readFileSync(
   'utf8',
 );
 const foundationSource = fs.readFileSync(new URL('./landing-foundations.ts', import.meta.url), 'utf8');
+const globalStylesSource = fs.readFileSync(new URL('../../styles.scss', import.meta.url), 'utf8');
 const foundationModel = fs.readFileSync(
   new URL('../architecture/foundation-concepts.model.ts', import.meta.url),
   'utf8',
@@ -96,25 +97,23 @@ test('Perspective navigation remains Registry-derived and phantom-route free', (
   assert.match(search, /홈 · 10P × 6L/);
 });
 
-test('main index adds exactly four foundation concept tabs with keyboard semantics', () => {
+test('main index renders five independent foundation pages with the real Clarity tabs component', () => {
   assert.match(source, /<os-landing-foundations/);
-  assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|ai-lifecycle)'/g) || []).length, 4);
-  assert.match(foundationSource, /role="tablist"/);
-  assert.match(foundationSource, /role="tab"/);
-  assert.match(foundationSource, /role="tabpanel"/);
-  assert.match(foundationSource, /aria-selected/);
-  for (const key of ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End']) {
-    assert.match(foundationSource, new RegExp(key));
-  }
+  assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)'/g) || []).length, 5);
+  assert.match(foundationSource, /import \{ ClarityModule \} from '@clr\/angular'/);
+  assert.match(foundationSource, /imports: \[ClarityModule\]/);
+  assert.match(foundationSource, /<clr-tabs class="foundation-clarity-tabs">/);
+  assert.equal((foundationSource.match(/<clr-tab>/g) || []).length, 5);
+  assert.equal((foundationSource.match(/<button clrTabLink/g) || []).length, 5);
+  assert.equal((foundationSource.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 5);
+  assert.doesNotMatch(foundationSource, /role="tablist"|onTabKeydown|ArrowRight|aria-selected/);
 });
 
 test('foundation concepts remain readable and contained across viewport widths', () => {
   assert.match(foundationSource, /:host \{[^}]*min-width:0;[^}]*max-width:100%/);
   assert.match(foundationSource, /\.foundation-docs \{[^}]*max-width:100%;[^}]*overflow:hidden/);
-  assert.match(
-    foundationSource,
-    /\.foundation-tabs \{[^}]*repeat\(auto-fit,minmax\(13rem,1fr\)\)/,
-  );
+  assert.match(foundationSource, /\.foundation-clarity-tabs \{[^}]*display:block/);
+  assert.match(globalStylesSource, /\.engine-surface-grid \{[^}]*repeat\(4, minmax\(0, 1fr\)\)/);
   assert.match(
     foundationSource,
     /\.ai-pipeline \{[^}]*repeat\(auto-fit,minmax\(10\.5rem,1fr\)\)/,
@@ -124,7 +123,7 @@ test('foundation concepts remain readable and contained across viewport widths',
 });
 
 test('foundation concepts enlarge body copy without changing the title line', () => {
-  assert.match(foundationSource, /<h2 id="foundation-docs-title">원자적 구성을 지탱하는 네 가지 설계 계약<\/h2>/);
+  assert.match(foundationSource, /<h2 id="foundation-docs-title">원자적 구성을 지탱하는 다섯 가지 설계 계약<\/h2>/);
   assert.match(
     foundationSource,
     /\.foundation-heading h2,\.section-title h3 \{[^}]*font-size:1\.28rem/,
@@ -147,6 +146,14 @@ test('foundation concepts use the approved local pictogram set without a runtime
     'connected-ecosystem.svg',
     'control-tower.svg',
     'ai-governance-lifecycle-factsheet.svg',
+    'api.svg',
+    'code-syntax.svg',
+    'console.svg',
+    'control-panel.svg',
+    'developer-tools.svg',
+    'intelligence.svg',
+    'microservices.svg',
+    'systems.svg',
   ];
   for (const pictogram of pictograms) {
     assert.match(foundationModel, new RegExp(`/assets/pictograms/${pictogram.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}`));
@@ -162,12 +169,12 @@ test('foundation concepts use the approved local pictogram set without a runtime
     assert.match(svg, /^<svg[^>]+viewBox="0 0 32 32"/);
     assert.doesNotMatch(svg, /<script|<foreignObject|\son\w+=|(?:href|src)=/i);
   }
-  assert.equal((foundationSource.match(/class="tab-pictogram"/g) || []).length, 1);
-  assert.equal((foundationSource.match(/class="section-pictogram"/g) || []).length, 4);
+  assert.equal((foundationSource.match(/class="section-pictogram"/g) || []).length, 5);
   assert.doesNotMatch(`${foundationSource}\n${foundationModel}`, /pictograms\.opl\.io\.kr|cdn\.statically\.io/);
-  assert.doesNotMatch(foundationSource, /\.tab-pictogram,\.section-pictogram \{[^}]*background:/);
-  assert.match(foundationSource, /class="tab-pictogram"[\s\S]{0,120}width="44" height="44"/);
-  assert.equal((foundationSource.match(/class="section-pictogram"[\s\S]{0,160}width="70" height="70"/g) || []).length, 4);
+  assert.doesNotMatch(foundationSource, /\.section-pictogram \{[^}]*background:/);
+  assert.equal((foundationSource.match(/class="section-pictogram"[\s\S]{0,160}width="70" height="70"/g) || []).length, 5);
+  assert.equal((foundationSource.match(/class="engine-node(?: target)?"/g) || []).length, 2);
+  assert.match(foundationSource, /CONTROLLED COMPONENTS/);
 });
 
 test('CBSS products use their approved local product logos without decorative tiles or a runtime CDN', () => {
@@ -190,7 +197,7 @@ test('CBSS products use their approved local product logos without decorative ti
   assert.match(foundationSource, /<img \[src\]="component\.productLogo" \[alt\]="component\.productLogoAlt \?\? component\.id" width="36" height="36" style="object-fit:contain"/);
   assert.doesNotMatch(`${foundationSource}\n${foundationModel}`, /logos\.opl\.io\.kr|cdn\.statically\.io/);
   assert.doesNotMatch(foundationSource, /product-logo[^}]*background:/);
-  assert.match(foundationSource, /원자적 구성을 지탱하는 네 가지 설계 계약/);
+  assert.match(foundationSource, /원자적 구성을 지탱하는 다섯 가지 설계 계약/);
 });
 
 test('Service Stack documentation defines HISS CBSS PFSS owners and hard boundaries', () => {
@@ -227,16 +234,36 @@ test('control pillars use one capability owner and keep OSAA CLI Shell as surfac
     'OpenSphere AI Agent',
     'OpenSphere CLI',
     'OpenSphere OS Shell',
-    'Capability & Owner API',
+    'OSCE Control API',
     'Plan · Approval · Operation',
     'Audit · Receipt · Recovery',
   ]) {
     assert.match(foundationModel, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.match(foundationSource, /표면은 authority가 아닙니다/);
-  assert.match(foundationSource, /PFSS PostgreSQL plan → approval → durable apply → watch → receipt/);
+  assert.match(foundationSource, /PFSS PostgreSQL adapter → plan → approval → durable apply → watch → receipt/);
   assert.match(foundationModel, /service account fallback/);
   assert.match(foundationModel, /raw kubectl\/SQL/);
+});
+
+test('Control Engine page defines OSCE as the shared engine without absorbing component authority', () => {
+  for (const term of [
+    'OpenSphere Control Engine',
+    'Main Shell Console',
+    'OpenSphere Shell',
+    'OpenSphere CLI',
+    'OSAA · R2D2',
+    'Component Control Adapter',
+    'SubShell',
+    'Plugin',
+    'Service Stack',
+  ]) {
+    assert.match(foundationModel + foundationSource, new RegExp(term.replace(/[.*+?^()|[\]\\]/g, '\\$&')));
+  }
+  assert.match(foundationSource, /구조화된 API가 기본, OSC는 공식 command adapter/);
+  assert.match(foundationSource, /OSCE가 소유하는 것과 소유하지 않는 것/);
+  assert.match(foundationSource, /raw kubectl·SQL/);
+  assert.equal((foundationModel.match(/step: '0[1-5]',\n    title: '(?:Observe & Understand|Plan|Authorize|Execute|Verify & Recover)'/g) || []).length, 5);
 });
 
 test('AI lifecycle distinguishes current runtime from target model and playground contracts', () => {

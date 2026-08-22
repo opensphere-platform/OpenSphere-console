@@ -2,6 +2,7 @@ export type FoundationConceptTabId =
   | 'service-stacks'
   | 'dupa'
   | 'control-pillars'
+  | 'control-engine'
   | 'ai-lifecycle';
 
 export interface FoundationConceptTab {
@@ -32,6 +33,15 @@ export interface LifecycleDefinition {
   evidence: string;
 }
 
+export interface ControlEngineNode {
+  id: string;
+  name: string;
+  role: string;
+  boundary: string;
+  pictogram: string;
+  pictogramAlt: string;
+}
+
 export const FOUNDATION_CONCEPT_TABS: readonly FoundationConceptTab[] = [
   {
     id: 'service-stacks',
@@ -53,9 +63,17 @@ export const FOUNDATION_CONCEPT_TABS: readonly FoundationConceptTab[] = [
     id: 'control-pillars',
     label: 'Control Pillars',
     eyebrow: 'OSAA · OSC · OSS',
-    summary: 'Agent, CLI, Shell이라는 세 접근면을 하나의 owner·operation·evidence 계약으로 연결합니다.',
+    summary: 'Agent, CLI, Shell이라는 세 접근면을 하나의 OSCE operation·evidence 계약으로 연결합니다.',
     pictogram: '/assets/pictograms/control-tower.svg',
     pictogramAlt: 'One control point connected to three operating surfaces',
+  },
+  {
+    id: 'control-engine',
+    label: 'Control Engine',
+    eyebrow: 'OSCE · API · Control Adapters',
+    summary: 'Console과 모든 제어 채널을 각 component의 실행 계약에 연결하는 공통 제어 엔진을 정의합니다.',
+    pictogram: '/assets/pictograms/control-panel.svg',
+    pictogramAlt: 'Control panel with three independent control channels',
   },
   {
     id: 'ai-lifecycle',
@@ -261,11 +279,116 @@ export const CONTROL_PILLARS: readonly ArchitectureDefinition[] = [
 ] as const;
 
 export const CONTROL_BEAMS: readonly ArchitectureDefinition[] = [
-  { id: 'Capability', name: 'Capability & Owner API', role: '세 접근면이 동일한 action과 유일 owner를 호출합니다.', owns: ['action schema', 'owner endpoint'], excludes: ['surface별 구현 분기'], evidence: 'semantic parity' },
+  { id: 'Capability', name: 'OSCE Control API', role: '세 접근면이 동일한 action과 유일 component control adapter를 호출합니다.', owns: ['action schema', 'component endpoint'], excludes: ['surface별 구현 분기'], evidence: 'semantic parity' },
   { id: 'Identity', name: 'Identity & Authorization', role: 'actor, tenant, assurance, purpose를 끝까지 전달합니다.', owns: ['actor context', 'RBAC/ABAC'], excludes: ['service account fallback'], evidence: 'cross-user/tenant negative' },
   { id: 'Operation', name: 'Plan · Approval · Operation', role: '위험한 변경을 계획과 확인, fence가 있는 operation으로 수행합니다.', owns: ['plan digest', 'confirmation', 'fencing'], excludes: ['fire-and-forget write'], evidence: 'durable state transition' },
   { id: 'Evidence', name: 'Audit · Receipt · Recovery', role: '무엇을 왜 바꿨고 결과가 무엇인지 같은 ledger로 설명합니다.', owns: ['audit correlation', 'terminal receipt', 'rollback reference'], excludes: ['surface-local success claim'], evidence: 'append-only correlation' },
 ] as const;
+
+export const CONTROL_ENGINE_SURFACES: readonly ControlEngineNode[] = [
+  {
+    id: 'Console',
+    name: 'Main Shell Console',
+    role: '페이지, navigation과 관리 workflow를 제공하는 시각적 제어 채널입니다.',
+    boundary: '화면은 domain 제어 로직이나 runtime truth를 소유하지 않습니다.',
+    pictogram: '/assets/pictograms/console.svg',
+    pictogramAlt: 'Console control surface',
+  },
+  {
+    id: 'OSS',
+    name: 'OpenSphere Shell',
+    role: 'Console 안에서 OSC와 허용된 운영 도구를 실행하는 감사 가능한 작업 환경입니다.',
+    boundary: 'Shell session은 제어 엔진이나 일반 cluster-admin 권한이 아닙니다.',
+    pictogram: '/assets/pictograms/developer-tools.svg',
+    pictogramAlt: 'Developer tools framed by command brackets',
+  },
+  {
+    id: 'OSC',
+    name: 'OpenSphere CLI',
+    role: '사람, automation과 AI가 동일한 typed command와 JSON 결과를 사용하는 공식 명령 채널입니다.',
+    boundary: 'CLI는 business logic을 복제하지 않고 OSCE Control API를 호출합니다.',
+    pictogram: '/assets/pictograms/code-syntax.svg',
+    pictogramAlt: 'Code syntax inside a command window',
+  },
+  {
+    id: 'OSAA',
+    name: 'OSAA · R2D2',
+    role: '자연어 의도를 closed action으로 해석하고 전체 작업을 지휘하는 운영 지능입니다.',
+    boundary: '모델의 추론은 직접 mutation 권위가 아니며 OSCE plan과 authorization을 통과합니다.',
+    pictogram: '/assets/pictograms/intelligence.svg',
+    pictogramAlt: 'Artificial intelligence brain',
+  },
+] as const;
+
+export const CONTROL_ENGINE_TARGETS: readonly ControlEngineNode[] = [
+  {
+    id: 'SubShell',
+    name: 'SubShell',
+    role: '독립된 운영 영역의 lifecycle과 child plugin 문맥을 제어합니다.',
+    boundary: 'Main Shell이 subShell의 domain 상태와 복구 로직을 흡수하지 않습니다.',
+    pictogram: '/assets/pictograms/connected-ecosystem.svg',
+    pictogramAlt: 'Connected ecosystem of independent components',
+  },
+  {
+    id: 'Plugin',
+    name: 'Plugin',
+    role: 'host에 귀속된 화면, capability binding 또는 read-only projection을 제어합니다.',
+    boundary: 'Plugin은 hostRef 밖의 route와 shared capability lifecycle을 소유하지 않습니다.',
+    pictogram: '/assets/pictograms/microservices.svg',
+    pictogramAlt: 'Independent microservices connected through defined paths',
+  },
+  {
+    id: 'Service Stack',
+    name: 'Service Stack',
+    role: 'HISS, CBSS, PFSS의 원하는 상태와 실제 상태를 owner별 adapter로 연결합니다.',
+    boundary: 'OSCE가 operator와 runtime truth를 대체하거나 직접 StatefulSet·SQL을 변경하지 않습니다.',
+    pictogram: '/assets/pictograms/systems.svg',
+    pictogramAlt: 'Independent systems sharing one bounded frame',
+  },
+] as const;
+
+export const CONTROL_ENGINE_STAGES: readonly LifecycleDefinition[] = [
+  {
+    step: '01',
+    title: 'Observe & Understand',
+    owner: 'OSAA + OSCE',
+    outcome: '문서·source·runtime·browser 증거를 연결해 실제 실패 지점을 판단',
+    evidence: 'source revision, observation freshness, uncertainty',
+  },
+  {
+    step: '02',
+    title: 'Plan',
+    owner: 'OSCE',
+    outcome: '대상 component, 변경 범위, 위험, 시험과 rollback을 하나의 plan으로 폐쇄',
+    evidence: 'planId, target revision, affected component',
+  },
+  {
+    step: '03',
+    title: 'Authorize',
+    owner: 'Console Backend',
+    outcome: '현재 actor와 정책으로 실행 가능 범위를 확인하고 필요한 승인을 결속',
+    evidence: 'actor, assurance, policy revision, approval',
+  },
+  {
+    step: '04',
+    title: 'Execute',
+    owner: 'Component Control Adapter',
+    outcome: '각 component의 공식 apply 또는 OSC machine mode를 통해 작업 실행',
+    evidence: 'operationId, exact input, owner receipt',
+  },
+  {
+    step: '05',
+    title: 'Verify & Recover',
+    owner: 'OSCE + Component owner',
+    outcome: 'API·runtime·browser postcondition을 확인하고 실패하면 rollback',
+    evidence: 'exact digest, postcondition, rollback receipt',
+  },
+] as const;
+
+export const CONTROL_ENGINE_PICTOGRAMS = {
+  engine: '/assets/pictograms/control-tower.svg',
+  api: '/assets/pictograms/api.svg',
+} as const;
 
 export const AI_LIFECYCLE: readonly LifecycleDefinition[] = [
   { step: '01', title: 'Source & Curate', owner: 'Data/Model owner', outcome: 'dataset·base model·license·usage policy를 등록', evidence: 'source, license, dataset/model digest' },

@@ -1,9 +1,14 @@
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import { ClarityModule } from '@clr/angular';
 import {
   AGENT_RUNTIME_SPECTRUM,
   AI_LIFECYCLE,
   CBSS_COMPONENTS,
   CONTROL_BEAMS,
+  CONTROL_ENGINE_PICTOGRAMS,
+  CONTROL_ENGINE_STAGES,
+  CONTROL_ENGINE_SURFACES,
+  CONTROL_ENGINE_TARGETS,
   CONTROL_PILLARS,
   DUPA_INSTALL_STAGES,
   DUPA_PLUGIN_ROLES,
@@ -16,13 +21,14 @@ import {
 
 @Component({
   selector: 'os-landing-foundations',
+  imports: [ClarityModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="foundation-docs" aria-labelledby="foundation-docs-title">
       <div class="foundation-heading">
         <div>
           <p class="foundation-eyebrow">OpenSphere foundation concepts</p>
-          <h2 id="foundation-docs-title">원자적 구성을 지탱하는 네 가지 설계 계약</h2>
+          <h2 id="foundation-docs-title">원자적 구성을 지탱하는 다섯 가지 설계 계약</h2>
         </div>
         <p>
           제품 이름의 나열이 아니라 각 객체가 무엇을 소유하고, 무엇을 소유하지 않으며,
@@ -30,37 +36,13 @@ import {
         </p>
       </div>
 
-      <div class="foundation-tabs" role="tablist" aria-label="OpenSphere 근간 개념">
-        @for (tab of tabs; track tab.id; let index = $index) {
-          <button
-            type="button"
-            role="tab"
-            [id]="'foundation-tab-' + tab.id"
-            [attr.aria-controls]="'foundation-panel-' + tab.id"
-            [attr.aria-selected]="activeTab() === tab.id"
-            [attr.tabindex]="activeTab() === tab.id ? 0 : -1"
-            [class.active]="activeTab() === tab.id"
-            (click)="selectTab(tab.id)"
-            (keydown)="onTabKeydown($event, index)"
-          >
-            <span class="tab-pictogram" aria-hidden="true">
-              <img [src]="tab.pictogram" alt="" width="44" height="44" />
-            </span>
-            <span class="tab-copy">
-              <strong>{{ tab.label }}</strong>
-              <small>{{ tab.eyebrow }}</small>
-            </span>
-          </button>
-        }
-      </div>
-
-      @switch (activeTab()) {
-        @case ('service-stacks') {
+      <clr-tabs class="foundation-clarity-tabs">
+        <clr-tab>
+          <button clrTabLink (click)="selectTab('service-stacks')">Service Stacks</button>
+          <clr-tab-content *clrIfActive="activeTab() === 'service-stacks'">
           <article
             class="foundation-panel"
             id="foundation-panel-service-stacks"
-            role="tabpanel"
-            aria-labelledby="foundation-tab-service-stacks"
           >
             <section class="document-intro">
               <div class="document-intro-heading">
@@ -184,10 +166,13 @@ import {
               </aside>
             </section>
           </article>
-        }
+          </clr-tab-content>
+        </clr-tab>
 
-        @case ('dupa') {
-          <article class="foundation-panel" id="foundation-panel-dupa" role="tabpanel" aria-labelledby="foundation-tab-dupa">
+        <clr-tab>
+          <button clrTabLink (click)="selectTab('dupa')">DUPA</button>
+          <clr-tab-content *clrIfActive="activeTab() === 'dupa'">
+          <article class="foundation-panel" id="foundation-panel-dupa">
             <section class="document-intro">
               <div class="document-intro-heading">
                 <span class="section-pictogram">
@@ -278,10 +263,13 @@ import {
               <aside class="objective-note"><strong>객관적 평가</strong><p>원자성은 구성요소 수를 늘리는 것이 아니라 결합 계약을 줄이는 것입니다. 두 번째 Runtime 구현이 생기기 전 독립 service plane을 미리 만들면 오히려 새 monolith가 됩니다. 현재는 R2D2 Native 구현에서 논리 계약을 추출하고 AI-Workbench는 read-only consumer로 붙이는 것이 적절합니다.</p></aside>
             </section>
           </article>
-        }
+          </clr-tab-content>
+        </clr-tab>
 
-        @case ('control-pillars') {
-          <article class="foundation-panel" id="foundation-panel-control-pillars" role="tabpanel" aria-labelledby="foundation-tab-control-pillars">
+        <clr-tab>
+          <button clrTabLink (click)="selectTab('control-pillars')">Control Pillars</button>
+          <clr-tab-content *clrIfActive="activeTab() === 'control-pillars'">
+          <article class="foundation-panel" id="foundation-panel-control-pillars">
             <section class="document-intro">
               <div class="document-intro-heading">
                 <span class="section-pictogram">
@@ -289,7 +277,7 @@ import {
                 </span>
                 <div><p class="foundation-eyebrow">OpenSphere control surfaces</p><h3>세 기둥은 서로 다른 UX를 제공하지만 같은 구조 하중을 받습니다</h3></div>
               </div>
-              <p>OSAA, OSC, OSS가 각자 lifecycle과 권위를 가지면 세 개의 control plane이 됩니다. OpenSphere는 이들을 동일한 capability owner, identity, operation, audit라는 보로 연결합니다.</p>
+              <p>OSAA, OSC, OSS가 각자 lifecycle과 권위를 가지면 세 개의 control plane이 됩니다. OpenSphere는 이들을 동일한 OSCE Control API, identity, operation, audit라는 보로 연결합니다.</p>
             </section>
 
             <div class="structure-frame" aria-label="OSAA OSC OSS pillars connected by control beams">
@@ -316,7 +304,7 @@ import {
                 <div><span>OSC</span><strong>os foundation postgres plan create</strong><small>typed flags → JSON</small></div>
                 <div><span>OSS</span><strong>OS Shell에서 같은 os 명령 실행</strong><small>bounded terminal session</small></div>
                 <b>↓</b>
-                <section><span>OWNER</span><strong>PFSS PostgreSQL plan → approval → durable apply → watch → receipt</strong><small>세 표면 모두 동일 planId·digest·fencing·postcondition을 관찰</small></section>
+                <section><span>OSCE</span><strong>PFSS PostgreSQL adapter → plan → approval → durable apply → watch → receipt</strong><small>세 표면 모두 동일 planId·digest·fencing·postcondition을 관찰</small></section>
               </div>
             </section>
 
@@ -329,14 +317,127 @@ import {
               </div>
             </section>
           </article>
-        }
+          </clr-tab-content>
+        </clr-tab>
 
-        @case ('ai-lifecycle') {
-          <article class="foundation-panel" id="foundation-panel-ai-lifecycle" role="tabpanel" aria-labelledby="foundation-tab-ai-lifecycle">
+        <clr-tab>
+          <button clrTabLink (click)="selectTab('control-engine')">Control Engine</button>
+          <clr-tab-content *clrIfActive="activeTab() === 'control-engine'">
+          <article class="foundation-panel" id="foundation-panel-control-engine">
             <section class="document-intro">
               <div class="document-intro-heading">
                 <span class="section-pictogram">
                   <img [src]="tabs[3].pictogram" [alt]="tabs[3].pictogramAlt" width="70" height="70" />
+                </span>
+                <div>
+                  <p class="foundation-eyebrow">OpenSphere Control Engine</p>
+                  <h3>모든 제어 채널을 하나의 실행 의미와 증거로 연결합니다</h3>
+                </div>
+              </div>
+              <p>
+                OSCE는 Console, OSS, OSC, OSAA가 서로 다른 제어 로직을 갖지 않도록 action, plan,
+                authorization, operation, verification과 rollback을 공통으로 처리합니다. 각 component의
+                domain 규칙과 runtime truth는 해당 component에 남기고 OSCE는 전체 작업을 지휘합니다.
+              </p>
+            </section>
+
+            <section class="engine-architecture" aria-label="OpenSphere Control Engine architecture">
+              <div class="engine-layer-heading">
+                <div><span>INPUT CHANNELS</span><h4>누가 어디서 사용하든 같은 제어 의미</h4></div>
+                <p>표면은 다르지만 동일한 action schema, actor context와 operation을 사용합니다.</p>
+              </div>
+              <div class="engine-surface-grid">
+                @for (surface of controlEngineSurfaces; track surface.id) {
+                  <section class="engine-node">
+                    <img [src]="surface.pictogram" [alt]="surface.pictogramAlt" width="64" height="64" />
+                    <div><span>{{ surface.id }}</span><h4>{{ surface.name }}</h4></div>
+                    <p>{{ surface.role }}</p>
+                    <small>{{ surface.boundary }}</small>
+                  </section>
+                }
+              </div>
+
+              <div class="engine-layer-heading engine-core-heading">
+                <div><span>SHARED CONTROL CORE</span><h4>OpenSphere Control Engine</h4></div>
+                <p>하나의 engine이 계획부터 실제 기능 확인과 rollback까지 operation을 닫습니다.</p>
+              </div>
+              <div class="engine-core-grid">
+                <section class="engine-core-card primary">
+                  <img [src]="controlEnginePictograms.engine" alt="Central control tower coordinating operating channels" width="82" height="82" />
+                  <div>
+                    <span>OSCE</span>
+                    <h4>Plan · Authorize · Execute · Verify · Recover</h4>
+                    <p>capability discovery, 영향 범위, 실행 정책, durable operation과 postcondition을 하나의 상관관계로 관리합니다.</p>
+                  </div>
+                </section>
+                <section class="engine-core-card">
+                  <img [src]="controlEnginePictograms.api" alt="Structured API control surface" width="82" height="82" />
+                  <div>
+                    <span>CONTROL API</span>
+                    <h4>구조화된 API가 기본, OSC는 공식 command adapter</h4>
+                    <p>R2D2는 API를 우선 사용하고 공식 운영 명령이 OSC에 정의된 경우 machine-readable mode로 같은 계약을 실행합니다.</p>
+                  </div>
+                </section>
+              </div>
+
+              <div class="engine-layer-heading">
+                <div><span>CONTROLLED COMPONENTS</span><h4>구현을 흡수하지 않고 adapter로 지휘</h4></div>
+                <p>각 대상은 자신의 lifecycle과 정본을 유지하며 OSCE에 표준 제어 능력을 제공합니다.</p>
+              </div>
+              <div class="engine-target-grid">
+                @for (target of controlEngineTargets; track target.id) {
+                  <section class="engine-node target">
+                    <img [src]="target.pictogram" [alt]="target.pictogramAlt" width="68" height="68" />
+                    <div><span>{{ target.id }}</span><h4>{{ target.name }}</h4></div>
+                    <p>{{ target.role }}</p>
+                    <small>{{ target.boundary }}</small>
+                  </section>
+                }
+              </div>
+            </section>
+
+            <section class="document-section">
+              <div class="section-title">
+                <div><p class="foundation-eyebrow">One closed operation</p><h3>판단에서 복구까지 다섯 단계</h3></div>
+                <p>사용자는 R2D2에 한 번 요청하지만 내부 실행은 각 단계의 권위와 증거를 잃지 않습니다.</p>
+              </div>
+              <ol class="engine-stages">
+                @for (stage of controlEngineStages; track stage.step) {
+                  <li>
+                    <span>{{ stage.step }}</span>
+                    <h4>{{ stage.title }}</h4>
+                    <strong>{{ stage.owner }}</strong>
+                    <p>{{ stage.outcome }}</p>
+                    <small>{{ stage.evidence }}</small>
+                  </li>
+                }
+              </ol>
+            </section>
+
+            <section class="decision-block engine-decision">
+              <div class="decision-label">CONTROL BOUNDARY</div>
+              <div>
+                <h4>OSCE가 소유하는 것과 소유하지 않는 것</h4>
+                <ul>
+                  <li><strong>소유</strong> — action schema, plan, authorization context, operation correlation, postcondition과 rollback 지휘</li>
+                  <li><strong>소유하지 않음</strong> — PFSS domain rule, Kubernetes runtime truth, SubShell lifecycle과 Plugin host 문맥</li>
+                  <li><strong>직접 경로 금지</strong> — 화면·R2D2·Shell이 adapter를 우회해 raw kubectl·SQL을 실행하는 구조</li>
+                  <li><strong>완료 기준</strong> — 명령 성공이 아니라 owner receipt, exact digest, API와 실제 화면의 기능 확인</li>
+                </ul>
+              </div>
+            </section>
+          </article>
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectTab('ai-lifecycle')">AI Lifecycle</button>
+          <clr-tab-content *clrIfActive="activeTab() === 'ai-lifecycle'">
+          <article class="foundation-panel" id="foundation-panel-ai-lifecycle">
+            <section class="document-intro">
+              <div class="document-intro-heading">
+                <span class="section-pictogram">
+                  <img [src]="tabs[4].pictogram" [alt]="tabs[4].pictogramAlt" width="70" height="70" />
                 </span>
                 <div><p class="foundation-eyebrow">Agent & model lifecycle</p><h3>모델을 “호출하는 기능”이 아니라 교체 가능한 운영 자원으로 관리합니다</h3></div>
               </div>
@@ -384,8 +485,9 @@ import {
               </div>
             </section>
           </article>
-        }
-      }
+          </clr-tab-content>
+        </clr-tab>
+      </clr-tabs>
     </section>
   `,
   styles: [`
@@ -398,16 +500,11 @@ import {
     .foundation-heading h2,.section-title h3 { margin:0; font-size:1.28rem; font-weight:550; line-height:1.3; }
     .foundation-heading>p,.section-title>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:.8rem; line-height:1.6; text-align:right; }
     .foundation-eyebrow { margin:0 0 .45rem; color:var(--os-accent); font-size:.58rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
-    .foundation-tabs { display:grid; grid-template-columns:repeat(auto-fit,minmax(13rem,1fr)); gap:1px; width:100%; min-width:0; border:1px solid var(--fd-line); background:var(--fd-line); }
-    .foundation-tabs button { display:grid; grid-template-columns:3.5rem minmax(0,1fr); align-items:center; gap:.8rem; min-width:0; min-height:6.4rem; padding:.85rem; border:0; background:var(--os-canvas); color:inherit; font:inherit; text-align:left; cursor:pointer; }
-    .foundation-tabs button:hover { background:var(--os-surface-1); }
-    .foundation-tabs button.active { box-shadow:inset 0 3px var(--os-accent); background:var(--os-accent-subtle); }
-    .foundation-tabs button:focus-visible { outline:2px solid var(--os-accent); outline-offset:-2px; }
-    .tab-pictogram,.section-pictogram { display:grid; place-items:center; }
-    .tab-pictogram { width:3.5rem; height:3.5rem; }
-    .tab-copy { display:grid; gap:.22rem; min-width:0; }
-    .foundation-tabs strong { overflow-wrap:anywhere; font-size:.88rem; line-height:1.35; }
-    .foundation-tabs small { overflow-wrap:anywhere; color:var(--os-ink-muted); font-size:.7rem; line-height:1.45; }
+    .foundation-clarity-tabs { display:block; width:100%; min-width:0; max-width:100%; }
+    :host ::ng-deep .foundation-clarity-tabs>.nav { margin:0; border-bottom:1px solid var(--fd-line); }
+    :host ::ng-deep .foundation-clarity-tabs>.nav .nav-link { font-size:.82rem; font-weight:600; }
+    :host ::ng-deep .foundation-clarity-tabs .tab-content { padding:0; }
+    .section-pictogram { display:grid; place-items:center; }
     .foundation-panel { width:100%; min-width:0; max-width:100%; border:1px solid var(--fd-line); border-top:0; overflow:hidden; background:var(--os-canvas); line-height:1.55; }
     .document-intro { align-items:start; padding:1.35rem 1.25rem; border-bottom:1px solid var(--fd-line); border-left:4px solid var(--os-accent); background:var(--os-surface-1); color:var(--os-ink); }
     .document-intro>.document-intro-heading { display:grid; grid-template-columns:5.6rem minmax(0,1fr); align-items:center; gap:1rem; min-width:0; }
@@ -418,7 +515,7 @@ import {
     .stack-flow,.operator-flow,.invocation-flow { display:flex; align-items:stretch; padding:1rem 1.25rem; border-bottom:1px solid var(--fd-line); background:var(--os-surface-1); }
     .stack-flow>div,.operator-flow>div,.invocation-flow>div { display:grid; flex:1; align-content:start; min-width:0; padding:.75rem; border:1px solid var(--fd-line); background:var(--os-canvas); }
     .stack-flow>b,.operator-flow>b,.invocation-flow>b { align-self:center; padding:0 .45rem; color:var(--os-ink-muted); font-weight:400; }
-    .stack-flow span,.operator-flow span,.invocation-flow span,.composition-map span,.runtime-spectrum span,.pillars span,.parity-flow span,.workspace-compare span,.state-split span { color:var(--os-accent); font:700 var(--fd-label) var(--os-font-mono); }
+    .stack-flow span,.operator-flow span,.invocation-flow span,.composition-map span,.runtime-spectrum span,.pillars span,.parity-flow span,.workspace-compare span,.state-split span,.engine-node span,.engine-core-card span,.engine-stages span { color:var(--os-accent); font:700 var(--fd-label) var(--os-font-mono); }
     .stack-flow strong,.operator-flow strong,.invocation-flow strong { margin-top:.35rem; font-size:.86rem; }
     .stack-flow small,.operator-flow small,.invocation-flow small { margin-top:.4rem; color:var(--os-ink-muted); font-size:var(--fd-detail); }
     .definition-grid { display:grid; min-width:0; gap:1px; border:1px solid var(--fd-line); background:var(--fd-line); }
@@ -511,7 +608,7 @@ import {
       .parity-flow>b,.parity-flow>section { grid-column:1; }
     }
     @media(max-width:36rem){
-      .foundation-tabs,.lifecycle-strip,.ai-pipeline { grid-template-columns:1fr; }
+      .lifecycle-strip,.ai-pipeline { grid-template-columns:1fr; }
       .document-intro,.document-section { padding:1rem; }
       .objective-note,.no-downgrade { grid-template-columns:1fr; }
     }
@@ -527,26 +624,15 @@ export class LandingFoundations {
   readonly runtimeSpectrum = AGENT_RUNTIME_SPECTRUM;
   readonly controlPillars = CONTROL_PILLARS;
   readonly controlBeams = CONTROL_BEAMS;
+  readonly controlEnginePictograms = CONTROL_ENGINE_PICTOGRAMS;
+  readonly controlEngineSurfaces = CONTROL_ENGINE_SURFACES;
+  readonly controlEngineTargets = CONTROL_ENGINE_TARGETS;
+  readonly controlEngineStages = CONTROL_ENGINE_STAGES;
   readonly aiLifecycle = AI_LIFECYCLE;
   readonly modelLocations = MODEL_LOCATIONS;
   readonly activeTab = signal<FoundationConceptTabId>('service-stacks');
 
   selectTab(tab: FoundationConceptTabId): void {
     this.activeTab.set(tab);
-  }
-
-  onTabKeydown(event: KeyboardEvent, index: number): void {
-    const keyOffsets: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
-    let nextIndex = index;
-    if (event.key === 'Home') nextIndex = 0;
-    else if (event.key === 'End') nextIndex = this.tabs.length - 1;
-    else if (event.key in keyOffsets) nextIndex = (index + keyOffsets[event.key] + this.tabs.length) % this.tabs.length;
-    else return;
-
-    event.preventDefault();
-    const nextTab = this.tabs[nextIndex];
-    this.activeTab.set(nextTab.id);
-    const tabList = (event.currentTarget as HTMLElement).closest('[role="tablist"]');
-    (tabList?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex])?.focus();
   }
 }

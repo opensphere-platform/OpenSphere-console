@@ -1380,3 +1380,59 @@ os-admin-osaa {
   os-admin-osaa .osaa-grass-footer { align-items: flex-start; flex-direction: column; }
   os-admin-osaa .osaa-evidence-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Main index: OpenSphere Control Engine architecture page. */
+os-landing-foundations {
+  .engine-architecture { margin: 1rem 1.25rem; border: 1px solid var(--fd-line); background: var(--fd-line); }
+  .engine-layer-heading { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; padding: .8rem 1rem; background: var(--os-surface-1); }
+  .engine-layer-heading span { color: var(--os-accent); font: 700 var(--fd-label) var(--os-font-mono); letter-spacing: .06em; }
+  .engine-layer-heading h4 { margin: .25rem 0 0; font-size: 1rem; }
+  .engine-layer-heading p { max-width: 36rem; margin: 0; color: var(--os-ink-muted); font-size: var(--fd-detail); text-align: right; }
+  .engine-core-heading { border-top: 1px solid var(--fd-line); background: var(--os-accent-subtle); }
+  .engine-surface-grid, .engine-target-grid, .engine-core-grid { display: grid; gap: 1px; background: var(--fd-line); }
+  .engine-surface-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .engine-target-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .engine-core-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .engine-node { display: grid; grid-template-columns: 4rem minmax(0, 1fr); align-content: start; gap: .65rem .8rem; min-width: 0; min-height: 13rem; padding: 1rem; background: var(--os-canvas); }
+  .engine-node img { width: 4rem; height: 4rem; object-fit: contain; }
+  .engine-node h4 { margin: .35rem 0 0; font-size: var(--fd-card-title); }
+  .engine-node > p, .engine-node > small { grid-column: 1 / -1; margin: 0; }
+  .engine-node > p { color: var(--os-ink); font-size: var(--fd-body); line-height: 1.6; }
+  .engine-node > small { padding-top: .55rem; border-top: 1px solid var(--fd-line); color: var(--os-ink-muted); font-size: var(--fd-detail); line-height: 1.55; }
+  .engine-node.target { min-height: 12rem; grid-template-columns: 4.25rem minmax(0, 1fr); }
+  .engine-node.target img { width: 4.25rem; height: 4.25rem; }
+  .engine-core-card { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); align-items: center; gap: 1rem; min-width: 0; min-height: 11rem; padding: 1.15rem; background: var(--os-canvas); }
+  .engine-core-card.primary { box-shadow: inset 4px 0 var(--os-accent); background: var(--os-accent-subtle); }
+  .engine-core-card img { width: 5.125rem; height: 5.125rem; object-fit: contain; }
+  .engine-core-card h4 { margin: .4rem 0 0; font-size: 1rem; }
+  .engine-core-card p { margin: .6rem 0 0; color: var(--os-ink); font-size: var(--fd-body); line-height: 1.6; }
+  .engine-stages { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0; padding: 1px; background: var(--fd-line); list-style: none; }
+  .engine-stages li { min-width: 0; min-height: 12rem; padding: .9rem; background: var(--os-canvas); }
+  .engine-stages h4 { margin: .55rem 0 0; font-size: .9rem; }
+  .engine-stages strong { display: block; margin-top: .3rem; color: var(--os-ink-muted); font-size: .72rem; }
+  .engine-stages p { margin: .7rem 0 0; color: var(--os-ink); font-size: .82rem; line-height: 1.55; }
+  .engine-stages small { display: block; margin-top: .45rem; color: var(--os-ink-muted); font-size: .75rem; }
+  .engine-decision { border-top: 1px solid var(--fd-line); border-bottom: 0; }
+}
+
+@media (max-width: 76rem) {
+  os-landing-foundations {
+    .engine-surface-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .engine-layer-heading { display: grid; }
+    .engine-layer-heading p { max-width: none; text-align: left; }
+    .engine-stages { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+  }
+}
+
+@media (max-width: 56rem) {
+  os-landing-foundations .engine-target-grid,
+  os-landing-foundations .engine-core-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 36rem) {
+  os-landing-foundations {
+    .engine-surface-grid { grid-template-columns: 1fr; }
+    .engine-architecture { margin: 1rem; }
+    .engine-node, .engine-node.target, .engine-core-card { grid-template-columns: 1fr; }
+  }
+}
