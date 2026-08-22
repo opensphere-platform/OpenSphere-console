@@ -5319,19 +5319,18 @@ async function osaaMutationLifecycle(actor) {
   if (cached && Date.now() - cached.checkedAt < 15000) return cached.value;
   let value;
   try {
-    const response = await fetch(`${DUPA_CONTROL_URL}/api/admin/platform-readiness/status`, {
+    const response = await fetch(`${DUPA_CONTROL_URL}/api/admin/platform-readiness/lifecycle`, {
       headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) value = { ready: false, reason: body.error || `lifecycle_gate_http_${response.status}` };
     else {
-      const prerequisites = Array.isArray(body.prerequisites) ? body.prerequisites : [];
-      const clusterManager = prerequisites.find((item) => item.key === 'cluster-manager');
-      const hisPreflight = prerequisites.find((item) => item.key === 'his-preflight');
       value = {
-        ready: Boolean(clusterManager?.ready && hisPreflight?.ready),
-        reason: clusterManager?.ready ? (hisPreflight?.ready ? null : 'his_preflight_not_ready') : 'cluster_manager_not_activated',
-        clusterManagerActivated: Boolean(clusterManager?.ready), hisPreflightReady: Boolean(hisPreflight?.ready), observedAt: body.observedAt || null,
+        ready: body.ready === true,
+        reason: body.reason || null,
+        clusterManagerActivated: body.clusterManagerActivated === true,
+        hisPreflightReady: body.hisPreflightReady === true,
+        observedAt: body.observedAt || null,
       };
     }
   } catch {

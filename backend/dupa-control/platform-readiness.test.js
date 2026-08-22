@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection, platformLifecycleGateProjection } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -29,6 +29,25 @@ test('platform readiness maps asynchronous results by probe name, never by seman
   assert.deepEqual(result.values.observability, { ready: true, capabilities: ['metrics'] });
   assert.deepEqual(result.failures, [{ probe: 'delivery', reason: 'repository unavailable' }]);
   assert.throws(() => settledProbeProjection(definitions, []), /cardinality mismatch/);
+});
+
+test('OSAA consumes a narrow lifecycle gate instead of rebuilding full platform readiness', () => {
+  const ready = platformLifecycleGateProjection(
+    { ready: true, phase: 'Activated', workload: 'Ready' },
+    { ready: true, state: 'Ready', checkedAt: '2026-08-22T00:00:00.000Z' },
+  );
+  assert.equal(ready.ready, true);
+  assert.equal(ready.reason, null);
+  const blocked = platformLifecycleGateProjection(
+    { ready: true, phase: 'Activated', workload: 'Ready' },
+    { ready: false, state: 'Degraded', reason: 'HIS core incomplete' },
+  );
+  assert.equal(blocked.ready, false);
+  assert.equal(blocked.reason, 'his_preflight_not_ready');
+  const controller = read('backend', 'dupa-control', 'controller.js');
+  const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
+  assert.match(controller, /\/api\/admin\/platform-readiness\/lifecycle/);
+  assert.match(gateway, /DUPA_CONTROL_URL\}\/api\/admin\/platform-readiness\/lifecycle/);
 });
 
 test('Kubernetes warning evidence is never marked seen before durable audit persistence', async () => {

@@ -3375,6 +3375,43 @@ async function platformReadinessStatus() {
     },
   };
 }
+
+function platformLifecycleGateProjection(clusterManager = {}, his = {}) {
+  const clusterManagerActivated = clusterManager.ready === true;
+  const hisPreflightReady = his.ready === true;
+  return {
+    apiVersion: 'opensphere.io/platform-lifecycle-gate/v1',
+    ready: clusterManagerActivated && hisPreflightReady,
+    reason: clusterManagerActivated
+      ? (hisPreflightReady ? null : 'his_preflight_not_ready')
+      : 'cluster_manager_not_activated',
+    clusterManagerActivated,
+    hisPreflightReady,
+    observedAt: new Date().toISOString(),
+    evidence: {
+      clusterManager: {
+        phase: clusterManager.phase || 'Unknown',
+        workload: clusterManager.workload || 'Unknown',
+        reason: clusterManager.reason || null,
+      },
+      hisPreflight: {
+        state: his.state || 'Unknown',
+        reason: his.reason || null,
+        checkedAt: his.checkedAt || null,
+      },
+    },
+  };
+}
+
+async function platformLifecycleGateStatus() {
+  const probes = [
+    { name: 'clusterManager', promise: clusterManagerActivationStatus(), fallback: { ready: false, phase: 'Unknown', workload: 'Unknown', reason: 'cluster manager probe failed' } },
+    { name: 'hisPreflight', promise: hisPreflightEvidence(), fallback: { ready: false, state: 'Unknown', reason: 'HIS preflight probe failed' } },
+  ];
+  const settled = await Promise.allSettled(probes.map((probe) => probe.promise));
+  const { values } = settledProbeProjection(probes, settled);
+  return platformLifecycleGateProjection(values.clusterManager, values.hisPreflight);
+}
 async function declarePlatformProfile(actor, reason) {
   const current = await readPlatformProfile();
   const body = {
@@ -3644,6 +3681,9 @@ const server = http.createServer(async (req, res) => {
     // Platform Readiness — Console native lifecycle gate. HIS is an external
     // authority; this API consumes Binding evidence and never calls a Cluster
     // Manager HIS control surface.
+    if (p === '/api/admin/platform-readiness/lifecycle' && req.method === 'GET') {
+      return json(res, 200, await platformLifecycleGateStatus());
+    }
     if (p === '/api/admin/platform-readiness/status' && req.method === 'GET') {
       return json(res, 200, await platformReadinessStatus(req));
     }
@@ -4171,6 +4211,6 @@ module.exports = {
   bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint,
   admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence,
   platformVerificationProjection, platformVerificationComparable, platformSupportAdmission,
-  persistEventBeforeSeen, settledProbeProjection,
+  persistEventBeforeSeen, settledProbeProjection, platformLifecycleGateProjection,
 };
 }
