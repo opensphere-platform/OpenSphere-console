@@ -98,6 +98,17 @@ test('durable operation completion is available to the live read-tool loop', () 
   assert.match(server, /never infer completion from action acceptance/);
 });
 
+test('durable operation planning is read-only and separate from human-confirmed execution', () => {
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(server, /id: 'osaa\.operation\.plan'/);
+  assert.match(server, /add\('osaa\.system\.read', 'plan_durable_operation'/);
+  assert.match(server, /case 'plan_durable_operation'/);
+  assert.match(server, /\/api\/osaa\/tools\/operations\/plan/);
+  assert.match(server, /return \{ \.\.\.projection, submitted: false, executed: false \}/);
+  assert.match(server, /call plan_durable_operation first/);
+  assert.match(server, /must never copy the returned confirmation into an action call/);
+});
+
 test('Registry Plugin presentation incidents select the canonical deterministic preflight', () => {
   assert.equal(requiresExtensionPresentationStatus('PFSS가 뭔지 알아?'), false);
   assert.equal(requiresExtensionPresentationStatus('Registry Plugins 전부가 요청 시 적재를 표시한다'), true);

@@ -143,6 +143,10 @@ const OSAA_POSTGRES_DELETION_POLICIES = Object.freeze(['Retain', 'Delete']);
 const OSAA_CONSOLE_ROLES = Object.freeze(['console-admins', 'console-operators', 'console-viewers']);
 const OSAA_EVIDENCE_STREAMS = Object.freeze(['agent_run', 'agent_step', 'tool_run', 'retrieval_trace', 'llm_usage_event', 'runtime_event']);
 const OSAA_RECOVERY_COMPONENTS = Object.freeze(['all', 'supabase-database', 'supabase-storage', 'gitea']);
+const OSAA_DURABLE_PLAN_ACTIONS = Object.freeze([
+  'restart-workload', 'scale-workload', 'rollback-image',
+  'run-cronjob', 'owner-recover', 'retry-delivery',
+]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OSAA_EXTENSION_IMAGE_RE = /^ghcr\.io\/opensphere-platform\/[a-z0-9._-]+@sha256:[0-9a-f]{64}$/;
 const OSAA_CEPH_IMPORT_REF_RE = /^opensphere-ceph-imports\/opensphere-ceph-import-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -3504,6 +3508,7 @@ function controlToolsSystemMessage() {
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/osaa/tools/k8s/*.',
       'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HIS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
       'When Registry Plugins are described as 요청 시 적재 or missing from a Host screen, call the extension presentation status tool. Distinguish host-owned menu eligibility from route-scoped child UI activation, and never restart, reinstall, or enable entries that Registry reports as healthy.',
+      'When the operator asks for a restart, scale, rollback, CronJob run, owner recovery, or notification retry plan, call plan_durable_operation first. Report the live exact target, risk class, required assurance, expected confirmation, and postcondition. Planning never submits or executes an operation, and OSAA must never copy the returned confirmation into an action call.',
       'When the operator asks what happened to a durable operation or supplies an operation UUID, call get_osaa_operation. Report its current phase, approval state, execution steps, and postcondition verification from the ledger; never infer completion from action acceptance.',
       'For source-level diagnosis, first read the canonical source catalog, resolve the repository branch to an exact GitHub revision, then search or read only that revision. Cite repository ID, 40-character revision, path, and line range. Never substitute Gitea, a workspace checkout, a stale manual snippet, or model memory for canonical source evidence; report inaccessible repositories and complete=false searches as coverage gaps.',
       'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HIS is telemetry authority.',
@@ -4889,6 +4894,25 @@ function osaaToolManifest() {
         kubernetes: { verbs: ['get', 'list'], apiGroups: ['apps', ''], resources: ['deployments', 'pods', 'events'], namespaces: nsEnum },
         inputSchema: schemaObject({ namespace: nsField, name: deploymentField }),
         auditEventType: 'k8s-rollout-status',
+      },
+      {
+        id: 'osaa.operation.plan',
+        name: 'Plan one governed durable OSAA operation without submitting it',
+        channel: 'owner-control-plane',
+        readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/osaa/tools/operations/plan'),
+        riskLevel: 'read',
+        confirmation: 'none',
+        inputSchema: schemaObject({
+          action: { type: 'string', enum: OSAA_DURABLE_PLAN_ACTIONS },
+          namespace: { ...mutationNsField, required: false },
+          name: { ...deploymentField, required: false },
+          replicas: { type: 'integer', minimum: 0, maximum: OSAA_SCALE_MAX, required: false },
+          container: { ...deploymentField, required: false },
+          image: { type: 'string', pattern: OSAA_EXTENSION_IMAGE_RE.source, required: false },
+          deliveryId: { type: 'string', pattern: UUID_RE.source, required: false },
+        }),
+        auditEventType: 'durable-operation-plan',
       },
       {
         id: 'osaa.k8s.deployment.restart',
@@ -6490,6 +6514,15 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
   add('osaa.system.read', 'get_osaa_operation', 'Read one durable OSAA operation from the Console-owned ledger, including approval, execution steps, and postcondition verification. Use the exact operation UUID returned by an accepted action.', {
     operationId: { type: 'string', pattern: UUID_RE.source },
   }, ['operationId']);
+  add('osaa.system.read', 'plan_durable_operation', 'Resolve one governed operation against its current live target and return risk, assurance, exact human confirmation, and postcondition without submitting or executing it.', {
+    action: { type: 'string', enum: OSAA_DURABLE_PLAN_ACTIONS },
+    namespace: { type: 'string', enum: OSAA_MUTATION_NAMESPACES },
+    name,
+    replicas: { type: 'integer', minimum: 0, maximum: OSAA_SCALE_MAX },
+    container: name,
+    image: { type: 'string', pattern: OSAA_EXTENSION_IMAGE_RE.source },
+    deliveryId: { type: 'string', pattern: UUID_RE.source },
+  }, ['action']);
   add('osaa.system.read', 'search_catalog_entities', 'Search the canonical OpenSphere catalog projection. Use this to relate services, owners, APIs, and declared platform components to live resources.', {
     filter: { type: 'string', maxLength: 200 },
     limit: { type: 'integer', minimum: 1, maximum: 100 },
@@ -6647,6 +6680,44 @@ async function durableOperationStatusRead(inputs, actor) {
   audit(actor, 'durable-operation-status', `DurableOperation/${operationId}`, 'ok',
     `${projection.phase || 'unknown'} / ${projection.verificationState || 'unknown'}`);
   return projection;
+}
+
+async function durableOperationPlanRead(inputs, actor) {
+  assertPermission(actor, 'osaa.system.read');
+  requireClosedOwnerInputs(inputs, ['action', 'namespace', 'name', 'replicas', 'container', 'image', 'deliveryId']);
+  const action = String(inputs.action || '').trim().toLowerCase();
+  if (!OSAA_DURABLE_PLAN_ACTIONS.includes(action)) throw { code: 400, msg: 'action is outside the durable planning contract' };
+
+  const target = {};
+  if (['restart-workload', 'scale-workload', 'rollback-image', 'run-cronjob'].includes(action)) {
+    target.namespace = requireMutationNamespace(inputs.namespace);
+    target.name = requireOwnerActionId(inputs.name);
+  }
+  if (action === 'scale-workload') {
+    const replicas = Number(inputs.replicas);
+    if (!Number.isInteger(replicas) || replicas < 0 || replicas > OSAA_SCALE_MAX) {
+      throw { code: 400, msg: `replicas must be an integer from 0 to ${OSAA_SCALE_MAX}` };
+    }
+    target.replicas = replicas;
+  }
+  if (action === 'rollback-image') {
+    target.container = requireOwnerActionId(inputs.container);
+    target.image = requireExtensionDigestImage(inputs.image, 'rollback image');
+  }
+  if (action === 'owner-recover') target.name = requireOwnerActionId(inputs.name, OSAA_HIS_MANAGED_IDS);
+  if (action === 'retry-delivery') {
+    const deliveryId = String(inputs.deliveryId || '').trim().toLowerCase();
+    if (!UUID_RE.test(deliveryId)) throw { code: 400, msg: 'deliveryId must be a UUID' };
+    target.deliveryId = deliveryId;
+  }
+
+  const projection = redactProjection(await fixedOwnerPost(
+    CONSOLE_IDENTITY_URL, '/api/osaa/operations/plan', actor, { action, target },
+    'Console durable operation planner', 15000,
+  ));
+  audit(actor, 'durable-operation-plan', `DurableOperationPlan/${action}/${projection.target?.uid || 'unresolved'}`, 'ok',
+    `${projection.riskClass || 'unknown'} / ${projection.requiredAssurance || 'unknown'}`);
+  return { ...projection, submitted: false, executed: false };
 }
 
 async function identityStatusRead(actor) {
@@ -7670,6 +7741,10 @@ async function executeAgentTool(name, args, actor, context = {}) {
     case 'get_osaa_operation':
       assertPermission(actor, 'osaa.system.read');
       result = await durableOperationStatusRead(input, actor);
+      break;
+    case 'plan_durable_operation':
+      assertPermission(actor, 'osaa.system.read');
+      result = await durableOperationPlanRead(input, actor);
       break;
     case 'search_catalog_entities':
       assertPermission(actor, 'osaa.system.read');
@@ -9128,6 +9203,10 @@ const server = http.createServer(async (req, res) => {
       assertPermission(actor, 'osaa.system.read');
       const body = req.method === 'POST' ? await readBody(req) : {};
       return json(res, 200, await environmentSnapshot(body, actor));
+    }
+    if (url.pathname === '/api/osaa/tools/operations/plan' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await durableOperationPlanRead(await readBody(req), actor));
     }
     if (url.pathname === '/api/osaa/tools/control-plane/status' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
