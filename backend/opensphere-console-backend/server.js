@@ -3211,7 +3211,11 @@ async function proxyAdminControlRequest(req, res, url) {
   const lifecycleAction = url.pathname === '/api/admin/extensions/install'
     ? 'install'
     : registrationLifecycle?.[1] || '';
-  const requireAal2 = isMutationRequest(req)
+  // Image inspection is a read-only supply-chain check transported as POST so
+  // the exact image reference stays out of the query string. It still requires
+  // an authenticated Console admin, but must not be classified as a mutation.
+  const readOnlyAdminPost = method === 'POST' && url.pathname === '/api/admin/extensions/inspect';
+  const requireAal2 = !readOnlyAdminPost && isMutationRequest(req)
     && (!lifecycleAction || moduleLifecycleNeedsRecentAal2(lifecycleAction));
   if (authorization) {
     // CLI/PAT requests retain their bearer credential, but are verified at the

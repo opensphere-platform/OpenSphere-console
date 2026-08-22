@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
+  extensionRouteBase,
   extensionRouteTarget,
   isTransientExtensionLoadError,
 } from './extension-load-order.ts';
@@ -24,6 +25,12 @@ test('canonical plugin deep links identify both host and child ownership', () =>
     childId: '',
   });
   assert.deepEqual(extensionRouteTarget('/manage/extensions/plugins'), { hostId: '', childId: '' });
+});
+
+test('extension routing grants each host its canonical URL space', () => {
+  assert.equal(extensionRouteBase('foundation', 'main'), '/pfss');
+  assert.equal(extensionRouteBase('postgres', 'foundation'), '/pfss/postgres');
+  assert.equal(extensionRouteBase('developer', 'main'), '/p/developer');
 });
 
 test('only transport interruption and timeout errors are retryable', () => {

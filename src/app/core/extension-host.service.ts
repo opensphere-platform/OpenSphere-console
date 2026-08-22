@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { HttpService } from './http.service';
 import { NotificationService, NotifyInput, OsNotification } from './notification.service';
 import {
+  extensionRouteBase,
   extensionRouteTarget,
   isTransientExtensionLoadError,
   TRANSIENT_EXTENSION_RETRY_DELAY_MS,
@@ -674,7 +675,7 @@ export class ExtensionHostService {
     verifiedAssets: ReadonlyMap<string, VerifiedAsset>,
   ) {
     const apiFetch = (input: RequestInfo | URL, init?: RequestInit) => this.fetchForPlugin(manifest, input, init);
-    const routeBase = `/p/${pluginId}`;
+    const routeBase = extensionRouteBase(pluginId, manifest.hostRef);
     const currentRoute = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const navigate = (path: string, options?: { replace?: boolean }) => {
       const target = new URL(path, window.location.origin);

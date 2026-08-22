@@ -4,6 +4,13 @@ export interface ExtensionRouteTarget {
 }
 export const TRANSIENT_EXTENSION_RETRY_DELAY_MS = 250;
 
+/** Canonical route space granted to an extension and its host-owned children. */
+export function extensionRouteBase(pluginId: string, hostRef = 'main'): string {
+  if (pluginId === 'foundation' && hostRef === 'main') return '/pfss';
+  if (hostRef === 'foundation') return `/pfss/${pluginId}`;
+  return `/p/${pluginId}`;
+}
+
 /** Only transport interruption and timeout failures are safe to retry. */
 export function isTransientExtensionLoadError(error: unknown): boolean {
   const candidate = error as { name?: unknown; message?: unknown } | null;
