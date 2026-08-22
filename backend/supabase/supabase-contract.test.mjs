@@ -132,6 +132,7 @@ test('OSAA deterministic verification is accepted as append-only agent evidence'
   assert.match(sql, /DROP CONSTRAINT IF EXISTS agent_step_step_kind_check/);
   assert.match(sql, /CHECK \(step_kind IN \('retrieval', 'llm', 'tool', 'verification'\)\)/);
   assert.match(sql, /ALTER TABLE osaa[.]agent_step/);
+  assert.doesNotMatch(sql, /\boaa[.]/);
   assert.doesNotMatch(sql, /DROP TRIGGER|DISABLE TRIGGER|UPDATE osaa[.]agent_step|DELETE FROM osaa[.]agent_step/i);
 });
 

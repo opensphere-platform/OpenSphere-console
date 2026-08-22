@@ -9,5 +9,5 @@ ALTER TABLE osaa.agent_step
   ADD CONSTRAINT agent_step_step_kind_check
   CHECK (step_kind IN ('retrieval', 'llm', 'tool', 'verification'));
 
-COMMENT ON COLUMN oaa.agent_step.step_kind IS
+COMMENT ON COLUMN osaa.agent_step.step_kind IS
   'retrieval, llm, and tool record agent execution; verification records deterministic server-owned grounding or postcondition evidence.';
