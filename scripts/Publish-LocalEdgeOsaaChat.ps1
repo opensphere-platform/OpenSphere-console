@@ -170,6 +170,7 @@ try {
   }
   Invoke-Checked node --test `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-prompt-boundary.test.js') `
+    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-source-grounding.test.js') `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\conversation-store.test.js') `
     (Join-Path $checkout 'backend\dupa-control\osaa-native-ui.test.js') `
     (Join-Path $checkout 'scripts\osaa-chat-publisher.test.mjs') | Out-Null

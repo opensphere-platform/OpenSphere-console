@@ -8,6 +8,7 @@ const path = require('path');
 const gateway = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 const backend = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'server.js'), 'utf8');
 const authority = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'osaa-source-authority.js'), 'utf8');
+const gatewayImage = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
 
 test('OSAA exposes canonical source catalog, revision, read and search as read-only knowledge tools', () => {
   for (const tool of [
@@ -22,6 +23,8 @@ test('OSAA exposes canonical source catalog, revision, read and search as read-o
   assert.match(gateway, /\/api\/osaa\/tools\/source\/read/);
   assert.match(gateway, /\/api\/osaa\/tools\/source\/search/);
   assert.match(gateway, /first read the canonical source catalog, resolve the repository branch to an exact GitHub revision/);
+  assert.match(gateway, /groundCanonicalSourceAnswer/);
+  assert.match(gatewayImage, /COPY r2d2-source-grounding\.js \/app\/r2d2-source-grounding\.js/);
 });
 
 test('Console Backend owns source credential custody and exact-revision materialization', () => {

@@ -21,6 +21,7 @@ COPY r2d2-sse-contract.js /app/r2d2-sse-contract.js
 COPY r2d2-operational-resilience.js /app/r2d2-operational-resilience.js
 COPY r2d2-incident-relay.js /app/r2d2-incident-relay.js
 COPY r2d2-source-adapters.js /app/r2d2-source-adapters.js
+COPY r2d2-source-grounding.js /app/r2d2-source-grounding.js
 COPY manual-seeds /app/manual-seeds
 ENV PORT=8080
 USER node

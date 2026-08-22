@@ -24,6 +24,7 @@ const {
   normalizeConversationMessages, untrustedEvidencePolicySystemMessage, untrustedEvidenceMessage,
   untrustedToolEvidenceContent,
 } = require('./r2d2-prompt-boundary');
+const { SOURCE_TOOL_NAMES, groundCanonicalSourceAnswer } = require('./r2d2-source-grounding');
 const { replayQuery, authorizationFingerprint } = require('./r2d2-sse-contract');
 const { durableBindingRequest, durableIdempotencyKey } = require('./r2d2-durable-binding');
 const {
@@ -7963,6 +7964,30 @@ async function chatCompletion(body, actor) {
     if (agentRunRecorded) await finishAgentRun(requestId, 'failed', toolTrace.length, error.errorCode || error.code || 'agent_loop_failed');
     throw error;
   }
+  const sourceGrounding = groundCanonicalSourceAnswer(
+    content,
+    Array.from(verifiedToolEvidence.values()),
+    { redactText: redactToolText },
+  );
+  content = sourceGrounding.content;
+  if (sourceGrounding.applied) {
+    audit(
+      actor,
+      'canonical-source-grounding',
+      `AgentRun/${requestId}`,
+      sourceGrounding.violations.length ? 'blocked' : 'ok',
+      `${sourceGrounding.state}; violations=${sourceGrounding.violations.length}; citations=${sourceGrounding.citations.length}`,
+    );
+    if (agentRunRecorded) await recordAgentStep({
+      runId: requestId,
+      index: agentStepIndex++,
+      kind: 'verification',
+      status: sourceGrounding.violations.length ? 'failed' : 'succeeded',
+      input: { sourceTools: toolTrace.filter((tool) => SOURCE_TOOL_NAMES.has(tool.name)).map((tool) => tool.name) },
+      output: { state: sourceGrounding.state, violations: sourceGrounding.violations, citations: sourceGrounding.citations },
+      metadata: { verifier: 'canonical-source-grounding/v1', deterministic: true },
+    });
+  }
   const latencyMs = Date.now() - started;
   if (agentRunRecorded) await finishAgentRun(requestId, 'completed', toolTrace.length);
   audit(actor, 'chat-completion', key.id, 'ok', `${key.provider}/${model}; tool_mode=${liveToolMode ? 'live' : 'knowledge'}; agent_rounds=${rounds}; tool_calls=${toolTrace.length}; total_tokens=${usage.totalTokens}; usage_recorded=${usageRecorded}`);
@@ -7989,6 +8014,13 @@ async function chatCompletion(body, actor) {
       toolCalls: toolTrace,
       mutationsRequireExplicitCommand: true,
       evidenceRecorded: agentRunRecorded,
+      sourceGrounding: {
+        applied: sourceGrounding.applied,
+        state: sourceGrounding.state,
+        evidenceIncomplete: sourceGrounding.evidenceIncomplete === true,
+        violations: sourceGrounding.violations.length,
+        citations: sourceGrounding.citations,
+      },
     },
     sources: sources.map((s) => ({
       title: s.title,
