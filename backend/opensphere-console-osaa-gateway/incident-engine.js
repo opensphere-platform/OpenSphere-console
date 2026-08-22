@@ -52,12 +52,15 @@ function deriveIncidentTransition(current, signal, policy) {
   }
   if (signal.present) {
     const repeated = Number(signal.repeatCount || 1) >= Number(policy.activationCount || 2);
-    const nextStatus = current.status === 'suspended' ? (repeated ? 'active' : 'detected')
+    const nextStatus = current.status === 'resolved' ? 'detected'
+      : current.status === 'suspended' ? (repeated ? 'active' : 'detected')
       : (current.status === 'detected' && repeated ? 'active' : current.status === 'recovering' ? 'active' : current.status);
     const severity = SEVERITY_ORDER[signal.severity] > SEVERITY_ORDER[current.severity] ? signal.severity : current.severity;
     const changedSeverity = severity !== current.severity;
     return { ...current, status: nextStatus, severity, lastObservedAt: now,
-      eventType: changedSeverity ? 'incident_severity_changed' : (current.status === 'suspended' ? 'incident_resumed' : nextStatus === 'active' && current.status !== 'active' ? 'incident_activated' : null),
+      eventType: current.status === 'resolved' ? 'incident_detected'
+        : changedSeverity ? 'incident_severity_changed'
+          : (current.status === 'suspended' ? 'incident_resumed' : nextStatus === 'active' && current.status !== 'active' ? 'incident_activated' : null),
       reasonCode: signal.reasonCode || 'signal-present' };
   }
   if (current.status === 'active') {

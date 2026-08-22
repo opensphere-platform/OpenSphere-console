@@ -34,6 +34,31 @@ test('a healthy clearing signal never creates a new incident', () => {
   }, {}), null);
 });
 
+test('a transient detected incident can enter recovery before activation', () => {
+  const next = deriveIncidentTransition({
+    status: 'detected', severity: 'warning', lastObservedAt: '2026-08-10T00:00:00Z',
+  }, {
+    receivedAt: '2026-08-10T00:00:10Z', sourceConfigured: true,
+    sourceFresh: true, snapshotComplete: true, present: false,
+  }, {});
+  assert.equal(next.status, 'recovering');
+  assert.equal(next.eventType, 'incident_recovering');
+  assert.equal(assertTransition('detected', 'recovering'), true);
+});
+
+test('a recurring resolved condition reopens as detected', () => {
+  const next = deriveIncidentTransition({
+    status: 'resolved', severity: 'warning', lastObservedAt: '2026-08-10T00:00:00Z',
+  }, {
+    receivedAt: '2026-08-10T00:02:00Z', sourceConfigured: true,
+    sourceFresh: true, snapshotComplete: true, present: true, severity: 'high',
+    confidence: 0.9, reasonCode: 'condition-recurred',
+  }, { activationCount: 1 });
+  assert.equal(next.status, 'detected');
+  assert.equal(next.eventType, 'incident_detected');
+  assert.equal(assertTransition('resolved', 'detected'), true);
+});
+
 test('resolution requires complete fresh reconciliation, newer watermark and hysteresis', () => {
   assert.throws(() => assertTransition('recovering', 'resolved', {
     snapshotComplete: false, sourceFresh: true, freshAuthorityWatermark: '2026-08-10T00:01:00Z',

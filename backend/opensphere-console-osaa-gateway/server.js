@@ -3494,6 +3494,7 @@ function controlToolsSystemMessage() {
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/osaa/tools/k8s/*.',
       'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HIS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
       'When Registry Plugins are described as 요청 시 적재 or missing from a Host screen, call the extension presentation status tool. Distinguish host-owned menu eligibility from route-scoped child UI activation, and never restart, reinstall, or enable entries that Registry reports as healthy.',
+      'When the operator asks what happened to a durable operation or supplies an operation UUID, call get_osaa_operation. Report its current phase, approval state, execution steps, and postcondition verification from the ledger; never infer completion from action acceptance.',
       'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HIS is telemetry authority.',
       'Platform recovery status is structured evidence, not proof that a restore executor exists. The current owner supports sanitized status and isolated-drill planning only; never claim that backup restore can be executed unless drill-request and evidence-promote capabilities are both advertised.',
       'The provider may call only the permission-filtered read tools supplied with this request. Treat their returned data as current evidence and cite what was actually observed.',
@@ -6405,6 +6406,9 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
   add('osaa.system.read', 'list_governed_actions', 'List actions allowed for this user. Mutating actions are proposals and still require an exact human confirmation and approval workflow.', {
     query: { type: 'string', maxLength: 1000 },
   });
+  add('osaa.system.read', 'get_osaa_operation', 'Read one durable OSAA operation from the Console-owned ledger, including approval, execution steps, and postcondition verification. Use the exact operation UUID returned by an accepted action.', {
+    operationId: { type: 'string', pattern: UUID_RE.source },
+  }, ['operationId']);
   add('osaa.system.read', 'search_catalog_entities', 'Search the canonical OpenSphere catalog projection. Use this to relate services, owners, APIs, and declared platform components to live resources.', {
     filter: { type: 'string', maxLength: 200 },
     limit: { type: 'integer', minimum: 1, maximum: 100 },
@@ -6495,6 +6499,17 @@ async function backendGet(path, actor) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw { code: response.status, msg: body.error || `Console Backend HTTP ${response.status}` };
   return body;
+}
+
+async function durableOperationStatusRead(inputs, actor) {
+  assertPermission(actor, 'osaa.system.read');
+  requireClosedOwnerInputs(inputs, ['operationId']);
+  const operationId = String(inputs.operationId || '').trim().toLowerCase();
+  if (!UUID_RE.test(operationId)) throw { code: 400, msg: 'operationId must be a UUID' };
+  const projection = redactProjection(await backendGet(`/api/osaa/operations/${encodeURIComponent(operationId)}`, actor));
+  audit(actor, 'durable-operation-status', `DurableOperation/${operationId}`, 'ok',
+    `${projection.phase || 'unknown'} / ${projection.verificationState || 'unknown'}`);
+  return projection;
 }
 
 async function identityStatusRead(actor) {
@@ -7423,6 +7438,10 @@ async function executeAgentTool(name, args, actor, context = {}) {
       };
       break;
     }
+    case 'get_osaa_operation':
+      assertPermission(actor, 'osaa.system.read');
+      result = await durableOperationStatusRead(input, actor);
+      break;
     case 'search_catalog_entities':
       assertPermission(actor, 'osaa.system.read');
       result = await catalogEntitySearch(input, actor);

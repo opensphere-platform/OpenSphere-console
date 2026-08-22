@@ -73,6 +73,16 @@ test('knowledge questions do not receive live operational tools', () => {
   assert.equal(requiresLiveAgentTools('현재 PFSS 상태를 확인해줘'), true);
   assert.equal(requiresLiveAgentTools('Check the current cluster health'), true);
   assert.equal(requiresLiveAgentTools('Registry Plugins가 요청 시 적재라고 나오고 화면에 표시되지 않아'), true);
+  assert.equal(requiresLiveAgentTools('작업 결과를 확인해줘'), true);
+  assert.equal(requiresLiveAgentTools('operation 03979adf-3300-4057-847e-26cc228ebbe1 결과는?'), true);
+});
+
+test('durable operation completion is available to the live read-tool loop', () => {
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(server, /add\('osaa\.system\.read', 'get_osaa_operation'/);
+  assert.match(server, /case 'get_osaa_operation'/);
+  assert.match(server, /\/api\/osaa\/operations\/\$\{encodeURIComponent\(operationId\)\}/);
+  assert.match(server, /never infer completion from action acceptance/);
 });
 
 test('Registry Plugin presentation incidents select the canonical deterministic preflight', () => {
