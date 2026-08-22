@@ -11,6 +11,7 @@ the Open Platform Labs pictogram asset repository.
 
 The SVG path geometry is unchanged; whitespace is normalized for the Console source tree. The
 assets are vendored so the Console does not depend on an external CDN at runtime.
+The Control Engine index page uses these assets inside page content while keeping Clarity tab labels text-only.
 
 | Asset | Pinned-source SHA-256 |
 | --- | --- |
