@@ -13,6 +13,18 @@ test('Supabase backbone manifest and migrations satisfy ADR-006 static boundary'
   if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`);
 });
 
+test('OSAA PostgREST profile is available only through explicitly granted database roles', () => {
+  const manifest = readFileSync(path.join(here, 'bootstrap', 'supabase.yaml'), 'utf8');
+  const repairRunner = readFileSync(path.join(here, 'migrations', '0070_osaa_local_edge_repair_runner.sql'), 'utf8');
+  assert.match(manifest, /PGRST_DB_SCHEMAS, value: "console,audit,storage,osaa"/);
+  assert.match(repairRunner,
+    /REVOKE ALL ON osaa\.engineering_remediation_runner,osaa\.engineering_browser_verification\s+FROM PUBLIC,anon,authenticated,service_role/);
+  assert.match(repairRunner,
+    /GRANT EXECUTE ON FUNCTION osaa\.register_engineering_remediation_runner[\s\S]*TO opensphere_console_backend/);
+  assert.doesNotMatch(repairRunner,
+    /GRANT (?:SELECT|INSERT|UPDATE|DELETE|ALL|EXECUTE)[^;]*\b(?:anon|authenticated)\b/i);
+});
+
 test('Supabase installer delimits migration identifiers before punctuation', () => {
   const installer = readFileSync(path.join(here, 'install.ps1'), 'utf8');
   assert.match(installer, /Migration checksum drift for \$\{migrationId\}:/);
