@@ -70,6 +70,22 @@ import {
               }
             </div>
 
+            <section class="document-section capability-contract">
+              <div class="section-title">
+                <div class="section-title-lockup">
+                  <img src="/assets/pictograms/systems.svg" alt="Service Stack operating functions" width="52" height="52" />
+                  <div><p class="foundation-eyebrow">Service Stack function contract</p><h3>Stack마다 독립적으로 닫혀야 하는 네 가지 운영 기능</h3></div>
+                </div>
+                <p>분류명이 아니라 실제 설치·운영·복구 책임을 입출력과 증거로 확인합니다.</p>
+              </div>
+              <div class="capability-grid">
+                <article><span>01</span><h4>Desired state 접수</h4><p>Stack owner가 지원하는 schema로 설치·변경 의도를 받고 다른 Stack의 내부 객체를 직접 쓰지 않습니다.</p><small>Input: signed claim · Output: accepted revision</small></article>
+                <article><span>02</span><h4>Reconcile와 격리</h4><p>자신의 adapter와 credential 범위 안에서만 actual state를 수렴시키고 실패 전파를 경계에서 차단합니다.</p><small>Input: desired revision · Output: bounded operation</small></article>
+                <article><span>03</span><h4>Readiness 관측</h4><p>프로세스 존재가 아니라 서비스 I/O, sync, policy와 dependency postcondition으로 Ready를 판정합니다.</p><small>Input: runtime evidence · Output: Ready or Degraded</small></article>
+                <article><span>04</span><h4>Upgrade와 복구</h4><p>exact digest, backup, restore, rollback 절차를 자신의 lifecycle 안에서 닫고 증거를 보존합니다.</p><small>Input: approved plan · Output: receipt and recovery point</small></article>
+              </div>
+            </section>
+
             <section class="decision-block">
               <div class="decision-label">DESIGN INTENT</div>
               <div>
@@ -90,7 +106,7 @@ import {
 
             <section class="document-section">
               <div class="section-title">
-                <div><p class="foundation-eyebrow">CBSS control triangle</p><h3>Supabase + Gitea + Beszel이 만드는 Console Backbone</h3></div>
+                <div class="section-title-lockup"><img src="/assets/pictograms/connected-ecosystem.svg" alt="Connected Console Backbone authorities" width="52" height="52" /><div><p class="foundation-eyebrow">CBSS control triangle</p><h3>Supabase + Gitea + Beszel이 만드는 Console Backbone</h3></div></div>
                 <p>세 도구는 서로의 대체재가 아니라 identity/data, desired change, observation이라는 서로 다른 권위를 가집니다.</p>
               </div>
               <div class="definition-grid definition-grid-three compact-cards">
@@ -122,7 +138,7 @@ import {
 
             <section class="document-section">
               <div class="section-title">
-                <div><p class="foundation-eyebrow">PFSS operator pattern</p><h3>공유 capability를 Operator로 제공하는 이유</h3></div>
+                <div class="section-title-lockup"><img src="/assets/pictograms/control-tower.svg" alt="PFSS operator control loop" width="52" height="52" /><div><p class="foundation-eyebrow">PFSS operator pattern</p><h3>공유 capability를 Operator로 제공하는 이유</h3></div></div>
                 <p>Main Shell의 일회성 명령이 아니라 desired state와 actual state를 계속 수렴시키고 복구하기 위해서입니다.</p>
               </div>
               <div class="operator-flow" aria-label="PFSS operator reconciliation flow">
@@ -185,9 +201,22 @@ import {
               </div>
             </div>
 
+            <section class="document-section capability-contract">
+              <div class="section-title">
+                <div class="section-title-lockup"><img src="/assets/pictograms/microservices.svg" alt="DUPA extension functions" width="52" height="52" /><div><p class="foundation-eyebrow">DUPA execution functions</p><h3>설치 이후 Main Shell이 실제로 수행하는 네 가지 기능</h3></div></div>
+                <p>동적 결합은 매 화면마다 재설치하는 것이 아니라 검증된 projection을 빠르게 소비하고 필요할 때만 UI를 적재하는 구조입니다.</p>
+              </div>
+              <div class="capability-grid">
+                <article><span>01</span><h4>Registry 검증</h4><p>source, digest, signature, compatibility와 hostRef를 설치 시점에 검증하고 승인 revision을 고정합니다.</p><small>Output: immutable verified extension revision</small></article>
+                <article><span>02</span><h4>Navigation snapshot</h4><p>메뉴·아이콘·표시 이름·순서를 projection으로 저장해 first paint에서 원격 readiness 조회 없이 즉시 렌더링합니다.</p><small>Output: cached Main Shell navigation projection</small></article>
+                <article><span>03</span><h4>On-demand UI load</h4><p>사용자가 route를 선택할 때 해당 host의 UI만 적재하며 timeout이 다른 SubShell과 root navigation을 막지 않습니다.</p><small>Output: isolated host view or bounded error state</small></article>
+                <article><span>04</span><h4>Disable와 rollback</h4><p>projection, runtime, child contribution과 외부 side effect를 revision 단위로 정리하고 직전 검증본으로 복구합니다.</p><small>Output: teardown evidence and restored revision</small></article>
+              </div>
+            </section>
+
             <section class="document-section">
               <div class="section-title">
-                <div><p class="foundation-eyebrow">Install contract</p><h3>SubShell 설치는 파일 복사가 아니라 여섯 단계의 권위 전이</h3></div>
+                <div class="section-title-lockup"><img src="/assets/pictograms/code-syntax.svg" alt="Signed installation contract" width="52" height="52" /><div><p class="foundation-eyebrow">Install contract</p><h3>SubShell 설치는 파일 복사가 아니라 여섯 단계의 권위 전이</h3></div></div>
                 <p>Main Shell은 package가 주장한 화면을 즉시 믿지 않고 Registry가 검증한 projection만 소비합니다.</p>
               </div>
               <ol class="lifecycle-strip">
@@ -217,7 +246,7 @@ import {
 
             <section class="document-section">
               <div class="section-title">
-                <div><p class="foundation-eyebrow">Functional plugin roles</p><h3>SubShell 귀속 plugin의 기능적 유형</h3></div>
+                <div class="section-title-lockup"><img src="/assets/pictograms/microservices.svg" alt="SubShell plugin role spectrum" width="52" height="52" /><div><p class="foundation-eyebrow">Functional plugin roles</p><h3>SubShell 귀속 plugin의 기능적 유형</h3></div></div>
                 <p>아래 유형은 설치 schema의 새로운 kind가 아닙니다. 설치 kind는 모두 plugin이며 책임을 설명하기 위한 기능적 분류입니다.</p>
               </div>
               <div class="definition-grid definition-grid-three compact-cards">
@@ -229,7 +258,7 @@ import {
 
             <section class="document-section">
               <div class="section-title">
-                <div><p class="foundation-eyebrow">Agent Runtime spectrum</p><h3>Shell plugin과 Runtime Unit을 분리하는 이유</h3></div>
+                <div class="section-title-lockup"><img src="/assets/pictograms/developer-tools.svg" alt="Agent Runtime unit spectrum" width="52" height="52" /><div><p class="foundation-eyebrow">Agent Runtime spectrum</p><h3>Shell plugin과 Runtime Unit을 분리하는 이유</h3></div></div>
                 <p>plugin은 제품 설치·호스팅 분류에 예약하고, Agent Runtime 내부 조립 단위는 Runtime Unit으로 부릅니다.</p>
               </div>
               <div class="runtime-spectrum">
@@ -269,6 +298,19 @@ import {
               <div class="foundation-base"><span>Supabase durable ledger</span><span>Gitea reviewed change</span><span>Kubernetes/PFSS runtime truth</span></div>
             </div>
 
+            <section class="document-section capability-contract">
+              <div class="section-title">
+                <div class="section-title-lockup"><img src="/assets/pictograms/api.svg" alt="Shared control surface contract" width="52" height="52" /><div><p class="foundation-eyebrow">Surface capability contract</p><h3>네 제어 표면이 나누어 맡는 기능과 공통 완료 기준</h3></div></div>
+                <p>Console을 포함한 각 표면은 입력 UX만 소유하고 실행 권위와 operation evidence는 OSCE를 통해 공유합니다.</p>
+              </div>
+              <div class="capability-grid">
+                <article><span>Console</span><h4>시각적 계획·승인</h4><p>폼과 diff로 action을 구성하고 위험, 영향 대상, 승인 상태와 진행률을 시각화합니다.</p><small>Does not own: domain mutation or runtime truth</small></article>
+                <article><span>OSS</span><h4>대화형 운영 터미널</h4><p>인증된 단기 session에서 OSC와 허용 도구를 조합하고 동일 operationId를 관찰합니다.</p><small>Does not own: cluster-admin or hidden shell logic</small></article>
+                <article><span>OSC</span><h4>기계 판독 명령 계약</h4><p>discoverable command, typed flag, stable JSON, exit code로 사람·자동화·AI에 같은 adapter를 제공합니다.</p><small>Does not own: duplicate business rules</small></article>
+                <article><span>OSAA</span><h4>진단·계획·조치 지휘</h4><p>문서와 runtime evidence를 결합해 closed action을 선택하고 필요한 승인 뒤 postcondition까지 추적합니다.</p><small>Does not own: shadow authority or unbounded mutation</small></article>
+              </div>
+            </section>
+
             <div class="definition-grid definition-grid-three pillar-cards">
               @for (pillar of controlPillars; track pillar.id) {
                 <section class="definition-card"><header><span>{{ pillar.id }}</span><h4>{{ pillar.name }}</h4></header><p>{{ pillar.role }}</p><dl><div><dt>Owns</dt><dd>{{ pillar.owns.join(' · ') }}</dd></div><div><dt>Cannot own</dt><dd>{{ pillar.excludes.join(' · ') }}</dd></div><div><dt>Evidence</dt><dd>{{ pillar.evidence }}</dd></div></dl></section>
@@ -276,7 +318,7 @@ import {
             </div>
 
             <section class="document-section">
-              <div class="section-title"><div><p class="foundation-eyebrow">One command, one owner</p><h3>같은 PostgreSQL 변경을 세 표면이 처리하는 방법</h3></div><p>입력 방식만 다르고 plan, approval, apply, operation과 receipt는 PFSS PostgreSQL owner가 하나만 생성합니다.</p></div>
+              <div class="section-title"><div class="section-title-lockup"><img src="/assets/pictograms/api.svg" alt="PostgreSQL control parity through one API" width="52" height="52" /><div><p class="foundation-eyebrow">One command, one owner</p><h3>같은 PostgreSQL 변경을 세 표면이 처리하는 방법</h3></div></div><p>입력 방식만 다르고 plan, approval, apply, operation과 receipt는 PFSS PostgreSQL owner가 하나만 생성합니다.</p></div>
               <div class="parity-flow">
                 <div><span>OSAA</span><strong>“cluster를 이 옵션으로 만들어 줘”</strong><small>자연어 → closed action</small></div>
                 <div><span>OSC</span><strong>os foundation postgres plan create</strong><small>typed flags → JSON</small></div>
@@ -287,7 +329,7 @@ import {
             </section>
 
             <section class="document-section">
-              <div class="section-title"><div><p class="foundation-eyebrow">Objective review</p><h3>CLI와 Shell을 유지할 이유와 지켜야 할 한계</h3></div></div>
+              <div class="section-title"><div class="section-title-lockup"><img src="/assets/pictograms/control-panel.svg" alt="Control surface objective review" width="52" height="52" /><div><p class="foundation-eyebrow">Objective review</p><h3>CLI와 Shell을 유지할 이유와 지켜야 할 한계</h3></div></div></div>
               <div class="tradeoff-grid three-tradeoffs">
                 <section><span class="positive">CLI</span><h4>AI 친화적인 가장 작은 안정 계약</h4><p>CLI는 terminal UI가 아니라 discoverable command tree, stable JSON, exit code와 stdin/stdout을 가진 protocol adapter입니다. 사람·automation·agent가 같은 계약을 재사용할 수 있습니다.</p></section>
                 <section><span class="positive">Shell</span><h4>Console 안의 재현 가능한 운영 환경</h4><p>브라우저만으로 표현하기 어려운 진단과 조합을 제공하되, identity·TTL·network·resource·audit가 묶인 일회성 runtime이어야 합니다.</p></section>
@@ -373,7 +415,7 @@ import {
 
             <section class="document-section">
               <div class="section-title">
-                <div><p class="foundation-eyebrow">One closed operation</p><h3>판단에서 복구까지 다섯 단계</h3></div>
+                <div class="section-title-lockup"><img src="/assets/pictograms/control-tower.svg" alt="Closed control operation stages" width="52" height="52" /><div><p class="foundation-eyebrow">One closed operation</p><h3>판단에서 복구까지 다섯 단계</h3></div></div>
                 <p>사용자는 R2D2에 한 번 요청하지만 내부 실행은 각 단계의 권위와 증거를 잃지 않습니다.</p>
               </div>
               <ol class="engine-stages">
@@ -387,6 +429,21 @@ import {
                   </li>
                 }
               </ol>
+            </section>
+
+            <section class="document-section capability-contract">
+              <div class="section-title">
+                <div class="section-title-lockup"><img src="/assets/pictograms/control-panel.svg" alt="Control Engine common capability catalog" width="52" height="52" /><div><p class="foundation-eyebrow">OSCE capability catalog</p><h3>모든 제어 채널이 재사용하는 여섯 가지 공통 기능</h3></div></div>
+                <p>OSCE는 component 구현을 흡수하지 않고 계획과 증거의 공통 의미를 제공해 표면별 중복을 제거합니다.</p>
+              </div>
+              <div class="capability-grid capability-grid-six">
+                <article><span>01</span><h4>Discover</h4><p>Registry와 owner API에서 허용 action, schema, risk와 현재 availability를 조회합니다.</p><small>Output: capability revision</small></article>
+                <article><span>02</span><h4>Plan</h4><p>대상, 변경 전후, 영향 범위, dependency와 rollback 가능성을 계산합니다.</p><small>Output: immutable plan digest</small></article>
+                <article><span>03</span><h4>Authorize</h4><p>actor, tenant, assurance, purpose와 risk에 맞는 정책·승인을 plan에 결속합니다.</p><small>Output: bounded authorization context</small></article>
+                <article><span>04</span><h4>Execute</h4><p>해당 component adapter만 호출하고 idempotency, fencing, retry와 progress를 operation으로 관리합니다.</p><small>Output: durable operationId</small></article>
+                <article><span>05</span><h4>Verify</h4><p>API, runtime, data와 필요한 browser postcondition을 함께 확인해 기능 완료를 판정합니다.</p><small>Output: owner receipt and evidence set</small></article>
+                <article><span>06</span><h4>Recover</h4><p>실패 단계와 적용된 side effect를 기준으로 rollback 또는 안전한 재시도 경로를 지휘합니다.</p><small>Output: recovery receipt and final state</small></article>
+              </div>
             </section>
 
             <section class="decision-block engine-decision">
@@ -422,8 +479,21 @@ import {
               }
             </ol>
 
+            <section class="document-section capability-contract">
+              <div class="section-title">
+                <div class="section-title-lockup"><img src="/assets/pictograms/intelligence.svg" alt="AI lifecycle operating functions" width="52" height="52" /><div><p class="foundation-eyebrow">AI lifecycle functions</p><h3>모델 확보부터 교체까지 끊기지 않아야 하는 운영 기능</h3></div></div>
+                <p>모델 파일, GPU endpoint와 Agent 배치를 하나로 뭉치지 않고 각 단계의 owner와 lineage를 연결합니다.</p>
+              </div>
+              <div class="capability-grid">
+                <article><span>01</span><h4>Artifact와 lineage</h4><p>dataset, base model, adapter, tokenizer, license와 evaluation 결과를 digest로 연결합니다.</p><small>Output: reproducible model artifact record</small></article>
+                <article><span>02</span><h4>학습·GPU 할당</h4><p>quota, priority, runtime class와 job spec 안에서 train·adapt workload를 예약하고 비용을 기록합니다.</p><small>Output: resource-bound training receipt</small></article>
+                <article><span>03</span><h4>평가·승인·Serving</h4><p>quality, safety, security, cost gate를 통과한 artifact만 Model Binding과 endpoint로 승격합니다.</p><small>Output: admitted binding and serving evidence</small></article>
+                <article><span>04</span><h4>배치·관측·교체</h4><p>Agent가 승인 model/tool/policy로 실행되도록 묶고 drift와 회귀를 감지해 새 revision으로 안전하게 전환합니다.</p><small>Output: run provenance and replacement receipt</small></article>
+              </div>
+            </section>
+
             <section class="document-section">
-              <div class="section-title"><div><p class="foundation-eyebrow">Where models live</p><h3>우리의 AI 모델은 어디에 존재하는가</h3></div><p>논리적으로는 PFSS Model Claim/Binding에 존재하고, 물리적으로는 provider·artifact registry·GPU serving runtime 중 하나에 존재합니다.</p></div>
+              <div class="section-title"><div class="section-title-lockup"><img src="/assets/pictograms/intelligence.svg" alt="Model locations and bindings" width="52" height="52" /><div><p class="foundation-eyebrow">Where models live</p><h3>우리의 AI 모델은 어디에 존재하는가</h3></div></div><p>논리적으로는 PFSS Model Claim/Binding에 존재하고, 물리적으로는 provider·artifact registry·GPU serving runtime 중 하나에 존재합니다.</p></div>
               <div class="definition-grid definition-grid-three compact-cards">
                 @for (location of modelLocations; track location.id) {
                   <section class="definition-card"><header><span>{{ location.id }}</span><h4>{{ location.name }}</h4></header><p>{{ location.role }}</p><dl><div><dt>Owns</dt><dd>{{ location.owns.join(' · ') }}</dd></div><div><dt>Boundary</dt><dd>{{ location.excludes.join(' · ') }}</dd></div><div><dt>Proof</dt><dd>{{ location.evidence }}</dd></div></dl></section>
@@ -440,7 +510,7 @@ import {
             </section>
 
             <section class="document-section">
-              <div class="section-title"><div><p class="foundation-eyebrow">GPU and playground</p><h3>Control Plane은 Pod, 실행 workspace는 risk에 따라 Pod 또는 KubeVirt</h3></div><p>GPU는 Agent에게 직접 배정하지 않고 quota·model serving·workspace profile을 통해 할당합니다. 더 강한 격리가 필요한 작업을 더 약한 Driver로 자동 하향하지 않습니다.</p></div>
+              <div class="section-title"><div class="section-title-lockup"><img src="/assets/pictograms/cloud-infrastructure-management.svg" alt="GPU and playground infrastructure" width="52" height="52" /><div><p class="foundation-eyebrow">GPU and playground</p><h3>Control Plane은 Pod, 실행 workspace는 risk에 따라 Pod 또는 KubeVirt</h3></div></div><p>GPU는 Agent에게 직접 배정하지 않고 quota·model serving·workspace profile을 통해 할당합니다. 더 강한 격리가 필요한 작업을 더 약한 Driver로 자동 하향하지 않습니다.</p></div>
               <div class="workspace-compare">
                 <section><span>DEFAULT</span><h4>Pod Playground</h4><p>짧은 수명, 빠른 시작, 표준 Kubernetes network/storage policy. read/evaluate와 제한된 tool 실행의 기본값입니다.</p><dl><div><dt>Best for</dt><dd>ephemeral evaluation · bounded code · standard isolation</dd></div><div><dt>Proof</dt><dd>runtimeClass · quota · NetworkPolicy · teardown residue zero</dd></div></dl></section>
                 <section><span>STRONGER CLASS</span><h4>KubeVirt VM Playground</h4><p>kernel boundary, VM tooling, 긴 workspace가 필요한 고위험 작업에 선택합니다. 설치 의존성이나 기본 경로는 아닙니다.</p><dl><div><dt>Best for</dt><dd>untrusted build · stronger tenant boundary · VM-specific tool</dd></div><div><dt>Proof</dt><dd>VMI identity · network/storage policy · console fence · teardown</dd></div></dl></section>
@@ -449,7 +519,7 @@ import {
             </section>
 
             <section class="document-section">
-              <div class="section-title"><div><p class="foundation-eyebrow">Current vs target</p><h3>현재 구현과 목표 상태를 구분합니다</h3></div></div>
+              <div class="section-title"><div class="section-title-lockup"><img src="/assets/pictograms/connected-ecosystem.svg" alt="Current and target AI runtime states" width="52" height="52" /><div><p class="foundation-eyebrow">Current vs target</p><h3>현재 구현과 목표 상태를 구분합니다</h3></div></div></div>
               <div class="state-split">
                 <section><span>CURRENT</span><h4>R2D2 Native Runtime</h4><p>Agent run/step, capability owner, approval, operation과 receipt 의미론의 최초 구현입니다. AI-Workbench는 authoring·evaluation·관찰 표면이며 Runtime 자체가 아닙니다.</p></section>
                 <section><span>NEXT CONTRACT</span><h4>AgentRunRead v1</h4><p>AI-Workbench가 별도 ledger나 Kubernetes proxy 없이 R2D2의 run/step을 read-only로 소비하는 최소 seam입니다.</p></section>
@@ -461,27 +531,27 @@ import {
     </section>
   `,
   styles: [`
-    :host { --fd-line:var(--os-hairline); --fd-body:.88rem; --fd-detail:.8rem; --fd-label:.68rem; --fd-card-title:.94rem; display:block; min-width:0; max-width:100%; }
+    :host { --fd-line:var(--os-hairline); --fd-page-title:var(--arch-page-title,clamp(1.55rem,2.2vw,2rem)); --fd-section-title:var(--arch-section-title,1.2rem); --fd-body:var(--arch-body,.9rem); --fd-detail:var(--arch-detail,.8rem); --fd-label:var(--arch-label,.68rem); --fd-card-title:var(--arch-card-title,.98rem); display:block; min-width:0; max-width:100%; }
     :host * { box-sizing:border-box; }
     .foundation-docs { width:100%; min-width:0; max-width:100%; overflow:hidden; color:var(--os-ink); }
     .foundation-panel :where(p,small,strong,h3,h4,dt,dd) { min-width:0; overflow-wrap:anywhere; }
     .section-title,.document-intro { display:flex; justify-content:space-between; align-items:end; gap:2rem; }
-    .section-title h3 { margin:0; font-size:1.28rem; font-weight:550; line-height:1.3; }
-    .section-title>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:.8rem; line-height:1.6; text-align:right; }
-    .foundation-eyebrow { margin:0 0 .45rem; color:var(--os-accent); font-size:.58rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+    .section-title h3 { margin:0; font-size:var(--fd-section-title); font-weight:550; line-height:1.3; }
+    .section-title>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:var(--fd-detail); line-height:1.6; text-align:right; }
+    .foundation-eyebrow { margin:0 0 .45rem; color:var(--os-accent); font-size:var(--fd-label); font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
     .section-pictogram { display:grid; place-items:center; }
     .foundation-panel { width:100%; min-width:0; max-width:100%; border:1px solid var(--fd-line); overflow:hidden; background:var(--os-canvas); line-height:1.55; }
     .document-intro { align-items:start; padding:1.35rem 1.25rem; border-bottom:1px solid var(--fd-line); border-left:4px solid var(--os-accent); background:var(--os-surface-1); color:var(--os-ink); }
     .document-intro>.document-intro-heading { display:grid; grid-template-columns:5.6rem minmax(0,1fr); align-items:center; gap:1rem; min-width:0; }
     .section-pictogram { width:5.6rem; height:5.6rem; }
     .document-intro .foundation-eyebrow { color:var(--os-accent); }
-    .document-intro h3 { margin:0; overflow-wrap:anywhere; font-size:clamp(1.05rem,1.7vw,1.4rem); font-weight:500; line-height:1.35; }
-    .document-intro>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:.8rem; line-height:1.7; }
+    .document-intro h3 { margin:0; overflow-wrap:anywhere; font-size:var(--fd-page-title); font-weight:500; line-height:1.14; letter-spacing:-.025em; }
+    .document-intro>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:var(--fd-body); line-height:1.65; }
     .stack-flow,.operator-flow,.invocation-flow { display:flex; align-items:stretch; padding:1rem 1.25rem; border-bottom:1px solid var(--fd-line); background:var(--os-surface-1); }
     .stack-flow>div,.operator-flow>div,.invocation-flow>div { display:grid; flex:1; align-content:start; min-width:0; padding:.75rem; border:1px solid var(--fd-line); background:var(--os-canvas); }
     .stack-flow>b,.operator-flow>b,.invocation-flow>b { align-self:center; padding:0 .45rem; color:var(--os-ink-muted); font-weight:400; }
     .stack-flow span,.operator-flow span,.invocation-flow span,.composition-map span,.runtime-spectrum span,.pillars span,.parity-flow span,.workspace-compare span,.state-split span,.engine-node span,.engine-core-card span,.engine-stages span { color:var(--os-accent); font:700 var(--fd-label) var(--os-font-mono); }
-    .stack-flow strong,.operator-flow strong,.invocation-flow strong { margin-top:.35rem; font-size:.86rem; }
+    .stack-flow strong,.operator-flow strong,.invocation-flow strong { margin-top:.35rem; font-size:var(--fd-card-title); }
     .stack-flow small,.operator-flow small,.invocation-flow small { margin-top:.4rem; color:var(--os-ink-muted); font-size:var(--fd-detail); }
     .definition-grid { display:grid; min-width:0; gap:1px; border:1px solid var(--fd-line); background:var(--fd-line); }
     .definition-grid-three,.pillars,.state-split { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -517,18 +587,18 @@ import {
     .composition-map { display:grid; grid-template-columns:1.05fr 1fr 1fr; border-bottom:1px solid var(--fd-line); }
     .composition-map>div { display:grid; min-height:10rem; padding:1rem; border-right:1px solid var(--fd-line); }
     .composition-map>div:last-child { border-right:0; }
-    .composition-map strong,.parity-flow strong { margin-top:.45rem; font-size:.86rem; }
-    .composition-map small,.parity-flow small { margin-top:.35rem; color:var(--os-ink-muted); font-size:.78rem; }
+    .composition-map strong,.parity-flow strong { margin-top:.45rem; font-size:var(--fd-card-title); }
+    .composition-map small,.parity-flow small { margin-top:.35rem; color:var(--os-ink-muted); font-size:var(--fd-detail); }
     .composition-branch { display:grid; grid-template-columns:1fr auto 1fr; gap:.5rem; }
     .composition-branch b { color:var(--os-ink-muted); font-size:.7rem; writing-mode:vertical-rl; }
     .system-branch { background:var(--os-surface-1); }
     .lifecycle-strip,.ai-pipeline { display:grid; grid-template-columns:repeat(auto-fit,minmax(10.5rem,1fr)); gap:1px; min-width:0; margin:0; padding:1px; background:var(--fd-line); list-style:none; }
     .lifecycle-strip li,.ai-pipeline li { min-width:0; min-height:10rem; padding:.85rem; background:var(--os-canvas); }
     .lifecycle-strip span,.ai-pipeline span { color:var(--os-accent); font:650 var(--fd-label) var(--os-font-mono); }
-    .lifecycle-strip h4,.ai-pipeline h4,.runtime-spectrum h4,.tradeoff-grid h4,.pillars h4,.workspace-compare h4,.state-split h4 { margin:.6rem 0 0; font-size:.88rem; }
+    .lifecycle-strip h4,.ai-pipeline h4,.runtime-spectrum h4,.tradeoff-grid h4,.pillars h4,.workspace-compare h4,.state-split h4 { margin:.6rem 0 0; font-size:var(--fd-card-title); }
     .lifecycle-strip strong,.ai-pipeline strong { display:block; margin-top:.3rem; color:var(--os-ink-muted); font-size:.72rem; }
-    .lifecycle-strip p,.ai-pipeline p,.runtime-spectrum p,.pillars p { margin:.7rem 0 0; overflow-wrap:anywhere; color:var(--os-ink); font-size:.84rem; }
-    .lifecycle-strip small,.ai-pipeline small,.runtime-spectrum small,.pillars small { display:block; margin-top:.45rem; overflow-wrap:anywhere; color:var(--os-ink-muted); font-size:.76rem; }
+    .lifecycle-strip p,.ai-pipeline p,.runtime-spectrum p,.pillars p { margin:.7rem 0 0; overflow-wrap:anywhere; color:var(--os-ink); font-size:var(--fd-body); }
+    .lifecycle-strip small,.ai-pipeline small,.runtime-spectrum small,.pillars small { display:block; margin-top:.45rem; overflow-wrap:anywhere; color:var(--os-ink-muted); font-size:var(--fd-detail); }
     .runtime-spectrum,.tradeoff-grid,.pillars,.workspace-compare,.state-split { display:grid; border:1px solid var(--fd-line); }
     .runtime-spectrum { grid-template-columns:repeat(auto-fit,minmax(13rem,1fr)); }
     .runtime-spectrum section,.tradeoff-grid section,.pillars section,.workspace-compare section,.state-split section { padding:.85rem; border-right:1px solid var(--fd-line); }

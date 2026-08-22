@@ -1382,11 +1382,31 @@ os-admin-osaa {
 }
 
 /* Main index: OpenSphere Control Engine architecture page. */
+os-landing {
+  .section-heading-title { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); align-items: center; gap: .8rem; }
+  .section-heading-title > img { width: 3.25rem; height: 3.25rem; object-fit: contain; }
+  .architecture-capability-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--os-hairline); background: var(--os-hairline); }
+  .architecture-capability-grid article { min-width: 0; min-height: 10rem; padding: 1rem; background: var(--os-canvas); }
+  .architecture-capability-grid span { color: var(--os-accent); font: 700 var(--arch-label) var(--os-font-mono); }
+  .architecture-capability-grid h3 { margin: .65rem 0 0; font-size: var(--arch-card-title); }
+  .architecture-capability-grid p { margin: .55rem 0 0; color: var(--os-ink); font-size: var(--arch-body); line-height: 1.55; }
+  .architecture-capability-grid small { display: block; margin-top: .65rem; padding-top: .55rem; border-top: 1px solid var(--os-hairline); color: var(--os-ink-muted); font-size: var(--arch-detail); line-height: 1.5; }
+}
+
 os-landing-foundations {
+  .section-title-lockup { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); align-items: center; gap: .8rem; min-width: 0; }
+  .section-title-lockup > img { width: 3.25rem; height: 3.25rem; object-fit: contain; }
+  .capability-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--fd-line); background: var(--fd-line); }
+  .capability-grid-six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .capability-grid article { min-width: 0; min-height: 10rem; padding: 1rem; background: var(--os-canvas); }
+  .capability-grid span { color: var(--os-accent); font: 700 var(--fd-label) var(--os-font-mono); }
+  .capability-grid h4 { margin: .65rem 0 0; font-size: var(--fd-card-title); line-height: 1.35; }
+  .capability-grid p { margin: .55rem 0 0; color: var(--os-ink); font-size: var(--fd-body); line-height: 1.55; }
+  .capability-grid small { display: block; margin-top: .65rem; padding-top: .55rem; border-top: 1px solid var(--fd-line); color: var(--os-ink-muted); font-size: var(--fd-detail); line-height: 1.5; }
   .engine-architecture { margin: 1rem 1.25rem; border: 1px solid var(--fd-line); background: var(--fd-line); }
   .engine-layer-heading { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; padding: .8rem 1rem; background: var(--os-surface-1); }
   .engine-layer-heading span { color: var(--os-accent); font: 700 var(--fd-label) var(--os-font-mono); letter-spacing: .06em; }
-  .engine-layer-heading h4 { margin: .25rem 0 0; font-size: 1rem; }
+  .engine-layer-heading h4 { margin: .25rem 0 0; font-size: var(--fd-card-title); }
   .engine-layer-heading p { max-width: 36rem; margin: 0; color: var(--os-ink-muted); font-size: var(--fd-detail); text-align: right; }
   .engine-core-heading { border-top: 1px solid var(--fd-line); background: var(--os-accent-subtle); }
   .engine-surface-grid, .engine-target-grid, .engine-core-grid { display: grid; gap: 1px; background: var(--fd-line); }
@@ -1404,18 +1424,20 @@ os-landing-foundations {
   .engine-core-card { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); align-items: center; gap: 1rem; min-width: 0; min-height: 11rem; padding: 1.15rem; background: var(--os-canvas); }
   .engine-core-card.primary { box-shadow: inset 4px 0 var(--os-accent); background: var(--os-accent-subtle); }
   .engine-core-card img { width: 5.125rem; height: 5.125rem; object-fit: contain; }
-  .engine-core-card h4 { margin: .4rem 0 0; font-size: 1rem; }
+  .engine-core-card h4 { margin: .4rem 0 0; font-size: var(--fd-card-title); }
   .engine-core-card p { margin: .6rem 0 0; color: var(--os-ink); font-size: var(--fd-body); line-height: 1.6; }
   .engine-stages { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0; padding: 1px; background: var(--fd-line); list-style: none; }
   .engine-stages li { min-width: 0; min-height: 12rem; padding: .9rem; background: var(--os-canvas); }
-  .engine-stages h4 { margin: .55rem 0 0; font-size: .9rem; }
-  .engine-stages strong { display: block; margin-top: .3rem; color: var(--os-ink-muted); font-size: .72rem; }
-  .engine-stages p { margin: .7rem 0 0; color: var(--os-ink); font-size: .82rem; line-height: 1.55; }
-  .engine-stages small { display: block; margin-top: .45rem; color: var(--os-ink-muted); font-size: .75rem; }
+  .engine-stages h4 { margin: .55rem 0 0; font-size: var(--fd-card-title); }
+  .engine-stages strong { display: block; margin-top: .3rem; color: var(--os-ink-muted); font-size: var(--fd-detail); }
+  .engine-stages p { margin: .7rem 0 0; color: var(--os-ink); font-size: var(--fd-body); line-height: 1.55; }
+  .engine-stages small { display: block; margin-top: .45rem; color: var(--os-ink-muted); font-size: var(--fd-detail); }
   .engine-decision { border-top: 1px solid var(--fd-line); border-bottom: 0; }
 }
 
 @media (max-width: 76rem) {
+  os-landing .architecture-capability-grid,
+  os-landing-foundations .capability-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   os-landing-foundations {
     .engine-surface-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .engine-layer-heading { display: grid; }
@@ -1425,11 +1447,15 @@ os-landing-foundations {
 }
 
 @media (max-width: 56rem) {
+  os-landing-foundations .capability-grid-six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   os-landing-foundations .engine-target-grid,
   os-landing-foundations .engine-core-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 36rem) {
+  os-landing .architecture-capability-grid,
+  os-landing-foundations .capability-grid,
+  os-landing-foundations .capability-grid-six { grid-template-columns: 1fr; }
   os-landing-foundations {
     .engine-surface-grid { grid-template-columns: 1fr; }
     .engine-architecture { margin: 1rem; }

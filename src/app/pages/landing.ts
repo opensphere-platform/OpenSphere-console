@@ -61,11 +61,16 @@ const PERSPECTIVES: PerspectiveDef[] = [
             <div class="architecture-page" id="architecture-page-realization">
       <section class="architecture-hero" aria-labelledby="architecture-title">
         <div>
-          <p class="eyebrow">OpenSphere architecture index</p>
-          <h1 id="architecture-title">
-            OpenSphere Ten-Perspective and Six-Layer
-            <span>Service Realization Architecture</span>
-          </h1>
+          <div class="architecture-title-lockup">
+            <img src="/assets/pictograms/systems.svg" alt="Interconnected OpenSphere architecture systems" width="72" height="72" />
+            <div>
+              <p class="eyebrow">OpenSphere architecture index</p>
+              <h1 id="architecture-title">
+                OpenSphere Ten-Perspective and Six-Layer
+                <span>Service Realization Architecture</span>
+              </h1>
+            </div>
+          </div>
           <p class="hero-lead">
             10개의 수평적 Perspective로 서비스의 의미를 정의하고, 6개의 수직적 Layer로
             그 서비스가 설치·활성화·운영·복구 가능한 실체가 되는 과정을 정의합니다.
@@ -89,32 +94,60 @@ const PERSPECTIVES: PerspectiveDef[] = [
       <section class="axis-definitions" aria-label="Architecture axes">
         <article>
           <span class="axis-mark axis-mark-horizontal">Horizontal</span>
-          <div>
-            <h2>10 Perspectives</h2>
-            <p>서비스를 어떤 사용자·업무·정보 흐름의 관점에서 읽고 제공하는지를 정의합니다.</p>
+          <div class="axis-copy">
+            <img src="/assets/pictograms/connected-ecosystem.svg" alt="Connected service perspectives" width="44" height="44" />
+            <div>
+              <h2>10 Perspectives</h2>
+              <p>서비스를 어떤 사용자·업무·정보 흐름의 관점에서 읽고 제공하는지를 정의합니다.</p>
+            </div>
           </div>
         </article>
         <article>
           <span class="axis-mark axis-mark-vertical">Vertical</span>
-          <div>
-            <h2>6 Service Realization Layers</h2>
-            <p>무엇이 먼저 성립해야 하며, 누가 권위를 갖고 어떤 증거로 다음 Layer를 여는지 정의합니다.</p>
+          <div class="axis-copy">
+            <img src="/assets/pictograms/cloud-infrastructure-management.svg" alt="Layered service infrastructure" width="44" height="44" />
+            <div>
+              <h2>6 Service Realization Layers</h2>
+              <p>무엇이 먼저 성립해야 하며, 누가 권위를 갖고 어떤 증거로 다음 Layer를 여는지 정의합니다.</p>
+            </div>
           </div>
         </article>
         <article class="coordinate-rule">
           <span class="axis-mark">Coordinate</span>
-          <div>
-            <h2>Service = Perspective × Layer</h2>
-            <p>제품 이름이 아니라 서비스의 의미와 운영 책임이 만나는 좌표에 객체를 배치합니다.</p>
+          <div class="axis-copy">
+            <img src="/assets/pictograms/microservices.svg" alt="Atomic service coordinate" width="44" height="44" />
+            <div>
+              <h2>Service = Perspective × Layer</h2>
+              <p>제품 이름이 아니라 서비스의 의미와 운영 책임이 만나는 좌표에 객체를 배치합니다.</p>
+            </div>
           </div>
         </article>
       </section>
 
+      <section class="architecture-capabilities" aria-labelledby="architecture-contract-title">
+        <div class="section-heading">
+          <div class="section-heading-title">
+            <img src="/assets/pictograms/control-panel.svg" alt="Architecture operating contract controls" width="52" height="52" />
+            <div><p class="eyebrow">Operating contract</p><h2 id="architecture-contract-title">좌표를 실제 운영 계약으로 바꾸는 네 가지 기능</h2></div>
+          </div>
+          <p>각 객체는 분류에서 끝나지 않고 입력, 소유자, 완료 조건과 증거가 함께 정의되어야 합니다.</p>
+        </div>
+        <div class="architecture-capability-grid">
+          <article><span>01</span><h3>좌표 분류</h3><p>사용자·업무 의미를 Perspective로, 실제 구현 책임을 주 Layer로 고정합니다.</p><small>입력: service intent · 출력: Perspective × Layer coordinate</small></article>
+          <article><span>02</span><h3>선행 조건 검증</h3><p>Requires가 충족되지 않은 객체는 다음 Layer의 Ready로 승격하지 않습니다.</p><small>입력: dependency evidence · 출력: admitted or blocked decision</small></article>
+          <article><span>03</span><h3>소유자와 증거 확정</h3><p>한 lifecycle owner가 Establishes와 Ready evidence를 함께 책임지도록 계약합니다.</p><small>입력: owner contract · 출력: authority and evidence binding</small></article>
+          <article><span>04</span><h3>실행 표면 연결</h3><p>모델 객체와 현재 Registry·Console route를 구분해 실제 사용 가능한 진입점만 노출합니다.</p><small>입력: verified projection · 출력: live navigation or model-only state</small></article>
+        </div>
+      </section>
+
       <section class="model-section" aria-labelledby="model-title">
         <div class="section-heading">
-          <div>
-            <p class="eyebrow">10P × 6L model</p>
-            <h2 id="model-title">OpenSphere Service Realization Map</h2>
+          <div class="section-heading-title">
+            <img src="/assets/pictograms/microservices.svg" alt="Service realization model" width="52" height="52" />
+            <div>
+              <p class="eyebrow">10P × 6L model</p>
+              <h2 id="model-title">OpenSphere Service Realization Map</h2>
+            </div>
           </div>
           <p>구조는 아래에서 위로 축적되며, 설립 순서는 L1 bootstrap에서 L3를 거쳐 L1 HIS를 실증하는 feedback을 포함합니다.</p>
         </div>
@@ -198,9 +231,12 @@ const PERSPECTIVES: PerspectiveDef[] = [
 
       <section class="model-rules" aria-labelledby="rules-title">
         <div class="section-heading">
-          <div>
-            <p class="eyebrow">Reading rules</p>
-            <h2 id="rules-title">이 모델을 읽는 세 가지 원칙</h2>
+          <div class="section-heading-title">
+            <img src="/assets/pictograms/control-panel.svg" alt="Architecture reading rules" width="52" height="52" />
+            <div>
+              <p class="eyebrow">Reading rules</p>
+              <h2 id="rules-title">이 모델을 읽는 세 가지 원칙</h2>
+            </div>
           </div>
         </div>
         <div>
@@ -224,9 +260,12 @@ const PERSPECTIVES: PerspectiveDef[] = [
 
       <section class="service-index" aria-labelledby="service-index-title">
         <div class="section-heading">
-          <div>
-            <p class="eyebrow">Current implementation</p>
-            <h2 id="service-index-title">Operational Service Index</h2>
+          <div class="section-heading-title">
+            <img src="/assets/pictograms/console.svg" alt="Operational Console service index" width="52" height="52" />
+            <div>
+              <p class="eyebrow">Current implementation</p>
+              <h2 id="service-index-title">Operational Service Index</h2>
+            </div>
           </div>
           <p>구조 모델과 현재 실행 가능한 Console 진입점을 분리해 표시합니다.</p>
         </div>
@@ -316,6 +355,12 @@ const PERSPECTIVES: PerspectiveDef[] = [
     `
       :host { display: block; }
       .architecture-index {
+        --arch-page-title: clamp(1.55rem, 2.2vw, 2rem);
+        --arch-section-title: 1.2rem;
+        --arch-card-title: 0.98rem;
+        --arch-body: 0.9rem;
+        --arch-detail: 0.8rem;
+        --arch-label: 0.68rem;
         margin: -1.5rem;
         min-height: calc(100% + 3rem);
         padding: 1.5rem 2rem 3rem;
@@ -340,10 +385,22 @@ const PERSPECTIVES: PerspectiveDef[] = [
         font-weight: 600;
         white-space: nowrap;
       }
+      :host ::ng-deep .architecture-page-tabs > .nav .nav-link.active,
+      :host ::ng-deep .architecture-page-tabs > .nav .nav-link[aria-selected='true'] {
+        background: var(--os-canvas);
+        box-shadow: inset 0 -3px 0 var(--os-accent);
+        color: var(--os-accent);
+        font-weight: 700;
+      }
+      :host ::ng-deep .architecture-page-tabs > .nav .nav-link:focus-visible {
+        outline: 2px solid var(--os-accent);
+        outline-offset: -2px;
+      }
       :host ::ng-deep .architecture-page-tabs > .tab-content { min-width: 0; padding: 0; }
       .architecture-page { min-width: 0; max-width: 100%; }
       .architecture-hero,
       .axis-definitions,
+      .architecture-capabilities,
       .model-section,
       .model-rules,
       .service-index {
@@ -360,7 +417,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
       .eyebrow {
         margin: 0 0 0.55rem;
         color: var(--os-accent);
-        font-size: 0.63rem;
+        font-size: var(--arch-label);
         font-weight: 700;
         letter-spacing: 0.14em;
         text-transform: uppercase;
@@ -368,22 +425,24 @@ const PERSPECTIVES: PerspectiveDef[] = [
       .architecture-hero h1 {
         max-width: 64rem;
         margin: 0;
-        font-size: clamp(1.75rem, 2.8vw, 2.5rem);
-        font-weight: 300;
-        letter-spacing: -0.035em;
-        line-height: 1.06;
+        font-size: var(--arch-page-title);
+        font-weight: 500;
+        letter-spacing: -0.025em;
+        line-height: 1.14;
       }
       .architecture-hero h1 span {
         display: block;
         margin-top: 0.15rem;
         color: var(--os-ink-muted);
-        font-weight: 200;
+        font-weight: 400;
       }
+      .architecture-title-lockup { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); align-items: center; gap: 1rem; }
+      .architecture-title-lockup > img { width: 5rem; height: 5rem; object-fit: contain; }
       .hero-lead {
         max-width: 55rem;
         margin: 1rem 0 0;
         color: var(--os-ink-muted);
-        font-size: 1rem;
+        font-size: var(--arch-body);
         line-height: 1.65;
       }
       .model-equation {
@@ -396,8 +455,8 @@ const PERSPECTIVES: PerspectiveDef[] = [
       }
       .model-equation > div { display: grid; gap: 0.15rem; padding: 1rem 1.15rem; }
       .model-equation strong { color: var(--os-accent); font-size: 2.25rem; font-weight: 300; line-height: 1; }
-      .model-equation span { font-size: 0.76rem; font-weight: 650; }
-      .model-equation small { color: var(--os-ink-muted); font-size: 0.62rem; }
+      .model-equation span { font-size: var(--arch-detail); font-weight: 650; }
+      .model-equation small { color: var(--os-ink-muted); font-size: var(--arch-label); }
       .model-equation b { color: var(--os-ink-muted); font-size: 1.4rem; font-weight: 300; }
 
       .axis-definitions {
@@ -428,10 +487,13 @@ const PERSPECTIVES: PerspectiveDef[] = [
       }
       .axis-mark-horizontal { border-color: var(--os-accent); }
       .axis-mark-vertical { border-color: #8a3ffc; }
-      .axis-definitions h2 { margin: 0; font-size: 0.82rem; font-weight: 650; }
-      .axis-definitions p { margin: 0.45rem 0 0; color: var(--os-ink-muted); font-size: 0.74rem; line-height: 1.58; }
+      .axis-definitions h2 { margin: 0; font-size: var(--arch-card-title); font-weight: 650; }
+      .axis-definitions p { margin: 0.45rem 0 0; color: var(--os-ink-muted); font-size: var(--arch-detail); line-height: 1.58; }
+      .axis-copy { display: grid; grid-template-columns: 3rem minmax(0, 1fr); align-items: start; gap: 0.7rem; }
+      .axis-copy > img { width: 2.75rem; height: 2.75rem; object-fit: contain; }
       .coordinate-rule { background: var(--os-surface-1); }
 
+      .architecture-capabilities,
       .model-section,
       .model-rules,
       .service-index { margin-top: 2rem; }
@@ -442,8 +504,8 @@ const PERSPECTIVES: PerspectiveDef[] = [
         align-items: end;
         margin-bottom: 0.65rem;
       }
-      .section-heading h2 { margin: 0; font-size: 1.15rem; font-weight: 500; }
-      .section-heading > p { max-width: 38rem; margin: 0; color: var(--os-ink-muted); font-size: 0.74rem; line-height: 1.55; text-align: right; }
+      .section-heading h2 { margin: 0; font-size: var(--arch-section-title); font-weight: 550; line-height: 1.3; }
+      .section-heading > p { max-width: 38rem; margin: 0; color: var(--os-ink-muted); font-size: var(--arch-detail); line-height: 1.55; text-align: right; }
 
       .model-scroll {
         overflow-x: auto;
@@ -616,7 +678,8 @@ const PERSPECTIVES: PerspectiveDef[] = [
       }
       @media screen and (max-width: 36rem) {
         .architecture-index { margin: -1rem; padding: 1rem 1rem 2rem; }
-        .architecture-hero h1 { font-size: 1.8rem; }
+        .architecture-hero h1 { font-size: var(--arch-page-title); }
+        .architecture-title-lockup { grid-template-columns: 1fr; }
         .model-equation { grid-template-columns: 1fr; }
         .model-equation b { display: none; }
         .model-equation > div + div { border-top: 1px solid var(--os-hairline); }

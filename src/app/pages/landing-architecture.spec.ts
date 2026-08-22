@@ -80,12 +80,19 @@ test('architecture sections do not inherit the global Console header height', ()
   assert.match(source, /class="service-group-heading"/);
 });
 
-test('architecture body copy uses the enlarged readability step', () => {
-  assert.match(source, /\.hero-lead[\s\S]{0,180}font-size: 1rem/);
-  assert.match(source, /\.axis-definitions p[\s\S]{0,180}font-size: 0\.74rem/);
+test('architecture pages share one readable typography scale', () => {
+  assert.match(source, /--arch-page-title: clamp\(1\.55rem, 2\.2vw, 2rem\)/);
+  assert.match(source, /--arch-section-title: 1\.2rem/);
+  assert.match(source, /--arch-body: 0\.9rem/);
+  assert.match(source, /\.architecture-hero h1[\s\S]{0,180}font-size: var\(--arch-page-title\)/);
+  assert.match(source, /\.hero-lead[\s\S]{0,180}font-size: var\(--arch-body\)/);
+  assert.match(source, /\.axis-definitions p[\s\S]{0,180}font-size: var\(--arch-detail\)/);
   assert.match(source, /\.layer-overview p[\s\S]{0,180}font-size: 0\.68rem/);
   assert.match(source, /\.layer-contract dd[\s\S]{0,180}font-size: 0\.62rem/);
   assert.match(source, /\.model-rules p[\s\S]{0,180}font-size: 0\.68rem/);
+  assert.match(foundationSource, /--fd-page-title:var\(--arch-page-title/);
+  assert.match(foundationSource, /--fd-section-title:var\(--arch-section-title/);
+  assert.match(foundationSource, /--fd-body:var\(--arch-body/);
 });
 
 test('Perspective navigation remains Registry-derived and phantom-route free', () => {
@@ -107,7 +114,15 @@ test('main index uses one top-level Clarity tab bar for six independent architec
   assert.equal((source.match(/<os-landing-foundations page="(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)"/g) || []).length, 5);
   assert.match(source, /<button clrTabLink[^>]*>10P × 6L Architecture<\/button>[\s\S]*id="architecture-page-realization"/);
   assert.doesNotMatch(foundationSource, /<clr-tabs|clrTabLink|clr-tab-content/);
-  assert.doesNotMatch(`${source}\n${foundationSource}`, /role="tablist"|onTabKeydown|ArrowRight|aria-selected/);
+  assert.doesNotMatch(`${source}\n${foundationSource}`, /role="tablist"|onTabKeydown|ArrowRight|\[attr\.aria-selected\]/);
+});
+
+test('active Clarity tab has an explicit persistent visual state', () => {
+  assert.match(source, /\.architecture-page-tabs > \.nav \.nav-link\.active/);
+  assert.match(source, /\.architecture-page-tabs > \.nav \.nav-link\[aria-selected='true'\]/);
+  assert.match(source, /box-shadow: inset 0 -3px 0 var\(--os-accent\)/);
+  assert.match(source, /color: var\(--os-accent\)/);
+  assert.match(source, /\.nav-link:focus-visible/);
 });
 
 test('foundation concepts remain readable and contained across viewport widths', () => {
@@ -124,21 +139,23 @@ test('foundation concepts remain readable and contained across viewport widths',
   assert.doesNotMatch(foundationSource, /background:#161616|background:#393939/);
 });
 
-test('each foundation page owns its own title and enlarged body copy', () => {
+test('each foundation page owns its own title and uses the shared type hierarchy', () => {
   assert.doesNotMatch(foundationSource, /foundation-docs-title|원자적 구성을 지탱하는 다섯 가지 설계 계약/);
   assert.equal((foundationSource.match(/<section class="document-intro">/g) || []).length, 5);
   assert.match(
     foundationSource,
-    /\.section-title h3 \{[^}]*font-size:1\.28rem/,
+    /\.section-title h3 \{[^}]*font-size:var\(--fd-section-title\)/,
   );
   assert.match(
     foundationSource,
-    /\.section-title>p \{[^}]*font-size:\.8rem/,
+    /\.section-title>p \{[^}]*font-size:var\(--fd-detail\)/,
   );
   assert.match(
     foundationSource,
-    /--fd-body:\.88rem; --fd-detail:\.8rem; --fd-label:\.68rem; --fd-card-title:\.94rem/,
+    /--fd-page-title:var\(--arch-page-title/,
   );
+  assert.match(foundationSource, /\.document-intro h3 \{[^}]*font-size:var\(--fd-page-title\)/);
+  assert.match(foundationSource, /\.document-intro>p \{[^}]*font-size:var\(--fd-body\)/);
   assert.match(foundationSource, /\.definition-card>p \{[^}]*font-size:var\(--fd-body\)/);
   assert.match(foundationSource, /\.definition-card dd \{[^}]*font-size:var\(--fd-detail\)/);
 });
@@ -173,11 +190,33 @@ test('foundation concepts use the approved local pictogram set without a runtime
     assert.doesNotMatch(svg, /<script|<foreignObject|\son\w+=|(?:href|src)=/i);
   }
   assert.equal((foundationSource.match(/class="section-pictogram"/g) || []).length, 5);
+  assert.equal((foundationSource.match(/class="section-title-lockup"/g) || []).length >= 12, true);
+  assert.equal((source.match(/\/assets\/pictograms\/[a-z-]+\.svg/g) || []).length >= 8, true);
   assert.doesNotMatch(`${foundationSource}\n${foundationModel}`, /pictograms\.opl\.io\.kr|cdn\.statically\.io/);
   assert.doesNotMatch(foundationSource, /\.section-pictogram \{[^}]*background:/);
   assert.equal((foundationSource.match(/class="section-pictogram"[\s\S]{0,160}width="70" height="70"/g) || []).length, 5);
   assert.equal((foundationSource.match(/class="engine-node(?: target)?"/g) || []).length, 2);
   assert.match(foundationSource, /CONTROLLED COMPONENTS/);
+});
+
+test('every architecture page explains operational functions with inputs and outputs', () => {
+  assert.match(source, /좌표를 실제 운영 계약으로 바꾸는 네 가지 기능/);
+  assert.equal((source.match(/class="architecture-capability-grid"/g) || []).length, 1);
+  assert.equal((foundationSource.match(/class="document-section capability-contract"/g) || []).length, 5);
+  assert.equal((foundationSource.match(/class="capability-grid(?: capability-grid-six)?"/g) || []).length, 5);
+  for (const term of [
+    'Stack마다 독립적으로 닫혀야 하는 네 가지 운영 기능',
+    '설치 이후 Main Shell이 실제로 수행하는 네 가지 기능',
+    '네 제어 표면이 나누어 맡는 기능과 공통 완료 기준',
+    '모든 제어 채널이 재사용하는 여섯 가지 공통 기능',
+    '모델 확보부터 교체까지 끊기지 않아야 하는 운영 기능',
+  ]) {
+    assert.match(foundationSource, new RegExp(term));
+  }
+  assert.match(foundationSource, /Input: signed claim/);
+  assert.match(foundationSource, /Output: immutable verified extension revision/);
+  assert.match(foundationSource, /Output: durable operationId/);
+  assert.match(foundationSource, /Output: run provenance and replacement receipt/);
 });
 
 test('CBSS products use their approved local product logos without decorative tiles or a runtime CDN', () => {
