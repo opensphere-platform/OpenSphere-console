@@ -91,13 +91,17 @@ if ($KubeContext -ne 'docker-desktop' -or (& kubectl config current-context).Tri
 if ($Operation -eq 'Enable') {
   # Migration -> trust -> exact rollout/readiness/SAR -> signed intent -> gate.
   # This also restores the exact replica profile after a completed Disable.
-  $arguments = @('-PublicationEvidence',$PublicationEvidence,'-KubeContext',$KubeContext,
-    '-SigningKey',$SigningKey,'-SigningKeyId',$SigningKeyId)
-  if ($RuntimePublicationEvidence) { $arguments += @('-RuntimePublicationEvidence',$RuntimePublicationEvidence) }
-  if ($BackendPublicationEvidence) { $arguments += @('-BackendPublicationEvidence',$BackendPublicationEvidence) }
-  if ($ConsolePublicationEvidence) { $arguments += @('-ConsolePublicationEvidence',$ConsolePublicationEvidence) }
-  if ($ControlPublicationEvidence) { $arguments += @('-ControlPublicationEvidence',$ControlPublicationEvidence) }
-  if ($ReceiptPath) { $arguments += @('-ReceiptPath',$ReceiptPath) }
+  $arguments = @{
+    PublicationEvidence = $PublicationEvidence
+    KubeContext = $KubeContext
+    SigningKey = $SigningKey
+    SigningKeyId = $SigningKeyId
+  }
+  if ($RuntimePublicationEvidence) { $arguments.RuntimePublicationEvidence = $RuntimePublicationEvidence }
+  if ($BackendPublicationEvidence) { $arguments.BackendPublicationEvidence = $BackendPublicationEvidence }
+  if ($ConsolePublicationEvidence) { $arguments.ConsolePublicationEvidence = $ConsolePublicationEvidence }
+  if ($ControlPublicationEvidence) { $arguments.ControlPublicationEvidence = $ControlPublicationEvidence }
+  if ($ReceiptPath) { $arguments.ReceiptPath = $ReceiptPath }
   & (Join-Path $PSScriptRoot 'Deploy-LocalEdgeOsShell.ps1') @arguments
   if ($LASTEXITCODE -ne 0) { throw "OS Shell enable deployment failed with exit code $LASTEXITCODE" }
   return

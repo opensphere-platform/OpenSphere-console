@@ -30,6 +30,13 @@ test('backend, release owner, and database use the append-only migration ledger 
   assert.match(migration, /sourceRevision' IS DISTINCT FROM v_latest_source_revision/);
 });
 
+test('OS Shell enable delegates named deployment evidence without positional parameter drift', () => {
+  assert.match(featureOperation, /\$arguments = @\{[\s\S]*PublicationEvidence = \$PublicationEvidence/);
+  assert.match(featureOperation, /\$arguments[.]ConsolePublicationEvidence = \$ConsolePublicationEvidence/);
+  assert.match(featureOperation, /Deploy-LocalEdgeOsShell[.]ps1'\) @arguments/);
+  assert.doesNotMatch(featureOperation, /\$arguments = @\('-PublicationEvidence'/);
+});
+
 test('backend bridge publisher binds canonical main, setup lock and exact digest', () => {
   assert.match(source, /branch --show-current/);
   assert.match(source, /refs\/remotes\/origin\/main/);
