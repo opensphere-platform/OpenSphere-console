@@ -68,6 +68,7 @@ COPY opensphere-console-backend/r2d2-operation-api.js ./r2d2-operation-api.js
 COPY opensphere-console-backend/r2d2-durable-operation.js ./r2d2-durable-operation.js
 COPY opensphere-console-backend/r2d2-engineering-remediation.js ./r2d2-engineering-remediation.js
 COPY opensphere-console-backend/r2d2-remediation-api.js ./r2d2-remediation-api.js
+COPY opensphere-console-backend/osaa-source-authority.js ./osaa-source-authority.js
 COPY opensphere-console-backend/module-lifecycle-policy.js ./module-lifecycle-policy.js
 COPY opensphere-console-backend/notification-api.js ./notification-api.js
 COPY opensphere-console-backend/external-channel-api.js ./external-channel-api.js

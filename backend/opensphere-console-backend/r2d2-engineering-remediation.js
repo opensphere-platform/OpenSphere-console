@@ -2,13 +2,9 @@
 
 const { createHash } = require('crypto');
 const path = require('path');
+const { engineeringRepositoryPolicy } = require('./osaa-source-authority');
 
-const REPOSITORIES = Object.freeze({
-  console: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-console.git', allowedPaths: ['backend/', 'src/', 'nginx/', 'docs/'], components: ['console', 'consoleBackend', 'osaaGateway'] }),
-  setup: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-Setup-CLI.git', allowedPaths: ['src/', 'deploy/', 'tests/', 'docs/'], components: ['setup'] }),
-  clusterManager: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-shell-clusterManager.git', allowedPaths: ['src/', 'backend/', 'tests/'], components: ['clusterManager'] }),
-  foundation: Object.freeze({ url: 'https://gitea.opensphere.local/opensphere/OpenSphere-shell-foundation.git', allowedPaths: ['src/', 'backend/', 'tests/'], components: ['foundation'] }),
-});
+const REPOSITORIES = engineeringRepositoryPolicy();
 const TEST_COMMANDS = Object.freeze(new Set(['unit', 'contract', 'integration', 'security', 'migration', 'ui-e2e', 'supply-chain']));
 const STAGES = Object.freeze(['proposed','awaiting_approval','approved','sandboxed','patched','testing','test_failed','ready_to_commit','committed','building','build_failed','built','awaiting_deploy_approval','deploying','verifying','inconclusive','succeeded','rolling_back','rolled_back','failed','cancelled']);
 const APPROVAL_SCOPES = Object.freeze(['source_patch', 'deployment']);

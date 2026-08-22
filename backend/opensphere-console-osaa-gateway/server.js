@@ -3495,6 +3495,7 @@ function controlToolsSystemMessage() {
       'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HIS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
       'When Registry Plugins are described as 요청 시 적재 or missing from a Host screen, call the extension presentation status tool. Distinguish host-owned menu eligibility from route-scoped child UI activation, and never restart, reinstall, or enable entries that Registry reports as healthy.',
       'When the operator asks what happened to a durable operation or supplies an operation UUID, call get_osaa_operation. Report its current phase, approval state, execution steps, and postcondition verification from the ledger; never infer completion from action acceptance.',
+      'For source-level diagnosis, first read the canonical source catalog, resolve the repository branch to an exact GitHub revision, then search or read only that revision. Cite repository ID, 40-character revision, path, and line range. Never substitute Gitea, a workspace checkout, a stale manual snippet, or model memory for canonical source evidence; report inaccessible repositories and complete=false searches as coverage gaps.',
       'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HIS is telemetry authority.',
       'Platform recovery status is structured evidence, not proof that a restore executor exists. The current owner supports sanitized status and isolated-drill planning only; never claim that backup restore can be executed unless drill-request and evidence-promote capabilities are both advertised.',
       'The provider may call only the permission-filtered read tools supplied with this request. Treat their returned data as current evidence and cite what was actually observed.',
@@ -5180,6 +5181,10 @@ const TOOL_PERMISSION = {
   'osaa.foundation.postgres.plan': 'osaa.action.execute.high',
   'osaa.knowledge.search': 'osaa.knowledge.read',
   'osaa.knowledge.ingest-manual': 'osaa.knowledge.manage',
+  'osaa.source.catalog': 'osaa.knowledge.read',
+  'osaa.source.head': 'osaa.knowledge.read',
+  'osaa.source.read': 'osaa.knowledge.read',
+  'osaa.source.search': 'osaa.knowledge.read',
   'osaa.k8s.logs.tail': 'osaa.logs.read',
   'osaa.k8s.deployment.restart': 'osaa.action.execute.high',
   'osaa.k8s.deployment.scale': 'osaa.action.execute.high',
@@ -6404,6 +6409,24 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     query: { type: 'string', minLength: 1, maxLength: 1000 },
     limit: { type: 'integer', minimum: 1, maximum: 12 },
   }, ['query']);
+  add('osaa.knowledge.read', 'get_opensphere_source_catalog', 'Read the release-bound canonical GitHub source catalog, repository visibility, allowlisted paths, and explicit coverage gaps. Never substitute Gitea or a workspace checkout for this authority.', {});
+  add('osaa.knowledge.read', 'resolve_opensphere_source_revision', 'Resolve one allowlisted canonical GitHub repository main branch to an exact 40-character commit revision before source reading or search.', {
+    repositoryId: { type: 'string', enum: ['platform-v2', 'console', 'setup-cli', 'shell-cluster-manager', 'shell-foundation'] },
+  }, ['repositoryId']);
+  add('osaa.knowledge.read', 'read_opensphere_source', 'Read a bounded line range from one allowlisted text file at an exact canonical GitHub revision. Cite repositoryId, revision, path, and returned line range.', {
+    repositoryId: { type: 'string', enum: ['platform-v2', 'console', 'setup-cli', 'shell-cluster-manager', 'shell-foundation'] },
+    revision: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+    path: { type: 'string', minLength: 1, maxLength: 500 },
+    startLine: { type: 'integer', minimum: 1 },
+    endLine: { type: 'integer', minimum: 1 },
+  }, ['repositoryId', 'revision', 'path']);
+  add('osaa.knowledge.read', 'search_opensphere_source', 'Search allowlisted text at one exact canonical GitHub revision. Narrow with pathPrefix when possible; use returned complete=false as a coverage gap, not evidence of absence.', {
+    repositoryId: { type: 'string', enum: ['platform-v2', 'console', 'setup-cli', 'shell-cluster-manager', 'shell-foundation'] },
+    revision: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+    query: { type: 'string', minLength: 2, maxLength: 200 },
+    pathPrefix: { type: 'string', minLength: 1, maxLength: 500 },
+    limit: { type: 'integer', minimum: 1, maximum: 30 },
+  }, ['repositoryId', 'revision', 'query']);
   add('osaa.system.read', 'list_governed_actions', 'List actions allowed for this user. Mutating actions are proposals and still require an exact human confirmation and approval workflow.', {
     query: { type: 'string', maxLength: 1000 },
   });
@@ -6500,6 +6523,58 @@ async function backendGet(path, actor) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw { code: response.status, msg: body.error || `Console Backend HTTP ${response.status}` };
   return body;
+}
+
+async function sourceCatalogRead(actor) {
+  assertPermission(actor, 'osaa.knowledge.read');
+  const projection = redactProjection(await backendGet('/api/osaa/source/catalog', actor));
+  audit(actor, 'canonical-source-catalog', 'CanonicalSource/catalog', 'ok', `${projection.repositories?.length || 0} repositories / ${projection.coverage || 'unknown'} coverage`);
+  return projection;
+}
+
+async function sourceHeadRead(inputs, actor) {
+  assertPermission(actor, 'osaa.knowledge.read');
+  requireClosedOwnerInputs(inputs, ['repositoryId']);
+  const projection = redactProjection(await fixedOwnerPost(
+    CONSOLE_IDENTITY_URL, '/api/osaa/source/head', actor,
+    { repositoryId: String(inputs.repositoryId || '').trim() }, 'Console canonical source', 20000,
+  ));
+  audit(actor, 'canonical-source-head', `CanonicalSource/${projection.repository?.id || inputs.repositoryId}@${projection.revision || 'unknown'}`, 'ok', projection.revision || 'unresolved');
+  return projection;
+}
+
+async function sourceFileRead(inputs, actor) {
+  assertPermission(actor, 'osaa.knowledge.read');
+  requireClosedOwnerInputs(inputs, ['repositoryId', 'revision', 'path', 'startLine', 'endLine']);
+  const payload = {
+    repositoryId: String(inputs.repositoryId || '').trim(),
+    revision: String(inputs.revision || '').trim().toLowerCase(),
+    path: String(inputs.path || '').trim(),
+  };
+  if (inputs.startLine != null) payload.startLine = Number(inputs.startLine);
+  if (inputs.endLine != null) payload.endLine = Number(inputs.endLine);
+  const projection = redactProjection(await fixedOwnerPost(
+    CONSOLE_IDENTITY_URL, '/api/osaa/source/read', actor, payload, 'Console canonical source', 45000,
+  ));
+  audit(actor, 'canonical-source-read', `CanonicalSource/${projection.repositoryId || payload.repositoryId}/${projection.path || payload.path}@${projection.revision || payload.revision}`, 'ok', projection.digest || 'digest unavailable');
+  return projection;
+}
+
+async function sourceSearchRead(inputs, actor) {
+  assertPermission(actor, 'osaa.knowledge.read');
+  requireClosedOwnerInputs(inputs, ['repositoryId', 'revision', 'query', 'pathPrefix', 'limit']);
+  const payload = {
+    repositoryId: String(inputs.repositoryId || '').trim(),
+    revision: String(inputs.revision || '').trim().toLowerCase(),
+    query: String(inputs.query || '').trim(),
+  };
+  if (inputs.pathPrefix != null) payload.pathPrefix = String(inputs.pathPrefix).trim();
+  if (inputs.limit != null) payload.limit = Number(inputs.limit);
+  const projection = redactProjection(await fixedOwnerPost(
+    CONSOLE_IDENTITY_URL, '/api/osaa/source/search', actor, payload, 'Console canonical source', 60000,
+  ));
+  audit(actor, 'canonical-source-search', `CanonicalSource/${projection.repositoryId || payload.repositoryId}@${projection.revision || payload.revision}`, 'ok', `${projection.items?.length || 0} matches / complete=${projection.complete === true}`);
+  return projection;
 }
 
 async function durableOperationStatusRead(inputs, actor) {
@@ -7416,6 +7491,22 @@ async function executeAgentTool(name, args, actor, context = {}) {
         action: 'knowledge-search',
         items: await searchKnowledge(String(input.query || ''), Number(input.limit || OSAA_RAG_TOP_K), actor, context),
       };
+      break;
+    case 'get_opensphere_source_catalog':
+      permissionCode = 'osaa.knowledge.read';
+      result = await sourceCatalogRead(actor);
+      break;
+    case 'resolve_opensphere_source_revision':
+      permissionCode = 'osaa.knowledge.read';
+      result = await sourceHeadRead(input, actor);
+      break;
+    case 'read_opensphere_source':
+      permissionCode = 'osaa.knowledge.read';
+      result = await sourceFileRead(input, actor);
+      break;
+    case 'search_opensphere_source':
+      permissionCode = 'osaa.knowledge.read';
+      result = await sourceSearchRead(input, actor);
       break;
     case 'list_governed_actions': {
       assertPermission(actor, 'osaa.system.read');
@@ -8839,6 +8930,23 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/osaa/tools/recovery/plan' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
       return json(res, 200, await recoveryPlanRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/osaa/tools/source/catalog' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await sourceCatalogRead(actor));
+    }
+    if (url.pathname === '/api/osaa/tools/source/head' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await sourceHeadRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/osaa/tools/source/read' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await sourceFileRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/osaa/tools/source/search' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await sourceSearchRead(await readBody(req), actor));
     }
     if (url.pathname === '/api/osaa/tools/observability/logs' && req.method === 'POST') {
       const actor = await verifyAuthed(req);

@@ -22,3 +22,7 @@ test('missing adapter is NotConfigured while stale configured adapter is stale',
   assert.equal(his.configured, false);
   assert.equal(his.blockerCode, 'not_configured');
 });
+
+// The canonical source-evidence contract is part of the same source-adapter
+// regression group so the root Console test inventory cannot omit it.
+require('./source-evidence-contract.test');

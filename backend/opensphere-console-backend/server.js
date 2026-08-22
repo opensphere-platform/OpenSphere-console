@@ -37,6 +37,7 @@ const { createModuleOperationApi } = require('./module-operation-api');
 const { createR2d2OperationApi, createRestOperationStore, createRestWorkerStore } = require('./r2d2-operation-api');
 const { DESCRIPTORS: R2D2_DURABLE_DESCRIPTORS, DurableOperationWorker } = require('./r2d2-durable-operation');
 const { createR2d2RemediationApi, createRestRemediationStore } = require('./r2d2-remediation-api');
+const { createCanonicalSourceEvidence } = require('./osaa-source-authority');
 const {
   DEFAULT_INSTALLATION_CONFIG_FILE,
   moduleLifecycleRequiresRecentAal2,
@@ -118,6 +119,7 @@ const R2D2_ENGINEERING_PROPOSAL_ENABLED = process.env.R2D2_ENGINEERING_PROPOSAL_
 const R2D2_ENGINEERING_PROPOSAL_REPOSITORIES = String(process.env.R2D2_ENGINEERING_PROPOSAL_REPOSITORIES || '')
   .split(',').map((value) => value.trim()).filter(Boolean);
 const R2D2_ENGINEERING_EXECUTION_ENABLED = process.env.R2D2_ENGINEERING_EXECUTION_ENABLED === 'true';
+const GITHUB_SOURCE_TOKEN = process.env.GITHUB_SOURCE_TOKEN || '';
 const OS_SHELL_ADMISSION_ENABLED = process.env.OS_SHELL_ADMISSION_ENABLED === 'true';
 const OS_SHELL_ADMISSION_SECRET = process.env.OS_SHELL_ADMISSION_SECRET || '';
 const OS_SHELL_DELEGATION_SECRET = process.env.OS_SHELL_DELEGATION_SECRET || '';
@@ -1022,6 +1024,7 @@ const r2d2RemediationApi = createR2d2RemediationApi({
   },
   store: createRestRemediationStore(restRequest),
 });
+const osaaSourceEvidence = createCanonicalSourceEvidence({ githubToken: GITHUB_SOURCE_TOKEN });
 
 async function verifyNotificationAdmin(req) {
   const actor = await verifyConsoleAdmin(req);
@@ -4951,6 +4954,50 @@ const server = http.createServer(async (req, res) => {
         return json(res, 202, await osaaNotificationOwnerAction(actor, await readBody(req)));
       } catch (e) {
         return json(res, authErrorStatus(e), { error: e.msg || 'OSAA notification owner action failed' });
+      }
+    }
+    if (p === '/api/osaa/source/catalog' && req.method === 'GET') {
+      try {
+        const actor = await verifyConsoleAdmin(req, { requireAal2: false });
+        requireActorPermission(actor, 'osaa.knowledge.read');
+        const result = osaaSourceEvidence.catalog();
+        await logAudit(actor, 'osaa-source-catalog', 'CanonicalSource/catalog', 'ok', 'OSAA canonical source catalog read', { targetType: 'canonical-source' });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA canonical source catalog unavailable' });
+      }
+    }
+    if (p === '/api/osaa/source/head' && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req, { requireAal2: false });
+        requireActorPermission(actor, 'osaa.knowledge.read');
+        const result = await osaaSourceEvidence.resolveHead(await readBody(req));
+        await logAudit(actor, 'osaa-source-head', `CanonicalSource/${result.repository.id}@${result.revision}`, 'ok', 'OSAA canonical source revision resolved', { targetType: 'canonical-source' });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA canonical source revision unavailable' });
+      }
+    }
+    if (p === '/api/osaa/source/read' && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req, { requireAal2: false });
+        requireActorPermission(actor, 'osaa.knowledge.read');
+        const result = await osaaSourceEvidence.readSource(await readBody(req));
+        await logAudit(actor, 'osaa-source-read', `CanonicalSource/${result.repositoryId}/${result.path}@${result.revision}`, 'ok', 'OSAA exact source file read', { targetType: 'canonical-source', evidenceDigest: result.digest });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA canonical source file unavailable' });
+      }
+    }
+    if (p === '/api/osaa/source/search' && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req, { requireAal2: false });
+        requireActorPermission(actor, 'osaa.knowledge.read');
+        const result = await osaaSourceEvidence.searchSource(await readBody(req));
+        await logAudit(actor, 'osaa-source-search', `CanonicalSource/${result.repositoryId}@${result.revision}`, 'ok', `OSAA exact source search returned ${result.items.length} matches`, { targetType: 'canonical-source' });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA canonical source search unavailable' });
       }
     }
     if (p === '/api/osaa/owner/recovery/capabilities' && req.method === 'GET') {
