@@ -8,6 +8,7 @@ const realizationModel = fs.readFileSync(
   'utf8',
 );
 const foundationSource = fs.readFileSync(new URL('./landing-foundations.ts', import.meta.url), 'utf8');
+const dialogueStateSource = fs.readFileSync(new URL('./landing-osaa-dialogue-state.ts', import.meta.url), 'utf8');
 const globalStylesSource = fs.readFileSync(new URL('../../styles.scss', import.meta.url), 'utf8');
 const foundationModel = fs.readFileSync(
   new URL('../architecture/foundation-concepts.model.ts', import.meta.url),
@@ -103,18 +104,52 @@ test('Perspective navigation remains Registry-derived and phantom-route free', (
   assert.match(search, /홈 · 10P × 6L/);
 });
 
-test('main index uses one top-level Clarity tab bar for six independent architecture pages', () => {
+test('main index uses one top-level Clarity tab bar for seven independent architecture pages', () => {
   assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)'/g) || []).length, 5);
   assert.match(source, /import \{ ClarityModule \} from '@clr\/angular'/);
-  assert.match(source, /imports: \[RouterLink, LandingFoundations, ClarityModule\]/);
+  assert.match(source, /imports: \[RouterLink, LandingFoundations, LandingOsaaDialogueState, ClarityModule\]/);
   assert.match(source, /<clr-tabs class="architecture-page-tabs">/);
-  assert.equal((source.match(/<clr-tab>/g) || []).length, 6);
-  assert.equal((source.match(/<button clrTabLink/g) || []).length, 6);
-  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 6);
+  assert.equal((source.match(/<clr-tab>/g) || []).length, 7);
+  assert.equal((source.match(/<button clrTabLink/g) || []).length, 7);
+  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 7);
   assert.equal((source.match(/<os-landing-foundations page="(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)"/g) || []).length, 5);
   assert.match(source, /<button clrTabLink[^>]*>10P × 6L Architecture<\/button>[\s\S]*id="architecture-page-realization"/);
+  assert.match(source, /<button clrTabLink[^>]*>OSAA Dialogue State<\/button>/);
+  assert.match(source, /<os-landing-osaa-dialogue-state/);
   assert.doesNotMatch(foundationSource, /<clr-tabs|clrTabLink|clr-tab-content/);
-  assert.doesNotMatch(`${source}\n${foundationSource}`, /role="tablist"|onTabKeydown|ArrowRight|\[attr\.aria-selected\]/);
+  assert.doesNotMatch(`${source}\n${foundationSource}\n${dialogueStateSource}`, /role="tablist"|onTabKeydown|ArrowRight|\[attr\.aria-selected\]/);
+});
+
+test('OSAA dialogue state page defines the researched schema-guided operating contract', () => {
+  for (const term of [
+    'OSAA Dialogue State Tracker',
+    'Schema-Guided Dialogue State Tracking',
+    'Dialogue State',
+    'OSCE Capability Schema',
+    'Resource Graph & Evidence',
+    'activeResourceRefs[]',
+    'authorityRef',
+    'evidenceRefs[]',
+    'tool call 없이 “확인했습니다”라고 답변',
+  ]) {
+    assert.match(dialogueStateSource, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.match(dialogueStateSource, /System Context Binding — 업스트림 표준 용어가 아님/);
+  assert.match(dialogueStateSource, /개념은 채택, 새 orchestration framework는 보류/);
+  assert.equal((dialogueStateSource.match(/class="operational-flow"/g) || []).length, 1);
+  assert.equal((dialogueStateSource.match(/class="turn-sequence"/g) || []).length, 1);
+  assert.equal((dialogueStateSource.match(/href: 'https:\/\//g) || []).length, 6);
+});
+
+test('OSAA dialogue state page uses local pictograms and the shared readable type scale', () => {
+  assert.match(dialogueStateSource, /--od-page-title:\s*var\(--arch-page-title/);
+  assert.match(dialogueStateSource, /--od-section-title:\s*var\(--arch-section-title/);
+  assert.match(dialogueStateSource, /--od-body:\s*var\(--arch-body/);
+  assert.equal((dialogueStateSource.match(/\/assets\/pictograms\/[a-z-]+\.svg/g) || []).length >= 16, true);
+  assert.doesNotMatch(dialogueStateSource, /pictograms\.opl\.io\.kr|cdn\.statically\.io/);
+  assert.doesNotMatch(dialogueStateSource, /background:#161616|background:#393939/);
+  assert.match(dialogueStateSource, /\.dialogue-state-page \{[^}]*min-width:\s*0;[^}]*max-width:\s*100%/);
+  assert.match(dialogueStateSource, /\.upstream-table-wrap \{[^}]*overflow-x:\s*auto/);
 });
 
 test('active Clarity tab has an explicit persistent visual state', () => {

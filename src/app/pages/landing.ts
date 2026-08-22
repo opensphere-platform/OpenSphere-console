@@ -6,6 +6,7 @@ import { PerspectiveService } from '../core/perspective.service';
 import { routeForPlugin } from '../core/perspectives';
 import { SERVICE_REALIZATION_LAYERS } from '../architecture/service-realization.model';
 import { LandingFoundations } from './landing-foundations';
+import { LandingOsaaDialogueState } from './landing-osaa-dialogue-state';
 
 interface IndexLink {
   path: string;
@@ -28,7 +29,8 @@ type ArchitecturePageId =
   | 'dupa'
   | 'control-pillars'
   | 'control-engine'
-  | 'ai-lifecycle';
+  | 'ai-lifecycle'
+  | 'osaa-dialogue-state';
 
 /**
  * The horizontal axis is exactly ten Perspectives. Main Shell is not an
@@ -50,7 +52,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
 
 @Component({
   selector: 'os-landing',
-  imports: [RouterLink, LandingFoundations, ClarityModule],
+  imports: [RouterLink, LandingFoundations, LandingOsaaDialogueState, ClarityModule],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
@@ -346,6 +348,13 @@ const PERSPECTIVES: PerspectiveDef[] = [
           <button clrTabLink (click)="selectPage('ai-lifecycle')">AI Lifecycle</button>
           <clr-tab-content *clrIfActive="activePage() === 'ai-lifecycle'">
             <os-landing-foundations page="ai-lifecycle" />
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('osaa-dialogue-state')">OSAA Dialogue State</button>
+          <clr-tab-content *clrIfActive="activePage() === 'osaa-dialogue-state'">
+            <os-landing-osaa-dialogue-state />
           </clr-tab-content>
         </clr-tab>
       </clr-tabs>
