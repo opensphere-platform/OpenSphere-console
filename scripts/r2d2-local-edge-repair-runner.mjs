@@ -25,6 +25,14 @@ const artifactBase = path.join(os.tmpdir(), 'opensphere-r2d2-repair-artifacts');
 const tokenState = { value: '', refreshAt: 0 };
 const activeClaims = new Set();
 
+function retryDelayMs(consecutiveFailures) {
+  return Math.min(30_000, 1_000 * (2 ** Math.max(0, Math.min(5, consecutiveFailures - 1))));
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function exactSha(value, label) {
   const revision = String(value || '').trim();
   if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error(`${label} must be an exact source revision`);
@@ -406,12 +414,22 @@ async function main() {
   await validateHost();
   const registerTimer = setInterval(() => validateHost().catch((error) => process.stderr.write(`${error.message}\n`)), 20_000);
   registerTimer.unref();
+  let consecutiveFailures = 0;
   try {
     do {
-      const claimed = await api('/api/osaa/remediations/local-edge-runner/claim', { runnerId, claimEpoch, limit: 1 });
-      if (claimed.items?.length) {
-        for (const item of claimed.items) await processClaim(item);
-      } else if (!once) await new Promise((resolve) => setTimeout(resolve, 5000));
+      try {
+        const claimed = await api('/api/osaa/remediations/local-edge-runner/claim', { runnerId, claimEpoch, limit: 1 });
+        if (claimed.items?.length) {
+          for (const item of claimed.items) await processClaim(item);
+        } else if (!once) await delay(5000);
+        consecutiveFailures = 0;
+      } catch (error) {
+        if (once) throw error;
+        consecutiveFailures += 1;
+        const retryInMs = retryDelayMs(consecutiveFailures);
+        process.stderr.write(`RepairRunnerRetry ${error.code || 'TransientFailure'}: ${error.message}; retryInMs=${retryInMs}\n`);
+        await delay(retryInMs);
+      }
     } while (!once);
   } finally { clearInterval(registerTimer); tokenState.value = ''; }
 }

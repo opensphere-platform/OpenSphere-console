@@ -60,6 +60,31 @@ interface OsaaEngineeringStatus {
     browserVerification: boolean; rollback: boolean;
   };
 }
+interface EngineeringRemediation {
+  remediationRequestId: string;
+  reason: string;
+  riskLevel: string;
+  stage: string;
+  repository: string;
+  baseRevision: string;
+  allowedPaths: string[];
+  changedPaths: string[];
+  patchDigest: string;
+  affectedComponents: string[];
+  affectedImages: string[];
+  requiredTests: string[];
+  releaseScope: string;
+  targetChannel: string;
+  buildAuthority: string;
+  approvalBindingDigest: string;
+  verificationProfile: string;
+  verificationRoute: string;
+  approvalExpiresAt: string;
+  updatedAt: string;
+  requiredConfirmation?: string | null;
+  latestBuild?: { sourceRevision: string; patchDigest: string; buildAuthority: string; imageDigests: string[]; releaseLockDigest: string } | null;
+  activation: { approvalApi: boolean; workerReady: boolean; repositoryWrite: boolean; build: boolean; publish: boolean; deploy: boolean };
+}
 interface R2d2OperationalStatus {
   clusterId: string;
   graph: { total: number; fresh: number; observedAt: string | null };
@@ -476,15 +501,39 @@ interface OsaaActionBindingManifest {
               }
             </tbody></table></div>
             @if (!meta.mismatches.length) { <p class="r2d2-empty">기록된 mismatch가 없습니다. source coverage가 완전한지 함께 확인해야 합니다.</p> }
-            <h4>Patch-bound remediation request</h4>
-            <div class="r2d2-scroll-table"><table class="table"><thead><tr><th>요청</th><th>Risk</th><th>Stage</th><th>Component</th><th>Patch</th><th>Delivery</th><th>업데이트</th></tr></thead><tbody>
-              @for (request of meta.remediations; track request.remediationRequestId) {
-                <tr><td class="os-mono">{{ shortId(request.remediationRequestId) }}</td><td>{{ request.riskLevel }}</td><td>{{ request.stage }}</td><td>{{ request.affectedComponents.join(', ') || '-' }}</td><td class="os-mono">{{ shortId(request.patchDigest) }}</td><td>{{ request.targetChannel }} · {{ request.buildAuthority }}</td><td>{{ formatDateTime(request.updatedAt) }}</td></tr>
-              }
-            </tbody></table></div>
-            @if (!meta.remediations.length) { <p class="r2d2-empty">Engineering Remediation 요청이 없습니다. 임의 명령은 허용하지 않으며, OSAA가 제안한 exact patch work unit만 사용자 승인 후 실행됩니다.</p> }
           </article>
         }
+
+        <article class="r2d2-live-panel r2d2-operation-panel" aria-label="Engineering Remediation 승인과 실행 상태">
+          <div class="r2d2-operation-head">
+            <div><h3>Engineering Remediation</h3><p class="os-sub">OSAA가 제안한 exact patch work unit만 한 번 승인합니다. 이후 source patch · test · component-only 배포 · 실제 화면 검증 · 실패 시 rollback은 Repair Runner가 이어서 수행합니다.</p></div>
+            <span class="label" [class.label-success]="engineeringStatus()?.workerReady" [class.label-warning]="!engineeringStatus()?.workerReady">{{ engineeringStatus()?.workerReady ? 'RUNNER READY' : 'RUNNER WAITING' }}</span>
+          </div>
+          @if (engineeringRequestError()) { <div class="alert alert-danger" role="alert"><div class="alert-items"><div class="alert-item static"><div class="alert-text">{{ engineeringRequestError() }}</div></div></div></div> }
+          <div class="r2d2-scroll-table"><table class="table"><thead><tr><th>작업</th><th>범위</th><th>증거</th><th>상태</th><th>작업</th></tr></thead><tbody>
+            @for (request of engineeringRequests(); track request.remediationRequestId) {
+              <tr>
+                <td><strong>{{ request.reason }}</strong><small class="r2d2-work-unit-paths">{{ request.changedPaths.join(' · ') || request.allowedPaths.join(' · ') }}</small></td>
+                <td>{{ request.riskLevel }} · {{ request.affectedComponents.join(', ') || '-' }}<small class="r2d2-work-unit-paths">{{ request.releaseScope }} · {{ request.targetChannel }} · {{ request.buildAuthority }}</small></td>
+                <td><span class="os-mono" [title]="request.patchDigest">patch {{ shortId(request.patchDigest) }}</span><small class="r2d2-work-unit-paths os-mono" [title]="request.approvalBindingDigest">binding {{ shortId(request.approvalBindingDigest) }}</small></td>
+                <td><span class="label" [class.label-success]="isEngineeringSuccess(request.stage)" [class.label-danger]="isEngineeringFailure(request.stage)" [class.label-warning]="request.stage === 'proposed' || request.stage === 'verifying'" [class.label-info]="isEngineeringRunning(request.stage)">{{ engineeringStageLabel(request.stage) }}</span><small class="r2d2-work-unit-paths">{{ formatDateTime(request.updatedAt) }}</small></td>
+                <td>
+                  @if (request.stage === 'proposed') {
+                    <button class="btn btn-sm btn-primary" type="button" [disabled]="engineeringActionBusy() === request.remediationRequestId || !engineeringStatus()?.workerReady" (click)="approveEngineering(request)">{{ engineeringActionBusy() === request.remediationRequestId ? '승인 중' : '승인하고 실행' }}</button>
+                  } @else if (request.stage === 'verifying' && request.verificationRoute === '/manage/osaa') {
+                    <span class="r2d2-inline-state">현재 화면 자동 검증 중</span>
+                  } @else if (request.stage === 'verifying') {
+                    <span class="r2d2-inline-state">{{ request.verificationRoute }} 검증 대기</span>
+                  } @else {
+                    <span class="r2d2-inline-state">{{ engineeringStageAction(request.stage) }}</span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody></table></div>
+          @if (!engineeringRequests().length && !engineeringRequestsBusy()) { <p class="r2d2-empty">승인 대기 또는 실행 중인 Engineering Remediation 요청이 없습니다.</p> }
+          @if (engineeringRequestsBusy() && !engineeringRequests().length) { <p class="r2d2-empty">Engineering Remediation 상태를 확인하고 있습니다.</p> }
+        </article>
       </section>
 
       <section class="r2d2-section" aria-labelledby="r2d2-metacognition-title">
@@ -1388,6 +1437,8 @@ interface OsaaActionBindingManifest {
       .r2d2-detail-head { display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
       .r2d2-operation-approval { margin-top: 0.6rem; padding: 0.55rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; background: var(--cds-alias-object-interaction-background, #f2f2f2); }
       .r2d2-operation-approval code { overflow-wrap: anywhere; }
+      .r2d2-work-unit-paths { display: block; margin-top: 0.2rem; color: #60798a; line-height: 1.35; overflow-wrap: anywhere; }
+      .r2d2-inline-state { color: #486574; font-weight: 600; font-size: 0.68rem; }
       .r2d2-detail ol { list-style: none; padding: 0; margin: 0.5rem 0 0; display: grid; gap: 0.35rem; }
       .r2d2-detail li { display: grid; grid-template-columns: minmax(8rem, 0.7fr) minmax(10rem, 1fr) 2fr; gap: 0.6rem; align-items: baseline; font-size: 0.75rem; }
       @media (max-width: 980px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
@@ -1417,6 +1468,10 @@ export class AdminOsaa implements OnInit, OnDestroy {
   readonly controlPlaneStatus = signal<OsaaControlPlaneStatus | null>(null);
   readonly controlPlaneError = signal('');
   readonly engineeringStatus = signal<OsaaEngineeringStatus | null>(null);
+  readonly engineeringRequests = signal<EngineeringRemediation[]>([]);
+  readonly engineeringRequestsBusy = signal(false);
+  readonly engineeringRequestError = signal('');
+  readonly engineeringActionBusy = signal('');
   readonly operationalStatus = signal<R2d2OperationalStatus | null>(null);
   readonly graphNodes = signal<R2d2GraphNode[]>([]);
   readonly incidents = signal<R2d2Incident[]>([]);
@@ -1428,6 +1483,11 @@ export class AdminOsaa implements OnInit, OnDestroy {
   readonly operationApprovalBusy = signal(false);
   readonly operationalError = signal('');
   private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly browserVerificationAttempts = new Set<string>();
+  private browserConsoleErrorCount = 0;
+  private browserNetworkFailureCount = 0;
+  private readonly onBrowserError = () => { this.browserConsoleErrorCount += 1; };
+  private readonly onUnhandledRejection = () => { this.browserConsoleErrorCount += 1; };
 
   // LLM provider keys
   readonly llmKeys = signal<LlmKey[]>([]);
@@ -1548,9 +1608,11 @@ export class AdminOsaa implements OnInit, OnDestroy {
   });
 
   async ngOnInit(): Promise<void> {
+    window.addEventListener('error', this.onBrowserError);
+    window.addEventListener('unhandledrejection', this.onUnhandledRejection);
     await this.loadHealth();
-    await Promise.all([this.loadOperationalIntelligence(), this.loadEngineeringStatus(), this.loadLlmKeys(), this.loadLlmUsage(), this.loadAgentEvidence(), this.loadKnowledgeStats(), this.loadToolManifest(), this.loadActionBindings()]);
-    this.timer = setInterval(() => { void this.loadHealth(true); void this.loadOperationalIntelligence(true); void this.loadEngineeringStatus(); }, 15000);
+    await Promise.all([this.loadOperationalIntelligence(), this.loadEngineeringStatus(), this.loadEngineeringRequests(), this.loadLlmKeys(), this.loadLlmUsage(), this.loadAgentEvidence(), this.loadKnowledgeStats(), this.loadToolManifest(), this.loadActionBindings()]);
+    this.timer = setInterval(() => { void this.loadHealth(true); void this.loadOperationalIntelligence(true); void this.loadEngineeringStatus(); void this.loadEngineeringRequests(true); }, 15000);
   }
 
   async loadEngineeringStatus(): Promise<void> {
@@ -1561,8 +1623,129 @@ export class AdminOsaa implements OnInit, OnDestroy {
       this.engineeringStatus.set(null);
     }
   }
+
+  async loadEngineeringRequests(silent = false): Promise<void> {
+    if (this.engineeringRequestsBusy()) return;
+    this.engineeringRequestsBusy.set(true);
+    if (!silent) this.engineeringRequestError.set('');
+    try {
+      const response = await this.http.request('/api/osaa/remediations', { cache: 'no-store' });
+      const body = await response.json().catch(() => ({})) as { remediations?: EngineeringRemediation[]; error?: string };
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      const requests = Array.isArray(body.remediations) ? body.remediations : [];
+      this.engineeringRequests.set(requests);
+      this.engineeringRequestError.set('');
+      window.setTimeout(() => { void this.verifyCurrentEngineeringRequest(requests); }, 300);
+    } catch (error) {
+      if (!silent) this.engineeringRequestError.set(`Engineering Remediation 조회 실패: ${String(error)}`);
+    } finally {
+      this.engineeringRequestsBusy.set(false);
+    }
+  }
+
+  async approveEngineering(request: EngineeringRemediation): Promise<void> {
+    if (request.stage !== 'proposed' || !this.engineeringStatus()?.workerReady || this.engineeringActionBusy()) return;
+    this.engineeringActionBusy.set(request.remediationRequestId);
+    try {
+      const detailResponse = await this.http.request(`/api/osaa/remediations/${encodeURIComponent(request.remediationRequestId)}`, { cache: 'no-store' });
+      const detail = await detailResponse.json().catch(() => ({})) as EngineeringRemediation & { error?: string };
+      if (!detailResponse.ok) throw new Error(detail.error || `상세 조회 HTTP ${detailResponse.status}`);
+      if (detail.stage !== 'proposed' || !detail.requiredConfirmation) throw new Error('이 작업은 더 이상 승인 대기 상태가 아닙니다.');
+      const response = await this.http.request(`/api/osaa/remediations/${encodeURIComponent(request.remediationRequestId)}/approvals/source`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ confirmation: detail.requiredConfirmation }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || `승인 HTTP ${response.status}`);
+      this.msg.set({ type: 'success', text: '정확히 표시된 OSAA 작업을 승인했습니다. Repair Runner가 test · component-only 배포 · 화면 검증을 계속합니다.' });
+      await Promise.all([this.loadEngineeringStatus(), this.loadEngineeringRequests(true), this.loadOperationalIntelligence(true)]);
+    } catch (error) {
+      this.msg.set({ type: 'danger', text: `Engineering Remediation 승인 실패: ${String(error)}` });
+    } finally {
+      this.engineeringActionBusy.set('');
+    }
+  }
+
+  private async verifyCurrentEngineeringRequest(requests: EngineeringRemediation[]): Promise<void> {
+    const request = requests.find((item) => item.stage === 'verifying'
+      && item.verificationProfile === 'osaa-admin' && item.verificationRoute === '/manage/osaa');
+    if (!request || window.location.pathname !== request.verificationRoute
+      || this.browserVerificationAttempts.has(request.remediationRequestId)) return;
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('osaa_verify') !== request.remediationRequestId) {
+      url.searchParams.set('osaa_verify', request.remediationRequestId);
+      window.history.replaceState(null, '', url);
+      window.location.reload();
+      return;
+    }
+
+    this.browserVerificationAttempts.add(request.remediationRequestId);
+    try {
+      const releaseResponse = await this.http.request('/api/platform/releases/status', { cache: 'no-store' });
+      const release = await releaseResponse.json().catch(() => ({})) as {
+        current?: { components?: Record<string, { sourceRevision?: string }> }; error?: string;
+      };
+      if (!releaseResponse.ok) {
+        this.browserNetworkFailureCount += 1;
+        throw new Error(release.error || `Platform Release HTTP ${releaseResponse.status}`);
+      }
+      const components = release.current?.components || {};
+      const affected = request.affectedComponents.length ? request.affectedComponents : ['console'];
+      const observedRevisions = [...new Set(affected.map((component) => String(components[component]?.sourceRevision || '')))].filter(Boolean);
+      if (observedRevisions.length !== 1 || !/^[0-9a-f]{40}$/.test(observedRevisions[0])) {
+        throw new Error(`영향 component(${affected.join(', ')})의 동일한 exact source revision을 확인할 수 없습니다.`);
+      }
+      const observedSourceRevision = observedRevisions[0];
+      const response = await this.http.request(`/api/osaa/remediations/${encodeURIComponent(request.remediationRequestId)}/browser-verifications`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          verificationProfile: 'osaa-admin', verificationRoute: '/manage/osaa',
+          observedSourceRevision, marker: 'os-admin-osaa',
+          markerPresent: document.querySelector('os-admin-osaa') !== null,
+          consoleErrorCount: this.browserConsoleErrorCount,
+          networkFailureCount: this.browserNetworkFailureCount,
+        }),
+      });
+      const body = await response.json().catch(() => ({})) as { accepted?: boolean; passed?: boolean; error?: string };
+      if (!response.ok) throw new Error(body.error || `화면 검증 HTTP ${response.status}`);
+      url.searchParams.delete('osaa_verify');
+      window.history.replaceState(null, '', url);
+      this.msg.set({ type: body.passed ? 'success' : 'danger', text: body.passed
+        ? '배포된 OSAA 화면의 exact revision과 marker를 확인했습니다.'
+        : 'OSAA 화면 postcondition이 실패했습니다. Repair Runner가 rollback 판정을 계속합니다.' });
+      await this.loadEngineeringRequests(true);
+    } catch (error) {
+      this.browserVerificationAttempts.delete(request.remediationRequestId);
+      this.engineeringRequestError.set(`OSAA 화면 검증 실패: ${String(error)}`);
+    }
+  }
+
+  engineeringStageLabel(stage: string): string {
+    const labels: Record<string, string> = {
+      proposed: '승인 대기', approved: '승인됨', sandboxed: '격리 완료', patched: '패치 적용', testing: '테스트 중',
+      ready_to_commit: '커밋 준비', committed: '커밋됨', building: '빌드 중', built: '빌드 완료', deploying: '배포 중',
+      verifying: '화면 검증', succeeded: '완료', rolling_back: '복구 중', rolled_back: '복구 완료', failed: '실패',
+      test_failed: '테스트 실패', build_failed: '빌드 실패', cancelled: '취소됨',
+    };
+    return labels[stage] || stage;
+  }
+
+  engineeringStageAction(stage: string): string {
+    if (this.isEngineeringSuccess(stage)) return stage === 'succeeded' ? '검증 완료' : '원상 복구 확인';
+    if (this.isEngineeringFailure(stage)) return '실패 증거 확인 필요';
+    return 'Repair Runner 처리 중';
+  }
+
+  isEngineeringSuccess(stage: string): boolean { return ['succeeded', 'rolled_back'].includes(stage); }
+  isEngineeringFailure(stage: string): boolean { return ['failed', 'test_failed', 'build_failed', 'cancelled'].includes(stage); }
+  isEngineeringRunning(stage: string): boolean {
+    return !['proposed', 'verifying', 'succeeded', 'rolled_back', 'failed', 'test_failed', 'build_failed', 'cancelled'].includes(stage);
+  }
   ngOnDestroy(): void {
     if (this.timer) clearInterval(this.timer);
+    window.removeEventListener('error', this.onBrowserError);
+    window.removeEventListener('unhandledrejection', this.onUnhandledRejection);
   }
 
   async loadHealth(silent = false): Promise<void> {

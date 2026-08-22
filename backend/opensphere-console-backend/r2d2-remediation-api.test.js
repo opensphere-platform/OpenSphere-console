@@ -44,7 +44,11 @@ function fixture(enabled = true, executionEnabled = false, workerReady = false, 
   const store = { propose: async (input) => {
     persisted.push(input);
     return rowFor(input);
-  }, get: async () => persisted[0], latestBuild: async () => persisted[0]?.build || null,
+  }, get: async () => persisted[0] ? {
+    ...persisted[0], stage: persisted[0].stage || 'proposed', changedPaths: persisted[0].patchArtifact?.changedFiles || [],
+  } : null,
+  list: async () => persisted.map((input) => ({ ...rowFor(input, input.stage || 'proposed'), changed_paths: input.patchArtifact?.changedFiles || [] })),
+  latestBuild: async () => persisted[0]?.build || null,
   approveScoped: async (input) => { approvals.push(input); return rowFor(persisted[0], 'approved'); },
   recordBrowserVerification: async (input) => ({ ...input, observed_at: 'now' }) };
   const api = createR2d2RemediationApi({
@@ -122,6 +126,19 @@ test('authenticated status exposes the real Repair Runner gate without claiming 
   const status = await ready.api.status({});
   assert.equal(status.workerReady, true);
   assert.equal(status.capabilities.exactDigestDeploy, true);
+});
+
+test('authenticated remediation list and detail expose the exact bounded work unit without patch bytes', async () => {
+  const prepared = fixture(true, true, true);
+  const created = await prepared.api.propose({ headers: { 'x-os-idempotency-key': 'remediation-proposal-1' } }, assessmentId, body());
+  const listed = await prepared.api.list({});
+  assert.equal(listed.remediations.length, 1);
+  assert.deepEqual(listed.remediations[0].changedPaths, ['backend/opensphere-console-osaa-gateway/server.js']);
+  assert.equal(Object.hasOwn(listed.remediations[0], 'patchText'), false);
+  const detail = await prepared.api.details({}, created.remediationRequestId);
+  assert.equal(detail.requiredConfirmation,
+    `approve R2D2 source patch ${created.remediationRequestId} ${created.approvalBindingDigest}`);
+  assert.equal(Object.hasOwn(detail, 'patchArtifact'), false);
 });
 
 test('browser verification is exact-profile, exact-source and approving-operator bound', async () => {

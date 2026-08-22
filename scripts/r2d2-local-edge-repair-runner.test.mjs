@@ -30,3 +30,10 @@ test('host wrapper binds runner code to deployed Backend authority on Windows Do
   assert.match(wrapper, /components\.backend\.sourceRevision/u);
   assert.match(wrapper, /git -C \$repoRoot diff --name-only \$backendRevision HEAD/u);
 });
+
+test('supervised Repair Runner survives transient API failures with bounded backoff', () => {
+  assert.match(runner, /function retryDelayMs\(consecutiveFailures\)/u);
+  assert.match(runner, /Math\.min\(30_000/u);
+  assert.match(runner, /RepairRunnerRetry/u);
+  assert.match(runner, /if \(once\) throw error/u);
+});

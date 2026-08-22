@@ -15,36 +15,41 @@ const BROWSER_MARKERS = Object.freeze({
   'osaa-admin': 'os-admin-osaa',
 });
 
+function field(row, snake, camel = snake) {
+  return row?.[camel] ?? row?.[snake] ?? null;
+}
+
 function publicRemediation(row, executionEnabled = false, workerReady = false) {
   return {
-    remediationRequestId: row.remediation_request_id,
-    assessmentId: row.assessment_id,
-    incidentId: row.incident_id,
-    operationId: row.operation_id,
-    operatorId: row.operator_id,
-    repository: row.repository,
-    baseRevision: row.base_revision,
-    allowedPaths: row.allowed_paths,
-    patchDigest: row.patch_digest,
-    reason: row.reason,
-    riskLevel: row.risk_level,
-    affectedComponents: row.affected_components,
-    affectedImages: row.affected_images,
-    requiredTests: row.required_tests,
-    releaseScope: row.release_scope,
-    fullReleaseJustification: row.full_release_justification,
-    targetChannel: row.target_channel,
-    buildAuthority: row.build_authority,
-    rollbackRevision: row.rollback_revision,
-    rollbackImageDigests: row.rollback_image_digests,
-    approvalBindingDigest: row.approval_binding_digest,
-    approvalMode: row.approval_mode,
-    verificationProfile: row.verification_profile,
-    verificationRoute: row.verification_route,
-    approvalExpiresAt: row.approval_expires_at,
-    stage: row.stage,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    remediationRequestId: field(row, 'remediation_request_id', 'remediationRequestId'),
+    assessmentId: field(row, 'assessment_id', 'assessmentId'),
+    incidentId: field(row, 'incident_id', 'incidentId'),
+    operationId: field(row, 'operation_id', 'operationId'),
+    operatorId: field(row, 'operator_id', 'operatorId'),
+    repository: field(row, 'repository'),
+    baseRevision: field(row, 'base_revision', 'baseRevision'),
+    allowedPaths: field(row, 'allowed_paths', 'allowedPaths') || [],
+    changedPaths: field(row, 'changed_paths', 'changedPaths') || [],
+    patchDigest: field(row, 'patch_digest', 'patchDigest'),
+    reason: field(row, 'reason'),
+    riskLevel: field(row, 'risk_level', 'riskLevel'),
+    affectedComponents: field(row, 'affected_components', 'affectedComponents') || [],
+    affectedImages: field(row, 'affected_images', 'affectedImages') || [],
+    requiredTests: field(row, 'required_tests', 'requiredTests') || [],
+    releaseScope: field(row, 'release_scope', 'releaseScope'),
+    fullReleaseJustification: field(row, 'full_release_justification', 'fullReleaseJustification'),
+    targetChannel: field(row, 'target_channel', 'targetChannel'),
+    buildAuthority: field(row, 'build_authority', 'buildAuthority'),
+    rollbackRevision: field(row, 'rollback_revision', 'rollbackRevision'),
+    rollbackImageDigests: field(row, 'rollback_image_digests', 'rollbackImageDigests') || [],
+    approvalBindingDigest: field(row, 'approval_binding_digest', 'approvalBindingDigest'),
+    approvalMode: field(row, 'approval_mode', 'approvalMode'),
+    verificationProfile: field(row, 'verification_profile', 'verificationProfile'),
+    verificationRoute: field(row, 'verification_route', 'verificationRoute'),
+    approvalExpiresAt: field(row, 'approval_expires_at', 'approvalExpiresAt'),
+    stage: field(row, 'stage'),
+    createdAt: field(row, 'created_at', 'createdAt'),
+    updatedAt: field(row, 'updated_at', 'updatedAt'),
     activation: {
       proposalOnly: !executionEnabled,
       approvalApi: executionEnabled,
@@ -91,6 +96,40 @@ function createR2d2RemediationApi(options) {
         browserVerification: ready,
         rollback: ready,
       },
+    };
+  }
+
+  async function list(req, limit = 20) {
+    await authenticate(req, { requireAal2: false });
+    const ready = executionEnabled && await currentWorkerReady();
+    const rows = typeof store.list === 'function' ? await store.list(Math.max(1, Math.min(50, Number(limit) || 20))) : [];
+    return {
+      schema: 'osaa-engineering-remediation-list.opensphere.io/v1alpha1',
+      remediations: rows.map((row) => publicRemediation(row, executionEnabled, ready)),
+    };
+  }
+
+  async function details(req, remediationRequestId) {
+    await authenticate(req, { requireAal2: false });
+    if (!UUID.test(String(remediationRequestId || ''))) throw { code: 400, msg: 'valid remediation request id required' };
+    const request = await store.get(remediationRequestId);
+    if (!request) throw { code: 404, msg: 'Engineering Remediation request not found' };
+    const ready = executionEnabled && await currentWorkerReady();
+    const build = await store.latestBuild(remediationRequestId);
+    const requiredConfirmation = request.stage === 'proposed'
+      ? exactEngineeringConfirmation('source_patch', request)
+      : (request.stage === 'awaiting_deploy_approval' && build
+        ? exactEngineeringConfirmation('deployment', request, build) : null);
+    return {
+      ...publicRemediation(request, executionEnabled, ready),
+      requiredConfirmation,
+      latestBuild: build ? {
+        sourceRevision: build.sourceRevision,
+        patchDigest: build.patchDigest,
+        buildAuthority: build.buildAuthority,
+        imageDigests: build.imageDigests,
+        releaseLockDigest: build.releaseLockDigest,
+      } : null,
     };
   }
 
@@ -205,6 +244,13 @@ function createR2d2RemediationApi(options) {
     if (pathname === '/api/osaa/remediations/status' && req.method === 'GET') {
       return json(res, 200, await status(req), { 'cache-control': 'no-store' });
     }
+    if (pathname === '/api/osaa/remediations' && req.method === 'GET') {
+      return json(res, 200, await list(req), { 'cache-control': 'no-store' });
+    }
+    const detail = pathname.match(/^\/api\/osaa\/remediations\/([0-9a-f-]{36})$/i);
+    if (detail && req.method === 'GET') {
+      return json(res, 200, await details(req, detail[1]), { 'cache-control': 'no-store' });
+    }
     const proposal = pathname.match(/^\/api\/osaa\/remediations\/assessments\/([0-9a-f-]{36})\/proposals$/i);
     if (proposal && req.method === 'POST') {
       return json(res, 202, await propose(req, proposal[1], await bodyReader(req)));
@@ -220,7 +266,7 @@ function createR2d2RemediationApi(options) {
     return false;
   }
 
-  return { status, propose, approve, recordBrowserVerification, handle, publicRemediation };
+  return { status, list, details, propose, approve, recordBrowserVerification, handle, publicRemediation };
 }
 
 function createRestRemediationStore(restRequest) {
@@ -271,8 +317,14 @@ function createRestRemediationStore(restRequest) {
     async get(id) {
       const rows = await request('engineering_remediation_request', { query: `remediation_request_id=eq.${encodeURIComponent(id)}&select=*` });
       const row = rows?.[0];
-      return row ? {
+      if (!row) return null;
+      const [operations, artifacts] = await Promise.all([
+        restRequest('module_operation', { profile: 'console', query: `operation_id=eq.${encodeURIComponent(row.operation_id)}&select=actor_id` }),
+        request('remediation_patch_artifact', { query: `remediation_request_id=eq.${encodeURIComponent(id)}&select=changed_paths` }),
+      ]);
+      return {
         ...row, remediationRequestId: row.remediation_request_id, operationId: row.operation_id,
+        actorId: operations?.[0]?.actor_id || null,
         operatorId: row.operator_id, approvalMode: row.approval_mode,
         verificationProfile: row.verification_profile, verificationRoute: row.verification_route,
         approvalBindingDigest: row.approval_binding_digest, approvalExpiresAt: row.approval_expires_at,
@@ -282,7 +334,20 @@ function createRestRemediationStore(restRequest) {
         requiredTests: row.required_tests, releaseScope: row.release_scope, targetChannel: row.target_channel,
         buildAuthority: row.build_authority, rollbackRevision: row.rollback_revision,
         rollbackImageDigests: row.rollback_image_digests,
-      } : null;
+        changedPaths: artifacts?.[0]?.changed_paths || [],
+      };
+    },
+    async list(limit = 20) {
+      const rows = await request('engineering_remediation_request', {
+        query: `order=updated_at.desc&limit=${Math.max(1, Math.min(50, Number(limit) || 20))}&select=*`,
+      });
+      if (!rows?.length) return [];
+      const ids = rows.map((row) => row.remediation_request_id).filter((id) => UUID.test(String(id)));
+      const artifacts = ids.length ? await request('remediation_patch_artifact', {
+        query: `remediation_request_id=in.(${ids.join(',')})&select=remediation_request_id,changed_paths`,
+      }) : [];
+      const changedPaths = new Map((artifacts || []).map((artifact) => [artifact.remediation_request_id, artifact.changed_paths || []]));
+      return rows.map((row) => ({ ...row, changedPaths: changedPaths.get(row.remediation_request_id) || [] }));
     },
     async latestBuild(id) {
       const rows = await request('build_evidence', { query: `remediation_request_id=eq.${encodeURIComponent(id)}&order=created_at.desc&limit=1&select=*` });

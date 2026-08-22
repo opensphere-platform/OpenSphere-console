@@ -43,3 +43,14 @@ test('rolling Console revisions never cache a missing hashed asset as immutable'
   assert.match(nginx, /location @missing_hashed_asset \{[\s\S]*?Cache-Control "no-store, max-age=0" always;[\s\S]*?return 404;/);
   assert.match(nginx, /Cache-Control "public, max-age=31536000, immutable" always;/);
 });
+
+test('OSAA admin exposes one bounded repair approval and exact-route browser verification flow', () => {
+  const osaa = read('src', 'app', 'pages', 'admin-osaa.ts');
+
+  assert.match(osaa, /\/api\/osaa\/remediations\/\$\{encodeURIComponent\(request\.remediationRequestId\)\}\/approvals\/source/u);
+  assert.match(osaa, /승인하고 실행/u);
+  assert.match(osaa, /verificationProfile:\s*'osaa-admin'/u);
+  assert.match(osaa, /document\.querySelector\('os-admin-osaa'\)/u);
+  assert.match(osaa, /request\.affectedComponents\.length/u);
+  assert.match(osaa, /components\[component\]\?\.sourceRevision/u);
+});
