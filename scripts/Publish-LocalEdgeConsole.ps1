@@ -54,6 +54,13 @@ function Set-RemoteTag {
   }
 }
 
+function Get-CanonicalTextSha256 {
+  param([Parameter(Mandatory)][string]$Path)
+  $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
+  $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
+  return 'sha256:' + ([BitConverter]::ToString([Security.Cryptography.SHA256]::HashData($bytes))).Replace('-', '').ToLowerInvariant()
+}
+
 if ($env:OS -ne 'Windows_NT') { throw 'Console edge publishing requires Windows.' }
 if (((Invoke-Checked kubectl config current-context) -join '').Trim() -ne 'docker-desktop') {
   throw 'Console edge publishing requires Kubernetes context docker-desktop.'
@@ -166,6 +173,9 @@ try {
   Set-RemoteTag -Repository $repository -Digest $digest -Tag $releaseTag -Immutable
   Set-RemoteTag -Repository $repository -Digest $digest -Tag edge
 
+  $migrationPath = Join-Path $consoleCheckout 'backend\supabase\migrations\manifest.json'
+  $migration = Get-Content -Raw -LiteralPath $migrationPath | ConvertFrom-Json
+
   $publication = [ordered]@{
     apiVersion = 'release.opensphere.io/v1alpha1'
     kind = 'OpenSphereEdgeComponentPublication'
@@ -178,10 +188,20 @@ try {
     releaseScope = 'component'
     fullReleaseJustification = $null
     releaseTag = $releaseTag
-    immutableTag = $releaseTag
+    immutableTag = $localTag
+    versionTag = $releaseTag
     source = 'https://github.com/opensphere-platform/OpenSphere-console'
     sourceRevision = $sourceRevision
     sdkSourceRevision = $sdkRevision
+    artifacts = [ordered]@{
+      supabaseMigrationManifest = [ordered]@{
+        path = 'backend/supabase/migrations/manifest.json'
+        sha256 = Get-CanonicalTextSha256 -Path $migrationPath
+        setDigest = [string]$migration.setDigest
+        latestMigrationId = [string]$migration.latestMigrationId
+        migrationCount = @($migration.migrations).Count
+      }
+    }
     buildAuthority = 'localhost'
     releaseClass = 'pre-ga'
     gaEligible = $false
