@@ -1,5 +1,4 @@
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-import { ClarityModule } from '@clr/angular';
+import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import {
   AGENT_RUNTIME_SPECTRUM,
   AI_LIFECYCLE,
@@ -21,25 +20,10 @@ import {
 
 @Component({
   selector: 'os-landing-foundations',
-  imports: [ClarityModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <section class="foundation-docs" aria-labelledby="foundation-docs-title">
-      <div class="foundation-heading">
-        <div>
-          <p class="foundation-eyebrow">OpenSphere foundation concepts</p>
-          <h2 id="foundation-docs-title">원자적 구성을 지탱하는 다섯 가지 설계 계약</h2>
-        </div>
-        <p>
-          제품 이름의 나열이 아니라 각 객체가 무엇을 소유하고, 무엇을 소유하지 않으며,
-          어떤 증거로 다음 구성요소와 결합하는지를 정의합니다.
-        </p>
-      </div>
-
-      <clr-tabs class="foundation-clarity-tabs">
-        <clr-tab>
-          <button clrTabLink (click)="selectTab('service-stacks')">Service Stacks</button>
-          <clr-tab-content *clrIfActive="activeTab() === 'service-stacks'">
+    <section class="foundation-docs">
+      @if (page() === 'service-stacks') {
           <article
             class="foundation-panel"
             id="foundation-panel-service-stacks"
@@ -166,12 +150,9 @@ import {
               </aside>
             </section>
           </article>
-          </clr-tab-content>
-        </clr-tab>
+      }
 
-        <clr-tab>
-          <button clrTabLink (click)="selectTab('dupa')">DUPA</button>
-          <clr-tab-content *clrIfActive="activeTab() === 'dupa'">
+      @if (page() === 'dupa') {
           <article class="foundation-panel" id="foundation-panel-dupa">
             <section class="document-intro">
               <div class="document-intro-heading">
@@ -263,12 +244,9 @@ import {
               <aside class="objective-note"><strong>객관적 평가</strong><p>원자성은 구성요소 수를 늘리는 것이 아니라 결합 계약을 줄이는 것입니다. 두 번째 Runtime 구현이 생기기 전 독립 service plane을 미리 만들면 오히려 새 monolith가 됩니다. 현재는 R2D2 Native 구현에서 논리 계약을 추출하고 AI-Workbench는 read-only consumer로 붙이는 것이 적절합니다.</p></aside>
             </section>
           </article>
-          </clr-tab-content>
-        </clr-tab>
+      }
 
-        <clr-tab>
-          <button clrTabLink (click)="selectTab('control-pillars')">Control Pillars</button>
-          <clr-tab-content *clrIfActive="activeTab() === 'control-pillars'">
+      @if (page() === 'control-pillars') {
           <article class="foundation-panel" id="foundation-panel-control-pillars">
             <section class="document-intro">
               <div class="document-intro-heading">
@@ -317,12 +295,9 @@ import {
               </div>
             </section>
           </article>
-          </clr-tab-content>
-        </clr-tab>
+      }
 
-        <clr-tab>
-          <button clrTabLink (click)="selectTab('control-engine')">Control Engine</button>
-          <clr-tab-content *clrIfActive="activeTab() === 'control-engine'">
+      @if (page() === 'control-engine') {
           <article class="foundation-panel" id="foundation-panel-control-engine">
             <section class="document-intro">
               <div class="document-intro-heading">
@@ -427,12 +402,9 @@ import {
               </div>
             </section>
           </article>
-          </clr-tab-content>
-        </clr-tab>
+      }
 
-        <clr-tab>
-          <button clrTabLink (click)="selectTab('ai-lifecycle')">AI Lifecycle</button>
-          <clr-tab-content *clrIfActive="activeTab() === 'ai-lifecycle'">
+      @if (page() === 'ai-lifecycle') {
           <article class="foundation-panel" id="foundation-panel-ai-lifecycle">
             <section class="document-intro">
               <div class="document-intro-heading">
@@ -485,27 +457,20 @@ import {
               </div>
             </section>
           </article>
-          </clr-tab-content>
-        </clr-tab>
-      </clr-tabs>
+      }
     </section>
   `,
   styles: [`
     :host { --fd-line:var(--os-hairline); --fd-body:.88rem; --fd-detail:.8rem; --fd-label:.68rem; --fd-card-title:.94rem; display:block; min-width:0; max-width:100%; }
     :host * { box-sizing:border-box; }
-    .foundation-docs { width:100%; min-width:0; max-width:100%; margin-top:2rem; overflow:hidden; color:var(--os-ink); }
+    .foundation-docs { width:100%; min-width:0; max-width:100%; overflow:hidden; color:var(--os-ink); }
     .foundation-panel :where(p,small,strong,h3,h4,dt,dd) { min-width:0; overflow-wrap:anywhere; }
-    .foundation-heading,.section-title,.document-intro { display:flex; justify-content:space-between; align-items:end; gap:2rem; }
-    .foundation-heading { margin-bottom:.8rem; padding:0; background:transparent; color:var(--os-ink); }
-    .foundation-heading h2,.section-title h3 { margin:0; font-size:1.28rem; font-weight:550; line-height:1.3; }
-    .foundation-heading>p,.section-title>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:.8rem; line-height:1.6; text-align:right; }
+    .section-title,.document-intro { display:flex; justify-content:space-between; align-items:end; gap:2rem; }
+    .section-title h3 { margin:0; font-size:1.28rem; font-weight:550; line-height:1.3; }
+    .section-title>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:.8rem; line-height:1.6; text-align:right; }
     .foundation-eyebrow { margin:0 0 .45rem; color:var(--os-accent); font-size:.58rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
-    .foundation-clarity-tabs { display:block; width:100%; min-width:0; max-width:100%; }
-    :host ::ng-deep .foundation-clarity-tabs>.nav { margin:0; border-bottom:1px solid var(--fd-line); }
-    :host ::ng-deep .foundation-clarity-tabs>.nav .nav-link { font-size:.82rem; font-weight:600; }
-    :host ::ng-deep .foundation-clarity-tabs .tab-content { padding:0; }
     .section-pictogram { display:grid; place-items:center; }
-    .foundation-panel { width:100%; min-width:0; max-width:100%; border:1px solid var(--fd-line); border-top:0; overflow:hidden; background:var(--os-canvas); line-height:1.55; }
+    .foundation-panel { width:100%; min-width:0; max-width:100%; border:1px solid var(--fd-line); overflow:hidden; background:var(--os-canvas); line-height:1.55; }
     .document-intro { align-items:start; padding:1.35rem 1.25rem; border-bottom:1px solid var(--fd-line); border-left:4px solid var(--os-accent); background:var(--os-surface-1); color:var(--os-ink); }
     .document-intro>.document-intro-heading { display:grid; grid-template-columns:5.6rem minmax(0,1fr); align-items:center; gap:1rem; min-width:0; }
     .section-pictogram { width:5.6rem; height:5.6rem; }
@@ -593,8 +558,8 @@ import {
     .no-downgrade strong { color:#8e6a00; font-size:.78rem; }
     .state-split section { min-height:8rem; }
     @media(max-width:76rem){
-      .document-intro,.foundation-heading,.section-title { display:grid; }
-      .foundation-heading>p,.section-title>p { max-width:none; text-align:left; }
+      .document-intro,.section-title { display:grid; }
+      .section-title>p { max-width:none; text-align:left; }
       .stack-flow,.operator-flow,.invocation-flow { display:grid; grid-template-columns:repeat(auto-fit,minmax(11rem,1fr)); gap:.65rem; }
       .stack-flow>b,.operator-flow>b,.invocation-flow>b { display:none; }
       .truth-line { grid-template-columns:auto 1fr; }
@@ -615,6 +580,7 @@ import {
   `],
 })
 export class LandingFoundations {
+  readonly page = input.required<FoundationConceptTabId>();
   readonly tabs = FOUNDATION_CONCEPT_TABS;
   readonly serviceStacks = SERVICE_STACKS;
   readonly cbssComponents = CBSS_COMPONENTS;
@@ -630,9 +596,4 @@ export class LandingFoundations {
   readonly controlEngineStages = CONTROL_ENGINE_STAGES;
   readonly aiLifecycle = AI_LIFECYCLE;
   readonly modelLocations = MODEL_LOCATIONS;
-  readonly activeTab = signal<FoundationConceptTabId>('service-stacks');
-
-  selectTab(tab: FoundationConceptTabId): void {
-    this.activeTab.set(tab);
-  }
 }

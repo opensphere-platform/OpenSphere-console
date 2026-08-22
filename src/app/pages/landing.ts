@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ClarityModule } from '@clr/angular';
 import { RouterLink } from '@angular/router';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
@@ -21,6 +22,14 @@ interface PerspectiveDef {
   pluginId: string;
 }
 
+type ArchitecturePageId =
+  | 'architecture'
+  | 'service-stacks'
+  | 'dupa'
+  | 'control-pillars'
+  | 'control-engine'
+  | 'ai-lifecycle';
+
 /**
  * The horizontal axis is exactly ten Perspectives. Main Shell is not an
  * eleventh Perspective; it is a Platform Control realization object in L3.
@@ -41,10 +50,15 @@ const PERSPECTIVES: PerspectiveDef[] = [
 
 @Component({
   selector: 'os-landing',
-  imports: [RouterLink, LandingFoundations],
+  imports: [RouterLink, LandingFoundations, ClarityModule],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
+      <clr-tabs class="architecture-page-tabs">
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('architecture')">10P × 6L Architecture</button>
+          <clr-tab-content *clrIfActive="activePage() === 'architecture'">
+            <div class="architecture-page" id="architecture-page-realization">
       <section class="architecture-hero" aria-labelledby="architecture-title">
         <div>
           <p class="eyebrow">OpenSphere architecture index</p>
@@ -95,8 +109,6 @@ const PERSPECTIVES: PerspectiveDef[] = [
           </div>
         </article>
       </section>
-
-      <os-landing-foundations />
 
       <section class="model-section" aria-labelledby="model-title">
         <div class="section-heading">
@@ -259,6 +271,45 @@ const PERSPECTIVES: PerspectiveDef[] = [
           </article>
         </div>
       </section>
+            </div>
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('service-stacks')">Service Stacks</button>
+          <clr-tab-content *clrIfActive="activePage() === 'service-stacks'">
+            <os-landing-foundations page="service-stacks" />
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('dupa')">DUPA</button>
+          <clr-tab-content *clrIfActive="activePage() === 'dupa'">
+            <os-landing-foundations page="dupa" />
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('control-pillars')">Control Pillars</button>
+          <clr-tab-content *clrIfActive="activePage() === 'control-pillars'">
+            <os-landing-foundations page="control-pillars" />
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('control-engine')">Control Engine</button>
+          <clr-tab-content *clrIfActive="activePage() === 'control-engine'">
+            <os-landing-foundations page="control-engine" />
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('ai-lifecycle')">AI Lifecycle</button>
+          <clr-tab-content *clrIfActive="activePage() === 'ai-lifecycle'">
+            <os-landing-foundations page="ai-lifecycle" />
+          </clr-tab-content>
+        </clr-tab>
+      </clr-tabs>
     </main>
   `,
   styles: [
@@ -271,6 +322,26 @@ const PERSPECTIVES: PerspectiveDef[] = [
         background: var(--os-overview-bg);
         color: var(--os-ink);
       }
+      .architecture-page-tabs { display: block; width: 100%; min-width: 0; max-width: 100%; }
+      :host ::ng-deep .architecture-page-tabs > .nav {
+        position: relative;
+        z-index: 1;
+        margin: 0 0 1.25rem;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-bottom: 1px solid var(--os-hairline);
+        background: var(--os-overview-bg);
+        scrollbar-width: thin;
+      }
+      :host ::ng-deep .architecture-page-tabs > .nav .nav-item { flex: 0 0 auto; }
+      :host ::ng-deep .architecture-page-tabs > .nav .nav-link {
+        min-height: 2.4rem;
+        font-size: 0.82rem;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      :host ::ng-deep .architecture-page-tabs > .tab-content { min-width: 0; padding: 0; }
+      .architecture-page { min-width: 0; max-width: 100%; }
       .architecture-hero,
       .axis-definitions,
       .model-section,
@@ -561,6 +632,11 @@ export class Landing {
   private psp = inject(PerspectiveService);
 
   readonly layers = SERVICE_REALIZATION_LAYERS;
+  readonly activePage = signal<ArchitecturePageId>('architecture');
+
+  selectPage(page: ArchitecturePageId): void {
+    this.activePage.set(page);
+  }
 
   readonly coreCards = computed<IndexLink[]>(() => {
     const base: IndexLink[] = [

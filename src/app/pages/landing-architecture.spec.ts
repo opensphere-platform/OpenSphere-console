@@ -26,7 +26,6 @@ test('main index defines exactly ten horizontal Perspectives', () => {
   assert.match(source, /10 Perspectives/);
   assert.match(source, /Horizontal service lenses/);
 });
-
 test('main index defines exactly six vertical Service Realization Layers', () => {
   assert.equal((realizationModel.match(/id: 'SRL-L\d'/g) || []).length, 6);
   for (const name of [
@@ -97,22 +96,25 @@ test('Perspective navigation remains Registry-derived and phantom-route free', (
   assert.match(search, /홈 · 10P × 6L/);
 });
 
-test('main index renders five independent foundation pages with the real Clarity tabs component', () => {
-  assert.match(source, /<os-landing-foundations/);
+test('main index uses one top-level Clarity tab bar for six independent architecture pages', () => {
   assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)'/g) || []).length, 5);
-  assert.match(foundationSource, /import \{ ClarityModule \} from '@clr\/angular'/);
-  assert.match(foundationSource, /imports: \[ClarityModule\]/);
-  assert.match(foundationSource, /<clr-tabs class="foundation-clarity-tabs">/);
-  assert.equal((foundationSource.match(/<clr-tab>/g) || []).length, 5);
-  assert.equal((foundationSource.match(/<button clrTabLink/g) || []).length, 5);
-  assert.equal((foundationSource.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 5);
-  assert.doesNotMatch(foundationSource, /role="tablist"|onTabKeydown|ArrowRight|aria-selected/);
+  assert.match(source, /import \{ ClarityModule \} from '@clr\/angular'/);
+  assert.match(source, /imports: \[RouterLink, LandingFoundations, ClarityModule\]/);
+  assert.match(source, /<clr-tabs class="architecture-page-tabs">/);
+  assert.equal((source.match(/<clr-tab>/g) || []).length, 6);
+  assert.equal((source.match(/<button clrTabLink/g) || []).length, 6);
+  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 6);
+  assert.equal((source.match(/<os-landing-foundations page="(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)"/g) || []).length, 5);
+  assert.match(source, /<button clrTabLink[^>]*>10P × 6L Architecture<\/button>[\s\S]*id="architecture-page-realization"/);
+  assert.doesNotMatch(foundationSource, /<clr-tabs|clrTabLink|clr-tab-content/);
+  assert.doesNotMatch(`${source}\n${foundationSource}`, /role="tablist"|onTabKeydown|ArrowRight|aria-selected/);
 });
 
 test('foundation concepts remain readable and contained across viewport widths', () => {
   assert.match(foundationSource, /:host \{[^}]*min-width:0;[^}]*max-width:100%/);
   assert.match(foundationSource, /\.foundation-docs \{[^}]*max-width:100%;[^}]*overflow:hidden/);
-  assert.match(foundationSource, /\.foundation-clarity-tabs \{[^}]*display:block/);
+  assert.match(source, /\.architecture-page-tabs \{[^}]*display: block;[^}]*max-width: 100%/);
+  assert.match(source, /\.architecture-page \{[^}]*min-width: 0;[^}]*max-width: 100%/);
   assert.match(globalStylesSource, /\.engine-surface-grid \{[^}]*repeat\(4, minmax\(0, 1fr\)\)/);
   assert.match(
     foundationSource,
@@ -122,15 +124,16 @@ test('foundation concepts remain readable and contained across viewport widths',
   assert.doesNotMatch(foundationSource, /background:#161616|background:#393939/);
 });
 
-test('foundation concepts enlarge body copy without changing the title line', () => {
-  assert.match(foundationSource, /<h2 id="foundation-docs-title">원자적 구성을 지탱하는 다섯 가지 설계 계약<\/h2>/);
+test('each foundation page owns its own title and enlarged body copy', () => {
+  assert.doesNotMatch(foundationSource, /foundation-docs-title|원자적 구성을 지탱하는 다섯 가지 설계 계약/);
+  assert.equal((foundationSource.match(/<section class="document-intro">/g) || []).length, 5);
   assert.match(
     foundationSource,
-    /\.foundation-heading h2,\.section-title h3 \{[^}]*font-size:1\.28rem/,
+    /\.section-title h3 \{[^}]*font-size:1\.28rem/,
   );
   assert.match(
     foundationSource,
-    /\.foundation-heading>p,\.section-title>p \{[^}]*font-size:\.8rem/,
+    /\.section-title>p \{[^}]*font-size:\.8rem/,
   );
   assert.match(
     foundationSource,
@@ -197,7 +200,7 @@ test('CBSS products use their approved local product logos without decorative ti
   assert.match(foundationSource, /<img \[src\]="component\.productLogo" \[alt\]="component\.productLogoAlt \?\? component\.id" width="36" height="36" style="object-fit:contain"/);
   assert.doesNotMatch(`${foundationSource}\n${foundationModel}`, /logos\.opl\.io\.kr|cdn\.statically\.io/);
   assert.doesNotMatch(foundationSource, /product-logo[^}]*background:/);
-  assert.match(foundationSource, /원자적 구성을 지탱하는 다섯 가지 설계 계약/);
+  assert.doesNotMatch(foundationSource, /foundation-heading/);
 });
 
 test('Service Stack documentation defines HISS CBSS PFSS owners and hard boundaries', () => {
