@@ -279,6 +279,15 @@ spec:
         - { name: nginx-conf, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
         - { name: nginx-tmp, emptyDir: { medium: Memory, sizeLimit: 16Mi } }
 ---
+# OS Shell is the sole owner of its Backend feature gates. Console Backend
+# deployments consume this object but never create, reset or delete it.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: opensphere-shell-control-gates, namespace: opensphere-console }
+data:
+  admission-enabled: "true"
+  credential-authority-enabled: "true"
+---
 apiVersion: v1
 kind: Service
 metadata: { name: opensphere-shell-api, namespace: opensphere-console }

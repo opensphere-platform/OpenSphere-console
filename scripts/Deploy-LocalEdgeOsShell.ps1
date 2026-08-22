@@ -782,6 +782,20 @@ function Set-BackendOsShellActivation {
     [Parameter(Mandatory)][string]$SourceRevision,
     [Parameter(Mandatory)][string]$ReleaseEvidenceRef
   )
+  $gateConfigMap = 'opensphere-shell-control-gates'
+  $existingGate = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'configmap', $gateConfigMap,
+    '--ignore-not-found', '-o', 'name')) -join '').Trim()
+  if ($existingGate) {
+    $gatePatch = [ordered]@{ data = [ordered]@{
+      'admission-enabled' = 'true'
+      'credential-authority-enabled' = 'true'
+    } }
+    Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'patch', 'configmap', $gateConfigMap, '--type=merge',
+      '--patch', ($gatePatch | ConvertTo-Json -Depth 4 -Compress)) | Out-Null
+  } else {
+    Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'create', 'configmap', $gateConfigMap,
+      '--from-literal=admission-enabled=true', '--from-literal=credential-authority-enabled=true') | Out-Null
+  }
   $deployment = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'deployment/opensphere-console-backend', '-o', 'json')) -join "`n") | ConvertFrom-Json
   $repository = ($Image -split '@', 2)[0]
   $containers = @($deployment.spec.template.spec.containers | Where-Object { [string]$_.image -like "${repository}@*" })
@@ -803,8 +817,12 @@ function Set-BackendOsShellActivation {
           name = [string]$containers[0].name
           image = $Image
           env = @(
-            [ordered]@{ name = 'OS_SHELL_ADMISSION_ENABLED'; value = 'true' },
-            [ordered]@{ name = 'OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED'; value = 'true' },
+            [ordered]@{ name = 'OS_SHELL_ADMISSION_ENABLED'; valueFrom = [ordered]@{ configMapKeyRef = [ordered]@{
+              name = $gateConfigMap; key = 'admission-enabled'; optional = $true
+            } } },
+            [ordered]@{ name = 'OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED'; valueFrom = [ordered]@{ configMapKeyRef = [ordered]@{
+              name = $gateConfigMap; key = 'credential-authority-enabled'; optional = $true
+            } } },
             [ordered]@{ name = 'OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE'; value = '/var/run/opensphere-shell-credential-authority/tls.crt' },
             [ordered]@{ name = 'OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE'; value = '/var/run/opensphere-shell-credential-authority/tls.key' },
             [ordered]@{ name = 'OS_SHELL_ADMISSION_SECRET'; valueFrom = [ordered]@{ secretKeyRef = [ordered]@{
@@ -832,11 +850,22 @@ function Set-BackendOsShellActivation {
   if ($activatedContainer.Count -ne 1) {
     throw 'Console Backend activation did not converge to the exact published image'
   }
-  foreach ($name in @('OS_SHELL_ADMISSION_ENABLED', 'OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED')) {
-    $values = @($activatedContainer[0].env | Where-Object { [string]$_.name -eq $name })
-    if ($values.Count -ne 1 -or [string]$values[0].value -ne 'true') {
-      throw "Console Backend activation flag is not exact: $name"
+  foreach ($binding in @(
+    [ordered]@{ Name = 'OS_SHELL_ADMISSION_ENABLED'; Key = 'admission-enabled' },
+    [ordered]@{ Name = 'OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED'; Key = 'credential-authority-enabled' }
+  )) {
+    $values = @($activatedContainer[0].env | Where-Object { [string]$_.name -eq [string]$binding.Name })
+    if ($values.Count -ne 1 -or [string]$values[0].valueFrom.configMapKeyRef.name -ne $gateConfigMap -or
+        [string]$values[0].valueFrom.configMapKeyRef.key -ne [string]$binding.Key -or
+        -not [bool]$values[0].valueFrom.configMapKeyRef.optional) {
+      throw "Console Backend activation gate projection is not exact: $($binding.Name)"
     }
+  }
+  $activatedGate = ((Invoke-Kubectl -Arguments @('-n', $ControlNamespace, 'get', 'configmap', $gateConfigMap,
+    '-o', 'json')) -join "`n") | ConvertFrom-Json
+  if ([string]$activatedGate.data.'admission-enabled' -ne 'true' -or
+      [string]$activatedGate.data.'credential-authority-enabled' -ne 'true') {
+    throw 'Console Backend activation gate authority is not exact'
   }
   foreach ($binding in @(
     [ordered]@{ Name = 'OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE'; Value = '/var/run/opensphere-shell-credential-authority/tls.crt' },

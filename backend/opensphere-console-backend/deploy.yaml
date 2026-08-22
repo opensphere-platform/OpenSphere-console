@@ -154,10 +154,14 @@ spec:
             - { name: R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "false" }
             - { name: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES, value: "" }
             - { name: R2D2_ENGINEERING_EXECUTION_ENABLED, value: "false" }
-            # CBSS remains fail-closed/default-off until the control/runtime
-            # exact-digest release and four separated internal TLS leaves are installed.
-            - { name: OS_SHELL_ADMISSION_ENABLED, value: "false" }
-            - { name: OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED, value: "false" }
+            # OS Shell owns these durable feature gates. If its ConfigMap is absent,
+            # optional key projection omits the variables and Backend remains
+            # fail-closed/default-off. A Backend-only apply must never reset an
+            # already installed OS Shell to false.
+            - name: OS_SHELL_ADMISSION_ENABLED
+              valueFrom: { configMapKeyRef: { name: opensphere-shell-control-gates, key: admission-enabled, optional: true } }
+            - name: OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED
+              valueFrom: { configMapKeyRef: { name: opensphere-shell-control-gates, key: credential-authority-enabled, optional: true } }
             - { name: OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE, value: /var/run/opensphere-shell-credential-authority/tls.crt }
             - { name: OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE, value: /var/run/opensphere-shell-credential-authority/tls.key }
             - name: OS_SHELL_ADMISSION_SECRET

@@ -180,11 +180,24 @@ test('TLS services and leaves are separated across API, registration, credential
   assert.match(source, /opensphere-shell-control-ca/);
 });
 
-test('local-edge activation patches and verifies the Setup-owned Backend credential authority before control rollout', () => {
+test('OS Shell owns durable Backend gates that survive Backend-only deployment', () => {
+  const gates = find('ConfigMap', 'opensphere-shell-control-gates', 'opensphere-console');
+  assert.deepEqual(gates.data, {
+    'admission-enabled': 'true',
+    'credential-authority-enabled': 'true',
+  });
+  assert.match(backendDeploy, /name: OS_SHELL_ADMISSION_ENABLED[\s\S]*?configMapKeyRef: \{ name: opensphere-shell-control-gates, key: admission-enabled, optional: true \}/);
+  assert.match(backendDeploy, /name: OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED[\s\S]*?configMapKeyRef: \{ name: opensphere-shell-control-gates, key: credential-authority-enabled, optional: true \}/);
+  assert.doesNotMatch(backendDeploy, /OS_SHELL_(?:ADMISSION|CREDENTIAL_AUTHORITY)_ENABLED, value: "false"/);
+});
+
+test('local-edge activation projects and verifies the Setup-owned Backend credential authority before control rollout', () => {
   assert.match(deployScript, /function Set-BackendOsShellActivation/);
   assert.match(deployScript, /Set-BackendOsShellActivation -Image \$backend[.]image/);
-  assert.match(deployScript, /OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED'; value = 'true'/);
-  assert.match(deployScript, /OS_SHELL_ADMISSION_ENABLED'; value = 'true'/);
+  assert.match(deployScript, /\$gateConfigMap = 'opensphere-shell-control-gates'/);
+  assert.match(deployScript, /credential-authority-enabled=true/);
+  assert.match(deployScript, /configMapKeyRef = \[ordered\]@\{/);
+  assert.match(deployScript, /activation gate authority is not exact/);
   assert.match(deployScript, /shell-cred-tls'; containerPort = 8444/);
   assert.match(backendDeploy, /name: shell-cred-tls, containerPort: 8444/);
   assert.ok('shell-cred-tls'.length <= 15, 'Kubernetes container port names are limited to 15 characters');
