@@ -13,7 +13,12 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
   imports: [ClarityModule, OsShellTerminalSurface],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <section class="shell-page" [class.embedded]="embedded" aria-label="OS Shell session">
+    <section
+      class="shell-page"
+      [class.embedded]="embedded"
+      [class.info-collapsed]="embedded && infoCollapsed"
+      aria-label="OS Shell session"
+    >
       @if (!embedded) {
         <header class="shell-heading">
         <div class="shell-identity">
@@ -59,7 +64,7 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
           <button class="btn btn-primary" type="button" [disabled]="busy()" (click)="refresh()">다시 확인</button>
         </section>
       } @else {
-        <section class="session-toolbar" aria-label="OS Shell session control">
+        <section id="os-shell-session-information" class="session-toolbar" aria-label="OS Shell session control">
           <div class="session-facts">
             <span><small>Session</small><strong>{{ session()?.sessionId || '없음' }}</strong></span>
             <span><small>State</small><strong>{{ session()?.observedState || attachState() }}</strong></span>
@@ -114,6 +119,7 @@ const TERMINAL_STATES = new Set(['Terminated', 'Failed', 'Revoked', 'Expired']);
 export class OsShellPage {
   @Input() standalone = false;
   @Input() embedded = false;
+  @Input() infoCollapsed = false;
   readonly readiness = inject(OsShellReadinessService);
   private readonly sessions = inject(OsShellSessionService);
   private readonly destroyRef = inject(DestroyRef);

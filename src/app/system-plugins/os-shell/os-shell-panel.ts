@@ -21,8 +21,20 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
         role="region"
         aria-label="OS Shell"
       >
-        <header class="panel-bar">
-          <div class="panel-title">
+        <header
+          class="panel-bar"
+          (dblclick)="panel.toggleInfo()"
+          [title]="panel.infoCollapsed() ? '더블 클릭하여 세션 정보 펼치기' : '더블 클릭하여 세션 정보 접기'"
+        >
+          <div
+            class="panel-title"
+            role="button"
+            tabindex="0"
+            aria-controls="os-shell-session-information"
+            [attr.aria-expanded]="!panel.infoCollapsed()"
+            (keydown.enter)="panel.toggleInfo()"
+            (keydown.space)="toggleInfoFromKeyboard($event)"
+          >
             <os-cicon [icon]="iconTerminal" [size]="18" />
             <strong>OS Shell</strong>
             <span class="panel-state" [attr.data-state]="readiness.status().state">
@@ -30,7 +42,7 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
               {{ readiness.status().state }}
             </span>
           </div>
-          <div class="panel-actions">
+          <div class="panel-actions" (dblclick)="$event.stopPropagation()">
             <a class="panel-action" href="/shell" target="_blank" rel="noopener noreferrer" title="전체 화면으로 열기" aria-label="OS Shell 전체 화면으로 열기">
               <os-cicon [icon]="iconLaunch" [size]="16" />
             </a>
@@ -43,7 +55,7 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
           </div>
         </header>
         <div class="panel-body">
-          <os-shell-page [embedded]="true" />
+          <os-shell-page [embedded]="true" [infoCollapsed]="panel.infoCollapsed()" />
         </div>
       </section>
     }
@@ -78,14 +90,17 @@ import { OsShellReadinessService } from './os-shell-readiness.service';
       border-bottom: 1px solid #393939;
       background: #262626;
       color: #f4f4f4;
+      cursor: pointer;
+      user-select: none;
     }
     .panel-title, .panel-actions { display: flex; align-items: center; }
-    .panel-title { min-width: 0; gap: .55rem; padding: 0 .9rem; font-size: .8rem; }
+    .panel-title { min-width: 0; align-self: stretch; flex: 1 1 auto; gap: .55rem; padding: 0 .9rem; font-size: .8rem; }
+    .panel-title:focus-visible { outline: 2px solid #78a9ff; outline-offset: -2px; }
     .panel-title > os-cicon { color: #78a9ff; }
     .panel-state { display: inline-flex; align-items: center; gap: .3rem; color: #a8a8a8; font-size: .68rem; font-weight: 500; }
     .state-dot { width: .4rem; height: .4rem; border-radius: 50%; background: var(--os-warning); }
     .panel-state[data-state='Ready'] .state-dot { background: var(--os-success); }
-    .panel-actions { align-self: stretch; }
+    .panel-actions { align-self: stretch; cursor: default; }
     .panel-action {
       display: inline-flex;
       width: 2.5rem;
@@ -118,4 +133,9 @@ export class OsShellPanel {
   readonly iconMaximize = Maximize20;
   readonly iconMinimize = Minimize20;
   readonly iconClose = Close20;
+
+  toggleInfoFromKeyboard(event: Event): void {
+    event.preventDefault();
+    this.panel.toggleInfo();
+  }
 }

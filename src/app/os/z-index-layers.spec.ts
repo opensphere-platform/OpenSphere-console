@@ -33,6 +33,9 @@ const osNotificationsTs = read('src/app/os/os-notifications.ts');
 const osOsaaAgentTs = read('src/app/os/os-osaa-agent.ts');
 const osSessionStepUpTs = read('src/app/os/os-session-step-up.ts');
 const osShellPanelTs = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
+const osShellPageTs = read('src/app/system-plugins/os-shell/os-shell-page.ts');
+const osShellPageScss = read('src/app/system-plugins/os-shell/os-shell-page.scss');
+const osShellPanelState = read('src/app/system-plugins/os-shell/os-shell-panel-state.service.ts');
 
 function tokenValue(css: string, name: string): number {
   const m = css.match(new RegExp(`--${name}:\\s*(\\d+);`));
@@ -111,6 +114,17 @@ test('전역 오버레이 컴포넌트(패널그립·알림·OSAA)가 공유 레
     /z-index:\s*var\(--os-z-shell-panel/,
     'OS Shell 도킹 패널은 var(--os-z-shell-panel)을 참조해야 한다',
   );
+});
+
+test('OS Shell 패널 헤더는 바로 아래 세션 정보만 접고 터미널 세션은 유지한다', () => {
+  assert.match(osShellPanelTs, /\(dblclick\)="panel[.]toggleInfo\(\)"/);
+  assert.match(osShellPanelTs, /\[infoCollapsed\]="panel[.]infoCollapsed\(\)"/);
+  assert.match(osShellPanelTs, /aria-controls="os-shell-session-information"/);
+  assert.match(osShellPanelTs, /\(keydown[.]enter\)="panel[.]toggleInfo\(\)"/);
+  assert.match(osShellPanelState, /readonly infoCollapsed = signal\(false\)/);
+  assert.match(osShellPageTs, /id="os-shell-session-information" class="session-toolbar"/);
+  assert.match(osShellPageTs, /<div class="terminal-wrap">[\s\S]*?<os-shell-terminal-surface/);
+  assert.match(osShellPageScss, /[.]shell-page[.]embedded[.]info-collapsed [.]session-toolbar \{ display: none; \}/);
 });
 
 test('os-search 드롭다운은 헤더 stacking context에 포함되어 있고, 자체 z-index가 헤더보다 낮은 값으로도 안전하다', () => {

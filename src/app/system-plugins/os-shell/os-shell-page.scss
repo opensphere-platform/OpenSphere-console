@@ -20,6 +20,7 @@ code { font-family: var(--os-font-mono); }
 .blocked-card dt { font-weight: 600; }
 .blocked-card .btn { justify-self: start; }
 .session-toolbar { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: .55rem 1rem; border-bottom: 1px solid #393939; background: #161616; color: #f4f4f4; }
+.shell-page.embedded.info-collapsed .session-toolbar { display: none; }
 .session-facts { display: grid; grid-template-columns: minmax(12rem, 1.5fr) repeat(3, minmax(8rem, 1fr)); flex: 1; gap: 1rem; min-width: 0; }
 .session-facts span { min-width: 0; }
 .session-facts small, .session-facts strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -5,6 +5,7 @@ import { Injectable, signal } from '@angular/core';
 export class OsShellPanelStateService {
   readonly open = signal(false);
   readonly expanded = signal(false);
+  readonly infoCollapsed = signal(false);
 
   toggle(): void {
     this.open.update((value) => !value);
@@ -13,9 +14,14 @@ export class OsShellPanelStateService {
   close(): void {
     this.open.set(false);
     this.expanded.set(false);
+    this.infoCollapsed.set(false);
   }
 
   toggleExpanded(): void {
     this.expanded.update((value) => !value);
+  }
+
+  toggleInfo(): void {
+    this.infoCollapsed.update((value) => !value);
   }
 }
