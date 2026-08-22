@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection, platformLifecycleGateProjection } = require('./controller');
+const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection, platformLifecycleGateProjection, platformLifecycleGateCachedProjection } = require('./controller');
 
 const root = path.resolve(__dirname, '../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -48,6 +48,16 @@ test('OSAA consumes a narrow lifecycle gate instead of rebuilding full platform 
   const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
   assert.match(controller, /\/api\/admin\/platform-readiness\/lifecycle/);
   assert.match(gateway, /DUPA_CONTROL_URL\}\/api\/admin\/platform-readiness\/lifecycle/);
+  const observedAt = Date.parse('2026-08-22T00:00:00.000Z');
+  const fresh = platformLifecycleGateCachedProjection(ready, observedAt, observedAt + 15_000, 60_000);
+  assert.equal(fresh.ready, true);
+  assert.equal(fresh.source, 'controller-observation');
+  assert.equal(fresh.ageMs, 15_000);
+  const stale = platformLifecycleGateCachedProjection(ready, observedAt, observedAt + 60_001, 60_000);
+  assert.equal(stale.ready, false);
+  assert.equal(stale.reason, 'lifecycle_projection_stale');
+  assert.equal(platformLifecycleGateCachedProjection(null, 0, observedAt, 60_000).reason, 'lifecycle_projection_warming');
+  assert.doesNotMatch(controller, /async function platformLifecycleGateStatus\(\) \{[\s\S]*?hisPreflightEvidence\(\)/);
 });
 
 test('Kubernetes warning evidence is never marked seen before durable audit persistence', async () => {

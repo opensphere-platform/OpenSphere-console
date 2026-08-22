@@ -40,6 +40,10 @@ const PLATFORM_PROFILE_PATH = `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/pla
 const HIS_STATUS_URL = process.env.HIS_STATUS_URL
   || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/his/internal/status';
 const HIS_STATUS_MAX_AGE_MS = Math.max(15000, Math.min(Number(process.env.HIS_STATUS_MAX_AGE_MS || 60000), 300000));
+const PLATFORM_LIFECYCLE_GATE_MAX_AGE_MS = Math.max(
+  15000,
+  Math.min(Number(process.env.PLATFORM_LIFECYCLE_GATE_MAX_AGE_MS || 60000), 300000),
+);
 const FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS = Math.max(
   5 * 60 * 1000,
   Math.min(Number(process.env.FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS || (60 * 60 * 1000)), 24 * 60 * 60 * 1000),
@@ -3290,6 +3294,7 @@ async function platformReadinessStatus() {
 		platformControl, mainShell, clusterManager, profile, delivery,
 		hisPreflight: his, observability, backupRestore, securityPolicy, registrations: regs,
 	} = values;
+  observePlatformLifecycleGate(clusterManager, his);
   const capabilities = [
     condition('Delivery', delivery.ready, delivery.ready ? 'Verified' : 'DeliveryEvidenceMissing', delivery.reason || 'GitOps delivery evidence verified', [delivery]),
     condition('Observability', observability.ready, observability.ready ? 'Verified' : 'TelemetryEvidenceMissing', observability.reason || 'Live telemetry verified', [observability]),
@@ -3403,14 +3408,49 @@ function platformLifecycleGateProjection(clusterManager = {}, his = {}) {
   };
 }
 
+let _platformLifecycleGateSnapshot = null;
+let _platformLifecycleGateObservedAtMs = 0;
+
+function platformLifecycleGateCachedProjection(snapshot, observedAtMs, now = Date.now(), maxAgeMs = PLATFORM_LIFECYCLE_GATE_MAX_AGE_MS) {
+  if (!snapshot) {
+    return {
+      apiVersion: 'opensphere.io/platform-lifecycle-gate/v1',
+      ready: false,
+      reason: 'lifecycle_projection_warming',
+      clusterManagerActivated: false,
+      hisPreflightReady: false,
+      observedAt: null,
+      source: 'controller-observation',
+      ageMs: null,
+    };
+  }
+  const ageMs = Math.max(0, Number(now) - Number(observedAtMs || 0));
+  if (ageMs > maxAgeMs) {
+    return {
+      ...snapshot,
+      ready: false,
+      reason: 'lifecycle_projection_stale',
+      source: 'controller-observation',
+      ageMs,
+    };
+  }
+  return { ...snapshot, source: 'controller-observation', ageMs };
+}
+
+function observePlatformLifecycleGate(clusterManager, his, now = Date.now()) {
+  _platformLifecycleGateSnapshot = platformLifecycleGateProjection(clusterManager, his);
+  _platformLifecycleGateObservedAtMs = now;
+  return _platformLifecycleGateSnapshot;
+}
+
 async function platformLifecycleGateStatus() {
-  const probes = [
-    { name: 'clusterManager', promise: clusterManagerActivationStatus(), fallback: { ready: false, phase: 'Unknown', workload: 'Unknown', reason: 'cluster manager probe failed' } },
-    { name: 'hisPreflight', promise: hisPreflightEvidence(), fallback: { ready: false, state: 'Unknown', reason: 'HIS preflight probe failed' } },
-  ];
-  const settled = await Promise.allSettled(probes.map((probe) => probe.promise));
-  const { values } = settledProbeProjection(probes, settled);
-  return platformLifecycleGateProjection(values.clusterManager, values.hisPreflight);
+  // The controller's reconciliation loop already observes these authorities.
+  // Serving that bounded projection keeps every OSAA request from synchronously
+  // repeating Kubernetes and HIS probes. Missing or stale evidence fails closed.
+  return platformLifecycleGateCachedProjection(
+    _platformLifecycleGateSnapshot,
+    _platformLifecycleGateObservedAtMs,
+  );
 }
 async function declarePlatformProfile(actor, reason) {
   const current = await readPlatformProfile();
@@ -4211,6 +4251,6 @@ module.exports = {
   bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint,
   admissionRedTestDenied, normalizedGitRepository, argocdApplicationEvidence,
   platformVerificationProjection, platformVerificationComparable, platformSupportAdmission,
-  persistEventBeforeSeen, settledProbeProjection, platformLifecycleGateProjection,
+  persistEventBeforeSeen, settledProbeProjection, platformLifecycleGateProjection, platformLifecycleGateCachedProjection,
 };
 }

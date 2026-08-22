@@ -5333,8 +5333,10 @@ async function osaaMutationLifecycle(actor) {
         observedAt: body.observedAt || null,
       };
     }
-  } catch {
-    value = { ready: false, reason: 'lifecycle_authority_unavailable' };
+  } catch (error) {
+    const failure = ['TimeoutError', 'AbortError'].includes(String(error?.name || '')) ? 'timeout' : 'network';
+    console.warn(`[osaa-lifecycle] authority unavailable category=${failure} endpoint=dupa-lifecycle`);
+    value = { ready: false, reason: 'lifecycle_authority_unavailable', failure };
   }
   lifecycleGateCache.set(subject, { checkedAt: Date.now(), value });
   return value;
