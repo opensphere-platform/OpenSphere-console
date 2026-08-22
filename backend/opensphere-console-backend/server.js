@@ -1047,10 +1047,10 @@ const r2d2RemediationApi = createR2d2RemediationApi({
   proposalRepositories: R2D2_ENGINEERING_PROPOSAL_REPOSITORIES,
   executionEnabled: R2D2_ENGINEERING_EXECUTION_ENABLED,
   workerReady: () => r2d2RepairRunnerApi.ready(),
-  authenticate: async (req) => {
+  authenticate: async (req, { requireAal2 = false } = {}) => {
     if (!browserSessions) throw { code: 503, msg: 'managed browser session broker unavailable' };
     const session = await browserSessions.authenticate(req);
-    assertConsoleAdminActor(session.actor, { requireAal2: true });
+    assertConsoleAdminActor(session.actor, { requireAal2 });
     return session;
   },
   store: createRestRemediationStore(restRequest),
