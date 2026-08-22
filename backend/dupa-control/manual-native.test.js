@@ -59,6 +59,11 @@ test('native manual.ts consumes ManualService and implements the Help Center lan
   // Loading / error / retry / detail behavior.
   assert.match(manualPage, /docsLoading = signal\(true\)/);
   assert.match(manualPage, /docsError = signal\(''\)/);
+  assert.match(manualPage, /unauthenticated = signal\(false\)/);
+  assert.match(manualPage, /HTTP 401\\b[\s\S]*unauthenticated\.set\(true\)/);
+  assert.match(manualPage, /HTTP 403\\b[\s\S]*forbidden\.set\(true\)/);
+  assert.match(manualPage, /Manual 로그인 세션을 확인할 수 없습니다/);
+  assert.match(manualPage, /Manual을 조회할 권한이 없습니다/);
   assert.match(manualPage, /detailLoading = signal\(false\)/);
   assert.match(manualPage, /detailError = signal\(''\)/);
   assert.match(manualPage, /retryDocument\(\)/);

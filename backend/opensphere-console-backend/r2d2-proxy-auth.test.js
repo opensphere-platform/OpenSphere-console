@@ -108,6 +108,24 @@ test('nginx gives the authenticated R2D2 chat endpoint its bounded long-response
   assert.match(chatLocation, /proxy_set_header Authorization \$r2d2_authorization;/);
 });
 
+test('nginx authenticates Manual browser requests before forwarding them to the OSAA Gateway', () => {
+  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
+  const locations = [
+    nginx.match(/location = \/api\/manual \{[\s\S]*?\n    \}/)?.[0] || '',
+    nginx.match(/location \/api\/manual\/ \{[\s\S]*?\n    \}/)?.[0] || '',
+  ];
+
+  for (const location of locations) {
+    assert.match(location, /set \$r2d2_original_method \$request_method;/);
+    assert.match(location, /set \$r2d2_original_uri \$request_uri;/);
+    assert.match(location, /auth_request \/_r2d2_authn;/);
+    assert.match(location, /auth_request_set \$r2d2_authorization \$upstream_http_x_os_r2d2_authorization;/);
+    assert.match(location, /proxy_set_header Cookie "";/);
+    assert.match(location, /proxy_set_header Authorization \$r2d2_authorization;/);
+    assert.doesNotMatch(location, /proxy_set_header Authorization \$http_authorization;/);
+  }
+});
+
 test('nginx keeps Engineering Remediation proposal writes on Console Backend', () => {
   const nginx = fs.readFileSync(path.resolve(__dirname, '../../nginx/default.conf.template'), 'utf8');
   const location = nginx.match(/location \^~ \/api\/osaa\/remediations\/ \{[\s\S]*?\n    \}/)?.[0] || '';

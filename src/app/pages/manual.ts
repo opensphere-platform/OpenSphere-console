@@ -178,7 +178,11 @@ interface ManualBlock {
         </section>
 
         <main class="manual-home manual-shell-width">
-          @if (forbidden()) {
+          @if (unauthenticated()) {
+            <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
+              <clr-alert-item><span class="alert-text">Manual 로그인 세션을 확인할 수 없습니다. 다시 로그인해 주세요.</span></clr-alert-item>
+            </clr-alert>
+          } @else if (forbidden()) {
             <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
               <clr-alert-item><span class="alert-text">Manual을 조회할 권한이 없습니다.</span></clr-alert-item>
             </clr-alert>
@@ -302,6 +306,7 @@ export class ManualPage implements OnInit {
   readonly documents = signal<ManualDocument[]>([]);
   readonly docsLoading = signal(true);
   readonly docsError = signal('');
+  readonly unauthenticated = signal(false);
   readonly forbidden = signal(false);
 
   readonly query = signal('');
@@ -351,6 +356,7 @@ export class ManualPage implements OnInit {
     this.clearCatalogRetry();
     this.docsLoading.set(true);
     this.docsError.set('');
+    this.unauthenticated.set(false);
     this.forbidden.set(false);
     try {
       const [sources, documents] = await Promise.all([
@@ -361,7 +367,8 @@ export class ManualPage implements OnInit {
       this.documents.set(documents);
     } catch (error) {
       const message = String(error);
-      if (/HTTP (401|403)\b/.test(message)) this.forbidden.set(true);
+      if (/HTTP 401\b/.test(message)) this.unauthenticated.set(true);
+      else if (/HTTP 403\b/.test(message)) this.forbidden.set(true);
       else {
         this.docsError.set(message);
         // The Manual Registry can briefly be unavailable during its own rollout. Keep this
