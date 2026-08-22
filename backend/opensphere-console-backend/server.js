@@ -4597,7 +4597,7 @@ const server = http.createServer(async (req, res) => {
         });
       }
     }
-    if (p.startsWith('/api/osaa/remediations/')) {
+    if (p === '/api/osaa/remediations' || p.startsWith('/api/osaa/remediations/')) {
       try {
         const runnerHandled = await r2d2RepairRunnerApi.handle(req, res, p, readBody, json);
         if (runnerHandled !== false) return;

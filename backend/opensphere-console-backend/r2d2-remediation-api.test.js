@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createR2d2RemediationApi, createRestRemediationWorkerStore } = require('./r2d2-remediation-api');
+const { readFileSync } = require('node:fs');
 const { REPOSITORIES, patchTextDigest } = require('./r2d2-engineering-remediation');
 
 const actorId = '11111111-1111-4111-8111-111111111111';
@@ -139,6 +140,11 @@ test('authenticated remediation list and detail expose the exact bounded work un
   assert.equal(detail.requiredConfirmation,
     `approve R2D2 source patch ${created.remediationRequestId} ${created.approvalBindingDigest}`);
   assert.equal(Object.hasOwn(detail, 'patchArtifact'), false);
+});
+
+test('Backend routes both remediation collection and item paths to the governed API', () => {
+  const server = readFileSync(require.resolve('./server.js'), 'utf8');
+  assert.match(server, /p === '\/api\/osaa\/remediations' \|\| p\.startsWith\('\/api\/osaa\/remediations\/'\)/u);
 });
 
 test('browser verification is exact-profile, exact-source and approving-operator bound', async () => {

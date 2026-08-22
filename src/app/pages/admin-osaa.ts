@@ -373,7 +373,7 @@ interface OsaaActionBindingManifest {
           <div class="r2d2-target-badges" aria-label="R2D2 목표 상태">
             <span>Target model</span>
             <span>Phased enablement</span>
-            <span class="guarded">Operational runtime ON · Engineering {{ engineeringStatus()?.workerReady ? 'READY' : (engineeringStatus()?.executionEnabled ? 'RUNNER 대기' : 'OFF') }}</span>
+            <span class="guarded">Operational runtime ON · Engineering {{ engineeringStatus()?.workerReady ? 'READY' : (engineeringStatus()?.executionEnabled ? 'RUNNER 대기' : (engineeringStatus() ? 'OFF' : 'UNKNOWN')) }}</span>
           </div>
         </div>
         <aside class="r2d2-position-card" aria-label="현재 위치와 최종 목표">
@@ -507,8 +507,9 @@ interface OsaaActionBindingManifest {
         <article class="r2d2-live-panel r2d2-operation-panel" aria-label="Engineering Remediation 승인과 실행 상태">
           <div class="r2d2-operation-head">
             <div><h3>Engineering Remediation</h3><p class="os-sub">OSAA가 제안한 exact patch work unit만 한 번 승인합니다. 이후 source patch · test · component-only 배포 · 실제 화면 검증 · 실패 시 rollback은 Repair Runner가 이어서 수행합니다.</p></div>
-            <span class="label" [class.label-success]="engineeringStatus()?.workerReady" [class.label-warning]="!engineeringStatus()?.workerReady">{{ engineeringStatus()?.workerReady ? 'RUNNER READY' : 'RUNNER WAITING' }}</span>
+            <span class="label" [class.label-success]="engineeringStatus()?.workerReady" [class.label-warning]="engineeringStatus() && !engineeringStatus()?.workerReady">{{ engineeringStatus()?.workerReady ? 'RUNNER READY' : (engineeringStatus() ? 'RUNNER WAITING' : 'RUNNER UNKNOWN') }}</span>
           </div>
+          @if (engineeringStatusError()) { <div class="alert alert-danger" role="alert"><div class="alert-items"><div class="alert-item static"><div class="alert-text">{{ engineeringStatusError() }}</div></div></div></div> }
           @if (engineeringRequestError()) { <div class="alert alert-danger" role="alert"><div class="alert-items"><div class="alert-item static"><div class="alert-text">{{ engineeringRequestError() }}</div></div></div></div> }
           <div class="r2d2-scroll-table"><table class="table"><thead><tr><th>작업</th><th>범위</th><th>증거</th><th>상태</th><th>작업</th></tr></thead><tbody>
             @for (request of engineeringRequests(); track request.remediationRequestId) {
@@ -1468,6 +1469,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
   readonly controlPlaneStatus = signal<OsaaControlPlaneStatus | null>(null);
   readonly controlPlaneError = signal('');
   readonly engineeringStatus = signal<OsaaEngineeringStatus | null>(null);
+  readonly engineeringStatusError = signal('');
   readonly engineeringRequests = signal<EngineeringRemediation[]>([]);
   readonly engineeringRequestsBusy = signal(false);
   readonly engineeringRequestError = signal('');
@@ -1618,9 +1620,13 @@ export class AdminOsaa implements OnInit, OnDestroy {
   async loadEngineeringStatus(): Promise<void> {
     try {
       const response = await this.http.request('/api/osaa/remediations/status', { cache: 'no-store' });
-      this.engineeringStatus.set(response.ok ? await response.json() as OsaaEngineeringStatus : null);
-    } catch {
+      const body = await response.json().catch(() => ({})) as OsaaEngineeringStatus & { error?: string };
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      this.engineeringStatus.set(body);
+      this.engineeringStatusError.set('');
+    } catch (error) {
       this.engineeringStatus.set(null);
+      this.engineeringStatusError.set(`Repair Runner 상태 조회 실패: ${String(error)}`);
     }
   }
 
