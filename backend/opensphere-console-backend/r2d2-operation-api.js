@@ -271,6 +271,7 @@ function createRestWorkerStore(restRequest, workerId, claimEpoch) {
     async setPhase(operationId, phase) {
       const mapped = PHASE_TO_DB[phase]; if (!mapped) throw new Error(`unmapped operation phase ${phase}`);
       const body = { phase: mapped[0], execution_state: mapped[1], updated_at: new Date().toISOString() };
+      if (phase === 'verifying') body.verification_state = 'verifying';
       if (phase === 'succeeded') body.verification_state = 'succeeded';
       if (phase === 'verification_failed') body.verification_state = 'failed';
       if (phase === 'inconclusive') body.verification_state = 'inconclusive';

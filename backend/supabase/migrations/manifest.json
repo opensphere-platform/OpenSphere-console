@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0066",
-  "migrationCount": 65,
-  "setDigest": "sha256:213b6bf05fde7d815a0ba7ab523f5b645d076efa642c655af80ba1b394565659",
+  "latestMigrationId": "0067",
+  "migrationCount": 66,
+  "setDigest": "sha256:5d19d5b481cbf2c0c35e51f4d561ce9fbee62159870c149134ab79ed0bb1391c",
   "migrations": [
     {
       "id": "0001",
@@ -458,6 +458,13 @@
       "name": "0066_osaa_incident_transition_convergence.sql",
       "path": "backend/supabase/migrations/0066_osaa_incident_transition_convergence.sql",
       "sha256": "bfd295d3de76c7a2becce0854c2b7a5bef9a985a77e61af3dfbf05d06105ae4f"
+    },
+    {
+      "id": "0067",
+      "predecessorMigrationId": "0066",
+      "name": "0067_osaa_operation_state_convergence.sql",
+      "path": "backend/supabase/migrations/0067_osaa_operation_state_convergence.sql",
+      "sha256": "09b63554485e74132c78db9951e4c2b970dbaa96766b73a78c2f2c4e437e512a"
     }
   ]
 }

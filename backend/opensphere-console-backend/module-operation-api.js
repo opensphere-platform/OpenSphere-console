@@ -211,6 +211,8 @@ function normalizeRow(row) {
     riskClass: row.risk_class,
     targetFingerprint: row.target_fingerprint,
     phase: row.phase,
+    executionState: row.execution_state || null,
+    verificationState: row.verification_state || null,
     result: row.result || {},
     errorCode: row.error_code || null,
     evidenceRef: row.evidence_ref || null,
@@ -218,6 +220,22 @@ function normalizeRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function moduleOperationState(phase) {
+  switch (String(phase || '')) {
+    case 'Queued': return { execution_state: 'accepted', verification_state: 'pending' };
+    case 'AwaitingApproval': return { execution_state: 'awaiting_approval', verification_state: 'pending' };
+    case 'Running': return { execution_state: 'executing', verification_state: 'pending' };
+    case 'Verifying': return { execution_state: 'complete', verification_state: 'verifying' };
+    case 'Succeeded': return { execution_state: 'complete', verification_state: 'succeeded' };
+    case 'VerificationFailed': return { execution_state: 'complete', verification_state: 'failed' };
+    case 'Inconclusive': return { execution_state: 'complete', verification_state: 'inconclusive' };
+    case 'Failed': return { execution_state: 'failed', verification_state: 'not_required' };
+    case 'RollingBack': return { execution_state: 'rolling_back', verification_state: 'failed' };
+    case 'RolledBack': return { execution_state: 'rolled_back', verification_state: 'failed' };
+    default: return {};
+  }
 }
 
 function createModuleOperationApi({
@@ -263,6 +281,7 @@ function createModuleOperationApi({
     if (!outcome || (outcome.phase === row.phase && outcome.errorCode === row.error_code)) return row;
     return patchOperation(row.operation_id, {
       phase: outcome.phase,
+      ...moduleOperationState(outcome.phase),
       error_code: outcome.errorCode,
       result: {
         ...(row.result || {}),
@@ -323,6 +342,7 @@ function createModuleOperationApi({
           risk_class: policy.riskClass,
           target_fingerprint: projection.targetFingerprint,
           phase: 'Queued',
+          ...moduleOperationState('Queued'),
           result: { acceptedAt: new Date().toISOString(), owner: module.owner },
         }],
         prefer: 'return=representation',
@@ -350,6 +370,7 @@ function createModuleOperationApi({
       const ownerOperation = ownerResult?.operation || null;
       const row = await patchOperation(operationId, {
         phase: action === 'verify' ? 'Verifying' : 'Running',
+        ...moduleOperationState(action === 'verify' ? 'Verifying' : 'Running'),
         evidence_ref: ownerOperation?.id ? `his-operation:${ownerOperation.id}` : null,
         result: {
           ...(inserted.result || {}),
@@ -366,6 +387,7 @@ function createModuleOperationApi({
     } catch (error) {
       await patchOperation(operationId, {
         phase: 'Failed',
+        ...moduleOperationState('Failed'),
         error_code: error?.errorCode || `owner_http_${error?.code || 500}`,
         result: {
           ...(inserted.result || {}),
@@ -462,5 +484,6 @@ module.exports = {
   observabilityProjection,
   ownerRequestBody,
   ownerTerminalResult,
+  moduleOperationState,
   reasonFrom,
 };

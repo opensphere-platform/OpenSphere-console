@@ -12,6 +12,7 @@ const {
   observabilityProjection,
   ownerRequestBody,
   ownerTerminalResult,
+  moduleOperationState,
 } = require('./module-operation-api');
 
 const actorId = '11111111-1111-4111-8111-111111111111';
@@ -156,6 +157,14 @@ test('owner terminal state is folded into the receipt without becoming desired-s
     check: { state: 'Ready', checkedAt: '2026-07-31T03:00:00.000Z' },
   }));
   assert.deepEqual(ownerTerminalResult(row, projection), { phase: 'Succeeded', errorCode: null });
+});
+
+test('legacy module receipts keep execution and verification state aligned with phase', () => {
+  assert.deepEqual(moduleOperationState('Running'), { execution_state: 'executing', verification_state: 'pending' });
+  assert.deepEqual(moduleOperationState('Verifying'), { execution_state: 'complete', verification_state: 'verifying' });
+  assert.deepEqual(moduleOperationState('Succeeded'), { execution_state: 'complete', verification_state: 'succeeded' });
+  assert.deepEqual(moduleOperationState('Failed'), { execution_state: 'failed', verification_state: 'not_required' });
+  assert.deepEqual(moduleOperationState('VerificationFailed'), { execution_state: 'complete', verification_state: 'failed' });
 });
 
 test('migration makes the receipt backend-only and Setup CLI publishes it as release material', () => {
