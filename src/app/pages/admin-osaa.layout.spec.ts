@@ -53,6 +53,7 @@ test('R2D2 overview and live evidence use a readable light visual contract', () 
   assert.match(styles, /\.r2d2-repair-ladder \{[^}]*grid-template-columns: repeat\(3,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(styles, /font-size: 0\.(?:[0-7]\d*)rem/);
   assert.doesNotMatch(source, /font-size: 0\.(?:[0-7]\d*)rem/);
+  assert.match(source, /\.r2d2-authority-table th:nth-child\(-n\+4\),\.r2d2-authority-table td:nth-child\(-n\+4\) \{ white-space: nowrap; \}/);
   assert.match(source, /class="table r2d2-authority-table"/);
   assert.match(source, /formatCompactDateTime\(source\.last_complete_at\)/);
 });

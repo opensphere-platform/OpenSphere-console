@@ -1542,7 +1542,7 @@ interface OsaaActionBindingManifest {
       .r2d2-authority-table th:nth-child(4) { width: 25%; }
       .r2d2-authority-table th:nth-child(5) { width: 26%; }
       .r2d2-authority-table td { vertical-align: middle; overflow-wrap: anywhere; }
-      .r2d2-authority-table th:first-child,.r2d2-authority-table td:first-child { white-space: nowrap; }
+      .r2d2-authority-table th:nth-child(-n+4),.r2d2-authority-table td:nth-child(-n+4) { white-space: nowrap; }
       .r2d2-authority-table time { white-space: nowrap; font-variant-numeric: tabular-nums; }
       .r2d2-live-kv { display: grid; grid-template-columns: 10rem 1fr; margin: 0.5rem 0 0; font-size: 0.875rem; }
       .r2d2-live-kv dt,.r2d2-live-kv dd { margin: 0; padding: 0.35rem 0.4rem; border-bottom: 1px solid #edf1f3; }
