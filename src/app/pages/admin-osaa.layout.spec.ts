@@ -26,5 +26,7 @@ test('live operations exposes the server-reported Dialogue State rollout at a gl
   assert.match(source, /enforceCurrentFacts/);
   assert.match(source, /enforceMutations/);
   assert.match(source, /case 'off': return '대화 상태 기록/);
-  assert.match(styles, /\.r2d2-dialogue-state[\s\S]*> header \{[^}]*background: #fff;/);
+  assert.match(source, /<div class="r2d2-dialogue-state-heading">/);
+  assert.doesNotMatch(source, /<header>[\s\S]*OSAA Dialogue State/);
+  assert.match(styles, /> \.r2d2-dialogue-state-heading \{[^}]*background: #fff;/);
 });

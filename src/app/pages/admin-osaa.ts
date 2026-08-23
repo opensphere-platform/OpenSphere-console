@@ -1385,7 +1385,7 @@ interface OsaaActionBindingManifest {
           <clr-tab-content id="r2d2-monitoring-panel">
             <div class="r2d2-top-tab-content">
               <section class="r2d2-dialogue-state" [class.state-off]="dialogueMode() === 'off'" [class.state-unknown]="dialogueMode() === 'unknown'" aria-labelledby="r2d2-dialogue-state-title">
-                <header>
+                <div class="r2d2-dialogue-state-heading">
                   <div>
                     <span class="r2d2-kicker">LIVE POLICY · DIALOGUE STATE</span>
                     <h2 id="r2d2-dialogue-state-title">OSAA Dialogue State</h2>
@@ -1396,7 +1396,7 @@ interface OsaaActionBindingManifest {
                     <strong>{{ dialogueMode() }}</strong>
                     <small><code>OSAA_DIALOGUE_STATE_MODE</code></small>
                   </div>
-                </header>
+                </div>
                 <div class="r2d2-dialogue-policy-grid">
                   <article [class.enabled]="health()?.dialogueState?.recordTransitions"><span>대화 전이 기록</span><strong>{{ health()?.dialogueState?.recordTransitions ? 'ON' : 'OFF' }}</strong><small>turn별 상태 변경과 revision 보존</small></article>
                   <article [class.enabled]="health()?.dialogueState?.exposeContext"><span>문맥 projection</span><strong>{{ health()?.dialogueState?.exposeContext ? 'ON' : 'OFF' }}</strong><small>검증된 대화 상태를 응답에 노출</small></article>
