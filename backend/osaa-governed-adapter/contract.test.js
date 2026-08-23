@@ -65,7 +65,7 @@ test('runtime inventory is broad but sanitizes configuration values', () => {
   for (const kind of ['node', 'persistentvolumeclaim', 'job', 'cronjob', 'ingress', 'horizontalpodautoscaler', 'customresourcedefinition', 'observabilitybinding', 'platformsupportprofile', 'uipluginregistration', 'foundationmodel', 'identitydirectorybinding']) assert.ok(RUNTIME_RESOURCE_KINDS.includes(kind));
   const binding = sanitizeKubernetesObject('observabilitybinding', {
     metadata: { name: 'opensphere-console' },
-    spec: { owner: 'HIS', consumerRef: { kind: 'Deployment', namespace: 'opensphere-console', name: 'opensphere-console' }, requestedCapabilities: ['metrics', 'logs', 'traces', 'otlp'] },
+    spec: { owner: 'HISS', consumerRef: { kind: 'Deployment', namespace: 'opensphere-console', name: 'opensphere-console' }, requestedCapabilities: ['metrics', 'logs', 'traces', 'otlp'] },
     status: { phase: 'Connected', capabilities: ['metrics'], contract: { queryEndpoint: 'http://internal.example', queryTemplates: { up: 'sum(up)' } }, evidence: { unavailableCapabilities: ['logs', 'traces', 'otlp'], digest: `sha256:${'a'.repeat(64)}` } },
   });
   assert.equal(binding.phase, 'Connected');
@@ -123,7 +123,7 @@ test('agent automatic loop exposes reads while mutations remain governed', () =>
   assert.match(gateway, /query_distributed_traces/);
   assert.match(gateway, /osaa\.observability\.logs\.query/);
   assert.match(gateway, /osaa\.observability\.traces\.query/);
-  assert.match(gateway, /\/api\/his\/observability\/\$\{kind\}/);
+  assert.match(gateway, /\/api\/hiss\/observability\/\$\{kind\}/);
   assert.match(gateway, /boundedObservabilityReadInputs/);
   assert.match(gateway, /osaaObservabilityCapabilities/);
   assert.match(gateway, /observabilityCapabilities\.has\('logs'\)/);
@@ -143,7 +143,7 @@ test('agent automatic loop exposes reads while mutations remain governed', () =>
     '/api/admin/plugins/registrations',
     '/api/v1/registry',
     '/api/catalog/entities',
-    '/api/his/status',
+    '/api/hiss/status',
     '/api/ceph/status',
     '/api/foundation/osaa/status',
   ]) assert.ok(gateway.includes(ownerPath), `missing owner facade ${ownerPath}`);
@@ -182,8 +182,8 @@ test('owner lifecycle actions use fixed typed facades with fail-closed inputs an
   assert.match(ownerAction, /\/api\/admin\/platform-readiness\/preflight/);
   assert.match(ownerAction, /\/api\/admin\/platform-readiness\/verify/);
   assert.match(ownerAction, /\/api\/admin\/plugins\/registrations\//);
-  assert.match(ownerAction, /\/api\/his\/validate/);
-  assert.match(ownerAction, /`\/api\/his\/\$\{action\}`/);
+  assert.match(ownerAction, /\/api\/hiss\/validate/);
+  assert.match(ownerAction, /`\/api\/hiss\/\$\{action\}`/);
   assert.match(ownerAction, /\/api\/ceph\/osaa\/connect/);
   assert.match(ownerAction, /\/api\/ceph\/osaa\/disconnect/);
   assert.match(ownerAction, /\/api\/foundation\/osaa\/engines\/lifecycle/);

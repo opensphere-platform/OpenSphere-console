@@ -214,7 +214,7 @@ export class AdminOverview {
           route: '/manage/infrastructure-monitoring',
         },
         {
-          label: 'HIS Observability',
+          label: 'HISS Observability',
           description: '외부 관측 스택의 binding 상태',
           route: '/manage/observability',
         },

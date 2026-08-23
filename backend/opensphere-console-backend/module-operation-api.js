@@ -12,7 +12,7 @@ const MODULES = Object.freeze({
   'shared-observability': Object.freeze({
     id: 'shared-observability',
     displayName: 'Shared Observability',
-    owner: 'cluster-manager/HIS',
+    owner: 'cluster-manager/HISS',
     adapter: 'his:kube-prometheus-stack',
     status: 'Available',
     actions: ['install', 'verify', 'delete-runtime', 'reinstall'],
@@ -146,7 +146,7 @@ function observabilityProjection(status) {
 function ownerRequestBody(action, reason, body) {
   if (action === 'install' || action === 'reinstall') {
     return {
-      path: '/api/his/install',
+      path: '/api/hiss/install',
       body: {
         id: 'kube-prometheus-stack',
         reason,
@@ -157,7 +157,7 @@ function ownerRequestBody(action, reason, body) {
   }
   if (action === 'verify') {
     return {
-      path: '/api/his/validate',
+      path: '/api/hiss/validate',
       body: { id: 'kube-prometheus-stack', reason },
     };
   }
@@ -166,7 +166,7 @@ function ownerRequestBody(action, reason, body) {
       throw { code: 400, errorCode: 'confirmation_required', msg: "confirm must equal 'kube-prometheus-stack'" };
     }
     return {
-      path: '/api/his/uninstall',
+      path: '/api/hiss/uninstall',
       body: { id: 'kube-prometheus-stack', reason, confirm: 'kube-prometheus-stack' },
     };
   }
@@ -246,7 +246,7 @@ function createModuleOperationApi({
   logAudit,
 }) {
   async function getOwnerProjection(authorization) {
-    const status = await ownerRequest('/api/his/status', { method: 'GET', authorization });
+    const status = await ownerRequest('/api/hiss/status', { method: 'GET', authorization });
     return observabilityProjection(status);
   }
 

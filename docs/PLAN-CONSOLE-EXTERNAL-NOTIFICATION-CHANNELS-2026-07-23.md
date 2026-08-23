@@ -18,7 +18,7 @@ Assumption: 요청의 “다스코드”는 **Discord**를 의미한다고 해�
 4. `audit.event`의 append-only 성격과 기존 `change_outbox` 패턴을 재사용해 이벤트, 전달, 재시도, 실패 이력을 영속화한다.
 5. Slack/Discord webhook URL, SMTP 비밀번호, SMS API secret은 일반 설정 JSON이나 브라우저 응답에 저장·노출하지 않는다.
 6. 전달 보장은 **at-least-once**로 정의한다. 중복 억제는 수행하지만 provider 특성상 exactly-once를 약속하지 않는다.
-7. Console은 HIS가 소유한 Prometheus/Alertmanager를 설치하거나 설정하지 않는다. HIS alert를 받으려면 별도 읽기 전용 Binding 또는 인증된 event ingress를 사용한다.
+7. Console은 HISS가 소유한 Prometheus/Alertmanager를 설치하거나 설정하지 않는다. HISS alert를 받으려면 별도 읽기 전용 Binding 또는 인증된 event ingress를 사용한다.
 
 권장 1차 범위는 Slack Incoming Webhook, Discord Webhook, SMTP 이메일, SMS provider adapter 1종이다. 임의 URL을 받는 Generic Webhook은 SSRF 위험 때문에 2차로 미룬다.
 
@@ -36,7 +36,7 @@ Assumption: 요청의 “다스코드”는 **Discord**를 의미한다고 해�
 | 감사 권위 | Supabase `audit.event`, update/delete 차단 | 설정 변경과 전달 재시도도 감사 이벤트로 남긴다. |
 | 비동기 작업 | `console.change_outbox`의 queued/dispatching/completed/failed/dead-letter | 전달 큐와 재시도 상태 모델의 선행 패턴으로 사용한다. |
 | 인증/권한 | Console Backend가 세션과 관리자 역할을 검증 | 모든 읽기/변경 API를 Backend 권한으로 보호한다. |
-| Observability 경계 | HIS가 Prometheus/Grafana/Alertmanager 수명주기 소유 | Console이 Alertmanager receiver를 대신 관리하지 않는다. |
+| Observability 경계 | HISS가 Prometheus/Grafana/Alertmanager 수명주기 소유 | Console이 Alertmanager receiver를 대신 관리하지 않는다. |
 | Status plugin | notification contribution이 비활성 | 현재 status plugin이 외부 전파 이벤트를 제공한다고 가정하면 안 된다. |
 
 근거:
@@ -417,7 +417,7 @@ flowchart LR
   P["Trusted producers"] --> E["notification_event"]
   A["audit.event append-only"] --> T["DB projection trigger"]
   T --> E
-  H["HIS Binding / authenticated ingress"] --> E
+  H["HISS Binding / authenticated ingress"] --> E
   E --> R["Rule evaluator"]
   R --> D["notification_delivery outbox"]
   D --> W["notification-dispatcher"]
@@ -442,7 +442,7 @@ flowchart LR
 | notification-dispatcher | rule 평가, queue claim, adapter 실행, retry/circuit/callback | browser session 처리 |
 | Supabase/PostgreSQL | metadata, event, delivery, attempt, audit 영속화 | raw secret 일반 조회 |
 | private secret store | 암호화 credential과 key version | UI 응답 제공 |
-| HIS adapter | 허용된 alert event를 정규화 | Alertmanager 수명주기 관리 |
+| HISS adapter | 허용된 alert event를 정규화 | Alertmanager 수명주기 관리 |
 
 ### 8.2 이벤트 입력 원칙
 
@@ -827,9 +827,9 @@ provider 자체 장애는 OpenSphere delivery availability와 분리해 표시�
 - liveness: process/event loop
 - readiness: DB, secret decrypt key, queue claim 가능 여부
 - provider health: 실제 test/최근 전송 기반이며 dispatcher readiness와 분리
-- `/metrics`는 HIS가 scrape할 수 있도록 기존 Console observability 계약을 따른다.
+- `/metrics`는 HISS가 scrape할 수 있도록 기존 Console observability 계약을 따른다.
 
-외부 채널 엔진 자신의 장애를 같은 고장 난 외부 채널로만 알리면 탐지가 끊길 수 있다. 최소한 Console 상태 레일, HIS metric/alert, dead-letter runbook을 독립 경로로 유지한다.
+외부 채널 엔진 자신의 장애를 같은 고장 난 외부 채널로만 알리면 탐지가 끊길 수 있다. 최소한 Console 상태 레일, HISS metric/alert, dead-letter runbook을 독립 경로로 유지한다.
 
 ---
 
@@ -972,7 +972,7 @@ Exit criteria:
 - KMS/external secret store 전환 또는 검증
 - key rotation drill
 - queue backlog/circuit/dead-letter runbook
-- HIS metric binding
+- HISS metric binding
 - chaos test: DNS, timeout, 429, revoked webhook, DB failover
 - Generic Webhook은 SSRF controls 검증 후 별도 승인
 
@@ -1060,7 +1060,7 @@ Exit criteria:
 | SMS 비용 폭증 | 비용·spam | severity 제한, recipient allowlist, quota, daily cap |
 | SSRF | 내부망 접근 | provider host allowlist, DNS/IP 재검증, redirect 차단, egress policy |
 | 메시지에 민감정보 포함 | 외부 유출 | field allowlist, preview, truncate, no raw payload |
-| dispatcher 자체 장애 | 외부 경보 단절 | 독립 HIS metric, Console warning, queue durability |
+| dispatcher 자체 장애 | 외부 경보 단절 | 독립 HISS metric, Console warning, queue durability |
 | 규칙 복잡도 | 오발송·설명 불가 | 초기 exact-match DSL, version snapshot, preview |
 | callback 위조 | 거짓 Delivered | 공식 signature validation, replay/idempotency receipt |
 
@@ -1077,7 +1077,7 @@ Exit criteria:
 5. quiet hours timezone과 critical 우회 정책
 6. recipient별 개인정보·보존 정책
 7. Console 관리자/운영자 사이의 retry와 rule-write 권한 분리
-8. HIS alert를 연결할 계약과 source allowlist
+8. HISS alert를 연결할 계약과 source allowlist
 
 위 항목이 미정이어도 Phase 1의 provider-neutral schema와 fake adapter는 시작할 수 있지만, 실제 SMS/이메일 운영 활성화는 하지 않는다.
 
@@ -1119,4 +1119,4 @@ Exit criteria:
 - 외부 전송 대상은 trusted server event로 한정
 - Generic Webhook과 양방향 승인 기능은 후속 별도 보안 심사
 
-이 방식은 기존 Console 인박스, append-only 감사, 관리 UI 디자인 시스템, HIS 소유 경계를 보존하면서도 외부 전달에 필요한 재시도·감사·보안·운영 가시성을 추가한다.
+이 방식은 기존 Console 인박스, append-only 감사, 관리 UI 디자인 시스템, HISS 소유 경계를 보존하면서도 외부 전달에 필요한 재시도·감사·보안·운영 가시성을 추가한다.

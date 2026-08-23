@@ -4,7 +4,7 @@
 |---|---|
 | 문서 상태 | **채택된 정본 · Platform Control Plane 2차 구현 기준선** |
 | 작성일 | 2026-07-22 |
-| 대상 | OpenSphere Console `/manage/*`, Console Backend, Supabase, Gitea, HIS Observability Binding, OSAA, Manual, subShell 연계 |
+| 대상 | OpenSphere Console `/manage/*`, Console Backend, Supabase, Gitea, HISS Observability Binding, OSAA, Manual, subShell 연계 |
 | 상위 결정 | `migration-adr-006` — **Supabase Data & Identity Authority + Gitea Declarative Change Authority** |
 | 변경 대상 | 사용자 노출 `/manage/backbone`, legacy `/api/admin/backbone/*`, CBS 명칭·namespace·OSAA 잔재 |
 | 비목표 | Supabase Studio 복제, Gitea를 workforce SCM으로 사용, 브라우저에 privileged credential 제공 |
@@ -24,7 +24,7 @@
 | Change Control | `opensphere-console-change`의 Gitea가 선언형 변경 repository와 PR/승인 경로를 제공 | protected `main`, 1인 이상 승인, direct push 금지, signed commit 요구 |
 | Gitea signing | 서버 전용 SSH signing key를 메모리 볼륨으로 materialize하고 private key를 브라우저·repository에 노출하지 않음 | 실제 ephemeral commit의 SSH signature, key mode `0600`, Gitea health |
 | Console 관리면 | Platform Control Plane, Data & Identity, Change Control 화면과 복구 evidence 읽기 모델을 배포 | Console `platform-control-v6`, Backend `platform-control-v4`, 양쪽 Deployment 2/2 Ready |
-| HIS Observability | Binding 소비자만 유지. Prometheus/ServiceMonitor/Alertmanager의 설치·수명주기는 Console이 소유하지 않음 | Binding 부재 시 `NotConfigured`, 시계열·SLO·alert를 Ready로 가장하지 않음 |
+| HISS Observability | Binding 소비자만 유지. Prometheus/ServiceMonitor/Alertmanager의 설치·수명주기는 Console이 소유하지 않음 | Binding 부재 시 `NotConfigured`, 시계열·SLO·alert를 Ready로 가장하지 않음 |
 | legacy CBS/Backbone | 사용자 승인 후 `opensphere-cbs`, `opensphere-backbone` namespace와 해당 legacy PVC/PV를 물리 삭제 | active workload/DNS 참조 0건, legacy namespace/PVC 재조회 결과 없음 |
 
 `change_outbox`와 receipt ledger는 이미 적용되어 있다. 다만 consumer별 자동
@@ -55,7 +55,7 @@ reconciler가 등록되기 전에는 변경을 `Applied`로 표시하지 않고 
 | 플랫폼 제어 기반 | Data & Identity | `/manage/data-identity` | `Data & Identity — Supabase` |
 | 플랫폼 제어 기반 | 상태 변경 관리 | `/manage/state-changes` | `플랫폼 상태 변경 관리` |
 | 플랫폼 제어 기반 | OSAA Gateway | `/manage/osaa` | `OSAA Gateway` |
-| 플랫폼 제어 기반 | Observability | `/manage/observability` | `Observability Integration — HIS-provided` |
+| 플랫폼 제어 기반 | Observability | `/manage/observability` | `Observability Integration — HISS-provided` |
 
 `Supabase`, `Gitea` 제품 이름은 숨기지 않는다. 메뉴의 역할 이름 옆 badge와 페이지 제목에 명시해 사용자가 실제 공급 기술과 버전을 즉시 알 수 있게 한다.
 
@@ -68,12 +68,12 @@ Gitea가 모든 데이터를 복제해 보관하는 구조는 채택하지 않�
 | 운영자, session, RBAC, 사용자 설정, object metadata, 관리 감사 | Supabase | 관계·검색·보안 정책·고빈도 기록에 적합 |
 | 선언형 설정, Manual 원문, OSAA tool/binding 선언, subShell descriptor, diff/review/revert | Gitea | 사람이 검토 가능한 변경 내용과 이력 |
 | 현재 workload/resource 상태 | Kubernetes API | 실행 현실의 권위 |
-| 지표·로그·trace | **HIS Observability**가 소유하는 Prometheus-compatible/log/trace backend | 시간계열·대용량 운영 증거. Console은 Binding을 통한 소비자 |
+| 지표·로그·trace | **HISS Observability**가 소유하는 Prometheus-compatible/log/trace backend | 시간계열·대용량 운영 증거. Console은 Binding을 통한 소비자 |
 | 명령 인가, reason, MFA, idempotency, 권위 간 연결 | Console Backend | 유일한 Policy Enforcement Point |
 
 따라서 “Gitea 결합”은 **모든 선언형 변경이 Gitea commit/PR을 통과하고 모든 운영 결과가 동일 request/correlation ID로 Supabase 감사에 연결됨**을 뜻한다. 로그, session, live state를 Git에 중복 저장하지 않는다.
 
-Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea 기반에 포함하지 않는다. 이들은 HIS가 소유하는 관측 capability다. Console은 `/metrics`·health·trace를 노출하고 필요한 관측 조건을 선언하며, HIS가 발급한 `ObservabilityBinding`을 읽기 전용으로 소비한다. PFS는 이 Console↔HIS 계약의 중간 소유자나 필수 경유지가 아니다.
+Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea 기반에 포함하지 않는다. 이들은 HISS가 소유하는 관측 capability다. Console은 `/metrics`·health·trace를 노출하고 필요한 관측 조건을 선언하며, HISS가 발급한 `ObservabilityBinding`을 읽기 전용으로 소비한다. PFS는 이 Console↔HISS 계약의 중간 소유자나 필수 경유지가 아니다.
 
 ---
 
@@ -132,7 +132,7 @@ Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea �
 | OSAA | `osaa` schema에 document, chunk, retrieval trace, tool run, ACL/RLS 보유 | 실제 관리 가시성 부족 |
 | Gitea 관측 | Observability에 repo/user/org/issues/releases/access/memory Prometheus query 존재 | 전용 관리면으로 재사용 가능 |
 | Gitea API | legacy controller의 `/api/admin/backbone/gitea*`는 anonymous/public read 수준 | 보안·기능 모두 교체 필요 |
-| Observability 연계 | Console이 `monitoring` namespace의 Prometheus service를 직접 찾아 query/targets를 호출 | HIS Binding을 통하지 않는 직접 결합 |
+| Observability 연계 | Console이 `monitoring` namespace의 Prometheus service를 직접 찾아 query/targets를 호출 | HISS Binding을 통하지 않는 직접 결합 |
 
 ### 1.3 확인된 구조적 잔재
 
@@ -143,7 +143,7 @@ Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea �
 - OSAA Gateway와 Nginx에 `opensphere-backbone` DNS/namespace, `BACKBONE_NS`, CBS 설명이 남아 있다.
 - 기존 `BACKBONE-ARCHITECTURE.md`는 superseded notice 아래에 구 구조 전체를 보존하고 있어 runtime 문서로 오인될 수 있다.
 - Dupa Controller가 `monitoring.coreos.com` 리소스에 광역 create/update/patch/delete 권한을 보유하고 ServiceMonitor를 직접 생성할 수 있다.
-- Observability API가 `monitoring` namespace의 service DNS를 직접 탐색한다. 이는 HIS가 소유해야 할 endpoint·tenant·credential·capability 계약을 우회한다.
+- Observability API가 `monitoring` namespace의 service DNS를 직접 탐색한다. 이는 HISS가 소유해야 할 endpoint·tenant·credential·capability 계약을 우회한다.
 
 ---
 
@@ -157,7 +157,7 @@ Prometheus, Grafana, Alertmanager, 수집기와 장기보존은 Supabase+Gitea �
 6. **브라우저에 privileged credential을 주지 않는다.** Supabase `service_role`, Gitea token, DB owner credential은 Backend/worker Secret만 사용한다.
 7. **상관관계 없는 성공은 성공으로 표시하지 않는다.** 요청, commit, reconcile, runtime 결과가 결합되어야 `Applied`다.
 8. **subShell은 consumer contract를 선언한다.** 어떤 schema/bucket/repo/path/permission/reconciler/telemetry를 쓰는지 Console이 입증한다.
-9. **HIS 경계를 침범하지 않는다.** Console은 Prometheus/Operator/CRD/retention/scrape/Alertmanager를 설치·구성·운영하지 않는다.
+9. **HISS 경계를 침범하지 않는다.** Console은 Prometheus/Operator/CRD/retention/scrape/Alertmanager를 설치·구성·운영하지 않는다.
 10. **관측 환경에 적응한다.** Binding이 없어도 bootstrap·진단·연결 복구 화면은 동작하고, Binding이 준비되면 심층 metric/SLO/alert 기능이 자동 활성화된다.
 
 ---
@@ -173,7 +173,7 @@ flowchart LR
   BE --> G["Gitea\nDesired State · Review · Commit · Revert"]
   G --> R["Approved Reconciler"]
   R --> K["Kubernetes\nObserved Runtime"]
-  H["HIS Observability\nPrometheus-compatible · Logs · Traces"]
+  H["HISS Observability\nPrometheus-compatible · Logs · Traces"]
   G -->|"PR / commit / webhook"| BE
   R -->|"operation result"| BE
   K -->|"live state"| BE
@@ -222,7 +222,7 @@ flowchart LR
 | Gitea | service/API/metrics 상태, repo/PR/webhook/reconcile, drift, backup age |
 | Kubernetes | registered cluster, API reachability, reconciler, pending/failed operation |
 | Console Backend | policy/audit append/outbox, error rate, latency, queue/unknown change |
-| HIS Observability | Binding 상태, provider capability, freshness, scrape coverage, alert/SLO 상태. 미연결 시 설치하지 않고 제한 사유 표시 |
+| HISS Observability | Binding 상태, provider capability, freshness, scrape coverage, alert/SLO 상태. 미연결 시 설치하지 않고 제한 사유 표시 |
 
 #### Change pipeline
 
@@ -232,10 +232,10 @@ flowchart LR
 
 | 영역 | 제공 정보 | 데이터 원천 |
 |---|---|---|
-| Overview | Auth/PostgREST/Storage/DB health, version/digest, uptime, p50/p95/p99, error rate, incident | direct probes + HIS Observability Binding + deployment metadata |
+| Overview | Auth/PostgREST/Storage/DB health, version/digest, uptime, p50/p95/p99, error rate, incident | direct probes + HISS Observability Binding + deployment metadata |
 | Database | schema/table/view/function 수, 크기, top tables, connection/pool, slow query, lock, WAL/backup, extension, migration drift | read-only SQL views + pg stats |
 | Auth & Access | operator, status, session, MFA/AAL, sign-in trend/failure, revoke, service principal, role-permission matrix, expiring grant | Auth Admin server API + `console`/auth audit projection |
-| APIs | PostgREST schema exposure, request/error/latency/role, RLS enforcement, rate limit | HIS-bound gateway/PostgREST metrics + access logs |
+| APIs | PostgREST schema exposure, request/error/latency/role, RLS enforcement, rate limit | HISS-bound gateway/PostgREST metrics + access logs |
 | Storage | bucket/object/bytes/growth, limits, MIME, public exposure, failed upload, orphan, retention, object backup | Storage API + read-only storage metadata + object inventory |
 | Advisors | RLS disabled/missing policy, exposed sensitive columns, unused/duplicate index, slow query, insecure function/search path | approved linter/advisor queries |
 | Audit & Changes | event volume, hash-chain continuity, phase gap, actor/source/category, correlated changes | `audit.event` + `console.change_request` |
@@ -253,7 +253,7 @@ flowchart LR
 
 | 영역 | 제공 정보 | 데이터 원천 |
 |---|---|---|
-| Overview | health/version/digest/uptime, repo/org/user/team, PR/issue/release, disk/LFS, runner, backup | Gitea API + HIS Observability Binding + K8s evidence |
+| Overview | health/version/digest/uptime, repo/org/user/team, PR/issue/release, disk/LFS, runner, backup | Gitea API + HISS Observability Binding + K8s evidence |
 | Repositories | 목적, owner, default/protected branch, code owner, last commit, signature, last applied, drift, consumers | Gitea API + consumer contract + reconciler |
 | Change Requests | actor/reason/risk, request, PR/review, diff summary, validation, commit, reconcile, outcome | Supabase change request + Gitea API |
 | Reconciliation | desired/applied SHA, queue, last duration, failure, drift, operation ID, observed generation | reconciler callback + Kubernetes projection |
@@ -270,35 +270,35 @@ flowchart LR
 - revert도 새 `change_request`로 생성하며 이전 요청과 `reverts_request_id`로 연결한다.
 - webhook은 raw body HMAC 검증, delivery ID idempotency, replay 방지/허용 정책을 적용한다.
 
-### 4.4 `/manage/observability` — HIS Observability Integration
+### 4.4 `/manage/observability` — HISS Observability Integration
 
-이 페이지는 Prometheus 관리 화면이 아니다. Console이 HIS Observability capability와 어떤 계약으로 연결됐는지 보여주는 **소비자·진단 표면**이다.
+이 페이지는 Prometheus 관리 화면이 아니다. Console이 HISS Observability capability와 어떤 계약으로 연결됐는지 보여주는 **소비자·진단 표면**이다.
 
-#### 2차 업데이트 확정 원칙 — HIS Binding 적응형 소비자
+#### 2차 업데이트 확정 원칙 — HISS Binding 적응형 소비자
 
-Console은 HIS가 존재한다고 가정하지도, HIS가 없다는 이유로 대체 관측 스택을 만들지도 않는다. 매 요청·화면 갱신에서 `ObservabilityBinding`의 condition, capability, freshness, scope를 평가하여 다음의 두 동작 모드 중 하나를 **명시적으로** 선택한다.
+Console은 HISS가 존재한다고 가정하지도, HISS가 없다는 이유로 대체 관측 스택을 만들지도 않는다. 매 요청·화면 갱신에서 `ObservabilityBinding`의 condition, capability, freshness, scope를 평가하여 다음의 두 동작 모드 중 하나를 **명시적으로** 선택한다.
 
 | 조건 | Console 동작 | 금지 사항 |
 |---|---|---|
-| HIS 또는 유효 Binding이 없음 (`NotConfigured`, `Requested`, `Pending`, `Denied`, `Incompatible`) | Supabase/Gitea/Kubernetes의 direct evidence, audit, bootstrap·복구 안내와 Gitea 기반 Claim 요청만 제공 | Prometheus/Grafana/Alertmanager 설치, `monitoring` 탐색, ServiceMonitor/CRD 생성, 시계열·SLO·alert 결과를 정상처럼 표시 |
-| HIS Binding이 유효하고 fresh하며 요청 범위가 허용됨 (`Connected`) | Binding이 허용한 metric/log/trace/alert summary와 query template를 Native Console view에 표시 | Binding scope 밖의 임의 query, credential 원문 노출, HIS lifecycle 변경 |
-| Binding이 저하·만료·상실됨 (`Degraded`, `Stale`, `Lost`) | 마지막 정상 증거를 stale로 분리 표시하고 direct evidence·복구 경로로 즉시 강등 | cached telemetry로 Ready 판정, activation/upgrade 승인, HIS를 Console이 직접 복구·재설치 |
+| HISS 또는 유효 Binding이 없음 (`NotConfigured`, `Requested`, `Pending`, `Denied`, `Incompatible`) | Supabase/Gitea/Kubernetes의 direct evidence, audit, bootstrap·복구 안내와 Gitea 기반 Claim 요청만 제공 | Prometheus/Grafana/Alertmanager 설치, `monitoring` 탐색, ServiceMonitor/CRD 생성, 시계열·SLO·alert 결과를 정상처럼 표시 |
+| HISS Binding이 유효하고 fresh하며 요청 범위가 허용됨 (`Connected`) | Binding이 허용한 metric/log/trace/alert summary와 query template를 Native Console view에 표시 | Binding scope 밖의 임의 query, credential 원문 노출, HISS lifecycle 변경 |
+| Binding이 저하·만료·상실됨 (`Degraded`, `Stale`, `Lost`) | 마지막 정상 증거를 stale로 분리 표시하고 direct evidence·복구 경로로 즉시 강등 | cached telemetry로 Ready 판정, activation/upgrade 승인, HISS를 Console이 직접 복구·재설치 |
 
-이 원칙은 선택적 UX가 아니라 플랫폼 안전 조건이다. HIS Binding 부재는 **제한 상태**이며 오류나 자동 설치 trigger가 아니다. Binding이 정상일 때에도 Console은 읽기 전용 consumer이고, HIS는 수집·저장·규칙·보존·고가용성의 전권 소유자다.
+이 원칙은 선택적 UX가 아니라 플랫폼 안전 조건이다. HISS Binding 부재는 **제한 상태**이며 오류나 자동 설치 trigger가 아니다. Binding이 정상일 때에도 Console은 읽기 전용 consumer이고, HISS는 수집·저장·규칙·보존·고가용성의 전권 소유자다.
 
-#### Console과 HIS의 책임 경계
+#### Console과 HISS의 책임 경계
 
-| Console | HIS |
+| Console | HISS |
 |---|---|
 | `/metrics`, health, W3C trace context와 telemetry descriptor 노출 | Prometheus-compatible 수집·저장·질의 계층 설치와 운영 |
 | 필요한 signal, SLO, alert 요구사항을 선언 | scrape, retention, capacity, HA, Alertmanager, 장기보존 소유 |
 | Gitea change request로 `ObservabilityClaim` 요구사항 제출 | Claim 검증·적용 후 `ObservabilityBinding` 발급 |
 | Binding의 허용된 query/summary를 읽기 전용 소비 | endpoint, tenant, credential reference, capability와 condition 관리 |
-| Native Console view 렌더링 | 다른 HIS/PFS/subShell 대상까지 포함한 공통 관측 기반 운영 |
+| Native Console view 렌더링 | 다른 HISS/PFS/subShell 대상까지 포함한 공통 관측 기반 운영 |
 
-Console runtime은 `monitoring` namespace, Prometheus service DNS, ServiceMonitor CRD 존재를 임의 탐색해 연결하지 않는다. Console의 광역 monitoring CRD CRUD 권한도 제거한다. 관측 rule/target 변경은 Gitea의 선언형 요청과 HIS reconciler를 통과한다.
+Console runtime은 `monitoring` namespace, Prometheus service DNS, ServiceMonitor CRD 존재를 임의 탐색해 연결하지 않는다. Console의 광역 monitoring CRD CRUD 권한도 제거한다. 관측 rule/target 변경은 Gitea의 선언형 요청과 HISS reconciler를 통과한다.
 
-Cluster Manager를 포함한 Console module에는 HIS 설치자 permission profile을 제공하지 않는다. module의 권한은 read-only observer 또는 Console 소비자 측 storage integration으로 제한하며, 과거 `cluster-his-manager-v1`처럼 Prometheus Operator·Alertmanager·RBAC escalation을 위임하는 profile과 기존 binding은 제거한다.
+Cluster Manager를 포함한 Console module에는 HISS 설치자 permission profile을 제공하지 않는다. module의 권한은 read-only observer 또는 Console 소비자 측 storage integration으로 제한하며, 과거 `cluster-his-manager-v1`처럼 Prometheus Operator·Alertmanager·RBAC escalation을 위임하는 profile과 기존 binding은 제거한다.
 
 #### Binding 최소 계약
 
@@ -313,7 +313,7 @@ allowedScopes / labelPolicy / redactionPolicy
 status.conditions[] / lastVerifiedAt
 ```
 
-endpoint credential 원문은 UI·Supabase·Gitea에 저장하지 않는다. Console Backend는 HIS가 발급한 scoped Secret reference만 사용한다.
+endpoint credential 원문은 UI·Supabase·Gitea에 저장하지 않는다. Console Backend는 HISS가 발급한 scoped Secret reference만 사용한다.
 
 ### 4.5 `/manage/audit` — 통합 Change Timeline 강화
 
@@ -400,7 +400,7 @@ Extensions/subShell detail 페이지는 이 contract를 요약하고, Data & Ide
 | `GET /api/admin/change-control/webhooks` | delivery/verification/retry evidence |
 | `GET /api/admin/changes/:requestId/timeline` | 단일 E2E timeline |
 | `GET /api/admin/integrations/consumers` | Manual/OSAA/subShell contract |
-| `GET /api/admin/observability/binding` | HIS Binding, capability, condition, freshness. Secret 원문 제외 |
+| `GET /api/admin/observability/binding` | HISS Binding, capability, condition, freshness. Secret 원문 제외 |
 | `GET /api/admin/observability/summary` | Binding 범위 내 metrics/logs/traces/alerts 요약 |
 | `GET /api/admin/observability/query` | Binding이 허용한 scope/template 기반 read query. 임의 provider 탐색 금지 |
 
@@ -477,15 +477,15 @@ legacy anonymous/public read를 다음 adapter로 교체한다.
 
 각 상태에는 `reason`, `message`, `lastTransitionAt`, `checkedAt`, `evidenceRef`, `remediation`이 필요하다.
 
-### 7.2 HIS Observability 연결 상태와 적응 동작
+### 7.2 HISS Observability 연결 상태와 적응 동작
 
-Console의 기본 관리 기능과 HIS 기반 심층 관측을 분리한다. Binding 부재는 Console이 HIS를 직접 설치할 이유가 아니라, 제한된 bootstrap/recovery mode로 동작할 조건이다.
+Console의 기본 관리 기능과 HISS 기반 심층 관측을 분리한다. Binding 부재는 Console이 HISS를 직접 설치할 이유가 아니라, 제한된 bootstrap/recovery mode로 동작할 조건이다.
 
 | 상태 | Console 표시 | 허용 기능 | 제한·gate |
 |---|---|---|---|
-| `NotConfigured` | `HIS Observability 미구성`과 필요한 capability 표시 | login, Supabase/Gitea/K8s direct health, audit/change 조회, Claim 초안 생성 | 시계열/SLO/alert 비활성. Platform Production Ready 금지 |
-| `Requested` | Gitea change request와 `ObservabilityClaim` 진행 단계 | direct evidence, 요청 취소/수정, HIS condition 조회 | Console이 Prometheus/CRD를 직접 생성하지 않음 |
-| `Pending` | HIS가 보고한 reason/message/dependency | direct evidence와 recovery navigation | 신규 PFS/domain activation, platform upgrade 차단 |
+| `NotConfigured` | `HISS Observability 미구성`과 필요한 capability 표시 | login, Supabase/Gitea/K8s direct health, audit/change 조회, Claim 초안 생성 | 시계열/SLO/alert 비활성. Platform Production Ready 금지 |
+| `Requested` | Gitea change request와 `ObservabilityClaim` 진행 단계 | direct evidence, 요청 취소/수정, HISS condition 조회 | Console이 Prometheus/CRD를 직접 생성하지 않음 |
+| `Pending` | HISS가 보고한 reason/message/dependency | direct evidence와 recovery navigation | 신규 PFS/domain activation, platform upgrade 차단 |
 | `Connected` | provider, capability, freshness, retention, scope | metric trend, SLO, alert, scrape coverage, correlation 모두 활성 | Binding scope 밖 query 금지 |
 | `Degraded` | 실패한 capability와 영향, last-good timestamp | 정상 capability와 direct evidence 유지 | telemetry-dependent high-risk 작업 차단, recovery 작업 허용 |
 | `Stale/Lost` | last-known 값을 명확히 stale 처리하고 live 값과 분리 | Supabase/Gitea/K8s direct probe, Binding 재검증 | cached metric으로 Ready 판정 금지; activation/upgrade 차단 |
@@ -497,7 +497,7 @@ Console의 기본 관리 기능과 HIS 기반 심층 관측을 분리한다. Bin
 - Gitea API health와 request/commit correlation
 - Kubernetes API reachability와 reconciler의 현재 operation 결과
 - audit append, backup/restore evidence, migration revision, credential/certificate expiry metadata
-- `HIS Observability unavailable`이라는 명시적 condition과 기능 영향 목록
+- `HISS Observability unavailable`이라는 명시적 condition과 기능 영향 목록
 
 이 직접 evidence는 bootstrap·복구용 현재 상태이며 Prometheus의 시계열, rate, histogram, alert evaluation을 흉내 내지 않는다.
 
@@ -519,7 +519,7 @@ Console의 기본 관리 기능과 HIS 기반 심층 관측을 분리한다. Bin
 - freshness와 수집 실패를 항상 표시
 - alert threshold와 SLO를 숨기지 않음
 
-Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platform metrics를 자동 제공하지 않는다. HIS는 Prometheus-compatible observability 기반을 소유하고, Console은 read-only DB views, backup evidence, audit projection과 HIS Binding을 하나의 Native View로 결합한다. 제공하지 않거나 Binding으로 입증하지 못한 기능은 `Ready`로 표시하지 않는다.
+Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platform metrics를 자동 제공하지 않는다. HISS는 Prometheus-compatible observability 기반을 소유하고, Console은 read-only DB views, backup evidence, audit projection과 HISS Binding을 하나의 Native View로 결합한다. 제공하지 않거나 Binding으로 입증하지 못한 기능은 `Ready`로 표시하지 않는다.
 
 ---
 
@@ -535,8 +535,8 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 8. backup은 같은 Supabase/Gitea 장애·삭제 권한 도메인 밖에 보관한다.
 9. 마지막 restore drill, checksum, RPO/RTO를 Ready gate에 포함한다.
 10. credential 원문, raw session token, service role, private key, Secret data는 UI·log·export에 포함하지 않는다.
-11. Console ServiceAccount에 Prometheus Operator/ServiceMonitor/Alertmanager 등 HIS 관측 리소스의 광역 write 권한을 부여하지 않는다.
-12. HIS Binding credential은 scoped Secret reference로만 사용하고 Console UI·Supabase·Gitea에 원문을 저장하지 않는다.
+11. Console ServiceAccount에 Prometheus Operator/ServiceMonitor/Alertmanager 등 HISS 관측 리소스의 광역 write 권한을 부여하지 않는다.
+12. HISS Binding credential은 scoped Secret reference로만 사용하고 Console UI·Supabase·Gitea에 원문을 저장하지 않는다.
 
 ---
 
@@ -561,14 +561,14 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 | `/api/admin/backbone/controller|claims|install` | CBS 모델과 함께 폐기 |
 | `/api/admin/backbone/gitea*` | scoped Gitea adapter의 `/api/admin/change-control/*`로 이관 |
 | `/api/admin/backbone/status|detail|yaml|events` | 실제 consumer 확인 후 폐기. 필요한 K8s evidence만 `/api/admin/platform-control/components/*`로 재설계 |
-| `/api/admin/observability/status|targets|query*` | URL 호환이 필요하면 유지하되 구현은 HIS Binding adapter로 교체. `monitoring` namespace/service 직접 탐색 제거 |
+| `/api/admin/observability/status|targets|query*` | URL 호환이 필요하면 유지하되 구현은 HISS Binding adapter로 교체. `monitoring` namespace/service 직접 탐색 제거 |
 
-### 9.3 HIS Observability 직접 결합 제거
+### 9.3 HISS Observability 직접 결합 제거
 
 | 현재 결합 | 목표 처리 |
 |---|---|
 | Dupa Controller의 monitoring CRD 광역 CRUD | 제거. Console은 Claim 제출과 자신의 telemetry descriptor 선언만 허용 |
-| plugin 등록 시 ServiceMonitor 직접 생성 | descriptor/Claim에 포함하고 HIS reconciler가 정책 검증 후 생성 |
+| plugin 등록 시 ServiceMonitor 직접 생성 | descriptor/Claim에 포함하고 HISS reconciler가 정책 검증 후 생성 |
 | `monitoring` namespace의 Prometheus/Grafana service 검색 | 제거. `ObservabilityBinding`의 endpoint reference만 사용 |
 | 임의 PromQL query proxy | Binding의 allowlisted template/scope query로 제한 |
 | Prometheus 미발견 시 단순 빈 화면 | adaptive state machine과 direct evidence mode 제공 |
@@ -597,13 +597,13 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 - route/menu/API/authority naming ADR 보충
 - Gitea org/repo/path/approval/reconciler consumer contract 확정
 - 상태·evidence schema v1 확정
-- HIS Observability 소유권, Claim/Binding schema와 adaptive state/gate 확정
+- HISS Observability 소유권, Claim/Binding schema와 adaptive state/gate 확정
 
 게이트:
 
 - Supabase/Gitea/Kubernetes/Backend의 canonical writer가 중복되지 않음
 - 상위 `migration-adr-006`과 충돌 없음
-- Console이 HIS Prometheus/CRD/retention/scrape lifecycle을 소유하지 않음
+- Console이 HISS Prometheus/CRD/retention/scrape lifecycle을 소유하지 않음
 
 ### Phase 1 — 명칭·IA·legacy 차단
 
@@ -614,7 +614,7 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 - OSAA/CBS 문구 및 Backend error/service name 정리
 - dangerous legacy PG DDL endpoint 제거 또는 hard-disabled
 - legacy API usage telemetry
-- `Observability Integration — HIS-provided` 명칭과 connection state UI
+- `Observability Integration — HISS-provided` 명칭과 connection state UI
 - Console의 monitoring CRD 광역 write 권한과 직접 Prometheus service discovery 제거
 
 게이트:
@@ -622,14 +622,14 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 - `/manage/*`와 CLI/help/docs에 user-facing `Backbone/CBS` 신규 노출 0건
 - 기존 bookmark는 로그인/session을 유지하며 새 route로 이동
 - redirect/browser E2E 통과
-- HIS Binding 미구성 상태에서도 bootstrap/recovery 화면이 오류 없이 동작
+- HISS Binding 미구성 상태에서도 bootstrap/recovery 화면이 오류 없이 동작
 
 ### Phase 2 — Evidence plane
 
 산출물:
 
 - 공통 health/evidence envelope
-- HIS Observability Binding adapter와 K8s/Supabase/Gitea direct evidence collector
+- HISS Observability Binding adapter와 K8s/Supabase/Gitea direct evidence collector
 - read-only Supabase views
 - partial/freshness/error model
 - Control Plane Overview 1차
@@ -665,7 +665,7 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 - scoped Gitea adapter
 - Overview/Repos/Changes/Reconciliation/Webhooks/Supply Chain/DR tabs
 - Gitea metrics 재사용
-- Gitea metric은 HIS Binding을 통해서만 조회
+- Gitea metric은 HISS Binding을 통해서만 조회
 - webhook receipt ledger와 signature verification
 - signed commit/protected branch policy projection
 
@@ -708,7 +708,7 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 - OSAA가 직접 Kubernetes write하지 않음
 - subShell별 schema/bucket/repo/path/reconciler/telemetry 누락을 UI가 경고
 - consumer filter를 유지한 cross-page E2E 통과
-- PFS를 경유하지 않고 HIS Binding으로 telemetry source가 연결됨
+- PFS를 경유하지 않고 HISS Binding으로 telemetry source가 연결됨
 
 ### Phase 7 — 물리 잔재 제거
 
@@ -732,7 +732,7 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 |---|---|
 | Route/session | old/new deep link, refresh, back/forward, role denial, session 유지 |
 | Health | component timeout, stale data, partial source, DB/Storage/Gitea/reconciler 장애 |
-| HIS Observability | Binding 미구성/대기/연결/저하/상실/거부, credential revoke, incompatible capability, direct-install 금지 |
+| HISS Observability | Binding 미구성/대기/연결/저하/상실/거부, credential revoke, incompatible capability, direct-install 금지 |
 | Identity | admin/viewer/disabled/service principal, MFA, revoke, expiring role |
 | Data/RLS | positive/negative RLS, service role browser 노출 정적 검사, migration drift |
 | Storage | put/get/hash/delete canary, MIME/size deny, orphan, public exposure, restore |
@@ -756,11 +756,11 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 | Change Control UI | 신규 `src/app/pages/admin-change-control.ts` |
 | Audit | `src/app/pages/admin-audit.ts` |
 | OSAA/Manual/Extensions | `src/app/pages/admin-osaa.ts`, `src/app/pages/manual.ts`, `src/app/pages/admin-plugins.ts` 및 subShell detail |
-| HIS Observability UI | `src/app/pages/admin-observability.ts` — 관리 화면이 아니라 Binding 소비·상태 표면으로 개편 |
+| HISS Observability UI | `src/app/pages/admin-observability.ts` — 관리 화면이 아니라 Binding 소비·상태 표면으로 개편 |
 | Backend aggregation | `backend/opensphere-console-backend/server.js`를 domain router/adapter로 분리 |
 | Supabase migrations | `backend/supabase/migrations/`의 read model, correlation, consumer contract |
 | Gitea legacy | `backend/dupa-control/controller.js`의 `/api/admin/backbone/*` 제거·이관 |
-| HIS 경계 정리 | `backend/dupa-control/controller.js`의 monitoring CRD 광역 RBAC, ServiceMonitor 직접 생성, service DNS 탐색 제거 |
+| HISS 경계 정리 | `backend/dupa-control/controller.js`의 monitoring CRD 광역 RBAC, ServiceMonitor 직접 생성, service DNS 탐색 제거 |
 | OSAA runtime | `backend/opensphere-console-osaa-gateway/server.js`, deploy manifest, seed |
 | Reverse proxy | `nginx/default.conf.template` |
 | Deployment | `backend/supabase/`, `backend/gitea/`, `backend/opensphere-console-osaa-gateway/deploy.yaml`, `backend/opensphere-console-backend/deploy.yaml`, namespace/NetworkPolicy/Secret/backup manifests |
@@ -792,7 +792,7 @@ observability/direct-evidence
 - [ ] 모든 management write가 reason, actor, current permission, MFA, request ID, Gitea revision, reconcile result를 가진다.
 - [ ] audit intent가 없으면 외부 write가 실행되지 않는다.
 - [ ] Manual/OSAA/subShell이 consumer contract로 연결되고 lineage와 권한을 확인할 수 있다.
-- [ ] Console은 HIS Observability를 설치·구성하지 않고 Claim/Binding 계약만 사용한다.
+- [ ] Console은 HISS Observability를 설치·구성하지 않고 Claim/Binding 계약만 사용한다.
 - [ ] Binding 부재·대기·정상·저하·상실·거부 상태에서 UI, freshness, 기능 gate가 정의대로 반응한다.
 - [ ] Binding이 없어도 bootstrap/recovery와 direct evidence가 동작하며 시계열 기능을 가장하지 않는다.
 - [ ] legacy anonymous Gitea, generic PG row/DDL, CBS Claim/install 경로가 runtime에서 제거된다.
@@ -834,6 +834,6 @@ Gitea 공식 문서는 Prometheus metrics, repository/user/org/system webhook, H
 5. **Platform Control Plane UI는 네 권위를 섞지 않고 correlation으로 연결한다.**
 6. **증거가 없거나 오래된 상태는 Ready가 아니다.**
 7. **모든 선언형 변경은 review 가능한 Git revision으로 남고, 모든 실행 결과는 Supabase 감사와 결합된다.**
-8. **Prometheus-compatible metrics/logs/traces 기반은 HIS가 소유하며 Console은 설치자나 관리자가 아니다.**
-9. **Console은 telemetry를 노출하고 ObservabilityClaim을 선언하며, HIS가 발급한 Binding만 읽기 전용으로 소비한다.**
-10. **PFS는 Console과 HIS Observability 사이의 필수 경유지나 소유자가 아니다.**
+8. **Prometheus-compatible metrics/logs/traces 기반은 HISS가 소유하며 Console은 설치자나 관리자가 아니다.**
+9. **Console은 telemetry를 노출하고 ObservabilityClaim을 선언하며, HISS가 발급한 Binding만 읽기 전용으로 소비한다.**
+10. **PFS는 Console과 HISS Observability 사이의 필수 경유지나 소유자가 아니다.**

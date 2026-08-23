@@ -77,7 +77,7 @@
   `osaaoperation-artifacts`).
 - `Unknown`과 `NotConfigured`가 반복되지만 영향·소유자·마지막 성공·remediation이 없다.
 - consumer별 상세 화면에서 declared/observed revision, Supabase scope, Gitea path,
-  reconciler, HIS Binding과 최근 operation을 연결해야 한다.
+  reconciler, HISS Binding과 최근 operation을 연결해야 한다.
 
 ### 7. Change Control Overview — 미흡
 
@@ -173,7 +173,7 @@
 - Storage: objects/bytes/growth/policy/failure/retention/backup
 - Integrations: consumer별 declared/observed state와 상세 drill-down
 
-HIS Binding이 없으면 시계열은 `NotConfigured`로 유지하되, Supabase/Kubernetes에서
+HISS Binding이 없으면 시계열은 `NotConfigured`로 유지하되, Supabase/Kubernetes에서
 확인 가능한 현재 inventory와 policy evidence는 충분히 제공한다.
 
 ### P1 — Gitea 운영 감독

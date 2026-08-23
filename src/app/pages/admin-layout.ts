@@ -194,7 +194,7 @@ export class AdminLayout {
       items: [
         { label: 'Control Plane', route: '/manage/platform-control' },
         { label: 'Platform Release', route: '/manage/platform-release' },
-        { label: 'HIS Observability', route: '/manage/observability' },
+        { label: 'HISS Observability', route: '/manage/observability' },
       ],
     },
     {

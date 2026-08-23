@@ -12,7 +12,7 @@ Date: 2026-07-22 (KST)
 - Removed Clarity's tab header/container from both specialist pages and used the same direct native `workspace-tabs` DOM and CSS anatomy as Platform Control: index, title, purpose subtitle, active surface, and accent underline.
 - Moved the tab styling to one global `.workspace-tabs` rule consumed by Platform Control, Data & Identity, and Change Control; the pages no longer carry duplicate tab definitions.
 - Kept the detailed information architecture intact: seven Supabase workspaces and eight Gitea workspaces remain independently addressable.
-- Kept authority boundaries intact: Supabase owns Data & Identity, Gitea owns declarative change, Kubernetes reports observed runtime truth, and HIS remains an external telemetry owner.
+- Kept authority boundaries intact: Supabase owns Data & Identity, Gitea owns declarative change, Kubernetes reports observed runtime truth, and HISS remains an external telemetry owner.
 
 ## Evidence sequence
 

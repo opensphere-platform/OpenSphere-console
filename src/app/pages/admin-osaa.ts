@@ -8,6 +8,8 @@ import { OsPanel } from '../os/os-panel';
 import { OsActionDialog } from '../os/os-action-dialog';
 import { HttpService } from '../core/http.service';
 
+type DialogueMode = 'off' | 'shadow' | 'read-enforce' | 'mutation-enforce';
+
 interface OsaaHealth {
   service: string;
   version: string;
@@ -40,6 +42,20 @@ interface OsaaHealth {
     enforceCurrentFacts: boolean;
     enforceMutations: boolean;
   };
+}
+interface OsaaDialogueStateControl {
+  mode: DialogueMode;
+  source: 'deployment-annotation' | 'safe-default' | string;
+  rollout: {
+    ready: boolean;
+    generation: number;
+    observedGeneration: number;
+    desiredReplicas: number;
+    updatedReplicas: number;
+    readyReplicas: number;
+  };
+  updatedAt?: string;
+  updatedBy?: string;
 }
 interface AgentControlReadiness {
   apiVersion: string;
@@ -359,7 +375,7 @@ interface OsaaActionBindingManifest {
  * mutation(쓰기) 바인딩 실행은 정확한 confirmation 문자열 + 사유(reason) 둘 다 로컬에서 먼저 검증하고,
  * 서버가 보고하는 health.mutationEnabled === true이면서 tool manifest/action binding 로드가 모두
  * 성공하지 않았으면(mutationGateOpen=false) 서버로 실행 요청을 보내지 않는다. 이는 UI 편의 게이트일 뿐이다 —
- * 실제 강제는 opensphere-console-osaa-gateway 서버가 Cluster Manager Activated + HIS Preflight Ready 이전에는
+ * 실제 강제는 opensphere-console-osaa-gateway 서버가 Cluster Manager Activated + HISS Preflight Ready 이전에는
  * OSAA_MUTATION_ENABLED가 정확히 'true'가 아닌 한 모든 Kubernetes mutation/action tool을 tool manifest/action
  * binding 응답에서 제거하고 실행 요청을 403(mutation_disabled_until_his_ready)으로 fail-closed 처리하는
  * 방식으로 이미 수행한다(CONSTITUTION-0004 §4.2). 이 페이지는 그 서버 정책을 대체하지 않는다.
@@ -388,7 +404,7 @@ interface OsaaActionBindingManifest {
         <aside class="r2d2-position-card" aria-label="현재 위치와 최종 목표">
           <div class="r2d2-position-head"><span>현재 위치</span><strong>Operational Intelligence</strong></div>
           <ol>
-            <li class="done"><span>01</span><div><strong>관측 기반</strong><small>runtime projection · owner API · HIS</small></div></li>
+            <li class="done"><span>01</span><div><strong>관측 기반</strong><small>runtime projection · owner API · HISS</small></div></li>
             <li class="active"><span>02</span><div><strong>상황 이해</strong><small>graph · coverage · incident · impact</small></div></li>
             <li><span>03</span><div><strong>운영 복구</strong><small>governed capability · postcondition</small></div></li>
             <li [class.done]="engineeringStatus()?.workerReady"><span>04</span><div><strong>Engineering Remediation</strong><small>source · build · exact digest deploy</small></div></li>
@@ -585,7 +601,7 @@ interface OsaaActionBindingManifest {
         </div>
         <div class="r2d2-authority-sources">
           <span>AUTHORITY SOURCES</span>
-          <strong>Kubernetes</strong><i>·</i><strong>Gitea desired state</strong><i>·</i><strong>Release BOM</strong><i>·</i><strong>Owner APIs</strong><i>·</i><strong>HIS</strong>
+          <strong>Kubernetes</strong><i>·</i><strong>Gitea desired state</strong><i>·</i><strong>Release BOM</strong><i>·</i><strong>Owner APIs</strong><i>·</i><strong>HISS</strong>
           <small>R2D2 projection은 정본을 대체하지 않으며 source · observed time · freshness · evidence digest를 보존합니다.</small>
         </div>
       </section>
@@ -598,7 +614,7 @@ interface OsaaActionBindingManifest {
         <div class="r2d2-compare">
           <article><span>EXPECTED STATE</span><strong>어떻게 동작해야 하는가</strong><ul><li>Release BOM · installation lock</li><li>Gitea desired state</li><li>owner policy · capability contract</li><li>환경 profile · namespace contract</li></ul></article>
           <div class="r2d2-compare-core"><span>COMPARE</span><strong>Mismatch</strong><small>evidence + impact<br />+ confidence</small></div>
-          <article><span>ACTUAL STATE</span><strong>실제로 어떻게 동작하는가</strong><ul><li>Kubernetes workload · imageID</li><li>runtime owner API</li><li>HIS metric · log · trace</li><li>schema · migration state</li></ul></article>
+          <article><span>ACTUAL STATE</span><strong>실제로 어떻게 동작하는가</strong><ul><li>Kubernetes workload · imageID</li><li>runtime owner API</li><li>HISS metric · log · trace</li><li>schema · migration state</li></ul></article>
         </div>
         <div class="r2d2-mismatch-types" aria-label="탐지할 mismatch 유형">
           <span>configuration drift</span><span>image / digest drift</span><span>dependency readiness</span><span>migration lineage</span><span>capability contract</span><span>environment profile</span><span>provenance</span><span>coverage gap</span>
@@ -757,13 +773,13 @@ interface OsaaActionBindingManifest {
                     Mutation gate: {{ mutationGateOpen() ? 'open' : 'closed' }}{{ !mutationGateOpen() && mutationGateReasonText() ? ' (' + mutationGateReasonText() + ')' : '' }}
                   </span>
                 </div>
-                <p class="os-sub">Mutation gate는 서버가 보고하는 <code>health.mutationEnabled === true</code>(CONSTITUTION-0004 §4.2 fail-closed)이고 tool manifest · action binding 로드가 모두 성공했을 때만 열립니다. Cluster Manager Activated + HIS Preflight Ready 이전에는 서버가 Kubernetes mutation/action tool을 제공하지 않으므로 이 UI 표시와 무관하게 실행은 항상 403으로 차단됩니다.</p>
+                <p class="os-sub">Mutation gate는 서버가 보고하는 <code>health.mutationEnabled === true</code>(CONSTITUTION-0004 §4.2 fail-closed)이고 tool manifest · action binding 로드가 모두 성공했을 때만 열립니다. Cluster Manager Activated + HISS Preflight Ready 이전에는 서버가 Kubernetes mutation/action tool을 제공하지 않으므로 이 UI 표시와 무관하게 실행은 항상 403으로 차단됩니다.</p>
               </div>
 
               @if (controlPlaneStatus(); as control) {
                 <div class="os-card osaa-control-readiness">
                   <div class="os-card-h"><span>Complete Agent readiness</span><strong [class.ok]="control.fullyOperational" [class.warn]="!control.fullyOperational">{{ control.fullyOperational ? 'Fully operational' : 'Degraded' }}</strong></div>
-                  <p class="os-sub">Owner API 도달 여부와 별개로 지식·실시간 projection·승인 mutation·Platform Support·HIS·Ceph capability를 모두 검증합니다. 마지막 확인 {{ formatDateTime(control.checkedAt) }}</p>
+                  <p class="os-sub">Owner API 도달 여부와 별개로 지식·실시간 projection·승인 mutation·Platform Support·HISS·Ceph capability를 모두 검증합니다. 마지막 확인 {{ formatDateTime(control.checkedAt) }}</p>
                   @if (control.agentControl.blockers.length) {
                     <div class="osaa-blocker-list" aria-label="R2D2 완전 운영 차단 사유">
                       @for (blocker of control.agentControl.blockers; track blocker) { <code>{{ blocker }}</code> }
@@ -771,7 +787,7 @@ interface OsaaActionBindingManifest {
                   }
                   <div class="osaa-capability-gaps">
                     <span>Observability missing <strong>{{ control.agentControl.missingCapabilities.observability.join(', ') || 'none' }}</strong></span>
-                    <span>HIS owner missing <strong>{{ control.agentControl.missingCapabilities.hisOwner.join(', ') || 'none' }}</strong></span>
+                    <span>HISS owner missing <strong>{{ control.agentControl.missingCapabilities.hisOwner.join(', ') || 'none' }}</strong></span>
                     <span>Ceph owner missing <strong>{{ control.agentControl.missingCapabilities.cephOwner.join(', ') || 'none' }}</strong></span>
                     <span>Recovery owner missing <strong>{{ control.agentControl.missingCapabilities.recoveryOwner?.join(', ') || 'none' }}</strong></span>
                   </div>
@@ -1403,6 +1419,33 @@ interface OsaaActionBindingManifest {
                   <article [class.enabled]="health()?.dialogueState?.enforceCurrentFacts"><span>현재 사실 강제</span><strong>{{ health()?.dialogueState?.enforceCurrentFacts ? 'ON' : 'OFF' }}</strong><small>Owner typed projection과 결정적 렌더러 사용</small></article>
                   <article [class.enabled]="health()?.dialogueState?.enforceMutations"><span>변경 대화 강제</span><strong>{{ health()?.dialogueState?.enforceMutations ? 'ON' : 'OFF' }}</strong><small>계획·승인·operation binding 적용</small></article>
                 </div>
+                <div class="r2d2-dialogue-control" aria-labelledby="r2d2-dialogue-control-title">
+                  <div>
+                    <strong id="r2d2-dialogue-control-title">관리자 모드 선택</strong>
+                    <small>선택한 정책은 OSAA Gateway 전체 복제본에 적용되며 변경 시 한 번만 순차 재시작됩니다.</small>
+                  </div>
+                  <div class="r2d2-dialogue-switch" role="radiogroup" aria-label="OSAA Dialogue State 모드">
+                    @for (mode of dialogueModes; track mode.value) {
+                      <button type="button" role="radio"
+                        [attr.aria-checked]="selectedDialogueMode() === mode.value"
+                        [class.active]="selectedDialogueMode() === mode.value"
+                        [disabled]="dialogueControlBusy()"
+                        (click)="selectDialogueMode(mode.value)">
+                        <span>{{ mode.label }}</span><small>{{ mode.help }}</small>
+                      </button>
+                    }
+                  </div>
+                  <div class="r2d2-dialogue-apply">
+                    <span>실제 {{ dialogueMode() }} · 목표 {{ dialogueControl()?.mode || 'off' }}</span>
+                    @if (dialogueControlError()) { <small class="error">{{ dialogueControlError() }}</small> }
+                    @else if (dialogueControl()?.rollout?.ready === false) { <small>Gateway {{ dialogueControl()?.rollout?.readyReplicas || 0 }}/{{ dialogueControl()?.rollout?.desiredReplicas || 0 }} 전환 중</small> }
+                    <button class="btn btn-sm btn-primary" type="button"
+                      [disabled]="dialogueControlBusy() || selectedDialogueMode() === dialogueControl()?.mode"
+                      (click)="applyDialogueMode()">
+                      {{ dialogueControlBusy() ? '적용 중' : '모드 적용' }}
+                    </button>
+                  </div>
+                </div>
                 <footer>
                   <span>관측 기준 <code>/api/osaa/health</code> · Runtime이 보고한 실제 서버 정책</span>
                   <button class="btn btn-sm btn-outline" type="button" [disabled]="healthBusy()" (click)="loadHealth()">상태 새로고침</button>
@@ -1531,6 +1574,16 @@ export class AdminOsaa implements OnInit, OnDestroy {
   readonly health = signal<OsaaHealth | null>(null);
   readonly gatewayDown = signal<string>('');
   readonly healthBusy = signal(false);
+  readonly dialogueModes: ReadonlyArray<{ value: DialogueMode; label: string; help: string }> = [
+    { value: 'off', label: 'OFF', help: '안전 기본값' },
+    { value: 'shadow', label: 'SHADOW', help: '기록만' },
+    { value: 'read-enforce', label: 'READ', help: '현재 사실 적용' },
+    { value: 'mutation-enforce', label: 'MUTATION', help: '변경 대화 적용' },
+  ];
+  readonly dialogueControl = signal<OsaaDialogueStateControl | null>(null);
+  readonly selectedDialogueMode = signal<DialogueMode>('off');
+  readonly dialogueControlBusy = signal(false);
+  readonly dialogueControlError = signal('');
   readonly dialogueMode = computed(() => this.health()?.dialogueState?.mode || 'unknown');
   readonly dialogueModeDescription = computed(() => {
     switch (this.dialogueMode()) {
@@ -1687,9 +1740,9 @@ export class AdminOsaa implements OnInit, OnDestroy {
   async ngOnInit(): Promise<void> {
     window.addEventListener('error', this.onBrowserError);
     window.addEventListener('unhandledrejection', this.onUnhandledRejection);
-    await this.loadHealth();
+    await Promise.all([this.loadHealth(), this.loadDialogueControl()]);
     await Promise.all([this.loadOperationalIntelligence(), this.loadEngineeringStatus(), this.loadEngineeringRequests(), this.loadLlmKeys(), this.loadLlmUsage(), this.loadAgentEvidence(), this.loadKnowledgeStats(), this.loadToolManifest(), this.loadActionBindings()]);
-    this.timer = setInterval(() => { void this.loadHealth(true); void this.loadOperationalIntelligence(true); void this.loadEngineeringStatus(); void this.loadEngineeringRequests(true); }, 15000);
+    this.timer = setInterval(() => { void this.loadHealth(true); void this.loadDialogueControl(true); void this.loadOperationalIntelligence(true); void this.loadEngineeringStatus(); void this.loadEngineeringRequests(true); }, 15000);
   }
 
   async loadEngineeringStatus(): Promise<void> {
@@ -1846,6 +1899,54 @@ export class AdminOsaa implements OnInit, OnDestroy {
       this.health.set(null);
     } finally {
       this.healthBusy.set(false);
+    }
+  }
+
+  selectDialogueMode(mode: DialogueMode): void {
+    if (!this.dialogueControlBusy()) this.selectedDialogueMode.set(mode);
+  }
+
+  async loadDialogueControl(silent = false): Promise<void> {
+    try {
+      const response = await this.http.request('/api/osaa/admin/dialogue-state', { cache: 'no-store' });
+      const body = await response.json().catch(() => ({})) as OsaaDialogueStateControl & { error?: string };
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      this.dialogueControl.set(body);
+      if (!this.dialogueControlBusy()) this.selectedDialogueMode.set(body.mode);
+      this.dialogueControlError.set('');
+    } catch (error) {
+      if (!silent) this.dialogueControlError.set(`모드 제어 조회 실패: ${String(error)}`);
+    }
+  }
+
+  async applyDialogueMode(): Promise<void> {
+    if (this.dialogueControlBusy()) return;
+    const target = this.selectedDialogueMode();
+    this.dialogueControlBusy.set(true);
+    this.dialogueControlError.set('');
+    try {
+      const response = await this.http.request('/api/osaa/admin/dialogue-state', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: target, reason: `관리자 OSAA Dialogue State 모드 변경: ${target}` }),
+      });
+      const body = await response.json().catch(() => ({})) as OsaaDialogueStateControl & { error?: string };
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      this.dialogueControl.set(body);
+      for (let attempt = 0; attempt < 45; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        await Promise.all([this.loadDialogueControl(true), this.loadHealth(true)]);
+        if (this.dialogueControl()?.rollout.ready && this.dialogueMode() === target) break;
+      }
+      if (!this.dialogueControl()?.rollout.ready || this.dialogueMode() !== target) {
+        throw new Error('Gateway 전환이 제한 시간 안에 완료되지 않았습니다. 상태를 다시 확인하십시오.');
+      }
+      this.msg.set({ type: 'success', text: `OSAA Dialogue State를 ${target} 모드로 적용했습니다.` });
+    } catch (error) {
+      this.dialogueControlError.set(String(error));
+      this.msg.set({ type: 'danger', text: `Dialogue State 모드 변경 실패: ${String(error)}` });
+    } finally {
+      this.dialogueControlBusy.set(false);
+      await this.loadDialogueControl(true);
     }
   }
 

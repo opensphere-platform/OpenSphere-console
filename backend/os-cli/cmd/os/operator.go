@@ -544,7 +544,7 @@ func doctor(cfg Config, args []string, out io.Writer) error {
 		{"Platform Control", join(cfg.ConsoleURL, "/api/admin/platform-readiness/status"), "Platform Readiness backend와 현재 Binding을 확인하세요.", true},
 		{"Supabase Data & Identity", join(cfg.ConsoleURL, "/api/identity/supabase/status"), "Supabase Auth/PostgREST/Storage 및 Console Backend를 확인하세요.", true},
 		{"Gitea Change Control", join(cfg.ConsoleURL, "/api/platform/gitea/status"), "Gitea credential, repository 정책, webhook 상태를 확인하세요.", true},
-		{"HIS Observability", join(cfg.ConsoleURL, "/api/admin/observability/status"), "ObservabilityBinding이 없다면 NotConfigured가 정상이며, 임의 설치로 우회하지 마세요.", false},
+		{"HISS Observability", join(cfg.ConsoleURL, "/api/admin/observability/status"), "ObservabilityBinding이 없다면 NotConfigured가 정상이며, 임의 설치로 우회하지 마세요.", false},
 		{"PlatformConfig API", join(cfg.APIURL, "/apis/config.opensphere.io/v1alpha1/platformconfigs"), "CRD가 없으면 os status를 현행 상태 권위로 사용하세요.", false},
 		{"PlatformVersion API", join(cfg.APIURL, "/apis/platform.opensphere.io/v1alpha1/platformversions"), "CRD가 없으면 os status를 현행 상태 권위로 사용하세요.", false},
 	}

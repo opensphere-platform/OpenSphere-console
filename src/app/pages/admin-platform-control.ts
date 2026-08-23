@@ -66,7 +66,7 @@ interface HisReadinessProjection {
 /**
  * Cross-authority operations workspace. Supabase and Gitea remain separate
  * sources of truth; this view correlates their read-only status without
- * manufacturing HIS telemetry or treating an unobserved change as complete.
+ * manufacturing HISS telemetry or treating an unobserved change as complete.
  */
 @Component({
   selector: 'os-admin-platform-control',
@@ -94,12 +94,12 @@ interface HisReadinessProjection {
         <div class="rail-cell"><span>상태 변경</span><strong>{{ inFlight() }}</strong><small>요청 · 승인 · 적용 대기</small></div>
         <div class="rail-cell"><span>Runtime drift</span><strong [class]="statusClass(driftVerdict())">{{ driftVerdict() }}</strong><small>Kubernetes observed truth</small></div>
         <div class="rail-cell"><span>Recovery evidence</span><strong [class]="statusClass(recoveryVerdict())"><os-cicon [icon]="recoveryVerdict() === 'Verified' ? icons.check : icons.warning" [size]="14" />{{ recoveryVerdict() }}</strong><small>{{ recoverySummary() }}</small></div>
-        <div class="rail-cell"><span>HIS Preflight</span><strong [class]="statusClass(hisPreflightState())">{{ hisPreflightState() }}</strong><small>{{ hisPreflightSummary() }}</small></div>
+        <div class="rail-cell"><span>HISS Preflight</span><strong [class]="statusClass(hisPreflightState())">{{ hisPreflightState() }}</strong><small>{{ hisPreflightSummary() }}</small></div>
       </section>
 
       <nav class="workspace-tabs" role="tablist" aria-label="Platform Control 관점">
         <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'operations'" [class.active]="activeTab() === 'operations'" (click)="activeTab.set('operations')"><span>01</span>Operations<small>전체 상태와 위험</small></button>
-        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'readiness'" [class.active]="activeTab() === 'readiness'" (click)="activeTab.set('readiness')"><span>02</span>Support Profile<small>HIS 이후 PFS 선행조건</small></button>
+        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'readiness'" [class.active]="activeTab() === 'readiness'" (click)="activeTab.set('readiness')"><span>02</span>Support Profile<small>HISS 이후 PFS 선행조건</small></button>
         <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'evidence'" [class.active]="activeTab() === 'evidence'" (click)="activeTab.set('evidence')"><span>03</span>Evidence<small>검증과 출처</small></button>
         <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'journey'" [class.active]="activeTab() === 'journey'" (click)="activeTab.set('journey')"><span>04</span>변경 흐름<small>요청에서 검증까지</small></button>
       </nav>
@@ -160,7 +160,7 @@ interface HisReadinessProjection {
               </div>
             }
             <div class="inspector-section"><h3>Sources of truth</h3><dl><div><dt>Data & identity</dt><dd>Supabase</dd></div><div><dt>상태 선언</dt><dd>선언 저장소 (Gitea)</dd></div><div><dt>Runtime truth</dt><dd>Kubernetes observed state</dd></div></dl></div>
-            <div class="inspector-section"><h3>Connection state</h3><dl><div><dt>Supabase</dt><dd [class]="statusClass(supabase() ? 'Connected' : 'Unavailable')">{{ supabase() ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>State Change Authority</dt><dd [class]="statusClass(gitea()?.ready ? 'Connected' : 'Unavailable')">{{ gitea()?.ready ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>HIS Preflight</dt><dd [class]="statusClass(hisPreflightState())">{{ hisPreflightState() }}</dd></div></dl></div>
+            <div class="inspector-section"><h3>Connection state</h3><dl><div><dt>Supabase</dt><dd [class]="statusClass(supabase() ? 'Connected' : 'Unavailable')">{{ supabase() ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>State Change Authority</dt><dd [class]="statusClass(gitea()?.ready ? 'Connected' : 'Unavailable')">{{ gitea()?.ready ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>HISS Preflight</dt><dd [class]="statusClass(hisPreflightState())">{{ hisPreflightState() }}</dd></div></dl></div>
           </aside>
 
           <section class="timeline-panel">
@@ -256,7 +256,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
     { key: 'all' as const, label: 'All evidence', icon: DocumentSecurity16 },
     { key: 'supabase' as const, label: 'Supabase', icon: DataBase16 },
     { key: 'gitea' as const, label: 'Gitea', icon: Commit16 },
-    { key: 'runtime' as const, label: 'Runtime / HIS', icon: FlowData16 },
+    { key: 'runtime' as const, label: 'Runtime / HISS', icon: FlowData16 },
   ];
   readonly stageLabels = ['Request', 'Audit', 'Signed PR', 'Approval', 'Merge', 'Outbox', 'Observed'];
   readonly journeyLanes: JourneyStep['source'][] = ['Supabase', 'Gitea', 'Kubernetes'];
@@ -348,7 +348,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   }
   hisPreflightSummary(): string {
     const his = this.hisProjection();
-    if (!his) return 'Cluster Manager HIS evidence unavailable';
+    if (!his) return 'Cluster Manager HISS evidence unavailable';
     return `${his.core.ready}/${his.core.total} core · ${his.realizationLayer}`;
   }
   latestChangeLabel(value: ChangeControlState): string { const latest = value.changes[0]; return latest ? `${this.shortId(latest.request_id)} · ${this.changeVerdict(latest)}` : 'No governed change yet'; }
@@ -357,7 +357,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   primaryRisk(): { tone: 'warning' | 'danger'; title: string; detail: string; actionLabel: string; action: () => void } {
     if (this.recoveryVerdict() !== 'Verified') return { tone: 'warning', title: 'Recovery evidence incomplete', detail: this.recoverySummary() + '. 복원 결과와 기대값을 확인해야 합니다.', actionLabel: 'Review evidence', action: () => this.openRecoveryEvidence() };
     if (!this.gitea()?.managementReady) return { tone: 'danger', title: 'Gitea management path unavailable', detail: this.gitea()?.reason || '변경 생성·승인 경로를 사용할 수 없습니다.', actionLabel: 'Open journey', action: () => this.activeTab.set('journey') };
-    if (this.hisPreflightState() !== 'Ready') return { tone: 'warning', title: 'HIS preflight is not ready', detail: this.hisProjection()?.reason || 'Cluster Manager HIS 정본 증거를 확인할 수 없습니다.', actionLabel: 'Review HIS evidence', action: () => this.activeTab.set('evidence') };
+    if (this.hisPreflightState() !== 'Ready') return { tone: 'warning', title: 'HISS preflight is not ready', detail: this.hisProjection()?.reason || 'Cluster Manager HISS 정본 증거를 확인할 수 없습니다.', actionLabel: 'Review HISS evidence', action: () => this.activeTab.set('evidence') };
     return { tone: 'warning', title: 'No active platform risk', detail: '현재 읽은 증거 범위에서 즉시 조치가 필요한 항목이 없습니다.', actionLabel: 'Review evidence', action: () => this.activeTab.set('evidence') };
   }
   openRecoveryEvidence(): void { this.evidenceFilter.set('supabase'); this.activeTab.set('evidence'); const row = this.evidenceRows().find((item) => item.verdict !== 'Verified' && /restore|Recovery/i.test(item.source + item.assertion)); if (row) this.selectedEvidenceId.set(row.id); }
@@ -371,11 +371,11 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
     const rows: EvidenceRow[] = [];
     const his = this.hisProjection();
     rows.push({
-      id: 'runtime-his-preflight', authority: 'runtime', source: his?.authority || 'Cluster Manager HIS',
-      assertion: 'HIS core readiness', expected: 'all effective required capabilities Ready',
+      id: 'runtime-his-preflight', authority: 'runtime', source: his?.authority || 'Cluster Manager HISS',
+      assertion: 'HISS core readiness', expected: 'all effective required capabilities Ready',
       observed: his ? `${his.core.ready}/${his.core.total} · ${his.state}` : 'Unavailable',
       time: his?.checkedAt || null, verdict: his?.ready ? 'Verified' : 'Attention required',
-      detail: his ? `${his.contract} · ${his.realizationLayer}` : 'canonical HIS projection unavailable', correlation: 'his-preflight',
+      detail: his ? `${his.contract} · ${his.realizationLayer}` : 'canonical HISS projection unavailable', correlation: 'his-preflight',
     });
     const recovery = this.supabase()?.recovery;
     const units: { key: string; authority: EvidenceFilter; source: string; value?: RecoveryUnit }[] = [
@@ -397,7 +397,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
     }
     for (const contract of this.gitea()?.contracts || []) {
       const phase = contract.observability?.phase || 'NotConfigured';
-      rows.push({ id: `runtime-${contract.consumer_id}`, authority: 'runtime', source: 'HIS Binding', assertion: `${contract.display_name || contract.consumer_id} telemetry binding`, expected: 'Bound when HIS provides telemetry', observed: phase, time: contract.observability?.observed_at || null, verdict: phase === 'Bound' ? 'Verified' : 'Not configured', detail: contract.observability?.binding_name || 'Console does not create Prometheus', correlation: contract.consumer_id });
+      rows.push({ id: `runtime-${contract.consumer_id}`, authority: 'runtime', source: 'HISS Binding', assertion: `${contract.display_name || contract.consumer_id} telemetry binding`, expected: 'Bound when HISS provides telemetry', observed: phase, time: contract.observability?.observed_at || null, verdict: phase === 'Bound' ? 'Verified' : 'Not configured', detail: contract.observability?.binding_name || 'Console does not create Prometheus', correlation: contract.consumer_id });
     }
     for (const change of (this.gitea()?.changes || []).slice(0, 10)) {
       rows.push({ id: `change-${change.request_id}`, authority: change.status === 'applied' ? 'runtime' : 'gitea', source: change.status === 'applied' ? 'Kubernetes Receipt' : 'State Change Authority', assertion: `${change.action} ${change.target}`, expected: 'observed receipt', observed: change.execution?.reconciler_status || change.status, time: change.completed_at || change.execution?.updated_at || change.created_at, verdict: this.changeVerdict(change), detail: change.execution?.pull_number ? `PR #${change.execution.pull_number}` : 'PR not created', correlation: change.request_id });

@@ -26,7 +26,7 @@ export interface ServiceRealizationLayer {
  * folders, product modules, or a strictly linear installer sequence.
  *
  * The array is ordered top-down for the architecture map. Establishment uses
- * SERVICE_REALIZATION_ESTABLISHMENT_SEQUENCE because full HIS verification is
+ * SERVICE_REALIZATION_ESTABLISHMENT_SEQUENCE because full HISS verification is
  * performed through the L3 Cluster Manager after the L1 bootstrap gate exists.
  */
 export const SERVICE_REALIZATION_LAYERS: readonly ServiceRealizationLayer[] = [
@@ -73,7 +73,7 @@ export const SERVICE_REALIZATION_LAYERS: readonly ServiceRealizationLayer[] = [
     short: 'Platform Support',
     scope: 'Cross-perspective safety',
     role: '상위 서비스를 반복 가능하게 배포하고 관측·복구·통제할 수 있게 한다.',
-    requires: 'SRL-L3 control authority와 SRL-L1 HIS Preflight Ready',
+    requires: 'SRL-L3 control authority와 SRL-L1 HISS Preflight Ready',
     establishes: 'Delivery·Observability·Backup/Restore·Security/Policy 안전망',
     evidence: 'sync·rollback, telemetry canary, restore drill, admission red test',
     authority: 'Main Shell의 PlatformSupportProfile gate와 capability별 고정 owner',
@@ -125,14 +125,14 @@ export const SERVICE_REALIZATION_LAYERS: readonly ServiceRealizationLayer[] = [
     establishes: 'bootstrap substrate와 검증된 compute·network·DNS·ingress·storage 기반',
     evidence: 'API, CNI, DNS, Ingress, CSI, metrics와 snapshot의 live canary',
     authority: '호스트 관리자와 명시 위임된 Cluster Manager; runtime truth는 Kubernetes API',
-    failurePolicy: 'HIS 실증 실패 시 SRL-L4 이상을 차단하되 기존 Console 복구 표면은 유지한다.',
+    failurePolicy: 'HISS 실증 실패 시 SRL-L4 이상을 차단하되 기존 Console 복구 표면은 유지한다.',
     objects: ['Kubernetes API', 'CNI / DNS / Ingress', 'CSI / Storage', 'Host Metrics', 'Volume Snapshot'],
   },
 ] as const;
 
 /**
  * Persistent layer order and establishment order are intentionally different.
- * The first L1 entry is the small bootstrap gate; the second is full HIS
+ * The first L1 entry is the small bootstrap gate; the second is full HISS
  * verification performed after L3 has established Cluster Manager authority.
  */
 export const SERVICE_REALIZATION_ESTABLISHMENT_SEQUENCE = [

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { bindingCapabilities, bindingConsumer, bindingContract, bindingPhase, safeBindingEndpoint } = require('./controller');
 
-test('HIS Binding contract classifies the Console consumer without direct Prometheus discovery', () => {
+test('HISS Binding contract classifies the Console consumer without direct Prometheus discovery', () => {
   const binding = {
     metadata: { name: 'console', namespace: 'his', labels: { 'opensphere.io/consumer': 'opensphere-console' } },
     status: {

@@ -116,7 +116,7 @@ function foundationEstablishmentProjection({
       'Platform Support Profile Ready',
       supportReady,
       supportReady ? 'Ready' : 'Blocked',
-      supportReady ? 'Required support evidence is live' : 'HIS and all required support capabilities must be Ready',
+      supportReady ? 'Required support evidence is live' : 'HISS and all required support capabilities must be Ready',
     ),
     evidenceCondition(
       'foundation-shell',

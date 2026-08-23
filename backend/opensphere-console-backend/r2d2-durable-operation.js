@@ -59,7 +59,7 @@ const DESCRIPTORS = Object.freeze({
   'owner-recover': Object.freeze({
     descriptorId: 'opensphere.owner.recover', revision: '1', toolId: 'owner.recovery.execute',
     verifierId: 'owner.recovery.postcondition', riskClass: 'R2', assurance: 'aal2',
-    targetKind: 'Capability', confirmationTemplate: 'recover HIS <name>',
+    targetKind: 'Capability', confirmationTemplate: 'recover HISS <name>',
     ownerRoute: 'cluster-manager/his', allowedNamespaces: [''],
     permission: 'osaa.action.execute.high',
   }),

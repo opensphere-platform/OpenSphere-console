@@ -40,7 +40,7 @@ test('OSAA consumes a narrow lifecycle gate instead of rebuilding full platform 
   assert.equal(ready.reason, null);
   const blocked = platformLifecycleGateProjection(
     { ready: true, phase: 'Activated', workload: 'Ready' },
-    { ready: false, state: 'Degraded', reason: 'HIS core incomplete' },
+    { ready: false, state: 'Degraded', reason: 'HISS core incomplete' },
   );
   assert.equal(blocked.ready, false);
   assert.equal(blocked.reason, 'his_preflight_not_ready');
@@ -101,15 +101,15 @@ test('deployment readiness requires a fully observed rollout, not ready replicas
   assert.equal(deploymentReadyResult('n', 'x', { ok: true, json: converged }).ready, true);
 });
 
-test('HIS status is fail-closed on an unavailable or degraded Cluster Manager response', () => {
+test('HISS status is fail-closed on an unavailable or degraded Cluster Manager response', () => {
   const status = (state) => ({
-    schema: 'his-status.opensphere.io/v1alpha1',
-    stack: 'HIS',
+    schema: 'hiss-status.opensphere.io/v1alpha1',
+    stack: 'HISS',
     state,
     checkedAt: new Date().toISOString(),
     items: [],
     summary: { coreTotal: 8, coreReady: state === 'Ready' ? 8 : 7, selectedProfilesTotal: 1, selectedProfilesReady: 1 },
-    projection: { authority: 'Cluster Manager HIS', realizationLayer: 'SRL-L1' },
+    projection: { authority: 'Cluster Manager HISS', realizationLayer: 'SRL-L1' },
   });
   assert.equal(normalizeHisStatus({ ok: false, status: 502, body: null }).ready, false);
   assert.equal(normalizeHisStatus({ ok: true, status: 200, body: status('Degraded') }).ready, false);
@@ -118,7 +118,7 @@ test('HIS status is fail-closed on an unavailable or degraded Cluster Manager re
   assert.equal(ready.contract, 'opensphere.his.readiness-projection/v1');
   assert.deepEqual(ready.core, { ready: 8, total: 8 });
   assert.deepEqual(ready.selectedProfiles, { ready: 1, total: 1 });
-  assert.equal(ready.authority, 'Cluster Manager HIS');
+  assert.equal(ready.authority, 'Cluster Manager HISS');
   assert.equal(ready.realizationLayer, 'SRL-L1');
   assert.equal(normalizeHisStatus({ ok: true, status: 200, body: { ...status('Ready'), checkedAt: '2020-01-01T00:00:00.000Z' } }).ready, false);
 });
@@ -142,7 +142,7 @@ test('Foundation management shell stays accessible while PFS services remain evi
   assert.doesNotMatch(controller, /const pfsEstablished = foundationReg\?\.status\?\.phase === 'Activated'/);
   assert.match(page, /PFS ADMISSION/);
   assert.match(page, /관리 화면은 항상 접근할 수 있습니다/);
-  assert.match(page, /\/p\/cluster-manager\/his\/his/);
+  assert.match(page, /\/p\/cluster-manager\/hiss\/hiss/);
   // Hosted PFS plugins remain bound to a visible lock, while the Foundation
   // management shell itself must never disappear behind that service gate.
   assert.ok((extensions.match(/\[disabled\]="activationLocked\(/g) || []).length >= 5);
@@ -537,7 +537,7 @@ test('fresh install creates optional platform namespaces before their evidence R
   }
 });
 
-test('Platform readiness consumes the named HIS preflight probe instead of rebranding Observability evidence', () => {
+test('Platform readiness consumes the named HISS preflight probe instead of rebranding Observability evidence', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   assert.match(controller, /hisPreflight:\s*his, observability/);
   assert.doesNotMatch(controller, /const his = \{\s*ready: observability\.stackReady/);

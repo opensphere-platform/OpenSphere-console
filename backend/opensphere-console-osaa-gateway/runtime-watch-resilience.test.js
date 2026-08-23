@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+const backendSource = fs.readFileSync(path.resolve(__dirname, '../opensphere-console-backend/server.js'), 'utf8');
 
 test('runtime watch discovery excludes absent APIs instead of reconnecting forever', () => {
   assert.match(source, /function discoverWatchableResource/);
@@ -31,6 +32,6 @@ test('OSAA evidence context declares projection source and freshness without sys
 });
 
 test('maintenance binds the cluster identifier with an explicit PostgreSQL type', () => {
-  assert.match(source, /jsonb_build_object\('clusterId',\$1::text\)/);
-  assert.match(source, /FROM osaa\.source_health WHERE cluster_id=\$1::text/);
+  assert.match(backendSource, /jsonb_build_object\('clusterId',\$1::text\)/);
+  assert.match(backendSource, /FROM osaa\.source_health WHERE cluster_id=\$1::text/);
 });

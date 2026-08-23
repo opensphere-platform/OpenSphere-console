@@ -44,16 +44,16 @@ test('static risk table keeps local-edge runtime lifecycle single-admin and purg
   assert.equal(MODULES.postgres.status, 'NotAvailable');
 });
 
-test('owner adapter uses only the fixed HIS item and requires explicit runtime-delete confirmation', () => {
-  assert.equal(ownerRequestBody('install', '설치 사유가 충분합니다', {}).path, '/api/his/install');
-  assert.equal(ownerRequestBody('verify', '검증 사유가 충분합니다', {}).path, '/api/his/validate');
+test('owner adapter uses only the fixed HISS item and requires explicit runtime-delete confirmation', () => {
+  assert.equal(ownerRequestBody('install', '설치 사유가 충분합니다', {}).path, '/api/hiss/install');
+  assert.equal(ownerRequestBody('verify', '검증 사유가 충분합니다', {}).path, '/api/hiss/validate');
   assert.throws(
     () => ownerRequestBody('delete-runtime', '삭제 사유가 충분합니다', { confirm: 'wrong' }),
     { code: 400, errorCode: 'confirmation_required' },
   );
   assert.equal(
     ownerRequestBody('delete-runtime', '삭제 사유가 충분합니다', { confirm: 'kube-prometheus-stack' }).path,
-    '/api/his/uninstall',
+    '/api/hiss/uninstall',
   );
 });
 
@@ -105,7 +105,7 @@ test('same idempotency key returns the same durable receipt and invokes owner on
       ownerMutationCount += 1;
       return { ok: true, operation: { id: 'his-op-1', action: 'install', phase: 'Queued' } };
     }
-    assert.equal(pathname, '/api/his/status');
+    assert.equal(pathname, '/api/hiss/status');
     return ownerStatus();
   };
   const api = createModuleOperationApi({

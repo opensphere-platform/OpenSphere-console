@@ -63,9 +63,9 @@ test('owner API outages and mutation lifecycle failures remain explicit blockers
   const result = buildAgentControlReadiness({
     ...complete,
     mutationLifecycle: { ready: false, reason: 'cluster_manager_not_activated' },
-    ownerApisUnavailable: ['Cluster Manager HIS preflight'],
+    ownerApisUnavailable: ['Cluster Manager HISS preflight'],
   });
-  assert.deepEqual(result.ownerApis.unavailable, ['Cluster Manager HIS preflight']);
+  assert.deepEqual(result.ownerApis.unavailable, ['Cluster Manager HISS preflight']);
   assert.ok(result.blockers.includes('cluster_manager_not_activated'));
   assert.ok(result.blockers.includes('owner_api_unavailable'));
 });

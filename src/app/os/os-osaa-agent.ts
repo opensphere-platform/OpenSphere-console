@@ -89,7 +89,7 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
  * HttpOnly 세션과 CSRF 정책을 따른다. 브라우저 JavaScript가 bearer token을 직접 조립하지 않는다.
  * API 키는 이 컴포넌트에 저장·표시되지 않는다(키 관리는 /manage 백본 관리 화면의 서버측 책임).
  * 실제 비-read 실행은 게이트웨이(서버) 단계에서 확인/감사 후에만 이루어지며, Cluster Manager Activated +
- * HIS Preflight Ready 이전에는 서버가 모든 Kubernetes mutation/action tool을 제공하지 않는다
+ * HISS Preflight Ready 이전에는 서버가 모든 Kubernetes mutation/action tool을 제공하지 않는다
  * (CONSTITUTION-0004 §4.2, fail-closed — 이 컴포넌트는 UI 제안일 뿐 gate를 대체하지 않는다).
  * Provider/키 미배포 시에도 폭이 셸을 깨지 않고 이 패널 안에서 오류 메시지로 성능 저하(Degraded)를 표시한다.
  *

@@ -44,7 +44,7 @@ test('original mutation method reaches browser-session CSRF enforcement', async 
     'x-os-internal-authz-subrequest': 'plugin-proxy-v1',
     'x-plugin-id': 'cluster-manager',
     'x-os-original-method': 'POST',
-    'x-os-original-uri': '/api/plugins/cluster-manager/api/his/requests',
+    'x-os-original-uri': '/api/plugins/cluster-manager/api/hiss/requests',
     'x-os-csrf-token': 'csrf-value',
     origin: 'https://localhost:1114',
   }), {

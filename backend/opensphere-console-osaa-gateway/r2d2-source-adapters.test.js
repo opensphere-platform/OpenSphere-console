@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { classifyProjection, projectAuthorityAdapters } = require('./r2d2-source-adapters');
 
-test('projection classifier keeps Registry, Release, Gitea, HIS and owner authorities distinct', () => {
+test('projection classifier keeps Registry, Release, Gitea, HISS and owner authorities distinct', () => {
   assert.equal(classifyProjection({ name: 'main-shell-registry' }), 'registry');
   assert.equal(classifyProjection({ name: 'platform-release' }), 'release');
   assert.equal(classifyProjection({ name: 'gitea-change-control' }), 'gitea');

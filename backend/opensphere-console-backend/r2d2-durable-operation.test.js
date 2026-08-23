@@ -111,7 +111,7 @@ test('local-edge rollback is exact-digest only and R2', () => {
   assert.throws(() => bindOperation(invalid), /exact image digest/);
 });
 
-test('HIS owner recovery is a closed R2 capability with an exact human confirmation', () => {
+test('HISS owner recovery is a closed R2 capability with an exact human confirmation', () => {
   const input = request('owner-recover'); input.target.name = 'kube-prometheus-stack'; input.target.uid = 'his:kube-prometheus-stack';
   input.confirmation = exactConfirmation(DESCRIPTORS['owner-recover'], input.target);
   const bound = bindOperation(input);

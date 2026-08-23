@@ -200,7 +200,7 @@ const OSAA_OWNER_ACTION_TOOL_IDS = new Set([
   'osaa.identity.role.membership',
   'osaa.evidence.retention.update',
 ]);
-// CONSTITUTION-0004 §4.2: before Cluster Manager Activated + HIS Preflight Ready, OSAA may only
+// CONSTITUTION-0004 §4.2: before Cluster Manager Activated + HISS Preflight Ready, OSAA may only
 // expose Manual/help/search/safe read-only capability. Kubernetes mutation/action tools must stay
 // unavailable. This must be exactly the string 'true' to open the gate; any other value (including
 // unset) fails closed.
@@ -1203,7 +1203,7 @@ function builtInKnowledgeDocs() {
       content: [
         'Supabase is the Console authority for identity, relational data, audit and object storage. Gitea is the authority for reviewed declarative changes and history.',
         'Supabase PostgreSQL with pgvector is the OSAA knowledge authority; the gateway has no schema-migration ownership and uses its dedicated least-privileged role.',
-        'Gitea provides code and Git-backed knowledge ingestion. HIS remains the authority for Prometheus-compatible observability rather than a Console-owned monitoring stack.'
+        'Gitea provides code and Git-backed knowledge ingestion. HISS remains the authority for Prometheus-compatible observability rather than a Console-owned monitoring stack.'
       ].join('\n\n'),
     },
     {
@@ -3519,12 +3519,12 @@ function controlToolsSystemMessage() {
       `Tool manifest schema: ${manifest.schema}. Tool IDs: ${manifest.tools.map((t) => t.id).join(', ')}.`,
       `Action binding schema: ${bindings.schema}. Action binding IDs: ${bindings.bindings.map((b) => b.id).join(', ')}.`,
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/osaa/tools/k8s/*.',
-      'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HIS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
+      'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HISS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
       'When Registry Plugins are described as 요청 시 적재 or missing from a Host screen, call the extension presentation status tool. Distinguish host-owned menu eligibility from route-scoped child UI activation, and never restart, reinstall, or enable entries that Registry reports as healthy.',
       'When the operator asks for a restart, scale, rollback, CronJob run, isolated recovery drill, owner recovery, or notification retry plan, call plan_durable_operation first. Report the live exact target, risk class, required assurance, expected confirmation, and postcondition. Planning never submits or executes an operation, and OSAA must never copy the returned confirmation into an action call.',
       'Call get_osaa_operation only when the operator supplied a valid operation UUID or an accepted action in this conversation returned one. Never call it during planning alone. Report its current phase, approval state, execution steps, and postcondition verification from the ledger; never infer completion from action acceptance.',
       'For source-level diagnosis, first read the canonical source catalog, resolve the repository branch to an exact GitHub revision, then search or read only that revision. Cite repository ID, 40-character revision, path, and line range. Never substitute Gitea, a workspace checkout, a stale manual snippet, or model memory for canonical source evidence; report inaccessible repositories and complete=false searches as coverage gaps.',
-      'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HIS is telemetry authority.',
+      'Do not treat the catalog or Supabase projection as runtime truth. Catalog is declared topology, Supabase is durable identity/audit/read-model evidence, Kubernetes is live runtime authority, Gitea is desired-change authority, and HISS is telemetry authority.',
       'Platform recovery status is structured evidence, not proof that a restore succeeded. A recovery drill is executable only through the fixed supabase or gitea CronJob target, the durable operation ledger, AAL2 exact confirmation, reviewed change reconciliation, and operation-correlated evidence promotion. Never request archive bytes, credentials, URLs, commands, or an arbitrary manifest.',
       'The provider may call only the permission-filtered read tools supplied with this request. Treat their returned data as current evidence and cite what was actually observed.',
       mutationNote,
@@ -3811,24 +3811,24 @@ function osaaActionBindings() {
       id: 'manual-action:opensphere:observability-logs-query',
       namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#his-observability-owner-control',
-      title: 'Query redacted centralized logs through the HIS owner facade', intent: 'diagnose-logs',
+      title: 'Query redacted centralized logs through the HISS owner facade', intent: 'diagnose-logs',
       toolId: 'osaa.observability.logs.query', controlPlane: 'cluster-manager-his-owner-facade',
       riskLevel: 'read', confirmation: 'none',
       requiredInputs: bindingInput({ template: 'service.recent | service.errors | namespace.recent', service: 'service name for service templates', namespace: 'namespace for namespace.recent', sinceMinutes: '1..1440', limit: '1..200' }),
       permission: { roles: ['authenticated'], scopes: ['osaa:logs:read'] },
-      audit: { eventType: 'his-observability-logs-query', targetTemplate: 'HIS/Loki/<target>' },
+      audit: { eventType: 'his-observability-logs-query', targetTemplate: 'HISS/Loki/<target>' },
       citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:observability-traces-query',
       namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#his-observability-owner-control',
-      title: 'Query sanitized distributed traces through the HIS owner facade', intent: 'diagnose-traces',
+      title: 'Query sanitized distributed traces through the HISS owner facade', intent: 'diagnose-traces',
       toolId: 'osaa.observability.traces.query', controlPlane: 'cluster-manager-his-owner-facade',
       riskLevel: 'read', confirmation: 'none',
       requiredInputs: bindingInput({ template: 'trace.by_id | service.recent', traceId: '32 hex characters for trace.by_id', service: 'service name for service.recent', sinceMinutes: '1..1440', limit: '1..100' }),
       permission: { roles: ['authenticated'], scopes: ['osaa:logs:read'] },
-      audit: { eventType: 'his-observability-traces-query', targetTemplate: 'HIS/Tempo/<target>' },
+      audit: { eventType: 'his-observability-traces-query', targetTemplate: 'HISS/Tempo/<target>' },
       citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
@@ -4133,58 +4133,58 @@ function osaaActionBindings() {
       id: 'manual-action:opensphere:his-observability-config',
       namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
-      title: 'Read the current managed HIS Observability configuration', intent: 'inspect-his-observability-config',
+      title: 'Read the current managed HISS Observability configuration', intent: 'inspect-his-observability-config',
       toolId: 'osaa.his.observability.config', controlPlane: 'cluster-manager-his-owner-facade',
       riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
       permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:his:read'] },
-      audit: { eventType: 'his-observability-config-read', targetTemplate: 'HIS/kube-prometheus-stack' },
+      audit: { eventType: 'his-observability-config-read', targetTemplate: 'HISS/kube-prometheus-stack' },
       citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:his-observability-plan',
       namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
-      title: 'Plan a closed-schema HIS Observability configuration change', intent: 'plan-his-observability',
+      title: 'Plan a closed-schema HISS Observability configuration change', intent: 'plan-his-observability',
       toolId: 'osaa.his.observability.plan', controlPlane: 'cluster-manager-his-owner-facade',
       riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({ config: 'complete SecretRef-only Observability configuration' }),
       permission: { roles: [CONSOLE_ADMIN_GROUP, 'console-operators'], scopes: ['console:his:read'] },
-      audit: { eventType: 'his-observability-plan', targetTemplate: 'HIS/kube-prometheus-stack' },
+      audit: { eventType: 'his-observability-plan', targetTemplate: 'HISS/kube-prometheus-stack' },
       citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:his-observability-configure',
       namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#existing-owner-api-conversational-control-coverage',
-      title: 'Apply a planned HIS Observability configuration', intent: 'configure-his-observability',
+      title: 'Apply a planned HISS Observability configuration', intent: 'configure-his-observability',
       toolId: 'osaa.his.observability.configure', controlPlane: 'cluster-manager-his-owner-facade',
-      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure HIS observability public=<public> data-reset=<resetData>',
-      requiredInputs: bindingInput({ config: 'complete SecretRef-only Observability configuration', resetData: 'boolean matching the owner plan', reason: 'human management reason (8+ chars)', confirm: 'configure HIS observability public=<public> data-reset=<resetData>' }),
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure HISS observability public=<public> data-reset=<resetData>',
+      requiredInputs: bindingInput({ config: 'complete SecretRef-only Observability configuration', resetData: 'boolean matching the owner plan', reason: 'human management reason (8+ chars)', confirm: 'configure HISS observability public=<public> data-reset=<resetData>' }),
       permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['console:his:manage'] },
-      audit: { eventType: 'his-observability-configure', targetTemplate: 'HIS/kube-prometheus-stack' },
+      audit: { eventType: 'his-observability-configure', targetTemplate: 'HISS/kube-prometheus-stack' },
       citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:his-validate',
       namespace: 'opensphere', sourceId: 'opensphere-docs/platform-bootstrap-lifecycle',
       sectionId: 'manual-section:opensphere-docs/platform-bootstrap-lifecycle#his-preflight',
-      title: 'Run a closed-catalog HIS canary validation', intent: 'validate-his',
+      title: 'Run a closed-catalog HISS canary validation', intent: 'validate-his',
       toolId: 'osaa.his.validate', controlPlane: 'cluster-manager-his-owner-facade',
-      riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'validate HIS <id>',
-      requiredInputs: bindingInput({ id: OSAA_HIS_VALIDATION_IDS.join(' | '), reason: 'human management reason (8+ chars)', confirm: 'validate HIS <id>' }),
+      riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'validate HISS <id>',
+      requiredInputs: bindingInput({ id: OSAA_HIS_VALIDATION_IDS.join(' | '), reason: 'human management reason (8+ chars)', confirm: 'validate HISS <id>' }),
       permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['osaa:action:execute:high'] },
-      audit: { eventType: 'his-canary-validation', targetTemplate: 'HIS/<id>' },
+      audit: { eventType: 'his-canary-validation', targetTemplate: 'HISS/<id>' },
       citations: [{ sourceId: 'opensphere-docs/platform-bootstrap-lifecycle', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md' }],
     }),
     mk({
       id: 'manual-action:opensphere:his-lifecycle',
       namespace: 'opensphere', sourceId: 'opensphere-docs/platform-bootstrap-lifecycle',
       sectionId: 'manual-section:opensphere-docs/platform-bootstrap-lifecycle#his-preflight',
-      title: 'Operate one closed-catalog HelmManaged HIS add-on', intent: 'manage-his',
+      title: 'Operate one closed-catalog HelmManaged HISS add-on', intent: 'manage-his',
       toolId: 'osaa.his.lifecycle', controlPlane: 'cluster-manager-his-owner-facade',
-      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> HIS <id><revisionSuffix>',
-      requiredInputs: bindingInput({ id: OSAA_HIS_MANAGED_IDS.join(' | '), action: OSAA_HIS_LIFECYCLE_ACTIONS.join(' | '), revision: 'required for rollback', reason: 'human management reason (8+ chars)', confirm: '<action> HIS <id> [to revision <revision>]' }),
+      riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> HISS <id><revisionSuffix>',
+      requiredInputs: bindingInput({ id: OSAA_HIS_MANAGED_IDS.join(' | '), action: OSAA_HIS_LIFECYCLE_ACTIONS.join(' | '), revision: 'required for rollback', reason: 'human management reason (8+ chars)', confirm: '<action> HISS <id> [to revision <revision>]' }),
       permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['osaa:action:execute:high'] },
-      audit: { eventType: 'his-lifecycle', targetTemplate: 'HIS/<id>' },
+      audit: { eventType: 'his-lifecycle', targetTemplate: 'HISS/<id>' },
       citations: [{ sourceId: 'opensphere-docs/platform-bootstrap-lifecycle', sourcePath: '_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md' }],
     }),
     mk({
@@ -4427,7 +4427,7 @@ function osaaToolManifest() {
       },
       {
         id: 'osaa.observability.logs.query',
-        name: 'Query redacted centralized logs through the HIS owner API',
+        name: 'Query redacted centralized logs through the HISS owner API',
         channel: 'owner-control-plane', readOnly: true,
         endpoint: toolEndpoint('POST', '/api/osaa/tools/observability/logs'),
         riskLevel: 'read', confirmation: 'none',
@@ -4441,7 +4441,7 @@ function osaaToolManifest() {
       },
       {
         id: 'osaa.observability.traces.query',
-        name: 'Query sanitized distributed traces through the HIS owner API',
+        name: 'Query sanitized distributed traces through the HISS owner API',
         channel: 'owner-control-plane', readOnly: true,
         endpoint: toolEndpoint('POST', '/api/osaa/tools/observability/traces'),
         riskLevel: 'read', confirmation: 'none',
@@ -4737,7 +4737,7 @@ function osaaToolManifest() {
       },
       {
         id: 'osaa.his.observability.config',
-        name: 'Read the current managed HIS Observability configuration',
+        name: 'Read the current managed HISS Observability configuration',
         channel: 'owner-control-plane', readOnly: true,
         endpoint: toolEndpoint('POST', '/api/osaa/tools/his/observability/config'),
         riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
@@ -4745,7 +4745,7 @@ function osaaToolManifest() {
       },
       {
         id: 'osaa.his.observability.plan',
-        name: 'Plan a complete SecretRef-only HIS Observability configuration',
+        name: 'Plan a complete SecretRef-only HISS Observability configuration',
         channel: 'owner-control-plane', readOnly: true,
         endpoint: toolEndpoint('POST', '/api/osaa/tools/his/observability/plan'),
         riskLevel: 'read', confirmation: 'none',
@@ -4754,10 +4754,10 @@ function osaaToolManifest() {
       },
       {
         id: 'osaa.his.observability.configure',
-        name: 'Apply a planned HIS Observability configuration through its owner',
+        name: 'Apply a planned HISS Observability configuration through its owner',
         channel: 'owner-control-plane', readOnly: false,
         endpoint: toolEndpoint('POST', '/api/osaa/actions/bindings/execute'),
-        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure HIS observability public=<public> data-reset=<resetData>',
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: 'configure HISS observability public=<public> data-reset=<resetData>',
         inputSchema: schemaObject({
           config: hisObservabilityConfigSchema(), resetData: { type: 'boolean' },
           confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
@@ -4766,19 +4766,19 @@ function osaaToolManifest() {
       },
       {
         id: 'osaa.his.validate',
-        name: 'Run a closed-catalog HIS canary validation',
+        name: 'Run a closed-catalog HISS canary validation',
         channel: 'owner-control-plane', readOnly: false,
         endpoint: toolEndpoint('POST', '/api/osaa/actions/bindings/execute'),
-        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'validate HIS <id>',
+        riskLevel: 'high', confirmation: 'required', confirmationTemplate: 'validate HISS <id>',
         inputSchema: schemaObject({ id: { type: 'string', enum: OSAA_HIS_VALIDATION_IDS }, confirm: confirmField, reason: { type: 'string' } }),
         auditEventType: 'his-canary-validation',
       },
       {
         id: 'osaa.his.lifecycle',
-        name: 'Operate one closed-catalog HelmManaged HIS add-on',
+        name: 'Operate one closed-catalog HelmManaged HISS add-on',
         channel: 'owner-control-plane', readOnly: false,
         endpoint: toolEndpoint('POST', '/api/osaa/actions/bindings/execute'),
-        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> HIS <id><revisionSuffix>',
+        riskLevel: 'critical', confirmation: 'required', confirmationTemplate: '<action> HISS <id><revisionSuffix>',
         inputSchema: schemaObject({
           id: { type: 'string', enum: OSAA_HIS_MANAGED_IDS },
           action: { type: 'string', enum: OSAA_HIS_LIFECYCLE_ACTIONS },
@@ -5384,7 +5384,7 @@ async function osaaObservabilityCapabilities(actor) {
     });
     const body = await response.json().catch(() => ({}));
     if (response.ok) capabilities = new Set((body.capabilities || []).map((value) => String(value).toLowerCase()));
-  } catch { /* fail closed: unavailable capability evidence exposes no HIS query tool */ }
+  } catch { /* fail closed: unavailable capability evidence exposes no HISS query tool */ }
   observabilityCapabilityCache.set(subject, { checkedAt: Date.now(), capabilities });
   return capabilities;
 }
@@ -5396,14 +5396,14 @@ async function osaaHisOwnerCapabilities(actor) {
   let capabilities = new Set();
   if (hasPermission(actor, 'console.his.read')) {
     try {
-      const response = await fetch(`${CLUSTER_MANAGER_URL}/api/his/osaa/capabilities`, {
+      const response = await fetch(`${CLUSTER_MANAGER_URL}/api/hiss/osaa/capabilities`, {
         headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: boundedSignal(5000),
       });
       const body = await response.json().catch(() => ({}));
       if (response.ok && body.apiVersion === 'opensphere.io/osaa-his-owner/v1') {
         capabilities = new Set((body.capabilities || []).map((value) => String(value)));
       }
-    } catch { /* fail closed: an old or unavailable owner exposes no advanced HIS controls */ }
+    } catch { /* fail closed: an old or unavailable owner exposes no advanced HISS controls */ }
   }
   hisOwnerCapabilityCache.set(subject, { checkedAt: Date.now(), capabilities });
   return capabilities;
@@ -6594,14 +6594,14 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     container: { type: 'string' },
     tailLines: { type: 'integer', minimum: 1, maximum: 300 },
   }, ['namespace', 'pod']);
-  if (observabilityCapabilities.has('logs')) add('osaa.logs.read', 'query_centralized_logs', 'Query redacted historical logs from HIS/Loki using a fixed template. Use service.errors for failures, service.recent for recent service output, or namespace.recent for an allowed namespace.', {
+  if (observabilityCapabilities.has('logs')) add('osaa.logs.read', 'query_centralized_logs', 'Query redacted historical logs from HISS/Loki using a fixed template. Use service.errors for failures, service.recent for recent service output, or namespace.recent for an allowed namespace.', {
     template: { type: 'string', enum: ['service.recent', 'service.errors', 'namespace.recent'] },
     service: { type: 'string', description: 'Required for service templates' },
     namespace: { ...namespace, description: 'Required for namespace.recent' },
     sinceMinutes: { type: 'integer', minimum: 1, maximum: 1440 },
     limit: { type: 'integer', minimum: 1, maximum: 200 },
   }, ['template']);
-  if (observabilityCapabilities.has('traces')) add('osaa.logs.read', 'query_distributed_traces', 'Query sanitized traces from HIS/Tempo using trace.by_id or service.recent.', {
+  if (observabilityCapabilities.has('traces')) add('osaa.logs.read', 'query_distributed_traces', 'Query sanitized traces from HISS/Tempo using trace.by_id or service.recent.', {
     template: { type: 'string', enum: ['trace.by_id', 'service.recent'] },
     traceId: { type: 'string', pattern: '^[a-fA-F0-9]{32}$', description: 'Required for trace.by_id' },
     service: { type: 'string', description: 'Required for service.recent' },
@@ -6692,10 +6692,10 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     }, ['component']);
   }
   if (hisOwnerCapabilities.has('observability-config-read')) {
-    add('console.his.read', 'get_his_observability_config', 'Read the current complete managed HIS Observability configuration and owner policy. Secret values are never returned.', {});
+    add('console.his.read', 'get_his_observability_config', 'Read the current complete managed HISS Observability configuration and owner policy. Secret values are never returned.', {});
   }
   if (hisOwnerCapabilities.has('observability-plan')) {
-    add('console.his.read', 'plan_his_observability_config', 'Plan a complete closed-schema HIS Observability configuration and return live blockers, warnings, storage effects, and whether data reset is required. Only SecretRef names are accepted.', {
+    add('console.his.read', 'plan_his_observability_config', 'Plan a complete closed-schema HISS Observability configuration and return live blockers, warnings, storage effects, and whether data reset is required. Only SecretRef names are accepted.', {
       config: hisObservabilityConfigSchema(),
     }, ['config']);
   }
@@ -7008,9 +7008,9 @@ async function observabilityRead(inputs, actor, kind) {
   assertPermission(actor, 'osaa.logs.read');
   const query = boundedObservabilityReadInputs(inputs, kind);
   const params = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]));
-  const result = redactProjection(await clusterManagerGet(`/api/his/observability/${kind}?${params.toString()}`, actor));
+  const result = redactProjection(await clusterManagerGet(`/api/hiss/observability/${kind}?${params.toString()}`, actor));
   const target = query.traceId || query.service || query.namespace || kind;
-  audit(actor, `his-observability-${kind}-query`, `HIS/${kind}/${target}`, 'ok', `${query.template} limit=${query.limit}`);
+  audit(actor, `his-observability-${kind}-query`, `HISS/${kind}/${target}`, 'ok', `${query.template} limit=${query.limit}`);
   return result;
 }
 
@@ -7128,26 +7128,26 @@ function normalizeHisObservabilityOwnerConfig(value) {
 }
 
 function hisObservabilityConfirmation(config, resetData) {
-  return `configure HIS observability public=${config.grafana.exposureMode === 'PublicIngress'} data-reset=${Boolean(resetData)}`;
+  return `configure HISS observability public=${config.grafana.exposureMode === 'PublicIngress'} data-reset=${Boolean(resetData)}`;
 }
 
 async function hisObservabilityConfigRead(actor) {
   assertPermission(actor, 'console.his.read');
-  if (!(await osaaHisOwnerCapabilities(actor)).has('observability-config-read')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability config owner capability' };
-  const projection = redactProjection(await clusterManagerGet('/api/his/osaa/observability/config', actor));
-  audit(actor, 'his-observability-config-read', 'HIS/kube-prometheus-stack', 'ok', projection.source || 'managed configuration');
+  if (!(await osaaHisOwnerCapabilities(actor)).has('observability-config-read')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HISS Observability config owner capability' };
+  const projection = redactProjection(await clusterManagerGet('/api/hiss/osaa/observability/config', actor));
+  audit(actor, 'his-observability-config-read', 'HISS/kube-prometheus-stack', 'ok', projection.source || 'managed configuration');
   return projection;
 }
 
 async function hisObservabilityPlanRead(inputs, actor) {
   assertPermission(actor, 'console.his.read');
-  if (!(await osaaHisOwnerCapabilities(actor)).has('observability-plan')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability plan owner capability' };
+  if (!(await osaaHisOwnerCapabilities(actor)).has('observability-plan')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HISS Observability plan owner capability' };
   requireClosedOwnerInputs(inputs, ['config']);
   const config = normalizeHisObservabilityOwnerConfig(inputs.config);
   const projection = redactProjection(await fixedOwnerPost(
-    CLUSTER_MANAGER_URL, '/api/his/osaa/observability/plan', actor, { config }, 'Cluster Manager HIS', 120000,
+    CLUSTER_MANAGER_URL, '/api/hiss/osaa/observability/plan', actor, { config }, 'Cluster Manager HISS', 120000,
   ));
-  audit(actor, 'his-observability-plan', 'HIS/kube-prometheus-stack', 'ok', `${projection.changes?.length || 0} changes / ${projection.blockers?.length || 0} blockers`);
+  audit(actor, 'his-observability-plan', 'HISS/kube-prometheus-stack', 'ok', `${projection.changes?.length || 0} changes / ${projection.blockers?.length || 0} blockers`);
   return projection;
 }
 
@@ -7296,16 +7296,16 @@ async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
   } else if (toolId === 'osaa.his.validate') {
     requireClosedOwnerInputs(inputs, ['id', 'confirm', 'reason']);
     const id = requireOwnerActionId(inputs.id, OSAA_HIS_VALIDATION_IDS);
-    requireConfirm(inputs.confirm, `validate HIS ${id}`);
-    owner = 'Cluster Manager HIS'; target = `HIS/${id}`;
-    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/his/validate', actor, { id, reason }, owner);
+    requireConfirm(inputs.confirm, `validate HISS ${id}`);
+    owner = 'Cluster Manager HISS'; target = `HISS/${id}`;
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/hiss/validate', actor, { id, reason }, owner);
   } else if (toolId === 'osaa.his.lifecycle') {
     requireClosedOwnerInputs(inputs, ['id', 'action', 'revision', 'confirm', 'reason']);
     const id = requireOwnerActionId(inputs.id, OSAA_HIS_MANAGED_IDS);
     const action = String(inputs.action || '').trim().toLowerCase();
-    if (!OSAA_HIS_LIFECYCLE_ACTIONS.includes(action)) throw { code: 400, msg: 'HIS action is outside the closed lifecycle contract' };
+    if (!OSAA_HIS_LIFECYCLE_ACTIONS.includes(action)) throw { code: 400, msg: 'HISS action is outside the closed lifecycle contract' };
     const payload = { id, reason };
-    let expected = `${action} HIS ${id}`;
+    let expected = `${action} HISS ${id}`;
     if (action === 'rollback') {
       const revision = Number(inputs.revision);
       if (!Number.isInteger(revision) || revision < 1) throw { code: 400, msg: 'rollback revision must be a positive integer' };
@@ -7313,22 +7313,22 @@ async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
       payload.confirm = `${id}:${revision}`;
       expected += ` to revision ${revision}`;
     } else {
-      if (inputs.revision !== undefined) throw { code: 400, msg: 'revision is accepted only for HIS rollback' };
+      if (inputs.revision !== undefined) throw { code: 400, msg: 'revision is accepted only for HISS rollback' };
       if (action === 'uninstall') payload.confirm = id;
     }
     requireConfirm(inputs.confirm, expected);
-    owner = 'Cluster Manager HIS'; target = `HIS/${id}`;
-    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, `/api/his/${action}`, actor, payload, owner);
+    owner = 'Cluster Manager HISS'; target = `HISS/${id}`;
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, `/api/hiss/${action}`, actor, payload, owner);
   } else if (toolId === 'osaa.his.observability.configure') {
     requireClosedOwnerInputs(inputs, ['config', 'resetData', 'confirm', 'reason']);
     const ownerCapabilities = await osaaHisOwnerCapabilities(actor);
-    if (!ownerCapabilities.has('observability-configure')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HIS Observability owner capability' };
+    if (!ownerCapabilities.has('observability-configure')) throw { code: 409, msg: 'signed Cluster Manager does not expose the HISS Observability owner capability' };
     if (typeof inputs.resetData !== 'boolean') throw { code: 400, msg: 'resetData must be boolean' };
     const config = normalizeHisObservabilityOwnerConfig(inputs.config);
     const expected = hisObservabilityConfirmation(config, inputs.resetData);
     requireConfirm(inputs.confirm, expected);
-    owner = 'Cluster Manager HIS'; target = 'HIS/kube-prometheus-stack';
-    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/his/osaa/observability/configure', actor, {
+    owner = 'Cluster Manager HISS'; target = 'HISS/kube-prometheus-stack';
+    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/hiss/osaa/observability/configure', actor, {
       config, resetData: inputs.resetData, confirm: inputs.confirm, reason,
     }, owner, 600000);
   } else if (toolId === 'osaa.ceph.connect') {
@@ -7445,8 +7445,8 @@ async function settledControlPlaneComponent(owner, request) {
 function ownerProjectionName(owner) {
   const names = {
     'Console lifecycle / DUPA': 'console-lifecycle',
-    'HIS ObservabilityBinding': 'his-observability-binding',
-    'Cluster Manager HIS preflight': 'cluster-manager-his',
+    'HISS ObservabilityBinding': 'his-observability-binding',
+    'Cluster Manager HISS preflight': 'cluster-manager-his',
     'Cluster Manager Ceph integration': 'cluster-manager-ceph',
     'Supabase Data & Identity': 'supabase-data-identity',
     'State Change Authority': 'gitea-change-control',
@@ -7562,8 +7562,8 @@ async function controlPlaneStatus(actor) {
   const [entries, coreReadiness, mutationLifecycle, observabilityCapabilities, hisOwnerCapabilities, cephOwnerCapabilities, recoveryOwnerCapabilities, llmConfigured] = await Promise.all([
     Promise.all([
       settledControlPlaneComponent('Console lifecycle / DUPA', () => dupaGet('/api/admin/platform-readiness/status', actor)),
-      settledControlPlaneComponent('HIS ObservabilityBinding', () => dupaGet('/api/admin/observability/status', actor)),
-      settledControlPlaneComponent('Cluster Manager HIS preflight', () => clusterManagerGet('/api/his/status', actor)),
+      settledControlPlaneComponent('HISS ObservabilityBinding', () => dupaGet('/api/admin/observability/status', actor)),
+      settledControlPlaneComponent('Cluster Manager HISS preflight', () => clusterManagerGet('/api/hiss/status', actor)),
       settledControlPlaneComponent('Cluster Manager Ceph integration', () => clusterManagerGet('/api/ceph/status', actor)),
       settledControlPlaneComponent('Supabase Data & Identity', () => backendGet('/api/identity/supabase/status', actor)),
       settledControlPlaneComponent('State Change Authority', () => backendGet('/api/platform/gitea/status', actor)),
@@ -7610,7 +7610,7 @@ async function controlPlaneStatus(actor) {
     action: 'control-plane-status',
     checkedAt,
     authorityModel: {
-      dataAndIdentity: 'Supabase', declarations: 'Gitea', runtime: 'Kubernetes', telemetry: 'HIS', lifecycle: 'Console/Cluster Manager/PFS owner facades',
+      dataAndIdentity: 'Supabase', declarations: 'Gitea', runtime: 'Kubernetes', telemetry: 'HISS', lifecycle: 'Console/Cluster Manager/PFS owner facades',
     },
     ready: unavailable.length === 0,
     fullyOperational: agentControl.fullyOperational,
@@ -9326,7 +9326,7 @@ async function durableHisStatus(inputs, actor) {
   requireClosedOwnerInputs(inputs, ['id']);
   const id = requireOwnerActionId(inputs.id, OSAA_HIS_MANAGED_IDS);
   assertPermission(actor, 'osaa.action.execute.high');
-  const status = await clusterManagerGet('/api/his/status', actor);
+  const status = await clusterManagerGet('/api/hiss/status', actor);
   const items = status.items || status.releases || status.capabilities || [];
   const item = Array.isArray(items) ? items.find((entry) => entry.id === id || entry.name === id) : null;
   const observed = redactProjection(item || status);
@@ -9340,7 +9340,7 @@ async function durableHisRecover(inputs, actor) {
   const id = requireOwnerActionId(inputs.id, OSAA_HIS_MANAGED_IDS);
   const idempotencyKey = String(inputs.idempotencyKey || '');
   if (!/^[-:a-zA-Z0-9]{16,240}$/.test(idempotencyKey)) throw { code: 400, msg: 'durable idempotency key is invalid' };
-  if (String(inputs.confirmation || '') !== `recover HIS ${id}`) throw { code: 400, msg: `exact human confirmation required: recover HIS ${id}` };
+  if (String(inputs.confirmation || '') !== `recover HISS ${id}`) throw { code: 400, msg: `exact human confirmation required: recover HISS ${id}` };
   const result = await executeOwnerControlAction('osaa.his.lifecycle', {
     id, action: 'recover', confirm: inputs.confirmation, reason: inputs.reason,
   }, actor);

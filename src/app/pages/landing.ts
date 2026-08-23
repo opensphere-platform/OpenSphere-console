@@ -151,7 +151,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
               <h2 id="model-title">OpenSphere Service Realization Map</h2>
             </div>
           </div>
-          <p>구조는 아래에서 위로 축적되며, 설립 순서는 L1 bootstrap에서 L3를 거쳐 L1 HIS를 실증하는 feedback을 포함합니다.</p>
+          <p>구조는 아래에서 위로 축적되며, 설립 순서는 L1 bootstrap에서 L3를 거쳐 L1 HISS를 실증하는 feedback을 포함합니다.</p>
         </div>
 
         <div class="model-scroll" tabindex="0" aria-label="10 Perspectives and 6 Layers architecture map">
@@ -245,7 +245,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
           <article>
             <span>01</span>
             <h3>Layer는 설치 단계가 아닙니다</h3>
-            <p>지속되는 운영 구조이며, bootstrap은 L1→L2→L3 뒤 L1 HIS를 실증하는 feedback을 가집니다.</p>
+            <p>지속되는 운영 구조이며, bootstrap은 L1→L2→L3 뒤 L1 HISS를 실증하는 feedback을 가집니다.</p>
           </article>
           <article>
             <span>02</span>

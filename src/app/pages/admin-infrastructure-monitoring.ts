@@ -143,7 +143,7 @@ interface ChartView {
         <os-backend-unavailable
           feature="Infrastructure Monitoring"
           backend="Console Baseline Monitoring adapter (/api/monitoring/baseline/v1)"
-          hint="Beszel Hub·Agent와 읽기 전용 adapter 자격을 확인하십시오. 인증·상태 변경·HIS에는 영향을 주지 않습니다."
+          hint="Beszel Hub·Agent와 읽기 전용 adapter 자격을 확인하십시오. 인증·상태 변경·HISS에는 영향을 주지 않습니다."
           [detail]="detail"
         />
       } @else {
@@ -182,7 +182,7 @@ interface ChartView {
                     <ul class="scope-list">
                       <li><strong>노드 OS 추세</strong><span>Beszel · CPU, 메모리, 디스크, I/O, 네트워크, load</span></li>
                       <li><strong>Kubernetes 현재 상태</strong><span>Kubernetes API · Node Ready, Pod phase, Namespace</span></li>
-                      <li><strong>고급 관측</strong><span>HIS · SLO, trace, 장기보존, 업무 telemetry</span></li>
+                      <li><strong>고급 관측</strong><span>HISS · SLO, trace, 장기보존, 업무 telemetry</span></li>
                     </ul>
                   </section>
                 </div>
@@ -357,7 +357,7 @@ interface ChartView {
                     <dl class="facts">
                       <div><dt>1분 지점</dt><dd>최근 1시간</dd></div><div><dt>10분 지점</dt><dd>최근 12시간</dd></div>
                       <div><dt>20분 지점</dt><dd>최근 24시간</dd></div><div><dt>2시간 지점</dt><dd>최근 7일</dd></div>
-                      <div><dt>8시간 지점</dt><dd>최근 30일</dd></div><div><dt>장기보존</dt><dd>HIS 또는 승인된 별도 export</dd></div>
+                      <div><dt>8시간 지점</dt><dd>최근 30일</dd></div><div><dt>장기보존</dt><dd>HISS 또는 승인된 별도 export</dd></div>
                     </dl>
                   </section>
                 }

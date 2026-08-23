@@ -9,8 +9,8 @@ const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 const clusterManagerSource = fs.readFileSync(path.resolve(__dirname, '../../../OpenSphere-shell-clusterManager/his-manager.js'), 'utf8');
 const cephManagerSource = fs.readFileSync(path.resolve(__dirname, '../../../OpenSphere-shell-clusterManager/ceph-manager.js'), 'utf8');
 
-test('HIS Observability tools are capability-negotiated against the signed owner API', () => {
-  assert.match(source, /\/api\/his\/osaa\/capabilities/);
+test('HISS Observability tools are capability-negotiated against the signed owner API', () => {
+  assert.match(source, /\/api\/hiss\/osaa\/capabilities/);
   assert.match(source, /opensphere\.io\/osaa-his-owner\/v1/);
   assert.match(source, /hisOwnerCapabilities\.has\('observability-configure'\)/);
   assert.match(source, /signed Cluster Manager does not expose/);
@@ -19,7 +19,7 @@ test('HIS Observability tools are capability-negotiated against the signed owner
   assert.match(clusterManagerSource, /'observability-configure'/);
 });
 
-test('Gateway and Cluster Manager both enforce closed SecretRef-only HIS input', () => {
+test('Gateway and Cluster Manager both enforce closed SecretRef-only HISS input', () => {
   assert.match(source, /normalizeHisObservabilityOwnerConfig/);
   assert.match(source, /requireExactOwnerObject/);
   assert.match(source, /additionalProperties: false/);
@@ -29,12 +29,12 @@ test('Gateway and Cluster Manager both enforce closed SecretRef-only HIS input',
   assert.match(clusterManagerSource, /\['enabled', 'url', 'secretName', 'secretKey'\]/);
 });
 
-test('HIS mutation is independently permissioned, AAL2-bound, and explicitly confirms exposure and reset', () => {
+test('HISS mutation is independently permissioned, AAL2-bound, and explicitly confirms exposure and reset', () => {
   assert.match(source, /'osaa\.his\.observability\.configure': 'console\.his\.manage'/);
-  assert.match(source, /configure HIS observability public=\$\{config\.grafana\.exposureMode === 'PublicIngress'\} data-reset=\$\{Boolean\(resetData\)\}/);
+  assert.match(source, /configure HISS observability public=\$\{config\.grafana\.exposureMode === 'PublicIngress'\} data-reset=\$\{Boolean\(resetData\)\}/);
   assert.match(source, /owner control-plane action requires MFA assurance aal2/);
   assert.match(clusterManagerSource, /OSAA_HIS_MANAGE_PERMISSION/);
-  assert.match(clusterManagerSource, /HIS OSAA 변경은 AAL2 재인증/);
+  assert.match(clusterManagerSource, /OSAA 변경은 AAL2 재인증/);
   assert.match(clusterManagerSource, /configurationPlan\.requiresDataReset !== body\.resetData/);
 });
 

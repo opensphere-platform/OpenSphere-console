@@ -41,6 +41,25 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensph
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
+# OSAA Dialogue State is a four-stage runtime policy, not a browser-only flag.
+# Backend may mutate only the OSAA Gateway Deployment pod-template annotation;
+# the annotation is durable desired state and changing it causes one bounded rollout.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: opensphere-console-backend-osaa-dialogue-state, namespace: opensphere-console }
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["opensphere-console-osaa-gateway"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: opensphere-console-backend-osaa-dialogue-state, namespace: opensphere-console }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-backend-osaa-dialogue-state }
+subjects:
+  - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
+---
 # The browser-facing Backend may read only the managed installation lock. It
 # cannot apply release resources or create executor Jobs.
 apiVersion: rbac.authorization.k8s.io/v1

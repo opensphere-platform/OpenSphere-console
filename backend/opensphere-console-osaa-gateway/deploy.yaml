@@ -4,7 +4,7 @@
 # platform pillar. It is installed after Supabase Data & Identity and Gitea
 # Declarative Change Authority are Ready. Clean bootstrap, upgrade and uninstall
 # own its lifecycle; a normal install must not require a post-install patch.
-# Before Cluster Manager Activated + HIS Preflight Ready, Kubernetes mutation/action tools stay
+# Before Cluster Manager Activated + HISS Preflight Ready, Kubernetes mutation/action tools stay
 # fail closed (OSAA_MUTATION_ENABLED='false' below) and this base runtime grants no deployment
 # patch RBAC at all — see the removed *-controlled-operator ClusterRole/ClusterRoleBinding below.
 apiVersion: v1
@@ -188,11 +188,11 @@ metadata: { name: opensphere-console-osaa-gateway-environment-reader }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensphere-console-osaa-gateway-environment-reader }
 subjects: [{ kind: ServiceAccount, name: opensphere-console-osaa-gateway, namespace: opensphere-console }]
 ---
-# CONSTITUTION-0004 §4.2: before Cluster Manager Activated + HIS Preflight Ready, OSAA must stay
+# CONSTITUTION-0004 §4.2: before Cluster Manager Activated + HISS Preflight Ready, OSAA must stay
 # read-only. The base runtime therefore grants NO deployment patch capability at all — the former
 # opensphere-console-osaa-gateway-controlled-operator ClusterRole/ClusterRoleBinding (apps/deployments
 # get/list/patch) is permanently removed from this manifest, not merely left unbound. Any later
-# controlled-mutation capability is a Cluster Manager Activated + HIS Preflight Ready gated addition,
+# controlled-mutation capability is a Cluster Manager Activated + HISS Preflight Ready gated addition,
 # never a base-install grant.
 apiVersion: apps/v1
 kind: Deployment
@@ -284,13 +284,18 @@ spec:
             - { name: OSAA_K8S_WATCH_ENABLED, value: "true" }
             - { name: OSAA_K8S_WATCH_HEARTBEAT_MS, value: "15000" }
             # Master switch only. The Gateway and Backend still require live Cluster Manager
-            # Activated + HIS Preflight Ready evidence for every mutating action.
+            # Activated + HISS Preflight Ready evidence for every mutating action.
             - { name: OSAA_ACTION_SUBMISSION_ENABLED, value: "true" }
-            # PLAN-015 rollout is server-owned. External requests cannot override this value.
-            # Re-audit and explicit deployment approval are required before advancing it.
-            - { name: OSAA_DIALOGUE_STATE_MODE, value: "off" }
+            # PLAN-015 rollout remains server-owned. The Console Backend may change
+            # only this Deployment's allowlisted pod annotation after admin+AAL2
+            # verification and audit intent recording. Missing/invalid values fail
+            # safe to `off` inside dialogue-rollout.js.
+            - name: OSAA_DIALOGUE_STATE_MODE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['opensphere.io/osaa-dialogue-state-mode']
             # CONSTITUTION-0004 §4.2 fail-closed default: Kubernetes mutation/action tools stay
-            # unavailable until Cluster Manager Activated + HIS Preflight Ready explicitly flips this.
+            # unavailable until Cluster Manager Activated + HISS Preflight Ready explicitly flips this.
             - { name: OSAA_MUTATION_ENABLED, value: "false" }
           ports: [{ name: http, containerPort: 8080 }]
           # /healthz is liveness/startup only. /readyz additionally requires PostgreSQL connectivity,

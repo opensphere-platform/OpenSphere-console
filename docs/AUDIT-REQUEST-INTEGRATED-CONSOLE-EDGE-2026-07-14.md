@@ -65,7 +65,7 @@
 
 - OpenSphere는 기존 Kubernetes 위에 설치되는 통합 운영 제품이다.
 - 초기 bootstrap은 전문 Kubernetes 지식 없이 실행 가능해야 한다.
-- HIS, Cluster Manager, Observability 및 기타 subShell·plugin의 부재가 기본 Console 기동을 막아서는 안 된다.
+- HISS, Cluster Manager, Observability 및 기타 subShell·plugin의 부재가 기본 Console 기동을 막아서는 안 된다.
 - 기본 Main Shell 설치 직후 subShell·plugin이 0건인 상태는 의도된 정상 상태다.
 - Developer Catalog, APIs, Console CLI, Extensions, 관리자, 역할, Backbone, 알림, 감사는 Console 자체 관리 기능이다.
 
@@ -253,7 +253,7 @@
 | 채널 | `edge`만 설치 | `candidate` 승격 금지 조건 확인 |
 | 운영 복구 | 정상 upgrade·verify 증거 보유 | 중단·부분 실패·rollback·backup restore chaos 시험 |
 
-Cluster Manager, HIS, AI subShell 및 기타 업무 모듈 자체의 기능 품질은 이번 감사 범위가 아니다. 다만 이들을 안전하게 설치할 Extension Host 계약은 감사 범위다.
+Cluster Manager, HISS, AI subShell 및 기타 업무 모듈 자체의 기능 품질은 이번 감사 범위가 아니다. 다만 이들을 안전하게 설치할 Extension Host 계약은 감사 범위다.
 
 ## 9. 독립 재현 절차
 

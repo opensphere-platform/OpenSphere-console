@@ -244,14 +244,14 @@ The reference and implementation differ in pixel dimensions, so comparisons were
 
 - Preserves the three-lane Supabase → Gitea → Kubernetes relationship, policy inspector, next-action banner, and request list.
 - The empty runtime state is explicit: there is no active request and the first governed change is still awaited.
-- The screen does not invent PR, outbox, reconciliation, Kubernetes receipt, or HIS telemetry evidence.
+- The screen does not invent PR, outbox, reconciliation, Kubernetes receipt, or HISS telemetry evidence.
 
 ### Dedicated management views
 
 - Data & Identity keeps Supabase-specific service, identity, RLS, storage, audit, integration, and structured recovery visibility.
 - Change Control keeps Gitea-specific repository, protected branch, signed-commit, direct-push, approval, webhook, supply-chain, DR, and contract visibility.
 - The Gitea overview exposes `opensphere/platform-declarations`, protected `main`, signed commits required, and direct push denied.
-- HIS remains an external telemetry authority and is displayed as `NotConfigured` when no binding exists; the Console does not create Prometheus/HIS resources.
+- HISS remains an external telemetry authority and is displayed as `NotConfigured` when no binding exists; the Console does not create Prometheus/HISS resources.
 
 ## States and interactions verified
 

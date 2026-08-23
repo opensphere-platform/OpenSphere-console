@@ -6,7 +6,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
-test('Console management exposes Supabase, Gitea and HIS as distinct authorities', () => {
+test('Console management exposes Supabase, Gitea and HISS as distinct authorities', () => {
   const routes = read('src', 'app', 'app.routes.ts');
   const layout = read('src', 'app', 'pages', 'admin-layout.ts');
   assert.match(routes, /path: 'platform-control'/);
@@ -16,7 +16,7 @@ test('Console management exposes Supabase, Gitea and HIS as distinct authorities
   assert.match(routes, /path: 'observability'/);
   assert.match(routes, /path: 'backbone', redirectTo: 'data-identity'/);
   assert.match(layout, /플랫폼 제어/);
-  assert.match(layout, /HIS Observability/);
+  assert.match(layout, /HISS Observability/);
   assert.match(layout, /route: '\/manage\/state-changes'/);
   assert.doesNotMatch(layout, /route: '\/manage\/change-control'/);
   assert.doesNotMatch(layout, /routerLink="\/manage\/backbone"/);
@@ -102,7 +102,7 @@ test('Platform Control presents support readiness, operations, evidence and jour
   assert.match(readiness, /@Input\(\) embedded = false/);
   assert.match(readiness, /PlatformSupportProfile 사전 점검/);
   assert.match(control, /변경 요청 → 서명된 상태 선언 → Kubernetes 실측 결과/);
-  assert.match(control, /HIS Preflight/);
+  assert.match(control, /HISS Preflight/);
   assert.match(control, /opensphere\.his\.readiness-projection\/v1/);
   assert.match(control, /PlatformReadinessService/);
   assert.match(control, /this\.readinessService\.status\(\)/);
@@ -135,7 +135,7 @@ test('DUPA active runtime depends on Supabase audit and never ships legacy data 
   assert.doesNotMatch(deployment, /BACKBONE_PG_|BACKBONE_S3_/);
 });
 
-test('OSAA runs in the Console namespace and HIS remains the telemetry owner', () => {
+test('OSAA runs in the Console namespace and HISS remains the telemetry owner', () => {
   const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
   const nginx = read('nginx', 'default.conf.template');
   const plan = read('docs', 'PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md');

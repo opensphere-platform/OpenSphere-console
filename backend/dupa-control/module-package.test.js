@@ -128,7 +128,7 @@ test('rejects unapproved permission profiles and keeps RBAC rules out of the con
   assert.doesNotMatch(observer, /resources: \[[^\]]*(?:secrets|users)/);
 });
 
-test('HIS manager profile is rejected: Console modules cannot own HIS lifecycle', () => {
+test('HISS manager profile is rejected: Console modules cannot own HISS lifecycle', () => {
   const his = structuredClone(descriptor);
   his.permissionProfile = 'cluster-his-manager-v1';
   assert.ok(moduleDescriptorIssues(his).some((issue) => issue.code === 'UnknownPermissionProfile'));

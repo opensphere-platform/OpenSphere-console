@@ -176,6 +176,9 @@ const EXTERNAL_CHANNEL_REQUIRE_AAL2 = String(process.env.EXTERNAL_CHANNEL_REQUIR
 const OSAA_NAMESPACE = process.env.OSAA_NAMESPACE || 'opensphere-console';
 const OSAA_KEY_NAMESPACE = process.env.OSAA_KEY_NAMESPACE || 'opensphere-osaa-credentials';
 const K8S_API = 'https://kubernetes.default.svc';
+const OSAA_DIALOGUE_STATE_DEPLOYMENT = 'opensphere-console-osaa-gateway';
+const OSAA_DIALOGUE_STATE_ANNOTATION = 'opensphere.io/osaa-dialogue-state-mode';
+const OSAA_DIALOGUE_STATE_MODES = new Set(['off', 'shadow', 'read-enforce', 'mutation-enforce']);
 const OSAA_KEY_LABEL = 'opensphere.io/osaa-llm-key';
 const OSAA_PART_LABEL = 'opensphere.io/part-of';
 const OSAA_KEY_ID_RE = /^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$/;
@@ -1403,7 +1406,7 @@ async function requireOsaaLifecycleGate(authorization) {
   const prerequisites = Array.isArray(body.prerequisites) ? body.prerequisites : [];
   const clusterManager = prerequisites.find((item) => item.key === 'cluster-manager');
   const hisPreflight = prerequisites.find((item) => item.key === 'his-preflight');
-  if (!clusterManager?.ready || !hisPreflight?.ready) throw { code: 409, msg: 'OSAA mutations require Cluster Manager Activated and HIS Preflight Ready' };
+  if (!clusterManager?.ready || !hisPreflight?.ready) throw { code: 409, msg: 'OSAA mutations require Cluster Manager Activated and HISS Preflight Ready' };
   return { clusterManager: true, hisPreflight: true, observedAt: body.observedAt || null };
 }
 
@@ -4097,6 +4100,93 @@ async function k8sRequest(method, apiPath, body = undefined, contentType = 'appl
   return { ok: response.ok, status: response.status, body: parsed };
 }
 
+function osaaDialogueStateDeploymentPath() {
+  return `/apis/apps/v1/namespaces/${encodeURIComponent(OSAA_NAMESPACE)}/deployments/${encodeURIComponent(OSAA_DIALOGUE_STATE_DEPLOYMENT)}`;
+}
+
+function osaaDialogueStateControlProjection(deployment) {
+  const spec = deployment?.spec || {};
+  const status = deployment?.status || {};
+  const annotations = spec.template?.metadata?.annotations || {};
+  const mode = OSAA_DIALOGUE_STATE_MODES.has(annotations[OSAA_DIALOGUE_STATE_ANNOTATION])
+    ? annotations[OSAA_DIALOGUE_STATE_ANNOTATION]
+    : 'off';
+  const desiredReplicas = Number(spec.replicas || 0);
+  const generation = Number(deployment?.metadata?.generation || 0);
+  const observedGeneration = Number(status.observedGeneration || 0);
+  const updatedReplicas = Number(status.updatedReplicas || 0);
+  const readyReplicas = Number(status.readyReplicas || 0);
+  return {
+    mode,
+    source: annotations[OSAA_DIALOGUE_STATE_ANNOTATION] ? 'deployment-annotation' : 'safe-default',
+    rollout: {
+      ready: observedGeneration >= generation
+        && updatedReplicas === desiredReplicas
+        && readyReplicas === desiredReplicas,
+      generation,
+      observedGeneration,
+      desiredReplicas,
+      updatedReplicas,
+      readyReplicas,
+    },
+    updatedAt: String(deployment?.metadata?.annotations?.['opensphere.io/osaa-dialogue-state-updated-at'] || ''),
+    updatedBy: String(deployment?.metadata?.annotations?.['opensphere.io/osaa-dialogue-state-updated-by'] || ''),
+  };
+}
+
+async function getOsaaDialogueStateControl() {
+  const response = await k8sRequest('GET', osaaDialogueStateDeploymentPath());
+  if (!response.ok) throw { code: 502, msg: `OSAA Dialogue State deployment unavailable (Kubernetes HTTP ${response.status})` };
+  return osaaDialogueStateControlProjection(response.body);
+}
+
+async function setOsaaDialogueStateControl(actor, body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['mode', 'reason'].includes(key))) {
+    throw { code: 400, msg: 'mode and reason are the only supported Dialogue State settings' };
+  }
+  const mode = String(body.mode || '').trim().toLowerCase();
+  if (!OSAA_DIALOGUE_STATE_MODES.has(mode)) throw { code: 400, msg: 'unsupported OSAA Dialogue State mode' };
+  const reason = managementReason(body.reason);
+  if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
+
+  const current = await getOsaaDialogueStateControl();
+  if (current.mode === mode && current.rollout.ready) return { changed: false, ...current };
+
+  const requestId = newOpId();
+  const updatedAt = new Date().toISOString();
+  const updatedBy = String(actor.username || actor.sub).slice(0, 200);
+  const payloadDigest = toHashHex(canonicalJson({ from: current.mode, to: mode }));
+  await logAudit(actor, 'osaa-dialogue-state-mode-change', OSAA_DIALOGUE_STATE_DEPLOYMENT, 'attempt', reason, {
+    requestId, phase: 'intent', targetType: 'osaa-dialogue-state-policy', payloadDigest,
+  });
+  const patched = await k8sRequest('PATCH', osaaDialogueStateDeploymentPath(), {
+    metadata: {
+      annotations: {
+        'opensphere.io/osaa-dialogue-state-updated-at': updatedAt,
+        'opensphere.io/osaa-dialogue-state-updated-by': updatedBy,
+        'opensphere.io/osaa-dialogue-state-change-reason': reason.slice(0, 500),
+        'opensphere.io/osaa-dialogue-state-request-id': requestId,
+      },
+    },
+    spec: {
+      template: {
+        metadata: { annotations: { [OSAA_DIALOGUE_STATE_ANNOTATION]: mode } },
+      },
+    },
+  }, 'application/merge-patch+json');
+  if (!patched.ok) {
+    await logAudit(actor, 'osaa-dialogue-state-mode-change', OSAA_DIALOGUE_STATE_DEPLOYMENT, 'failed', reason, {
+      requestId, phase: 'failed', targetType: 'osaa-dialogue-state-policy', payloadDigest,
+    }).catch(() => undefined);
+    throw { code: 502, msg: `OSAA Dialogue State mode apply failed (Kubernetes HTTP ${patched.status})` };
+  }
+  await logAudit(actor, 'osaa-dialogue-state-mode-change', OSAA_DIALOGUE_STATE_DEPLOYMENT, 'ok', reason, {
+    requestId, phase: 'applied', targetType: 'osaa-dialogue-state-policy', payloadDigest,
+  });
+  return { changed: true, requestId, ...osaaDialogueStateControlProjection(patched.body) };
+}
+
 function osaaKeySecretName(id) {
   return `osaa-llm-${id}`;
 }
@@ -5203,6 +5293,18 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/osaa/admin/llm-keys' && req.method === 'GET') {
       try { const actor = await verifyConsoleAdmin(req); return json(res, 200, await listOsaaKeys(actor)); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA credential inventory unavailable' }); }
+    }
+    if (p === '/api/osaa/admin/dialogue-state' && req.method === 'GET') {
+      try {
+        await verifyConsoleAdmin(req, { requireAal2: false });
+        return json(res, 200, await getOsaaDialogueStateControl());
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA Dialogue State control unavailable' }); }
+    }
+    if (p === '/api/osaa/admin/dialogue-state' && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req, { requireAal2: true });
+        return json(res, 202, await setOsaaDialogueStateControl(actor, await readBody(req)));
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA Dialogue State mode change failed' }); }
     }
     if (p === '/api/osaa/admin/llm-keys' && req.method === 'POST') {
       try {

@@ -12,9 +12,9 @@ import {
 } from '../core/platform-readiness.service';
 
 /**
- * Console-native lifecycle gate between HIS and PFS (CONSTITUTION-0004 §7~§8).
+ * Console-native lifecycle gate between HISS and PFS (CONSTITUTION-0004 §7~§8).
  * This page aggregates authoritative server evidence and records PlatformSupportProfile
- * preflight/verification. It never installs HIS itself; Cluster Manager owns those mutations.
+ * preflight/verification. It never installs HISS itself; Cluster Manager owns those mutations.
  */
 @Component({
   selector: 'os-admin-platform-readiness',
@@ -23,7 +23,7 @@ import {
   template: `
     @if (!embedded) {
       <os-page-header title="플랫폼 준비 상태" tag="Platform Support Profile · Console native">
-        <p>CBS와 Main Shell, Cluster Manager, HIS의 실제 상태를 검증하고 PFS 설치 허용 여부를 결정합니다.</p>
+        <p>CBS와 Main Shell, Cluster Manager, HISS의 실제 상태를 검증하고 PFS 설치 허용 여부를 결정합니다.</p>
       </os-page-header>
     }
 
@@ -137,7 +137,7 @@ import {
           <h2>Foundation Shell 관리 화면 활성화 허용</h2>
           <p>{{ s.ready ? 'Platform Support Profile이 Ready입니다. PFSS 설립과 하위 서비스 admission을 진행할 수 있습니다.' : '관리 화면은 항상 접근할 수 있습니다. 미충족 증거는 PFSS 내부에서 Degraded로 표시하며, 실제 서비스 설립과 하위 plugin admission만 잠깁니다.' }}</p>
         </div>
-        <div class="btn-group"><a class="btn btn-primary" routerLink="/manage/extensions">Foundation Shell 관리</a>@if (!s.ready) { <a class="btn" routerLink="/p/cluster-manager/his/his">HIS 구성</a> }</div>
+        <div class="btn-group"><a class="btn btn-primary" routerLink="/manage/extensions">Foundation Shell 관리</a>@if (!s.ready) { <a class="btn" routerLink="/p/cluster-manager/hiss/hiss">HISS 구성</a> }</div>
       </section>
     } @else {
       <div class="progress loop"><progress></progress></div>

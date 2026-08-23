@@ -17,4 +17,4 @@
 
 ## 운영 시작
 
-먼저 호스트의 준비 상태를 확인한 뒤 Cluster Perspective로 이동합니다. OpenSphere는 기존 Kubernetes 위에 설치되므로 호스트 자체를 임의 변경하지 않고, HIS 계약으로 확인 가능한 상태와 필요한 조치만 제시합니다.
+먼저 호스트의 준비 상태를 확인한 뒤 Cluster Perspective로 이동합니다. OpenSphere는 기존 Kubernetes 위에 설치되므로 호스트 자체를 임의 변경하지 않고, HISS 계약으로 확인 가능한 상태와 필요한 조치만 제시합니다.

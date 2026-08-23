@@ -38,7 +38,7 @@ const PLATFORM_GROUP = 'platform.opensphere.io';
 const PLATFORM_PROFILE_NAME = 'default';
 const PLATFORM_PROFILE_PATH = `/apis/${PLATFORM_GROUP}/${V}/namespaces/${NS}/platformsupportprofiles/${PLATFORM_PROFILE_NAME}`;
 const HIS_STATUS_URL = process.env.HIS_STATUS_URL
-  || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/his/internal/status';
+  || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/hiss/internal/status';
 const HIS_STATUS_MAX_AGE_MS = Math.max(15000, Math.min(Number(process.env.HIS_STATUS_MAX_AGE_MS || 60000), 300000));
 const PLATFORM_LIFECYCLE_GATE_MAX_AGE_MS = Math.max(
   15000,
@@ -1036,7 +1036,7 @@ function networkPolicyManifest(pkg) {
   if (policy?.enabled !== true) return null;
   const name = pkg.metadata.name;
   const ingressFrom = [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': NS } } }];
-  // A consumer package may opt into an explicit HIS namespace selector issued
+  // A consumer package may opt into an explicit HISS namespace selector issued
   // by platform policy.  It must never assume a namespace named "monitoring".
   const telemetrySelector = policy.telemetryIngress?.namespaceSelector;
   if (telemetrySelector && typeof telemetrySelector === 'object') {
@@ -1057,8 +1057,8 @@ function networkPolicyManifest(pkg) {
   };
 }
 
-// HIS owns scrape configuration.  DUPA publishes this descriptor as part of the
-// package contract, but never materializes a ServiceMonitor (or any other HIS
+// HISS owns scrape configuration.  DUPA publishes this descriptor as part of the
+// package contract, but never materializes a ServiceMonitor (or any other HISS
 // resource) on the Console's behalf.
 function telemetryDescriptor(pkg) {
   const obs = pkg.spec.contributions?.observability;
@@ -2556,9 +2556,9 @@ async function osaaGatewayReadiness() {
     return { ready: false, components: null, reason: 'osaa_gateway_unreachable' };
   }
 }
-// ── Observability: HIS Binding consumer only ───────────────────────────────
-// Prometheus/Grafana/Alertmanager are HIS-owned.  The Console may read an
-// HIS-issued ObservabilityBinding and relay only contract-approved templates;
+// ── Observability: HISS Binding consumer only ───────────────────────────────
+// Prometheus/Grafana/Alertmanager are HISS-owned.  The Console may read an
+// HISS-issued ObservabilityBinding and relay only contract-approved templates;
 // it never discovers a monitoring namespace, writes ServiceMonitor resources,
 // or accepts arbitrary PromQL from a browser.
 const OBSERVABILITY_GROUP = 'observability.opensphere.io';
@@ -2639,17 +2639,17 @@ function boundQueryUrl(endpoint, range) {
 async function observabilityBinding() {
   const result = await k8s('GET', OBSERVABILITY_BINDINGS_PATH);
   if (result.status === 404) return {
-    mode: 'NotConfigured', ready: false, owner: 'HIS', bindingApi: 'Unavailable', capabilities: [],
-    reason: 'HIS ObservabilityBinding API is not configured for this cluster', binding: null,
+    mode: 'NotConfigured', ready: false, owner: 'HISS', bindingApi: 'Unavailable', capabilities: [],
+    reason: 'HISS ObservabilityBinding API is not configured for this cluster', binding: null,
   };
   if (!result.ok) return {
-    mode: 'Degraded', ready: false, owner: 'HIS', bindingApi: `HTTP ${result.status}`, capabilities: [],
+    mode: 'Degraded', ready: false, owner: 'HISS', bindingApi: `HTTP ${result.status}`, capabilities: [],
     reason: `ObservabilityBinding read failed (HTTP ${result.status})`, binding: null,
   };
   const binding = consoleBinding(result.json?.items);
   if (!binding) return {
-    mode: 'NotConfigured', ready: false, owner: 'HIS', bindingApi: 'Available', capabilities: [],
-    reason: 'No HIS ObservabilityBinding has been issued to opensphere-console', binding: null,
+    mode: 'NotConfigured', ready: false, owner: 'HISS', bindingApi: 'Available', capabilities: [],
+    reason: 'No HISS ObservabilityBinding has been issued to opensphere-console', binding: null,
   };
   const contract = bindingContract(binding);
   const phase = bindingPhase(binding);
@@ -2659,10 +2659,10 @@ async function observabilityBinding() {
   const mode = connected ? 'Connected' : phase === 'Degraded' ? 'Degraded' : 'Pending';
   const missing = [!metrics && 'metrics capability', !endpoint && 'query endpoint'].filter(Boolean).join(', ');
   return {
-    mode, ready: connected, owner: 'HIS', bindingApi: 'Available', capabilities: contract.capabilities,
+    mode, ready: connected, owner: 'HISS', bindingApi: 'Available', capabilities: contract.capabilities,
     reason: connected ? '' : (phase === 'Degraded'
-      ? String(binding.status?.message || binding.status?.reason || 'HIS Binding is degraded')
-      : `HIS Binding is not usable: ${missing || 'connection is pending'}`),
+      ? String(binding.status?.message || binding.status?.reason || 'HISS Binding is degraded')
+      : `HISS Binding is not usable: ${missing || 'connection is pending'}`),
     binding: {
       name: binding.metadata?.name || '', namespace: binding.metadata?.namespace || '', phase,
       observedAt: contract.observedAt, templates: Object.keys(contract.templates),
@@ -2686,21 +2686,21 @@ async function observabilityStatus() {
   // The Binding endpoint is intentionally never sent to the browser.
   const { _contract, ...publicBinding } = binding;
   return {
-    owner: 'HIS', mode: publicBinding.mode, ready: publicBinding.ready,
+    owner: 'HISS', mode: publicBinding.mode, ready: publicBinding.ready,
     binding: publicBinding.binding, bindingApi: publicBinding.bindingApi,
     capabilities: publicBinding.capabilities, reason: publicBinding.reason,
     directEvidence, telemetry: publicBinding.ready
-      ? { enabled: true, source: 'HIS ObservabilityBinding' }
+      ? { enabled: true, source: 'HISS ObservabilityBinding' }
       : { enabled: false, source: 'direct Console evidence only' },
   };
 }
 async function observabilityTargets() {
   const binding = await observabilityBinding();
   return {
-    owner: 'HIS', mode: binding.mode, reachable: binding.ready,
+    owner: 'HISS', mode: binding.mode, reachable: binding.ready,
     active: [],
     reason: binding.ready
-      ? 'Target inventory is not exposed unless HIS publishes an approved target template'
+      ? 'Target inventory is not exposed unless HISS publishes an approved target template'
       : binding.reason,
   };
 }
@@ -2708,9 +2708,9 @@ async function observabilityTemplateQuery(template, range) {
   const binding = await observabilityBinding();
   if (!binding.ready) return { ok: false, code: 'ObservabilityBindingUnavailable', hint: binding.reason };
   const expr = binding._contract.templates[String(template || '')];
-  if (typeof expr !== 'string' || !expr.trim()) return { ok: false, code: 'TemplateUnavailable', hint: 'The requested query is not approved by HIS Binding' };
+  if (typeof expr !== 'string' || !expr.trim()) return { ok: false, code: 'TemplateUnavailable', hint: 'The requested query is not approved by HISS Binding' };
   const url = boundQueryUrl(binding._contract.endpoint, range);
-  if (!url) return { ok: false, code: 'InvalidBindingEndpoint', hint: 'HIS Binding query endpoint is invalid' };
+  if (!url) return { ok: false, code: 'InvalidBindingEndpoint', hint: 'HISS Binding query endpoint is invalid' };
   url.searchParams.set('query', expr);
   if (range) {
     const end = Math.floor(Date.now() / 1000);
@@ -2724,7 +2724,7 @@ async function observabilityTemplateQuery(template, range) {
       headers: { Authorization: `Bearer ${token()}`, accept: 'application/json' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!response.ok) return { ok: false, code: 'HISQueryFailed', hint: `HIS query endpoint HTTP ${response.status}` };
+    if (!response.ok) return { ok: false, code: 'HISQueryFailed', hint: `HISS query endpoint HTTP ${response.status}` };
     const body = await response.json();
     return { ok: true, resultType: body.data?.resultType || '', result: body.data?.result || [] };
   } catch (error) {
@@ -2734,10 +2734,10 @@ async function observabilityTemplateQuery(template, range) {
 
 // ── Platform Readiness (CONSTITUTION-0004 §7~§8) ───────────────────────────
 // PlatformSupportProfile is a Main Shell-owned, machine-readable admission gate. It is not a
-// fourth service stack and it does not install or administer HIS. SRL-L1 HIS
+// fourth service stack and it does not install or administer HISS. SRL-L1 HISS
 // readiness comes only from the authenticated Cluster Manager projection.
 // ObservabilityBinding remains an SRL-L4 telemetry capability and is never a
-// substitute for the complete HIS preflight.
+// substitute for the complete HISS preflight.
 const FOUNDATION_ID = 'foundation';
 const DOMAIN_SHELL_IDS = new Set(['developer', 'workspace', 'customer', 'edge', 'website']);
 function requiresDomainAdmission(pkg) {
@@ -2844,8 +2844,8 @@ function normalizeHisStatus(response) {
   const body = response?.body || response?.json || {};
   const checkedAtMs = Date.parse(body.checkedAt || '');
   const ageMs = Number.isFinite(checkedAtMs) ? Math.max(0, Date.now() - checkedAtMs) : Number.POSITIVE_INFINITY;
-  const contractValid = body.schema === 'his-status.opensphere.io/v1alpha1'
-    && body.stack === 'HIS'
+  const contractValid = body.schema === 'hiss-status.opensphere.io/v1alpha1'
+    && body.stack === 'HISS'
     && ['Ready', 'Degraded', 'Blocked'].includes(body.state)
     && Array.isArray(body.items)
     && body.summary && Number.isFinite(Number(body.summary.coreTotal));
@@ -2857,13 +2857,13 @@ function normalizeHisStatus(response) {
       .map((item) => ({ id: item.id, state: item.check?.state || 'Unknown', reason: item.check?.reason || 'Unknown' }))
     : [];
   let reason = '';
-  if (response?.ok !== true) reason = `Cluster Manager HIS status HTTP ${response?.status || 0}`;
-  else if (!contractValid) reason = 'Cluster Manager HIS status contract is invalid';
-  else if (!fresh) reason = `Cluster Manager HIS status is stale (${Math.floor(ageMs / 1000)}s old)`;
-  else if (body.state !== 'Ready') reason = `HIS ${body.state}: ${blockers.map((item) => `${item.id}/${item.reason}`).join(', ') || 'required capability incomplete'}`;
+  if (response?.ok !== true) reason = `Cluster Manager HISS status HTTP ${response?.status || 0}`;
+  else if (!contractValid) reason = 'Cluster Manager HISS status contract is invalid';
+  else if (!fresh) reason = `Cluster Manager HISS status is stale (${Math.floor(ageMs / 1000)}s old)`;
+  else if (body.state !== 'Ready') reason = `HISS ${body.state}: ${blockers.map((item) => `${item.id}/${item.reason}`).join(', ') || 'required capability incomplete'}`;
   return {
     contract: 'opensphere.his.readiness-projection/v1',
-    authority: body.projection?.authority || 'Cluster Manager HIS',
+    authority: body.projection?.authority || 'Cluster Manager HISS',
     realizationLayer: body.projection?.realizationLayer || 'SRL-L1',
     ready,
     state: body.state || (response?.ok ? 'Unknown' : 'Unavailable'),
@@ -3079,7 +3079,7 @@ async function securityPolicyEvidence() {
   ]);
   const np = policies.json?.items || [];
   const rb = admins.json?.items || [];
-  // HIS has an independent boundary; Console proves only its own isolation and
+  // HISS has an independent boundary; Console proves only its own isolation and
   // immutable-image admission policies. No unrelated validating webhook is
   // treated as substitute evidence for these native VAP Deny bindings.
   const isolation = np.some((x) => x.metadata?.namespace === NS);
@@ -3218,7 +3218,7 @@ async function observabilityProfileEvidence() {
   return {
     ready, stackReady: binding.ready, telemetry,
     mode: binding.mode, binding: binding.binding,
-    reason: ready ? '' : (binding.reason || 'A Connected HIS ObservabilityBinding with metrics, logs, traces, and OTLP is required'),
+    reason: ready ? '' : (binding.reason || 'A Connected HISS ObservabilityBinding with metrics, logs, traces, and OTLP is required'),
   };
 }
 async function readPlatformProfile() {
@@ -3280,7 +3280,7 @@ async function platformReadinessStatus() {
 		{ name: 'platformControl', promise: platformControlReadiness(), fallback: { ready: false, reason: 'platform control probe failed' } },
 		{ name: 'mainShell', promise: mainShellBaselineStatus(), fallback: { ready: false, reason: 'main shell probe failed' } },
 		{ name: 'clusterManager', promise: clusterManagerActivationStatus(), fallback: { ready: false, phase: 'Unknown', workload: 'Unknown', reason: 'cluster manager probe failed' } },
-		{ name: 'hisPreflight', promise: hisPreflightEvidence(), fallback: { ready: false, reason: 'HIS preflight probe failed' } },
+		{ name: 'hisPreflight', promise: hisPreflightEvidence(), fallback: { ready: false, reason: 'HISS preflight probe failed' } },
 		{ name: 'profile', promise: readPlatformProfile(), fallback: { declared: false, crdReady: false, resource: null, reason: 'profile probe failed' } },
 		{ name: 'delivery', promise: deliveryEvidence(), fallback: { ready: false, state: 'ProbeFailed', reason: 'delivery probe failed' } },
 		{ name: 'observability', promise: observabilityProfileEvidence(), fallback: { ready: false, stackReady: false, mode: 'ProbeFailed', reason: 'observability probe failed' } },
@@ -3305,7 +3305,7 @@ async function platformReadinessStatus() {
     { key: 'platform-control', label: 'Platform Control Ready', ready: platformControl.ready, detail: platformControl.ready ? 'Supabase · Gitea · OSAA ready' : platformControl.reason, route: '/manage/platform-control' },
     { key: 'main-shell', label: 'Main Shell Baseline Ready', ready: mainShell.ready, detail: mainShell.ready ? 'Console native baseline ready' : 'Console/Auth/Backend/DUPA/OSAA workload incomplete', route: '/manage/observability' },
     { key: 'cluster-manager', label: 'Cluster Manager Activated', ready: clusterManager.ready, detail: `${clusterManager.phase} · workload ${clusterManager.workload}`, route: '/manage/extensions' },
-    { key: 'his-preflight', label: 'HIS Preflight Ready', ready: his.ready, detail: his.ready ? `${his.realizationLayer} ${his.core.ready}/${his.core.total} core Ready · checked ${his.checkedAt}` : (his.reason || his.state), route: '/p/cluster-manager/his/his' },
+    { key: 'his-preflight', label: 'HISS Preflight Ready', ready: his.ready, detail: his.ready ? `${his.realizationLayer} ${his.core.ready}/${his.core.total} core Ready · checked ${his.checkedAt}` : (his.reason || his.state), route: '/p/cluster-manager/hiss/hiss' },
   ];
   const prerequisitesReady = prerequisites.every((x) => x.ready);
   const supportAdmission = platformSupportAdmission(profile.declared, prerequisitesReady, capabilities);
@@ -3446,7 +3446,7 @@ function observePlatformLifecycleGate(clusterManager, his, now = Date.now()) {
 async function platformLifecycleGateStatus() {
   // The controller's reconciliation loop already observes these authorities.
   // Serving that bounded projection keeps every OSAA request from synchronously
-  // repeating Kubernetes and HIS probes. Missing or stale evidence fails closed.
+  // repeating Kubernetes and HISS probes. Missing or stale evidence fails closed.
   return platformLifecycleGateCachedProjection(
     _platformLifecycleGateSnapshot,
     _platformLifecycleGateObservedAtMs,
@@ -3520,7 +3520,7 @@ async function reconcilePlatformVerification() {
 }
 
 // ── /metrics (Prometheus exposition, dependency-free; never browser-routed) ──
-// HIS may scrape this only after accepting the Console telemetry descriptor and
+// HISS may scrape this only after accepting the Console telemetry descriptor and
 // issuing an ObservabilityBinding. Console code does not create the scrape rule.
 let _httpReqs = 0;
 function metricsText() {
@@ -3718,9 +3718,9 @@ const server = http.createServer(async (req, res) => {
       await durableAudit(actor, 'mutation-request', p, 'attempt', req.method, opId);
     }
 
-    // Platform Readiness — Console native lifecycle gate. HIS is an external
+    // Platform Readiness — Console native lifecycle gate. HISS is an external
     // authority; this API consumes Binding evidence and never calls a Cluster
-    // Manager HIS control surface.
+    // Manager HISS control surface.
     if (p === '/api/admin/platform-readiness/lifecycle' && req.method === 'GET') {
       return json(res, 200, await platformLifecycleGateStatus());
     }
@@ -3748,18 +3748,18 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await platformReadinessStatus(req));
     }
 
-    // Observability is HIS-owned. The Console consumes only a read-only Binding;
+    // Observability is HISS-owned. The Console consumes only a read-only Binding;
     // arbitrary PromQL and target discovery are intentionally not exposed.
     if (p === '/api/admin/observability/status' && req.method === 'GET') return json(res, 200, await observabilityStatus());
     if (p === '/api/admin/observability/targets' && req.method === 'GET') return json(res, 200, await observabilityTargets());
     if (p === '/api/admin/observability/query' && req.method === 'GET') {
       const template = url.searchParams.get('template') || '';
-      if (!template || template.length > 120) return json(res, 400, { error: 'HIS query template required', opId });
+      if (!template || template.length > 120) return json(res, 400, { error: 'HISS query template required', opId });
       return json(res, 200, await observabilityTemplateQuery(template, null));
     }
     if (p === '/api/admin/observability/query_range' && req.method === 'GET') {
       const template = url.searchParams.get('template') || '';
-      if (!template || template.length > 120) return json(res, 400, { error: 'HIS query template required', opId });
+      if (!template || template.length > 120) return json(res, 400, { error: 'HISS query template required', opId });
       return json(res, 200, await observabilityTemplateQuery(template, { minutes: Number(url.searchParams.get('minutes')) || 60, step: Number(url.searchParams.get('step')) || 60 }));
     }
     if (p === '/api/admin/extensions/revocations' && req.method === 'GET') {

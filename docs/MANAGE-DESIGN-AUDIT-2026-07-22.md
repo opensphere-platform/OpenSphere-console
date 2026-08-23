@@ -14,7 +14,7 @@
 - Supabase: 인증, 역할 계약, Console 운영 데이터, 감사·객체 저장의 권위 원천
 - Gitea: 선언형 변경, 보호 브랜치, 서명 커밋, 승인·조정 이력의 권위 원천
 - Kubernetes: 실제 반영 결과와 런타임 증거
-- HIS: 관측성 소유자. Console은 `ObservabilityBinding`의 읽기 전용 소비자이며 Prometheus/Grafana를 직접 소유하거나 구성하지 않는다.
+- HISS: 관측성 소유자. Console은 `ObservabilityBinding`의 읽기 전용 소비자이며 Prometheus/Grafana를 직접 소유하거나 구성하지 않는다.
 
 ## 공통 디자인 기준과 반영 내용
 
@@ -23,7 +23,7 @@
 3. **상태와 조치의 분리** — 녹색/황색 색상만으로 판단하지 않고 `Ready`, `Attention required`, `NotConfigured` 같은 텍스트와 다음 조치를 함께 둔다.
 4. **각 페이지의 강점 보존** — Control Plane의 Operations/Evidence/Change Journey, Data & Identity의 영역별 탭, Change Control의 변경 수명주기 탭, Extensions의 Topology/Installed/Catalog/Audit/Bindings를 유지했다.
 5. **명칭과 정보 구조 정리** — 좌측 메뉴 그룹을 `플랫폼 제어`, `운영 및 증거`로 정리하고 폐기된 `/manage/platform-readiness`는 `/manage/platform-control`로 호환 리디렉션한다.
-6. **빈 상태의 의미 명확화** — API 없음, HIS Binding 없음, 실패 감사 없음 같은 상태를 오류처럼 보이지 않게 명시적 빈 상태로 표시한다.
+6. **빈 상태의 의미 명확화** — API 없음, HISS Binding 없음, 실패 감사 없음 같은 상태를 오류처럼 보이지 않게 명시적 빈 상태로 표시한다.
 
 ## 화면별 결과
 
@@ -35,11 +35,11 @@
 | 4 | Extensions | 정상 | 4개 패키지, Topology/Installed/Catalog/Audit/Bindings 보존, 잘못된 readiness 링크 수정 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-04-extensions.png) |
 | 5 | 콘솔 관리자 | 정상 | Supabase Auth 소유권, 활성/비활성/관리자/역할 계약 요약, 사용자 작업 툴바 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-05-console-admins.png) |
 | 6 | 역할 | 정상 | 3개 역할 계약, 할당 역할·멤버십·관리자·감사 권위 요약 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-06-roles.png) |
-| 7 | Platform Control Plane | 정상·주의 1건 | Supabase/Gitea 연결 정상, 4/4 Console probe, 복구 증거 3건 검토 필요, HIS 미구성 상태를 사실대로 표시 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-07-platform-control.png) |
+| 7 | Platform Control Plane | 정상·주의 1건 | Supabase/Gitea 연결 정상, 4/4 Console probe, 복구 증거 3건 검토 필요, HISS 미구성 상태를 사실대로 표시 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-07-platform-control.png) |
 | 8 | Data & Identity | 정상·주의 1건 | Supabase 3/3 준비, Auth/Database/API/Storage/Security & DR/Integrations 탭, 복구 증거 주의 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-08-data-identity.png) |
 | 9 | Change Control | 정상 | Gitea 연결, 보호 브랜치·서명 커밋·직접 push 차단, 변경 여정과 공급망/DR 탭 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-09-change-control.png) |
 | 10 | OSAA Gateway | 정상·Degraded | Gateway reachable, 지식 48/281, 도구 12, 바인딩 8, LLM key 0을 기능 장애와 구분 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-10-osaa.png) |
-| 11 | HIS Observability | 조건부 정상 | HIS 소유권, Binding `NotConfigured`, telemetry 미활성, Console 직접 증거 2/2를 분리 표시 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-11-observability.png) |
+| 11 | HISS Observability | 조건부 정상 | HISS 소유권, Binding `NotConfigured`, telemetry 미활성, Console 직접 증거 2/2를 분리 표시 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-11-observability.png) |
 | 12 | 알림 | 정상 | 500건 상태 레일, 전체/안읽음/주의 이상 필터, 검색, 읽음 처리 작업 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-12-notifications.png) |
 | 13 | 감사 로그 | 정상 | 최근 200건, 승인 성공/실패 거부 필터, 행위자·동작·대상·사유 검색, 읽기 쉬운 시각 | [화면](audit-evidence/2026-07-22-manage-full-audit/final-13-audit.png) |
 
@@ -56,7 +56,7 @@
 
 ## 강점
 
-- Supabase/Gitea/Kubernetes/HIS의 권위 경계가 제목, 설명, 상태, 탭에 반복적으로 드러난다.
+- Supabase/Gitea/Kubernetes/HISS의 권위 경계가 제목, 설명, 상태, 탭에 반복적으로 드러난다.
 - Control Plane은 전체 상황, Data & Identity와 Change Control은 전문 영역, Observability는 외부 조건을 다루어 중복 없이 역할이 선명하다.
 - 상태 레일 → 작업 탭/필터 → 상세 표의 정보 위계가 모든 관리 화면에서 예측 가능해졌다.
 - 실패나 미구성 상태를 녹색으로 포장하지 않고, 필요한 증거와 다음 행동을 함께 보여 준다.
@@ -65,7 +65,7 @@
 
 - 알림과 감사 표는 데이터 밀도가 높다. 긴 제목·대상 값은 향후 행 상세 패널 또는 확장 행을 도입하면 탐색 부담을 더 줄일 수 있다.
 - 한국어와 영문 운영 용어가 혼재한다. 제품 고유명과 계약 필드는 영문을 유지하되 일반 동작 용어의 번역 사전을 별도로 고정할 필요가 있다.
-- API 목록 0건, 복구 증거 검토 필요, OSAA provider key 0건, HIS Binding 미구성은 실제 운영 데이터/조건의 후속 과제다.
+- API 목록 0건, 복구 증거 검토 필요, OSAA provider key 0건, HISS Binding 미구성은 실제 운영 데이터/조건의 후속 과제다.
 - 스크린샷과 DOM 검증으로 제목 구조, 레이블, 텍스트 상태, 컨트롤 노출은 확인했지만 스크린리더 실제 낭독 순서, 전 구간 키보드 탭 순서, 확대 400%, 자동 색 대비는 별도 전문 접근성 시험 범위다.
 
 ## 검증 및 배포 결과
@@ -81,4 +81,4 @@
 
 ## 판정
 
-이번 범위의 일관성·기능 개선은 완료되었다. 화면별 특화 정보와 탭은 유지하면서 공통 상태·작업 문법을 흡수했고, Supabase + Gitea 기반의 소유권과 HIS 관측성 경계를 모든 핵심 관리 흐름에서 확인할 수 있다. 남은 항목은 디자인 회귀가 아니라 운영 데이터와 별도 접근성 전문 시험, 번들 최적화 과제다.
+이번 범위의 일관성·기능 개선은 완료되었다. 화면별 특화 정보와 탭은 유지하면서 공통 상태·작업 문법을 흡수했고, Supabase + Gitea 기반의 소유권과 HISS 관측성 경계를 모든 핵심 관리 흐름에서 확인할 수 있다. 남은 항목은 디자인 회귀가 아니라 운영 데이터와 별도 접근성 전문 시험, 번들 최적화 과제다.

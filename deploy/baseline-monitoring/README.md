@@ -1,6 +1,6 @@
 # OpenSphere Baseline Monitoring 운영 Runbook
 
-이 디렉터리는 Console이 Prometheus/Grafana 없이 제공하는 노드 OS 기초 관측 계층을 설치한다. Beszel은 Supabase(Data & Identity), Gitea(Change Control), HIS Observability와 독립된 형제 기반이며 기존 기능의 기동 조건이 아니다.
+이 디렉터리는 Console이 Prometheus/Grafana 없이 제공하는 노드 OS 기초 관측 계층을 설치한다. Beszel은 Supabase(Data & Identity), Gitea(Change Control), HISS Observability와 독립된 형제 기반이며 기존 기능의 기동 조건이 아니다.
 
 ## 영향 경계
 

@@ -47,7 +47,7 @@ rules:
     resources: [uipluginpackages, uipluginpackages/finalizers, uipluginregistrations, uipluginregistrations/status]
     # delete: uninstall ??registration CR ?뚯닔 (?놁쑝硫?CR??Removed濡??붾쪟 ??UX??'??젣 ????)
     verbs: [get, list, watch, create, update, patch, delete]
-  # Main Shell-owned lifecycle declaration/evidence between HIS and PFS.
+  # Main Shell-owned lifecycle declaration/evidence between HISS and PFS.
   - apiGroups: ["platform.opensphere.io"]
     resources: [platformsupportprofiles, platformsupportprofiles/status]
     verbs: [get, list, watch, create, update, patch]
@@ -294,7 +294,7 @@ metadata:
   name: opensphere-module-cluster-infrastructure-manager-v1
   labels: { opensphere.io/managed-by: dupa }
 rules:
-  # Console-side storage integration only. HIS lifecycle is never delegated
+  # Console-side storage integration only. HISS lifecycle is never delegated
   # through a Console module permission profile.
   - { apiGroups: [""], resources: [namespaces, nodes, pods, pods/log, services, endpoints, persistentvolumeclaims, persistentvolumes, events, configmaps, limitranges, resourcequotas, serviceaccounts, replicationcontrollers], verbs: [get, list, watch] }
   - { apiGroups: [apps], resources: [deployments, daemonsets, statefulsets, replicasets, controllerrevisions], verbs: [get, list, watch] }
@@ -815,7 +815,7 @@ spec:
             # 모든 Console 권한은 Supabase-backed Console identity service가 단일 검증한다.
             - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
             - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
-            - { name: HIS_STATUS_URL, value: http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/his/internal/status }
+            - { name: HIS_STATUS_URL, value: http://cluster-manager.opensphere-console.svc.cluster.local:8080/api/hiss/internal/status }
             - { name: HIS_STATUS_MAX_AGE_MS, value: "60000" }
             - { name: FOUNDATION_UPGRADE_AUTHORIZATION_MAX_AGE_MS, value: "3600000" }
             - { name: RECOVERY_EVIDENCE_MAX_AGE_MS, value: "86400000" }

@@ -30,3 +30,15 @@ test('live operations exposes the server-reported Dialogue State rollout at a gl
   assert.doesNotMatch(source, /<header>[\s\S]*OSAA Dialogue State/);
   assert.match(styles, /> \.r2d2-dialogue-state-heading \{[^}]*background: #fff;/);
 });
+
+test('Dialogue State monitoring exposes a four-stage admin switch backed by the management API', () => {
+  assert.match(source, /관리자 모드 선택/);
+  assert.match(source, /role="radiogroup"/);
+  assert.match(source, /\{ value: 'off'/);
+  assert.match(source, /\{ value: 'shadow'/);
+  assert.match(source, /\{ value: 'read-enforce'/);
+  assert.match(source, /\{ value: 'mutation-enforce'/);
+  assert.match(source, /\/api\/osaa\/admin\/dialogue-state/);
+  assert.match(source, /applyDialogueMode\(\)/);
+  assert.match(styles, /\.r2d2-dialogue-switch/);
+});
