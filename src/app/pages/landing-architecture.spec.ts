@@ -131,6 +131,11 @@ test('OSAA dialogue state page defines the researched schema-guided operating co
     'authorityRef',
     'evidenceRefs[]',
     'tool call 없이 “확인했습니다”라고 답변',
+    'Google ADK Session · State · Memory',
+    'osaa.conversation_state',
+    'conversation_message.metadata.stateDelta',
+    'Resolver & deterministic validator',
+    'R2D2 완성도는 실제 대화 결과로 판정합니다',
   ]) {
     assert.match(dialogueStateSource, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
@@ -138,7 +143,11 @@ test('OSAA dialogue state page defines the researched schema-guided operating co
   assert.match(dialogueStateSource, /개념은 채택, 새 orchestration framework는 보류/);
   assert.equal((dialogueStateSource.match(/class="operational-flow"/g) || []).length, 1);
   assert.equal((dialogueStateSource.match(/class="turn-sequence"/g) || []).length, 1);
-  assert.equal((dialogueStateSource.match(/href: 'https:\/\//g) || []).length, 6);
+  assert.equal((dialogueStateSource.match(/href: 'https:\/\//g) || []).length, 9);
+  assert.equal((dialogueStateSource.match(/class="strategy-strip"/g) || []).length, 1);
+  assert.equal((dialogueStateSource.match(/class="schema-mapping"/g) || []).length, 1);
+  assert.equal((dialogueStateSource.match(/class="delivery-phases"/g) || []).length, 1);
+  assert.equal((dialogueStateSource.match(/<tr>\s*<th scope="row">/g) || []).length >= 6, true);
 });
 
 test('OSAA dialogue state page uses local pictograms and the shared readable type scale', () => {
@@ -150,6 +159,8 @@ test('OSAA dialogue state page uses local pictograms and the shared readable typ
   assert.doesNotMatch(dialogueStateSource, /background:#161616|background:#393939/);
   assert.match(dialogueStateSource, /\.dialogue-state-page \{[^}]*min-width:\s*0;[^}]*max-width:\s*100%/);
   assert.match(dialogueStateSource, /\.upstream-table-wrap \{[^}]*overflow-x:\s*auto/);
+  assert.match(globalStylesSource, /os-landing-osaa-dialogue-state \{/);
+  assert.match(globalStylesSource, /os-landing-osaa-dialogue-state \{[\s\S]*\.strategy-overview/);
 });
 
 test('active Clarity tab has an explicit persistent visual state', () => {
