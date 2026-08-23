@@ -350,6 +350,33 @@ data:
 "@
 Invoke-Kubectl @("apply", "-f", "-") $runtimeSecret
 
+# The pre-v1.2 release verifier treated the legacy Gateway maintenance keys as
+# globally required even though the workload declared them optional. During the
+# one-release cutover, provide deliberately unusable sentinels only while the
+# installed Gateway still references those keys. The target Gateway manifest
+# removes the references; the next installer run then removes these sentinels.
+$legacyGatewayNeedsMaintenanceSentinel = $false
+$legacyGatewayJson = (& kubectl @kubectlArgs -n $Namespace get deployment opensphere-console-osaa-gateway -o json 2>$null)
+if ($LASTEXITCODE -eq 0 -and $legacyGatewayJson) {
+  $legacyGateway = $legacyGatewayJson | ConvertFrom-Json
+  foreach ($container in @($legacyGateway.spec.template.spec.containers)) {
+    foreach ($environment in @($container.env)) {
+      $secretReference = $environment.valueFrom.secretKeyRef
+      if ($secretReference.name -eq 'opensphere-osaa-runtime' -and
+          $secretReference.key -in @('maintenance-pg-user', 'maintenance-pg-password')) {
+        $legacyGatewayNeedsMaintenanceSentinel = $true
+      }
+    }
+  }
+}
+$legacyMaintenanceSentinelData = ''
+if ($legacyGatewayNeedsMaintenanceSentinel) {
+  $legacyMaintenanceSentinelData = @"
+  maintenance-pg-user: b3BlbnNwaGVyZV9vc2FhX2Rpc2FibGVk
+  maintenance-pg-password: ZGlzYWJsZWQtdHJhbnNpdGlvbi1vbmx5
+"@
+}
+
 $osaaRuntimeSecret = @"
 apiVersion: v1
 kind: Secret
@@ -363,6 +390,7 @@ data:
   pg-password: $osaaGatewayPasswordB64
   observer-pg-password: $osaaObserverPasswordB64
   relay-pg-password: $osaaRelayPasswordB64
+$legacyMaintenanceSentinelData
 stringData:
   observer-pg-user: opensphere_osaa_observer
   relay-pg-user: opensphere_osaa_incident_relay
