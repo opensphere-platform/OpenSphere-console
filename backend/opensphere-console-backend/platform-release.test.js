@@ -357,6 +357,10 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.match(deployer, /OpenSphereEdgeComponentPublication/);
   assert.match(deployer, /create token opensphere-local-edge-release/);
   assert.match(deployer, /\/api\/platform\/releases\/local-edge-automation/);
+  assert.match(deployer, /opensphere[.]io\/request-id/);
+  assert.match(deployer, /[.]type -eq 'Failed'/);
+  assert.match(deployer, /[.]type -eq 'Complete'/);
+  assert.match(deployer, /Platform Release Job completed with exact target digest/);
   assert.match(deployer, /Properties\['release\.json'\]/);
   assert.doesNotMatch(deployer, /release-lock\.json/);
   assert.doesNotMatch(deployer, /kubectl\s+(?:apply|patch|set|replace|delete)/i);

@@ -56,6 +56,33 @@ function Invoke-Kubectl([string[]]$Arguments, [string]$InputText = '') {
   if ($LASTEXITCODE -ne 0) { throw "kubectl failed: $($Arguments -join ' ')" }
 }
 
+# The release executor embedded before OSAA Dialogue State v1.2 still checks
+# the retired Gateway maintenance keys as globally required. Supply unusable
+# sentinel values only while the installed legacy Gateway manifest references
+# those optional keys. This is a compatibility fence, not a database login;
+# the full installer removes it after the new Gateway manifest is active.
+$legacyGatewayNeedsMaintenanceSentinel = $false
+$legacyGatewayJson = (& kubectl @kubectlArgs -n opensphere-console get deployment opensphere-console-osaa-gateway -o json 2>$null)
+if ($LASTEXITCODE -eq 0 -and $legacyGatewayJson) {
+  $legacyGateway = $legacyGatewayJson | ConvertFrom-Json
+  foreach ($container in @($legacyGateway.spec.template.spec.containers)) {
+    foreach ($environment in @($container.env)) {
+      $reference = $environment.valueFrom.secretKeyRef
+      if ($reference.name -eq 'opensphere-osaa-runtime' -and
+          $reference.key -in @('maintenance-pg-user', 'maintenance-pg-password')) {
+        $legacyGatewayNeedsMaintenanceSentinel = $true
+      }
+    }
+  }
+}
+if ($legacyGatewayNeedsMaintenanceSentinel) {
+  $sentinelPatch = @{ stringData = @{
+    'maintenance-pg-user' = 'opensphere_osaa_disabled'
+    'maintenance-pg-password' = 'disabled-transition-only'
+  } } | ConvertTo-Json -Compress
+  Invoke-Kubectl @('-n','opensphere-console','patch','secret','opensphere-osaa-runtime','--type=merge','-p',$sentinelPatch)
+}
+
 # Component-scoped migrations may introduce RPC grants for Shell roles. Ensure
 # those LOGIN roles and their one-role-only workload Secrets exist before SQL is
 # evaluated; no owner/JWT/service-role credential is mirrored.

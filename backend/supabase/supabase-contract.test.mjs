@@ -148,7 +148,7 @@ test('OSAA deterministic verification is accepted as append-only agent evidence'
   assert.doesNotMatch(sql, /DROP TRIGGER|DISABLE TRIGGER|UPDATE osaa[.]agent_step|DELETE FROM osaa[.]agent_step/i);
 });
 
-test('component-scoped migration runner provisions only scoped Shell DB credentials and never rolls workloads', () => {
+test('component-scoped migration runner provisions scoped Shell credentials and fences the legacy OSAA cutover', () => {
   const runner = readFileSync(path.join(here, 'migrate-only.ps1'), 'utf8');
   assert.match(runner, /manifest\.json/);
   assert.match(runner, /Migration manifest inventory mismatch/);
@@ -156,6 +156,9 @@ test('component-scoped migration runner provisions only scoped Shell DB credenti
   assert.match(runner, /opensphere-shell-api-db/);
   assert.match(runner, /opensphere-shell-gateway-db/);
   assert.match(runner, /opensphere-shell-reconciler-db/);
+  assert.match(runner, /legacyGatewayNeedsMaintenanceSentinel/);
+  assert.match(runner, /disabled-transition-only/);
+  assert.doesNotMatch(runner, /osaa-maintenance-password/);
   assert.match(runner, /NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
   assert.doesNotMatch(runner, /rollout\s+(?:restart|status)/i);
   assert.doesNotMatch(runner, /kubectl[^\n]*delete/i);

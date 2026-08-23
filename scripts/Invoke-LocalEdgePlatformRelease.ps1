@@ -88,26 +88,41 @@ try {
 
   $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
   do {
-    $lockConfig = (Invoke-Checked kubectl -n opensphere-console get configmap opensphere-installation-lock -o json) |
-      ConvertFrom-Json
-    $releaseLockProperty = $lockConfig.data.PSObject.Properties['release.json']
-    if (-not $releaseLockProperty -or -not [string]$releaseLockProperty.Value) {
-      throw 'Installation lock ConfigMap does not contain canonical release.json data.'
-    }
-    $lock = [string]$releaseLockProperty.Value | ConvertFrom-Json
-    if ([string]$lock.releaseDigest -eq [string]$response.targetReleaseDigest) {
-      Write-Host "[success] Installation lock observed exact target digest $($lock.releaseDigest)"
-      [pscustomobject]@{
-        requestId = [string]$response.requestId
-        releaseDigest = [string]$lock.releaseDigest
-        changedComponents = @($response.changedComponents)
-        observedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    $jobs = (Invoke-Checked kubectl -n opensphere-console get jobs `
+      -l "opensphere.io/request-id=$($response.requestId)" -o json) | ConvertFrom-Json
+    $job = @($jobs.items | Sort-Object { $_.metadata.creationTimestamp } | Select-Object -Last 1)
+    if ($job.Count) {
+      $failed = @($job[0].status.conditions | Where-Object { $_.type -eq 'Failed' -and $_.status -eq 'True' })
+      if ($failed.Count) {
+        $logs = (& kubectl -n opensphere-console logs "job/$($job[0].metadata.name)" --all-containers=true 2>&1) -join "`n"
+        throw "Platform Release Job failed: $($job[0].metadata.name)`n$logs"
       }
-      return
+      $complete = @($job[0].status.conditions | Where-Object { $_.type -eq 'Complete' -and $_.status -eq 'True' })
+      if ($complete.Count) {
+        $lockConfig = (Invoke-Checked kubectl -n opensphere-console get configmap opensphere-installation-lock -o json) |
+          ConvertFrom-Json
+        $releaseLockProperty = $lockConfig.data.PSObject.Properties['release.json']
+        if (-not $releaseLockProperty -or -not [string]$releaseLockProperty.Value) {
+          throw 'Installation lock ConfigMap does not contain canonical release.json data.'
+        }
+        $lock = [string]$releaseLockProperty.Value | ConvertFrom-Json
+        if ([string]$lock.releaseDigest -ne [string]$response.targetReleaseDigest) {
+          throw "Completed Platform Release Job did not commit target lock $($response.targetReleaseDigest)."
+        }
+        Write-Host "[success] Platform Release Job completed with exact target digest $($lock.releaseDigest)"
+        [pscustomobject]@{
+          requestId = [string]$response.requestId
+          releaseDigest = [string]$lock.releaseDigest
+          job = [string]$job[0].metadata.name
+          changedComponents = @($response.changedComponents)
+          observedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        }
+        return
+      }
     }
     Start-Sleep -Seconds 5
   } while ([DateTimeOffset]::UtcNow -lt $deadline)
-  throw "Timed out waiting for installation lock $($response.targetReleaseDigest). Request: $($response.requestId)"
+  throw "Timed out waiting for terminal Platform Release Job and lock $($response.targetReleaseDigest). Request: $($response.requestId)"
 } finally {
   $token = $null
 }
