@@ -69,9 +69,9 @@ export const FOUNDATION_CONCEPT_TABS: readonly FoundationConceptTab[] = [
   },
   {
     id: 'control-engine',
-    label: 'Control Engine',
-    eyebrow: 'OSCE · API · Control Adapters',
-    summary: 'Console과 모든 제어 채널을 각 component의 실행 계약에 연결하는 공통 제어 엔진을 정의합니다.',
+    label: 'OSCE',
+    eyebrow: 'CBSS Core Service · Control Engine',
+    summary: 'Console과 모든 제어 채널을 각 component의 실행 계약에 연결하는 CBSS 핵심 제어 서비스를 정의합니다.',
     pictogram: '/assets/pictograms/control-panel.svg',
     pictogramAlt: 'Control panel with three independent control channels',
   },

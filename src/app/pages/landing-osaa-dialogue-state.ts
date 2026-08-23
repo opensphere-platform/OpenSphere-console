@@ -140,11 +140,11 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
             height="76"
           />
           <div>
-            <p class="eyebrow">OSAA · Schema-guided operational dialogue</p>
-            <h1 id="dialogue-state-title">OSAA Dialogue State Tracker</h1>
+            <p class="eyebrow">OSDST · CBSS Core Service</p>
+            <h1 id="dialogue-state-title">OSDST</h1>
             <p>
-              일반 LLM 대화 이력을 OpenSphere의 서비스·리소스·권위·근거에 결속된 운영 대화로 바꾸는
-              구조적 장치입니다. 정식 방법론은
+              <strong>OSAA Dialogue State Tracker</strong>는 일반 LLM 대화 이력을 OpenSphere의
+              서비스·리소스·권위·근거에 결속된 운영 대화로 바꾸는 CBSS 핵심 서비스입니다. 정식 방법론은
               <strong>Schema-Guided Dialogue State Tracking</strong>입니다.
             </p>
           </div>
@@ -155,8 +155,20 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
             <dd>OSAA Dialogue State Tracker</dd>
           </div>
           <div>
-            <dt>한국어</dt>
-            <dd>OSAA 대화 상태 추적기</dd>
+            <dt>Acronym</dt>
+            <dd>OSDST</dd>
+          </div>
+          <div>
+            <dt>Classification</dt>
+            <dd>CBSS Core Service · Agent Core Engine</dd>
+          </div>
+          <div>
+            <dt>Deployment</dt>
+            <dd>Platform-bundled core component</dd>
+          </div>
+          <div>
+            <dt>Extension</dt>
+            <dd>SubShell · Console Plugin · Binding 아님</dd>
           </div>
           <div>
             <dt>폐기한 표현</dt>

@@ -114,7 +114,8 @@ test('main index uses one top-level Clarity tab bar for seven independent archit
   assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 7);
   assert.equal((source.match(/<os-landing-foundations page="(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)"/g) || []).length, 5);
   assert.match(source, /<button clrTabLink[^>]*>10P × 6L Architecture<\/button>[\s\S]*id="architecture-page-realization"/);
-  assert.match(source, /<button clrTabLink[^>]*>OSAA Dialogue State<\/button>/);
+  assert.match(source, /<button clrTabLink[^>]*>OSCE<\/button>/);
+  assert.match(source, /<button clrTabLink[^>]*>OSDST<\/button>/);
   assert.match(source, /<os-landing-osaa-dialogue-state/);
   assert.doesNotMatch(foundationSource, /<clr-tabs|clrTabLink|clr-tab-content/);
   assert.doesNotMatch(`${source}\n${foundationSource}\n${dialogueStateSource}`, /role="tablist"|onTabKeydown|ArrowRight|\[attr\.aria-selected\]/);
@@ -122,7 +123,10 @@ test('main index uses one top-level Clarity tab bar for seven independent archit
 
 test('OSAA dialogue state page defines the researched schema-guided operating contract', () => {
   for (const term of [
+    'OSDST',
     'OSAA Dialogue State Tracker',
+    'CBSS Core Service · Agent Core Engine',
+    'SubShell · Console Plugin · Binding 아님',
     'Schema-Guided Dialogue State Tracking',
     'Dialogue State',
     'OSCE Capability Schema',
@@ -336,6 +340,10 @@ test('control pillars use one capability owner and keep OSAA CLI Shell as surfac
 
 test('Control Engine page defines OSCE as the shared engine without absorbing component authority', () => {
   for (const term of [
+    'OSCE · CBSS Core Service',
+    'CBSS Core Service',
+    'Platform Control Core Engine',
+    'SubShell · Console Plugin · Binding 아님',
     'OpenSphere Control Engine',
     'Main Shell Console',
     'OpenSphere Shell',

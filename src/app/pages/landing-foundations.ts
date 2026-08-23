@@ -347,16 +347,25 @@ import {
                   <img [src]="tabs[3].pictogram" [alt]="tabs[3].pictogramAlt" width="70" height="70" />
                 </span>
                 <div>
-                  <p class="foundation-eyebrow">OpenSphere Control Engine</p>
-                  <h3>모든 제어 채널을 하나의 실행 의미와 증거로 연결합니다</h3>
+                  <p class="foundation-eyebrow">OSCE · CBSS Core Service</p>
+                  <h3>OSCE</h3>
+                  <p class="canonical-name">OpenSphere Control Engine</p>
                 </div>
               </div>
               <p>
-                OSCE는 Console, OSS, OSC, OSAA가 서로 다른 제어 로직을 갖지 않도록 action, plan,
-                authorization, operation, verification과 rollback을 공통으로 처리합니다. 각 component의
-                domain 규칙과 runtime truth는 해당 component에 남기고 OSCE는 전체 작업을 지휘합니다.
+                <strong>CBSS Core Service</strong>인 OSCE는 Console, OSS, OSC, OSAA가 서로 다른 제어 로직을
+                갖지 않도록 action, plan, authorization, operation, verification과 rollback을 공통으로
+                처리합니다. 각 component의 domain 규칙과 runtime truth는 해당 component에 남기고 OSCE는
+                전체 작업을 지휘합니다.
               </p>
             </section>
+
+            <dl class="core-service-identity" aria-label="OSCE component identity">
+              <div><dt>분류</dt><dd>CBSS Core Service</dd></div>
+              <div><dt>기능 성격</dt><dd>Platform Control Core Engine</dd></div>
+              <div><dt>배포 성격</dt><dd>Platform-bundled core component</dd></div>
+              <div><dt>Extension 여부</dt><dd>SubShell · Console Plugin · Binding 아님</dd></div>
+            </dl>
 
             <section class="engine-architecture" aria-label="OpenSphere Control Engine architecture">
               <div class="engine-layer-heading">
@@ -547,6 +556,10 @@ import {
     .document-intro .foundation-eyebrow { color:var(--os-accent); }
     .document-intro h3 { margin:0; overflow-wrap:anywhere; font-size:var(--fd-page-title); font-weight:500; line-height:1.14; letter-spacing:-.025em; }
     .document-intro>p { max-width:42rem; margin:0; color:var(--os-ink); font-size:var(--fd-body); line-height:1.65; }
+    .canonical-name { margin:.35rem 0 0; color:var(--os-ink-muted); font-size:var(--fd-card-title); }
+    .core-service-identity { display:grid; grid-template-columns:repeat(auto-fit,minmax(12rem,1fr)); gap:.75rem 2rem; margin:0; padding:.85rem 1.25rem; border-bottom:1px solid var(--fd-line); }
+    .core-service-identity dt { color:var(--os-ink-muted); font:700 var(--fd-label) var(--os-font-mono); }
+    .core-service-identity dd { margin:.2rem 0 0; font-size:var(--fd-detail); font-weight:600; }
     .stack-flow,.operator-flow,.invocation-flow { display:flex; align-items:stretch; padding:1rem 1.25rem; border-bottom:1px solid var(--fd-line); background:var(--os-surface-1); }
     .stack-flow>div,.operator-flow>div,.invocation-flow>div { display:grid; flex:1; align-content:start; min-width:0; padding:.75rem; border:1px solid var(--fd-line); background:var(--os-canvas); }
     .stack-flow>b,.operator-flow>b,.invocation-flow>b { align-self:center; padding:0 .45rem; color:var(--os-ink-muted); font-weight:400; }

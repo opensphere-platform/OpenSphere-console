@@ -338,7 +338,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('control-engine')">Control Engine</button>
+          <button clrTabLink (click)="selectPage('control-engine')">OSCE</button>
           <clr-tab-content *clrIfActive="activePage() === 'control-engine'">
             <os-landing-foundations page="control-engine" />
           </clr-tab-content>
@@ -352,7 +352,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('osaa-dialogue-state')">OSAA Dialogue State</button>
+          <button clrTabLink (click)="selectPage('osaa-dialogue-state')">OSDST</button>
           <clr-tab-content *clrIfActive="activePage() === 'osaa-dialogue-state'">
             <os-landing-osaa-dialogue-state />
           </clr-tab-content>
