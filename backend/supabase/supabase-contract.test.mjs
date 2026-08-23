@@ -319,5 +319,7 @@ test('0072 removes shared-JWT role assumption and owner-binds manual recovery', 
   assert.match(installer, /CREATE ROLE opensphere_osaa_dialogue_maintenance LOGIN PASSWORD/);
   assert.match(installer, /legacyGatewayNeedsMaintenanceSentinel/);
   assert.match(installer, /ZGlzYWJsZWQtdHJhbnNpdGlvbi1vbmx5/);
+  assert.match(installer, /sentinelRemoval/);
+  assert.match(installer, /--type=json/);
   assert.doesNotMatch(installer, /maintenance-pg-password: \$osaaMaintenancePasswordB64/);
 });

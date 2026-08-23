@@ -396,6 +396,18 @@ stringData:
   relay-pg-user: opensphere_osaa_incident_relay
 "@
 Invoke-Kubectl @("apply", "-f", "-") $osaaRuntimeSecret
+if (-not $legacyGatewayNeedsMaintenanceSentinel) {
+  $currentOsaaRuntimeSecret = (& kubectl @kubectlArgs -n opensphere-console get secret opensphere-osaa-runtime -o json) | ConvertFrom-Json
+  $sentinelRemoval = @()
+  foreach ($key in @('maintenance-pg-user', 'maintenance-pg-password')) {
+    if ($currentOsaaRuntimeSecret.data.PSObject.Properties[$key]) {
+      $sentinelRemoval += @{ op = 'remove'; path = "/data/$key" }
+    }
+  }
+  if ($sentinelRemoval.Count) {
+    Invoke-Kubectl @('-n','opensphere-console','patch','secret','opensphere-osaa-runtime','--type=json','-p',($sentinelRemoval | ConvertTo-Json -Compress))
+  }
+}
 
 # Scheduled maintenance runs in the existing CBSS Backend, never in the
 # serving OSAA Gateway. Each database login is independently scoped and no
