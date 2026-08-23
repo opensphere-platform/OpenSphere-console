@@ -177,13 +177,13 @@ export class AdminOverview {
       step: '02', label: 'REASON & CONTROL', title: 'CBSS Core Services', pictogram: '/assets/pictograms/control-tower.svg', pictogramAlt: 'Core control engine',
       nodes: [
         { label: 'OSCE', name: 'Control Engine', description: 'Plan · Authorize · Execute · Verify', route: '/manage/platform-control' },
-        { label: 'OSDST', name: 'Dialogue State', description: 'Intent · Resource · Authority · Evidence', route: '/manage/osaa' },
+        { label: 'OSDST', name: 'Dialogue State Tracker', description: 'Intent · Resource · Authority · Evidence', route: '/manage/osaa' },
       ],
     },
     {
       step: '03', label: 'DELIVER', title: 'Operational Services', pictogram: '/assets/pictograms/microservices.svg', pictogramAlt: 'Operational services',
       nodes: [
-        { label: 'IDENTITY', name: 'Identity & Session', description: '인증·역할·사용자 정책', route: '/manage/data-identity' },
+        { label: 'IDENTITY', name: 'Identity & Session', description: '시스템 관리자 인증·역할·정책', route: '/manage/data-identity' },
         { label: 'CHANGE', name: 'State Change', description: '선언·승인·적용 영수증', route: '/manage/state-changes' },
         { label: 'COMPOSE', name: 'DUPA Lifecycle', description: 'SubShell·Plugin 구성', route: '/manage/extensions' },
         { label: 'OPERATE', name: 'Evidence & Recovery', description: '관측·감사·알림·복구', route: '/manage/audit' },
@@ -202,7 +202,7 @@ export class AdminOverview {
 
   readonly portfolio: ServicePortfolio[] = [
     {
-      label: 'TRUST', title: 'Identity & Data', description: '사람과 시스템의 신원, 세션, 데이터 권위를 제공합니다.', pictogram: '/assets/pictograms/systems.svg', pictogramAlt: 'Identity and data systems',
+      label: 'TRUST', title: 'Identity & Data', description: '시스템 관리자의 신원·세션과 시스템 신원, Console 데이터 권위를 제공합니다. 일반 직원 신원은 PFSS ADDC가 담당합니다.', pictogram: '/assets/pictograms/systems.svg', pictogramAlt: 'Identity and data systems',
       services: [
         { name: 'Identity & Session', route: '/manage/data-identity', state: 'serving' },
         { name: 'Roles & Administration', route: '/manage/roles', state: 'serving' },
@@ -221,7 +221,7 @@ export class AdminOverview {
       label: 'CONTROL', title: 'AI & Control', description: '현재 사실을 이해하고 승인된 operation으로 닫습니다.', pictogram: '/assets/pictograms/intelligence.svg', pictogramAlt: 'AI and control engine',
       services: [
         { name: 'OSCE Operations', route: '/manage/platform-control', state: 'evolving' },
-        { name: 'OSDST Dialogue State', route: '/manage/osaa', state: 'evolving' },
+        { name: 'OSDST Dialogue State Tracker', route: '/manage/osaa', state: 'evolving' },
         { name: 'OSAA · R2D2', route: '/manage/osaa', state: 'serving' },
       ],
     },

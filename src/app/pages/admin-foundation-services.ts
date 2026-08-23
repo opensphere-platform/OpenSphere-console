@@ -435,7 +435,7 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
       id: 'data',
       domain: 'Data & Identity',
       implementation: 'Supabase',
-      role: '인증·권한·업무 데이터·감사·객체 저장 권위',
+      role: 'Console 시스템 관리자 인증·권한과 업무 데이터·감사·객체 저장 권위',
       state,
       route: '/manage/data-identity',
       logo: LOGOS.data,

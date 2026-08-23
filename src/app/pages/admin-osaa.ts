@@ -431,11 +431,11 @@ interface OsaaActionBindingManifest {
             <article><span>ACTIVATION</span><strong>{{ live.flags.observer ? 'ON' : 'OFF' }}</strong><small>Graph {{ live.flags.graph ? 'ON' : 'OFF' }} · Incident {{ live.flags.incident ? 'ON' : 'OFF' }}</small></article>
           </div>
           <div class="r2d2-live-grid">
-            <article class="r2d2-live-panel">
+            <article class="r2d2-live-panel r2d2-authority-panel">
               <h3>Authority source와 Coverage</h3>
-              <table class="table"><thead><tr><th>Source</th><th>인식 상태</th><th>Barrier</th><th>마지막 complete</th><th>Blocker</th></tr></thead><tbody>
+              <table class="table r2d2-authority-table"><thead><tr><th>Source</th><th>인식 상태</th><th>Barrier</th><th>마지막 complete</th><th>Blocker</th></tr></thead><tbody>
                 @for (source of live.sources; track source.source) {
-                  <tr><td class="os-mono">{{ authoritySourceLabel(source.source) }}</td><td><span class="label" [class.label-success]="source.epistemic_state === 'known'" [class.label-warning]="source.epistemic_state !== 'known'">{{ source.epistemic_state }}</span></td><td>{{ source.snapshot_complete ? 'complete' : 'partial' }}</td><td>{{ source.last_complete_at ? formatDateTime(source.last_complete_at) : '-' }}</td><td class="os-mono">{{ source.blocker_code || '-' }}</td></tr>
+                  <tr><td class="os-mono">{{ authoritySourceLabel(source.source) }}</td><td><span class="label" [class.label-success]="source.epistemic_state === 'known'" [class.label-warning]="source.epistemic_state !== 'known'">{{ source.epistemic_state }}</span></td><td>{{ source.snapshot_complete ? 'complete' : 'partial' }}</td><td><time [attr.datetime]="source.last_complete_at || null" [title]="source.last_complete_at ? formatDateTime(source.last_complete_at) : '-'">{{ source.last_complete_at ? formatCompactDateTime(source.last_complete_at) : '-' }}</time></td><td class="os-mono">{{ source.blocker_code || '-' }}</td></tr>
                 }
               </tbody></table>
             </article>
@@ -1403,8 +1403,8 @@ interface OsaaActionBindingManifest {
               <section class="r2d2-dialogue-state" [class.state-off]="dialogueMode() === 'off'" [class.state-unknown]="dialogueMode() === 'unknown'" aria-labelledby="r2d2-dialogue-state-title">
                 <div class="r2d2-dialogue-state-heading">
                   <div>
-                    <span class="r2d2-kicker">LIVE POLICY · DIALOGUE STATE</span>
-                    <h2 id="r2d2-dialogue-state-title">OSAA Dialogue State</h2>
+                    <span class="r2d2-kicker">LIVE POLICY · DIALOGUE STATE TRACKER</span>
+                    <h2 id="r2d2-dialogue-state-title">OSAA Dialogue State Tracker</h2>
                     <p>{{ dialogueModeDescription() }}</p>
                   </div>
                   <div class="r2d2-dialogue-mode" [class.state-off]="dialogueMode() === 'off'" [class.state-on]="dialogueMode() !== 'off' && dialogueMode() !== 'unknown'">
@@ -1424,7 +1424,7 @@ interface OsaaActionBindingManifest {
                     <strong id="r2d2-dialogue-control-title">관리자 모드 선택</strong>
                     <small>선택한 정책은 OSAA Gateway 전체 복제본에 적용되며 변경 시 한 번만 순차 재시작됩니다.</small>
                   </div>
-                  <div class="r2d2-dialogue-switch" role="radiogroup" aria-label="OSAA Dialogue State 모드">
+                  <div class="r2d2-dialogue-switch" role="radiogroup" aria-label="OSAA Dialogue State Tracker 모드">
                     @for (mode of dialogueModes; track mode.value) {
                       <button type="button" role="radio"
                         [attr.aria-checked]="selectedDialogueMode() === mode.value"
@@ -1521,24 +1521,32 @@ interface OsaaActionBindingManifest {
       .exec-result { margin: 0.7rem 0 0; max-height: 16rem; overflow: auto; border: 1px solid #e1e5ea; border-radius: 4px; background: #0f2230; color: #d7e6ee; padding: 0.7rem; font-size: 0.66rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
       .r2d2-live { margin: 1.2rem 0; padding: 1.1rem; border: 1px solid #b7c8d6; border-radius: 8px; background: linear-gradient(180deg, #f8fbfd, #fff); }
       .r2d2-live .r2d2-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.8rem; }
-      .r2d2-live .r2d2-section-heading h2 { margin: 0.15rem 0 0; font-size: 1.05rem; }
-      .r2d2-kicker { color: #27709b; font-size: 0.57rem; font-weight: 700; letter-spacing: 0.08em; }
+      .r2d2-live .r2d2-section-heading h2 { margin: 0.15rem 0 0; font-size: 1.2rem; line-height: 1.35; }
+      .r2d2-kicker { color: #1e638c; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.08em; }
       .r2d2-live-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid #dce5eb; border-radius: 6px; background: #fff; }
       .r2d2-live-metrics article { display: grid; gap: 0.1rem; padding: 0.7rem; border-right: 1px solid #dce5eb; }
       .r2d2-live-metrics article:last-child { border-right: 0; }
-      .r2d2-live-metrics span { color: #60798a; font-size: 0.55rem; font-weight: 700; letter-spacing: 0.06em; }
+      .r2d2-live-metrics span { color: #526b7d; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.06em; }
       .r2d2-live-metrics strong { font-size: 1.1rem; color: #173b52; }
       .r2d2-live-metrics strong.danger { color: #b3261e; }
-      .r2d2-live-metrics small { color: #6a7d89; font-size: 0.58rem; overflow-wrap: anywhere; }
-      .r2d2-live-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0.8rem; margin-top: 0.8rem; }
+      .r2d2-live-metrics small { color: #526b7d; font-size: 0.66rem; overflow-wrap: anywhere; }
+      .r2d2-live-grid { display: grid; grid-template-columns: minmax(0,1.08fr) minmax(0,.92fr); gap: 0.8rem; margin-top: 0.8rem; }
       .r2d2-live-panel { min-width: 0; padding: 0.8rem; border: 1px solid #dce5eb; border-radius: 6px; background: #fff; }
-      .r2d2-live-panel h3 { margin: 0 0 0.25rem; font-size: 0.78rem; }
+      .r2d2-live-panel h3 { margin: 0 0 0.35rem; color: #173b52; font-size: 0.9rem; }
       .r2d2-scroll-table { max-height: 20rem; overflow: auto; }
-      .r2d2-scroll-table .table { margin: 0.45rem 0 0; font-size: 0.61rem; }
-      .r2d2-live-kv { display: grid; grid-template-columns: 9rem 1fr; margin: 0.5rem 0 0; font-size: 0.62rem; }
+      .r2d2-scroll-table .table { margin: 0.45rem 0 0; font-size: 0.68rem; }
+      .r2d2-authority-table { width: 100%; table-layout: fixed; font-size: 0.68rem; }
+      .r2d2-authority-table th:nth-child(1) { width: 16%; }
+      .r2d2-authority-table th:nth-child(2) { width: 17%; }
+      .r2d2-authority-table th:nth-child(3) { width: 15%; }
+      .r2d2-authority-table th:nth-child(4) { width: 25%; }
+      .r2d2-authority-table th:nth-child(5) { width: 27%; }
+      .r2d2-authority-table td { vertical-align: middle; overflow-wrap: anywhere; }
+      .r2d2-authority-table time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .r2d2-live-kv { display: grid; grid-template-columns: 9rem 1fr; margin: 0.5rem 0 0; font-size: 0.7rem; }
       .r2d2-live-kv dt,.r2d2-live-kv dd { margin: 0; padding: 0.35rem 0.4rem; border-bottom: 1px solid #edf1f3; }
       .r2d2-live-kv dt { color: #60798a; font-weight: 600; }
-      .r2d2-empty { margin: 0.65rem 0 0; padding: 0.65rem; border: 1px dashed #b7c8d6; color: #60798a; font-size: 0.62rem; }
+      .r2d2-empty { margin: 0.65rem 0 0; padding: 0.65rem; border: 1px dashed #b7c8d6; color: #526b7d; font-size: 0.7rem; }
       .r2d2-operation-panel { margin-top: 0.8rem; }
       .r2d2-operation-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
       .r2d2-row-action { margin: 0; padding: 0; min-width: 0; text-align: left; font-weight: 600; }
@@ -1550,6 +1558,7 @@ interface OsaaActionBindingManifest {
       .r2d2-inline-state { color: #486574; font-weight: 600; font-size: 0.68rem; }
       .r2d2-detail ol { list-style: none; padding: 0; margin: 0.5rem 0 0; display: grid; gap: 0.35rem; }
       .r2d2-detail li { display: grid; grid-template-columns: minmax(8rem, 0.7fr) minmax(10rem, 1fr) 2fr; gap: 0.6rem; align-items: baseline; font-size: 0.75rem; }
+      @media (max-width: 1180px) { .r2d2-live-grid { grid-template-columns: 1fr; } }
       @media (max-width: 980px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
       @media (max-width: 760px) {
         .r2d2-live-metrics,.r2d2-live-grid { grid-template-columns: 1fr; }
@@ -1594,7 +1603,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
       case 'shadow': return '대화 상태 전이를 기록하고 비교하지만 사용자 응답과 현재 사실 판정에는 아직 강제하지 않습니다.';
       case 'read-enforce': return '대화 문맥과 Owner 기반 현재 사실 판정을 강제합니다. 변경 작업은 계속 별도 승인 경계에서 차단됩니다.';
       case 'mutation-enforce': return '현재 사실 판정과 승인된 변경 대화 계약을 모두 강제합니다. 실제 실행 권한은 OSCE와 각 Owner 정책이 다시 검증합니다.';
-      default: return 'OSAA Gateway health를 아직 관측하지 못해 Dialogue State 적용 모드를 확인할 수 없습니다.';
+      default: return 'OSAA Gateway health를 아직 관측하지 못해 Dialogue State Tracker 적용 모드를 확인할 수 없습니다.';
     }
   });
   readonly controlPlaneStatus = signal<OsaaControlPlaneStatus | null>(null);
@@ -1930,7 +1939,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
     try {
       const response = await this.http.request('/api/osaa/admin/dialogue-state', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: target, reason: `관리자 OSAA Dialogue State 모드 변경: ${target}` }),
+        body: JSON.stringify({ mode: target, reason: `관리자 OSAA Dialogue State Tracker 모드 변경: ${target}` }),
       });
       const body = await response.json().catch(() => ({})) as OsaaDialogueStateControl & { error?: string };
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
@@ -1943,10 +1952,10 @@ export class AdminOsaa implements OnInit, OnDestroy {
       if (!this.dialogueControl()?.rollout.ready || this.dialogueMode() !== target) {
         throw new Error('Gateway 전환이 제한 시간 안에 완료되지 않았습니다. 상태를 다시 확인하십시오.');
       }
-      this.msg.set({ type: 'success', text: `OSAA Dialogue State를 ${target} 모드로 적용했습니다.` });
+      this.msg.set({ type: 'success', text: `OSAA Dialogue State Tracker를 ${target} 모드로 적용했습니다.` });
     } catch (error) {
       this.dialogueControlError.set(String(error));
-      this.msg.set({ type: 'danger', text: `Dialogue State 모드 변경 실패: ${String(error)}` });
+      this.msg.set({ type: 'danger', text: `Dialogue State Tracker 모드 변경 실패: ${String(error)}` });
     } finally {
       this.dialogueControlBusy.set(false);
       await this.loadDialogueControl(true);
@@ -2257,6 +2266,15 @@ export class AdminOsaa implements OnInit, OnDestroy {
     if (!value) return '-';
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString('ko-KR', { hour12: false }) : value;
+  }
+  formatCompactDateTime(value: string): string {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return value;
+    return new Intl.DateTimeFormat('ko-KR', {
+      timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).format(date);
   }
   shortDate(value: string): string {
     const parts = String(value || '').split('-');

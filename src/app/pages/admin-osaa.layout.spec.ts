@@ -17,7 +17,7 @@ test('R2D2 management separates explanation and live operations with Clarity tab
 });
 
 test('live operations exposes the server-reported Dialogue State rollout at a glance', () => {
-  assert.match(source, /OSAA Dialogue State/);
+  assert.match(source, /OSAA Dialogue State Tracker/);
   assert.match(source, /OSAA_DIALOGUE_STATE_MODE/);
   assert.match(source, /관측 기준 <code>\/api\/osaa\/health<\/code>/);
   assert.match(source, /dialogueState\?\.mode/);
@@ -27,7 +27,7 @@ test('live operations exposes the server-reported Dialogue State rollout at a gl
   assert.match(source, /enforceMutations/);
   assert.match(source, /case 'off': return '대화 상태 기록/);
   assert.match(source, /<div class="r2d2-dialogue-state-heading">/);
-  assert.doesNotMatch(source, /<header>[\s\S]*OSAA Dialogue State/);
+  assert.doesNotMatch(source, /<header>[\s\S]*OSAA Dialogue State Tracker/);
   assert.match(styles, /> \.r2d2-dialogue-state-heading \{[^}]*background: #fff;/);
 });
 
@@ -41,6 +41,13 @@ test('Dialogue State monitoring exposes a four-stage admin switch backed by the 
   assert.match(source, /\/api\/osaa\/admin\/dialogue-state/);
   assert.match(source, /applyDialogueMode\(\)/);
   assert.match(styles, /\.r2d2-dialogue-switch/);
+});
+
+test('R2D2 overview and live evidence use a readable light visual contract', () => {
+  assert.match(styles, /\.r2d2-dark \{[\s\S]*background: #f5f9fc;/);
+  assert.match(styles, /\.r2d2-section-heading[\s\S]*font-size: clamp\(1\.15rem, 1\.8vw, 1\.6rem\)/);
+  assert.match(source, /class="table r2d2-authority-table"/);
+  assert.match(source, /formatCompactDateTime\(source\.last_complete_at\)/);
 });
 
 test('operational authority table presents the canonical HISS name', () => {
