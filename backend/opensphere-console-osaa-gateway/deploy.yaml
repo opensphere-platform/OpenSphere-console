@@ -268,7 +268,6 @@ spec:
             - { name: R2D2_INCIDENT_ENABLED, value: "true" }
             - { name: R2D2_GLOBAL_RISK_ENABLED, value: "true" }
             - { name: R2D2_INCIDENT_RELAY_ENABLED, value: "true" }
-            - { name: R2D2_MAINTENANCE_ENABLED, value: "true" }
             - { name: R2D2_INCIDENT_LLM_ENABLED, value: "false" }
             - { name: R2D2_CLUSTER_ID, value: local }
             - name: R2D2_OBSERVER_PG_USER
@@ -279,10 +278,6 @@ spec:
               valueFrom: { secretKeyRef: { name: opensphere-osaa-runtime, key: relay-pg-user, optional: true } }
             - name: R2D2_RELAY_PG_PASSWORD
               valueFrom: { secretKeyRef: { name: opensphere-osaa-runtime, key: relay-pg-password, optional: true } }
-            - name: R2D2_MAINTENANCE_PG_USER
-              valueFrom: { secretKeyRef: { name: opensphere-osaa-runtime, key: maintenance-pg-user, optional: true } }
-            - name: R2D2_MAINTENANCE_PG_PASSWORD
-              valueFrom: { secretKeyRef: { name: opensphere-osaa-runtime, key: maintenance-pg-password, optional: true } }
             - { name: OSAA_EMBED_DIM, value: "1536" }
             - { name: OSAA_ALLOW_HASH_EMBEDDINGS, value: "false" }
             - { name: OSAA_RAG_TOP_K, value: "5" }

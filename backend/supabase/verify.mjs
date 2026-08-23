@@ -43,6 +43,7 @@ const osaaCutover = read('migrations', '0063_osaa_canonical_identity_and_convers
 const storageEntrypoint = read('images', 'storage', 'opensphere-storage-entrypoint.sh');
 const storageDockerfile = read('images', 'storage', 'Dockerfile');
 const installer = read('install.ps1');
+const migrationTransaction = read('migration-transaction.ps1');
 const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
 
 assert.match(installer, /\[string\]\$Namespace = "opensphere-console-data"/);
@@ -64,8 +65,10 @@ assert.match(installer, /Migration checksum drift/);
 assert.match(installer, /Supabase migration \$migrationId already attested/);
 assert.match(installer, /foreach \(\$migration in \$migrations\)/);
 assert.match(installer, /\$migrationSql = Get-Content -Raw -LiteralPath \$migration\.FullName/);
-assert.match(installer, /installer owns atomic attestation/);
-assert.match(installer, /Invoke-SupabaseMigrationPsql \("BEGIN;`n" \+ \$migrationSql \+ "`n" \+ \$ledgerSql \+ "`nCOMMIT;"\)/);
+assert.match(installer, /New-SupabaseMigrationTransactionSql/);
+assert.match(migrationTransaction, /installer owns atomic attestation/);
+assert.match(migrationTransaction, /VALUES \('\$MigrationId', '\$Checksum', '\$SourceRevision', current_user\);/);
+assert.match(migrationTransaction, /BEGIN;[\s\S]+COMMIT;/);
 assert.match(installer, /deployment\/opensphere-supabase-auth'[\s\S]+migrate-call\.js[\s\S]+foreach \(\$migration in \$migrations\)/);
 assert.match(installer, /foreach \(\$migration in \$migrations\)[\s\S]+foreach \(\$workload in @\('opensphere-supabase-rest', 'opensphere-supabase-storage'\)\)/);
 assert.doesNotMatch(installer, /--from-literal/);

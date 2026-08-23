@@ -19,17 +19,22 @@ const { dialogueModePolicy } = require('./dialogue-rollout');
 const { assertDialogueRequestBoundary } = require('./dialogue-request-boundary');
 const { dialogueTransitionForToolResult } = require('./dialogue-transition');
 const {
+  projectVerifiedLiveToolObservation,
+  renderVerifiedLiveToolObservation,
+} = require('./live-tool-observation');
+const {
   activeTurnSignal,
   assertTurnLeaseActive,
   boundedSignal,
+  independentBoundedSignal,
   runWithTurnSignal,
 } = require('./turn-lease-execution');
 const {
   buildPfssPostgresClaimSet,
   buildPfssPostgresOperationClaim,
   guardProviderCurrentFactResponse,
-  hasExplicitNonPfssDomainQuery,
   isOperationalQuery,
+  isPfssContextualFollowupQuery,
   observeOwnerEvidence,
   renderPfssPostgresClaimSet,
   renderPfssPostgresOperationClaim,
@@ -125,17 +130,13 @@ const R2D2_GRAPH_ENABLED = process.env.R2D2_GRAPH_ENABLED === 'true';
 const R2D2_INCIDENT_ENABLED = process.env.R2D2_INCIDENT_ENABLED === 'true';
 const R2D2_GLOBAL_RISK_ENABLED = process.env.R2D2_GLOBAL_RISK_ENABLED === 'true';
 const R2D2_INCIDENT_RELAY_ENABLED = process.env.R2D2_INCIDENT_RELAY_ENABLED === 'true';
-const R2D2_MAINTENANCE_ENABLED = process.env.R2D2_MAINTENANCE_ENABLED === 'true';
 const R2D2_CLUSTER_ID = String(process.env.R2D2_CLUSTER_ID || 'local').trim().slice(0, 128);
 const R2D2_OBSERVER_PG_USER = String(process.env.R2D2_OBSERVER_PG_USER || '').trim();
 const R2D2_OBSERVER_PG_PASSWORD = String(process.env.R2D2_OBSERVER_PG_PASSWORD || '');
 const R2D2_RELAY_PG_USER = String(process.env.R2D2_RELAY_PG_USER || '').trim();
 const R2D2_RELAY_PG_PASSWORD = String(process.env.R2D2_RELAY_PG_PASSWORD || '');
-const R2D2_MAINTENANCE_PG_USER = String(process.env.R2D2_MAINTENANCE_PG_USER || '').trim();
-const R2D2_MAINTENANCE_PG_PASSWORD = String(process.env.R2D2_MAINTENANCE_PG_PASSWORD || '');
 const R2D2_RELAY_INTERVAL_MS = Math.max(1000, Math.min(60000, Number(process.env.R2D2_RELAY_INTERVAL_MS || 3000) || 3000));
 const R2D2_OBSERVER_INTERVAL_MS = Math.max(15000, Math.min(300000, Number(process.env.R2D2_OBSERVER_INTERVAL_MS || 60000) || 60000));
-const R2D2_MAINTENANCE_INTERVAL_MS = Math.max(3600000, Math.min(604800000, Number(process.env.R2D2_MAINTENANCE_INTERVAL_MS || 86400000) || 86400000));
 const OSAA_ACTION_SUBMISSION_ENABLED = process.env.OSAA_ACTION_SUBMISSION_ENABLED === 'true';
 // Server-owned rollout only. Request and conversation payloads cannot select this mode.
 const OSAA_DIALOGUE_POLICY = dialogueModePolicy(process.env.OSAA_DIALOGUE_STATE_MODE);
@@ -381,12 +382,10 @@ let pgPool = null;
 let conversationStore = null;
 let r2d2ObserverPool = null;
 let r2d2RelayPool = null;
-let r2d2MaintenancePool = null;
 let r2d2Runtime = null;
 let r2d2QueryService = null;
 let r2d2Timer = null;
 let r2d2RelayTimer = null;
-let r2d2MaintenanceTimer = null;
 let pgSchemaReady = false;
 let pgSchemaPromise = null;
 let pgUsageLedgerReady = false;
@@ -2293,22 +2292,6 @@ function getR2d2RelayPool() {
   });
   r2d2RelayPool.on('error', (error) => console.error('[r2d2-relay-db] pool error', error.message || error));
   return r2d2RelayPool;
-}
-
-function getR2d2MaintenancePool() {
-  if (!R2D2_MAINTENANCE_ENABLED || !R2D2_MAINTENANCE_PG_USER || !R2D2_MAINTENANCE_PG_PASSWORD) return null;
-  if (r2d2MaintenancePool) return r2d2MaintenancePool;
-  const ca = pgCa();
-  if (OSAA_PG_TLS && !ca) return null;
-  r2d2MaintenancePool = new Pool({
-    host: PG.host, port: PG.port, database: PG.database,
-    user: R2D2_MAINTENANCE_PG_USER, password: R2D2_MAINTENANCE_PG_PASSWORD,
-    ssl: OSAA_PG_TLS ? { ca, rejectUnauthorized: true, servername: PG.host } : false,
-    options: `-c search_path=${PG.schema},public -c statement_timeout=30000`,
-    max: 1, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000,
-  });
-  r2d2MaintenancePool.on('error', (error) => console.error('[r2d2-maintenance-db] pool error', error.message || error));
-  return r2d2MaintenancePool;
 }
 
 function requireAllowedNamespace(ns) {
@@ -6499,8 +6482,8 @@ async function foundationPostgresStatusConversation(messages, actor, dialogueCon
   const pfssContext = /(?:pfss|postgres(?:ql)?|postgresclaim|foundation-data-pg)/i.test(query);
   const persistedPfssContext = dialogueContext?.domain === 'pfss.postgresql';
   const deterministicIntent = requiresFoundationPostgresStatus(query)
-    || (OSAA_DIALOGUE_POLICY.enforceCurrentFacts && (pfssContext || persistedPfssContext)
-      && !hasExplicitNonPfssDomainQuery(query)
+    || (OSAA_DIALOGUE_POLICY.enforceCurrentFacts && (pfssContext
+      || (persistedPfssContext && isPfssContextualFollowupQuery(query)))
       && isOperationalQuery(query) && !foundationPostgresConversationIntent(messages));
   if (!deterministicIntent) return null;
   const started = Date.now();
@@ -6761,6 +6744,33 @@ async function backendGet(path, actor) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw { code: response.status, msg: body.error || `Console Backend HTTP ${response.status}` };
   return body;
+}
+
+async function requireDialogueMaintenanceCapability(actor) {
+  let response;
+  try {
+    response = await fetch(`${CONSOLE_IDENTITY_URL}/readyz`, {
+      headers: actor?.bearerToken
+        ? { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' }
+        : { accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    throw {
+      code: 503,
+      errorCode: 'conversation_turn_maintenance_unavailable',
+      msg: 'OSAA Dialogue State maintenance capability is unreachable',
+    };
+  }
+  const readiness = await response.json().catch(() => ({}));
+  if (!response.ok || readiness?.dialogueMaintenance?.ready !== true) {
+    throw {
+      code: 503,
+      errorCode: 'conversation_turn_maintenance_unavailable',
+      msg: readiness?.error || 'OSAA Dialogue State maintenance capability is unavailable',
+    };
+  }
+  return readiness.dialogueMaintenance;
 }
 
 async function sourceCatalogRead(actor) {
@@ -8234,7 +8244,6 @@ async function executeAgentTool(name, args, actor, context = {}) {
     default:
       throw { code: 400, msg: `unsupported agent tool: ${name}` };
   }
-  assertTurnLeaseActive();
   await recordToolRun(actor, {
     requestId: randomUUID(),
     agentRunId: context.runId || null,
@@ -8703,8 +8712,29 @@ async function chatCompletion(body, actor) {
       metadata: { verifier: 'canonical-source-grounding/v1', deterministic: true },
     });
   }
+  const liveToolObservation = projectVerifiedLiveToolObservation(Array.from(verifiedToolEvidence.values()));
+  const renderedLiveToolObservation = renderVerifiedLiveToolObservation(liveToolObservation, { redactText: redactToolText });
+  if (renderedLiveToolObservation) {
+    content = renderedLiveToolObservation;
+    audit(actor, 'live-tool-observation-grounding', `AgentRun/${requestId}`, 'ok',
+      `items=${liveToolObservation.items.length}; tools=${liveToolObservation.items.map((item) => item.tool).join(',')}`);
+    if (agentRunRecorded) await recordAgentStep({
+      runId: requestId,
+      index: agentStepIndex++,
+      kind: 'verification',
+      status: 'succeeded',
+      input: { tools: liveToolObservation.items.map((item) => item.tool) },
+      output: { schema: liveToolObservation.schema, itemCount: liveToolObservation.items.length },
+      metadata: { verifier: 'verified-live-tool-observation/v1', deterministic: true },
+    });
+  }
   const currentFactGuard = guardProviderCurrentFactResponse(userContent, content, {
-    verifiedDeterministic: Boolean(extensionPresentationEvidence || surfaceDiagnosisEvidence),
+    verifiedDeterministic: Boolean(
+      extensionPresentationEvidence
+      || surfaceDiagnosisEvidence
+      || renderedLiveToolObservation
+      || (sourceGrounding.applied && sourceGrounding.violations.length === 0),
+    ),
   });
   content = currentFactGuard.content;
   if (currentFactGuard.applied) {
@@ -8806,6 +8836,10 @@ async function chatCompletion(body, actor) {
 
 async function durableChatCompletion(body, actor) {
   assertDialogueRequestBoundary(body);
+  // Admission is capability-scoped: native Backend management surfaces remain
+  // routable, but a new durable OSAA turn cannot start if its lease recovery
+  // capability is not known-good.
+  await requireDialogueMaintenanceCapability(actor);
   const store = getConversationStore();
   const turn = await store.beginTurn(actor, body);
   if (turn.replay) return { ...turn.response, replayed: true };
@@ -8822,7 +8856,7 @@ async function durableChatCompletion(body, actor) {
         });
       }
     });
-  }, Math.max(1000, Math.floor((TURN_LEASE_SECONDS * 1000) / 3)));
+  }, Math.max(1000, Math.min(10000, Math.floor((TURN_LEASE_SECONDS * 1000) / 3))));
   heartbeatTimer.unref();
   try {
     const response = await runWithTurnSignal(
@@ -8937,7 +8971,7 @@ function audit(actor, action, target, result, reason) {
       method: 'POST',
       headers: { authorization: `Bearer ${actor.bearerToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ action, target, result, reason: reason || 'OSAA read/planning operation', targetType: 'osaa' }),
-      signal: boundedSignal(3000),
+      signal: independentBoundedSignal(3000),
     }).catch((error) => console.warn('[osaa-audit] persistence skipped:', error.message || error));
   }
 }
@@ -9062,7 +9096,7 @@ async function submitControlPlaneAction(binding, inputs, target, actor) {
       method: 'POST',
       headers: { authorization: `Bearer ${actor.bearerToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ bindingId: binding.id, toolId: binding.toolId, target, inputs, reason: inputs.reason }),
-      signal: boundedSignal(5000),
+      signal: independentBoundedSignal(5000),
     });
   } catch {
     throw { code: 503, msg: 'Console Backend control-plane submission is unavailable' };
@@ -9331,26 +9365,6 @@ async function initializeIncidentRelay() {
   r2d2RelayTimer.unref();
 }
 
-async function runR2d2Maintenance() {
-  const pool = getR2d2MaintenancePool();
-  if (!pool) throw new Error('dedicated maintenance database credential is unavailable');
-  await pool.query(`SELECT osaa.ensure_time_partitions(current_date), osaa.ensure_time_partitions((current_date + interval '1 month')::date)`);
-  await pool.query(`INSERT INTO osaa.slo_sample(sampled_at,metric,value,labels)
-    SELECT clock_timestamp(),'coverage_ratio',
-      CASE WHEN count(*)=0 THEN 0 ELSE count(*) FILTER (WHERE configured AND snapshot_complete AND epistemic_state='known')::numeric/count(*) END,
-      jsonb_build_object('clusterId',$1::text)
-    FROM osaa.source_health WHERE cluster_id=$1::text`, [R2D2_CLUSTER_ID]);
-}
-
-async function initializeR2d2Maintenance() {
-  if (!R2D2_MAINTENANCE_ENABLED) return;
-  await runR2d2Maintenance();
-  r2d2MaintenanceTimer = setInterval(() => {
-    void runR2d2Maintenance().catch((error) => console.warn('[r2d2-maintenance]', error.message || error));
-  }, R2D2_MAINTENANCE_INTERVAL_MS);
-  r2d2MaintenanceTimer.unref();
-}
-
 function operationalUnavailable(res) {
   return json(res, 503, {
     error: 'R2D2 operational intelligence schema or API projection is unavailable',
@@ -9359,7 +9373,6 @@ function operationalUnavailable(res) {
       observer: R2D2_OBSERVER_ENABLED, graph: R2D2_GRAPH_ENABLED,
       incident: R2D2_INCIDENT_ENABLED, globalRisk: R2D2_GLOBAL_RISK_ENABLED,
       incidentRelay: R2D2_INCIDENT_RELAY_ENABLED,
-      maintenance: R2D2_MAINTENANCE_ENABLED,
     },
   });
 }
@@ -9538,7 +9551,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ...status, runtime: r2d2Runtime?.lastResult || null,
         flags: { observer: R2D2_OBSERVER_ENABLED, graph: R2D2_GRAPH_ENABLED,
           incident: R2D2_INCIDENT_ENABLED, globalRisk: R2D2_GLOBAL_RISK_ENABLED,
-          incidentRelay: R2D2_INCIDENT_RELAY_ENABLED, maintenance: R2D2_MAINTENANCE_ENABLED } });
+          incidentRelay: R2D2_INCIDENT_RELAY_ENABLED } });
     }
     if (url.pathname === '/api/osaa/graph/nodes' && req.method === 'GET') {
       const actor = await verifyAuthed(req);
@@ -9948,7 +9961,6 @@ server.listen(PORT, () => {
   void initializeGatewayData();
   void initializeOperationalIntelligence().catch((error) => console.warn('[r2d2] initialization failed:', error.message || error));
   void initializeIncidentRelay().catch((error) => console.warn('[r2d2-relay] initialization failed:', error.message || error));
-  void initializeR2d2Maintenance().catch((error) => console.warn('[r2d2-maintenance] initialization failed:', error.message || error));
   void refreshRuntimeProjection();
   startRuntimeWatches();
   const runtimeTimer = setInterval(() => { void refreshRuntimeProjection(); }, OSAA_RUNTIME_REFRESH_MS);
@@ -9962,10 +9974,8 @@ function stopGateway() {
   for (const controller of runtimeWatchControllers) controller.abort();
   if (r2d2Timer) clearInterval(r2d2Timer);
   if (r2d2RelayTimer) clearInterval(r2d2RelayTimer);
-  if (r2d2MaintenanceTimer) clearInterval(r2d2MaintenanceTimer);
   if (r2d2ObserverPool) void r2d2ObserverPool.end().catch(() => undefined);
   if (r2d2RelayPool) void r2d2RelayPool.end().catch(() => undefined);
-  if (r2d2MaintenancePool) void r2d2MaintenancePool.end().catch(() => undefined);
   server.close();
 }
 process.on('SIGTERM', stopGateway);

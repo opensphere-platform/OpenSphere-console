@@ -265,6 +265,7 @@ test('R2D2 relation monotonicity never dereferences a node-only record field', (
 test('0071 keeps Dialogue State in CBSS and atomically separates it from Agent Runtime evidence', () => {
   const sql = readFileSync(path.join(here, 'migrations', '0071_osaa_dialogue_state_transition.sql'), 'utf8');
   const installer = readFileSync(path.join(here, 'install.ps1'), 'utf8');
+  const migrationTransaction = readFileSync(path.join(here, 'migration-transaction.ps1'), 'utf8');
   assert.match(sql, /CREATE TABLE osaa[.]dialogue_state_projection/);
   assert.match(sql, /CREATE TABLE osaa[.]dialogue_state_transition/);
   assert.match(sql, /conversation_id uuid NOT NULL REFERENCES osaa[.]conversation\(id\) ON DELETE RESTRICT/);
@@ -282,8 +283,9 @@ test('0071 keeps Dialogue State in CBSS and atomically separates it from Agent R
   assert.match(sql, /TO opensphere_osaa_dialogue_maintenance/);
   assert.doesNotMatch(sql, /GRANT EXECUTE ON FUNCTION osaa[.]reap_expired_dialogue_turns[^;]+opensphere_osaa_gateway/is);
   assert.doesNotMatch(sql, /^\s*(?:BEGIN|COMMIT)\s*;/im);
-  assert.match(installer, /Migration \$migrationId must not contain transaction control; the installer owns atomic attestation/);
-  assert.match(installer, /Invoke-SupabaseMigrationPsql \("BEGIN;`n" \+ \$migrationSql \+ "`n" \+ \$ledgerSql \+ "`nCOMMIT;"\)/);
+  assert.match(installer, /New-SupabaseMigrationTransactionSql/);
+  assert.match(migrationTransaction, /Migration \$MigrationId must not contain transaction control; the installer owns atomic attestation/);
+  assert.match(migrationTransaction, /VALUES \('\$MigrationId', '\$Checksum', '\$SourceRevision', current_user\);/);
   assert.match(sql, /REVOKE UPDATE, DELETE, TRUNCATE ON osaa[.]dialogue_state_transition/);
   assert.match(sql, /purge_dialogue_state\(/);
   assert.match(sql, /conversation has a pending turn/);
@@ -299,4 +301,16 @@ test('0071 keeps Dialogue State in CBSS and atomically separates it from Agent R
   assert.match(sql, /REVOKE DELETE, TRUNCATE ON osaa[.]conversation/);
   assert.doesNotMatch(sql, /agent_step|agent_run/);
   assert.doesNotMatch(sql, /ON CONFLICT[^;]*DO NOTHING/is);
+});
+
+test('0072 removes shared-JWT role assumption and owner-binds manual recovery', () => {
+  const sql = readFileSync(path.join(here, 'migrations', '0072_osaa_dialogue_maintenance_identity.sql'), 'utf8');
+  const installer = readFileSync(path.join(here, 'install.ps1'), 'utf8');
+  assert.match(sql, /REVOKE opensphere_osaa_dialogue_maintenance FROM authenticator/);
+  assert.match(sql, /session_user <> 'opensphere_osaa_dialogue_maintenance'/);
+  assert.match(sql, /expected_owner_id text/);
+  assert.match(sql, /AND c[.]owner_id=expected_owner_id/);
+  assert.match(sql, /recover_dialogue_turn\(uuid, uuid, text, text\)/);
+  assert.match(installer, /opensphere-osaa-maintenance-runtime/);
+  assert.match(installer, /CREATE ROLE opensphere_osaa_dialogue_maintenance LOGIN PASSWORD/);
 });

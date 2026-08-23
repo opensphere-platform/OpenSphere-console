@@ -16,6 +16,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $here 'migration-transaction.ps1')
 $manifest = Join-Path $here "bootstrap\supabase.yaml"
 $migrationDirectory = Join-Path $here "migrations"
 $migrations = @(Get-ChildItem -LiteralPath $migrationDirectory -Filter '*.sql' -File | Sort-Object Name)
@@ -237,6 +238,7 @@ if (-not $secretExists) {
   $osaaObserverPassword = New-RandomSafePassword 36
   $osaaRelayPassword = New-RandomSafePassword 36
   $osaaMaintenancePassword = New-RandomSafePassword 36
+  $osaaDialogueMaintenancePassword = New-RandomSafePassword 36
   $aiRuntimePassword = New-RandomSafePassword 36
   $aiPipelinePassword = New-RandomSafePassword 36
   $shellApiPassword = New-RandomSafePassword 36
@@ -263,6 +265,7 @@ if (-not $secretExists) {
       'osaa-observer-password' = $osaaObserverPassword
       'osaa-relay-password' = $osaaRelayPassword
       'osaa-maintenance-password' = $osaaMaintenancePassword
+      'osaa-dialogue-maintenance-password' = $osaaDialogueMaintenancePassword
       'ai-runtime-password' = $aiRuntimePassword
       'ai-pipeline-password' = $aiPipelinePassword
       'shell-api-password' = $shellApiPassword
@@ -290,6 +293,7 @@ $requiredScopedSecrets = @{
   'osaa-observer-password' = 36
   'osaa-relay-password' = 36
   'osaa-maintenance-password' = 36
+  'osaa-dialogue-maintenance-password' = 36
   'ai-runtime-password' = 36
   'ai-pipeline-password' = 36
   'shell-api-password' = 36
@@ -317,6 +321,7 @@ $osaaGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opens
 $osaaObserverPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.osaa-observer-password}")
 $osaaRelayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.osaa-relay-password}")
 $osaaMaintenancePasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.osaa-maintenance-password}")
+$osaaDialogueMaintenancePasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.osaa-dialogue-maintenance-password}")
 $shellApiPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-api-password}")
 $shellGatewayPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-gateway-password}")
 $shellReconcilerPasswordB64 = (& kubectl @kubectlArgs -n $Namespace get secret opensphere-supabase-secrets -o "jsonpath={.data.shell-reconciler-password}")
@@ -356,13 +361,32 @@ data:
   pg-password: $osaaGatewayPasswordB64
   observer-pg-password: $osaaObserverPasswordB64
   relay-pg-password: $osaaRelayPasswordB64
-  maintenance-pg-password: $osaaMaintenancePasswordB64
 stringData:
   observer-pg-user: opensphere_osaa_observer
   relay-pg-user: opensphere_osaa_incident_relay
-  maintenance-pg-user: opensphere_osaa_maintenance
 "@
 Invoke-Kubectl @("apply", "-f", "-") $osaaRuntimeSecret
+
+# Scheduled maintenance runs in the existing CBSS Backend, never in the
+# serving OSAA Gateway. Each database login is independently scoped and no
+# Supabase JWT signing material is used to assume these roles.
+$osaaMaintenanceRuntimeSecret = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensphere-osaa-maintenance-runtime
+  namespace: opensphere-console
+  labels:
+    opensphere.io/secret-scope: console-backend-maintenance-only
+type: Opaque
+data:
+  operational-pg-password: $osaaMaintenancePasswordB64
+  dialogue-pg-password: $osaaDialogueMaintenancePasswordB64
+stringData:
+  operational-pg-user: opensphere_osaa_maintenance
+  dialogue-pg-user: opensphere_osaa_dialogue_maintenance
+"@
+Invoke-Kubectl @("apply", "-f", "-") $osaaMaintenanceRuntimeSecret
 
 # Each Shell control-plane process receives exactly one constrained database
 # login. These Secrets intentionally contain no Supabase owner/JWT/service key.
@@ -606,6 +630,7 @@ $osaaGatewayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64Stri
 $osaaObserverPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($osaaObserverPasswordB64))
 $osaaRelayPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($osaaRelayPasswordB64))
 $osaaMaintenancePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($osaaMaintenancePasswordB64))
+$osaaDialogueMaintenancePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($osaaDialogueMaintenancePasswordB64))
 $aiRuntimePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aiRuntimePasswordB64))
 $aiPipelinePassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aiPipelinePasswordB64))
 $shellApiPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($shellApiPasswordB64))
@@ -616,6 +641,7 @@ $escapedOsaaGatewayPassword = $osaaGatewayPassword.Replace("'", "''")
 $escapedOsaaObserverPassword = $osaaObserverPassword.Replace("'", "''")
 $escapedOsaaRelayPassword = $osaaRelayPassword.Replace("'", "''")
 $escapedOsaaMaintenancePassword = $osaaMaintenancePassword.Replace("'", "''")
+$escapedOsaaDialogueMaintenancePassword = $osaaDialogueMaintenancePassword.Replace("'", "''")
 $escapedAiRuntimePassword = $aiRuntimePassword.Replace("'", "''")
 $escapedAiPipelinePassword = $aiPipelinePassword.Replace("'", "''")
 $escapedShellApiPassword = $shellApiPassword.Replace("'", "''")
@@ -676,6 +702,17 @@ BEGIN
   ELSE
     ALTER ROLE opensphere_osaa_maintenance LOGIN PASSWORD '$escapedOsaaMaintenancePassword'
       NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+`$`$;
+DO `$`$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opensphere_osaa_dialogue_maintenance') THEN
+    CREATE ROLE opensphere_osaa_dialogue_maintenance LOGIN PASSWORD '$escapedOsaaDialogueMaintenancePassword'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE opensphere_osaa_dialogue_maintenance LOGIN PASSWORD '$escapedOsaaDialogueMaintenancePassword'
+      NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
 END
 `$`$;
@@ -786,21 +823,24 @@ foreach ($migration in $migrations) {
   $migrationSql = Get-Content -Raw -LiteralPath $migration.FullName
   $ledgerSql = @"
 INSERT INTO console.schema_migration(migration_id, sha256, source_revision, executor)
-VALUES ('$migrationId', '$checksum', '$SourceRevision', current_user)
+VALUES ('$migrationId', '$checksum', '$SourceRevision', current_user);
 "@
   if ($migrationId -ge '0071') {
-    if ($migrationSql -match '(?im)^\s*(BEGIN|COMMIT)\s*;') {
-      throw "Migration $migrationId must not contain transaction control; the installer owns atomic attestation"
-    }
     # Schema mutation and its immutable ledger receipt are one PostgreSQL
     # transaction. A crash or ledger conflict rolls back both, so an
     # unrecorded partially-applied schema cannot survive to the next run.
-    Invoke-SupabaseMigrationPsql ("BEGIN;`n" + $migrationSql + "`n" + $ledgerSql + "`nCOMMIT;")
+    $atomicMigrationSql = New-SupabaseMigrationTransactionSql `
+      -MigrationSql $migrationSql `
+      -MigrationId $migrationId `
+      -Checksum $checksum `
+      -SourceRevision $SourceRevision
+    Invoke-SupabaseMigrationPsql $atomicMigrationSql
   } else {
     # Historical migrations retain their already-attested byte identity. New
     # migrations use the atomic path above without rewriting deployed files.
     Invoke-SupabaseMigrationPsql $migrationSql
-    Invoke-SupabaseMigrationPsql ($ledgerSql + "ON CONFLICT (migration_id) DO NOTHING;`n")
+    $legacyLedgerSql = $ledgerSql -replace ';\s*$', ''
+    Invoke-SupabaseMigrationPsql ($legacyLedgerSql + "`nON CONFLICT (migration_id) DO NOTHING;`n")
   }
   $attestedChecksum = Get-SupabaseMigrationChecksum $migrationId
   if ($attestedChecksum -ne $checksum) { throw "Migration ledger did not attest $migrationId" }

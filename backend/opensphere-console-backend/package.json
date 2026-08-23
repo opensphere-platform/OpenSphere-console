@@ -1,0 +1,8 @@
+{
+  "name": "opensphere-console-backend-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "pg": "8.16.3"
+  }
+}

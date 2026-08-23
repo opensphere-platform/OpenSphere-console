@@ -27,15 +27,31 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { canonicalPermissionRevision } = require('../opensphere-console-backend/os-shell-contract.js');
 const MIGRATIONS = path.join(here, 'migrations');
+const MIGRATION_TRANSACTION_COMPOSER = path.join(here, 'migration-transaction.ps1');
 const MIGRATION_FILES = readdirSync(MIGRATIONS).filter((file) => file.endsWith('.sql')).sort();
 const LATEST_MIGRATION_ID = MIGRATION_FILES.at(-1).slice(0, 4);
 const CONTAINER = `os-ledger-verify-${process.pid}-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 const IMAGE = 'pgvector/pgvector:pg16';
+const DIALOGUE_MAINTENANCE_TEST_PASSWORD = `verify-${randomUUID()}`;
 
 const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', ...opts });
 const psql = (sql, { stopOnError = true } = {}) =>
   sh('docker', ['exec', '-i', CONTAINER, 'psql', '-U', 'postgres', '-d', 'postgres',
     ...(stopOnError ? ['-v', 'ON_ERROR_STOP=1'] : []), '-t', '-A'], { input: sql });
+const psqlAsDialogueMaintenance = (sql) =>
+  sh('docker', ['exec', '-i', '-e', `PGPASSWORD=${DIALOGUE_MAINTENANCE_TEST_PASSWORD}`, CONTAINER,
+    'psql', '-h', '127.0.0.1', '-U', 'opensphere_osaa_dialogue_maintenance', '-d', 'postgres',
+    '-v', 'ON_ERROR_STOP=1', '-t', '-A'], { input: sql });
+
+function installerMigrationSql(file, migrationId, sha256) {
+  return sh('pwsh', [
+    '-NoProfile', '-File', MIGRATION_TRANSACTION_COMPOSER, '-Emit',
+    '-MigrationPath', path.join(MIGRATIONS, file),
+    '-MigrationId', migrationId,
+    '-Checksum', sha256,
+    '-SourceRevision', 'a'.repeat(40),
+  ]);
+}
 
 function psqlAsync(sql) {
   return new Promise((resolve, reject) => {
@@ -62,6 +78,7 @@ CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service
 CREATE ROLE supabase_admin LOGIN SUPERUSER; CREATE ROLE authenticator NOLOGIN;
 CREATE ROLE opensphere_ai_pipeline NOLOGIN; CREATE ROLE opensphere_ai_runtime NOLOGIN;
 CREATE ROLE opensphere_console_backend NOLOGIN; CREATE ROLE opensphere_external_channel_executor NOLOGIN;
+CREATE ROLE opensphere_osaa_dialogue_maintenance LOGIN PASSWORD '${DIALOGUE_MAINTENANCE_TEST_PASSWORD}' NOINHERIT NOBYPASSRLS;
 CREATE ROLE opensphere_notification_dispatcher NOLOGIN; CREATE ROLE opensphere_oaa_gateway NOLOGIN;
 CREATE ROLE opensphere_shell_api NOLOGIN; CREATE ROLE opensphere_shell_gateway NOLOGIN;
 CREATE ROLE opensphere_shell_reconciler NOLOGIN;
@@ -123,8 +140,20 @@ function mustRejectContract(sql, label, pattern) {
   console.log(`  ✓ ${label} — 계약 거부됨`);
 }
 
+function mustRejectDialogueMaintenance(sql, label, pattern) {
+  let rejected = false;
+  let detail = '';
+  try { psqlAsDialogueMaintenance(sql); } catch (err) {
+    rejected = true;
+    detail = [err.stderr, err.stdout, err.message].filter((value) => value !== undefined && value !== null).map(String).join('\n');
+  }
+  assert.ok(rejected, `${label}: dedicated maintenance identity crossed its owner boundary`);
+  assert.match(detail, pattern, `${label}: failed for an unexpected reason — ${detail.slice(0, 300)}`);
+  console.log(`  ✓ ${label} — owner 경계 거부됨`);
+}
+
 function verifyDialogueStateContract() {
-  console.log('\nOSAA Dialogue State actor isolation·lease recovery·append-only 계약 (0071)');
+  console.log('\nOSAA Dialogue State actor isolation·lease recovery·append-only 계약 (0071/0072)');
   const conversation = '11111111-1111-4111-8111-111111111111';
   const expiredTurn = '22222222-2222-4222-8222-222222222222';
   const adminTurn = '33333333-3333-4333-8333-333333333333';
@@ -145,9 +174,9 @@ function verifyDialogueStateContract() {
     );`);
   mustRejectPermission(`SET ROLE opensphere_osaa_gateway;
     SELECT * FROM osaa.reap_expired_dialogue_turns(10);`, 'Gateway → global dialogue lease reaper');
-  const reaped = psql(`SET ROLE opensphere_osaa_dialogue_maintenance;
-    SELECT action||'|'||turn_request_id FROM osaa.reap_expired_dialogue_turns(10);
-    RESET ROLE;`).trim().split('\n').find((line) => line.startsWith('lease-expired|'));
+  const reaped = psqlAsDialogueMaintenance(
+    'SELECT action||\'|\'||turn_request_id FROM osaa.reap_expired_dialogue_turns(10);',
+  ).trim().split('\n').find((line) => line.startsWith('lease-expired|'));
   assert.equal(reaped, `lease-expired|${expiredTurn}`,
     'expired turn was not atomically reaped with a receipt');
   console.log('  ✓ expired lease 회수와 content-free receipt가 원자적으로 생성된다');
@@ -160,12 +189,15 @@ function verifyDialogueStateContract() {
       '${adminTurn}',clock_timestamp()+interval '2 minutes',clock_timestamp(),1
     );`);
   mustRejectPermission(`SET ROLE opensphere_osaa_gateway;
-    SELECT * FROM osaa.recover_dialogue_turn('${conversation}','${adminTurn}','operator requested recovery');`,
+    SELECT * FROM osaa.recover_dialogue_turn('${conversation}','${adminTurn}','${owner}','operator requested recovery');`,
   'Gateway → administrator dialogue recovery');
-  const recovered = psql(`SET ROLE opensphere_osaa_dialogue_maintenance;
-    SELECT action||'|'||turn_request_id FROM osaa.recover_dialogue_turn(
-      '${conversation}','${adminTurn}','operator requested recovery');
-    RESET ROLE;`).trim().split('\n').find((line) => line.startsWith('admin-recovery|'));
+  mustRejectDialogueMaintenance(`SELECT * FROM osaa.recover_dialogue_turn(
+    '${conversation}','${adminTurn}','dialogue-owner-b','operator requested recovery');`,
+  'Dialogue maintenance → cross-owner turn recovery', /pending conversation turn not found for expected owner/i);
+  const recovered = psqlAsDialogueMaintenance(`SELECT action||'|'||turn_request_id
+    FROM osaa.recover_dialogue_turn(
+      '${conversation}','${adminTurn}','${owner}','operator requested recovery');`)
+    .trim().split('\n').find((line) => line.startsWith('admin-recovery|'));
   assert.equal(recovered, `admin-recovery|${adminTurn}`,
     'administrator turn recovery did not emit its receipt');
   assert.equal(psql(`SELECT count(*) FROM osaa.dialogue_turn_recovery_receipt
@@ -190,9 +222,9 @@ function verifyDialogueStateContract() {
   `${genesisDigest}|${genesisDigest}`,
   'database did not replace caller-supplied chain links with the committed genesis digest');
   console.log('  ✓ caller가 위조한 prev digest 두 사본을 DB가 committed chain 값으로 덮어쓴다');
-  assert.match(psql(`SET ROLE opensphere_osaa_dialogue_maintenance;
-    SELECT digest_valid||'|'||projection_valid FROM osaa.verify_dialogue_state_chain('${conversation}');
-    RESET ROLE;`), /true\|true/);
+  assert.match(psqlAsDialogueMaintenance(
+    `SELECT digest_valid||'|'||projection_valid FROM osaa.verify_dialogue_state_chain('${conversation}');`,
+  ), /true\|true/);
   assert.equal(psql(`SET ROLE opensphere_osaa_gateway;
     SELECT set_config('opensphere.actor_id','dialogue-owner-b',false);
     SELECT count(*) FROM osaa.conversation WHERE id='${conversation}';
@@ -1036,10 +1068,7 @@ async function main() {
       if (file >= '0071_osaa_dialogue_state_transition.sql') {
         const migrationId = file.slice(0, -4);
         const sha256 = createHash('sha256').update(sql.replace(/\r\n/gu, '\n'), 'utf8').digest('hex');
-        assert.doesNotMatch(sql, /^\s*(?:BEGIN|COMMIT)\s*;/imu,
-          `${file} must leave transaction control to the atomic installer`);
-        psql(`BEGIN;\n${sql}\nINSERT INTO console.schema_migration(migration_id,sha256,source_revision,executor)
-          VALUES('${migrationId}','${sha256}','${'a'.repeat(40)}',current_user);\nCOMMIT;`);
+        psql(installerMigrationSql(file, migrationId, sha256));
       } else {
         psql(sql);
         if (file >= '0026_schema_migration_ledger.sql') {

@@ -182,7 +182,7 @@ function isOperationalQuery(value) {
   const text = String(value || '').trim();
   if (!text) return false;
   const conceptual = /(개념|정의|뜻|설명|architecture|설계\s*원칙|왜\s*(?:필요|사용)|what\s+is)/i.test(text);
-  const liveMarker = /(현재|지금|운영\s*중|실시간|live|ready|running|status|상태|버전|version|몇\s*개|존재|가능|삭제|생성|적용|실행|완료|실패|오류)/i.test(text);
+  const liveMarker = /(현재|지금|운영\s*중|실시간|live|ready|running|status|상태|버전|version|몇\s*개|존재|가능|삭제|생성|적용|실행|완료|실패|오류|인스턴스|replicas?|목록|다시\s*확인)/i.test(text);
   if (conceptual && !liveMarker) return false;
   if (liveMarker) return true;
   if (/^(?:postgres(?:ql)?|pfss|인스턴스|그거|그것|이거|이것)(?:은|는|이|가)?\s*(?:\?|어때|어떻게|있어|없어)?$/i.test(text)) return true;
@@ -194,18 +194,26 @@ function isCurrentSystemFactQuery(value) {
   if (!text) return false;
   const deicticCurrentFact = /^(?:몇\s*개(?:야|인가|있어)?|상태(?:는|가)?|지금(?:은)?|현재(?:는)?|가능(?:해|한가)?|있어|없어|how\s+many|what(?:'s|\s+is)\s+(?:its|the)\s+(?:status|version)|is\s+it\s+(?:ready|running|available))\s*[?.!]*$/i.test(text);
   if (deicticCurrentFact) return true;
-  const systemDomain = /(?:opensphere|osaa|r2d2|pfss|postgres(?:ql)?|postgresclaim|subshell|plugin|registry|kubernetes|k8s|pod|deployment|service|gitlab|gitea|os\s*shell|oss|cluster|console|manual|인스턴스|파드|배포|서비스|레지스트리|플러그인|서브셸)/i.test(text);
-  if (!systemDomain) return false;
-  const liveMarker = /(?:현재|지금|운영\s*중|실시간|몇\s*개|상태|버전|존재|가능|준비|활성|비활성|설치|오류|실패|완료|current|now|live|how\s+many|status|version|exist|available|ready|running|healthy|enabled|disabled|installed|failed|completed)/i.test(text);
+  const liveMarker = /(?:현재|지금|운영\s*중|실시간|몇\s*개|상태|버전|존재|가능|준비|활성|비활성|설치|오류|실패|완료|정상|동기화|됐(?:어|나)|되나|로그인|목록|수\s*알려|current|now|live|how\s+many|status|version|exist|available|ready|running|healthy|enabled|disabled|installed|failed|completed|synced)/i.test(text);
   const conceptual = /(?:개념|정의|뜻|설명|architecture|설계\s*원칙|왜\s*(?:필요|사용)|what\s+is)/i.test(text);
   return liveMarker && !conceptual;
 }
 
 function providerClaimsCurrentSystemFact(value) {
   const text = String(value || '');
-  const systemDomain = /(?:opensphere|osaa|r2d2|pfss|postgres(?:ql)?|postgresclaim|subshell|plugin|registry|kubernetes|k8s|pod|deployment|service|gitlab|gitea|os\s*shell|cluster|console|인스턴스|파드|배포|서비스|레지스트리|플러그인|서브셸)/i.test(text);
-  const concreteRuntimeClaim = /(?:현재|지금|운영\s*중|ready|running|healthy|unavailable|available|enabled|disabled|failed|version\s*[:=]?\s*[v\d]|replicas?\s*[:=]?\s*\d|\d+\s*(?:개|pods?|instances?|replicas?))/i.test(text);
-  return systemDomain && concreteRuntimeClaim;
+  const conceptual = /(?:개념|정의|뜻|일반적|보통|architecture|설계\s*원칙|what\s+is)/i.test(text);
+  const explicitCurrent = /(?:현재|지금|운영\s*중|실시간|currently|right\s+now)/i.test(text);
+  const observedState = /(?:정상\s*(?:동작|상태|입니다)|준비(?:됨|되었습니다)|사용\s*가능|사용\s*불가|있습니다|없습니다|가능합니다|불가능합니다|ready|running|healthy|unavailable|available|enabled|disabled|failed|synced|outofsync|degraded)/i.test(text);
+  const observedCount = /(?:인스턴스|파드|pod|replica|deployment|service|클러스터|노드)[^\n.]{0,40}(?:\d+\s*개|\d+\s*\/\s*\d+)/i.test(text);
+  if (conceptual && !explicitCurrent) return false;
+  return explicitCurrent || observedState || observedCount;
+}
+
+function isPfssContextualFollowupQuery(value) {
+  const text = String(value || '').trim();
+  if (!text || text.length > 160) return false;
+  if (/(?:pfss|postgres(?:ql)?|postgresclaim|foundation-data-pg)/i.test(text)) return true;
+  return /^(?:(?:그거|그것|이거|이것)(?:은|는|이|가)?\s*)?(?:몇\s*개(?:야|인가|있어)?|상태(?:는|가)?|다시\s*확인(?:해줘)?|인스턴스\s*(?:목록(?:\s*보여줘)?|수(?:\s*알려줘)?)|replicas?\s*(?:수|목록)?(?:\s*알려줘)?|목록\s*보여줘|삭제\s*가능(?:해|한가)?|생성\s*가능(?:해|한가)?)\s*[?.!]*$/i.test(text);
 }
 
 function hasExplicitNonPfssDomainQuery(value) {
@@ -236,6 +244,7 @@ module.exports = {
   hasExplicitNonPfssDomainQuery,
   isCurrentSystemFactQuery,
   isOperationalQuery,
+  isPfssContextualFollowupQuery,
   providerClaimsCurrentSystemFact,
   observeOwnerEvidence,
   redactOwnerEvidence,

@@ -68,7 +68,7 @@ test('PFSS status and operation watch become typed deterministic claims in read-
   assert.match(source, /renderPfssPostgresOperationClaim/);
   assert.match(source, /OSAA_DIALOGUE_POLICY\.enforceCurrentFacts/);
   assert.match(source, /body\?\._dialogueContext \|\| null/);
-  assert.match(transitionSource, /operationRef: result\.operationId \|\| null/);
+  assert.match(transitionSource, /operationRef: persistedOperationRef/);
   assert.match(source, /foundationPostgresContextualCapabilityConversation/);
   assert.match(source, /PFSS Owner 계약에는 PostgreSQL 클러스터 삭제 기능/);
   assert.match(source, /foundationPostgresReadinessRead/);

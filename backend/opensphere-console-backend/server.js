@@ -4,6 +4,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { createHmac, createHash, randomBytes, randomUUID, timingSafeEqual, createPublicKey, verify: verifySignature } = require('crypto');
+const { Pool } = require('pg');
 const { createSupabaseVerifier } = require('./supabase-auth');
 const { enforcePatRequestScope, normalizePatScope, validatePatTTL } = require('./cli-token-policy');
 const { createNotificationApi } = require('./notification-api');
@@ -108,10 +109,22 @@ const SUPABASE_BACKEND_ROLE = process.env.SUPABASE_BACKEND_ROLE || 'console-admi
 const SUPABASE_BACKEND_DB_ROLE = process.env.SUPABASE_BACKEND_DB_ROLE || 'opensphere_console_backend';
 const SUPABASE_BACKEND_TOKEN_TTL_SEC = Number(process.env.SUPABASE_BACKEND_TOKEN_TTL_SEC || (24 * 60 * 60 * 30));
 const SUPABASE_BACKEND_TOKEN = process.env.SUPABASE_BACKEND_TOKEN || '';
-const OSAA_DIALOGUE_MAINTENANCE_DB_ROLE = 'opensphere_osaa_dialogue_maintenance';
 const OSAA_DIALOGUE_MAINTENANCE_REQUIRED = String(process.env.OSAA_DIALOGUE_MAINTENANCE_REQUIRED || 'true').toLowerCase() !== 'false';
 const OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS = Math.max(5000, Math.min(300000,
   Number(process.env.OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS || 30000) || 30000));
+const SUPABASE_PG_HOST = process.env.SUPABASE_PG_HOST || 'opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local';
+const SUPABASE_PG_PORT = Number(process.env.SUPABASE_PG_PORT || 5432);
+const SUPABASE_PG_DATABASE = process.env.SUPABASE_PG_DATABASE || 'postgres';
+const SUPABASE_PG_TLS = process.env.SUPABASE_PG_TLS === 'true';
+const SUPABASE_PG_CA_PATH = process.env.SUPABASE_PG_CA_PATH || '';
+const OSAA_DIALOGUE_MAINTENANCE_PG_USER = String(process.env.OSAA_DIALOGUE_MAINTENANCE_PG_USER || '').trim();
+const OSAA_DIALOGUE_MAINTENANCE_PG_PASSWORD = String(process.env.OSAA_DIALOGUE_MAINTENANCE_PG_PASSWORD || '');
+const R2D2_MAINTENANCE_ENABLED = process.env.R2D2_MAINTENANCE_ENABLED === 'true';
+const R2D2_MAINTENANCE_PG_USER = String(process.env.R2D2_MAINTENANCE_PG_USER || '').trim();
+const R2D2_MAINTENANCE_PG_PASSWORD = String(process.env.R2D2_MAINTENANCE_PG_PASSWORD || '');
+const R2D2_MAINTENANCE_INTERVAL_MS = Math.max(3600000, Math.min(604800000,
+  Number(process.env.R2D2_MAINTENANCE_INTERVAL_MS || 86400000) || 86400000));
+const R2D2_CLUSTER_ID = String(process.env.R2D2_CLUSTER_ID || 'local').trim().slice(0, 128);
 const AUDIT_READ_LIMIT = Number(process.env.SUPABASE_AUDIT_READ_LIMIT || 200);
 // Administrator mutations are MFA-protected by default in every environment.
 // A deployment must opt out explicitly; local bootstrap is handled by the
@@ -348,22 +361,6 @@ function backendHeaders(profile = 'console') {
   return headers;
 }
 
-function serviceRoleHeaders(role, subject, profile = 'console') {
-  const token = buildServiceJwt(role, subject);
-  if (!token || !SUPABASE_SERVICE_ROLE_KEY) throw { code: 503, msg: 'Supabase service role credentials are not configured' };
-  const headers = {
-    apikey: SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${token}`,
-    accept: 'application/json',
-    'content-type': 'application/json',
-  };
-  if (profile) {
-    headers['accept-profile'] = profile;
-    headers['content-profile'] = profile;
-  }
-  return headers;
-}
-
 function adminHeaders() {
   if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_REST_URL) {
     throw { code: 503, msg: 'Supabase admin credentials are not configured' };
@@ -394,8 +391,6 @@ async function restRequest(resource, {
   prefer = 'return=representation',
   timeoutMs = SUPABASE_TIMEOUT_MS,
   profile = 'console',
-  serviceRole = null,
-  serviceSubject = null,
 } = {}) {
   const url = new URL(`${SUPABASE_REST_URL.replace(/\/$/, '')}/${resource}`);
   const q = normalizeQuery(query);
@@ -403,9 +398,7 @@ async function restRequest(resource, {
   const options = {
     method,
     headers: {
-      ...(serviceRole
-        ? serviceRoleHeaders(serviceRole, serviceSubject || serviceRole, profile)
-        : backendHeaders(profile)),
+      ...backendHeaders(profile),
       Prefer: prefer,
     },
     signal: AbortSignal.timeout(timeoutMs),
@@ -1795,6 +1788,10 @@ let r2d2OperationLoopBusy = false;
 let osaaDialoguePurgeTimer = null;
 let osaaDialogueMaintenanceTimer = null;
 let osaaDialogueMaintenanceBusy = false;
+let r2d2MaintenanceTimer = null;
+let r2d2MaintenanceBusy = false;
+let osaaDialogueMaintenancePool = null;
+let r2d2MaintenancePool = null;
 let osaaDialogueMaintenanceState = {
   ready: false,
   required: OSAA_DIALOGUE_MAINTENANCE_REQUIRED,
@@ -1803,6 +1800,44 @@ let osaaDialogueMaintenanceState = {
   lastReceiptCount: 0,
   error: 'not checked',
 };
+
+function maintenancePgSsl() {
+  if (!SUPABASE_PG_TLS) return false;
+  if (!SUPABASE_PG_CA_PATH || !fs.existsSync(SUPABASE_PG_CA_PATH)) {
+    throw new Error('verified Supabase PostgreSQL CA is required for maintenance TLS');
+  }
+  return {
+    ca: fs.readFileSync(SUPABASE_PG_CA_PATH, 'utf8'),
+    rejectUnauthorized: true,
+    servername: SUPABASE_PG_HOST,
+  };
+}
+
+function scopedMaintenancePool(kind) {
+  const dialogue = kind === 'dialogue';
+  const user = dialogue ? OSAA_DIALOGUE_MAINTENANCE_PG_USER : R2D2_MAINTENANCE_PG_USER;
+  const password = dialogue ? OSAA_DIALOGUE_MAINTENANCE_PG_PASSWORD : R2D2_MAINTENANCE_PG_PASSWORD;
+  if (!user || !password) return null;
+  if (dialogue && osaaDialogueMaintenancePool) return osaaDialogueMaintenancePool;
+  if (!dialogue && r2d2MaintenancePool) return r2d2MaintenancePool;
+  const pool = new Pool({
+    host: SUPABASE_PG_HOST,
+    port: SUPABASE_PG_PORT,
+    database: SUPABASE_PG_DATABASE,
+    user,
+    password,
+    ssl: maintenancePgSsl(),
+    application_name: dialogue ? 'opensphere-console-dialogue-maintenance' : 'opensphere-console-operational-maintenance',
+    options: '-c search_path=osaa,extensions,public -c statement_timeout=30000',
+    max: 1,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+  });
+  pool.on('error', (error) => console.error(`[${kind}-maintenance-db]`, error.message || error));
+  if (dialogue) osaaDialogueMaintenancePool = pool;
+  else r2d2MaintenancePool = pool;
+  return pool;
+}
 function startR2d2OperationWorker() {
   if (!R2D2_DURABLE_OPERATION_ENABLED || r2d2OperationTimer) return;
   const claimEpoch = Date.now();
@@ -1844,11 +1879,10 @@ function startOsaaDialogueRetentionWorker() {
 }
 
 async function reapExpiredOsaaDialogueTurns() {
-  const receipts = await restRequest('rpc/reap_expired_dialogue_turns', {
-    method: 'POST', profile: 'osaa', body: { reap_limit: 100 },
-    serviceRole: OSAA_DIALOGUE_MAINTENANCE_DB_ROLE,
-    serviceSubject: 'opensphere-console-backend-dialogue-maintenance',
-  });
+  const pool = scopedMaintenancePool('dialogue');
+  if (!pool) throw new Error('dedicated Dialogue State maintenance database credential is unavailable');
+  const result = await pool.query('SELECT * FROM osaa.reap_expired_dialogue_turns($1::integer)', [100]);
+  const receipts = result.rows;
   const receiptCount = Array.isArray(receipts) ? receipts.length : 0;
   const now = new Date().toISOString();
   osaaDialogueMaintenanceState = {
@@ -1901,22 +1935,63 @@ async function recoverOsaaDialogueTurn(actor, conversationId, turnRequestId, bod
   if (String(body.confirmation || '').trim() !== expectedConfirmation) {
     throw { code: 400, msg: `confirmation required: ${expectedConfirmation}` };
   }
-  const rows = await restRequest('rpc/recover_dialogue_turn', {
-    method: 'POST', profile: 'osaa',
-    body: {
-      target_conversation_id: conversationId,
-      target_turn_request_id: turnRequestId,
-      recovery_reason: reason,
-    },
-    serviceRole: OSAA_DIALOGUE_MAINTENANCE_DB_ROLE,
-    serviceSubject: 'opensphere-console-backend-dialogue-maintenance',
-  });
-  const receipt = Array.isArray(rows) ? rows[0] : rows;
+  const pool = scopedMaintenancePool('dialogue');
+  if (!pool) throw { code: 503, msg: 'Dialogue State maintenance database identity is unavailable' };
+  const result = await pool.query(
+    'SELECT * FROM osaa.recover_dialogue_turn($1::uuid,$2::uuid,$3::text,$4::text)',
+    [conversationId, turnRequestId, actor.sub, reason],
+  );
+  const receipt = result.rows[0];
   if (!receipt) throw { code: 404, msg: 'pending conversation turn not found' };
   await logAudit(actor, 'conversation-turn-recovery', turnRequestId, 'ok', reason, {
     targetType: 'osaa-dialogue-turn',
   });
   return receipt;
+}
+
+async function runR2d2Maintenance() {
+  if (r2d2MaintenanceBusy) return;
+  r2d2MaintenanceBusy = true;
+  const pool = scopedMaintenancePool('operational');
+  if (!pool) {
+    r2d2MaintenanceBusy = false;
+    throw new Error('dedicated operational maintenance database credential is unavailable');
+  }
+  let client = null;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const lock = await client.query(
+      "SELECT pg_try_advisory_xact_lock(hashtextextended('opensphere-osaa-operational-maintenance',0)) AS acquired",
+    );
+    if (!lock.rows[0]?.acquired) {
+      await client.query('ROLLBACK');
+      return;
+    }
+    await client.query("SELECT osaa.ensure_time_partitions(current_date), osaa.ensure_time_partitions((current_date + interval '1 month')::date)");
+    await client.query(`INSERT INTO osaa.slo_sample(sampled_at,metric,value,labels)
+      SELECT clock_timestamp(),'coverage_ratio',
+        CASE WHEN count(*)=0 THEN 0 ELSE count(*) FILTER (WHERE configured AND snapshot_complete AND epistemic_state='known')::numeric/count(*) END,
+        jsonb_build_object('clusterId',$1::text)
+      FROM osaa.source_health WHERE cluster_id=$1::text`, [R2D2_CLUSTER_ID]);
+    await client.query('COMMIT');
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    if (client) client.release();
+    r2d2MaintenanceBusy = false;
+  }
+}
+
+function startR2d2MaintenanceWorker() {
+  if (!R2D2_MAINTENANCE_ENABLED || r2d2MaintenanceTimer) return;
+  const run = () => void runR2d2Maintenance().catch((error) => {
+    console.warn('[r2d2-maintenance]', error.message || error);
+  });
+  r2d2MaintenanceTimer = setInterval(run, R2D2_MAINTENANCE_INTERVAL_MS);
+  r2d2MaintenanceTimer.unref();
+  run();
 }
 
 async function requireSupabase() {
@@ -4360,6 +4435,9 @@ function metricsText() {
     '# HELP os_audit_events Current in-memory audit ring size.',
     '# TYPE os_audit_events gauge',
     `os_audit_events ${audit.length}`,
+    '# HELP osaa_dialogue_maintenance_ready Whether expired-turn recovery is currently usable.',
+    '# TYPE osaa_dialogue_maintenance_ready gauge',
+    `osaa_dialogue_maintenance_ready ${osaaDialogueMaintenanceState.ready ? 1 : 0}`,
     '# HELP process_uptime_seconds Process uptime in seconds.',
     '# TYPE process_uptime_seconds gauge',
     `process_uptime_seconds ${Math.round(process.uptime())}`,
@@ -5818,6 +5896,7 @@ server.listen(PORT, () => {
   startR2d2OperationWorker();
   startOsaaDialogueRetentionWorker();
   startOsaaDialogueMaintenanceWorker();
+  startR2d2MaintenanceWorker();
 });
 
 let credentialAuthorityServer = null;
@@ -5851,6 +5930,9 @@ function stopR2d2Worker() {
   if (r2d2OperationTimer) clearInterval(r2d2OperationTimer);
   if (osaaDialoguePurgeTimer) clearInterval(osaaDialoguePurgeTimer);
   if (osaaDialogueMaintenanceTimer) clearInterval(osaaDialogueMaintenanceTimer);
+  if (r2d2MaintenanceTimer) clearInterval(r2d2MaintenanceTimer);
+  if (osaaDialogueMaintenancePool) void osaaDialogueMaintenancePool.end().catch(() => undefined);
+  if (r2d2MaintenancePool) void r2d2MaintenancePool.end().catch(() => undefined);
   if (credentialAuthorityServer) credentialAuthorityServer.close();
 }
 process.on('SIGTERM', stopR2d2Worker);

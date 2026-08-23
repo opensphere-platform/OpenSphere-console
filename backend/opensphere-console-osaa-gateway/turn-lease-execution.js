@@ -14,6 +14,13 @@ function boundedSignal(timeoutMs) {
   return leaseSignal ? AbortSignal.any([leaseSignal, timeoutSignal]) : timeoutSignal;
 }
 
+// Audit and post-side-effect receipts must remain writable after a turn lease
+// is lost. This signal is time-bounded but deliberately not coupled to the
+// active dialogue execution context.
+function independentBoundedSignal(timeoutMs) {
+  return AbortSignal.timeout(timeoutMs);
+}
+
 function assertTurnLeaseActive() {
   const signal = activeTurnSignal();
   if (signal?.aborted) {
@@ -35,5 +42,6 @@ module.exports = {
   activeTurnSignal,
   assertTurnLeaseActive,
   boundedSignal,
+  independentBoundedSignal,
   runWithTurnSignal,
 };

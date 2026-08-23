@@ -16,6 +16,10 @@ test('read-only status and capability answers do not destroy a prepared creation
   assert.equal(dialogueTransitionForToolResult({
     schema: 'r2d2.foundation-postgres-capability-answer/v1', phase: 'Observed', question: 'cluster.create',
   }, preparedPlan), null);
+  assert.equal(dialogueTransitionForToolResult({
+    schema: 'r2d2.foundation-postgres-operation/v1', phase: 'Observed',
+    operationId: '11111111-1111-4111-8111-111111111111',
+  }, preparedPlan), null);
 });
 
 test('an accepted operation replaces plan state and preserves its operation reference', () => {
@@ -38,4 +42,17 @@ test('operation watch keeps the persisted operation reference in off-compatible 
   }, { domain: 'pfss.postgresql', intent: 'create.apply', phase: 'operation_accepted', operationRef: operationId });
   assert.equal(transition.intent, 'operation.watch');
   assert.equal(transition.operationRef, operationId);
+});
+
+test('operation watch cannot inject or replace a server-persisted operation reference', () => {
+  const persisted = '22222222-2222-4222-8222-222222222222';
+  const injected = '33333333-3333-4333-8333-333333333333';
+  assert.equal(dialogueTransitionForToolResult({
+    schema: 'r2d2.foundation-postgres-operation/v1', phase: 'Observed', operationId: injected,
+    operationClaim: { operation: { stage: 'Ready' } },
+  }, { domain: 'pfss.postgresql', intent: 'create.apply', phase: 'operation_accepted', operationRef: persisted }), null);
+  assert.equal(dialogueTransitionForToolResult({
+    schema: 'r2d2.foundation-postgres-operation/v1', phase: 'Observed', operationId: injected,
+    operationClaim: { operation: { stage: 'Ready' } },
+  }, { domain: 'pfss.postgresql', intent: 'status.read', phase: 'observed', operationRef: null }), null);
 });

@@ -48,6 +48,9 @@ WORKDIR /app/opensphere-console-backend
 # Build with `docker build -f opensphere-console-backend/Dockerfile .` from
 # `backend/` and a named `setup-cli` context, so the browser API cannot supply
 # or mutate the release executor implementation.
+COPY opensphere-console-backend/package.json opensphere-console-backend/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY opensphere-console-backend/server.js ./server.js
 COPY opensphere-console-backend/supabase-auth.js ./supabase-auth.js
 COPY opensphere-console-backend/cli-token-policy.js ./cli-token-policy.js

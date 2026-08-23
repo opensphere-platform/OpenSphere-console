@@ -5,7 +5,8 @@ function dialogueTransitionForToolResult(result, dialogueContext = null) {
   const preservesPreparedPlan = dialogueContext?.domain === 'pfss.postgresql'
     && dialogueContext?.intent === 'create.plan'
     && dialogueContext?.phase === 'plan_ready'
-    && ['r2d2.foundation-postgres-status/v1', 'r2d2.foundation-postgres-capability-answer/v1']
+    && ['r2d2.foundation-postgres-status/v1', 'r2d2.foundation-postgres-capability-answer/v1',
+      'r2d2.foundation-postgres-operation/v1']
       .includes(result.schema);
   if (preservesPreparedPlan) return null;
   if (result.schema === 'r2d2.foundation-postgres-status/v1') {
@@ -20,6 +21,9 @@ function dialogueTransitionForToolResult(result, dialogueContext = null) {
     };
   }
   if (result.schema === 'r2d2.foundation-postgres-operation/v1') {
+    const persistedOperationRef = String(dialogueContext?.operationRef || '').trim();
+    const observedOperationRef = String(result.operationId || '').trim();
+    if (!persistedOperationRef || (observedOperationRef && observedOperationRef !== persistedOperationRef)) return null;
     return {
       domain: 'pfss.postgresql', intent: 'operation.watch',
       phase: result.phase === 'Observed'
@@ -29,7 +33,7 @@ function dialogueTransitionForToolResult(result, dialogueContext = null) {
       slots: {}, missingSlots: [],
       capabilityRef: result.capabilityBinding?.capabilityRef || null,
       evidenceRefs: result.operationClaim?.evidenceRef ? [result.operationClaim.evidenceRef] : [],
-      operationRef: result.operationId || null,
+      operationRef: persistedOperationRef,
     };
   }
   if (result.schema === 'r2d2.foundation-postgres-capability-answer/v1') {

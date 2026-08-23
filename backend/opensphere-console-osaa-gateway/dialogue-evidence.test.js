@@ -4,7 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildPfssPostgresClaimSet, buildPfssPostgresOperationClaim, guardProviderCurrentFactResponse,
-  hasExplicitNonPfssDomainQuery, isCurrentSystemFactQuery, isOperationalQuery, observeOwnerEvidence,
+  hasExplicitNonPfssDomainQuery, isCurrentSystemFactQuery, isOperationalQuery,
+  isPfssContextualFollowupQuery, observeOwnerEvidence,
   providerClaimsCurrentSystemFact,
   redactOwnerEvidence, renderPfssPostgresClaimSet, renderPfssPostgresOperationClaim,
 } = require('./dialogue-evidence');
@@ -61,15 +62,30 @@ test('ambiguous queries fail safe as operational', () => {
   assert.equal(isOperationalQuery('재미있는 이야기를 해줘'), false);
 });
 
-test('current-fact classification is closed and conflicting domains do not inherit PFSS', () => {
+test('current-fact classification is domain-open and conflicting domains do not inherit PFSS', () => {
   assert.equal(isCurrentSystemFactQuery('현재 GitLab 파드는 몇 개야?'), true);
+  assert.equal(isCurrentSystemFactQuery('Keycloak 지금 정상이야?'), true);
+  assert.equal(isCurrentSystemFactQuery('Argo CD 동기화 됐어?'), true);
+  assert.equal(isCurrentSystemFactQuery('Kanidm 로그인 가능한가?'), true);
   assert.equal(isCurrentSystemFactQuery('How many Kubernetes pods are running?'), true);
   assert.equal(isCurrentSystemFactQuery('What is Kubernetes?'), false);
   assert.equal(isCurrentSystemFactQuery('DUPA 설계 원칙을 설명해줘'), false);
   assert.equal(hasExplicitNonPfssDomainQuery('GitLab 파드는 몇 개야?'), true);
   assert.equal(hasExplicitNonPfssDomainQuery('PFSS PostgreSQL 인스턴스는 몇 개야?'), false);
   assert.equal(providerClaimsCurrentSystemFact('Kubernetes has 3 running pods.'), true);
+  assert.equal(providerClaimsCurrentSystemFact('Keycloak은 현재 정상입니다.'), true);
+  assert.equal(providerClaimsCurrentSystemFact('foundation cluster 인스턴스가 2개 있습니다.'), true);
   assert.equal(providerClaimsCurrentSystemFact('Kubernetes is a container orchestration system.'), false);
+  assert.equal(providerClaimsCurrentSystemFact('PostgreSQL은 관계형 DB이고 replicas=3 구성이 일반적입니다.'), false);
+});
+
+test('persisted PFSS context is inherited only by tightly bounded PFSS follow-ups', () => {
+  assert.equal(isPfssContextualFollowupQuery('다시 확인해줘'), true);
+  assert.equal(isPfssContextualFollowupQuery('인스턴스 목록 보여줘'), true);
+  assert.equal(isPfssContextualFollowupQuery('replica 수 알려줘'), true);
+  assert.equal(isPfssContextualFollowupQuery('Keycloak 지금 정상이야?'), false);
+  assert.equal(isPfssContextualFollowupQuery('Argo CD 동기화 됐어?'), false);
+  assert.equal(isPfssContextualFollowupQuery('Odoo 상태는?'), false);
 });
 
 test('provider prose cannot assert a current system fact without deterministic evidence', () => {
