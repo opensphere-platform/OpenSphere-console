@@ -59,6 +59,9 @@ const COMPONENT_REPOSITORIES = Object.freeze({
   giteaPostgres: 'opensphere-console-gitea-postgres',
   recovery: 'opensphere-console-recovery',
 });
+const AUXILIARY_ARTIFACT_REPOSITORIES = Object.freeze({
+  cliArtifacts: 'opensphere-os-cli',
+});
 const REQUIRED_COMPONENTS = Object.freeze(Object.keys(COMPONENT_REPOSITORIES));
 const PRE_OSDST_COMPONENT_REPOSITORIES = Object.freeze(Object.fromEntries(
   Object.entries(COMPONENT_REPOSITORIES).filter(([name]) => name !== 'osdst'),
@@ -89,6 +92,7 @@ function calculateReleaseDigest(lock) {
     ...(lock.releaseScope ? { releaseScope: lock.releaseScope } : {}),
     ...(lock.baseReleaseDigest ? { baseReleaseDigest: lock.baseReleaseDigest } : {}),
     ...(lock.changedComponents ? { changedComponents: lock.changedComponents } : {}),
+    ...(lock.auxiliaryArtifacts ? { auxiliaryArtifacts: lock.auxiliaryArtifacts } : {}),
   });
   return `sha256:${createHash('sha256').update(payload).digest('hex')}`;
 }
@@ -137,6 +141,7 @@ function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false 
     'sourceRevision', 'trust', 'releaseBom', 'components',
     'releaseScope', 'baseReleaseDigest', 'changedComponents',
     'provenanceVerifiedAt', 'sbomVerifiedAt',
+    'auxiliaryArtifacts',
   ], 'targetLock');
   if (lock.apiVersion !== RELEASE_LOCK_API_VERSION || lock.kind !== RELEASE_LOCK_KIND) {
     throw new Error('targetLock is not an OpenSphere release lock');
@@ -245,6 +250,40 @@ function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false 
       throw new Error(`targetLock component ${name} registry credential flag is invalid`);
     }
   }
+  if (lock.auxiliaryArtifacts !== undefined) {
+    if (!localEdge || lock.channel !== 'edge') {
+      throw new Error('targetLock auxiliary artifacts require localhost edge trust');
+    }
+    const expectedAuxiliaryNames = Object.keys(AUXILIARY_ARTIFACT_REPOSITORIES);
+    assertClosedObject(lock.auxiliaryArtifacts, expectedAuxiliaryNames, 'targetLock.auxiliaryArtifacts');
+    const auxiliaryNames = Object.keys(lock.auxiliaryArtifacts);
+    if (canonicalJson(auxiliaryNames) !== canonicalJson(expectedAuxiliaryNames)) {
+      throw new Error('targetLock auxiliary artifact set is incomplete or unsupported');
+    }
+    for (const name of expectedAuxiliaryNames) {
+      const artifact = lock.auxiliaryArtifacts[name];
+      assertClosedObject(artifact, [
+        'repository', 'image', 'sourceRevision', 'registryCredentialsRequired',
+      ], `targetLock.auxiliaryArtifacts.${name}`);
+      const image = String(artifact.image || '');
+      const match = image.match(IMAGE_RE);
+      if (!match || artifact.repository !== match[1]
+        || artifact.repository !== AUXILIARY_ARTIFACT_REPOSITORIES[name]) {
+        throw new Error(`targetLock auxiliary artifact ${name} is not a canonical exact-digest image`);
+      }
+      if (!REVISION_RE.test(String(artifact.sourceRevision || ''))) {
+        throw new Error(`targetLock auxiliary artifact ${name} sourceRevision is invalid`);
+      }
+      if (releaseScope === RELEASE_SCOPE_INTEGRATED
+        && artifact.sourceRevision !== lock.sourceRevision) {
+        throw new Error(`targetLock auxiliary artifact ${name} sourceRevision differs from the release`);
+      }
+      if (artifact.registryCredentialsRequired !== undefined
+        && typeof artifact.registryCredentialsRequired !== 'boolean') {
+        throw new Error(`targetLock auxiliary artifact ${name} registry credential flag is invalid`);
+      }
+    }
+  }
   if (lock.releaseBom !== undefined
     && lock.releaseBom.subject !== lock.components.console.image) {
     throw new Error('targetLock releaseBom subject is not the Console anchor');
@@ -274,6 +313,9 @@ function validateReleaseTransition(baseLock, targetLock) {
   }
   if (target.channel !== base.channel || canonicalJson(target.trust) !== canonicalJson(base.trust)) {
     throw new Error('component targetLock channel or trust differs from its base release');
+  }
+  if (!sameComponent(base.auxiliaryArtifacts, target.auxiliaryArtifacts)) {
+    throw new Error('component targetLock cannot change auxiliary runtime artifacts');
   }
   const cutover = isAgentIdentityCutover(base.components, target.components);
   if (cutover) {
@@ -374,6 +416,9 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
     releaseScope: RELEASE_SCOPE_COMPONENT,
     baseReleaseDigest: base.releaseDigest,
     changedComponents,
+    ...(base.auxiliaryArtifacts
+      ? { auxiliaryArtifacts: structuredClone(base.auxiliaryArtifacts) }
+      : {}),
     components,
   };
   target.releaseDigest = calculateReleaseDigest(target);

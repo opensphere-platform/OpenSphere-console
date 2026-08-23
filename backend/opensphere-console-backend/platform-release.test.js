@@ -86,6 +86,20 @@ function releaseLock() {
   return lock;
 }
 
+function releaseLockWithCliArtifact() {
+  const lock = releaseLock();
+  lock.auxiliaryArtifacts = {
+    cliArtifacts: {
+      repository: 'opensphere-os-cli',
+      image: `ghcr.io/opensphere-platform/opensphere-os-cli@${digest('e')}`,
+      sourceRevision: revision,
+      registryCredentialsRequired: false,
+    },
+  };
+  lock.releaseDigest = calculateReleaseDigest(lock);
+  return lock;
+}
+
 function legacyInstalledReleaseLock() {
   const lock = releaseLock();
   const components = Object.fromEntries(Object.entries(lock.components)
@@ -151,6 +165,24 @@ test('Platform Release contract accepts only the complete canonical exact-digest
   blockedPromotion.channel = 'candidate';
   blockedPromotion.releaseDigest = calculateReleaseDigest(blockedPromotion);
   assert.throws(() => validateReleaseLock(blockedPromotion), /channel is unsupported/);
+});
+
+test('component release preserves the Setup-governed CLI auxiliary artifact', () => {
+  const base = releaseLockWithCliArtifact();
+  assert.equal(validateReleaseLock(base), base);
+  const target = buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: { osaaGateway: { image: digest('f') } },
+  });
+  assert.deepEqual(target.auxiliaryArtifacts, base.auxiliaryArtifacts);
+  assert.equal(validateReleaseTransition(base, target), target);
+
+  const changedArtifact = structuredClone(target);
+  changedArtifact.auxiliaryArtifacts.cliArtifacts.image =
+    `ghcr.io/opensphere-platform/opensphere-os-cli@${digest('d')}`;
+  changedArtifact.releaseDigest = calculateReleaseDigest(changedArtifact);
+  assert.throws(() => validateReleaseTransition(base, changedArtifact),
+    /cannot change auxiliary runtime artifacts/);
 });
 
 test('Console generates an atomic component target from the installed complete lock', () => {
