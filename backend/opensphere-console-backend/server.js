@@ -109,16 +109,11 @@ const SUPABASE_BACKEND_ROLE = process.env.SUPABASE_BACKEND_ROLE || 'console-admi
 const SUPABASE_BACKEND_DB_ROLE = process.env.SUPABASE_BACKEND_DB_ROLE || 'opensphere_console_backend';
 const SUPABASE_BACKEND_TOKEN_TTL_SEC = Number(process.env.SUPABASE_BACKEND_TOKEN_TTL_SEC || (24 * 60 * 60 * 30));
 const SUPABASE_BACKEND_TOKEN = process.env.SUPABASE_BACKEND_TOKEN || '';
-const OSAA_DIALOGUE_MAINTENANCE_REQUIRED = String(process.env.OSAA_DIALOGUE_MAINTENANCE_REQUIRED || 'true').toLowerCase() !== 'false';
-const OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS = Math.max(5000, Math.min(300000,
-  Number(process.env.OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS || 30000) || 30000));
 const SUPABASE_PG_HOST = process.env.SUPABASE_PG_HOST || 'opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local';
 const SUPABASE_PG_PORT = Number(process.env.SUPABASE_PG_PORT || 5432);
 const SUPABASE_PG_DATABASE = process.env.SUPABASE_PG_DATABASE || 'postgres';
 const SUPABASE_PG_TLS = process.env.SUPABASE_PG_TLS === 'true';
 const SUPABASE_PG_CA_PATH = process.env.SUPABASE_PG_CA_PATH || '';
-const OSAA_DIALOGUE_MAINTENANCE_PG_USER = String(process.env.OSAA_DIALOGUE_MAINTENANCE_PG_USER || '').trim();
-const OSAA_DIALOGUE_MAINTENANCE_PG_PASSWORD = String(process.env.OSAA_DIALOGUE_MAINTENANCE_PG_PASSWORD || '');
 const R2D2_MAINTENANCE_ENABLED = process.env.R2D2_MAINTENANCE_ENABLED === 'true';
 const R2D2_MAINTENANCE_PG_USER = String(process.env.R2D2_MAINTENANCE_PG_USER || '').trim();
 const R2D2_MAINTENANCE_PG_PASSWORD = String(process.env.R2D2_MAINTENANCE_PG_PASSWORD || '');
@@ -146,8 +141,6 @@ const OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE = process.env.OS_SHELL_CREDENTIAL_
 const OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE || '';
 const R2D2_OPERATION_WORKER_ID = String(process.env.R2D2_OPERATION_WORKER_ID || process.env.HOSTNAME || `backend-${process.pid}`).slice(0, 128);
 const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env.R2D2_OPERATION_POLL_MS || 3000) || 3000));
-const OSAA_DIALOGUE_PURGE_INTERVAL_MS = Math.max(3600000, Math.min(604800000,
-  Number(process.env.OSAA_DIALOGUE_PURGE_INTERVAL_MS || 86400000) || 86400000));
 const RECOVERY_DRILL_TARGETS = Object.freeze({
   supabase: Object.freeze({ namespace: 'opensphere-console-recovery', name: 'opensphere-supabase-recovery-drill', mode: 'drill-supabase' }),
   gitea: Object.freeze({ namespace: 'opensphere-console-recovery', name: 'opensphere-gitea-recovery-drill', mode: 'drill-gitea' }),
@@ -156,6 +149,7 @@ const RECOVERY_OPERATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89a
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OSAA_GATEWAY_URL = (process.env.OSAA_GATEWAY_URL || 'http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const OSDST_URL = (process.env.OSDST_URL || 'http://opensphere-osdst.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const FOUNDATION_CONTROL_URL = (process.env.FOUNDATION_CONTROL_URL || 'http://foundation-osaa-owner.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
 const INSTALLATION_CONFIG_FILE = process.env.INSTALLATION_CONFIG_FILE || DEFAULT_INSTALLATION_CONFIG_FILE;
@@ -176,8 +170,8 @@ const EXTERNAL_CHANNEL_REQUIRE_AAL2 = String(process.env.EXTERNAL_CHANNEL_REQUIR
 const OSAA_NAMESPACE = process.env.OSAA_NAMESPACE || 'opensphere-console';
 const OSAA_KEY_NAMESPACE = process.env.OSAA_KEY_NAMESPACE || 'opensphere-osaa-credentials';
 const K8S_API = 'https://kubernetes.default.svc';
-const OSAA_DIALOGUE_STATE_DEPLOYMENT = 'opensphere-console-osaa-gateway';
-const OSAA_DIALOGUE_STATE_ANNOTATION = 'opensphere.io/osaa-dialogue-state-mode';
+const OSAA_DIALOGUE_STATE_DEPLOYMENT = 'opensphere-osdst';
+const OSAA_DIALOGUE_STATE_ANNOTATION = 'opensphere.io/osdst-mode';
 const OSAA_DIALOGUE_STATE_MODES = new Set(['off', 'shadow', 'read-enforce', 'mutation-enforce']);
 const OSAA_KEY_LABEL = 'opensphere.io/osaa-llm-key';
 const OSAA_PART_LABEL = 'opensphere.io/part-of';
@@ -1000,6 +994,16 @@ const r2d2OperationApi = createR2d2OperationApi({
     return session;
   },
   store: createRestOperationStore(restRequest),
+  resolveDialogueState: async (conversationId, actorId, req) => {
+    const projection = await osdstRequest(
+      `/v1/conversations/${encodeURIComponent(conversationId)}/projection`,
+      { sourceRequest: req },
+    );
+    if (String(projection?.conversationId || '') !== conversationId) {
+      throw { code: 409, msg: 'OSDST returned a projection for a different conversation' };
+    }
+    return projection;
+  },
   resolveTarget: async (action, requested, auth) => {
     if (action === 'create-postgres-cluster') {
       let response;
@@ -1788,21 +1792,10 @@ async function durableVerify(verifierId, target, receipt, accessToken) {
 
 let r2d2OperationTimer = null;
 let r2d2OperationLoopBusy = false;
-let osaaDialoguePurgeTimer = null;
-let osaaDialogueMaintenanceTimer = null;
-let osaaDialogueMaintenanceBusy = false;
 let r2d2MaintenanceTimer = null;
 let r2d2MaintenanceBusy = false;
-let osaaDialogueMaintenancePool = null;
 let r2d2MaintenancePool = null;
-let osaaDialogueMaintenanceState = {
-  ready: false,
-  required: OSAA_DIALOGUE_MAINTENANCE_REQUIRED,
-  checkedAt: null,
-  lastSuccessAt: null,
-  lastReceiptCount: 0,
-  error: 'not checked',
-};
+let osdstState = { ready: false, checkedAt: null, error: 'not checked' };
 
 function maintenancePgSsl() {
   if (!SUPABASE_PG_TLS) return false;
@@ -1817,12 +1810,10 @@ function maintenancePgSsl() {
 }
 
 function scopedMaintenancePool(kind) {
-  const dialogue = kind === 'dialogue';
-  const user = dialogue ? OSAA_DIALOGUE_MAINTENANCE_PG_USER : R2D2_MAINTENANCE_PG_USER;
-  const password = dialogue ? OSAA_DIALOGUE_MAINTENANCE_PG_PASSWORD : R2D2_MAINTENANCE_PG_PASSWORD;
+  const user = R2D2_MAINTENANCE_PG_USER;
+  const password = R2D2_MAINTENANCE_PG_PASSWORD;
   if (!user || !password) return null;
-  if (dialogue && osaaDialogueMaintenancePool) return osaaDialogueMaintenancePool;
-  if (!dialogue && r2d2MaintenancePool) return r2d2MaintenancePool;
+  if (r2d2MaintenancePool) return r2d2MaintenancePool;
   const pool = new Pool({
     host: SUPABASE_PG_HOST,
     port: SUPABASE_PG_PORT,
@@ -1830,15 +1821,14 @@ function scopedMaintenancePool(kind) {
     user,
     password,
     ssl: maintenancePgSsl(),
-    application_name: dialogue ? 'opensphere-console-dialogue-maintenance' : 'opensphere-console-operational-maintenance',
+    application_name: 'opensphere-console-operational-maintenance',
     options: '-c search_path=osaa,extensions,public -c statement_timeout=30000',
     max: 1,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
   });
   pool.on('error', (error) => console.error(`[${kind}-maintenance-db]`, error.message || error));
-  if (dialogue) osaaDialogueMaintenancePool = pool;
-  else r2d2MaintenancePool = pool;
+  r2d2MaintenancePool = pool;
   return pool;
 }
 function startR2d2OperationWorker() {
@@ -1862,74 +1852,39 @@ function startR2d2OperationWorker() {
   r2d2OperationTimer.unref(); void poll();
 }
 
-async function purgeExpiredOsaaDialogueState() {
-  const receipts = await restRequest('rpc/purge_eligible_dialogue_state', {
-    method: 'POST', profile: 'osaa', body: { purge_limit: 25 },
-  });
-  if (Array.isArray(receipts) && receipts.length) {
-    console.log(`[osaa-dialogue-retention] purged ${receipts.length} expired conversation state set(s)`);
-  }
-}
-
-function startOsaaDialogueRetentionWorker() {
-  if (osaaDialoguePurgeTimer) return;
-  const run = () => void purgeExpiredOsaaDialogueState().catch((error) => {
-    console.warn('[osaa-dialogue-retention]', error.message || error);
-  });
-  osaaDialoguePurgeTimer = setInterval(run, OSAA_DIALOGUE_PURGE_INTERVAL_MS);
-  osaaDialoguePurgeTimer.unref();
-  run();
-}
-
-async function reapExpiredOsaaDialogueTurns() {
-  const pool = scopedMaintenancePool('dialogue');
-  if (!pool) throw new Error('dedicated Dialogue State maintenance database credential is unavailable');
-  const result = await pool.query('SELECT * FROM osaa.reap_expired_dialogue_turns($1::integer)', [100]);
-  const receipts = result.rows;
-  const receiptCount = Array.isArray(receipts) ? receipts.length : 0;
-  const now = new Date().toISOString();
-  osaaDialogueMaintenanceState = {
-    ready: true,
-    required: OSAA_DIALOGUE_MAINTENANCE_REQUIRED,
-    checkedAt: now,
-    lastSuccessAt: now,
-    lastReceiptCount: receiptCount,
-    error: null,
-  };
-  if (receiptCount) console.warn(`[osaa-dialogue-maintenance] recovered ${receiptCount} expired turn lease(s)`);
-  return receipts;
-}
-
-async function runOsaaDialogueMaintenance() {
-  if (osaaDialogueMaintenanceBusy) return;
-  osaaDialogueMaintenanceBusy = true;
+async function osdstRequest(pathname, { method = 'GET', sourceRequest, body } = {}) {
+  let response;
   try {
-    await reapExpiredOsaaDialogueTurns();
+    response = await fetch(`${OSDST_URL}${pathname}`, {
+      method,
+      headers: {
+        accept: 'application/json',
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(sourceRequest?.headers?.authorization ? { authorization: sourceRequest.headers.authorization } : {}),
+        ...(sourceRequest?.headers?.cookie ? { cookie: sourceRequest.headers.cookie } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
   } catch (error) {
-    osaaDialogueMaintenanceState = {
-      ...osaaDialogueMaintenanceState,
-      ready: false,
-      checkedAt: new Date().toISOString(),
-      lastReceiptCount: 0,
-      error: String(error?.msg || error?.message || error).slice(0, 240),
-    };
-    console.warn('[osaa-dialogue-maintenance]', osaaDialogueMaintenanceState.error);
-  } finally {
-    osaaDialogueMaintenanceBusy = false;
+    throw { code: 503, msg: `OSDST unavailable: ${error.message || error}` };
   }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: data.error || `OSDST HTTP ${response.status}` };
+  return data;
 }
 
-function startOsaaDialogueMaintenanceWorker() {
-  if (osaaDialogueMaintenanceTimer) return;
-  osaaDialogueMaintenanceTimer = setInterval(
-    () => { void runOsaaDialogueMaintenance(); },
-    OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS,
-  );
-  osaaDialogueMaintenanceTimer.unref();
-  void runOsaaDialogueMaintenance();
+async function observeOsdst() {
+  try {
+    const state = await osdstRequest('/readyz');
+    osdstState = { ...state, ready: state.ready === true, checkedAt: new Date().toISOString(), error: null };
+  } catch (error) {
+    osdstState = { ready: false, checkedAt: new Date().toISOString(), error: String(error.msg || error.message || error).slice(0, 240) };
+  }
+  return osdstState;
 }
 
-async function recoverOsaaDialogueTurn(actor, conversationId, turnRequestId, body = {}) {
+async function recoverOsaaDialogueTurn(sourceRequest, actor, conversationId, turnRequestId, body = {}) {
   const reason = String(body.reason || '').trim();
   if (reason.length < 8 || reason.length > 500) {
     throw { code: 400, msg: 'recovery reason must contain 8 to 500 characters' };
@@ -1938,13 +1893,10 @@ async function recoverOsaaDialogueTurn(actor, conversationId, turnRequestId, bod
   if (String(body.confirmation || '').trim() !== expectedConfirmation) {
     throw { code: 400, msg: `confirmation required: ${expectedConfirmation}` };
   }
-  const pool = scopedMaintenancePool('dialogue');
-  if (!pool) throw { code: 503, msg: 'Dialogue State maintenance database identity is unavailable' };
-  const result = await pool.query(
-    'SELECT * FROM osaa.recover_dialogue_turn($1::uuid,$2::uuid,$3::text,$4::text)',
-    [conversationId, turnRequestId, actor.sub, reason],
-  );
-  const receipt = result.rows[0];
+  const result = await osdstRequest(`/v1/admin/conversations/${conversationId}/turns/${turnRequestId}/recover`, {
+    method: 'POST', sourceRequest, body: { reason, ownerId: actor.sub },
+  });
+  const receipt = result.receipt;
   if (!receipt) throw { code: 404, msg: 'pending conversation turn not found' };
   await logAudit(actor, 'conversation-turn-recovery', turnRequestId, 'ok', reason, {
     targetType: 'osaa-dialogue-turn',
@@ -4129,15 +4081,22 @@ function osaaDialogueStateControlProjection(deployment) {
       updatedReplicas,
       readyReplicas,
     },
-    updatedAt: String(deployment?.metadata?.annotations?.['opensphere.io/osaa-dialogue-state-updated-at'] || ''),
-    updatedBy: String(deployment?.metadata?.annotations?.['opensphere.io/osaa-dialogue-state-updated-by'] || ''),
+    updatedAt: String(deployment?.metadata?.annotations?.['opensphere.io/osdst-updated-at'] || ''),
+    updatedBy: String(deployment?.metadata?.annotations?.['opensphere.io/osdst-updated-by'] || ''),
   };
 }
 
 async function getOsaaDialogueStateControl() {
-  const response = await k8sRequest('GET', osaaDialogueStateDeploymentPath());
-  if (!response.ok) throw { code: 502, msg: `OSAA Dialogue State deployment unavailable (Kubernetes HTTP ${response.status})` };
-  return osaaDialogueStateControlProjection(response.body);
+  const [response, runtime] = await Promise.all([
+    k8sRequest('GET', osaaDialogueStateDeploymentPath()),
+    osdstRequest('/v1/status').catch((error) => ({
+      service: 'opensphere-osdst', ready: false, error: String(error.msg || error.message || error),
+    })),
+  ]);
+  if (!response.ok) throw { code: 502, msg: `OSDST deployment unavailable (Kubernetes HTTP ${response.status})` };
+  const exactImage = String(response.body?.spec?.template?.spec?.containers
+    ?.find((container) => container.name === 'osdst')?.image || '');
+  return { ...osaaDialogueStateControlProjection(response.body), runtime: { ...runtime, exactImage } };
 }
 
 async function setOsaaDialogueStateControl(actor, body) {
@@ -4146,7 +4105,7 @@ async function setOsaaDialogueStateControl(actor, body) {
     throw { code: 400, msg: 'mode and reason are the only supported Dialogue State settings' };
   }
   const mode = String(body.mode || '').trim().toLowerCase();
-  if (!OSAA_DIALOGUE_STATE_MODES.has(mode)) throw { code: 400, msg: 'unsupported OSAA Dialogue State mode' };
+  if (!OSAA_DIALOGUE_STATE_MODES.has(mode)) throw { code: 400, msg: 'unsupported OSDST mode' };
   const reason = managementReason(body.reason);
   if (!reason) throw { code: 400, msg: 'management reason must be at least 8 characters' };
 
@@ -4163,10 +4122,10 @@ async function setOsaaDialogueStateControl(actor, body) {
   const patched = await k8sRequest('PATCH', osaaDialogueStateDeploymentPath(), {
     metadata: {
       annotations: {
-        'opensphere.io/osaa-dialogue-state-updated-at': updatedAt,
-        'opensphere.io/osaa-dialogue-state-updated-by': updatedBy,
-        'opensphere.io/osaa-dialogue-state-change-reason': reason.slice(0, 500),
-        'opensphere.io/osaa-dialogue-state-request-id': requestId,
+        'opensphere.io/osdst-updated-at': updatedAt,
+        'opensphere.io/osdst-updated-by': updatedBy,
+        'opensphere.io/osdst-change-reason': reason.slice(0, 500),
+        'opensphere.io/osdst-request-id': requestId,
       },
     },
     spec: {
@@ -4179,7 +4138,7 @@ async function setOsaaDialogueStateControl(actor, body) {
     await logAudit(actor, 'osaa-dialogue-state-mode-change', OSAA_DIALOGUE_STATE_DEPLOYMENT, 'failed', reason, {
       requestId, phase: 'failed', targetType: 'osaa-dialogue-state-policy', payloadDigest,
     }).catch(() => undefined);
-    throw { code: 502, msg: `OSAA Dialogue State mode apply failed (Kubernetes HTTP ${patched.status})` };
+    throw { code: 502, msg: `OSDST mode apply failed (Kubernetes HTTP ${patched.status})` };
   }
   await logAudit(actor, 'osaa-dialogue-state-mode-change', OSAA_DIALOGUE_STATE_DEPLOYMENT, 'ok', reason, {
     requestId, phase: 'applied', targetType: 'osaa-dialogue-state-policy', payloadDigest,
@@ -4527,7 +4486,7 @@ function metricsText() {
     `os_audit_events ${audit.length}`,
     '# HELP osaa_dialogue_maintenance_ready Whether expired-turn recovery is currently usable.',
     '# TYPE osaa_dialogue_maintenance_ready gauge',
-    `osaa_dialogue_maintenance_ready ${osaaDialogueMaintenanceState.ready ? 1 : 0}`,
+    `osaa_dialogue_maintenance_ready ${osdstState.ready ? 1 : 0}`,
     '# HELP process_uptime_seconds Process uptime in seconds.',
     '# TYPE process_uptime_seconds gauge',
     `process_uptime_seconds ${Math.round(process.uptime())}`,
@@ -4851,16 +4810,17 @@ const server = http.createServer(async (req, res) => {
     if (p === '/readyz') {
       try {
         const authority = await requireSupabase();
-        if (OSAA_DIALOGUE_MAINTENANCE_REQUIRED && !osaaDialogueMaintenanceState.ready) {
+        const dialogueMaintenance = await observeOsdst();
+        if (!dialogueMaintenance.ready) {
           return json(res, 503, {
             ready: false,
             required: true,
-            error: 'OSAA dialogue maintenance capability unavailable',
-            components: [{ name: 'osaa-dialogue-maintenance', ...osaaDialogueMaintenanceState }],
-            checkedAt: osaaDialogueMaintenanceState.checkedAt || new Date().toISOString(),
+            error: 'OSDST capability unavailable',
+            components: [{ name: 'opensphere-osdst', ...dialogueMaintenance }],
+            checkedAt: dialogueMaintenance.checkedAt || new Date().toISOString(),
           });
         }
-        return json(res, 200, { ...authority, dialogueMaintenance: osaaDialogueMaintenanceState });
+        return json(res, 200, { ...authority, dialogueMaintenance, osdst: dialogueMaintenance });
       }
       catch (error) {
         return json(res, 503, {
@@ -5298,13 +5258,13 @@ const server = http.createServer(async (req, res) => {
       try {
         await verifyConsoleAdmin(req, { requireAal2: false });
         return json(res, 200, await getOsaaDialogueStateControl());
-      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA Dialogue State control unavailable' }); }
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSDST control unavailable' }); }
     }
     if (p === '/api/osaa/admin/dialogue-state' && req.method === 'POST') {
       try {
         const actor = await verifyConsoleAdmin(req, { requireAal2: true });
         return json(res, 202, await setOsaaDialogueStateControl(actor, await readBody(req)));
-      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA Dialogue State mode change failed' }); }
+      } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSDST mode change failed' }); }
     }
     if (p === '/api/osaa/admin/llm-keys' && req.method === 'POST') {
       try {
@@ -5334,7 +5294,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const actor = await verifyConsoleAdmin(req, { requireAal2: true });
         const receipt = await recoverOsaaDialogueTurn(
-          actor, conversationRecoveryPath[1], conversationRecoveryPath[2], await readBody(req),
+          req, actor, conversationRecoveryPath[1], conversationRecoveryPath[2], await readBody(req),
         );
         return json(res, 200, { recovered: true, receipt });
       } catch (e) {
@@ -5996,8 +5956,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`opensphere-console-backend v${VERSION} listening :${PORT} (Supabase identity/data + catalog + Kubernetes passthrough)`);
   startR2d2OperationWorker();
-  startOsaaDialogueRetentionWorker();
-  startOsaaDialogueMaintenanceWorker();
   startR2d2MaintenanceWorker();
 });
 
@@ -6030,10 +5988,7 @@ if (OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED) {
 
 function stopR2d2Worker() {
   if (r2d2OperationTimer) clearInterval(r2d2OperationTimer);
-  if (osaaDialoguePurgeTimer) clearInterval(osaaDialoguePurgeTimer);
-  if (osaaDialogueMaintenanceTimer) clearInterval(osaaDialogueMaintenanceTimer);
   if (r2d2MaintenanceTimer) clearInterval(r2d2MaintenanceTimer);
-  if (osaaDialogueMaintenancePool) void osaaDialogueMaintenancePool.end().catch(() => undefined);
   if (r2d2MaintenancePool) void r2d2MaintenancePool.end().catch(() => undefined);
   if (credentialAuthorityServer) credentialAuthorityServer.close();
 }

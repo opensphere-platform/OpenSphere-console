@@ -13,15 +13,15 @@ function request(action = 'restart-workload') {
 }
 function fixture(actor = {}) {
   const rows = []; const approvals = []; const plans = [];
+  const dialogue = { resolve: async (conversationId) => ({
+    conversationId, stateDigest: DIALOGUE_STATE_DIGEST,
+    domain: 'pfss.postgresql', intent: 'create.plan', phase: 'plan_ready',
+    targetRef: { namespace: 'opensphere-foundation', name: 'r2d2-e2e-pg' },
+    revision: 3,
+  }) };
   const store = {
     insertPlan: async (row) => { plans.push({ ...row }); return plans.at(-1); },
     getPlan: async (id) => plans.find((row) => row.plan_id === id) || null,
-    getDialogueState: async (conversationId, actorId) => ({
-      conversation_id: conversationId, state_digest: DIALOGUE_STATE_DIGEST,
-      domain: 'pfss.postgresql', intent: 'create.plan', phase: 'plan_ready',
-      target_ref: { namespace: 'opensphere-foundation', name: 'r2d2-e2e-pg' },
-      revision: 3, owner_id: actorId,
-    }),
     consumePlan: async (id, operationId) => { const plan = plans.find((row) => row.plan_id === id); if (!plan || plan.consumed_operation_id) return false; plan.consumed_operation_id = operationId; return true; },
     insert: async (row) => { rows.push({ ...row, created_at: 'now', updated_at: 'now' }); return rows.at(-1); },
     get: async (id) => rows.find((r) => r.operation_id === id), list: async () => rows, steps: async () => [],
@@ -29,12 +29,13 @@ function fixture(actor = {}) {
     approvals: async (id) => approvals.filter((a) => a.operation_id === id), queue: async (id) => { rows.find((r) => r.operation_id === id).phase = 'Queued'; },
   };
   const api = createR2d2OperationApi({ enabled: true, authenticate: async () => ({ actor: { sub: '11111111-1111-4111-8111-111111111111', assurance: 'aal2', browserSessionId: '22222222-2222-4222-8222-222222222222', credentialRevision: 3, lastReauthenticatedAt: '2026-08-09T23:59:00.000Z', ...actor } }), store,
+    resolveDialogueState: (...args) => dialogue.resolve(...args),
     resolveTarget: async (action, target) => action === 'create-postgres-cluster'
       ? { kind: 'FoundationClaim', namespace: target.namespace, name: target.name, uid: 'pending:owner-revision',
         generation: 0, resourceVersion: 'catalog-rv:runtime-rv', request: { ...target } }
       : ({ ...request().target, ...target, kind: 'Deployment', uid: 'live-uid', generation: 9, resourceVersion: 'live-rv' }),
     now: () => new Date('2026-08-10T00:00:00Z') });
-  return { api, rows, approvals, plans, store };
+  return { api, rows, approvals, plans, store, dialogue };
 }
 test('operation acceptance persists only digests/session identity and queues R1', async () => {
   const { api, rows } = fixture();
@@ -145,9 +146,9 @@ test('PostgreSQL apply verifies the live CBSS Dialogue State owner, digest, inte
     postgresVersion: '18.4', deletionPolicy: 'Retain',
   };
   const planned = await f.api.plan({}, { action: 'create-postgres-cluster', target, reason: 'PFSS PostgreSQL configuration' });
-  f.store.getDialogueState = async () => ({
-    state_digest: `sha256:${'e'.repeat(64)}`, domain: 'pfss.postgresql',
-    intent: 'status.read', phase: 'observed', target_ref: null, revision: 4,
+  f.dialogue.resolve = async () => ({
+    stateDigest: `sha256:${'e'.repeat(64)}`, domain: 'pfss.postgresql',
+    intent: 'status.read', phase: 'observed', targetRef: null, revision: 4,
   });
   await assert.rejects(() => f.api.accept({ headers: {} }, {
     planId: planned.planId, planDigest: planned.planDigest,

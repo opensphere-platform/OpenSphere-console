@@ -95,7 +95,7 @@ test('knowledge questions do not receive live operational tools', () => {
 
 test('automatic suggested actions are absent and status answers use the deterministic PFSS owner path', () => {
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const store = fs.readFileSync(path.join(__dirname, 'conversation-store.js'), 'utf8');
+  const store = fs.readFileSync(path.join(__dirname, '..', 'opensphere-osdst', 'conversation-store.js'), 'utf8');
   assert.doesNotMatch(server, /suggestActionBindings/);
   assert.doesNotMatch(server, /suggestedActions/);
   assert.doesNotMatch(server, /deterministic-action-suggestions/);

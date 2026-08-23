@@ -73,6 +73,17 @@ interface MonitoringHealth {
   reasons: string[];
 }
 
+interface OsdstControl {
+  mode: string;
+  rollout: { ready: boolean };
+  runtime: {
+    ready?: boolean;
+    service?: string;
+    version?: string;
+    error?: string;
+  };
+}
+
 interface ReadResult<T> {
   value: T | null;
   error: string;
@@ -84,6 +95,7 @@ interface FoundationSnapshot {
   change: ReadResult<ChangeStatus>;
   monitoring: ReadResult<MonitoringOverview>;
   monitoringHealth: ReadResult<MonitoringHealth>;
+  osdst: ReadResult<OsdstControl>;
 }
 
 interface Evidence {
@@ -163,7 +175,11 @@ const LOGOS = {
             <p>Core Service의 건강과 자원 서비스의 건강은 별도로 판정하되, revision과 evidence로 연결합니다.</p>
           </div>
           <a routerLink="/manage/platform-control"><strong>OSCE</strong><span>Platform Control Core Engine</span><small>Supabase identity · Gitea change authority · runtime evidence 소비</small></a>
-          <a routerLink="/manage/osaa"><strong>OSDST</strong><span>Agent Core Engine</span><small>Supabase dialogue state · Owner typed projection · evidence freshness 소비</small></a>
+          <a routerLink="/manage/osaa">
+            <span class="core-service-name"><strong>OSDST</strong><em [class]="stateClass(osdstState())">{{ stateLabel(osdstState()) }}</em></span>
+            <span>OpenSphere Dialogue State Tracker</span>
+            <small>{{ osdstSummary() }}</small>
+          </a>
         </section>
 
         <section class="status-rail" aria-label="CBSS 자원 서비스 종합 상태">
@@ -269,7 +285,7 @@ const LOGOS = {
     .page-lead small{display:block;margin-top:.25rem;color:var(--os-ink-subtle);font-size:.64rem}
     .page-meta{display:grid;grid-template-columns:auto auto auto;align-items:center;gap:var(--os-3);white-space:nowrap;color:var(--os-ink-muted);font-size:.65rem}
     .page-meta strong{color:var(--os-ink);font-size:.7rem}.icon-button{display:grid;place-items:center;width:2rem;height:2rem;border:1px solid var(--os-hairline);background:var(--os-canvas);color:var(--os-accent)}
-    .core-consumers{display:grid;grid-template-columns:minmax(18rem,1.2fr) repeat(2,minmax(15rem,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas);margin:var(--os-5) 0}.core-consumers>*{min-width:0;padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}.core-consumers>*:last-child{border-inline-end:0}.core-consumers h2{margin:.2rem 0;font-size:.92rem}.core-consumers p,.core-consumers small{display:block;margin:.25rem 0 0;color:var(--os-ink-muted);font-size:.62rem;line-height:1.4}.core-consumers a{display:grid;align-content:center;color:inherit;text-decoration:none}.core-consumers a:hover{background:var(--os-surface-1)}.core-consumers a strong{color:var(--os-accent);font:700 .8rem var(--os-font-mono)}.core-consumers a span{margin-top:.2rem;font-size:.72rem;font-weight:600}
+    .core-consumers{display:grid;grid-template-columns:minmax(18rem,1.2fr) repeat(2,minmax(15rem,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas);margin:var(--os-5) 0}.core-consumers>*{min-width:0;padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}.core-consumers>*:last-child{border-inline-end:0}.core-consumers h2{margin:.2rem 0;font-size:.92rem}.core-consumers p,.core-consumers small{display:block;margin:.25rem 0 0;color:var(--os-ink-muted);font-size:.62rem;line-height:1.4}.core-consumers a{display:grid;align-content:center;color:inherit;text-decoration:none}.core-consumers a:hover{background:var(--os-surface-1)}.core-consumers a strong{color:var(--os-accent);font:700 .8rem var(--os-font-mono)}.core-consumers a>span{margin-top:.2rem;font-size:.72rem;font-weight:600}.core-service-name{display:flex!important;align-items:center;justify-content:space-between;gap:var(--os-3);margin:0!important}.core-service-name em{font-style:normal}
     .status-rail{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas);margin:var(--os-5) 0}
     .status-rail>div{display:grid;gap:var(--os-2);min-width:0;padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}
     .status-rail>div:last-child{border-inline-end:0}.status-rail span,.evidence-grid span{color:var(--os-ink-muted);font-size:.64rem}.status-rail strong{font-size:1.08rem}.status-rail small,.evidence-grid small{color:var(--os-ink-subtle);font-size:.59rem}
@@ -316,6 +332,7 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
       current.change.error,
       current.monitoring.error,
       current.monitoringHealth.error,
+      current.osdst.error,
     ].filter((item, index, all) => item && all.indexOf(item) === index);
   });
   readonly availableCount = computed(() => this.services().filter((item) =>
@@ -370,6 +387,12 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
     if (states.includes('Stale')) return 'Stale';
     return states.length ? 'Healthy' : 'Unavailable';
   });
+  readonly osdstState = computed<FoundationState>(() => {
+    const result = this.snapshot()?.osdst;
+    if (!result?.value) return 'Unavailable';
+    return result.value.runtime?.ready === true && result.value.rollout?.ready === true
+      ? 'Healthy' : 'Degraded';
+  });
 
   async ngOnInit(): Promise<void> {
     await this.refresh();
@@ -379,11 +402,12 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
 
   async refresh(silent = false): Promise<void> {
     if (!silent) this.busy.set(true);
-    const [supabase, change, monitoring, monitoringHealth] = await Promise.all([
+    const [supabase, change, monitoring, monitoringHealth, osdst] = await Promise.all([
       this.read<SupabaseStatus>('/api/identity/supabase/status', 'Data & Identity 상태'),
       this.read<ChangeStatus>('/api/platform/gitea/status', '선언형 변경 상태'),
       this.read<MonitoringOverview>('/api/monitoring/baseline/v1/overview', '노드 관측 요약'),
       this.read<MonitoringHealth>('/api/monitoring/baseline/v1/data-health', '노드 관측 데이터 상태'),
+      this.read<OsdstControl>('/api/osaa/admin/dialogue-state', 'OSDST 상태'),
     ]);
     this.snapshot.set({
       generatedAt: new Date().toISOString(),
@@ -391,8 +415,17 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
       change,
       monitoring,
       monitoringHealth,
+      osdst,
     });
     if (!silent) this.busy.set(false);
+  }
+
+  osdstSummary(): string {
+    const result = this.snapshot()?.osdst;
+    if (!result?.value) return result?.error || '실측 상태를 확인할 수 없습니다.';
+    const runtime = result.value.runtime || {};
+    if (runtime.ready !== true) return runtime.error || 'OSDST runtime이 Ready가 아닙니다.';
+    return `${runtime.version || 'version 미수집'} · ${result.value.mode || 'mode 미수집'} · CBSS Supabase projection`;
   }
 
   stateLabel(state: FoundationState): string {

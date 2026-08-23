@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0072",
-  "migrationCount": 71,
-  "setDigest": "sha256:9590d18dbe3ffbbeaf958081ebf3f3655073926092e50a87a4d7b25c0ce95efd",
+  "latestMigrationId": "0073",
+  "migrationCount": 72,
+  "setDigest": "sha256:fea730280516b69cab6441338a8f4f5c3a59d1f4ff5201f90d104b33c898fb96",
   "migrations": [
     {
       "id": "0001",
@@ -500,6 +500,13 @@
       "name": "0072_osaa_dialogue_maintenance_identity.sql",
       "path": "backend/supabase/migrations/0072_osaa_dialogue_maintenance_identity.sql",
       "sha256": "1f2ebced4a394b0ed417b377acea38c07e4bed8e65e1486956bb5cbbabe9d445"
+    },
+    {
+      "id": "0073",
+      "predecessorMigrationId": "0072",
+      "name": "0073_osdst_single_maintenance_owner.sql",
+      "path": "backend/supabase/migrations/0073_osdst_single_maintenance_owner.sql",
+      "sha256": "4019110c6de014b3ad0f65c1e900bb0d90c67a8bbb3ba4dcd993379a684da508"
     }
   ]
 }

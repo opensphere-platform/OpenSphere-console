@@ -26,8 +26,9 @@ test('shadow records without exposing or enforcing and mutation is last-stage on
 test('deployment reads the admin-owned rollout annotation and health exposes the effective server-owned mode', () => {
   const deploy = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  assert.match(deploy, /name: OSAA_DIALOGUE_STATE_MODE[\s\S]*fieldPath: metadata\.annotations\['opensphere\.io\/osaa-dialogue-state-mode'\]/);
-  assert.doesNotMatch(deploy, /name: OSAA_DIALOGUE_STATE_MODE, value:/);
-  assert.match(server, /dialogueState: \{[\s\S]*mode: OSAA_DIALOGUE_POLICY\.mode/);
-  assert.match(server, /assertDialogueRequestBoundary\(body\)/);
+  const gateway = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-osaa-gateway', 'server.js'), 'utf8');
+  assert.match(deploy, /name: OSDST_MODE[\s\S]*fieldPath: metadata\.annotations\['opensphere\.io\/osdst-mode'\]/);
+  assert.doesNotMatch(deploy, /name: OSDST_MODE, value:/);
+  assert.match(server, /mode: MODE\.mode/);
+  assert.match(gateway, /assertDialogueRequestBoundary\(body\)/);
 });

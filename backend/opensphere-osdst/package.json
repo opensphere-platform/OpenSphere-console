@@ -1,0 +1,14 @@
+{
+  "name": "opensphere-osdst",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenSphere Dialogue State Tracker CBSS Core Service",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --check server.js && node --test dialogue-state.test.js dialogue-transition.test.js dialogue-rollout.test.js conversation-store.test.js server-contract.test.js"
+  },
+  "dependencies": {
+    "pg": "8.16.3"
+  }
+}

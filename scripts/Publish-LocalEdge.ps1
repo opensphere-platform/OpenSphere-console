@@ -8,8 +8,8 @@ param(
   [string]$SetupSourcePath = '',
   [switch]$UseExistingRegistryLogin,
   [switch]$AdvanceOsShellUxConsoleEdge,
-  [ValidateSet('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend', 'dupaController', 'osaaGateway', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
-  [string[]]$Components = @('console', 'backend', 'dupaController', 'osaaGateway', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
+  [ValidateSet('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend', 'dupaController', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
+  [string[]]$Components = @('console', 'backend', 'dupaController', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -287,16 +287,17 @@ if ($UseExistingRegistryLogin) {
 $allImages = @(
   [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $workspace; File = (Join-Path $consoleCheckout 'Dockerfile') },
   # CLI artifacts are a Console-native auxiliary workload with an independent
-  # build and rollout. They are intentionally not added to the 13-component
+  # build and rollout. They are intentionally not added to the 14-component
   # Platform Release lock merely to decouple an Angular UI build.
   [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile') },
   # CBSS OS Shell images are auxiliary component workloads. Selecting one may
-  # never expand a local edge change into the 13-image integrated release.
+  # never expand a local edge change into the 14-image integrated release.
   [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\os-shell-control\Dockerfile') },
   [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile.runtime') },
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'); SetupContext = $setupCheckout },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway\Dockerfile') },
+  [ordered]@{ Key = 'osdst'; Image = 'opensphere-osdst'; Context = (Join-Path $consoleCheckout 'backend\opensphere-osdst'); File = (Join-Path $consoleCheckout 'backend\opensphere-osdst\Dockerfile') },
   [ordered]@{ Key = 'osaaGovernedAdapter'; Image = 'opensphere-osaa-governed-adapter'; Context = (Join-Path $consoleCheckout 'backend\osaa-governed-adapter'); File = (Join-Path $consoleCheckout 'backend\osaa-governed-adapter\Dockerfile') },
   [ordered]@{ Key = 'notificationDispatcher'; Image = 'opensphere-console-notification-dispatcher'; Context = (Join-Path $consoleCheckout 'backend\notification-dispatcher'); File = (Join-Path $consoleCheckout 'backend\notification-dispatcher\Dockerfile') },
   [ordered]@{ Key = 'recovery'; Image = 'opensphere-console-recovery'; Context = (Join-Path $consoleCheckout 'backend\recovery'); File = (Join-Path $consoleCheckout 'backend\recovery\Dockerfile') },
@@ -399,6 +400,9 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
   }
   if ($item.Key -eq 'osShellRuntime') {
     $arguments += @('--build-arg', "OPENSPHERE_VERSION=$releaseTag")
+  }
+  if ($item.Key -eq 'osdst') {
+    $arguments += @('--build-arg', "APP_VERSION=$releaseTag")
   }
   $arguments += $item.Context
   Invoke-Checked docker @arguments

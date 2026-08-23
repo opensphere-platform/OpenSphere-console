@@ -27,6 +27,8 @@ test('Console foundation services keep role-oriented scope and CC compatibility 
   assert.match(page, /이 자원을 소비하는 CBSS Core Service/);
   assert.match(page, /OSCE/);
   assert.match(page, /OSDST/);
+  assert.match(page, /api\/osaa\/admin\/dialogue-state/);
+  assert.match(page, /OpenSphere Dialogue State Tracker/);
   assert.match(page, /\/assets\/product-logos\/supabase-icon\.svg/);
   assert.match(page, /\/assets\/product-logos\/gitea\.svg/);
   assert.match(page, /\/assets\/product-logos\/beszel-light\.svg/);

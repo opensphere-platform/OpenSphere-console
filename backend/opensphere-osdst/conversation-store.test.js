@@ -79,10 +79,9 @@ test('successful provider responses repair the conversation model projection', (
   assert.doesNotMatch(source, /response\?\.modelAuthority === 'execution-profile'[\s\S]*?SET model_id/);
 });
 
-test('gateway runtime image contains the durable conversation store', () => {
+test('OSDST runtime image contains the durable conversation store', () => {
   const dockerfile = readFileSync(join(__dirname, 'Dockerfile'), 'utf8');
-  assert.match(dockerfile, /^COPY conversation-store\.js \/app\/conversation-store\.js$/m);
-  assert.match(dockerfile, /^COPY dialogue-state\.js \/app\/dialogue-state\.js$/m);
+  assert.match(dockerfile, /COPY server\.js conversation-store\.js dialogue-state\.js dialogue-transition\.js dialogue-rollout\.js \/app\//);
 });
 
 test('Dialogue State transition and assistant message share one fail-closed transaction', () => {
@@ -96,6 +95,7 @@ test('Dialogue State transition and assistant message share one fail-closed tran
   assert.match(source, /osaa_dialogue_revision_conflict/);
   assert.doesNotMatch(source, /dialogue_state_transition[\s\S]*?ON CONFLICT[^;]*DO NOTHING/);
   const server = readFileSync(join(__dirname, 'server.js'), 'utf8');
+  const gateway = readFileSync(join(__dirname, '..', 'opensphere-console-osaa-gateway', 'server.js'), 'utf8');
   const transition = readFileSync(join(__dirname, 'dialogue-transition.js'), 'utf8');
   assert.match(transition, /function dialogueTransitionForToolResult/);
   assert.match(transition, /r2d2[.]foundation-postgres-status\/v1/);
@@ -107,5 +107,5 @@ test('Dialogue State transition and assistant message share one fail-closed tran
   assert.match(source, /targetRef: row\.target_ref \|\| null/);
   assert.match(source, /SELECT domain,intent,phase,target_ref,capability_ref,operation_ref,revision,state_digest/);
   assert.doesNotMatch(server, /initializeConversationLeaseReaper|conversationRecoveryMatch/);
-  assert.match(server, /retry-after/);
+  assert.match(gateway, /retry-after/);
 });

@@ -4,11 +4,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { buildCorpus, THREATS } = require('./dialogue-redteam-corpus');
 const { assertDialogueRequestBoundary } = require('./dialogue-request-boundary');
-const { buildTransition } = require('./dialogue-state');
-const { dialogueModePolicy } = require('./dialogue-rollout');
+const { buildTransition } = require('../opensphere-osdst/dialogue-state');
+const { dialogueModePolicy } = require('../opensphere-osdst/dialogue-rollout');
 const { observeOwnerEvidence, buildPfssPostgresClaimSet, renderPfssPostgresClaimSet, redactOwnerEvidence } = require('./dialogue-evidence');
 const { durableIdempotencyKey } = require('./r2d2-durable-binding');
-const { contextWindow, messageContent, MAX_CONTEXT_CHARS, MAX_CONTEXT_MESSAGES } = require('./conversation-store');
+const { contextWindow, messageContent, MAX_CONTEXT_CHARS, MAX_CONTEXT_MESSAGES } = require('../opensphere-osdst/conversation-store');
 const { operationConfirmation } = require('../opensphere-console-backend/r2d2-durable-operation');
 
 const developmentNormal = buildCorpus('development', 'normal');

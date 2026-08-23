@@ -24,7 +24,10 @@ function publicOperation(row) {
 }
 
 function createR2d2OperationApi(options) {
-  const { authenticate, store, resolveTarget, enabled = false, now = () => new Date() } = options;
+  const {
+    authenticate, store, resolveTarget, resolveDialogueState,
+    enabled = false, now = () => new Date(),
+  } = options;
 
   async function plan(req, body) {
     const auth = await authenticate(req);
@@ -123,14 +126,15 @@ function createR2d2OperationApi(options) {
       if (!UUID.test(dialogueConversationId) || !SHA256.test(dialogueStateDigest)) {
         throw { code: 400, msg: 'PFSS operation requires a conversationId and Dialogue State digest' };
       }
-      if (typeof store.getDialogueState !== 'function') {
-        throw { code: 503, msg: 'CBSS Dialogue State resolver is unavailable' };
+      if (typeof resolveDialogueState !== 'function') {
+        throw { code: 503, msg: 'OSDST projection resolver is unavailable' };
       }
-      dialogueState = await store.getDialogueState(dialogueConversationId, actorId);
-      if (!dialogueState || dialogueState.state_digest !== dialogueStateDigest) {
+      dialogueState = await resolveDialogueState(dialogueConversationId, actorId, req);
+      const resolvedStateDigest = dialogueState?.stateDigest || dialogueState?.state_digest;
+      if (!dialogueState || resolvedStateDigest !== dialogueStateDigest) {
         throw { code: 409, msg: 'Dialogue State changed or does not belong to this actor' };
       }
-      const targetRef = dialogueState.target_ref || {};
+      const targetRef = dialogueState.targetRef || dialogueState.target_ref || {};
       if (dialogueState.domain !== 'pfss.postgresql'
           || dialogueState.intent !== 'create.plan'
           || dialogueState.phase !== 'plan_ready'
@@ -254,7 +258,6 @@ function createR2d2OperationApi(options) {
 
 function createRestOperationStore(restRequest) {
   const request = (resource, options = {}) => restRequest(resource, { ...options, profile: 'console' });
-  const dialogueRequest = (resource, options = {}) => restRequest(resource, { ...options, profile: 'osaa' });
   return {
     async insertPlan(row) {
       const rows = await request('module_operation_plan', { method: 'POST', query: 'select=*', body: [row], prefer: 'return=representation' });
@@ -263,15 +266,6 @@ function createRestOperationStore(restRequest) {
     },
     async getPlan(id) {
       const rows = await request('module_operation_plan', { query: `select=*&plan_id=eq.${encodeURIComponent(id)}&limit=1` });
-      return rows?.[0] || null;
-    },
-    async getDialogueState(conversationId, actorId) {
-      const rows = await dialogueRequest('rpc/resolve_dialogue_operation_context', {
-        method: 'POST', body: {
-          target_conversation_id: conversationId,
-          target_owner_id: actorId,
-        },
-      });
       return rows?.[0] || null;
     },
     async consumePlan(id, operationId) {

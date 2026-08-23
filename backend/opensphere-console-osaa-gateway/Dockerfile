@@ -8,13 +8,11 @@ RUN apk upgrade --no-cache \
 COPY server.js /app/server.js
 COPY provider-tool-calls.js /app/provider-tool-calls.js
 COPY chat-runtime-policy.js /app/chat-runtime-policy.js
-COPY conversation-store.js /app/conversation-store.js
-COPY dialogue-state.js /app/dialogue-state.js
+COPY osdst-client.js /app/osdst-client.js
+COPY canonical-digest.js /app/canonical-digest.js
 COPY dialogue-capability.js /app/dialogue-capability.js
 COPY dialogue-evidence.js /app/dialogue-evidence.js
-COPY dialogue-rollout.js /app/dialogue-rollout.js
 COPY dialogue-request-boundary.js /app/dialogue-request-boundary.js
-COPY dialogue-transition.js /app/dialogue-transition.js
 COPY live-tool-observation.js /app/live-tool-observation.js
 COPY turn-lease-execution.js /app/turn-lease-execution.js
 COPY kubernetes-resource-catalog.js /app/kubernetes-resource-catalog.js

@@ -246,6 +246,7 @@ spec:
             - { name: OSAA_KEY_NAMESPACE, value: opensphere-osaa-credentials }
             # Supabase-backed Console identity is the only Console token/role authority.
             - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
+            - { name: OSDST_URL, value: http://opensphere-osdst.opensphere-console.svc.cluster.local:8080 }
             - { name: FOUNDATION_CONTROL_URL, value: http://foundation-osaa-owner.opensphere-console.svc.cluster.local:8080 }
             - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
@@ -286,14 +287,8 @@ spec:
             # Master switch only. The Gateway and Backend still require live Cluster Manager
             # Activated + HISS Preflight Ready evidence for every mutating action.
             - { name: OSAA_ACTION_SUBMISSION_ENABLED, value: "true" }
-            # PLAN-015 rollout remains server-owned. The Console Backend may change
-            # only this Deployment's allowlisted pod annotation after admin+AAL2
-            # verification and audit intent recording. Missing/invalid values fail
-            # safe to `off` inside dialogue-rollout.js.
-            - name: OSAA_DIALOGUE_STATE_MODE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.annotations['opensphere.io/osaa-dialogue-state-mode']
+            # Dialogue state mode, persistence and lease ownership live in the
+            # independent OSDST CBSS Core Service. Gateway consumes its API.
             # CONSTITUTION-0004 §4.2 fail-closed default: Kubernetes mutation/action tools stay
             # unavailable until Cluster Manager Activated + HISS Preflight Ready explicitly flips this.
             - { name: OSAA_MUTATION_ENABLED, value: "false" }

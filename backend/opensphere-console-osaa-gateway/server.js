@@ -13,11 +13,9 @@ const {
   requiresOsShellDiagnosis,
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
-const { createConversationStore, TURN_LEASE_SECONDS } = require('./conversation-store');
+const { createOsdstClient, dialogueModePolicy } = require('./osdst-client');
 const { joinPfssDialogueCapability } = require('./dialogue-capability');
-const { dialogueModePolicy } = require('./dialogue-rollout');
 const { assertDialogueRequestBoundary } = require('./dialogue-request-boundary');
-const { dialogueTransitionForToolResult } = require('./dialogue-transition');
 const {
   projectVerifiedLiveToolObservation,
   renderVerifiedLiveToolObservation,
@@ -141,7 +139,8 @@ const R2D2_RELAY_INTERVAL_MS = Math.max(1000, Math.min(60000, Number(process.env
 const R2D2_OBSERVER_INTERVAL_MS = Math.max(15000, Math.min(300000, Number(process.env.R2D2_OBSERVER_INTERVAL_MS || 60000) || 60000));
 const OSAA_ACTION_SUBMISSION_ENABLED = process.env.OSAA_ACTION_SUBMISSION_ENABLED === 'true';
 // Server-owned rollout only. Request and conversation payloads cannot select this mode.
-const OSAA_DIALOGUE_POLICY = dialogueModePolicy(process.env.OSAA_DIALOGUE_STATE_MODE);
+const TURN_LEASE_SECONDS = 120;
+let OSAA_DIALOGUE_POLICY = dialogueModePolicy('off');
 const OSAA_EMBED_KEY_ID = String(process.env.OSAA_EMBED_KEY_ID || '').trim();
 const OSAA_MANUAL_SEED_PATH = process.env.OSAA_MANUAL_SEED_PATH || '/app/manual-seeds/opensphere-core-manuals.json';
 const OSAA_ENV_NAMESPACES = (process.env.OSAA_ENV_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change,opensphere-console-recovery,opensphere-foundation,opensphere-system')
@@ -454,10 +453,14 @@ function getPgPool() {
 }
 
 function getConversationStore() {
-  const pool = getPgPool();
-  if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OSAA conversations' };
-  conversationStore ||= createConversationStore(pool);
+  conversationStore ||= createOsdstClient();
   return conversationStore;
+}
+
+async function refreshOsdstPolicy() {
+  const status = await getConversationStore().status();
+  OSAA_DIALOGUE_POLICY = dialogueModePolicy(status.mode);
+  return status;
 }
 
 async function ensureKnowledgeSchema() {
@@ -6058,7 +6061,6 @@ function commandHelp() {
 }
 
 function commandResponse(started, message, result = null, options = {}) {
-  const dialogueTransition = dialogueTransitionForToolResult(result, options.dialogueContext || null);
   return {
     keyId: 'osaa-tools',
     provider: 'opensphere',
@@ -6071,7 +6073,6 @@ function commandResponse(started, message, result = null, options = {}) {
     environment: null,
     toolResult: result,
     dialogueMode: OSAA_DIALOGUE_POLICY.mode,
-    ...(dialogueTransition && OSAA_DIALOGUE_POLICY.recordTransitions ? { dialogueTransition } : {}),
   };
 }
 
@@ -6771,7 +6772,7 @@ async function requireDialogueMaintenanceCapability(actor) {
     throw {
       code: 503,
       errorCode: 'conversation_turn_maintenance_unavailable',
-      msg: 'OSAA Dialogue State maintenance capability is unreachable',
+      msg: 'OSDST maintenance capability is unreachable',
     };
   }
   const readiness = await response.json().catch(() => ({}));
@@ -6779,7 +6780,7 @@ async function requireDialogueMaintenanceCapability(actor) {
     throw {
       code: 503,
       errorCode: 'conversation_turn_maintenance_unavailable',
-      msg: readiness?.error || 'OSAA Dialogue State maintenance capability is unavailable',
+      msg: readiness?.error || 'OSDST maintenance capability is unavailable',
     };
   }
   return readiness.dialogueMaintenance;
@@ -8850,6 +8851,7 @@ async function chatCompletion(body, actor) {
 
 async function durableChatCompletion(body, actor) {
   assertDialogueRequestBoundary(body);
+  await refreshOsdstPolicy();
   // Admission is capability-scoped: native Backend management surfaces remain
   // routable, but a new durable OSAA turn cannot start if its lease recovery
   // capability is not known-good.
@@ -8883,12 +8885,7 @@ async function durableChatCompletion(body, actor) {
       }, actor),
     );
     if (turnController.signal.aborted) throw turnController.signal.reason;
-    const governed = {
-      ...response,
-      dialogueMode: OSAA_DIALOGUE_POLICY.mode,
-      ...(!OSAA_DIALOGUE_POLICY.recordTransitions ? { dialogueTransition: null } : {}),
-    };
-    const completed = await store.completeTurn(actor, turn, governed);
+    const completed = await store.completeTurn(actor, turn, response);
     if (!OSAA_DIALOGUE_POLICY.exposeContext) delete completed.dialogue;
     return completed;
   } catch (error) {
@@ -9478,6 +9475,9 @@ const server = http.createServer(async (req, res) => {
     // requiring the UI to infer it.
     if (url.pathname === '/api/osaa/health') {
       await verifyAuthed(req);
+      const osdst = await refreshOsdstPolicy().catch((error) => ({
+        service: 'opensphere-osdst', status: 'unavailable', error: error.message || String(error),
+      }));
       const readiness = await computeReadiness({ probeSemantic: true }).catch(() => ({ ready: false, components: {}, reason: 'readiness_check_failed' }));
       let hasEnabledLlmKey = false;
       if (readiness.ready) {
@@ -9519,6 +9519,7 @@ const server = http.createServer(async (req, res) => {
           exposeContext: OSAA_DIALOGUE_POLICY.exposeContext,
           enforceCurrentFacts: OSAA_DIALOGUE_POLICY.enforceCurrentFacts,
           enforceMutations: OSAA_DIALOGUE_POLICY.enforceMutations,
+          service: osdst,
         },
         ragEnabled: OSAA_RAG_ENABLED,
         lexicalSearchReady: readiness.ready,

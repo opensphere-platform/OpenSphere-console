@@ -41,7 +41,25 @@ interface OsaaHealth {
     exposeContext: boolean;
     enforceCurrentFacts: boolean;
     enforceMutations: boolean;
+    service?: OsdstRuntime;
   };
+}
+interface OsdstRuntime {
+  service?: string;
+  displayName?: string;
+  classification?: string;
+  version?: string;
+  instance?: string;
+  ready?: boolean;
+  exactImage?: string;
+  mode?: DialogueMode | string;
+  writer?: string;
+  schema?: string;
+  singleWriter?: boolean;
+  lastCommitAt?: string | null;
+  counters?: Record<string, number>;
+  dependencies?: { cbssSupabase?: string; maintenance?: { ready?: boolean; checkedAt?: string; error?: string | null } };
+  error?: string | null;
 }
 interface OsaaDialogueStateControl {
   mode: DialogueMode;
@@ -56,6 +74,7 @@ interface OsaaDialogueStateControl {
   };
   updatedAt?: string;
   updatedBy?: string;
+  runtime?: OsdstRuntime;
 }
 interface AgentControlReadiness {
   apiVersion: string;
@@ -1404,14 +1423,24 @@ interface OsaaActionBindingManifest {
                 <div class="r2d2-dialogue-state-heading">
                   <div>
                     <span class="r2d2-kicker">LIVE POLICY · DIALOGUE STATE TRACKER</span>
-                    <h2 id="r2d2-dialogue-state-title">OSAA Dialogue State Tracker</h2>
+                    <h2 id="r2d2-dialogue-state-title">OSDST</h2>
+                    <strong class="r2d2-osdst-identity">OpenSphere Dialogue State Tracker · CBSS Core Service</strong>
                     <p>{{ dialogueModeDescription() }}</p>
                   </div>
                   <div class="r2d2-dialogue-mode" [class.state-off]="dialogueMode() === 'off'" [class.state-on]="dialogueMode() !== 'off' && dialogueMode() !== 'unknown'">
                     <span>MODE</span>
                     <strong>{{ dialogueMode() }}</strong>
-                    <small><code>OSAA_DIALOGUE_STATE_MODE</code></small>
+                    <small><code>OSDST_MODE</code></small>
                   </div>
+                </div>
+                <div class="r2d2-osdst-runtime" aria-label="OSDST 독립 서비스 상태">
+                  <article><span>서비스</span><strong>{{ dialogueControl()?.runtime?.ready ? 'Ready' : 'Not Ready' }}</strong><small>{{ dialogueControl()?.runtime?.service || 'opensphere-osdst' }} · {{ dialogueControl()?.runtime?.version || '관측 대기' }}</small></article>
+                  <article><span>Exact image</span><strong>{{ dialogueControl()?.runtime?.exactImage || '관측 대기' }}</strong><small>배포된 immutable digest</small></article>
+                  <article><span>쓰기 권위</span><strong>{{ dialogueControl()?.runtime?.singleWriter ? '단일 Writer' : '확인 중' }}</strong><small>{{ dialogueControl()?.runtime?.writer || '관측 대기' }}</small></article>
+                  <article><span>상태 스키마</span><strong>{{ dialogueControl()?.runtime?.schema || '관측 대기' }}</strong><small>기존 CBSS Supabase · osaa.*</small></article>
+                  <article><span>전이 결과</span><strong>{{ dialogueControl()?.runtime?.counters?.['transitionsCommitted'] || 0 }} / {{ dialogueControl()?.runtime?.counters?.['transitionConflicts'] || 0 }} / {{ dialogueControl()?.runtime?.counters?.['transitionFailures'] || 0 }}</strong><small>성공 / 충돌 / 실패</small></article>
+                  <article><span>유지보수</span><strong>{{ dialogueControl()?.runtime?.dependencies?.maintenance?.ready ? 'Ready' : 'Not Ready' }}</strong><small>lease recovery · retention purge</small></article>
+                  <article><span>마지막 commit</span><strong>{{ formatCompactDateTime(dialogueControl()?.runtime?.lastCommitAt) }}</strong><small>현재 OSDST replica 관측값</small></article>
                 </div>
                 <div class="r2d2-dialogue-policy-grid">
                   <article [class.enabled]="health()?.dialogueState?.recordTransitions"><span>대화 전이 기록</span><strong>{{ health()?.dialogueState?.recordTransitions ? 'ON' : 'OFF' }}</strong><small>turn별 상태 변경과 revision 보존</small></article>
@@ -1422,9 +1451,9 @@ interface OsaaActionBindingManifest {
                 <div class="r2d2-dialogue-control" aria-labelledby="r2d2-dialogue-control-title">
                   <div>
                     <strong id="r2d2-dialogue-control-title">관리자 모드 선택</strong>
-                    <small>선택한 정책은 OSAA Gateway 전체 복제본에 적용되며 변경 시 한 번만 순차 재시작됩니다.</small>
+                    <small>선택한 정책은 OSDST 전체 복제본에 적용되며 변경 시 한 번만 순차 재시작됩니다.</small>
                   </div>
-                  <div class="r2d2-dialogue-switch" role="radiogroup" aria-label="OSAA Dialogue State Tracker 모드">
+                  <div class="r2d2-dialogue-switch" role="radiogroup" aria-label="OSDST 모드">
                     @for (mode of dialogueModes; track mode.value) {
                       <button type="button" role="radio"
                         [attr.aria-checked]="selectedDialogueMode() === mode.value"
@@ -1438,7 +1467,7 @@ interface OsaaActionBindingManifest {
                   <div class="r2d2-dialogue-apply">
                     <span>실제 {{ dialogueMode() }} · 목표 {{ dialogueControl()?.mode || 'off' }}</span>
                     @if (dialogueControlError()) { <small class="error">{{ dialogueControlError() }}</small> }
-                    @else if (dialogueControl()?.rollout?.ready === false) { <small>Gateway {{ dialogueControl()?.rollout?.readyReplicas || 0 }}/{{ dialogueControl()?.rollout?.desiredReplicas || 0 }} 전환 중</small> }
+                    @else if (dialogueControl()?.rollout?.ready === false) { <small>OSDST {{ dialogueControl()?.rollout?.readyReplicas || 0 }}/{{ dialogueControl()?.rollout?.desiredReplicas || 0 }} 전환 중</small> }
                     <button class="btn btn-sm btn-primary" type="button"
                       [disabled]="dialogueControlBusy() || selectedDialogueMode() === dialogueControl()?.mode"
                       (click)="applyDialogueMode()">
@@ -1447,7 +1476,7 @@ interface OsaaActionBindingManifest {
                   </div>
                 </div>
                 <footer>
-                  <span>관측 기준 <code>/api/osaa/health</code> · Runtime이 보고한 실제 서버 정책</span>
+                  <span>관측 기준 <code>/v1/status</code> · OSDST가 보고한 실제 서비스·쓰기 권위·정책</span>
                   <button class="btn btn-sm btn-outline" type="button" [disabled]="healthBusy()" (click)="loadHealth()">상태 새로고침</button>
                 </footer>
               </section>
@@ -1519,6 +1548,12 @@ interface OsaaActionBindingManifest {
       :host ::ng-deep .osaa-retention-form input.clr-input,
       :host ::ng-deep .osaa-retention-form select.clr-select { width: 100%; max-width: none; }
       .exec-result { margin: 0.7rem 0 0; max-height: 16rem; overflow: auto; border: 1px solid #e1e5ea; border-radius: 4px; background: #0f2230; color: #d7e6ee; padding: 0.85rem; font-size: 0.875rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+      .r2d2-osdst-identity { display: block; margin: 0.25rem 0 0.45rem; color: #284b63; font-size: 1rem; font-weight: 600; }
+      .r2d2-osdst-runtime { display: grid; grid-template-columns: repeat(auto-fit,minmax(13rem,1fr)); border-bottom: 1px solid #dfe6ed; background: #f7fafc; }
+      .r2d2-osdst-runtime article { min-width: 0; padding: 0.8rem 1rem; border-right: 1px solid #dfe6ed; }
+      .r2d2-osdst-runtime article:last-child { border-right: 0; }
+      .r2d2-osdst-runtime span,.r2d2-osdst-runtime small { display: block; color: #526b7d; font-size: 0.875rem; }
+      .r2d2-osdst-runtime strong { display: block; margin: 0.25rem 0; color: #173b52; font-size: 1rem; overflow-wrap: anywhere; }
       .r2d2-live { margin: 1.2rem 0; padding: 1.1rem; border: 1px solid #b7c8d6; border-radius: 8px; background: linear-gradient(180deg, #f8fbfd, #fff); }
       .r2d2-live .r2d2-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.8rem; }
       .r2d2-live .r2d2-section-heading h2 { margin: 0.15rem 0 0; font-size: 1.5rem; line-height: 1.35; }
@@ -1559,10 +1594,10 @@ interface OsaaActionBindingManifest {
       .r2d2-inline-state { color: #486574; font-weight: 600; font-size: 0.875rem; }
       .r2d2-detail ol { list-style: none; padding: 0; margin: 0.5rem 0 0; display: grid; gap: 0.35rem; }
       .r2d2-detail li { display: grid; grid-template-columns: minmax(8rem, 0.7fr) minmax(10rem, 1fr) 2fr; gap: 0.75rem; align-items: baseline; font-size: 1rem; }
-      @media (max-width: 1180px) { .r2d2-live-grid { grid-template-columns: 1fr; } }
+      @media (max-width: 1180px) { .r2d2-live-grid { grid-template-columns: 1fr; } .r2d2-osdst-runtime { grid-template-columns: repeat(2,minmax(0,1fr)); } .r2d2-osdst-runtime article { border-bottom: 1px solid #dfe6ed; } }
       @media (max-width: 980px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
       @media (max-width: 760px) {
-        .r2d2-live-metrics,.r2d2-live-grid { grid-template-columns: 1fr; }
+        .r2d2-live-metrics,.r2d2-live-grid,.r2d2-osdst-runtime { grid-template-columns: 1fr; }
         .r2d2-live-metrics article { border-right: 0; border-bottom: 1px solid #dce5eb; }
         .osaa-key-form { grid-template-columns: 1fr; }
         .osaa-key-form .osaa-field-wide,
@@ -1604,7 +1639,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
       case 'shadow': return '대화 상태 전이를 기록하고 비교하지만 사용자 응답과 현재 사실 판정에는 아직 강제하지 않습니다.';
       case 'read-enforce': return '대화 문맥과 Owner 기반 현재 사실 판정을 강제합니다. 변경 작업은 계속 별도 승인 경계에서 차단됩니다.';
       case 'mutation-enforce': return '현재 사실 판정과 승인된 변경 대화 계약을 모두 강제합니다. 실제 실행 권한은 OSCE와 각 Owner 정책이 다시 검증합니다.';
-      default: return 'OSAA Gateway health를 아직 관측하지 못해 Dialogue State Tracker 적용 모드를 확인할 수 없습니다.';
+      default: return 'OSDST 상태를 아직 관측하지 못해 Dialogue State Tracker 적용 모드를 확인할 수 없습니다.';
     }
   });
   readonly controlPlaneStatus = signal<OsaaControlPlaneStatus | null>(null);
@@ -1940,7 +1975,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
     try {
       const response = await this.http.request('/api/osaa/admin/dialogue-state', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: target, reason: `관리자 OSAA Dialogue State Tracker 모드 변경: ${target}` }),
+        body: JSON.stringify({ mode: target, reason: `관리자 OSDST 모드 변경: ${target}` }),
       });
       const body = await response.json().catch(() => ({})) as OsaaDialogueStateControl & { error?: string };
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
@@ -1951,9 +1986,9 @@ export class AdminOsaa implements OnInit, OnDestroy {
         if (this.dialogueControl()?.rollout.ready && this.dialogueMode() === target) break;
       }
       if (!this.dialogueControl()?.rollout.ready || this.dialogueMode() !== target) {
-        throw new Error('Gateway 전환이 제한 시간 안에 완료되지 않았습니다. 상태를 다시 확인하십시오.');
+        throw new Error('OSDST 전환이 제한 시간 안에 완료되지 않았습니다. 상태를 다시 확인하십시오.');
       }
-      this.msg.set({ type: 'success', text: `OSAA Dialogue State Tracker를 ${target} 모드로 적용했습니다.` });
+      this.msg.set({ type: 'success', text: `OSDST를 ${target} 모드로 적용했습니다.` });
     } catch (error) {
       this.dialogueControlError.set(String(error));
       this.msg.set({ type: 'danger', text: `Dialogue State Tracker 모드 변경 실패: ${String(error)}` });
@@ -2268,7 +2303,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString('ko-KR', { hour12: false }) : value;
   }
-  formatCompactDateTime(value: string): string {
+  formatCompactDateTime(value: string | null | undefined): string {
     if (!value) return '-';
     const date = new Date(value);
     if (!Number.isFinite(date.getTime())) return value;

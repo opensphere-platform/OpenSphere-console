@@ -11,7 +11,7 @@ const nginx = readFileSync(join(__dirname, '..', '..', 'nginx', 'default.conf.te
 
 test('Dialogue State admin control accepts only the closed four-stage mode set', () => {
   assert.match(server, /new Set\(\['off', 'shadow', 'read-enforce', 'mutation-enforce'\]\)/);
-  assert.match(server, /unsupported OSAA Dialogue State mode/);
+  assert.match(server, /unsupported OSDST mode/);
   assert.match(server, /Object\.keys\(body\).*\['mode', 'reason'\]/s);
 });
 
@@ -22,9 +22,9 @@ test('Dialogue State change is admin, recent-AAL2 and audit-intent gated', () =>
   assert.match(server, /phase: 'intent'/);
 });
 
-test('Backend can patch only the OSAA Gateway deployment and nginx keeps the write out of Gateway', () => {
+test('Backend can patch only the OSDST deployment and nginx keeps the write out of Gateway', () => {
   assert.match(deploy, /name: opensphere-console-backend-osaa-dialogue-state/);
-  assert.match(deploy, /resourceNames: \["opensphere-console-osaa-gateway"\]/);
+  assert.match(deploy, /resourceNames: \["opensphere-osdst"\]/);
   assert.match(deploy, /verbs: \["get", "patch"\]/);
   assert.match(nginx, /location = \/api\/osaa\/admin\/dialogue-state[\s\S]*opensphere-console-backend/);
 });

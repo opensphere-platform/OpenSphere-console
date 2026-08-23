@@ -271,9 +271,9 @@ function verifyDialogueStateContract() {
     ) VALUES('${purgeConversation}','${owner}','pfss.postgresql','status.read','observed',1,'${adminTurn}','${digestB}');`);
   mustRejectPermission(`SET ROLE opensphere_osaa_gateway;
     SELECT * FROM osaa.purge_eligible_dialogue_state(10);`, 'Gateway → scheduled Dialogue State purge');
-  assert.match(psql(`SET ROLE opensphere_console_backend;
-    SELECT conversation_id||'|'||transition_count FROM osaa.purge_eligible_dialogue_state(10);
-    RESET ROLE;`), new RegExp(`${purgeConversation}\\|1`));
+  assert.match(psqlAsDialogueMaintenance(
+    `SELECT conversation_id||'|'||transition_count FROM osaa.purge_eligible_dialogue_state(10);`,
+  ), new RegExp(`${purgeConversation}\\|1`));
   assert.equal(psql(`SELECT
       (SELECT count(*) FROM osaa.dialogue_state_transition WHERE conversation_id='${purgeConversation}')||'|'||
       (SELECT count(*) FROM osaa.dialogue_state_projection WHERE conversation_id='${purgeConversation}')||'|'||

@@ -17,18 +17,21 @@ test('R2D2 management separates explanation and live operations with Clarity tab
 });
 
 test('live operations exposes the server-reported Dialogue State rollout at a glance', () => {
-  assert.match(source, /OSAA Dialogue State Tracker/);
-  assert.match(source, /OSAA_DIALOGUE_STATE_MODE/);
-  assert.match(source, /관측 기준 <code>\/api\/osaa\/health<\/code>/);
-  assert.match(source, /dialogueState\?\.mode/);
+  assert.match(source, /OpenSphere Dialogue State Tracker · CBSS Core Service/);
+  assert.match(source, /OSDST_MODE/);
+  assert.match(source, /관측 기준 <code>\/v1\/status<\/code>/);
+  assert.match(source, /dialogueControl\(\)\?\.runtime\?\.service/);
   assert.match(source, /recordTransitions/);
   assert.match(source, /exposeContext/);
   assert.match(source, /enforceCurrentFacts/);
   assert.match(source, /enforceMutations/);
   assert.match(source, /case 'off': return '대화 상태 기록/);
   assert.match(source, /<div class="r2d2-dialogue-state-heading">/);
-  assert.doesNotMatch(source, /<header>[\s\S]*OSAA Dialogue State Tracker/);
+  assert.doesNotMatch(source, /<header>[\s\S]*OpenSphere Dialogue State Tracker/);
   assert.match(styles, /> \.r2d2-dialogue-state-heading \{[^}]*background: #fff;/);
+  assert.match(source, /\.r2d2-osdst-runtime \{ display: grid; grid-template-columns: repeat\(auto-fit,minmax\(13rem,1fr\)\)/);
+  assert.match(source, /Exact image/);
+  assert.match(source, /성공 \/ 충돌 \/ 실패/);
 });
 
 test('Dialogue State monitoring exposes a four-stage admin switch backed by the management API', () => {

@@ -41,8 +41,8 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensph
 subjects:
   - { kind: ServiceAccount, name: opensphere-console-backend, namespace: opensphere-console }
 ---
-# OSAA Dialogue State is a four-stage runtime policy, not a browser-only flag.
-# Backend may mutate only the OSAA Gateway Deployment pod-template annotation;
+# OSDST mode is a four-stage runtime policy, not a browser-only flag.
+# Backend may mutate only the OSDST Deployment pod-template annotation;
 # the annotation is durable desired state and changing it causes one bounded rollout.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -50,7 +50,7 @@ metadata: { name: opensphere-console-backend-osaa-dialogue-state, namespace: ope
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    resourceNames: ["opensphere-console-osaa-gateway"]
+    resourceNames: ["opensphere-osdst"]
     verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -208,6 +208,7 @@ spec:
             - name: OS_SHELL_DELEGATION_SECRET
               valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: delegation-secret, optional: true } }
             - { name: OSAA_GATEWAY_URL, value: "http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080" }
+            - { name: OSDST_URL, value: "http://opensphere-osdst.opensphere-console.svc.cluster.local:8080" }
             - { name: DUPA_CONTROL_URL, value: "http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080" }
             # ADR-006 canonical runtime mode.
             - { name: AUTH_PROVIDER, value: supabase }
@@ -221,21 +222,14 @@ spec:
             - name: CLI_JWT_SECRET
               valueFrom: { secretKeyRef: { name: opensphere-console-cli-runtime, key: jwt-secret } }
             - { name: SUPABASE_BACKEND_DB_ROLE, value: opensphere_console_backend }
-            # Scheduled OSAA maintenance belongs to this existing CBSS Backend.
-            # It uses two direct, independently scoped PostgreSQL logins; the
-            # serving Gateway receives neither credential.
-            - { name: OSAA_DIALOGUE_MAINTENANCE_REQUIRED, value: "true" }
-            - { name: OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS, value: "30000" }
+            # Operational Intelligence maintenance remains Backend-owned.
+            # Dialogue persistence and lease recovery are owned by OSDST.
             - { name: R2D2_MAINTENANCE_ENABLED, value: "true" }
             - { name: R2D2_MAINTENANCE_INTERVAL_MS, value: "86400000" }
             - { name: R2D2_CLUSTER_ID, value: local }
             - { name: SUPABASE_PG_HOST, value: "opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local" }
             - { name: SUPABASE_PG_PORT, value: "5432" }
             - { name: SUPABASE_PG_DATABASE, value: postgres }
-            - name: OSAA_DIALOGUE_MAINTENANCE_PG_USER
-              valueFrom: { secretKeyRef: { name: opensphere-osaa-maintenance-runtime, key: dialogue-pg-user } }
-            - name: OSAA_DIALOGUE_MAINTENANCE_PG_PASSWORD
-              valueFrom: { secretKeyRef: { name: opensphere-osaa-maintenance-runtime, key: dialogue-pg-password } }
             - name: R2D2_MAINTENANCE_PG_USER
               valueFrom: { secretKeyRef: { name: opensphere-osaa-maintenance-runtime, key: operational-pg-user } }
             - name: R2D2_MAINTENANCE_PG_PASSWORD

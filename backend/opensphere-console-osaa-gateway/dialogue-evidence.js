@@ -1,6 +1,6 @@
 'use strict';
 
-const { digest } = require('./dialogue-state');
+const { digest } = require('./canonical-digest');
 
 const EPISTEMIC_STATES = Object.freeze(new Set([
   'known', 'unknown', 'stale', 'conflicting', 'inferred', 'unobservable',

@@ -48,6 +48,7 @@ const COMPONENT_REPOSITORIES = Object.freeze({
   backend: 'opensphere-console-backend',
   dupaController: 'opensphere-console-dupa-controller',
   osaaGateway: 'opensphere-console-osaa-gateway',
+  osdst: 'opensphere-osdst',
   osaaGovernedAdapter: 'opensphere-osaa-governed-adapter',
   notificationDispatcher: 'opensphere-console-notification-dispatcher',
   gitea: 'opensphere-console-gitea',
@@ -59,6 +60,9 @@ const COMPONENT_REPOSITORIES = Object.freeze({
   recovery: 'opensphere-console-recovery',
 });
 const REQUIRED_COMPONENTS = Object.freeze(Object.keys(COMPONENT_REPOSITORIES));
+const PRE_OSDST_COMPONENT_REPOSITORIES = Object.freeze(Object.fromEntries(
+  Object.entries(COMPONENT_REPOSITORIES).filter(([name]) => name !== 'osdst'),
+));
 const LEGACY_INSTALLED_COMPONENT_REPOSITORIES = legacyInstalledComponentMap(COMPONENT_REPOSITORIES);
 const SHA256_RE = /^sha256:[a-f0-9]{64}$/;
 const REVISION_RE = /^[a-f0-9]{40}$/;
@@ -103,6 +107,16 @@ function installedComponentProfile(components, { allowInstalledAgentIdentityCuto
   if (names.length === canonicalNames.length
     && canonicalNames.every((name) => names.includes(name))) {
     return { names: canonicalNames, repositories: COMPONENT_REPOSITORIES, agentIdentity: 'canonical' };
+  }
+  const preOsdstNames = Object.keys(PRE_OSDST_COMPONENT_REPOSITORIES);
+  if (allowInstalledAgentIdentityCutover
+    && names.length === preOsdstNames.length
+    && preOsdstNames.every((name) => names.includes(name))) {
+    return {
+      names: preOsdstNames,
+      repositories: PRE_OSDST_COMPONENT_REPOSITORIES,
+      agentIdentity: 'installed-pre-osdst',
+    };
   }
   const legacyNames = Object.keys(LEGACY_INSTALLED_COMPONENT_REPOSITORIES);
   if (allowInstalledAgentIdentityCutover

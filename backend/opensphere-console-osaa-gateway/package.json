@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --check server.js && node --test agent-control-readiness.test.js dialogue-capability.test.js dialogue-evidence.test.js dialogue-redteam-corpus.test.js dialogue-request-boundary.test.js dialogue-rollout.test.js dialogue-runtime-regression.test.js dialogue-transition.test.js extension-presentation.test.js live-tool-observation.test.js manual-seed-reconcile.test.js r2d2-source-grounding.test.js source-evidence-contract.test.js turn-lease-execution.test.js"
+    "test": "node --check server.js && node --test agent-control-readiness.test.js dialogue-capability.test.js dialogue-evidence.test.js dialogue-redteam-corpus.test.js dialogue-request-boundary.test.js dialogue-runtime-regression.test.js extension-presentation.test.js live-tool-observation.test.js manual-seed-reconcile.test.js r2d2-source-grounding.test.js source-evidence-contract.test.js turn-lease-execution.test.js"
   },
   "dependencies": {
     "pg": "8.16.3"

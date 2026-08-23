@@ -323,3 +323,12 @@ test('0072 removes shared-JWT role assumption and owner-binds manual recovery', 
   assert.match(installer, /--type=json/);
   assert.doesNotMatch(installer, /maintenance-pg-password: \$osaaMaintenancePasswordB64/);
 });
+
+test('0073 transfers scheduled Dialogue State purge to the OSDST maintenance identity', () => {
+  const sql = readFileSync(path.join(here, 'migrations', '0073_osdst_single_maintenance_owner.sql'), 'utf8');
+  assert.match(sql, /session_user <> 'opensphere_osaa_dialogue_maintenance'/);
+  assert.match(sql, /scheduled OSDST dialogue retention expiry/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION osaa[.]purge_dialogue_state\(uuid, text\) FROM PUBLIC, opensphere_console_backend/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION osaa[.]purge_eligible_dialogue_state\(integer\)[\s\S]*TO opensphere_osaa_dialogue_maintenance/);
+  assert.doesNotMatch(sql, /CREATE (?:DATABASE|ROLE)|kafka|rabbit|redis|nats/i);
+});
