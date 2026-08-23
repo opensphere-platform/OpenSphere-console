@@ -202,6 +202,11 @@ spec:
             - name: CLI_JWT_SECRET
               valueFrom: { secretKeyRef: { name: opensphere-console-cli-runtime, key: jwt-secret } }
             - { name: SUPABASE_BACKEND_DB_ROLE, value: opensphere_console_backend }
+            # Expired dialogue-turn recovery is owned by this existing CBSS
+            # Backend. A scoped NOLOGIN PostgREST role is minted at runtime;
+            # the serving Gateway receives no dialogue-maintenance credential.
+            - { name: OSAA_DIALOGUE_MAINTENANCE_REQUIRED, value: "true" }
+            - { name: OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS, value: "30000" }
             - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000" }
             - { name: SUPABASE_STORAGE_URL, value: "http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000" }
             - { name: BESZEL_URL, value: "http://beszel-hub.opensphere-monitoring.svc.cluster.local:8090" }

@@ -108,6 +108,10 @@ const SUPABASE_BACKEND_ROLE = process.env.SUPABASE_BACKEND_ROLE || 'console-admi
 const SUPABASE_BACKEND_DB_ROLE = process.env.SUPABASE_BACKEND_DB_ROLE || 'opensphere_console_backend';
 const SUPABASE_BACKEND_TOKEN_TTL_SEC = Number(process.env.SUPABASE_BACKEND_TOKEN_TTL_SEC || (24 * 60 * 60 * 30));
 const SUPABASE_BACKEND_TOKEN = process.env.SUPABASE_BACKEND_TOKEN || '';
+const OSAA_DIALOGUE_MAINTENANCE_DB_ROLE = 'opensphere_osaa_dialogue_maintenance';
+const OSAA_DIALOGUE_MAINTENANCE_REQUIRED = String(process.env.OSAA_DIALOGUE_MAINTENANCE_REQUIRED || 'true').toLowerCase() !== 'false';
+const OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS = Math.max(5000, Math.min(300000,
+  Number(process.env.OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS || 30000) || 30000));
 const AUDIT_READ_LIMIT = Number(process.env.SUPABASE_AUDIT_READ_LIMIT || 200);
 // Administrator mutations are MFA-protected by default in every environment.
 // A deployment must opt out explicitly; local bootstrap is handled by the
@@ -298,15 +302,15 @@ function cliLabel(value) {
   return label;
 }
 
-function buildBackendJwt() {
-  if (!SUPABASE_JWT_SECRET || !SUPABASE_AUTH_ISSUER || !SUPABASE_BACKEND_DB_ROLE) return '';
+function buildServiceJwt(role, subject) {
+  if (!SUPABASE_JWT_SECRET || !SUPABASE_AUTH_ISSUER || !role || !subject) return '';
   const header = { alg: 'HS256', typ: 'JWT' };
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iss: SUPABASE_AUTH_ISSUER,
     aud: SUPABASE_AUTH_AUDIENCE,
-    role: SUPABASE_BACKEND_DB_ROLE,
-    sub: 'opensphere-console-backend',
+    role,
+    sub: subject,
     iat: now,
     exp: now + Math.max(3600, SUPABASE_BACKEND_TOKEN_TTL_SEC),
   };
@@ -320,6 +324,10 @@ function buildBackendJwt() {
   return `${token}.${signature}`;
 }
 
+function buildBackendJwt() {
+  return buildServiceJwt(SUPABASE_BACKEND_DB_ROLE, 'opensphere-console-backend');
+}
+
 function backendHeaders(profile = 'console') {
   if (!backendToken || Date.now() / 1000 > backendTokenExp - 60) {
     backendToken = buildBackendJwt();
@@ -330,6 +338,22 @@ function backendHeaders(profile = 'console') {
   const headers = {
     apikey: SUPABASE_SERVICE_ROLE_KEY,
     Authorization: `Bearer ${backendToken}`,
+    accept: 'application/json',
+    'content-type': 'application/json',
+  };
+  if (profile) {
+    headers['accept-profile'] = profile;
+    headers['content-profile'] = profile;
+  }
+  return headers;
+}
+
+function serviceRoleHeaders(role, subject, profile = 'console') {
+  const token = buildServiceJwt(role, subject);
+  if (!token || !SUPABASE_SERVICE_ROLE_KEY) throw { code: 503, msg: 'Supabase service role credentials are not configured' };
+  const headers = {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${token}`,
     accept: 'application/json',
     'content-type': 'application/json',
   };
@@ -370,13 +394,20 @@ async function restRequest(resource, {
   prefer = 'return=representation',
   timeoutMs = SUPABASE_TIMEOUT_MS,
   profile = 'console',
+  serviceRole = null,
+  serviceSubject = null,
 } = {}) {
   const url = new URL(`${SUPABASE_REST_URL.replace(/\/$/, '')}/${resource}`);
   const q = normalizeQuery(query);
   if (q) url.search = q;
   const options = {
     method,
-    headers: { ...backendHeaders(profile), Prefer: prefer },
+    headers: {
+      ...(serviceRole
+        ? serviceRoleHeaders(serviceRole, serviceSubject || serviceRole, profile)
+        : backendHeaders(profile)),
+      Prefer: prefer,
+    },
     signal: AbortSignal.timeout(timeoutMs),
   };
   if (body !== undefined) options.body = JSON.stringify(body);
@@ -1762,6 +1793,16 @@ async function durableVerify(verifierId, target, receipt, accessToken) {
 let r2d2OperationTimer = null;
 let r2d2OperationLoopBusy = false;
 let osaaDialoguePurgeTimer = null;
+let osaaDialogueMaintenanceTimer = null;
+let osaaDialogueMaintenanceBusy = false;
+let osaaDialogueMaintenanceState = {
+  ready: false,
+  required: OSAA_DIALOGUE_MAINTENANCE_REQUIRED,
+  checkedAt: null,
+  lastSuccessAt: null,
+  lastReceiptCount: 0,
+  error: 'not checked',
+};
 function startR2d2OperationWorker() {
   if (!R2D2_DURABLE_OPERATION_ENABLED || r2d2OperationTimer) return;
   const claimEpoch = Date.now();
@@ -1800,6 +1841,82 @@ function startOsaaDialogueRetentionWorker() {
   osaaDialoguePurgeTimer = setInterval(run, OSAA_DIALOGUE_PURGE_INTERVAL_MS);
   osaaDialoguePurgeTimer.unref();
   run();
+}
+
+async function reapExpiredOsaaDialogueTurns() {
+  const receipts = await restRequest('rpc/reap_expired_dialogue_turns', {
+    method: 'POST', profile: 'osaa', body: { reap_limit: 100 },
+    serviceRole: OSAA_DIALOGUE_MAINTENANCE_DB_ROLE,
+    serviceSubject: 'opensphere-console-backend-dialogue-maintenance',
+  });
+  const receiptCount = Array.isArray(receipts) ? receipts.length : 0;
+  const now = new Date().toISOString();
+  osaaDialogueMaintenanceState = {
+    ready: true,
+    required: OSAA_DIALOGUE_MAINTENANCE_REQUIRED,
+    checkedAt: now,
+    lastSuccessAt: now,
+    lastReceiptCount: receiptCount,
+    error: null,
+  };
+  if (receiptCount) console.warn(`[osaa-dialogue-maintenance] recovered ${receiptCount} expired turn lease(s)`);
+  return receipts;
+}
+
+async function runOsaaDialogueMaintenance() {
+  if (osaaDialogueMaintenanceBusy) return;
+  osaaDialogueMaintenanceBusy = true;
+  try {
+    await reapExpiredOsaaDialogueTurns();
+  } catch (error) {
+    osaaDialogueMaintenanceState = {
+      ...osaaDialogueMaintenanceState,
+      ready: false,
+      checkedAt: new Date().toISOString(),
+      lastReceiptCount: 0,
+      error: String(error?.msg || error?.message || error).slice(0, 240),
+    };
+    console.warn('[osaa-dialogue-maintenance]', osaaDialogueMaintenanceState.error);
+  } finally {
+    osaaDialogueMaintenanceBusy = false;
+  }
+}
+
+function startOsaaDialogueMaintenanceWorker() {
+  if (osaaDialogueMaintenanceTimer) return;
+  osaaDialogueMaintenanceTimer = setInterval(
+    () => { void runOsaaDialogueMaintenance(); },
+    OSAA_DIALOGUE_MAINTENANCE_INTERVAL_MS,
+  );
+  osaaDialogueMaintenanceTimer.unref();
+  void runOsaaDialogueMaintenance();
+}
+
+async function recoverOsaaDialogueTurn(actor, conversationId, turnRequestId, body = {}) {
+  const reason = String(body.reason || '').trim();
+  if (reason.length < 8 || reason.length > 500) {
+    throw { code: 400, msg: 'recovery reason must contain 8 to 500 characters' };
+  }
+  const expectedConfirmation = `recover dialogue turn ${conversationId}/${turnRequestId}`;
+  if (String(body.confirmation || '').trim() !== expectedConfirmation) {
+    throw { code: 400, msg: `confirmation required: ${expectedConfirmation}` };
+  }
+  const rows = await restRequest('rpc/recover_dialogue_turn', {
+    method: 'POST', profile: 'osaa',
+    body: {
+      target_conversation_id: conversationId,
+      target_turn_request_id: turnRequestId,
+      recovery_reason: reason,
+    },
+    serviceRole: OSAA_DIALOGUE_MAINTENANCE_DB_ROLE,
+    serviceSubject: 'opensphere-console-backend-dialogue-maintenance',
+  });
+  const receipt = Array.isArray(rows) ? rows[0] : rows;
+  if (!receipt) throw { code: 404, msg: 'pending conversation turn not found' };
+  await logAudit(actor, 'conversation-turn-recovery', turnRequestId, 'ok', reason, {
+    targetType: 'osaa-dialogue-turn',
+  });
+  return receipt;
 }
 
 async function requireSupabase() {
@@ -4564,7 +4681,19 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (p === '/readyz') {
-      try { return json(res, 200, await requireSupabase()); }
+      try {
+        const authority = await requireSupabase();
+        if (OSAA_DIALOGUE_MAINTENANCE_REQUIRED && !osaaDialogueMaintenanceState.ready) {
+          return json(res, 503, {
+            ready: false,
+            required: true,
+            error: 'OSAA dialogue maintenance capability unavailable',
+            components: [{ name: 'osaa-dialogue-maintenance', ...osaaDialogueMaintenanceState }],
+            checkedAt: osaaDialogueMaintenanceState.checkedAt || new Date().toISOString(),
+          });
+        }
+        return json(res, 200, { ...authority, dialogueMaintenance: osaaDialogueMaintenanceState });
+      }
       catch (error) {
         return json(res, 503, {
           ready: false,
@@ -5017,6 +5146,20 @@ const server = http.createServer(async (req, res) => {
         const actor = await verifyConsoleAdmin(req);
         return json(res, 200, await deleteOsaaKey(actor, osaaKeyPath[1], url.searchParams.get('reason')));
       } catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'OSAA credential delete failed' }); }
+    }
+    const conversationRecoveryPath = p.match(
+      /^\/api\/osaa\/admin\/conversations\/([0-9a-f-]{36})\/turns\/([0-9a-f-]{36})\/recover$/i,
+    );
+    if (conversationRecoveryPath && req.method === 'POST') {
+      try {
+        const actor = await verifyConsoleAdmin(req, { requireAal2: true });
+        const receipt = await recoverOsaaDialogueTurn(
+          actor, conversationRecoveryPath[1], conversationRecoveryPath[2], await readBody(req),
+        );
+        return json(res, 200, { recovered: true, receipt });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'OSAA dialogue turn recovery failed' });
+      }
     }
     // OSAA is not an audit authority.  It forwards evidence through this
     // Console Backend endpoint so every tool/retrieval event is persisted in
@@ -5674,6 +5817,7 @@ server.listen(PORT, () => {
   console.log(`opensphere-console-backend v${VERSION} listening :${PORT} (Supabase identity/data + catalog + Kubernetes passthrough)`);
   startR2d2OperationWorker();
   startOsaaDialogueRetentionWorker();
+  startOsaaDialogueMaintenanceWorker();
 });
 
 let credentialAuthorityServer = null;
@@ -5706,6 +5850,7 @@ if (OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED) {
 function stopR2d2Worker() {
   if (r2d2OperationTimer) clearInterval(r2d2OperationTimer);
   if (osaaDialoguePurgeTimer) clearInterval(osaaDialoguePurgeTimer);
+  if (osaaDialogueMaintenanceTimer) clearInterval(osaaDialogueMaintenanceTimer);
   if (credentialAuthorityServer) credentialAuthorityServer.close();
 }
 process.on('SIGTERM', stopR2d2Worker);

@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+const transitionSource = fs.readFileSync(path.join(__dirname, 'dialogue-transition.js'), 'utf8');
 
 test('R2D2 exposes PFSS PostgreSQL status, Admission plan, and owner create capability', () => {
   assert.match(source, /id: 'osaa\.foundation\.postgres\.status'/);
@@ -67,7 +68,7 @@ test('PFSS status and operation watch become typed deterministic claims in read-
   assert.match(source, /renderPfssPostgresOperationClaim/);
   assert.match(source, /OSAA_DIALOGUE_POLICY\.enforceCurrentFacts/);
   assert.match(source, /body\?\._dialogueContext \|\| null/);
-  assert.match(source, /operationRef: result\.operationId \|\| null/);
+  assert.match(transitionSource, /operationRef: result\.operationId \|\| null/);
   assert.match(source, /foundationPostgresContextualCapabilityConversation/);
   assert.match(source, /PFSS Owner 계약에는 PostgreSQL 클러스터 삭제 기능/);
   assert.match(source, /foundationPostgresReadinessRead/);

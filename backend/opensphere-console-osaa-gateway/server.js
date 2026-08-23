@@ -17,9 +17,18 @@ const { createConversationStore, TURN_LEASE_SECONDS } = require('./conversation-
 const { joinPfssDialogueCapability } = require('./dialogue-capability');
 const { dialogueModePolicy } = require('./dialogue-rollout');
 const { assertDialogueRequestBoundary } = require('./dialogue-request-boundary');
+const { dialogueTransitionForToolResult } = require('./dialogue-transition');
+const {
+  activeTurnSignal,
+  assertTurnLeaseActive,
+  boundedSignal,
+  runWithTurnSignal,
+} = require('./turn-lease-execution');
 const {
   buildPfssPostgresClaimSet,
   buildPfssPostgresOperationClaim,
+  guardProviderCurrentFactResponse,
+  hasExplicitNonPfssDomainQuery,
   isOperationalQuery,
   observeOwnerEvidence,
   renderPfssPostgresClaimSet,
@@ -27,7 +36,7 @@ const {
 } = require('./dialogue-evidence');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
-const { projectExtensionPresentation } = require('./extension-presentation');
+const { projectExtensionPresentation, renderExtensionPresentation } = require('./extension-presentation');
 const {
   KubernetesLeaseElector,
   OperationalGraphStore,
@@ -243,6 +252,7 @@ async function k8s(method, path, body) {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: boundedSignal(30000),
   });
   const text = await res.text();
   let data = null;
@@ -257,7 +267,7 @@ async function verifyAuthed(req) {
   try {
     response = await fetch(`${CONSOLE_IDENTITY_URL}/api/identity/session`, {
       headers: { authorization: `Bearer ${m[1]}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
+      signal: boundedSignal(8000),
     });
   } catch {
     throw { code: 503, msg: 'Supabase identity authority unavailable' };
@@ -377,7 +387,6 @@ let r2d2QueryService = null;
 let r2d2Timer = null;
 let r2d2RelayTimer = null;
 let r2d2MaintenanceTimer = null;
-let conversationLeaseReaperTimer = null;
 let pgSchemaReady = false;
 let pgSchemaPromise = null;
 let pgUsageLedgerReady = false;
@@ -446,7 +455,7 @@ function getPgPool() {
 function getConversationStore() {
   const pool = getPgPool();
   if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OSAA conversations' };
-  conversationStore ||= createConversationStore(pool, getR2d2MaintenancePool);
+  conversationStore ||= createConversationStore(pool);
   return conversationStore;
 }
 
@@ -1034,6 +1043,7 @@ async function providerEmbedding(text, key, opts = {}) {
         method: 'POST',
         headers: { authorization: `Bearer ${key.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify(reqBody),
+        signal: boundedSignal(30000),
       });
     } catch {
       lastMsg = 'embedding provider network error';
@@ -5387,7 +5397,7 @@ async function osaaObservabilityCapabilities(actor) {
   let capabilities = new Set();
   try {
     const response = await fetch(`${DUPA_CONTROL_URL}/api/admin/observability/status`, {
-      headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+      headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: boundedSignal(5000),
     });
     const body = await response.json().catch(() => ({}));
     if (response.ok) capabilities = new Set((body.capabilities || []).map((value) => String(value).toLowerCase()));
@@ -5404,7 +5414,7 @@ async function osaaHisOwnerCapabilities(actor) {
   if (hasPermission(actor, 'console.his.read')) {
     try {
       const response = await fetch(`${CLUSTER_MANAGER_URL}/api/his/osaa/capabilities`, {
-        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: boundedSignal(5000),
       });
       const body = await response.json().catch(() => ({}));
       if (response.ok && body.apiVersion === 'opensphere.io/osaa-his-owner/v1') {
@@ -5424,7 +5434,7 @@ async function osaaCephOwnerCapabilities(actor) {
   if (hasPermission(actor, 'console.ceph.read')) {
     try {
       const response = await fetch(`${CLUSTER_MANAGER_URL}/api/ceph/osaa/capabilities`, {
-        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(10000),
+        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: boundedSignal(10000),
       });
       const body = await response.json().catch(() => ({}));
       if (response.ok && body.apiVersion === 'opensphere.io/osaa-ceph-owner/v1') {
@@ -5444,7 +5454,7 @@ async function osaaRecoveryOwnerCapabilities(actor) {
   if (hasPermission(actor, 'console.recovery.read')) {
     try {
       const response = await fetch(`${CONSOLE_IDENTITY_URL}/api/osaa/owner/recovery/capabilities`, {
-        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+        headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: boundedSignal(5000),
       });
       const body = await response.json().catch(() => ({}));
       if (response.ok && body.apiVersion === 'opensphere.io/osaa-recovery-owner/v1') {
@@ -5464,7 +5474,7 @@ async function osaaMutationLifecycle(actor) {
   let value;
   try {
     const response = await fetch(`${DUPA_CONTROL_URL}/api/admin/platform-readiness/lifecycle`, {
-      headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+      headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: boundedSignal(5000),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) value = { ready: false, reason: body.error || `lifecycle_gate_http_${response.status}` };
@@ -6062,70 +6072,8 @@ function commandHelp() {
   ].join('\n');
 }
 
-function dialogueTransitionForToolResult(result) {
-  if (!result || typeof result !== 'object') return null;
-  if (result.schema === 'r2d2.foundation-postgres-status/v1') {
-    const claimSet = result.claimSet || result.shadowEvaluation?.claimSet || null;
-    const capabilityBinding = result.capabilityBinding || result.shadowEvaluation?.capabilityBinding || null;
-    return {
-      domain: 'pfss.postgresql', intent: 'status.read',
-      phase: result.phase === 'Observed' ? 'observed' : 'unavailable',
-      targetRef: null, slots: {}, missingSlots: [],
-      capabilityRef: capabilityBinding?.capabilityRef || null,
-      evidenceRefs: claimSet?.evidenceRef ? [claimSet.evidenceRef] : [], operationRef: null,
-    };
-  }
-  if (result.schema === 'r2d2.foundation-postgres-operation/v1') {
-    return {
-      domain: 'pfss.postgresql', intent: 'operation.watch',
-      phase: result.phase === 'Observed'
-        ? String(result.operationClaim?.operation?.stage || 'observed').toLowerCase()
-        : 'unavailable',
-      targetRef: result.operationClaim?.operation?.target || null,
-      slots: {}, missingSlots: [],
-      capabilityRef: result.capabilityBinding?.capabilityRef || null,
-      evidenceRefs: result.operationClaim?.evidenceRef ? [result.operationClaim.evidenceRef] : [],
-      operationRef: result.operationId || null,
-    };
-  }
-  if (result.schema === 'r2d2.foundation-postgres-capability-answer/v1') {
-    return {
-      domain: 'pfss.postgresql', intent: String(result.question || 'capability.read'),
-      phase: result.phase === 'Observed' ? 'observed' : 'unavailable',
-      targetRef: null, slots: {}, missingSlots: [], capabilityRef: null,
-      evidenceRefs: [], operationRef: null,
-    };
-  }
-  if (result.action === 'binding-execute'
-      && result.binding?.toolId === 'osaa.foundation.postgres.claim.create') {
-    const operation = result.result?.response || result.result || {};
-    return {
-      domain: 'pfss.postgresql', intent: 'create.apply', phase: 'operation_accepted',
-      targetRef: operation.target ? {
-        namespace: operation.target.namespace || '', name: operation.target.name || '',
-      } : null,
-      slots: {}, missingSlots: [],
-      capabilityRef: operation.capabilityBinding?.capabilityRef || null,
-      evidenceRefs: [], operationRef: operation.operationId || null,
-    };
-  }
-  if (result.schema !== 'r2d2.foundation-postgres-intake/v1') return null;
-  const values = result.request || result.values || {};
-  const slots = Object.fromEntries(Object.entries(values)
-    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
-    .map(([key, value]) => [key, { value, status: 'validated' }]));
-  return {
-    domain: 'pfss.postgresql', intent: 'create.plan',
-    phase: result.phase === 'AwaitingConfirmation' ? 'plan_ready' : 'needs_input',
-    targetRef: values.name ? { namespace: values.namespace || 'opensphere-foundation', name: values.name } : null,
-    slots, missingSlots: Array.isArray(result.missing) ? result.missing : [],
-    capabilityRef: result.plan?.capabilityBinding?.capabilityRef || null,
-    evidenceRefs: [], operationRef: null,
-  };
-}
-
-function commandResponse(started, message, result = null) {
-  const dialogueTransition = dialogueTransitionForToolResult(result);
+function commandResponse(started, message, result = null, options = {}) {
+  const dialogueTransition = dialogueTransitionForToolResult(result, options.dialogueContext || null);
   return {
     keyId: 'osaa-tools',
     provider: 'opensphere',
@@ -6552,6 +6500,7 @@ async function foundationPostgresStatusConversation(messages, actor, dialogueCon
   const persistedPfssContext = dialogueContext?.domain === 'pfss.postgresql';
   const deterministicIntent = requiresFoundationPostgresStatus(query)
     || (OSAA_DIALOGUE_POLICY.enforceCurrentFacts && (pfssContext || persistedPfssContext)
+      && !hasExplicitNonPfssDomainQuery(query)
       && isOperationalQuery(query) && !foundationPostgresConversationIntent(messages));
   if (!deterministicIntent) return null;
   const started = Date.now();
@@ -6578,7 +6527,7 @@ async function foundationPostgresStatusConversation(messages, actor, dialogueCon
       return commandResponse(started, legacyFoundationPostgresStatusMessage(status), {
         schema: 'r2d2.foundation-postgres-status/v1', phase: 'Observed', status,
         ...(shadowEvaluation ? { shadowEvaluation } : {}),
-      });
+      }, { dialogueContext });
     }
     const ownerCapability = await foundationPostgresCapabilitiesRead(actor);
     const capabilityBinding = joinPfssDialogueCapability('status.read', {
@@ -6594,13 +6543,13 @@ async function foundationPostgresStatusConversation(messages, actor, dialogueCon
     return commandResponse(started, foundationPostgresStatusMessage(claimSet), {
       schema: 'r2d2.foundation-postgres-status/v1', phase: 'Observed', claimSet,
       capabilityBinding,
-    });
+    }, { dialogueContext });
   } catch (error) {
     const reason = String(error?.msg || error?.message || 'owner API unavailable');
     const claimSet = buildPfssPostgresClaimSet({ epistemicState: 'unobservable' });
     return commandResponse(started, `${foundationPostgresStatusMessage(claimSet)} ${reason}. 조회 실패는 인스턴스가 없다는 뜻이 아닙니다.`, {
       schema: 'r2d2.foundation-postgres-status/v1', phase: 'Unavailable', claimSet, error: reason,
-    });
+    }, { dialogueContext });
   }
 }
 
@@ -6804,7 +6753,7 @@ async function backendGet(path, actor) {
   try {
     response = await fetch(`${CONSOLE_IDENTITY_URL}${path}`, {
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
+      signal: boundedSignal(5000),
     });
   } catch {
     throw { code: 503, msg: 'Console Backend status API is unavailable' };
@@ -6988,7 +6937,7 @@ async function dupaGet(path, actor) {
   try {
     response = await fetch(`${DUPA_CONTROL_URL}${path}`, {
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
+      signal: boundedSignal(5000),
     });
   } catch {
     throw { code: 503, msg: 'Console lifecycle API is unavailable' };
@@ -7004,7 +6953,7 @@ async function clusterManagerGet(path, actor) {
   try {
     response = await fetch(`${CLUSTER_MANAGER_URL}${path}`, {
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(15000),
+      signal: boundedSignal(15000),
     });
   } catch {
     throw { code: 503, msg: 'Cluster Manager owner API is unavailable' };
@@ -7063,7 +7012,7 @@ async function fixedOwnerPost(baseUrl, path, actor, payload, owner, timeoutMs = 
       method: 'POST',
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify(payload || {}),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: boundedSignal(timeoutMs),
     });
   } catch {
     throw { code: 503, msg: `${owner} owner API is unavailable` };
@@ -7782,7 +7731,7 @@ async function foundationStatusRead(actor) {
   try {
     response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/status`, {
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(15000),
+      signal: boundedSignal(15000),
     });
   } catch {
     throw { code: 503, msg: 'Foundation owner API is unavailable' };
@@ -7849,7 +7798,7 @@ async function foundationPostgresStatusRead(actor) {
   try {
     response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/status`, {
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(30000),
+      signal: boundedSignal(30000),
     });
   } catch {
     throw { code: 503, msg: 'PFSS PostgreSQL owner API is unavailable' };
@@ -7868,7 +7817,7 @@ async function foundationPostgresCapabilitiesRead(actor) {
   try {
     response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/capabilities?capability=data.sql.postgres`, {
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(10000),
+      signal: boundedSignal(10000),
     });
   } catch {
     throw { code: 503, msg: 'PFSS PostgreSQL capability owner API is unavailable' };
@@ -7887,7 +7836,7 @@ async function foundationPostgresReadinessRead(actor) {
   try {
     response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/readiness`, {
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(15000),
+      signal: boundedSignal(15000),
     });
   } catch {
     throw { code: 503, msg: 'PFSS PostgreSQL readiness owner API is unavailable' };
@@ -7916,7 +7865,7 @@ async function foundationPostgresContextualCapabilityConversation(messages, acto
         : '현재 PFSS Owner 계약에는 PostgreSQL 클러스터 삭제 기능이 노출되어 있지 않습니다. 따라서 R2D2를 통해 삭제할 수 없습니다.', {
         schema: 'r2d2.foundation-postgres-capability-answer/v1', phase: 'Observed',
         question: 'cluster.delete', available, capabilities,
-      });
+      }, { dialogueContext });
     }
     const readiness = await foundationPostgresReadinessRead(actor);
     const action = (readiness.nextActions || []).find((item) => item.actionId === 'cluster.create');
@@ -7930,13 +7879,13 @@ async function foundationPostgresContextualCapabilityConversation(messages, acto
     return commandResponse(started, message, {
       schema: 'r2d2.foundation-postgres-capability-answer/v1', phase: 'Observed',
       question: 'cluster.create', available, capabilities, readiness,
-    });
+    }, { dialogueContext });
   } catch (error) {
     const reason = String(error?.msg || error?.message || error).slice(0, 240);
     return commandResponse(started, `현재 PFSS Owner의 생성·삭제 가능 여부를 확인할 수 없습니다. ${reason}. 조회 실패를 불가능 또는 가능으로 추정하지 않습니다.`, {
       schema: 'r2d2.foundation-postgres-capability-answer/v1', phase: 'Unavailable', error: reason,
       question: asksDelete ? 'cluster.delete' : 'cluster.create', available: null,
-    });
+    }, { dialogueContext });
   }
 }
 
@@ -7950,7 +7899,7 @@ async function foundationPostgresOperationRead(inputs, actor) {
   try {
     response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/operations/${operationId}`, {
       headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(15000),
+      signal: boundedSignal(15000),
     });
   } catch {
     throw { code: 503, msg: 'PFSS PostgreSQL operation owner API is unavailable' };
@@ -7995,12 +7944,12 @@ async function foundationPostgresOperationConversation(messages, actor, dialogue
     return commandResponse(started, renderPfssPostgresOperationClaim(operationClaim), {
       schema: 'r2d2.foundation-postgres-operation/v1', phase: 'Observed', operationId,
       operationClaim, ...(capabilityBinding?.available ? { capabilityBinding } : {}),
-    });
+    }, { dialogueContext });
   } catch (error) {
     const operationClaim = buildPfssPostgresOperationClaim({ epistemicState: 'unobservable' });
     return commandResponse(started, `${renderPfssPostgresOperationClaim(operationClaim)} ${String(error?.msg || error?.message || error).slice(0, 240)}`, {
       schema: 'r2d2.foundation-postgres-operation/v1', phase: 'Unavailable', operationId, operationClaim,
-    });
+    }, { dialogueContext });
   }
 }
 
@@ -8040,6 +7989,7 @@ async function foundationPostgresPlanRead(inputs, actor) {
 }
 
 async function executeAgentTool(name, args, actor, context = {}) {
+  assertTurnLeaseActive();
   const input = args && typeof args === 'object' ? args : {};
   let result;
   let permissionCode = 'osaa.system.read';
@@ -8284,6 +8234,7 @@ async function executeAgentTool(name, args, actor, context = {}) {
     default:
       throw { code: 400, msg: `unsupported agent tool: ${name}` };
   }
+  assertTurnLeaseActive();
   await recordToolRun(actor, {
     requestId: randomUUID(),
     agentRunId: context.runId || null,
@@ -8295,6 +8246,7 @@ async function executeAgentTool(name, args, actor, context = {}) {
     status: 'applied',
     result,
   });
+  assertTurnLeaseActive();
   return result;
 }
 
@@ -8328,6 +8280,7 @@ function addProviderUsage(total, usage) {
 }
 
 async function providerChatTurn({ baseUrl, key, model, requestBody, actor, source, sessionId, agentRunId = null, round }) {
+  assertTurnLeaseActive();
   const requestId = randomUUID();
   const started = Date.now();
   let response;
@@ -8336,14 +8289,19 @@ async function providerChatTurn({ baseUrl, key, model, requestBody, actor, sourc
       method: 'POST',
       headers: { authorization: `Bearer ${key.apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify(requestBody),
+      signal: boundedSignal(115000),
     });
-  } catch {
+  } catch (error) {
+    const leaseLost = activeTurnSignal()?.aborted === true;
     await recordLlmUsageEvent({
       requestId, agentRunId, actor, source, sessionId, key, model, operation: 'chat_completion', status: 'failed',
-      usage: normalizeProviderUsage(null), latencyMs: Date.now() - started, errorCode: 'provider_network_error',
+      usage: normalizeProviderUsage(null), latencyMs: Date.now() - started,
+      errorCode: leaseLost ? 'conversation_turn_lease_lost' : 'provider_network_error',
     });
+    if (leaseLost) assertTurnLeaseActive();
     throw { code: 502, msg: 'LLM provider network request failed' };
   }
+  assertTurnLeaseActive();
   const text = await response.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
@@ -8368,6 +8326,7 @@ async function providerChatTurn({ baseUrl, key, model, requestBody, actor, sourc
 }
 
 async function chatCompletion(body, actor) {
+  assertTurnLeaseActive();
   const baseMessages = normalizeMessages(body);
   const commandOut = await handleSlashCommand(latestUserContent(baseMessages), body, actor);
   if (commandOut) return commandOut;
@@ -8706,6 +8665,20 @@ async function chatCompletion(body, actor) {
       metadata: { verifier: 'surface-diagnosis-grounding/v1', deterministic: true },
     });
   }
+  if (extensionPresentationEvidence) {
+    content = renderExtensionPresentation(extensionPresentationEvidence);
+    audit(actor, 'extension-presentation-grounding', `AgentRun/${requestId}`, 'ok',
+      `${extensionPresentationEvidence.diagnosis}; eligible=${extensionPresentationEvidence.summary?.menuEligible || 0}`);
+    if (agentRunRecorded) await recordAgentStep({
+      runId: requestId,
+      index: agentStepIndex++,
+      kind: 'verification',
+      status: 'succeeded',
+      input: { tool: 'get_extension_presentation_status' },
+      output: { diagnosis: extensionPresentationEvidence.diagnosis, summary: extensionPresentationEvidence.summary },
+      metadata: { verifier: 'extension-presentation-grounding/v1', deterministic: true },
+    });
+  }
   const sourceGrounding = groundCanonicalSourceAnswer(
     content,
     Array.from(verifiedToolEvidence.values()),
@@ -8728,6 +8701,22 @@ async function chatCompletion(body, actor) {
       input: { sourceTools: toolTrace.filter((tool) => SOURCE_TOOL_NAMES.has(tool.name)).map((tool) => tool.name) },
       output: { state: sourceGrounding.state, violations: sourceGrounding.violations, citations: sourceGrounding.citations },
       metadata: { verifier: 'canonical-source-grounding/v1', deterministic: true },
+    });
+  }
+  const currentFactGuard = guardProviderCurrentFactResponse(userContent, content, {
+    verifiedDeterministic: Boolean(extensionPresentationEvidence || surfaceDiagnosisEvidence),
+  });
+  content = currentFactGuard.content;
+  if (currentFactGuard.applied) {
+    audit(actor, 'current-fact-guard', `AgentRun/${requestId}`, 'blocked', currentFactGuard.state);
+    if (agentRunRecorded) await recordAgentStep({
+      runId: requestId,
+      index: agentStepIndex++,
+      kind: 'verification',
+      status: 'failed',
+      input: { query: userContent },
+      output: { state: currentFactGuard.state },
+      metadata: { verifier: 'current-fact-guard/v1', deterministic: true },
     });
   }
   const latencyMs = Date.now() - started;
@@ -8765,6 +8754,10 @@ async function chatCompletion(body, actor) {
         citations: sourceGrounding.citations,
       },
       surfaceDiagnosis,
+      currentFactGuard: {
+        applied: currentFactGuard.applied,
+        state: currentFactGuard.state,
+      },
     },
     sources: sources.map((s) => ({
       title: s.title,
@@ -8816,19 +8809,32 @@ async function durableChatCompletion(body, actor) {
   const store = getConversationStore();
   const turn = await store.beginTurn(actor, body);
   if (turn.replay) return { ...turn.response, replayed: true };
+  const turnController = new AbortController();
   const heartbeatTimer = setInterval(() => {
     void store.heartbeatTurn(actor, turn).catch((error) => {
       console.warn('[osaa-conversation] lease heartbeat failed:', error?.message || error);
+      if (!turnController.signal.aborted) {
+        turnController.abort({
+          code: 409,
+          errorCode: 'conversation_turn_lease_lost',
+          msg: 'conversation turn lease was lost during execution',
+          cause: error,
+        });
+      }
     });
   }, Math.max(1000, Math.floor((TURN_LEASE_SECONDS * 1000) / 3)));
   heartbeatTimer.unref();
   try {
-    const response = await chatCompletion({
-      ...body,
-      messages: turn.messages,
-      sessionId: turn.conversationId,
-      _dialogueContext: turn.dialogueContext,
-    }, actor);
+    const response = await runWithTurnSignal(
+      turnController.signal,
+      () => chatCompletion({
+        ...body,
+        messages: turn.messages,
+        sessionId: turn.conversationId,
+        _dialogueContext: turn.dialogueContext,
+      }, actor),
+    );
+    if (turnController.signal.aborted) throw turnController.signal.reason;
     const governed = {
       ...response,
       dialogueMode: OSAA_DIALOGUE_POLICY.mode,
@@ -8845,25 +8851,6 @@ async function durableChatCompletion(body, actor) {
   } finally {
     clearInterval(heartbeatTimer);
   }
-}
-
-async function runConversationLeaseReaper() {
-  const receipts = await getConversationStore().reapExpiredTurns(100);
-  if (receipts.length) {
-    console.warn(`[osaa-conversation] recovered ${receipts.length} expired turn lease(s)`);
-  }
-}
-
-function initializeConversationLeaseReaper() {
-  void runConversationLeaseReaper().catch((error) => {
-    console.warn('[osaa-conversation] initial lease recovery skipped:', error?.message || error);
-  });
-  conversationLeaseReaperTimer = setInterval(() => {
-    void runConversationLeaseReaper().catch((error) => {
-      console.warn('[osaa-conversation] lease reaper failed:', error?.message || error);
-    });
-  }, 30000);
-  conversationLeaseReaperTimer.unref();
 }
 
 function validateKeyBody(body, rotate = false) {
@@ -8950,7 +8937,7 @@ function audit(actor, action, target, result, reason) {
       method: 'POST',
       headers: { authorization: `Bearer ${actor.bearerToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ action, target, result, reason: reason || 'OSAA read/planning operation', targetType: 'osaa' }),
-      signal: AbortSignal.timeout(3000),
+      signal: boundedSignal(3000),
     }).catch((error) => console.warn('[osaa-audit] persistence skipped:', error.message || error));
   }
 }
@@ -9075,7 +9062,7 @@ async function submitControlPlaneAction(binding, inputs, target, actor) {
       method: 'POST',
       headers: { authorization: `Bearer ${actor.bearerToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ bindingId: binding.id, toolId: binding.toolId, target, inputs, reason: inputs.reason }),
-      signal: AbortSignal.timeout(5000),
+      signal: boundedSignal(5000),
     });
   } catch {
     throw { code: 503, msg: 'Console Backend control-plane submission is unavailable' };
@@ -9544,23 +9531,6 @@ const server = http.createServer(async (req, res) => {
       assertPermission(actor, 'osaa.chat.use');
       return json(res, 200, await getConversationStore().remove(actor, conversationMatch[1]));
     }
-    const conversationRecoveryMatch = url.pathname.match(
-      /^\/api\/osaa\/admin\/conversations\/([0-9a-f-]{36})\/turns\/([0-9a-f-]{36})\/recover$/i,
-    );
-    if (conversationRecoveryMatch && req.method === 'POST') {
-      const actor = await verifyAdmin(req);
-      const body = await readBody(req);
-      if (actor.assurance !== 'aal2') {
-        throw { code: 403, msg: 'conversation turn recovery requires MFA assurance aal2' };
-      }
-      const expectedConfirmation = `recover dialogue turn ${conversationRecoveryMatch[1]}/${conversationRecoveryMatch[2]}`;
-      requireConfirm(body.confirmation, expectedConfirmation);
-      const receipt = await getConversationStore().recoverTurn(
-        actor, conversationRecoveryMatch[1], conversationRecoveryMatch[2], body.reason,
-      );
-      audit(actor, 'conversation-turn-recovery', conversationRecoveryMatch[2], 'ok', body.reason);
-      return json(res, 200, { recovered: true, receipt });
-    }
     if (url.pathname === '/api/osaa/operational/status' && req.method === 'GET') {
       await verifyAuthed(req);
       if (!r2d2QueryService) return operationalUnavailable(res);
@@ -9976,7 +9946,6 @@ async function initializeGatewayData(attempt = 1) {
 server.listen(PORT, () => {
   console.log(`opensphere-console-osaa-gateway v${VERSION} listening :${PORT} (ns=${OSAA_NAMESPACE})`);
   void initializeGatewayData();
-  initializeConversationLeaseReaper();
   void initializeOperationalIntelligence().catch((error) => console.warn('[r2d2] initialization failed:', error.message || error));
   void initializeIncidentRelay().catch((error) => console.warn('[r2d2-relay] initialization failed:', error.message || error));
   void initializeR2d2Maintenance().catch((error) => console.warn('[r2d2-maintenance] initialization failed:', error.message || error));
@@ -9994,7 +9963,6 @@ function stopGateway() {
   if (r2d2Timer) clearInterval(r2d2Timer);
   if (r2d2RelayTimer) clearInterval(r2d2RelayTimer);
   if (r2d2MaintenanceTimer) clearInterval(r2d2MaintenanceTimer);
-  if (conversationLeaseReaperTimer) clearInterval(conversationLeaseReaperTimer);
   if (r2d2ObserverPool) void r2d2ObserverPool.end().catch(() => undefined);
   if (r2d2RelayPool) void r2d2RelayPool.end().catch(() => undefined);
   if (r2d2MaintenancePool) void r2d2MaintenancePool.end().catch(() => undefined);

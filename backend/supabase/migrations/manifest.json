@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "latestMigrationId": "0071",
   "migrationCount": 70,
-  "setDigest": "sha256:08558c99a1539e30495d9ba752e7e6839786799ce40afe260f34dc8be7312a2a",
+  "setDigest": "sha256:2f65636f5fb23e2fa27eb1dffd4bd6f477484888f8fe12f63f87915ddc0962ac",
   "migrations": [
     {
       "id": "0001",
@@ -492,7 +492,7 @@
       "predecessorMigrationId": "0070",
       "name": "0071_osaa_dialogue_state_transition.sql",
       "path": "backend/supabase/migrations/0071_osaa_dialogue_state_transition.sql",
-      "sha256": "9ff12d19183c30be4909db795196b32f3bcd4fd48a442e59b35ca78179af0d92"
+      "sha256": "ab3b3c8b1cfd64f7e0ace00d6725683591381d215901cb0b6a62636b23ebc4c3"
     }
   ]
 }

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { projectExtensionPresentation } = require('./extension-presentation');
+const { projectExtensionPresentation, renderExtensionPresentation } = require('./extension-presentation');
 
 function registry(overrides = {}) {
   return {
@@ -33,6 +33,10 @@ test('host-owned navigation remains eligible while child UI activation is on dem
   assert.equal(out.items[0].browserVisibilityVerified, false);
   assert.equal(out.items[0].lifecycleMutationRequired, false);
   assert.match(out.interpretation, /메뉴 미노출을 뜻하지 않습니다/);
+  const rendered = renderExtensionPresentation(out);
+  assert.match(rendered, /메뉴 표시 가능 1개/);
+  assert.match(rendered, /PostgreSQL \(postgres\): 메뉴 Eligible, UI OnDemand/);
+  assert.match(rendered, /브라우저 실제 표시 여부는 .*검증하지 않았습니다/);
 });
 
 test('real Registry or host blockers are reported without proposing blind lifecycle mutation', () => {

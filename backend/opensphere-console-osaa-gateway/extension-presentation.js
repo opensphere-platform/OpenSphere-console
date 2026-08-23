@@ -86,4 +86,20 @@ function projectExtensionPresentation(registry) {
   };
 }
 
-module.exports = { projectExtensionPresentation };
+function renderExtensionPresentation(projection) {
+  const summary = projection?.summary || {};
+  const items = Array.isArray(projection?.items) ? projection.items : [];
+  const lines = [
+    `Registry Plugin ${Number(summary.total || 0)}개 중 메뉴 표시 가능 ${Number(summary.menuEligible || 0)}개, 차단 ${Number(summary.blocked || 0)}개입니다.`,
+    String(projection?.interpretation || ''),
+  ];
+  for (const item of items) {
+    lines.push(`- ${item.name} (${item.id}): 메뉴 ${item.menuEligibility}, UI ${item.uiActivation}, 경로 ${item.expectedRoute}`);
+    if (item.blockers?.length) lines.push(`  차단 사유: ${item.blockers.join('; ')}`);
+  }
+  lines.push(String(projection?.mutationSafety || ''));
+  lines.push('브라우저 실제 표시 여부는 이 Registry projection만으로 검증하지 않았습니다.');
+  return lines.filter(Boolean).join('\n');
+}
+
+module.exports = { projectExtensionPresentation, renderExtensionPresentation };

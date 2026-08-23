@@ -3,7 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  buildPfssPostgresClaimSet, buildPfssPostgresOperationClaim, isOperationalQuery, observeOwnerEvidence,
+  buildPfssPostgresClaimSet, buildPfssPostgresOperationClaim, guardProviderCurrentFactResponse,
+  hasExplicitNonPfssDomainQuery, isCurrentSystemFactQuery, isOperationalQuery, observeOwnerEvidence,
+  providerClaimsCurrentSystemFact,
   redactOwnerEvidence, renderPfssPostgresClaimSet, renderPfssPostgresOperationClaim,
 } = require('./dialogue-evidence');
 
@@ -55,6 +57,43 @@ test('ambiguous queries fail safe as operational', () => {
   assert.equal(isOperationalQuery('postgres는?'), true);
   assert.equal(isOperationalQuery('몇 개야?'), true);
   assert.equal(isOperationalQuery('PostgreSQL의 개념을 설명해줘'), false);
+  assert.equal(isOperationalQuery('오늘 날씨가 어때?'), false);
+  assert.equal(isOperationalQuery('재미있는 이야기를 해줘'), false);
+});
+
+test('current-fact classification is closed and conflicting domains do not inherit PFSS', () => {
+  assert.equal(isCurrentSystemFactQuery('현재 GitLab 파드는 몇 개야?'), true);
+  assert.equal(isCurrentSystemFactQuery('How many Kubernetes pods are running?'), true);
+  assert.equal(isCurrentSystemFactQuery('What is Kubernetes?'), false);
+  assert.equal(isCurrentSystemFactQuery('DUPA 설계 원칙을 설명해줘'), false);
+  assert.equal(hasExplicitNonPfssDomainQuery('GitLab 파드는 몇 개야?'), true);
+  assert.equal(hasExplicitNonPfssDomainQuery('PFSS PostgreSQL 인스턴스는 몇 개야?'), false);
+  assert.equal(providerClaimsCurrentSystemFact('Kubernetes has 3 running pods.'), true);
+  assert.equal(providerClaimsCurrentSystemFact('Kubernetes is a container orchestration system.'), false);
+});
+
+test('provider prose cannot assert a current system fact without deterministic evidence', () => {
+  const blocked = guardProviderCurrentFactResponse(
+    '현재 GitLab 파드는 몇 개야?',
+    '현재 GitLab 파드는 3개입니다.',
+  );
+  assert.equal(blocked.applied, true);
+  assert.equal(blocked.state, 'unobservable');
+  assert.doesNotMatch(blocked.content, /3개/);
+
+  const unsolicitedClaim = guardProviderCurrentFactResponse(
+    '간단히 답해줘',
+    'OpenSphere Kubernetes currently has 4 running pods.',
+  );
+  assert.equal(unsolicitedClaim.applied, true);
+  assert.doesNotMatch(unsolicitedClaim.content, /4 running pods/);
+
+  const verified = guardProviderCurrentFactResponse(
+    'Registry Plugin 메뉴가 현재 표시되는가?',
+    'Registry projection 기준 메뉴 표시 가능 6개입니다.',
+    { verifiedDeterministic: true },
+  );
+  assert.equal(verified.applied, false);
 });
 
 test('PFSS operation phase is rendered only from a fresh typed Owner observation', () => {

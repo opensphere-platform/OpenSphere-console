@@ -180,17 +180,63 @@ function renderPfssPostgresOperationClaim(claim) {
 
 function isOperationalQuery(value) {
   const text = String(value || '').trim();
-  if (!text) return true;
-  if (/(현재|지금|운영|상태|ready|running|version|버전|instance|인스턴스|삭제|생성|적용|실행)/i.test(text)) return true;
-  if (/(개념|정의|뜻|설명|architecture|설계 원칙)/i.test(text)) return false;
-  return true;
+  if (!text) return false;
+  const conceptual = /(개념|정의|뜻|설명|architecture|설계\s*원칙|왜\s*(?:필요|사용)|what\s+is)/i.test(text);
+  const liveMarker = /(현재|지금|운영\s*중|실시간|live|ready|running|status|상태|버전|version|몇\s*개|존재|가능|삭제|생성|적용|실행|완료|실패|오류)/i.test(text);
+  if (conceptual && !liveMarker) return false;
+  if (liveMarker) return true;
+  if (/^(?:postgres(?:ql)?|pfss|인스턴스|그거|그것|이거|이것)(?:은|는|이|가)?\s*(?:\?|어때|어떻게|있어|없어)?$/i.test(text)) return true;
+  return false;
+}
+
+function isCurrentSystemFactQuery(value) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  const deicticCurrentFact = /^(?:몇\s*개(?:야|인가|있어)?|상태(?:는|가)?|지금(?:은)?|현재(?:는)?|가능(?:해|한가)?|있어|없어|how\s+many|what(?:'s|\s+is)\s+(?:its|the)\s+(?:status|version)|is\s+it\s+(?:ready|running|available))\s*[?.!]*$/i.test(text);
+  if (deicticCurrentFact) return true;
+  const systemDomain = /(?:opensphere|osaa|r2d2|pfss|postgres(?:ql)?|postgresclaim|subshell|plugin|registry|kubernetes|k8s|pod|deployment|service|gitlab|gitea|os\s*shell|oss|cluster|console|manual|인스턴스|파드|배포|서비스|레지스트리|플러그인|서브셸)/i.test(text);
+  if (!systemDomain) return false;
+  const liveMarker = /(?:현재|지금|운영\s*중|실시간|몇\s*개|상태|버전|존재|가능|준비|활성|비활성|설치|오류|실패|완료|current|now|live|how\s+many|status|version|exist|available|ready|running|healthy|enabled|disabled|installed|failed|completed)/i.test(text);
+  const conceptual = /(?:개념|정의|뜻|설명|architecture|설계\s*원칙|왜\s*(?:필요|사용)|what\s+is)/i.test(text);
+  return liveMarker && !conceptual;
+}
+
+function providerClaimsCurrentSystemFact(value) {
+  const text = String(value || '');
+  const systemDomain = /(?:opensphere|osaa|r2d2|pfss|postgres(?:ql)?|postgresclaim|subshell|plugin|registry|kubernetes|k8s|pod|deployment|service|gitlab|gitea|os\s*shell|cluster|console|인스턴스|파드|배포|서비스|레지스트리|플러그인|서브셸)/i.test(text);
+  const concreteRuntimeClaim = /(?:현재|지금|운영\s*중|ready|running|healthy|unavailable|available|enabled|disabled|failed|version\s*[:=]?\s*[v\d]|replicas?\s*[:=]?\s*\d|\d+\s*(?:개|pods?|instances?|replicas?))/i.test(text);
+  return systemDomain && concreteRuntimeClaim;
+}
+
+function hasExplicitNonPfssDomainQuery(value) {
+  const text = String(value || '');
+  const hasPfss = /(?:pfss|postgres(?:ql)?|postgresclaim|foundation-data-pg)/i.test(text);
+  if (hasPfss) return false;
+  return /(?:gitlab|gitea|os\s*shell|\boss\b|manual|cluster\s*manager|kubernetes|\bk8s\b|pod|deployment|service|psmdb|mongo(?:db)?|valkey|opensearch|rustfs|ceph|supabase|subshell|plugin|registry)/i.test(text);
+}
+
+function guardProviderCurrentFactResponse(query, content, options = {}) {
+  const currentFact = isCurrentSystemFactQuery(query) || providerClaimsCurrentSystemFact(content);
+  const verifiedDeterministic = options.verifiedDeterministic === true;
+  if (!currentFact || verifiedDeterministic) {
+    return { applied: false, state: currentFact ? 'verified' : 'not-current-fact', content: String(content || '') };
+  }
+  return {
+    applied: true,
+    state: 'unobservable',
+    content: '이 질문은 OpenSphere의 현재 시스템 사실 확인이 필요하지만, 이 응답 경로에는 답을 확정할 수 있는 Owner의 typed projection과 결정적 렌더러가 없습니다. 추정해서 답하지 않습니다.',
+  };
 }
 
 module.exports = {
   EPISTEMIC_STATES,
   buildPfssPostgresClaimSet,
   buildPfssPostgresOperationClaim,
+  guardProviderCurrentFactResponse,
+  hasExplicitNonPfssDomainQuery,
+  isCurrentSystemFactQuery,
   isOperationalQuery,
+  providerClaimsCurrentSystemFact,
   observeOwnerEvidence,
   redactOwnerEvidence,
   renderPfssPostgresClaimSet,

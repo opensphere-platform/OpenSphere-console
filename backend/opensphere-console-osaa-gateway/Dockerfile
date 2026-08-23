@@ -13,6 +13,8 @@ COPY dialogue-capability.js /app/dialogue-capability.js
 COPY dialogue-evidence.js /app/dialogue-evidence.js
 COPY dialogue-rollout.js /app/dialogue-rollout.js
 COPY dialogue-request-boundary.js /app/dialogue-request-boundary.js
+COPY dialogue-transition.js /app/dialogue-transition.js
+COPY turn-lease-execution.js /app/turn-lease-execution.js
 COPY kubernetes-resource-catalog.js /app/kubernetes-resource-catalog.js
 COPY manual-seed-reconcile.js /app/manual-seed-reconcile.js
 COPY agent-control-readiness.js /app/agent-control-readiness.js

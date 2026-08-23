@@ -13,23 +13,29 @@ const { operationConfirmation } = require('../opensphere-console-backend/r2d2-du
 
 const developmentNormal = buildCorpus('development', 'normal');
 const developmentAdversarial = buildCorpus('development', 'adversarial');
-const heldOut = buildCorpus('held-out', 'adversarial');
+const heldOutNormal = buildCorpus('held-out', 'normal');
+const heldOutAdversarial = buildCorpus('held-out', 'adversarial');
 
 test('corpus fixes 120 normal, 120 adversarial, and separate 120 held-out multi-turn scenarios', () => {
   assert.equal(developmentNormal.length, 120);
   assert.equal(developmentAdversarial.length, 120);
-  assert.equal(heldOut.length, 120);
-  const ids = new Set([...developmentNormal, ...developmentAdversarial, ...heldOut].map((item) => item.id));
-  assert.equal(ids.size, 360);
-  for (const corpus of [developmentNormal, developmentAdversarial, heldOut]) {
+  assert.equal(heldOutNormal.length, 120);
+  assert.equal(heldOutAdversarial.length, 120);
+  const all = [...developmentNormal, ...developmentAdversarial, ...heldOutNormal, ...heldOutAdversarial];
+  const ids = new Set(all.map((item) => item.id));
+  assert.equal(ids.size, 480);
+  for (const corpus of [developmentNormal, developmentAdversarial, heldOutNormal, heldOutAdversarial]) {
     assert.equal(corpus.every((item) => item.turns.length >= 2 && item.language.includes('-')), true);
   }
   for (const threat of THREATS) {
     assert.equal(developmentAdversarial.filter((item) => item.threat === threat).length, 10);
-    assert.equal(heldOut.filter((item) => item.threat === threat).length, 10);
+    assert.equal(heldOutAdversarial.filter((item) => item.threat === threat).length, 10);
   }
-  const developmentTurns = new Set(developmentAdversarial.map((item) => item.turns.join('\n')));
-  assert.equal(heldOut.some((item) => developmentTurns.has(item.turns.join('\n'))), false);
+  const developmentTurns = new Set([...developmentNormal, ...developmentAdversarial].map((item) => item.turns.join('\n')));
+  const heldOutTurns = [...heldOutNormal, ...heldOutAdversarial].map((item) => item.turns.join('\n'));
+  assert.equal(heldOutTurns.some((turns) => developmentTurns.has(turns)), false);
+  assert.equal(new Set(heldOutTurns).size, 240);
+  assert.equal(heldOutTurns.some((turns) => /held-out variant/i.test(turns)), false);
 });
 
 test('T1/T3/T11 direct injection cannot write identity, refs, revision, or rollout mode', () => {

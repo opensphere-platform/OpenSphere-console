@@ -1,7 +1,26 @@
 -- PLAN-015 v1.2: CBSS-owned OSAA Dialogue State projection and transition ledger.
 -- Dialogue transitions are conversation data, not Agent Runtime evidence.
 
-BEGIN;
+-- Dialogue lease recovery is a CBSS maintenance capability. It is deliberately
+-- separate from both the serving Gateway role and the broader R2D2 retention
+-- maintenance login. Console Backend mints a short-lived PostgREST JWT for this
+-- NOLOGIN role; no reusable database password is placed in the Gateway pod.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opensphere_osaa_dialogue_maintenance') THEN
+    CREATE ROLE opensphere_osaa_dialogue_maintenance NOLOGIN NOINHERIT NOBYPASSRLS;
+  END IF;
+END
+$$;
+GRANT opensphere_osaa_dialogue_maintenance TO authenticator;
+GRANT USAGE ON SCHEMA osaa TO opensphere_osaa_dialogue_maintenance;
+
+-- Conversations created before Dialogue State existed receive the same bounded
+-- retention policy as new conversations. Active rows are never purge-eligible;
+-- the clock starts only when deleted_at is set.
+ALTER TABLE osaa.conversation ALTER COLUMN retention_days SET DEFAULT 30;
+UPDATE osaa.conversation SET retention_days = 30 WHERE retention_days IS NULL;
+ALTER TABLE osaa.conversation ALTER COLUMN retention_days SET NOT NULL;
 
 ALTER TABLE osaa.conversation_message
   ADD COLUMN lease_owner text,
@@ -328,9 +347,8 @@ SECURITY DEFINER
 SET search_path = pg_catalog, osaa
 AS $$
 BEGIN
-  IF session_user <> 'opensphere_osaa_maintenance'
-     AND current_setting('role', true) <> 'opensphere_osaa_maintenance' THEN
-    RAISE EXCEPTION 'dialogue lease reaping requires the maintenance database identity';
+  IF current_setting('role', true) <> 'opensphere_osaa_dialogue_maintenance' THEN
+    RAISE EXCEPTION 'dialogue lease reaping requires the CBSS dialogue maintenance role';
   END IF;
   IF reap_limit < 1 OR reap_limit > 1000 THEN
     RAISE EXCEPTION 'reap limit must be between 1 and 1000';
@@ -362,7 +380,7 @@ BEGIN
   )
   SELECT conversation_id,owner_id,turn_request_id,'lease-expired',
     'expired dialogue turn lease recovered by bounded reaper',
-    lease_owner,lease_expires_at,attempt,session_user
+    lease_owner,lease_expires_at,attempt,current_setting('role', true)
   FROM recovered
   RETURNING *;
 END
@@ -381,9 +399,8 @@ DECLARE
   target record;
   receipt osaa.dialogue_turn_recovery_receipt%ROWTYPE;
 BEGIN
-  IF session_user <> 'opensphere_osaa_maintenance'
-     AND current_setting('role', true) <> 'opensphere_osaa_maintenance' THEN
-    RAISE EXCEPTION 'dialogue turn recovery requires the maintenance database identity';
+  IF current_setting('role', true) <> 'opensphere_osaa_dialogue_maintenance' THEN
+    RAISE EXCEPTION 'dialogue turn recovery requires the CBSS dialogue maintenance role';
   END IF;
   IF length(trim(COALESCE(recovery_reason, ''))) NOT BETWEEN 8 AND 500 THEN
     RAISE EXCEPTION 'recovery reason must contain 8 to 500 characters';
@@ -414,7 +431,7 @@ BEGIN
   ) VALUES (
     target.conversation_id,target.owner_id,target.turn_request_id,'admin-recovery',
     trim(recovery_reason),target.lease_owner,target.lease_expires_at,
-    target.attempt,session_user
+    target.attempt,current_setting('role', true)
   ) RETURNING * INTO receipt;
   RETURN receipt;
 END
@@ -646,8 +663,8 @@ CREATE POLICY osaa_gateway_dialogue_transition_insert
 CREATE POLICY osaa_backend_dialogue_purge_receipt_select
   ON osaa.dialogue_state_purge_receipt FOR SELECT TO opensphere_console_backend
   USING (true);
-CREATE POLICY osaa_maintenance_dialogue_recovery_receipt_select
-  ON osaa.dialogue_turn_recovery_receipt FOR SELECT TO opensphere_osaa_maintenance
+CREATE POLICY osaa_dialogue_maintenance_recovery_receipt_select
+  ON osaa.dialogue_turn_recovery_receipt FOR SELECT TO opensphere_osaa_dialogue_maintenance
   USING (true);
 CREATE POLICY osaa_backend_dialogue_recovery_receipt_select
   ON osaa.dialogue_turn_recovery_receipt FOR SELECT TO opensphere_console_backend
@@ -661,7 +678,7 @@ GRANT SELECT, INSERT, UPDATE ON osaa.dialogue_state_projection TO opensphere_osa
 GRANT SELECT, INSERT ON osaa.dialogue_state_transition TO opensphere_osaa_gateway;
 GRANT SELECT ON osaa.dialogue_state_purge_receipt TO opensphere_console_backend;
 GRANT SELECT ON osaa.dialogue_turn_recovery_receipt
-  TO opensphere_console_backend, opensphere_osaa_maintenance;
+  TO opensphere_console_backend, opensphere_osaa_dialogue_maintenance;
 REVOKE UPDATE, DELETE, TRUNCATE ON osaa.dialogue_state_transition FROM opensphere_osaa_gateway;
 REVOKE DELETE, TRUNCATE ON osaa.conversation, osaa.conversation_message FROM opensphere_osaa_gateway;
 REVOKE ALL ON FUNCTION osaa.purge_dialogue_state(uuid, text) FROM PUBLIC;
@@ -672,9 +689,9 @@ GRANT EXECUTE ON FUNCTION osaa.purge_eligible_dialogue_state(integer)
 REVOKE ALL ON FUNCTION osaa.reap_expired_dialogue_turns(integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION osaa.recover_dialogue_turn(uuid, uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION osaa.reap_expired_dialogue_turns(integer)
-  TO opensphere_osaa_maintenance;
+  TO opensphere_osaa_dialogue_maintenance;
 GRANT EXECUTE ON FUNCTION osaa.recover_dialogue_turn(uuid, uuid, text)
-  TO opensphere_osaa_maintenance;
+  TO opensphere_osaa_dialogue_maintenance;
 REVOKE ALL ON FUNCTION osaa.dialogue_genesis_digest(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION osaa.enforce_dialogue_transition_chain() FROM PUBLIC;
 REVOKE ALL ON FUNCTION osaa.enforce_dialogue_projection_link() FROM PUBLIC;
@@ -682,7 +699,7 @@ REVOKE ALL ON FUNCTION osaa.verify_dialogue_state_chain(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION osaa.resolve_dialogue_operation_context(uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION osaa.reject_dialogue_state_truncate() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION osaa.verify_dialogue_state_chain(uuid)
-  TO opensphere_console_backend, opensphere_osaa_maintenance;
+  TO opensphere_console_backend, opensphere_osaa_dialogue_maintenance;
 GRANT EXECUTE ON FUNCTION osaa.resolve_dialogue_operation_context(uuid, text)
   TO opensphere_console_backend;
 
@@ -694,5 +711,3 @@ COMMENT ON TABLE osaa.dialogue_state_purge_receipt IS
   'User-content-free receipt proving an authorized retention purge of Dialogue State data.';
 COMMENT ON TABLE osaa.dialogue_turn_recovery_receipt IS
   'Append-only, user-content-free receipt for expired lease reaping and explicit administrator turn recovery.';
-
-COMMIT;

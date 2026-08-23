@@ -196,7 +196,7 @@ async function commitDialogueTransition(client, owner, turn, candidate) {
   };
 }
 
-function createConversationStore(pool, maintenancePoolProvider = () => null) {
+function createConversationStore(pool) {
   if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
     throw new TypeError('OSAA conversation store requires a pg Pool');
   }
@@ -568,42 +568,9 @@ function createConversationStore(pool, maintenancePoolProvider = () => null) {
     });
   }
 
-  function maintenancePool() {
-    const maintenance = maintenancePoolProvider();
-    if (!maintenance || typeof maintenance.query !== 'function') {
-      throw failure(503, 'OSAA dialogue maintenance database identity is unavailable');
-    }
-    return maintenance;
-  }
-
-  async function reapExpiredTurns(limit = 100) {
-    const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
-    const result = await maintenancePool().query(
-      'SELECT * FROM osaa.reap_expired_dialogue_turns($1)',
-      [bounded],
-    );
-    return result.rows;
-  }
-
-  async function recoverTurn(actor, value, turnValue, reason) {
-    ownerId(actor);
-    const id = conversationId(value);
-    const turnRequestId = requestId(turnValue);
-    const recoveryReason = String(reason || '').trim();
-    if (recoveryReason.length < 8 || recoveryReason.length > 500) {
-      throw failure(400, 'recovery reason must contain 8 to 500 characters');
-    }
-    const result = await maintenancePool().query(
-      'SELECT * FROM osaa.recover_dialogue_turn($1,$2,$3)',
-      [id, turnRequestId, recoveryReason],
-    );
-    if (!result.rows[0]) throw failure(404, 'pending conversation turn not found');
-    return result.rows[0];
-  }
-
   return {
     list, get, update, remove, beginTurn, completeTurn, failTurn,
-    heartbeatTurn, dialogueContext, reapExpiredTurns, recoverTurn,
+    heartbeatTurn, dialogueContext,
   };
 }
 

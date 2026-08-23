@@ -783,13 +783,25 @@ foreach ($migration in $migrations) {
     continue
   }
   Write-Host "Applying Supabase migration $($migration.Name) sha256=$checksum"
-  Invoke-SupabaseMigrationPsql (Get-Content -Raw -LiteralPath $migration.FullName)
+  $migrationSql = Get-Content -Raw -LiteralPath $migration.FullName
   $ledgerSql = @"
 INSERT INTO console.schema_migration(migration_id, sha256, source_revision, executor)
 VALUES ('$migrationId', '$checksum', '$SourceRevision', current_user)
-ON CONFLICT (migration_id) DO NOTHING;
 "@
-  Invoke-SupabaseMigrationPsql $ledgerSql
+  if ($migrationId -ge '0071') {
+    if ($migrationSql -match '(?im)^\s*(BEGIN|COMMIT)\s*;') {
+      throw "Migration $migrationId must not contain transaction control; the installer owns atomic attestation"
+    }
+    # Schema mutation and its immutable ledger receipt are one PostgreSQL
+    # transaction. A crash or ledger conflict rolls back both, so an
+    # unrecorded partially-applied schema cannot survive to the next run.
+    Invoke-SupabaseMigrationPsql ("BEGIN;`n" + $migrationSql + "`n" + $ledgerSql + "`nCOMMIT;")
+  } else {
+    # Historical migrations retain their already-attested byte identity. New
+    # migrations use the atomic path above without rewriting deployed files.
+    Invoke-SupabaseMigrationPsql $migrationSql
+    Invoke-SupabaseMigrationPsql ($ledgerSql + "ON CONFLICT (migration_id) DO NOTHING;`n")
+  }
   $attestedChecksum = Get-SupabaseMigrationChecksum $migrationId
   if ($attestedChecksum -ne $checksum) { throw "Migration ledger did not attest $migrationId" }
   $appliedMigrationCount += 1

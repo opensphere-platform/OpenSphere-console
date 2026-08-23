@@ -145,7 +145,7 @@ function verifyDialogueStateContract() {
     );`);
   mustRejectPermission(`SET ROLE opensphere_osaa_gateway;
     SELECT * FROM osaa.reap_expired_dialogue_turns(10);`, 'Gateway → global dialogue lease reaper');
-  const reaped = psql(`SET ROLE opensphere_osaa_maintenance;
+  const reaped = psql(`SET ROLE opensphere_osaa_dialogue_maintenance;
     SELECT action||'|'||turn_request_id FROM osaa.reap_expired_dialogue_turns(10);
     RESET ROLE;`).trim().split('\n').find((line) => line.startsWith('lease-expired|'));
   assert.equal(reaped, `lease-expired|${expiredTurn}`,
@@ -162,7 +162,7 @@ function verifyDialogueStateContract() {
   mustRejectPermission(`SET ROLE opensphere_osaa_gateway;
     SELECT * FROM osaa.recover_dialogue_turn('${conversation}','${adminTurn}','operator requested recovery');`,
   'Gateway → administrator dialogue recovery');
-  const recovered = psql(`SET ROLE opensphere_osaa_maintenance;
+  const recovered = psql(`SET ROLE opensphere_osaa_dialogue_maintenance;
     SELECT action||'|'||turn_request_id FROM osaa.recover_dialogue_turn(
       '${conversation}','${adminTurn}','operator requested recovery');
     RESET ROLE;`).trim().split('\n').find((line) => line.startsWith('admin-recovery|'));
@@ -190,7 +190,7 @@ function verifyDialogueStateContract() {
   `${genesisDigest}|${genesisDigest}`,
   'database did not replace caller-supplied chain links with the committed genesis digest');
   console.log('  ✓ caller가 위조한 prev digest 두 사본을 DB가 committed chain 값으로 덮어쓴다');
-  assert.match(psql(`SET ROLE opensphere_osaa_maintenance;
+  assert.match(psql(`SET ROLE opensphere_osaa_dialogue_maintenance;
     SELECT digest_valid||'|'||projection_valid FROM osaa.verify_dialogue_state_chain('${conversation}');
     RESET ROLE;`), /true\|true/);
   assert.equal(psql(`SET ROLE opensphere_osaa_gateway;
@@ -1033,12 +1033,21 @@ async function main() {
     // 이 하네스가 통과하지 못하는 마이그레이션 집합은 배포도 통과하지 못한다.
     for (const file of MIGRATION_FILES) {
       const sql = readFileSync(path.join(MIGRATIONS, file), 'utf8');
-      psql(sql);
-      if (file >= '0026_schema_migration_ledger.sql') {
+      if (file >= '0071_osaa_dialogue_state_transition.sql') {
         const migrationId = file.slice(0, -4);
         const sha256 = createHash('sha256').update(sql.replace(/\r\n/gu, '\n'), 'utf8').digest('hex');
-        psql(`INSERT INTO console.schema_migration(migration_id,sha256,source_revision,executor)
-          VALUES('${migrationId}','${sha256}','${'a'.repeat(40)}',current_user);`);
+        assert.doesNotMatch(sql, /^\s*(?:BEGIN|COMMIT)\s*;/imu,
+          `${file} must leave transaction control to the atomic installer`);
+        psql(`BEGIN;\n${sql}\nINSERT INTO console.schema_migration(migration_id,sha256,source_revision,executor)
+          VALUES('${migrationId}','${sha256}','${'a'.repeat(40)}',current_user);\nCOMMIT;`);
+      } else {
+        psql(sql);
+        if (file >= '0026_schema_migration_ledger.sql') {
+          const migrationId = file.slice(0, -4);
+          const sha256 = createHash('sha256').update(sql.replace(/\r\n/gu, '\n'), 'utf8').digest('hex');
+          psql(`INSERT INTO console.schema_migration(migration_id,sha256,source_revision,executor)
+            VALUES('${migrationId}','${sha256}','${'a'.repeat(40)}',current_user);`);
+        }
       }
     }
     console.log('  ✓ 마이그레이션 전량 적용 완료 (건너뛴 것 없음)\n');
