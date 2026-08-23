@@ -9,6 +9,14 @@ function dialogueTransitionForToolResult(result, dialogueContext = null) {
       'r2d2.foundation-postgres-operation/v1']
       .includes(result.schema);
   if (preservesPreparedPlan) return null;
+  if (result.schema === 'r2d2.foundation-directory-status/v1') {
+    return {
+      domain: 'pfss.directory', intent: 'status.read',
+      phase: result.phase === 'Observed' ? 'observed' : 'unavailable',
+      targetRef: null, slots: {}, missingSlots: [], capabilityRef: null,
+      evidenceRefs: result.claimSet?.evidenceRef ? [result.claimSet.evidenceRef] : [], operationRef: null,
+    };
+  }
   if (result.schema === 'r2d2.foundation-postgres-status/v1') {
     const claimSet = result.claimSet || result.shadowEvaluation?.claimSet || null;
     const capabilityBinding = result.capabilityBinding || result.shadowEvaluation?.capabilityBinding || null;

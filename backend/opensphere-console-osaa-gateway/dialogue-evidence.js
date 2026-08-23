@@ -137,6 +137,107 @@ function renderPfssPostgresClaimSet(claimSet) {
   ].join('\n');
 }
 
+function isPfssDirectoryStatusQuery(value) {
+  const text = String(value || '').trim();
+  if (!text || text.length > 500) return false;
+  return /(?:directory\s*providers?|directory\s*services?|identity[-\s]?directory|samba(?:[-\s]?ad)?|\baddc\b|디렉터리|디렉토리)/i.test(text);
+}
+
+function isPfssDirectoryContextualFollowupQuery(value) {
+  const text = String(value || '').trim();
+  if (!text || text.length > 160) return false;
+  if (isPfssDirectoryStatusQuery(text)) return true;
+  return /^(?:(?:그거|그것|이거|이것)(?:은|는|이|가)?\s*)?(?:상태(?:는|가)?|왜\s*(?:그래|그런가|안\s*돼|없어)|다시\s*확인(?:해줘)?|설치\s*(?:준비|가능)(?:해|한가)?|생성\s*가능(?:해|한가)?)\s*[?.!]*$/i.test(text);
+}
+
+function projectFoundationDirectoryStatus(ownerStatus, options = {}) {
+  if (ownerStatus?.schema !== 'foundation-owner-status.opensphere.io/v1alpha1') {
+    return {
+      schema: 'foundation.directory.owner-status/v1', observable: false,
+      reason: 'foundation_owner_schema_unavailable', refreshedAt: null,
+    };
+  }
+  const models = Array.isArray(ownerStatus.models) ? ownerStatus.models : [];
+  const identity = models.find((model) => model?.model === 'identity' || model?.name === 'identity') || null;
+  const catalogEngines = Array.isArray(ownerStatus?.catalog?.engines) ? ownerStatus.catalog.engines : [];
+  const engineState = String(identity?.engines?.samba || 'disabled').toLowerCase();
+  const sambaObservation = (Array.isArray(identity?.observed) ? identity.observed : [])
+    .find((item) => item?.id === 'samba_up') || null;
+  const serviceExists = engineState === 'enabled';
+  const ready = serviceExists && sambaObservation?.healthy === true
+    && String(sambaObservation?.value || '').toLowerCase() !== 'n/a';
+  const refreshedAt = new Date(options.refreshedAt || Date.now());
+  return {
+    schema: 'foundation.directory.owner-status/v1', observable: true,
+    owner: 'PFSS / identity.directory', sourceSchema: ownerStatus.schema,
+    namespace: String(ownerStatus.namespace || 'opensphere-foundation'),
+    moduleAvailable: catalogEngines.includes('samba'), provider: 'OpenSphere Managed Samba-AD',
+    serviceExists, ready, engineState,
+    lifecycle: serviceExists ? (ready ? 'Ready' : 'Starting') : 'Bootstrap 대기',
+    version: serviceExists ? null : '—', profile: serviceExists ? 'single-dc' : '미선택',
+    modelObservedAt: identity?.observedAt || null,
+    refreshedAt: Number.isFinite(refreshedAt.getTime()) ? refreshedAt.toISOString() : null,
+  };
+}
+
+function buildPfssDirectoryClaimSet(observation) {
+  const base = {
+    schema: 'osaa.claim-set/pfss-directory-v1',
+    epistemicState: EPISTEMIC_STATES.has(observation?.epistemicState)
+      ? observation.epistemicState : 'unobservable',
+    evidenceRef: observation?.evidenceRef || null,
+    observedAt: observation?.observedAt || null,
+    expiresAt: observation?.expiresAt || null,
+    directory: null,
+  };
+  if (base.epistemicState !== 'known' || !observation?.value?.observable) return base;
+  const value = observation.value;
+  base.directory = {
+    moduleAvailable: value.moduleAvailable === true,
+    namespace: String(value.namespace || 'opensphere-foundation'),
+    provider: String(value.provider || 'OpenSphere Managed Samba-AD'),
+    serviceExists: value.serviceExists === true,
+    ready: value.ready === true,
+    lifecycle: String(value.lifecycle || 'Unknown'),
+    version: value.version === null ? null : String(value.version || '—'),
+    profile: String(value.profile || '미선택'),
+    engineState: String(value.engineState || 'unknown'),
+  };
+  return base;
+}
+
+function renderPfssDirectoryClaimSet(claimSet) {
+  if (claimSet?.epistemicState === 'stale') {
+    return 'PFSS Directory Providers의 Owner 관측이 만료되어 현재 상태를 확정할 수 없습니다.';
+  }
+  if (claimSet?.epistemicState !== 'known' || !claimSet?.directory) {
+    return 'PFSS Directory Providers Owner를 현재 관측할 수 없어 서비스 상태를 확정할 수 없습니다.';
+  }
+  const directory = claimSet.directory;
+  if (!directory.moduleAvailable) {
+    return 'PFSS Directory Providers 모듈이 현재 Foundation Owner catalog에 등록되어 있지 않습니다.';
+  }
+  if (!directory.serviceExists) {
+    return [
+      'PFSS Directory Providers 모듈은 존재합니다.',
+      `현재 ${directory.namespace}에는 생성된 Directory 서비스가 없습니다.`,
+      `Lifecycle: ${directory.lifecycle}`,
+      `Version: ${directory.version || '—'}`,
+      `Profile: ${directory.profile}`,
+      'Directory 서비스를 생성하려면 Provisioning에서 검증된 프로파일과 설치 입력을 선택해야 합니다.',
+      `확인 기준: Foundation Owner ${claimSet.observedAt}`,
+    ].join('\n');
+  }
+  return [
+    'PFSS Directory Providers 모듈은 존재합니다.',
+    `현재 ${directory.namespace}에 ${directory.provider} 서비스가 있습니다.`,
+    `Lifecycle: ${directory.lifecycle}`,
+    `Version: ${directory.version || 'Owner projection 미표시'}`,
+    `Profile: ${directory.profile}`,
+    `확인 기준: Foundation Owner ${claimSet.observedAt}`,
+  ].join('\n');
+}
+
 function buildPfssPostgresOperationClaim(observation) {
   const base = {
     schema: 'osaa.operation-claim/pfss-postgresql-v1',
@@ -250,6 +351,7 @@ function guardProviderCurrentFactResponse(query, content, options = {}) {
 
 module.exports = {
   EPISTEMIC_STATES,
+  buildPfssDirectoryClaimSet,
   buildPfssPostgresClaimSet,
   buildPfssPostgresOperationClaim,
   guardProviderCurrentFactResponse,
@@ -257,11 +359,15 @@ module.exports = {
   isCurrentSystemFactQuery,
   isOsaaSelfIdentityQuery,
   isOperationalQuery,
+  isPfssDirectoryContextualFollowupQuery,
+  isPfssDirectoryStatusQuery,
   isPfssContextualFollowupQuery,
   providerClaimsCurrentSystemFact,
   observeOwnerEvidence,
+  projectFoundationDirectoryStatus,
   redactOwnerEvidence,
   renderPfssPostgresClaimSet,
+  renderPfssDirectoryClaimSet,
   renderPfssPostgresOperationClaim,
   renderOsaaSelfIdentity,
 };

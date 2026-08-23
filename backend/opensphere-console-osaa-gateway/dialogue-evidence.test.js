@@ -3,12 +3,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  buildPfssDirectoryClaimSet,
   buildPfssPostgresClaimSet, buildPfssPostgresOperationClaim, guardProviderCurrentFactResponse,
   hasExplicitNonPfssDomainQuery, isCurrentSystemFactQuery, isOperationalQuery,
   isOsaaSelfIdentityQuery,
+  isPfssDirectoryContextualFollowupQuery, isPfssDirectoryStatusQuery,
   isPfssContextualFollowupQuery, observeOwnerEvidence,
+  projectFoundationDirectoryStatus,
   providerClaimsCurrentSystemFact,
   redactOwnerEvidence, renderPfssPostgresClaimSet, renderPfssPostgresOperationClaim,
+  renderPfssDirectoryClaimSet,
   renderOsaaSelfIdentity,
 } = require('./dialogue-evidence');
 
@@ -54,6 +58,35 @@ test('typed PFSS claimSet renders only Ready generation-current claims', () => {
   const claims = buildPfssPostgresClaimSet(observation);
   assert.equal(claims.claims.length, 1);
   assert.match(renderPfssPostgresClaimSet(claims), /ready: Ready, PostgreSQL 18, 2개 인스턴스/);
+});
+
+test('PFSS Directory Providers renders the current absent-service lifecycle from Foundation Owner evidence', () => {
+  const projected = projectFoundationDirectoryStatus({
+    schema: 'foundation-owner-status.opensphere.io/v1alpha1', namespace: 'opensphere-foundation',
+    catalog: { engines: ['keycloak', 'samba', 'postgres'] },
+    models: [{ name: 'identity', model: 'identity', engines: { samba: 'disabled' },
+      observedAt: '2026-08-24T00:00:00.000Z', observed: [{ id: 'samba_up', healthy: false, value: 'n/a' }] }],
+  }, { refreshedAt: '2026-08-24T00:00:05.000Z' });
+  const observation = observeOwnerEvidence(projected, {
+    owner: 'pfss.directory', schema: projected.schema,
+    observedAt: projected.refreshedAt, ttlSeconds: 60, now: Date.parse('2026-08-24T00:00:06.000Z'),
+  });
+  const rendered = renderPfssDirectoryClaimSet(buildPfssDirectoryClaimSet(observation));
+  assert.match(rendered, /PFSS Directory Providers 모듈은 존재합니다/);
+  assert.match(rendered, /opensphere-foundation에는 생성된 Directory 서비스가 없습니다/);
+  assert.match(rendered, /Lifecycle: Bootstrap 대기/);
+  assert.match(rendered, /Version: —/);
+  assert.match(rendered, /Profile: 미선택/);
+  assert.match(rendered, /Provisioning에서 검증된 프로파일과 설치 입력/);
+});
+
+test('PFSS Directory status intent and bounded follow-up are deterministic', () => {
+  assert.equal(isPfssDirectoryStatusQuery('PFSS Directory Providers에 대해 알려줘'), true);
+  assert.equal(isPfssDirectoryStatusQuery('pfss에서 ADDC 설치 준비되어 있어?'), true);
+  assert.equal(isPfssDirectoryStatusQuery('Samba-AD 상태는?'), true);
+  assert.equal(isPfssDirectoryStatusQuery('PostgreSQL 상태는?'), false);
+  assert.equal(isPfssDirectoryContextualFollowupQuery('다시 확인해줘'), true);
+  assert.equal(isPfssDirectoryContextualFollowupQuery('GitLab 상태는?'), false);
 });
 
 test('ambiguous queries fail safe as operational', () => {

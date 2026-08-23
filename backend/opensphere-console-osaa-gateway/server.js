@@ -28,13 +28,18 @@ const {
   runWithTurnSignal,
 } = require('./turn-lease-execution');
 const {
+  buildPfssDirectoryClaimSet,
   buildPfssPostgresClaimSet,
   buildPfssPostgresOperationClaim,
   guardProviderCurrentFactResponse,
   isOsaaSelfIdentityQuery,
   isOperationalQuery,
+  isPfssDirectoryContextualFollowupQuery,
+  isPfssDirectoryStatusQuery,
   isPfssContextualFollowupQuery,
   observeOwnerEvidence,
+  projectFoundationDirectoryStatus,
+  renderPfssDirectoryClaimSet,
   renderPfssPostgresClaimSet,
   renderPfssPostgresOperationClaim,
   renderOsaaSelfIdentity,
@@ -3908,6 +3913,17 @@ function osaaActionBindings() {
       citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
     }),
     mk({
+      id: 'manual-action:opensphere:foundation-directory-status',
+      namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
+      sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#foundation-owner-control',
+      title: 'Read PFSS Directory Providers module and managed Samba-AD lifecycle status', intent: 'inspect-foundation-directory',
+      toolId: 'osaa.foundation.directory.status', controlPlane: 'foundation-owner-facade',
+      riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
+      permission: { roles: ['authenticated'], scopes: ['osaa:system:read'] },
+      audit: { eventType: 'foundation-directory-status-read', targetTemplate: 'PFSS/identity.directory' },
+      citations: [{ sourceId: 'console-docs/osaa-control-plane-assessment', sourcePath: 'OpenSphere-console/docs/OSAA-CONTROL-PLANE-ASSESSMENT-2026-07-23.md' }],
+    }),
+    mk({
       id: 'manual-action:opensphere:foundation-postgres-status',
       namespace: 'opensphere', sourceId: 'console-docs/osaa-control-plane-assessment',
       sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#foundation-owner-control',
@@ -4512,6 +4528,14 @@ function osaaToolManifest() {
         endpoint: toolEndpoint('POST', '/api/osaa/tools/foundation/status'),
         riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
         auditEventType: 'foundation-status-read',
+      },
+      {
+        id: 'osaa.foundation.directory.status',
+        name: 'Read PFSS Directory Providers module and managed Samba-AD lifecycle status',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/osaa/tools/foundation/directory/status'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'foundation-directory-status-read',
       },
       {
         id: 'osaa.foundation.postgres.capabilities',
@@ -6467,6 +6491,33 @@ function osaaSelfIdentityConversation(messages) {
   });
 }
 
+async function foundationDirectoryStatusConversation(messages, actor, dialogueContext = null) {
+  const query = latestUserContent(messages);
+  const contextual = dialogueContext?.domain === 'pfss.directory'
+    && isPfssDirectoryContextualFollowupQuery(query);
+  if (!isPfssDirectoryStatusQuery(query) && !contextual) return null;
+  const started = Date.now();
+  try {
+    const status = await foundationDirectoryStatusRead(actor);
+    const observation = observeOwnerEvidence(status, {
+      owner: 'pfss.directory', schema: status.schema,
+      observedAt: status.refreshedAt, ttlSeconds: 60,
+    });
+    const claimSet = buildPfssDirectoryClaimSet(observation);
+    return commandResponse(started, renderPfssDirectoryClaimSet(claimSet), {
+      schema: 'r2d2.foundation-directory-status/v1', phase: 'Observed',
+      deterministic: true, claimSet,
+    }, { dialogueContext });
+  } catch (error) {
+    const reason = String(error?.msg || error?.message || 'Foundation Directory Owner unavailable');
+    const claimSet = buildPfssDirectoryClaimSet({ epistemicState: 'unobservable' });
+    return commandResponse(started, `${renderPfssDirectoryClaimSet(claimSet)} ${reason}. 조회 실패는 Directory 서비스가 없다는 뜻이 아닙니다.`, {
+      schema: 'r2d2.foundation-directory-status/v1', phase: 'Unavailable',
+      deterministic: true, claimSet, error: reason,
+    }, { dialogueContext });
+  }
+}
+
 function legacyFoundationPostgresStatusMessage(status) {
   const claims = Array.isArray(status?.claims) ? status.claims : [];
   const clusters = Array.isArray(status?.clusters) ? status.clusters : [];
@@ -6670,6 +6721,7 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     browserStatus: { type: 'integer', minimum: 100, maximum: 599 },
   });
   add('osaa.system.read', 'get_foundation_status', 'Read Foundation models, engine states, consumer claims, bindings, and controller readiness from the Foundation owner API.', {});
+  add('osaa.system.read', 'get_foundation_directory_status', 'Read the deterministic PFSS identity.directory Owner projection: Directory Providers module registration, managed Samba-AD service existence, lifecycle, version and profile.', {});
   add('osaa.system.read', 'get_foundation_postgres_capabilities', 'Read the revision-bound PFSS PostgreSQL capability contract. It is discovery evidence only and cannot authorize execution.', {});
   add('osaa.system.read', 'get_foundation_postgres_status', 'Read the PFSS data.sql.postgres owner projection: approved runtimes and plans, managed namespaces, PostgresClaims, and realized clusters. Use this before discussing PostgreSQL provisioning; do not confuse the postgres UI plugin Deployment with a database cluster.', {});
   add('osaa.system.read', 'watch_foundation_postgres_operation', 'Read one existing PFSS durable operation and its verified owner postcondition without changing it.', {
@@ -7766,6 +7818,16 @@ async function foundationStatusRead(actor) {
   return projection;
 }
 
+async function foundationDirectoryStatusRead(actor) {
+  assertPermission(actor, 'osaa.system.read');
+  const ownerStatus = await foundationStatusRead(actor);
+  const projection = projectFoundationDirectoryStatus(ownerStatus, { refreshedAt: new Date().toISOString() });
+  if (!projection.observable) throw { code: 409, msg: `PFSS Directory Owner projection unavailable: ${projection.reason}` };
+  audit(actor, 'foundation-directory-status-read', 'PFSS/identity.directory', 'ok',
+    `${projection.engineState}:${projection.lifecycle}`);
+  return projection;
+}
+
 function normalizeFoundationPostgresRequest(inputs) {
   requireClosedOwnerInputs(inputs, [
     'name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion',
@@ -8151,6 +8213,10 @@ async function executeAgentTool(name, args, actor, context = {}) {
       assertPermission(actor, 'osaa.system.read');
       result = await foundationStatusRead(actor);
       break;
+    case 'get_foundation_directory_status':
+      assertPermission(actor, 'osaa.system.read');
+      result = await foundationDirectoryStatusRead(actor);
+      break;
     case 'get_foundation_postgres_status':
       assertPermission(actor, 'osaa.system.read');
       if (OSAA_DIALOGUE_POLICY.enforceCurrentFacts) {
@@ -8354,6 +8420,10 @@ async function chatCompletion(body, actor) {
   if (commandOut) return commandOut;
   const selfIdentityOut = osaaSelfIdentityConversation(baseMessages);
   if (selfIdentityOut) return selfIdentityOut;
+  const foundationDirectoryStatusOut = await foundationDirectoryStatusConversation(
+    baseMessages, actor, body?._dialogueContext || null,
+  );
+  if (foundationDirectoryStatusOut) return foundationDirectoryStatusOut;
   const foundationPostgresOperationOut = await foundationPostgresOperationConversation(
     baseMessages, actor, body?._dialogueContext || null,
   );
@@ -9818,6 +9888,11 @@ const server = http.createServer(async (req, res) => {
       const actor = await verifyAuthed(req);
       assertPermission(actor, 'osaa.system.read');
       return json(res, 200, await foundationStatusRead(actor));
+    }
+    if (url.pathname === '/api/osaa/tools/foundation/directory/status' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await foundationDirectoryStatusRead(actor));
     }
     if (url.pathname === '/api/osaa/tools/foundation/postgres/status' && req.method === 'POST') {
       const actor = await verifyAuthed(req);

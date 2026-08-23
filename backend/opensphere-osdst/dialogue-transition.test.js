@@ -22,6 +22,18 @@ test('read-only status and capability answers do not destroy a prepared creation
   }, preparedPlan), null);
 });
 
+test('Directory Owner status becomes a pfss.directory Dialogue State transition', () => {
+  const evidenceRef = `pfss.directory@sha256:${'a'.repeat(64)}`;
+  const transition = dialogueTransitionForToolResult({
+    schema: 'r2d2.foundation-directory-status/v1', phase: 'Observed',
+    claimSet: { evidenceRef },
+  });
+  assert.equal(transition.domain, 'pfss.directory');
+  assert.equal(transition.intent, 'status.read');
+  assert.equal(transition.phase, 'observed');
+  assert.deepEqual(transition.evidenceRefs, [evidenceRef]);
+});
+
 test('an accepted operation replaces plan state and preserves its operation reference', () => {
   const operationId = '11111111-1111-4111-8111-111111111111';
   const transition = dialogueTransitionForToolResult({
