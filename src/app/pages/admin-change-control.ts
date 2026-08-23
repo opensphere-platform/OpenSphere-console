@@ -128,7 +128,7 @@ interface ChangeControlState {
                   <clr-dg-cell><span [class]="statusClass(change.status)">{{ changeStatusLabel(change.status) }}</span><small>{{ change.outbox?.status || '대기열 미등록' }} · 시도 {{ change.outbox?.attempts || 0 }}회</small><small>{{ change.execution?.reconciler_status || '적용기 미배정' }}</small>@if (change.execution?.last_error) { <small class="error-detail">{{ change.execution?.last_error }}</small> }</clr-dg-cell>
                   <clr-dg-cell>
                     @if (change.status === 'authorized' && change.execution?.pull_number && !isApprovalApplied(change) && !isOwnerMfa(change)) { <button class="btn btn-sm btn-outline" (click)="openApproval(change)">검토 후 승인</button> }
-                    @else if (change.status === 'failed' && isApprovalApplied(change)) { <button class="btn btn-sm btn-outline" (click)="openRetry(change)">재적용 요청</button> }
+                    @else if (canRetry(change)) { <button class="btn btn-sm btn-outline" (click)="openRetry(change)">재적용 요청</button> }
                     @else { <span class="muted">{{ change.k8s_operation_id || changeNextAction(change) }}</span> }
                   </clr-dg-cell>
                 </clr-dg-row>
@@ -235,6 +235,8 @@ export class AdminChangeControl implements OnInit, OnDestroy {
   isOwnerMfa(change: ChangeRequest): boolean { return change.approvalPolicy === 'owner-mfa'; }
   approvalPolicyLabel(change: ChangeRequest): string { return this.isOwnerMfa(change) ? '최고 관리자 MFA' : `교차 승인 ${this.state()?.supplyChain?.requiredApprovals || 1}명 필요`; }
   isApprovalApplied(change: ChangeRequest): boolean { return change.approvals.some((approval) => approval.status === 'applied'); }
+  isLocalEdgeAutomation(change: ChangeRequest): boolean { return change.actor_type === 'service' && change.target === 'opensphere-platform'; }
+  canRetry(change: ChangeRequest): boolean { return change.status === 'failed' && (this.isApprovalApplied(change) || this.isLocalEdgeAutomation(change)); }
   requesterLabel(change: ChangeRequest): string { return change.requester?.displayName || change.actor_id || '요청자 미상'; }
   approvalActorLabel(change: ChangeRequest): string { const latest = change.approvals[change.approvals.length - 1]; if (!latest) return '승인자 미배정'; return `${latest.approver_display_name || this.shortId(latest.approver_id)} · ${this.formatDate(latest.completed_at || latest.created_at)}`; }
   approvalLabel(change: ChangeRequest): string { const latest = change.approvals[change.approvals.length - 1]; if (!latest) return this.isOwnerMfa(change) ? '최고 관리자 MFA 승인 대기' : '교차 승인 대기'; const result = ({ intent: '승인 기록 중', applied: '승인 완료', failed: '승인 실패' } as Record<string, string>)[latest.status] || latest.status; return this.isOwnerMfa(change) ? `최고 관리자 MFA ${result}` : `교차 ${result}`; }

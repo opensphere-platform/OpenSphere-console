@@ -46,6 +46,14 @@ test('release Job admission applies only to the reserved executor service accoun
     /\|\| \(\s*request\.userInfo\.username == 'system:serviceaccount:opensphere-console:platform-release-reconciler'/);
 });
 
+test('failed local-edge automation remains retryable by an authenticated administrator', () => {
+  const ui = fs.readFileSync(path.join(directory, '..', '..', 'src', 'app', 'pages', 'admin-change-control.ts'), 'utf8');
+  assert.match(ui, /@else if \(canRetry\(change\)\)/);
+  assert.match(ui, /isLocalEdgeAutomation\(change: ChangeRequest\): boolean \{ return change[.]actor_type === 'service' && change[.]target === 'opensphere-platform'; \}/);
+  assert.match(ui, /change[.]status === 'failed' && \(this[.]isApprovalApplied\(change\) \|\| this[.]isLocalEdgeAutomation\(change\)\)/);
+  assert.match(ui, /\/api\/platform\/changes\/\$\{encodeURIComponent\(change[.]request_id\)\}\/retry/);
+});
+
 function releaseLock() {
   const hexCharacters = '0123456789abcdef';
   const lock = {
