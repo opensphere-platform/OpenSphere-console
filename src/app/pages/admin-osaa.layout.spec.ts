@@ -18,6 +18,7 @@ test('R2D2 management separates explanation and live operations with Clarity tab
 test('live operations exposes the server-reported Dialogue State rollout at a glance', () => {
   assert.match(source, /OSAA Dialogue State/);
   assert.match(source, /OSAA_DIALOGUE_STATE_MODE/);
+  assert.match(source, /관측 기준 <code>\/api\/osaa\/health<\/code>/);
   assert.match(source, /dialogueState\?\.mode/);
   assert.match(source, /recordTransitions/);
   assert.match(source, /exposeContext/);
