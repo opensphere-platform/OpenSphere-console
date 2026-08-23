@@ -5,9 +5,11 @@ const assert = require('node:assert/strict');
 const {
   buildPfssPostgresClaimSet, buildPfssPostgresOperationClaim, guardProviderCurrentFactResponse,
   hasExplicitNonPfssDomainQuery, isCurrentSystemFactQuery, isOperationalQuery,
+  isOsaaSelfIdentityQuery,
   isPfssContextualFollowupQuery, observeOwnerEvidence,
   providerClaimsCurrentSystemFact,
   redactOwnerEvidence, renderPfssPostgresClaimSet, renderPfssPostgresOperationClaim,
+  renderOsaaSelfIdentity,
 } = require('./dialogue-evidence');
 
 test('secret-like fields and PostgreSQL URI userinfo never cross the model boundary', () => {
@@ -60,6 +62,16 @@ test('ambiguous queries fail safe as operational', () => {
   assert.equal(isOperationalQuery('PostgreSQL의 개념을 설명해줘'), false);
   assert.equal(isOperationalQuery('오늘 날씨가 어때?'), false);
   assert.equal(isOperationalQuery('재미있는 이야기를 해줘'), false);
+});
+
+test('OSAA self identity is deterministic product identity, not a live Owner fact', () => {
+  assert.equal(isOsaaSelfIdentityQuery('네 이름이 뭐야?'), true);
+  assert.equal(isOsaaSelfIdentityQuery('R2D2, 너는 누구야?'), true);
+  assert.equal(isOsaaSelfIdentityQuery('What is your name?'), true);
+  assert.equal(isOsaaSelfIdentityQuery('OSAA, what is your name?'), true);
+  assert.equal(isOsaaSelfIdentityQuery('사용자 이름이 뭐야?'), false);
+  assert.equal(isCurrentSystemFactQuery('네 이름이 뭐야?'), false);
+  assert.equal(renderOsaaSelfIdentity(), '저는 OpenSphere AI Agent(OSAA), 별칭 R2D2입니다.');
 });
 
 test('current-fact classification is domain-open and conflicting domains do not inherit PFSS', () => {

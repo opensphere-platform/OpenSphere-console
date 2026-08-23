@@ -435,7 +435,7 @@ interface OsaaActionBindingManifest {
               <h3>Authority source와 Coverage</h3>
               <table class="table"><thead><tr><th>Source</th><th>인식 상태</th><th>Barrier</th><th>마지막 complete</th><th>Blocker</th></tr></thead><tbody>
                 @for (source of live.sources; track source.source) {
-                  <tr><td class="os-mono">{{ source.source }}</td><td><span class="label" [class.label-success]="source.epistemic_state === 'known'" [class.label-warning]="source.epistemic_state !== 'known'">{{ source.epistemic_state }}</span></td><td>{{ source.snapshot_complete ? 'complete' : 'partial' }}</td><td>{{ source.last_complete_at ? formatDateTime(source.last_complete_at) : '-' }}</td><td class="os-mono">{{ source.blocker_code || '-' }}</td></tr>
+                  <tr><td class="os-mono">{{ authoritySourceLabel(source.source) }}</td><td><span class="label" [class.label-success]="source.epistemic_state === 'known'" [class.label-warning]="source.epistemic_state !== 'known'">{{ source.epistemic_state }}</span></td><td>{{ source.snapshot_complete ? 'complete' : 'partial' }}</td><td>{{ source.last_complete_at ? formatDateTime(source.last_complete_at) : '-' }}</td><td class="os-mono">{{ source.blocker_code || '-' }}</td></tr>
                 }
               </tbody></table>
             </article>
@@ -1585,6 +1585,9 @@ export class AdminOsaa implements OnInit, OnDestroy {
   readonly dialogueControlBusy = signal(false);
   readonly dialogueControlError = signal('');
   readonly dialogueMode = computed(() => this.health()?.dialogueState?.mode || 'unknown');
+  authoritySourceLabel(source: string): string {
+    return /^(?:his|hiss)$/i.test(String(source || '').trim()) ? 'HISS' : String(source || '');
+  }
   readonly dialogueModeDescription = computed(() => {
     switch (this.dialogueMode()) {
       case 'off': return '대화 상태 기록·문맥 projection·Owner 기반 현재 사실 강제가 모두 꺼져 있습니다. 일반 응답 경로의 안전 차단만 남아 있으므로 운영 질문이 구체적인 상태 조회로 연결되지 않을 수 있습니다.';

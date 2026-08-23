@@ -223,6 +223,18 @@ function hasExplicitNonPfssDomainQuery(value) {
   return /(?:gitlab|gitea|os\s*shell|\boss\b|manual|cluster\s*manager|kubernetes|\bk8s\b|pod|deployment|service|psmdb|mongo(?:db)?|valkey|opensearch|rustfs|ceph|supabase|subshell|plugin|registry)/i.test(text);
 }
 
+function isOsaaSelfIdentityQuery(value) {
+  const text = String(value || '').trim();
+  if (!text || text.length > 120) return false;
+  const namesOsaa = /(?:너|넌|네\s|당신|\byou\b|\byour\b|r2d2|osaa|opensphere\s+ai\s+agent)/i.test(text);
+  const asksIdentity = /(?:이름(?:은|이|이야|인가|뭐|뭔)|누구(?:야|니|인가)?|who\s+are\s+you|what(?:'s|\s+is)\s+your\s+name)/i.test(text);
+  return namesOsaa && asksIdentity;
+}
+
+function renderOsaaSelfIdentity() {
+  return '저는 OpenSphere AI Agent(OSAA), 별칭 R2D2입니다.';
+}
+
 function guardProviderCurrentFactResponse(query, content, options = {}) {
   const currentFact = isCurrentSystemFactQuery(query) || providerClaimsCurrentSystemFact(content);
   const verifiedDeterministic = options.verifiedDeterministic === true;
@@ -243,6 +255,7 @@ module.exports = {
   guardProviderCurrentFactResponse,
   hasExplicitNonPfssDomainQuery,
   isCurrentSystemFactQuery,
+  isOsaaSelfIdentityQuery,
   isOperationalQuery,
   isPfssContextualFollowupQuery,
   providerClaimsCurrentSystemFact,
@@ -250,4 +263,5 @@ module.exports = {
   redactOwnerEvidence,
   renderPfssPostgresClaimSet,
   renderPfssPostgresOperationClaim,
+  renderOsaaSelfIdentity,
 };

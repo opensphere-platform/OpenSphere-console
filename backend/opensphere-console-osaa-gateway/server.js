@@ -33,11 +33,13 @@ const {
   buildPfssPostgresClaimSet,
   buildPfssPostgresOperationClaim,
   guardProviderCurrentFactResponse,
+  isOsaaSelfIdentityQuery,
   isOperationalQuery,
   isPfssContextualFollowupQuery,
   observeOwnerEvidence,
   renderPfssPostgresClaimSet,
   renderPfssPostgresOperationClaim,
+  renderOsaaSelfIdentity,
 } = require('./dialogue-evidence');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
@@ -6454,6 +6456,16 @@ function foundationPostgresStatusMessage(claimSet) {
   return renderPfssPostgresClaimSet(claimSet);
 }
 
+function osaaSelfIdentityConversation(messages) {
+  if (!isOsaaSelfIdentityQuery(latestUserContent(messages))) return null;
+  const started = Date.now();
+  return commandResponse(started, renderOsaaSelfIdentity(), {
+    schema: 'osaa.self-identity/v1',
+    identity: { canonicalName: 'OpenSphere AI Agent', acronym: 'OSAA', alias: 'R2D2' },
+    deterministic: true,
+  });
+}
+
 function legacyFoundationPostgresStatusMessage(status) {
   const claims = Array.isArray(status?.claims) ? status.claims : [];
   const clusters = Array.isArray(status?.clusters) ? status.clusters : [];
@@ -8339,6 +8351,8 @@ async function chatCompletion(body, actor) {
   const baseMessages = normalizeMessages(body);
   const commandOut = await handleSlashCommand(latestUserContent(baseMessages), body, actor);
   if (commandOut) return commandOut;
+  const selfIdentityOut = osaaSelfIdentityConversation(baseMessages);
+  if (selfIdentityOut) return selfIdentityOut;
   const foundationPostgresOperationOut = await foundationPostgresOperationConversation(
     baseMessages, actor, body?._dialogueContext || null,
   );

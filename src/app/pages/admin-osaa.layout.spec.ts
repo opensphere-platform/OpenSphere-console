@@ -42,3 +42,9 @@ test('Dialogue State monitoring exposes a four-stage admin switch backed by the 
   assert.match(source, /applyDialogueMode\(\)/);
   assert.match(styles, /\.r2d2-dialogue-switch/);
 });
+
+test('operational authority table presents the canonical HISS name', () => {
+  assert.match(source, /authoritySourceLabel\(source\.source\)/);
+  assert.match(source, /\^\(\?:his\|hiss\)\$/);
+  assert.match(source, /\? 'HISS'/);
+});
