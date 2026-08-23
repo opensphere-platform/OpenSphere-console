@@ -3,6 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createR2d2OperationApi } = require('./r2d2-operation-api');
 const { DESCRIPTORS, exactConfirmation } = require('./r2d2-durable-operation');
+const DIALOGUE_CONVERSATION_ID = '55555555-5555-4555-8555-555555555555';
+const DIALOGUE_STATE_DIGEST = `sha256:${'d'.repeat(64)}`;
 
 function request(action = 'restart-workload') {
   const descriptor = DESCRIPTORS[action];
@@ -14,6 +16,12 @@ function fixture(actor = {}) {
   const store = {
     insertPlan: async (row) => { plans.push({ ...row }); return plans.at(-1); },
     getPlan: async (id) => plans.find((row) => row.plan_id === id) || null,
+    getDialogueState: async (conversationId, actorId) => ({
+      conversation_id: conversationId, state_digest: DIALOGUE_STATE_DIGEST,
+      domain: 'pfss.postgresql', intent: 'create.plan', phase: 'plan_ready',
+      target_ref: { namespace: 'opensphere-foundation', name: 'r2d2-e2e-pg' },
+      revision: 3, owner_id: actorId,
+    }),
     consumePlan: async (id, operationId) => { const plan = plans.find((row) => row.plan_id === id); if (!plan || plan.consumed_operation_id) return false; plan.consumed_operation_id = operationId; return true; },
     insert: async (row) => { rows.push({ ...row, created_at: 'now', updated_at: 'now' }); return rows.at(-1); },
     get: async (id) => rows.find((r) => r.operation_id === id), list: async () => rows, steps: async () => [],
@@ -94,14 +102,17 @@ test('PostgreSQL plan is durable, expiring, revision-bound, and consumed into mo
   assert.equal(f.plans.length, 1);
   const accepted = await f.api.accept({ headers: {} }, {
     planId: planned.planId, planDigest: planned.planDigest,
-    dialogueStateDigest: `sha256:${'d'.repeat(64)}`, confirmation: planned.expectedConfirmation,
+    conversationId: DIALOGUE_CONVERSATION_ID,
+    dialogueStateDigest: DIALOGUE_STATE_DIGEST, confirmation: planned.expectedConfirmation,
   });
   assert.equal(accepted.phase, 'AwaitingApproval');
   assert.equal(f.rows[0].action, 'create-postgres-cluster');
   assert.equal(f.rows[0].precondition.target.request.database, 'r2d2_e2e');
   assert.equal(f.rows[0].precondition.planDigest, planned.planDigest);
   assert.equal(f.rows[0].idempotency_key, planned.planId);
-  assert.equal(f.rows[0].precondition.dialogueStateDigest, `sha256:${'d'.repeat(64)}`);
+  assert.equal(f.rows[0].precondition.dialogueStateDigest, DIALOGUE_STATE_DIGEST);
+  assert.equal(f.rows[0].precondition.dialogueConversationId, DIALOGUE_CONVERSATION_ID);
+  assert.equal(f.rows[0].precondition.dialogueRevision, 3);
   assert.equal(Object.hasOwn(f.rows[0].precondition, 'humanConfirmation'), false);
   assert.equal(f.plans[0].consumed_operation_id, accepted.operationId);
 });
@@ -123,6 +134,26 @@ test('PostgreSQL durable plan cannot cross authenticated sessions', async () => 
     }),
     (error) => error?.code === 403 && /different authenticated session/.test(error?.msg),
   );
+  assert.equal(f.rows.length, 0);
+});
+
+test('PostgreSQL apply verifies the live CBSS Dialogue State owner, digest, intent, phase, and target', async () => {
+  const f = fixture();
+  const target = {
+    name: 'r2d2-e2e-pg', namespace: 'opensphere-foundation', alias: 'R2D2 E2E PostgreSQL',
+    database: 'r2d2_e2e', owner: 'r2d2_e2e', plan: 'postgresql-dev-single',
+    postgresVersion: '18.4', deletionPolicy: 'Retain',
+  };
+  const planned = await f.api.plan({}, { action: 'create-postgres-cluster', target, reason: 'PFSS PostgreSQL configuration' });
+  f.store.getDialogueState = async () => ({
+    state_digest: `sha256:${'e'.repeat(64)}`, domain: 'pfss.postgresql',
+    intent: 'status.read', phase: 'observed', target_ref: null, revision: 4,
+  });
+  await assert.rejects(() => f.api.accept({ headers: {} }, {
+    planId: planned.planId, planDigest: planned.planDigest,
+    conversationId: DIALOGUE_CONVERSATION_ID,
+    dialogueStateDigest: DIALOGUE_STATE_DIGEST, confirmation: planned.expectedConfirmation,
+  }), (error) => error?.code === 409 && /Dialogue State changed/.test(error?.msg));
   assert.equal(f.rows.length, 0);
 });
 

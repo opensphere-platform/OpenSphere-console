@@ -5,6 +5,7 @@ const test = require('node:test');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const {
+  DEFAULT_RETENTION_DAYS,
   MAX_CONTEXT_CHARS,
   MAX_CONTEXT_MESSAGES,
   TURN_LEASE_SECONDS,
@@ -60,8 +61,14 @@ test('one conversation serializes turns before provider execution', () => {
   assert.match(source, /turn_request_id<>\$2/);
   assert.match(source, /another conversation turn is still in progress/);
   assert.equal(TURN_LEASE_SECONDS, 120);
-  assert.match(source, /lease_expires_at<=clock_timestamp\(\)/);
+  assert.equal(DEFAULT_RETENTION_DAYS, 30);
+  assert.match(source, /INSERT INTO osaa\.conversation\(id,owner_id,title,model_id,retention_days\)/);
+  assert.match(source, /workerLeaseId = randomUUID\(\)/);
+  assert.match(source, /attempt<\$4/);
+  assert.match(source, /conversation_turn_attempt_limit/);
   assert.match(source, /reap_expired_dialogue_turns/);
+  assert.match(source, /maintenancePoolProvider/);
+  assert.doesNotMatch(source, /reap_expired_dialogue_turns\(\$1,\$2\)/);
   assert.match(source, /heartbeatTurn/);
   assert.match(source, /conversation_turn_lease_lost/);
   assert.match(source, /retryAfterSeconds/);
@@ -97,9 +104,12 @@ test('Dialogue State transition and assistant message share one fail-closed tran
   assert.match(server, /intent: 'status[.]read'/);
   assert.match(server, /intent: 'create[.]plan'/);
   assert.match(server, /intent: 'operation[.]watch'/);
-  assert.match(source, /SELECT domain,intent,phase,capability_ref,operation_ref,revision,state_digest/);
   assert.match(source, /operationRef: row\.operation_ref \|\| null/);
+  assert.match(source, /targetRef: row\.target_ref \|\| null/);
+  assert.match(source, /SELECT domain,intent,phase,target_ref,capability_ref,operation_ref,revision,state_digest/);
   assert.match(server, /initializeConversationLeaseReaper/);
   assert.match(server, /conversationRecoveryMatch/);
+  assert.match(server, /conversation turn recovery requires MFA assurance aal2/);
+  assert.match(server, /recover dialogue turn \$\{conversationRecoveryMatch\[1\]\}\/\$\{conversationRecoveryMatch\[2\]\}/);
   assert.match(server, /retry-after/);
 });

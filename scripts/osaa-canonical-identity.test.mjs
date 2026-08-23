@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,7 +24,7 @@ function repositoryFiles() {
   return execFileSync('git', ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8' })
     .split(/\r?\n/)
     .map((file) => file.trim().replaceAll('\\', '/'))
-    .filter(Boolean);
+    .filter((file) => file && existsSync(path.join(root, file)));
 }
 
 test('OSAA is the only current agent identity outside the exact installed-state cutover reader', () => {

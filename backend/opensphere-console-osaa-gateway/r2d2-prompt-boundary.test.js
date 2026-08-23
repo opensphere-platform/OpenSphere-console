@@ -100,7 +100,7 @@ test('automatic suggested actions are absent and status answers use the determin
   assert.doesNotMatch(server, /suggestedActions/);
   assert.doesNotMatch(server, /deterministic-action-suggestions/);
   assert.doesNotMatch(store, /suggestedActions/);
-  assert.match(server, /foundationPostgresStatusConversation\(baseMessages, actor\)/);
+  assert.match(server, /foundationPostgresStatusConversation\([\s\S]{0,120}baseMessages, actor, body\?\._dialogueContext \|\| null/);
   assert.match(server, /현재 PFSS PostgreSQL 운영 인스턴스가/);
   assert.match(server, /Failure to observe a resource is not evidence that the resource is absent/);
 });

@@ -1,13 +1,15 @@
 -- PLAN-015 v1.2: CBSS-owned OSAA Dialogue State projection and transition ledger.
 -- Dialogue transitions are conversation data, not Agent Runtime evidence.
 
-ALTER TABLE osaa.conversation_message
-  ADD COLUMN IF NOT EXISTS lease_owner text,
-  ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz,
-  ADD COLUMN IF NOT EXISTS heartbeat_at timestamptz,
-  ADD COLUMN IF NOT EXISTS attempt integer NOT NULL DEFAULT 0 CHECK (attempt >= 0);
+BEGIN;
 
-CREATE INDEX IF NOT EXISTS conversation_message_pending_lease_idx
+ALTER TABLE osaa.conversation_message
+  ADD COLUMN lease_owner text,
+  ADD COLUMN lease_expires_at timestamptz,
+  ADD COLUMN heartbeat_at timestamptz,
+  ADD COLUMN attempt integer NOT NULL DEFAULT 0 CHECK (attempt >= 0 AND attempt <= 5);
+
+CREATE INDEX conversation_message_pending_lease_idx
   ON osaa.conversation_message (lease_expires_at, conversation_id)
   WHERE role = 'user' AND status = 'pending';
 
@@ -87,7 +89,174 @@ CREATE TABLE osaa.dialogue_turn_recovery_receipt (
   UNIQUE (conversation_id, turn_request_id, attempt, action)
 );
 
-CREATE OR REPLACE FUNCTION osaa.reject_dialogue_state_mutation()
+CREATE FUNCTION osaa.dialogue_genesis_digest(target_conversation_id uuid)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+SET search_path = pg_catalog, extensions
+AS $$
+  SELECT 'sha256:' || encode(
+    extensions.digest(
+      convert_to(
+        format(
+          '{"conversationId":"%s","revision":0,"schema":"osaa.dialogue-state/v1"}',
+          target_conversation_id
+        ),
+        'UTF8'
+      ),
+      'sha256'
+    ),
+    'hex'
+  )
+$$;
+
+CREATE FUNCTION osaa.enforce_dialogue_transition_chain()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, osaa
+AS $$
+DECLARE
+  parent_owner text;
+  expected_revision bigint;
+  expected_digest text;
+BEGIN
+  SELECT c.owner_id INTO parent_owner
+  FROM osaa.conversation c
+  WHERE c.id = NEW.conversation_id
+  FOR KEY SHARE;
+  IF NOT FOUND OR NEW.owner_id <> parent_owner THEN
+    RAISE EXCEPTION 'dialogue transition owner does not match its conversation';
+  END IF;
+
+  SELECT t.next_revision, t.state_digest
+  INTO expected_revision, expected_digest
+  FROM osaa.dialogue_state_transition t
+  WHERE t.conversation_id = NEW.conversation_id
+  ORDER BY t.next_revision DESC
+  LIMIT 1
+  FOR SHARE;
+
+  IF NOT FOUND THEN
+    expected_revision := 0;
+    expected_digest := osaa.dialogue_genesis_digest(NEW.conversation_id);
+  END IF;
+  IF NEW.base_revision <> expected_revision
+     OR NEW.next_revision <> expected_revision + 1 THEN
+    RAISE EXCEPTION 'dialogue transition revision does not extend the database chain';
+  END IF;
+  -- The caller cannot choose the ledger link. Derive both stored copies from
+  -- the committed database chain, even when the submitted values are forged.
+  NEW.prev_state_digest := expected_digest;
+  NEW.delta := jsonb_set(
+    NEW.delta,
+    '{prevStateDigest}',
+    to_jsonb(expected_digest),
+    true
+  );
+  IF (NEW.delta ->> 'baseRevision')::bigint <> NEW.base_revision
+     OR (NEW.delta ->> 'nextRevision')::bigint <> NEW.next_revision
+     OR NEW.delta ->> 'prevStateDigest' <> NEW.prev_state_digest
+     OR NEW.delta ->> 'stateDigest' <> NEW.state_digest THEN
+    RAISE EXCEPTION 'dialogue transition delta does not match its ledger columns';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER dialogue_state_transition_chain_guard
+  BEFORE INSERT ON osaa.dialogue_state_transition
+  FOR EACH ROW EXECUTE FUNCTION osaa.enforce_dialogue_transition_chain();
+ALTER TABLE osaa.dialogue_state_transition
+  ENABLE ALWAYS TRIGGER dialogue_state_transition_chain_guard;
+
+CREATE FUNCTION osaa.enforce_dialogue_projection_link()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, osaa
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM osaa.conversation c
+    JOIN osaa.dialogue_state_transition t
+      ON t.conversation_id = c.id
+     AND t.next_revision = NEW.revision
+     AND t.state_digest = NEW.state_digest
+     AND t.turn_request_id = NEW.last_turn_request_id
+    WHERE c.id = NEW.conversation_id
+      AND c.owner_id = NEW.owner_id
+  ) THEN
+    RAISE EXCEPTION 'dialogue projection is not linked to the committed transition';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER dialogue_state_projection_link_guard
+  BEFORE INSERT OR UPDATE ON osaa.dialogue_state_projection
+  FOR EACH ROW EXECUTE FUNCTION osaa.enforce_dialogue_projection_link();
+ALTER TABLE osaa.dialogue_state_projection
+  ENABLE ALWAYS TRIGGER dialogue_state_projection_link_guard;
+
+CREATE FUNCTION osaa.verify_dialogue_state_chain(target_conversation_id uuid)
+RETURNS TABLE(next_revision bigint, digest_valid boolean, projection_valid boolean)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, osaa
+AS $$
+  WITH chain AS (
+    SELECT t.*,
+      lag(t.state_digest) OVER (ORDER BY t.next_revision) AS linked_digest
+    FROM osaa.dialogue_state_transition t
+    WHERE t.conversation_id = target_conversation_id
+  )
+  SELECT chain.next_revision,
+    chain.prev_state_digest = COALESCE(
+      chain.linked_digest,
+      osaa.dialogue_genesis_digest(target_conversation_id)
+    ) AS digest_valid,
+    EXISTS (
+      SELECT 1 FROM osaa.dialogue_state_projection p
+      WHERE p.conversation_id = target_conversation_id
+        AND p.revision = chain.next_revision
+        AND p.state_digest = chain.state_digest
+    ) = (chain.next_revision = max(chain.next_revision) OVER ()) AS projection_valid
+  FROM chain
+  ORDER BY chain.next_revision
+$$;
+
+CREATE FUNCTION osaa.resolve_dialogue_operation_context(
+  target_conversation_id uuid,
+  target_owner_id text
+) RETURNS TABLE(
+  conversation_id uuid,
+  domain text,
+  intent text,
+  phase text,
+  target_ref jsonb,
+  operation_ref uuid,
+  revision bigint,
+  state_digest text
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, osaa
+AS $$
+  SELECT p.conversation_id, p.domain, p.intent, p.phase, p.target_ref,
+    p.operation_ref, p.revision, p.state_digest
+  FROM osaa.dialogue_state_projection p
+  JOIN osaa.conversation c ON c.id = p.conversation_id
+  WHERE p.conversation_id = target_conversation_id
+    AND c.owner_id = target_owner_id
+    AND c.deleted_at IS NULL
+$$;
+
+CREATE FUNCTION osaa.reject_dialogue_state_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE'
@@ -104,7 +273,7 @@ CREATE TRIGGER dialogue_state_transition_append_only
 ALTER TABLE osaa.dialogue_state_transition
   ENABLE ALWAYS TRIGGER dialogue_state_transition_append_only;
 
-CREATE OR REPLACE FUNCTION osaa.reject_dialogue_purge_receipt_mutation()
+CREATE FUNCTION osaa.reject_dialogue_purge_receipt_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   RAISE EXCEPTION 'OSAA dialogue state purge receipts are append-only';
@@ -123,22 +292,49 @@ CREATE TRIGGER dialogue_turn_recovery_receipt_append_only
 ALTER TABLE osaa.dialogue_turn_recovery_receipt
   ENABLE ALWAYS TRIGGER dialogue_turn_recovery_receipt_append_only;
 
-CREATE OR REPLACE FUNCTION osaa.reap_expired_dialogue_turns(
-  reap_limit integer,
-  recovery_actor text
+CREATE FUNCTION osaa.reject_dialogue_state_truncate()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'OSAA dialogue state tables are append-only and cannot be truncated';
+END
+$$;
+
+CREATE TRIGGER dialogue_state_projection_reject_truncate
+  BEFORE TRUNCATE ON osaa.dialogue_state_projection
+  FOR EACH STATEMENT EXECUTE FUNCTION osaa.reject_dialogue_state_truncate();
+ALTER TABLE osaa.dialogue_state_projection
+  ENABLE ALWAYS TRIGGER dialogue_state_projection_reject_truncate;
+CREATE TRIGGER dialogue_state_transition_reject_truncate
+  BEFORE TRUNCATE ON osaa.dialogue_state_transition
+  FOR EACH STATEMENT EXECUTE FUNCTION osaa.reject_dialogue_state_truncate();
+ALTER TABLE osaa.dialogue_state_transition
+  ENABLE ALWAYS TRIGGER dialogue_state_transition_reject_truncate;
+CREATE TRIGGER dialogue_state_purge_receipt_reject_truncate
+  BEFORE TRUNCATE ON osaa.dialogue_state_purge_receipt
+  FOR EACH STATEMENT EXECUTE FUNCTION osaa.reject_dialogue_state_truncate();
+ALTER TABLE osaa.dialogue_state_purge_receipt
+  ENABLE ALWAYS TRIGGER dialogue_state_purge_receipt_reject_truncate;
+CREATE TRIGGER dialogue_turn_recovery_receipt_reject_truncate
+  BEFORE TRUNCATE ON osaa.dialogue_turn_recovery_receipt
+  FOR EACH STATEMENT EXECUTE FUNCTION osaa.reject_dialogue_state_truncate();
+ALTER TABLE osaa.dialogue_turn_recovery_receipt
+  ENABLE ALWAYS TRIGGER dialogue_turn_recovery_receipt_reject_truncate;
+
+CREATE FUNCTION osaa.reap_expired_dialogue_turns(
+  reap_limit integer
 ) RETURNS SETOF osaa.dialogue_turn_recovery_receipt
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, osaa
 AS $$
 BEGIN
+  IF session_user <> 'opensphere_osaa_maintenance'
+     AND current_setting('role', true) <> 'opensphere_osaa_maintenance' THEN
+    RAISE EXCEPTION 'dialogue lease reaping requires the maintenance database identity';
+  END IF;
   IF reap_limit < 1 OR reap_limit > 1000 THEN
     RAISE EXCEPTION 'reap limit must be between 1 and 1000';
   END IF;
-  IF length(trim(COALESCE(recovery_actor, ''))) < 1 THEN
-    RAISE EXCEPTION 'recovery actor is required';
-  END IF;
-
   RETURN QUERY
   WITH expired AS (
     SELECT m.id,m.conversation_id,c.owner_id,m.turn_request_id,
@@ -166,16 +362,15 @@ BEGIN
   )
   SELECT conversation_id,owner_id,turn_request_id,'lease-expired',
     'expired dialogue turn lease recovered by bounded reaper',
-    lease_owner,lease_expires_at,attempt,trim(recovery_actor)
+    lease_owner,lease_expires_at,attempt,session_user
   FROM recovered
   RETURNING *;
 END
 $$;
 
-CREATE OR REPLACE FUNCTION osaa.recover_dialogue_turn(
+CREATE FUNCTION osaa.recover_dialogue_turn(
   target_conversation_id uuid,
   target_turn_request_id uuid,
-  recovery_actor text,
   recovery_reason text
 ) RETURNS osaa.dialogue_turn_recovery_receipt
 LANGUAGE plpgsql
@@ -186,8 +381,9 @@ DECLARE
   target record;
   receipt osaa.dialogue_turn_recovery_receipt%ROWTYPE;
 BEGIN
-  IF length(trim(COALESCE(recovery_actor, ''))) < 1 THEN
-    RAISE EXCEPTION 'recovery actor is required';
+  IF session_user <> 'opensphere_osaa_maintenance'
+     AND current_setting('role', true) <> 'opensphere_osaa_maintenance' THEN
+    RAISE EXCEPTION 'dialogue turn recovery requires the maintenance database identity';
   END IF;
   IF length(trim(COALESCE(recovery_reason, ''))) NOT BETWEEN 8 AND 500 THEN
     RAISE EXCEPTION 'recovery reason must contain 8 to 500 characters';
@@ -218,7 +414,7 @@ BEGIN
   ) VALUES (
     target.conversation_id,target.owner_id,target.turn_request_id,'admin-recovery',
     trim(recovery_reason),target.lease_owner,target.lease_expires_at,
-    target.attempt,trim(recovery_actor)
+    target.attempt,session_user
   ) RETURNING * INTO receipt;
   RETURN receipt;
 END
@@ -233,7 +429,7 @@ SET lease_owner='migration-needs-reconciliation',
   metadata=metadata || '{"recovery":"migration-needs-reconciliation"}'::jsonb
 WHERE role='user' AND status='pending' AND lease_expires_at IS NULL;
 
-CREATE OR REPLACE FUNCTION osaa.purge_dialogue_state(
+CREATE FUNCTION osaa.purge_dialogue_state(
   target_conversation_id uuid,
   purge_reason text
 ) RETURNS osaa.dialogue_state_purge_receipt
@@ -246,7 +442,12 @@ DECLARE
   transition_total bigint;
   terminal_digest text;
   receipt osaa.dialogue_state_purge_receipt%ROWTYPE;
+  purge_request_id uuid := gen_random_uuid();
 BEGIN
+  IF session_user <> 'opensphere_console_backend'
+     AND current_setting('role', true) <> 'opensphere_console_backend' THEN
+    RAISE EXCEPTION 'dialogue purge requires the Console Backend database identity';
+  END IF;
   IF length(trim(COALESCE(purge_reason, ''))) < 8 THEN
     RAISE EXCEPTION 'purge reason must contain at least 8 characters';
   END IF;
@@ -259,8 +460,8 @@ BEGIN
     RAISE EXCEPTION 'conversation not found';
   END IF;
   IF target.deleted_at IS NULL
-     AND (target.retention_days IS NULL
-       OR target.created_at + make_interval(days => target.retention_days) > clock_timestamp()) THEN
+     OR target.retention_days IS NULL
+     OR target.deleted_at + make_interval(days => target.retention_days) > clock_timestamp() THEN
     RAISE EXCEPTION 'conversation is not eligible for retention purge';
   END IF;
   IF EXISTS (
@@ -289,7 +490,60 @@ BEGIN
     target.id, target.owner_id, trim(purge_reason), transition_total,
     terminal_digest, session_user
   ) RETURNING * INTO receipt;
+
+  INSERT INTO audit.event (
+    request_id, correlation_id, actor_type, actor_id, action,
+    target_type, target_id, reason, phase, result, payload_digest, event_hash
+  ) VALUES (
+    purge_request_id, 'osaa-dialogue-purge:' || target.id::text, 'service', NULL,
+    'osaa-dialogue-state-purge', 'Conversation', target.id::text,
+    trim(purge_reason), 'applied',
+    format('purged %s transition(s)', transition_total), terminal_digest,
+    encode(extensions.digest(convert_to(
+      purge_request_id::text || '|' || target.id::text || '|' || transition_total::text || '|' || trim(purge_reason),
+      'UTF8'
+    ), 'sha256'), 'hex')
+  );
   RETURN receipt;
+END
+$$;
+
+CREATE FUNCTION osaa.purge_eligible_dialogue_state(purge_limit integer DEFAULT 25)
+RETURNS SETOF osaa.dialogue_state_purge_receipt
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, osaa
+AS $$
+DECLARE
+  candidate record;
+BEGIN
+  IF session_user <> 'opensphere_console_backend'
+     AND current_setting('role', true) <> 'opensphere_console_backend' THEN
+    RAISE EXCEPTION 'scheduled dialogue purge requires the Console Backend database identity';
+  END IF;
+  IF purge_limit < 1 OR purge_limit > 100 THEN
+    RAISE EXCEPTION 'dialogue purge limit must be between 1 and 100';
+  END IF;
+  FOR candidate IN
+    SELECT c.id
+    FROM osaa.conversation c
+    WHERE c.deleted_at IS NOT NULL
+      AND c.retention_days IS NOT NULL
+      AND c.deleted_at + make_interval(days => c.retention_days) <= clock_timestamp()
+      AND NOT EXISTS (
+        SELECT 1 FROM osaa.conversation_message m
+        WHERE m.conversation_id = c.id AND m.status = 'pending'
+      )
+    ORDER BY COALESCE(c.deleted_at, c.created_at), c.id
+    LIMIT purge_limit
+    FOR UPDATE OF c SKIP LOCKED
+  LOOP
+    RETURN NEXT osaa.purge_dialogue_state(
+      candidate.id,
+      'scheduled CBSS dialogue retention expiry'
+    );
+  END LOOP;
+  RETURN;
 END
 $$;
 
@@ -347,20 +601,57 @@ CREATE POLICY osaa_gateway_conversation_message_update
 
 CREATE POLICY osaa_gateway_dialogue_projection_select
   ON osaa.dialogue_state_projection FOR SELECT TO opensphere_osaa_gateway
-  USING (owner_id = current_setting('opensphere.actor_id', true));
+  USING (EXISTS (
+    SELECT 1 FROM osaa.conversation c
+    WHERE c.id=dialogue_state_projection.conversation_id
+      AND c.owner_id=current_setting('opensphere.actor_id', true)
+  ));
 CREATE POLICY osaa_gateway_dialogue_projection_insert
   ON osaa.dialogue_state_projection FOR INSERT TO opensphere_osaa_gateway
-  WITH CHECK (owner_id = current_setting('opensphere.actor_id', true));
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM osaa.conversation c
+    WHERE c.id=dialogue_state_projection.conversation_id
+      AND c.owner_id=current_setting('opensphere.actor_id', true)
+      AND c.owner_id=dialogue_state_projection.owner_id
+  ));
 CREATE POLICY osaa_gateway_dialogue_projection_update
   ON osaa.dialogue_state_projection FOR UPDATE TO opensphere_osaa_gateway
-  USING (owner_id = current_setting('opensphere.actor_id', true))
-  WITH CHECK (owner_id = current_setting('opensphere.actor_id', true));
+  USING (EXISTS (
+    SELECT 1 FROM osaa.conversation c
+    WHERE c.id=dialogue_state_projection.conversation_id
+      AND c.owner_id=current_setting('opensphere.actor_id', true)
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM osaa.conversation c
+    WHERE c.id=dialogue_state_projection.conversation_id
+      AND c.owner_id=current_setting('opensphere.actor_id', true)
+      AND c.owner_id=dialogue_state_projection.owner_id
+  ));
 CREATE POLICY osaa_gateway_dialogue_transition_select
   ON osaa.dialogue_state_transition FOR SELECT TO opensphere_osaa_gateway
-  USING (owner_id = current_setting('opensphere.actor_id', true));
+  USING (EXISTS (
+    SELECT 1 FROM osaa.conversation c
+    WHERE c.id=dialogue_state_transition.conversation_id
+      AND c.owner_id=current_setting('opensphere.actor_id', true)
+  ));
 CREATE POLICY osaa_gateway_dialogue_transition_insert
   ON osaa.dialogue_state_transition FOR INSERT TO opensphere_osaa_gateway
-  WITH CHECK (owner_id = current_setting('opensphere.actor_id', true));
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM osaa.conversation c
+    WHERE c.id=dialogue_state_transition.conversation_id
+      AND c.owner_id=current_setting('opensphere.actor_id', true)
+      AND c.owner_id=dialogue_state_transition.owner_id
+  ));
+
+CREATE POLICY osaa_backend_dialogue_purge_receipt_select
+  ON osaa.dialogue_state_purge_receipt FOR SELECT TO opensphere_console_backend
+  USING (true);
+CREATE POLICY osaa_maintenance_dialogue_recovery_receipt_select
+  ON osaa.dialogue_turn_recovery_receipt FOR SELECT TO opensphere_osaa_maintenance
+  USING (true);
+CREATE POLICY osaa_backend_dialogue_recovery_receipt_select
+  ON osaa.dialogue_turn_recovery_receipt FOR SELECT TO opensphere_console_backend
+  USING (true);
 
 REVOKE ALL ON osaa.dialogue_state_projection,
   osaa.dialogue_state_transition, osaa.dialogue_state_purge_receipt,
@@ -368,14 +659,32 @@ REVOKE ALL ON osaa.dialogue_state_projection,
   FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE ON osaa.dialogue_state_projection TO opensphere_osaa_gateway;
 GRANT SELECT, INSERT ON osaa.dialogue_state_transition TO opensphere_osaa_gateway;
+GRANT SELECT ON osaa.dialogue_state_purge_receipt TO opensphere_console_backend;
+GRANT SELECT ON osaa.dialogue_turn_recovery_receipt
+  TO opensphere_console_backend, opensphere_osaa_maintenance;
 REVOKE UPDATE, DELETE, TRUNCATE ON osaa.dialogue_state_transition FROM opensphere_osaa_gateway;
 REVOKE DELETE, TRUNCATE ON osaa.conversation, osaa.conversation_message FROM opensphere_osaa_gateway;
 REVOKE ALL ON FUNCTION osaa.purge_dialogue_state(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION osaa.purge_eligible_dialogue_state(integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION osaa.purge_dialogue_state(uuid, text) TO opensphere_console_backend;
-REVOKE ALL ON FUNCTION osaa.reap_expired_dialogue_turns(integer, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION osaa.recover_dialogue_turn(uuid, uuid, text, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION osaa.reap_expired_dialogue_turns(integer, text) TO opensphere_osaa_gateway;
-GRANT EXECUTE ON FUNCTION osaa.recover_dialogue_turn(uuid, uuid, text, text) TO opensphere_osaa_gateway;
+GRANT EXECUTE ON FUNCTION osaa.purge_eligible_dialogue_state(integer)
+  TO opensphere_console_backend;
+REVOKE ALL ON FUNCTION osaa.reap_expired_dialogue_turns(integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION osaa.recover_dialogue_turn(uuid, uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION osaa.reap_expired_dialogue_turns(integer)
+  TO opensphere_osaa_maintenance;
+GRANT EXECUTE ON FUNCTION osaa.recover_dialogue_turn(uuid, uuid, text)
+  TO opensphere_osaa_maintenance;
+REVOKE ALL ON FUNCTION osaa.dialogue_genesis_digest(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION osaa.enforce_dialogue_transition_chain() FROM PUBLIC;
+REVOKE ALL ON FUNCTION osaa.enforce_dialogue_projection_link() FROM PUBLIC;
+REVOKE ALL ON FUNCTION osaa.verify_dialogue_state_chain(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION osaa.resolve_dialogue_operation_context(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION osaa.reject_dialogue_state_truncate() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION osaa.verify_dialogue_state_chain(uuid)
+  TO opensphere_console_backend, opensphere_osaa_maintenance;
+GRANT EXECUTE ON FUNCTION osaa.resolve_dialogue_operation_context(uuid, text)
+  TO opensphere_console_backend;
 
 COMMENT ON TABLE osaa.dialogue_state_projection IS
   'CBSS-owned current OSAA Dialogue State projection. It is not an authorization or resource-state authority.';
@@ -385,3 +694,5 @@ COMMENT ON TABLE osaa.dialogue_state_purge_receipt IS
   'User-content-free receipt proving an authorized retention purge of Dialogue State data.';
 COMMENT ON TABLE osaa.dialogue_turn_recovery_receipt IS
   'Append-only, user-content-free receipt for expired lease reaping and explicit administrator turn recovery.';
+
+COMMIT;

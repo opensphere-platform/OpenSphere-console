@@ -54,6 +54,10 @@ test('PFSS PostgreSQL confirmation is bound to the stored plan digest and server
   assert.match(source, /const expected = foundationPostgresConfirmation\(request, planDigest\)/);
   assert.match(source, /storedPlan\.expectedConfirmation !== expected/);
   assert.match(source, /PFSS apply requires the server-owned Dialogue State/);
+  assert.match(source, /dialogue\?\.intent !== 'create\.plan'/);
+  assert.match(source, /dialogue\?\.phase !== 'plan_ready'/);
+  assert.match(source, /String\(dialogueTarget\.namespace \|\| ''\) !== request\.namespace/);
+  assert.match(source, /String\(dialogueTarget\.name \|\| ''\) !== request\.name/);
   assert.match(source, /Apply는 이 planId와 digest만 사용하며 재계획하지 않습니다/);
 });
 
@@ -64,4 +68,9 @@ test('PFSS status and operation watch become typed deterministic claims in read-
   assert.match(source, /OSAA_DIALOGUE_POLICY\.enforceCurrentFacts/);
   assert.match(source, /body\?\._dialogueContext \|\| null/);
   assert.match(source, /operationRef: result\.operationId \|\| null/);
+  assert.match(source, /foundationPostgresContextualCapabilityConversation/);
+  assert.match(source, /PFSS Owner 계약에는 PostgreSQL 클러스터 삭제 기능/);
+  assert.match(source, /foundationPostgresReadinessRead/);
+  assert.match(source, /persistedPfssContext/);
+  assert.match(source, /!OSAA_DIALOGUE_POLICY\.recordTransitions && !UUID_RE\.test\(String\(dialogueContext\?\.operationRef/);
 });

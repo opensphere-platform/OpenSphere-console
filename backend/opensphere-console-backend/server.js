@@ -129,6 +129,8 @@ const OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE = process.env.OS_SHELL_CREDENTIAL_
 const OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE = process.env.OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE || '';
 const R2D2_OPERATION_WORKER_ID = String(process.env.R2D2_OPERATION_WORKER_ID || process.env.HOSTNAME || `backend-${process.pid}`).slice(0, 128);
 const R2D2_OPERATION_POLL_MS = Math.max(1000, Math.min(30000, Number(process.env.R2D2_OPERATION_POLL_MS || 3000) || 3000));
+const OSAA_DIALOGUE_PURGE_INTERVAL_MS = Math.max(3600000, Math.min(604800000,
+  Number(process.env.OSAA_DIALOGUE_PURGE_INTERVAL_MS || 86400000) || 86400000));
 const RECOVERY_DRILL_TARGETS = Object.freeze({
   supabase: Object.freeze({ namespace: 'opensphere-console-recovery', name: 'opensphere-supabase-recovery-drill', mode: 'drill-supabase' }),
   gitea: Object.freeze({ namespace: 'opensphere-console-recovery', name: 'opensphere-gitea-recovery-drill', mode: 'drill-gitea' }),
@@ -1759,6 +1761,7 @@ async function durableVerify(verifierId, target, receipt, accessToken) {
 
 let r2d2OperationTimer = null;
 let r2d2OperationLoopBusy = false;
+let osaaDialoguePurgeTimer = null;
 function startR2d2OperationWorker() {
   if (!R2D2_DURABLE_OPERATION_ENABLED || r2d2OperationTimer) return;
   const claimEpoch = Date.now();
@@ -1778,6 +1781,25 @@ function startR2d2OperationWorker() {
   };
   r2d2OperationTimer = setInterval(() => { void poll(); }, R2D2_OPERATION_POLL_MS);
   r2d2OperationTimer.unref(); void poll();
+}
+
+async function purgeExpiredOsaaDialogueState() {
+  const receipts = await restRequest('rpc/purge_eligible_dialogue_state', {
+    method: 'POST', profile: 'osaa', body: { purge_limit: 25 },
+  });
+  if (Array.isArray(receipts) && receipts.length) {
+    console.log(`[osaa-dialogue-retention] purged ${receipts.length} expired conversation state set(s)`);
+  }
+}
+
+function startOsaaDialogueRetentionWorker() {
+  if (osaaDialoguePurgeTimer) return;
+  const run = () => void purgeExpiredOsaaDialogueState().catch((error) => {
+    console.warn('[osaa-dialogue-retention]', error.message || error);
+  });
+  osaaDialoguePurgeTimer = setInterval(run, OSAA_DIALOGUE_PURGE_INTERVAL_MS);
+  osaaDialoguePurgeTimer.unref();
+  run();
 }
 
 async function requireSupabase() {
@@ -5651,6 +5673,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`opensphere-console-backend v${VERSION} listening :${PORT} (Supabase identity/data + catalog + Kubernetes passthrough)`);
   startR2d2OperationWorker();
+  startOsaaDialogueRetentionWorker();
 });
 
 let credentialAuthorityServer = null;
@@ -5680,6 +5703,10 @@ if (OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED) {
   credentialAuthorityServer.listen(8444, '0.0.0.0', () => console.log('OS Shell credential authority listening with TLS 1.3 on :8444'));
 }
 
-function stopR2d2Worker() { if (r2d2OperationTimer) clearInterval(r2d2OperationTimer); if (credentialAuthorityServer) credentialAuthorityServer.close(); }
+function stopR2d2Worker() {
+  if (r2d2OperationTimer) clearInterval(r2d2OperationTimer);
+  if (osaaDialoguePurgeTimer) clearInterval(osaaDialoguePurgeTimer);
+  if (credentialAuthorityServer) credentialAuthorityServer.close();
+}
 process.on('SIGTERM', stopR2d2Worker);
 process.on('SIGINT', stopR2d2Worker);

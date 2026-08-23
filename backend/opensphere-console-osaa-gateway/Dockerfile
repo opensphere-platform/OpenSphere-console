@@ -11,7 +11,6 @@ COPY conversation-store.js /app/conversation-store.js
 COPY dialogue-state.js /app/dialogue-state.js
 COPY dialogue-capability.js /app/dialogue-capability.js
 COPY dialogue-evidence.js /app/dialogue-evidence.js
-COPY dialogue-shadow.js /app/dialogue-shadow.js
 COPY dialogue-rollout.js /app/dialogue-rollout.js
 COPY dialogue-request-boundary.js /app/dialogue-request-boundary.js
 COPY kubernetes-resource-catalog.js /app/kubernetes-resource-catalog.js

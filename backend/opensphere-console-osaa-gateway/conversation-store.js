@@ -9,6 +9,9 @@ const MAX_CONTEXT_MESSAGES = 24;
 const MAX_CONTEXT_CHARS = 24000;
 const MAX_MESSAGE = MAX_CONTEXT_CHARS;
 const TURN_LEASE_SECONDS = 120;
+const MAX_TURN_ATTEMPTS = 5;
+const DEFAULT_RETENTION_DAYS = Math.max(1, Math.min(3650,
+  Number(process.env.OSAA_DIALOGUE_RETENTION_DAYS || 30) || 30));
 
 function failure(code, msg, errorCode = '', retryAfterSeconds = 0) {
   const error = Object.assign(new Error(msg), { code, msg });
@@ -125,13 +128,14 @@ function responseFromAssistant(row) {
 function rowDialogueContext(row, conversation) {
   if (!row) return {
     conversationId: conversation, domain: null, intent: null, phase: 'idle',
-    capabilityRef: null, operationRef: null, revision: 0, stateDigest: null,
+    targetRef: null, capabilityRef: null, operationRef: null, revision: 0, stateDigest: null,
   };
   return {
     conversationId: conversation,
     domain: row.domain || null,
     intent: row.intent || null,
     phase: row.phase || 'idle',
+    targetRef: row.target_ref || null,
     capabilityRef: row.capability_ref || null,
     operationRef: row.operation_ref || null,
     revision: Number(row.revision || 0),
@@ -192,7 +196,7 @@ async function commitDialogueTransition(client, owner, turn, candidate) {
   };
 }
 
-function createConversationStore(pool) {
+function createConversationStore(pool, maintenancePoolProvider = () => null) {
   if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
     throw new TypeError('OSAA conversation store requires a pg Pool');
   }
@@ -293,6 +297,7 @@ function createConversationStore(pool) {
   async function beginTurn(actor, body = {}) {
     const owner = ownerId(actor);
     const clientRequestId = requestId(body.clientRequestId);
+    const workerLeaseId = randomUUID();
     const content = messageContent(body.message);
     const requestedConversationId = conversationId(body.conversationId, { optional: true });
     const modelId = String(body.model || '').trim().slice(0, 120) || null;
@@ -312,21 +317,12 @@ function createConversationStore(pool) {
         if (conversation.status !== 'active') throw failure(409, 'archived conversation is read-only');
       } else {
         const created = await client.query(`
-          INSERT INTO osaa.conversation(id,owner_id,title,model_id)
-          VALUES($1,$2,$3,$4)
+          INSERT INTO osaa.conversation(id,owner_id,title,model_id,retention_days)
+          VALUES($1,$2,$3,$4,$5)
           RETURNING *
-        `, [randomUUID(), owner, firstTurnTitle(content), modelId]);
+        `, [randomUUID(), owner, firstTurnTitle(content), modelId, DEFAULT_RETENTION_DAYS]);
         conversation = created.rows[0];
       }
-
-      await client.query(`
-        UPDATE osaa.conversation_message
-        SET status='failed', completed_at=clock_timestamp(),
-            lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL,
-            metadata=metadata || '{"recovery":"lease-expired"}'::jsonb
-        WHERE conversation_id=$1 AND role='user' AND status='pending'
-          AND lease_expires_at IS NOT NULL AND lease_expires_at<=clock_timestamp()
-      `, [conversation.id]);
 
       const concurrent = await client.query(`
         SELECT turn_request_id,lease_expires_at FROM osaa.conversation_message
@@ -356,18 +352,26 @@ function createConversationStore(pool) {
         throw failure(409, 'clientRequestId was already used with different content', 'conversation_request_conflict');
       }
       if (existing.rows[0]?.status === 'pending') {
+        if (new Date(existing.rows[0].lease_expires_at || 0).getTime() <= Date.now()) {
+          throw failure(409, 'expired conversation turn is awaiting maintenance recovery',
+            'conversation_turn_recovery_pending', 1);
+        }
         throw failure(409, 'conversation turn is still in progress',
           'conversation_turn_in_progress', retryAfter(existing.rows[0].lease_expires_at));
       }
 
       if (existing.rows[0]) {
-        await client.query(`
+        const retried = await client.query(`
           UPDATE osaa.conversation_message
           SET status='pending', completed_at=NULL, lease_owner=$2,
               lease_expires_at=clock_timestamp()+make_interval(secs=>$3),
               heartbeat_at=clock_timestamp(), attempt=attempt+1
-          WHERE id=$1
-        `, [existing.rows[0].id, clientRequestId, TURN_LEASE_SECONDS]);
+          WHERE id=$1 AND attempt<$4
+          RETURNING attempt
+        `, [existing.rows[0].id, workerLeaseId, TURN_LEASE_SECONDS, MAX_TURN_ATTEMPTS]);
+        if (!retried.rows[0]) {
+          throw failure(409, 'conversation turn retry limit reached', 'conversation_turn_attempt_limit');
+        }
       } else {
         const sequence = await client.query(`
           SELECT COALESCE(max(sequence),0)+1 AS next_sequence
@@ -377,9 +381,9 @@ function createConversationStore(pool) {
           INSERT INTO osaa.conversation_message(
             conversation_id,sequence,turn_request_id,role,content,model_id,status,
             lease_owner,lease_expires_at,heartbeat_at,attempt
-          ) VALUES($1,$2,$3,'user',$4,$5,'pending',$3,
-            clock_timestamp()+make_interval(secs=>$6),clock_timestamp(),1)
-        `, [conversation.id, sequence.rows[0].next_sequence, clientRequestId, content, modelId, TURN_LEASE_SECONDS]);
+          ) VALUES($1,$2,$3,'user',$4,$5,'pending',$6,
+            clock_timestamp()+make_interval(secs=>$7),clock_timestamp(),1)
+        `, [conversation.id, sequence.rows[0].next_sequence, clientRequestId, content, modelId, workerLeaseId, TURN_LEASE_SECONDS]);
       }
 
       const history = await client.query(`
@@ -389,7 +393,7 @@ function createConversationStore(pool) {
         ORDER BY sequence DESC LIMIT $2
       `, [conversation.id, MAX_CONTEXT_MESSAGES]);
       const dialogue = await client.query(`
-        SELECT domain,intent,phase,capability_ref,operation_ref,revision,state_digest
+        SELECT domain,intent,phase,target_ref,capability_ref,operation_ref,revision,state_digest
         FROM osaa.dialogue_state_projection
         WHERE conversation_id=$1 AND owner_id=$2
       `, [conversation.id, owner]);
@@ -404,6 +408,7 @@ function createConversationStore(pool) {
         conversation: rowConversation(conversation),
         conversationId: conversation.id,
         clientRequestId,
+        workerLeaseId,
         messages: contextWindow(history.rows, content),
         dialogueContext: rowDialogueContext(dialogue.rows[0] || null, conversation.id),
       };
@@ -433,10 +438,10 @@ function createConversationStore(pool) {
       const lease = await client.query(`
         SELECT id FROM osaa.conversation_message
         WHERE conversation_id=$1 AND turn_request_id=$2 AND role='user'
-          AND status='pending' AND lease_owner=$2
+          AND status='pending' AND lease_owner=$3
           AND lease_expires_at>clock_timestamp()
         FOR UPDATE
-      `, [turn.conversationId, turn.clientRequestId]);
+      `, [turn.conversationId, turn.clientRequestId, turn.workerLeaseId]);
       if (!lease.rows[0]) {
         throw failure(409, 'conversation turn lease was lost before completion', 'conversation_turn_lease_lost');
       }
@@ -474,7 +479,8 @@ function createConversationStore(pool) {
         SET status='completed', completed_at=clock_timestamp(),
             lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL
         WHERE conversation_id=$1 AND turn_request_id=$2 AND role='user'
-      `, [turn.conversationId, turn.clientRequestId]);
+          AND lease_owner=$3
+      `, [turn.conversationId, turn.clientRequestId, turn.workerLeaseId]);
       await client.query(`
         UPDATE osaa.conversation
         SET model_id=COALESCE($2,model_id),
@@ -504,8 +510,8 @@ function createConversationStore(pool) {
         FROM osaa.conversation c
         WHERE m.conversation_id=c.id AND c.id=$1 AND c.owner_id=$2
           AND m.turn_request_id=$3 AND m.role='user' AND m.status='pending'
-          AND m.lease_owner=$3
-      `, [turn.conversationId, owner, turn.clientRequestId]);
+          AND m.lease_owner=$4
+      `, [turn.conversationId, owner, turn.clientRequestId, turn.workerLeaseId]);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -528,9 +534,9 @@ function createConversationStore(pool) {
         FROM osaa.conversation c
         WHERE m.conversation_id=c.id AND c.id=$1 AND c.owner_id=$2
           AND m.turn_request_id=$3 AND m.role='user' AND m.status='pending'
-          AND m.lease_owner=$3 AND m.lease_expires_at>clock_timestamp()
-        RETURNING m.lease_expires_at
-      `, [turn.conversationId, owner, turn.clientRequestId, TURN_LEASE_SECONDS]);
+          AND m.lease_owner=$5 AND m.lease_expires_at>clock_timestamp()
+          RETURNING m.lease_expires_at
+      `, [turn.conversationId, owner, turn.clientRequestId, TURN_LEASE_SECONDS, turn.workerLeaseId]);
       if (!result.rows[0]) {
         throw failure(409, 'conversation turn lease is no longer active', 'conversation_turn_lease_lost');
       }
@@ -554,7 +560,7 @@ function createConversationStore(pool) {
       `, [id, owner]);
       if (!conversation.rows[0]) throw failure(404, 'conversation not found');
       const result = await client.query(`
-        SELECT domain,intent,phase,capability_ref,revision,state_digest
+        SELECT domain,intent,phase,target_ref,capability_ref,operation_ref,revision,state_digest
         FROM osaa.dialogue_state_projection
         WHERE conversation_id=$1 AND owner_id=$2
       `, [id, owner]);
@@ -562,26 +568,34 @@ function createConversationStore(pool) {
     });
   }
 
-  async function reapExpiredTurns(limit = 100, recoveredBy = 'osaa-gateway') {
+  function maintenancePool() {
+    const maintenance = maintenancePoolProvider();
+    if (!maintenance || typeof maintenance.query !== 'function') {
+      throw failure(503, 'OSAA dialogue maintenance database identity is unavailable');
+    }
+    return maintenance;
+  }
+
+  async function reapExpiredTurns(limit = 100) {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
-    const result = await pool.query(
-      'SELECT * FROM osaa.reap_expired_dialogue_turns($1,$2)',
-      [bounded, String(recoveredBy || 'osaa-gateway').slice(0, 200)],
+    const result = await maintenancePool().query(
+      'SELECT * FROM osaa.reap_expired_dialogue_turns($1)',
+      [bounded],
     );
     return result.rows;
   }
 
   async function recoverTurn(actor, value, turnValue, reason) {
-    const recoveredBy = ownerId(actor);
+    ownerId(actor);
     const id = conversationId(value);
     const turnRequestId = requestId(turnValue);
     const recoveryReason = String(reason || '').trim();
     if (recoveryReason.length < 8 || recoveryReason.length > 500) {
       throw failure(400, 'recovery reason must contain 8 to 500 characters');
     }
-    const result = await pool.query(
-      'SELECT * FROM osaa.recover_dialogue_turn($1,$2,$3,$4)',
-      [id, turnRequestId, recoveredBy, recoveryReason],
+    const result = await maintenancePool().query(
+      'SELECT * FROM osaa.recover_dialogue_turn($1,$2,$3)',
+      [id, turnRequestId, recoveryReason],
     );
     if (!result.rows[0]) throw failure(404, 'pending conversation turn not found');
     return result.rows[0];
@@ -596,7 +610,9 @@ function createConversationStore(pool) {
 module.exports = {
   MAX_CONTEXT_CHARS,
   MAX_CONTEXT_MESSAGES,
+  DEFAULT_RETENTION_DAYS,
   TURN_LEASE_SECONDS,
+  MAX_TURN_ATTEMPTS,
   contextWindow,
   conversationId,
   createConversationStore,

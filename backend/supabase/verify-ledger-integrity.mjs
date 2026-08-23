@@ -128,6 +128,9 @@ function verifyDialogueStateContract() {
   const conversation = '11111111-1111-4111-8111-111111111111';
   const expiredTurn = '22222222-2222-4222-8222-222222222222';
   const adminTurn = '33333333-3333-4333-8333-333333333333';
+  const victimConversation = '44444444-4444-4444-8444-444444444444';
+  const purgeConversation = '55555555-5555-4555-8555-555555555555';
+  const activeRetentionConversation = '66666666-6666-4666-8666-666666666666';
   const owner = 'dialogue-owner-a';
   const digestA = `sha256:${'a'.repeat(64)}`;
   const digestB = `sha256:${'b'.repeat(64)}`;
@@ -140,8 +143,10 @@ function verifyDialogueStateContract() {
       '${conversation}',1,'${expiredTurn}','user','expired turn','pending',
       '${expiredTurn}',clock_timestamp()-interval '1 minute',clock_timestamp()-interval '2 minutes',1
     );`);
-  const reaped = psql(`SET ROLE opensphere_osaa_gateway;
-    SELECT action||'|'||turn_request_id FROM osaa.reap_expired_dialogue_turns(10,'ledger-verifier');
+  mustRejectPermission(`SET ROLE opensphere_osaa_gateway;
+    SELECT * FROM osaa.reap_expired_dialogue_turns(10);`, 'Gateway → global dialogue lease reaper');
+  const reaped = psql(`SET ROLE opensphere_osaa_maintenance;
+    SELECT action||'|'||turn_request_id FROM osaa.reap_expired_dialogue_turns(10);
     RESET ROLE;`).trim().split('\n').find((line) => line.startsWith('lease-expired|'));
   assert.equal(reaped, `lease-expired|${expiredTurn}`,
     'expired turn was not atomically reaped with a receipt');
@@ -154,9 +159,12 @@ function verifyDialogueStateContract() {
       '${conversation}',2,'${adminTurn}','user','admin recovery turn','pending',
       '${adminTurn}',clock_timestamp()+interval '2 minutes',clock_timestamp(),1
     );`);
-  const recovered = psql(`SET ROLE opensphere_osaa_gateway;
+  mustRejectPermission(`SET ROLE opensphere_osaa_gateway;
+    SELECT * FROM osaa.recover_dialogue_turn('${conversation}','${adminTurn}','operator requested recovery');`,
+  'Gateway → administrator dialogue recovery');
+  const recovered = psql(`SET ROLE opensphere_osaa_maintenance;
     SELECT action||'|'||turn_request_id FROM osaa.recover_dialogue_turn(
-      '${conversation}','${adminTurn}','dialogue-admin','operator requested recovery');
+      '${conversation}','${adminTurn}','operator requested recovery');
     RESET ROLE;`).trim().split('\n').find((line) => line.startsWith('admin-recovery|'));
   assert.equal(recovered, `admin-recovery|${adminTurn}`,
     'administrator turn recovery did not emit its receipt');
@@ -164,17 +172,27 @@ function verifyDialogueStateContract() {
     WHERE conversation_id='${conversation}';`).trim(), '2');
   console.log('  ✓ 특정 turn 관리자 recovery가 lease를 닫고 append-only receipt를 남긴다');
 
+  const genesisDigest = psql(`SELECT osaa.dialogue_genesis_digest('${conversation}');`).trim();
   psql(`SET ROLE opensphere_osaa_gateway;
     SELECT set_config('opensphere.actor_id','${owner}',false);
-    INSERT INTO osaa.dialogue_state_projection(
-      conversation_id,owner_id,domain,intent,phase,state_digest
-    ) VALUES('${conversation}','${owner}','pfss.postgresql','status.read','observed','${digestA}');
     INSERT INTO osaa.dialogue_state_transition(
       conversation_id,owner_id,turn_request_id,base_revision,next_revision,
       prev_state_digest,state_digest,delta
     ) VALUES('${conversation}','${owner}','${expiredTurn}',0,1,'${digestA}','${digestB}',
-      '{"schema":"osaa.dialogue-state-delta/v1","set":{}}'::jsonb);
+      jsonb_build_object('schema','osaa.dialogue-state-delta/v1','baseRevision',0,
+        'nextRevision',1,'prevStateDigest','${digestA}','stateDigest','${digestB}','set','{}'::jsonb));
+    INSERT INTO osaa.dialogue_state_projection(
+      conversation_id,owner_id,domain,intent,phase,revision,last_turn_request_id,state_digest
+    ) VALUES('${conversation}','${owner}','pfss.postgresql','status.read','observed',1,'${expiredTurn}','${digestB}');
     RESET ROLE;`);
+  assert.equal(psql(`SELECT prev_state_digest||'|'||(delta->>'prevStateDigest')
+    FROM osaa.dialogue_state_transition WHERE conversation_id='${conversation}';`).trim(),
+  `${genesisDigest}|${genesisDigest}`,
+  'database did not replace caller-supplied chain links with the committed genesis digest');
+  console.log('  ✓ caller가 위조한 prev digest 두 사본을 DB가 committed chain 값으로 덮어쓴다');
+  assert.match(psql(`SET ROLE opensphere_osaa_maintenance;
+    SELECT digest_valid||'|'||projection_valid FROM osaa.verify_dialogue_state_chain('${conversation}');
+    RESET ROLE;`), /true\|true/);
   assert.equal(psql(`SET ROLE opensphere_osaa_gateway;
     SELECT set_config('opensphere.actor_id','dialogue-owner-b',false);
     SELECT count(*) FROM osaa.conversation WHERE id='${conversation}';
@@ -184,10 +202,54 @@ function verifyDialogueStateContract() {
   console.log('  ✓ Gateway actor context가 conversation과 Dialogue State의 cross-user 조회를 0행으로 만든다');
   mustRejectPermission(`SET ROLE authenticated; SELECT * FROM osaa.dialogue_state_projection;`,
     'PostgREST authenticated → Dialogue State direct read');
+  psql(`INSERT INTO osaa.conversation(id,owner_id,title)
+    VALUES('${victimConversation}','${owner}','Dialogue tenant boundary verifier');`);
+  mustRejectContract(`SET ROLE opensphere_osaa_gateway;
+    SELECT set_config('opensphere.actor_id','dialogue-owner-b',false);
+    INSERT INTO osaa.dialogue_state_transition(
+      conversation_id,owner_id,turn_request_id,base_revision,next_revision,
+      prev_state_digest,state_digest,delta
+    ) VALUES('${victimConversation}','dialogue-owner-b','${adminTurn}',0,1,'${digestA}','${digestB}',
+      jsonb_build_object('schema','osaa.dialogue-state-delta/v1','baseRevision',0,
+        'nextRevision',1,'prevStateDigest','${digestA}','stateDigest','${digestB}','set','{}'::jsonb));`,
+  'cross-tenant Dialogue State insert', /owner does not match|row-level security/i);
   mustReject(`UPDATE osaa.dialogue_state_transition SET state_digest='${digestA}'
     WHERE conversation_id='${conversation}';`, 'Dialogue State transition UPDATE');
   mustReject(`UPDATE osaa.dialogue_turn_recovery_receipt SET reason='silent rewrite attempted'
     WHERE conversation_id='${conversation}';`, 'Dialogue turn recovery receipt UPDATE');
+  for (const table of ['dialogue_state_projection', 'dialogue_state_transition',
+    'dialogue_state_purge_receipt', 'dialogue_turn_recovery_receipt']) {
+    mustReject(`TRUNCATE osaa.${table};`, `${table} TRUNCATE`);
+  }
+
+  psql(`INSERT INTO osaa.conversation(id,owner_id,title,status,retention_days,created_at,deleted_at)
+    VALUES('${purgeConversation}','${owner}','Dialogue purge verifier','archived',1,
+      clock_timestamp()-interval '5 days',clock_timestamp()-interval '3 days');
+    INSERT INTO osaa.conversation(id,owner_id,title,status,retention_days,created_at)
+    VALUES('${activeRetentionConversation}','${owner}','Active retention verifier','active',1,
+      clock_timestamp()-interval '5 days');
+    INSERT INTO osaa.dialogue_state_transition(
+      conversation_id,owner_id,turn_request_id,base_revision,next_revision,
+      prev_state_digest,state_digest,delta
+    ) VALUES('${purgeConversation}','${owner}','${adminTurn}',0,1,'${digestA}','${digestB}',
+      jsonb_build_object('schema','osaa.dialogue-state-delta/v1','baseRevision',0,
+        'nextRevision',1,'prevStateDigest','${digestA}','stateDigest','${digestB}','set','{}'::jsonb));
+    INSERT INTO osaa.dialogue_state_projection(
+      conversation_id,owner_id,domain,intent,phase,revision,last_turn_request_id,state_digest
+    ) VALUES('${purgeConversation}','${owner}','pfss.postgresql','status.read','observed',1,'${adminTurn}','${digestB}');`);
+  mustRejectPermission(`SET ROLE opensphere_osaa_gateway;
+    SELECT * FROM osaa.purge_eligible_dialogue_state(10);`, 'Gateway → scheduled Dialogue State purge');
+  assert.match(psql(`SET ROLE opensphere_console_backend;
+    SELECT conversation_id||'|'||transition_count FROM osaa.purge_eligible_dialogue_state(10);
+    RESET ROLE;`), new RegExp(`${purgeConversation}\\|1`));
+  assert.equal(psql(`SELECT
+      (SELECT count(*) FROM osaa.dialogue_state_transition WHERE conversation_id='${purgeConversation}')||'|'||
+      (SELECT count(*) FROM osaa.dialogue_state_projection WHERE conversation_id='${purgeConversation}')||'|'||
+      (SELECT count(*) FROM osaa.dialogue_state_purge_receipt WHERE conversation_id='${purgeConversation}')||'|'||
+      (SELECT count(*) FROM audit.event WHERE action='osaa-dialogue-state-purge' AND target_id='${purgeConversation}')||'|'||
+      (SELECT count(*) FROM osaa.conversation WHERE id='${activeRetentionConversation}' AND deleted_at IS NULL);`).trim(),
+  '0|0|1|1|1');
+  console.log('  ✓ 삭제 후 retention 유예를 지난 대화만 purge하고 active 대화와 receipt·audit을 보존한다');
 }
 
 function verifyR2d2RoleMatrix() {
@@ -988,14 +1050,20 @@ async function main() {
     verifyR2d2DurabilityAndRemediation();
 
     // ── 1. 서버가 사슬을 채우는가 ────────────────────────────────────────────
+    const priorLedgerHash = psql(`SELECT COALESCE(
+      (SELECT ledger_hash FROM audit.event ORDER BY chain_sequence DESC LIMIT 1),
+      repeat('0',64));`).trim();
     psql(`INSERT INTO audit.event (request_id, correlation_id, actor_type, action, target_type, target_id, reason, phase, result, event_hash)
       VALUES (extensions.gen_random_uuid(),'c1','system','t.one','x','x1','r1','applied','ok','h1'),
              (extensions.gen_random_uuid(),'c2','system','t.two','x','x2','r2','applied','ok','h2'),
              (extensions.gen_random_uuid(),'c3','system','t.three','x','x3','r3','applied','ok','h3');`);
     const chain = psql(`SELECT chain_sequence || '|' || prev_hash || '|' || ledger_hash
-      FROM audit.event ORDER BY chain_sequence;`).trim().split('\n').map((row) => row.split('|'));
-    assert.deepEqual(chain.map(([sequence]) => sequence), ['1', '2', '3']);
-    assert.equal(chain[0][1], '0'.repeat(64), '첫 원장 행의 genesis 링크가 잘못됐다');
+      FROM audit.event WHERE action IN ('t.one','t.two','t.three') ORDER BY chain_sequence;`)
+      .trim().split('\n').map((row) => row.split('|'));
+    assert.equal(chain.length, 3);
+    assert.deepEqual(chain.map(([sequence]) => Number(sequence)),
+      [Number(chain[0][0]), Number(chain[0][0]) + 1, Number(chain[0][0]) + 2]);
+    assert.equal(chain[0][1], priorLedgerHash, '첫 검증 행이 기존 원장 tail을 잇지 않았다');
     assert.equal(chain[1][1], chain[0][2], '두 번째 행이 첫 번째 ledger_hash를 가리키지 않는다');
     assert.equal(chain[2][1], chain[1][2], '세 번째 행이 두 번째 ledger_hash를 가리키지 않는다');
     console.log('  ✓ prev_hash 를 서버가 채운다 — genesis → ledger_hash → ledger_hash');
@@ -1032,8 +1100,8 @@ async function main() {
           ALTER TABLE audit.event ENABLE ALWAYS TRIGGER audit_event_append_only;`);
     const breaks = psql(`SELECT CASE WHEN valid THEN 'valid' ELSE 'invalid' END || '|' || first_invalid_sequence
       FROM audit.verify_event_ledger_chain();`).trim();
-    assert.equal(breaks, 'invalid|3', `사슬 파손이 탐지되지 않았다 (실제: ${breaks || '(없음)'})`);
-    console.log('  ✓ 행이 사라지면 verify_event_ledger_chain() 이 첫 파손 chain_sequence=3을 지목한다');
+    assert.equal(breaks, `invalid|${chain[2][0]}`, `사슬 파손이 탐지되지 않았다 (실제: ${breaks || '(없음)'})`);
+    console.log(`  ✓ 행이 사라지면 verify_event_ledger_chain() 이 첫 파손 chain_sequence=${chain[2][0]}을 지목한다`);
 
     console.log('\n원장 무결성 검증 통과.');
     console.log(JSON.stringify({ contract: 'opensphere-ledger-verifier-run/v1', run: CONTAINER, result: 'PASS' }));

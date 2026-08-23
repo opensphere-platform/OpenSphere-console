@@ -117,7 +117,28 @@ function createR2d2OperationApi(options) {
     const idempotencyKey = storedPlan?.plan_id || String(req.headers['x-os-idempotency-key'] || body.idempotencyKey || '').trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(idempotencyKey)) throw { code: 400, msg: 'valid idempotency key required' };
     const dialogueStateDigest = String(body?.dialogueStateDigest || '');
-    if (dialogueStateDigest && !SHA256.test(dialogueStateDigest)) {
+    const dialogueConversationId = String(body?.conversationId || '');
+    let dialogueState = null;
+    if (bound.action === 'create-postgres-cluster') {
+      if (!UUID.test(dialogueConversationId) || !SHA256.test(dialogueStateDigest)) {
+        throw { code: 400, msg: 'PFSS operation requires a conversationId and Dialogue State digest' };
+      }
+      if (typeof store.getDialogueState !== 'function') {
+        throw { code: 503, msg: 'CBSS Dialogue State resolver is unavailable' };
+      }
+      dialogueState = await store.getDialogueState(dialogueConversationId, actorId);
+      if (!dialogueState || dialogueState.state_digest !== dialogueStateDigest) {
+        throw { code: 409, msg: 'Dialogue State changed or does not belong to this actor' };
+      }
+      const targetRef = dialogueState.target_ref || {};
+      if (dialogueState.domain !== 'pfss.postgresql'
+          || dialogueState.intent !== 'create.plan'
+          || dialogueState.phase !== 'plan_ready'
+          || String(targetRef.namespace || '') !== String(bound.target.namespace || '')
+          || String(targetRef.name || '') !== String(bound.target.name || '')) {
+        throw { code: 409, msg: 'Dialogue State is not bound to this PFSS plan target' };
+      }
+    } else if (dialogueStateDigest && !SHA256.test(dialogueStateDigest)) {
       throw { code: 400, msg: 'Dialogue State digest is invalid' };
     }
     const deadline = new Date(now().getTime() + Math.max(60000, Math.min(3600000, Number(body.deadlineMs || 600000))));
@@ -137,6 +158,8 @@ function createR2d2OperationApi(options) {
         target: bound.target, ownerRoute: bound.ownerRoute, requiredPermission: bound.requiredPermission,
         confirmationDigest: bound.confirmationDigest,
         dialogueStateDigest: dialogueStateDigest || null,
+        dialogueConversationId: dialogueConversationId || null,
+        dialogueRevision: dialogueState ? Number(dialogueState.revision || 0) : null,
         planId: storedPlan?.plan_id || null,
         planDigest: storedPlan?.plan_digest || null,
         bindingDigest: storedPlan?.plan_digest || null,
@@ -231,6 +254,7 @@ function createR2d2OperationApi(options) {
 
 function createRestOperationStore(restRequest) {
   const request = (resource, options = {}) => restRequest(resource, { ...options, profile: 'console' });
+  const dialogueRequest = (resource, options = {}) => restRequest(resource, { ...options, profile: 'osaa' });
   return {
     async insertPlan(row) {
       const rows = await request('module_operation_plan', { method: 'POST', query: 'select=*', body: [row], prefer: 'return=representation' });
@@ -239,6 +263,15 @@ function createRestOperationStore(restRequest) {
     },
     async getPlan(id) {
       const rows = await request('module_operation_plan', { query: `select=*&plan_id=eq.${encodeURIComponent(id)}&limit=1` });
+      return rows?.[0] || null;
+    },
+    async getDialogueState(conversationId, actorId) {
+      const rows = await dialogueRequest('rpc/resolve_dialogue_operation_context', {
+        method: 'POST', body: {
+          target_conversation_id: conversationId,
+          target_owner_id: actorId,
+        },
+      });
       return rows?.[0] || null;
     },
     async consumePlan(id, operationId) {

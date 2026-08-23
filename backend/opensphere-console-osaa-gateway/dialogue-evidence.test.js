@@ -53,6 +53,7 @@ test('typed PFSS claimSet renders only Ready generation-current claims', () => {
 
 test('ambiguous queries fail safe as operational', () => {
   assert.equal(isOperationalQuery('postgres는?'), true);
+  assert.equal(isOperationalQuery('몇 개야?'), true);
   assert.equal(isOperationalQuery('PostgreSQL의 개념을 설명해줘'), false);
 });
 

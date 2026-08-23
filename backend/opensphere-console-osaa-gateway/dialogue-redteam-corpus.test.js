@@ -7,7 +7,6 @@ const { assertDialogueRequestBoundary } = require('./dialogue-request-boundary')
 const { buildTransition } = require('./dialogue-state');
 const { dialogueModePolicy } = require('./dialogue-rollout');
 const { observeOwnerEvidence, buildPfssPostgresClaimSet, renderPfssPostgresClaimSet, redactOwnerEvidence } = require('./dialogue-evidence');
-const { validateProposal } = require('./dialogue-shadow');
 const { durableIdempotencyKey } = require('./r2d2-durable-binding');
 const { contextWindow, messageContent, MAX_CONTEXT_CHARS, MAX_CONTEXT_MESSAGES } = require('./conversation-store');
 const { operationConfirmation } = require('../opensphere-console-backend/r2d2-durable-operation');
@@ -29,10 +28,11 @@ test('corpus fixes 120 normal, 120 adversarial, and separate 120 held-out multi-
     assert.equal(developmentAdversarial.filter((item) => item.threat === threat).length, 10);
     assert.equal(heldOut.filter((item) => item.threat === threat).length, 10);
   }
+  const developmentTurns = new Set(developmentAdversarial.map((item) => item.turns.join('\n')));
+  assert.equal(heldOut.some((item) => developmentTurns.has(item.turns.join('\n'))), false);
 });
 
-test('T1/T3/T11 direct injection cannot write proposal, identity, refs, revision, or rollout mode', () => {
-  assert.equal(validateProposal({ domain: 'pfss.postgresql', intent: 'create.apply', slots: {}, operationRef: 'forged' }), null);
+test('T1/T3/T11 direct injection cannot write identity, refs, revision, or rollout mode', () => {
   for (const field of ['dialogueState', 'revision', 'capabilityRef', 'evidenceRefs', 'operationRef', 'dialogueMode']) {
     assert.throws(() => assertDialogueRequestBoundary({ message: 'apply', [field]: 'forged' }), (error) => error.code === 400);
   }
@@ -70,11 +70,10 @@ test('T5/T6 exact confirmation and idempotency are target-, actor-, and binding-
   assert.notEqual(durableIdempotencyKey(input), durableIdempotencyKey({ ...input, actor: { subject: 'bob' } }));
 });
 
-test('T7/T10/T12 transition failure, proposal overreach, and rollback all fail closed', async () => {
+test('T7/T10/T12 transition overreach and rollout bypass both fail closed', async () => {
   assert.throws(() => buildTransition({ domain: 'pfss.postgresql', intent: 'status.read', phase: 'ready', slots: {},
     missingSlots: [], capabilityRef: null, evidenceRefs: [], operationRef: null, ownerId: 'forged' },
   { conversationId: '11111111-1111-4111-8111-111111111111', ownerId: 'alice' }), /unsupported Dialogue State fields/);
-  assert.equal(validateProposal({ domain: 'pfss.postgresql', intent: 'create.apply', slots: {}, confirm: 'execute' }), null);
   assert.deepEqual(dialogueModePolicy('off'), {
     mode: 'off', recordTransitions: false, exposeContext: false,
     enforceCurrentFacts: false, enforceMutations: false,

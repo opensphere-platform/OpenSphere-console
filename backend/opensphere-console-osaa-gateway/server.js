@@ -446,7 +446,7 @@ function getPgPool() {
 function getConversationStore() {
   const pool = getPgPool();
   if (!pool) throw { code: 503, msg: 'Supabase PostgreSQL is not configured for OSAA conversations' };
-  conversationStore ||= createConversationStore(pool);
+  conversationStore ||= createConversationStore(pool, getR2d2MaintenancePool);
   return conversationStore;
 }
 
@@ -6088,6 +6088,14 @@ function dialogueTransitionForToolResult(result) {
       operationRef: result.operationId || null,
     };
   }
+  if (result.schema === 'r2d2.foundation-postgres-capability-answer/v1') {
+    return {
+      domain: 'pfss.postgresql', intent: String(result.question || 'capability.read'),
+      phase: result.phase === 'Observed' ? 'observed' : 'unavailable',
+      targetRef: null, slots: {}, missingSlots: [], capabilityRef: null,
+      evidenceRefs: [], operationRef: null,
+    };
+  }
   if (result.action === 'binding-execute'
       && result.binding?.toolId === 'osaa.foundation.postgres.claim.create') {
     const operation = result.result?.response || result.result || {};
@@ -6538,11 +6546,12 @@ function legacyFoundationPostgresStatusMessage(status) {
   ].join('\n');
 }
 
-async function foundationPostgresStatusConversation(messages, actor) {
+async function foundationPostgresStatusConversation(messages, actor, dialogueContext = null) {
   const query = latestUserContent(messages);
   const pfssContext = /(?:pfss|postgres(?:ql)?|postgresclaim|foundation-data-pg)/i.test(query);
+  const persistedPfssContext = dialogueContext?.domain === 'pfss.postgresql';
   const deterministicIntent = requiresFoundationPostgresStatus(query)
-    || (OSAA_DIALOGUE_POLICY.enforceCurrentFacts && pfssContext
+    || (OSAA_DIALOGUE_POLICY.enforceCurrentFacts && (pfssContext || persistedPfssContext)
       && isOperationalQuery(query) && !foundationPostgresConversationIntent(messages));
   if (!deterministicIntent) return null;
   const started = Date.now();
@@ -7424,7 +7433,14 @@ async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
     }
     const { request, planId, planDigest } = normalizeFoundationPostgresApplyInputs(inputs);
     const dialogue = context.dialogueContext;
-    if (dialogue?.domain !== 'pfss.postgresql' || !/^sha256:[0-9a-f]{64}$/.test(String(dialogue?.stateDigest || ''))) {
+    const dialogueTarget = dialogue?.targetRef || {};
+    if (!UUID_RE.test(String(dialogue?.conversationId || ''))
+        || dialogue?.domain !== 'pfss.postgresql'
+        || dialogue?.intent !== 'create.plan'
+        || dialogue?.phase !== 'plan_ready'
+        || String(dialogueTarget.namespace || '') !== request.namespace
+        || String(dialogueTarget.name || '') !== request.name
+        || !/^sha256:[0-9a-f]{64}$/.test(String(dialogue?.stateDigest || ''))) {
       throw { code: 409, msg: 'PFSS apply requires the server-owned Dialogue State from the planned conversation' };
     }
     const [storedPlan, ownerCapability] = await Promise.all([
@@ -7441,7 +7457,8 @@ async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
     requireConfirm(inputs.confirm, expected);
     owner = 'PFSS PostgreSQL owner'; target = `FoundationClaim/${request.namespace}/${request.name}`;
     response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/osaa/operations', actor, {
-      planId, planDigest, dialogueStateDigest: dialogue.stateDigest, confirmation: expected,
+      planId, planDigest, conversationId: dialogue.conversationId,
+      dialogueStateDigest: dialogue.stateDigest, confirmation: expected,
     }, 'Console durable operation ledger', 30000);
     response = {
       ...response, planId, planDigest, expiresAt: storedPlan.expiresAt, capabilityBinding,
@@ -7863,6 +7880,66 @@ async function foundationPostgresCapabilitiesRead(actor) {
   return projection;
 }
 
+async function foundationPostgresReadinessRead(actor) {
+  assertPermission(actor, 'osaa.system.read');
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/readiness`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw { code: 503, msg: 'PFSS PostgreSQL readiness owner API is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `PFSS readiness owner HTTP ${response.status}` };
+  return redactProjection(body);
+}
+
+async function foundationPostgresContextualCapabilityConversation(messages, actor, dialogueContext = null) {
+  if (!OSAA_DIALOGUE_POLICY.enforceCurrentFacts || dialogueContext?.domain !== 'pfss.postgresql') return null;
+  const query = latestUserContent(messages);
+  const asksCreate = /(?:생성|만들|추가|create|provision)/i.test(query)
+    && /(?:가능|할\s*수|can|available|지원)/i.test(query);
+  const asksDelete = /(?:삭제|제거|delete|remove)/i.test(query)
+    && /(?:가능|할\s*수|can|available|지원)/i.test(query);
+  if (!asksCreate && !asksDelete) return null;
+  const started = Date.now();
+  try {
+    const capabilities = await foundationPostgresCapabilitiesRead(actor);
+    const operations = new Set(capabilities.operations || []);
+    if (asksDelete) {
+      const available = operations.has('cluster.delete');
+      return commandResponse(started, available
+        ? '현재 PFSS Owner 계약에는 PostgreSQL 클러스터 삭제 기능이 노출되어 있습니다. 실행 전 별도 R2 계획과 정확 확인이 필요합니다.'
+        : '현재 PFSS Owner 계약에는 PostgreSQL 클러스터 삭제 기능이 노출되어 있지 않습니다. 따라서 R2D2를 통해 삭제할 수 없습니다.', {
+        schema: 'r2d2.foundation-postgres-capability-answer/v1', phase: 'Observed',
+        question: 'cluster.delete', available, capabilities,
+      });
+    }
+    const readiness = await foundationPostgresReadinessRead(actor);
+    const action = (readiness.nextActions || []).find((item) => item.actionId === 'cluster.create');
+    const available = operations.has('cluster.create') && action?.available === true && readiness.readyToExecute === true;
+    const blockers = (readiness.blockers || [])
+      .filter((item) => (item.blocksActions || []).includes('cluster.create'))
+      .map((item) => `${item.code}: ${item.message}`);
+    const message = available
+      ? '현재 PFSS Owner의 실시간 readiness 기준으로 새 PostgreSQL 인스턴스를 생성할 수 있습니다. 생성은 R2 계획, 별도 승인, 정확 확인을 거칩니다.'
+      : `현재 새 PFSS PostgreSQL 인스턴스 생성은 차단되어 있습니다.${blockers.length ? ` 차단 사유: ${blockers.join('; ')}` : ' Owner가 cluster.create를 실행 가능 상태로 확인하지 않았습니다.'}`;
+    return commandResponse(started, message, {
+      schema: 'r2d2.foundation-postgres-capability-answer/v1', phase: 'Observed',
+      question: 'cluster.create', available, capabilities, readiness,
+    });
+  } catch (error) {
+    const reason = String(error?.msg || error?.message || error).slice(0, 240);
+    return commandResponse(started, `현재 PFSS Owner의 생성·삭제 가능 여부를 확인할 수 없습니다. ${reason}. 조회 실패를 불가능 또는 가능으로 추정하지 않습니다.`, {
+      schema: 'r2d2.foundation-postgres-capability-answer/v1', phase: 'Unavailable', error: reason,
+      question: asksDelete ? 'cluster.delete' : 'cluster.create', available: null,
+    });
+  }
+}
+
 async function foundationPostgresOperationRead(inputs, actor) {
   assertPermission(actor, 'osaa.system.read');
   requireClosedOwnerInputs(inputs, ['operationId']);
@@ -7886,11 +7963,12 @@ async function foundationPostgresOperationRead(inputs, actor) {
 }
 
 async function foundationPostgresOperationConversation(messages, actor, dialogueContext = null) {
+  if (!OSAA_DIALOGUE_POLICY.recordTransitions && !UUID_RE.test(String(dialogueContext?.operationRef || ''))) return null;
   const query = latestUserContent(messages);
   const explicit = query.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i)?.[0] || '';
   const asksStatus = /(작업|operation|진행|상태|결과|완료|watch|receipt|postcondition)/i.test(query);
   const contextual = dialogueContext?.domain === 'pfss.postgresql' ? String(dialogueContext.operationRef || '') : '';
-  const operationId = explicit || (asksStatus ? contextual : '');
+  const operationId = asksStatus ? (explicit || contextual) : '';
   if (!UUID_RE.test(operationId)) return null;
   const started = Date.now();
   try {
@@ -8297,7 +8375,13 @@ async function chatCompletion(body, actor) {
     baseMessages, actor, body?._dialogueContext || null,
   );
   if (foundationPostgresOperationOut) return foundationPostgresOperationOut;
-  const foundationPostgresStatusOut = await foundationPostgresStatusConversation(baseMessages, actor);
+  const foundationPostgresCapabilityOut = await foundationPostgresContextualCapabilityConversation(
+    baseMessages, actor, body?._dialogueContext || null,
+  );
+  if (foundationPostgresCapabilityOut) return foundationPostgresCapabilityOut;
+  const foundationPostgresStatusOut = await foundationPostgresStatusConversation(
+    baseMessages, actor, body?._dialogueContext || null,
+  );
   if (foundationPostgresStatusOut) return foundationPostgresStatusOut;
   const foundationPostgresOut = await foundationPostgresConversation(baseMessages, actor);
   if (foundationPostgresOut) return foundationPostgresOut;
@@ -8764,9 +8848,7 @@ async function durableChatCompletion(body, actor) {
 }
 
 async function runConversationLeaseReaper() {
-  const receipts = await getConversationStore().reapExpiredTurns(
-    100, `osaa-gateway:${OSAA_WATCH_OBSERVER_ID}`,
-  );
+  const receipts = await getConversationStore().reapExpiredTurns(100);
   if (receipts.length) {
     console.warn(`[osaa-conversation] recovered ${receipts.length} expired turn lease(s)`);
   }
@@ -9468,6 +9550,11 @@ const server = http.createServer(async (req, res) => {
     if (conversationRecoveryMatch && req.method === 'POST') {
       const actor = await verifyAdmin(req);
       const body = await readBody(req);
+      if (actor.assurance !== 'aal2') {
+        throw { code: 403, msg: 'conversation turn recovery requires MFA assurance aal2' };
+      }
+      const expectedConfirmation = `recover dialogue turn ${conversationRecoveryMatch[1]}/${conversationRecoveryMatch[2]}`;
+      requireConfirm(body.confirmation, expectedConfirmation);
       const receipt = await getConversationStore().recoverTurn(
         actor, conversationRecoveryMatch[1], conversationRecoveryMatch[2], body.reason,
       );

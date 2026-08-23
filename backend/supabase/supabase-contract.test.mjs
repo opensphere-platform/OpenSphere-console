@@ -272,7 +272,14 @@ test('0071 keeps Dialogue State in CBSS and atomically separates it from Agent R
   assert.match(sql, /next_revision = base_revision \+ 1/);
   assert.match(sql, /ENABLE ALWAYS TRIGGER dialogue_state_transition_append_only/);
   assert.match(sql, /FORCE ROW LEVEL SECURITY/);
-  assert.match(sql, /owner_id = current_setting\('opensphere[.]actor_id', true\)/);
+  assert.match(sql, /c[.]owner_id=current_setting\('opensphere[.]actor_id', true\)/);
+  assert.match(sql, /enforce_dialogue_transition_chain/);
+  assert.match(sql, /dialogue_genesis_digest/);
+  assert.match(sql, /verify_dialogue_state_chain/);
+  assert.match(sql, /BEFORE TRUNCATE ON osaa[.]dialogue_state_transition/);
+  assert.match(sql, /TO opensphere_osaa_maintenance/);
+  assert.doesNotMatch(sql, /GRANT EXECUTE ON FUNCTION osaa[.]reap_expired_dialogue_turns[^;]+opensphere_osaa_gateway/is);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\s*$/m);
   assert.match(sql, /REVOKE UPDATE, DELETE, TRUNCATE ON osaa[.]dialogue_state_transition/);
   assert.match(sql, /purge_dialogue_state\(/);
   assert.match(sql, /conversation has a pending turn/);
