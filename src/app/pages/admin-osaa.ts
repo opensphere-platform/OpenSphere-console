@@ -1536,12 +1536,13 @@ interface OsaaActionBindingManifest {
       .r2d2-scroll-table { max-height: 20rem; overflow: auto; }
       .r2d2-scroll-table .table { margin: 0.45rem 0 0; font-size: 0.68rem; }
       .r2d2-authority-table { width: 100%; table-layout: fixed; font-size: 0.68rem; }
-      .r2d2-authority-table th:nth-child(1) { width: 16%; }
+      .r2d2-authority-table th:nth-child(1) { width: 18%; }
       .r2d2-authority-table th:nth-child(2) { width: 17%; }
-      .r2d2-authority-table th:nth-child(3) { width: 15%; }
+      .r2d2-authority-table th:nth-child(3) { width: 14%; }
       .r2d2-authority-table th:nth-child(4) { width: 25%; }
-      .r2d2-authority-table th:nth-child(5) { width: 27%; }
+      .r2d2-authority-table th:nth-child(5) { width: 26%; }
       .r2d2-authority-table td { vertical-align: middle; overflow-wrap: anywhere; }
+      .r2d2-authority-table th:first-child,.r2d2-authority-table td:first-child { white-space: nowrap; }
       .r2d2-authority-table time { white-space: nowrap; font-variant-numeric: tabular-nums; }
       .r2d2-live-kv { display: grid; grid-template-columns: 9rem 1fr; margin: 0.5rem 0 0; font-size: 0.7rem; }
       .r2d2-live-kv dt,.r2d2-live-kv dd { margin: 0; padding: 0.35rem 0.4rem; border-bottom: 1px solid #edf1f3; }
