@@ -36,8 +36,7 @@ RUN test -n "${SETUP_SOURCE_REVISION}" \
     && tar -xzf /tmp/gh.tar.gz -C /tmp \
     && cp "/tmp/gh_2.96.0_linux_${TARGETARCH}/bin/gh" /usr/local/bin/gh \
     && chmod 0555 /usr/local/bin/gh \
-    && rm -rf /tmp/powershell.tar.gz /tmp/gh.tar.gz "/tmp/gh_2.96.0_linux_${TARGETARCH}" \
-      /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+    && rm -rf /tmp/powershell.tar.gz /tmp/gh.tar.gz "/tmp/gh_2.96.0_linux_${TARGETARCH}"
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 RUN node --version \
     && pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()' \

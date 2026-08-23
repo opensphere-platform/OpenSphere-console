@@ -10,6 +10,7 @@ const gatewaySource = readFileSync(join(__dirname, '..', 'opensphere-console-osa
 const conversationStore = readFileSync(join(__dirname, '..', 'opensphere-console-osaa-gateway', 'conversation-store.js'), 'utf8');
 const migration = readFileSync(join(__dirname, '..', 'supabase', 'migrations', '0072_osaa_dialogue_maintenance_identity.sql'), 'utf8');
 const installer = readFileSync(join(__dirname, '..', 'supabase', 'install.ps1'), 'utf8');
+const backendDockerfile = readFileSync(join(__dirname, 'Dockerfile'), 'utf8');
 const backendDeploy = readFileSync(join(__dirname, 'deploy.yaml'), 'utf8');
 const gatewayDeploy = readFileSync(join(__dirname, '..', 'opensphere-console-osaa-gateway', 'deploy.yaml'), 'utf8');
 
@@ -38,6 +39,13 @@ test('serving Gateway has no dialogue or generic maintenance credential and exec
   assert.doesNotMatch(gatewaySource, /R2D2_MAINTENANCE|r2d2MaintenancePool/);
   assert.doesNotMatch(gatewayDeploy, /maintenance-pg-user|maintenance-pg-password/);
   assert.match(backendSource, /startR2d2MaintenanceWorker/);
+});
+
+test('Backend installs production dependencies before removing npm from the runtime image', () => {
+  const installOffset = backendDockerfile.indexOf('RUN npm ci --omit=dev');
+  const removalOffset = backendDockerfile.indexOf('/usr/local/lib/node_modules/npm');
+  assert.ok(installOffset >= 0);
+  assert.ok(removalOffset > installOffset);
 });
 
 test('manual recovery stays behind AAL2, exact confirmation, and audit', () => {
