@@ -16,7 +16,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$requestedSourceRevision = $SourceRevision
 . (Join-Path $here 'migration-transaction.ps1')
+$SourceRevision = $requestedSourceRevision
 $manifest = Join-Path $here "bootstrap\supabase.yaml"
 $migrationDirectory = Join-Path $here "migrations"
 $migrations = @(Get-ChildItem -LiteralPath $migrationDirectory -Filter '*.sql' -File | Sort-Object Name)

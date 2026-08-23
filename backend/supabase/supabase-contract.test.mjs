@@ -229,6 +229,7 @@ test('actual PostgreSQL verifier uses an isolated per-run container and cleans o
 
 test('full installer provisions three isolated Shell LOGIN roles and workload Secrets', () => {
   const installer = readFileSync(path.join(here, 'install.ps1'), 'utf8');
+  assert.match(installer, /\$requestedSourceRevision = \$SourceRevision\s+\. \(Join-Path \$here 'migration-transaction[.]ps1'\)\s+\$SourceRevision = \$requestedSourceRevision/);
   for (const role of ['opensphere_shell_api', 'opensphere_shell_gateway', 'opensphere_shell_reconciler']) {
     assert.match(installer, new RegExp(`CREATE ROLE ${role} LOGIN PASSWORD`));
     assert.match(installer, new RegExp(`ALTER ROLE ${role} LOGIN PASSWORD`));
