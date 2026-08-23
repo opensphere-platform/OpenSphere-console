@@ -3,6 +3,50 @@ os-admin-osaa {
   --r2d2-navy: #071b2f;
   --r2d2-line: #dfe6ed;
 
+  .r2d2-page-tabs { display: block; min-width: 0; margin-top: 0.35rem; }
+  .r2d2-top-tab-content { min-width: 0; padding-top: 0.75rem; }
+  .r2d2-tab-state {
+    display: inline-flex; align-items: center; min-height: 0.9rem; margin-left: 0.35rem; padding: 0.08rem 0.32rem;
+    border: 1px solid #9aa9b7; border-radius: 0.5rem; background: #f2f4f6; color: #364956;
+    font-family: var(--os-font-mono); font-size: 0.48rem; font-weight: 700; line-height: 1; text-transform: uppercase;
+    &.state-off { border-color: #c27c0e; background: #fff4ce; color: #6f3d00; }
+    &.state-on { border-color: #198038; background: #defbe6; color: #0e6027; }
+  }
+
+  .r2d2-dialogue-state {
+    margin: 0.35rem 0 1rem; overflow: hidden; border: 1px solid #b8c7d3; border-left: 4px solid #0f62fe; background: #fff;
+    &.state-off { border-left-color: #c27c0e; background: #fffdf7; }
+    &.state-unknown { border-left-color: #8d8d8d; }
+    > header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(13rem, 0.28fr); gap: 1.5rem; align-items: stretch; padding: 1.05rem 1.15rem; border-bottom: 1px solid #dfe6ed; }
+    h2 { margin: 0.2rem 0 0.35rem; color: #102a43; font-size: 1.2rem; font-weight: 500; letter-spacing: -0.02em; }
+    header p { max-width: 62rem; margin: 0; color: #425466; font-size: 0.69rem; line-height: 1.65; }
+    > footer { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: 0.65rem 1.15rem; border-top: 1px solid #dfe6ed; background: #f7f9fa; color: #526777; font-size: 0.59rem; }
+    footer code { color: #164b7a; font-size: 0.57rem; }
+    footer .btn { margin: 0; }
+  }
+
+  .r2d2-dialogue-mode {
+    display: grid; align-content: center; gap: 0.12rem; min-width: 0; padding: 0.8rem 0.9rem; border: 1px solid #9fb8cc; background: #edf5fb;
+    > span { color: #4c6477; font-family: var(--os-font-mono); font-size: 0.5rem; font-weight: 700; letter-spacing: 0.1em; }
+    > strong { color: #123d5a; font-family: var(--os-font-mono); font-size: 1.25rem; text-transform: uppercase; overflow-wrap: anywhere; }
+    > small { color: #60788b; font-size: 0.5rem; }
+    code { background: transparent; color: inherit; font-size: inherit; }
+    &.state-off { border-color: #d5a24a; background: #fff4ce; }
+    &.state-off > strong { color: #7a4300; }
+    &.state-on { border-color: #6fba83; background: #defbe6; }
+    &.state-on > strong { color: #0e6027; }
+  }
+
+  .r2d2-dialogue-policy-grid {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    article { display: grid; gap: 0.16rem; min-width: 0; padding: 0.75rem 0.9rem; border-right: 1px solid #dfe6ed; background: #fff; }
+    article:last-child { border-right: 0; }
+    article > span { color: #526777; font-size: 0.58rem; font-weight: 600; }
+    article > strong { color: #8a4b00; font-family: var(--os-font-mono); font-size: 0.76rem; }
+    article > small { color: #708392; font-size: 0.53rem; line-height: 1.45; }
+    article.enabled > strong { color: #198038; }
+  }
+
   .r2d2-eyebrow,
   .r2d2-kicker,
   .r2d2-card-label {
@@ -221,6 +265,10 @@ os-admin-osaa {
   @media (max-width: 980px) {
     .r2d2-north-star, .r2d2-section-heading, .r2d2-compare { grid-template-columns: 1fr; }
     .r2d2-epistemic-grid, .r2d2-guardrails, .r2d2-wave-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .r2d2-dialogue-state > header { grid-template-columns: 1fr; }
+    .r2d2-dialogue-policy-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .r2d2-dialogue-policy-grid article:nth-child(2) { border-right: 0; }
+    .r2d2-dialogue-policy-grid article:nth-child(-n+2) { border-bottom: 1px solid #dfe6ed; }
   }
   @media (max-width: 760px) {
     .r2d2-north-star { padding: 1.15rem; }
@@ -229,5 +277,9 @@ os-admin-osaa {
     .r2d2-wave-grid .future { grid-column: auto; }
     .r2d2-resource-list { grid-template-columns: 1fr; }
     .r2d2-runtime-divider { align-items: flex-start; flex-direction: column; }
+    .r2d2-dialogue-policy-grid { grid-template-columns: 1fr; }
+    .r2d2-dialogue-policy-grid article { border-right: 0; border-bottom: 1px solid #dfe6ed; }
+    .r2d2-dialogue-policy-grid article:last-child { border-bottom: 0; }
+    .r2d2-dialogue-state > footer { align-items: flex-start; flex-direction: column; }
   }
 }

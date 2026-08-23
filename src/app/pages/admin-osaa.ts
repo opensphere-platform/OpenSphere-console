@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { Component, OnInit, OnDestroy, signal, computed, inject, ChangeDetectionStrategy } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
 import { FormsModule } from '@angular/forms';
@@ -31,6 +32,13 @@ interface OsaaHealth {
   runtimeProjection?: {
     ready: boolean; reason?: string; totalResources?: number; freshResources?: number;
     lastObservedAt?: string; lagSeconds?: number; refreshSeconds?: number; authority?: string; projection?: string;
+  };
+  dialogueState?: {
+    mode: 'off' | 'shadow' | 'read-enforce' | 'mutation-enforce' | string;
+    recordTransitions: boolean;
+    exposeContext: boolean;
+    enforceCurrentFacts: boolean;
+    enforceMutations: boolean;
   };
 }
 interface AgentControlReadiness {
@@ -358,10 +366,11 @@ interface OsaaActionBindingManifest {
  */
 @Component({
   selector: 'os-admin-osaa',
-  imports: [ClarityModule, FormsModule, BackendUnavailable, OsPageHeader, OsPanel, OsActionDialog],
+  imports: [ClarityModule, FormsModule, NgTemplateOutlet, BackendUnavailable, OsPageHeader, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
       <os-page-header title="R2D2" tag="Core·Admin · Console 내장 AI 관리 표면" />
+      <ng-template #overviewIntro>
       <section class="r2d2-north-star" aria-labelledby="r2d2-north-star-title">
         <div class="r2d2-north-star-copy">
           <div class="r2d2-eyebrow">OPERATIONAL INTELLIGENCE · NORTH STAR</div>
@@ -387,7 +396,9 @@ interface OsaaActionBindingManifest {
           <p>관측·상황 이해·승인 기반 운영 복구와 exact patch-bound Engineering Remediation을 연결했습니다. 실제 source·build·배포 권한은 Windows local edge Repair Runner의 짧은 lease가 살아 있을 때만 열립니다.</p>
         </aside>
       </section>
+      </ng-template>
 
+      <ng-template #operationalMonitoring>
       <section class="r2d2-live" aria-labelledby="r2d2-live-title">
         <div class="r2d2-section-heading">
           <div><span class="r2d2-kicker">LIVE · OPERATIONAL CONTROL</span><h2 id="r2d2-live-title">현재 관측 범위, 위험과 관리 작업을 하나의 증거 흐름으로 확인합니다.</h2></div>
@@ -536,7 +547,9 @@ interface OsaaActionBindingManifest {
           @if (engineeringRequestsBusy() && !engineeringRequests().length) { <p class="r2d2-empty">Engineering Remediation 상태를 확인하고 있습니다.</p> }
         </article>
       </section>
+      </ng-template>
 
+      <ng-template #overviewDetails>
       <section class="r2d2-section" aria-labelledby="r2d2-metacognition-title">
         <div class="r2d2-section-heading">
           <div><span class="r2d2-kicker">01 · METACOGNITION</span><h2 id="r2d2-metacognition-title">메타인지란 자신의 지식과 능력의 한계를 데이터로 설명하는 것입니다.</h2></div>
@@ -681,7 +694,9 @@ interface OsaaActionBindingManifest {
           <article class="future"><span>ENGINEERING REMEDIATION</span><strong>Source repair contract</strong><p>patch approval · sandbox · build evidence · deploy</p><small>EXECUTION SOURCE IMPLEMENTED · ACTIVATION PROHIBITED</small></article>
         </div>
       </section>
+      </ng-template>
 
+      <ng-template #runtimeManagement>
       <div class="r2d2-runtime-divider" role="separator"><span>현재 R2D2 runtime 관리</span><small>아래 영역은 실제 연결 상태와 현재 구현된 관리 기능을 표시합니다.</small></div>
       @if (gatewayDown(); as d) {
         <os-backend-unavailable
@@ -1350,6 +1365,56 @@ interface OsaaActionBindingManifest {
           }
         </os-panel>
       }
+      </ng-template>
+
+      <clr-tabs class="r2d2-page-tabs" aria-label="R2D2 관리 페이지 분류">
+        <clr-tab>
+          <button clrTabLink id="r2d2-overview-tab">개요와 구조</button>
+          <clr-tab-content id="r2d2-overview-panel">
+            <div class="r2d2-top-tab-content">
+              <ng-container [ngTemplateOutlet]="overviewIntro"></ng-container>
+              <ng-container [ngTemplateOutlet]="overviewDetails"></ng-container>
+            </div>
+          </clr-tab-content>
+        </clr-tab>
+        <clr-tab>
+          <button clrTabLink id="r2d2-monitoring-tab">
+            관측 및 운영
+            <span class="r2d2-tab-state" [class.state-off]="dialogueMode() === 'off'" [class.state-on]="dialogueMode() !== 'off' && dialogueMode() !== 'unknown'">{{ dialogueMode() }}</span>
+          </button>
+          <clr-tab-content id="r2d2-monitoring-panel">
+            <div class="r2d2-top-tab-content">
+              <section class="r2d2-dialogue-state" [class.state-off]="dialogueMode() === 'off'" [class.state-unknown]="dialogueMode() === 'unknown'" aria-labelledby="r2d2-dialogue-state-title">
+                <header>
+                  <div>
+                    <span class="r2d2-kicker">LIVE POLICY · DIALOGUE STATE</span>
+                    <h2 id="r2d2-dialogue-state-title">OSAA Dialogue State</h2>
+                    <p>{{ dialogueModeDescription() }}</p>
+                  </div>
+                  <div class="r2d2-dialogue-mode" [class.state-off]="dialogueMode() === 'off'" [class.state-on]="dialogueMode() !== 'off' && dialogueMode() !== 'unknown'">
+                    <span>MODE</span>
+                    <strong>{{ dialogueMode() }}</strong>
+                    <small><code>OSAA_DIALOGUE_STATE_MODE</code></small>
+                  </div>
+                </header>
+                <div class="r2d2-dialogue-policy-grid">
+                  <article [class.enabled]="health()?.dialogueState?.recordTransitions"><span>대화 전이 기록</span><strong>{{ health()?.dialogueState?.recordTransitions ? 'ON' : 'OFF' }}</strong><small>turn별 상태 변경과 revision 보존</small></article>
+                  <article [class.enabled]="health()?.dialogueState?.exposeContext"><span>문맥 projection</span><strong>{{ health()?.dialogueState?.exposeContext ? 'ON' : 'OFF' }}</strong><small>검증된 대화 상태를 응답에 노출</small></article>
+                  <article [class.enabled]="health()?.dialogueState?.enforceCurrentFacts"><span>현재 사실 강제</span><strong>{{ health()?.dialogueState?.enforceCurrentFacts ? 'ON' : 'OFF' }}</strong><small>Owner typed projection과 결정적 렌더러 사용</small></article>
+                  <article [class.enabled]="health()?.dialogueState?.enforceMutations"><span>변경 대화 강제</span><strong>{{ health()?.dialogueState?.enforceMutations ? 'ON' : 'OFF' }}</strong><small>계획·승인·operation binding 적용</small></article>
+                </div>
+                <footer>
+                  <span>관측 기준 <code>/api/osaa/health</code> · Runtime이 보고한 실제 서버 정책</span>
+                  <button class="btn btn-sm btn-outline" type="button" [disabled]="healthBusy()" (click)="loadHealth()">상태 새로고침</button>
+                </footer>
+              </section>
+
+              <ng-container [ngTemplateOutlet]="operationalMonitoring"></ng-container>
+              <ng-container [ngTemplateOutlet]="runtimeManagement"></ng-container>
+            </div>
+          </clr-tab-content>
+        </clr-tab>
+      </clr-tabs>
     </div>
   `,
   changeDetection: ChangeDetectionStrategy.Eager,
@@ -1466,6 +1531,16 @@ export class AdminOsaa implements OnInit, OnDestroy {
   readonly health = signal<OsaaHealth | null>(null);
   readonly gatewayDown = signal<string>('');
   readonly healthBusy = signal(false);
+  readonly dialogueMode = computed(() => this.health()?.dialogueState?.mode || 'unknown');
+  readonly dialogueModeDescription = computed(() => {
+    switch (this.dialogueMode()) {
+      case 'off': return '대화 상태 기록·문맥 projection·Owner 기반 현재 사실 강제가 모두 꺼져 있습니다. 일반 응답 경로의 안전 차단만 남아 있으므로 운영 질문이 구체적인 상태 조회로 연결되지 않을 수 있습니다.';
+      case 'shadow': return '대화 상태 전이를 기록하고 비교하지만 사용자 응답과 현재 사실 판정에는 아직 강제하지 않습니다.';
+      case 'read-enforce': return '대화 문맥과 Owner 기반 현재 사실 판정을 강제합니다. 변경 작업은 계속 별도 승인 경계에서 차단됩니다.';
+      case 'mutation-enforce': return '현재 사실 판정과 승인된 변경 대화 계약을 모두 강제합니다. 실제 실행 권한은 OSCE와 각 Owner 정책이 다시 검증합니다.';
+      default: return 'OSAA Gateway health를 아직 관측하지 못해 Dialogue State 적용 모드를 확인할 수 없습니다.';
+    }
+  });
   readonly controlPlaneStatus = signal<OsaaControlPlaneStatus | null>(null);
   readonly controlPlaneError = signal('');
   readonly engineeringStatus = signal<OsaaEngineeringStatus | null>(null);
