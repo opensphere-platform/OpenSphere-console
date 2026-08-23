@@ -261,3 +261,22 @@ test('R2D2 relation monotonicity never dereferences a node-only record field', (
   assert.match(sql, /TG_TABLE_NAME = 'resource_node'/);
   assert.doesNotMatch(sql, /coalesce\(NEW\.stream_sequence/);
 });
+
+test('0071 keeps Dialogue State in CBSS and atomically separates it from Agent Runtime evidence', () => {
+  const sql = readFileSync(path.join(here, 'migrations', '0071_osaa_dialogue_state_transition.sql'), 'utf8');
+  assert.match(sql, /CREATE TABLE osaa[.]dialogue_state_projection/);
+  assert.match(sql, /CREATE TABLE osaa[.]dialogue_state_transition/);
+  assert.match(sql, /conversation_id uuid NOT NULL REFERENCES osaa[.]conversation\(id\) ON DELETE RESTRICT/);
+  assert.match(sql, /UNIQUE \(conversation_id, turn_request_id\)/);
+  assert.match(sql, /UNIQUE \(conversation_id, next_revision\)/);
+  assert.match(sql, /next_revision = base_revision \+ 1/);
+  assert.match(sql, /ENABLE ALWAYS TRIGGER dialogue_state_transition_append_only/);
+  assert.match(sql, /FORCE ROW LEVEL SECURITY/);
+  assert.match(sql, /owner_id = current_setting\('opensphere[.]actor_id', true\)/);
+  assert.match(sql, /REVOKE UPDATE, DELETE, TRUNCATE ON osaa[.]dialogue_state_transition/);
+  assert.match(sql, /purge_dialogue_state\(/);
+  assert.match(sql, /conversation has a pending turn/);
+  assert.match(sql, /dialogue_state_purge_receipt/);
+  assert.doesNotMatch(sql, /agent_step|agent_run/);
+  assert.doesNotMatch(sql, /ON CONFLICT[^;]*DO NOTHING/is);
+});

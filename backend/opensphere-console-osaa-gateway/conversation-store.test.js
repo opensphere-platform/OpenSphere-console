@@ -6,6 +6,8 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const {
   MAX_CONTEXT_CHARS,
+  MAX_CONTEXT_MESSAGES,
+  TURN_LEASE_SECONDS,
   contextWindow,
   conversationId,
   firstTurnTitle,
@@ -24,6 +26,10 @@ test('OSAA identifiers and bounded user input fail closed', () => {
   assert.throws(() => requestId(''), /UUID/);
   assert.equal(messageContent('  hello  '), 'hello');
   assert.throws(() => messageContent('   '), /message is required/);
+  assert.throws(
+    () => messageContent('x'.repeat(MAX_CONTEXT_CHARS + 1)),
+    (error) => error.code === 413 && error.errorCode === 'osaa_context_too_large',
+  );
   assert.equal(title('  A   durable   title  '), 'A durable title');
   assert.equal(firstTurnTitle('첫 문장입니다.\n둘째 문장'), '첫 문장입니다.');
 });
@@ -37,8 +43,10 @@ test('context window is chronological and bounded by server budget', () => {
   const window = contextWindow(rows, 'current request');
   assert.equal(window.at(-1).content, 'current request');
   assert.equal(window.at(-1).role, 'user');
-  assert.ok(window.length <= 80);
-  assert.ok(window.reduce((total, item) => total + item.content.length, 0) <= MAX_CONTEXT_CHARS + 1000);
+  assert.equal(MAX_CONTEXT_MESSAGES, 24);
+  assert.equal(MAX_CONTEXT_CHARS, 24000);
+  assert.ok(window.length <= MAX_CONTEXT_MESSAGES);
+  assert.ok(window.reduce((total, item) => total + item.content.length, 0) <= MAX_CONTEXT_CHARS);
   assert.equal(window.some((item) => item.content === 'failed output'), false);
   const previousNumbers = window.slice(0, -1).map((item) => Number(item.content.match(/^m(\d+)-/)[1]));
   assert.deepEqual(previousNumbers, [...previousNumbers].sort((a, b) => a - b));
@@ -49,6 +57,10 @@ test('one conversation serializes turns before provider execution', () => {
   assert.match(source, /role='user' AND status='pending'/);
   assert.match(source, /turn_request_id<>\$2/);
   assert.match(source, /another conversation turn is still in progress/);
+  assert.equal(TURN_LEASE_SECONDS, 120);
+  assert.match(source, /lease_expires_at<=clock_timestamp\(\)/);
+  assert.match(source, /FOR UPDATE SKIP LOCKED/);
+  assert.match(source, /lease-reaper/);
 });
 
 test('successful provider responses repair the conversation model projection', () => {
@@ -61,4 +73,21 @@ test('successful provider responses repair the conversation model projection', (
 test('gateway runtime image contains the durable conversation store', () => {
   const dockerfile = readFileSync(join(__dirname, 'Dockerfile'), 'utf8');
   assert.match(dockerfile, /^COPY conversation-store\.js \/app\/conversation-store\.js$/m);
+  assert.match(dockerfile, /^COPY dialogue-state\.js \/app\/dialogue-state\.js$/m);
+});
+
+test('Dialogue State transition and assistant message share one fail-closed transaction', () => {
+  const source = readFileSync(require.resolve('./conversation-store'), 'utf8');
+  const complete = source.slice(source.indexOf('async function completeTurn'));
+  assert.match(complete, /await client\.query\('BEGIN'\)/);
+  assert.match(complete, /commitDialogueTransition\([\s\S]*?INSERT INTO osaa\.conversation_message/);
+  assert.match(complete, /await client\.query\('COMMIT'\)/);
+  assert.match(source, /INSERT INTO osaa\.dialogue_state_transition/);
+  assert.doesNotMatch(source, /dialogue_state_transition[\s\S]*?ON CONFLICT[^;]*DO NOTHING/);
+  const server = readFileSync(join(__dirname, 'server.js'), 'utf8');
+  assert.match(server, /function dialogueTransitionForToolResult/);
+  assert.match(server, /r2d2[.]foundation-postgres-status\/v1/);
+  assert.match(server, /r2d2[.]foundation-postgres-intake\/v1/);
+  assert.match(server, /intent: 'status[.]read'/);
+  assert.match(server, /intent: 'create[.]plan'/);
 });

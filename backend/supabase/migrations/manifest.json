@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "latestMigrationId": "0070",
-  "migrationCount": 69,
-  "setDigest": "sha256:e06eca1857723ab775c5ec7a2909a1af3af976bd64d8fa0f31a9123b8318fe8b",
+  "latestMigrationId": "0071",
+  "migrationCount": 70,
+  "setDigest": "sha256:98001aa9cd95f328a4aa92e8e44e1bc4148b1d5437bce69e7be64ef2e108d48c",
   "migrations": [
     {
       "id": "0001",
@@ -486,6 +486,13 @@
       "name": "0070_osaa_local_edge_repair_runner.sql",
       "path": "backend/supabase/migrations/0070_osaa_local_edge_repair_runner.sql",
       "sha256": "66788fd0376345bb7553659d9f8b5c46d280a78eede879d41bd86189e886c6f4"
+    },
+    {
+      "id": "0071",
+      "predecessorMigrationId": "0070",
+      "name": "0071_osaa_dialogue_state_transition.sql",
+      "path": "backend/supabase/migrations/0071_osaa_dialogue_state_transition.sql",
+      "sha256": "8cc0e1c21331768bf3d02fa91b169dd57ec8edf0f07f83ebe38d04d568327818"
     }
   ]
 }

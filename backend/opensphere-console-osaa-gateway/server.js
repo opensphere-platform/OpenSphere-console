@@ -6025,7 +6025,33 @@ function commandHelp() {
   ].join('\n');
 }
 
+function dialogueTransitionForToolResult(result) {
+  if (!result || typeof result !== 'object') return null;
+  if (result.schema === 'r2d2.foundation-postgres-status/v1') {
+    return {
+      domain: 'pfss.postgresql', intent: 'status.read',
+      phase: result.phase === 'Observed' ? 'observed' : 'unavailable',
+      targetRef: null, slots: {}, missingSlots: [], evidenceRefs: [], operationRef: null,
+    };
+  }
+  if (result.schema !== 'r2d2.foundation-postgres-intake/v1') return null;
+  const values = result.request || result.values || {};
+  const slots = Object.fromEntries(Object.entries(values)
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([key, value]) => [key, { value, status: 'validated' }]));
+  return {
+    domain: 'pfss.postgresql', intent: 'create.plan',
+    phase: result.phase === 'AwaitingConfirmation' ? 'plan_ready' : 'needs_input',
+    targetRef: values.name ? { namespace: values.namespace || 'opensphere-foundation', name: values.name } : null,
+    slots, missingSlots: Array.isArray(result.missing) ? result.missing : [],
+    capabilityRef: result.plan?.descriptorDigest
+      ? `pfss.postgresql.cluster.plan@${result.plan.descriptorDigest}` : null,
+    evidenceRefs: [], operationRef: null,
+  };
+}
+
 function commandResponse(started, message, result = null) {
+  const dialogueTransition = dialogueTransitionForToolResult(result);
   return {
     keyId: 'osaa-tools',
     provider: 'opensphere',
@@ -6037,6 +6063,7 @@ function commandResponse(started, message, result = null) {
     sources: [],
     environment: null,
     toolResult: result,
+    ...(dialogueTransition ? { dialogueTransition } : {}),
   };
 }
 

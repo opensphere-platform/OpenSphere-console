@@ -1,12 +1,14 @@
 'use strict';
 
 const { randomUUID } = require('crypto');
+const { buildTransition } = require('./dialogue-state');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_TITLE = 160;
-const MAX_MESSAGE = 200000;
-const MAX_CONTEXT_MESSAGES = 80;
-const MAX_CONTEXT_CHARS = 60000;
+const MAX_CONTEXT_MESSAGES = 24;
+const MAX_CONTEXT_CHARS = 24000;
+const MAX_MESSAGE = MAX_CONTEXT_CHARS;
+const TURN_LEASE_SECONDS = 120;
 
 function failure(code, msg, errorCode = '') {
   const error = Object.assign(new Error(msg), { code, msg });
@@ -36,7 +38,9 @@ function requestId(value) {
 function messageContent(value) {
   const content = String(value || '').trim();
   if (!content) throw failure(400, 'message is required');
-  if (content.length > MAX_MESSAGE) throw failure(400, `message exceeds ${MAX_MESSAGE} characters`);
+  if (content.length > MAX_MESSAGE) {
+    throw failure(413, `message exceeds the ${MAX_MESSAGE} character provider boundary`, 'osaa_context_too_large');
+  }
   return content;
 }
 
@@ -97,7 +101,7 @@ function contextWindow(rows, currentUserContent = '') {
   let characters = String(currentUserContent || '').length;
   for (let index = ordered.length - 1; index >= 0 && output.length < MAX_CONTEXT_MESSAGES - 1; index -= 1) {
     const content = String(ordered[index].content || '');
-    if (output.length && characters + content.length > MAX_CONTEXT_CHARS) break;
+    if (characters + content.length > MAX_CONTEXT_CHARS) break;
     characters += content.length;
     output.unshift({ role: ordered[index].role, content });
   }
@@ -110,6 +114,55 @@ function responseFromAssistant(row) {
   const response = message.response && typeof message.response === 'object' ? message.response : {};
   delete message.response;
   return { ...response, message: message.content, conversationId: row.conversation_id, assistantMessage: message };
+}
+
+async function commitDialogueTransition(client, owner, turn, candidate) {
+  if (!candidate) return null;
+  const current = await client.query(`
+    SELECT * FROM osaa.dialogue_state_projection
+    WHERE conversation_id=$1 AND owner_id=$2
+    FOR UPDATE
+  `, [turn.conversationId, owner]);
+  const transition = buildTransition(candidate, {
+    conversationId: turn.conversationId,
+    ownerId: owner,
+  }, current.rows[0] || null);
+  const state = transition.material;
+  await client.query(`
+    INSERT INTO osaa.dialogue_state_transition(
+      conversation_id,owner_id,turn_request_id,base_revision,next_revision,
+      prev_state_digest,state_digest,delta,capability_ref,evidence_refs,operation_ref
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11::uuid)
+  `, [turn.conversationId, owner, turn.clientRequestId,
+    transition.baseRevision, transition.nextRevision, transition.previousDigest,
+    transition.stateDigest, JSON.stringify(transition.delta), state.capabilityRef,
+    JSON.stringify(state.evidenceRefs), state.operationRef]);
+  await client.query(`
+    INSERT INTO osaa.dialogue_state_projection(
+      conversation_id,owner_id,domain,intent,phase,target_ref,slots,missing_slots,
+      capability_ref,evidence_refs,operation_ref,revision,last_turn_request_id,state_digest
+    ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::text[],$9,$10::jsonb,$11::uuid,$12,$13,$14)
+    ON CONFLICT (conversation_id) DO UPDATE SET
+      domain=EXCLUDED.domain,intent=EXCLUDED.intent,phase=EXCLUDED.phase,
+      target_ref=EXCLUDED.target_ref,slots=EXCLUDED.slots,missing_slots=EXCLUDED.missing_slots,
+      capability_ref=EXCLUDED.capability_ref,evidence_refs=EXCLUDED.evidence_refs,
+      operation_ref=EXCLUDED.operation_ref,revision=EXCLUDED.revision,
+      last_turn_request_id=EXCLUDED.last_turn_request_id,state_digest=EXCLUDED.state_digest,
+      updated_at=clock_timestamp()
+    WHERE osaa.dialogue_state_projection.owner_id=EXCLUDED.owner_id
+      AND osaa.dialogue_state_projection.revision=$12-1
+  `, [turn.conversationId, owner, state.domain, state.intent, state.phase,
+    JSON.stringify(state.targetRef), JSON.stringify(state.slots), state.missingSlots,
+    state.capabilityRef, JSON.stringify(state.evidenceRefs), state.operationRef,
+    transition.nextRevision, turn.clientRequestId, transition.stateDigest]);
+  return {
+    domain: state.domain,
+    intent: state.intent,
+    phase: state.phase,
+    missingSlots: state.missingSlots,
+    contextStatus: 'validated',
+    revision: transition.nextRevision,
+  };
 }
 
 function createConversationStore(pool) {
@@ -195,6 +248,7 @@ function createConversationStore(pool) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query("SELECT set_config('opensphere.actor_id',$1,true)", [owner]);
       let conversation;
       if (requestedConversationId) {
         const found = await client.query(`
@@ -214,10 +268,19 @@ function createConversationStore(pool) {
         conversation = created.rows[0];
       }
 
-      const concurrent = await client.query(`
-        SELECT turn_request_id FROM osaa.conversation_message
+      await client.query(`
+        UPDATE osaa.conversation_message
+        SET status='failed', completed_at=clock_timestamp(),
+            lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL,
+            metadata=metadata || '{"recovery":"lease-expired"}'::jsonb
         WHERE conversation_id=$1 AND role='user' AND status='pending'
-          AND turn_request_id<>$2
+          AND lease_expires_at IS NOT NULL AND lease_expires_at<=clock_timestamp()
+      `, [conversation.id]);
+
+      const concurrent = await client.query(`
+        SELECT turn_request_id,lease_expires_at FROM osaa.conversation_message
+        WHERE conversation_id=$1 AND role='user' AND status='pending'
+          AND turn_request_id<>$2 AND lease_expires_at>clock_timestamp()
         LIMIT 1
       `, [conversation.id, clientRequestId]);
       if (concurrent.rows[0]) {
@@ -247,9 +310,11 @@ function createConversationStore(pool) {
       if (existing.rows[0]) {
         await client.query(`
           UPDATE osaa.conversation_message
-          SET status='pending', completed_at=NULL
+          SET status='pending', completed_at=NULL, lease_owner=$2,
+              lease_expires_at=clock_timestamp()+make_interval(secs=>$3),
+              heartbeat_at=clock_timestamp(), attempt=attempt+1
           WHERE id=$1
-        `, [existing.rows[0].id]);
+        `, [existing.rows[0].id, clientRequestId, TURN_LEASE_SECONDS]);
       } else {
         const sequence = await client.query(`
           SELECT COALESCE(max(sequence),0)+1 AS next_sequence
@@ -257,9 +322,11 @@ function createConversationStore(pool) {
         `, [conversation.id]);
         await client.query(`
           INSERT INTO osaa.conversation_message(
-            conversation_id,sequence,turn_request_id,role,content,model_id,status
-          ) VALUES($1,$2,$3,'user',$4,$5,'pending')
-        `, [conversation.id, sequence.rows[0].next_sequence, clientRequestId, content, modelId]);
+            conversation_id,sequence,turn_request_id,role,content,model_id,status,
+            lease_owner,lease_expires_at,heartbeat_at,attempt
+          ) VALUES($1,$2,$3,'user',$4,$5,'pending',$3,
+            clock_timestamp()+make_interval(secs=>$6),clock_timestamp(),1)
+        `, [conversation.id, sequence.rows[0].next_sequence, clientRequestId, content, modelId, TURN_LEASE_SECONDS]);
       }
 
       const history = await client.query(`
@@ -297,18 +364,27 @@ function createConversationStore(pool) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query("SELECT set_config('opensphere.actor_id',$1,true)", [owner]);
       const locked = await client.query(`
         SELECT * FROM osaa.conversation
         WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
         FOR UPDATE
       `, [turn.conversationId, owner]);
       if (!locked.rows[0]) throw failure(404, 'conversation not found');
+      const dialogue = await commitDialogueTransition(
+        client, owner, turn, response?.dialogueTransition || null,
+      );
       const sequence = await client.query(`
         SELECT COALESCE(max(sequence),0)+1 AS next_sequence
         FROM osaa.conversation_message WHERE conversation_id=$1
       `, [turn.conversationId]);
       const metadata = {
-        response: Object.fromEntries(Object.entries(response || {}).filter(([key]) => key !== 'message')),
+        response: {
+          ...Object.fromEntries(Object.entries(response || {}).filter(
+            ([key]) => !['message', 'dialogueTransition'].includes(key),
+          )),
+          ...(dialogue ? { dialogue } : {}),
+        },
         sources: Array.isArray(response?.sources) ? response.sources : [],
         concepts: response?.concepts?.concepts || [],
         usage: response?.usage || null,
@@ -326,7 +402,8 @@ function createConversationStore(pool) {
         JSON.stringify(metadata)]);
       await client.query(`
         UPDATE osaa.conversation_message
-        SET status='completed', completed_at=clock_timestamp()
+        SET status='completed', completed_at=clock_timestamp(),
+            lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL
         WHERE conversation_id=$1 AND turn_request_id=$2 AND role='user'
       `, [turn.conversationId, turn.clientRequestId]);
       await client.query(`
@@ -349,19 +426,42 @@ function createConversationStore(pool) {
     const owner = ownerId(actor);
     await pool.query(`
       UPDATE osaa.conversation_message m
-      SET status='failed', completed_at=clock_timestamp()
+      SET status='failed', completed_at=clock_timestamp(),
+          lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL
       FROM osaa.conversation c
       WHERE m.conversation_id=c.id AND c.id=$1 AND c.owner_id=$2
         AND m.turn_request_id=$3 AND m.role='user' AND m.status='pending'
     `, [turn.conversationId, owner, turn.clientRequestId]);
   }
 
-  return { list, get, update, remove, beginTurn, completeTurn, failTurn };
+  async function reapExpiredTurns(limit = 100) {
+    const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
+    const result = await pool.query(`
+      WITH expired AS (
+        SELECT id FROM osaa.conversation_message
+        WHERE role='user' AND status='pending'
+          AND lease_expires_at IS NOT NULL AND lease_expires_at<=clock_timestamp()
+        ORDER BY lease_expires_at,id
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE osaa.conversation_message m
+      SET status='failed', completed_at=clock_timestamp(),
+          lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL,
+          metadata=m.metadata || '{"recovery":"lease-reaper"}'::jsonb
+      FROM expired WHERE m.id=expired.id
+      RETURNING m.conversation_id,m.turn_request_id
+    `, [bounded]);
+    return result.rows;
+  }
+
+  return { list, get, update, remove, beginTurn, completeTurn, failTurn, reapExpiredTurns };
 }
 
 module.exports = {
   MAX_CONTEXT_CHARS,
   MAX_CONTEXT_MESSAGES,
+  TURN_LEASE_SECONDS,
   contextWindow,
   conversationId,
   createConversationStore,
