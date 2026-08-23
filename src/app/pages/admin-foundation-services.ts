@@ -106,9 +106,9 @@ interface FoundationService {
 }
 
 const LOGOS = {
-  data: 'https://cdn.statically.io/gh/openplatform-labs/images@main/logos/supabase-2.svg',
-  change: 'https://cdn.statically.io/gh/openplatform-labs/images@main/logos/gitea.svg',
-  monitoring: 'https://cdn.statically.io/gh/openplatform-labs/images@main/logos/beszel-light.svg',
+  data: '/assets/product-logos/supabase-icon.svg',
+  change: '/assets/product-logos/gitea.svg',
+  monitoring: '/assets/product-logos/beszel-light.svg',
 } as const;
 
 @Component({
@@ -117,13 +117,13 @@ const LOGOS = {
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <div class="os-page foundation-page">
-      <os-page-header title="Console 기반 서비스" tag="Foundation Services · Live evidence" />
+      <os-page-header title="CBSS 자원 서비스" tag="Console Backbone Service Stack · Live evidence" />
       <div class="page-lead">
         <div>
           <p>
-            Console의 Data &amp; Identity, 선언형 상태 변경, 노드 시계열 기반을 하나의 운영
-            관점에서 확인합니다. 제품 이름보다 서비스 역할을 우선하며, 각 상세 화면의 권위와
-            기능은 그대로 유지합니다.
+            OSCE와 OSDST를 비롯한 Console 서비스를 지속시키는 Data &amp; Identity, 선언형 상태 변경,
+            노드 시계열 자원을 하나의 운영 관점에서 확인합니다. 제품 이름보다 서비스 역할을
+            우선하며, 각 상세 화면의 권위와 기능은 그대로 유지합니다.
           </p>
           <small>현재 가용성과 장기 운영 준비도를 분리하고, 수집되지 않은 값은 0이 아닌 미구성으로 표시합니다.</small>
         </div>
@@ -133,7 +133,7 @@ const LOGOS = {
           <button
             class="icon-button"
             type="button"
-            aria-label="Console 기반 서비스 상태 새로고침"
+            aria-label="CBSS 자원 서비스 상태 새로고침"
             [disabled]="busy()"
             (click)="refresh()"
           >
@@ -143,20 +143,30 @@ const LOGOS = {
       </div>
 
       @if (busy() && !snapshot()) {
-        <div class="loading-block"><span class="spinner spinner-md"></span><span>기반 서비스 증거를 확인하고 있습니다.</span></div>
+        <div class="loading-block"><span class="spinner spinner-md"></span><span>CBSS 자원 서비스 증거를 확인하고 있습니다.</span></div>
       } @else if (snapshot()) {
         @if (failedReads().length) {
           <clr-alert [clrAlertType]="availableCount() ? 'warning' : 'danger'" [clrAlertClosable]="false">
             <clr-alert-item>
               <span class="alert-text">
-                <strong>{{ availableCount() ? '일부 근거를 불러오지 못했습니다.' : '기반 서비스 상태를 확인할 수 없습니다.' }}</strong>
+                <strong>{{ availableCount() ? '일부 근거를 불러오지 못했습니다.' : 'CBSS 자원 서비스 상태를 확인할 수 없습니다.' }}</strong>
                 {{ failedReads().join(' · ') }}
               </span>
             </clr-alert-item>
           </clr-alert>
         }
 
-        <section class="status-rail" aria-label="Console 기반 서비스 종합 상태">
+        <section class="core-consumers" aria-labelledby="core-consumers-title">
+          <div class="core-consumers-heading">
+            <span class="eyebrow">CORE SERVICE CONSUMERS</span>
+            <h2 id="core-consumers-title">이 자원을 소비하는 CBSS Core Service</h2>
+            <p>Core Service의 건강과 자원 서비스의 건강은 별도로 판정하되, revision과 evidence로 연결합니다.</p>
+          </div>
+          <a routerLink="/manage/platform-control"><strong>OSCE</strong><span>Platform Control Core Engine</span><small>Supabase identity · Gitea change authority · runtime evidence 소비</small></a>
+          <a routerLink="/manage/osaa"><strong>OSDST</strong><span>Agent Core Engine</span><small>Supabase dialogue state · Owner typed projection · evidence freshness 소비</small></a>
+        </section>
+
+        <section class="status-rail" aria-label="CBSS 자원 서비스 종합 상태">
           <div>
             <span>종합 판정</span>
             <strong [class]="stateClass(overallState())">{{ stateLabel(overallState()) }}</strong>
@@ -184,7 +194,7 @@ const LOGOS = {
           </div>
         </section>
 
-        <section class="service-grid" aria-label="기반 서비스 역할별 상태">
+        <section class="service-grid" aria-label="CBSS 자원 서비스 역할별 상태">
           @for (service of services(); track service.id) {
             <article class="service-card">
               <div class="service-heading">
@@ -259,6 +269,7 @@ const LOGOS = {
     .page-lead small{display:block;margin-top:.25rem;color:var(--os-ink-subtle);font-size:.64rem}
     .page-meta{display:grid;grid-template-columns:auto auto auto;align-items:center;gap:var(--os-3);white-space:nowrap;color:var(--os-ink-muted);font-size:.65rem}
     .page-meta strong{color:var(--os-ink);font-size:.7rem}.icon-button{display:grid;place-items:center;width:2rem;height:2rem;border:1px solid var(--os-hairline);background:var(--os-canvas);color:var(--os-accent)}
+    .core-consumers{display:grid;grid-template-columns:minmax(18rem,1.2fr) repeat(2,minmax(15rem,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas);margin:var(--os-5) 0}.core-consumers>*{min-width:0;padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}.core-consumers>*:last-child{border-inline-end:0}.core-consumers h2{margin:.2rem 0;font-size:.92rem}.core-consumers p,.core-consumers small{display:block;margin:.25rem 0 0;color:var(--os-ink-muted);font-size:.62rem;line-height:1.4}.core-consumers a{display:grid;align-content:center;color:inherit;text-decoration:none}.core-consumers a:hover{background:var(--os-surface-1)}.core-consumers a strong{color:var(--os-accent);font:700 .8rem var(--os-font-mono)}.core-consumers a span{margin-top:.2rem;font-size:.72rem;font-weight:600}
     .status-rail{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas);margin:var(--os-5) 0}
     .status-rail>div{display:grid;gap:var(--os-2);min-width:0;padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}
     .status-rail>div:last-child{border-inline-end:0}.status-rail span,.evidence-grid span{color:var(--os-ink-muted);font-size:.64rem}.status-rail strong{font-size:1.08rem}.status-rail small,.evidence-grid small{color:var(--os-ink-subtle);font-size:.59rem}
@@ -277,7 +288,7 @@ const LOGOS = {
     .gate-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas)}.gate-grid>div{padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}.gate-grid>div:last-child{border-inline-end:0}.gate-grid>div>span{display:block;margin-bottom:var(--os-3);color:var(--os-ink-muted);font-size:.65rem}.gate-grid p{margin:.5rem 0 0;color:var(--os-ink-muted);font-size:.64rem;line-height:1.45}
     .source-contract dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:0;border:1px solid var(--os-hairline);background:var(--os-canvas)}.source-contract dl>div{display:grid;grid-template-columns:minmax(9rem,.7fr) minmax(0,1.3fr);gap:var(--os-4);padding:var(--os-4) var(--os-5);border-bottom:1px solid var(--os-hairline)}.source-contract dt{font-size:.65rem;font-weight:600}.source-contract dd{margin:0;color:var(--os-ink-muted);font-size:.64rem}
     .loading-block{display:grid;place-items:center;gap:var(--os-4);min-height:14rem;color:var(--os-ink-muted);font-size:.72rem}.warn{color:#684e00}.danger{color:#a2191f}
-    @media(max-width:76rem){.service-grid{grid-template-columns:1fr}.status-rail{grid-template-columns:repeat(3,minmax(0,1fr))}.status-rail>div:nth-child(3){border-inline-end:0}.gate-grid{grid-template-columns:1fr}.gate-grid>div{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.gate-grid>div:last-child{border-bottom:0}}
+    @media(max-width:76rem){.service-grid{grid-template-columns:1fr}.core-consumers{grid-template-columns:1fr}.core-consumers>*{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.core-consumers>*:last-child{border-bottom:0}.status-rail{grid-template-columns:repeat(3,minmax(0,1fr))}.status-rail>div:nth-child(3){border-inline-end:0}.gate-grid{grid-template-columns:1fr}.gate-grid>div{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.gate-grid>div:last-child{border-bottom:0}}
     @media(max-width:48rem){.page-lead{display:grid}.page-meta{white-space:normal}.status-rail,.source-contract dl{grid-template-columns:1fr}.status-rail>div{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.status-rail>div:last-child{border-bottom:0}.source-contract dl>div{grid-template-columns:1fr;gap:var(--os-2)}}
   `],
 })

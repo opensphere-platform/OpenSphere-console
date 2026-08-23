@@ -45,8 +45,15 @@ test('Console management uses Clarity mixed tree navigation with direct overview
   );
   assert.doesNotMatch(treeGroups, /route: '\/manage\/extensions'/);
   assert.doesNotMatch(treeGroups, /route: '\/manage\/osaa'/);
-  assert.match(overview, /title="콘솔 관리" tag="Overview · Core Admin"/);
-  assert.match(overview, /routerLink="\/manage\/extensions"/);
+  assert.match(overview, /title="Console Service Dashboard" tag="CBSS · Service plane"/);
+  assert.match(overview, /OpenSphere를 제어하기 위해 Console은 무엇을 서비스하는가/);
+  assert.match(overview, /CBSS CORE SERVICES/);
+  assert.match(overview, /OpenSphere Control Engine/);
+  assert.match(overview, /OSAA Dialogue State Tracker/);
+  assert.match(overview, /SubShell·Plugin 구성/);
+  assert.match(overview, /Owner live evidence 연계 전/);
+  assert.match(overview, /routerLink="\/manage\/foundation-services"/);
+  assert.match(overview, /route: '\/manage\/extensions'/);
 });
 
 test('all Console management surfaces share task context, status and filtering conventions', () => {

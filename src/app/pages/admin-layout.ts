@@ -159,7 +159,7 @@ export class AdminLayout {
   readonly groups: AdminGroup[] = [
     {
       id: 'foundation',
-      label: 'Console 기반 서비스',
+      label: 'CBSS 자원 서비스',
       icon: Layers16,
       items: [
         { label: '개요', route: '/manage/foundation-services' },

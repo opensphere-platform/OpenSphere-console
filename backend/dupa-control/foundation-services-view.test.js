@@ -16,13 +16,21 @@ test('Console foundation services keep role-oriented scope and CC compatibility 
   assert.match(routes, /path: 'foundation-services',[\s\S]*?loadComponent:[\s\S]*?AdminFoundationServices/);
   assert.match(routes, /path: 'bbss', redirectTo: 'foundation-services'/);
   assert.match(layout, /id: 'foundation'/);
-  assert.match(layout, /label: 'Console 기반 서비스'/);
+  assert.match(layout, /label: 'CBSS 자원 서비스'/);
   assert.match(layout, /\{ label: '개요', route: '\/manage\/foundation-services' \}/);
   assert.match(layout, /\{ label: 'Data & Identity', route: '\/manage\/data-identity' \}/);
   assert.match(layout, /\{ label: '선언형 상태 변경', route: '\/manage\/state-changes' \}/);
   assert.match(layout, /\{ label: 'Infrastructure Monitoring', route: '\/manage\/infrastructure-monitoring' \}/);
 
-  assert.match(page, /title="Console 기반 서비스"/);
+  assert.match(page, /title="CBSS 자원 서비스"/);
+  assert.match(page, /Console Backbone Service Stack · Live evidence/);
+  assert.match(page, /이 자원을 소비하는 CBSS Core Service/);
+  assert.match(page, /OSCE/);
+  assert.match(page, /OSDST/);
+  assert.match(page, /\/assets\/product-logos\/supabase-icon\.svg/);
+  assert.match(page, /\/assets\/product-logos\/gitea\.svg/);
+  assert.match(page, /\/assets\/product-logos\/beszel-light\.svg/);
+  assert.doesNotMatch(page, /cdn\.statically\.io|logos\.opl\.io\.kr/);
   assert.match(page, /현재 가용성과 장기 운영 준비도를 분리/);
   assert.match(page, /수집되지 않은 값은 0이 아닌 미구성/);
   assert.match(page, /공통 운영 Gate/);
@@ -30,7 +38,7 @@ test('Console foundation services keep role-oriented scope and CC compatibility 
   assert.match(page, /운영 Gate 주의/);
   assert.match(page, /\[\.\.\.this\.services\(\), \.\.\.this\.gates\(\)\]/);
   assert.match(page, /데이터 출처 계약/);
-  assert.match(page, /제품 이름보다 서비스 역할을 우선/);
+  assert.match(page, /제품 이름보다 서비스 역할을\s*우선/);
   assert.match(page, /route: '\/manage\/data-identity'/);
   assert.match(page, /route: '\/manage\/state-changes'/);
   assert.match(page, /route: '\/manage\/infrastructure-monitoring'/);
