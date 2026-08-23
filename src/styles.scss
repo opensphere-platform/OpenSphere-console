@@ -1464,3 +1464,248 @@ os-landing-foundations {
     .engine-node, .engine-node.target, .engine-core-card { grid-template-columns: 1fr; }
   }
 }
+
+// Main Index · OSAA Dialogue State strategy page. Scoped to the component host so
+// the denser architecture layouts cannot affect Console navigation or other pages.
+os-landing-osaa-dialogue-state {
+  .strategy-overview {
+    display: grid;
+    grid-template-columns: minmax(17rem, .72fr) minmax(0, 2.28fr);
+    gap: 1rem;
+    margin-top: 1rem;
+    border: 1px solid var(--os-hairline);
+    background: var(--os-canvas);
+  }
+  .strategy-heading { padding: 1rem; border-right: 1px solid var(--os-hairline); background: var(--os-surface-1); }
+  .strategy-heading h2 { margin: 0; font-size: var(--od-section-title); line-height: 1.3; }
+  .strategy-heading > p:last-child,
+  .strategy-strip p,
+  .method-layers p,
+  .method-boundary p,
+  .storage-rules p,
+  .state-transaction p,
+  .delivery-phases p { color: var(--os-ink-muted); line-height: 1.5; }
+  .strategy-heading > p:last-child { margin: .65rem 0 0; font-size: var(--od-detail); }
+  .strategy-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .strategy-strip article {
+    display: grid;
+    grid-template-columns: 3.1rem minmax(0, 1fr);
+    align-content: start;
+    gap: .45rem .65rem;
+    padding: .9rem;
+    border-right: 1px solid var(--os-hairline);
+  }
+  .strategy-strip article:last-child,
+  .method-layers article:last-child,
+  .storage-rules article:last-child,
+  .state-transaction article:last-child,
+  .delivery-phases li:last-child { border-right: 0; }
+  .strategy-strip span,
+  .method-layers span,
+  .implementation-baseline span {
+    color: var(--os-accent);
+    font-size: var(--od-label);
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .strategy-strip span,
+  .method-layers span { grid-column: 1 / -1; }
+  .strategy-strip img { grid-row: 2 / 4; width: 2.75rem; height: 2.75rem; object-fit: contain; }
+  .strategy-strip strong,
+  .method-layers h3,
+  .implementation-baseline h3,
+  .storage-rules strong,
+  .state-transaction strong,
+  .delivery-phases strong,
+  .acceptance-heading h3 { font-size: var(--od-card-title); line-height: 1.35; }
+  .strategy-strip p { margin: 0; font-size: var(--od-detail); }
+
+  .method-layers {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--os-hairline);
+    background: var(--os-canvas);
+  }
+  .method-layers article {
+    display: grid;
+    grid-template-columns: 3.4rem minmax(0, 1fr);
+    align-content: start;
+    gap: .35rem .75rem;
+    min-height: 10rem;
+    padding: 1rem;
+    border-right: 1px solid var(--os-hairline);
+  }
+  .method-layers img { grid-row: 2 / 5; width: 3rem; height: 3rem; object-fit: contain; }
+  .method-layers h3 { margin: 0; }
+  .method-layers p { margin: .35rem 0 0; font-size: var(--od-body); }
+  .method-layers small,
+  .storage-rules small,
+  .delivery-phases small { color: var(--os-ink-muted); font-size: var(--od-detail); line-height: 1.45; }
+  .method-layers small { align-self: end; }
+
+  .schema-mapping-wrap,
+  .acceptance-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--os-hairline);
+    border-top: 0;
+    background: var(--os-canvas);
+  }
+  .schema-mapping-wrap:focus-visible,
+  .acceptance-table-wrap:focus-visible,
+  .contract-detail pre:focus-visible { outline: 2px solid var(--os-accent); outline-offset: 2px; }
+  .schema-mapping,
+  .acceptance-table { width: 100%; min-width: 58rem; border-collapse: collapse; table-layout: fixed; }
+  .schema-mapping th,
+  .schema-mapping td,
+  .acceptance-table th,
+  .acceptance-table td {
+    padding: .65rem .75rem;
+    border-right: 1px solid var(--os-hairline);
+    border-bottom: 1px solid var(--os-hairline);
+    text-align: left;
+    vertical-align: top;
+    font-size: var(--od-detail);
+    line-height: 1.5;
+  }
+  .schema-mapping thead th,
+  .acceptance-table thead th { background: var(--os-surface-1); font-size: var(--od-label); text-transform: uppercase; }
+  .schema-mapping tr:last-child > *,
+  .acceptance-table tr:last-child > * { border-bottom: 0; }
+  .schema-mapping tr > *:last-child,
+  .acceptance-table tr > *:last-child { border-right: 0; }
+  .schema-mapping code,
+  .acceptance-table code,
+  .implementation-baseline code,
+  .storage-rules code,
+  .delivery-phases code { color: var(--os-accent); font: var(--od-detail) var(--os-font-mono); }
+  .method-boundary {
+    display: grid;
+    grid-template-columns: 8rem minmax(0, 1fr);
+    gap: .8rem;
+    padding: .8rem 1rem;
+    border: 1px solid var(--os-hairline);
+    border-top: 0;
+    background: var(--os-surface-1);
+  }
+  .method-boundary strong { color: var(--os-accent); font-size: var(--od-detail); }
+  .method-boundary p { margin: 0; font-size: var(--od-detail); }
+
+  .implementation-baseline,
+  .contract-detail,
+  .state-transaction,
+  .delivery-phases,
+  .acceptance-block { border: 1px solid var(--os-hairline); background: var(--os-canvas); }
+  .implementation-baseline { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .implementation-baseline article { padding: 1rem; }
+  .implementation-baseline article + article { border-left: 1px solid var(--os-hairline); }
+  .implementation-baseline span { display: inline-block; }
+  .implementation-baseline h3 { margin: .35rem 0 0; padding-bottom: .55rem; border-bottom: 3px solid var(--os-success); }
+  .implementation-baseline .to-build h3 { border-color: var(--os-accent); }
+  .implementation-baseline ul { margin: .7rem 0 0; padding-left: 1.15rem; }
+  .implementation-baseline li { margin: .35rem 0; font-size: var(--od-body); line-height: 1.5; }
+  .contract-detail { display: grid; grid-template-columns: minmax(22rem, 1fr) minmax(0, 1.25fr); border-top: 0; }
+  .contract-detail > div:first-child { padding: 1rem; border-right: 1px solid var(--os-hairline); }
+  .contract-detail h3 { margin: 0; font-size: var(--od-card-title); }
+  .contract-detail pre {
+    max-width: 100%;
+    margin: .7rem 0 0;
+    padding: .8rem;
+    overflow: auto;
+    border: 1px solid var(--os-hairline);
+    background: var(--os-surface-1);
+    color: var(--os-ink);
+    font: var(--od-detail)/1.55 var(--os-font-mono);
+    white-space: pre;
+  }
+  .storage-rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .storage-rules article { padding: 1rem; border-right: 1px solid var(--os-hairline); }
+  .storage-rules p { margin: .5rem 0 0; font-size: var(--od-body); }
+  .storage-rules small { display: block; margin-top: .6rem; }
+  .state-transaction { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 0; background: var(--os-surface-1); }
+  .state-transaction article { min-height: 7rem; padding: .8rem; border-right: 1px solid var(--os-hairline); }
+  .state-transaction span,
+  .delivery-phases li > span { color: var(--os-accent); font: var(--od-label) var(--os-font-mono); }
+  .state-transaction span,
+  .state-transaction strong { display: block; }
+  .state-transaction strong { margin-top: .35rem; }
+  .state-transaction p { margin: .35rem 0 0; font-size: var(--od-detail); }
+
+  .delivery-phases { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; padding: 0; list-style: none; }
+  .delivery-phases li {
+    display: grid;
+    grid-template-columns: 2.8rem minmax(0, 1fr);
+    align-content: start;
+    gap: .4rem .65rem;
+    min-height: 11.5rem;
+    padding: .85rem;
+    border-right: 1px solid var(--os-hairline);
+  }
+  .delivery-phases li > span { grid-column: 1 / -1; }
+  .delivery-phases img { width: 2.6rem; height: 2.6rem; object-fit: contain; }
+  .delivery-phases p { margin: .4rem 0 0; font-size: var(--od-detail); }
+  .delivery-phases small { display: block; margin-top: .55rem; }
+  .acceptance-block { display: grid; grid-template-columns: minmax(17rem, .7fr) minmax(0, 2.3fr); border-top: 0; }
+  .acceptance-heading {
+    display: grid;
+    grid-template-columns: 3.6rem minmax(0, 1fr);
+    gap: .75rem;
+    align-content: start;
+    padding: 1rem;
+    border-right: 1px solid var(--os-hairline);
+    background: var(--os-surface-1);
+  }
+  .acceptance-heading img { width: 3.25rem; height: 3.25rem; object-fit: contain; }
+  .acceptance-heading h3 { margin: 0; }
+  .acceptance-table-wrap { border: 0; }
+  .acceptance-table { min-width: 52rem; }
+  .acceptance-table th:first-child { width: 24%; }
+  .acceptance-table th:nth-child(2) { width: 34%; }
+}
+
+@media (max-width: 76rem) {
+  os-landing-osaa-dialogue-state {
+    .strategy-overview, .acceptance-block { grid-template-columns: 1fr; }
+    .strategy-heading, .acceptance-heading { border-right: 0; border-bottom: 1px solid var(--os-hairline); }
+    .strategy-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .strategy-strip article:nth-child(2n) { border-right: 0; }
+    .strategy-strip article:nth-child(-n + 2) { border-bottom: 1px solid var(--os-hairline); }
+    .contract-detail { grid-template-columns: 1fr; }
+    .contract-detail > div:first-child { border-right: 0; border-bottom: 1px solid var(--os-hairline); }
+    .state-transaction { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .state-transaction article:nth-child(3n) { border-right: 0; }
+    .state-transaction article:nth-child(-n + 3) { border-bottom: 1px solid var(--os-hairline); }
+    .delivery-phases { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .delivery-phases li:nth-child(2n) { border-right: 0; }
+    .delivery-phases li:nth-child(-n + 4) { border-bottom: 1px solid var(--os-hairline); }
+    .delivery-phases li:last-child { grid-column: 1 / -1; min-height: 0; }
+  }
+}
+
+@media (max-width: 60rem) {
+  os-landing-osaa-dialogue-state {
+    .method-layers, .implementation-baseline, .storage-rules { grid-template-columns: 1fr; }
+    .method-layers article { border-right: 0; border-bottom: 1px solid var(--os-hairline); }
+    .method-layers article:last-child { border-bottom: 0; }
+    .method-boundary { grid-template-columns: 1fr; gap: .25rem; }
+    .implementation-baseline article + article { border-left: 0; border-top: 1px solid var(--os-hairline); }
+    .storage-rules article { border-right: 0; border-bottom: 1px solid var(--os-hairline); }
+    .storage-rules article:last-child { border-bottom: 0; }
+  }
+}
+
+@media (max-width: 38rem) {
+  os-landing-osaa-dialogue-state {
+    .strategy-strip, .state-transaction, .delivery-phases { grid-template-columns: 1fr; }
+    .strategy-strip article, .strategy-strip article:nth-child(2n),
+    .state-transaction article, .state-transaction article:nth-child(3n),
+    .delivery-phases li, .delivery-phases li:nth-child(2n) {
+      grid-column: auto;
+      min-height: 0;
+      border-right: 0;
+      border-bottom: 1px solid var(--os-hairline);
+    }
+    .strategy-strip article:last-child,
+    .state-transaction article:last-child,
+    .delivery-phases li:last-child { border-bottom: 0; }
+  }
+}

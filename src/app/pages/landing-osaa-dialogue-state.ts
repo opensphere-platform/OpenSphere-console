@@ -52,6 +52,23 @@ const DIALOGUE_STATE_FIELDS: readonly DialogueStateField[] = [
   },
 ] as const;
 
+const EXAMPLE_DIALOGUE_STATE = `{
+  "schema": "osaa.dialogue-state/v1",
+  "revision": 12,
+  "domain": "pfss.postgresql",
+  "activeIntent": "create.capability.check",
+  "activeResourceRefs": [
+    "opensphere://pfss/postgresql/foundation-data-pg"
+  ],
+  "slotValues": { "version": "18", "replicas": 2 },
+  "authorityRef": "owner://pfss/postgresql",
+  "capabilityRefs": ["status", "create.plan", "create.apply"],
+  "evidenceRefs": [
+    { "id": "observation:...", "observedAt": "...", "expiresAt": "..." }
+  ],
+  "operationRef": null
+}`;
+
 const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
   {
     name: 'Dialogue State Tracking',
@@ -64,6 +81,24 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
     contribution: '고정된 명령 목록 대신 서비스/API 스키마로 intent와 slot을 해석합니다.',
     decision: 'OSCE Capability Schema와 결합',
     href: 'https://research.google/pubs/towards-scalable-multi-domain-conversational-agents-the-schema-guided-dialogue-dataset/',
+  },
+  {
+    name: 'Google Description-Driven DST',
+    contribution: 'intent·slot의 내부 이름보다 자연어 설명을 이용해 새로운 task로 일반화합니다.',
+    decision: 'Capability description을 resolver 입력으로 채택',
+    href: 'https://research.google/pubs/description-driven-task-oriented-dialog-modeling/',
+  },
+  {
+    name: 'Google ADK Session · State · Memory',
+    contribution: '대화 이벤트, 세션 임시 상태와 세션 간 장기 기억의 lifecycle을 분리합니다.',
+    decision: '분리 원칙 채택, ADK runtime은 도입하지 않음',
+    href: 'https://adk.dev/sessions/',
+  },
+  {
+    name: 'Dialogflow CX Session Parameters',
+    contribution: '자연어 원문과 별개로 추출·정규화된 parameter를 session 범위에서 유지합니다.',
+    decision: 'slot 원문·정규값 분리 방식 참고',
+    href: 'https://docs.cloud.google.com/dialogflow/cx/docs/concept/parameter',
   },
   {
     name: 'Rasa Tracker',
@@ -130,6 +165,74 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
         </dl>
       </section>
 
+      <section class="strategy-overview" aria-labelledby="strategy-overview-title">
+        <div class="strategy-heading">
+          <p class="eyebrow">Goal and development strategy</p>
+          <h2 id="strategy-overview-title">대화 이력을 운영 가능한 상태로 바꿉니다</h2>
+          <p>
+            새 대화 프레임워크를 만드는 것이 목표가 아닙니다. 이미 존재하는
+            Conversation·OSCE·Owner·증거 체계를 구조화된 대화 상태로 연결해, R2D2가 맥락을
+            유지하면서도 현재 사실을 추측하지 않게 합니다.
+          </p>
+        </div>
+        <div class="strategy-strip">
+          <article>
+            <span>현재 기반</span>
+            <img
+              src="/assets/pictograms/console.svg"
+              alt="Durable conversation baseline"
+              width="44"
+              height="44"
+            />
+            <strong>Durable Conversation</strong>
+            <p>
+              Supabase에 사용자별 대화·메시지를 저장하고 최근 80개·60,000자 문맥을 재구성합니다.
+            </p>
+          </article>
+          <article>
+            <span>현재 공백</span>
+            <img
+              src="/assets/pictograms/code-syntax.svg"
+              alt="Missing typed dialogue state"
+              width="44"
+              height="44"
+            />
+            <strong>Typed State 미구현</strong>
+            <p>
+              intent·resource·slot이 검증된 객체가 아니라 아직 과거 메시지 안의 자연어로만 남아
+              있습니다.
+            </p>
+          </article>
+          <article>
+            <span>개발 목표</span>
+            <img
+              src="/assets/pictograms/connected-ecosystem.svg"
+              alt="Schema guided operating dialogue"
+              width="44"
+              height="44"
+            />
+            <strong>Schema-guided Control</strong>
+            <p>
+              Google식 intent·slot 추적을 OSCE Capability Schema와 canonical resource에 결속합니다.
+            </p>
+          </article>
+          <article>
+            <span>완료 기준</span>
+            <img
+              src="/assets/pictograms/ai-governance-lifecycle-factsheet.svg"
+              alt="Evidence backed operation"
+              width="44"
+              height="44"
+            />
+            <strong>Evidence-backed Action</strong>
+            <p>
+              상태 유지, live 관측, 승인된 실행과 postcondition이 하나의 operation으로 이어져야
+              합니다.
+            </p>
+          </article>
+        </div>
+      </section>
+
       <section class="document-section" aria-labelledby="structure-title">
         <div class="section-title">
           <div class="section-title-lockup">
@@ -186,6 +289,132 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
             <p>canonical resource 관계와 해당 턴에서 관측한 실제 상태·freshness를 연결합니다.</p>
             <small>증명하는 것: “현재 실제로 무엇이 확인되었는가”</small>
           </article>
+        </div>
+      </section>
+
+      <section class="document-section" aria-labelledby="google-method-title">
+        <div class="section-title">
+          <div class="section-title-lockup">
+            <img
+              src="/assets/pictograms/developer-tools.svg"
+              alt="Google dialogue methods adapted to OpenSphere"
+              width="52"
+              height="52"
+            />
+            <div>
+              <p class="eyebrow">Upstream method · native control</p>
+              <h2 id="google-method-title">
+                Google의 구조를 대화 계층에 적용하고 운영 계층은 OSCE로 확장합니다
+              </h2>
+            </div>
+          </div>
+          <p>
+            Google SGD는 서비스·intent·slot을 동적으로 해석하고, ADK는 Session·State·Memory를
+            분리합니다. OpenSphere는 그 위에 Owner 권위, live evidence, 승인과 operation receipt를
+            추가합니다.
+          </p>
+        </div>
+
+        <div class="method-layers">
+          <article>
+            <span>Google SGD · D3ST</span>
+            <img
+              src="/assets/pictograms/intelligence.svg"
+              alt="Schema guided dialogue understanding"
+              width="48"
+              height="48"
+            />
+            <h3>대화 이해</h3>
+            <p>
+              자연어 설명이 포함된 service schema를 보고 active intent와 필요한 slot을 추적합니다.
+            </p>
+            <small>채택: schema · intent · required/optional/result slots</small>
+          </article>
+          <article>
+            <span>Google ADK · Dialogflow CX</span>
+            <img
+              src="/assets/pictograms/microservices.svg"
+              alt="Session state and memory separation"
+              width="48"
+              height="48"
+            />
+            <h3>상태 lifecycle</h3>
+            <p>
+              메시지 이벤트, 세션 상태, 세션을 넘는 지식을 서로 다른 수명과 저장 책임으로
+              분리합니다.
+            </p>
+            <small>채택: Session · State · Memory 및 parameter 정규화</small>
+          </article>
+          <article>
+            <span>OpenSphere native</span>
+            <img
+              src="/assets/pictograms/control-tower.svg"
+              alt="OpenSphere operational authority"
+              width="48"
+              height="48"
+            />
+            <h3>운영 권위와 증거</h3>
+            <p>OSCE가 capability를 검증하고 Owner가 실제 상태·계획·실행·사후 검증을 소유합니다.</p>
+            <small>추가: authority · evidence · approval · operation</small>
+          </article>
+        </div>
+
+        <div
+          class="schema-mapping-wrap"
+          tabindex="0"
+          aria-label="Google schema to OpenSphere mapping"
+        >
+          <table class="schema-mapping">
+            <thead>
+              <tr>
+                <th scope="col">Google schema</th>
+                <th scope="col">OpenSphere 계약</th>
+                <th scope="col">PFSS PostgreSQL 예</th>
+                <th scope="col">추가 검증</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row"><code>service_name</code></th>
+                <td><code>domain + authorityRef</code></td>
+                <td>pfss.postgresql · PFSS PostgreSQL Owner</td>
+                <td>등록된 Owner와 schema version 일치</td>
+              </tr>
+              <tr>
+                <th scope="row"><code>intent</code></th>
+                <td><code>activeIntent + capabilityRef</code></td>
+                <td>status · create.plan · create.apply</td>
+                <td>Owner가 현재 광고한 capability인지 확인</td>
+              </tr>
+              <tr>
+                <th scope="row"><code>required_slots</code></th>
+                <td><code>slotValues</code></td>
+                <td>name · version · replicas · storageClass</td>
+                <td>형식·정책·기본값과 누락 입력 검증</td>
+              </tr>
+              <tr>
+                <th scope="row"><code>service_call</code></th>
+                <td><code>owner operation</code></td>
+                <td>PostgresClaim status 또는 create plan</td>
+                <td>읽기/변경 분리 · 승인 · plan digest</td>
+              </tr>
+              <tr>
+                <th scope="row"><code>service_results</code></th>
+                <td><code>evidenceRefs + operationRef</code></td>
+                <td>observationId · operationId · receipt</td>
+                <td>observedAt · expiresAt · postcondition</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="method-boundary">
+          <strong>도입 경계</strong>
+          <p>
+            Google dataset·모델·ADK runtime을 제품 의존성으로 넣지 않습니다. 검증된 데이터 모델과
+            lifecycle 분리 원칙만 수용하고, 구현은 기존 OSAA Gateway·Supabase·OSCE 안에서
+            네이티브하게 수행합니다.
+          </p>
         </div>
       </section>
 
@@ -293,6 +522,109 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
               <small>{{ field.example }}</small>
             </article>
           }
+        </div>
+      </section>
+
+      <section class="document-section" aria-labelledby="implementation-contract-title">
+        <div class="section-title">
+          <div class="section-title-lockup">
+            <img
+              src="/assets/pictograms/code-syntax.svg"
+              alt="Concrete dialogue state implementation contract"
+              width="52"
+              height="52"
+            />
+            <div>
+              <p class="eyebrow">Concrete native implementation</p>
+              <h2 id="implementation-contract-title">
+                현재 저장 구조를 유지하고 typed projection만 추가합니다
+              </h2>
+            </div>
+          </div>
+          <p>
+            Conversation 전체를 새 엔진으로 옮기지 않습니다. 현재 메시지 원장은 그대로 두고, 빠르게
+            읽는 현재 상태 projection과 매 턴의 검증된 state delta를 추가합니다.
+          </p>
+        </div>
+
+        <div class="implementation-baseline">
+          <article class="implemented">
+            <span>이미 구현됨</span>
+            <h3>OSAA durable conversation</h3>
+            <ul>
+              <li><code>osaa.conversation</code> · <code>conversation_message</code></li>
+              <li>사용자 소유권과 Supabase RLS</li>
+              <li><code>conversationId</code>와 turn request 중복 방지</li>
+              <li>최근 80개·60,000자 server-owned context</li>
+              <li>AgentRun · ToolRun · evidence · operation ledger</li>
+            </ul>
+          </article>
+          <article class="to-build">
+            <span>이번 전략의 구현 대상</span>
+            <h3>Typed dialogue state projection</h3>
+            <ul>
+              <li><code>osaa.conversation_state</code> 현재 projection과 revision</li>
+              <li><code>conversation_message.metadata.stateDelta</code> 턴별 변경 이력</li>
+              <li>OSCE schema version과 Owner authority binding</li>
+              <li>LLM 제안 뒤 deterministic validator 통과</li>
+              <li>live evidence와 active operation reference 연결</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="contract-detail">
+          <div>
+            <p class="eyebrow">Target projection · v1</p>
+            <h3>PFSS PostgreSQL 상태 예시</h3>
+            <pre tabindex="0"><code>{{ exampleState }}</code></pre>
+          </div>
+          <div class="storage-rules">
+            <article>
+              <strong><code>slotValues</code>에 저장</strong>
+              <p>사용자가 요청한 desired input과 schema가 정규화한 값만 저장합니다.</p>
+              <small>예: PostgreSQL 18 · replicas 2</small>
+            </article>
+            <article>
+              <strong>운영 사실은 저장하지 않음</strong>
+              <p>
+                Ready·Pod 수·Owner 응답은 state의 사실 값이 아니라 유효기간이 있는 evidence
+                reference입니다.
+              </p>
+              <small>매 답변 시 live read 또는 명시적 last-known 판정</small>
+            </article>
+            <article>
+              <strong>동시성은 revision으로 차단</strong>
+              <p>현재 revision과 turn request를 비교해 중복·순서 역전 상태 변경을 거부합니다.</p>
+              <small>optimistic state transition · idempotent turn</small>
+            </article>
+          </div>
+        </div>
+
+        <div class="state-transaction" aria-label="Dialogue state transaction steps">
+          <article>
+            <span>01</span><strong>Load</strong>
+            <p>현재 projection과 새 utterance를 읽음</p>
+          </article>
+          <article>
+            <span>02</span><strong>Propose</strong>
+            <p>LLM이 intent·resource·slot delta를 제안</p>
+          </article>
+          <article>
+            <span>03</span><strong>Validate</strong>
+            <p>OSCE schema·Owner·canonical ID로 결정 검증</p>
+          </article>
+          <article>
+            <span>04</span><strong>Observe / Plan</strong>
+            <p>Owner가 live read 또는 변경 계획 수행</p>
+          </article>
+          <article>
+            <span>05</span><strong>Commit</strong>
+            <p>state revision·delta·evidence·operation을 원자 기록</p>
+          </article>
+          <article>
+            <span>06</span><strong>Respond</strong>
+            <p>검증된 상태와 해당 턴 증거로만 답변</p>
+          </article>
         </div>
       </section>
 
@@ -407,6 +739,164 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
               <li>모델 추론을 mutation 권위로 사용</li>
             </ul>
           </article>
+        </div>
+      </section>
+
+      <section class="document-section" aria-labelledby="delivery-plan-title">
+        <div class="section-title">
+          <div class="section-title-lockup">
+            <img
+              src="/assets/pictograms/control-panel.svg"
+              alt="OSAA dialogue state delivery plan"
+              width="52"
+              height="52"
+            />
+            <div>
+              <p class="eyebrow">Delivery plan · bounded increments</p>
+              <h2 id="delivery-plan-title">
+                다섯 단계로 구현하고 각 단계에서 독립적으로 판정합니다
+              </h2>
+            </div>
+          </div>
+          <p>
+            프레임워크 도입부터 시작하지 않습니다. 데이터 계약, schema adapter, validator, evidence
+            결속, 사용자 검증 순으로 작은 기능 단위를 완성합니다.
+          </p>
+        </div>
+
+        <ol class="delivery-phases">
+          <li>
+            <span>01</span>
+            <img
+              src="/assets/pictograms/code-syntax.svg"
+              alt="State contract and migration"
+              width="42"
+              height="42"
+            />
+            <div>
+              <strong>State contract & migration</strong>
+              <p><code>conversation_state</code>, revision, stateDelta와 RLS를 추가합니다.</p>
+              <small>Gate: 재시작 후 같은 conversation state 복구</small>
+            </div>
+          </li>
+          <li>
+            <span>02</span>
+            <img
+              src="/assets/pictograms/api.svg"
+              alt="OSCE schema adapter"
+              width="42"
+              height="42"
+            />
+            <div>
+              <strong>OSCE schema adapter</strong>
+              <p>Owner capability를 service·intent·slot schema로 투영합니다.</p>
+              <small>Gate: 새 capability가 모델 재학습 없이 노출</small>
+            </div>
+          </li>
+          <li>
+            <span>03</span>
+            <img
+              src="/assets/pictograms/intelligence.svg"
+              alt="State resolver and validator"
+              width="42"
+              height="42"
+            />
+            <div>
+              <strong>Resolver & deterministic validator</strong>
+              <p>LLM은 delta를 제안하고 서버가 schema·ID·정책으로 확정합니다.</p>
+              <small>Gate: 미등록 intent·resource·slot 거부</small>
+            </div>
+          </li>
+          <li>
+            <span>04</span>
+            <img
+              src="/assets/pictograms/control-tower.svg"
+              alt="Evidence and operation binding"
+              width="42"
+              height="42"
+            />
+            <div>
+              <strong>Evidence & operation binding</strong>
+              <p>live read, plan, approval, apply와 postcondition을 같은 턴에 연결합니다.</p>
+              <small>Gate: 근거 없는 현재 사실·완료 주장 차단</small>
+            </div>
+          </li>
+          <li>
+            <span>05</span>
+            <img
+              src="/assets/pictograms/console.svg"
+              alt="Console state inspection and evaluation"
+              width="42"
+              height="42"
+            />
+            <div>
+              <strong>Console inspection & evaluation</strong>
+              <p>운영자는 현재 intent·resource·evidence·operation을 대화에서 확인합니다.</p>
+              <small>Gate: PFSS 기준 시나리오와 장애 시나리오 통과</small>
+            </div>
+          </li>
+        </ol>
+
+        <div class="acceptance-block">
+          <div class="acceptance-heading">
+            <img
+              src="/assets/pictograms/ai-governance-lifecycle-factsheet.svg"
+              alt="Acceptance test contract"
+              width="52"
+              height="52"
+            />
+            <div>
+              <p class="eyebrow">Acceptance contract</p>
+              <h3>R2D2 완성도는 실제 대화 결과로 판정합니다</h3>
+            </div>
+          </div>
+          <div
+            class="acceptance-table-wrap"
+            tabindex="0"
+            aria-label="Dialogue state acceptance scenarios"
+          >
+            <table class="acceptance-table">
+              <thead>
+                <tr>
+                  <th scope="col">시나리오</th>
+                  <th scope="col">반드시 유지할 상태</th>
+                  <th scope="col">합격 판정</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">운영 인스턴스가 있는가?</th>
+                  <td>pfss.postgresql · status</td>
+                  <td>같은 턴의 Owner evidence로 대상·Ready·관측 시각 제시</td>
+                </tr>
+                <tr>
+                  <th scope="row">삭제할 수 있나?</th>
+                  <td>기존 resource 유지 · intent만 delete capability로 전환</td>
+                  <td>보호·백업·권한을 별도 조회하고 plan 가능 여부를 판정</td>
+                </tr>
+                <tr>
+                  <th scope="row">새 인스턴스 생성은?</th>
+                  <td>domain 유지 · 기존 resource는 생성 대상에서 해제</td>
+                  <td>create schema의 누락 slot만 질문하고 기존 장애를 복사하지 않음</td>
+                </tr>
+                <tr>
+                  <th scope="row">Owner API 500</th>
+                  <td>canonical resource reference 유지</td>
+                  <td>“없음”이 아니라 “현재 관찰 불가능”으로 답변</td>
+                </tr>
+                <tr>
+                  <th scope="row">변경 실행</th>
+                  <td>planDigest · approval · operationRef</td>
+                  <td>receipt와 postcondition 전에는 완료라고 답하지 않음</td>
+                </tr>
+                <tr>
+                  <th scope="row">새 Owner capability 설치</th>
+                  <td>새 schemaRef revision</td>
+                  <td>LLM 재학습 없이 새로운 intent·slot을 해석</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -968,4 +1458,5 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
 export class LandingOsaaDialogueState {
   readonly stateFields = DIALOGUE_STATE_FIELDS;
   readonly upstreamReferences = UPSTREAM_REFERENCES;
+  readonly exampleState = EXAMPLE_DIALOGUE_STATE;
 }
