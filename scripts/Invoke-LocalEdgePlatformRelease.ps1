@@ -92,12 +92,14 @@ try {
       -l "opensphere.io/request-id=$($response.requestId)" -o json) | ConvertFrom-Json
     $job = @($jobs.items | Sort-Object { $_.metadata.creationTimestamp } | Select-Object -Last 1)
     if ($job.Count) {
-      $failed = @($job[0].status.conditions | Where-Object { $_.type -eq 'Failed' -and $_.status -eq 'True' })
+      $conditionsProperty = $job[0].status.PSObject.Properties['conditions']
+      $conditions = if ($conditionsProperty) { @($conditionsProperty.Value) } else { @() }
+      $failed = @($conditions | Where-Object { $_.type -eq 'Failed' -and $_.status -eq 'True' })
       if ($failed.Count) {
         $logs = (& kubectl -n opensphere-console logs "job/$($job[0].metadata.name)" --all-containers=true 2>&1) -join "`n"
         throw "Platform Release Job failed: $($job[0].metadata.name)`n$logs"
       }
-      $complete = @($job[0].status.conditions | Where-Object { $_.type -eq 'Complete' -and $_.status -eq 'True' })
+      $complete = @($conditions | Where-Object { $_.type -eq 'Complete' -and $_.status -eq 'True' })
       if ($complete.Count) {
         $lockConfig = (Invoke-Checked kubectl -n opensphere-console get configmap opensphere-installation-lock -o json) |
           ConvertFrom-Json
