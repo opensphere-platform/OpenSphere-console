@@ -89,12 +89,20 @@ test('PostgreSQL plan is durable, expiring, revision-bound, and consumed into mo
   assert.match(planned.planDigest, /^sha256:[0-9a-f]{64}$/);
   assert.equal(planned.targetRevision, 'catalog-rv:runtime-rv');
   assert.equal(planned.expectedConfirmation,
-    'create PostgreSQL cluster opensphere-foundation/r2d2-e2e-pg plan postgresql-dev-single version 18.4');
+    `create PostgreSQL cluster opensphere-foundation/r2d2-e2e-pg binding ${planned.planDigest} version 18.4 storage-profile postgresql-dev-single`);
+  assert.equal(planned.idempotencyKey, planned.planId);
   assert.equal(f.plans.length, 1);
-  const accepted = await f.api.accept({ headers: {} }, { planId: planned.planId, confirmation: planned.expectedConfirmation });
+  const accepted = await f.api.accept({ headers: {} }, {
+    planId: planned.planId, planDigest: planned.planDigest,
+    dialogueStateDigest: `sha256:${'d'.repeat(64)}`, confirmation: planned.expectedConfirmation,
+  });
   assert.equal(accepted.phase, 'AwaitingApproval');
   assert.equal(f.rows[0].action, 'create-postgres-cluster');
   assert.equal(f.rows[0].precondition.target.request.database, 'r2d2_e2e');
+  assert.equal(f.rows[0].precondition.planDigest, planned.planDigest);
+  assert.equal(f.rows[0].idempotency_key, planned.planId);
+  assert.equal(f.rows[0].precondition.dialogueStateDigest, `sha256:${'d'.repeat(64)}`);
+  assert.equal(Object.hasOwn(f.rows[0].precondition, 'humanConfirmation'), false);
   assert.equal(f.plans[0].consumed_operation_id, accepted.operationId);
 });
 
@@ -109,9 +117,46 @@ test('PostgreSQL durable plan cannot cross authenticated sessions', async () => 
   const planned = await f.api.plan({}, { action: 'create-postgres-cluster', target, reason: 'PFSS PostgreSQL configuration' });
   actor.browserSessionId = '44444444-4444-4444-8444-444444444444';
   await assert.rejects(
-    () => f.api.accept({ headers: {} }, { planId: planned.planId, confirmation: planned.expectedConfirmation }),
+    () => f.api.accept({ headers: {} }, {
+      planId: planned.planId, planDigest: planned.planDigest,
+      dialogueStateDigest: `sha256:${'d'.repeat(64)}`, confirmation: planned.expectedConfirmation,
+    }),
     (error) => error?.code === 403 && /different authenticated session/.test(error?.msg),
   );
+  assert.equal(f.rows.length, 0);
+});
+
+test('PostgreSQL plan inspection is read-only and returns 404 outside its actor-session binding', async () => {
+  const actor = {};
+  const f = fixture(actor);
+  const target = {
+    name: 'r2d2-e2e-pg', namespace: 'opensphere-foundation', alias: 'R2D2 E2E PostgreSQL',
+    database: 'r2d2_e2e', owner: 'r2d2_e2e', plan: 'postgresql-dev-single',
+    postgresVersion: '18.4', deletionPolicy: 'Retain',
+  };
+  const planned = await f.api.plan({}, { action: 'create-postgres-cluster', target, reason: 'PFSS PostgreSQL configuration' });
+  const inspected = await f.api.inspectPlan({}, planned.planId);
+  assert.equal(inspected.planId, planned.planId);
+  assert.equal(inspected.planDigest, planned.planDigest);
+  assert.equal(inspected.riskClass, 'R2');
+  assert.equal(f.rows.length, 0);
+  actor.browserSessionId = '44444444-4444-4444-8444-444444444444';
+  await assert.rejects(() => f.api.inspectPlan({}, planned.planId),
+    (error) => error?.code === 404 && /not found/.test(error?.msg));
+});
+
+test('PostgreSQL apply rejects missing or changed plan digest before operation insertion', async () => {
+  const f = fixture();
+  const target = {
+    name: 'r2d2-e2e-pg', namespace: 'opensphere-foundation', alias: 'R2D2 E2E PostgreSQL',
+    database: 'r2d2_e2e', owner: 'r2d2_e2e', plan: 'postgresql-dev-single',
+    postgresVersion: '18.4', deletionPolicy: 'Retain',
+  };
+  const planned = await f.api.plan({}, { action: 'create-postgres-cluster', target, reason: 'PFSS PostgreSQL configuration' });
+  await assert.rejects(() => f.api.accept({ headers: {} }, {
+    planId: planned.planId, planDigest: `sha256:${'0'.repeat(64)}`,
+    dialogueStateDigest: `sha256:${'d'.repeat(64)}`, confirmation: planned.expectedConfirmation,
+  }), (error) => error?.code === 409 && /plan digest does not match/.test(error?.msg));
   assert.equal(f.rows.length, 0);
 });
 

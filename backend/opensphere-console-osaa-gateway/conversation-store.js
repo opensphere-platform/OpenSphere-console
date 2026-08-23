@@ -122,6 +122,23 @@ function responseFromAssistant(row) {
   return { ...response, message: message.content, conversationId: row.conversation_id, assistantMessage: message };
 }
 
+function rowDialogueContext(row, conversation) {
+  if (!row) return {
+    conversationId: conversation, domain: null, intent: null, phase: 'idle',
+    capabilityRef: null, operationRef: null, revision: 0, stateDigest: null,
+  };
+  return {
+    conversationId: conversation,
+    domain: row.domain || null,
+    intent: row.intent || null,
+    phase: row.phase || 'idle',
+    capabilityRef: row.capability_ref || null,
+    operationRef: row.operation_ref || null,
+    revision: Number(row.revision || 0),
+    stateDigest: row.state_digest || null,
+  };
+}
+
 async function commitDialogueTransition(client, owner, turn, candidate) {
   if (!candidate) return null;
   const current = await client.query(`
@@ -371,6 +388,11 @@ function createConversationStore(pool) {
         WHERE conversation_id=$1 AND status='completed'
         ORDER BY sequence DESC LIMIT $2
       `, [conversation.id, MAX_CONTEXT_MESSAGES]);
+      const dialogue = await client.query(`
+        SELECT domain,intent,phase,capability_ref,operation_ref,revision,state_digest
+        FROM osaa.dialogue_state_projection
+        WHERE conversation_id=$1 AND owner_id=$2
+      `, [conversation.id, owner]);
       await client.query(`
         UPDATE osaa.conversation
         SET model_id=COALESCE($2,model_id), last_message_at=clock_timestamp(), updated_at=clock_timestamp()
@@ -383,6 +405,7 @@ function createConversationStore(pool) {
         conversationId: conversation.id,
         clientRequestId,
         messages: contextWindow(history.rows, content),
+        dialogueContext: rowDialogueContext(dialogue.rows[0] || null, conversation.id),
       };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -521,6 +544,24 @@ function createConversationStore(pool) {
     }
   }
 
+  async function dialogueContext(actor, value) {
+    const owner = ownerId(actor);
+    const id = conversationId(value);
+    return withActor(owner, async (client) => {
+      const conversation = await client.query(`
+        SELECT id FROM osaa.conversation
+        WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
+      `, [id, owner]);
+      if (!conversation.rows[0]) throw failure(404, 'conversation not found');
+      const result = await client.query(`
+        SELECT domain,intent,phase,capability_ref,revision,state_digest
+        FROM osaa.dialogue_state_projection
+        WHERE conversation_id=$1 AND owner_id=$2
+      `, [id, owner]);
+      return rowDialogueContext(result.rows[0] || null, id);
+    });
+  }
+
   async function reapExpiredTurns(limit = 100, recoveredBy = 'osaa-gateway') {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
     const result = await pool.query(
@@ -548,7 +589,7 @@ function createConversationStore(pool) {
 
   return {
     list, get, update, remove, beginTurn, completeTurn, failTurn,
-    heartbeatTurn, reapExpiredTurns, recoverTurn,
+    heartbeatTurn, dialogueContext, reapExpiredTurns, recoverTurn,
   };
 }
 

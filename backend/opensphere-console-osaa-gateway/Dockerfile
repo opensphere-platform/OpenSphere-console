@@ -9,6 +9,11 @@ COPY provider-tool-calls.js /app/provider-tool-calls.js
 COPY chat-runtime-policy.js /app/chat-runtime-policy.js
 COPY conversation-store.js /app/conversation-store.js
 COPY dialogue-state.js /app/dialogue-state.js
+COPY dialogue-capability.js /app/dialogue-capability.js
+COPY dialogue-evidence.js /app/dialogue-evidence.js
+COPY dialogue-shadow.js /app/dialogue-shadow.js
+COPY dialogue-rollout.js /app/dialogue-rollout.js
+COPY dialogue-request-boundary.js /app/dialogue-request-boundary.js
 COPY kubernetes-resource-catalog.js /app/kubernetes-resource-catalog.js
 COPY manual-seed-reconcile.js /app/manual-seed-reconcile.js
 COPY agent-control-readiness.js /app/agent-control-readiness.js

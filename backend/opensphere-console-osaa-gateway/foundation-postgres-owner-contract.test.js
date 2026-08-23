@@ -9,8 +9,10 @@ const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 
 test('R2D2 exposes PFSS PostgreSQL status, Admission plan, and owner create capability', () => {
   assert.match(source, /id: 'osaa\.foundation\.postgres\.status'/);
+  assert.match(source, /id: 'osaa\.foundation\.postgres\.capabilities'/);
   assert.match(source, /id: 'osaa\.foundation\.postgres\.plan'/);
   assert.match(source, /id: 'osaa\.foundation\.postgres\.claim\.create'/);
+  assert.match(source, /id: 'osaa\.foundation\.postgres\.operation\.watch'/);
   assert.match(source, /get_foundation_postgres_status/);
   assert.match(source, /plan_foundation_postgres_cluster/);
   assert.match(source, /\/api\/foundation\/osaa\/postgres\/status/);
@@ -20,10 +22,13 @@ test('R2D2 exposes PFSS PostgreSQL status, Admission plan, and owner create capa
 });
 
 test('PostgreSQL create uses an expiring durable plan, exact confirmation, closed inputs, and owner postcondition', () => {
-  assert.match(source, /create PostgreSQL cluster \$\{request\.namespace\}\/\$\{request\.name\} plan \$\{request\.plan\} version \$\{request\.postgresVersion\}/);
+  assert.match(source, /create PostgreSQL cluster \$\{request\.namespace\}\/\$\{request\.name\} binding \$\{binding\} version \$\{request\.postgresVersion\} storage-profile \$\{request\.plan\}/);
   assert.match(source, /requireConfirm\(inputs\.confirm, expected\)/);
-  assert.match(source, /normalizeFoundationPostgresRequest\(inputs\)/);
-  assert.match(source, /planId: plan\.planId, planDigest: plan\.planDigest, expiresAt: plan\.expiresAt/);
+  assert.match(source, /normalizeFoundationPostgresApplyInputs\(inputs\)/);
+  assert.match(source, /planId: plan\.planId, planDigest: plan\.planDigest/);
+  assert.match(source, /`Plan expiry: \$\{plan\.expiresAt\}`/);
+  assert.match(source, /storedPlan\.planDigest !== planDigest/);
+  assert.match(source, /dialogueStateDigest: dialogue\.stateDigest/);
   assert.match(source, /FoundationClaim Bound with observedGeneration current/);
   assert.match(source, /verificationTool: 'get_foundation_postgres_status'/);
 });
@@ -45,9 +50,18 @@ test('vague PFSS PostgreSQL requests enter deterministic intake instead of fabri
   assert.match(source, /if \(foundationPostgresOut\) return foundationPostgresOut/);
 });
 
-test('PFSS PostgreSQL confirmation is sourced from the owner plan and fully bound', () => {
-  assert.match(source, /const expected = String\(plan\?\.expectedConfirmation \|\| ''\)/);
-  assert.match(source, /확인 문구는 owner plan이 반환한 값/);
-  assert.match(source, /replace\(\/<plan>\/g, String\(inputs\.plan \|\| ''\)\)/);
-  assert.match(source, /replace\(\/<postgresVersion>\/g, String\(inputs\.postgresVersion \|\| ''\)\)/);
+test('PFSS PostgreSQL confirmation is bound to the stored plan digest and server-owned dialogue state', () => {
+  assert.match(source, /const expected = foundationPostgresConfirmation\(request, planDigest\)/);
+  assert.match(source, /storedPlan\.expectedConfirmation !== expected/);
+  assert.match(source, /PFSS apply requires the server-owned Dialogue State/);
+  assert.match(source, /Apply는 이 planId와 digest만 사용하며 재계획하지 않습니다/);
+});
+
+test('PFSS status and operation watch become typed deterministic claims in read-enforce', () => {
+  assert.match(source, /foundationPostgresOperationConversation/);
+  assert.match(source, /buildPfssPostgresOperationClaim/);
+  assert.match(source, /renderPfssPostgresOperationClaim/);
+  assert.match(source, /OSAA_DIALOGUE_POLICY\.enforceCurrentFacts/);
+  assert.match(source, /body\?\._dialogueContext \|\| null/);
+  assert.match(source, /operationRef: result\.operationId \|\| null/);
 });

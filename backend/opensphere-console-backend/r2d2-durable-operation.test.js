@@ -81,7 +81,12 @@ function request(action = 'restart-workload') {
       request: { component: 'supabase' },
     });
   }
-  return { action, target, confirmation: exactConfirmation(descriptor, target), reason: 'operator requested recovery' };
+  const bindingDigest = action === 'create-postgres-cluster' ? `sha256:${'b'.repeat(64)}` : '';
+  return {
+    action, target, bindingDigest,
+    confirmation: exactConfirmation(descriptor, target, { bindingDigest }),
+    reason: 'operator requested recovery',
+  };
 }
 
 test('closed binder selects only release descriptor values', () => {
@@ -161,7 +166,7 @@ function workerFixture(overrides = {}) {
 
 function operation(action = 'restart-workload') {
   const bound = bindOperation(request(action));
-  return { ...bound, operationId: 'op-1', phase: 'accepted', actorId: 'actor', authSessionId: 'session-1', authzRevision: 'r1' };
+  return { ...bound, operationId: 'op-1', idempotencyKey: `r2d2-plan-${action}`, phase: 'accepted', actorId: 'actor', authSessionId: 'session-1', authzRevision: 'r1' };
 }
 
 test('all initial management scenarios bind to a closed owner and authoritative postcondition', async () => {
@@ -199,6 +204,7 @@ test('all initial management scenarios bind to a closed owner and authoritative 
     assert.equal(invoked.route, DESCRIPTORS[action].ownerRoute);
     assert.equal(invoked.payload.toolId, DESCRIPTORS[action].toolId);
     assert.equal(invoked.payload.target.uid, op.target.uid);
+    assert.equal(invoked.payload.idempotencyKey, op.idempotencyKey);
     assert.equal(JSON.stringify({ invoked, steps: fixture.steps }).includes('memory-only'), false);
   }
 });

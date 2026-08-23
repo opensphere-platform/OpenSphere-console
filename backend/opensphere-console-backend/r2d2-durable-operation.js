@@ -71,10 +71,10 @@ const DESCRIPTORS = Object.freeze({
     permission: 'console.notification.manage',
   }),
   'create-postgres-cluster': Object.freeze({
-    descriptorId: 'foundation.postgres.cluster.create', revision: '1', toolId: 'owner.foundation.postgres.create',
+    descriptorId: 'foundation.postgres.cluster.create', revision: '2', toolId: 'owner.foundation.postgres.create',
     verifierId: 'owner.foundation.postgres.ready', riskClass: 'R2', assurance: 'aal2',
     targetKind: 'FoundationClaim',
-    confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+    confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> binding <bindingDigest> version <postgresVersion> storage-profile <storageProfile>',
     ownerRoute: 'foundation/postgres', allowedNamespaces: ['opensphere-*'],
     permission: 'osaa.action.execute.high',
   }),
@@ -90,7 +90,7 @@ function digest(value) {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`;
 }
 
-function exactConfirmation(descriptor, target) {
+function exactConfirmation(descriptor, target, context = {}) {
   return descriptor.confirmationTemplate
     .replace(/<kind>/g, String(target.kind || '').toLowerCase())
     .replace(/<namespace>/g, String(target.namespace || ''))
@@ -101,9 +101,17 @@ function exactConfirmation(descriptor, target) {
     .replace(/<digest>/g, String(target.digest || ''))
     .replace(/<revision>/g, String(target.desiredRevision || ''))
     .replace(/<replicas>/g, String(target.replicas ?? ''))
+    .replace(/<bindingDigest>/g, String(context.bindingDigest || target.request?.bindingDigest || ''))
+    .replace(/<storageProfile>/g, String(target.request?.plan || ''))
     .replace(/<plan>/g, String(target.request?.plan || ''))
     .replace(/<postgresVersion>/g, String(target.request?.postgresVersion || ''))
     .replace(/<component>/g, String(target.request?.component || ''));
+}
+
+function operationConfirmation(planned, bindingDigest = '') {
+  const descriptor = DESCRIPTORS[String(planned?.action || '')];
+  if (!descriptor) throw Object.assign(new Error('unsupported management action'), { code: 'DescriptorNotFound' });
+  return exactConfirmation(descriptor, planned.target || {}, { bindingDigest });
 }
 
 function namespaceAllowed(namespace, patterns) {
@@ -160,7 +168,7 @@ function planOperation(request, registry = DESCRIPTORS) {
       throw Object.assign(new Error('PostgreSQL owner target revision is required'), { code: 'TargetRevisionRequired' });
     }
   }
-  const expected = exactConfirmation(descriptor, target);
+  const expected = exactConfirmation(descriptor, target, { bindingDigest: request?.bindingDigest });
   const immutableDescriptor = { ...descriptor };
   return {
     action,
@@ -369,7 +377,11 @@ class DurableOperationWorker {
           actorId: operation.actorId, executionActorId: authorization.executionActorId, code: authorization.code,
         });
       }
-      const downstreamKey = `${operation.operationId}:${operation.descriptorDigest}`;
+      const downstreamKey = String(operation.idempotencyKey || '').trim();
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(downstreamKey)) {
+        await step('preflight_blocked', 'idempotency', 'failed', { code: 'StableIdempotencyKeyRequired' });
+        return { phase, ownerCalled: false, code: 'StableIdempotencyKeyRequired' };
+      }
       let receipt;
       let ownerCalled = false;
       if (!resumingUncertainOwnerCall) {
@@ -392,7 +404,8 @@ class DurableOperationWorker {
           ownerCalled = true;
           receipt = await this.deps.owners.invoke(operation.ownerRoute, {
           operationId: operation.operationId, idempotencyKey: downstreamKey,
-            toolId: operation.toolId, target: operation.target, reason: operation.reason, confirmation: operation.confirmation,
+            toolId: operation.toolId, target: operation.target, reason: operation.reason,
+            confirmation: operation.confirmation, bindingDigest: operation.bindingDigest || null,
           }, authorization.accessToken);
           await requireLease();
         } catch (error) {
@@ -438,6 +451,6 @@ class DurableOperationWorker {
 
 module.exports = {
   DESCRIPTORS, TERMINAL, PHASE_TRANSITIONS, stableJson, digest, exactConfirmation,
-  planOperation, bindOperation, expectedPostcondition, authorizeAtExecution, checkLivePreconditions, transitionPhase,
+  operationConfirmation, planOperation, bindOperation, expectedPostcondition, authorizeAtExecution, checkLivePreconditions, transitionPhase,
   DurableOperationWorker,
 };

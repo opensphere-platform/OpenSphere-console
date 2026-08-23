@@ -1523,7 +1523,8 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
       response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/apply`, {
         method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json',
           'x-idempotency-key': payload.idempotencyKey },
-        body: JSON.stringify({ ...(payload.target.request || {}), reason: payload.reason, confirm: payload.confirmation }),
+        body: JSON.stringify({ ...(payload.target.request || {}), reason: payload.reason,
+          bindingDigest: payload.bindingDigest, confirm: payload.confirmation }),
         signal: AbortSignal.timeout(120000),
       });
     } catch (cause) {

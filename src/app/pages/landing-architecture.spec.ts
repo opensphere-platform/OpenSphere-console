@@ -351,7 +351,7 @@ test('Control Engine page defines OSCE as the shared engine without absorbing co
   assert.match(foundationSource, /구조화된 API가 기본, OSC는 공식 command adapter/);
   assert.match(foundationSource, /OSCE가 소유하는 것과 소유하지 않는 것/);
   assert.match(foundationSource, /raw kubectl·SQL/);
-  assert.equal((foundationModel.match(/step: '0[1-5]',\n    title: '(?:Observe & Understand|Plan|Authorize|Execute|Verify & Recover)'/g) || []).length, 5);
+  assert.equal((foundationModel.match(/step: '0[1-5]',\r?\n    title: '(?:Observe & Understand|Plan|Authorize|Execute|Verify & Recover)'/g) || []).length, 5);
 });
 
 test('AI lifecycle distinguishes current runtime from target model and playground contracts', () => {

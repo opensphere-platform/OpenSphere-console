@@ -96,6 +96,9 @@ test('Dialogue State transition and assistant message share one fail-closed tran
   assert.match(server, /r2d2[.]foundation-postgres-intake\/v1/);
   assert.match(server, /intent: 'status[.]read'/);
   assert.match(server, /intent: 'create[.]plan'/);
+  assert.match(server, /intent: 'operation[.]watch'/);
+  assert.match(source, /SELECT domain,intent,phase,capability_ref,operation_ref,revision,state_digest/);
+  assert.match(source, /operationRef: row\.operation_ref \|\| null/);
   assert.match(server, /initializeConversationLeaseReaper/);
   assert.match(server, /conversationRecoveryMatch/);
   assert.match(server, /retry-after/);

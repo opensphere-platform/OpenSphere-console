@@ -291,6 +291,9 @@ spec:
             # Master switch only. The Gateway and Backend still require live Cluster Manager
             # Activated + HIS Preflight Ready evidence for every mutating action.
             - { name: OSAA_ACTION_SUBMISSION_ENABLED, value: "true" }
+            # PLAN-015 rollout is server-owned. External requests cannot override this value.
+            # Re-audit and explicit deployment approval are required before advancing it.
+            - { name: OSAA_DIALOGUE_STATE_MODE, value: "off" }
             # CONSTITUTION-0004 §4.2 fail-closed default: Kubernetes mutation/action tools stay
             # unavailable until Cluster Manager Activated + HIS Preflight Ready explicitly flips this.
             - { name: OSAA_MUTATION_ENABLED, value: "false" }

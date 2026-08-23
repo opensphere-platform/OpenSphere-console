@@ -1,9 +1,12 @@
 'use strict';
 
 const { randomUUID } = require('crypto');
-const { planOperation, bindOperation, expectedPostcondition, digest } = require('./r2d2-durable-operation');
+const {
+  planOperation, bindOperation, expectedPostcondition, digest, operationConfirmation,
+} = require('./r2d2-durable-operation');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
 function publicOperation(row) {
   return {
@@ -11,6 +14,7 @@ function publicOperation(row) {
     phase: row.phase, executionState: row.execution_state, verificationState: row.verification_state,
     riskClass: row.requested_risk_class || row.risk_class, requiredAssurance: row.required_assurance,
     incidentId: row.incident_id || null, descriptorRevision: row.descriptor_revision,
+    descriptorDigest: row.descriptor_digest,
     toolId: row.tool_id, verifierId: row.verifier_id, attempt: Number(row.attempt || 0),
     result: row.result || {}, errorCode: row.error_code || null,
     createdAt: row.created_at, updatedAt: row.updated_at, deadlineAt: row.deadline_at,
@@ -45,16 +49,18 @@ function createR2d2OperationApi(options) {
     if (requestPayload.reason.length < 8) throw { code: 400, msg: 'reason must contain at least eight characters' };
     const planDigest = digest({ actorId, action: planned.action, descriptorDigest: planned.descriptorDigest,
       target: planned.target, requestPayload, expectedPostcondition: output.expectedPostcondition, expiresAt });
+    const expectedConfirmation = operationConfirmation(planned, planDigest);
     await store.insertPlan({
       plan_id: planId, actor_id: actorId, auth_session_id: authSessionId, action: planned.action,
       descriptor_revision: planned.descriptorRevision, descriptor_digest: planned.descriptorDigest,
       plan_digest: planDigest, target_revision: String(planned.target.resourceVersion || ''),
       risk_class: planned.riskClass, required_assurance: planned.requiredAssurance,
-      expected_confirmation: planned.expectedConfirmation, target: planned.target,
+      expected_confirmation: expectedConfirmation, target: planned.target,
       request_payload: requestPayload, expected_postcondition: output.expectedPostcondition,
       expires_at: expiresAt,
     });
-    return { ...output, planId, planDigest, expiresAt, targetRevision: String(planned.target.resourceVersion || ''),
+    return { ...output, expectedConfirmation, planId, planDigest, idempotencyKey: planId,
+      expiresAt, targetRevision: String(planned.target.resourceVersion || ''),
       postconditions: [
         'FoundationClaim Bound and observedGeneration equals metadata.generation',
         'PostgresClaim Ready=True and observedGeneration equals metadata.generation',
@@ -82,6 +88,9 @@ function createR2d2OperationApi(options) {
         throw { code: 403, msg: 'durable plan belongs to a different authenticated session' };
       }
       if (Date.parse(storedPlan.expires_at) <= now().getTime()) throw { code: 409, msg: 'durable plan expired' };
+      if (!SHA256.test(String(body?.planDigest || '')) || String(body.planDigest) !== String(storedPlan.plan_digest)) {
+        throw { code: 409, msg: 'durable plan digest does not match the stored plan' };
+      }
       const plannedTarget = await resolveTarget(storedPlan.action, storedPlan.request_payload?.target || {}, auth);
       resolvedTarget = plannedTarget;
       const replanned = planOperation({ action: storedPlan.action, target: plannedTarget });
@@ -92,7 +101,8 @@ function createR2d2OperationApi(options) {
         throw { code: 409, msg: 'durable plan target revision changed; create a new plan' };
       }
       requestBody = { action: storedPlan.action, target: storedPlan.request_payload.target,
-        reason: storedPlan.request_payload.reason, confirmation: body.confirmation };
+        reason: storedPlan.request_payload.reason, confirmation: body.confirmation,
+        bindingDigest: storedPlan.plan_digest };
     }
     const target = resolvedTarget || await resolveTarget(String(requestBody.action || ''), requestBody.target || {}, auth);
     const bound = bindOperation({ ...requestBody, target });
@@ -106,6 +116,10 @@ function createR2d2OperationApi(options) {
     }
     const idempotencyKey = storedPlan?.plan_id || String(req.headers['x-os-idempotency-key'] || body.idempotencyKey || '').trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(idempotencyKey)) throw { code: 400, msg: 'valid idempotency key required' };
+    const dialogueStateDigest = String(body?.dialogueStateDigest || '');
+    if (dialogueStateDigest && !SHA256.test(dialogueStateDigest)) {
+      throw { code: 400, msg: 'Dialogue State digest is invalid' };
+    }
     const deadline = new Date(now().getTime() + Math.max(60000, Math.min(3600000, Number(body.deadlineMs || 600000))));
     const approvalRequired = ['R2', 'R3'].includes(bound.riskClass);
     const row = await store.insert({
@@ -119,8 +133,18 @@ function createR2d2OperationApi(options) {
       actor_assurance_at_accept: actor.assurance || 'aal1', auth_session_id: actor.browserSessionId || actor.authSessionId,
       authz_revision: String(actor.credentialRevision || actor.authzRevision || 0),
       deadline_at: deadline.toISOString(), execution_state: approvalRequired ? 'awaiting_approval' : 'accepted',
-      verification_state: 'pending', precondition: { target: bound.target, ownerRoute: bound.ownerRoute, requiredPermission: bound.requiredPermission,
-        confirmationDigest: bound.confirmationDigest, humanConfirmation: String(body.confirmation) },
+      verification_state: 'pending', precondition: {
+        target: bound.target, ownerRoute: bound.ownerRoute, requiredPermission: bound.requiredPermission,
+        confirmationDigest: bound.confirmationDigest,
+        dialogueStateDigest: dialogueStateDigest || null,
+        planId: storedPlan?.plan_id || null,
+        planDigest: storedPlan?.plan_digest || null,
+        bindingDigest: storedPlan?.plan_digest || null,
+        descriptorDigest: bound.descriptorDigest,
+        targetFingerprint: digest(bound.target),
+        idempotencyKeyDigest: digest(idempotencyKey),
+        actorBinding: { actorId, tenantId: String(actor.tenantId || actor.tenant || '') },
+      },
       expected_postcondition: expectedPostcondition(bound),
       incident_id: UUID.test(String(body.incidentId || '')) ? body.incidentId : null,
     });
@@ -131,6 +155,28 @@ function createR2d2OperationApi(options) {
       }
     }
     return publicOperation(row);
+  }
+
+  async function inspectPlan(req, planId) {
+    const auth = await authenticate(req);
+    const actor = auth.actor || auth;
+    const actorId = String(actor.sub || actor.subject || '');
+    const authSessionId = String(actor.browserSessionId || actor.authSessionId || '');
+    if (!UUID.test(actorId) || !UUID.test(authSessionId)) throw { code: 401, msg: 'durable plan inspection requires stable actor and session UUIDs' };
+    if (typeof store.getPlan !== 'function') throw { code: 503, msg: 'durable plan store is unavailable' };
+    const plan = await store.getPlan(planId);
+    if (!plan) throw { code: 404, msg: 'durable plan not found' };
+    if (String(plan.actor_id) !== actorId || String(plan.auth_session_id) !== authSessionId) {
+      throw { code: 404, msg: 'durable plan not found' };
+    }
+    return {
+      planId: plan.plan_id, planDigest: plan.plan_digest, action: plan.action,
+      descriptorId: 'foundation.postgres.cluster.create',
+      descriptorRevision: plan.descriptor_revision, descriptorDigest: plan.descriptor_digest,
+      riskClass: plan.risk_class, requiredAssurance: plan.required_assurance,
+      expectedConfirmation: plan.expected_confirmation, target: plan.target,
+      expiresAt: plan.expires_at, consumedOperationId: plan.consumed_operation_id || null,
+    };
   }
 
   async function approve(req, operationId, body) {
@@ -167,6 +213,8 @@ function createR2d2OperationApi(options) {
     if (pathname === '/api/osaa/operations' && req.method === 'GET') {
       await authenticate(req); return json(res, 200, { operations: (await store.list()).map(publicOperation) });
     }
+    const planInspection = pathname.match(/^\/api\/osaa\/operations\/plans\/(pgplan-[0-9a-f-]{36})$/i);
+    if (planInspection && req.method === 'GET') return json(res, 200, await inspectPlan(req, planInspection[1]));
     const approval = pathname.match(/^\/api\/osaa\/operations\/([0-9a-f-]{36})\/approvals$/i);
     if (approval && req.method === 'POST') return json(res, 200, await approve(req, approval[1], await bodyReader(req)));
     const operation = pathname.match(/^\/api\/osaa\/operations\/([0-9a-f-]{36})$/i);
@@ -178,7 +226,7 @@ function createR2d2OperationApi(options) {
     return false;
   }
 
-  return { plan, accept, approve, handle, publicOperation };
+  return { plan, accept, inspectPlan, approve, handle, publicOperation };
 }
 
 function createRestOperationStore(restRequest) {
@@ -236,15 +284,19 @@ const PHASE_TO_DB = Object.freeze({
 });
 
 function workerOperation(row) {
+  const target = row.precondition?.target || { uid: row.target_uid, generation: row.target_generation, desiredRevision: row.desired_revision };
   return {
     operationId: row.operation_id, phase: row.phase === 'Queued' ? 'accepted' : row.phase === 'AwaitingApproval' ? 'awaiting_approval' : String(row.phase || '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase(),
     actorId: row.actor_id, authSessionId: row.auth_session_id, authzRevision: row.authz_revision,
     action: row.action, descriptorDigest: row.descriptor_digest, toolId: row.tool_id, verifierId: row.verifier_id,
     ownerRoute: row.precondition?.ownerRoute, riskClass: row.requested_risk_class, requiredAssurance: row.required_assurance,
     requiredPermission: row.precondition?.requiredPermission,
-    confirmation: row.precondition?.humanConfirmation,
+    idempotencyKey: row.idempotency_key,
+    confirmation: operationConfirmation({ action: row.action, target }, row.precondition?.bindingDigest || ''),
+    bindingDigest: row.precondition?.bindingDigest || null,
+    dialogueStateDigest: row.precondition?.dialogueStateDigest || null,
     deadlineAt: row.deadline_at,
-    target: row.precondition?.target || { uid: row.target_uid, generation: row.target_generation, desiredRevision: row.desired_revision },
+    target,
     reason: row.reason,
   };
 }

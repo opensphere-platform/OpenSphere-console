@@ -14,6 +14,17 @@ const {
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
 const { createConversationStore, TURN_LEASE_SECONDS } = require('./conversation-store');
+const { joinPfssDialogueCapability } = require('./dialogue-capability');
+const { dialogueModePolicy } = require('./dialogue-rollout');
+const { assertDialogueRequestBoundary } = require('./dialogue-request-boundary');
+const {
+  buildPfssPostgresClaimSet,
+  buildPfssPostgresOperationClaim,
+  isOperationalQuery,
+  observeOwnerEvidence,
+  renderPfssPostgresClaimSet,
+  renderPfssPostgresOperationClaim,
+} = require('./dialogue-evidence');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
 const { projectExtensionPresentation } = require('./extension-presentation');
@@ -117,6 +128,8 @@ const R2D2_RELAY_INTERVAL_MS = Math.max(1000, Math.min(60000, Number(process.env
 const R2D2_OBSERVER_INTERVAL_MS = Math.max(15000, Math.min(300000, Number(process.env.R2D2_OBSERVER_INTERVAL_MS || 60000) || 60000));
 const R2D2_MAINTENANCE_INTERVAL_MS = Math.max(3600000, Math.min(604800000, Number(process.env.R2D2_MAINTENANCE_INTERVAL_MS || 86400000) || 86400000));
 const OSAA_ACTION_SUBMISSION_ENABLED = process.env.OSAA_ACTION_SUBMISSION_ENABLED === 'true';
+// Server-owned rollout only. Request and conversation payloads cannot select this mode.
+const OSAA_DIALOGUE_POLICY = dialogueModePolicy(process.env.OSAA_DIALOGUE_STATE_MODE);
 const OSAA_EMBED_KEY_ID = String(process.env.OSAA_EMBED_KEY_ID || '').trim();
 const OSAA_MANUAL_SEED_PATH = process.env.OSAA_MANUAL_SEED_PATH || '/app/manual-seeds/opensphere-core-manuals.json';
 const OSAA_ENV_NAMESPACES = (process.env.OSAA_ENV_NAMESPACES || 'opensphere-console,opensphere-console-data,opensphere-console-change,opensphere-console-recovery,opensphere-foundation,opensphere-system')
@@ -170,6 +183,7 @@ const OSAA_OWNER_ACTION_TOOL_IDS = new Set([
   'osaa.foundation.claim.release',
   'osaa.foundation.identity-directory.claim.create',
   'osaa.foundation.identity-directory.claim.release',
+  'osaa.foundation.postgres.plan',
   'osaa.foundation.postgres.claim.create',
   'osaa.identity.user.create',
   'osaa.identity.user.enabled',
@@ -3912,7 +3926,7 @@ function osaaActionBindings() {
       sectionId: 'manual-section:console-docs/osaa-control-plane-assessment#foundation-owner-control',
       title: 'Admission-dry-run a PFSS PostgreSQL PostgresClaim and return the exact approval phrase', intent: 'plan-foundation-postgres',
       toolId: 'osaa.foundation.postgres.plan', controlPlane: 'foundation-owner-facade',
-      riskLevel: 'read', confirmation: 'none',
+      riskLevel: 'high', confirmation: 'none',
       requiredInputs: bindingInput({
         name: 'claim name', namespace: 'Foundation-managed namespace', alias: 'human display name',
         database: 'initial database name', owner: 'initial database owner', plan: 'Available PostgreSQL AddOnPlan',
@@ -3930,14 +3944,15 @@ function osaaActionBindings() {
       title: 'Create a PFSS PostgreSQL cluster through the PostgresClaim owner contract', intent: 'create-foundation-postgres',
       toolId: 'osaa.foundation.postgres.claim.create', controlPlane: 'foundation-owner-facade',
       riskLevel: 'high', confirmation: 'required',
-      confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+      confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> binding <bindingDigest> version <postgresVersion> storage-profile <storageProfile>',
       requiredInputs: bindingInput({
         name: 'claim name', namespace: 'Foundation-managed namespace', alias: 'human display name',
         database: 'initial database name', owner: 'initial database owner', plan: 'Available PostgreSQL AddOnPlan',
         postgresVersion: 'Available PostgresRuntimeCatalog version', deletionPolicy: OSAA_POSTGRES_DELETION_POLICIES.join(' | '),
         storageSize: 'optional binary quantity such as 20Gi', storageClass: 'optional StorageClass name',
+        planId: 'unexpired durable plan ID', planDigest: 'sha256 durable binding digest',
         reason: 'human management reason (8+ chars)',
-        confirm: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+        confirm: 'exact target + binding digest + version + storage profile phrase',
       }),
       permission: { roles: [CONSOLE_ADMIN_GROUP], scopes: ['osaa:action:execute:high'], namespaceScope: ['opensphere-foundation'] },
       audit: { eventType: 'foundation-postgres-claim-create', targetTemplate: 'PostgresClaim/<namespace>/<name>' },
@@ -4501,6 +4516,14 @@ function osaaToolManifest() {
         auditEventType: 'foundation-status-read',
       },
       {
+        id: 'osaa.foundation.postgres.capabilities',
+        name: 'Read and semantically bind PFSS PostgreSQL owner capabilities',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/osaa/tools/foundation/postgres/capabilities'),
+        riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
+        auditEventType: 'foundation-postgres-capabilities-read',
+      },
+      {
         id: 'osaa.foundation.postgres.status',
         name: 'Read PFSS PostgreSQL owner runtimes, plans, managed namespaces, claims, and clusters',
         channel: 'owner-control-plane', readOnly: true,
@@ -4510,10 +4533,10 @@ function osaaToolManifest() {
       },
       {
         id: 'osaa.foundation.postgres.plan',
-        name: 'Admission-dry-run a PFSS PostgreSQL PostgresClaim and return the exact approval phrase',
-        channel: 'owner-control-plane', readOnly: true,
+        name: 'Create one R2 durable PFSS PostgreSQL plan and return its exact approval phrase',
+        channel: 'owner-control-plane', readOnly: false,
         endpoint: toolEndpoint('POST', '/api/osaa/tools/foundation/postgres/plan'),
-        riskLevel: 'read', confirmation: 'none',
+        riskLevel: 'high', confirmation: 'none',
         inputSchema: schemaObject({
           name: deploymentField, namespace: nsField,
           alias: { type: 'string', minLength: 1, maxLength: 160 },
@@ -4533,7 +4556,7 @@ function osaaToolManifest() {
         channel: 'owner-control-plane', readOnly: false,
         endpoint: toolEndpoint('POST', '/api/osaa/actions/bindings/execute'),
         riskLevel: 'high', confirmation: 'required',
-        confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> plan <plan> version <postgresVersion>',
+        confirmationTemplate: 'create PostgreSQL cluster <namespace>/<name> binding <bindingDigest> version <postgresVersion> storage-profile <storageProfile>',
         inputSchema: schemaObject({
           name: deploymentField, namespace: nsField,
           alias: { type: 'string', minLength: 1, maxLength: 160 },
@@ -4544,9 +4567,20 @@ function osaaToolManifest() {
           deletionPolicy: { type: 'string', enum: OSAA_POSTGRES_DELETION_POLICIES },
           storageSize: { type: 'string', pattern: '^[0-9]+(?:Mi|Gi|Ti)$', required: false },
           storageClass: { ...deploymentField, required: false },
+          planId: { type: 'string', pattern: '^pgplan-[0-9a-f-]{36}$' },
+          planDigest: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
           confirm: confirmField, reason: { type: 'string', minLength: 8, maxLength: 500 },
         }),
         auditEventType: 'foundation-postgres-claim-create',
+      },
+      {
+        id: 'osaa.foundation.postgres.operation.watch',
+        name: 'Watch one durable PFSS PostgreSQL operation and its Owner postcondition',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/osaa/tools/foundation/postgres/operation'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({ operationId: { type: 'string', pattern: UUID_RE.source } }),
+        auditEventType: 'foundation-postgres-operation-watch',
       },
       {
         id: 'osaa.foundation.engine.lifecycle',
@@ -5697,6 +5731,8 @@ function bindingConfirmationExpected(binding, inputs = {}) {
     .replace(/<replicas>/g, String(inputs.replicas ?? ''))
     .replace(/<kind>/g, String(inputs.kind || inputs.manifest?.kind || '').toLowerCase())
     .replace(/<name>/g, String(inputs.name || inputs.manifest?.metadata?.name || ''))
+    .replace(/<bindingDigest>/g, String(inputs.planDigest || ''))
+    .replace(/<storageProfile>/g, String(inputs.plan || ''))
     .replace(/<plan>/g, String(inputs.plan || ''))
     .replace(/<postgresVersion>/g, String(inputs.postgresVersion || ''))
     .replace(/<container>/g, String(inputs.container || ''))
@@ -5753,7 +5789,7 @@ function bindingSummary(binding, result) {
   return lines.join('\n');
 }
 
-async function executeActionBinding(body = {}, actor = null) {
+async function executeActionBinding(body = {}, actor = null, context = {}) {
   const started = Date.now();
   const binding = await getActionBinding(body.bindingId || body.id);
   // Mutation gate takes priority over every other check (confirmation phrase, admin membership):
@@ -5811,7 +5847,7 @@ async function executeActionBinding(body = {}, actor = null) {
     if (OSAA_OWNER_ACTION_TOOL_IDS.has(binding.toolId)) {
       let ownerResult;
       try {
-        ownerResult = await executeOwnerControlAction(binding.toolId, inputs, actor);
+        ownerResult = await executeOwnerControlAction(binding.toolId, inputs, actor, context);
       } catch (error) {
         const failure = { code: Number(error?.code) || 500, error: String(error?.msg || error?.message || 'owner action failed').slice(0, 500) };
         await recordToolRun(actor, {
@@ -6029,10 +6065,40 @@ function commandHelp() {
 function dialogueTransitionForToolResult(result) {
   if (!result || typeof result !== 'object') return null;
   if (result.schema === 'r2d2.foundation-postgres-status/v1') {
+    const claimSet = result.claimSet || result.shadowEvaluation?.claimSet || null;
+    const capabilityBinding = result.capabilityBinding || result.shadowEvaluation?.capabilityBinding || null;
     return {
       domain: 'pfss.postgresql', intent: 'status.read',
       phase: result.phase === 'Observed' ? 'observed' : 'unavailable',
-      targetRef: null, slots: {}, missingSlots: [], evidenceRefs: [], operationRef: null,
+      targetRef: null, slots: {}, missingSlots: [],
+      capabilityRef: capabilityBinding?.capabilityRef || null,
+      evidenceRefs: claimSet?.evidenceRef ? [claimSet.evidenceRef] : [], operationRef: null,
+    };
+  }
+  if (result.schema === 'r2d2.foundation-postgres-operation/v1') {
+    return {
+      domain: 'pfss.postgresql', intent: 'operation.watch',
+      phase: result.phase === 'Observed'
+        ? String(result.operationClaim?.operation?.stage || 'observed').toLowerCase()
+        : 'unavailable',
+      targetRef: result.operationClaim?.operation?.target || null,
+      slots: {}, missingSlots: [],
+      capabilityRef: result.capabilityBinding?.capabilityRef || null,
+      evidenceRefs: result.operationClaim?.evidenceRef ? [result.operationClaim.evidenceRef] : [],
+      operationRef: result.operationId || null,
+    };
+  }
+  if (result.action === 'binding-execute'
+      && result.binding?.toolId === 'osaa.foundation.postgres.claim.create') {
+    const operation = result.result?.response || result.result || {};
+    return {
+      domain: 'pfss.postgresql', intent: 'create.apply', phase: 'operation_accepted',
+      targetRef: operation.target ? {
+        namespace: operation.target.namespace || '', name: operation.target.name || '',
+      } : null,
+      slots: {}, missingSlots: [],
+      capabilityRef: operation.capabilityBinding?.capabilityRef || null,
+      evidenceRefs: [], operationRef: operation.operationId || null,
     };
   }
   if (result.schema !== 'r2d2.foundation-postgres-intake/v1') return null;
@@ -6045,8 +6111,7 @@ function dialogueTransitionForToolResult(result) {
     phase: result.phase === 'AwaitingConfirmation' ? 'plan_ready' : 'needs_input',
     targetRef: values.name ? { namespace: values.namespace || 'opensphere-foundation', name: values.name } : null,
     slots, missingSlots: Array.isArray(result.missing) ? result.missing : [],
-    capabilityRef: result.plan?.descriptorDigest
-      ? `pfss.postgresql.cluster.plan@${result.plan.descriptorDigest}` : null,
+    capabilityRef: result.plan?.capabilityBinding?.capabilityRef || null,
     evidenceRefs: [], operationRef: null,
   };
 }
@@ -6064,7 +6129,8 @@ function commandResponse(started, message, result = null) {
     sources: [],
     environment: null,
     toolResult: result,
-    ...(dialogueTransition ? { dialogueTransition } : {}),
+    dialogueMode: OSAA_DIALOGUE_POLICY.mode,
+    ...(dialogueTransition && OSAA_DIALOGUE_POLICY.recordTransitions ? { dialogueTransition } : {}),
   };
 }
 
@@ -6237,7 +6303,10 @@ async function handleSlashCommand(text, body, actor) {
     // A chat command is not a management reason.  Mutating bindings must get
     // a concrete, human-supplied reason from the JSON inputs (or the caller's
     // request envelope), otherwise the Backend refuses the intent.
-    const out = await executeActionBinding({ bindingId, inputs, confirm, reason: body?.reason || '' }, actor);
+    const out = await executeActionBinding(
+      { bindingId, inputs, confirm, reason: body?.reason || '' }, actor,
+      { dialogueContext: body?._dialogueContext || null },
+    );
     return commandResponse(started, out.message, out);
   }
   if (cmd === '/env') {
@@ -6400,18 +6469,27 @@ function foundationPostgresClarification(status, values) {
 
 function foundationPostgresPlanMessage(plan, request) {
   const expected = String(plan?.expectedConfirmation || '');
-  const actionInputs = { ...request, reason: 'PFSS PostgreSQL cluster provisioning approved' };
+  const actionInputs = {
+    ...request,
+    ...(request.storage?.size ? { storageSize: request.storage.size } : {}),
+    ...(request.storage?.storageClass ? { storageClass: request.storage.storageClass } : {}),
+    planId: plan.planId, planDigest: plan.planDigest,
+    reason: 'PFSS PostgreSQL cluster provisioning approved',
+  };
+  delete actionInputs.storage;
   return [
-    'Foundation owner Admission dry-run이 통과했습니다. 아직 클러스터를 생성하지 않았습니다.',
+    'PFSS PostgreSQL R2 계획이 저장되었습니다. 아직 클러스터를 생성하지 않았습니다.',
     '',
-    `대상: ${plan.target}`,
+    `대상: ${plan.target?.kind || 'FoundationClaim'}/${plan.target?.namespace || request.namespace}/${plan.target?.name || request.name}`,
     `작업: ${plan.action}`,
-    `Plan: ${request.plan}`,
+    `Storage profile: ${request.plan}`,
     `PostgreSQL: ${request.postgresVersion}`,
-    `Postcondition: ${plan.postcondition}`,
+    `Binding digest: ${plan.planDigest}`,
+    `Plan expiry: ${plan.expiresAt}`,
+    `Postcondition: ${JSON.stringify(plan.expectedPostcondition || plan.postconditions || null)}`,
     ...(Array.isArray(plan.warnings) && plan.warnings.length ? ['', '경고:', ...plan.warnings.map((warning) => `- ${warning}`)] : []),
     '',
-    '실행하려면 관리자가 아래 명령을 그대로 전송해야 합니다. 확인 문구는 owner plan이 반환한 값이며 R2D2가 생성하지 않습니다.',
+    '실행하려면 관리자가 아래 명령을 그대로 전송해야 합니다. Apply는 이 planId와 digest만 사용하며 재계획하지 않습니다.',
     `/action manual-action:opensphere:foundation-postgres-claim-create ${JSON.stringify(actionInputs)} confirm ${expected}`,
   ].join('\n');
 }
@@ -6433,7 +6511,11 @@ async function foundationPostgresConversation(messages, actor) {
   });
 }
 
-function foundationPostgresStatusMessage(status) {
+function foundationPostgresStatusMessage(claimSet) {
+  return renderPfssPostgresClaimSet(claimSet);
+}
+
+function legacyFoundationPostgresStatusMessage(status) {
   const claims = Array.isArray(status?.claims) ? status.claims : [];
   const clusters = Array.isArray(status?.clusters) ? status.clusters : [];
   const readyClaims = claims.filter((claim) => claim?.ready === true
@@ -6458,17 +6540,57 @@ function foundationPostgresStatusMessage(status) {
 
 async function foundationPostgresStatusConversation(messages, actor) {
   const query = latestUserContent(messages);
-  if (!requiresFoundationPostgresStatus(query)) return null;
+  const pfssContext = /(?:pfss|postgres(?:ql)?|postgresclaim|foundation-data-pg)/i.test(query);
+  const deterministicIntent = requiresFoundationPostgresStatus(query)
+    || (OSAA_DIALOGUE_POLICY.enforceCurrentFacts && pfssContext
+      && isOperationalQuery(query) && !foundationPostgresConversationIntent(messages));
+  if (!deterministicIntent) return null;
   const started = Date.now();
   try {
     const status = await foundationPostgresStatusRead(actor);
-    return commandResponse(started, foundationPostgresStatusMessage(status), {
-      schema: 'r2d2.foundation-postgres-status/v1', phase: 'Observed', status,
+    if (!OSAA_DIALOGUE_POLICY.enforceCurrentFacts) {
+      let shadowEvaluation = null;
+      if (OSAA_DIALOGUE_POLICY.recordTransitions) {
+        try {
+          const ownerCapability = await foundationPostgresCapabilitiesRead(actor);
+          const capabilityBinding = joinPfssDialogueCapability('status.read', {
+            ownerCapability, toolManifest: osaaToolManifest(),
+          });
+          const observation = observeOwnerEvidence(status, {
+            owner: 'pfss.postgresql', schema: status?.schema,
+            observedAt: status?.refreshedAt || new Date().toISOString(),
+            ttlSeconds: Number(status?.evidencePolicy?.ttlSeconds),
+          });
+          shadowEvaluation = { capabilityBinding, claimSet: buildPfssPostgresClaimSet(observation) };
+        } catch (error) {
+          shadowEvaluation = { available: false, reason: String(error?.msg || error?.message || error).slice(0, 240) };
+        }
+      }
+      return commandResponse(started, legacyFoundationPostgresStatusMessage(status), {
+        schema: 'r2d2.foundation-postgres-status/v1', phase: 'Observed', status,
+        ...(shadowEvaluation ? { shadowEvaluation } : {}),
+      });
+    }
+    const ownerCapability = await foundationPostgresCapabilitiesRead(actor);
+    const capabilityBinding = joinPfssDialogueCapability('status.read', {
+      ownerCapability, toolManifest: osaaToolManifest(),
+    });
+    if (!capabilityBinding.available) throw { code: 409, msg: `PFSS status capability unavailable: ${capabilityBinding.reason}` };
+    const observedAt = status?.refreshedAt || new Date().toISOString();
+    const observation = observeOwnerEvidence(status, {
+      owner: 'pfss.postgresql', schema: status?.schema,
+      observedAt, ttlSeconds: Number(status?.evidencePolicy?.ttlSeconds),
+    });
+    const claimSet = buildPfssPostgresClaimSet(observation);
+    return commandResponse(started, foundationPostgresStatusMessage(claimSet), {
+      schema: 'r2d2.foundation-postgres-status/v1', phase: 'Observed', claimSet,
+      capabilityBinding,
     });
   } catch (error) {
     const reason = String(error?.msg || error?.message || 'owner API unavailable');
-    return commandResponse(started, `현재 PFSS PostgreSQL 운영 인스턴스 존재 여부를 확정할 수 없습니다. ${reason}. 이 조회 실패는 인스턴스가 없다는 뜻이 아닙니다.`, {
-      schema: 'r2d2.foundation-postgres-status/v1', phase: 'Unavailable', error: reason,
+    const claimSet = buildPfssPostgresClaimSet({ epistemicState: 'unobservable' });
+    return commandResponse(started, `${foundationPostgresStatusMessage(claimSet)} ${reason}. 조회 실패는 인스턴스가 없다는 뜻이 아닙니다.`, {
+      schema: 'r2d2.foundation-postgres-status/v1', phase: 'Unavailable', claimSet, error: reason,
     });
   }
 }
@@ -6594,7 +6716,11 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     browserStatus: { type: 'integer', minimum: 100, maximum: 599 },
   });
   add('osaa.system.read', 'get_foundation_status', 'Read Foundation models, engine states, consumer claims, bindings, and controller readiness from the Foundation owner API.', {});
+  add('osaa.system.read', 'get_foundation_postgres_capabilities', 'Read the revision-bound PFSS PostgreSQL capability contract. It is discovery evidence only and cannot authorize execution.', {});
   add('osaa.system.read', 'get_foundation_postgres_status', 'Read the PFSS data.sql.postgres owner projection: approved runtimes and plans, managed namespaces, PostgresClaims, and realized clusters. Use this before discussing PostgreSQL provisioning; do not confuse the postgres UI plugin Deployment with a database cluster.', {});
+  add('osaa.system.read', 'watch_foundation_postgres_operation', 'Read one existing PFSS durable operation and its verified owner postcondition without changing it.', {
+    operationId: { type: 'string', pattern: UUID_RE.source },
+  }, ['operationId']);
   add('osaa.action.execute.high', 'plan_foundation_postgres_cluster', 'Validate a complete PFSS PostgreSQL cluster request through the typed owner Admission dry-run. Returns the exact human approval phrase and postcondition; it does not create the cluster.', {
     name: { type: 'string', pattern: K8S_NAME_RE.source },
     namespace: { type: 'string', enum: OSAA_ENV_NAMESPACES },
@@ -7088,7 +7214,7 @@ function requireOwnerActionId(value, allowed = null) {
   return id;
 }
 
-async function executeOwnerControlAction(toolId, inputs, actor) {
+async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
   if (!OSAA_OWNER_ACTION_TOOL_IDS.has(toolId)) throw { code: 403, msg: 'tool is not an approved owner control-plane action' };
   assertPermission(actor, TOOL_PERMISSION[toolId] || 'osaa.action.execute.high');
   if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'owner control-plane action requires MFA assurance aal2' };
@@ -7287,21 +7413,39 @@ async function executeOwnerControlAction(toolId, inputs, actor) {
     requireConfirm(inputs.confirm, `release IdentityDirectory claim ${name}`);
     owner = 'Foundation control plane'; target = `IdentityDirectoryClaim/opensphere-foundation/${name}`;
     response = await fixedOwnerPost(FOUNDATION_CONTROL_URL, '/api/foundation/osaa/identity-directory/claims/release', actor, { name, confirm: inputs.confirm, reason }, owner, 120000);
-  } else if (toolId === 'osaa.foundation.postgres.claim.create') {
+  } else if (toolId === 'osaa.foundation.postgres.plan') {
+    owner = 'PFSS PostgreSQL owner';
     const request = normalizeFoundationPostgresRequest(inputs);
-    const expected = foundationPostgresConfirmation(request);
+    target = `FoundationClaim/${request.namespace}/${request.name}`;
+    response = await foundationPostgresPlanRead(inputs, actor);
+  } else if (toolId === 'osaa.foundation.postgres.claim.create') {
+    if (!OSAA_DIALOGUE_POLICY.enforceMutations) {
+      throw { code: 409, msg: 'PFSS Dialogue State mutation enforcement is not enabled by the server rollout mode' };
+    }
+    const { request, planId, planDigest } = normalizeFoundationPostgresApplyInputs(inputs);
+    const dialogue = context.dialogueContext;
+    if (dialogue?.domain !== 'pfss.postgresql' || !/^sha256:[0-9a-f]{64}$/.test(String(dialogue?.stateDigest || ''))) {
+      throw { code: 409, msg: 'PFSS apply requires the server-owned Dialogue State from the planned conversation' };
+    }
+    const [storedPlan, ownerCapability] = await Promise.all([
+      backendGet(`/api/osaa/operations/plans/${encodeURIComponent(planId)}`, actor),
+      foundationPostgresCapabilitiesRead(actor),
+    ]);
+    if (storedPlan.planDigest !== planDigest) throw { code: 409, msg: 'durable PostgreSQL plan digest changed or expired; plan again' };
+    const capabilityBinding = joinPfssDialogueCapability('create.apply', {
+      ownerCapability, toolManifest: osaaToolManifest(), descriptor: storedPlan,
+    });
+    if (!capabilityBinding.available) throw { code: 409, msg: `PFSS apply capability unavailable: ${capabilityBinding.reason}` };
+    const expected = foundationPostgresConfirmation(request, planDigest);
+    if (storedPlan.expectedConfirmation !== expected) throw { code: 409, msg: 'durable PostgreSQL confirmation binding changed; plan again' };
     requireConfirm(inputs.confirm, expected);
     owner = 'PFSS PostgreSQL owner'; target = `FoundationClaim/${request.namespace}/${request.name}`;
-    const plan = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/osaa/operations/plan', actor, {
-      action: 'create-postgres-cluster', target: request, reason,
-    }, 'Console durable PostgreSQL planner', 30000);
-    if (plan.expectedConfirmation !== expected || !plan.planId) throw { code: 409, msg: 'durable PostgreSQL plan binding changed; plan again' };
     response = await fixedOwnerPost(CONSOLE_IDENTITY_URL, '/api/osaa/operations', actor, {
-      planId: plan.planId, confirmation: expected,
+      planId, planDigest, dialogueStateDigest: dialogue.stateDigest, confirmation: expected,
     }, 'Console durable operation ledger', 30000);
     response = {
-      ...response, planId: plan.planId, planDigest: plan.planDigest, expiresAt: plan.expiresAt,
-      postconditions: plan.postconditions || [
+      ...response, planId, planDigest, expiresAt: storedPlan.expiresAt, capabilityBinding,
+      postconditions: storedPlan.postconditions || [
         'FoundationClaim Bound with observedGeneration current',
         'PostgresClaim Ready=True with observedGeneration current',
       ],
@@ -7661,8 +7805,24 @@ function normalizeFoundationPostgresRequest(inputs) {
   };
 }
 
-function foundationPostgresConfirmation(request) {
-  return `create PostgreSQL cluster ${request.namespace}/${request.name} plan ${request.plan} version ${request.postgresVersion}`;
+function foundationPostgresConfirmation(request, bindingDigest) {
+  const binding = String(bindingDigest || '');
+  if (!/^sha256:[0-9a-f]{64}$/.test(binding)) throw { code: 400, msg: 'planDigest must be a sha256 durable binding digest' };
+  return `create PostgreSQL cluster ${request.namespace}/${request.name} binding ${binding} version ${request.postgresVersion} storage-profile ${request.plan}`;
+}
+
+function normalizeFoundationPostgresApplyInputs(inputs) {
+  requireClosedOwnerInputs(inputs, [
+    'name', 'namespace', 'alias', 'database', 'owner', 'plan', 'postgresVersion',
+    'deletionPolicy', 'storageSize', 'storageClass', 'planId', 'planDigest', 'confirm', 'reason',
+  ]);
+  const planId = String(inputs.planId || '').trim().toLowerCase();
+  const planDigest = String(inputs.planDigest || '').trim().toLowerCase();
+  if (!/^pgplan-[0-9a-f-]{36}$/.test(planId)) throw { code: 400, msg: 'planId must be an unexpired PFSS durable plan ID' };
+  if (!/^sha256:[0-9a-f]{64}$/.test(planDigest)) throw { code: 400, msg: 'planDigest must be a sha256 durable binding digest' };
+  const request = normalizeFoundationPostgresRequest(Object.fromEntries(Object.entries(inputs)
+    .filter(([key]) => !['planId', 'planDigest'].includes(key))));
+  return { request, planId, planDigest };
 }
 
 async function foundationPostgresStatusRead(actor) {
@@ -7684,16 +7844,121 @@ async function foundationPostgresStatusRead(actor) {
   return projection;
 }
 
+async function foundationPostgresCapabilitiesRead(actor) {
+  assertPermission(actor, 'osaa.system.read');
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/capabilities?capability=data.sql.postgres`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    throw { code: 503, msg: 'PFSS PostgreSQL capability owner API is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `PFSS capability owner HTTP ${response.status}` };
+  const projection = redactProjection(body);
+  audit(actor, 'foundation-postgres-capabilities-read', 'PFSS/data.sql.postgres', 'ok', `${projection.revision || 'unversioned'} / ${projection.contractDigest || 'undigested'}`);
+  return projection;
+}
+
+async function foundationPostgresOperationRead(inputs, actor) {
+  assertPermission(actor, 'osaa.system.read');
+  requireClosedOwnerInputs(inputs, ['operationId']);
+  const operationId = String(inputs.operationId || '').trim().toLowerCase();
+  if (!UUID_RE.test(operationId)) throw { code: 400, msg: 'operationId must be a UUID' };
+  if (!actor?.bearerToken) throw { code: 503, msg: 'Console identity token is unavailable' };
+  let response;
+  try {
+    response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/operations/${operationId}`, {
+      headers: { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw { code: 503, msg: 'PFSS PostgreSQL operation owner API is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `PFSS operation owner HTTP ${response.status}` };
+  const projection = redactProjection(body);
+  audit(actor, 'foundation-postgres-operation-watch', `ModuleOperation/${operationId}`, 'ok', `${projection.operationPhase || projection.phase || 'unknown'}`);
+  return projection;
+}
+
+async function foundationPostgresOperationConversation(messages, actor, dialogueContext = null) {
+  const query = latestUserContent(messages);
+  const explicit = query.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i)?.[0] || '';
+  const asksStatus = /(작업|operation|진행|상태|결과|완료|watch|receipt|postcondition)/i.test(query);
+  const contextual = dialogueContext?.domain === 'pfss.postgresql' ? String(dialogueContext.operationRef || '') : '';
+  const operationId = explicit || (asksStatus ? contextual : '');
+  if (!UUID_RE.test(operationId)) return null;
+  const started = Date.now();
+  try {
+    const status = await foundationPostgresOperationRead({ operationId }, actor);
+    let capabilityBinding = null;
+    if (OSAA_DIALOGUE_POLICY.recordTransitions) {
+      try {
+        const ownerCapability = await foundationPostgresCapabilitiesRead(actor);
+        capabilityBinding = joinPfssDialogueCapability('operation.watch', {
+          ownerCapability, toolManifest: osaaToolManifest(),
+        });
+      } catch (error) {
+        capabilityBinding = { available: false, reason: String(error?.msg || error?.message || error).slice(0, 240) };
+      }
+      if (!capabilityBinding.available && OSAA_DIALOGUE_POLICY.enforceCurrentFacts) {
+        throw { code: 409, msg: `PFSS operation watch capability unavailable: ${capabilityBinding.reason}` };
+      }
+    }
+    const observation = observeOwnerEvidence(status, {
+      owner: 'pfss.postgresql', schema: 'foundation.postgres.operation-status/v1',
+      observedAt: status?.observedAt, ttlSeconds: Number(status?.evidencePolicy?.ttlSeconds),
+    });
+    const operationClaim = buildPfssPostgresOperationClaim(observation);
+    return commandResponse(started, renderPfssPostgresOperationClaim(operationClaim), {
+      schema: 'r2d2.foundation-postgres-operation/v1', phase: 'Observed', operationId,
+      operationClaim, ...(capabilityBinding?.available ? { capabilityBinding } : {}),
+    });
+  } catch (error) {
+    const operationClaim = buildPfssPostgresOperationClaim({ epistemicState: 'unobservable' });
+    return commandResponse(started, `${renderPfssPostgresOperationClaim(operationClaim)} ${String(error?.msg || error?.message || error).slice(0, 240)}`, {
+      schema: 'r2d2.foundation-postgres-operation/v1', phase: 'Unavailable', operationId, operationClaim,
+    });
+  }
+}
+
 async function foundationPostgresPlanRead(inputs, actor) {
   assertPermission(actor, 'osaa.action.execute.high');
   const request = normalizeFoundationPostgresRequest(inputs);
-  const projection = redactProjection(await fixedOwnerPost(
+  const rawPlan = await fixedOwnerPost(
     CONSOLE_IDENTITY_URL, '/api/osaa/operations/plan', actor,
     { action: 'create-postgres-cluster', target: request, reason: String(inputs.reason || '') },
     'Console durable PostgreSQL planner', 30000,
-  ));
+  );
+  const projection = redactProjection(rawPlan);
+  if (!OSAA_DIALOGUE_POLICY.recordTransitions) {
+    audit(actor, 'foundation-postgres-plan', `FoundationClaim/${request.namespace}/${request.name}`, 'ok', `${request.plan}/${request.postgresVersion}`);
+    return projection;
+  }
+  let ownerCapability;
+  try {
+    ownerCapability = await foundationPostgresCapabilitiesRead(actor);
+  } catch (error) {
+    if (!OSAA_DIALOGUE_POLICY.enforceCurrentFacts) {
+      return { ...projection, shadowCapability: { available: false, reason: String(error?.msg || error?.message || error).slice(0, 240) } };
+    }
+    throw error;
+  }
+  const capabilityBinding = joinPfssDialogueCapability('create.plan', {
+    ownerCapability, toolManifest: osaaToolManifest(), descriptor: projection,
+  });
+  if (!capabilityBinding.available && OSAA_DIALOGUE_POLICY.enforceCurrentFacts) {
+    throw { code: 409, msg: `PFSS plan capability unavailable: ${capabilityBinding.reason}` };
+  }
   audit(actor, 'foundation-postgres-plan', `FoundationClaim/${request.namespace}/${request.name}`, 'ok', `${request.plan}/${request.postgresVersion}`);
-  return projection;
+  return {
+    ...projection,
+    ...(capabilityBinding.available ? { capabilityBinding } : { shadowCapability: capabilityBinding }),
+  };
 }
 
 async function executeAgentTool(name, args, actor, context = {}) {
@@ -7837,7 +8102,44 @@ async function executeAgentTool(name, args, actor, context = {}) {
       break;
     case 'get_foundation_postgres_status':
       assertPermission(actor, 'osaa.system.read');
-      result = await foundationPostgresStatusRead(actor);
+      if (OSAA_DIALOGUE_POLICY.enforceCurrentFacts) {
+        const [status, ownerCapability] = await Promise.all([
+          foundationPostgresStatusRead(actor), foundationPostgresCapabilitiesRead(actor),
+        ]);
+        const capabilityBinding = joinPfssDialogueCapability('status.read', {
+          ownerCapability, toolManifest: osaaToolManifest(),
+        });
+        if (!capabilityBinding.available) throw { code: 409, msg: `PFSS status capability unavailable: ${capabilityBinding.reason}` };
+        const observation = observeOwnerEvidence(status, {
+          owner: 'pfss.postgresql', schema: status?.schema,
+          observedAt: status?.refreshedAt || new Date().toISOString(),
+          ttlSeconds: Number(status?.evidencePolicy?.ttlSeconds),
+        });
+        result = { schema: 'osaa.claim-set-tool-result/pfss-postgresql-v1',
+          claimSet: buildPfssPostgresClaimSet(observation), capabilityBinding };
+      } else result = await foundationPostgresStatusRead(actor);
+      break;
+    case 'get_foundation_postgres_capabilities':
+      assertPermission(actor, 'osaa.system.read');
+      result = await foundationPostgresCapabilitiesRead(actor);
+      break;
+    case 'watch_foundation_postgres_operation':
+      assertPermission(actor, 'osaa.system.read');
+      if (OSAA_DIALOGUE_POLICY.enforceCurrentFacts) {
+        const [status, ownerCapability] = await Promise.all([
+          foundationPostgresOperationRead(input, actor), foundationPostgresCapabilitiesRead(actor),
+        ]);
+        const capabilityBinding = joinPfssDialogueCapability('operation.watch', {
+          ownerCapability, toolManifest: osaaToolManifest(),
+        });
+        if (!capabilityBinding.available) throw { code: 409, msg: `PFSS operation watch capability unavailable: ${capabilityBinding.reason}` };
+        const observation = observeOwnerEvidence(status, {
+          owner: 'pfss.postgresql', schema: 'foundation.postgres.operation-status/v1',
+          observedAt: status?.observedAt, ttlSeconds: Number(status?.evidencePolicy?.ttlSeconds),
+        });
+        result = { schema: 'osaa.operation-claim-tool-result/pfss-postgresql-v1',
+          operationClaim: buildPfssPostgresOperationClaim(observation), capabilityBinding };
+      } else result = await foundationPostgresOperationRead(input, actor);
       break;
     case 'plan_foundation_postgres_cluster':
       permissionCode = 'osaa.action.execute.high';
@@ -7991,6 +8293,10 @@ async function chatCompletion(body, actor) {
   const baseMessages = normalizeMessages(body);
   const commandOut = await handleSlashCommand(latestUserContent(baseMessages), body, actor);
   if (commandOut) return commandOut;
+  const foundationPostgresOperationOut = await foundationPostgresOperationConversation(
+    baseMessages, actor, body?._dialogueContext || null,
+  );
+  if (foundationPostgresOperationOut) return foundationPostgresOperationOut;
   const foundationPostgresStatusOut = await foundationPostgresStatusConversation(baseMessages, actor);
   if (foundationPostgresStatusOut) return foundationPostgresStatusOut;
   const foundationPostgresOut = await foundationPostgresConversation(baseMessages, actor);
@@ -8422,10 +8728,7 @@ async function chatCompletion(body, actor) {
 }
 
 async function durableChatCompletion(body, actor) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) throw { code: 400, msg: 'OSAA chat body must be an object' };
-  if (Object.prototype.hasOwnProperty.call(body, 'messages')) {
-    throw { code: 400, msg: 'messages is server-owned; send conversationId and the current message only' };
-  }
+  assertDialogueRequestBoundary(body);
   const store = getConversationStore();
   const turn = await store.beginTurn(actor, body);
   if (turn.replay) return { ...turn.response, replayed: true };
@@ -8440,8 +8743,16 @@ async function durableChatCompletion(body, actor) {
       ...body,
       messages: turn.messages,
       sessionId: turn.conversationId,
+      _dialogueContext: turn.dialogueContext,
     }, actor);
-    return await store.completeTurn(actor, turn, response);
+    const governed = {
+      ...response,
+      dialogueMode: OSAA_DIALOGUE_POLICY.mode,
+      ...(!OSAA_DIALOGUE_POLICY.recordTransitions ? { dialogueTransition: null } : {}),
+    };
+    const completed = await store.completeTurn(actor, turn, governed);
+    if (!OSAA_DIALOGUE_POLICY.exposeContext) delete completed.dialogue;
+    return completed;
   } catch (error) {
     await store.failTurn(actor, turn).catch((failure) => {
       console.error('[osaa-conversation] failed to record failed turn:', failure?.message || failure);
@@ -9106,6 +9417,13 @@ const server = http.createServer(async (req, res) => {
         mutationGateReason: OSAA_ACTION_SUBMISSION_ENABLED ? null : 'console_backend_action_submission_disabled',
         mutationGate: { enabled: OSAA_ACTION_SUBMISSION_ENABLED, reason: OSAA_ACTION_SUBMISSION_ENABLED ? null : 'console_backend_action_submission_disabled' },
         directKubernetesMutationEnabled: false,
+        dialogueState: {
+          mode: OSAA_DIALOGUE_POLICY.mode,
+          recordTransitions: OSAA_DIALOGUE_POLICY.recordTransitions,
+          exposeContext: OSAA_DIALOGUE_POLICY.exposeContext,
+          enforceCurrentFacts: OSAA_DIALOGUE_POLICY.enforceCurrentFacts,
+          enforceMutations: OSAA_DIALOGUE_POLICY.enforceMutations,
+        },
         ragEnabled: OSAA_RAG_ENABLED,
         lexicalSearchReady: readiness.ready,
         semanticSearchReady: Boolean(semanticSearch.ready),
@@ -9421,9 +9739,18 @@ const server = http.createServer(async (req, res) => {
       requireClosedOwnerInputs(await readBody(req), []);
       return json(res, 200, await foundationPostgresStatusRead(actor));
     }
+    if (url.pathname === '/api/osaa/tools/foundation/postgres/capabilities' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      requireClosedOwnerInputs(await readBody(req), []);
+      return json(res, 200, await foundationPostgresCapabilitiesRead(actor));
+    }
     if (url.pathname === '/api/osaa/tools/foundation/postgres/plan' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
       return json(res, 200, await foundationPostgresPlanRead(await readBody(req), actor));
+    }
+    if (url.pathname === '/api/osaa/tools/foundation/postgres/operation' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      return json(res, 200, await foundationPostgresOperationRead(await readBody(req), actor));
     }
     if (url.pathname === '/api/osaa/tools/k8s/resources' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
@@ -9482,7 +9809,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/osaa/actions/bindings/execute' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
       const body = await readBody(req);
-      return json(res, 200, await executeActionBinding(body, actor));
+      const dialogueContext = body?.conversationId
+        ? await getConversationStore().dialogueContext(actor, body.conversationId)
+        : null;
+      return json(res, 200, await executeActionBinding(body, actor, { dialogueContext }));
     }
     if (url.pathname === '/api/osaa/actions/k8s/restart-deployment' && req.method === 'POST') {
       const actor = await verifyAdmin(req);

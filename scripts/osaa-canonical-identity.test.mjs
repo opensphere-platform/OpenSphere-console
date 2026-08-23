@@ -12,6 +12,8 @@ const historical = (file) =>
   file.startsWith('backend/supabase/migrations/') ||
   file === 'backend/supabase/migration-history-lock.json' ||
   file === 'backend/supabase/verify.mjs' ||
+  // Replays the complete immutable migration history, including the retired OAA role.
+  file === 'backend/supabase/verify-ledger-integrity.mjs' ||
   file === 'backend/opensphere-console-backend/foundation-bootstrap-bundle.js' ||
   /(?:^|\/)(?:test\/.*|[^/]+\.(?:test|spec)\.(?:js|mjs|ts))$/i.test(file) ||
   file === 'scripts/osaa-canonical-identity.test.mjs' ||

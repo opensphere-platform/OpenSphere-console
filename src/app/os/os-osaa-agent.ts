@@ -52,6 +52,14 @@ interface OsaaUsage {
   source: 'provider' | 'unavailable';
   recorded: boolean;
 }
+interface OsaaDialogue {
+  domain: string;
+  intent: string;
+  phase: string;
+  missingSlots: string[];
+  contextStatus: string;
+  revision: number;
+}
 interface OsaaMessage {
   id: string;
   role: OsaaRole;
@@ -60,6 +68,7 @@ interface OsaaMessage {
   sources?: OsaaSource[];
   concepts?: OsaaConcept[];
   usage?: OsaaUsage;
+  dialogue?: OsaaDialogue;
 }
 interface OsaaSession {
   id: string;
@@ -155,6 +164,20 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
                   }
                 </div>
                 @if (m.meta) { <div class="osaa-meta">{{ m.meta }}</div> }
+                @if (m.dialogue; as dialogue) {
+                  <details class="osaa-context-inspector">
+                    <summary>
+                      <span>Context</span>
+                      <strong>{{ dialogue.domain }} · {{ dialogue.intent }}</strong>
+                      <span>{{ dialogue.phase }}</span>
+                    </summary>
+                    <dl>
+                      <div><dt>Status</dt><dd>{{ dialogue.contextStatus }}</dd></div>
+                      <div><dt>Revision</dt><dd>{{ dialogue.revision }}</dd></div>
+                      <div><dt>Missing</dt><dd>{{ dialogue.missingSlots.length ? dialogue.missingSlots.join(', ') : '없음' }}</dd></div>
+                    </dl>
+                  </details>
+                }
                 @if (m.usage; as usage) {
                   <div class="osaa-token-usage" aria-label="LLM 토큰 사용량">
                     <span>입력 {{ formatTokenCount(usage.inputTokens) }}</span>
@@ -394,6 +417,20 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
       .osaa-content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.73rem; line-height: 1.55; }
       .osaa-meta { margin-top: 0.35rem; font-size: 0.56rem; color: #7a8496; font-family: monospace; }
       .osaa-user .osaa-meta { color: rgba(255, 255, 255, 0.75); }
+      .osaa-context-inspector {
+        margin-top: 0.45rem; border: 1px solid #dde4ee; border-radius: 6px; background: #f8fafc;
+        color: #344054; font-size: 0.61rem;
+      }
+      .osaa-context-inspector summary {
+        display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.4rem;
+        padding: 0.38rem 0.45rem; cursor: pointer; list-style-position: inside;
+      }
+      .osaa-context-inspector summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+      .osaa-context-inspector summary span:last-child { color: #667085; }
+      .osaa-context-inspector dl { margin: 0; padding: 0 0.45rem 0.4rem; border-top: 1px solid #e7ecf2; }
+      .osaa-context-inspector dl div { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr); gap: 0.35rem; padding-top: 0.28rem; }
+      .osaa-context-inspector dt { color: #667085; }
+      .osaa-context-inspector dd { margin: 0; overflow-wrap: anywhere; }
       .osaa-sources {
         margin-top: 0.55rem; padding-top: 0.45rem; border-top: 1px solid #e6ebf2;
         display: flex; flex-direction: column; gap: 0.28rem;
@@ -734,6 +771,7 @@ export class OsOsaaAgent implements OnDestroy {
         usage: this.normalizeUsage(body.usage, body.usageRecorded),
         sources: this.normalizeSources(body.sources),
         concepts: this.normalizeConcepts(body.concepts?.concepts),
+        dialogue: this.normalizeDialogue(body.dialogue, body.dialogueMode),
       }]);
       await this.refreshHistory(false);
     } catch (e: any) {
@@ -832,6 +870,25 @@ export class OsOsaaAgent implements OnDestroy {
     };
   }
 
+  private normalizeDialogue(value: unknown, mode: unknown): OsaaDialogue | undefined {
+    if (!['read-enforce', 'mutation-enforce'].includes(String(mode || ''))) return undefined;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const raw = value as Record<string, unknown>;
+    const domain = String(raw['domain'] || '').slice(0, 120);
+    const intent = String(raw['intent'] || '').slice(0, 120);
+    const phase = String(raw['phase'] || 'idle').slice(0, 80);
+    if (!domain || !intent) return undefined;
+    return {
+      domain,
+      intent,
+      phase,
+      missingSlots: Array.isArray(raw['missingSlots'])
+        ? raw['missingSlots'].map((item) => String(item).slice(0, 120)).slice(0, 32) : [],
+      contextStatus: String(raw['contextStatus'] || 'validated').slice(0, 40),
+      revision: Math.max(0, Math.floor(Number(raw['revision']) || 0)),
+    };
+  }
+
   private fromStoredMessage(value: unknown): OsaaMessage {
     const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const role = raw['role'] === 'user' || raw['role'] === 'assistant' || raw['role'] === 'system'
@@ -849,6 +906,7 @@ export class OsOsaaAgent implements OnDestroy {
       sources: this.normalizeSources(raw['sources'] || response['sources']),
       concepts: this.normalizeConcepts(raw['concepts'] || (response['concepts'] as any)?.concepts),
       usage: this.normalizeUsage(raw['usage'] || response['usage'], response['usageRecorded']),
+      dialogue: this.normalizeDialogue(response['dialogue'], response['dialogueMode']),
     };
   }
 

@@ -315,3 +315,14 @@ test('OSAA composer follows the desktop chat interaction contract', () => {
   assert.match(agent, /stopGeneration\(\): void/);
   assert.match(agent, /toggleVoiceInput\(\): void/);
 });
+
+test('OSAA shows a concise enforced Dialogue State inspector without exposing shadow state', () => {
+  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+
+  assert.match(agent, /interface OsaaDialogue/);
+  assert.match(agent, /class="osaa-context-inspector"/);
+  assert.match(agent, /dialogue\.domain.*dialogue\.intent/);
+  assert.match(agent, /dialogue\.missingSlots\.join/);
+  assert.match(agent, /\['read-enforce', 'mutation-enforce'\]\.includes/);
+  assert.match(agent, /dialogue: this\.normalizeDialogue\(body\.dialogue, body\.dialogueMode\)/);
+});
