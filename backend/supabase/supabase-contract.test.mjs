@@ -277,6 +277,15 @@ test('0071 keeps Dialogue State in CBSS and atomically separates it from Agent R
   assert.match(sql, /purge_dialogue_state\(/);
   assert.match(sql, /conversation has a pending turn/);
   assert.match(sql, /dialogue_state_purge_receipt/);
+  assert.match(sql, /CREATE TABLE osaa[.]dialogue_turn_recovery_receipt/);
+  assert.match(sql, /reap_expired_dialogue_turns/);
+  assert.match(sql, /recover_dialogue_turn/);
+  assert.match(sql, /migration-needs-reconciliation/);
+  assert.match(sql, /dialogue_turn_recovery_receipt_append_only/);
+  assert.match(sql, /DROP POLICY IF EXISTS osaa_gateway_conversation/);
+  assert.match(sql, /ALTER TABLE osaa[.]conversation FORCE ROW LEVEL SECURITY/);
+  assert.match(sql, /osaa_gateway_conversation_message_select/);
+  assert.match(sql, /REVOKE DELETE, TRUNCATE ON osaa[.]conversation/);
   assert.doesNotMatch(sql, /agent_step|agent_run/);
   assert.doesNotMatch(sql, /ON CONFLICT[^;]*DO NOTHING/is);
 });

@@ -13,7 +13,7 @@ const {
   requiresOsShellDiagnosis,
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
-const { createConversationStore } = require('./conversation-store');
+const { createConversationStore, TURN_LEASE_SECONDS } = require('./conversation-store');
 const { manualSeedStructureDiff, relationId, seedOwnershipMetadata } = require('./manual-seed-reconcile');
 const { buildAgentControlReadiness } = require('./agent-control-readiness');
 const { projectExtensionPresentation } = require('./extension-presentation');
@@ -363,6 +363,7 @@ let r2d2QueryService = null;
 let r2d2Timer = null;
 let r2d2RelayTimer = null;
 let r2d2MaintenanceTimer = null;
+let conversationLeaseReaperTimer = null;
 let pgSchemaReady = false;
 let pgSchemaPromise = null;
 let pgUsageLedgerReady = false;
@@ -8428,6 +8429,12 @@ async function durableChatCompletion(body, actor) {
   const store = getConversationStore();
   const turn = await store.beginTurn(actor, body);
   if (turn.replay) return { ...turn.response, replayed: true };
+  const heartbeatTimer = setInterval(() => {
+    void store.heartbeatTurn(actor, turn).catch((error) => {
+      console.warn('[osaa-conversation] lease heartbeat failed:', error?.message || error);
+    });
+  }, Math.max(1000, Math.floor((TURN_LEASE_SECONDS * 1000) / 3)));
+  heartbeatTimer.unref();
   try {
     const response = await chatCompletion({
       ...body,
@@ -8440,7 +8447,30 @@ async function durableChatCompletion(body, actor) {
       console.error('[osaa-conversation] failed to record failed turn:', failure?.message || failure);
     });
     throw error;
+  } finally {
+    clearInterval(heartbeatTimer);
   }
+}
+
+async function runConversationLeaseReaper() {
+  const receipts = await getConversationStore().reapExpiredTurns(
+    100, `osaa-gateway:${OSAA_WATCH_OBSERVER_ID}`,
+  );
+  if (receipts.length) {
+    console.warn(`[osaa-conversation] recovered ${receipts.length} expired turn lease(s)`);
+  }
+}
+
+function initializeConversationLeaseReaper() {
+  void runConversationLeaseReaper().catch((error) => {
+    console.warn('[osaa-conversation] initial lease recovery skipped:', error?.message || error);
+  });
+  conversationLeaseReaperTimer = setInterval(() => {
+    void runConversationLeaseReaper().catch((error) => {
+      console.warn('[osaa-conversation] lease reaper failed:', error?.message || error);
+    });
+  }, 30000);
+  conversationLeaseReaperTimer.unref();
 }
 
 function validateKeyBody(body, rotate = false) {
@@ -9114,6 +9144,18 @@ const server = http.createServer(async (req, res) => {
       assertPermission(actor, 'osaa.chat.use');
       return json(res, 200, await getConversationStore().remove(actor, conversationMatch[1]));
     }
+    const conversationRecoveryMatch = url.pathname.match(
+      /^\/api\/osaa\/admin\/conversations\/([0-9a-f-]{36})\/turns\/([0-9a-f-]{36})\/recover$/i,
+    );
+    if (conversationRecoveryMatch && req.method === 'POST') {
+      const actor = await verifyAdmin(req);
+      const body = await readBody(req);
+      const receipt = await getConversationStore().recoverTurn(
+        actor, conversationRecoveryMatch[1], conversationRecoveryMatch[2], body.reason,
+      );
+      audit(actor, 'conversation-turn-recovery', conversationRecoveryMatch[2], 'ok', body.reason);
+      return json(res, 200, { recovered: true, receipt });
+    }
     if (url.pathname === '/api/osaa/operational/status' && req.method === 'GET') {
       await verifyAuthed(req);
       if (!r2d2QueryService) return operationalUnavailable(res);
@@ -9486,6 +9528,7 @@ const server = http.createServer(async (req, res) => {
     // human-readable message. Never include raw secrets/tokens/stack traces in the response body.
     const responseBody = { error: e.msg || e.message || String(e) };
     if (e.errorCode) responseBody.code = e.errorCode;
+    if (e.retryAfterSeconds > 0) res.setHeader('retry-after', String(Math.ceil(e.retryAfterSeconds)));
     return json(res, code, responseBody);
   }
 });
@@ -9516,6 +9559,7 @@ async function initializeGatewayData(attempt = 1) {
 server.listen(PORT, () => {
   console.log(`opensphere-console-osaa-gateway v${VERSION} listening :${PORT} (ns=${OSAA_NAMESPACE})`);
   void initializeGatewayData();
+  initializeConversationLeaseReaper();
   void initializeOperationalIntelligence().catch((error) => console.warn('[r2d2] initialization failed:', error.message || error));
   void initializeIncidentRelay().catch((error) => console.warn('[r2d2-relay] initialization failed:', error.message || error));
   void initializeR2d2Maintenance().catch((error) => console.warn('[r2d2-maintenance] initialization failed:', error.message || error));
@@ -9533,6 +9577,7 @@ function stopGateway() {
   if (r2d2Timer) clearInterval(r2d2Timer);
   if (r2d2RelayTimer) clearInterval(r2d2RelayTimer);
   if (r2d2MaintenanceTimer) clearInterval(r2d2MaintenanceTimer);
+  if (conversationLeaseReaperTimer) clearInterval(conversationLeaseReaperTimer);
   if (r2d2ObserverPool) void r2d2ObserverPool.end().catch(() => undefined);
   if (r2d2RelayPool) void r2d2RelayPool.end().catch(() => undefined);
   if (r2d2MaintenancePool) void r2d2MaintenancePool.end().catch(() => undefined);

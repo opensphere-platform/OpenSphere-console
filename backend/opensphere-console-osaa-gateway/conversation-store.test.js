@@ -54,13 +54,17 @@ test('context window is chronological and bounded by server budget', () => {
 
 test('one conversation serializes turns before provider execution', () => {
   const source = readFileSync(require.resolve('./conversation-store'), 'utf8');
+  assert.match(source, /async function withActor/);
+  assert.match(source, /set_config\('opensphere[.]actor_id'/);
   assert.match(source, /role='user' AND status='pending'/);
   assert.match(source, /turn_request_id<>\$2/);
   assert.match(source, /another conversation turn is still in progress/);
   assert.equal(TURN_LEASE_SECONDS, 120);
   assert.match(source, /lease_expires_at<=clock_timestamp\(\)/);
-  assert.match(source, /FOR UPDATE SKIP LOCKED/);
-  assert.match(source, /lease-reaper/);
+  assert.match(source, /reap_expired_dialogue_turns/);
+  assert.match(source, /heartbeatTurn/);
+  assert.match(source, /conversation_turn_lease_lost/);
+  assert.match(source, /retryAfterSeconds/);
 });
 
 test('successful provider responses repair the conversation model projection', () => {
@@ -83,6 +87,8 @@ test('Dialogue State transition and assistant message share one fail-closed tran
   assert.match(complete, /commitDialogueTransition\([\s\S]*?INSERT INTO osaa\.conversation_message/);
   assert.match(complete, /await client\.query\('COMMIT'\)/);
   assert.match(source, /INSERT INTO osaa\.dialogue_state_transition/);
+  assert.match(source, /RETURNING revision/);
+  assert.match(source, /osaa_dialogue_revision_conflict/);
   assert.doesNotMatch(source, /dialogue_state_transition[\s\S]*?ON CONFLICT[^;]*DO NOTHING/);
   const server = readFileSync(join(__dirname, 'server.js'), 'utf8');
   assert.match(server, /function dialogueTransitionForToolResult/);
@@ -90,4 +96,7 @@ test('Dialogue State transition and assistant message share one fail-closed tran
   assert.match(server, /r2d2[.]foundation-postgres-intake\/v1/);
   assert.match(server, /intent: 'status[.]read'/);
   assert.match(server, /intent: 'create[.]plan'/);
+  assert.match(server, /initializeConversationLeaseReaper/);
+  assert.match(server, /conversationRecoveryMatch/);
+  assert.match(server, /retry-after/);
 });

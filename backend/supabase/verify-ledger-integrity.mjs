@@ -62,7 +62,7 @@ CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service
 CREATE ROLE supabase_admin LOGIN SUPERUSER; CREATE ROLE authenticator NOLOGIN;
 CREATE ROLE opensphere_ai_pipeline NOLOGIN; CREATE ROLE opensphere_ai_runtime NOLOGIN;
 CREATE ROLE opensphere_console_backend NOLOGIN; CREATE ROLE opensphere_external_channel_executor NOLOGIN;
-CREATE ROLE opensphere_notification_dispatcher NOLOGIN; CREATE ROLE opensphere_osaa_gateway NOLOGIN;
+CREATE ROLE opensphere_notification_dispatcher NOLOGIN; CREATE ROLE opensphere_oaa_gateway NOLOGIN;
 CREATE ROLE opensphere_shell_api NOLOGIN; CREATE ROLE opensphere_shell_gateway NOLOGIN;
 CREATE ROLE opensphere_shell_reconciler NOLOGIN;
 CREATE SCHEMA IF NOT EXISTS extensions;
@@ -121,6 +121,73 @@ function mustRejectContract(sql, label, pattern) {
   assert.ok(rejected, `${label}: 강제 계약을 우회했다`);
   assert.match(detail, pattern, `${label}: 예상 계약이 아닌 이유로 실패했다 — ${detail.slice(0, 300)}`);
   console.log(`  ✓ ${label} — 계약 거부됨`);
+}
+
+function verifyDialogueStateContract() {
+  console.log('\nOSAA Dialogue State actor isolation·lease recovery·append-only 계약 (0071)');
+  const conversation = '11111111-1111-4111-8111-111111111111';
+  const expiredTurn = '22222222-2222-4222-8222-222222222222';
+  const adminTurn = '33333333-3333-4333-8333-333333333333';
+  const owner = 'dialogue-owner-a';
+  const digestA = `sha256:${'a'.repeat(64)}`;
+  const digestB = `sha256:${'b'.repeat(64)}`;
+  psql(`INSERT INTO osaa.conversation(id,owner_id,title)
+    VALUES('${conversation}','${owner}','Dialogue verifier');
+    INSERT INTO osaa.conversation_message(
+      conversation_id,sequence,turn_request_id,role,content,status,
+      lease_owner,lease_expires_at,heartbeat_at,attempt
+    ) VALUES(
+      '${conversation}',1,'${expiredTurn}','user','expired turn','pending',
+      '${expiredTurn}',clock_timestamp()-interval '1 minute',clock_timestamp()-interval '2 minutes',1
+    );`);
+  const reaped = psql(`SET ROLE opensphere_osaa_gateway;
+    SELECT action||'|'||turn_request_id FROM osaa.reap_expired_dialogue_turns(10,'ledger-verifier');
+    RESET ROLE;`).trim().split('\n').find((line) => line.startsWith('lease-expired|'));
+  assert.equal(reaped, `lease-expired|${expiredTurn}`,
+    'expired turn was not atomically reaped with a receipt');
+  console.log('  ✓ expired lease 회수와 content-free receipt가 원자적으로 생성된다');
+
+  psql(`INSERT INTO osaa.conversation_message(
+      conversation_id,sequence,turn_request_id,role,content,status,
+      lease_owner,lease_expires_at,heartbeat_at,attempt
+    ) VALUES(
+      '${conversation}',2,'${adminTurn}','user','admin recovery turn','pending',
+      '${adminTurn}',clock_timestamp()+interval '2 minutes',clock_timestamp(),1
+    );`);
+  const recovered = psql(`SET ROLE opensphere_osaa_gateway;
+    SELECT action||'|'||turn_request_id FROM osaa.recover_dialogue_turn(
+      '${conversation}','${adminTurn}','dialogue-admin','operator requested recovery');
+    RESET ROLE;`).trim().split('\n').find((line) => line.startsWith('admin-recovery|'));
+  assert.equal(recovered, `admin-recovery|${adminTurn}`,
+    'administrator turn recovery did not emit its receipt');
+  assert.equal(psql(`SELECT count(*) FROM osaa.dialogue_turn_recovery_receipt
+    WHERE conversation_id='${conversation}';`).trim(), '2');
+  console.log('  ✓ 특정 turn 관리자 recovery가 lease를 닫고 append-only receipt를 남긴다');
+
+  psql(`SET ROLE opensphere_osaa_gateway;
+    SELECT set_config('opensphere.actor_id','${owner}',false);
+    INSERT INTO osaa.dialogue_state_projection(
+      conversation_id,owner_id,domain,intent,phase,state_digest
+    ) VALUES('${conversation}','${owner}','pfss.postgresql','status.read','observed','${digestA}');
+    INSERT INTO osaa.dialogue_state_transition(
+      conversation_id,owner_id,turn_request_id,base_revision,next_revision,
+      prev_state_digest,state_digest,delta
+    ) VALUES('${conversation}','${owner}','${expiredTurn}',0,1,'${digestA}','${digestB}',
+      '{"schema":"osaa.dialogue-state-delta/v1","set":{}}'::jsonb);
+    RESET ROLE;`);
+  assert.equal(psql(`SET ROLE opensphere_osaa_gateway;
+    SELECT set_config('opensphere.actor_id','dialogue-owner-b',false);
+    SELECT count(*) FROM osaa.conversation WHERE id='${conversation}';
+    SELECT count(*) FROM osaa.dialogue_state_projection WHERE conversation_id='${conversation}';
+    RESET ROLE;`).trim().split('\n').filter((line) => line === '0').length, 2,
+    'cross-user actor could observe conversation or Dialogue State');
+  console.log('  ✓ Gateway actor context가 conversation과 Dialogue State의 cross-user 조회를 0행으로 만든다');
+  mustRejectPermission(`SET ROLE authenticated; SELECT * FROM osaa.dialogue_state_projection;`,
+    'PostgREST authenticated → Dialogue State direct read');
+  mustReject(`UPDATE osaa.dialogue_state_transition SET state_digest='${digestA}'
+    WHERE conversation_id='${conversation}';`, 'Dialogue State transition UPDATE');
+  mustReject(`UPDATE osaa.dialogue_turn_recovery_receipt SET reason='silent rewrite attempted'
+    WHERE conversation_id='${conversation}';`, 'Dialogue turn recovery receipt UPDATE');
 }
 
 function verifyR2d2RoleMatrix() {
@@ -661,7 +728,7 @@ function verifyR2d2DurabilityAndRemediation() {
       true,'lower recovery ladder exhausted','r2d2-remediation-v1','${digestC}');`);
   const proposalSql = `SELECT stage||'|'||remediation_request_id FROM osaa.propose_engineering_remediation_v2(
     '${remediation}','r2d2-remediation-proposal-db','${actor}','aal2','ffffffff-ffff-4fff-8fff-ffffffffffff','9',
-    '${assessment}','${incident}','https://gitea.opensphere.local/opensphere/OpenSphere-console.git',
+    '${assessment}','${incident}','https://github.com/opensphere-platform/OpenSphere-console.git',
     '${'1'.repeat(40)}',ARRAY['backend/opensphere-console-osaa-gateway/'],'${patchDigest}',
     $patch$${patchText}$patch$,ARRAY['backend/opensphere-console-osaa-gateway/server.js'],'${digestB}',
     'known mismatch requires bounded source repair','R2',ARRAY['osaaGateway'],ARRAY['opensphere-console-osaa-gateway'],
@@ -913,6 +980,7 @@ async function main() {
       }
     }
     console.log('  ✓ 마이그레이션 전량 적용 완료 (건너뛴 것 없음)\n');
+    verifyDialogueStateContract();
     await verifyShellSessionLedger();
     verifyR2d2RoleMatrix();
     verifyR2d2RedteamHardening();

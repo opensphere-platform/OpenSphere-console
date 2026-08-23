@@ -10,10 +10,16 @@ const MAX_CONTEXT_CHARS = 24000;
 const MAX_MESSAGE = MAX_CONTEXT_CHARS;
 const TURN_LEASE_SECONDS = 120;
 
-function failure(code, msg, errorCode = '') {
+function failure(code, msg, errorCode = '', retryAfterSeconds = 0) {
   const error = Object.assign(new Error(msg), { code, msg });
   if (errorCode) error.errorCode = errorCode;
+  if (retryAfterSeconds > 0) error.retryAfterSeconds = Math.ceil(retryAfterSeconds);
   return error;
+}
+
+function retryAfter(leaseExpiresAt) {
+  const remaining = new Date(leaseExpiresAt || 0).getTime() - Date.now();
+  return Math.max(1, Math.ceil(remaining / 1000));
 }
 
 function ownerId(actor) {
@@ -137,7 +143,7 @@ async function commitDialogueTransition(client, owner, turn, candidate) {
     transition.baseRevision, transition.nextRevision, transition.previousDigest,
     transition.stateDigest, JSON.stringify(transition.delta), state.capabilityRef,
     JSON.stringify(state.evidenceRefs), state.operationRef]);
-  await client.query(`
+  const projected = await client.query(`
     INSERT INTO osaa.dialogue_state_projection(
       conversation_id,owner_id,domain,intent,phase,target_ref,slots,missing_slots,
       capability_ref,evidence_refs,operation_ref,revision,last_turn_request_id,state_digest
@@ -151,10 +157,14 @@ async function commitDialogueTransition(client, owner, turn, candidate) {
       updated_at=clock_timestamp()
     WHERE osaa.dialogue_state_projection.owner_id=EXCLUDED.owner_id
       AND osaa.dialogue_state_projection.revision=$12-1
+    RETURNING revision
   `, [turn.conversationId, owner, state.domain, state.intent, state.phase,
     JSON.stringify(state.targetRef), JSON.stringify(state.slots), state.missingSlots,
     state.capabilityRef, JSON.stringify(state.evidenceRefs), state.operationRef,
     transition.nextRevision, turn.clientRequestId, transition.stateDigest]);
+  if (!projected.rows[0] || Number(projected.rows[0].revision) !== transition.nextRevision) {
+    throw failure(409, 'dialogue state revision changed during this turn', 'osaa_dialogue_revision_conflict');
+  }
   return {
     domain: state.domain,
     intent: state.intent,
@@ -170,40 +180,60 @@ function createConversationStore(pool) {
     throw new TypeError('OSAA conversation store requires a pg Pool');
   }
 
+  async function withActor(owner, work) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('opensphere.actor_id',$1,true)", [owner]);
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function list(actor, options = {}) {
     const owner = ownerId(actor);
     const limit = normalizeLimit(options.limit);
-    const result = await pool.query(`
-      SELECT c.*,
-        COALESCE((
-          SELECT left(m.content, 180)
-          FROM osaa.conversation_message m
-          WHERE m.conversation_id=c.id AND m.status='completed'
-          ORDER BY m.sequence DESC LIMIT 1
-        ), '') AS preview
-      FROM osaa.conversation c
-      WHERE c.owner_id=$1 AND c.deleted_at IS NULL
-        AND ($2::text IS NULL OR c.status=$2)
-      ORDER BY c.last_message_at DESC, c.id
-      LIMIT $3
-    `, [owner, options.status === 'archived' ? 'archived' : (options.status === 'active' ? 'active' : null), limit]);
-    return result.rows.map(rowConversation);
+    return withActor(owner, async (client) => {
+      const result = await client.query(`
+        SELECT c.*,
+          COALESCE((
+            SELECT left(m.content, 180)
+            FROM osaa.conversation_message m
+            WHERE m.conversation_id=c.id AND m.status='completed'
+            ORDER BY m.sequence DESC LIMIT 1
+          ), '') AS preview
+        FROM osaa.conversation c
+        WHERE c.owner_id=$1 AND c.deleted_at IS NULL
+          AND ($2::text IS NULL OR c.status=$2)
+        ORDER BY c.last_message_at DESC, c.id
+        LIMIT $3
+      `, [owner, options.status === 'archived' ? 'archived' : (options.status === 'active' ? 'active' : null), limit]);
+      return result.rows.map(rowConversation);
+    });
   }
 
   async function get(actor, value) {
     const owner = ownerId(actor);
     const id = conversationId(value);
-    const conversation = await pool.query(`
-      SELECT * FROM osaa.conversation
-      WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
-    `, [id, owner]);
-    if (!conversation.rows[0]) throw failure(404, 'conversation not found');
-    const messages = await pool.query(`
-      SELECT * FROM osaa.conversation_message
-      WHERE conversation_id=$1 AND status='completed'
-      ORDER BY sequence
-    `, [id]);
-    return { ...rowConversation(conversation.rows[0]), messages: messages.rows.map(rowMessage) };
+    return withActor(owner, async (client) => {
+      const conversation = await client.query(`
+        SELECT * FROM osaa.conversation
+        WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
+      `, [id, owner]);
+      if (!conversation.rows[0]) throw failure(404, 'conversation not found');
+      const messages = await client.query(`
+        SELECT * FROM osaa.conversation_message
+        WHERE conversation_id=$1 AND status='completed'
+        ORDER BY sequence
+      `, [id]);
+      return { ...rowConversation(conversation.rows[0]), messages: messages.rows.map(rowMessage) };
+    });
   }
 
   async function update(actor, value, patch = {}) {
@@ -216,27 +246,31 @@ function createConversationStore(pool) {
     const nextStatus = patch.status === undefined ? null : String(patch.status || '').trim();
     if (nextStatus !== null && !['active', 'archived'].includes(nextStatus)) throw failure(400, 'status must be active or archived');
     if (nextTitle === null && nextStatus === null) throw failure(400, 'title or status is required');
-    const result = await pool.query(`
-      UPDATE osaa.conversation
-      SET title=COALESCE($3,title), status=COALESCE($4,status), updated_at=clock_timestamp()
-      WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
-      RETURNING *
-    `, [id, owner, nextTitle, nextStatus]);
-    if (!result.rows[0]) throw failure(404, 'conversation not found');
-    return rowConversation(result.rows[0]);
+    return withActor(owner, async (client) => {
+      const result = await client.query(`
+        UPDATE osaa.conversation
+        SET title=COALESCE($3,title), status=COALESCE($4,status), updated_at=clock_timestamp()
+        WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
+        RETURNING *
+      `, [id, owner, nextTitle, nextStatus]);
+      if (!result.rows[0]) throw failure(404, 'conversation not found');
+      return rowConversation(result.rows[0]);
+    });
   }
 
   async function remove(actor, value) {
     const owner = ownerId(actor);
     const id = conversationId(value);
-    const result = await pool.query(`
-      UPDATE osaa.conversation
-      SET status='archived', deleted_at=clock_timestamp(), updated_at=clock_timestamp()
-      WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
-      RETURNING id
-    `, [id, owner]);
-    if (!result.rows[0]) throw failure(404, 'conversation not found');
-    return { deleted: true, id };
+    return withActor(owner, async (client) => {
+      const result = await client.query(`
+        UPDATE osaa.conversation
+        SET status='archived', deleted_at=clock_timestamp(), updated_at=clock_timestamp()
+        WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
+        RETURNING id
+      `, [id, owner]);
+      if (!result.rows[0]) throw failure(404, 'conversation not found');
+      return { deleted: true, id };
+    });
   }
 
   async function beginTurn(actor, body = {}) {
@@ -284,7 +318,8 @@ function createConversationStore(pool) {
         LIMIT 1
       `, [conversation.id, clientRequestId]);
       if (concurrent.rows[0]) {
-        throw failure(409, 'another conversation turn is still in progress', 'conversation_turn_in_progress');
+        throw failure(409, 'another conversation turn is still in progress',
+          'conversation_turn_in_progress', retryAfter(concurrent.rows[0].lease_expires_at));
       }
 
       const replay = await client.query(`
@@ -304,7 +339,8 @@ function createConversationStore(pool) {
         throw failure(409, 'clientRequestId was already used with different content', 'conversation_request_conflict');
       }
       if (existing.rows[0]?.status === 'pending') {
-        throw failure(409, 'conversation turn is still in progress', 'conversation_turn_in_progress');
+        throw failure(409, 'conversation turn is still in progress',
+          'conversation_turn_in_progress', retryAfter(existing.rows[0].lease_expires_at));
       }
 
       if (existing.rows[0]) {
@@ -371,6 +407,16 @@ function createConversationStore(pool) {
         FOR UPDATE
       `, [turn.conversationId, owner]);
       if (!locked.rows[0]) throw failure(404, 'conversation not found');
+      const lease = await client.query(`
+        SELECT id FROM osaa.conversation_message
+        WHERE conversation_id=$1 AND turn_request_id=$2 AND role='user'
+          AND status='pending' AND lease_owner=$2
+          AND lease_expires_at>clock_timestamp()
+        FOR UPDATE
+      `, [turn.conversationId, turn.clientRequestId]);
+      if (!lease.rows[0]) {
+        throw failure(409, 'conversation turn lease was lost before completion', 'conversation_turn_lease_lost');
+      }
       const dialogue = await commitDialogueTransition(
         client, owner, turn, response?.dialogueTransition || null,
       );
@@ -424,38 +470,86 @@ function createConversationStore(pool) {
 
   async function failTurn(actor, turn) {
     const owner = ownerId(actor);
-    await pool.query(`
-      UPDATE osaa.conversation_message m
-      SET status='failed', completed_at=clock_timestamp(),
-          lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL
-      FROM osaa.conversation c
-      WHERE m.conversation_id=c.id AND c.id=$1 AND c.owner_id=$2
-        AND m.turn_request_id=$3 AND m.role='user' AND m.status='pending'
-    `, [turn.conversationId, owner, turn.clientRequestId]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('opensphere.actor_id',$1,true)", [owner]);
+      await client.query(`
+        UPDATE osaa.conversation_message m
+        SET status='failed', completed_at=clock_timestamp(),
+            lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL
+        FROM osaa.conversation c
+        WHERE m.conversation_id=c.id AND c.id=$1 AND c.owner_id=$2
+          AND m.turn_request_id=$3 AND m.role='user' AND m.status='pending'
+          AND m.lease_owner=$3
+      `, [turn.conversationId, owner, turn.clientRequestId]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
-  async function reapExpiredTurns(limit = 100) {
+  async function heartbeatTurn(actor, turn) {
+    const owner = ownerId(actor);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('opensphere.actor_id',$1,true)", [owner]);
+      const result = await client.query(`
+        UPDATE osaa.conversation_message m
+        SET heartbeat_at=clock_timestamp(),
+            lease_expires_at=clock_timestamp()+make_interval(secs=>$4)
+        FROM osaa.conversation c
+        WHERE m.conversation_id=c.id AND c.id=$1 AND c.owner_id=$2
+          AND m.turn_request_id=$3 AND m.role='user' AND m.status='pending'
+          AND m.lease_owner=$3 AND m.lease_expires_at>clock_timestamp()
+        RETURNING m.lease_expires_at
+      `, [turn.conversationId, owner, turn.clientRequestId, TURN_LEASE_SECONDS]);
+      if (!result.rows[0]) {
+        throw failure(409, 'conversation turn lease is no longer active', 'conversation_turn_lease_lost');
+      }
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function reapExpiredTurns(limit = 100, recoveredBy = 'osaa-gateway') {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 100));
-    const result = await pool.query(`
-      WITH expired AS (
-        SELECT id FROM osaa.conversation_message
-        WHERE role='user' AND status='pending'
-          AND lease_expires_at IS NOT NULL AND lease_expires_at<=clock_timestamp()
-        ORDER BY lease_expires_at,id
-        LIMIT $1
-        FOR UPDATE SKIP LOCKED
-      )
-      UPDATE osaa.conversation_message m
-      SET status='failed', completed_at=clock_timestamp(),
-          lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NULL,
-          metadata=m.metadata || '{"recovery":"lease-reaper"}'::jsonb
-      FROM expired WHERE m.id=expired.id
-      RETURNING m.conversation_id,m.turn_request_id
-    `, [bounded]);
+    const result = await pool.query(
+      'SELECT * FROM osaa.reap_expired_dialogue_turns($1,$2)',
+      [bounded, String(recoveredBy || 'osaa-gateway').slice(0, 200)],
+    );
     return result.rows;
   }
 
-  return { list, get, update, remove, beginTurn, completeTurn, failTurn, reapExpiredTurns };
+  async function recoverTurn(actor, value, turnValue, reason) {
+    const recoveredBy = ownerId(actor);
+    const id = conversationId(value);
+    const turnRequestId = requestId(turnValue);
+    const recoveryReason = String(reason || '').trim();
+    if (recoveryReason.length < 8 || recoveryReason.length > 500) {
+      throw failure(400, 'recovery reason must contain 8 to 500 characters');
+    }
+    const result = await pool.query(
+      'SELECT * FROM osaa.recover_dialogue_turn($1,$2,$3,$4)',
+      [id, turnRequestId, recoveredBy, recoveryReason],
+    );
+    if (!result.rows[0]) throw failure(404, 'pending conversation turn not found');
+    return result.rows[0];
+  }
+
+  return {
+    list, get, update, remove, beginTurn, completeTurn, failTurn,
+    heartbeatTurn, reapExpiredTurns, recoverTurn,
+  };
 }
 
 module.exports = {
