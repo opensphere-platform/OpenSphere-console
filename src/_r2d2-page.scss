@@ -17,7 +17,7 @@ os-admin-osaa {
     margin: 0.35rem 0 1rem; overflow: hidden; border: 1px solid #b8c7d3; border-left: 4px solid #0f62fe; background: #fff;
     &.state-off { border-left-color: #c27c0e; background: #fffdf7; }
     &.state-unknown { border-left-color: #8d8d8d; }
-    > header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(13rem, 0.28fr); gap: 1.5rem; align-items: stretch; padding: 1.05rem 1.15rem; border-bottom: 1px solid #dfe6ed; }
+    > header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(13rem, 0.28fr); gap: 1.5rem; align-items: stretch; padding: 1.05rem 1.15rem; border-bottom: 1px solid #dfe6ed; background: #fff; }
     h2 { margin: 0.2rem 0 0.35rem; color: #102a43; font-size: 1.2rem; font-weight: 500; letter-spacing: -0.02em; }
     header p { max-width: 62rem; margin: 0; color: #425466; font-size: 0.69rem; line-height: 1.65; }
     > footer { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: 0.65rem 1.15rem; border-top: 1px solid #dfe6ed; background: #f7f9fa; color: #526777; font-size: 0.59rem; }

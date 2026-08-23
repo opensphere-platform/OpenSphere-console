@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const source = readFileSync(new URL('./admin-osaa.ts', import.meta.url), 'utf8');
+const styles = readFileSync(new URL('../../_r2d2-page.scss', import.meta.url), 'utf8');
 
 test('R2D2 management separates explanation and live operations with Clarity tabs', () => {
   assert.match(source, /<clr-tabs class="r2d2-page-tabs"/);
@@ -25,4 +26,5 @@ test('live operations exposes the server-reported Dialogue State rollout at a gl
   assert.match(source, /enforceCurrentFacts/);
   assert.match(source, /enforceMutations/);
   assert.match(source, /case 'off': return '대화 상태 기록/);
+  assert.match(styles, /\.r2d2-dialogue-state[\s\S]*> header \{[^}]*background: #fff;/);
 });
