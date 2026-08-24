@@ -160,6 +160,7 @@ test('PFSS delivery page defines the full install and update authority flow', ()
   assert.doesNotMatch(pfssDeliverySource, /pictograms\.opl\.io\.kr|logos\.opl\.io\.kr|cdn\.statically\.io/);
   assert.match(pfssDeliverySource, /--delivery-body:\s*var\(--arch-body/);
   assert.match(pfssDeliverySource, /\.delivery-steps \{[\s\S]*?grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/);
+  assert.doesNotMatch(pfssDeliverySource, /<header class="delivery-intro"/);
 });
 
 test('OSAA dialogue state page defines the researched schema-guided operating contract', () => {
