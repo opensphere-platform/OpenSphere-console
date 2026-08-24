@@ -215,6 +215,29 @@ test('every Extension management tab has a reloadable canonical route', () => {
   }
 });
 
+test('Catalog separates Foundation service selection from Console Extension package lifecycle', () => {
+  assert.match(source, /<h2 id="foundation-catalog-title">Foundation Service Catalog<\/h2>/);
+  assert.match(source, /<h2 id="extension-package-catalog-title">Extension Packages<\/h2>/);
+  assert.match(source, /Foundation service plan과는 다른 생명주기입니다/);
+  assert.match(source, /foundationCatalogSnapshot/);
+  assert.match(source, /\/api\/v1\/registry/);
+  assert.match(source, /body\.schema !== 'opensphere\.registry-catalog\/v1'/);
+  assert.match(source, /body\.stale/);
+  assert.match(source, /Object\.values\(snapshot\.sources \|\| \{\}\)\.every\(\(source\) => source\.ready\)/);
+  assert.match(source, /plan\.lifecycle !== 'Available' \|\| !foundationCatalogSelectable\(\)/);
+});
+
+test('an available Foundation plan creates only a revision-bound OSCE read-only plan', () => {
+  assert.match(source, /OSCE 읽기 전용 계획 생성/);
+  assert.match(source, /'\/api\/osaa\/operations\/plan'/);
+  assert.match(source, /action: 'create-postgres-cluster'/);
+  assert.match(source, /deletionPolicy: 'Retain'/);
+  assert.match(source, /body\.target\?\.catalogBinding\?\.revision !== snapshot\.revision/);
+  assert.match(source, /PLAN READY · NOT EXECUTED/);
+  assert.match(source, /이 화면은 리소스를 생성하지 않습니다/);
+  assert.doesNotMatch(source.slice(source.indexOf('id="foundation-catalog-title"'), source.indexOf('id="extension-package-catalog-title"')), /operations\/accept|operations'\s*,\s*\{\s*method:\s*'POST'/);
+});
+
 test('PFSS child plugins keep their host ownership across routes and navigation', () => {
   assert.match(routes, /matcher: platformSupportDeliveryMatcher,[\s\S]*data: \{ pluginId: 'foundation' \}/);
   assert.match(routes, /segments\[1\]\.path === 'delivery' && \['argocd', 'crossplane'\]\.includes\(segments\[2\]\?\.path \?\? ''\)/);
