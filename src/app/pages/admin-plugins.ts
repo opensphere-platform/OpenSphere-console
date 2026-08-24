@@ -63,10 +63,6 @@ interface FoundationCatalogSnapshot {
   observedAt: string;
   stale: boolean;
   catalog: {
-    capabilities: FoundationCatalogObject[];
-    offerings: FoundationCatalogObject[];
-    plans: FoundationCatalogObject[];
-    runtimeCatalogs: FoundationCatalogObject[];
     moduleDescriptors: FoundationCatalogObject[];
   };
   sources: Record<string, { ready: boolean; count: number; reason?: string }>;
@@ -618,7 +614,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
               <aside class="foundation-catalog-boundary">
                 <strong>이 화면의 경계</strong>
                 <span>Registry는 모듈 설치 후보를 판정합니다. PostgreSQL 인스턴스 생성과 운영 설정은 설치된 PFSS의 <code>/pfss/postgres</code>에서 처리합니다.</span>
-                <small>현재 Registry가 보유한 인스턴스 구성 자료: capability {{ snapshot.catalog.capabilities.length }} · offering {{ snapshot.catalog.offerings.length }} · profile {{ snapshot.catalog.plans.length }}. 이 자료는 여기서 선택하거나 실행하지 않습니다.</small>
+                <small>Registry는 PostgreSQL 버전·프로파일·용량·복제·백업 값을 보유하거나 판정하지 않습니다.</small>
               </aside>
             } @else if (!foundationCatalogLoading()) {
               <p class="os-sub">Registry &amp; Catalog의 유효한 스냅샷이 없습니다. 0건으로 간주하지 않습니다.</p>

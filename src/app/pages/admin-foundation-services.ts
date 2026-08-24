@@ -91,10 +91,6 @@ interface RegistryCatalogSnapshot {
   stale: boolean;
   extensions: { count: number; publishedIds: string[] };
   catalog: {
-    capabilities: unknown[];
-    offerings: unknown[];
-    plans: unknown[];
-    runtimeCatalogs: unknown[];
     moduleDescriptors: unknown[];
   };
   sources: Record<string, { ready: boolean; count: number; reason?: string }>;
@@ -497,9 +493,7 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
       return `${sources.filter((source) => source.ready).length}/${sources.length}`;
     }
     const catalog = value.catalog;
-    return String((catalog?.capabilities?.length || 0) + (catalog?.offerings?.length || 0)
-      + (catalog?.plans?.length || 0) + (catalog?.runtimeCatalogs?.length || 0)
-      + (catalog?.moduleDescriptors?.length || 0));
+    return String(catalog?.moduleDescriptors?.length || 0);
   }
 
   private shortRevision(value: string): string {

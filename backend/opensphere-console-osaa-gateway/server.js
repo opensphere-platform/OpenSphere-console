@@ -4504,10 +4504,9 @@ function osaaToolManifest() {
         endpoint: toolEndpoint('POST', '/api/osaa/tools/registry/resolve'),
         riskLevel: 'read', confirmation: 'none',
         inputSchema: schemaObject({
-          kind: { type: 'string', enum: ['extension', 'plan'] },
+          kind: { type: 'string', enum: ['extension'] },
           id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,62}$' },
           revision: { type: 'string', pattern: '^sha256:[a-f0-9]{64}$' },
-          targetProfile: { type: 'string', required: false, maxLength: 64 },
           architecture: { type: 'string', required: false, enum: ['linux/amd64'] },
           channel: { type: 'string', required: false, enum: ['edge'] },
         }),
@@ -6736,11 +6735,10 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     limit: { type: 'integer', minimum: 1, maximum: 100 },
   });
   add('osaa.system.read', 'get_opensphere_registry', 'Read the current OpenSphere Registry & Catalog snapshot, including its canonical revision, extension discovery, installable catalog, source health, and rejected objects.', {});
-  add('osaa.system.read', 'resolve_registry_candidate', 'Resolve one extension or catalog plan against the exact Registry revision previously observed. This is read-only eligibility evidence, not execution authority.', {
-    kind: { type: 'string', enum: ['extension', 'plan'] },
+  add('osaa.system.read', 'resolve_registry_candidate', 'Resolve one Console extension against the exact Registry revision previously observed. PFSS instance plans are resolved by the installed module Owner, not by Registry. This is read-only eligibility evidence, not execution authority.', {
+    kind: { type: 'string', enum: ['extension'] },
     id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,62}$' },
     revision: { type: 'string', pattern: '^sha256:[a-f0-9]{64}$' },
-    targetProfile: { type: 'string', maxLength: 64 },
     architecture: { type: 'string', enum: ['linux/amd64'] },
     channel: { type: 'string', enum: ['edge'] },
   }, ['kind', 'id', 'revision']);
@@ -7773,16 +7771,15 @@ async function registryRead(actor) {
 
 async function registryResolveRead(inputs, actor) {
   assertPermission(actor, 'osaa.system.read');
-  requireClosedOwnerInputs(inputs, ['kind', 'id', 'revision', 'targetProfile', 'architecture', 'channel']);
+  requireClosedOwnerInputs(inputs, ['kind', 'id', 'revision', 'architecture', 'channel']);
   const request = {
     kind: String(inputs?.kind || ''),
     id: String(inputs?.id || ''),
     revision: String(inputs?.revision || ''),
-    targetProfile: String(inputs?.targetProfile || ''),
     architecture: String(inputs?.architecture || ''),
     channel: String(inputs?.channel || ''),
   };
-  if (!['extension', 'plan'].includes(request.kind)) throw { code: 400, msg: 'kind must be extension or plan' };
+  if (request.kind !== 'extension') throw { code: 400, msg: 'kind must be extension' };
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(request.id)) throw { code: 400, msg: 'id is invalid' };
   if (!/^sha256:[a-f0-9]{64}$/.test(request.revision)) throw { code: 400, msg: 'revision must be an exact Registry revision' };
   if (request.architecture && request.architecture !== 'linux/amd64') throw { code: 400, msg: 'architecture must be linux/amd64' };

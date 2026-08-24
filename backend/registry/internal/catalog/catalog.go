@@ -27,18 +27,11 @@ type Object struct {
 }
 
 type Projection struct {
-	Capabilities      []Object `json:"capabilities"`
-	Offerings         []Object `json:"offerings"`
-	Plans             []Object `json:"plans"`
-	RuntimeCatalogs   []Object `json:"runtimeCatalogs"`
 	ModuleDescriptors []Object `json:"moduleDescriptors"`
 }
 
 func EmptyProjection() Projection {
-	return Projection{
-		Capabilities: []Object{}, Offerings: []Object{}, Plans: []Object{},
-		RuntimeCatalogs: []Object{}, ModuleDescriptors: []Object{},
-	}
+	return Projection{ModuleDescriptors: []Object{}}
 }
 
 func SortObjects(items []Object) {

@@ -225,6 +225,8 @@ test('Catalog separates Foundation module installation from Console Extension pa
   assert.match(source, /body\.stale/);
   assert.match(source, /Object\.values\(body\.sources \|\| \{\}\)\.every\(\(source\) => source\.ready\)/);
   assert.match(source, /snapshot\.catalog\.moduleDescriptors/);
+  assert.doesNotMatch(source, /snapshot\.catalog\.plans/);
+  assert.doesNotMatch(source, /snapshot\.catalog\.runtimeCatalogs/);
   assert.match(source, /PFSS 모듈의 설치 자격과 배포 출처/);
 });
 

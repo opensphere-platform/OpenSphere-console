@@ -28,10 +28,6 @@ import (
 var (
 	uipkgGVR      = schema.GroupVersionResource{Group: "plugins.opensphere.io", Version: "v1alpha1", Resource: "uipluginpackages"}
 	uiregGVR      = schema.GroupVersionResource{Group: "plugins.opensphere.io", Version: "v1alpha1", Resource: "uipluginregistrations"}
-	capabilityGVR = schema.GroupVersionResource{Group: "catalog.opensphere.io", Version: "v1alpha1", Resource: "addoncapabilities"}
-	offeringGVR   = schema.GroupVersionResource{Group: "catalog.opensphere.io", Version: "v1alpha1", Resource: "addonofferings"}
-	planGVR       = schema.GroupVersionResource{Group: "catalog.opensphere.io", Version: "v1alpha1", Resource: "addonplans"}
-	runtimeGVR    = schema.GroupVersionResource{Group: "catalog.opensphere.io", Version: "v1alpha1", Resource: "postgresruntimecatalogs"}
 	descriptorGVR = schema.GroupVersionResource{Group: "foundation.opensphere.io", Version: "v1alpha1", Resource: "foundationmoduledescriptors"}
 	configMapGVR  = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
 	digestRE      = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
@@ -118,12 +114,12 @@ type Response struct {
 }
 
 type Input struct {
-	Packages, Registrations, Capabilities, Offerings, Plans, Runtimes, Descriptors *unstructured.UnstructuredList
-	TrustedKeys                                                                    map[string]string
-	Navigation                                                                     map[string]map[string]interface{}
-	PreviousPlugins                                                                []Plugin
-	Sources                                                                        map[string]catalog.SourceStatus
-	ObservedAt                                                                     time.Time
+	Packages, Registrations, Descriptors *unstructured.UnstructuredList
+	TrustedKeys                          map[string]string
+	Navigation                           map[string]map[string]interface{}
+	PreviousPlugins                      []Plugin
+	Sources                              map[string]catalog.SourceStatus
+	ObservedAt                           time.Time
 }
 
 func nestedString(o map[string]interface{}, fields ...string) string {
@@ -277,60 +273,8 @@ func catalogObjects(list *unstructured.UnstructuredList) []catalog.Object {
 	return items
 }
 
-func validateCatalog(p catalog.Projection) []catalog.Rejected {
-	rejected := []catalog.Rejected{}
-	caps := map[string]bool{}
-	offers := map[string]catalog.Object{}
-	runtimes := map[string]catalog.Object{}
-	for _, item := range p.Capabilities {
-		if caps[item.ID] {
-			rejected = append(rejected, catalog.Rejected{Kind: "capability", ID: item.ID, Code: "DuplicateID", Message: "duplicate capability id"})
-		}
-		caps[item.ID] = true
-	}
-	for _, item := range p.Offerings {
-		if _, exists := offers[item.ID]; exists {
-			rejected = append(rejected, catalog.Rejected{Kind: "offering", ID: item.ID, Code: "DuplicateID", Message: "duplicate offering id"})
-		}
-		offers[item.ID] = item
-		ref, _ := item.Spec["capabilityRef"].(string)
-		if !caps[ref] {
-			rejected = append(rejected, catalog.Rejected{Kind: "offering", ID: item.ID, Code: "BrokenCapabilityRef", Message: "capability reference does not exist"})
-		}
-	}
-	for _, item := range p.RuntimeCatalogs {
-		runtimes[item.ID] = item
-		for _, raw := range slice(item.Spec["versions"]) {
-			version, _ := raw.(map[string]interface{})
-			image, _ := version["image"].(string)
-			if !strings.Contains(image, "@sha256:") {
-				rejected = append(rejected, catalog.Rejected{Kind: "runtimeCatalog", ID: item.ID, Code: "InvalidDigest", Message: "runtime version image is not exact-digest pinned"})
-			}
-		}
-	}
-	for _, item := range p.Plans {
-		capRef, _ := item.Spec["capabilityRef"].(string)
-		offRef, _ := item.Spec["offeringRef"].(string)
-		if !caps[capRef] {
-			rejected = append(rejected, catalog.Rejected{Kind: "plan", ID: item.ID, Code: "BrokenCapabilityRef", Message: "capability reference does not exist"})
-		}
-		if _, ok := offers[offRef]; !ok {
-			rejected = append(rejected, catalog.Rejected{Kind: "plan", ID: item.ID, Code: "BrokenOfferingRef", Message: "offering reference does not exist"})
-		}
-	}
-	catalog.SortRejected(rejected)
-	return rejected
-}
-
-func slice(v interface{}) []interface{} {
-	if out, ok := v.([]interface{}); ok {
-		return out
-	}
-	return []interface{}{}
-}
-
 func Build(input Input) (Response, error) {
-	if input.Packages == nil || input.Registrations == nil || input.Capabilities == nil || input.Offerings == nil || input.Plans == nil || input.Runtimes == nil || input.Descriptors == nil {
+	if input.Packages == nil || input.Registrations == nil || input.Descriptors == nil {
 		return Response{}, errors.New("required Registry source is missing")
 	}
 	regs := map[string]unstructured.Unstructured{}
@@ -388,12 +332,7 @@ func Build(input Input) (Response, error) {
 	}
 	sort.SliceStable(plugins, func(i, j int) bool { return plugins[i].ID < plugins[j].ID })
 	p := catalog.EmptyProjection()
-	p.Capabilities = catalogObjects(input.Capabilities)
-	p.Offerings = catalogObjects(input.Offerings)
-	p.Plans = catalogObjects(input.Plans)
-	p.RuntimeCatalogs = catalogObjects(input.Runtimes)
 	p.ModuleDescriptors = catalogObjects(input.Descriptors)
-	rejected = append(rejected, validateCatalog(p)...)
 	catalog.SortRejected(rejected)
 	ids := make([]string, len(plugins))
 	for i := range plugins {
@@ -434,8 +373,7 @@ type Source struct {
 
 var sources = []Source{
 	{"extensions.packages", uipkgGVR, registryNamespace, true}, {"extensions.registrations", uiregGVR, registryNamespace, true},
-	{"catalog.capabilities", capabilityGVR, "", true}, {"catalog.offerings", offeringGVR, "", true}, {"catalog.plans", planGVR, "", true},
-	{"catalog.runtimes", runtimeGVR, "", true}, {"catalog.descriptors", descriptorGVR, "", true},
+	{"catalog.descriptors", descriptorGVR, "", true},
 }
 
 func resource(dyn dynamic.Interface, source Source) dynamic.ResourceInterface {
@@ -470,7 +408,7 @@ func LoadInput(ctx context.Context, dyn dynamic.Interface, now time.Time) (Input
 		return Input{}, fmt.Errorf("extensions.navigation: %w", err)
 	}
 	statuses["extensions.navigation"] = catalog.SourceStatus{Ready: true, Count: len(navigation)}
-	return Input{Packages: lists["extensions.packages"], Registrations: lists["extensions.registrations"], Capabilities: lists["catalog.capabilities"], Offerings: lists["catalog.offerings"], Plans: lists["catalog.plans"], Runtimes: lists["catalog.runtimes"], Descriptors: lists["catalog.descriptors"], TrustedKeys: keys, Navigation: navigation, Sources: statuses, ObservedAt: now}, nil
+	return Input{Packages: lists["extensions.packages"], Registrations: lists["extensions.registrations"], Descriptors: lists["catalog.descriptors"], TrustedKeys: keys, Navigation: navigation, Sources: statuses, ObservedAt: now}, nil
 }
 
 func loadTrustedKeys(ctx context.Context, dyn dynamic.Interface) (map[string]string, error) {
@@ -624,12 +562,11 @@ func (s *Store) consumeWatch(ctx context.Context, w watch.Interface, changes cha
 }
 
 type ResolveRequest struct {
-	Kind          string `json:"kind"`
-	ID            string `json:"id"`
-	TargetProfile string `json:"targetProfile"`
-	Architecture  string `json:"architecture"`
-	Channel       string `json:"channel"`
-	Revision      string `json:"revision"`
+	Kind         string `json:"kind"`
+	ID           string `json:"id"`
+	Architecture string `json:"architecture"`
+	Channel      string `json:"channel"`
+	Revision     string `json:"revision"`
 }
 type ResolveResponse struct {
 	Result      string      `json:"result"`
@@ -664,45 +601,7 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": "extension", "id": p.ID, "digest": p.InstalledDigest, "channel": p.RequestedChannel}}
 			}
 		}
-	case "plan":
-		for _, plan := range snap.Catalog.Plans {
-			if plan.ID != req.ID {
-				continue
-			}
-			if plan.Lifecycle != "Available" {
-				return ResolveResponse{Result: "Ineligible", Revision: snap.Revision, BlockerCode: "LifecycleNotAvailable", Message: "Only Available plans can be selected"}
-			}
-			if req.TargetProfile != "" && req.TargetProfile != fmt.Sprint(plan.Spec["profile"]) {
-				return ResolveResponse{Result: "Ineligible", Revision: snap.Revision, BlockerCode: "ProfileMismatch", Message: "Plan profile does not match the target"}
-			}
-			candidate, ok := resolvePlan(plan, snap.Catalog)
-			if !ok {
-				return ResolveResponse{Result: "Ineligible", Revision: snap.Revision, BlockerCode: "ExactRuntimeUnavailable", Message: "No exact-digest runtime matches this plan"}
-			}
-			return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: candidate}
-		}
 	}
 	return ResolveResponse{Result: "Ineligible", Revision: snap.Revision, BlockerCode: "CandidateNotFound", Message: "Requested catalog candidate does not exist"}
-}
-func resolvePlan(plan catalog.Object, p catalog.Projection) (map[string]interface{}, bool) {
-	provider := fmt.Sprint(plan.Spec["provider"])
-	major := fmt.Sprint(plan.Spec["postgresVersion"])
-	for _, runtime := range p.RuntimeCatalogs {
-		if fmt.Sprint(runtime.Spec["provider"]) != provider {
-			continue
-		}
-		for _, raw := range slice(runtime.Spec["versions"]) {
-			v, ok := raw.(map[string]interface{})
-			if !ok || fmt.Sprint(v["major"]) != major || fmt.Sprint(v["lifecycle"]) != "Available" {
-				continue
-			}
-			image := fmt.Sprint(v["image"])
-			if !strings.Contains(image, "@sha256:") {
-				continue
-			}
-			return map[string]interface{}{"kind": "plan", "id": plan.ID, "profile": plan.Spec["profile"], "provider": provider, "runtimeCatalogId": runtime.ID, "version": v["version"], "image": image}, true
-		}
-	}
-	return nil, false
 }
 func (s *Store) ResolveCount() uint64 { return s.resolveTotal.Load() }
