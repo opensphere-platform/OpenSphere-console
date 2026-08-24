@@ -51,6 +51,11 @@ test('Registry and Catalog is a first-class CBSS Core Service page', () => {
   assert.match(registryCatalogSource, /POST \/api\/v1\/registry\/resolve/);
   assert.match(registryCatalogSource, /Kubernetes watch → 메모리 snapshot → 단일 API/);
   assert.match(registryCatalogSource, /class="registry-flow"/);
+  assert.match(registryCatalogSource, /RegistryDescriptorV1/);
+  assert.match(registryCatalogSource, /class="descriptor-model"/);
+  assert.match(registryCatalogSource, /class="coverage-panel"/);
+  assert.match(registryCatalogSource, /Instance · Runtime/);
+  assert.match(registryCatalogSource, /Windows Registry/);
   assert.match(registryCatalogSource, /grid-template-columns:repeat\(3,minmax\(0,1fr\) 2rem\) minmax\(0,1fr\)/);
   assert.match(registryCatalogSource, /\.registry-flow>header\{[^}]*background:transparent;[^}]*color:var\(--os-ink\)/);
   assert.doesNotMatch(registryCatalogSource, /Foundation capability·offering·plan·runtime catalog/);
@@ -148,13 +153,17 @@ test('PFSS delivery page defines the full install and update authority flow', ()
     'Argo CD',
     'PFSS Owner / Operator',
     'OSCE Postcondition',
+    'Installable Module',
+    'Runtime Catalog',
+    'PFSS Owner API',
     'Argo CD는 App Store가 아니며 Registry 업데이트를 스스로 선택하지 않습니다.',
-    'Catalog가 판단하고, OSCE가 승인하며, Gitea가 선언하고, Argo CD가 배포하며, PFSS Owner가 운영합니다.',
+    'Registry가 모듈 후보를 고정하고, PFSS Owner가 runtime 입력을 검증하며, OSCE가 승인하고, Gitea·Argo CD가 배포한 뒤 PFSS Owner가 Instance를 운영합니다.',
   ]) {
     assert.match(normalized, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.equal((pfssDeliverySource.match(/class="step-number"/g) || []).length, 6);
   assert.equal((pfssDeliverySource.match(/<section class="update-loop"/g) || []).length, 1);
+  assert.equal((pfssDeliverySource.match(/<section class="pfss-object-model"/g) || []).length, 1);
   assert.match(pfssDeliverySource, /\/assets\/product-logos\/gitea\.svg/);
   assert.match(pfssDeliverySource, /\/assets\/product-logos\/argocd\.svg/);
   assert.doesNotMatch(pfssDeliverySource, /pictograms\.opl\.io\.kr|logos\.opl\.io\.kr|cdn\.statically\.io/);

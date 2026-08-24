@@ -51,8 +51,8 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
               <small>DISCOVER</small>
               <h3>Registry / Catalog</h3>
             </div>
-            <p>서명·호환성·채널·필수 입력을 검증해 설치 가능한 모듈과 버전을 제시합니다.</p>
-            <strong>출력 · 검증된 설치 후보</strong>
+            <p>공통 Descriptor에서 모듈 identity·배포 출처·서명·호환성을 검증하고 현재 revision에 후보를 고정합니다.</p>
+            <strong>출력 · revision-bound 설치 후보</strong>
           </li>
           <li>
             <span class="step-number">02</span>
@@ -139,6 +139,38 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         </ol>
       </section>
 
+      <section class="pfss-object-model" aria-labelledby="pfss-object-model-title">
+        <div class="delivery-section-heading">
+          <div>
+            <p class="delivery-eyebrow">OBJECT BOUNDARIES</p>
+            <h2 id="pfss-object-model-title">모듈을 아는 것과 인스턴스를 운영하는 것은 다른 책임입니다.</h2>
+          </div>
+          <p>Registry는 PFSS의 존재와 설치 출처를 설명하지만, PostgreSQL cluster의 현재 상태나 운영 설정을 대신 답하지 않습니다.</p>
+        </div>
+        <div class="pfss-object-grid">
+          <article>
+            <span>01</span><strong>Installable Module</strong>
+            <p>공통 Descriptor가 PFSS identity, Owner, 설치 source와 exact release evidence를 제공합니다.</p>
+            <small>권위 · Registry &amp; Catalog</small>
+          </article>
+          <article>
+            <span>02</span><strong>Runtime Catalog</strong>
+            <p>PostgreSQL version·profile·replica·storage·backup 선택지는 제품 도메인 안에서 검증합니다.</p>
+            <small>권위 · PFSS Owner</small>
+          </article>
+          <article>
+            <span>03</span><strong>Operation</strong>
+            <p>선택한 입력과 Registry revision을 결속하고 위험·승인·rollback·postcondition을 계획합니다.</p>
+            <small>권위 · OSCE</small>
+          </article>
+          <article>
+            <span>04</span><strong>Instance</strong>
+            <p>실제로 생성된 cluster의 Ready·scale·backup·restore·migration 상태를 관측하고 운영합니다.</p>
+            <small>권위 · PFSS Owner API</small>
+          </article>
+        </div>
+      </section>
+
       <section class="update-loop" aria-labelledby="update-loop-title">
         <div class="loop-title">
           <img
@@ -160,8 +192,8 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         </div>
         <ol>
           <li>
-            <span>1</span><strong>Registry가 새 버전 발견</strong
-            ><small>서명·호환성·정책 검증</small>
+            <span>1</span><strong>Registry가 새 release 후보 발견</strong
+            ><small>Descriptor·서명·호환성·revision 검증</small>
           </li>
           <li>
             <span>2</span><strong>OSCE가 변경 승인</strong><small>영향·백업·rollback 계획</small>
@@ -191,8 +223,8 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         </div>
         <dl>
           <div>
-            <dt>설치·업데이트 가능 판단</dt>
-            <dd>Foundation Registry / Catalog</dd>
+            <dt>모듈 identity·설치 출처 판단</dt>
+            <dd>Registry &amp; Catalog</dd>
           </div>
           <div>
             <dt>관리 요청·정책·승인</dt>
@@ -207,8 +239,8 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
             <dd>Argo CD · HISS Platform Support Controller</dd>
           </div>
           <div>
-            <dt>설치 후 서비스 lifecycle</dt>
-            <dd>PFSS Owner / Operator</dd>
+            <dt>Runtime 설정·Instance lifecycle</dt>
+            <dd>PFSS Runtime Catalog + Owner / Operator</dd>
           </div>
           <div>
             <dt>최종 완료·복구 판정</dt>
@@ -225,8 +257,8 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
           height="48"
         />
         <p>
-          <strong>한 문장으로:</strong> Catalog가 판단하고, OSCE가 승인하며, Gitea가 선언하고, Argo
-          CD가 배포하며, PFSS Owner가 운영합니다.
+          <strong>한 문장으로:</strong> Registry가 모듈 후보를 고정하고, PFSS Owner가 runtime 입력을
+          검증하며, OSCE가 승인하고, Gitea·Argo CD가 배포한 뒤 PFSS Owner가 Instance를 운영합니다.
         </p>
       </aside>
     </article>
@@ -291,6 +323,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         line-height: 1.65;
       }
       .delivery-flow,
+      .pfss-object-model,
       .update-loop,
       .delivery-boundaries {
         margin-top: 2rem;
@@ -395,6 +428,46 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         padding-top: 0.65rem;
         border-top: 1px solid var(--os-hairline);
         font-size: var(--delivery-detail);
+        line-height: 1.4;
+      }
+      .pfss-object-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        border: 1px solid var(--os-hairline);
+        background: var(--os-canvas);
+      }
+      .pfss-object-grid article {
+        min-width: 0;
+        padding: 1rem;
+        border-right: 1px solid var(--os-hairline);
+      }
+      .pfss-object-grid article:last-child {
+        border-right: 0;
+      }
+      .pfss-object-grid span {
+        color: var(--os-accent);
+        font: 700 var(--delivery-label) var(--os-font-mono);
+      }
+      .pfss-object-grid strong,
+      .pfss-object-grid small {
+        display: block;
+      }
+      .pfss-object-grid strong {
+        margin-top: 0.45rem;
+        font-size: var(--delivery-card-title);
+        line-height: 1.35;
+      }
+      .pfss-object-grid p {
+        margin: 0.55rem 0;
+        color: var(--os-ink-muted);
+        font-size: var(--delivery-detail);
+        line-height: 1.55;
+      }
+      .pfss-object-grid small {
+        padding-top: 0.6rem;
+        border-top: 1px solid var(--os-hairline);
+        color: var(--os-ink-subtle);
+        font-size: var(--delivery-label);
         line-height: 1.4;
       }
       .update-loop {
@@ -542,6 +615,18 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         .delivery-steps li:nth-child(3)::after {
           display: none;
         }
+        .pfss-object-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .pfss-object-grid article {
+          border-bottom: 1px solid var(--os-hairline);
+        }
+        .pfss-object-grid article:nth-child(2n) {
+          border-right: 0;
+        }
+        .pfss-object-grid article:nth-last-child(-n + 2) {
+          border-bottom: 0;
+        }
       }
       @media (max-width: 62rem) {
         .delivery-intro {
@@ -614,6 +699,18 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         }
         .loop-title {
           grid-template-columns: 1fr;
+        }
+        .pfss-object-grid {
+          grid-template-columns: 1fr;
+        }
+        .pfss-object-grid article,
+        .pfss-object-grid article:nth-child(2n),
+        .pfss-object-grid article:nth-last-child(-n + 2) {
+          border-right: 0;
+          border-bottom: 1px solid var(--os-hairline);
+        }
+        .pfss-object-grid article:last-child {
+          border-bottom: 0;
         }
       }
     `,
