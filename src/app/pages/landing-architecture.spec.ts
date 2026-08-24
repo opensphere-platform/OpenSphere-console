@@ -49,6 +49,10 @@ test('Registry and Catalog is a first-class CBSS Core Service page', () => {
   assert.match(registryCatalogSource, /GET \/api\/v1\/registry/);
   assert.match(registryCatalogSource, /POST \/api\/v1\/registry\/resolve/);
   assert.match(registryCatalogSource, /Kubernetes watch → 메모리 snapshot → 단일 API/);
+  assert.match(registryCatalogSource, /class="registry-flow"/);
+  assert.match(registryCatalogSource, /grid-template-columns:repeat\(3,minmax\(0,1fr\) 2rem\) minmax\(0,1fr\)/);
+  assert.match(registryCatalogSource, /\.registry-flow>header\{[^}]*background:transparent;[^}]*color:var\(--os-ink\)/);
+  assert.doesNotMatch(registryCatalogSource, /Foundation capability·offering·plan·runtime catalog/);
 });
 
 test('Main Shell is a Platform Control object instead of Perspective zero', () => {
