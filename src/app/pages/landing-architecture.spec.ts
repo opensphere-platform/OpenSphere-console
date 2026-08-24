@@ -9,6 +9,7 @@ const realizationModel = fs.readFileSync(
 );
 const foundationSource = fs.readFileSync(new URL('./landing-foundations.ts', import.meta.url), 'utf8');
 const dialogueStateSource = fs.readFileSync(new URL('./landing-osaa-dialogue-state.ts', import.meta.url), 'utf8');
+const pfssDeliverySource = fs.readFileSync(new URL('./landing-pfss-delivery.ts', import.meta.url), 'utf8');
 const globalStylesSource = fs.readFileSync(new URL('../../styles.scss', import.meta.url), 'utf8');
 const foundationModel = fs.readFileSync(
   new URL('../architecture/foundation-concepts.model.ts', import.meta.url),
@@ -104,21 +105,47 @@ test('Perspective navigation remains Registry-derived and phantom-route free', (
   assert.match(search, /홈 · 10P × 6L/);
 });
 
-test('main index uses one top-level Clarity tab bar for seven independent architecture pages', () => {
+test('main index uses one top-level Clarity tab bar for eight independent architecture pages', () => {
   assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)'/g) || []).length, 5);
   assert.match(source, /import \{ ClarityModule \} from '@clr\/angular'/);
-  assert.match(source, /imports: \[RouterLink, LandingFoundations, LandingOsaaDialogueState, ClarityModule\]/);
+  assert.match(source, /imports: \[RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingPfssDelivery, ClarityModule\]/);
   assert.match(source, /<clr-tabs class="architecture-page-tabs">/);
-  assert.equal((source.match(/<clr-tab>/g) || []).length, 7);
-  assert.equal((source.match(/<button clrTabLink/g) || []).length, 7);
-  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 7);
+  assert.equal((source.match(/<clr-tab>/g) || []).length, 8);
+  assert.equal((source.match(/<button clrTabLink/g) || []).length, 8);
+  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 8);
   assert.equal((source.match(/<os-landing-foundations page="(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)"/g) || []).length, 5);
   assert.match(source, /<button clrTabLink[^>]*>10P × 6L Architecture<\/button>[\s\S]*id="architecture-page-realization"/);
   assert.match(source, /<button clrTabLink[^>]*>OSCE<\/button>/);
+  assert.match(source, /<button clrTabLink[^>]*>PFSS Delivery<\/button>/);
   assert.match(source, /<button clrTabLink[^>]*>OSDST<\/button>/);
+  assert.match(source, /<os-landing-pfss-delivery/);
   assert.match(source, /<os-landing-osaa-dialogue-state/);
   assert.doesNotMatch(foundationSource, /<clr-tabs|clrTabLink|clr-tab-content/);
   assert.doesNotMatch(`${source}\n${foundationSource}\n${dialogueStateSource}`, /role="tablist"|onTabKeydown|ArrowRight|\[attr\.aria-selected\]/);
+});
+
+test('PFSS delivery page defines the full install and update authority flow', () => {
+  const normalized = pfssDeliverySource.replace(/\s+/g, ' ');
+  for (const term of [
+    'PFSS 모듈은 어떻게 설치·운영·업데이트되는가',
+    'Registry / Catalog',
+    'Console + OSCE',
+    'Gitea',
+    'Argo CD',
+    'PFSS Owner / Operator',
+    'OSCE Postcondition',
+    'Argo CD는 App Store가 아니며 Registry 업데이트를 스스로 선택하지 않습니다.',
+    'Catalog가 판단하고, OSCE가 승인하며, Gitea가 선언하고, Argo CD가 배포하며, PFSS Owner가 운영합니다.',
+  ]) {
+    assert.match(normalized, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.equal((pfssDeliverySource.match(/class="step-number"/g) || []).length, 6);
+  assert.equal((pfssDeliverySource.match(/<section class="update-loop"/g) || []).length, 1);
+  assert.match(pfssDeliverySource, /\/assets\/product-logos\/gitea\.svg/);
+  assert.match(pfssDeliverySource, /\/assets\/product-logos\/argocd\.svg/);
+  assert.doesNotMatch(pfssDeliverySource, /pictograms\.opl\.io\.kr|logos\.opl\.io\.kr|cdn\.statically\.io/);
+  assert.match(pfssDeliverySource, /--delivery-body:\s*var\(--arch-body/);
+  assert.match(pfssDeliverySource, /\.delivery-steps \{[\s\S]*?grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/);
 });
 
 test('OSAA dialogue state page defines the researched schema-guided operating contract', () => {

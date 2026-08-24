@@ -7,6 +7,7 @@ import { routeForPlugin } from '../core/perspectives';
 import { SERVICE_REALIZATION_LAYERS } from '../architecture/service-realization.model';
 import { LandingFoundations } from './landing-foundations';
 import { LandingOsaaDialogueState } from './landing-osaa-dialogue-state';
+import { LandingPfssDelivery } from './landing-pfss-delivery';
 
 interface IndexLink {
   path: string;
@@ -29,6 +30,7 @@ type ArchitecturePageId =
   | 'dupa'
   | 'control-pillars'
   | 'control-engine'
+  | 'pfss-delivery'
   | 'ai-lifecycle'
   | 'osaa-dialogue-state';
 
@@ -52,7 +54,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
 
 @Component({
   selector: 'os-landing',
-  imports: [RouterLink, LandingFoundations, LandingOsaaDialogueState, ClarityModule],
+  imports: [RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingPfssDelivery, ClarityModule],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
@@ -341,6 +343,13 @@ const PERSPECTIVES: PerspectiveDef[] = [
           <button clrTabLink (click)="selectPage('control-engine')">OSCE</button>
           <clr-tab-content *clrIfActive="activePage() === 'control-engine'">
             <os-landing-foundations page="control-engine" />
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('pfss-delivery')">PFSS Delivery</button>
+          <clr-tab-content *clrIfActive="activePage() === 'pfss-delivery'">
+            <os-landing-pfss-delivery />
           </clr-tab-content>
         </clr-tab>
 
