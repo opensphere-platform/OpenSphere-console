@@ -5,7 +5,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <article class="delivery-page" aria-labelledby="pfss-delivery-title">
-      <header class="delivery-intro">
+      <section class="delivery-intro" aria-labelledby="pfss-delivery-title">
         <div class="delivery-intro-title">
           <img
             src="/assets/pictograms/connected-ecosystem.svg"
@@ -22,7 +22,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
           관리자는 Catalog에서 모듈을 선택하지만, 한 제품이 모든 일을 처리하지 않습니다.
           판단·승인·선언·배포·운영을 각 권위가 이어받고, 업데이트는 같은 흐름으로 다시 진입합니다.
         </p>
-      </header>
+      </section>
 
       <section class="delivery-flow" aria-labelledby="delivery-flow-title">
         <div class="delivery-section-heading">
