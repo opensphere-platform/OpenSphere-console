@@ -350,7 +350,7 @@ func TestDynamicOperationWatchDispatchesPollingFromManifest(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/registry":
-			_ = json.NewEncoder(w).Encode(Registry{Version: 3, Capabilities: []map[string]any{}, Templates: []map[string]any{}, TrustedKeys: map[string]any{}, Plugins: []RegistryItem{{
+			_ = json.NewEncoder(w).Encode(Registry{Version: 3, Schema: "opensphere.registry-catalog/v1", Revision: "sha256:" + strings.Repeat("a", 64), Inventory: RegistryInventory{Descriptors: []RegistryDescriptor{}, Coverage: map[string]any{}}, Capabilities: []map[string]any{}, Templates: []map[string]any{}, TrustedKeys: map[string]any{}, Plugins: []RegistryItem{{
 				ID: "owner", Name: "Owner", Available: true,
 				CLI: &CLIContribution{Namespace: "owner", APIBase: "/api", ManifestPath: "/manifest"},
 			}}})
@@ -392,7 +392,7 @@ func TestDynamicNamespaceHelpUsesOwnerManifest(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/registry":
-			_ = json.NewEncoder(w).Encode(Registry{Version: 3, Capabilities: []map[string]any{}, Templates: []map[string]any{}, TrustedKeys: map[string]any{}, Plugins: []RegistryItem{{
+			_ = json.NewEncoder(w).Encode(Registry{Version: 3, Schema: "opensphere.registry-catalog/v1", Revision: "sha256:" + strings.Repeat("a", 64), Inventory: RegistryInventory{Descriptors: []RegistryDescriptor{}, Coverage: map[string]any{}}, Capabilities: []map[string]any{}, Templates: []map[string]any{}, TrustedKeys: map[string]any{}, Plugins: []RegistryItem{{
 				ID: "foundation", Name: "Foundation", Available: true,
 				CLI: &CLIContribution{Namespace: "foundation", APIBase: "/owner", ManifestPath: "/manifest"},
 			}}})

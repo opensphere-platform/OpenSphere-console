@@ -1,4 +1,4 @@
-# opensphere-console-backend — 콘솔 stateless API 통합(구 console-identity-api + opensphere-catalog-api).
+# opensphere-console-backend — Console identity와 Developer Catalog projection을 제공하는 stateless API.
 # 셸 nginx: /api/identity·/api/catalog·/api/kubernetes → 이 단일 서비스.
 apiVersion: v1
 kind: Namespace

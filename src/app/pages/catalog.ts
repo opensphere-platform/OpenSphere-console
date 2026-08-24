@@ -7,24 +7,21 @@ import { OsPanel } from '../os/os-panel';
 import { BackendUnavailable } from '../os/backend-unavailable';
 import { OsPageHeader } from '../os/os-page-header';
 
-/**
- * Developer Catalog — rhdh-self를 headless 엔진으로 소비(헌법 §4),
- * 행 클릭은 페이지 전환이 아니라 퀵뷰 패널(R1·R4 deep-link).
- */
+/** Developer Catalog is a bounded Backstage-style asset projection. */
 @Component({
   selector: 'os-catalog',
   imports: [ClarityModule, OsDatagrid, OsPanel, BackendUnavailable, OsPageHeader],
   template: `
     <div class="os-page">
-    <os-page-header title="Developer Catalog" tag="RHDH headless · Console inventory" />
-    <div class="manage-page-lead"><p>Console이 headless RHDH Catalog API를 통해 읽는 자산 인벤토리입니다. 항목을 선택하면 관계와 Kubernetes runtime evidence를 같은 문맥에서 확인할 수 있습니다.</p><span>UI embed 0 · REST only</span></div>
+    <os-page-header title="Developer Catalog" tag="Backstage concepts · Console-native" />
+    <div class="manage-page-lead"><p>OpenSphere CRD와 배포 워크로드를 Developer 관점의 Component·API 자산으로 투영합니다. OS 모듈의 설치 자격을 판정하는 Registry &amp; Catalog와는 별도 bounded context입니다.</p><span>선언·관계·개발 자산</span></div>
 
     <section class="manage-status-rail" aria-label="Catalog 요약">
       <div><span>Catalog entities</span><strong>{{ rows().length }}</strong><small>현재 조회 범위</small></div>
       <div><span>Components</span><strong>{{ countKind('Component') }}</strong><small>runtime evidence 대상</small></div>
       <div><span>Owners</span><strong>{{ uniqueSpec('owner') }}</strong><small>명시된 소유자</small></div>
       <div><span>Lifecycle</span><strong>{{ uniqueSpec('lifecycle') }}</strong><small>선언된 단계</small></div>
-      <div><span>Source</span><strong>rhdh-self</strong><small>headless catalog engine</small></div>
+      <div><span>Source</span><strong>Console-native</strong><small>Developer asset projection</small></div>
     </section>
 
     <div class="manage-toolbar">
@@ -39,8 +36,8 @@ import { OsPageHeader } from '../os/os-page-header';
     } @else if (error()) {
       <os-backend-unavailable
         feature="Developer Catalog"
-        backend="opensphere-catalog / rhdh-self 엔진"
-        hint="카탈로그 백엔드 operand를 배포하면 자동 복구됩니다."
+        backend="Console Backend · Developer Catalog projection"
+        hint="Console Backend와 Kubernetes read authority를 확인하세요."
         [detail]="error()"
       />
     } @else {

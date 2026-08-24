@@ -19,6 +19,73 @@ type SourceStatus struct {
 	Reason          string `json:"reason,omitempty"`
 }
 
+type Owner struct {
+	ID           string `json:"id"`
+	LifecycleAPI string `json:"lifecycleApi,omitempty"`
+}
+
+type Source struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
+type Release struct {
+	Version     string `json:"version,omitempty"`
+	ImageDigest string `json:"imageDigest,omitempty"`
+}
+
+type Installation struct {
+	Mode     string `json:"mode"`
+	Eligible bool   `json:"eligible"`
+}
+
+type Evidence struct {
+	ObservedGeneration int64  `json:"observedGeneration"`
+	SourceRevision     string `json:"sourceRevision"`
+}
+
+// Descriptor is the only cross-consumer Registry read model. It deliberately
+// excludes instance, capacity, credential and runtime lifecycle state.
+type Descriptor struct {
+	ID           string       `json:"id"`
+	Class        string       `json:"class"`
+	DisplayName  string       `json:"displayName"`
+	Domain       string       `json:"domain"`
+	Owner        Owner        `json:"owner"`
+	Source       Source       `json:"source"`
+	Release      Release      `json:"release"`
+	Capabilities []string     `json:"capabilities"`
+	Installation Installation `json:"installation"`
+	Evidence     Evidence     `json:"evidence"`
+}
+
+type ClassCoverage struct {
+	Expected  int `json:"expected"`
+	Published int `json:"published"`
+	Rejected  int `json:"rejected"`
+	Missing   int `json:"missing"`
+}
+
+type CoverageGap struct {
+	ID      string `json:"id"`
+	Class   string `json:"class"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type Coverage struct {
+	Expected  int                      `json:"expected"`
+	Published int                      `json:"published"`
+	Rejected  int                      `json:"rejected"`
+	Missing   []CoverageGap            `json:"missing"`
+	ByClass   map[string]ClassCoverage `json:"byClass"`
+}
+
+type Inventory struct {
+	Descriptors []Descriptor `json:"descriptors"`
+	Coverage    Coverage     `json:"coverage"`
+}
+
 // Object is the stable, metadata-free projection of a Catalog CR.
 type Object struct {
 	ID   string                 `json:"id"`
@@ -47,4 +114,8 @@ func SortRejected(items []Rejected) {
 		}
 		return items[i].Code < items[j].Code
 	})
+}
+
+func SortDescriptors(items []Descriptor) {
+	sort.SliceStable(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 }

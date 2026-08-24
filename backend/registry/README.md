@@ -1,14 +1,20 @@
 # OpenSphere Registry & Catalog Service
 
 `opensphere-registry` is a CBSS Core Service and the single read-only serving authority for
-OpenSphere extension discovery and installable Catalog candidates.
+OpenSphere module discovery and installable Catalog candidates.
 
 - Public discovery: `GET /api/v1/registry`
 - Internal deterministic resolution: `POST /api/v1/registry/resolve`
 - Operations: `GET /healthz`, `/readyz`, `/v1/status`, `/metrics`
-- Inputs: verified UI Plugin CRs, Catalog CRs, Foundation descriptors, public trust keys and
-  operator-owned navigation preferences
+- Common model: `RegistryDescriptorV1` classes `coreService`, `extension`, `installableModule`
+- Inputs: canonical `opensphere-installation-lock`, verified UI Plugin CRs, Foundation descriptors,
+  public trust keys and operator-owned navigation preferences
+- Coverage: expected/published/rejected/missing totals and the same values by descriptor class
 - Mutations: none. It does not install, update, delete or operate workloads.
+
+Runtime instances, credentials, capacity, replica counts, backup policy and lifecycle state are
+not Registry fields. Core Services are discovery-only. Only exact-digest `extension` and
+`installableModule` descriptors can be resolved; OSCE and each Owner execute approved changes.
 
 The service keeps one immutable in-memory snapshot. A complete validated input set is serialized
 deterministically, hashed as the catalog revision and atomically swapped. After a source failure,

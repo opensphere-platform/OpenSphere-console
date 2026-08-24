@@ -11,6 +11,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,11 +36,13 @@ var (
 )
 
 const (
-	registryNamespace   = "opensphere-console"
-	trustConfigMap      = "dupa-trusted-keys"
-	navigationConfigMap = "opensphere-extension-navigation-v1"
-	navigationKey       = "navigation.json"
-	freshnessTarget     = 30 * time.Second
+	registryNamespace         = "opensphere-console"
+	trustConfigMap            = "dupa-trusted-keys"
+	navigationConfigMap       = "opensphere-extension-navigation-v1"
+	navigationKey             = "navigation.json"
+	installationLockConfigMap = "opensphere-installation-lock"
+	installationLockKey       = "release.json"
+	freshnessTarget           = 30 * time.Second
 )
 
 type CLIContribution struct {
@@ -110,11 +113,27 @@ type Response struct {
 	Sources      map[string]catalog.SourceStatus `json:"sources"`
 	Extensions   ExtensionSummary                `json:"extensions"`
 	Catalog      catalog.Projection              `json:"catalog"`
+	Inventory    catalog.Inventory               `json:"inventory"`
 	Rejected     []catalog.Rejected              `json:"rejected"`
+}
+
+type ReleaseComponent struct {
+	Repository     string `json:"repository"`
+	Image          string `json:"image"`
+	SourceRevision string `json:"sourceRevision"`
+}
+
+type ReleaseLock struct {
+	Channel        string                      `json:"channel"`
+	ReleaseDigest  string                      `json:"releaseDigest"`
+	SourceRevision string                      `json:"sourceRevision"`
+	Components     map[string]ReleaseComponent `json:"components"`
 }
 
 type Input struct {
 	Packages, Registrations, Descriptors *unstructured.UnstructuredList
+	ReleaseLock                          ReleaseLock
+	ReleaseLockResourceVersion           string
 	TrustedKeys                          map[string]string
 	Navigation                           map[string]map[string]interface{}
 	PreviousPlugins                      []Plugin
@@ -323,9 +342,203 @@ func catalogObjects(list *unstructured.UnstructuredList) []catalog.Object {
 	return items
 }
 
+type coreServiceMetadata struct {
+	ID, DisplayName, Domain, OwnerID, LifecycleAPI string
+	Capabilities                                   []string
+}
+
+var coreServices = map[string]coreServiceMetadata{
+	"console":                {"cbss.opensphere-console", "OpenSphere Console", "console", "cbss.console", "/api/health", []string{"main-shell", "administration"}},
+	"backend":                {"cbss.opensphere-osce", "OpenSphere Control Engine", "control", "cbss.osce", "/api/admin/platform-control", []string{"plan", "policy-gate", "durable-operation", "postcondition"}},
+	"dupaController":         {"cbss.opensphere-dupa-controller", "DUPA Controller", "extensions", "cbss.dupa", "/api/admin/extensions/status", []string{"extension-reconcile", "signature-verification"}},
+	"registry":               {"cbss.opensphere-registry", "OpenSphere Registry & Catalog Service", "catalog", "cbss.registry", "/api/v1/registry", []string{"discovery", "normalization", "revision", "resolve"}},
+	"osaaGateway":            {"cbss.opensphere-osaa-gateway", "OSAA Gateway", "agent", "cbss.osaa", "/api/osaa/health", []string{"dialogue", "tool-routing"}},
+	"osdst":                  {"cbss.opensphere-osdst", "OpenSphere Dialogue State Tracker", "agent", "cbss.osdst", "/api/osdst/v1/status", []string{"dialogue-state", "typed-projection", "deterministic-rendering"}},
+	"osaaGovernedAdapter":    {"cbss.opensphere-osaa-governed-adapter", "OSAA Governed Adapter", "agent", "cbss.osaa", "/api/osaa/health", []string{"governed-execution"}},
+	"notificationDispatcher": {"cbss.opensphere-notification-dispatcher", "Notification Dispatcher", "operations", "cbss.notifications", "/api/health", []string{"notification-delivery"}},
+	"gitea":                  {"cbss.opensphere-gitea", "CBSS Gitea", "source-control", "cbss.gitea", "/api/health", []string{"desired-state", "approval-evidence"}},
+	"supabasePostgres":       {"cbss.opensphere-supabase-postgres", "CBSS Supabase PostgreSQL", "console-data", "cbss.supabase", "/api/health", []string{"console-data"}},
+	"supabaseAuth":           {"cbss.opensphere-supabase-auth", "CBSS Supabase Auth", "identity", "cbss.supabase", "/api/identity/session", []string{"administrator-identity", "session"}},
+	"supabaseRest":           {"cbss.opensphere-supabase-rest", "CBSS Supabase REST", "console-data", "cbss.supabase", "/api/health", []string{"console-data-api"}},
+	"supabaseStorage":        {"cbss.opensphere-supabase-storage", "CBSS Supabase Storage", "console-data", "cbss.supabase", "/api/health", []string{"console-object-storage"}},
+	"giteaPostgres":          {"cbss.opensphere-gitea-postgres", "CBSS Gitea PostgreSQL", "source-control", "cbss.gitea", "/api/health", []string{"gitea-data"}},
+	"recovery":               {"cbss.opensphere-recovery", "OpenSphere Recovery", "recovery", "cbss.recovery", "/api/admin/recovery/status", []string{"backup", "restore", "recovery-evidence"}},
+}
+
+func imageDigest(image string) string {
+	parts := strings.Split(image, "@")
+	if len(parts) != 2 || !digestRE.MatchString(parts[1]) {
+		return ""
+	}
+	return parts[1]
+}
+
+func observedGeneration(resourceVersion string) int64 {
+	value, _ := strconv.ParseInt(resourceVersion, 10, 64)
+	return value
+}
+
+func extensionCapabilities(plugin Plugin) []string {
+	values := []string{}
+	for key, value := range plugin.Contributions {
+		enabled := value != nil
+		if object, ok := value.(map[string]interface{}); ok {
+			if explicit, exists := object["enabled"].(bool); exists {
+				enabled = explicit
+			}
+		}
+		if enabled {
+			values = append(values, key)
+		}
+	}
+	sort.Strings(values)
+	return values
+}
+
+func buildInventory(input Input, plugins []Plugin, rejected *[]catalog.Rejected) catalog.Inventory {
+	descriptors := []catalog.Descriptor{}
+	missing := []catalog.CoverageGap{}
+	rejectedByClass := map[string]int{"coreService": 0, "extension": 0, "installableModule": 0}
+	expectedByClass := map[string]int{
+		"coreService":       len(input.ReleaseLock.Components),
+		"extension":         len(input.Packages.Items),
+		"installableModule": len(input.Descriptors.Items),
+	}
+
+	for componentName, component := range input.ReleaseLock.Components {
+		metadata, ok := coreServices[componentName]
+		if !ok {
+			id := "core." + componentName
+			*rejected = append(*rejected, catalog.Rejected{Kind: "coreService", ID: id, Code: "DescriptorMissing", Message: "release component has no Registry metadata adapter"})
+			missing = append(missing, catalog.CoverageGap{ID: id, Class: "coreService", Code: "DescriptorMissing", Message: "release component has no Registry metadata adapter"})
+			rejectedByClass["coreService"]++
+			continue
+		}
+		digest := imageDigest(component.Image)
+		if digest == "" || component.SourceRevision == "" {
+			code := "ReleaseEvidenceMissing"
+			if digest == "" {
+				code = "DigestMissing"
+			}
+			*rejected = append(*rejected, catalog.Rejected{Kind: "coreService", ID: metadata.ID, Code: code, Message: "canonical release component lacks exact release evidence"})
+			missing = append(missing, catalog.CoverageGap{ID: metadata.ID, Class: "coreService", Code: code, Message: "canonical release component lacks exact release evidence"})
+			rejectedByClass["coreService"]++
+			continue
+		}
+		descriptors = append(descriptors, catalog.Descriptor{
+			ID: metadata.ID, Class: "coreService", DisplayName: metadata.DisplayName, Domain: metadata.Domain,
+			Owner:        catalog.Owner{ID: metadata.OwnerID, LifecycleAPI: metadata.LifecycleAPI},
+			Source:       catalog.Source{Kind: "OpenSphereReleaseLock", Name: componentName},
+			Release:      catalog.Release{Version: component.SourceRevision, ImageDigest: digest},
+			Capabilities: append([]string(nil), metadata.Capabilities...),
+			Installation: catalog.Installation{Mode: "built-in", Eligible: false},
+			Evidence:     catalog.Evidence{ObservedGeneration: observedGeneration(input.ReleaseLockResourceVersion), SourceRevision: component.SourceRevision},
+		})
+	}
+
+	packages := map[string]unstructured.Unstructured{}
+	for _, item := range input.Packages.Items {
+		packages[item.GetName()] = item
+	}
+	for _, plugin := range plugins {
+		pkg := packages[plugin.ID]
+		version := plugin.ArtifactVersion
+		if version == "" {
+			version = plugin.SourceRevision
+		}
+		if version == "" || !digestRE.MatchString(plugin.InstalledDigest) {
+			code := "ReleaseEvidenceMissing"
+			if !digestRE.MatchString(plugin.InstalledDigest) {
+				code = "DigestMissing"
+			}
+			id := "extension." + plugin.ID
+			*rejected = append(*rejected, catalog.Rejected{Kind: "extension", ID: id, Code: code, Message: "verified extension lacks release evidence"})
+			missing = append(missing, catalog.CoverageGap{ID: id, Class: "extension", Code: code, Message: "verified extension lacks release evidence"})
+			rejectedByClass["extension"]++
+			continue
+		}
+		ownerID := plugin.HostRef
+		if ownerID == "" {
+			ownerID = "opensphere-console"
+		}
+		descriptors = append(descriptors, catalog.Descriptor{
+			ID: "extension." + plugin.ID, Class: "extension", DisplayName: plugin.Name, Domain: "console-extension",
+			Owner:        catalog.Owner{ID: ownerID, LifecycleAPI: "/api/admin/extensions/registrations/" + plugin.ID},
+			Source:       catalog.Source{Kind: "UIPluginPackage+UIPluginRegistration", Name: plugin.ID},
+			Release:      catalog.Release{Version: version, ImageDigest: plugin.InstalledDigest},
+			Capabilities: extensionCapabilities(plugin), Installation: catalog.Installation{Mode: "dupa", Eligible: true},
+			Evidence: catalog.Evidence{ObservedGeneration: pkg.GetGeneration(), SourceRevision: plugin.SourceRevision},
+		})
+	}
+
+	for _, item := range input.Descriptors.Items {
+		id := "foundation." + item.GetName()
+		digest := imageDigest(nestedString(item.Object, "spec", "operator", "image"))
+		if digest == "" {
+			*rejected = append(*rejected, catalog.Rejected{Kind: "installableModule", ID: id, Code: "DigestMissing", Message: "Foundation descriptor does not identify one exact-digest installable artifact"})
+			missing = append(missing, catalog.CoverageGap{ID: id, Class: "installableModule", Code: "DigestMissing", Message: "Foundation descriptor does not identify one exact-digest installable artifact"})
+			rejectedByClass["installableModule"]++
+			continue
+		}
+		capabilities := []string{}
+		for _, value := range nestedSlice(item.Object, "spec", "operator", "capability") {
+			if capability, ok := value.(string); ok {
+				capabilities = append(capabilities, capability)
+			}
+		}
+		sort.Strings(capabilities)
+		mode := nestedString(item.Object, "spec", "catalog", "install")
+		if mode == "" {
+			mode = "optional"
+		}
+		descriptors = append(descriptors, catalog.Descriptor{
+			ID: id, Class: "installableModule", DisplayName: item.GetName(), Domain: "foundation",
+			Owner:   catalog.Owner{ID: "pfss.foundation", LifecycleAPI: "/api/foundation/modules/" + item.GetName()},
+			Source:  catalog.Source{Kind: "FoundationModuleDescriptor", Name: item.GetName()},
+			Release: catalog.Release{Version: item.GetResourceVersion(), ImageDigest: digest}, Capabilities: capabilities,
+			Installation: catalog.Installation{Mode: mode, Eligible: true},
+			Evidence:     catalog.Evidence{ObservedGeneration: item.GetGeneration(), SourceRevision: item.GetResourceVersion()},
+		})
+	}
+
+	catalog.SortDescriptors(descriptors)
+	identityCount := map[string]int{}
+	for _, descriptor := range descriptors {
+		identityCount[descriptor.ID]++
+	}
+	unique := make([]catalog.Descriptor, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		if identityCount[descriptor.ID] > 1 {
+			*rejected = append(*rejected, catalog.Rejected{Kind: descriptor.Class, ID: descriptor.ID, Code: "DuplicateIdentity", Message: "descriptor identity collides across Registry sources"})
+			missing = append(missing, catalog.CoverageGap{ID: descriptor.ID, Class: descriptor.Class, Code: "DuplicateIdentity", Message: "descriptor identity collides across Registry sources"})
+			rejectedByClass[descriptor.Class]++
+			continue
+		}
+		unique = append(unique, descriptor)
+	}
+	sort.SliceStable(missing, func(i, j int) bool {
+		if missing[i].ID != missing[j].ID {
+			return missing[i].ID < missing[j].ID
+		}
+		return missing[i].Code < missing[j].Code
+	})
+	publishedByClass := map[string]int{"coreService": 0, "extension": 0, "installableModule": 0}
+	for _, descriptor := range unique {
+		publishedByClass[descriptor.Class]++
+	}
+	byClass := map[string]catalog.ClassCoverage{}
+	for _, class := range []string{"coreService", "extension", "installableModule"} {
+		byClass[class] = catalog.ClassCoverage{Expected: expectedByClass[class], Published: publishedByClass[class], Rejected: rejectedByClass[class], Missing: expectedByClass[class] - publishedByClass[class]}
+	}
+	return catalog.Inventory{Descriptors: unique, Coverage: catalog.Coverage{Expected: expectedByClass["coreService"] + expectedByClass["extension"] + expectedByClass["installableModule"], Published: len(unique), Rejected: rejectedByClass["coreService"] + rejectedByClass["extension"] + rejectedByClass["installableModule"], Missing: missing, ByClass: byClass}}
+}
+
 func Build(input Input) (Response, error) {
 	if input.Packages == nil || input.Registrations == nil || input.Descriptors == nil {
 		return Response{}, errors.New("required Registry source is missing")
+	}
+	if len(input.ReleaseLock.Components) == 0 {
+		return Response{}, errors.New("canonical release inventory is missing")
 	}
 	regs := map[string]unstructured.Unstructured{}
 	for _, reg := range input.Registrations.Items {
@@ -383,12 +596,13 @@ func Build(input Input) (Response, error) {
 	sort.SliceStable(plugins, func(i, j int) bool { return plugins[i].ID < plugins[j].ID })
 	p := catalog.EmptyProjection()
 	p.ModuleDescriptors = catalogObjects(input.Descriptors)
+	inventory := buildInventory(input, plugins, &rejected)
 	catalog.SortRejected(rejected)
 	ids := make([]string, len(plugins))
 	for i := range plugins {
 		ids[i] = plugins[i].ID
 	}
-	response := Response{Version: 3, TrustedKeys: input.TrustedKeys, Capabilities: []interface{}{}, Plugins: plugins, Templates: []interface{}{}, Schema: catalog.Schema, ObservedAt: input.ObservedAt.UTC().Format(time.RFC3339Nano), Sources: input.Sources, Extensions: ExtensionSummary{Count: len(plugins), PublishedIDs: ids}, Catalog: p, Rejected: rejected}
+	response := Response{Version: 3, TrustedKeys: input.TrustedKeys, Capabilities: []interface{}{}, Plugins: plugins, Templates: []interface{}{}, Schema: catalog.Schema, ObservedAt: input.ObservedAt.UTC().Format(time.RFC3339Nano), Sources: input.Sources, Extensions: ExtensionSummary{Count: len(plugins), PublishedIDs: ids}, Catalog: p, Inventory: inventory, Rejected: rejected}
 	// Revision identifies the semantic snapshot consumed by Console, OSC, OSAA
 	// and OSCE. Observation timestamps remain in the response as evidence, but
 	// must not invalidate a plan when the exact candidates and policy are
@@ -403,8 +617,9 @@ func Build(input Input) (Response, error) {
 		TrustedKeys map[string]string  `json:"trustedKeys"`
 		Plugins     []Plugin           `json:"plugins"`
 		Catalog     catalog.Projection `json:"catalog"`
+		Inventory   catalog.Inventory  `json:"inventory"`
 		Rejected    []catalog.Rejected `json:"rejected"`
-	}{response.Version, response.TrustedKeys, revisionPlugins, response.Catalog, response.Rejected}
+	}{response.Version, response.TrustedKeys, revisionPlugins, response.Catalog, response.Inventory, response.Rejected}
 	encoded, err := json.Marshal(content)
 	if err != nil {
 		return Response{}, err
@@ -458,7 +673,28 @@ func LoadInput(ctx context.Context, dyn dynamic.Interface, now time.Time) (Input
 		return Input{}, fmt.Errorf("extensions.navigation: %w", err)
 	}
 	statuses["extensions.navigation"] = catalog.SourceStatus{Ready: true, Count: len(navigation)}
-	return Input{Packages: lists["extensions.packages"], Registrations: lists["extensions.registrations"], Descriptors: lists["catalog.descriptors"], TrustedKeys: keys, Navigation: navigation, Sources: statuses, ObservedAt: now}, nil
+	releaseLock, resourceVersion, err := loadReleaseLock(ctx, dyn)
+	if err != nil {
+		return Input{}, fmt.Errorf("release.inventory: %w", err)
+	}
+	statuses["release.inventory"] = catalog.SourceStatus{Ready: true, Count: len(releaseLock.Components), ResourceVersion: resourceVersion}
+	return Input{Packages: lists["extensions.packages"], Registrations: lists["extensions.registrations"], Descriptors: lists["catalog.descriptors"], ReleaseLock: releaseLock, ReleaseLockResourceVersion: resourceVersion, TrustedKeys: keys, Navigation: navigation, Sources: statuses, ObservedAt: now}, nil
+}
+
+func loadReleaseLock(ctx context.Context, dyn dynamic.Interface) (ReleaseLock, string, error) {
+	cm, err := dyn.Resource(configMapGVR).Namespace(registryNamespace).Get(ctx, installationLockConfigMap, metav1.GetOptions{})
+	if err != nil {
+		return ReleaseLock{}, "", err
+	}
+	raw, _, _ := unstructured.NestedString(cm.Object, "data", installationLockKey)
+	var lock ReleaseLock
+	if err := json.Unmarshal([]byte(raw), &lock); err != nil {
+		return ReleaseLock{}, "", errors.New("release lock payload is invalid")
+	}
+	if !digestRE.MatchString(lock.ReleaseDigest) || len(lock.Components) == 0 {
+		return ReleaseLock{}, "", errors.New("release lock lacks canonical release evidence")
+	}
+	return lock, cm.GetResourceVersion(), nil
 }
 
 func loadTrustedKeys(ctx context.Context, dyn dynamic.Interface) (map[string]string, error) {
@@ -551,6 +787,7 @@ func (s *Store) Run(ctx context.Context) {
 	}
 	go s.watchConfigMap(ctx, registryNamespace, trustConfigMap, changes)
 	go s.watchConfigMap(ctx, registryNamespace, navigationConfigMap, changes)
+	go s.watchConfigMap(ctx, registryNamespace, installationLockConfigMap, changes)
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -647,8 +884,14 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 	switch req.Kind {
 	case "extension":
 		for _, p := range snap.Plugins {
-			if p.ID == req.ID {
-				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": "extension", "id": p.ID, "digest": p.InstalledDigest, "channel": p.RequestedChannel}}
+			if p.ID == req.ID || "extension."+p.ID == req.ID {
+				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": "extension", "descriptorId": "extension." + p.ID, "id": p.ID, "digest": p.InstalledDigest, "channel": p.RequestedChannel, "catalogRevision": snap.Revision}}
+			}
+		}
+	case "installableModule":
+		for _, descriptor := range snap.Inventory.Descriptors {
+			if descriptor.Class == "installableModule" && descriptor.ID == req.ID && descriptor.Installation.Eligible {
+				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": descriptor.Class, "descriptorId": descriptor.ID, "digest": descriptor.Release.ImageDigest, "catalogRevision": snap.Revision}}
 			}
 		}
 	}

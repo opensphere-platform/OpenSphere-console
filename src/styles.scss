@@ -1789,3 +1789,48 @@ os-landing-osaa-dialogue-state {
     .delivery-phases li:last-child { border-bottom: 0; }
   }
 }
+/* Registry Inventory lives in the Extensions page but is a shared Console
+   projection. Keep it outside the already-large page component style budget. */
+.foundation-catalog,
+.extension-package-catalog { margin: 1rem 0; padding: 1rem; border: 1px solid var(--os-hairline); background: var(--os-surface-1); }
+.foundation-catalog-head,
+.extension-package-catalog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.foundation-catalog-head h2,
+.extension-package-catalog-head h2 { margin: .15rem 0; font-size: 1.15rem; }
+.foundation-catalog-head p,
+.extension-package-catalog-head p { max-width: 58rem; margin: .25rem 0; line-height: 1.55; }
+.foundation-catalog-eyebrow { color: var(--os-accent); font-size: .68rem; font-weight: 700; letter-spacing: .08em; }
+.foundation-catalog-evidence,
+.registry-class-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); margin: 1rem 0; border: 1px solid var(--os-hairline); }
+.foundation-catalog-evidence > div,
+.registry-class-summary > div { min-width: 0; padding: .75rem; border-inline-end: 1px solid var(--os-hairline); }
+.registry-class-summary { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.foundation-catalog-evidence > div:last-child,
+.registry-class-summary > div:last-child { border-inline-end: 0; }
+.foundation-catalog-evidence span,
+.registry-class-summary span { display: block; color: var(--os-muted); font-size: .66rem; }
+.foundation-catalog-evidence strong,
+.registry-class-summary strong { display: block; margin-top: .25rem; font-size: .9rem; }
+.registry-class-summary small { display: block; margin-top: .25rem; color: var(--os-muted); line-height: 1.4; }
+.registry-descriptor-group { margin-top: 1.25rem; }
+.registry-descriptor-group > header { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--os-hairline); }
+.registry-descriptor-group h3 { margin: 0 0 .45rem; font-size: 1rem; }
+.registry-descriptor-group header span { color: var(--os-muted); font-size: .68rem; }
+.foundation-module-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-inline-start: 1px solid var(--os-hairline); }
+.foundation-module { min-width: 0; padding: .85rem; border-inline-end: 1px solid var(--os-hairline); border-bottom: 1px solid var(--os-hairline); }
+.foundation-module-state { display: block; color: var(--os-accent); font-size: .62rem; font-weight: 700; letter-spacing: .06em; }
+.foundation-module > strong { display: block; margin: .35rem 0; font-size: .85rem; }
+.foundation-module p { overflow-wrap: anywhere; line-height: 1.45; }
+.foundation-module dl { display: grid; grid-template-columns: 5rem minmax(0,1fr); gap: .25rem .5rem; margin: .65rem 0 0; font-size: .66rem; }
+.foundation-module dt { color: var(--os-muted); }
+.foundation-module dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.registry-coverage-gap,
+.foundation-catalog-boundary { display: grid; gap: .2rem; margin-top: 1rem; padding: .75rem; border-inline-start: .2rem solid var(--os-warning, #d98700); background: var(--os-surface-2); }
+.registry-coverage-gap span,
+.foundation-catalog-boundary span { overflow-wrap: anywhere; }
+.registry-coverage-gap small,
+.foundation-catalog-boundary small { color: var(--os-muted); }
+.legacy-foundation-source { margin-top: 1rem; }
+.legacy-foundation-source summary { cursor: pointer; font-weight: 650; }
+@media(max-width: 70rem) { .foundation-module-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media(max-width: 48rem) { .foundation-catalog-head,.extension-package-catalog-head { display: grid; } .foundation-catalog-evidence,.registry-class-summary,.foundation-module-grid { grid-template-columns: 1fr; } .foundation-catalog-evidence > div,.registry-class-summary > div { border-inline-end: 0; border-bottom: 1px solid var(--os-hairline); } }

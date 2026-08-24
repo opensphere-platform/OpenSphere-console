@@ -19,9 +19,9 @@ func object(name string, spec map[string]interface{}) unstructured.Unstructured 
 func fixtureInput() Input {
 	pkg := object("postgres", map[string]interface{}{"displayName": "PostgreSQL", "kind": "plugin", "hostRef": "foundation", "hostApiVersion": "1.0.0", "hostCompat": ">=1.0.0 <2.0.0", "image": map[string]interface{}{"digest": "sha256:" + string(bytes.Repeat([]byte{'a'}, 64))}, "manifest": map[string]interface{}{"sha256": string(bytes.Repeat([]byte{'b'}, 64)), "signaturePath": "/plugins/ui-shell.manifest.json.sig"}, "trust": map[string]interface{}{"keyId": "key-1"}, "contributions": map[string]interface{}{}})
 	reg := object("postgres", map[string]interface{}{"desiredState": "Enabled", "approval": map[string]interface{}{"requestedBy": "admin", "reason": "test"}})
-	reg.Object["status"] = map[string]interface{}{"phase": "Activated", "workload": map[string]interface{}{"phase": "Ready"}, "verification": map[string]interface{}{"manifest": "Verified", "signature": "Verified", "entryDigest": "Verified", "permissions": "Approved"}, "currentDigest": "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)), "currentManifestSha256": string(bytes.Repeat([]byte{'b'}, 64)), "manifestUrl": "/api/plugins/postgres-r-1/plugins/ui-shell.manifest.json", "serving": map[string]interface{}{"phase": "Current", "artifactServiceId": "postgres-r-1", "revision": "1"}}
+	reg.Object["status"] = map[string]interface{}{"phase": "Activated", "workload": map[string]interface{}{"phase": "Ready"}, "verification": map[string]interface{}{"manifest": "Verified", "signature": "Verified", "entryDigest": "Verified", "permissions": "Approved"}, "currentDigest": "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)), "currentManifestSha256": string(bytes.Repeat([]byte{'b'}, 64)), "currentVersion": "202608240000", "currentRevision": "0123456789012345678901234567890123456789", "manifestUrl": "/api/plugins/postgres-r-1/plugins/ui-shell.manifest.json", "serving": map[string]interface{}{"phase": "Current", "artifactServiceId": "postgres-r-1", "revision": "1"}}
 	descriptor := object("data", map[string]interface{}{"model": "data", "catalog": map[string]interface{}{"authority": "registry", "install": "optional"}})
-	return Input{Packages: list(pkg), Registrations: list(reg), Descriptors: list(descriptor), TrustedKeys: map[string]string{"key-1": "public"}, Navigation: map[string]map[string]interface{}{}, Sources: map[string]catalog.SourceStatus{}, ObservedAt: time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)}
+	return Input{Packages: list(pkg), Registrations: list(reg), Descriptors: list(descriptor), ReleaseLock: ReleaseLock{ReleaseDigest: "sha256:" + string(bytes.Repeat([]byte{'e'}, 64)), Components: map[string]ReleaseComponent{"registry": {Repository: "opensphere-registry", Image: "ghcr.io/opensphere-platform/opensphere-registry@sha256:" + string(bytes.Repeat([]byte{'c'}, 64)), SourceRevision: "0123456789012345678901234567890123456789"}}}, ReleaseLockResourceVersion: "42", TrustedKeys: map[string]string{"key-1": "public"}, Navigation: map[string]map[string]interface{}{}, Sources: map[string]catalog.SourceStatus{}, ObservedAt: time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)}
 }
 
 func TestBuildIsDeterministicAndCompatible(t *testing.T) {
@@ -41,6 +41,31 @@ func TestBuildIsDeterministicAndCompatible(t *testing.T) {
 	if a.Version != 3 || len(a.Plugins) != 1 || a.Schema == "" || len(a.Catalog.ModuleDescriptors) != 1 {
 		t.Fatalf("contract missing: %#v", a)
 	}
+	if a.Inventory.Coverage.Expected != 3 || a.Inventory.Coverage.Published != 2 || len(a.Inventory.Descriptors) != 2 {
+		t.Fatalf("common descriptor coverage is not explicit: %#v", a.Inventory)
+	}
+}
+
+func TestInventoryPublishesRequiredCoreServicesAndRejectsNonExactFoundationArtifact(t *testing.T) {
+	got, err := Build(fixtureInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Inventory.Descriptors[0].ID != "cbss.opensphere-registry" || got.Inventory.Descriptors[0].Installation.Eligible {
+		t.Fatalf("Registry core service classification is invalid: %#v", got.Inventory.Descriptors)
+	}
+	if got.Inventory.Descriptors[1].ID != "extension.postgres" {
+		t.Fatalf("extension descriptor is missing: %#v", got.Inventory.Descriptors)
+	}
+	if len(got.Inventory.Coverage.Missing) != 1 || got.Inventory.Coverage.Missing[0].ID != "foundation.data" || got.Inventory.Coverage.Missing[0].Code != "DigestMissing" {
+		t.Fatalf("non-exact Foundation artifact was not exposed as a coverage gap: %#v", got.Inventory.Coverage)
+	}
+	for _, rejected := range got.Rejected {
+		if rejected.ID == "foundation.data" && rejected.Code == "DigestMissing" {
+			return
+		}
+	}
+	t.Fatal("DigestMissing rejection was not published")
 }
 
 func TestModuleDescriptorCannotPublishPfssRuntimeConfiguration(t *testing.T) {
@@ -153,7 +178,11 @@ func TestPendingTargetPreservesLastKnownGoodAndNavigation(t *testing.T) {
 	if next.Plugins[0].Name != "Database" || next.Plugins[0].Icon != "data--base" {
 		t.Fatalf("navigation preference was not projected: %#v", next.Plugins[0])
 	}
-	if len(next.Rejected) != 1 || next.Rejected[0].Code != "ReleaseCoordinatesPending" {
+	foundPending := false
+	for _, rejected := range next.Rejected {
+		foundPending = foundPending || rejected.Code == "ReleaseCoordinatesPending"
+	}
+	if !foundPending {
 		t.Fatalf("pending target was not reported: %#v", next.Rejected)
 	}
 }

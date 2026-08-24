@@ -31,13 +31,13 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         <div class="scope-grid">
           <article>
             <span>현재 제공</span>
-            <strong>Extension + Foundation module descriptor</strong>
-            <p>Package·Registration과 검증된 설치 identity를 같은 revision으로 게시합니다.</p>
+            <strong>Core Service + Extension + Module source</strong>
+            <p>Release Lock, Package·Registration, Foundation descriptor를 같은 revision으로 정규화합니다.</p>
           </article>
           <article>
             <span>수렴 대상</span>
-            <strong>공통 RegistryDescriptorV1</strong>
-            <p>OSCE·OSDST·Registry 같은 Core Service와 설치 가능한 Module을 같은 읽기 계약으로 표현합니다.</p>
+            <strong>공통 RegistryDescriptorV1 · Coverage</strong>
+            <p>OSCE·OSDST·Registry 같은 Core Service와 Extension을 게시하고, exact artifact가 없는 Module은 gap으로 표시합니다.</p>
           </article>
           <article>
             <span>항상 Owner 소유</span>
@@ -50,7 +50,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
       <section class="registry-flow" aria-labelledby="registry-flow-title">
         <header><p class="eyebrow">DECLARATION TO OPERATION</p><h2 id="registry-flow-title">정의·선택·배포·운영의 권위를 섞지 않습니다.</h2></header>
         <div class="flow-grid">
-          <article><span>01</span><img src="/assets/pictograms/systems.svg" alt="Declared sources" width="58" height="58" /><h3>Sources</h3><p>Extension Package·Registration과 Foundation module descriptor의 설치 자격·배포 출처를 관측합니다.</p><small>권위: 각 CR Owner</small></article>
+          <article><span>01</span><img src="/assets/pictograms/systems.svg" alt="Declared sources" width="58" height="58" /><h3>Sources</h3><p>Release Lock, Extension Package·Registration과 Foundation module descriptor의 설치 자격·배포 출처를 관측합니다.</p><small>권위: Release · 각 CR Owner</small></article>
           <b aria-hidden="true">→</b>
           <article><span>02</span><img src="/assets/pictograms/connected-ecosystem.svg" alt="Registry projection" width="58" height="58" /><h3>Registry projection</h3><p>검증된 객체만 정규화하고 source health, rejected object, canonical revision을 하나의 원자적 snapshot으로 게시합니다.</p><small>권위: Registry &amp; Catalog</small></article>
           <b aria-hidden="true">→</b>

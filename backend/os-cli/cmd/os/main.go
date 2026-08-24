@@ -61,11 +61,32 @@ type RegistryItem struct {
 }
 
 type Registry struct {
-	Version      int              `json:"version"`
-	Capabilities []map[string]any `json:"capabilities"`
-	Plugins      []RegistryItem   `json:"plugins"`
-	Templates    []map[string]any `json:"templates"`
-	TrustedKeys  map[string]any   `json:"trustedKeys"`
+	Version      int               `json:"version"`
+	Schema       string            `json:"schema"`
+	Revision     string            `json:"revision"`
+	Capabilities []map[string]any  `json:"capabilities"`
+	Plugins      []RegistryItem    `json:"plugins"`
+	Templates    []map[string]any  `json:"templates"`
+	TrustedKeys  map[string]any    `json:"trustedKeys"`
+	Inventory    RegistryInventory `json:"inventory"`
+}
+
+type RegistryDescriptor struct {
+	ID           string         `json:"id"`
+	Class        string         `json:"class"`
+	DisplayName  string         `json:"displayName"`
+	Domain       string         `json:"domain"`
+	Owner        map[string]any `json:"owner"`
+	Source       map[string]any `json:"source"`
+	Release      map[string]any `json:"release"`
+	Capabilities []string       `json:"capabilities"`
+	Installation map[string]any `json:"installation"`
+	Evidence     map[string]any `json:"evidence"`
+}
+
+type RegistryInventory struct {
+	Descriptors []RegistryDescriptor `json:"descriptors"`
+	Coverage    map[string]any       `json:"coverage"`
 }
 
 type Tool struct {
@@ -839,7 +860,7 @@ func whoami(cfg Config, out io.Writer) error {
 func registry(cfg Config, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("registry", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	kind := fs.String("kind", "", "capability|plugin|template")
+	kind := fs.String("kind", "", "capability|plugin|template|core-service|extension|installable-module|coverage")
 	output := fs.String("o", "json", "json")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -865,11 +886,26 @@ func registry(cfg Config, args []string, out io.Writer) error {
 		return renderOutput(cfg, out, b)
 	}
 	_ = output // -o는 하위호환을 위해 수용하되 현재 출력은 항상 JSON이다.
-	key := map[string]string{"capability": "capabilities", "plugin": "plugins", "template": "templates"}[*kind]
+	key := map[string]string{"capability": "capabilities", "plugin": "plugins", "template": "templates", "coverage": "coverage", "core-service": "coreService", "extension": "extension", "installable-module": "installableModule"}[*kind]
 	if key == "" {
 		return usageErrorf("알 수 없는 kind: %s", *kind)
 	}
-	selected, err := json.Marshal(map[string]any{"capabilities": reg.Capabilities, "plugins": reg.Plugins, "templates": reg.Templates}[key])
+	var value any
+	switch key {
+	case "coverage":
+		value = map[string]any{"revision": reg.Revision, "coverage": reg.Inventory.Coverage}
+	case "coreService", "extension", "installableModule":
+		selected := []RegistryDescriptor{}
+		for _, descriptor := range reg.Inventory.Descriptors {
+			if descriptor.Class == key {
+				selected = append(selected, descriptor)
+			}
+		}
+		value = map[string]any{"revision": reg.Revision, "descriptors": selected}
+	default:
+		value = map[string]any{"capabilities": reg.Capabilities, "plugins": reg.Plugins, "templates": reg.Templates}[key]
+	}
+	selected, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("Registry subset could not be encoded: %w", err)
 	}
@@ -885,7 +921,7 @@ func requireJSONResponse(contentType, subject string) error {
 }
 
 func validateRegistry(reg Registry) error {
-	if reg.Version != 3 || reg.Capabilities == nil || reg.Plugins == nil || reg.Templates == nil || reg.TrustedKeys == nil {
+	if reg.Version != 3 || reg.Schema != "opensphere.registry-catalog/v1" || !strings.HasPrefix(reg.Revision, "sha256:") || reg.Capabilities == nil || reg.Plugins == nil || reg.Templates == nil || reg.TrustedKeys == nil || reg.Inventory.Descriptors == nil || reg.Inventory.Coverage == nil {
 		return errors.New("Console Registry schema is invalid or unsupported")
 	}
 	for _, plugin := range reg.Plugins {

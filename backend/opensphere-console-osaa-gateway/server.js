@@ -6772,14 +6772,14 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     deliveryId: { type: 'string', pattern: UUID_RE.source },
     component: { type: 'string', enum: OSAA_RECOVERY_DRILL_COMPONENTS },
   }, ['action']);
-  add('osaa.system.read', 'search_catalog_entities', 'Search the canonical OpenSphere catalog projection. Use this to relate services, owners, APIs, and declared platform components to live resources.', {
+  add('osaa.system.read', 'search_catalog_entities', 'Search the Developer Catalog asset projection (Backstage-style Component/API entities). This is not the OS module Registry & Catalog and cannot decide installation eligibility.', {
     filter: { type: 'string', maxLength: 200 },
     limit: { type: 'integer', minimum: 1, maximum: 100 },
   });
-  add('osaa.system.read', 'get_opensphere_registry', 'Read the current OpenSphere Registry & Catalog snapshot, including its canonical revision, extension discovery, installable catalog, source health, and rejected objects.', {});
-  add('osaa.system.read', 'resolve_registry_candidate', 'Resolve one Console extension against the exact Registry revision previously observed. PFSS instance plans are resolved by the installed module Owner, not by Registry. This is read-only eligibility evidence, not execution authority.', {
-    kind: { type: 'string', enum: ['extension'] },
-    id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,62}$' },
+  add('osaa.system.read', 'get_opensphere_registry', 'Read the current OpenSphere Registry & Catalog common Descriptor snapshot. Use Coverage to distinguish an unregistered module from an Owner API outage or an absent runtime Instance; Registry does not report Instance existence.', {});
+  add('osaa.system.read', 'resolve_registry_candidate', 'Resolve one installable Console extension or Foundation module against the exact Registry revision previously observed. Core Services are read-only and PFSS runtime Instance plans are resolved by the installed module Owner. This is eligibility evidence, not execution authority.', {
+    kind: { type: 'string', enum: ['extension', 'installableModule'] },
+    id: { type: 'string', pattern: '^[a-z0-9][a-zA-Z0-9.-]{0,126}$' },
     revision: { type: 'string', pattern: '^sha256:[a-f0-9]{64}$' },
     architecture: { type: 'string', enum: ['linux/amd64'] },
     channel: { type: 'string', enum: ['edge'] },
@@ -7802,13 +7802,24 @@ async function catalogEntitySearch(input, actor) {
 async function registryRead(actor) {
   assertPermission(actor, 'osaa.system.read');
   const registry = redactProjection(await registryGet());
-  const count = Array.isArray(registry?.plugins)
-    ? registry.plugins.length
-    : (Array.isArray(registry?.items)
-      ? registry.items.length
-      : (Array.isArray(registry?.registrations) ? registry.registrations.length : null));
+  const descriptors = Array.isArray(registry?.inventory?.descriptors) ? registry.inventory.descriptors : [];
+  const count = descriptors.length;
+  const byClass = Object.fromEntries(['coreService', 'extension', 'installableModule'].map((className) => [
+    className,
+    descriptors.filter((descriptor) => descriptor?.class === className).length,
+  ]));
+  const coverage = registry?.inventory?.coverage || null;
   audit(actor, 'registry-read', 'opensphere/registry', 'ok', count === null ? 'registry projection read' : `${count} entries`);
-  return { action: 'registry-read', authority: 'OpenSphere Registry & Catalog Service', revision: registry.revision || '', count, registry };
+  return {
+    action: 'registry-read', authority: 'OpenSphere Registry & Catalog Service', revision: registry.revision || '', count,
+    byClass, coverage,
+    interpretation: {
+      unregistered: 'descriptor absent or listed in coverage.missing',
+      ownerUnavailable: 'descriptor present; verify owner.lifecycleApi separately',
+      instanceAbsent: 'Registry cannot decide; query the installed module Owner runtime projection',
+    },
+    registry,
+  };
 }
 
 async function registryResolveRead(inputs, actor) {
@@ -7821,8 +7832,8 @@ async function registryResolveRead(inputs, actor) {
     architecture: String(inputs?.architecture || ''),
     channel: String(inputs?.channel || ''),
   };
-  if (request.kind !== 'extension') throw { code: 400, msg: 'kind must be extension' };
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(request.id)) throw { code: 400, msg: 'id is invalid' };
+  if (!['extension', 'installableModule'].includes(request.kind)) throw { code: 400, msg: 'kind must be extension or installableModule' };
+  if (!/^[a-z0-9][a-zA-Z0-9.-]{0,126}$/.test(request.id)) throw { code: 400, msg: 'id is invalid' };
   if (!/^sha256:[a-f0-9]{64}$/.test(request.revision)) throw { code: 400, msg: 'revision must be an exact Registry revision' };
   if (request.architecture && request.architecture !== 'linux/amd64') throw { code: 400, msg: 'architecture must be linux/amd64' };
   if (request.channel && request.channel !== 'edge') throw { code: 400, msg: 'channel must be edge' };

@@ -426,7 +426,7 @@ func TestDoctorReportsOptionalMissingCRDsWithoutHidingThem(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"not found"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"Ready","version":3,"capabilities":[],"plugins":[],"templates":[],"trustedKeys":{}}`))
+		_, _ = w.Write([]byte(`{"status":"Ready","version":3,"schema":"opensphere.registry-catalog/v1","revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","inventory":{"descriptors":[],"coverage":{}},"capabilities":[],"plugins":[],"templates":[],"trustedKeys":{}}`))
 	}))
 	defer server.Close()
 	cfg := defaults()

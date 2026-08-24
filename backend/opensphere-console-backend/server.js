@@ -150,6 +150,7 @@ const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-con
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OSAA_GATEWAY_URL = (process.env.OSAA_GATEWAY_URL || 'http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OSDST_URL = (process.env.OSDST_URL || 'http://opensphere-osdst.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const REGISTRY_URL = (process.env.REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const FOUNDATION_CONTROL_URL = (process.env.FOUNDATION_CONTROL_URL || 'http://foundation-osaa-owner.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CONSOLE_PUBLIC_URL = (process.env.CONSOLE_PUBLIC_URL || 'https://localhost:8090').replace(/\/$/, '');
 const INSTALLATION_CONFIG_FILE = process.env.INSTALLATION_CONFIG_FILE || DEFAULT_INSTALLATION_CONFIG_FILE;
@@ -3579,6 +3580,35 @@ async function readBody(req) {
   try { return JSON.parse(s); } catch { throw { code: 400, msg: 'invalid json body' }; }
 }
 
+async function resolveInstallableCatalogBinding(body) {
+  const descriptorId = String(body?.descriptorId || '').trim();
+  const catalogRevision = String(body?.catalogRevision || '').trim();
+  if (!/^foundation\.[a-z0-9][a-z0-9.-]{0,115}$/.test(descriptorId)
+    || !/^sha256:[a-f0-9]{64}$/.test(catalogRevision)) {
+    throw { code: 400, errorCode: 'CatalogBindingInvalid', msg: 'descriptorId and exact catalogRevision are required' };
+  }
+  let response;
+  try {
+    response = await fetch(`${REGISTRY_URL}/api/v1/registry/resolve`, {
+      method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'installableModule', id: descriptorId, revision: catalogRevision, architecture: 'linux/amd64', channel: 'edge' }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch {
+    throw { code: 503, errorCode: 'RegistryUnavailable', msg: 'Registry & Catalog Service is unavailable' };
+  }
+  const resolution = await response.json().catch(() => ({}));
+  if (!response.ok || resolution.result !== 'Eligible') {
+    throw { code: response.ok ? 409 : response.status, errorCode: resolution.blockerCode || 'CatalogBindingInvalid', msg: resolution.message || 'installable module is not eligible' };
+  }
+  const candidate = resolution.candidate || {};
+  if (candidate.descriptorId !== descriptorId || candidate.catalogRevision !== catalogRevision
+    || !/^sha256:[a-f0-9]{64}$/.test(String(candidate.digest || ''))) {
+    throw { code: 409, errorCode: 'CatalogBindingInvalid', msg: 'Registry resolution did not return an exact descriptor binding' };
+  }
+  return { catalogBinding: { descriptorId, catalogRevision, exactDigest: candidate.digest }, resolution: 'Eligible' };
+}
+
 async function proxyAdminControlRequest(req, res, url) {
   let authorization = String(req.headers.authorization || '');
   const method = String(req.method || 'GET').toUpperCase();
@@ -4900,6 +4930,18 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/api/modules') || p.startsWith('/api/module-operations')) {
       const handled = await moduleOperationApi.handle(req, res, p, json);
       if (handled) return;
+    }
+    if (p === '/api/admin/platform-control/catalog/resolve' && req.method === 'POST') {
+      try {
+        if (String(req.headers.authorization || '')) await verifyConsoleAdmin(req);
+        else {
+          if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
+          assertConsoleAdminActor((await browserSessions.authenticate(req)).actor);
+        }
+        return json(res, 200, await resolveInstallableCatalogBinding(await readBody(req)), { 'cache-control': 'no-store' });
+      } catch (e) {
+        return json(res, authErrorStatus(e), { error: e.msg || 'Catalog binding resolution failed', code: e.errorCode || undefined });
+      }
     }
     if (p.startsWith('/api/admin/') && p !== '/api/admin/events') {
       try {

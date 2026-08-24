@@ -215,8 +215,8 @@ test('every Extension management tab has a reloadable canonical route', () => {
   }
 });
 
-test('Catalog separates Foundation module installation from Console Extension package lifecycle', () => {
-  assert.match(source, /<h2 id="foundation-catalog-title">Foundation Module Catalog<\/h2>/);
+test('Catalog separates common Registry descriptors from Console Extension package lifecycle', () => {
+  assert.match(source, /<h2 id="foundation-catalog-title">OpenSphere Registry Inventory<\/h2>/);
   assert.match(source, /<h2 id="extension-package-catalog-title">Extension Packages<\/h2>/);
   assert.match(source, /Foundation service plan과는 다른 생명주기입니다/);
   assert.match(source, /foundationCatalogSnapshot/);
@@ -225,9 +225,12 @@ test('Catalog separates Foundation module installation from Console Extension pa
   assert.match(source, /body\.stale/);
   assert.match(source, /Object\.values\(body\.sources \|\| \{\}\)\.every\(\(source\) => source\.ready\)/);
   assert.match(source, /snapshot\.catalog\.moduleDescriptors/);
+  assert.match(source, /snapshot\.inventory\.coverage/);
+  assert.match(source, /registryDescriptorClasses/);
+  assert.match(source, /coreService.*extension.*installableModule/);
   assert.doesNotMatch(source, /snapshot\.catalog\.plans/);
   assert.doesNotMatch(source, /snapshot\.catalog\.runtimeCatalogs/);
-  assert.match(source, /PFSS 모듈의 설치 자격과 배포 출처/);
+  assert.match(source, /Core Service, Console Extension, 설치 가능 모듈/);
 });
 
 test('Foundation module Catalog does not configure or create service instances', () => {

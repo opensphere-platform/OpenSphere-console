@@ -57,6 +57,29 @@ interface FoundationCatalogObject {
   spec: Record<string, unknown>;
 }
 
+type RegistryDescriptorClass = 'coreService' | 'extension' | 'installableModule';
+
+interface RegistryDescriptor {
+  id: string;
+  class: RegistryDescriptorClass;
+  displayName: string;
+  domain: string;
+  owner: { id: string; lifecycleApi?: string };
+  source: { kind: string; name: string };
+  release: { version?: string; imageDigest?: string };
+  capabilities: string[];
+  installation: { mode: string; eligible: boolean };
+  evidence: { observedGeneration: number; sourceRevision: string };
+}
+
+interface RegistryCoverage {
+  expected: number;
+  published: number;
+  rejected: number;
+  missing: Array<{ id: string; class: RegistryDescriptorClass; code: string; message: string }>;
+  byClass: Record<RegistryDescriptorClass, { expected: number; published: number; rejected: number; missing: number }>;
+}
+
 interface FoundationCatalogSnapshot {
   schema: string;
   revision: string;
@@ -64,6 +87,10 @@ interface FoundationCatalogSnapshot {
   stale: boolean;
   catalog: {
     moduleDescriptors: FoundationCatalogObject[];
+  };
+  inventory: {
+    descriptors: RegistryDescriptor[];
+    coverage: RegistryCoverage;
   };
   sources: Record<string, { ready: boolean; count: number; reason?: string }>;
   rejected: Array<{ kind: string; id: string; code: string; message: string }>;
@@ -573,8 +600,8 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             <div class="foundation-catalog-head">
               <div>
                 <p class="foundation-catalog-eyebrow">CBSS CORE SERVICE · REGISTRY &amp; CATALOG</p>
-                <h2 id="foundation-catalog-title">Foundation Module Catalog</h2>
-                <p>PFSS 모듈의 설치 자격과 배포 출처를 확인합니다. 설치 후 서비스 인스턴스의 버전·용량·복제·백업 설정은 각 PFSS 관리 화면이 소유합니다.</p>
+                <h2 id="foundation-catalog-title">OpenSphere Registry Inventory</h2>
+                <p>Core Service, Console Extension, 설치 가능 모듈을 같은 revision의 공통 Descriptor로 조회합니다. Registry는 발견·정규화·판정만 담당하며 실행과 인스턴스 운영은 OSCE와 각 Owner가 담당합니다.</p>
               </div>
               <button class="btn btn-sm btn-outline" [disabled]="foundationCatalogLoading()" (click)="refreshFoundationCatalog()">
                 {{ foundationCatalogLoading() ? '조회 중' : 'Catalog 새로고침' }}
@@ -592,13 +619,59 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                 <div><span>서비스</span><strong>{{ snapshot.schema }}</strong></div>
                 <div><span>Revision</span><strong class="os-mono">{{ shortDigest(snapshot.revision) }}</strong></div>
                 <div><span>Source</span><strong>{{ readyCatalogSources(snapshot) }}</strong></div>
-                <div><span>Rejected</span><strong>{{ snapshot.rejected.length }}</strong></div>
+                <div><span>Coverage</span><strong>{{ snapshot.inventory.coverage.published }}/{{ snapshot.inventory.coverage.expected }}</strong></div>
               </div>
 
-              <div class="foundation-module-grid" aria-label="Foundation modules">
-                @for (module of snapshot.catalog.moduleDescriptors; track module.id) {
+              <div class="registry-class-summary" aria-label="Registry descriptor coverage">
+                @for (className of registryDescriptorClasses; track className) {
+                  <div>
+                    <span>{{ registryClassLabel(className) }}</span>
+                    <strong>{{ registryClassCoverage(snapshot, className) }}</strong>
+                    <small>{{ registryClassBoundary(className) }}</small>
+                  </div>
+                }
+              </div>
+
+              @for (className of registryDescriptorClasses; track className) {
+                <section class="registry-descriptor-group" [attr.aria-label]="registryClassLabel(className)">
+                  <header><h3>{{ registryClassLabel(className) }}</h3><span>{{ descriptorsByClass(snapshot, className).length }} published</span></header>
+                  <div class="foundation-module-grid">
+                    @for (descriptor of descriptorsByClass(snapshot, className); track descriptor.id) {
+                      <article class="foundation-module">
+                        <span class="foundation-module-state">{{ descriptor.installation.eligible ? '설치 후보' : '조회 전용' }}</span>
+                        <strong>{{ descriptor.displayName }}</strong>
+                        <p class="os-mono">{{ descriptor.id }}</p>
+                        <dl>
+                          <dt>Owner</dt><dd>{{ descriptor.owner.id }}</dd>
+                          <dt>Source</dt><dd>{{ descriptor.source.kind }} · {{ descriptor.source.name }}</dd>
+                          <dt>Release</dt><dd class="os-mono">{{ shortDigest(descriptor.release.imageDigest || descriptor.release.version || '') }}</dd>
+                        </dl>
+                      </article>
+                    } @empty {
+                      <p class="os-sub">게시된 {{ registryClassLabel(className) }} Descriptor가 없습니다.</p>
+                    }
+                  </div>
+                </section>
+              }
+
+              @if (snapshot.inventory.coverage.missing.length) {
+                <aside class="registry-coverage-gap">
+                  <strong>Coverage gaps · {{ snapshot.inventory.coverage.missing.length }}</strong>
+                  <span>
+                    @for (gap of snapshot.inventory.coverage.missing; track gap.id + gap.code) {
+                      <span class="os-mono">{{ gap.id }} · {{ gap.code }}</span>
+                    }
+                  </span>
+                  <small>누락은 설치 불가 또는 미등록을 뜻하며, 인스턴스 부재나 Owner 장애로 오해하지 않습니다.</small>
+                </aside>
+              }
+
+              <details class="legacy-foundation-source">
+                <summary>Foundation 원본 Descriptor {{ snapshot.catalog.moduleDescriptors.length }}건</summary>
+                <div class="foundation-module-grid" aria-label="Foundation source descriptors">
+                  @for (module of snapshot.catalog.moduleDescriptors; track module.id) {
                   <article class="foundation-module">
-                    <span class="foundation-module-state">CATALOG 등록</span>
+                    <span class="foundation-module-state">SOURCE 등록</span>
                     <strong>{{ catalogText(module, 'model') || module.id }}</strong>
                     <p>{{ catalogNestedText(module, 'description', 'summary') }}</p>
                     <dl>
@@ -609,12 +682,13 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                 } @empty {
                   <p class="os-sub">검증된 Foundation module descriptor가 없습니다. 서비스 plan을 모듈 설치 항목으로 대신 표시하지 않습니다.</p>
                 }
-              </div>
+                </div>
+              </details>
 
               <aside class="foundation-catalog-boundary">
                 <strong>이 화면의 경계</strong>
-                <span>Registry는 모듈 설치 후보를 판정합니다. PostgreSQL 인스턴스 생성과 운영 설정은 설치된 PFSS의 <code>/pfss/postgres</code>에서 처리합니다.</span>
-                <small>Registry는 PostgreSQL 버전·프로파일·용량·복제·백업 값을 보유하거나 판정하지 않습니다.</small>
+                <span>Registry는 installableModule Descriptor만 설치 후보로 판정합니다. Core Service는 조회 전용이며 PostgreSQL 인스턴스 생성과 운영 설정은 설치된 PFSS의 <code>/pfss/postgres</code>에서 처리합니다.</span>
+                <small>Registry는 런타임 상태·인스턴스·버전 프로파일·용량·복제·백업 값을 보유하지 않습니다.</small>
               </aside>
             } @else if (!foundationCatalogLoading()) {
               <p class="os-sub">Registry &amp; Catalog의 유효한 스냅샷이 없습니다. 0건으로 간주하지 않습니다.</p>
@@ -1430,6 +1504,7 @@ export class AdminPlugins implements OnInit {
   readonly foundationCatalogSnapshot = signal<FoundationCatalogSnapshot | null>(null);
   readonly foundationCatalogError = signal<string | null>(null);
   readonly foundationCatalogLoading = signal(false);
+  readonly registryDescriptorClasses: readonly RegistryDescriptorClass[] = ['coreService', 'extension', 'installableModule'];
 
   readonly catalog = this.projections.catalog;
   readonly registrations = this.projections.registrations;
@@ -2039,6 +2114,27 @@ export class AdminPlugins implements OnInit {
   readyCatalogSources(snapshot: FoundationCatalogSnapshot): string {
     const sources = Object.values(snapshot.sources || {});
     return `${sources.filter((source) => source.ready).length}/${sources.length} Ready`;
+  }
+
+  descriptorsByClass(snapshot: FoundationCatalogSnapshot, className: RegistryDescriptorClass): RegistryDescriptor[] {
+    return (snapshot.inventory?.descriptors || []).filter((descriptor) => descriptor.class === className);
+  }
+
+  registryClassLabel(className: RegistryDescriptorClass): string {
+    return ({ coreService: 'CBSS Core Services', extension: 'Console Extensions', installableModule: 'Installable Modules' })[className];
+  }
+
+  registryClassCoverage(snapshot: FoundationCatalogSnapshot, className: RegistryDescriptorClass): string {
+    const coverage = snapshot.inventory?.coverage?.byClass?.[className];
+    return coverage ? `${coverage.published}/${coverage.expected}` : '—';
+  }
+
+  registryClassBoundary(className: RegistryDescriptorClass): string {
+    return ({
+      coreService: '현재 Console을 구성하는 조회 전용 내장 서비스',
+      extension: 'DUPA Package·Registration으로 검증된 확장',
+      installableModule: 'OSCE가 exact digest로 resolve할 수 있는 설치 후보',
+    })[className];
   }
 
   private async refreshOperationalData(): Promise<void> {

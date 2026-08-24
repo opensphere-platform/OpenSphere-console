@@ -93,6 +93,10 @@ interface RegistryCatalogSnapshot {
   catalog: {
     moduleDescriptors: unknown[];
   };
+  inventory: {
+    descriptors: Array<{ id: string; class: 'coreService' | 'extension' | 'installableModule' }>;
+    coverage: { expected: number; published: number; rejected: number; missing: Array<{ id: string; class: string; code: string; message: string }> };
+  };
   sources: Record<string, { ready: boolean; count: number; reason?: string }>;
   rejected: unknown[];
 }
@@ -210,7 +214,7 @@ const LOGOS = {
           <dl>
             <div><dt>Revision</dt><dd>{{ registryRevision() }}</dd></div>
             <div><dt>Extensions</dt><dd>{{ registryCount('extensions') }}</dd></div>
-            <div><dt>Catalog objects</dt><dd>{{ registryCount('catalog') }}</dd></div>
+            <div><dt>Descriptors</dt><dd>{{ registryCount('catalog') }}</dd></div>
             <div><dt>Source health</dt><dd>{{ registryCount('sources') }}</dd></div>
             <div><dt>Rejected</dt><dd>{{ registryCount('rejected') }}</dd></div>
           </dl>
@@ -492,8 +496,7 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
       const sources = Object.values(value.sources || {});
       return `${sources.filter((source) => source.ready).length}/${sources.length}`;
     }
-    const catalog = value.catalog;
-    return String(catalog?.moduleDescriptors?.length || 0);
+    return `${value.inventory?.coverage?.published ?? 0}/${value.inventory?.coverage?.expected ?? 0}`;
   }
 
   private shortRevision(value: string): string {
