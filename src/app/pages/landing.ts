@@ -8,6 +8,7 @@ import { SERVICE_REALIZATION_LAYERS } from '../architecture/service-realization.
 import { LandingFoundations } from './landing-foundations';
 import { LandingOsaaDialogueState } from './landing-osaa-dialogue-state';
 import { LandingRegistryCatalog } from './landing-registry-catalog';
+import { LandingPfssDelivery } from './landing-pfss-delivery';
 
 interface IndexLink {
   path: string;
@@ -31,6 +32,7 @@ type ArchitecturePageId =
   | 'control-pillars'
   | 'control-engine'
   | 'registry-catalog'
+  | 'pfss-delivery'
   | 'ai-lifecycle'
   | 'osaa-dialogue-state';
 
@@ -54,7 +56,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
 
 @Component({
   selector: 'os-landing',
-  imports: [RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, ClarityModule],
+  imports: [RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, ClarityModule],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
@@ -350,6 +352,13 @@ const PERSPECTIVES: PerspectiveDef[] = [
           <button clrTabLink (click)="selectPage('registry-catalog')">Registry &amp; Catalog</button>
           <clr-tab-content *clrIfActive="activePage() === 'registry-catalog'">
             <os-landing-registry-catalog />
+          </clr-tab-content>
+        </clr-tab>
+
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('pfss-delivery')">PFSS Delivery</button>
+          <clr-tab-content *clrIfActive="activePage() === 'pfss-delivery'">
+            <os-landing-pfss-delivery />
           </clr-tab-content>
         </clr-tab>
 
