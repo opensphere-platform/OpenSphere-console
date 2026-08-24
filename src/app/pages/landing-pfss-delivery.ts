@@ -20,7 +20,9 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         </div>
         <p>
           관리자는 Catalog에서 모듈을 선택하지만, 한 제품이 모든 일을 처리하지 않습니다.
-          판단·승인·선언·배포·운영을 각 권위가 이어받고, 업데이트는 같은 흐름으로 다시 진입합니다.
+          판단·승인·선언·배포·운영을 각 권위가 이어받고, 업데이트는 같은 흐름으로 다시 진입합니다. 이 페이지는
+          OpenSphere 공통 Delivery Control Loop를 PFSS에 적용한 형태이며, 다른 구성요소는 각자의 Controller가 마지막 운영
+          책임을 맡습니다.
         </p>
       </section>
 
@@ -343,15 +345,16 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         position: absolute;
         z-index: 1;
         top: 50%;
-        right: -0.58rem;
+        right: -0.85rem;
         display: grid;
         place-items: center;
-        width: 1.1rem;
-        height: 1.6rem;
-        margin-top: -0.8rem;
+        width: 1.7rem;
+        height: 2.4rem;
+        margin-top: -1.2rem;
         background: var(--os-canvas);
         color: var(--os-accent);
-        font-size: 1.35rem;
+        font-size: 2.25rem;
+        font-weight: 500;
         line-height: 1;
       }
       .step-number {
@@ -438,10 +441,12 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
       .update-loop li:not(:last-child)::after {
         content: '→';
         position: absolute;
-        top: 0.9rem;
-        right: 0.65rem;
+        top: 0.65rem;
+        right: 0.5rem;
         color: var(--os-accent);
-        font-size: 1rem;
+        font-size: 1.75rem;
+        font-weight: 600;
+        line-height: 1;
       }
       .update-loop li span {
         display: grid;
