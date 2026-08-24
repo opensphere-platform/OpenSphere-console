@@ -117,7 +117,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
     </article>
   `,
   styles: [`
-    :host{display:block;min-width:0;max-width:100%}.registry-doc{--body:.9rem;--detail:.8rem;display:grid;min-width:0;max-width:100%;gap:1.35rem;color:var(--os-ink)}
+    :host{display:block;min-width:0;max-width:100%}.registry-doc{--body:.9rem;--detail:.8rem;display:grid;grid-template-columns:minmax(0,1fr);min-width:0;max-width:100%;gap:1.35rem;color:var(--os-ink)}
     .hero{display:grid;grid-template-columns:6rem minmax(0,1fr);gap:1.25rem;align-items:center;padding:1.5rem;border-inline-start:4px solid var(--os-accent);background:var(--os-canvas)}
     .eyebrow{margin:0;color:var(--os-accent);font-size:.7rem;font-weight:700;letter-spacing:.11em}.hero h1{max-width:68rem;margin:.35rem 0;font-size:1.55rem;line-height:1.25}.lead{max-width:72rem;margin:.55rem 0 0;color:var(--os-ink-muted);font-size:var(--body);line-height:1.6}
     .identity{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:0;border:1px solid var(--os-hairline);background:var(--os-canvas)}.identity>div{padding:1rem;border-inline-end:1px solid var(--os-hairline)}.identity>div:last-child{border-inline-end:0}.identity dt{color:var(--os-ink-muted);font-size:.72rem}.identity dd{margin:.35rem 0 0;font-size:var(--detail);font-weight:650;line-height:1.45}

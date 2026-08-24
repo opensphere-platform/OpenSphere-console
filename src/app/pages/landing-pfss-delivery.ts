@@ -411,12 +411,14 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
       }
       .delivery-steps h3 {
         margin: 0.15rem 0 0;
+        overflow-wrap: anywhere;
         font-size: var(--delivery-card-title);
         line-height: 1.3;
       }
       .delivery-steps p {
         grid-column: 1/-1;
         margin: 0.35rem 0 0;
+        overflow-wrap: anywhere;
         color: var(--os-ink-muted);
         font-size: var(--delivery-detail);
         line-height: 1.55;
@@ -426,6 +428,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         align-self: end;
         margin-top: auto;
         padding-top: 0.65rem;
+        overflow-wrap: anywhere;
         border-top: 1px solid var(--os-hairline);
         font-size: var(--delivery-detail);
         line-height: 1.4;
@@ -459,6 +462,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
       }
       .pfss-object-grid p {
         margin: 0.55rem 0;
+        overflow-wrap: anywhere;
         color: var(--os-ink-muted);
         font-size: var(--delivery-detail);
         line-height: 1.55;
@@ -466,6 +470,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
       .pfss-object-grid small {
         padding-top: 0.6rem;
         border-top: 1px solid var(--os-hairline);
+        overflow-wrap: anywhere;
         color: var(--os-ink-subtle);
         font-size: var(--delivery-label);
         line-height: 1.4;
