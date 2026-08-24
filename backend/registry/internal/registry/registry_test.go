@@ -43,6 +43,37 @@ func TestBuildIsDeterministicAndCompatible(t *testing.T) {
 	}
 }
 
+func TestModuleDescriptorCannotPublishPfssRuntimeConfiguration(t *testing.T) {
+	input := fixtureInput()
+	input.Descriptors.Items[0] = object("data", map[string]interface{}{
+		"model":           "data",
+		"description":     map[string]interface{}{"summary": "Data services"},
+		"catalog":         map[string]interface{}{"authority": "registry", "install": "optional", "fixed": false},
+		"operator":        map[string]interface{}{"image": "ghcr.io/opensphere-platform/operator@sha256:" + string(bytes.Repeat([]byte{'c'}, 64))},
+		"lifecycle":       "Available",
+		"runtimeCatalog":  map[string]interface{}{"versions": []interface{}{"18"}},
+		"plans":           []interface{}{map[string]interface{}{"name": "production"}},
+		"postgresVersion": "18",
+		"capacity":        "large",
+		"replicas":        int64(3),
+		"storage":         map[string]interface{}{"size": "1Ti"},
+		"backup":          map[string]interface{}{"enabled": true},
+	})
+	got, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Catalog.ModuleDescriptors[0])
+	for _, forbidden := range [][]byte{[]byte("lifecycle"), []byte("runtimeCatalog"), []byte("plans"), []byte("postgresVersion"), []byte("capacity"), []byte("replicas"), []byte("storage"), []byte("backup")} {
+		if bytes.Contains(encoded, forbidden) {
+			t.Fatalf("PFSS runtime field leaked into Registry descriptor: %s", encoded)
+		}
+	}
+	if !bytes.Contains(encoded, []byte(`"authority":"registry"`)) || !bytes.Contains(encoded, []byte(`"image"`)) {
+		t.Fatalf("installation identity/source fields were lost: %s", encoded)
+	}
+}
+
 func TestRevisionIgnoresObservationTimestampChurn(t *testing.T) {
 	input := fixtureInput()
 	_ = unstructured.SetNestedField(input.Registrations.Items[0].Object, "2026-08-24T00:00:01Z", "status", "currentResolvedAt")

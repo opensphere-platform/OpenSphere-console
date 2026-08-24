@@ -147,7 +147,6 @@ const RECOVERY_DRILL_TARGETS = Object.freeze({
 });
 const RECOVERY_OPERATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
-const REGISTRY_URL = (process.env.REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OSAA_GATEWAY_URL = (process.env.OSAA_GATEWAY_URL || 'http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OSDST_URL = (process.env.OSDST_URL || 'http://opensphere-osdst.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');

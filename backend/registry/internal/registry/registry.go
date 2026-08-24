@@ -263,11 +263,61 @@ func pluginFrom(pkg, reg unstructured.Unstructured, nav map[string]interface{}, 
 	return plugin, nil
 }
 
+func descriptorSpec(item unstructured.Unstructured) map[string]interface{} {
+	// FoundationModuleDescriptor is an installation descriptor, not a PFSS
+	// runtime configuration envelope. Project only the fields owned by the
+	// Registry contract so a permissive source CRD cannot accidentally publish
+	// version/profile/capacity/replica/storage/backup or lifecycle state.
+	out := map[string]interface{}{}
+	if value := nestedString(item.Object, "spec", "model"); value != "" {
+		out["model"] = value
+	}
+	if value := nestedMap(item.Object, "spec", "description"); len(value) > 0 {
+		out["description"] = map[string]interface{}{"summary": nestedString(value, "summary")}
+	}
+	if value := nestedMap(item.Object, "spec", "catalog"); len(value) > 0 {
+		projected := map[string]interface{}{}
+		if authority := nestedString(value, "authority"); authority != "" {
+			projected["authority"] = authority
+		}
+		if install := nestedString(value, "install"); install != "" {
+			projected["install"] = install
+		}
+		if fixed, ok, _ := unstructured.NestedBool(value, "fixed"); ok {
+			projected["fixed"] = fixed
+		}
+		out["catalog"] = projected
+	}
+	if value := nestedMap(item.Object, "spec", "operator"); len(value) > 0 {
+		projected := map[string]interface{}{}
+		if image := nestedString(value, "image"); image != "" {
+			projected["image"] = image
+		}
+		if chartRef := nestedMap(value, "chartRef"); len(chartRef) > 0 {
+			projected["chartRef"] = chartRef
+		}
+		if capability := nestedSlice(value, "capability"); len(capability) > 0 {
+			projected["capability"] = capability
+		}
+		out["operator"] = projected
+	}
+	if value := nestedMap(item.Object, "spec", "relations"); len(value) > 0 {
+		projected := map[string]interface{}{}
+		if consumed := nestedSlice(value, "consumed"); consumed != nil {
+			projected["consumed"] = consumed
+		}
+		if consumers := nestedSlice(value, "consumers"); consumers != nil {
+			projected["consumers"] = consumers
+		}
+		out["relations"] = projected
+	}
+	return out
+}
+
 func catalogObjects(list *unstructured.UnstructuredList) []catalog.Object {
 	items := make([]catalog.Object, 0, len(list.Items))
 	for _, item := range list.Items {
-		spec := nestedMap(item.Object, "spec")
-		items = append(items, catalog.Object{ID: item.GetName(), Lifecycle: nestedString(item.Object, "spec", "lifecycle"), Spec: spec})
+		items = append(items, catalog.Object{ID: item.GetName(), Spec: descriptorSpec(item)})
 	}
 	catalog.SortObjects(items)
 	return items

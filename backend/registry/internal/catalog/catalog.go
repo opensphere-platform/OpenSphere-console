@@ -21,9 +21,8 @@ type SourceStatus struct {
 
 // Object is the stable, metadata-free projection of a Catalog CR.
 type Object struct {
-	ID        string                 `json:"id"`
-	Lifecycle string                 `json:"lifecycle,omitempty"`
-	Spec      map[string]interface{} `json:"spec"`
+	ID   string                 `json:"id"`
+	Spec map[string]interface{} `json:"spec"`
 }
 
 type Projection struct {
