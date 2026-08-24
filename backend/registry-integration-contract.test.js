@@ -10,6 +10,8 @@ const dupa = read('dupa-control/controller.js');
 const backend = read('opensphere-console-backend/server.js');
 const gateway = read('opensphere-console-osaa-gateway/server.js');
 const nginx = read('../nginx/default.conf.template');
+const registrySource = read('registry/internal/registry/registry.go');
+const registryManifest = read('registry/deploy/registry.yaml');
 
 test('DUPA publishes lifecycle and navigation facts but does not serve a second Registry', () => {
   assert.match(dupa, /publishNavigationPreferences/);
@@ -38,4 +40,15 @@ test('OSAA reads the same Registry and has a closed deterministic resolver tool'
   assert.match(gateway, /resolve_registry_candidate/);
   assert.match(gateway, /Registry & Catalog Service is unavailable/);
   assert.doesNotMatch(gateway, /DUPA projection/);
+});
+
+test('Registry reads both public-key and navigation inputs from one namespace-scoped authority', () => {
+  assert.doesNotMatch(registrySource, /opensphere-system/);
+  assert.match(registrySource, /Namespace\(registryNamespace\)\.Get\(ctx, trustConfigMap/);
+  assert.match(registryManifest, /kind: Role[\s\S]*name: opensphere-registry-config[\s\S]*resourceNames: \["dupa-trusted-keys", "opensphere-extension-navigation-v1"\]/);
+  const clusterRole = registryManifest
+    .split(/\r?\n---\r?\n/)
+    .find((document) => /kind: ClusterRole\r?\n/.test(document));
+  assert.ok(clusterRole);
+  assert.doesNotMatch(clusterRole, /resources: \["configmaps"\]/);
 });
