@@ -6513,10 +6513,24 @@ function osaaSelfIdentityConversation(messages) {
 }
 
 function registryStatusMessage(summary) {
+  const classCoverage = ['coreService', 'extension', 'installableModule'].map((className) => {
+    const coverage = summary.coverage?.byClass?.[className] || {};
+    const published = Number.isFinite(Number(coverage.published))
+      ? Number(coverage.published)
+      : Number(summary.byClass?.[className] || 0);
+    const expected = Number.isFinite(Number(coverage.expected)) ? Number(coverage.expected) : published;
+    return `${className} ${published}/${expected}`;
+  });
+  const missing = Array.isArray(summary.coverage?.missing) ? summary.coverage.missing : [];
+  const missingLines = missing.length
+    ? missing.map((item) => `- ${item.id} (${item.class}) · ${item.code}: ${item.message}`)
+    : ['- 없음'];
   return [
     `OpenSphere Registry & Catalog revision: ${summary.revision || '관측 불가'}`,
     `상태: ${summary.stale ? 'Stale' : 'Ready'} · Source ${summary.readySources}/${summary.totalSources} Ready · Rejected ${summary.rejectedCount}`,
-    `Foundation module: ${summary.moduleCount}개 · Extension package: ${summary.extensionCount}개`,
+    `Coverage: ${summary.coverage?.published ?? 0}/${summary.coverage?.expected ?? 0} · ${classCoverage.join(' · ')}`,
+    '누락 사유:',
+    ...missingLines,
     '',
     '책임 경계: Registry는 PFSS 모듈의 설치 자격과 배포 출처만 소유합니다.',
     'PostgreSQL의 버전·프로파일·용량·복제·스토리지·백업 설정과 Available 같은 runtime lifecycle·운영 상태는 PFSS PostgreSQL Owner가 소유합니다.',
@@ -6538,8 +6552,8 @@ async function registryStatusConversation(messages, actor) {
       readySources: sources.filter((source) => source?.ready === true).length,
       totalSources: sources.length,
       rejectedCount: Array.isArray(registry.rejected) ? registry.rejected.length : 0,
-      moduleCount: Array.isArray(registry?.catalog?.moduleDescriptors) ? registry.catalog.moduleDescriptors.length : 0,
-      extensionCount: Number(registry?.extensions?.count || (Array.isArray(registry.plugins) ? registry.plugins.length : 0)),
+      byClass: projection?.byClass || {},
+      coverage: projection?.coverage || null,
     };
     return commandResponse(started, registryStatusMessage(summary), {
       schema: 'r2d2.registry-status/v1', phase: summary.stale ? 'Stale' : 'Observed',
