@@ -330,9 +330,9 @@ func validateNativeOptionValue(name, value string) error {
 		}
 	case "kind":
 		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "capability", "plugin", "template":
+		case "capability", "plugin", "template", "core-service", "extension", "installable-module", "coverage":
 		default:
-			return usageError("--kind는 capability, plugin, template 중 하나여야 합니다")
+			return usageError("--kind는 capability, plugin, template, core-service, extension, installable-module, coverage 중 하나여야 합니다")
 		}
 	case "channel":
 		switch strings.ToLower(strings.TrimSpace(value)) {

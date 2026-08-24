@@ -58,6 +58,14 @@ func TestNativeCommandContractRejectsUnknownFlagsAndUnexpectedArguments(t *testi
 	}
 }
 
+func TestRegistryCommandContractAcceptsCommonDescriptorKinds(t *testing.T) {
+	for _, kind := range []string{"core-service", "extension", "installable-module", "coverage"} {
+		if err := validateNativeCommandOptions([]string{"registry", "--kind", kind}); err != nil {
+			t.Fatalf("Registry kind %q must pass native command validation: %v", kind, err)
+		}
+	}
+}
+
 func TestSubcommandHelpIsLocalAndCompletionUsesSameCatalog(t *testing.T) {
 	for _, command := range []string{"status", "get", "token", "update"} {
 		var out bytes.Buffer
