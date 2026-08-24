@@ -40,7 +40,6 @@ var (
 
 const (
 	registryNamespace   = "opensphere-console"
-	trustNamespace      = "opensphere-system"
 	trustConfigMap      = "dupa-trusted-keys"
 	navigationConfigMap = "opensphere-extension-navigation-v1"
 	navigationKey       = "navigation.json"
@@ -466,7 +465,7 @@ func LoadInput(ctx context.Context, dyn dynamic.Interface, now time.Time) (Input
 }
 
 func loadTrustedKeys(ctx context.Context, dyn dynamic.Interface) (map[string]string, error) {
-	cm, err := dyn.Resource(configMapGVR).Namespace(trustNamespace).Get(ctx, trustConfigMap, metav1.GetOptions{})
+	cm, err := dyn.Resource(configMapGVR).Namespace(registryNamespace).Get(ctx, trustConfigMap, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +552,7 @@ func (s *Store) Run(ctx context.Context) {
 	for _, source := range sources {
 		go s.watch(ctx, source, changes)
 	}
-	go s.watchConfigMap(ctx, trustNamespace, trustConfigMap, changes)
+	go s.watchConfigMap(ctx, registryNamespace, trustConfigMap, changes)
 	go s.watchConfigMap(ctx, registryNamespace, navigationConfigMap, changes)
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()

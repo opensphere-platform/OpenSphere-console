@@ -21,10 +21,6 @@ rules:
   - apiGroups: ["foundation.opensphere.io"]
     resources: ["foundationmoduledescriptors"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames: ["dupa-trusted-keys", "opensphere-extension-navigation-v1"]
-    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -34,6 +30,31 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: opensphere-registry
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-registry
+    namespace: opensphere-console
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-registry-config
+  namespace: opensphere-console
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["dupa-trusted-keys", "opensphere-extension-navigation-v1"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-registry-config
+  namespace: opensphere-console
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-registry-config
 subjects:
   - kind: ServiceAccount
     name: opensphere-registry
