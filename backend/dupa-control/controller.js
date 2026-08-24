@@ -11,7 +11,6 @@ const fs = require('fs');
 const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes, randomUUID } = require('crypto');
 const { RegistryCredentialCoordinator } = require('./registry-credentials');
-const { ExtensionProjectionCoordinator } = require('./extension-projection');
 const {
   FOUNDATION_CONTRACT_CRDS,
   foundationEstablishmentProjection,
@@ -287,6 +286,37 @@ async function listNavigationPreferences() {
   }));
 }
 
+const NAVIGATION_PROJECTION_NAME = 'opensphere-extension-navigation-v1';
+const NAVIGATION_PROJECTION_KEY = 'navigation.json';
+async function publishNavigationPreferences(preferences) {
+  const navigation = Object.fromEntries([...preferences.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, value]) => [id, navigationPreferenceFromRecord({ navigation: value }) || {}]));
+  const data = { [NAVIGATION_PROJECTION_KEY]: JSON.stringify(navigation) };
+  const resourcePath = `/api/v1/namespaces/${NS}/configmaps/${NAVIGATION_PROJECTION_NAME}`;
+  const existing = await k8s('GET', resourcePath);
+  const metadata = {
+    name: NAVIGATION_PROJECTION_NAME, namespace: NS,
+    labels: {
+      'app.kubernetes.io/managed-by': 'opensphere-console-dupa-controller',
+      'opensphere.io/purpose': 'extension-navigation-preferences',
+    },
+  };
+  let result;
+  if (existing.status === 404) {
+    result = await k8s('POST', `/api/v1/namespaces/${NS}/configmaps`, {
+      apiVersion: 'v1', kind: 'ConfigMap', metadata, data,
+    });
+    if (result.status === 409) result = await k8s('PATCH', resourcePath, { metadata: { labels: metadata.labels }, data });
+  } else if (existing.ok) {
+    result = await k8s('PATCH', resourcePath, { metadata: { labels: metadata.labels }, data });
+  } else {
+    throw Object.assign(new Error(`navigation projection read HTTP ${existing.status}`), { code: 503, reason: 'NavigationProjectionUnavailable' });
+  }
+  if (!result.ok) throw Object.assign(new Error(`navigation projection write HTTP ${result.status}`), { code: 503, reason: 'NavigationProjectionUnavailable' });
+  return navigation;
+}
+
 async function saveNavigationPreferences(updates, actor) {
   const ids = [...new Set((updates || []).map((item) => item?.id).filter(safeName))];
   if (ids.length !== updates.length) {
@@ -427,13 +457,20 @@ async function k8sText(path) {
 const crd = (plural) => `/apis/${GROUP}/${V}/namespaces/${NS}/${plural}`;
 const listPackages = () => k8s('GET', crd('uipluginpackages'));
 const listRegs = () => k8s('GET', crd('uipluginregistrations'));
-const extensionProjection = new ExtensionProjectionCoordinator({ k8s, namespace: NS });
 // ADR-UI-003 §3.1: scope=main-shell-* 라벨 = shell-pinned core 표면(패키징은 plugin이나 분류는 core) → 제거/비활성 불가.
 const isCorePkg = (pkg) => (pkg?.metadata?.labels?.['opensphere.io/scope'] || '').startsWith('main-shell');
 const getPackage = (n) => k8s('GET', `${crd('uipluginpackages')}/${n}`);
 const getReg = (n) => k8s('GET', `${crd('uipluginregistrations')}/${n}`);
+let managementProjection = { observedAt: '', catalog: { items: [] }, registrations: { items: [] } };
+function managementProjectionStatus() {
+  const ready = Boolean(managementProjection.observedAt);
+  return {
+    ready,
+    state: ready ? 'live' : 'initializing',
+    observedAt: managementProjection.observedAt || null,
+  };
+}
 async function refreshExtensionManagementProjection() {
-  const current = extensionProjection.requireCurrent();
   const [packages, registrations, navigationPreferences] = await Promise.all([
     listPackages(),
     listRegs(),
@@ -442,17 +479,16 @@ async function refreshExtensionManagementProjection() {
   if (!packages.ok || !registrations.ok) {
     throw Object.assign(new Error('extension management projection refresh failed'), {
       code: 503,
-      reason: 'ExtensionProjectionRefreshFailed',
+      reason: 'ExtensionManagementProjectionRefreshFailed',
     });
   }
-  const snapshot = await extensionProjection.persist({
-    ...current,
+  await publishNavigationPreferences(navigationPreferences);
+  managementProjection = {
     observedAt: new Date().toISOString(),
-    catalog: { items: catalogProjectionItems(packages.json?.items, navigationPreferences, current.catalog?.items) },
+    catalog: { items: catalogProjectionItems(packages.json?.items, navigationPreferences) },
     registrations: { items: registrationProjectionItems(registrations.json?.items) },
-  });
-  applyExtensionProjection(snapshot);
-  return snapshot;
+  };
+  return managementProjection;
 }
 function verifiedActivatedRegistration(reg) {
   const status = reg?.status || {};
@@ -473,14 +509,38 @@ function verifiedProxyTarget(pkg, reg) {
     && packageDigest === String(reg?.status?.currentDigest || '')
     && packageManifest === String(reg?.status?.currentManifestSha256 || '');
 }
+const REGISTRY_URL = (process.env.REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+async function readRegistryProjection() {
+  const response = await fetch(`${REGISTRY_URL}/api/v1/registry`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) throw Object.assign(new Error(`Registry HTTP ${response.status}`), { code: 503, reason: 'RegistryUnavailable' });
+  const projection = await response.json();
+  if (projection?.schema !== 'opensphere.registry-catalog/v1' || !/^sha256:[a-f0-9]{64}$/.test(String(projection?.revision || ''))
+    || !Array.isArray(projection?.plugins)) {
+    throw Object.assign(new Error('Registry projection contract is invalid'), { code: 503, reason: 'RegistryUnavailable' });
+  }
+  return projection;
+}
+async function waitForRegistryArtifact(id, artifactServiceId, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const projection = await readRegistryProjection();
+      const current = projection.plugins.find((plugin) => plugin.id === id);
+      if (current?.artifactServiceId === artifactServiceId) return projection.revision;
+    } catch { /* Registry convergence is retried until the bounded deadline. */ }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw Object.assign(new Error(`Registry did not publish ${id}/${artifactServiceId}`), {
+    code: 503,
+    reason: 'RegistryConvergencePending',
+  });
+}
 async function proxyAuthorizationFromSharedState(id) {
   if (!safeName(id) || RESERVED_PROXY_SERVICE_IDS.has(id)) return false;
   try {
-    // Revision artifact aliases live in the shared Registry projection rather
-    // than as Package names. Hydrate before falling back to Package/Registration
-    // so every controller replica authorizes the same content-addressed route.
-    const snapshot = await extensionProjection.hydrate();
-    if ((snapshot?.registry?.plugins || []).some((plugin) => proxyIdsForPlugin(plugin).includes(id))) return true;
+    // Revision artifact aliases are owned by the independent Registry service.
+    const projection = await readRegistryProjection();
+    if (projection.plugins.some((plugin) => proxyIdsForPlugin(plugin).includes(id))) return true;
     const [pkg, reg] = await Promise.all([getPackage(id), getReg(id)]);
     return pkg.ok && reg.ok && verifiedProxyTarget(pkg.json, reg.json);
   } catch (error) {
@@ -2043,16 +2103,16 @@ function registrationProjectionItems(items) {
     };
   });
 }
-function applyExtensionProjection(snapshot) {
-  if (!snapshot) return;
-  publishedPlugins = snapshot.registry.plugins.map((plugin) => ({ ...plugin }));
-  publishedPluginCount = publishedPlugins.length;
-  proxyAllow = new Set(publishedPlugins.flatMap(proxyIdsForPlugin));
-}
 async function reconcile() {
   const [pkgs, regs] = await Promise.all([listPackages(), listRegs()]);
   if (!pkgs.ok || !regs.ok) return;
-  const priorProjection = extensionProjection.current();
+  let priorPublishedPlugins = publishedPlugins;
+  try {
+    const registryProjection = await readRegistryProjection();
+    priorPublishedPlugins = registryProjection.plugins.map((plugin) => ({ ...plugin }));
+  } catch (error) {
+    console.warn('[registry] current projection unavailable; using the last observed local view:', error?.message || error);
+  }
   let navigationPreferences = null;
   try {
     navigationPreferences = await listNavigationPreferences();
@@ -2062,9 +2122,9 @@ async function reconcile() {
     // retained until the durable preference authority becomes readable again.
     console.error('[navigation-preferences] durable authority unavailable; retaining last projection:', error?.message || error);
   }
-  const priorCatalogItems = priorProjection?.catalog?.items || [];
+  const priorCatalogItems = managementProjection.catalog.items || [];
   const priorPublishedByName = Object.fromEntries(
-    (priorProjection?.registry?.plugins || []).map((plugin) => [plugin.id, plugin])
+    priorPublishedPlugins.map((plugin) => [plugin.id, plugin])
   );
   const pkgByName = Object.fromEntries(pkgs.json.items.map((p) => [p.metadata.name, p]));
   _trustedKeys = null; // 매 reconcile마다 신뢰키 재로드
@@ -2318,38 +2378,24 @@ async function reconcile() {
     }
   }
   const nextPublishedPlugins = published.map((plugin) => ({ ...plugin, available: true }));
-  // Status writes above can change every registration. Read them once more so
-  // Registry, Catalog and Admin status are committed as one versioned snapshot.
+  // Status writes above can change every registration. Refresh only the DUPA
+  // administration view; the independent Registry watches the authoritative CRDs.
   const refreshedRegs = await listRegs();
   const registrationItems = registrationProjectionItems(refreshedRegs.ok ? refreshedRegs.json?.items : regs.json?.items);
-  try {
-    const snapshot = await extensionProjection.persist({
-      version: 1,
-      observedAt: new Date().toISOString(),
-      registry: {
-        version: 3,
-        trustedKeys: { ...(_trustedKeys || {}) },
-        capabilities: [],
-        plugins: nextPublishedPlugins,
-        templates: [],
-      },
-      catalog: { items: catalogProjectionItems(pkgs.json?.items, navigationPreferences, priorCatalogItems) },
-      registrations: { items: registrationItems },
-    });
-    applyExtensionProjection(snapshot);
-    // Only after the shared Registry snapshot points at the new immutable
-    // artifact service may revisions older than current+previous be reclaimed.
-    // Cleanup failure cannot roll back the already committed serving pointer;
-    // it is reported and retried on the next reconcile.
-    for (const release of activatedRevisionKeeps) {
-      try { await garbageCollectWorkloadRevisions(release.pkg, release.keepNames); }
-      catch (error) { console.error('[extension-release] revision cleanup deferred:', error?.reason || error?.message || error); }
+  managementProjection = {
+    observedAt: new Date().toISOString(),
+    catalog: { items: catalogProjectionItems(pkgs.json?.items, navigationPreferences, priorCatalogItems) },
+    registrations: { items: registrationItems },
+  };
+  // Old immutable revisions are reclaimed only after the independent Registry
+  // has observed the activated Registration and published the exact artifact.
+  for (const release of activatedRevisionKeeps) {
+    try {
+      await waitForRegistryArtifact(release.pkg.metadata.name, release.keepNames[0]);
+      await garbageCollectWorkloadRevisions(release.pkg, release.keepNames);
+    } catch (error) {
+      console.error('[extension-release] revision cleanup deferred:', error?.reason || error?.message || error);
     }
-  } catch (error) {
-    // Serving stays on the previous shared LKG; an update failure must not
-    // publish a process-local state that other replicas cannot observe.
-    console.error('[extension-projection] persist failed:', error?.reason || error?.message || error);
-    applyExtensionProjection(extensionProjection.current());
   }
   // 재감사 P1-2: proxy allowlist = '검증 성공 + 활성(published)' id + enabled CLIDownload 서비스 id만.
   //   (모든 UIPluginPackage 이름이 아니라) → Failed/Disabled/미검증 package는 자동 제외(403).
@@ -2372,9 +2418,8 @@ async function reconcile() {
       }
     }
   } catch { /* binding scan best-effort */ }
-  // Registry와 proxy authz는 같은 런타임 스냅샷이다. authz를 먼저 열고 Registry를
-  // 게시하면 활성화 시 403 창이 없고, 비활성화 시에는 Registry 제거보다 먼저
-  // fail-closed 된다. 두 대입 사이에는 await가 없어 단일 replica 안에서 원자적이다.
+  // Proxy authorization remains a DUPA enforcement concern. The Registry owns
+  // discovery; this local view is only the reconciler's fail-closed proxy fence.
   proxyAllow = allow;
   publishedPlugins = nextPublishedPlugins;
   publishedPluginCount = publishedPlugins.length;
@@ -3533,9 +3578,9 @@ function metricsText() {
     '# HELP os_http_requests_total HTTP requests handled.',
     '# TYPE os_http_requests_total counter',
     `os_http_requests_total ${_httpReqs}`,
-    '# HELP dupa_registry_plugins Published plugins in runtime registry.',
-    '# TYPE dupa_registry_plugins gauge',
-    `dupa_registry_plugins ${plugins}`,
+    '# HELP dupa_verified_extensions Verified extensions in the local proxy fence.',
+    '# TYPE dupa_verified_extensions gauge',
+    `dupa_verified_extensions ${plugins}`,
     '# HELP dupa_proxy_allow Allowlisted plugin ids for /api/plugins proxy.',
     '# TYPE dupa_proxy_allow gauge',
     `dupa_proxy_allow ${proxyAllow ? proxyAllow.size : 0}`,
@@ -3571,18 +3616,7 @@ const server = http.createServer(async (req, res) => {
       const state = await platformControlReadiness();
       return json(res, state.ready ? 200 : 503, state);
     }
-    if (p === '/serving-readyz') {
-      const state = extensionProjection.servingStatus();
-      return json(res, state.ready ? 200 : 503, state);
-    }
     if (p === '/metrics') { res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }); return res.end(metricsText()); }
-    // Main Shell native Registry. The controller already owns the verified, activated
-    // projection, so a separate registry workload would duplicate authority.
-    if (p === '/api/v1/registry' && req.method === 'GET') {
-      const snapshot = extensionProjection.current();
-      if (!snapshot) return json(res, 503, { error: 'ExtensionProjectionUnavailable', message: 'No valid Registry projection has been observed.' });
-      return json(res, 200, { ...snapshot.registry, projection: extensionProjection.servingStatus() });
-    }
     // Console-native os CLI resource plane. It is deliberately read-only and
     // closed to four product CRD families; this is not a general Kubernetes proxy.
     if (p.startsWith('/api/proxy/')) {
@@ -3941,14 +3975,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/admin/plugins/catalog') {
-      const snapshot = extensionProjection.current();
-      if (!snapshot) return json(res, 503, { error: 'ExtensionProjectionUnavailable', message: 'No valid Catalog projection has been observed.' });
-      return json(res, 200, { ...snapshot.catalog, projection: extensionProjection.servingStatus() });
+      if (!managementProjection.observedAt) await refreshExtensionManagementProjection();
+      return json(res, 200, { ...managementProjection.catalog, projection: managementProjectionStatus() });
     }
     if (p === '/api/admin/plugins/registrations') {
-      const snapshot = extensionProjection.current();
-      if (!snapshot) return json(res, 503, { error: 'ExtensionProjectionUnavailable', message: 'No valid Registration projection has been observed.' });
-      return json(res, 200, { ...snapshot.registrations, projection: extensionProjection.servingStatus() });
+      if (!managementProjection.observedAt) await refreshExtensionManagementProjection();
+      return json(res, 200, { ...managementProjection.registrations, projection: managementProjectionStatus() });
     }
     if (p === '/api/admin/plugins/events') {
       // Supabase audit.event is the one durable notification source.  The
@@ -4214,13 +4246,15 @@ if (require.main === module) {
     setInterval(observeRegistryCredentials, 1000).unref();
     // Supabase is the durable Data & Identity authority.  DUPA retains only
     // its plugin reconciliation/event loop and does not bootstrap CBS claims.
-    extensionProjection.hydrate()
-      .then((snapshot) => {
-        applyExtensionProjection(snapshot);
-        if (snapshot) console.log(`[extension-projection] hydrated ${snapshot.registry.plugins.length} plugins observedAt=${snapshot.observedAt}`);
-      })
-      .catch((e) => console.error('[extension-projection] hydrate failed:', e?.reason || e?.message || e))
-      .finally(() => hydrateAudit()).finally(() => {
+    Promise.allSettled([
+      hydrateAudit(),
+      readRegistryProjection().then((projection) => {
+        publishedPlugins = projection.plugins.map((plugin) => ({ ...plugin }));
+        publishedPluginCount = publishedPlugins.length;
+        proxyAllow = new Set(publishedPlugins.flatMap(proxyIdsForPlugin));
+        console.log(`[registry] observed ${publishedPluginCount} plugins revision=${projection.revision}`);
+      }),
+    ]).finally(() => {
       const loop = () => Promise.all([reconcile(), pollK8sEvents(), reconcilePlatformVerification()])
         .catch((e) => console.error('loop error', e))
         .finally(() => setTimeout(loop, 15000));

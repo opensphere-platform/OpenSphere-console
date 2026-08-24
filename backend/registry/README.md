@@ -1,8 +1,15 @@
-# opensphere-registry
+# OpenSphere Registry & Catalog Service
 
-OpenSphere-Platform 컴포넌트 — **Plane P5 · kind spine**
+`opensphere-registry` is a CBSS Core Service and the single read-only serving authority for
+OpenSphere extension discovery and installable Catalog candidates.
 
-Registry/Catalog Resolver + Store(OLM+OperatorHub+ADR-0001) — PP-LDNN 단일데이터셋→3표현, 단일창구 GET /api/v1/registry, day-2 의존성해결/업그레이드, self-registration. 검증정정: ImageDigest 빈값 게시거부 게이트, ChartName/Version은 day-2 표현으로만. ex polyon-CORE(registry.go·sto
+- Public discovery: `GET /api/v1/registry`
+- Internal deterministic resolution: `POST /api/v1/registry/resolve`
+- Operations: `GET /healthz`, `/readyz`, `/v1/status`, `/metrics`
+- Inputs: verified UI Plugin CRs, Catalog CRs, Foundation descriptors, public trust keys and
+  operator-owned navigation preferences
+- Mutations: none. It does not install, update, delete or operate workloads.
 
-> arch-001(OKD 렌즈 재설계 v1.2) 기준 스캐폴드. 구현 예정.
-> 설계 권위: `opensphere-docs/20-아키텍처/arch-001-opensphere-okd-재설계.md`
+The service keeps one immutable in-memory snapshot. A complete validated input set is serialized
+deterministically, hashed as the catalog revision and atomically swapped. After a source failure,
+browse retains the last snapshot with `stale=true`; resolve fails closed.

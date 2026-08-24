@@ -9,6 +9,7 @@ const realizationModel = fs.readFileSync(
 );
 const foundationSource = fs.readFileSync(new URL('./landing-foundations.ts', import.meta.url), 'utf8');
 const dialogueStateSource = fs.readFileSync(new URL('./landing-osaa-dialogue-state.ts', import.meta.url), 'utf8');
+const registryCatalogSource = fs.readFileSync(new URL('./landing-registry-catalog.ts', import.meta.url), 'utf8');
 const globalStylesSource = fs.readFileSync(new URL('../../styles.scss', import.meta.url), 'utf8');
 const foundationModel = fs.readFileSync(
   new URL('../architecture/foundation-concepts.model.ts', import.meta.url),
@@ -40,6 +41,14 @@ test('main index defines exactly six vertical Service Realization Layers', () =>
     assert.match(realizationModel, new RegExp(name));
   }
   assert.match(source, /Vertical realization structure/);
+});
+
+test('Registry and Catalog is a first-class CBSS Core Service page', () => {
+  assert.match(source, /selectPage\('registry-catalog'\)/);
+  assert.match(registryCatalogSource, /REGISTRY &amp; CATALOG · CBSS CORE SERVICE/);
+  assert.match(registryCatalogSource, /GET \/api\/v1\/registry/);
+  assert.match(registryCatalogSource, /POST \/api\/v1\/registry\/resolve/);
+  assert.match(registryCatalogSource, /Kubernetes watch → 메모리 snapshot → 단일 API/);
 });
 
 test('Main Shell is a Platform Control object instead of Perspective zero', () => {
@@ -104,18 +113,19 @@ test('Perspective navigation remains Registry-derived and phantom-route free', (
   assert.match(search, /홈 · 10P × 6L/);
 });
 
-test('main index uses one top-level Clarity tab bar for seven independent architecture pages', () => {
+test('main index uses one top-level Clarity tab bar for eight independent architecture pages', () => {
   assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)'/g) || []).length, 5);
   assert.match(source, /import \{ ClarityModule \} from '@clr\/angular'/);
-  assert.match(source, /imports: \[RouterLink, LandingFoundations, LandingOsaaDialogueState, ClarityModule\]/);
+  assert.match(source, /imports: \[RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, ClarityModule\]/);
   assert.match(source, /<clr-tabs class="architecture-page-tabs">/);
-  assert.equal((source.match(/<clr-tab>/g) || []).length, 7);
-  assert.equal((source.match(/<button clrTabLink/g) || []).length, 7);
-  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 7);
+  assert.equal((source.match(/<clr-tab>/g) || []).length, 8);
+  assert.equal((source.match(/<button clrTabLink/g) || []).length, 8);
+  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 8);
   assert.equal((source.match(/<os-landing-foundations page="(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)"/g) || []).length, 5);
   assert.match(source, /<button clrTabLink[^>]*>10P × 6L Architecture<\/button>[\s\S]*id="architecture-page-realization"/);
   assert.match(source, /<button clrTabLink[^>]*>OSCE<\/button>/);
   assert.match(source, /<button clrTabLink[^>]*>OSDST<\/button>/);
+  assert.match(source, /<button clrTabLink[^>]*>Registry &amp; Catalog<\/button>/);
   assert.match(source, /<os-landing-osaa-dialogue-state/);
   assert.doesNotMatch(foundationSource, /<clr-tabs|clrTabLink|clr-tab-content/);
   assert.doesNotMatch(`${source}\n${foundationSource}\n${dialogueStateSource}`, /role="tablist"|onTabKeydown|ArrowRight|\[attr\.aria-selected\]/);

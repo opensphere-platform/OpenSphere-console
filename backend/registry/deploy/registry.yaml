@@ -1,64 +1,136 @@
-# opensphere-registry 단일창구 — SA·RBAC(라이브 UIPluginPackage list)·Deployment·Service.
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: opensphere-registry, namespace: opensphere-console }
+metadata:
+  name: opensphere-registry
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/name: opensphere-registry
+    opensphere.io/cbss-core-service: "true"
 ---
-# 라이브 plugin 표현 = UIPluginPackage list. (read-only)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
-metadata: { name: opensphere-registry }
+metadata:
+  name: opensphere-registry
 rules:
   - apiGroups: ["plugins.opensphere.io"]
     resources: ["uipluginpackages", "uipluginregistrations"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["catalog.opensphere.io"]
+    resources: ["addoncapabilities", "addonofferings", "addonplans", "postgresruntimecatalogs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["foundation.opensphere.io"]
+    resources: ["foundationmoduledescriptors"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["dupa-trusted-keys"]
+    resourceNames: ["dupa-trusted-keys", "opensphere-extension-navigation-v1"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
-metadata: { name: opensphere-registry }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: opensphere-registry }
+metadata:
+  name: opensphere-registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opensphere-registry
 subjects:
-  - { kind: ServiceAccount, name: opensphere-registry, namespace: opensphere-console }
+  - kind: ServiceAccount
+    name: opensphere-registry
+    namespace: opensphere-console
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: opensphere-registry
   namespace: opensphere-console
-  labels: { app: opensphere-registry }
+  labels:
+    app.kubernetes.io/name: opensphere-registry
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/cbss-core-service: "true"
 spec:
   replicas: 2
-  selector: { matchLabels: { app: opensphere-registry } }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opensphere-registry
   template:
-    metadata: { labels: { app: opensphere-registry } }
+    metadata:
+      labels:
+        app.kubernetes.io/name: opensphere-registry
+        app.kubernetes.io/part-of: opensphere-console
+        opensphere.io/cbss-core-service: "true"
     spec:
       serviceAccountName: opensphere-registry
+      imagePullSecrets:
+        - name: opensphere-ghcr-pull
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: registry
-          image: opensphere-registry@sha256:a0212f47aa8be464fd7d6ea2ac2addde324b6d1ad6bd0bd366c90c8ec227771c
+          image: ghcr.io/opensphere-platform/opensphere-registry@sha256:0000000000000000000000000000000000000000000000000000000000000000
           imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: IMAGE_DIGEST, value: "__OPENSPHERE_REGISTRY_IMAGE_DIGEST__" }
+          ports:
+            - { name: http, containerPort: 8080 }
           readinessProbe:
-            httpGet: { path: /healthz, port: 8080 }
+            httpGet: { path: /readyz, port: http }
             initialDelaySeconds: 2
             periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
           livenessProbe:
-            httpGet: { path: /healthz, port: 8080 }
+            httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 2
           resources:
             requests: { cpu: 20m, memory: 32Mi }
             limits: { cpu: 200m, memory: 128Mi }
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: opensphere-registry
+  namespace: opensphere-console
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opensphere-registry
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: opensphere-registry, namespace: opensphere-console }
+metadata:
+  name: opensphere-registry
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/name: opensphere-registry
+    opensphere.io/cbss-core-service: "true"
 spec:
-  selector: { app: opensphere-registry }
-  ports: [{ port: 80, targetPort: 8080 }]
+  selector:
+    app.kubernetes.io/name: opensphere-registry
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opensphere-registry
+  namespace: opensphere-console
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opensphere-registry
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 8080 }

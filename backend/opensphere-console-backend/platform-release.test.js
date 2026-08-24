@@ -100,6 +100,13 @@ function releaseLockWithCliArtifact() {
   return lock;
 }
 
+function preRegistryReleaseLock() {
+  const lock = releaseLock();
+  delete lock.components.registry;
+  lock.releaseDigest = calculateReleaseDigest(lock);
+  return lock;
+}
+
 function legacyInstalledReleaseLock() {
   const lock = releaseLock();
   const components = Object.fromEntries(Object.entries(lock.components)
@@ -208,6 +215,20 @@ test('Console generates an atomic component target from the installed complete l
   assert.equal(target.resolvedAt, '2026-07-30T12:34:56.000Z');
   assert.equal(Object.keys(target.components).length, REQUIRED_COMPONENTS.length);
   assert.equal(validateReleaseTransition(base, target), target);
+});
+
+test('Registry is introduced once without rebuilding unchanged installed components', () => {
+  const base = preRegistryReleaseLock();
+  const target = buildComponentReleaseLock(base, {
+    sourceRevision: 'b'.repeat(40),
+    components: { registry: { image: digest('e') } },
+  }, new Date('2026-08-24T00:00:00.000Z'));
+  assert.deepEqual(target.changedComponents, ['registry']);
+  assert.equal(Object.keys(target.components).length, REQUIRED_COMPONENTS.length);
+  assert.equal(validateReleaseTransition(base, target), target);
+  for (const [name, component] of Object.entries(base.components)) {
+    assert.deepEqual(target.components[name], component);
+  }
 });
 
 test('installed pre-OSAA lock can build only one complete canonical OSAA cutover target', () => {

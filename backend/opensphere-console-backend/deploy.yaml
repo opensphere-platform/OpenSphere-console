@@ -208,6 +208,7 @@ spec:
             - name: OS_SHELL_DELEGATION_SECRET
               valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: delegation-secret, optional: true } }
             - { name: OSAA_GATEWAY_URL, value: "http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080" }
+            - { name: REGISTRY_URL, value: "http://opensphere-registry.opensphere-console.svc.cluster.local:8080" }
             - { name: OSDST_URL, value: "http://opensphere-osdst.opensphere-console.svc.cluster.local:8080" }
             - { name: DUPA_CONTROL_URL, value: "http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080" }
             # ADR-006 canonical runtime mode.

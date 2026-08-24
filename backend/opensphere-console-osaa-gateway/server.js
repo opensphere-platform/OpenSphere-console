@@ -91,6 +91,7 @@ const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const CONSOLE_ADMIN_GROUP = process.env.CONSOLE_ADMIN_GROUP || 'console-admins';
 const CONSOLE_IDENTITY_URL = (process.env.CONSOLE_IDENTITY_URL || 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const REGISTRY_URL = (process.env.REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const FOUNDATION_CONTROL_URL = (process.env.FOUNDATION_CONTROL_URL || 'http://foundation-osaa-owner.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const SCHEMA_ID_RE = /^[a-z_][a-z0-9_]{0,62}$/;
@@ -3529,7 +3530,7 @@ function controlToolsSystemMessage() {
       `Tool manifest schema: ${manifest.schema}. Tool IDs: ${manifest.tools.map((t) => t.id).join(', ')}.`,
       `Action binding schema: ${bindings.schema}. Action binding IDs: ${bindings.bindings.map((b) => b.id).join(', ')}.`,
       'Read tools: live environment snapshot is automatically attached; cluster pod summary, pod logs, services, events, describe, and rollout can be read through /api/osaa/tools/k8s/*.',
-      'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, Main Shell Registry, Supabase, Gitea, HISS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
+      'OpenSphere owner-facade reads: authorized operators can inspect Platform Readiness, the Registry & Catalog CBSS Core Service, Supabase, Gitea, HISS ObservabilityBinding, consumer contracts, notification delivery, and Extension Host registration through fixed owner APIs. The canonical catalog search relates declared owners, services, and APIs to live Kubernetes evidence.',
       'When Registry Plugins are described as 요청 시 적재 or missing from a Host screen, call the extension presentation status tool. Distinguish host-owned menu eligibility from route-scoped child UI activation, and never restart, reinstall, or enable entries that Registry reports as healthy.',
       'When the operator asks for a restart, scale, rollback, CronJob run, isolated recovery drill, owner recovery, or notification retry plan, call plan_durable_operation first. Report the live exact target, risk class, required assurance, expected confirmation, and postcondition. Planning never submits or executes an operation, and OSAA must never copy the returned confirmation into an action call.',
       'Call get_osaa_operation only when the operator supplied a valid operation UUID or an accepted action in this conversation returned one. Never call it during planning alone. Report its current phase, approval state, execution steps, and postcondition verification from the ledger; never infer completion from action acceptance.',
@@ -3861,8 +3862,8 @@ function osaaActionBindings() {
       id: 'manual-action:opensphere:registry-read',
       namespace: 'opensphere', sourceId: 'opensphere-docs/constitution-0002-registry',
       sectionId: 'manual-section:opensphere-docs/constitution-0002-registry#registry-api',
-      title: 'Read the canonical Main Shell Registry projection', intent: 'inspect-registry',
-      toolId: 'osaa.registry.read', controlPlane: 'dupa-registry-owner-facade',
+      title: 'Read the canonical Registry & Catalog snapshot', intent: 'inspect-registry',
+      toolId: 'osaa.registry.read', controlPlane: 'opensphere-registry-catalog',
       riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
       permission: { roles: ['authenticated'], scopes: ['osaa:system:read'] },
       audit: { eventType: 'registry-read', targetTemplate: 'opensphere/registry' },
@@ -3873,7 +3874,7 @@ function osaaActionBindings() {
       namespace: 'opensphere', sourceId: 'opensphere-docs/constitution-0002-registry',
       sectionId: 'manual-section:opensphere-docs/constitution-0002-registry#registry-api',
       title: 'Diagnose Registry Plugin menu and lazy UI presentation state', intent: 'diagnose-extension-presentation',
-      toolId: 'osaa.extension.presentation.status', controlPlane: 'dupa-registry-owner-facade',
+      toolId: 'osaa.extension.presentation.status', controlPlane: 'opensphere-registry-catalog',
       riskLevel: 'read', confirmation: 'none', requiredInputs: bindingInput({}),
       permission: { roles: ['authenticated'], scopes: ['osaa:system:read'] },
       audit: { eventType: 'extension-presentation-status-read', targetTemplate: 'opensphere/extensions/presentation' },
@@ -4490,11 +4491,27 @@ function osaaToolManifest() {
       },
       {
         id: 'osaa.registry.read',
-        name: 'Read the Main Shell canonical Registry projection',
+        name: 'Read the OpenSphere Registry & Catalog snapshot',
         channel: 'owner-control-plane', readOnly: true,
         endpoint: toolEndpoint('POST', '/api/osaa/tools/registry'),
         riskLevel: 'read', confirmation: 'none', inputSchema: schemaObject({}),
         auditEventType: 'registry-read',
+      },
+      {
+        id: 'osaa.registry.resolve',
+        name: 'Resolve one revision-bound Registry & Catalog candidate',
+        channel: 'owner-control-plane', readOnly: true,
+        endpoint: toolEndpoint('POST', '/api/osaa/tools/registry/resolve'),
+        riskLevel: 'read', confirmation: 'none',
+        inputSchema: schemaObject({
+          kind: { type: 'string', enum: ['extension', 'plan'] },
+          id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,62}$' },
+          revision: { type: 'string', pattern: '^sha256:[a-f0-9]{64}$' },
+          targetProfile: { type: 'string', required: false, maxLength: 64 },
+          architecture: { type: 'string', required: false, enum: ['linux/amd64'] },
+          channel: { type: 'string', required: false, enum: ['edge'] },
+        }),
+        auditEventType: 'registry-resolve',
       },
       {
         id: 'osaa.extension.presentation.status',
@@ -5334,6 +5351,7 @@ const TOOL_PERMISSION = {
   'osaa.observability.logs.query': 'osaa.logs.read',
   'osaa.observability.traces.query': 'osaa.logs.read',
   'osaa.registry.read': 'osaa.system.read',
+  'osaa.registry.resolve': 'osaa.system.read',
   'osaa.extension.presentation.status': 'osaa.system.read',
   'osaa.diagnostics.manual.access': 'osaa.system.read',
   'osaa.diagnostics.os-shell': 'osaa.system.read',
@@ -6000,6 +6018,9 @@ async function executeActionBinding(body = {}, actor = null, context = {}) {
       break;
     case 'osaa.registry.read':
       result = await registryRead(actor);
+      break;
+    case 'osaa.registry.resolve':
+      result = await registryResolveRead(inputs, actor);
       break;
     case 'osaa.extension.presentation.status':
       result = await extensionPresentationStatusRead(actor);
@@ -6714,7 +6735,15 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
     filter: { type: 'string', maxLength: 200 },
     limit: { type: 'integer', minimum: 1, maximum: 100 },
   });
-  add('osaa.system.read', 'get_opensphere_registry', 'Read the current Main Shell native Registry projection from its owning DUPA API. Treat it as discovery and activation state, not Kubernetes runtime truth.', {});
+  add('osaa.system.read', 'get_opensphere_registry', 'Read the current OpenSphere Registry & Catalog snapshot, including its canonical revision, extension discovery, installable catalog, source health, and rejected objects.', {});
+  add('osaa.system.read', 'resolve_registry_candidate', 'Resolve one extension or catalog plan against the exact Registry revision previously observed. This is read-only eligibility evidence, not execution authority.', {
+    kind: { type: 'string', enum: ['extension', 'plan'] },
+    id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,62}$' },
+    revision: { type: 'string', pattern: '^sha256:[a-f0-9]{64}$' },
+    targetProfile: { type: 'string', maxLength: 64 },
+    architecture: { type: 'string', enum: ['linux/amd64'] },
+    channel: { type: 'string', enum: ['edge'] },
+  }, ['kind', 'id', 'revision']);
   add('osaa.system.read', 'get_extension_presentation_status', 'Diagnose Registry Plugin presentation. Distinguish Host-owned menu eligibility from route-scoped child UI activation; use this when the UI says 요청 시 적재 or a hosted plugin menu appears missing. This tool does not claim browser DOM visibility.', {});
   add('osaa.system.read', 'diagnose_manual_access', 'Deterministically distinguish Manual authentication, osaa.knowledge.read authorization, and the current actor-visible Manual Registry projection. Use this for /manual 401, 403, permission, or loading failures.', {});
   add('osaa.system.read', 'diagnose_os_shell', 'Deterministically inspect the durable OS Shell feature state, signed control gates, required Deployments and Services, then locate the first failed stage. Supply browserStatus only when the same-session /api/os-shell/readiness HTTP status is known.', {
@@ -7019,6 +7048,38 @@ async function dupaGet(path, actor) {
   }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw { code: response.status, msg: body.error || `Console lifecycle HTTP ${response.status}` };
+  return body;
+}
+
+async function registryGet(path = '/api/v1/registry') {
+  let response;
+  try {
+    response = await fetch(`${REGISTRY_URL}${path}`, {
+      headers: { accept: 'application/json' },
+      signal: boundedSignal(5000),
+    });
+  } catch {
+    throw { code: 503, msg: 'OpenSphere Registry & Catalog Service is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `Registry HTTP ${response.status}` };
+  return body;
+}
+
+async function registryPost(path, payload) {
+  let response;
+  try {
+    response = await fetch(`${REGISTRY_URL}${path}`, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: boundedSignal(5000),
+    });
+  } catch {
+    throw { code: 503, msg: 'OpenSphere Registry & Catalog Service is unavailable' };
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: body.error || `Registry HTTP ${response.status}` };
   return body;
 }
 
@@ -7520,7 +7581,7 @@ function ownerProjectionName(owner) {
     'Console notification delivery': 'console-notification-delivery',
     'Console Platform Recovery': 'console-platform-recovery',
     'Extension Host registrations': 'extension-host-registrations',
-    'Main Shell Registry': 'main-shell-registry',
+    'Registry & Catalog': 'registry-catalog',
     'Foundation control plane': 'foundation-control-plane',
   };
   return names[owner] || `owner-${createHash('sha256').update(String(owner || '')).digest('hex').slice(0, 16)}`;
@@ -7636,7 +7697,7 @@ async function controlPlaneStatus(actor) {
       settledControlPlaneComponent('Console notification delivery', () => backendGet('/api/notifications/summary', actor)),
       settledControlPlaneComponent('Console Platform Recovery', () => backendGet('/api/osaa/owner/recovery/status', actor)),
       settledControlPlaneComponent('Extension Host registrations', () => dupaGet('/api/admin/plugins/registrations', actor)),
-      settledControlPlaneComponent('Main Shell Registry', () => dupaGet('/api/v1/registry', actor)),
+      settledControlPlaneComponent('Registry & Catalog', () => registryGet()),
       settledControlPlaneComponent('Foundation control plane', () => foundationStatusRead(actor)),
     ]),
     computeReadiness({ probeSemantic: false }).catch(() => ({ ready: false, reason: 'readiness_check_failed', capabilities: {} })),
@@ -7700,19 +7761,40 @@ async function catalogEntitySearch(input, actor) {
 
 async function registryRead(actor) {
   assertPermission(actor, 'osaa.system.read');
-  const registry = redactProjection(await dupaGet('/api/v1/registry', actor));
+  const registry = redactProjection(await registryGet());
   const count = Array.isArray(registry?.plugins)
     ? registry.plugins.length
     : (Array.isArray(registry?.items)
       ? registry.items.length
       : (Array.isArray(registry?.registrations) ? registry.registrations.length : null));
   audit(actor, 'registry-read', 'opensphere/registry', 'ok', count === null ? 'registry projection read' : `${count} entries`);
-  return { action: 'registry-read', authority: 'Main Shell DUPA owner API', count, registry };
+  return { action: 'registry-read', authority: 'OpenSphere Registry & Catalog Service', revision: registry.revision || '', count, registry };
+}
+
+async function registryResolveRead(inputs, actor) {
+  assertPermission(actor, 'osaa.system.read');
+  requireClosedOwnerInputs(inputs, ['kind', 'id', 'revision', 'targetProfile', 'architecture', 'channel']);
+  const request = {
+    kind: String(inputs?.kind || ''),
+    id: String(inputs?.id || ''),
+    revision: String(inputs?.revision || ''),
+    targetProfile: String(inputs?.targetProfile || ''),
+    architecture: String(inputs?.architecture || ''),
+    channel: String(inputs?.channel || ''),
+  };
+  if (!['extension', 'plan'].includes(request.kind)) throw { code: 400, msg: 'kind must be extension or plan' };
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(request.id)) throw { code: 400, msg: 'id is invalid' };
+  if (!/^sha256:[a-f0-9]{64}$/.test(request.revision)) throw { code: 400, msg: 'revision must be an exact Registry revision' };
+  if (request.architecture && request.architecture !== 'linux/amd64') throw { code: 400, msg: 'architecture must be linux/amd64' };
+  if (request.channel && request.channel !== 'edge') throw { code: 400, msg: 'channel must be edge' };
+  const resolution = redactProjection(await registryPost('/api/v1/registry/resolve', request));
+  audit(actor, 'registry-resolve', `opensphere/registry/${request.kind}/${request.id}`, 'ok', `${resolution.result || 'unknown'} revision=${resolution.revision || ''}`);
+  return { action: 'registry-resolve', authority: 'OpenSphere Registry & Catalog Service', ...resolution };
 }
 
 async function extensionPresentationStatusRead(actor) {
   assertPermission(actor, 'osaa.system.read');
-  const registry = redactProjection(await dupaGet('/api/v1/registry', actor));
+  const registry = redactProjection(await registryGet());
   const projection = projectExtensionPresentation(registry);
   audit(
     actor,
@@ -8196,6 +8278,10 @@ async function executeAgentTool(name, args, actor, context = {}) {
     case 'get_opensphere_registry':
       assertPermission(actor, 'osaa.system.read');
       result = await registryRead(actor);
+      break;
+    case 'resolve_registry_candidate':
+      assertPermission(actor, 'osaa.system.read');
+      result = await registryResolveRead(input, actor);
       break;
     case 'get_extension_presentation_status':
       assertPermission(actor, 'osaa.system.read');
@@ -9868,6 +9954,11 @@ const server = http.createServer(async (req, res) => {
       const actor = await verifyAuthed(req);
       assertPermission(actor, 'osaa.system.read');
       return json(res, 200, await registryRead(actor));
+    }
+    if (url.pathname === '/api/osaa/tools/registry/resolve' && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.system.read');
+      return json(res, 200, await registryResolveRead(await readBody(req), actor));
     }
     if (url.pathname === '/api/osaa/tools/extensions/presentation' && req.method === 'POST') {
       const actor = await verifyAuthed(req);

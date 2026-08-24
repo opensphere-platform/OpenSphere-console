@@ -101,7 +101,7 @@ import { CatalogItem, PluginControlClient, Registration } from '../core/plugin-c
             @if (failure(); as f) {
               (로드 실패: {{ f.error }})
             }
-            — 레지스트리(/registry/plugins.json)와 기능 컨테이너 상태를 확인하세요.
+            — Registry & Catalog(/api/v1/registry)와 기능 컨테이너 상태를 확인하세요.
           </span>
         </clr-alert-item>
       </clr-alert>

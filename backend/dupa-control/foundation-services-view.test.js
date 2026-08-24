@@ -25,6 +25,8 @@ test('Console foundation services keep role-oriented scope and CC compatibility 
   assert.match(page, /title="CBSS 자원 서비스"/);
   assert.match(page, /Console Backbone Service Stack · Live evidence/);
   assert.match(page, /이 자원을 소비하는 CBSS Core Service/);
+  assert.match(page, /Registry &amp; Catalog/);
+  assert.match(page, /\/api\/v1\/registry/);
   assert.match(page, /OSCE/);
   assert.match(page, /OSDST/);
   assert.match(page, /api\/osaa\/admin\/dialogue-state/);

@@ -247,6 +247,7 @@ spec:
             # Supabase-backed Console identity is the only Console token/role authority.
             - { name: CONSOLE_IDENTITY_URL, value: http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080 }
             - { name: OSDST_URL, value: http://opensphere-osdst.opensphere-console.svc.cluster.local:8080 }
+            - { name: REGISTRY_URL, value: http://opensphere-registry.opensphere-console.svc.cluster.local:8080 }
             - { name: FOUNDATION_CONTROL_URL, value: http://foundation-osaa-owner.opensphere-console.svc.cluster.local:8080 }
             - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }

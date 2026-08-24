@@ -92,29 +92,33 @@ test('autoscaling and Registry artifact URLs bind to the staged revision, retain
   assert.deepEqual(proxyIdsForPlugin(entry), ['ai-workbench', revision.serviceName, previous]);
 });
 
-test('reconcile verifies the immutable revision before the stable pointer and Registry move', () => {
+test('reconcile verifies the immutable revision before Registry convergence and artifact reclamation', () => {
   const source = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
   const reconcileStart = source.indexOf('async function reconcile()');
   const staged = source.indexOf('const revision = await applyWorkload(pkg)', reconcileStart);
   const verified = source.indexOf('const v = await verifyPlugin(pkg, revision.serviceName)', staged);
   const cutover = source.indexOf('await activateWorkloadRevision(pkg, revision)', verified);
   const published = source.indexOf('published.push(publishedPluginEntry', cutover);
-  const persisted = source.indexOf('const snapshot = await extensionProjection.persist', published);
-  const reclaimed = source.indexOf('await garbageCollectWorkloadRevisions', persisted);
+  const converged = source.indexOf('await waitForRegistryArtifact', published);
+  const reclaimed = source.indexOf('await garbageCollectWorkloadRevisions', converged);
   assert.ok(staged > reconcileStart);
   assert.ok(verified > staged);
   assert.ok(cutover > verified);
   assert.ok(published > cutover);
-  assert.ok(persisted > published);
-  assert.ok(reclaimed > persisted);
+  assert.ok(converged > published);
+  assert.ok(reclaimed > converged);
+  assert.doesNotMatch(source, /extensionProjection\.persist/);
 });
 
 test('edge publisher supports an exact affected-component subset and stays separate from the integrated publisher', () => {
   const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
-  assert.match(publisher, /\[ValidateSet\('console', 'dupaController'\)\]/);
+  assert.match(publisher, /\[ValidateSet\('console', 'dupaController', 'registry', 'backend', 'osaaGateway'\)\]/);
   assert.match(publisher, /\$componentNames = @\(\$Components \| Sort-Object -Unique\)/);
   assert.match(publisher, /if \(\$componentNames -contains 'console'\)/);
   assert.match(publisher, /if \(\$componentNames -contains 'dupaController'\)/);
+  assert.match(publisher, /if \(\$componentNames -contains 'registry'\)/);
+  assert.match(publisher, /if \(\$componentNames -contains 'backend'\)/);
+  assert.match(publisher, /if \(\$componentNames -contains 'osaaGateway'\)/);
   assert.match(publisher, /affectedImages = @\(\$componentNames \| ForEach-Object \{ \$repositories\[\$_\] \}\)/);
   assert.doesNotMatch(publisher, /\$components\s*=\s*\[ordered\]@\{/i);
   assert.match(publisher, /\$publicationComponents\s*=\s*\[ordered\]@\{/);

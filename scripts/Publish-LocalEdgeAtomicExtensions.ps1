@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$Registry = 'ghcr.io/opensphere-platform',
-  [ValidateSet('console', 'dupaController')]
+  [ValidateSet('console', 'dupaController', 'registry', 'backend', 'osaaGateway')]
   [string[]]$Components = @('console', 'dupaController'),
   [switch]$UseExistingRegistryLogin
 )
@@ -93,7 +93,7 @@ if (-not $componentNames.Count) { throw 'At least one affected component is requ
 $changedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($componentName in $componentNames) {
   $componentProperty = $installedLock.components.PSObject.Properties[$componentName]
-  $baseRevision = if ($componentProperty) { [string]$componentProperty.Value.sourceRevision } else { '' }
+  $baseRevision = if ($componentProperty) { [string]$componentProperty.Value.sourceRevision } else { [string]$installedLock.sourceRevision }
   if ($baseRevision -notmatch '^[0-9a-f]{40}$') { throw "Installed $componentName source revision is not canonical." }
   Invoke-Checked git -C $repoRoot fetch --no-tags origin $baseRevision | Out-Null
   Invoke-Checked git -C $repoRoot cat-file -e "${baseRevision}^{commit}" | Out-Null
@@ -114,12 +114,16 @@ if (Test-Path -LiteralPath $outputRoot) { throw "Publication output already exis
 $buildRoot = Join-Path ([IO.Path]::GetTempPath()) "opensphere-atomic-extension-$([Guid]::NewGuid().ToString('N'))"
 $consoleCheckout = Join-Path $buildRoot 'OpenSphere-console'
 $sdkCheckout = Join-Path $buildRoot 'OpenSphere-SDK'
+$setupCheckout = Join-Path $buildRoot 'OpenSphere-Setup-CLI'
 $metadataRoot = Join-Path $buildRoot 'metadata'
 New-Item -ItemType Directory -Path $buildRoot, $metadataRoot, $outputRoot | Out-Null
 
 $repositories = [ordered]@{
   console = "$Registry/opensphere-console"
   dupaController = "$Registry/opensphere-console-dupa-controller"
+  registry = "$Registry/opensphere-registry"
+  backend = "$Registry/opensphere-console-backend"
+  osaaGateway = "$Registry/opensphere-console-osaa-gateway"
 }
 $digests = [ordered]@{}
 
@@ -131,6 +135,19 @@ try {
   Invoke-Checked git -C $sdkCheckout checkout --detach $sdkRevision | Out-Null
   if (((Invoke-Checked git -C $sdkCheckout rev-parse HEAD) -join '').Trim() -ne $sdkRevision) {
     throw 'SDK checkout differs from sdk-source.lock.'
+  }
+
+  $setupRevision = ''
+  if ($componentNames -contains 'backend') {
+    $setupRevision = (Get-Content -Raw -LiteralPath (Join-Path $consoleCheckout 'backend\opensphere-console-backend\setup-source.lock')).Trim()
+    if ($setupRevision -notmatch '^[0-9a-f]{40}$') { throw 'Backend setup-source.lock is not canonical.' }
+    Invoke-Checked git init $setupCheckout | Out-Null
+    Invoke-Checked git -C $setupCheckout remote add origin https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git | Out-Null
+    Invoke-Checked git -C $setupCheckout fetch --depth 1 origin $setupRevision | Out-Null
+    Invoke-Checked git -C $setupCheckout checkout --detach $setupRevision | Out-Null
+    if (((Invoke-Checked git -C $setupCheckout rev-parse HEAD) -join '').Trim() -ne $setupRevision) {
+      throw 'Setup CLI checkout differs from setup-source.lock.'
+    }
   }
 
   Invoke-Checked node --test `
@@ -181,6 +198,48 @@ try {
     )
     Invoke-Checked docker @controllerArgs | Out-Null
     $digests.dupaController = [string](Get-Content -Raw $controllerMetadata | ConvertFrom-Json).'containerimage.digest'
+  }
+
+
+  if ($componentNames -contains 'registry') {
+    $registryMetadata = Join-Path $metadataRoot 'registry.json'
+    $registryArgs = @(
+      'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
+      '--metadata-file', $registryMetadata, '--tag', "$($repositories.registry):$buildTag",
+      '--build-arg', "APP_VERSION=$releaseTag", '--build-arg', "SOURCE_REVISION=$sourceRevision"
+    ) + $labels + @(
+      '--file', (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile'),
+      (Join-Path $consoleCheckout 'backend\registry')
+    )
+    Invoke-Checked docker @registryArgs | Out-Null
+    $digests.registry = [string](Get-Content -Raw $registryMetadata | ConvertFrom-Json).'containerimage.digest'
+  }
+
+  if ($componentNames -contains 'backend') {
+    $backendMetadata = Join-Path $metadataRoot 'backend.json'
+    $backendArgs = @(
+      'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
+      '--metadata-file', $backendMetadata, '--tag', "$($repositories.backend):$buildTag",
+      '--build-arg', "SETUP_SOURCE_REVISION=$setupRevision", '--build-context', "setup-cli=$setupCheckout"
+    ) + $labels + @(
+      '--file', (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'),
+      (Join-Path $consoleCheckout 'backend')
+    )
+    Invoke-Checked docker @backendArgs | Out-Null
+    $digests.backend = [string](Get-Content -Raw $backendMetadata | ConvertFrom-Json).'containerimage.digest'
+  }
+
+  if ($componentNames -contains 'osaaGateway') {
+    $gatewayMetadata = Join-Path $metadataRoot 'osaa-gateway.json'
+    $gatewayArgs = @(
+      'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
+      '--metadata-file', $gatewayMetadata, '--tag', "$($repositories.osaaGateway):$buildTag"
+    ) + $labels + @(
+      '--file', (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway\Dockerfile'),
+      (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway')
+    )
+    Invoke-Checked docker @gatewayArgs | Out-Null
+    $digests.osaaGateway = [string](Get-Content -Raw $gatewayMetadata | ConvertFrom-Json).'containerimage.digest'
   }
 
   foreach ($componentName in $componentNames) {

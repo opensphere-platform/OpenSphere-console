@@ -147,6 +147,7 @@ const RECOVERY_DRILL_TARGETS = Object.freeze({
 });
 const RECOVERY_OPERATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const REGISTRY_URL = (process.env.REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OSAA_GATEWAY_URL = (process.env.OSAA_GATEWAY_URL || 'http://opensphere-console-osaa-gateway.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const OSDST_URL = (process.env.OSDST_URL || 'http://opensphere-osdst.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
@@ -977,6 +978,39 @@ const moduleOperationApi = createModuleOperationApi({
   logAudit,
 });
 
+async function registryCatalogRequest(method, path, body = null) {
+  let response;
+  try {
+    response = await fetch(`${REGISTRY_URL}${path}`, {
+      method,
+      headers: { accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch {
+    throw { code: 503, msg: 'Registry & Catalog Service is unavailable' };
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw { code: response.status, msg: payload.error || `Registry HTTP ${response.status}` };
+  return payload;
+}
+
+async function resolvePostgresCatalogBinding(request, bound = null) {
+  const revision = String(bound?.revision || (await registryCatalogRequest('GET', '/api/v1/registry')).revision || '');
+  if (!/^sha256:[a-f0-9]{64}$/.test(revision)) throw { code: 503, msg: 'Registry revision is unavailable' };
+  const resolution = await registryCatalogRequest('POST', '/api/v1/registry/resolve', {
+    kind: 'plan', id: String(request?.plan || ''), targetProfile: '',
+    architecture: 'linux/amd64', channel: 'edge', revision,
+  });
+  if (resolution.result !== 'Eligible') {
+    throw { code: resolution.result === 'StaleRevision' ? 409 : 422, msg: resolution.blockerCode || 'Catalog plan is not eligible' };
+  }
+  if (String(resolution.candidate?.version || '') !== String(request?.postgresVersion || '')) {
+    throw { code: 422, msg: 'Requested PostgreSQL version does not match the exact Catalog candidate' };
+  }
+  return { revision: resolution.revision, planId: String(request.plan), candidate: resolution.candidate };
+}
+
 const r2d2OperationApi = createR2d2OperationApi({
   enabled: R2D2_DURABLE_OPERATION_ENABLED,
   authenticate: async (req) => {
@@ -1006,6 +1040,7 @@ const r2d2OperationApi = createR2d2OperationApi({
   },
   resolveTarget: async (action, requested, auth) => {
     if (action === 'create-postgres-cluster') {
+      const catalogBinding = await resolvePostgresCatalogBinding(requested);
       let response;
       try {
         response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/plan`, {
@@ -1024,7 +1059,7 @@ const r2d2OperationApi = createR2d2OperationApi({
       return {
         kind: 'FoundationClaim', namespace, name,
         uid: String(ownerPlan.resource?.uid || prospectiveUid), generation: Number(ownerPlan.resource?.generation || 0),
-        resourceVersion: targetRevision, request: JSON.parse(JSON.stringify(requested || {})),
+        resourceVersion: targetRevision, request: JSON.parse(JSON.stringify(requested || {})), catalogBinding,
       };
     }
     let recoveryDrillTarget = null;
@@ -1491,6 +1526,7 @@ async function resolveDurableExecutionSession(sessionId, actorId) {
 async function durableAuthorityRead(target, accessToken) {
   if (target.kind === 'FoundationClaim' && target.request) {
     try {
+      if (target.catalogBinding) await resolvePostgresCatalogBinding(target.request, target.catalogBinding);
       const response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/plan`, {
         method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
         body: JSON.stringify(target.request), signal: AbortSignal.timeout(15000),
@@ -1551,6 +1587,10 @@ async function durableOwnerInvoke(_route, payload, accessToken) {
   const actor = await verifyAuthed({ method: 'POST', headers: { authorization: `Bearer ${accessToken}` } });
   if (payload.toolId === 'owner.foundation.postgres.create') {
     requireActorPermission(actor, 'osaa.action.execute.high');
+    if (payload.target.catalogBinding) {
+      try { await resolvePostgresCatalogBinding(payload.target.request, payload.target.catalogBinding); }
+      catch (cause) { throw Object.assign(new Error('Registry catalog binding is no longer valid'), { code: 'CatalogBindingInvalid', cause }); }
+    }
     let response;
     try {
       response = await fetch(`${FOUNDATION_CONTROL_URL}/api/foundation/osaa/postgres/apply`, {

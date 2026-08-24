@@ -84,6 +84,23 @@ interface OsdstControl {
   };
 }
 
+interface RegistryCatalogSnapshot {
+  schema: string;
+  revision: string;
+  observedAt: string;
+  stale: boolean;
+  extensions: { count: number; publishedIds: string[] };
+  catalog: {
+    capabilities: unknown[];
+    offerings: unknown[];
+    plans: unknown[];
+    runtimeCatalogs: unknown[];
+    moduleDescriptors: unknown[];
+  };
+  sources: Record<string, { ready: boolean; count: number; reason?: string }>;
+  rejected: unknown[];
+}
+
 interface ReadResult<T> {
   value: T | null;
   error: string;
@@ -96,6 +113,7 @@ interface FoundationSnapshot {
   monitoring: ReadResult<MonitoringOverview>;
   monitoringHealth: ReadResult<MonitoringHealth>;
   osdst: ReadResult<OsdstControl>;
+  registry: ReadResult<RegistryCatalogSnapshot>;
 }
 
 interface Evidence {
@@ -133,7 +151,7 @@ const LOGOS = {
       <div class="page-lead">
         <div>
           <p>
-            OSCE와 OSDST를 비롯한 Console 서비스를 지속시키는 Data &amp; Identity, 선언형 상태 변경,
+            OSCE, OSDST, Registry &amp; Catalog를 비롯한 Console 서비스를 지속시키는 Data &amp; Identity, 선언형 상태 변경,
             노드 시계열 자원을 하나의 운영 관점에서 확인합니다. 제품 이름보다 서비스 역할을
             우선하며, 각 상세 화면의 권위와 기능은 그대로 유지합니다.
           </p>
@@ -180,6 +198,26 @@ const LOGOS = {
             <span>OpenSphere Dialogue State Tracker</span>
             <small>{{ osdstSummary() }}</small>
           </a>
+          <a routerLink="/manage/extensions/topology">
+            <span class="core-service-name"><strong>REGISTRY</strong><em [class]="stateClass(registryState())">{{ stateLabel(registryState()) }}</em></span>
+            <span>Registry &amp; Catalog Service</span>
+            <small>{{ registrySummary() }}</small>
+          </a>
+        </section>
+
+        <section class="registry-status" aria-labelledby="registry-status-title">
+          <div>
+            <span class="eyebrow">CBSS CORE SERVICE · LIVE PROJECTION</span>
+            <h2 id="registry-status-title">Registry &amp; Catalog</h2>
+            <p>설치 가능한 정의와 현재 검증된 Extension을 하나의 revision으로 제공하며, 설치·변경 자체는 수행하지 않습니다.</p>
+          </div>
+          <dl>
+            <div><dt>Revision</dt><dd>{{ registryRevision() }}</dd></div>
+            <div><dt>Extensions</dt><dd>{{ registryCount('extensions') }}</dd></div>
+            <div><dt>Catalog objects</dt><dd>{{ registryCount('catalog') }}</dd></div>
+            <div><dt>Source health</dt><dd>{{ registryCount('sources') }}</dd></div>
+            <div><dt>Rejected</dt><dd>{{ registryCount('rejected') }}</dd></div>
+          </dl>
         </section>
 
         <section class="status-rail" aria-label="CBSS 자원 서비스 종합 상태">
@@ -273,6 +311,7 @@ const LOGOS = {
             <div><dt>노드 OS 시계열</dt><dd>Beszel read-only adapter · Kubernetes Node correlation</dd></div>
             <div><dt>애플리케이션 관측</dt><dd>HISS Observability · 별도 SLO, trace, 장기보존 계약</dd></div>
             <div><dt>감사 정본</dt><dd>Supabase append-only audit projection</dd></div>
+            <div><dt>설치 가능성·Extension discovery</dt><dd>Registry &amp; Catalog Service · revision-bound read projection</dd></div>
           </dl>
         </section>
       }
@@ -285,7 +324,8 @@ const LOGOS = {
     .page-lead small{display:block;margin-top:.25rem;color:var(--os-ink-subtle);font-size:.64rem}
     .page-meta{display:grid;grid-template-columns:auto auto auto;align-items:center;gap:var(--os-3);white-space:nowrap;color:var(--os-ink-muted);font-size:.65rem}
     .page-meta strong{color:var(--os-ink);font-size:.7rem}.icon-button{display:grid;place-items:center;width:2rem;height:2rem;border:1px solid var(--os-hairline);background:var(--os-canvas);color:var(--os-accent)}
-    .core-consumers{display:grid;grid-template-columns:minmax(18rem,1.2fr) repeat(2,minmax(15rem,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas);margin:var(--os-5) 0}.core-consumers>*{min-width:0;padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}.core-consumers>*:last-child{border-inline-end:0}.core-consumers h2{margin:.2rem 0;font-size:.92rem}.core-consumers p,.core-consumers small{display:block;margin:.25rem 0 0;color:var(--os-ink-muted);font-size:.62rem;line-height:1.4}.core-consumers a{display:grid;align-content:center;color:inherit;text-decoration:none}.core-consumers a:hover{background:var(--os-surface-1)}.core-consumers a strong{color:var(--os-accent);font:700 .8rem var(--os-font-mono)}.core-consumers a>span{margin-top:.2rem;font-size:.72rem;font-weight:600}.core-service-name{display:flex!important;align-items:center;justify-content:space-between;gap:var(--os-3);margin:0!important}.core-service-name em{font-style:normal}
+    .core-consumers{display:grid;grid-template-columns:minmax(18rem,1.2fr) repeat(3,minmax(14rem,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas);margin:var(--os-5) 0}.core-consumers>*{min-width:0;padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}.core-consumers>*:last-child{border-inline-end:0}.core-consumers h2{margin:.2rem 0;font-size:.92rem}.core-consumers p,.core-consumers small{display:block;margin:.25rem 0 0;color:var(--os-ink-muted);font-size:.62rem;line-height:1.4}.core-consumers a{display:grid;align-content:center;color:inherit;text-decoration:none}.core-consumers a:hover{background:var(--os-surface-1)}.core-consumers a strong{color:var(--os-accent);font:700 .8rem var(--os-font-mono)}.core-consumers a>span{margin-top:.2rem;font-size:.72rem;font-weight:600}.core-service-name{display:flex!important;align-items:center;justify-content:space-between;gap:var(--os-3);margin:0!important}.core-service-name em{font-style:normal}
+    .registry-status{display:grid;grid-template-columns:minmax(18rem,.8fr) minmax(0,2.2fr);gap:var(--os-6);margin:var(--os-5) 0;padding:var(--os-5);border:1px solid var(--os-hairline);border-inline-start:4px solid var(--os-accent);background:var(--os-canvas)}.registry-status h2{margin:.2rem 0}.registry-status p{margin:0;color:var(--os-ink-muted);font-size:.68rem;line-height:1.5}.registry-status dl{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:0}.registry-status dl>div{min-width:0;padding:var(--os-3) var(--os-4);border-inline-start:1px solid var(--os-hairline)}.registry-status dt{color:var(--os-ink-muted);font-size:.62rem}.registry-status dd{overflow:hidden;margin:.3rem 0 0;color:var(--os-ink);font:650 .78rem var(--os-font-mono);text-overflow:ellipsis;white-space:nowrap}
     .status-rail{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas);margin:var(--os-5) 0}
     .status-rail>div{display:grid;gap:var(--os-2);min-width:0;padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}
     .status-rail>div:last-child{border-inline-end:0}.status-rail span,.evidence-grid span{color:var(--os-ink-muted);font-size:.64rem}.status-rail strong{font-size:1.08rem}.status-rail small,.evidence-grid small{color:var(--os-ink-subtle);font-size:.59rem}
@@ -304,8 +344,8 @@ const LOGOS = {
     .gate-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas)}.gate-grid>div{padding:var(--os-5);border-inline-end:1px solid var(--os-hairline)}.gate-grid>div:last-child{border-inline-end:0}.gate-grid>div>span{display:block;margin-bottom:var(--os-3);color:var(--os-ink-muted);font-size:.65rem}.gate-grid p{margin:.5rem 0 0;color:var(--os-ink-muted);font-size:.64rem;line-height:1.45}
     .source-contract dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:0;border:1px solid var(--os-hairline);background:var(--os-canvas)}.source-contract dl>div{display:grid;grid-template-columns:minmax(9rem,.7fr) minmax(0,1.3fr);gap:var(--os-4);padding:var(--os-4) var(--os-5);border-bottom:1px solid var(--os-hairline)}.source-contract dt{font-size:.65rem;font-weight:600}.source-contract dd{margin:0;color:var(--os-ink-muted);font-size:.64rem}
     .loading-block{display:grid;place-items:center;gap:var(--os-4);min-height:14rem;color:var(--os-ink-muted);font-size:.72rem}.warn{color:#684e00}.danger{color:#a2191f}
-    @media(max-width:76rem){.service-grid{grid-template-columns:1fr}.core-consumers{grid-template-columns:1fr}.core-consumers>*{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.core-consumers>*:last-child{border-bottom:0}.status-rail{grid-template-columns:repeat(3,minmax(0,1fr))}.status-rail>div:nth-child(3){border-inline-end:0}.gate-grid{grid-template-columns:1fr}.gate-grid>div{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.gate-grid>div:last-child{border-bottom:0}}
-    @media(max-width:48rem){.page-lead{display:grid}.page-meta{white-space:normal}.status-rail,.source-contract dl{grid-template-columns:1fr}.status-rail>div{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.status-rail>div:last-child{border-bottom:0}.source-contract dl>div{grid-template-columns:1fr;gap:var(--os-2)}}
+    @media(max-width:76rem){.service-grid{grid-template-columns:1fr}.core-consumers{grid-template-columns:1fr}.core-consumers>*{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.core-consumers>*:last-child{border-bottom:0}.registry-status{grid-template-columns:1fr}.registry-status dl>div:first-child{border-inline-start:0}.status-rail{grid-template-columns:repeat(3,minmax(0,1fr))}.status-rail>div:nth-child(3){border-inline-end:0}.gate-grid{grid-template-columns:1fr}.gate-grid>div{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.gate-grid>div:last-child{border-bottom:0}}
+    @media(max-width:48rem){.page-lead{display:grid}.page-meta{white-space:normal}.registry-status dl,.status-rail,.source-contract dl{grid-template-columns:1fr}.registry-status dl>div{border-inline-start:0;border-top:1px solid var(--os-hairline)}.status-rail>div{border-inline-end:0;border-bottom:1px solid var(--os-hairline)}.status-rail>div:last-child{border-bottom:0}.source-contract dl>div{grid-template-columns:1fr;gap:var(--os-2)}}
   `],
 })
 export class AdminFoundationServices implements OnInit, OnDestroy {
@@ -333,6 +373,7 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
       current.monitoring.error,
       current.monitoringHealth.error,
       current.osdst.error,
+      current.registry.error,
     ].filter((item, index, all) => item && all.indexOf(item) === index);
   });
   readonly availableCount = computed(() => this.services().filter((item) =>
@@ -393,6 +434,12 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
     return result.value.runtime?.ready === true && result.value.rollout?.ready === true
       ? 'Healthy' : 'Degraded';
   });
+  readonly registryState = computed<FoundationState>(() => {
+    const result = this.snapshot()?.registry;
+    if (!result?.value) return 'Unavailable';
+    if (result.value.stale) return 'Stale';
+    return Object.values(result.value.sources || {}).every((source) => source.ready) ? 'Healthy' : 'Degraded';
+  });
 
   async ngOnInit(): Promise<void> {
     await this.refresh();
@@ -402,12 +449,13 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
 
   async refresh(silent = false): Promise<void> {
     if (!silent) this.busy.set(true);
-    const [supabase, change, monitoring, monitoringHealth, osdst] = await Promise.all([
+    const [supabase, change, monitoring, monitoringHealth, osdst, registry] = await Promise.all([
       this.read<SupabaseStatus>('/api/identity/supabase/status', 'Data & Identity 상태'),
       this.read<ChangeStatus>('/api/platform/gitea/status', '선언형 변경 상태'),
       this.read<MonitoringOverview>('/api/monitoring/baseline/v1/overview', '노드 관측 요약'),
       this.read<MonitoringHealth>('/api/monitoring/baseline/v1/data-health', '노드 관측 데이터 상태'),
       this.read<OsdstControl>('/api/osaa/admin/dialogue-state', 'OSDST 상태'),
+      this.read<RegistryCatalogSnapshot>('/api/v1/registry', 'Registry & Catalog 상태'),
     ]);
     this.snapshot.set({
       generatedAt: new Date().toISOString(),
@@ -416,6 +464,7 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
       monitoring,
       monitoringHealth,
       osdst,
+      registry,
     });
     if (!silent) this.busy.set(false);
   }
@@ -426,6 +475,35 @@ export class AdminFoundationServices implements OnInit, OnDestroy {
     const runtime = result.value.runtime || {};
     if (runtime.ready !== true) return runtime.error || 'OSDST runtime이 Ready가 아닙니다.';
     return `${runtime.version || 'version 미수집'} · ${result.value.mode || 'mode 미수집'} · CBSS Supabase projection`;
+  }
+
+  registrySummary(): string {
+    const result = this.snapshot()?.registry;
+    if (!result?.value) return result?.error || '실측 상태를 확인할 수 없습니다.';
+    return `${result.value.schema} · revision ${this.shortRevision(result.value.revision)} · ${result.value.stale ? 'stale' : 'fresh'}`;
+  }
+
+  registryRevision(): string {
+    return this.shortRevision(this.snapshot()?.registry.value?.revision || '');
+  }
+
+  registryCount(kind: 'extensions' | 'catalog' | 'sources' | 'rejected'): string {
+    const value = this.snapshot()?.registry.value;
+    if (!value) return '미수집';
+    if (kind === 'extensions') return String(value.extensions?.count || 0);
+    if (kind === 'rejected') return String(value.rejected?.length || 0);
+    if (kind === 'sources') {
+      const sources = Object.values(value.sources || {});
+      return `${sources.filter((source) => source.ready).length}/${sources.length}`;
+    }
+    const catalog = value.catalog;
+    return String((catalog?.capabilities?.length || 0) + (catalog?.offerings?.length || 0)
+      + (catalog?.plans?.length || 0) + (catalog?.runtimeCatalogs?.length || 0)
+      + (catalog?.moduleDescriptors?.length || 0));
+  }
+
+  private shortRevision(value: string): string {
+    return value ? value.slice(0, 12) : '미수집';
   }
 
   stateLabel(state: FoundationState): string {
