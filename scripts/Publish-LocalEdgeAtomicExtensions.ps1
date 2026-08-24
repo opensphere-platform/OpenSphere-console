@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$Registry = 'ghcr.io/opensphere-platform',
-  [ValidateSet('console', 'dupaController', 'registry', 'backend', 'osaaGateway')]
+  [ValidateSet('console', 'dupaController', 'registry', 'backend', 'osaaGateway', 'cliArtifacts')]
   [string[]]$Components = @('console', 'dupaController'),
   [switch]$UseExistingRegistryLogin
 )
@@ -124,6 +124,7 @@ $repositories = [ordered]@{
   registry = "$Registry/opensphere-registry"
   backend = "$Registry/opensphere-console-backend"
   osaaGateway = "$Registry/opensphere-console-osaa-gateway"
+  cliArtifacts = "$Registry/opensphere-os-cli"
 }
 $digests = [ordered]@{}
 
@@ -240,6 +241,20 @@ try {
     )
     Invoke-Checked docker @gatewayArgs | Out-Null
     $digests.osaaGateway = [string](Get-Content -Raw $gatewayMetadata | ConvertFrom-Json).'containerimage.digest'
+  }
+
+  if ($componentNames -contains 'cliArtifacts') {
+    $cliMetadata = Join-Path $metadataRoot 'os-cli.json'
+    $cliArgs = @(
+      'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
+      '--metadata-file', $cliMetadata, '--tag', "$($repositories.cliArtifacts):$buildTag",
+      '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local'
+    ) + $labels + @(
+      '--file', (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile'),
+      (Join-Path $consoleCheckout 'backend\os-cli')
+    )
+    Invoke-Checked docker @cliArgs | Out-Null
+    $digests.cliArtifacts = [string](Get-Content -Raw $cliMetadata | ConvertFrom-Json).'containerimage.digest'
   }
 
   foreach ($componentName in $componentNames) {
