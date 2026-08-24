@@ -688,7 +688,11 @@ export class ExtensionHostService {
     const currentRoute = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const navigate = (path: string, options?: { replace?: boolean }) => {
       const target = new URL(path, window.location.origin);
-      if (target.origin !== window.location.origin || (target.pathname !== routeBase && !target.pathname.startsWith(`${routeBase}/`))) {
+      const platformSupportDeliveryRoute = pluginId === 'foundation'
+        && ['/manage/platform-support/argocd', '/manage/platform-support/crossplane']
+          .some((base) => target.pathname === base || target.pathname.startsWith(`${base}/`));
+      if (target.origin !== window.location.origin
+        || (!platformSupportDeliveryRoute && target.pathname !== routeBase && !target.pathname.startsWith(`${routeBase}/`))) {
         throw new Error(`guest route must remain under ${routeBase}`);
       }
       const next = `${target.pathname}${target.search}${target.hash}`;

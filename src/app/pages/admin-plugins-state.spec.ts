@@ -216,6 +216,8 @@ test('every Extension management tab has a reloadable canonical route', () => {
 });
 
 test('PFSS child plugins keep their host ownership across routes and navigation', () => {
+  assert.match(routes, /matcher: platformSupportDeliveryMatcher,[\s\S]*data: \{ pluginId: 'foundation' \}/);
+  assert.match(routes, /segments\[1\]\.path === 'delivery' && \['argocd', 'crossplane'\]\.includes\(segments\[2\]\?\.path \?\? ''\)/);
   assert.match(routes, /return childPath \? `\/pfss\/\$\{childPath\}` : '\/pfss\/foundation'/);
   assert.match(routes, /path: 'p\/opensearch', redirectTo: 'pfss\/opensearch'/);
   assert.match(routes, /path: 'p\/postgres', redirectTo: 'pfss\/postgres'/);

@@ -41,6 +41,15 @@ function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
   return { consumed: segments, posParams: { id: segments[1] } };
 }
 
+/** Delivery controllers are Platform Support services surfaced by the Foundation host. */
+function platformSupportDeliveryMatcher(segments: UrlSegment[]): UrlMatchResult | null {
+  if (segments.length < 3
+    || segments[0].path !== 'manage'
+    || segments[1].path !== 'platform-support'
+    || !['argocd', 'crossplane'].includes(segments[2].path)) return null;
+  return { consumed: segments };
+}
+
 /**
  * PFSS canonical namespace. The URL names the owning platform service stack,
  * while PluginHost still mounts the registered `foundation` subShell.
@@ -48,6 +57,7 @@ function pluginHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
  */
 function pfssHostMatcher(segments: UrlSegment[]): UrlMatchResult | null {
   if (segments.length < 2 || segments[0].path !== 'pfss') return null;
+  if (segments[1].path === 'delivery' && ['argocd', 'crossplane'].includes(segments[2]?.path ?? '')) return null;
   return { consumed: segments };
 }
 
@@ -58,6 +68,10 @@ function legacyFoundationMatcher(segments: UrlSegment[]): UrlMatchResult | null 
 
 function redirectLegacyFoundation({ url }: PartialMatchRouteSnapshot): string {
   const childPath = url.slice(2).map((segment) => segment.path).join('/');
+  const deliveryProduct = ['argocd', 'crossplane'].find((id) => childPath === `delivery/${id}` || childPath.startsWith(`delivery/${id}/`));
+  if (deliveryProduct) {
+    return childPath.replace(`delivery/${deliveryProduct}`, `/manage/platform-support/${deliveryProduct}`);
+  }
   return childPath ? `/pfss/${childPath}` : '/pfss/foundation';
 }
 
@@ -72,6 +86,15 @@ export const routes: Routes = [
   // top-level boot realm; exposing an Angular route would let an already
   // activated external plugin reach the terminal through History API/router.
   // Containers 섹션은 DUPA subShell(shell-template)로 이전됨 → 네이티브 라우트 제거. /p/shell-template 로 진입.
+
+  // Delivery controllers belong to Platform Support, not PFSS. This matcher must precede
+  // the native /manage layout so the Foundation host owns all detail tabs.
+  {
+    matcher: platformSupportDeliveryMatcher,
+    component: PluginHost,
+    canActivate: [authenticatedGuard],
+    data: { pluginId: 'foundation' },
+  },
 
   // "콘솔 관리" 섹션 (Model A): 1단 진입 → AdminLayout이 2단 보조메뉴 + 자식 페이지를 렌더.
   // §3.2 Core≠Plugin: 셸 네이티브 컴포넌트. 백엔드는 Console Backend(`/api/identity` 프록시).
@@ -124,8 +147,8 @@ export const routes: Routes = [
       { path: 'audit', component: AdminAudit },
     ],
   },
-  // Foundation overview owns /pfss/foundation. Its child plugins use the
-  // concise /pfss/<plugin> namespace and remain hosted by Foundation.
+  // Foundation overview owns /pfss/foundation. Its PFSS child plugins use the
+  // concise /pfss/<plugin> namespace. Delivery controllers are excluded above.
   { matcher: legacyFoundationMatcher, redirectTo: redirectLegacyFoundation },
   { path: 'p/opensearch', redirectTo: 'pfss/opensearch', pathMatch: 'prefix' },
   { path: 'p/postgres', redirectTo: 'pfss/postgres', pathMatch: 'prefix' },

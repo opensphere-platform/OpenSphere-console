@@ -28,6 +28,11 @@ export function isTransientExtensionLoadError(error: unknown): boolean {
  */
 export function extensionRouteTarget(pathname: string): ExtensionRouteTarget {
   const segments = pathname.split('/').filter(Boolean).map((segment) => decodeURIComponent(segment));
+  if (segments[0] === 'manage'
+    && segments[1] === 'platform-support'
+    && ['argocd', 'crossplane'].includes(segments[2] ?? '')) {
+    return { hostId: 'foundation', childId: '' };
+  }
   if (segments[0] === 'pfss') {
     return {
       hostId: 'foundation',

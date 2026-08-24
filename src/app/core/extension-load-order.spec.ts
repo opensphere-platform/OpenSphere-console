@@ -24,6 +24,14 @@ test('canonical plugin deep links identify both host and child ownership', () =>
     hostId: 'foundation',
     childId: '',
   });
+  assert.deepEqual(extensionRouteTarget('/manage/platform-support/argocd/events'), {
+    hostId: 'foundation',
+    childId: '',
+  });
+  assert.deepEqual(extensionRouteTarget('/manage/platform-support/crossplane/providers'), {
+    hostId: 'foundation',
+    childId: '',
+  });
   assert.deepEqual(extensionRouteTarget('/manage/extensions/plugins'), { hostId: '', childId: '' });
 });
 
