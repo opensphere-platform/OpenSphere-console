@@ -112,7 +112,8 @@ test('reconcile verifies the immutable revision before Registry convergence and 
 
 test('edge publisher supports an exact affected-component subset and stays separate from the integrated publisher', () => {
   const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
-  assert.match(publisher, /\[ValidateSet\('console', 'dupaController', 'registry', 'backend', 'osaaGateway'\)\]/);
+  assert.match(publisher, /\[ValidateSet\('console', 'dupaController', 'registry', 'backend', 'osaaGateway', 'cliArtifacts'\)\]/);
+  assert.match(publisher, /cliArtifacts = "\$Registry\/opensphere-os-cli"/);
   assert.match(publisher, /\$componentNames = @\(\$Components \| Sort-Object -Unique\)/);
   assert.match(publisher, /if \(\$componentNames -contains 'console'\)/);
   assert.match(publisher, /if \(\$componentNames -contains 'dupaController'\)/);
