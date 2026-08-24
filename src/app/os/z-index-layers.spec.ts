@@ -132,6 +132,7 @@ test('R2D2 대화는 입력과 응답 이벤트를 따라가되 과거 메시지
   assert.match(osOsaaAgentTs, /this\.followLatest = thread\.scrollHeight - thread\.clientHeight - thread\.scrollTop <= 48;/);
   assert.match(osOsaaAgentTs, /this\.messages\.set\(next\);\s*this\.busy\.set\(true\);\s*this\.requestScrollToLatest\(true\);/s);
   assert.match(osOsaaAgentTs, /this\.messages\.update\([\s\S]+?this\.requestScrollToLatest\(\);\s*await this\.refreshHistory/);
+  assert.match(osOsaaAgentTs, /requestScrollToLatest\(force = false, behavior: ScrollBehavior = 'auto'\)/);
   assert.match(osOsaaAgentTs, /thread\.scrollTo\(\{ top: thread\.scrollHeight, behavior:/);
 });
 

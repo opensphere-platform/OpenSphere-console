@@ -961,7 +961,7 @@ export class OsOsaaAgent implements OnDestroy {
     this.requestScrollToLatest();
   };
 
-  private requestScrollToLatest(force = false, behavior: ScrollBehavior = 'smooth'): void {
+  private requestScrollToLatest(force = false, behavior: ScrollBehavior = 'auto'): void {
     if (force) this.followLatest = true;
     if (!this.followLatest || !this.open()) return;
     if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
