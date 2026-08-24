@@ -515,7 +515,9 @@ export class OsOsaaAgent implements OnDestroy {
 
   @ViewChild('thread')
   private set thread(ref: ElementRef<HTMLDivElement> | undefined) {
-    this.threadElement = ref?.nativeElement || null;
+    const nextThread = ref?.nativeElement || null;
+    if (nextThread === this.threadElement) return;
+    this.threadElement = nextThread;
     if (this.threadElement) this.requestScrollToLatest(true, 'auto');
   }
 

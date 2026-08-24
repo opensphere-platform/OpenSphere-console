@@ -129,6 +129,7 @@ test('OS Shell 패널 헤더는 바로 아래 세션 정보만 접고 터미널 
 
 test('R2D2 대화는 입력과 응답 이벤트를 따라가되 과거 메시지를 읽는 사용자를 방해하지 않는다', () => {
   assert.match(osOsaaAgentTs, /#thread class="osaa-thread" \(scroll\)="onThreadScroll\(\$event\)"/);
+  assert.match(osOsaaAgentTs, /if \(nextThread === this\.threadElement\) return;/);
   assert.match(osOsaaAgentTs, /this\.followLatest = thread\.scrollHeight - thread\.clientHeight - thread\.scrollTop <= 48;/);
   assert.match(osOsaaAgentTs, /this\.messages\.set\(next\);\s*this\.busy\.set\(true\);\s*this\.requestScrollToLatest\(true\);/s);
   assert.match(osOsaaAgentTs, /this\.messages\.update\([\s\S]+?this\.requestScrollToLatest\(\);\s*await this\.refreshHistory/);
