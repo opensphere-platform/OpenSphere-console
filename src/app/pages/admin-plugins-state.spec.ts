@@ -215,27 +215,25 @@ test('every Extension management tab has a reloadable canonical route', () => {
   }
 });
 
-test('Catalog separates Foundation service selection from Console Extension package lifecycle', () => {
-  assert.match(source, /<h2 id="foundation-catalog-title">Foundation Service Catalog<\/h2>/);
+test('Catalog separates Foundation module installation from Console Extension package lifecycle', () => {
+  assert.match(source, /<h2 id="foundation-catalog-title">Foundation Module Catalog<\/h2>/);
   assert.match(source, /<h2 id="extension-package-catalog-title">Extension Packages<\/h2>/);
   assert.match(source, /Foundation service plan과는 다른 생명주기입니다/);
   assert.match(source, /foundationCatalogSnapshot/);
   assert.match(source, /\/api\/v1\/registry/);
   assert.match(source, /body\.schema !== 'opensphere\.registry-catalog\/v1'/);
   assert.match(source, /body\.stale/);
-  assert.match(source, /Object\.values\(snapshot\.sources \|\| \{\}\)\.every\(\(source\) => source\.ready\)/);
-  assert.match(source, /plan\.lifecycle !== 'Available' \|\| !foundationCatalogSelectable\(\)/);
+  assert.match(source, /Object\.values\(body\.sources \|\| \{\}\)\.every\(\(source\) => source\.ready\)/);
+  assert.match(source, /snapshot\.catalog\.moduleDescriptors/);
+  assert.match(source, /PFSS 모듈의 설치 자격과 배포 출처/);
 });
 
-test('an available Foundation plan creates only a revision-bound OSCE read-only plan', () => {
-  assert.match(source, /OSCE 읽기 전용 계획 생성/);
-  assert.match(source, /'\/api\/osaa\/operations\/plan'/);
-  assert.match(source, /action: 'create-postgres-cluster'/);
-  assert.match(source, /deletionPolicy: 'Retain'/);
-  assert.match(source, /body\.target\?\.catalogBinding\?\.revision !== snapshot\.revision/);
-  assert.match(source, /PLAN READY · NOT EXECUTED/);
-  assert.match(source, /이 화면은 리소스를 생성하지 않습니다/);
-  assert.doesNotMatch(source.slice(source.indexOf('id="foundation-catalog-title"'), source.indexOf('id="extension-package-catalog-title"')), /operations\/accept|operations'\s*,\s*\{\s*method:\s*'POST'/);
+test('Foundation module Catalog does not configure or create service instances', () => {
+  const catalogSection = source.slice(source.indexOf('id="foundation-catalog-title"'), source.indexOf('id="extension-package-catalog-title"'));
+  assert.match(catalogSection, /PostgreSQL 인스턴스 생성과 운영 설정은 설치된 PFSS/);
+  assert.match(catalogSection, /\/pfss\/postgres/);
+  assert.doesNotMatch(catalogSection, /create-postgres-cluster|operations\/plan|postgresVersion|Instance name|Available/);
+  assert.doesNotMatch(source, /createOscePostgresPlan|selectedFoundationPlan|oscePlan/);
 });
 
 test('PFSS child plugins keep their host ownership across routes and navigation', () => {
