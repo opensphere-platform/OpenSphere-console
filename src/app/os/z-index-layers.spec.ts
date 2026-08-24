@@ -127,6 +127,14 @@ test('OS Shell 패널 헤더는 바로 아래 세션 정보만 접고 터미널 
   assert.match(osShellPageScss, /[.]shell-page[.]embedded[.]info-collapsed [.]session-toolbar \{ display: none; \}/);
 });
 
+test('R2D2 대화는 입력과 응답 이벤트를 따라가되 과거 메시지를 읽는 사용자를 방해하지 않는다', () => {
+  assert.match(osOsaaAgentTs, /#thread class="osaa-thread" \(scroll\)="onThreadScroll\(\$event\)"/);
+  assert.match(osOsaaAgentTs, /this\.followLatest = thread\.scrollHeight - thread\.clientHeight - thread\.scrollTop <= 48;/);
+  assert.match(osOsaaAgentTs, /this\.messages\.set\(next\);\s*this\.busy\.set\(true\);\s*this\.requestScrollToLatest\(true\);/s);
+  assert.match(osOsaaAgentTs, /this\.messages\.update\([\s\S]+?this\.requestScrollToLatest\(\);\s*await this\.refreshHistory/);
+  assert.match(osOsaaAgentTs, /thread\.scrollTo\(\{ top: thread\.scrollHeight, behavior:/);
+});
+
 test('os-search 드롭다운은 헤더 stacking context에 포함되어 있고, 자체 z-index가 헤더보다 낮은 값으로도 안전하다', () => {
   // 드롭다운의 로컬 z-index(1001)는 문서 전체가 아니라 .header가 형성한 stacking context 내부
   // 순서일 뿐임을 문서화한다 — 이 계약이 os-shell의 .header z-index 존재에 의존함을 명시.

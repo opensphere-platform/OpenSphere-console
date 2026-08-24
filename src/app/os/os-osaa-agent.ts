@@ -1,4 +1,4 @@
-import { Component, ChangeDetectionStrategy, OnDestroy, computed, effect, inject, signal } from '@angular/core';
+import { Component, ChangeDetectionStrategy, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ClarityModule } from '@clr/angular';
 import { CarbonIcon } from './carbon-icon';
@@ -152,7 +152,7 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
           </div>
         }
 
-        <div class="osaa-thread">
+        <div #thread class="osaa-thread" (scroll)="onThreadScroll($event)">
           @for (m of messages(); track m.id) {
             <div class="osaa-msg" [class.osaa-user]="m.role === 'user'" [class.osaa-assistant]="m.role === 'assistant'" [class.osaa-system]="m.role === 'system'">
               <div class="osaa-bubble">
@@ -509,6 +509,15 @@ export class OsOsaaAgent implements OnDestroy {
   });
   private activeRequest: AbortController | null = null;
   private speechRecognition: any = null;
+  private threadElement: HTMLDivElement | null = null;
+  private followLatest = true;
+  private scrollFrame: number | null = null;
+
+  @ViewChild('thread')
+  private set thread(ref: ElementRef<HTMLDivElement> | undefined) {
+    this.threadElement = ref?.nativeElement || null;
+    if (this.threadElement) this.requestScrollToLatest(true, 'auto');
+  }
 
   constructor() {
     window.addEventListener('resize', this.onWindowResize);
@@ -526,6 +535,7 @@ export class OsOsaaAgent implements OnDestroy {
   ngOnDestroy(): void {
     this.activeRequest?.abort();
     this.speechRecognition?.abort?.();
+    if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
     window.removeEventListener('resize', this.onWindowResize);
     document.body.classList.remove('osaa-agent-open', 'osaa-agent-full', 'osaa-agent-resizing');
     document.documentElement.classList.remove('osaa-agent-open', 'osaa-agent-full');
@@ -586,6 +596,7 @@ export class OsOsaaAgent implements OnDestroy {
     this.chatTitle.set('New chat');
     this.messages.set(this.initialMessages());
     this.draft = '';
+    this.requestScrollToLatest(true, 'auto');
   }
 
   reset(): void {
@@ -645,6 +656,7 @@ export class OsOsaaAgent implements OnDestroy {
       this.messages.set(stored.length ? stored : this.initialMessages());
       this.historyOpen.set(false);
       this.error.set('');
+      this.requestScrollToLatest(true, 'auto');
     } catch (error) {
       this.error.set('대화를 불러오지 못했습니다: ' + error);
     }
@@ -687,6 +699,12 @@ export class OsOsaaAgent implements OnDestroy {
     if (ev.isComposing || ev.key !== 'Enter' || ev.shiftKey) return;
     ev.preventDefault();
     void this.send();
+  }
+
+  onThreadScroll(ev: Event): void {
+    const thread = ev.currentTarget as HTMLDivElement | null;
+    if (!thread) return;
+    this.followLatest = thread.scrollHeight - thread.clientHeight - thread.scrollTop <= 48;
   }
 
   toggleVoiceInput(): void {
@@ -732,6 +750,7 @@ export class OsOsaaAgent implements OnDestroy {
     const next = [...this.messages(), { id: 'u-' + Date.now(), role: 'user' as const, content: text }];
     this.messages.set(next);
     this.busy.set(true);
+    this.requestScrollToLatest(true);
     const request = new AbortController();
     this.activeRequest = request;
     try {
@@ -773,6 +792,7 @@ export class OsOsaaAgent implements OnDestroy {
         concepts: this.normalizeConcepts(body.concepts?.concepts),
         dialogue: this.normalizeDialogue(body.dialogue, body.dialogueMode),
       }]);
+      this.requestScrollToLatest();
       await this.refreshHistory(false);
     } catch (e: any) {
       if (e instanceof HttpRequestTimeoutError) {
@@ -783,6 +803,7 @@ export class OsOsaaAgent implements OnDestroy {
     } finally {
       if (this.activeRequest === request) this.activeRequest = null;
       this.busy.set(false);
+      this.requestScrollToLatest();
     }
   }
 
@@ -937,7 +958,25 @@ export class OsOsaaAgent implements OnDestroy {
     if (width !== this.dockWidth()) this.dockWidth.set(width);
     document.body.style.setProperty('--osaa-dock-width', `${width}px`);
     this.syncFullLeft();
+    this.requestScrollToLatest();
   };
+
+  private requestScrollToLatest(force = false, behavior: ScrollBehavior = 'smooth'): void {
+    if (force) this.followLatest = true;
+    if (!this.followLatest || !this.open()) return;
+    if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
+    queueMicrotask(() => {
+      this.scrollFrame = requestAnimationFrame(() => {
+        this.scrollFrame = requestAnimationFrame(() => {
+          const thread = this.threadElement;
+          this.scrollFrame = null;
+          if (!thread || !this.followLatest) return;
+          const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+          thread.scrollTo({ top: thread.scrollHeight, behavior: reducedMotion ? 'auto' : behavior });
+        });
+      });
+    });
+  }
 
   private initialDockWidth(): number {
     const raw = Number(window.localStorage.getItem('opensphere.osaa.dockWidth'));
