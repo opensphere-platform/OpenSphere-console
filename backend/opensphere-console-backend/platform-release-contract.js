@@ -47,6 +47,7 @@ const COMPONENT_REPOSITORIES = Object.freeze({
   console: 'opensphere-console',
   backend: 'opensphere-console-backend',
   dupaController: 'opensphere-console-dupa-controller',
+  registry: 'opensphere-registry',
   osaaGateway: 'opensphere-console-osaa-gateway',
   osdst: 'opensphere-osdst',
   osaaGovernedAdapter: 'opensphere-osaa-governed-adapter',
@@ -63,6 +64,9 @@ const AUXILIARY_ARTIFACT_REPOSITORIES = Object.freeze({
   cliArtifacts: 'opensphere-os-cli',
 });
 const REQUIRED_COMPONENTS = Object.freeze(Object.keys(COMPONENT_REPOSITORIES));
+const PRE_REGISTRY_COMPONENT_REPOSITORIES = Object.freeze(Object.fromEntries(
+  Object.entries(COMPONENT_REPOSITORIES).filter(([name]) => name !== 'registry'),
+));
 const PRE_OSDST_COMPONENT_REPOSITORIES = Object.freeze(Object.fromEntries(
   Object.entries(COMPONENT_REPOSITORIES).filter(([name]) => name !== 'osdst'),
 ));
@@ -120,6 +124,16 @@ function installedComponentProfile(components, { allowInstalledAgentIdentityCuto
       names: preOsdstNames,
       repositories: PRE_OSDST_COMPONENT_REPOSITORIES,
       agentIdentity: 'installed-pre-osdst',
+    };
+  }
+  const preRegistryNames = Object.keys(PRE_REGISTRY_COMPONENT_REPOSITORIES);
+  if (allowInstalledAgentIdentityCutover
+    && names.length === preRegistryNames.length
+    && preRegistryNames.every((name) => names.includes(name))) {
+    return {
+      names: preRegistryNames,
+      repositories: PRE_REGISTRY_COMPONENT_REPOSITORIES,
+      agentIdentity: 'installed-pre-registry',
     };
   }
   const legacyNames = Object.keys(LEGACY_INSTALLED_COMPONENT_REPOSITORIES);
@@ -328,13 +342,18 @@ function validateReleaseTransition(baseLock, targetLock) {
     .map((name) => cutover ? canonicalNameForInstalledComponent(name) : name)
     .sort();
   const targetNames = Object.keys(target.components).sort();
-  if (canonicalJson(baseNames) !== canonicalJson(targetNames)) {
+  const registryIntroduction = !baseNames.includes('registry')
+    && targetNames.includes('registry')
+    && canonicalJson([...baseNames, 'registry'].sort()) === canonicalJson(targetNames)
+    && target.changedComponents.includes('registry');
+  if (canonicalJson(baseNames) !== canonicalJson(targetNames) && !registryIntroduction) {
     throw new Error('component targetLock cannot change the installed component set');
   }
   const changed = new Set(target.changedComponents);
   for (const name of targetNames) {
     const installedName = cutover ? installedNameForCanonicalComponent(name) : name;
-    const differs = !sameComponent(base.components[installedName], target.components[name]);
+    const differs = registryIntroduction && name === 'registry'
+      ? true : !sameComponent(base.components[installedName], target.components[name]);
     if (changed.has(name) && !differs) {
       throw new Error(`component targetLock changed component ${name} is identical to the base release`);
     }
@@ -400,7 +419,7 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
       sourceRevision: evidence.sourceRevision,
       registryCredentialsRequired: item.registryCredentialsRequired
         ?? base.components[cutover ? installedNameForCanonicalComponent(name) : name]
-          .registryCredentialsRequired
+          ?.registryCredentialsRequired
         ?? false,
     };
   }

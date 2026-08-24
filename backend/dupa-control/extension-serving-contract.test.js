@@ -102,12 +102,14 @@ test('a failed target revision keeps the exact previously verified artifact serv
   }, enabled, 'ImageRevoked', trustedKeys), false);
 });
 
-test('controller image includes the shared projection module and probes serving readiness', () => {
+test('DUPA contains no embedded Registry snapshot server and probes only process health', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
   const deployment = fs.readFileSync(path.join(__dirname, 'opensphere-console-dupa-controller.yaml'), 'utf8');
-  assert.match(dockerfile, /COPY extension-projection\.js \/app\/extension-projection\.js/);
-  assert.match(deployment, /readinessProbe:.*path: \/serving-readyz/);
-  assert.doesNotMatch(deployment, /readinessProbe:.*path: \/readyz/);
+  const controller = fs.readFileSync(path.join(__dirname, 'controller.js'), 'utf8');
+  assert.doesNotMatch(dockerfile, /extension-projection\.js/);
+  assert.doesNotMatch(controller, /p === '\/api\/v1\/registry'/);
+  assert.doesNotMatch(controller, /p === '\/serving-readyz'/);
+  assert.match(deployment, /readinessProbe:.*path: \/healthz/);
 });
 
 test('last-known-good status preserves active release coordinates while a new target is staged', () => {

@@ -40,14 +40,14 @@ interface ServicePortfolio {
           <span class="eyebrow">WHAT THE CONSOLE SERVES</span>
           <h2 id="console-service-question">OpenSphere를 제어하기 위해 Console은 무엇을 서비스하는가?</h2>
           <p>
-            Main Shell은 단순한 관리 페이지 모음이 아닙니다. 네 개의 제어 표면을 OSCE와 OSDST에
-            연결하고, 그 아래의 운영 서비스를 CBSS 자원과 각 Owner 권위로 실행 가능한 상태로
+            Main Shell은 단순한 관리 페이지 모음이 아닙니다. 네 개의 제어 표면을 OSCE, OSDST,
+            Registry &amp; Catalog에 연결하고, 그 아래의 운영 서비스를 CBSS 자원과 각 Owner 권위로 실행 가능한 상태로
             제공합니다.
           </p>
         </div>
         <dl class="dashboard-summary">
           <div><dt>Control surfaces</dt><dd>4</dd><small>Console · OSS · OSC · OSAA</small></div>
-          <div><dt>CBSS Core Services</dt><dd>2</dd><small>OSCE · OSDST</small></div>
+          <div><dt>CBSS Core Services</dt><dd>3</dd><small>OSCE · OSDST · Registry &amp; Catalog</small></div>
           <div><dt>Service domains</dt><dd>12</dd><small>현재·목표 기능 전체</small></div>
           <div><dt>Projection</dt><dd>Preview</dd><small>Owner live evidence 연계 전</small></div>
         </dl>
@@ -89,8 +89,8 @@ interface ServicePortfolio {
 
       <section class="core-services" aria-labelledby="core-service-title">
         <div class="section-heading">
-          <div><span class="eyebrow">CBSS CORE SERVICES</span><h2 id="core-service-title">Console 제어를 실제 기능으로 만드는 두 엔진</h2></div>
-          <p>두 엔진은 Extension Registry 대상이 아니라 Console과 함께 배포되는 Platform core component입니다.</p>
+          <div><span class="eyebrow">CBSS CORE SERVICES</span><h2 id="core-service-title">Console 제어를 실제 기능으로 만드는 세 Core Service</h2></div>
+          <p>세 서비스는 Extension Registry 대상이 아니라 Console과 함께 독립 배포·관측되는 CBSS core component입니다.</p>
         </div>
         <div class="core-service-grid">
           <a routerLink="/manage/platform-control" class="core-service-card">
@@ -102,6 +102,11 @@ interface ServicePortfolio {
             <img src="/assets/pictograms/intelligence.svg" alt="Dialogue state connected to system evidence" width="78" height="78" />
             <div><span>OSDST</span><h3>OSAA Dialogue State Tracker</h3><p>대화의 의도·대상·권위·근거를 구조화해 R2D2가 현재 시스템 사실과 작업 문맥을 유지하게 합니다.</p></div>
             <small>CBSS Core Service · Agent Core Engine</small>
+          </a>
+          <a routerLink="/manage/extensions/topology" class="core-service-card">
+            <img src="/assets/pictograms/connected-ecosystem.svg" alt="Registry and catalog projection" width="78" height="78" />
+            <div><span>REGISTRY</span><h3>Registry &amp; Catalog Service</h3><p>설치 가능한 정의와 검증된 Extension을 단일 revision으로 투영하고, OSCE·OSAA·Console에 같은 선택 근거를 제공합니다.</p></div>
+            <small>CBSS Core Service · Discovery &amp; Resolution Authority</small>
           </a>
         </div>
       </section>
@@ -154,7 +159,7 @@ interface ServicePortfolio {
     .service-map,.core-services,.portfolio,.resource-authorities{margin-top:1.4rem}.section-heading{display:flex;justify-content:space-between;align-items:end;gap:2rem;margin-bottom:.75rem}.section-heading>p{max-width:42rem;margin:0;text-align:right}.section-heading>a{color:var(--os-accent);font-size:.72rem;font-weight:650}
     .service-map-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas)}.service-layer{min-width:0;border-right:1px solid var(--os-hairline)}.service-layer:last-child{border-right:0}.service-layer>header{display:grid;grid-template-columns:auto 3.4rem minmax(0,1fr);align-items:center;gap:.65rem;min-height:5.9rem;padding:.9rem;border-bottom:1px solid var(--os-hairline);background:var(--os-surface-1)}.service-layer>header>span{align-self:start;color:var(--os-accent);font:700 .65rem var(--os-font-mono)}.service-layer header small,.portfolio header span{color:var(--os-ink-muted);font-size:.59rem;font-weight:700;letter-spacing:.08em}.service-layer h3,.portfolio h3,.core-service-card h3{margin:.2rem 0 0;font-size:.9rem;line-height:1.25}
     .service-node-list>a,.service-node-list>div{display:grid;grid-template-columns:4.8rem minmax(0,1fr);gap:.2rem .55rem;min-height:4.3rem;padding:.7rem .9rem;border-bottom:1px solid var(--os-hairline);color:inherit;text-decoration:none}.service-node-list>*:last-child{border-bottom:0}.service-node-list a:hover{background:var(--os-surface-1)}.service-node-list span{color:var(--os-accent);font:700 .59rem var(--os-font-mono)}.service-node-list strong{font-size:.72rem}.service-node-list small{grid-column:2;color:var(--os-ink-muted);font-size:.62rem;line-height:1.35}
-    .core-service-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem}.core-service-card{display:grid;grid-template-columns:5rem minmax(0,1fr);gap:.3rem 1rem;padding:1.1rem;border:1px solid var(--os-hairline);border-top:3px solid var(--os-accent);background:var(--os-canvas);color:inherit;text-decoration:none}.core-service-card:hover{background:var(--os-surface-1)}.core-service-card>img{grid-row:1/3}.core-service-card div>span{color:var(--os-accent);font:700 .72rem var(--os-font-mono)}.core-service-card p{margin:.45rem 0 0;color:var(--os-ink-muted);font-size:.7rem;line-height:1.5}.core-service-card>small{grid-column:2;color:var(--os-ink-subtle);font-size:.61rem}
+    .core-service-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.8rem}.core-service-card{display:grid;grid-template-columns:5rem minmax(0,1fr);gap:.3rem 1rem;padding:1.1rem;border:1px solid var(--os-hairline);border-top:3px solid var(--os-accent);background:var(--os-canvas);color:inherit;text-decoration:none}.core-service-card:hover{background:var(--os-surface-1)}.core-service-card>img{grid-row:1/3}.core-service-card div>span{color:var(--os-accent);font:700 .72rem var(--os-font-mono)}.core-service-card p{margin:.45rem 0 0;color:var(--os-ink-muted);font-size:.7rem;line-height:1.5}.core-service-card>small{grid-column:2;color:var(--os-ink-subtle);font-size:.61rem}
     .portfolio-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas)}.portfolio-grid>article{min-width:0;padding:1rem;border-right:1px solid var(--os-hairline)}.portfolio-grid>article:last-child{border-right:0}.portfolio-grid>article>header{display:grid;grid-template-columns:3.7rem minmax(0,1fr);gap:.7rem;min-height:5.4rem;padding:0;background:var(--os-canvas);color:var(--os-ink)}.portfolio header p{margin:.3rem 0 0;color:var(--os-ink-muted);font-size:.63rem;line-height:1.4}.portfolio ul{list-style:none;margin:.75rem 0 0;padding:0;border-top:1px solid var(--os-hairline)}.portfolio li{border-bottom:1px solid var(--os-hairline)}.portfolio li a{display:flex;justify-content:space-between;gap:.6rem;padding:.58rem .1rem;color:inherit;text-decoration:none}.portfolio li strong{font-size:.68rem}.portfolio li span{font-size:.58rem;white-space:nowrap}.serving{color:#0e6027}.evolving{color:#8e6a00}
     .resource-strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid var(--os-hairline);background:var(--os-canvas)}.resource-strip>div{display:grid;grid-template-columns:2.5rem minmax(0,1fr);gap:.15rem .7rem;padding:.85rem;border-right:1px solid var(--os-hairline)}.resource-strip>div:last-child{border-right:0}.resource-strip img{grid-row:1/4;width:2.4rem;height:2.1rem;object-fit:contain}.resource-strip span{color:var(--os-accent);font-size:.56rem;font-weight:700}.resource-strip strong{font-size:.68rem}.resource-strip small{color:var(--os-ink-muted);font-size:.58rem;line-height:1.3}
     .prototype-note{display:grid;grid-template-columns:10rem minmax(0,1fr);gap:1rem;margin-top:1rem;padding:.85rem 1rem;border-left:3px solid #f1c21b;background:#fff8e1}.prototype-note strong{color:#684e00;font-size:.7rem}.prototype-note p{margin:0;color:#525252;font-size:.66rem;line-height:1.5}
@@ -178,6 +183,7 @@ export class AdminOverview {
       nodes: [
         { label: 'OSCE', name: 'Control Engine', description: 'Plan · Authorize · Execute · Verify', route: '/manage/platform-control' },
         { label: 'OSDST', name: 'Dialogue State Tracker', description: 'Intent · Resource · Authority · Evidence', route: '/manage/osaa' },
+        { label: 'REGISTRY', name: 'Registry & Catalog', description: 'Discover · Resolve · Revision-bind', route: '/manage/extensions/topology' },
       ],
     },
     {

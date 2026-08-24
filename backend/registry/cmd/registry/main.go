@@ -1,69 +1,120 @@
-// opensphere-registry — Registry 단일창구(ADR-0001).
-// GET /api/v1/registry → {capabilities, plugins, templates} 단일 권위 응답.
-// read-only(쓰기경로 0) · ImageDigest 빈값 게시거부 · 결정적 출력(console==cli byte-identical).
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 
-	"github.com/opensphere/registry/internal/catalog"
 	"github.com/opensphere/registry/internal/registry"
 )
 
-func main() {
-	dyn, dynErr := newDynamic()
-	if dynErr != nil {
-		log.Printf("경고: in-cluster client 없음(%v) — 라이브 plugin 생략, seed 만 게시", dynErr)
-	}
+var (
+	appVersion     = env("APP_VERSION", "dev")
+	sourceRevision = env("SOURCE_REVISION", "unknown")
+	imageDigest    = env("IMAGE_DIGEST", "unknown")
+)
 
+func env(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+func writeJSON(w http.ResponseWriter, status int, value interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, max-age=5, stale-while-revalidate=25")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func main() {
+	dyn, err := newDynamic()
+	if err != nil {
+		log.Fatalf("Kubernetes client initialization failed: %v", err)
+	}
+	store := registry.NewStore(dyn)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	if err := store.Refresh(ctx); err != nil {
+		log.Printf("initial snapshot unavailable: %v", err)
+	}
+	go store.Run(ctx)
 	mux := http.NewServeMux()
-	handleRegistry := func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "registry 는 read-only(GET 전용) — ADR-0001", http.StatusMethodNotAllowed)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		snapshot, ok := store.Current()
+		ready := ok && !snapshot.Stale
+		status := http.StatusOK
+		if !ready {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(w, status, map[string]interface{}{"ready": ready, "stale": snapshot.Stale, "revision": snapshot.Revision, "sources": snapshot.Sources, "reason": store.LastError()})
+	})
+	mux.HandleFunc("GET /api/v1/registry", func(w http.ResponseWriter, _ *http.Request) {
+		snapshot, ok := store.Current()
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "RegistryUnavailable", "message": "No valid Registry snapshot has been observed."})
 			return
 		}
-		// 단일 데이터셋 조립: seed capability/template + 라이브 plugin(UIPluginPackage).
-		items := append(catalog.SeedCapabilities(), catalog.SeedTemplates()...)
-		if dyn != nil {
-			if live, err := registry.LoadLivePlugins(r.Context(), dyn); err != nil {
-				log.Printf("라이브 plugin 로드 실패: %v (seed 응답만)", err)
-			} else {
-				items = append(items, live...)
-			}
+		writeJSON(w, http.StatusOK, snapshot)
+	})
+	mux.HandleFunc("POST /api/v1/registry/resolve", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		var request registry.ResolveRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "InvalidResolveRequest"})
+			return
 		}
-		resp, rejected := registry.Build(items)
-		if dyn != nil {
-			if keys, err := registry.LoadTrustedKeys(r.Context(), dyn); err == nil {
-				resp.TrustedKeys = keys
-			} else {
-				log.Printf("trusted key 로드 실패: %v", err)
-			}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "InvalidResolveRequest"})
+			return
 		}
-		if len(rejected) > 0 {
-			log.Printf("게시거부(ImageDigest 빈값): %v", rejected)
+		writeJSON(w, http.StatusOK, store.Resolve(request))
+	})
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
+		snapshot, ok := store.Current()
+		writeJSON(w, http.StatusOK, map[string]interface{}{"service": "opensphere-registry", "product": "OpenSphere Registry & Catalog Service", "cbssCoreService": true, "version": appVersion, "sourceRevision": sourceRevision, "imageDigest": imageDigest, "ready": ok && !snapshot.Stale, "stale": snapshot.Stale, "revision": snapshot.Revision, "observedAt": snapshot.ObservedAt, "sources": snapshot.Sources, "rejected": snapshot.Rejected, "lastError": store.LastError()})
+	})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
+		snapshot, ok := store.Current()
+		ready := 0
+		if ok && !snapshot.Stale {
+			ready = 1
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		// 결정적(byte-identical): 고정 indent, HTML escape 끔.
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(resp); err != nil {
-			log.Printf("인코딩 실패: %v", err)
+		age := 0.0
+		if t, err := time.Parse(time.RFC3339Nano, snapshot.ObservedAt); err == nil {
+			age = time.Since(t).Seconds()
 		}
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		_, _ = fmt.Fprintf(w, "# HELP opensphere_registry_ready Registry snapshot readiness.\n# TYPE opensphere_registry_ready gauge\nopensphere_registry_ready %d\n# HELP opensphere_registry_snapshot_age_seconds Age of the current atomic snapshot.\n# TYPE opensphere_registry_snapshot_age_seconds gauge\nopensphere_registry_snapshot_age_seconds %.3f\n# HELP opensphere_registry_plugins Published extension count.\n# TYPE opensphere_registry_plugins gauge\nopensphere_registry_plugins %d\n# HELP opensphere_registry_catalog_plans Catalog plan count.\n# TYPE opensphere_registry_catalog_plans gauge\nopensphere_registry_catalog_plans %d\n# HELP opensphere_registry_rejected Rejected source item count.\n# TYPE opensphere_registry_rejected gauge\nopensphere_registry_rejected %d\n# HELP opensphere_registry_resolve_total Resolve requests.\n# TYPE opensphere_registry_resolve_total counter\nopensphere_registry_resolve_total %d\n", ready, age, len(snapshot.Plugins), len(snapshot.Catalog.Plans), len(snapshot.Rejected), store.ResolveCount())
+	})
+	server := &http.Server{Addr: ":8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 * 1024}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+	log.Printf("opensphere-registry %s source=%s listening :8080", appVersion, sourceRevision)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
 	}
-	mux.HandleFunc("/api/v1/registry", handleRegistry)
-	// Legacy browser path is an alias only; the Registry service remains the sole authority.
-	mux.HandleFunc("/registry/plugins.json", handleRegistry)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
-	const addr = ":8080"
-	log.Printf("opensphere-registry 단일창구 listening %s (GET /api/v1/registry · read-only)", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
 func newDynamic() (dynamic.Interface, error) {
@@ -71,5 +122,14 @@ func newDynamic() (dynamic.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
+	qps := float32(20)
+	if value := os.Getenv("KUBERNETES_CLIENT_QPS"); value != "" {
+		if parsed, e := strconv.ParseFloat(value, 32); e == nil {
+			qps = float32(parsed)
+		}
+	}
+	cfg.QPS = qps
+	cfg.Burst = 40
+	cfg.Timeout = 10 * time.Second
 	return dynamic.NewForConfig(cfg)
 }
