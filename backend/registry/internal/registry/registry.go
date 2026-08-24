@@ -400,13 +400,22 @@ func Build(input Input) (Response, error) {
 		ids[i] = plugins[i].ID
 	}
 	response := Response{Version: 3, TrustedKeys: input.TrustedKeys, Capabilities: []interface{}{}, Plugins: plugins, Templates: []interface{}{}, Schema: catalog.Schema, ObservedAt: input.ObservedAt.UTC().Format(time.RFC3339Nano), Sources: input.Sources, Extensions: ExtensionSummary{Count: len(plugins), PublishedIDs: ids}, Catalog: p, Rejected: rejected}
+	// Revision identifies the semantic snapshot consumed by Console, OSC, OSAA
+	// and OSCE. Observation timestamps remain in the response as evidence, but
+	// must not invalidate a plan when the exact candidates and policy are
+	// unchanged. The extension controller refreshes channelCheckedAt frequently.
+	revisionPlugins := append([]Plugin(nil), plugins...)
+	for i := range revisionPlugins {
+		revisionPlugins[i].ResolvedAt = ""
+		revisionPlugins[i].ChannelCheckedAt = ""
+	}
 	content := struct {
 		Version     int                `json:"version"`
 		TrustedKeys map[string]string  `json:"trustedKeys"`
 		Plugins     []Plugin           `json:"plugins"`
 		Catalog     catalog.Projection `json:"catalog"`
 		Rejected    []catalog.Rejected `json:"rejected"`
-	}{response.Version, response.TrustedKeys, response.Plugins, response.Catalog, response.Rejected}
+	}{response.Version, response.TrustedKeys, revisionPlugins, response.Catalog, response.Rejected}
 	encoded, err := json.Marshal(content)
 	if err != nil {
 		return Response{}, err

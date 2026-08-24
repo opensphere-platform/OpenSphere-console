@@ -45,6 +45,38 @@ func TestBuildIsDeterministicAndCompatible(t *testing.T) {
 		t.Fatalf("contract missing: %#v", a)
 	}
 }
+
+func TestRevisionIgnoresObservationTimestampChurn(t *testing.T) {
+	input := fixtureInput()
+	_ = unstructured.SetNestedField(input.Registrations.Items[0].Object, "2026-08-24T00:00:01Z", "status", "currentResolvedAt")
+	_ = unstructured.SetNestedField(input.Registrations.Items[0].Object, "2026-08-24T00:00:02Z", "status", "channelCheckedAt")
+	first, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unstructured.SetNestedField(input.Registrations.Items[0].Object, "2026-08-24T00:01:01Z", "status", "currentResolvedAt")
+	_ = unstructured.SetNestedField(input.Registrations.Items[0].Object, "2026-08-24T00:01:02Z", "status", "channelCheckedAt")
+	second, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Revision != second.Revision {
+		t.Fatalf("observation-only refresh changed semantic revision: %s -> %s", first.Revision, second.Revision)
+	}
+	if first.Plugins[0].ChannelCheckedAt == second.Plugins[0].ChannelCheckedAt {
+		t.Fatal("observation evidence was not preserved in the public snapshot")
+	}
+
+	_ = unstructured.SetNestedField(input.Registrations.Items[0].Object, "UpdateAvailable", "status", "channelState")
+	semanticChange, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Revision == semanticChange.Revision {
+		t.Fatal("meaningful candidate state change did not change semantic revision")
+	}
+}
+
 func TestResolveBindsExactRevisionAndDigest(t *testing.T) {
 	snapshot, _ := Build(fixtureInput())
 	store := NewStore(nil)

@@ -102,8 +102,8 @@
   --clr-card-border-radius: var(--os-radius);   /* 10px → 4px (플랫) */
 }
 
-/* Registry & Catalog is a CBSS Core Service. Keep its Foundation service plan
-   flow visually separate from the older Console Extension package lifecycle. */
+/* Registry & Catalog is a CBSS Core Service. Module installation and
+   post-install service-instance configuration are intentionally separate. */
 os-admin-plugins {
   .foundation-catalog,
   .extension-package-catalog {
@@ -120,13 +120,9 @@ os-admin-plugins {
     padding: 1.25rem 1.5rem 1rem;
   }
   .foundation-catalog-head h2,
-  .extension-package-catalog-head h2,
-  .foundation-plan-builder h3,
-  .osce-plan-result h3 { margin: 0.15rem 0 0.35rem; color: var(--os-ink); }
+  .extension-package-catalog-head h2 { margin: 0.15rem 0 0.35rem; color: var(--os-ink); }
   .foundation-catalog-head p,
-  .extension-package-catalog-head p,
-  .foundation-plan-builder p,
-  .osce-plan-result p { margin: 0; color: var(--os-ink-muted); font-size: 0.9375rem; line-height: 1.55; }
+  .extension-package-catalog-head p { margin: 0; color: var(--os-ink-muted); font-size: 0.9375rem; line-height: 1.55; }
   .foundation-catalog-eyebrow {
     color: var(--os-accent) !important;
     font-size: 0.75rem !important;
@@ -142,8 +138,7 @@ os-admin-plugins {
   .foundation-catalog-evidence.is-stale { border-left: 0.25rem solid var(--os-warning); }
   .foundation-catalog-evidence > div { padding: 0.85rem 1rem; border-right: 1px solid var(--os-hairline); }
   .foundation-catalog-evidence > div:last-child { border-right: 0; }
-  .foundation-catalog-evidence span,
-  .foundation-catalog-context span {
+  .foundation-catalog-evidence span {
     display: block;
     margin-bottom: 0.2rem;
     color: var(--os-muted);
@@ -153,57 +148,37 @@ os-admin-plugins {
     letter-spacing: 0.045em;
   }
   .foundation-catalog-evidence strong { font-size: 0.9375rem; }
-  .foundation-catalog-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .foundation-catalog-context > div { padding: 1rem 1.5rem; border-right: 1px solid var(--os-hairline); border-bottom: 1px solid var(--os-hairline); }
-  .foundation-catalog-context > div:last-child { border-right: 0; }
-  .foundation-catalog-context strong { display: block; margin-bottom: 0.25rem; font-size: 1.0625rem; }
-  .foundation-catalog-context small { display: block; color: var(--os-ink-muted); font-size: 0.875rem; line-height: 1.45; }
-  .foundation-plan-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; padding: 1rem 1.5rem 1.25rem; }
-  .foundation-plan {
+  .foundation-module-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; padding: 1rem 1.5rem; }
+  .foundation-module {
     display: flex;
     flex-direction: column;
     gap: 0.45rem;
-    min-height: 10.5rem;
+    min-height: 9rem;
     padding: 1rem;
     border: 1px solid var(--os-hairline);
-    background: #fff;
+    background: var(--os-surface-0, #fff);
     color: var(--os-ink);
-    text-align: left;
-    cursor: pointer;
   }
-  .foundation-plan:hover:not(:disabled) { border-color: var(--os-accent); }
-  .foundation-plan.is-selected { border-color: var(--os-accent); box-shadow: inset 0 0 0 0.0625rem var(--os-accent); }
-  .foundation-plan.is-unavailable { opacity: 0.6; cursor: not-allowed; }
-  .foundation-plan strong { font-size: 1rem; overflow-wrap: anywhere; }
-  .foundation-plan > span:not(.foundation-plan-state) { color: var(--os-ink-muted); font-size: 0.875rem; line-height: 1.4; }
-  .foundation-plan-state { align-self: flex-start; color: var(--os-accent); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
-  .foundation-plan-builder { padding: 1.25rem 1.5rem; border-top: 1px solid var(--os-hairline); background: var(--os-surface-1); }
-  .foundation-plan-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; margin-top: 1rem; }
-  .foundation-plan-fields label { color: var(--os-ink-muted); font-size: 0.8125rem; font-weight: 600; }
-  .foundation-plan-fields input { width: 100%; margin-top: 0.3rem; }
-  .foundation-plan-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; }
-  .foundation-plan-actions span { font-size: 0.9375rem; }
-  .osce-plan-result { margin: 0 1.5rem 1.5rem; padding: 1.25rem; border-left: 0.25rem solid var(--os-success); background: rgba(36, 161, 72, 0.07); }
-  .osce-plan-result dl { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: 0.45rem 1rem; margin: 1rem 0; font-size: 0.875rem; }
-  .osce-plan-result dt { color: var(--os-ink-muted); }
-  .osce-plan-result dd { margin: 0; overflow-wrap: anywhere; }
+  .foundation-module-state { align-self: flex-start; color: var(--os-accent); font-size: 0.75rem; font-weight: 700; }
+  .foundation-module > strong { font-size: 1.0625rem; overflow-wrap: anywhere; }
+  .foundation-module > p { margin: 0; color: var(--os-ink-muted); font-size: 0.875rem; line-height: 1.5; }
+  .foundation-module dl { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: 0.3rem 0.75rem; margin: auto 0 0; padding-top: 0.75rem; border-top: 1px solid var(--os-hairline); font-size: 0.8125rem; }
+  .foundation-module dt { color: var(--os-ink-muted); }
+  .foundation-module dd { margin: 0; overflow-wrap: anywhere; }
+  .foundation-catalog-boundary { display: flex; flex-direction: column; gap: 0.35rem; margin: 0 1.5rem 1.25rem; padding: 1rem; border-left: 0.25rem solid var(--os-accent); background: var(--os-surface-1); }
+  .foundation-catalog-boundary span { color: var(--os-ink); font-size: 0.9375rem; line-height: 1.5; }
+  .foundation-catalog-boundary small { color: var(--os-ink-muted); font-size: 0.8125rem; line-height: 1.45; }
   .extension-package-catalog > .table { margin: 0; border-inline: 0; }
 
   @media (max-width: 68.75rem) {
-    .foundation-plan-grid,
-    .foundation-plan-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .foundation-module-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 45rem) {
     .foundation-catalog-head,
-    .extension-package-catalog-head,
-    .foundation-plan-actions { flex-direction: column; }
+    .extension-package-catalog-head { flex-direction: column; }
     .foundation-catalog-evidence,
-    .foundation-catalog-context,
-    .foundation-plan-grid,
-    .foundation-plan-fields { grid-template-columns: 1fr; }
-    .foundation-catalog-evidence > div,
-    .foundation-catalog-context > div { border-right: 0; border-bottom: 1px solid var(--os-hairline); }
-    .osce-plan-result dl { grid-template-columns: 1fr; }
+    .foundation-module-grid { grid-template-columns: 1fr; }
+    .foundation-catalog-evidence > div { border-right: 0; border-bottom: 1px solid var(--os-hairline); }
   }
 }
 

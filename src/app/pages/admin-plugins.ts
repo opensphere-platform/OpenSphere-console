@@ -67,29 +67,10 @@ interface FoundationCatalogSnapshot {
     offerings: FoundationCatalogObject[];
     plans: FoundationCatalogObject[];
     runtimeCatalogs: FoundationCatalogObject[];
+    moduleDescriptors: FoundationCatalogObject[];
   };
   sources: Record<string, { ready: boolean; count: number; reason?: string }>;
   rejected: Array<{ kind: string; id: string; code: string; message: string }>;
-}
-
-interface OscePostgresPlan {
-  planId: string;
-  planDigest: string;
-  expiresAt: string;
-  targetRevision: string;
-  riskClass: string;
-  requiredAssurance: string;
-  expectedPostcondition: Record<string, unknown>;
-  postconditions: string[];
-  target: {
-    namespace: string;
-    name: string;
-    catalogBinding?: {
-      revision: string;
-      planId: string;
-      candidate?: { version?: string; image?: string; digest?: string };
-    };
-  };
 }
 
 /** 위계 트리 노드 — console(mainShell) → systemPlugin/subShell/plugin, + Bindings 분기. */
@@ -596,8 +577,8 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
             <div class="foundation-catalog-head">
               <div>
                 <p class="foundation-catalog-eyebrow">CBSS CORE SERVICE · REGISTRY &amp; CATALOG</p>
-                <h2 id="foundation-catalog-title">Foundation Service Catalog</h2>
-                <p>설치 가능성은 Registry가 판정하고, 선택한 exact revision은 OSCE 읽기 전용 계획에 결속됩니다. 이 화면은 리소스를 생성하지 않습니다.</p>
+                <h2 id="foundation-catalog-title">Foundation Module Catalog</h2>
+                <p>PFSS 모듈의 설치 자격과 배포 출처를 확인합니다. 설치 후 서비스 인스턴스의 버전·용량·복제·백업 설정은 각 PFSS 관리 화면이 소유합니다.</p>
               </div>
               <button class="btn btn-sm btn-outline" [disabled]="foundationCatalogLoading()" (click)="refreshFoundationCatalog()">
                 {{ foundationCatalogLoading() ? '조회 중' : 'Catalog 새로고침' }}
@@ -618,83 +599,27 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                 <div><span>Rejected</span><strong>{{ snapshot.rejected.length }}</strong></div>
               </div>
 
-              <div class="foundation-catalog-context">
-                @for (capability of snapshot.catalog.capabilities; track capability.id) {
-                  <div>
-                    <span>Capability</span>
-                    <strong>{{ catalogText(capability, 'displayName') || capability.id }}</strong>
-                    <small>{{ catalogText(capability, 'description') }}</small>
-                  </div>
-                }
-                @for (offering of snapshot.catalog.offerings; track offering.id) {
-                  <div>
-                    <span>Offering</span>
-                    <strong>{{ offering.id }}</strong>
-                    <small>{{ catalogText(offering, 'provider') }} · {{ catalogText(offering, 'operatorVersion') }} · {{ offering.lifecycle || '미지정' }}</small>
-                  </div>
-                }
-              </div>
-
-              <div class="foundation-plan-grid" aria-label="Foundation service plans">
-                @for (plan of snapshot.catalog.plans; track plan.id) {
-                  <button
-                    type="button"
-                    class="foundation-plan"
-                    [class.is-selected]="selectedFoundationPlanId() === plan.id"
-                    [class.is-unavailable]="plan.lifecycle !== 'Available'"
-                    [disabled]="plan.lifecycle !== 'Available' || !foundationCatalogSelectable()"
-                    (click)="selectFoundationPlan(plan.id)"
-                  >
-                    <span class="foundation-plan-state">{{ plan.lifecycle || '미지정' }}</span>
-                    <strong>{{ plan.id }}</strong>
-                    <span>{{ catalogText(plan, 'profile') }} · PostgreSQL {{ catalogText(plan, 'postgresVersion') }}</span>
-                    <span>{{ catalogNumber(plan, 'instances') }} instance · {{ catalogNestedText(plan, 'resources', 'cpu') }} CPU · {{ catalogNestedText(plan, 'resources', 'memory') }}</span>
-                    <span>{{ catalogNestedText(plan, 'storage', 'size') }} · {{ catalogNestedText(plan, 'storage', 'storageClass') }}</span>
-                  </button>
+              <div class="foundation-module-grid" aria-label="Foundation modules">
+                @for (module of snapshot.catalog.moduleDescriptors; track module.id) {
+                  <article class="foundation-module">
+                    <span class="foundation-module-state">CATALOG 등록</span>
+                    <strong>{{ catalogText(module, 'model') || module.id }}</strong>
+                    <p>{{ catalogNestedText(module, 'description', 'summary') }}</p>
+                    <dl>
+                      <dt>설치 정책</dt><dd>{{ catalogNestedText(module, 'catalog', 'install') || '미지정' }}</dd>
+                      <dt>Catalog 권위</dt><dd>{{ catalogNestedText(module, 'catalog', 'authority') || '미지정' }}</dd>
+                    </dl>
+                  </article>
+                } @empty {
+                  <p class="os-sub">검증된 Foundation module descriptor가 없습니다. 서비스 plan을 모듈 설치 항목으로 대신 표시하지 않습니다.</p>
                 }
               </div>
 
-              @if (selectedFoundationPlan(); as plan) {
-                <div class="foundation-plan-builder">
-                  <div>
-                    <p class="foundation-catalog-eyebrow">OSCE · READ-ONLY PLAN</p>
-                    <h3>{{ plan.id }} 계획 입력</h3>
-                    <p>계획 생성은 Catalog revision과 PFSS Owner의 현재 판정을 확인합니다. 적용·승인·실행은 여기서 수행하지 않습니다.</p>
-                  </div>
-                  <div class="foundation-plan-fields">
-                    <label>Instance name<input #pgName class="clr-input" value="catalog-postgres" pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" /></label>
-                    <label>Display name<input #pgAlias class="clr-input" value="Catalog PostgreSQL" /></label>
-                    <label>Database<input #pgDatabase class="clr-input" value="app" /></label>
-                    <label>Owner<input #pgOwner class="clr-input" value="app_owner" /></label>
-                  </div>
-                  <div class="foundation-plan-actions">
-                    <span><strong>Exact version</strong> {{ selectedFoundationVersion() || '해당 major의 사용 가능 버전 없음' }}</span>
-                    <button
-                      class="btn btn-primary"
-                      [disabled]="oscePlanning() || !foundationCatalogSelectable() || !selectedFoundationVersion() || !pgName.value.trim() || !pgDatabase.value.trim() || !pgOwner.value.trim()"
-                      (click)="createOscePostgresPlan(pgName.value, pgAlias.value, pgDatabase.value, pgOwner.value)"
-                    >{{ oscePlanning() ? 'OSCE 확인 중' : 'OSCE 읽기 전용 계획 생성' }}</button>
-                  </div>
-                </div>
-              }
-
-              @if (oscePlan(); as plan) {
-                <section class="osce-plan-result" aria-labelledby="osce-plan-result-title">
-                  <div>
-                    <p class="foundation-catalog-eyebrow">PLAN READY · NOT EXECUTED</p>
-                    <h3 id="osce-plan-result-title">OSCE가 계획을 검증했습니다</h3>
-                  </div>
-                  <dl>
-                    <dt>Plan</dt><dd class="os-mono">{{ plan.planId }}</dd>
-                    <dt>Catalog revision</dt><dd class="os-mono">{{ shortDigest(plan.target.catalogBinding?.revision || '') }}</dd>
-                    <dt>Plan binding</dt><dd>{{ plan.target.catalogBinding?.planId || '미보고' }} · PostgreSQL {{ plan.target.catalogBinding?.candidate?.version || '미보고' }}</dd>
-                    <dt>Target revision</dt><dd class="os-mono">{{ plan.targetRevision }}</dd>
-                    <dt>Risk / assurance</dt><dd>{{ plan.riskClass }} · {{ plan.requiredAssurance }}</dd>
-                    <dt>Expires</dt><dd>{{ plan.expiresAt }}</dd>
-                  </dl>
-                  <p>이 결과는 계획 증거이며 설치나 생성 결과가 아닙니다. 실행은 별도 승인·OSDST 결속·Owner 재검증을 거쳐야 합니다.</p>
-                </section>
-              }
+              <aside class="foundation-catalog-boundary">
+                <strong>이 화면의 경계</strong>
+                <span>Registry는 모듈 설치 후보를 판정합니다. PostgreSQL 인스턴스 생성과 운영 설정은 설치된 PFSS의 <code>/pfss/postgres</code>에서 처리합니다.</span>
+                <small>현재 Registry가 보유한 인스턴스 구성 자료: capability {{ snapshot.catalog.capabilities.length }} · offering {{ snapshot.catalog.offerings.length }} · profile {{ snapshot.catalog.plans.length }}. 이 자료는 여기서 선택하거나 실행하지 않습니다.</small>
+              </aside>
             } @else if (!foundationCatalogLoading()) {
               <p class="os-sub">Registry &amp; Catalog의 유효한 스냅샷이 없습니다. 0건으로 간주하지 않습니다.</p>
             }
@@ -1509,26 +1434,6 @@ export class AdminPlugins implements OnInit {
   readonly foundationCatalogSnapshot = signal<FoundationCatalogSnapshot | null>(null);
   readonly foundationCatalogError = signal<string | null>(null);
   readonly foundationCatalogLoading = signal(false);
-  readonly selectedFoundationPlanId = signal<string | null>(null);
-  readonly oscePlanning = signal(false);
-  readonly oscePlan = signal<OscePostgresPlan | null>(null);
-  readonly selectedFoundationPlan = computed(() => {
-    const id = this.selectedFoundationPlanId();
-    return id ? this.foundationCatalogSnapshot()?.catalog.plans.find((plan) => plan.id === id) || null : null;
-  });
-  readonly selectedFoundationVersion = computed(() => {
-    const snapshot = this.foundationCatalogSnapshot();
-    const plan = this.selectedFoundationPlan();
-    if (!snapshot || !plan) return '';
-    const major = this.catalogText(plan, 'postgresVersion');
-    for (const runtime of snapshot.catalog.runtimeCatalogs) {
-      const versions = Array.isArray(runtime.spec['versions']) ? runtime.spec['versions'] as Array<Record<string, unknown>> : [];
-      const available = versions.filter((item) => String(item['major'] || '') === major && String(item['lifecycle'] || '') === 'Available');
-      const preferred = available.find((item) => String(item['version'] || '') === String(runtime.spec['defaultVersion'] || '')) || available[0];
-      if (preferred) return String(preferred['version'] || '');
-    }
-    return '';
-  });
 
   readonly catalog = this.projections.catalog;
   readonly registrations = this.projections.registrations;
@@ -2107,79 +2012,14 @@ export class AdminPlugins implements OnInit {
       }
       this.foundationCatalogSnapshot.set(body);
       this.foundationCatalogError.set(body.stale
-        ? 'Registry & Catalog 스냅샷이 stale 상태입니다. 마지막 정상 값은 보이지만 새 계획 선택은 차단됩니다.'
+        ? 'Registry & Catalog 스냅샷이 stale 상태입니다. 마지막 정상 값은 보이지만 모듈 설치 판단에는 사용할 수 없습니다.'
         : Object.values(body.sources || {}).every((source) => source.ready)
           ? null
-          : 'Registry & Catalog source 일부가 Ready가 아닙니다. 새 계획 선택은 차단됩니다.');
-      const selected = this.selectedFoundationPlanId();
-      if (!selected || !body.catalog.plans.some((plan) => plan.id === selected && plan.lifecycle === 'Available')) {
-        this.selectedFoundationPlanId.set(body.catalog.plans.find((plan) => plan.lifecycle === 'Available')?.id || null);
-        this.oscePlan.set(null);
-      }
+          : 'Registry & Catalog source 일부가 Ready가 아닙니다. 모듈 설치 판단에는 사용할 수 없습니다.');
     } catch (error) {
       this.foundationCatalogError.set(error instanceof Error ? error.message : String(error));
     } finally {
       this.foundationCatalogLoading.set(false);
-    }
-  }
-
-  foundationCatalogSelectable(): boolean {
-    const snapshot = this.foundationCatalogSnapshot();
-    return Boolean(snapshot && !snapshot.stale && Object.values(snapshot.sources || {}).every((source) => source.ready));
-  }
-
-  selectFoundationPlan(id: string): void {
-    const plan = this.foundationCatalogSnapshot()?.catalog.plans.find((item) => item.id === id);
-    if (!plan || plan.lifecycle !== 'Available' || !this.foundationCatalogSelectable()) return;
-    this.selectedFoundationPlanId.set(id);
-    this.oscePlan.set(null);
-  }
-
-  async createOscePostgresPlan(name: string, alias: string, database: string, owner: string): Promise<void> {
-    const snapshot = this.foundationCatalogSnapshot();
-    const plan = this.selectedFoundationPlan();
-    const postgresVersion = this.selectedFoundationVersion();
-    const targetName = name.trim();
-    if (!snapshot || !plan || !postgresVersion || !this.foundationCatalogSelectable()) {
-      this.msg.set({ type: 'danger', text: 'Ready 상태의 Foundation Catalog plan과 exact PostgreSQL version이 필요합니다.' });
-      return;
-    }
-    if (!/^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/.test(targetName) || targetName.length > 63) {
-      this.msg.set({ type: 'danger', text: 'Instance name은 63자 이하의 Kubernetes DNS label이어야 합니다.' });
-      return;
-    }
-    this.oscePlanning.set(true);
-    this.oscePlan.set(null);
-    try {
-      const response = await this.http.request('/api/osaa/operations/plan', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create-postgres-cluster',
-          target: {
-            name: targetName,
-            namespace: 'opensphere-foundation',
-            alias: alias.trim() || targetName,
-            database: database.trim(),
-            owner: owner.trim(),
-            plan: plan.id,
-            postgresVersion,
-            deletionPolicy: 'Retain',
-          },
-          reason: `Foundation Catalog ${plan.id} 읽기 전용 계획 검증`,
-        }),
-      });
-      const body = await response.json().catch(() => ({})) as OscePostgresPlan & { error?: string };
-      if (!response.ok) throw new Error(body.error || `OSCE 계획 HTTP ${response.status}`);
-      if (body.target?.catalogBinding?.revision !== snapshot.revision) {
-        throw new Error('OSCE 계획이 화면에서 선택한 Registry revision과 일치하지 않습니다. Catalog를 새로고침하십시오.');
-      }
-      this.oscePlan.set(body);
-      this.msg.set({ type: 'success', text: 'OSCE 읽기 전용 계획이 생성되었습니다. 리소스 생성이나 변경은 실행되지 않았습니다.' });
-    } catch (error) {
-      this.msg.set({ type: 'danger', text: `OSCE 계획 생성 실패: ${error instanceof Error ? error.message : String(error)}` });
-    } finally {
-      this.oscePlanning.set(false);
     }
   }
 
