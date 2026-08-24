@@ -11,6 +11,7 @@ const {
   requiresFoundationPostgresStatus,
   requiresManualAccessDiagnosis,
   requiresOsShellDiagnosis,
+  requiresRegistryStatus,
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
 const { createOsdstClient, dialogueModePolicy } = require('./osdst-client');
@@ -6511,6 +6512,47 @@ function osaaSelfIdentityConversation(messages) {
   });
 }
 
+function registryStatusMessage(summary) {
+  return [
+    `OpenSphere Registry & Catalog revision: ${summary.revision || '관측 불가'}`,
+    `상태: ${summary.stale ? 'Stale' : 'Ready'} · Source ${summary.readySources}/${summary.totalSources} Ready · Rejected ${summary.rejectedCount}`,
+    `Foundation module: ${summary.moduleCount}개 · Extension package: ${summary.extensionCount}개`,
+    '',
+    '책임 경계: Registry는 PFSS 모듈의 설치 자격과 배포 출처만 소유합니다.',
+    'PostgreSQL의 버전·프로파일·용량·복제·스토리지·백업 설정과 운영 상태는 PFSS PostgreSQL Owner가 소유합니다.',
+  ].join('\n');
+}
+
+async function registryStatusConversation(messages, actor) {
+  if (!requiresRegistryStatus(latestUserContent(messages))) return null;
+  const started = Date.now();
+  try {
+    const projection = await registryRead(actor);
+    const registry = projection?.registry || {};
+    const sources = Object.values(registry.sources && typeof registry.sources === 'object' ? registry.sources : {});
+    const summary = {
+      schema: String(registry.schema || ''),
+      revision: String(registry.revision || projection?.revision || ''),
+      observedAt: String(registry.observedAt || ''),
+      stale: registry.stale === true,
+      readySources: sources.filter((source) => source?.ready === true).length,
+      totalSources: sources.length,
+      rejectedCount: Array.isArray(registry.rejected) ? registry.rejected.length : 0,
+      moduleCount: Array.isArray(registry?.catalog?.moduleDescriptors) ? registry.catalog.moduleDescriptors.length : 0,
+      extensionCount: Number(registry?.extensions?.count || (Array.isArray(registry.plugins) ? registry.plugins.length : 0)),
+    };
+    return commandResponse(started, registryStatusMessage(summary), {
+      schema: 'r2d2.registry-status/v1', phase: summary.stale ? 'Stale' : 'Observed',
+      deterministic: true, registry: summary,
+    });
+  } catch (error) {
+    const reason = String(error?.msg || error?.message || 'Registry unavailable');
+    return commandResponse(started, `OpenSphere Registry & Catalog Service를 현재 관측할 수 없습니다. ${reason}. 조회 실패는 설치 후보가 없다는 뜻이 아닙니다.`, {
+      schema: 'r2d2.registry-status/v1', phase: 'Unavailable', deterministic: true, error: reason,
+    });
+  }
+}
+
 async function foundationDirectoryStatusConversation(messages, actor, dialogueContext = null) {
   const query = latestUserContent(messages);
   const contextual = dialogueContext?.domain === 'pfss.directory'
@@ -8503,6 +8545,8 @@ async function chatCompletion(body, actor) {
   if (commandOut) return commandOut;
   const selfIdentityOut = osaaSelfIdentityConversation(baseMessages);
   if (selfIdentityOut) return selfIdentityOut;
+  const registryStatusOut = await registryStatusConversation(baseMessages, actor);
+  if (registryStatusOut) return registryStatusOut;
   const foundationDirectoryStatusOut = await foundationDirectoryStatusConversation(
     baseMessages, actor, body?._dialogueContext || null,
   );

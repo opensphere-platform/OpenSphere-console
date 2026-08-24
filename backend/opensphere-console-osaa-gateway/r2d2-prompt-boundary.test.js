@@ -15,6 +15,7 @@ const {
   requiresFoundationPostgresStatus,
   requiresManualAccessDiagnosis,
   requiresOsShellDiagnosis,
+  requiresRegistryStatus,
   requiresLiveAgentTools,
 } = require('./chat-runtime-policy');
 
@@ -91,6 +92,9 @@ test('knowledge questions do not receive live operational tools', () => {
   assert.equal(requiresOsShellDiagnosis('OS Shell이 왜 필요한가?'), false);
   assert.equal(requiresFoundationPostgresStatus('현재 pfss postgres 운영중인 인스턴스가 있는가?'), true);
   assert.equal(requiresFoundationPostgresStatus('PFSS PostgreSQL 클러스터를 생성해줘'), false);
+  assert.equal(requiresRegistryStatus('현재 Registry revision과 source 상태를 알려줘'), true);
+  assert.equal(requiresRegistryStatus('Registry가 PostgreSQL 설정을 소유하는가?'), true);
+  assert.equal(requiresFoundationPostgresStatus('현재 Registry revision과 PostgreSQL 설정 소유권을 알려줘'), false);
 });
 
 test('automatic suggested actions are absent and status answers use the deterministic PFSS owner path', () => {
@@ -134,6 +138,14 @@ test('Registry Plugin presentation incidents select the canonical deterministic 
   assert.match(server, /!extensionPresentationEvidence/);
   assert.match(server, /body\.includeEnvironment !== false && !extensionPresentationIntent/);
   assert.match(server, /Do not cite unrelated Kubernetes workload readiness as a cause/);
+});
+
+test('Registry status and ownership questions use the deterministic Registry projection before PFSS routing', () => {
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(server, /function registryStatusConversation/);
+  assert.match(server, /Registry는 PFSS 모듈의 설치 자격과 배포 출처만 소유합니다/);
+  assert.match(server, /PostgreSQL의 버전·프로파일·용량·복제·스토리지·백업 설정과 운영 상태는 PFSS PostgreSQL Owner가 소유합니다/);
+  assert.match(server, /registryStatusConversation\(baseMessages, actor\)[\s\S]{0,180}foundationDirectoryStatusConversation/);
 });
 
 test('lexical retrieval separates canonical identifiers from Korean particles', () => {
