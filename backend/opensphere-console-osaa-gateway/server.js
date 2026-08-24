@@ -6519,7 +6519,7 @@ function registryStatusMessage(summary) {
     `Foundation module: ${summary.moduleCount}개 · Extension package: ${summary.extensionCount}개`,
     '',
     '책임 경계: Registry는 PFSS 모듈의 설치 자격과 배포 출처만 소유합니다.',
-    'PostgreSQL의 버전·프로파일·용량·복제·스토리지·백업 설정과 운영 상태는 PFSS PostgreSQL Owner가 소유합니다.',
+    'PostgreSQL의 버전·프로파일·용량·복제·스토리지·백업 설정과 Available 같은 runtime lifecycle·운영 상태는 PFSS PostgreSQL Owner가 소유합니다.',
   ].join('\n');
 }
 
