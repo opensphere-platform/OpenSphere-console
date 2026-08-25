@@ -5,7 +5,7 @@ import { HttpService } from './http.service';
  *  사용자 신원은 X-OpenSphere-User로 전달(audit·권한). 셸 nginx가 controller로 프록시. */
 export interface CatalogItem {
   name: string; displayName: string; version: string; owner: string;
-  description: string; nav?: { band: string; label: string; icon?: string; labelOverride?: string; order?: number };
+  description: string; nav?: { band: string; label: string; icon?: string; labelOverride?: string; bandOverride?: string | null; order?: number };
   shellCompat: string; permissions: string[];
   kind: 'subShell' | 'plugin'; hostRef: string; hostApiVersion?: string; hostCompat: string;
   contributions: Record<string, unknown>;
@@ -227,7 +227,7 @@ export class PluginControlClient {
     }).then((r) => { if (!r.ok) throw new Error(`set-icon HTTP ${r.status}`); return r.json(); });
   }
   /** Main Shell 1단 메뉴 표현 설정. 빈 labelOverride는 원래 displayName 사용. */
-  setNavigation(id: string, settings: { icon?: string; labelOverride?: string }) {
+  setNavigation(id: string, settings: { icon?: string; labelOverride?: string; bandOverride?: string }) {
     return this.http.request(`/api/admin/plugins/packages/${id}/navigation`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings),
     }).then(async (r) => {

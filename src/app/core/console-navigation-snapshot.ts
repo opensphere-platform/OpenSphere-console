@@ -38,6 +38,16 @@ export interface NavigationInventoryEntry {
 
 export const CONSOLE_NAVIGATION_BAND_ORDER = ['운영 Operate', '구축 Build', '전달 Deliver', '지능 Intelligence'] as const;
 
+/** Standard groups follow workspace ACLs; administrator-created groups are administrator-only. */
+export function navigationBandVisible(
+  band: string,
+  allowedBands: ReadonlySet<string>,
+  aclBands: ReadonlySet<string>,
+  isAdmin: boolean,
+): boolean {
+  return aclBands.has(band) ? allowedBands.has(band) : isAdmin;
+}
+
 function bandRank(value: string): number {
   const rank = CONSOLE_NAVIGATION_BAND_ORDER.indexOf(value as typeof CONSOLE_NAVIGATION_BAND_ORDER[number]);
   return rank < 0 ? CONSOLE_NAVIGATION_BAND_ORDER.length : rank;

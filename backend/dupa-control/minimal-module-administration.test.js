@@ -147,10 +147,10 @@ test('DUPA runtime image contains every local controller module', () => {
   assert.match(dockerfile, /COPY foundation-establishment\.js \/app\/foundation-establishment\.js/);
 });
 
-test('first-level navigation settings accept closed icon and optional label overrides', () => {
-  assert.deepEqual(navigationSettingsPatch({ icon: 'logo--gitlab', labelOverride: '  Source Control  ' }), {
+test('first-level navigation settings accept closed presentation and group overrides', () => {
+  assert.deepEqual(navigationSettingsPatch({ icon: 'logo--gitlab', labelOverride: '  Source Control  ', bandOverride: '  데이터 Data  ' }), {
     ok: true,
-    nav: { icon: 'logo--gitlab', labelOverride: 'Source Control' },
+    nav: { icon: 'logo--gitlab', labelOverride: 'Source Control', bandOverride: '데이터 Data' },
   });
   assert.deepEqual(navigationSettingsPatch({ labelOverride: '   ' }), {
     ok: true,
@@ -158,6 +158,8 @@ test('first-level navigation settings accept closed icon and optional label over
   });
   assert.equal(navigationSettingsPatch({ icon: '<svg onload=alert(1)>' }).reason, 'InvalidNavigationIcon');
   assert.equal(navigationSettingsPatch({ labelOverride: 'bad\nlabel' }).reason, 'InvalidNavigationLabel');
+  assert.equal(navigationSettingsPatch({ bandOverride: 'bad\nband' }).reason, 'InvalidNavigationBand');
+  assert.deepEqual(navigationSettingsPatch({ bandOverride: '   ' }), { ok: true, nav: { bandOverride: null } });
   assert.equal(navigationSettingsPatch({ icon: 'application', authority: 'guest' }).reason, 'InvalidNavigationSettings');
 });
 

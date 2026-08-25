@@ -26,6 +26,7 @@ import {
   IntegrationStatus,
 } from '../core/plugin-control-client.service';
 import { ExtensionProjectionStore } from '../core/extension-projection.store';
+import { CONSOLE_NAVIGATION_BAND_ORDER } from '../core/console-navigation-snapshot';
 
 interface EffectiveExtensionState {
   label: string;
@@ -952,6 +953,24 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         @if (selectedIsFirstLevelSubShell()) {
           <clr-accordion class="cc-secondary cc-menu-settings" aria-label="1단 메뉴 표시 설정">
             <clr-accordion-panel>
+              <clr-accordion-title>메뉴 그룹</clr-accordion-title>
+              <clr-accordion-description>{{ menuBand(selected() || '') }}</clr-accordion-description>
+              <clr-accordion-content *clrIfExpanded>
+                <div class="cc-menu-label">
+                  <label for="subshell-menu-band">그룹 이름</label>
+                  <input id="subshell-menu-band" #menuBandInput class="clr-input" maxlength="80"
+                         list="subshell-menu-bands" [value]="menuBandOverride()" [placeholder]="menuBand(selected() || '')" />
+                  <datalist id="subshell-menu-bands">
+                    @for (band of standardNavigationBands; track band) { <option [value]="band"></option> }
+                    @for (band of customNavigationBands(); track band) { <option [value]="band"></option> }
+                  </datalist>
+                  <button type="button" class="btn btn-sm btn-primary" (click)="saveMenuBand(menuBandInput.value)">저장</button>
+                </div>
+                <p class="os-sub">기존 그룹을 선택하거나 새 이름을 입력할 수 있습니다. 새 그룹은 기본적으로 관리자에게만 표시됩니다. 비워서 저장하면 패키지 기본 그룹으로 복원합니다.</p>
+              </clr-accordion-content>
+            </clr-accordion-panel>
+
+            <clr-accordion-panel>
               <clr-accordion-title>메뉴 표시 이름</clr-accordion-title>
               <clr-accordion-description>{{ menuDisplayLabel(selected() || '') }}</clr-accordion-description>
               <clr-accordion-content *clrIfExpanded>
@@ -1640,6 +1659,26 @@ export class AdminPlugins implements OnInit {
   }
   menuBand(name: string): string {
     return this.catalogItem(name)?.nav?.band || '운영 Operate';
+  }
+  readonly standardNavigationBands = CONSOLE_NAVIGATION_BAND_ORDER;
+  readonly customNavigationBands = computed(() => [...new Set(this.catalog()
+    .filter((item) => item.kind === 'subShell' && (item.hostRef || 'main') === 'main')
+    .map((item) => item.nav?.band || '')
+    .filter((band) => band && !CONSOLE_NAVIGATION_BAND_ORDER.includes(band as typeof CONSOLE_NAVIGATION_BAND_ORDER[number])))]
+    .sort((left, right) => left.localeCompare(right)));
+  menuBandOverride(): string {
+    return this.catalogItem(this.selected() || '')?.nav?.bandOverride || '';
+  }
+  async saveMenuBand(value: string): Promise<void> {
+    const id = this.selected();
+    if (!id) return;
+    try {
+      await this.ctl.setNavigation(id, { bandOverride: value });
+      await this.ext.reload();
+      this.msg.set({ type: 'success', text: value.trim() ? `메뉴 그룹 변경: ${value.trim()}` : '메뉴 그룹을 패키지 기본값으로 복원했습니다.' });
+    } catch (error) {
+      this.msg.set({ type: 'danger', text: String(error) });
+    }
   }
   async saveMenuLabel(value: string): Promise<void> {
     const id = this.selected();

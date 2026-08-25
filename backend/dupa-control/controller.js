@@ -285,6 +285,14 @@ function navigationPreferenceFromRecord(record) {
         && !/[\u0000-\u001f\u007f]/.test(raw.labelOverride)))) {
     preference.labelOverride = raw.labelOverride;
   }
+  if (Object.hasOwn(raw, 'bandOverride')
+    && (raw.bandOverride === null
+      || (typeof raw.bandOverride === 'string' && raw.bandOverride.length <= 80
+        && raw.bandOverride.trim() === raw.bandOverride
+        && raw.bandOverride.length > 0
+        && !/[\u0000-\u001f\u007f]/.test(raw.bandOverride)))) {
+    preference.bandOverride = raw.bandOverride;
+  }
   if (Number.isInteger(raw.order) && raw.order >= 0 && raw.order <= 63) preference.order = raw.order;
   return Object.keys(preference).length ? preference : null;
 }
@@ -1339,7 +1347,7 @@ const NAV_ICON_TOKEN = /^[a-z0-9][a-z0-9-]{0,95}$/;
 function navigationSettingsPatch(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, reason: 'InvalidNavigationSettings' };
   const keys = Object.keys(body);
-  if (!keys.length || keys.some((key) => !['icon', 'labelOverride'].includes(key))) {
+  if (!keys.length || keys.some((key) => !['icon', 'labelOverride', 'bandOverride'].includes(key))) {
     return { ok: false, reason: 'InvalidNavigationSettings' };
   }
   const nav = {};
@@ -1354,6 +1362,12 @@ function navigationSettingsPatch(body) {
     const label = body.labelOverride.trim();
     if (label.length > 80 || /[\u0000-\u001f\u007f]/.test(label)) return { ok: false, reason: 'InvalidNavigationLabel' };
     nav.labelOverride = label || null;
+  }
+  if (Object.hasOwn(body, 'bandOverride')) {
+    if (typeof body.bandOverride !== 'string') return { ok: false, reason: 'InvalidNavigationBand' };
+    const band = body.bandOverride.trim();
+    if (band.length > 80 || /[\u0000-\u001f\u007f]/.test(band)) return { ok: false, reason: 'InvalidNavigationBand' };
+    nav.bandOverride = band || null;
   }
   return { ok: true, nav };
 }
@@ -2088,11 +2102,17 @@ function effectivePackageNavigation(pkg, preferences, priorCatalogItems = []) {
     ? preferences.get(id)
     : priorNavigationPreference(priorCatalogItems, id);
   if (!preference) return pkg;
+  const { bandOverride, ...presentation } = preference;
   return {
     ...pkg,
     spec: {
       ...pkg.spec,
-      nav: { ...(pkg.spec?.nav || {}), ...preference },
+      nav: {
+        ...(pkg.spec?.nav || {}),
+        ...presentation,
+        ...(typeof bandOverride === 'string' ? { band: bandOverride } : {}),
+        ...(Object.hasOwn(preference, 'bandOverride') ? { bandOverride } : {}),
+      },
     },
   };
 }

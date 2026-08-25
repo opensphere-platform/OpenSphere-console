@@ -4,6 +4,7 @@ import {
   buildConsoleNavigationSnapshot,
   parseConsoleNavigationSnapshot,
   parseStoredConsoleNavigationSnapshot,
+  navigationBandVisible,
 } from './console-navigation-snapshot.ts';
 
 const sha = 'a'.repeat(64);
@@ -49,4 +50,13 @@ test('stored navigation projection is closed and canonical', () => {
   assert.equal(parseConsoleNavigationSnapshot({ ...snapshot, items: [{ ...snapshot.items[0], route: '/manage/roles' }] }), null);
   assert.equal(parseConsoleNavigationSnapshot({ ...snapshot, items: [snapshot.items[0], snapshot.items[0]] }), null);
   assert.equal(parseStoredConsoleNavigationSnapshot('{broken'), null);
+});
+
+test('custom navigation groups are administrator-only while standard groups follow workspace ACLs', () => {
+  const acl = new Set(['운영 Operate', '구축 Build', '전달 Deliver', '지능 Intelligence']);
+  const allowed = new Set(['구축 Build', '전달 Deliver']);
+  assert.equal(navigationBandVisible('구축 Build', allowed, acl, false), true);
+  assert.equal(navigationBandVisible('운영 Operate', allowed, acl, false), false);
+  assert.equal(navigationBandVisible('데이터 Data', allowed, acl, false), false);
+  assert.equal(navigationBandVisible('데이터 Data', allowed, acl, true), true);
 });

@@ -269,3 +269,10 @@ test('a verified host declaration exposes Registry-approved navigation before ch
   assert.match(source, /this\.ext\.hostChildProjection\(hostRef, r\.name\)/);
   assert.match(source, /\{\{ menuState\(r\)\.reason \}\}/);
 });
+
+test('first-level SubShell settings manage a durable menu group without editing signed packages', () => {
+  assert.match(source, /<clr-accordion-title>메뉴 그룹<\/clr-accordion-title>/);
+  assert.match(source, /saveMenuBand\(menuBandInput\.value\)/);
+  assert.match(source, /bandOverride: value/);
+  assert.match(source, /새 그룹은 기본적으로 관리자에게만 표시됩니다/);
+});

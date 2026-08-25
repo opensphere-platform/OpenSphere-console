@@ -234,7 +234,7 @@ test('package replacement cannot erase operator navigation preferences', () => {
     digest: `sha256:${'b'.repeat(64)}`,
   });
   const preference = navigationPreferenceFromRecord({
-    navigation: { icon: 'app-connectivity', labelOverride: 'PF Service Stack', order: 2 },
+    navigation: { icon: 'app-connectivity', labelOverride: 'PF Service Stack', bandOverride: '데이터 Data', order: 2 },
   });
   const before = catalogProjectionItems([first], new Map([[descriptor.id, preference]]))[0];
 
@@ -251,10 +251,12 @@ test('package replacement cannot erase operator navigation preferences', () => {
   assert.deepEqual(before.nav, {
     ...first.spec.nav,
     icon: 'app-connectivity', labelOverride: 'PF Service Stack', order: 2,
+    band: '데이터 Data', bandOverride: '데이터 Data',
   });
   assert.deepEqual(after.nav, {
     ...updatedDescriptor.nav,
     icon: 'app-connectivity', labelOverride: 'PF Service Stack', order: 2,
+    band: '데이터 Data', bandOverride: '데이터 Data',
   });
   assert.deepEqual(replacement.spec.nav, updatedDescriptor.nav, 'signed package remains free of operator-owned values');
 });

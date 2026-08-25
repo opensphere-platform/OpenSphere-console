@@ -17,6 +17,7 @@ import ChevronRight16 from '@carbon/icons/es/chevron--right/16';
 import { AuthService } from '../core/auth.service';
 import { ExtensionHostService, NavNode } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
+import { navigationBandVisible } from '../core/console-navigation-snapshot';
 import { pluginIdFromRoute, routeForPlugin } from '../core/perspectives';
 import { OsNavNode } from './os-nav-node';
 import { OsSearch } from './os-search';
@@ -439,8 +440,8 @@ export class OsShell {
     const known = OsShell.BAND_ORDER.filter((b) => byBand.has(b));
     const extra = [...byBand.keys()].filter((b) => !OsShell.BAND_ORDER.includes(b));
     return [...known, ...extra]
-      // ACL에 정의된 밴드면 허용 여부로 게이트, 신규(ACL 미정의) 밴드는 통과
-      .filter((b) => !aclBands.has(b) || allowedBands.has(b))
+      // 표준 밴드는 workspace ACL을 따르고, 신규 관리자 그룹은 일반 사용자에게 fail-closed한다.
+      .filter((b) => navigationBandVisible(b, allowedBands, aclBands, this.psp.isAdmin()))
       .map((b) => ({ band: b, items: byBand.get(b) ?? [] }))
       // 빈 밴드 제거(항목 0 + 트리 0) — phantom 밴드 라벨 제거
       .filter((b) => b.items.length > 0 || this.treesForBand(b.band).length > 0);
