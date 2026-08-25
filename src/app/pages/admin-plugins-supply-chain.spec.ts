@@ -18,6 +18,7 @@ test('Catalog, Registry Connections, and Trust are separate management surfaces'
 test('Catalog presentation accepts only the normalized navigation icon token', () => {
   assert.match(page, /<os-nav-icon \[token\]="descriptor\.presentation\?\.iconRef \|\| 'application'"/);
   assert.doesNotMatch(page, /descriptor\.presentation\?\.(?:iconUrl|svg|html)/);
+  assert.doesNotMatch(page, /<os-raw-icon[^>]*descriptor|descriptor[^\n]*bypassSecurityTrust|\[innerHTML\][^\n]*descriptor/);
 });
 
 test('Catalog selection never sends an Owner-managed artifact to the DUPA installer', () => {
@@ -29,9 +30,13 @@ test('Catalog selection never sends an Owner-managed artifact to the DUPA instal
 
 test('Registry connection and revocation destructive actions require exact confirmation', () => {
   assert.match(page, /REMOVE opensphere-ghcr/);
-  assert.match(page, /REVOKE \$\{digest\}/);
+  assert.match(page, /REVOKE \$\{reference\}/);
   assert.match(client, /JSON\.stringify\(\{ reason, confirmation \}\)/);
   assert.match(client, /JSON\.stringify\(\{ image, replacementImage, reason, confirmation \}\)/);
   assert.match(client, /registry-connections\/opensphere-ghcr\/verify/);
   assert.doesNotMatch(client, /\/api\/admin\/extensions\/registry-credentials/);
+});
+
+test('Catalog does not expose the raw OCI installation escape hatch', () => {
+  assert.doesNotMatch(page, /고급 OCI 설치|직접 참조 설치|advanced-install/);
 });

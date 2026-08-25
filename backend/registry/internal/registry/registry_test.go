@@ -20,6 +20,7 @@ func fixtureInput() Input {
 	pkg := object("postgres", map[string]interface{}{"displayName": "PostgreSQL", "kind": "plugin", "hostRef": "foundation", "hostApiVersion": "1.0.0", "hostCompat": ">=1.0.0 <2.0.0", "image": map[string]interface{}{"digest": "sha256:" + string(bytes.Repeat([]byte{'a'}, 64))}, "manifest": map[string]interface{}{"sha256": string(bytes.Repeat([]byte{'b'}, 64)), "signaturePath": "/plugins/ui-shell.manifest.json.sig"}, "trust": map[string]interface{}{"keyId": "key-1"}, "contributions": map[string]interface{}{}})
 	reg := object("postgres", map[string]interface{}{"desiredState": "Enabled", "approval": map[string]interface{}{"requestedBy": "admin", "reason": "test"}})
 	reg.Object["status"] = map[string]interface{}{"phase": "Activated", "workload": map[string]interface{}{"phase": "Ready"}, "verification": map[string]interface{}{"manifest": "Verified", "signature": "Verified", "entryDigest": "Verified", "permissions": "Approved"}, "currentDigest": "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)), "currentManifestSha256": string(bytes.Repeat([]byte{'b'}, 64)), "currentVersion": "202608240000", "currentRevision": "0123456789012345678901234567890123456789", "manifestUrl": "/api/plugins/postgres-r-1/plugins/ui-shell.manifest.json", "serving": map[string]interface{}{"phase": "Current", "artifactServiceId": "postgres-r-1", "revision": "1"}}
+	reg.Object["status"].(map[string]interface{})["currentRequestedRef"] = "ghcr.io/opensphere-platform/opensphere-plugin-postgres:edge"
 	descriptor := object("data", map[string]interface{}{"model": "data", "catalog": map[string]interface{}{"authority": "registry", "install": "optional"}})
 	return Input{Packages: list(pkg), Registrations: list(reg), Descriptors: list(descriptor), ReleaseLock: ReleaseLock{ReleaseDigest: "sha256:" + string(bytes.Repeat([]byte{'e'}, 64)), Components: map[string]ReleaseComponent{"registry": {Repository: "opensphere-registry", Image: "ghcr.io/opensphere-platform/opensphere-registry@sha256:" + string(bytes.Repeat([]byte{'c'}, 64)), SourceRevision: "0123456789012345678901234567890123456789"}}}, ReleaseLockResourceVersion: "42", TrustedKeys: map[string]string{"key-1": "public"}, Navigation: map[string]map[string]interface{}{}, Sources: map[string]catalog.SourceStatus{}, ObservedAt: time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)}
 }
@@ -159,9 +160,13 @@ func TestResolveBindsExtensionToExactRevisionAndDigest(t *testing.T) {
 	if wrongExecution.Result != "StaleRevision" {
 		t.Fatalf("execution revision mismatch was not rejected: %#v", wrongExecution)
 	}
-	stale := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: "sha256:old"})
-	if stale.Result != "StaleRevision" {
-		t.Fatalf("unexpected: %#v", stale)
+	presentationOnlySnapshotAdvance := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: "sha256:old", ExecutionRevision: descriptorExecutionRevision})
+	if presentationOnlySnapshotAdvance.Result != "Eligible" {
+		t.Fatalf("unchanged executable descriptor was incorrectly invalidated by snapshot advance: %#v", presentationOnlySnapshotAdvance)
+	}
+	missingExecution := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: snapshot.Revision})
+	if missingExecution.BlockerCode != "ExecutionRevisionRequired" {
+		t.Fatalf("missing execution revision was not rejected: %#v", missingExecution)
 	}
 }
 func TestInvalidExtensionDigestIsRejected(t *testing.T) {
@@ -171,6 +176,40 @@ func TestInvalidExtensionDigestIsRejected(t *testing.T) {
 	if len(got.Plugins) != 0 || len(got.Rejected) == 0 {
 		t.Fatalf("invalid candidate published: %#v", got)
 	}
+}
+
+func TestExtensionWithoutCanonicalArtifactReferenceIsRejected(t *testing.T) {
+	input := fixtureInput()
+	_ = unstructured.SetNestedField(input.Registrations.Items[0].Object, "docker.io/example/postgres:latest", "status", "currentRequestedRef")
+	got, _ := Build(input)
+	for _, descriptor := range got.Inventory.Descriptors {
+		if descriptor.ID == "extension.postgres" {
+			t.Fatalf("extension with a non-canonical artifact reference was published: %#v", descriptor)
+		}
+	}
+	for _, rejected := range got.Rejected {
+		if rejected.ID == "extension.postgres" && rejected.Code == "ArtifactReferenceInvalid" {
+			return
+		}
+	}
+	t.Fatal("invalid extension artifact reference was not rejected")
+}
+
+func TestDescriptorPresentationTextIsBoundedAndControlFree(t *testing.T) {
+	input := fixtureInput()
+	longName := string(bytes.Repeat([]byte{'x'}, 180)) + "\nunsafe"
+	_ = unstructured.SetNestedField(input.Packages.Items[0].Object, longName, "spec", "displayName")
+	got, _ := Build(input)
+	for _, descriptor := range got.Inventory.Descriptors {
+		if descriptor.ID != "extension.postgres" {
+			continue
+		}
+		if len([]rune(descriptor.DisplayName)) != 120 || bytes.ContainsRune([]byte(descriptor.DisplayName), '\n') {
+			t.Fatalf("presentation text was not bounded: %q", descriptor.DisplayName)
+		}
+		return
+	}
+	t.Fatal("extension descriptor missing")
 }
 
 func TestPendingTargetPreservesLastKnownGoodAndNavigation(t *testing.T) {

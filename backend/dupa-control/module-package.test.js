@@ -338,7 +338,7 @@ test('OSAA Extension security facade is exact-digest, permission-gated, AAL2, an
   assert.match(owner, /osaaActor\.assurance !== 'aal2'/);
   assert.match(owner, /requireClosedOsaaExtensionBody/);
   assert.match(owner, /if \(parsed\.channel\)/);
-  assert.match(owner, /revoke extension image \$\{image\}/);
+  assert.match(owner, /registryRevocationConfirmation\(image\)/);
   assert.doesNotMatch(owner, /registryToken|password|apiKey|credential\s*:/i);
   assert.match(source, /permissions: Array\.isArray\(body\.permissions\)/);
   assert.match(source, /assurance: String\(body\.assurance/);

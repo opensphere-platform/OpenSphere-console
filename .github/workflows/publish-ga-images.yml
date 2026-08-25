@@ -49,6 +49,11 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: OpenSphere-console/package-lock.json
+      - name: Setup Registry Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: OpenSphere-console/backend/registry/go.mod
+          cache-dependency-path: OpenSphere-console/backend/registry/go.sum
       - name: Install SDK
         working-directory: OpenSphere-SDK
         # The SDK repository does not yet publish a package-lock.json.
@@ -62,6 +67,12 @@ jobs:
       - name: Console contract tests
         working-directory: OpenSphere-console
         run: npm test
+      - name: Registry and Catalog security contracts
+        working-directory: OpenSphere-console
+        run: npm run test:catalog-security
+      - name: Registry service tests
+        working-directory: OpenSphere-console/backend/registry
+        run: go test ./...
       - name: OSAA dialogue-state focused contracts
         working-directory: OpenSphere-console
         run: npm run test:osaa-dialogue

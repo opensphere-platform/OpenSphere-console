@@ -390,18 +390,26 @@ func exactArtifactRef(image, digest string) string {
 }
 
 func pluginArtifactRef(plugin Plugin) string {
-	if exact := exactArtifactRef(plugin.RequestedRef, plugin.InstalledDigest); exact != "" {
-		return exact
-	}
-	prefix := "opensphere-plugin-"
-	if plugin.Kind == "subShell" {
-		if strings.HasPrefix(plugin.ID, "shell-") {
-			prefix = "opensphere-"
-		} else {
-			prefix = "opensphere-shell-"
+	return exactArtifactRef(plugin.RequestedRef, plugin.InstalledDigest)
+}
+
+func boundedText(value string, maxRunes int) string {
+	value = strings.Map(func(r rune) rune {
+		switch r {
+		case '\r', '\n', '\t':
+			return ' '
 		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		value = string(runes[:maxRunes])
 	}
-	return "ghcr.io/opensphere-platform/" + prefix + plugin.ID + "@" + plugin.InstalledDigest
+	return value
 }
 
 var presentationIconAllowlist = map[string]bool{
@@ -420,11 +428,11 @@ func presentationIcon(value string) string {
 
 func installablePresentation(item unstructured.Unstructured) (string, string, catalog.Presentation) {
 	id := item.GetName()
-	displayName := nestedString(item.Object, "spec", "model")
+	displayName := boundedText(nestedString(item.Object, "spec", "model"), 120)
 	if displayName == "" {
 		displayName = strings.Title(strings.ReplaceAll(strings.ReplaceAll(id, "-", " "), "_", " ")) //nolint:staticcheck -- deterministic legacy name fallback
 	}
-	description := nestedString(item.Object, "spec", "description", "summary")
+	description := boundedText(nestedString(item.Object, "spec", "description", "summary"), 500)
 	icons := map[string]string{"postgres": "data--base", "directory": "user-profile", "psmdb": "document"}
 	icon := icons[id]
 	if icon == "" {
@@ -534,16 +542,24 @@ func buildInventory(input Input, plugins []Plugin, rejected *[]catalog.Rejected)
 			rejectedByClass["extension"]++
 			continue
 		}
+		artifactRef := pluginArtifactRef(plugin)
+		if artifactRef == "" {
+			id := "extension." + plugin.ID
+			*rejected = append(*rejected, catalog.Rejected{Kind: "extension", ID: id, Code: "ArtifactReferenceInvalid", Message: "verified extension does not identify an allowlisted exact artifact reference"})
+			missing = append(missing, catalog.CoverageGap{ID: id, Class: "extension", Code: "ArtifactReferenceInvalid", Message: "verified extension does not identify an allowlisted exact artifact reference"})
+			rejectedByClass["extension"]++
+			continue
+		}
 		ownerID := plugin.HostRef
 		if ownerID == "" {
 			ownerID = "opensphere-console"
 		}
 		descriptors = append(descriptors, catalog.Descriptor{
-			ID: "extension." + plugin.ID, Class: "extension", DisplayName: plugin.Name,
+			ID: "extension." + plugin.ID, Class: "extension", DisplayName: boundedText(plugin.Name, 120),
 			Description: "Verified Console extension", Publisher: "opensphere-platform", Presentation: catalog.Presentation{IconRef: presentationIcon(plugin.Icon), Categories: []string{"console-extension"}}, Domain: "console-extension",
 			Owner:        catalog.Owner{ID: ownerID, LifecycleAPI: "/api/admin/extensions/registrations/" + plugin.ID},
 			Source:       catalog.Source{Kind: "UIPluginPackage+UIPluginRegistration", Name: plugin.ID},
-			Release:      catalog.Release{Version: version, ArtifactRef: pluginArtifactRef(plugin), ImageDigest: plugin.InstalledDigest},
+			Release:      catalog.Release{Version: version, ArtifactRef: artifactRef, ImageDigest: plugin.InstalledDigest},
 			Capabilities: extensionCapabilities(plugin), Installation: catalog.Installation{Mode: "dupa", Eligible: true},
 			Evidence: catalog.Evidence{ObservedGeneration: pkg.GetGeneration(), SourceRevision: plugin.SourceRevision},
 		})
@@ -571,6 +587,12 @@ func buildInventory(input Input, plugins []Plugin, rejected *[]catalog.Rejected)
 		}
 		displayName, description, presentation := installablePresentation(item)
 		artifactRef := exactArtifactRef(nestedString(item.Object, "spec", "operator", "image"), digest)
+		if artifactRef == "" {
+			*rejected = append(*rejected, catalog.Rejected{Kind: "installableModule", ID: id, Code: "ArtifactReferenceInvalid", Message: "Foundation descriptor artifact reference is not in the allowlisted exact-digest namespace"})
+			missing = append(missing, catalog.CoverageGap{ID: id, Class: "installableModule", Code: "ArtifactReferenceInvalid", Message: "Foundation descriptor artifact reference is not in the allowlisted exact-digest namespace"})
+			rejectedByClass["installableModule"]++
+			continue
+		}
 		descriptors = append(descriptors, catalog.Descriptor{
 			ID: id, Class: "installableModule", DisplayName: displayName, Description: description,
 			Publisher: "opensphere-platform", Presentation: presentation, Domain: "foundation",
@@ -955,8 +977,8 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 	if snap.Stale {
 		return ResolveResponse{Result: "Unavailable", Revision: snap.Revision, BlockerCode: "RegistryStale", Message: "Registry sources are stale"}
 	}
-	if req.Revision != snap.Revision {
-		return ResolveResponse{Result: "StaleRevision", Revision: snap.Revision, BlockerCode: "CatalogRevisionChanged", Message: "Catalog revision changed; create a new plan"}
+	if req.ExecutionRevision == "" {
+		return ResolveResponse{Result: "Ineligible", Revision: snap.Revision, BlockerCode: "ExecutionRevisionRequired", Message: "descriptor execution revision is required"}
 	}
 	if req.Architecture != "" && req.Architecture != "linux/amd64" {
 		return ResolveResponse{Result: "Ineligible", Revision: snap.Revision, BlockerCode: "ArchitectureUnsupported", Message: "Only linux/amd64 is published in the local edge catalog"}
@@ -972,7 +994,7 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 					if descriptor.ID != "extension."+p.ID {
 						continue
 					}
-					if req.ExecutionRevision != "" && req.ExecutionRevision != descriptor.ExecutionRevision {
+					if req.ExecutionRevision != descriptor.ExecutionRevision {
 						return ResolveResponse{Result: "StaleRevision", Revision: snap.Revision, BlockerCode: "CatalogRevisionChanged", Message: "descriptor execution revision changed; create a new plan"}
 					}
 					return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": "extension", "descriptorId": descriptor.ID, "id": p.ID, "digest": p.InstalledDigest, "artifactRef": descriptor.Release.ArtifactRef, "channel": p.RequestedChannel, "catalogRevision": snap.Revision, "executionRevision": descriptor.ExecutionRevision}}
@@ -982,7 +1004,7 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 	case "installableModule":
 		for _, descriptor := range snap.Inventory.Descriptors {
 			if descriptor.Class == "installableModule" && descriptor.ID == req.ID && descriptor.Installation.Eligible {
-				if req.ExecutionRevision != "" && req.ExecutionRevision != descriptor.ExecutionRevision {
+				if req.ExecutionRevision != descriptor.ExecutionRevision {
 					return ResolveResponse{Result: "StaleRevision", Revision: snap.Revision, BlockerCode: "CatalogRevisionChanged", Message: "descriptor execution revision changed; create a new plan"}
 				}
 				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": descriptor.Class, "descriptorId": descriptor.ID, "digest": descriptor.Release.ImageDigest, "artifactRef": descriptor.Release.ArtifactRef, "catalogRevision": snap.Revision, "executionRevision": descriptor.ExecutionRevision}}

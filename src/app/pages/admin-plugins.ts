@@ -229,7 +229,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         </div>
         <div class="clr-form-control">
           <label for="revoke-confirmation" class="clr-control-label">Exact confirmation</label>
-          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-confirmation" #revokeConfirmation class="clr-input" placeholder="REVOKE sha256:..." /></div></div>
+          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-confirmation" #revokeConfirmation class="clr-input" placeholder="REVOKE ghcr.io/...@sha256:..." /></div></div>
         </div>
         <button class="btn btn-danger" [disabled]="!revokeImageRef.value.includes('@sha256:') || revokeReason.value.trim().length < 8 || revokeConfirmation.value !== revokeExpectedConfirmation(revokeImageRef.value)" (click)="revokeImage(revokeImageRef.value, replacementImageRef.value, revokeReason.value, revokeConfirmation.value)">Digest 철회</button>
       </div>
@@ -246,44 +246,6 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       }
     </section>
 
-    } @if (activeView() === 'catalog') {
-    <details class="advanced-install">
-      <summary>고급 OCI 설치</summary>
-    <section class="oci-install" aria-labelledby="oci-install-title">
-      <h2 id="oci-install-title">직접 참조 설치</h2>
-      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 개발용 local edge의 설치·업데이트는 MFA를 생략하고, 다른 환경과 다른 lifecycle 작업은 최근 MFA를 요구합니다. 사유는 항상 8자 이상 필요합니다.</p>
-      <div class="registry-access-form registry-access-form--install">
-        <div class="clr-form-control">
-          <label for="extension-image" class="clr-control-label">OCI image</label>
-          <div class="clr-control-container"><div class="clr-input-wrapper"><input
-            id="extension-image"
-            class="clr-input"
-            placeholder="ghcr.io/opensphere-platform/opensphere-…:edge"
-            [value]="extensionInstallImage()"
-            (input)="extensionInstallImage.set($any($event.target).value)"
-          /></div></div>
-        </div>
-        <div class="clr-form-control">
-          <label for="extension-install-reason" class="clr-control-label">설치 사유</label>
-          <div class="clr-control-container"><div class="clr-input-wrapper"><input
-            id="extension-install-reason"
-            class="clr-input"
-            minlength="8"
-            placeholder="운영 변경 사유(8자 이상)"
-            [value]="extensionInstallReason()"
-            (input)="extensionInstallReason.set($any($event.target).value)"
-          /></div></div>
-        </div>
-        <button
-          class="btn btn-primary"
-          [disabled]="installing() || !extensionInstallImage().trim() || extensionInstallReason().trim().length < 8"
-          (click)="installModule(extensionInstallImage(), extensionInstallReason())"
-        >
-          설치
-        </button>
-      </div>
-    </section>
-    </details>
     }
 
     <ng-template #extensionStatusCells let-r let-showHost="showHost" let-showIcon="showIcon" let-navigation="navigation">
@@ -1567,8 +1529,6 @@ export class AdminPlugins implements OnInit {
   private readonly operationalDataWarning = signal<string | null>(null);
   readonly dataWarning = computed(() => [this.coreDataWarning(), this.operationalDataWarning()].filter(Boolean).join(' ') || null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
-  readonly extensionInstallImage = signal('');
-  readonly extensionInstallReason = signal('');
   readonly catalogInstallReason = signal('');
   readonly revocationImage = signal('');
   readonly revocationImpact = computed(() => {
@@ -2236,8 +2196,8 @@ export class AdminPlugins implements OnInit {
   }
 
   revokeExpectedConfirmation(image: string): string {
-    const digest = String(image || '').trim().split('@')[1] || '';
-    return digest ? `REVOKE ${digest}` : '';
+    const reference = String(image || '').trim();
+    return reference.includes('@sha256:') ? `REVOKE ${reference}` : '';
   }
 
   async revokeImage(image: string, replacementImage: string, reason: string, confirmation: string): Promise<void> {
@@ -2516,24 +2476,6 @@ export class AdminPlugins implements OnInit {
       this.msg.set({ type: 'success', text: `${action} 완료: ${id}` });
     } catch (err) {
       this.msg.set({ type: 'danger', text: `${action} 실패: ${err}` });
-    }
-  }
-
-  async installModule(image: string, reason: string): Promise<void> {
-    if (this.installing()) return;
-    this.installing.set(true);
-    try {
-      const result = await this.ctl.install(image, reason);
-      const id = String((result as { id?: unknown })?.id || image);
-      const operation = result.operation === 'Update' ? 'update' : 'install';
-      this.extensionInstallImage.set('');
-      this.extensionInstallReason.set('');
-      this.msg.set({ type: 'info', text: `${operation} 요청됨: ${id} — 관리자 의도 ${result.desiredState}를 보존하며 검증과 workload를 조정 중…` });
-      await this.refresh();
-    } catch (error) {
-      this.msg.set({ type: 'danger', text: `install 실패: ${String(error)}` });
-    } finally {
-      this.installing.set(false);
     }
   }
 

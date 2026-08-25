@@ -5,9 +5,10 @@ const path = require('node:path');
 const { RegistryCredentialCoordinator, dockerConfig, dockerCredentials } = require('./registry-credentials');
 
 function fakeCluster() {
-  const state = { secret: null, configMaps: new Map(), pods: ['controller-a', 'controller-b'] };
+  const state = { secret: null, configMaps: new Map(), pods: ['controller-a', 'controller-b'], calls: [] };
   const result = (status, json = null) => ({ ok: status >= 200 && status < 300, status, json });
   const k8s = async (method, path, body) => {
+    state.calls.push({ method, path, body: body ? structuredClone(body) : undefined });
     const configMatch = path.match(/\/configmaps\/([^/?]+)$/);
     if (path.includes('/pods?')) return result(200, { items: state.pods.map((name) => ({
       metadata: { name }, status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }] },
@@ -33,11 +34,24 @@ function fakeCluster() {
       if (method === 'PATCH') {
         if (!state.secret) return result(404);
         state.secret = { ...state.secret, ...body, metadata: { ...state.secret.metadata, ...body.metadata }, data: { ...state.secret.data, ...body.data } };
+        state.secret.metadata.resourceVersion = String(Number(state.secret.metadata.resourceVersion || '1') + 1);
+        return result(200, state.secret);
+      }
+      if (method === 'PUT') {
+        if (!state.secret) return result(404);
+        if (!body?.metadata?.resourceVersion || body.metadata.resourceVersion !== state.secret.metadata.resourceVersion) return result(409);
+        state.secret = structuredClone(body);
+        state.secret.metadata.resourceVersion = String(Number(body.metadata.resourceVersion) + 1);
         return result(200, state.secret);
       }
       if (method === 'DELETE') { state.secret = null; return result(200); }
     }
-    if (path.endsWith('/secrets') && method === 'POST') { state.secret = body; return result(201, body); }
+    if (path.endsWith('/secrets') && method === 'POST') {
+      if (body?.metadata?.resourceVersion || body?.metadata?.uid || body?.metadata?.creationTimestamp) return result(422);
+      state.secret = structuredClone(body);
+      state.secret.metadata.resourceVersion = '1';
+      return result(201, state.secret);
+    }
     throw new Error(`unexpected Kubernetes call ${method} ${path}`);
   };
   return { state, k8s };
@@ -114,7 +128,7 @@ test('a failed Secret write leaves the previous validated credential and phase i
 test('a failed lifecycle commit compensates the Secret and restores the previous state', async () => {
   const cluster = fakeCluster();
   cluster.state.secret = {
-    metadata: { name: 'opensphere-ghcr-pull', annotations: { 'opensphere.io/credential-generation': 'generation-1' } },
+    metadata: { name: 'opensphere-ghcr-pull', namespace: 'opensphere-console', resourceVersion: '7', uid: 'old-secret-uid', creationTimestamp: '2026-07-23T00:00:00.000Z', annotations: { 'opensphere.io/credential-generation': 'generation-1' } },
     type: 'kubernetes.io/dockerconfigjson',
     data: { '.dockerconfigjson': Buffer.from(dockerConfig('opensphere-platform', 'old-token', 'generation-1')).toString('base64') },
   };
@@ -138,6 +152,39 @@ test('a failed lifecycle commit compensates the Secret and restores the previous
   const restored = dockerCredentials(Buffer.from(cluster.state.secret.data['.dockerconfigjson'], 'base64').toString('utf8'));
   assert.equal(restored.password, 'old-token');
   assert.equal(restored.generation, 'generation-1');
+  assert.equal(cluster.state.calls.some((call) => call.method === 'DELETE' && call.path.endsWith('/secrets/opensphere-ghcr-pull')), false);
+  assert.equal(cluster.state.calls.some((call) => call.method === 'PUT' && call.path.endsWith('/secrets/opensphere-ghcr-pull')), true);
+});
+
+test('a failed removal state commit recreates the previous Secret without server-managed metadata', async () => {
+  const cluster = fakeCluster();
+  cluster.state.secret = {
+    metadata: { name: 'opensphere-ghcr-pull', namespace: 'opensphere-console', resourceVersion: '9', uid: 'existing-secret-uid', creationTimestamp: '2026-07-23T00:00:00.000Z', annotations: { 'opensphere.io/credential-generation': 'generation-1' } },
+    type: 'kubernetes.io/dockerconfigjson',
+    data: { '.dockerconfigjson': Buffer.from(dockerConfig('opensphere-platform', 'old-token', 'generation-1')).toString('base64') },
+  };
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: { phase: 'configured', generation: 'generation-1', updatedAt: '2026-07-23T00:00:00.000Z' } });
+  const original = cluster.k8s;
+  let rejectedRevokedState = false;
+  cluster.k8s = async (method, path, body) => {
+    if (!rejectedRevokedState && method === 'PATCH' && path.endsWith('/configmaps/opensphere-ghcr-credential-state')
+      && body?.data?.phase === 'revoked') {
+      rejectedRevokedState = true;
+      return { ok: false, status: 500, json: null };
+    }
+    return original(method, path, body);
+  };
+  const a = coordinator(cluster, 'controller-a', new Map());
+  await assert.rejects(a.remove(), (error) => error.reason === 'RegistryCredentialStoreUnavailable');
+  assert.equal(rejectedRevokedState, true);
+  const restored = dockerCredentials(Buffer.from(cluster.state.secret.data['.dockerconfigjson'], 'base64').toString('utf8'));
+  assert.equal(restored.password, 'old-token');
+  assert.equal(cluster.state.secret.metadata.uid, undefined);
+  assert.equal(cluster.state.secret.metadata.creationTimestamp, undefined);
+  assert.equal(cluster.state.secret.metadata.resourceVersion, '1');
+  assert.deepEqual(cluster.state.configMaps.get('opensphere-ghcr-credential-state').data, {
+    phase: 'configured', generation: 'generation-1', updatedAt: '2026-07-23T00:00:00.000Z',
+  });
 });
 
 test('a stale replica returns retryable propagation rather than a false 401', async () => {

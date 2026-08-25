@@ -4,28 +4,36 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { resolveAdminControlEnforcement } = require('./admin-extension-route-policy');
 
-const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-
-test('Extension administration declares permission, risk, and AAL policy as route metadata', () => {
-  assert.match(source, /ADMIN_CONTROL_ROUTE_POLICIES/);
-  assert.match(source, /extensions\.registry\.write[\s\S]*risk: 'R2'[\s\S]*requireAal2: true/);
-  assert.match(source, /extensions\.registry\.delete[\s\S]*risk: 'R3'[\s\S]*requireAal2: true/);
-  assert.match(source, /extensions\.trust\.revoke[\s\S]*risk: 'R3'[\s\S]*requireAal2: true/);
-  assert.match(source, /'x-os-required-permission': routePolicy\.permission/);
-  assert.match(source, /'x-os-risk-class': routePolicy\.risk/);
+test('canonical and deprecated credential deletion receive identical R2 and recent-AAL2 enforcement', () => {
+  const canonical = resolveAdminControlEnforcement('/api/admin/extensions/registry-connections/opensphere-ghcr', 'DELETE');
+  const legacy = resolveAdminControlEnforcement('/api/admin/extensions/registry-credentials', 'DELETE');
+  for (const policy of [canonical, legacy]) {
+    assert.equal(policy.permission, 'console.extension.security.manage');
+    assert.equal(policy.risk, 'R2');
+    assert.equal(policy.requireAal2, true);
+  }
 });
 
-test('unknown administrator mutations remain fail-closed at AAL2', () => {
-  assert.match(source, /requireAal2: !\['GET', 'HEAD'\]\.includes\(method\)/);
+test('unknown administrator mutations remain fail-closed at R2 with recent AAL2', () => {
+  const policy = resolveAdminControlEnforcement('/api/admin/unknown-mutation', 'POST');
+  assert.equal(policy.permission, 'console.admin');
+  assert.equal(policy.risk, 'R2');
+  assert.equal(policy.requireAal2, true);
 });
 
-test('Extension install consumes the existing durable operation ledger', () => {
-  assert.match(source, /function extensionInstallLedgerIntent/);
-  assert.match(source, /restRequest\('module_operation'/);
-  assert.match(source, /module_id: 'extension-catalog', action: 'install'/);
-  assert.match(source, /existing\.target_fingerprint !== intent\.targetFingerprint/);
-  assert.match(source, /errorCode: 'IdempotencyConflict'/);
-  assert.match(source, /duplicate: true/);
-  assert.doesNotMatch(source, /CREATE TABLE[\s\S]*extension_install/i);
+test('development edge install is honestly classified R1 while other environments remain R2', () => {
+  const edge = resolveAdminControlEnforcement('/api/admin/extensions/install', 'POST', () => false);
+  const governed = resolveAdminControlEnforcement('/api/admin/extensions/install', 'POST', () => true);
+  assert.deepEqual({ risk: edge.risk, requireAal2: edge.requireAal2 }, { risk: 'R1', requireAal2: false });
+  assert.deepEqual({ risk: governed.risk, requireAal2: governed.requireAal2 }, { risk: 'R2', requireAal2: true });
+});
+
+test('Console enforcement point consumes the declared permission before proxying', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const actorResolution = source.indexOf('actor = session.actor');
+  const permissionGate = source.indexOf('requireActorPermission(actor, routePolicy.permission)');
+  const proxyFetch = source.indexOf('fetch(`${DUPA_CONTROL_URL}${url.pathname}${url.search}`');
+  assert.ok(actorResolution >= 0 && permissionGate > actorResolution && proxyFetch > permissionGate);
 });

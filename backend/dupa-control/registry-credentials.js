@@ -257,14 +257,35 @@ class RegistryCredentialCoordinator {
 
   async restoreSecret(snapshot) {
     const path = secretPath(this.namespace, this.secretName);
-    const current = await this.k8s('DELETE', path);
+    const current = await this.k8s('GET', path);
     if (!current.ok && current.status !== 404) {
-      throw storeError(`registry credential rollback delete HTTP ${current.status}`);
+      throw storeError(`registry credential rollback read HTTP ${current.status}`);
     }
-    if (snapshot?.ok && snapshot.json) {
-      const restored = await this.k8s('POST', `/api/v1/namespaces/${this.namespace}/secrets`, snapshot.json);
-      if (!restored.ok) throw storeError(`registry credential rollback restore HTTP ${restored.status}`);
+    if (!snapshot?.ok || !snapshot.json) {
+      if (current.ok) {
+        const removed = await this.k8s('DELETE', path);
+        if (!removed.ok && removed.status !== 404) {
+          throw storeError(`registry credential rollback delete HTTP ${removed.status}`);
+        }
+      }
+      return;
     }
+    if (current.ok) {
+      const restored = structuredClone(snapshot.json);
+      restored.metadata = {
+        ...(restored.metadata || {}),
+        resourceVersion: current.json?.metadata?.resourceVersion,
+      };
+      const replaced = await this.k8s('PUT', path, restored);
+      if (!replaced.ok) throw storeError(`registry credential rollback replace HTTP ${replaced.status}`);
+      return;
+    }
+    const restored = structuredClone(snapshot.json);
+    for (const field of ['resourceVersion', 'uid', 'creationTimestamp', 'managedFields', 'generation', 'deletionTimestamp', 'deletionGracePeriodSeconds']) {
+      delete restored.metadata?.[field];
+    }
+    const created = await this.k8s('POST', `/api/v1/namespaces/${this.namespace}/secrets`, restored);
+    if (!created.ok) throw storeError(`registry credential rollback create HTTP ${created.status}`);
   }
 
   async restoreState(snapshot) {

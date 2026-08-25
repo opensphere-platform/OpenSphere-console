@@ -7,6 +7,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '../..');
 const backend = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+const adminRoutePolicy = fs.readFileSync(path.join(__dirname, 'admin-extension-route-policy.js'), 'utf8');
 const deploy = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
 const notificationDeploy = fs.readFileSync(path.join(root, 'backend/notification-dispatcher/deploy.yaml'), 'utf8');
 const authService = fs.readFileSync(path.join(root, 'src/app/core/auth.service.ts'), 'utf8');
@@ -35,10 +36,10 @@ test('administrator mutations require a real AAL2 session by default', () => {
 
 test('Extension install and update read the mounted development edge policy and all other mutations retain MFA', () => {
   assert.match(backend, /readInstallationPolicy\(INSTALLATION_CONFIG_FILE\)/);
-  assert.match(backend, /moduleLifecycleNeedsRecentAal2\(routePolicy\.lifecycleAction\)/);
-  assert.match(backend, /permission: 'extensions\.read', risk: 'R0', readOnly: true/);
-  assert.match(backend, /!routePolicy\.readOnly && isMutationRequest\(req\)/);
-  assert.match(backend, /install\|enable\|disable\|uninstall\|rollback/);
+  assert.match(backend, /resolveAdminControlEnforcement\(url\.pathname, method, moduleLifecycleNeedsRecentAal2\)/);
+  assert.match(adminRoutePolicy, /permission: 'console\.extension\.security\.read', risk: 'R0', readOnly: true/);
+  assert.match(adminRoutePolicy, /developmentEdgeExemption/);
+  assert.match(adminRoutePolicy, /install\|enable\|disable\|uninstall\|rollback/);
   assert.match(deploy, /mountPath: \/var\/run\/opensphere-installation/);
   assert.match(deploy, /name: opensphere-installation-lock/);
   assert.match(deploy, /optional: true/);
@@ -181,9 +182,9 @@ test('profile settings own a private upload and exact linked-account avatar proj
 test('browser admin requests resolve the HttpOnly session at the Console enforcement point', () => {
   assert.match(backend, /async function proxyAdminControlRequest/);
   assert.match(backend, /browserSessions\.authenticate\(req\)/);
-  assert.match(backend, /const routePolicy = adminControlRoutePolicy\(url\.pathname, method\)/);
+  assert.match(backend, /const routePolicy = resolveAdminControlEnforcement\(url\.pathname, method, moduleLifecycleNeedsRecentAal2\)/);
   assert.match(backend, /routePolicy\.requireAal2 === true/);
-  assert.match(backend, /routePolicy\.readOnly/);
+  assert.match(backend, /requireActorPermission\(actor, routePolicy\.permission\)/);
   assert.match(backend, /verifyConsoleAdmin\(req, \{ requireAal2 \}\)/);
   assert.match(backend, /assertConsoleAdminActor\(session\.actor, \{ requireAal2 \}\)/);
   assert.match(backend, /authorization = `Bearer \$\{session\.accessToken\}`/);

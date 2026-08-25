@@ -17,6 +17,12 @@ const {
   requestGhcrToken,
   verifyGhcrCandidateCredentials,
 } = require('./registry-http');
+const { createRegistryVerifyRateLimiter } = require('./registry-verify-policy');
+const {
+  REGISTRY_REMOVAL_CONFIRMATION,
+  registryRemovalConfirmed,
+  registryRevocationConfirmation,
+} = require('./registry-security-policy');
 const {
   FOUNDATION_CONTRACT_CRDS,
   foundationEstablishmentProjection,
@@ -93,6 +99,7 @@ const RELEASE_TAG_LABEL = 'io.opensphere.release-tag';
 const OCI_VERSION_LABEL = 'org.opencontainers.image.version';
 const APPROVED_PERMISSION_PROFILES = new Set(['none', 'cluster-observer-v1', 'cluster-infrastructure-manager-v1', 'ai-domain-operator-v1']);
 const ALLOWED_IMAGE = /^ghcr\.io\/opensphere-platform\/(opensphere-[a-z0-9._-]+)(?:@sha256:([a-f0-9]{64})|:(edge|candidate|stable|ga))$/;
+const registryVerifyRateLimit = createRegistryVerifyRateLimiter();
 const OCI_ACCEPT = [
   'application/vnd.oci.image.index.v1+json',
   'application/vnd.docker.distribution.manifest.list.v2+json',
@@ -3720,7 +3727,7 @@ const server = http.createServer(async (req, res) => {
           const parsed = parseModuleImageReference(body.image);
           if (parsed.channel) throw { code: 400, msg: 'revocation requires repository@sha256:digest' };
           const image = `${parsed.repository}@${parsed.reference}`;
-          requireOsaaExtensionConfirmation(body.confirm, `revoke extension image ${image}`);
+          requireOsaaExtensionConfirmation(body.confirm, registryRevocationConfirmation(image));
           let replacementDigest = '';
           if (body.replacementImage) {
             const replacement = parseModuleImageReference(body.replacementImage);
@@ -3837,7 +3844,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const parsed = parseModuleImageReference(body.image);
         if (parsed.channel) return json(res, 400, { error: 'ExactDigestRequired', message: 'revocation requires repository@sha256:digest', opId });
-        const expectedConfirmation = `REVOKE ${parsed.reference}`;
+        const expectedConfirmation = registryRevocationConfirmation(`${parsed.repository}@${parsed.reference}`);
         if (String(body.confirmation || '').trim() !== expectedConfirmation) {
           return json(res, 400, { error: 'ExactConfirmationRequired', expected: expectedConfirmation, opId });
         }
@@ -3896,23 +3903,33 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/admin/extensions/registry-connections/opensphere-ghcr/verify' && req.method === 'POST') {
       const body = await readBody(req).catch(() => ({}));
+      const reason = String(body.reason || 'Verify private GHCR connection').trim().slice(0, 2000);
       try {
+        const rate = registryVerifyRateLimit(auditActorLabel(actor));
+        if (!rate.allowed) throw { code: 429, reason: 'RegistryRateLimited', message: 'registry connection verification rate limit exceeded', retryAfter: rate.retryAfter };
         const credentials = body.token
           ? { username: String(body.username || '').trim(), password: String(body.token || '').trim() }
           : await ghcrCredentials();
-        if (!credentials?.username || !credentials?.password) return json(res, 409, { error: 'RegistryCredentialsRequired', opId });
+        if (!credentials?.username || !credentials?.password) throw { code: 409, reason: 'RegistryCredentialsRequired', message: 'private GHCR credentials are not configured' };
         const verified = await verifyGhcrCandidateCredentials(credentials.username, credentials.password);
+        await durableAudit(actor, 'registry-credentials-verify', 'ghcr.io', 'accepted', reason, opId);
         return json(res, 200, { id: 'opensphere-ghcr', verified: true, ...verified });
       } catch (e) {
-        return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryVerificationFailed', message: e?.message, retryAfter: e?.retryAfter, opId });
+        try {
+          await durableAudit(actor, 'registry-credentials-verify', 'ghcr.io', 'denied', `${reason} | ${e?.reason || 'RegistryVerificationFailed'}`, opId);
+        } catch {
+          // durableAudit already records its persistence failure. Preserve the
+          // original verification or audit error instead of masking it.
+        }
+        return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryVerificationFailed', message: e?.message, retryAfter: e?.retryAfter, opId }, e?.retryAfter ? { 'retry-after': String(e.retryAfter) } : {});
       }
     }
     if ((registryConnectionPath || legacyRegistryCredentialPath) && req.method === 'DELETE') {
       const body = await readBody(req).catch(() => ({}));
       const reason = String(body.reason || '').trim();
       if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'registry credential removal reason must be at least 8 characters', opId });
-      if (registryConnectionPath && String(body.confirmation || '').trim() !== 'REMOVE opensphere-ghcr') {
-        return json(res, 400, { error: 'ExactConfirmationRequired', expected: 'REMOVE opensphere-ghcr', opId });
+      if (!registryRemovalConfirmed(body.confirmation)) {
+        return json(res, 400, { error: 'ExactConfirmationRequired', expected: REGISTRY_REMOVAL_CONFIRMATION, opId });
       }
       try {
         const impact = await registryCredentialImpact();
@@ -3933,6 +3950,10 @@ const server = http.createServer(async (req, res) => {
       const reason = String(body.reason || '').trim();
       if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'installation reason must be at least 8 characters', opId });
       try {
+        const requested = parseModuleImageReference(body.image);
+        if (requested.channel && !(requested.channel === 'edge' && process.env.OPENSPHERE_RUNTIME_MODE === 'development')) {
+          throw { code: 400, reason: 'ExactDigestRequired', message: 'tag installation is allowed only for the development local edge channel' };
+        }
         const inspection = await inspectModuleImage(body.image);
         const pkg = packageFromInspection(inspection);
         const [currentPkgResult, currentRegResult] = await Promise.all([
