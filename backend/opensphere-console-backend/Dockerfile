@@ -74,6 +74,8 @@ COPY opensphere-console-backend/r2d2-repair-runner-contract.js ./r2d2-repair-run
 COPY opensphere-console-backend/r2d2-repair-runner-api.js ./r2d2-repair-runner-api.js
 COPY opensphere-console-backend/osaa-source-authority.js ./osaa-source-authority.js
 COPY opensphere-console-backend/module-lifecycle-policy.js ./module-lifecycle-policy.js
+COPY opensphere-console-backend/admin-extension-route-policy.js ./admin-extension-route-policy.js
+COPY opensphere-console-backend/extension-install-idempotency.js ./extension-install-idempotency.js
 COPY opensphere-console-backend/notification-api.js ./notification-api.js
 COPY opensphere-console-backend/external-channel-api.js ./external-channel-api.js
 COPY opensphere-console-backend/recovery-owner.js ./recovery-owner.js

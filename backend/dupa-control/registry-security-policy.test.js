@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   REGISTRY_REMOVAL_CONFIRMATION,
   registryRemovalConfirmed,
@@ -23,4 +25,10 @@ test('canonical and legacy credential routes share one exact removal confirmatio
 test('revocation confirmation binds the complete repository and digest', () => {
   const image = `ghcr.io/opensphere-platform/opensphere-test@sha256:${'a'.repeat(64)}`;
   assert.equal(registryRevocationConfirmation(image), `REVOKE ${image}`);
+});
+
+test('DUPA runtime image contains both registry policy modules', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /COPY registry-security-policy\.js/);
+  assert.match(dockerfile, /COPY registry-verify-policy\.js/);
 });

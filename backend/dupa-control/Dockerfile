@@ -14,6 +14,8 @@ RUN apk upgrade --no-cache \
 COPY controller.js /app/controller.js
 COPY registry-credentials.js /app/registry-credentials.js
 COPY registry-http.js /app/registry-http.js
+COPY registry-security-policy.js /app/registry-security-policy.js
+COPY registry-verify-policy.js /app/registry-verify-policy.js
 COPY foundation-establishment.js /app/foundation-establishment.js
 USER 1000:1000
 EXPOSE 8080

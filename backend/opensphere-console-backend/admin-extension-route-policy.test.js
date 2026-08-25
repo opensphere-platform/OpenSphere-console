@@ -37,3 +37,9 @@ test('Console enforcement point consumes the declared permission before proxying
   const proxyFetch = source.indexOf('fetch(`${DUPA_CONTROL_URL}${url.pathname}${url.search}`');
   assert.ok(actorResolution >= 0 && permissionGate > actorResolution && proxyFetch > permissionGate);
 });
+
+test('Backend runtime image contains the route and idempotency policy modules', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /COPY opensphere-console-backend\/admin-extension-route-policy\.js/);
+  assert.match(dockerfile, /COPY opensphere-console-backend\/extension-install-idempotency\.js/);
+});
