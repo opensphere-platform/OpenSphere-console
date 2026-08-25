@@ -12,6 +12,12 @@ const { execFile } = require('child_process');
 const { createHash, createPublicKey, verify, randomBytes, randomUUID } = require('crypto');
 const { RegistryCredentialCoordinator } = require('./registry-credentials');
 const {
+  registryFetch,
+  registryResponseError,
+  requestGhcrToken,
+  verifyGhcrCandidateCredentials,
+} = require('./registry-http');
+const {
   FOUNDATION_CONTRACT_CRDS,
   foundationEstablishmentProjection,
 } = require('./foundation-establishment');
@@ -1554,6 +1560,23 @@ const ghcrCredentials = () => registryCredentials.credentials();
 const registryCredentialStatus = () => registryCredentials.status();
 const storeRegistryCredentials = (username, password) => registryCredentials.store(username, password);
 const deleteRegistryCredentials = () => registryCredentials.remove();
+async function registryCredentialImpact() {
+  const packages = await listPackages();
+  if (!packages.ok) throw Object.assign(new Error(`extension package inventory HTTP ${packages.status}`), { code: 503, reason: 'RegistryCredentialImpactUnavailable' });
+  const items = (packages.json?.items || [])
+    .filter((item) => item?.spec?.resolution?.registryCredentialsRequired === true)
+    .map((item) => String(item?.metadata?.name || ''))
+    .filter(Boolean)
+    .sort();
+  return { dependentPackages: items, dependentPackageCount: items.length };
+}
+async function registryConnectionModel() {
+  const [status, impact] = await Promise.all([registryCredentialStatus(), registryCredentialImpact()]);
+  return {
+    id: 'opensphere-ghcr', displayName: 'OpenSphere GHCR', registryHost: 'ghcr.io',
+    allowedNamespace: 'opensphere-platform', ...status, impact,
+  };
+}
 function parseModuleImageReference(image) {
   const match = ALLOWED_IMAGE.exec(String(image || '').trim());
   if (!match) throw Object.assign(new Error('image must be an opensphere-platform GHCR digest or channel reference'), { code: 400, reason: 'InvalidImageReference' });
@@ -1574,44 +1597,41 @@ function runnablePlatformManifests(manifest) {
 }
 async function ghcrFetch(path, accept) {
   const headers = { Accept: accept || 'application/json' };
-  let response = await fetch(`https://ghcr.io${path}`, { headers, signal: AbortSignal.timeout(15000) });
-  if (response.status !== 401) return { response, authenticated: false };
+  let response = await registryFetch(`https://ghcr.io${path}`, { headers });
+  if (response.status !== 401) {
+    if (!response.ok) throw registryResponseError(response, 'GHCR artifact request');
+    return { response, authenticated: false };
+  }
   const challenge = response.headers.get('www-authenticate') || '';
   const service = /service="([^"]+)"/.exec(challenge)?.[1];
   const scope = /scope="([^"]+)"/.exec(challenge)?.[1];
   if (service !== 'ghcr.io' || !scope?.startsWith('repository:opensphere-platform/')) throw Object.assign(new Error('registry challenge rejected'), { code: 401, reason: 'RegistryAuthRejected' });
-  const tokenUrl = `https://ghcr.io/token?service=${encodeURIComponent(service)}&scope=${encodeURIComponent(scope)}`;
-  const requestToken = async (credentials = null) => {
-    const tokenHeaders = credentials
-      ? { Authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}` }
-      : {};
-    const tokenResponse = await fetch(tokenUrl, { headers: tokenHeaders, signal: AbortSignal.timeout(15000) });
-    if (!tokenResponse.ok) return '';
-    return String((await tokenResponse.json()).token || '');
-  };
-  const fetchWithToken = (registryToken) => fetch(`https://ghcr.io${path}`, {
-    headers: { ...headers, Authorization: `Bearer ${registryToken}` }, signal: AbortSignal.timeout(15000),
+  const fetchWithToken = (registryToken) => registryFetch(`https://ghcr.io${path}`, {
+    headers: { ...headers, Authorization: `Bearer ${registryToken}` },
   });
 
   // 공개 패키지는 익명 토큰으로 먼저 확인한다. 자격증명이 등록되어 있어도 공개
   // 패키지를 불필요하게 private dependency로 기록하지 않는다.
-  const anonymousToken = await requestToken();
+  let anonymousToken = '';
+  try { anonymousToken = await requestGhcrToken(scope); }
+  catch (error) {
+    if (!['RegistryUnauthorized', 'ArtifactNotFound'].includes(error?.reason)) throw error;
+  }
   if (anonymousToken) {
     response = await fetchWithToken(anonymousToken);
     if (response.ok) return { response, authenticated: false };
+    if (![401, 403].includes(response.status)) throw registryResponseError(response, 'GHCR artifact request');
   }
   const credentials = await ghcrCredentials();
   if (!credentials) throw Object.assign(new Error('private GHCR package requires configured registry credentials'), { code: 401, reason: 'RegistryCredentialsRequired' });
-  const authenticatedToken = await requestToken(credentials);
-  if (!authenticatedToken) throw Object.assign(new Error('configured GHCR credentials were rejected'), { code: 401, reason: 'RegistryAuthFailed' });
+  const authenticatedToken = await requestGhcrToken(scope, credentials);
   response = await fetchWithToken(authenticatedToken);
-  if (!response.ok && [401, 403].includes(response.status)) throw Object.assign(new Error('configured GHCR credentials cannot read this package'), { code: 401, reason: 'RegistryAuthFailed' });
+  if (!response.ok) throw registryResponseError(response, 'authenticated GHCR artifact request');
   return { response, authenticated: true };
 }
 async function fetchImageManifest(repositoryPath, reference) {
   const fetched = await ghcrFetch(`/v2/${repositoryPath}/manifests/${reference}`, OCI_ACCEPT);
   const { response } = fetched;
-  if (!response.ok) throw Object.assign(new Error(`registry manifest HTTP ${response.status}`), { code: 422, reason: 'ImageManifestUnreachable' });
   const text = await response.text();
   const digest = response.headers.get('docker-content-digest') || `sha256:${sha256(text)}`;
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw Object.assign(new Error('registry returned an invalid content digest'), { code: 422, reason: 'InvalidImageDigest' });
@@ -1627,7 +1647,6 @@ async function readModuleLabels(repositoryPath, manifest, expectedManifestDigest
     'application/vnd.oci.image.config.v1+json, application/vnd.docker.container.image.v1+json',
   );
   const { response: configResponse } = configFetched;
-  if (!configResponse.ok) throw Object.assign(new Error(`image config HTTP ${configResponse.status}`), { code: 422, reason: 'ImageConfigUnreachable' });
   const config = await configResponse.json();
   const labels = config?.config?.Labels || {};
   return {
@@ -2503,6 +2522,10 @@ function registryCredentialError(res, error, opId) {
     body.servingReplicas = error.servingReplicas || [];
     body.observedReplicas = error.observedReplicas || [];
     return json(res, 503, body, { 'Retry-After': String(body.retryAfter) });
+  }
+  if (error?.retryAfter) {
+    body.retryAfter = String(error.retryAfter);
+    return json(res, status, body, { 'Retry-After': String(error.retryAfter) });
   }
   return json(res, status, body);
 }
@@ -3606,9 +3629,12 @@ function metricsText() {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
-  const opId = typeof req.headers['x-os-correlation-id'] === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(req.headers['x-os-correlation-id'])
+  const idempotencyKey = typeof req.headers['x-os-idempotency-key'] === 'string'
+    && /^[A-Za-z0-9._:-]{8,160}$/.test(req.headers['x-os-idempotency-key'])
+    ? req.headers['x-os-idempotency-key'] : '';
+  const opId = idempotencyKey || (typeof req.headers['x-os-correlation-id'] === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(req.headers['x-os-correlation-id'])
     ? req.headers['x-os-correlation-id']
-    : newOpId();
+    : newOpId());
   _httpReqs++;
   try {
     if (p === '/healthz') { res.writeHead(200); return res.end('ok'); }
@@ -3746,7 +3772,11 @@ const server = http.createServer(async (req, res) => {
 
     // Console mutations require the three explicit authorities (Supabase,
     // Gitea, OSAA). Read-only surfaces remain available while this gate is closed.
-    if (p.startsWith('/api/admin/') && p !== '/api/admin/events' && p !== '/api/admin/extensions/inspect' && req.method !== 'GET') {
+    if (p.startsWith('/api/admin/')
+      && p !== '/api/admin/events'
+      && p !== '/api/admin/extensions/inspect'
+      && p !== '/api/admin/extensions/registry-connections/opensphere-ghcr/verify'
+      && req.method !== 'GET') {
       const state = await platformControlReadiness();
       if (!state.ready) return json(res, 503, { error: 'Platform Control authorities unavailable', platformControl: state, opId });
       await durableAudit(actor, 'mutation-request', p, 'attempt', req.method, opId);
@@ -3807,6 +3837,10 @@ const server = http.createServer(async (req, res) => {
       try {
         const parsed = parseModuleImageReference(body.image);
         if (parsed.channel) return json(res, 400, { error: 'ExactDigestRequired', message: 'revocation requires repository@sha256:digest', opId });
+        const expectedConfirmation = `REVOKE ${parsed.reference}`;
+        if (String(body.confirmation || '').trim() !== expectedConfirmation) {
+          return json(res, 400, { error: 'ExactConfirmationRequired', expected: expectedConfirmation, opId });
+        }
         let replacementDigest = '';
         if (body.replacementImage) {
           const replacement = parseModuleImageReference(body.replacementImage);
@@ -3825,15 +3859,20 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req).catch(() => ({}));
       try { return json(res, 200, await inspectModuleImage(body.image)); }
       catch (e) {
-        if (e?.reason === 'RegistryCredentialsPropagating') return registryCredentialError(res, e, opId);
+        if (e?.reason === 'RegistryCredentialsPropagating' || /^Registry/.test(String(e?.reason || '')) || e?.reason === 'ArtifactNotFound') return registryCredentialError(res, e, opId);
         return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], revocation: e?.revocation || null, opId });
       }
     }
-    if (p === '/api/admin/extensions/registry-credentials' && req.method === 'GET') {
-      try { return json(res, 200, await registryCredentialStatus()); }
+    const registryConnectionPath = p === '/api/admin/extensions/registry-connections/opensphere-ghcr';
+    const legacyRegistryCredentialPath = p === '/api/admin/extensions/registry-credentials';
+    if ((p === '/api/admin/extensions/registry-connections' || legacyRegistryCredentialPath) && req.method === 'GET') {
+      try {
+        const connection = await registryConnectionModel();
+        return json(res, 200, legacyRegistryCredentialPath ? { ...connection, deprecated: true } : { items: [connection] });
+      }
       catch (e) { return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryCredentialStoreUnavailable', message: e?.message, opId }); }
     }
-    if (p === '/api/admin/extensions/registry-credentials' && req.method === 'PUT') {
+    if ((registryConnectionPath || legacyRegistryCredentialPath) && req.method === 'PUT') {
       const body = await readBody(req).catch(() => ({}));
       const username = String(body.username || '').trim();
       const registryToken = String(body.token || '').trim();
@@ -3842,22 +3881,48 @@ const server = http.createServer(async (req, res) => {
       if (registryToken.length < 20 || registryToken.length > 1024 || /\s/.test(registryToken)) return json(res, 400, { error: 'InvalidRegistryToken', opId });
       if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'registry credential change reason must be at least 8 characters', opId });
       try {
+        const verification = await verifyGhcrCandidateCredentials(username, registryToken);
         const stored = await storeRegistryCredentials(username, registryToken);
         await durableAudit(actor, 'registry-credentials-configure', 'ghcr.io', 'accepted', reason, opId);
-        return json(res, stored.converged ? 200 : 202, stored);
+        return json(res, stored.converged ? 200 : 202, {
+          id: 'opensphere-ghcr', displayName: 'OpenSphere GHCR', registryHost: 'ghcr.io',
+          allowedNamespace: 'opensphere-platform', ...stored, lastVerifiedAt: verification.verifiedAt,
+          ...(legacyRegistryCredentialPath ? { deprecated: true } : {}),
+        });
       } catch (e) {
         await durableAudit(actor, 'registry-credentials-configure', 'ghcr.io', 'error', e?.reason || 'store failed', opId);
         return registryCredentialError(res, e, opId);
       }
     }
-    if (p === '/api/admin/extensions/registry-credentials' && req.method === 'DELETE') {
+    if (p === '/api/admin/extensions/registry-connections/opensphere-ghcr/verify' && req.method === 'POST') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        const credentials = body.token
+          ? { username: String(body.username || '').trim(), password: String(body.token || '').trim() }
+          : await ghcrCredentials();
+        if (!credentials?.username || !credentials?.password) return json(res, 409, { error: 'RegistryCredentialsRequired', opId });
+        const verified = await verifyGhcrCandidateCredentials(credentials.username, credentials.password);
+        return json(res, 200, { id: 'opensphere-ghcr', verified: true, ...verified });
+      } catch (e) {
+        return json(res, Number(e?.code) || 503, { error: e?.reason || 'RegistryVerificationFailed', message: e?.message, retryAfter: e?.retryAfter, opId });
+      }
+    }
+    if ((registryConnectionPath || legacyRegistryCredentialPath) && req.method === 'DELETE') {
       const body = await readBody(req).catch(() => ({}));
       const reason = String(body.reason || '').trim();
       if (reason.length < 8) return json(res, 400, { error: 'ApprovalReasonRequired', message: 'registry credential removal reason must be at least 8 characters', opId });
+      if (registryConnectionPath && String(body.confirmation || '').trim() !== 'REMOVE opensphere-ghcr') {
+        return json(res, 400, { error: 'ExactConfirmationRequired', expected: 'REMOVE opensphere-ghcr', opId });
+      }
       try {
+        const impact = await registryCredentialImpact();
         const removed = await deleteRegistryCredentials();
         await durableAudit(actor, 'registry-credentials-remove', 'ghcr.io', 'accepted', reason, opId);
-        return json(res, removed.converged ? 200 : 202, removed);
+        return json(res, removed.converged ? 200 : 202, {
+          id: 'opensphere-ghcr', displayName: 'OpenSphere GHCR', registryHost: 'ghcr.io',
+          allowedNamespace: 'opensphere-platform', ...removed, impact,
+          ...(legacyRegistryCredentialPath ? { deprecated: true } : {}),
+        });
       } catch (e) {
         await durableAudit(actor, 'registry-credentials-remove', 'ghcr.io', 'error', e?.reason || 'delete failed', opId);
         return registryCredentialError(res, e, opId);
@@ -3886,6 +3951,26 @@ const server = http.createServer(async (req, res) => {
         }
         const currentPkg = currentPkgResult.ok ? currentPkgResult.json : null;
         const currentReg = currentRegResult.ok ? currentRegResult.json : null;
+        const requestFingerprint = `sha256:${sha256(JSON.stringify({ image: inspection.image, reason, client: body.client === 'cli:os' ? 'cli:os' : 'console:web' }))}`;
+        if (idempotencyKey && currentPkg?.metadata?.annotations?.['opensphere.io/idempotency-key'] === idempotencyKey) {
+          const priorFingerprint = String(currentPkg.metadata.annotations['opensphere.io/idempotency-fingerprint'] || '');
+          if (priorFingerprint !== requestFingerprint) {
+            return json(res, 409, { error: 'IdempotencyConflict', message: 'idempotency key was already used with a different request', opId });
+          }
+          return json(res, 200, {
+            accepted: true, duplicate: true, id: pkg.metadata.name,
+            operation: currentReg ? 'Update' : 'Install',
+            desiredState: String(currentReg?.spec?.desiredState || 'Installed'),
+            image: inspection.image, verification: inspection.verification, opId,
+          });
+        }
+        if (idempotencyKey) {
+          pkg.metadata.annotations = {
+            ...(pkg.metadata.annotations || {}),
+            'opensphere.io/idempotency-key': idempotencyKey,
+            'opensphere.io/idempotency-fingerprint': requestFingerprint,
+          };
+        }
         const transition = extensionInstallTransition(currentPkg, currentReg, pkg);
         if (!transition.allowed) {
           await durableAudit(actor, 'extension-update', pkg.metadata.name, 'denied', transition.reason, opId);
@@ -3969,7 +4054,7 @@ const server = http.createServer(async (req, res) => {
         });
       } catch (e) {
         await durableAudit(actor, 'extension-install', String(body.image || '').slice(0, 160), 'denied', e?.reason || 'InspectionFailed', opId);
-        if (e?.reason === 'RegistryCredentialsPropagating') return registryCredentialError(res, e, opId);
+        if (e?.reason === 'RegistryCredentialsPropagating' || /^Registry/.test(String(e?.reason || '')) || e?.reason === 'ArtifactNotFound') return registryCredentialError(res, e, opId);
         return json(res, Number(e?.code) || 422, { error: e?.reason || 'InspectionFailed', message: e?.message || 'image inspection failed', issues: e?.issues || [], revocation: e?.revocation || null, opId });
       }
     }

@@ -255,12 +255,33 @@ class RegistryCredentialCoordinator {
     };
   }
 
+  async restoreSecret(snapshot) {
+    const path = secretPath(this.namespace, this.secretName);
+    const current = await this.k8s('DELETE', path);
+    if (!current.ok && current.status !== 404) {
+      throw storeError(`registry credential rollback delete HTTP ${current.status}`);
+    }
+    if (snapshot?.ok && snapshot.json) {
+      const restored = await this.k8s('POST', `/api/v1/namespaces/${this.namespace}/secrets`, snapshot.json);
+      if (!restored.ok) throw storeError(`registry credential rollback restore HTTP ${restored.status}`);
+    }
+  }
+
+  async restoreState(snapshot) {
+    await this.writeState(snapshot.phase, snapshot.generation, snapshot.updatedAt || this.now());
+  }
+
   async store(username, password) {
     const generation = this.newGeneration();
     const updatedAt = this.now();
-    await this.writeState('configuring', generation, updatedAt);
     const path = secretPath(this.namespace, this.secretName);
-    const existing = await this.k8s('GET', path);
+    const [existing, previousState] = await Promise.all([
+      this.k8s('GET', path),
+      this.state(),
+    ]);
+    if (!existing.ok && existing.status !== 404) {
+      throw storeError(`registry credential read HTTP ${existing.status}`);
+    }
     const body = {
       apiVersion: 'v1', kind: 'Secret', type: 'kubernetes.io/dockerconfigjson',
       metadata: {
@@ -276,7 +297,20 @@ class RegistryCredentialCoordinator {
       ? await this.k8s('PATCH', path, { type: body.type, metadata: { labels: body.metadata.labels, annotations: body.metadata.annotations }, data: body.data })
       : await this.k8s('POST', `/api/v1/namespaces/${this.namespace}/secrets`, body);
     if (!result.ok) throw storeError(`registry credential store HTTP ${result.status}`);
-    await this.writeState('configured', generation, updatedAt);
+    try {
+      // The candidate Secret is already authenticated by the caller. Commit the
+      // lifecycle generation only after the Secret write succeeds. Until this
+      // point every replica fails closed on the generation mismatch instead of
+      // accepting uncommitted credential bytes.
+      await this.writeState('configured', generation, updatedAt);
+    } catch (error) {
+      // A failed state commit must never strand a previously validated Secret or
+      // leave the shared phase in configuring. Restore both authorities before
+      // returning the failure.
+      await this.restoreSecret(existing);
+      await this.restoreState(previousState);
+      throw error;
+    }
     const convergence = await this.convergenceStatus('configured', generation);
     return {
       registry: 'ghcr.io',
@@ -295,10 +329,20 @@ class RegistryCredentialCoordinator {
     const current = await this.state();
     const generation = current.generation || this.newGeneration();
     const updatedAt = this.now();
-    await this.writeState('revoking', generation, updatedAt);
-    const result = await this.k8s('DELETE', secretPath(this.namespace, this.secretName));
+    const path = secretPath(this.namespace, this.secretName);
+    const existing = await this.k8s('GET', path);
+    if (!existing.ok && existing.status !== 404) {
+      throw storeError(`registry credential read HTTP ${existing.status}`);
+    }
+    const result = await this.k8s('DELETE', path);
     if (!result.ok && result.status !== 404) throw storeError(`registry credential delete HTTP ${result.status}`);
-    await this.writeState('revoked', generation, updatedAt);
+    try {
+      await this.writeState('revoked', generation, updatedAt);
+    } catch (error) {
+      await this.restoreSecret(existing);
+      await this.restoreState(current);
+      throw error;
+    }
     const convergence = await this.convergenceStatus('revoked', generation);
     return {
       registry: 'ghcr.io',

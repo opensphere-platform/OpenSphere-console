@@ -31,7 +31,13 @@ type Source struct {
 
 type Release struct {
 	Version     string `json:"version,omitempty"`
+	ArtifactRef string `json:"artifactRef,omitempty"`
 	ImageDigest string `json:"imageDigest,omitempty"`
+}
+
+type Presentation struct {
+	IconRef    string   `json:"iconRef,omitempty"`
+	Categories []string `json:"categories,omitempty"`
 }
 
 type Installation struct {
@@ -47,16 +53,20 @@ type Evidence struct {
 // Descriptor is the only cross-consumer Registry read model. It deliberately
 // excludes instance, capacity, credential and runtime lifecycle state.
 type Descriptor struct {
-	ID           string       `json:"id"`
-	Class        string       `json:"class"`
-	DisplayName  string       `json:"displayName"`
-	Domain       string       `json:"domain"`
-	Owner        Owner        `json:"owner"`
-	Source       Source       `json:"source"`
-	Release      Release      `json:"release"`
-	Capabilities []string     `json:"capabilities"`
-	Installation Installation `json:"installation"`
-	Evidence     Evidence     `json:"evidence"`
+	ID                string       `json:"id"`
+	Class             string       `json:"class"`
+	DisplayName       string       `json:"displayName"`
+	Description       string       `json:"description,omitempty"`
+	Publisher         string       `json:"publisher,omitempty"`
+	Presentation      Presentation `json:"presentation"`
+	Domain            string       `json:"domain"`
+	Owner             Owner        `json:"owner"`
+	Source            Source       `json:"source"`
+	Release           Release      `json:"release"`
+	Capabilities      []string     `json:"capabilities"`
+	Installation      Installation `json:"installation"`
+	Evidence          Evidence     `json:"evidence"`
+	ExecutionRevision string       `json:"executionRevision"`
 }
 
 type ClassCoverage struct {

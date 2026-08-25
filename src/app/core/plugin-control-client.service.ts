@@ -73,8 +73,11 @@ export interface AuditEvent {
   time: string; actor: string; actorId?: string; action: string; target: string;
   result: string; reason: string; opId?: string; source?: string;
 }
-export interface RegistryCredentialStatus {
+export interface RegistryConnectionStatus {
+  id: 'opensphere-ghcr'; displayName: string; registryHost: 'ghcr.io'; allowedNamespace: 'opensphere-platform';
   registry: 'ghcr.io'; configured: boolean; username?: string; secretName: string; updatedAt?: string;
+  lastVerifiedAt?: string; phase?: string; targetPhase?: string; converged?: boolean;
+  impact?: { dependentPackageCount: number; dependentPackages: string[] };
 }
 export interface ImageRevocation {
   repository: string; digest: string; replacementDigest?: string; revokedAt: string; actor: string; reason: string;
@@ -133,33 +136,44 @@ export class PluginControlClient {
     if (!r.ok) throw new Error(`bindings HTTP ${r.status}`);
     return (await r.json()).items;
   }
-  registryCredentialStatus(): Promise<RegistryCredentialStatus> {
-    return this.http.request('/api/admin/extensions/registry-credentials', { cache: 'no-store' })
-      .then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}`); return r.json(); });
+  registryConnectionStatus(): Promise<RegistryConnectionStatus> {
+    return this.http.request('/api/admin/extensions/registry-connections', { cache: 'no-store' })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`registry connections HTTP ${r.status}`);
+        const body = await r.json() as { items?: RegistryConnectionStatus[] };
+        if (!body.items?.[0]) throw new Error('OpenSphere GHCR connection is missing');
+        return body.items[0];
+      });
   }
-  configureRegistryCredentials(username: string, token: string, reason: string): Promise<RegistryCredentialStatus> {
-    return this.http.request('/api/admin/extensions/registry-credentials', {
+  configureRegistryCredentials(username: string, token: string, reason: string): Promise<RegistryConnectionStatus> {
+    return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, token, reason }),
-    }).then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+    }).then(async (r) => { if (!r.ok) throw new Error(`registry connection HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
-  removeRegistryCredentials(reason: string): Promise<RegistryCredentialStatus> {
-    return this.http.request('/api/admin/extensions/registry-credentials', {
-      method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }),
-    }).then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+  verifyRegistryCredentials(): Promise<{ verified: boolean; verifiedAt: string }> {
+    return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr/verify', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    }).then(async (r) => { if (!r.ok) throw new Error(`registry verification HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+  }
+  removeRegistryCredentials(reason: string, confirmation: string): Promise<RegistryConnectionStatus> {
+    return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr', {
+      method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason, confirmation }),
+    }).then(async (r) => { if (!r.ok) throw new Error(`registry connection HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
   revocations(): Promise<ImageRevocation[]> {
     return this.http.request('/api/admin/extensions/revocations', { cache: 'no-store' })
       .then(async (r) => { if (!r.ok) throw new Error(`revocations HTTP ${r.status}`); return (await r.json()).items; });
   }
-  revokeImage(image: string, replacementImage: string, reason: string): Promise<ImageRevocation> {
+  revokeImage(image: string, replacementImage: string, reason: string, confirmation: string): Promise<ImageRevocation> {
     return this.http.request('/api/admin/extensions/revocations', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason, confirmation }),
     }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return (await r.json()).item; });
   }
   install(image: string, reason: string, client: 'cli:os' | 'console:web' = 'console:web'): Promise<ExtensionInstallResult> {
+    const operationId = crypto.randomUUID();
     return this.http.request('/api/admin/extensions/install', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-os-idempotency-key': operationId },
       body: JSON.stringify({ image: image.trim(), reason: reason.trim(), client }),
     }).then(async (r) => {
       if (!r.ok) {
@@ -168,6 +182,17 @@ export class PluginControlClient {
       }
       return r.json() as Promise<ExtensionInstallResult>;
     });
+  }
+  async installCatalogDescriptor(descriptorId: string, snapshotRevision: string, executionRevision: string, reason: string): Promise<ExtensionInstallResult> {
+    const resolved = await this.http.request('/api/admin/platform-control/catalog/resolve', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ descriptorId, snapshotRevision, executionRevision }),
+    });
+    if (!resolved.ok) throw new Error(`Catalog resolve HTTP ${resolved.status}: ${JSON.stringify(await resolved.json().catch(() => ({})))}`);
+    const body = await resolved.json() as { catalogBinding?: { artifactRef?: string } };
+    const artifactRef = String(body.catalogBinding?.artifactRef || '');
+    if (!artifactRef.includes('@sha256:')) throw new Error('Catalog did not return an exact artifact reference');
+    return this.install(artifactRef, reason);
   }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */
   bindingAction(name: string, action: 'enable' | 'disable') {

@@ -90,6 +90,56 @@ test('login returns propagation state without waiting for projected Secret conve
   assert.doesNotMatch(metadata, /test-token-not-a-real-secret|password|auth/);
 });
 
+test('a failed Secret write leaves the previous validated credential and phase intact', async () => {
+  const cluster = fakeCluster();
+  cluster.state.secret = {
+    metadata: { name: 'opensphere-ghcr-pull', annotations: { 'opensphere.io/credential-generation': 'generation-1' } },
+    type: 'kubernetes.io/dockerconfigjson',
+    data: { '.dockerconfigjson': Buffer.from(dockerConfig('opensphere-platform', 'old-token', 'generation-1')).toString('base64') },
+  };
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: { phase: 'configured', generation: 'generation-1', updatedAt: '2026-07-23T00:00:00.000Z' } });
+  const original = cluster.k8s;
+  cluster.k8s = async (method, path, body) => {
+    if (method === 'PATCH' && path.endsWith('/secrets/opensphere-ghcr-pull')) return { ok: false, status: 500, json: null };
+    return original(method, path, body);
+  };
+  const a = coordinator(cluster, 'controller-a', new Map());
+  await assert.rejects(a.store('opensphere-platform', 'candidate-token'), (error) => error.reason === 'RegistryCredentialStoreUnavailable');
+  assert.equal(cluster.state.configMaps.get('opensphere-ghcr-credential-state').data.phase, 'configured');
+  assert.equal(cluster.state.configMaps.get('opensphere-ghcr-credential-state').data.generation, 'generation-1');
+  const restored = dockerCredentials(Buffer.from(cluster.state.secret.data['.dockerconfigjson'], 'base64').toString('utf8'));
+  assert.equal(restored.password, 'old-token');
+});
+
+test('a failed lifecycle commit compensates the Secret and restores the previous state', async () => {
+  const cluster = fakeCluster();
+  cluster.state.secret = {
+    metadata: { name: 'opensphere-ghcr-pull', annotations: { 'opensphere.io/credential-generation': 'generation-1' } },
+    type: 'kubernetes.io/dockerconfigjson',
+    data: { '.dockerconfigjson': Buffer.from(dockerConfig('opensphere-platform', 'old-token', 'generation-1')).toString('base64') },
+  };
+  cluster.state.configMaps.set('opensphere-ghcr-credential-state', { data: { phase: 'configured', generation: 'generation-1', updatedAt: '2026-07-23T00:00:00.000Z' } });
+  const original = cluster.k8s;
+  let rejectedCandidateState = false;
+  cluster.k8s = async (method, path, body) => {
+    if (!rejectedCandidateState && method === 'PATCH' && path.endsWith('/configmaps/opensphere-ghcr-credential-state')
+      && body?.data?.generation === 'generation-2') {
+      rejectedCandidateState = true;
+      return { ok: false, status: 500, json: null };
+    }
+    return original(method, path, body);
+  };
+  const a = coordinator(cluster, 'controller-a', new Map());
+  await assert.rejects(a.store('opensphere-platform', 'candidate-token'), (error) => error.reason === 'RegistryCredentialStoreUnavailable');
+  assert.equal(rejectedCandidateState, true);
+  assert.deepEqual(cluster.state.configMaps.get('opensphere-ghcr-credential-state').data, {
+    phase: 'configured', generation: 'generation-1', updatedAt: '2026-07-23T00:00:00.000Z',
+  });
+  const restored = dockerCredentials(Buffer.from(cluster.state.secret.data['.dockerconfigjson'], 'base64').toString('utf8'));
+  assert.equal(restored.password, 'old-token');
+  assert.equal(restored.generation, 'generation-1');
+});
+
 test('a stale replica returns retryable propagation rather than a false 401', async () => {
   const cluster = fakeCluster();
   cluster.state.secret = {
@@ -232,8 +282,9 @@ test('controller keeps GHCR tokens file-only and mounts only lifecycle metadata 
   assert.match(deployment, /name: POD_NAME/);
   assert.match(deployment, /name: opensphere-ghcr-state/);
   assert.match(lifecycle, /RegistryCredentialsPropagating/);
-  assert.match(controller, /json\(res,\s*stored\.converged\s*\?\s*200\s*:\s*202,\s*stored\)/);
-  assert.match(controller, /json\(res,\s*removed\.converged\s*\?\s*200\s*:\s*202,\s*removed\)/);
+  assert.match(controller, /stored\.converged\s*\?\s*200\s*:\s*202/);
+  assert.match(controller, /lastVerifiedAt:\s*verification\.verifiedAt/);
+  assert.match(controller, /removed\.converged\s*\?\s*200\s*:\s*202/);
   assert.doesNotMatch(lifecycle, /GHCR_(?:TOKEN|PASSWORD)|process\.env\.[A-Z_]*TOKEN/);
 });
 

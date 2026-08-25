@@ -54,4 +54,11 @@ test('Registry reads both public-key and navigation inputs from one namespace-sc
     .find((document) => /kind: ClusterRole\r?\n/.test(document));
   assert.ok(clusterRole);
   assert.doesNotMatch(clusterRole, /resources: \["configmaps"\]/);
+  assert.doesNotMatch(registryManifest, /resources:\s*\["secrets"\]/);
+  const registryRoles = registryManifest
+    .split(/\r?\n---\r?\n/)
+    .filter((document) => /kind: (?:Cluster)?Role\r?\n/.test(document));
+  for (const role of registryRoles) {
+    assert.doesNotMatch(role, /verbs:\s*\[[^\]]*(?:create|update|patch|delete)[^\]]*\]/);
+  }
 });

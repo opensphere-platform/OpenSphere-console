@@ -13,6 +13,7 @@ RUN apk upgrade --no-cache \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY controller.js /app/controller.js
 COPY registry-credentials.js /app/registry-credentials.js
+COPY registry-http.js /app/registry-http.js
 COPY foundation-establishment.js /app/foundation-establishment.js
 USER 1000:1000
 EXPOSE 8080

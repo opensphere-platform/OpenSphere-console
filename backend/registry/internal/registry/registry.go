@@ -373,6 +373,83 @@ func imageDigest(image string) string {
 	return parts[1]
 }
 
+func exactArtifactRef(image, digest string) string {
+	if !digestRE.MatchString(digest) {
+		return ""
+	}
+	base := strings.Split(strings.TrimSpace(image), "@")[0]
+	if slash := strings.LastIndex(base, "/"); slash >= 0 {
+		if colon := strings.LastIndex(base, ":"); colon > slash {
+			base = base[:colon]
+		}
+	}
+	if !strings.HasPrefix(base, "ghcr.io/opensphere-platform/opensphere-") {
+		return ""
+	}
+	return base + "@" + digest
+}
+
+func pluginArtifactRef(plugin Plugin) string {
+	if exact := exactArtifactRef(plugin.RequestedRef, plugin.InstalledDigest); exact != "" {
+		return exact
+	}
+	prefix := "opensphere-plugin-"
+	if plugin.Kind == "subShell" {
+		if strings.HasPrefix(plugin.ID, "shell-") {
+			prefix = "opensphere-"
+		} else {
+			prefix = "opensphere-shell-"
+		}
+	}
+	return "ghcr.io/opensphere-platform/" + prefix + plugin.ID + "@" + plugin.InstalledDigest
+}
+
+var presentationIconAllowlist = map[string]bool{
+	"application": true, "data--base": true, "user-profile": true, "document": true,
+	"terminal": true, "ai--observability": true, "cloud-service-management": true,
+	"network--3": true, "catalog": true, "settings": true,
+}
+
+func presentationIcon(value string) string {
+	value = strings.TrimSpace(value)
+	if presentationIconAllowlist[value] {
+		return value
+	}
+	return "application"
+}
+
+func installablePresentation(item unstructured.Unstructured) (string, string, catalog.Presentation) {
+	id := item.GetName()
+	displayName := nestedString(item.Object, "spec", "model")
+	if displayName == "" {
+		displayName = strings.Title(strings.ReplaceAll(strings.ReplaceAll(id, "-", " "), "_", " ")) //nolint:staticcheck -- deterministic legacy name fallback
+	}
+	description := nestedString(item.Object, "spec", "description", "summary")
+	icons := map[string]string{"postgres": "data--base", "directory": "user-profile", "psmdb": "document"}
+	icon := icons[id]
+	if icon == "" {
+		icon = "application"
+	}
+	return displayName, description, catalog.Presentation{IconRef: icon, Categories: []string{"foundation"}}
+}
+
+func bindExecutionRevisions(descriptors []catalog.Descriptor) {
+	for i := range descriptors {
+		executable := struct {
+			ID           string               `json:"id"`
+			Class        string               `json:"class"`
+			Owner        catalog.Owner        `json:"owner"`
+			Release      catalog.Release      `json:"release"`
+			Capabilities []string             `json:"capabilities"`
+			Installation catalog.Installation `json:"installation"`
+			Evidence     catalog.Evidence     `json:"evidence"`
+		}{descriptors[i].ID, descriptors[i].Class, descriptors[i].Owner, descriptors[i].Release, descriptors[i].Capabilities, descriptors[i].Installation, descriptors[i].Evidence}
+		encoded, _ := json.Marshal(executable)
+		sum := sha256.Sum256(encoded)
+		descriptors[i].ExecutionRevision = "sha256:" + hex.EncodeToString(sum[:])
+	}
+}
+
 func observedGeneration(resourceVersion string) int64 {
 	value, _ := strconv.ParseInt(resourceVersion, 10, 64)
 	return value
@@ -462,10 +539,11 @@ func buildInventory(input Input, plugins []Plugin, rejected *[]catalog.Rejected)
 			ownerID = "opensphere-console"
 		}
 		descriptors = append(descriptors, catalog.Descriptor{
-			ID: "extension." + plugin.ID, Class: "extension", DisplayName: plugin.Name, Domain: "console-extension",
+			ID: "extension." + plugin.ID, Class: "extension", DisplayName: plugin.Name,
+			Description: "Verified Console extension", Publisher: "opensphere-platform", Presentation: catalog.Presentation{IconRef: presentationIcon(plugin.Icon), Categories: []string{"console-extension"}}, Domain: "console-extension",
 			Owner:        catalog.Owner{ID: ownerID, LifecycleAPI: "/api/admin/extensions/registrations/" + plugin.ID},
 			Source:       catalog.Source{Kind: "UIPluginPackage+UIPluginRegistration", Name: plugin.ID},
-			Release:      catalog.Release{Version: version, ImageDigest: plugin.InstalledDigest},
+			Release:      catalog.Release{Version: version, ArtifactRef: pluginArtifactRef(plugin), ImageDigest: plugin.InstalledDigest},
 			Capabilities: extensionCapabilities(plugin), Installation: catalog.Installation{Mode: "dupa", Eligible: true},
 			Evidence: catalog.Evidence{ObservedGeneration: pkg.GetGeneration(), SourceRevision: plugin.SourceRevision},
 		})
@@ -491,16 +569,20 @@ func buildInventory(input Input, plugins []Plugin, rejected *[]catalog.Rejected)
 		if mode == "" {
 			mode = "optional"
 		}
+		displayName, description, presentation := installablePresentation(item)
+		artifactRef := exactArtifactRef(nestedString(item.Object, "spec", "operator", "image"), digest)
 		descriptors = append(descriptors, catalog.Descriptor{
-			ID: id, Class: "installableModule", DisplayName: item.GetName(), Domain: "foundation",
+			ID: id, Class: "installableModule", DisplayName: displayName, Description: description,
+			Publisher: "opensphere-platform", Presentation: presentation, Domain: "foundation",
 			Owner:   catalog.Owner{ID: "pfss.foundation", LifecycleAPI: "/api/foundation/modules/" + item.GetName()},
 			Source:  catalog.Source{Kind: "FoundationModuleDescriptor", Name: item.GetName()},
-			Release: catalog.Release{Version: item.GetResourceVersion(), ImageDigest: digest}, Capabilities: capabilities,
+			Release: catalog.Release{Version: item.GetResourceVersion(), ArtifactRef: artifactRef, ImageDigest: digest}, Capabilities: capabilities,
 			Installation: catalog.Installation{Mode: mode, Eligible: true},
 			Evidence:     catalog.Evidence{ObservedGeneration: item.GetGeneration(), SourceRevision: item.GetResourceVersion()},
 		})
 	}
 
+	bindExecutionRevisions(descriptors)
 	catalog.SortDescriptors(descriptors)
 	identityCount := map[string]int{}
 	for _, descriptor := range descriptors {
@@ -849,11 +931,12 @@ func (s *Store) consumeWatch(ctx context.Context, w watch.Interface, changes cha
 }
 
 type ResolveRequest struct {
-	Kind         string `json:"kind"`
-	ID           string `json:"id"`
-	Architecture string `json:"architecture"`
-	Channel      string `json:"channel"`
-	Revision     string `json:"revision"`
+	Kind              string `json:"kind"`
+	ID                string `json:"id"`
+	Architecture      string `json:"architecture"`
+	Channel           string `json:"channel"`
+	Revision          string `json:"revision"`
+	ExecutionRevision string `json:"executionRevision,omitempty"`
 }
 type ResolveResponse struct {
 	Result      string      `json:"result"`
@@ -885,13 +968,24 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 	case "extension":
 		for _, p := range snap.Plugins {
 			if p.ID == req.ID || "extension."+p.ID == req.ID {
-				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": "extension", "descriptorId": "extension." + p.ID, "id": p.ID, "digest": p.InstalledDigest, "channel": p.RequestedChannel, "catalogRevision": snap.Revision}}
+				for _, descriptor := range snap.Inventory.Descriptors {
+					if descriptor.ID != "extension."+p.ID {
+						continue
+					}
+					if req.ExecutionRevision != "" && req.ExecutionRevision != descriptor.ExecutionRevision {
+						return ResolveResponse{Result: "StaleRevision", Revision: snap.Revision, BlockerCode: "CatalogRevisionChanged", Message: "descriptor execution revision changed; create a new plan"}
+					}
+					return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": "extension", "descriptorId": descriptor.ID, "id": p.ID, "digest": p.InstalledDigest, "artifactRef": descriptor.Release.ArtifactRef, "channel": p.RequestedChannel, "catalogRevision": snap.Revision, "executionRevision": descriptor.ExecutionRevision}}
+				}
 			}
 		}
 	case "installableModule":
 		for _, descriptor := range snap.Inventory.Descriptors {
 			if descriptor.Class == "installableModule" && descriptor.ID == req.ID && descriptor.Installation.Eligible {
-				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": descriptor.Class, "descriptorId": descriptor.ID, "digest": descriptor.Release.ImageDigest, "catalogRevision": snap.Revision}}
+				if req.ExecutionRevision != "" && req.ExecutionRevision != descriptor.ExecutionRevision {
+					return ResolveResponse{Result: "StaleRevision", Revision: snap.Revision, BlockerCode: "CatalogRevisionChanged", Message: "descriptor execution revision changed; create a new plan"}
+				}
+				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": descriptor.Class, "descriptorId": descriptor.ID, "digest": descriptor.Release.ImageDigest, "artifactRef": descriptor.Release.ArtifactRef, "catalogRevision": snap.Revision, "executionRevision": descriptor.ExecutionRevision}}
 			}
 		}
 	}

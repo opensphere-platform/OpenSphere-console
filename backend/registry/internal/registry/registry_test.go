@@ -132,16 +132,32 @@ func TestRevisionIgnoresObservationTimestampChurn(t *testing.T) {
 
 func TestResolveBindsExtensionToExactRevisionAndDigest(t *testing.T) {
 	snapshot, _ := Build(fixtureInput())
+	var descriptorExecutionRevision string
+	for _, descriptor := range snapshot.Inventory.Descriptors {
+		if descriptor.ID == "extension.postgres" {
+			descriptorExecutionRevision = descriptor.ExecutionRevision
+			if descriptor.Release.ArtifactRef == "" {
+				t.Fatal("extension descriptor did not retain a pullable exact artifact reference")
+			}
+		}
+	}
+	if descriptorExecutionRevision == "" {
+		t.Fatal("extension descriptor execution revision is missing")
+	}
 	store := NewStore(nil)
 	store.snapshot.Store(&snapshot)
 	store.lastSuccess = time.Now()
-	got := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: snapshot.Revision})
+	got := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: snapshot.Revision, ExecutionRevision: descriptorExecutionRevision})
 	if got.Result != "Eligible" {
 		t.Fatalf("unexpected: %#v", got)
 	}
 	encoded, _ := json.Marshal(got.Candidate)
 	if !bytes.Contains(encoded, []byte("sha256:")) {
 		t.Fatalf("candidate is not exact digest: %s", encoded)
+	}
+	wrongExecution := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: snapshot.Revision, ExecutionRevision: "sha256:" + string(bytes.Repeat([]byte{'f'}, 64))})
+	if wrongExecution.Result != "StaleRevision" {
+		t.Fatalf("execution revision mismatch was not rejected: %#v", wrongExecution)
 	}
 	stale := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: "sha256:old"})
 	if stale.Result != "StaleRevision" {

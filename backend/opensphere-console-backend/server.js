@@ -3582,16 +3582,18 @@ async function readBody(req) {
 
 async function resolveInstallableCatalogBinding(body) {
   const descriptorId = String(body?.descriptorId || '').trim();
-  const catalogRevision = String(body?.catalogRevision || '').trim();
+  const catalogRevision = String(body?.snapshotRevision || body?.catalogRevision || '').trim();
+  const executionRevision = String(body?.executionRevision || '').trim();
   if (!/^foundation\.[a-z0-9][a-z0-9.-]{0,115}$/.test(descriptorId)
-    || !/^sha256:[a-f0-9]{64}$/.test(catalogRevision)) {
-    throw { code: 400, errorCode: 'CatalogBindingInvalid', msg: 'descriptorId and exact catalogRevision are required' };
+    || !/^sha256:[a-f0-9]{64}$/.test(catalogRevision)
+    || !/^sha256:[a-f0-9]{64}$/.test(executionRevision)) {
+    throw { code: 400, errorCode: 'CatalogBindingInvalid', msg: 'descriptorId, snapshotRevision, and executionRevision are required' };
   }
   let response;
   try {
     response = await fetch(`${REGISTRY_URL}/api/v1/registry/resolve`, {
       method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: 'installableModule', id: descriptorId, revision: catalogRevision, architecture: 'linux/amd64', channel: 'edge' }),
+      body: JSON.stringify({ kind: 'installableModule', id: descriptorId, revision: catalogRevision, executionRevision, architecture: 'linux/amd64', channel: 'edge' }),
       signal: AbortSignal.timeout(8000),
     });
   } catch {
@@ -3603,32 +3605,127 @@ async function resolveInstallableCatalogBinding(body) {
   }
   const candidate = resolution.candidate || {};
   if (candidate.descriptorId !== descriptorId || candidate.catalogRevision !== catalogRevision
-    || !/^sha256:[a-f0-9]{64}$/.test(String(candidate.digest || ''))) {
+    || candidate.executionRevision !== executionRevision
+    || !/^sha256:[a-f0-9]{64}$/.test(String(candidate.digest || ''))
+    || !/^ghcr\.io\/opensphere-platform\/opensphere-[a-z0-9._-]+@sha256:[a-f0-9]{64}$/.test(String(candidate.artifactRef || ''))) {
     throw { code: 409, errorCode: 'CatalogBindingInvalid', msg: 'Registry resolution did not return an exact descriptor binding' };
   }
-  return { catalogBinding: { descriptorId, catalogRevision, exactDigest: candidate.digest }, resolution: 'Eligible' };
+  return { catalogBinding: { descriptorId, snapshotRevision: catalogRevision, executionRevision, exactDigest: candidate.digest, artifactRef: candidate.artifactRef }, resolution: 'Eligible' };
+}
+
+// Administrative authorization is declared as route metadata instead of being
+// inferred from incidental URL literals. Unknown mutations retain the fail-closed
+// AAL2 default below.
+const ADMIN_CONTROL_ROUTE_POLICIES = [
+  { method: 'POST', match: /^\/api\/admin\/extensions\/inspect$/, permission: 'extensions.read', risk: 'R0', readOnly: true },
+  { method: 'GET', match: /^\/api\/admin\/extensions\/(?:registry-connections|registry-connections\/opensphere-ghcr|registry-credentials|revocations)$/, permission: 'extensions.read', risk: 'R0' },
+  { method: 'POST', match: /^\/api\/admin\/extensions\/registry-connections\/opensphere-ghcr\/verify$/, permission: 'extensions.registry.verify', risk: 'R0', readOnly: true },
+  { method: 'PUT', match: /^\/api\/admin\/extensions\/(?:registry-connections\/opensphere-ghcr|registry-credentials)$/, permission: 'extensions.registry.write', risk: 'R2', requireAal2: true },
+  { method: 'DELETE', match: /^\/api\/admin\/extensions\/(?:registry-connections\/opensphere-ghcr|registry-credentials)$/, permission: 'extensions.registry.delete', risk: 'R3', requireAal2: true },
+  { method: 'POST', match: /^\/api\/admin\/extensions\/revocations$/, permission: 'extensions.trust.revoke', risk: 'R3', requireAal2: true },
+  { method: 'POST', match: /^\/api\/admin\/extensions\/install$/, permission: 'extensions.install', risk: 'R2', lifecycleAction: 'install' },
+  { method: 'POST', match: /^\/api\/admin\/plugins\/registrations\/[a-z0-9-]+\/(install|enable|disable|uninstall|rollback)$/, permission: 'extensions.lifecycle', risk: 'R2', lifecycleFromMatch: true },
+];
+
+function adminControlRoutePolicy(pathname, method) {
+  for (const policy of ADMIN_CONTROL_ROUTE_POLICIES) {
+    if (policy.method !== method) continue;
+    const matched = pathname.match(policy.match);
+    if (!matched) continue;
+    return { ...policy, lifecycleAction: policy.lifecycleFromMatch ? matched[1] : policy.lifecycleAction || '' };
+  }
+  return {
+    permission: 'console.admin', risk: ['GET', 'HEAD'].includes(method) ? 'R0' : 'R2',
+    readOnly: ['GET', 'HEAD'].includes(method), requireAal2: !['GET', 'HEAD'].includes(method), lifecycleAction: '',
+  };
+}
+
+function extensionInstallLedgerIntent(req, actor, bodyBuffer) {
+  const key = String(req.headers['x-os-idempotency-key'] || '').trim();
+  if (!key) return null; // compatibility window for released CLI consumers
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,159}$/.test(key)) {
+    throw { code: 400, errorCode: 'idempotency_key_invalid', msg: 'x-os-idempotency-key must be 8-160 safe characters' };
+  }
+  let body;
+  try { body = JSON.parse(bodyBuffer.toString('utf8') || '{}'); }
+  catch { throw { code: 400, errorCode: 'invalid_json', msg: 'extension install body must be JSON' }; }
+  const reason = String(body.reason || '').trim();
+  const image = String(body.image || '').trim();
+  const client = body.client === 'cli:os' ? 'cli:os' : 'console:web';
+  const targetFingerprint = `sha256:${createHash('sha256').update(JSON.stringify({ image, reason, client })).digest('hex')}`;
+  return {
+    key, reason, targetFingerprint,
+    actorId: String(actor?.sub || ''),
+    assurance: actor?.assurance === 'aal2' ? 'aal2' : 'aal1',
+  };
+}
+
+async function beginExtensionInstallLedger(intent) {
+  if (!intent) return { intent: null, existing: null };
+  const query = `select=*&idempotency_key=eq.${encodeURIComponent(intent.key)}&limit=1`;
+  let rows = await restRequest('module_operation', { query });
+  let existing = Array.isArray(rows) ? rows[0] : null;
+  if (existing) {
+    if (existing.module_id !== 'extension-catalog' || existing.action !== 'install'
+      || existing.actor_id !== intent.actorId || existing.target_fingerprint !== intent.targetFingerprint) {
+      throw { code: 409, errorCode: 'IdempotencyConflict', msg: 'idempotency key belongs to a different operation intent' };
+    }
+    return { intent, existing };
+  }
+  try {
+    rows = await restRequest('module_operation', {
+      method: 'POST',
+      body: {
+        operation_id: randomUUID(), idempotency_key: intent.key, module_id: 'extension-catalog', action: 'install',
+        actor_id: intent.actorId, reason: intent.reason, assurance: intent.assurance, risk_class: 'R2',
+        target_fingerprint: intent.targetFingerprint, phase: 'Running',
+        execution_state: 'executing', verification_state: 'pending', result: {},
+      },
+    });
+    return { intent, existing: null, row: Array.isArray(rows) ? rows[0] : null };
+  } catch (error) {
+    if (Number(error?.code) !== 409) throw error;
+    rows = await restRequest('module_operation', { query });
+    existing = Array.isArray(rows) ? rows[0] : null;
+    if (!existing || existing.module_id !== 'extension-catalog' || existing.action !== 'install'
+      || existing.actor_id !== intent.actorId || existing.target_fingerprint !== intent.targetFingerprint) {
+      throw { code: 409, errorCode: 'IdempotencyConflict', msg: 'idempotency key belongs to a different operation intent' };
+    }
+    return { intent, existing };
+  }
+}
+
+async function finishExtensionInstallLedger(ledger, status, payload) {
+  if (!ledger?.intent) return;
+  const succeeded = status >= 200 && status < 300;
+  await restRequest('module_operation', {
+    method: 'PATCH',
+    query: `idempotency_key=eq.${encodeURIComponent(ledger.intent.key)}`,
+    body: {
+      phase: succeeded ? 'Succeeded' : 'Failed',
+      execution_state: succeeded ? 'complete' : 'failed',
+      verification_state: succeeded ? 'succeeded' : 'not_required',
+      error_code: succeeded ? null : `extension_install_http_${status}`,
+      result: { httpStatus: status, payload },
+      updated_at: new Date().toISOString(),
+    },
+    prefer: 'return=minimal',
+  });
 }
 
 async function proxyAdminControlRequest(req, res, url) {
   let authorization = String(req.headers.authorization || '');
+  let actor;
   const method = String(req.method || 'GET').toUpperCase();
-  const registrationLifecycle = url.pathname.match(
-    /^\/api\/admin\/plugins\/registrations\/[a-z0-9-]+\/(install|enable|disable|uninstall|rollback)$/,
-  );
-  const lifecycleAction = url.pathname === '/api/admin/extensions/install'
-    ? 'install'
-    : registrationLifecycle?.[1] || '';
-  // Image inspection is a read-only supply-chain check transported as POST so
-  // the exact image reference stays out of the query string. It still requires
-  // an authenticated Console admin, but must not be classified as a mutation.
-  const readOnlyAdminPost = method === 'POST' && url.pathname === '/api/admin/extensions/inspect';
-  const requireAal2 = !readOnlyAdminPost && isMutationRequest(req)
-    && (!lifecycleAction || moduleLifecycleNeedsRecentAal2(lifecycleAction));
+  const routePolicy = adminControlRoutePolicy(url.pathname, method);
+  const requireAal2 = routePolicy.requireAal2 === true
+    || (!routePolicy.readOnly && isMutationRequest(req)
+      && (!routePolicy.lifecycleAction || moduleLifecycleNeedsRecentAal2(routePolicy.lifecycleAction)));
   if (authorization) {
     // CLI/PAT requests retain their bearer credential, but are verified at the
     // Console enforcement point before the request reaches DUPA. A bearer
     // string never substitutes for the current admin role or recent AAL2 proof.
-    await verifyConsoleAdmin(req, { requireAal2 });
+    actor = await verifyConsoleAdmin(req, { requireAal2 });
   } else {
     // Browser credentials never return to JavaScript. Resolve the opaque
     // HttpOnly cookie server-side and forward only the short-lived Supabase
@@ -3636,15 +3733,25 @@ async function proxyAdminControlRequest(req, res, url) {
     if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
     const session = await browserSessions.authenticate(req);
     assertConsoleAdminActor(session.actor, { requireAal2 });
+    actor = session.actor;
     authorization = `Bearer ${session.accessToken}`;
   }
 
   const hasBody = !['GET', 'HEAD'].includes(method);
   const body = hasBody ? await readRawBody(req) : undefined;
+  const ledger = url.pathname === '/api/admin/extensions/install' && method === 'POST'
+    ? await beginExtensionInstallLedger(extensionInstallLedgerIntent(req, actor, body))
+    : null;
+  if (ledger?.existing?.result?.httpStatus && ledger.existing.phase !== 'Running') {
+    const stored = ledger.existing.result;
+    return json(res, Number(stored.httpStatus), { ...(stored.payload || {}), duplicate: true });
+  }
   const headers = {
     authorization,
     accept: String(req.headers.accept || 'application/json'),
     'x-os-correlation-id': String(req.headers['x-os-correlation-id'] || newOpId()),
+    'x-os-required-permission': routePolicy.permission,
+    'x-os-risk-class': routePolicy.risk,
   };
   if (req.headers['content-type']) headers['content-type'] = String(req.headers['content-type']);
   if (req.headers['x-os-idempotency-key']) headers['x-os-idempotency-key'] = String(req.headers['x-os-idempotency-key']);
@@ -3662,6 +3769,12 @@ async function proxyAdminControlRequest(req, res, url) {
   }
 
   const payload = Buffer.from(await response.arrayBuffer());
+  if (ledger?.intent) {
+    let receiptPayload = {};
+    try { receiptPayload = JSON.parse(payload.toString('utf8') || '{}'); }
+    catch { receiptPayload = { message: payload.toString('utf8').slice(0, 1000) }; }
+    await finishExtensionInstallLedger(ledger, response.status, receiptPayload);
+  }
   const responseHeaders = {};
   for (const name of ['content-type', 'cache-control', 'content-disposition', 'etag', 'retry-after', 'x-os-correlation-id']) {
     const value = response.headers.get(name);

@@ -35,9 +35,9 @@ test('administrator mutations require a real AAL2 session by default', () => {
 
 test('Extension install and update read the mounted development edge policy and all other mutations retain MFA', () => {
   assert.match(backend, /readInstallationPolicy\(INSTALLATION_CONFIG_FILE\)/);
-  assert.match(backend, /moduleLifecycleNeedsRecentAal2\(lifecycleAction\)/);
-  assert.match(backend, /const readOnlyAdminPost = method === 'POST' && url\.pathname === '\/api\/admin\/extensions\/inspect'/);
-  assert.match(backend, /const requireAal2 = !readOnlyAdminPost && isMutationRequest\(req\)/);
+  assert.match(backend, /moduleLifecycleNeedsRecentAal2\(routePolicy\.lifecycleAction\)/);
+  assert.match(backend, /permission: 'extensions\.read', risk: 'R0', readOnly: true/);
+  assert.match(backend, /!routePolicy\.readOnly && isMutationRequest\(req\)/);
   assert.match(backend, /install\|enable\|disable\|uninstall\|rollback/);
   assert.match(deploy, /mountPath: \/var\/run\/opensphere-installation/);
   assert.match(deploy, /name: opensphere-installation-lock/);
@@ -181,7 +181,9 @@ test('profile settings own a private upload and exact linked-account avatar proj
 test('browser admin requests resolve the HttpOnly session at the Console enforcement point', () => {
   assert.match(backend, /async function proxyAdminControlRequest/);
   assert.match(backend, /browserSessions\.authenticate\(req\)/);
-  assert.match(backend, /const requireAal2 = !readOnlyAdminPost && isMutationRequest\(req\)/);
+  assert.match(backend, /const routePolicy = adminControlRoutePolicy\(url\.pathname, method\)/);
+  assert.match(backend, /routePolicy\.requireAal2 === true/);
+  assert.match(backend, /routePolicy\.readOnly/);
   assert.match(backend, /verifyConsoleAdmin\(req, \{ requireAal2 \}\)/);
   assert.match(backend, /assertConsoleAdminActor\(session\.actor, \{ requireAal2 \}\)/);
   assert.match(backend, /authorization = `Bearer \$\{session\.accessToken\}`/);
