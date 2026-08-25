@@ -374,6 +374,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       </div>
     </ng-template>
 
+    @if (activeView() !== 'registry-connections' && activeView() !== 'trust') {
     <clr-tabs>
       <clr-tab>
         <button clrTabLink (click)="selectView('subshells')">SubShells <span class="view-count">{{ subShellMetric() }}</span></button>
@@ -884,6 +885,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         </clr-tab-content>
       </clr-tab>
     </clr-tabs>
+    }
 
     <!-- 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 설치/검증 상태 -->
     @if (selectedReg(); as r) {

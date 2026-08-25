@@ -12,6 +12,11 @@ test('Catalog, Registry Connections, and Trust are separate management surfaces'
   }
   assert.match(page, /Registry Connections/);
   assert.match(page, /Trust &amp; Revocation/);
+  assert.match(
+    page,
+    /@if \(activeView\(\) !== 'registry-connections' && activeView\(\) !== 'trust'\) \{\s*<clr-tabs>/,
+    'Registry Connections와 Trust 경로에서는 이전 Clarity tab 본문을 제거해야 한다',
+  );
   assert.doesNotMatch(page, /clrAccordionTitle>관리 작업/);
 });
 
