@@ -1791,6 +1791,110 @@ os-landing-osaa-dialogue-state {
 }
 /* Registry Inventory lives in the Extensions page but is a shared Console
    projection. Keep it outside the already-large page component style budget. */
+os-admin-plugins {
+  .extension-view-navigation {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 0 0 1rem;
+    border-block: 1px solid var(--os-hairline);
+    border-inline-start: 1px solid var(--os-hairline);
+    background: var(--os-canvas, #fff);
+  }
+  .extension-view-navigation__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    min-width: 0;
+    min-height: 2.8rem;
+    padding: .65rem .8rem;
+    border-inline-end: 1px solid var(--os-hairline);
+    border-bottom: .18rem solid transparent;
+    color: var(--os-ink-muted);
+    font-size: .74rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-decoration: none;
+  }
+  .extension-view-navigation__item:hover { background: var(--os-surface-1); color: var(--os-ink); }
+  .extension-view-navigation__item.is-active {
+    border-bottom-color: var(--os-accent);
+    background: var(--os-accent-subtle, #eef5ff);
+    color: var(--os-accent);
+  }
+  .extension-view-navigation__item strong {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.35rem;
+    min-height: 1.15rem;
+    padding-inline: .3rem;
+    border-radius: 1rem;
+    background: var(--os-surface-2);
+    color: var(--os-ink-muted);
+    font-size: .62rem;
+    font-weight: 650;
+  }
+  .extension-view-heading {
+    display: grid;
+    grid-template-columns: minmax(8.5rem, .28fr) minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+    margin: 0 0 1rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--os-hairline);
+    border-inline-start: .2rem solid var(--os-accent);
+    background: var(--os-canvas, #fff);
+  }
+  .extension-view-heading .view-kicker { margin: .18rem 0 0; }
+  .extension-view-heading h2 { margin: 0; font-size: 1.2rem; line-height: 1.25; }
+  .extension-view-heading div > p {
+    max-width: 58rem;
+    margin: .35rem 0 0;
+    color: var(--os-muted);
+    font-size: .78rem;
+    line-height: 1.55;
+  }
+  .extension-content-tabs > .nav { display: none; }
+  .extension-content-tabs > .tab-content { padding-top: 0; }
+  .extension-table-wrap--simple { margin-top: .25rem; }
+  .extension-table-wrap--simple .table { width: 100%; margin: 0; border: 0; table-layout: fixed; }
+  .extension-audit-table { min-width: 58rem; }
+  .extension-audit-table th:nth-child(1) { width: 14%; }
+  .extension-audit-table th:nth-child(2) { width: 13%; }
+  .extension-audit-table th:nth-child(3) { width: 16%; }
+  .extension-audit-table th:nth-child(4) { width: 25%; }
+  .extension-audit-table th:nth-child(5) { width: 32%; }
+  .extension-audit-table th,
+  .extension-audit-table td,
+  .extension-bindings-table th,
+  .extension-bindings-table td {
+    padding: .7rem .8rem !important;
+    text-align: left !important;
+    vertical-align: top;
+    font-size: .75rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  .extension-empty-state {
+    display: grid;
+    gap: .35rem;
+    min-height: 7rem;
+    align-content: center;
+    margin-top: .25rem;
+    padding: 1.1rem;
+    border: 1px dashed var(--os-hairline);
+    background: var(--os-canvas, #fff);
+  }
+  .extension-empty-state strong { color: var(--os-ink); font-size: .88rem; }
+  .extension-empty-state span { max-width: 46rem; color: var(--os-muted); font-size: .76rem; line-height: 1.5; }
+  .manage-status-rail span,
+  .manage-status-rail small { font-size: .63rem; }
+  .manage-status-rail strong { font-size: .86rem; }
+  .foundation-catalog-head .btn,
+  .registry-access-form .btn { white-space: nowrap; }
+}
+
 .foundation-catalog,
 .extension-package-catalog { margin: 1rem 0; padding: 1rem; border: 1px solid var(--os-hairline); background: var(--os-surface-1); }
 .foundation-catalog-head,
@@ -1834,3 +1938,9 @@ os-landing-osaa-dialogue-state {
 .legacy-foundation-source summary { cursor: pointer; font-weight: 650; }
 @media(max-width: 70rem) { .foundation-module-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media(max-width: 48rem) { .foundation-catalog-head,.extension-package-catalog-head { display: grid; } .foundation-catalog-evidence,.registry-class-summary,.foundation-module-grid { grid-template-columns: 1fr; } .foundation-catalog-evidence > div,.registry-class-summary > div { border-inline-end: 0; border-bottom: 1px solid var(--os-hairline); } }
+@media(max-width: 70rem) {
+  os-admin-plugins {
+    .extension-view-navigation { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .extension-view-heading { grid-template-columns: 1fr; gap: .35rem; }
+  }
+}

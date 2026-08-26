@@ -115,6 +115,25 @@ interface TreeNode {
 type ExtensionManagementView = 'subshells' | 'plugins' | 'topology' | 'catalog' | 'registry-connections' | 'trust' | 'audit' | 'bindings';
 const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshells', 'plugins', 'topology', 'catalog', 'registry-connections', 'trust', 'audit', 'bindings'];
 
+interface ExtensionViewDefinition {
+  id: ExtensionManagementView;
+  label: string;
+  eyebrow: string;
+  title: string;
+  description: string;
+}
+
+const EXTENSION_VIEW_DEFINITIONS: readonly ExtensionViewDefinition[] = [
+  { id: 'subshells', label: 'SubShells', eyebrow: 'OPERATING SHELLS', title: 'SubShell 관리', description: 'Main Shell에 직접 연결되어 1단 메뉴와 독립 운영 영역을 제공하는 SubShell을 관리합니다.' },
+  { id: 'plugins', label: 'Plugins', eyebrow: 'HOSTED CAPABILITIES', title: 'Plugin 관리', description: 'Main Shell 핵심 표면, System Plugin, SubShell이 소유하는 Registry Plugin을 수명주기별로 구분합니다.' },
+  { id: 'topology', label: 'Topology', eyebrow: 'OWNERSHIP MAP', title: 'Extension 구성도', description: 'Main Shell부터 SubShell·Plugin·Binding까지 실제 소유 관계와 현재 연결 상태를 확인합니다.' },
+  { id: 'catalog', label: 'Catalog', eyebrow: 'REGISTRY INVENTORY', title: 'Catalog', description: '검증된 Descriptor와 설치 가능한 Extension Package를 하나의 Registry revision으로 조회합니다.' },
+  { id: 'registry-connections', label: 'Registry Connections', eyebrow: 'PACKAGE ACCESS', title: 'Registry Connections', description: 'Private OCI Registry 연결과 읽기 전용 패키지 접근 자격증명을 분리하여 관리합니다.' },
+  { id: 'trust', label: 'Trust & Revocation', eyebrow: 'SUPPLY CHAIN TRUST', title: 'Trust & Revocation', description: '손상되거나 취약한 exact image digest를 철회하고 신규 설치와 활성화를 차단합니다.' },
+  { id: 'audit', label: 'Audit', eyebrow: 'OPERATION EVIDENCE', title: 'Extension 감사 기록', description: '설치·활성화·비활성화·철회 작업의 주체와 결과를 시간순으로 확인합니다.' },
+  { id: 'bindings', label: 'Bindings', eyebrow: 'EXTERNAL CONTRACTS', title: 'Extension Bindings', description: 'Main Shell core 밖의 CLI·인증·권한 확장이 연결되는 명시적 계약을 관리합니다.' },
+];
+
 /**
  * Admin Control Page (계획서 §7) — Catalog/Installed/Audit 탭.
  * 설치/비활성화/재활성화/삭제를 Control API로만 수행하고, 성공 후 Extension Host를
@@ -155,11 +174,27 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       <div><span>상태 동기화</span><strong [class.warn]="projectionStatus()?.state === 'stale'">{{ projectionLabel() }}</strong><small>공유 Registry projection</small></div>
     </section>
 
-    <nav class="btn-group" aria-label="Catalog 및 공급망 관리">
-      <a class="btn btn-sm" [class.btn-primary]="activeView() === 'catalog'" routerLink="/manage/extensions/catalog">Catalog</a>
-      <a class="btn btn-sm" [class.btn-primary]="activeView() === 'registry-connections'" routerLink="/manage/extensions/registry-connections">Registry Connections</a>
-      <a class="btn btn-sm" [class.btn-primary]="activeView() === 'trust'" routerLink="/manage/extensions/trust">Trust &amp; Revocation</a>
+    <nav class="extension-view-navigation" aria-label="Console Extension 관리 화면">
+      @for (view of extensionViewDefinitions; track view.id) {
+        <a
+          class="extension-view-navigation__item"
+          [class.is-active]="activeView() === view.id"
+          [attr.aria-current]="activeView() === view.id ? 'page' : null"
+          [routerLink]="'/manage/extensions/' + view.id"
+        >
+          <span>{{ view.label }}</span>
+          @if (viewCount(view.id); as count) { <strong>{{ count }}</strong> }
+        </a>
+      }
     </nav>
+
+    <section class="extension-view-heading" aria-labelledby="extension-view-title">
+      <p class="view-kicker">{{ activeViewDefinition().eyebrow }}</p>
+      <div>
+        <h2 id="extension-view-title">{{ activeViewDefinition().title }}</h2>
+        <p>{{ activeViewDefinition().description }}</p>
+      </div>
+    </section>
 
     @if (activeView() === 'registry-connections') {
     <section class="registry-access" aria-labelledby="registry-access-title">
@@ -375,14 +410,10 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
     </ng-template>
 
     @if (activeView() !== 'registry-connections' && activeView() !== 'trust') {
-    <clr-tabs>
+    <clr-tabs class="extension-content-tabs">
       <clr-tab>
         <button clrTabLink (click)="selectView('subshells')">SubShells <span class="view-count">{{ subShellMetric() }}</span></button>
         <clr-tab-content *clrIfActive="activeView() === 'subshells'">
-          <div class="extension-view-intro">
-            <div><span class="view-kicker">FIRST-LEVEL OPERATING SHELLS</span><h2>SubShell 관리</h2></div>
-            <p>Main Shell에 직접 연결되어 1단 메뉴와 독립 운영 영역을 제공하는 subShell만 표시합니다. plugin은 이 view에 포함하지 않습니다.</p>
-          </div>
           <div class="status-guide">
             <strong>상태 읽는 법</strong>
             <span><i class="status-dot success"></i>사용자 설정대로 서비스 중</span>
@@ -396,10 +427,6 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       <clr-tab>
         <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ pluginMetric() }}</span></button>
         <clr-tab-content *clrIfActive="activeView() === 'plugins'">
-          <div class="extension-view-intro">
-            <div><span class="view-kicker">SYSTEM &amp; HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
-            <p>Main Shell 핵심 표면, Console 내장 system plugin, subShell이 소유·호스팅하는 Registry plugin을 서로 다른 수명주기로 표시합니다.</p>
-          </div>
           <section class="plugin-host-group" aria-label="Console Core Surfaces">
             <header>
               <div><span class="view-kicker">MAIN SHELL CORE</span><h3>Core Surfaces</h3></div>
@@ -798,43 +825,46 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       <clr-tab>
         <button clrTabLink (click)="selectView('audit')">Audit</button>
         <clr-tab-content *clrIfActive="activeView() === 'audit'">
-          <table class="table">
-            <thead>
-              <tr>
-                <th class="left">Time</th>
-                <th>Actor</th>
-                <th>Action</th>
-                <th>Target</th>
-                <th>Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (e of events(); track $index) {
-                <tr>
-                  <td class="left os-mono">{{ e.time }}</td>
-                  <td>{{ e.actor }}</td>
-                  <td>{{ e.action }}</td>
-                  <td>{{ e.target }}</td>
-                  <td>{{ e.result }}{{ e.reason ? ' · ' + e.reason : '' }}</td>
-                </tr>
-              } @empty {
-                <tr>
-                  <td colspan="5" class="os-sub">감사 이벤트 없음</td>
-                </tr>
-              }
-            </tbody>
-          </table>
+          @if (events().length) {
+            <div class="extension-table-wrap extension-table-wrap--simple">
+              <table class="table extension-audit-table">
+                <thead>
+                  <tr>
+                    <th class="left">Time</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>Target</th>
+                    <th>Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                @for (e of events(); track $index) {
+                  <tr>
+                    <td class="left os-mono">{{ e.time }}</td>
+                    <td>{{ e.actor }}</td>
+                    <td>{{ e.action }}</td>
+                    <td class="os-mono">{{ e.target }}</td>
+                    <td>{{ e.result }}{{ e.reason ? ' · ' + e.reason : '' }}</td>
+                  </tr>
+                }
+                </tbody>
+              </table>
+            </div>
+          } @else {
+            <section class="extension-empty-state">
+              <strong>기록된 Extension 작업이 없습니다.</strong>
+              <span>설치·활성화·비활성화·철회 작업이 실행되면 주체와 결과가 이곳에 시간순으로 표시됩니다.</span>
+            </section>
+          }
         </clr-tab-content>
       </clr-tab>
 
       <clr-tab>
         <button clrTabLink (click)="selectView('bindings')">Bindings</button>
         <clr-tab-content *clrIfActive="activeView() === 'bindings'">
-          <p class="os-sub">
-            향후 workforce 인증·권한·명령처럼 Main Shell core 밖의 CLI 확장을 선언하는 채널입니다.
-            native <code>os</code>는 이 목록에 포함되지 않습니다.
-          </p>
-          <table class="table">
+          @if (bindings().length) {
+          <div class="extension-table-wrap extension-table-wrap--simple">
+          <table class="table extension-bindings-table">
             <thead>
               <tr>
                 <th class="left">Binding</th>
@@ -875,13 +905,16 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
                     }
                   </td>
                 </tr>
-              } @empty {
-                <tr>
-                  <td colspan="5" class="os-sub">바인딩 없음</td>
-                </tr>
               }
             </tbody>
           </table>
+          </div>
+          } @else {
+            <section class="extension-empty-state">
+              <strong>등록된 Binding이 없습니다.</strong>
+              <span>Workforce 인증·권한·명령처럼 Main Shell core 밖의 확장이 계약을 게시하면 이곳에 표시됩니다. Native <code>os</code>는 포함되지 않습니다.</span>
+            </section>
+          }
         </clr-tab-content>
       </clr-tab>
     </clr-tabs>
@@ -1140,7 +1173,8 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
     `
       .os-sub {
         color: var(--os-muted);
-        font-size: 0.7rem;
+        font-size: 0.76rem;
+        line-height: 1.5;
         margin: 0.3rem 0 0.8rem;
       }
       .os-engine {
@@ -1151,7 +1185,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       }
       .os-mono {
         font-family: monospace;
-        font-size: 0.62rem;
+        font-size: 0.7rem;
       }
       .management-actions {
         display: block;
@@ -1166,14 +1200,14 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         background: var(--os-surface-1);
       }
       .registry-access {
-        padding: 0.8rem 1rem;
+        padding: 1rem 1.1rem;
         margin-bottom: 1rem;
         border: 1px solid var(--os-hairline);
         border-radius: var(--os-radius);
         background: var(--os-surface-1);
       }
       .registry-access-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-      .registry-access h2 { margin: 0; font-size: 1rem; }
+      .registry-access h2 { margin: 0; font-size: 1.05rem; line-height: 1.3; }
       .registry-access-form { display: flex; align-items: flex-end; gap: 0.7rem; flex-wrap: wrap; }
       .registry-access-form .clr-form-control { min-width: 0; margin-top: 0.45rem; }
       .registry-access-form .clr-control-container,
@@ -1215,11 +1249,10 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         color: var(--os-ink);
       }
       .state-detail {
-        max-width: none;
         margin-top: 0.22rem;
         color: var(--os-muted);
-        font-size: 0.64rem;
-        line-height: 1.35;
+        font-size: 0.7rem;
+        line-height: 1.45;
         overflow-wrap: anywhere;
       }
       .status-guide {
@@ -1233,7 +1266,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         border-bottom: 0;
         background: var(--os-surface-1);
         color: var(--os-muted);
-        font-size: 0.68rem;
+        font-size: 0.72rem;
         flex-wrap: wrap;
       }
       .status-guide strong { color: var(--os-ink); }
@@ -1250,19 +1283,8 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         font-size: 0.62rem;
         line-height: 1.2rem;
       }
-      .extension-view-intro {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 1rem;
-        margin: 0.9rem 0 0;
-        padding-bottom: 0.55rem;
-        border-bottom: 1px solid var(--os-hairline);
-      }
-      .extension-view-intro h2,
       .plugin-host-group h3 { margin: 0.15rem 0 0; }
-      .extension-view-intro p { max-width: 52rem; margin: 0; color: var(--os-muted); font-size: 0.72rem; }
-      .view-kicker { color: var(--os-accent); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; }
+      .view-kicker { color: var(--os-accent); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; }
       .plugin-host-group {
         margin: 0.9rem 0 1rem;
         border: 1px solid var(--os-hairline);
@@ -1275,11 +1297,12 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         gap: 1rem;
         padding: 0.7rem 0.9rem;
         border-bottom: 1px solid var(--os-hairline);
+        background: var(--os-surface-1);
+        color: var(--os-ink);
       }
-      .plugin-host-group>header{color:#fff}
-      .plugin-host-group>header *{color:inherit!important}
+      .plugin-host-group > header .view-kicker { color: var(--os-accent); }
       .plugin-host-group .extension-table-wrap { padding: 0.65rem; }
-      .plugin-host-coordinate { display: flex; align-items: center; gap: 0.45rem; color: var(--os-muted); font-size: 0.68rem; }
+      .plugin-host-coordinate { display: flex; align-items: center; gap: 0.45rem; color: var(--os-muted); font-size: 0.72rem; }
       .plugin-host-coordinate code { color: var(--os-ink); }
       .empty-view { margin: 0.8rem 0; padding: 1rem; border: 1px dashed var(--os-hairline); color: var(--os-muted); }
       .contract-warning { border-color: var(--os-warning); }
@@ -1289,6 +1312,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         overflow-x: auto;
         border: 1px solid var(--os-hairline);
         background: var(--os-canvas, #fff);
+        scrollbar-color: var(--os-ink-subtle) var(--os-surface-1);
       }
       .plugin-host-group .extension-table-wrap { border: 0; background: transparent; }
       .extension-table {
@@ -1307,9 +1331,9 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       }
       .extension-table th {
         white-space: nowrap;
-        font-size: 0.7rem;
+        font-size: 0.74rem;
       }
-      .extension-table td { vertical-align: top; overflow-wrap: anywhere; }
+      .extension-table td { vertical-align: top; overflow-wrap: anywhere; font-size: 0.76rem; line-height: 1.45; }
       .extension-table:not(.extension-table--with-host) th:nth-child(1) { width: 20%; }
       .extension-table:not(.extension-table--with-host) th:nth-child(2) { width: 12%; }
       .extension-table:not(.extension-table--with-host) th:nth-child(3) { width: 12%; }
@@ -1335,7 +1359,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         table-layout: fixed;
       }
       .tree {
-        overflow: hidden;
+        overflow-x: auto;
         border: 1px solid var(--os-hairline);
         background: var(--os-canvas, #fff);
       }
@@ -1344,14 +1368,16 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       .status-dot.warning { background: var(--os-warning); }
       .status-dot.danger { background: var(--os-error); }
       .tree {
-        font-size: 0.8rem;
-        margin: 0.2rem 0 0.5rem;
+        font-size: 0.82rem;
+        margin: 0.4rem 0 0.75rem;
+        padding: 0.4rem;
       }
       .tn {
         display: flex;
         align-items: center;
         gap: 0.45rem;
-        padding: 0.25rem 0.2rem;
+        min-width: 45rem;
+        padding: 0.42rem 0.35rem;
         border-bottom: 1px solid var(--clr-color-neutral-200, #eee);
       }
       .tn1 {
@@ -1528,6 +1554,10 @@ export class AdminPlugins implements OnInit {
   private readonly router = inject(Router);
   readonly iconLib = inject(IconLibraryService);
   readonly activeView = signal<ExtensionManagementView>(this.normalizeView(this.route.snapshot.paramMap.get('view')));
+  readonly extensionViewDefinitions = EXTENSION_VIEW_DEFINITIONS;
+  readonly activeViewDefinition = computed(() =>
+    EXTENSION_VIEW_DEFINITIONS.find((view) => view.id === this.activeView()) ?? EXTENSION_VIEW_DEFINITIONS[0]
+  );
   readonly foundationCatalogSnapshot = signal<FoundationCatalogSnapshot | null>(null);
   readonly foundationCatalogError = signal<string | null>(null);
   readonly foundationCatalogLoading = signal(false);
@@ -2299,6 +2329,16 @@ export class AdminPlugins implements OnInit {
 
   pluginMetric(): string {
     return this.registrationsLoaded() ? String(this.totalPluginCount()) : '—';
+  }
+
+  viewCount(view: ExtensionManagementView): string | null {
+    if (view === 'subshells') return this.subShellMetric();
+    if (view === 'plugins') return this.pluginMetric();
+    if (view === 'catalog') return this.catalogMetric();
+    if (view === 'audit') return String(this.events().length);
+    if (view === 'bindings') return String(this.bindings().length);
+    if (view === 'trust') return String(this.revocations().length);
+    return null;
   }
 
   failedCount(): number {
