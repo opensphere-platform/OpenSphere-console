@@ -1823,7 +1823,7 @@ os-admin-plugins {
     font-size: .62rem;
     line-height: 1.35;
   }
-  .extension-view-navigation__group > div {
+  .extension-view-navigation__items {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
     height: calc(100% - 3.2rem);
@@ -1845,7 +1845,7 @@ os-admin-plugins {
     line-height: 1.25;
     text-decoration: none;
   }
-  .extension-view-navigation__group > div > .extension-view-navigation__item:last-child { border-inline-end: 0; }
+  .extension-view-navigation__items > .extension-view-navigation__item:last-child { border-inline-end: 0; }
   .extension-view-navigation__item:hover { background: var(--os-surface-1); color: var(--os-ink); }
   .extension-view-navigation__item.is-active {
     border-bottom-color: var(--os-accent);

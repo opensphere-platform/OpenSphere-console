@@ -191,7 +191,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             <strong>{{ group.label }}</strong>
             <span>{{ group.description }}</span>
           </div>
-          <div>
+          <div class="extension-view-navigation__items">
             @for (view of group.views; track view.id) {
               <a
                 class="extension-view-navigation__item"
