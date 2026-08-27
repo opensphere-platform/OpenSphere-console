@@ -70,7 +70,7 @@ import { CatalogItem, PluginControlClient, Registration } from '../core/plugin-c
             <h1 id="module-management-title">{{ item.catalog?.displayName || id() }}</h1>
             <p>제품 화면은 현재 비활성 상태입니다. 이 관리 화면은 설치·활성화 여부와 관계없이 유지됩니다.</p>
           </div>
-          <a class="btn btn-primary" routerLink="/manage/extensions">Extensions 관리</a>
+          <a class="btn btn-primary" routerLink="/manage/extensions">Modules & Extensions 관리</a>
         </div>
         <div class="module-state-grid">
           <div><span>Installed</span><strong>{{ item.registration ? 'Yes' : 'No' }}</strong></div>

@@ -739,7 +739,7 @@ export class Landing {
       base.push(
         { path: '/manage/data-identity', title: 'Console Backbone', sub: 'Supabase and Gitea authority' },
         { path: '/manage/platform-control', title: 'Platform Control', sub: 'Readiness and evidence' },
-        { path: '/manage/extensions', title: 'Extensions', sub: 'DUPA lifecycle and Registry' },
+        { path: '/manage/extensions', title: 'Modules & Extensions', sub: 'Module registry · DUPA lifecycle' },
         { path: '/manage/roles', title: '역할', sub: 'Roles and assignments' },
       );
     }

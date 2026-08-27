@@ -146,7 +146,7 @@ export class AdminLayout {
   private readonly router = inject(Router);
   readonly overviewIcon = Home16;
   readonly extensionItem = {
-    label: 'Extensions',
+    label: 'Modules & Extensions',
     route: '/manage/extensions',
     icon: Application16,
   };

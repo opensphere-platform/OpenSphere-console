@@ -154,7 +154,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
   imports: [NgTemplateOutlet, RouterLink, ClarityModule, CdkDropList, CdkDrag, CdkDragHandle, OsPageHeader, OsRawIcon, OsNavIcon, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
-      <os-page-header title="Console Extensions" tag="Core Runtime">
+      <os-page-header title="Modules & Extensions" tag="Core Runtime">
         <p>Console 내장 system plugin과 subShell·plugin의 소유 관계, 현재 서비스, 서명 검증, 워크로드 연결을 한곳에서 관리합니다.</p>
       </os-page-header>
 

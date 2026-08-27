@@ -5,6 +5,19 @@ import fs from 'node:fs';
 const page = fs.readFileSync(new URL('./admin-plugins.ts', import.meta.url), 'utf8');
 const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts', import.meta.url), 'utf8');
 const styles = fs.readFileSync(new URL('../../styles.scss', import.meta.url), 'utf8');
+const adminLayout = fs.readFileSync(new URL('./admin-layout.ts', import.meta.url), 'utf8');
+const search = fs.readFileSync(new URL('../core/search.service.ts', import.meta.url), 'utf8');
+const landing = fs.readFileSync(new URL('./landing.ts', import.meta.url), 'utf8');
+const pluginHost = fs.readFileSync(new URL('./plugin-host.ts', import.meta.url), 'utf8');
+
+test('the management umbrella is named Modules & Extensions across Console entry points', () => {
+  assert.match(page, /<os-page-header title="Modules & Extensions"/);
+  assert.match(adminLayout, /label: 'Modules & Extensions'/);
+  assert.match(search, /label: 'Modules & Extensions 관리'/);
+  assert.match(search, /label: 'Modules & Extensions'/);
+  assert.match(landing, /title: 'Modules & Extensions'/);
+  assert.match(pluginHost, />Modules & Extensions 관리<\/a>/);
+});
 
 test('Catalog, Registry Connections, and Trust are separate management surfaces', () => {
   for (const view of ['catalog', 'registry-connections', 'trust']) {
