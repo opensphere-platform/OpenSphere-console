@@ -35,6 +35,12 @@ test('all Extension management views share one route navigation and readable pag
   assert.match(page, /class="extension-empty-state"/);
 });
 
+test('Catalog descriptor headings do not inherit Clarity application-header colors', () => {
+  assert.match(page, /class="registry-descriptor-heading"/);
+  assert.doesNotMatch(page, /<header><h3>\{\{ registryClassLabel\(className\) \}\}/);
+  assert.match(styles, /\.registry-descriptor-heading\s*\{[\s\S]*?background: var\(--os-surface-2\);[\s\S]*?color: var\(--os-ink\);/);
+});
+
 test('Catalog presentation accepts only the normalized navigation icon token', () => {
   assert.match(page, /<os-nav-icon \[token\]="descriptor\.presentation\?\.iconRef \|\| 'application'"/);
   assert.doesNotMatch(page, /descriptor\.presentation\?\.(?:iconUrl|svg|html)/);

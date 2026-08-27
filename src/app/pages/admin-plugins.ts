@@ -658,7 +658,10 @@ const EXTENSION_VIEW_DEFINITIONS: readonly ExtensionViewDefinition[] = [
 
               @for (className of registryDescriptorClasses; track className) {
                 <section class="registry-descriptor-group" [attr.aria-label]="registryClassLabel(className)">
-                  <header><h3>{{ registryClassLabel(className) }}</h3><span>{{ descriptorsByClass(snapshot, className).length }} published</span></header>
+                  <div class="registry-descriptor-heading">
+                    <h3>{{ registryClassLabel(className) }}</h3>
+                    <span>{{ descriptorsByClass(snapshot, className).length }} published</span>
+                  </div>
                   <div class="foundation-module-grid">
                     @for (descriptor of descriptorsByClass(snapshot, className); track descriptor.id) {
                       <article class="foundation-module">

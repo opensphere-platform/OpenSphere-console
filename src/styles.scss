@@ -1917,9 +1917,19 @@ os-admin-plugins {
 .registry-class-summary strong { display: block; margin-top: .25rem; font-size: .9rem; }
 .registry-class-summary small { display: block; margin-top: .25rem; color: var(--os-muted); line-height: 1.4; }
 .registry-descriptor-group { margin-top: 1.25rem; }
-.registry-descriptor-group > header { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--os-hairline); }
-.registry-descriptor-group h3 { margin: 0 0 .45rem; font-size: 1rem; }
-.registry-descriptor-group header span { color: var(--os-muted); font-size: .68rem; }
+.registry-descriptor-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 2.6rem;
+  padding: .65rem .75rem;
+  border-bottom: 1px solid var(--os-hairline);
+  background: var(--os-surface-2);
+  color: var(--os-ink);
+}
+.registry-descriptor-heading h3 { margin: 0; color: inherit; font-size: 1rem; }
+.registry-descriptor-heading span { color: var(--os-muted); font-size: .68rem; }
 .foundation-module-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-inline-start: 1px solid var(--os-hairline); }
 .foundation-module { min-width: 0; padding: .85rem; border-inline-end: 1px solid var(--os-hairline); border-bottom: 1px solid var(--os-hairline); }
 .foundation-module-state { display: block; color: var(--os-accent); font-size: .62rem; font-weight: 700; letter-spacing: .06em; }
