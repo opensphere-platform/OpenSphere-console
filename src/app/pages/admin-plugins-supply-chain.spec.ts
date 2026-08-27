@@ -35,6 +35,18 @@ test('all Extension management views share one route navigation and readable pag
   assert.match(page, /class="extension-empty-state"/);
 });
 
+test('Extension navigation exposes architecture hierarchy instead of eight false peers', () => {
+  for (const group of ['Extension 구성', 'Registry · 배포 준비', '보안 · 증거', '외부 계약']) {
+    assert.match(page, new RegExp(group.replace('·', '·')));
+  }
+  for (const role of ['Management View', 'Relationship View', 'CBSS Core Service', 'Control Surface', 'Security Control', 'Evidence', 'Contract']) {
+    assert.match(page, new RegExp(role));
+  }
+  assert.match(page, /extension-view-heading__architecture/);
+  assert.match(page, /OpenSphere Registry & Catalog Service/);
+  assert.match(styles, /\.extension-view-navigation__group/);
+});
+
 test('Catalog descriptor headings do not inherit Clarity application-header colors', () => {
   assert.match(page, /class="registry-descriptor-heading"/);
   assert.doesNotMatch(page, /<header><h3>\{\{ registryClassLabel\(className\) \}\}/);

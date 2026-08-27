@@ -1796,8 +1796,35 @@ os-admin-plugins {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     margin: 0 0 1rem;
-    border-block: 1px solid var(--os-hairline);
-    border-inline-start: 1px solid var(--os-hairline);
+    border: 1px solid var(--os-hairline);
+    background: var(--os-surface-1);
+  }
+  .extension-view-navigation__group {
+    min-width: 0;
+    border-inline-end: 1px solid var(--os-hairline);
+  }
+  .extension-view-navigation__group:last-child { border-inline-end: 0; }
+  .extension-view-navigation__group > header {
+    display: grid;
+    gap: .12rem;
+    min-height: 3.2rem;
+    padding: .55rem .7rem;
+    border-bottom: 1px solid var(--os-hairline);
+  }
+  .extension-view-navigation__group > header strong {
+    color: var(--os-ink);
+    font-size: .7rem;
+    font-weight: 700;
+  }
+  .extension-view-navigation__group > header span {
+    color: var(--os-muted);
+    font-size: .62rem;
+    line-height: 1.35;
+  }
+  .extension-view-navigation__group > div {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    height: calc(100% - 3.2rem);
     background: var(--os-canvas, #fff);
   }
   .extension-view-navigation__item {
@@ -1816,6 +1843,7 @@ os-admin-plugins {
     line-height: 1.25;
     text-decoration: none;
   }
+  .extension-view-navigation__group > div > .extension-view-navigation__item:last-child { border-inline-end: 0; }
   .extension-view-navigation__item:hover { background: var(--os-surface-1); color: var(--os-ink); }
   .extension-view-navigation__item.is-active {
     border-bottom-color: var(--os-accent);
@@ -1837,7 +1865,7 @@ os-admin-plugins {
   }
   .extension-view-heading {
     display: grid;
-    grid-template-columns: minmax(8.5rem, .28fr) minmax(0, 1fr);
+    grid-template-columns: minmax(8.5rem, .22fr) minmax(18rem, 1fr) minmax(18rem, .72fr);
     gap: 1.25rem;
     align-items: start;
     margin: 0 0 1rem;
@@ -1854,6 +1882,43 @@ os-admin-plugins {
     color: var(--os-muted);
     font-size: .78rem;
     line-height: 1.55;
+  }
+  .extension-view-heading__architecture {
+    display: grid;
+    gap: .42rem;
+    margin: 0;
+    padding-inline-start: 1rem;
+    border-inline-start: 1px solid var(--os-hairline);
+  }
+  .extension-view-heading__architecture > div {
+    display: grid;
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+    gap: .55rem;
+    align-items: baseline;
+  }
+  .extension-view-heading__architecture dt {
+    color: var(--os-muted);
+    font-size: .64rem;
+    font-weight: 650;
+  }
+  .extension-view-heading__architecture dd {
+    min-width: 0;
+    margin: 0;
+    color: var(--os-ink);
+    font-size: .7rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .architecture-role {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.25rem;
+    padding: 0 .42rem;
+    border: 1px solid var(--os-accent);
+    border-radius: 1rem;
+    background: var(--os-accent-subtle, #eef5ff);
+    color: var(--os-accent);
+    font-weight: 700;
   }
   .extension-content-tabs > .nav { display: none; }
   .extension-content-tabs > .tab-content { padding-top: 0; }
@@ -1951,6 +2016,18 @@ os-admin-plugins {
 @media(max-width: 70rem) {
   os-admin-plugins {
     .extension-view-navigation { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .extension-view-heading { grid-template-columns: 1fr; gap: .35rem; }
+    .extension-view-navigation__group:nth-child(2n) { border-inline-end: 0; }
+    .extension-view-navigation__group:nth-child(-n+2) { border-bottom: 1px solid var(--os-hairline); }
+    .extension-view-heading { grid-template-columns: 1fr; gap: .55rem; }
+    .extension-view-heading__architecture { padding: .7rem 0 0; border-inline-start: 0; border-top: 1px solid var(--os-hairline); }
+  }
+}
+
+@media(max-width: 40rem) {
+  os-admin-plugins {
+    .extension-view-navigation { grid-template-columns: 1fr; }
+    .extension-view-navigation__group,
+    .extension-view-navigation__group:nth-child(2n) { border-inline-end: 0; border-bottom: 1px solid var(--os-hairline); }
+    .extension-view-navigation__group:last-child { border-bottom: 0; }
   }
 }

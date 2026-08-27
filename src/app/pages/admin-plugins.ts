@@ -121,17 +121,27 @@ interface ExtensionViewDefinition {
   eyebrow: string;
   title: string;
   description: string;
+  architectureRole: string;
+  implementation: string;
+  boundary: string;
 }
 
 const EXTENSION_VIEW_DEFINITIONS: readonly ExtensionViewDefinition[] = [
-  { id: 'subshells', label: 'SubShells', eyebrow: 'OPERATING SHELLS', title: 'SubShell 관리', description: 'Main Shell에 직접 연결되어 1단 메뉴와 독립 운영 영역을 제공하는 SubShell을 관리합니다.' },
-  { id: 'plugins', label: 'Plugins', eyebrow: 'HOSTED CAPABILITIES', title: 'Plugin 관리', description: 'Main Shell 핵심 표면, System Plugin, SubShell이 소유하는 Registry Plugin을 수명주기별로 구분합니다.' },
-  { id: 'topology', label: 'Topology', eyebrow: 'OWNERSHIP MAP', title: 'Extension 구성도', description: 'Main Shell부터 SubShell·Plugin·Binding까지 실제 소유 관계와 현재 연결 상태를 확인합니다.' },
-  { id: 'catalog', label: 'Catalog', eyebrow: 'REGISTRY INVENTORY', title: 'Catalog', description: '검증된 Descriptor와 설치 가능한 Extension Package를 하나의 Registry revision으로 조회합니다.' },
-  { id: 'registry-connections', label: 'Registry Connections', eyebrow: 'PACKAGE ACCESS', title: 'Registry Connections', description: 'Private OCI Registry 연결과 읽기 전용 패키지 접근 자격증명을 분리하여 관리합니다.' },
-  { id: 'trust', label: 'Trust & Revocation', eyebrow: 'SUPPLY CHAIN TRUST', title: 'Trust & Revocation', description: '손상되거나 취약한 exact image digest를 철회하고 신규 설치와 활성화를 차단합니다.' },
-  { id: 'audit', label: 'Audit', eyebrow: 'OPERATION EVIDENCE', title: 'Extension 감사 기록', description: '설치·활성화·비활성화·철회 작업의 주체와 결과를 시간순으로 확인합니다.' },
-  { id: 'bindings', label: 'Bindings', eyebrow: 'EXTERNAL CONTRACTS', title: 'Extension Bindings', description: 'Main Shell core 밖의 CLI·인증·권한 확장이 연결되는 명시적 계약을 관리합니다.' },
+  { id: 'subshells', label: 'SubShells', eyebrow: 'OPERATING SHELLS', title: 'SubShell 관리', description: 'Main Shell에 직접 연결되어 1단 메뉴와 독립 운영 영역을 제공하는 SubShell을 관리합니다.', architectureRole: 'Management View', implementation: 'DUPA Controller · Registry projection', boundary: '공유 서비스 기반 관리 화면' },
+  { id: 'plugins', label: 'Plugins', eyebrow: 'HOSTED CAPABILITIES', title: 'Plugin 관리', description: 'Main Shell 핵심 표면, System Plugin, SubShell이 소유하는 Registry Plugin을 수명주기별로 구분합니다.', architectureRole: 'Management View', implementation: 'DUPA Controller · Main Shell composition', boundary: '공유 서비스 기반 관리 화면' },
+  { id: 'topology', label: 'Topology', eyebrow: 'OWNERSHIP MAP', title: 'Extension 구성도', description: 'Main Shell부터 SubShell·Plugin·Binding까지 실제 소유 관계와 현재 연결 상태를 확인합니다.', architectureRole: 'Relationship View', implementation: 'Registry projection · Binding projection', boundary: '여러 권위의 읽기 전용 합성 화면' },
+  { id: 'catalog', label: 'Catalog', eyebrow: 'REGISTRY INVENTORY', title: 'Catalog', description: '검증된 Descriptor와 설치 가능한 Extension Package를 하나의 Registry revision으로 조회합니다.', architectureRole: 'CBSS Core Service', implementation: 'OpenSphere Registry & Catalog Service', boundary: '독립 API·revision을 가진 Core Service' },
+  { id: 'registry-connections', label: 'Registry Connections', eyebrow: 'PACKAGE ACCESS', title: 'Registry Connections', description: 'Private OCI Registry 연결과 읽기 전용 패키지 접근 자격증명을 분리하여 관리합니다.', architectureRole: 'Control Surface', implementation: 'Console Backend · Kubernetes Secret', boundary: '공유 Controller의 연결 관리 기능' },
+  { id: 'trust', label: 'Trust & Revocation', eyebrow: 'SUPPLY CHAIN TRUST', title: 'Trust & Revocation', description: '손상되거나 취약한 exact image digest를 철회하고 신규 설치와 활성화를 차단합니다.', architectureRole: 'Security Control', implementation: 'Console Backend · Supabase revocation ledger', boundary: '공유 Controller와 영속 보안 원장' },
+  { id: 'audit', label: 'Audit', eyebrow: 'OPERATION EVIDENCE', title: 'Extension 감사 기록', description: '설치·활성화·비활성화·철회 작업의 주체와 결과를 시간순으로 확인합니다.', architectureRole: 'Evidence', implementation: 'Supabase audit.event', boundary: '공통 감사 원장의 조회 화면' },
+  { id: 'bindings', label: 'Bindings', eyebrow: 'EXTERNAL CONTRACTS', title: 'Extension Bindings', description: 'Main Shell core 밖의 CLI·인증·권한 확장이 연결되는 명시적 계약을 관리합니다.', architectureRole: 'Contract', implementation: 'DUPA Controller · Kubernetes CR', boundary: '외부 기능 계약 관리 화면' },
+];
+
+const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; views: readonly ExtensionViewDefinition[] }[] = [
+  { label: 'Extension 구성', description: '등록 객체와 소유 관계', views: EXTENSION_VIEW_DEFINITIONS.filter((view) => ['subshells', 'plugins', 'topology'].includes(view.id)) },
+  { label: 'Registry · 배포 준비', description: '설치 후보와 패키지 접근', views: EXTENSION_VIEW_DEFINITIONS.filter((view) => ['catalog', 'registry-connections'].includes(view.id)) },
+  { label: '보안 · 증거', description: '공급망 통제와 감사 기록', views: EXTENSION_VIEW_DEFINITIONS.filter((view) => ['trust', 'audit'].includes(view.id)) },
+  { label: '외부 계약', description: 'Core 밖의 명시적 연결', views: EXTENSION_VIEW_DEFINITIONS.filter((view) => view.id === 'bindings') },
 ];
 
 /**
@@ -175,16 +185,26 @@ const EXTENSION_VIEW_DEFINITIONS: readonly ExtensionViewDefinition[] = [
     </section>
 
     <nav class="extension-view-navigation" aria-label="Console Extension 관리 화면">
-      @for (view of extensionViewDefinitions; track view.id) {
-        <a
-          class="extension-view-navigation__item"
-          [class.is-active]="activeView() === view.id"
-          [attr.aria-current]="activeView() === view.id ? 'page' : null"
-          [routerLink]="'/manage/extensions/' + view.id"
-        >
-          <span>{{ view.label }}</span>
-          @if (viewCount(view.id); as count) { <strong>{{ count }}</strong> }
-        </a>
+      @for (group of extensionViewGroups; track group.label) {
+        <section class="extension-view-navigation__group" [attr.aria-label]="group.label">
+          <header>
+            <strong>{{ group.label }}</strong>
+            <span>{{ group.description }}</span>
+          </header>
+          <div>
+            @for (view of group.views; track view.id) {
+              <a
+                class="extension-view-navigation__item"
+                [class.is-active]="activeView() === view.id"
+                [attr.aria-current]="activeView() === view.id ? 'page' : null"
+                [routerLink]="'/manage/extensions/' + view.id"
+              >
+                <span>{{ view.label }}</span>
+                @if (viewCount(view.id); as count) { <strong>{{ count }}</strong> }
+              </a>
+            }
+          </div>
+        </section>
       }
     </nav>
 
@@ -194,6 +214,11 @@ const EXTENSION_VIEW_DEFINITIONS: readonly ExtensionViewDefinition[] = [
         <h2 id="extension-view-title">{{ activeViewDefinition().title }}</h2>
         <p>{{ activeViewDefinition().description }}</p>
       </div>
+      <dl class="extension-view-heading__architecture" aria-label="현재 화면의 아키텍처 위치">
+        <div><dt>위상</dt><dd><span class="architecture-role">{{ activeViewDefinition().architectureRole }}</span></dd></div>
+        <div><dt>구현 기반</dt><dd>{{ activeViewDefinition().implementation }}</dd></div>
+        <div><dt>경계</dt><dd>{{ activeViewDefinition().boundary }}</dd></div>
+      </dl>
     </section>
 
     @if (activeView() === 'registry-connections') {
@@ -1558,6 +1583,7 @@ export class AdminPlugins implements OnInit {
   readonly iconLib = inject(IconLibraryService);
   readonly activeView = signal<ExtensionManagementView>(this.normalizeView(this.route.snapshot.paramMap.get('view')));
   readonly extensionViewDefinitions = EXTENSION_VIEW_DEFINITIONS;
+  readonly extensionViewGroups = EXTENSION_VIEW_GROUPS;
   readonly activeViewDefinition = computed(() =>
     EXTENSION_VIEW_DEFINITIONS.find((view) => view.id === this.activeView()) ?? EXTENSION_VIEW_DEFINITIONS[0]
   );
