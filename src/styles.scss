@@ -1804,19 +1804,21 @@ os-admin-plugins {
     border-inline-end: 1px solid var(--os-hairline);
   }
   .extension-view-navigation__group:last-child { border-inline-end: 0; }
-  .extension-view-navigation__group > header {
+  .extension-view-navigation__group-heading {
     display: grid;
     gap: .12rem;
     min-height: 3.2rem;
     padding: .55rem .7rem;
     border-bottom: 1px solid var(--os-hairline);
+    background: var(--os-surface-1);
+    color: var(--os-ink);
   }
-  .extension-view-navigation__group > header strong {
+  .extension-view-navigation__group-heading strong {
     color: var(--os-ink);
     font-size: .7rem;
     font-weight: 700;
   }
-  .extension-view-navigation__group > header span {
+  .extension-view-navigation__group-heading span {
     color: var(--os-muted);
     font-size: .62rem;
     line-height: 1.35;

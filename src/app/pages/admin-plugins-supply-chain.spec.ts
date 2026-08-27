@@ -43,7 +43,9 @@ test('Extension navigation exposes architecture hierarchy instead of eight false
     assert.match(page, new RegExp(role));
   }
   assert.match(page, /extension-view-heading__architecture/);
+  assert.match(page, /extension-view-navigation__group-heading/);
   assert.match(page, /OpenSphere Registry & Catalog Service/);
+  assert.doesNotMatch(page, /extension-view-navigation__group[^>]*>[\s\S]{0,80}<header>/);
   assert.match(styles, /\.extension-view-navigation__group/);
 });
 

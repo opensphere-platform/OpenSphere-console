@@ -187,10 +187,10 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
     <nav class="extension-view-navigation" aria-label="Console Extension 관리 화면">
       @for (group of extensionViewGroups; track group.label) {
         <section class="extension-view-navigation__group" [attr.aria-label]="group.label">
-          <header>
+          <div class="extension-view-navigation__group-heading">
             <strong>{{ group.label }}</strong>
             <span>{{ group.description }}</span>
-          </header>
+          </div>
           <div>
             @for (view of group.views; track view.id) {
               <a
