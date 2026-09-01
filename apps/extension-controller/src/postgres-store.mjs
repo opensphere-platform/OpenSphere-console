@@ -46,7 +46,7 @@ const RECORD_REMOVE_OBSERVATION_SQL = [
 
 const RECORD_FAILURE_SQL = [
   'SELECT console_extension.record_execution_failure(',
-  '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text, $7::boolean',
+  '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text, $7::text',
   ') AS operation_record',
 ].join(' ');
 
@@ -184,10 +184,10 @@ export function createExtensionPostgresStore({ query }) {
       }
     },
 
-    async recordFailure({ workerId, outboxId, claimEpoch, operationId, errorCode, errorDigest, sideEffectUnknown }) {
+    async recordFailure({ workerId, outboxId, claimEpoch, operationId, errorCode, errorDigest, sideEffect }) {
       try {
         const result = await query(RECORD_FAILURE_SQL, [
-          workerId, outboxId, claimEpoch, operationId, errorCode, errorDigest, sideEffectUnknown,
+          workerId, outboxId, claimEpoch, operationId, errorCode, errorDigest, sideEffect,
         ]);
         const record = result?.rows?.[0]?.operation_record;
         if (!record) throw new Error('record_execution_failure returned no operation receipt');

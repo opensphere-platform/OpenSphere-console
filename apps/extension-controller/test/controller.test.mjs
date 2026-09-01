@@ -19,7 +19,7 @@ const candidate = {
   verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
 };
 
-function fixture(claim, observationResult = null, writerOverrides = {}) {
+function fixture(claim, observationResult = null, writerOverrides = {}, controllerOverrides = {}) {
   const calls = [];
   const store = {
     async claim(input) { calls.push({ method: 'claim', input }); return claim; },
@@ -46,7 +46,7 @@ function fixture(claim, observationResult = null, writerOverrides = {}) {
     },
     async recordFailure(input) {
       calls.push({ method: 'recordFailure', input });
-      return { state: 'Failed' };
+      return { state: input.sideEffect === 'unknown' ? 'Unknown' : 'Failed' };
     },
   };
   const registryResolver = {
@@ -91,7 +91,12 @@ function fixture(claim, observationResult = null, writerOverrides = {}) {
     },
     ...writerOverrides,
   };
-  return { calls, controller: createExtensionController({ store, registryResolver, registrationWriter, workerId, leaseSeconds: 30 }) };
+  return {
+    calls,
+    controller: createExtensionController({
+      store, registryResolver, registrationWriter, workerId, leaseSeconds: 30, ...controllerOverrides,
+    }),
+  };
 }
 
 test('idle poll has no owner side effect', async () => {
@@ -163,7 +168,7 @@ test('install observation preserves Applied until exact Kubernetes readiness is 
   const { calls, controller } = fixture({
     outboxId: 20, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
     targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
-    dispatchPhase: 'observe', dispatchPayload,
+    dispatchPhase: 'observe', dispatchPayload, attemptCount: 1,
     executionPlan: {
       schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
       catalogRevision, image: installImage,
@@ -190,7 +195,7 @@ test('pending install observation does not record readiness or change operation 
   const { calls, controller } = fixture({
     outboxId: 20, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
     targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
-    dispatchPhase: 'observe', dispatchPayload,
+    dispatchPhase: 'observe', dispatchPayload, attemptCount: 1,
     executionPlan: {
       schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
       catalogRevision, image: installImage,
@@ -199,9 +204,64 @@ test('pending install observation does not record readiness or change operation 
   const result = await controller.runOnce();
   assert.deepEqual(result, {
     state: 'Pending', actionId: 'console.extension.install', operationId,
-    claimEpoch: 1, reason: 'RegistrationNotReady',
+    claimEpoch: 1, reason: 'RegistrationNotReady', attemptCount: 1,
   });
   assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'observeRegistration']);
+});
+
+test('last pending install observation closes durably as Unknown without another queue', async () => {
+  const dispatchPayload = {
+    schemaVersion: '1.0', eventType: 'ExtensionInstallObservationRequested', operationId,
+    descriptorId: 'extension.workspace', image: installImage, packageResourceVersion: '17',
+    packageGeneration: 1, manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+    compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId,
+    registrationName: 'workspace', registrationUid: 'registration-uid', appliedReceiptDigest: digest,
+  };
+  const { calls, controller } = fixture({
+    outboxId: 20, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
+    targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 2,
+    dispatchPhase: 'observe', dispatchPayload, attemptCount: 2,
+    executionPlan: {
+      schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
+      catalogRevision, image: installImage,
+    },
+  }, { state: 'Pending', reason: 'RegistrationNotReady' }, {}, { maxObservationAttempts: 2 });
+  const result = await controller.runOnce();
+  assert.deepEqual(result, {
+    state: 'Unknown', actionId: 'console.extension.install', operationId,
+    claimEpoch: 2, errorCode: 'ObservationTimeout', attemptCount: 2,
+  });
+  assert.deepEqual(calls.map((call) => call.method), [
+    'claim', 'renew', 'observeRegistration', 'recordFailure',
+  ]);
+  assert.equal(calls[3].input.sideEffect, 'unknown');
+});
+
+test('irrecoverable install observation identity loss closes immediately as Unknown', async () => {
+  const dispatchPayload = {
+    schemaVersion: '1.0', eventType: 'ExtensionInstallObservationRequested', operationId,
+    descriptorId: 'extension.workspace', image: installImage, packageResourceVersion: '17',
+    packageGeneration: 1, manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+    compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId,
+    registrationName: 'workspace', registrationUid: 'registration-uid', appliedReceiptDigest: digest,
+  };
+  const missing = Object.assign(new Error('registration disappeared'), {
+    code: 'ResourceNotFound', sideEffect: 'unknown',
+  });
+  const { calls, controller } = fixture({
+    outboxId: 20, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
+    targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
+    dispatchPhase: 'observe', dispatchPayload, attemptCount: 1,
+    executionPlan: {
+      schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
+      catalogRevision, image: installImage,
+    },
+  }, null, { async observeInstall() { throw missing; } }, { maxObservationAttempts: 20 });
+  const result = await controller.runOnce();
+  assert.equal(result.state, 'Unknown');
+  assert.equal(result.errorCode, 'ResourceNotFound');
+  assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'recordFailure']);
+  assert.equal(calls[2].input.sideEffect, 'unknown');
 });
 
 test('typed removal applies Uninstalled intent before recording its fenced receipt', async () => {
@@ -227,7 +287,7 @@ test('removal observation records success only after the exact Registration is a
   const { calls, controller } = fixture({
     outboxId: 22, operationId, actionId: 'console.extension.remove', actionVersion: '1.0',
     targetRef: 'extension.workspace', payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
-    dispatchPhase: 'observe', dispatchPayload,
+    dispatchPhase: 'observe', dispatchPayload, attemptCount: 1,
   });
   const result = await controller.runOnce();
   assert.equal(result.state, 'Observed');
@@ -250,7 +310,30 @@ test('known no-side-effect removal denial closes as a typed failure', async () =
   assert.equal(result.errorCode, 'OwnerRejected');
   assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'recordFailure']);
   assert.match(calls[2].input.errorDigest, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(calls[2].input.sideEffectUnknown, false);
+  assert.equal(calls[2].input.sideEffect, 'none');
+});
+
+test('terminal removal observation closes as Failed with known side effect', async () => {
+  const dispatchPayload = {
+    schemaVersion: '1.0', eventType: 'ExtensionRemovalObservationRequested', operationId,
+    descriptorId: 'extension.workspace', registrationName: 'workspace',
+    registrationUid: 'registration-uid', appliedReceiptDigest: digest,
+  };
+  const terminal = Object.assign(new Error('terminal removal failure'), {
+    code: 'OwnerRejected', terminal: true, sideEffect: 'present',
+  });
+  const { calls, controller } = fixture({
+    outboxId: 22, operationId, actionId: 'console.extension.remove', actionVersion: '1.0',
+    targetRef: 'extension.workspace', payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
+    dispatchPhase: 'observe', dispatchPayload, attemptCount: 1,
+  }, null, { async observeRemove() { throw terminal; } });
+  const result = await controller.runOnce();
+  assert.deepEqual(result, {
+    state: 'Failed', actionId: 'console.extension.remove', operationId,
+    claimEpoch: 1, errorCode: 'OwnerRejected', attemptCount: 1,
+  });
+  assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'recordFailure']);
+  assert.equal(calls[2].input.sideEffect, 'present');
 });
 
 test('owner, action, target and digest substitution fail before apply', async () => {
@@ -316,7 +399,7 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
   });
   await store.recordFailure({
     workerId, outboxId: 18, claimEpoch: 5, operationId,
-    errorCode: 'OwnerRejected', errorDigest: digest, sideEffectUnknown: false,
+    errorCode: 'OwnerRejected', errorDigest: digest, sideEffect: 'none',
   });
   assert.match(calls[0].sql, /claim_owner_operation/);
   assert.deepEqual(calls[0].values[2], ['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create']);

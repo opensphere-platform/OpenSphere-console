@@ -21,6 +21,7 @@ if (!databaseUrl) throw new Error('CONSOLE_EXTENSION_DATABASE_URL is required');
 const workerId = String(process.env.CONSOLE_EXTENSION_WORKER_ID || randomUUID());
 const leaseSeconds = integer('CONSOLE_EXTENSION_LEASE_SECONDS', 30, 5, 300);
 const pollMilliseconds = integer('CONSOLE_EXTENSION_POLL_MS', 1000, 100, 60000);
+const maxObservationAttempts = integer('CONSOLE_EXTENSION_OBSERVATION_MAX_ATTEMPTS', 20, 1, 100);
 const port = integer('PORT', 8080, 1, 65535);
 const pool = new Pool({
   connectionString: databaseUrl,
@@ -45,7 +46,9 @@ const registrationWriter = kubernetesToken ? createKubernetesRegistrationWriter(
   timeoutMs: integer('CONSOLE_KUBERNETES_TIMEOUT_MS', 8000, 100, 30000),
   maximumResponseBytes: integer('CONSOLE_KUBERNETES_MAX_RESPONSE_BYTES', 131072, 1024, 1024 * 1024),
 }) : null;
-const controller = createExtensionController({ store, registryResolver, registrationWriter, workerId, leaseSeconds });
+const controller = createExtensionController({
+  store, registryResolver, registrationWriter, workerId, leaseSeconds, maxObservationAttempts,
+});
 
 let stopping = false;
 let lastError = null;

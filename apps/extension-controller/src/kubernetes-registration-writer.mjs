@@ -1,8 +1,8 @@
 const EXTENSION_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/;
 
-function fault(message, code, retryable = false, terminal = false) {
-  return Object.assign(new Error(message), { code, retryable, terminal });
+function fault(message, code, retryable = false, terminal = false, sideEffect = 'unknown') {
+  return Object.assign(new Error(message), { code, retryable, terminal, sideEffect });
 }
 
 function origin(value) {
@@ -82,10 +82,10 @@ function readyRegistration(registration, candidate, expectedUid) {
       || !RESOURCE_VERSION.test(String(metadata.resourceVersion || ''))
       || !Number.isSafeInteger(Number(metadata.generation)) || Number(metadata.generation) < 1
       || spec.packageRef?.name !== candidate.id || !['Installed', 'Enabled'].includes(spec.desiredState)) {
-    throw fault('UIPluginRegistration identity changed after application', 'ObservationMismatch');
+    throw fault('UIPluginRegistration identity changed after application', 'ObservationMismatch', false, true, 'unknown');
   }
   if (['Failed', 'Removed'].includes(status.phase)) {
-    throw fault('UIPluginRegistration reported a terminal installation failure', 'OwnerRejected');
+    throw fault('UIPluginRegistration reported a terminal installation failure', 'OwnerRejected', false, true, 'present');
   }
   const desiredReady = (spec.desiredState === 'Installed' && status.phase === 'Ready')
     || (spec.desiredState === 'Enabled' && status.phase === 'Activated');
@@ -329,10 +329,10 @@ export function createKubernetesRegistrationWriter({
       const registration = result.value;
       if (registration?.metadata?.name !== registrationName
           || String(registration?.metadata?.uid || '') !== registrationUid) {
-        throw fault('UIPluginRegistration was replaced during removal', 'ObservationMismatch');
+        throw fault('UIPluginRegistration was replaced during removal', 'ObservationMismatch', false, true, 'unknown');
       }
       if (registration?.status?.phase === 'Failed') {
-        throw fault('UIPluginRegistration reported a terminal removal failure', 'OwnerRejected');
+        throw fault('UIPluginRegistration reported a terminal removal failure', 'OwnerRejected', false, true, 'present');
       }
       return Object.freeze({ state: 'Pending', reason: 'RegistrationStillPresent' });
     },

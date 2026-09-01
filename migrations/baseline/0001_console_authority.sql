@@ -2012,7 +2012,7 @@ CREATE OR REPLACE FUNCTION console_extension.record_execution_failure(
   p_operation_id uuid,
   p_error_code text,
   p_error_digest text,
-  p_side_effect_unknown boolean
+  p_side_effect text
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -2022,11 +2022,13 @@ AS $$
 DECLARE
   v_outbox console_operation.outbox;
   v_operation console_operation.operation;
-  v_phase text := CASE WHEN p_side_effect_unknown THEN 'Unknown' ELSE 'Failed' END;
+  v_phase text := CASE WHEN p_side_effect = 'unknown' THEN 'Unknown' ELSE 'Failed' END;
+  v_dispatch_phase text;
   v_evidence jsonb;
 BEGIN
   IF COALESCE(p_error_code, '') !~ '^[A-Z][A-Za-z0-9]{2,63}$'
-      OR COALESCE(p_error_digest, '') !~ '^sha256:[0-9a-f]{64}$' THEN
+      OR COALESCE(p_error_digest, '') !~ '^sha256:[0-9a-f]{64}$'
+      OR COALESCE(p_side_effect, '') NOT IN ('none', 'present', 'unknown') THEN
     RAISE EXCEPTION 'invalid typed execution failure' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
   END IF;
   SELECT * INTO v_outbox
@@ -2034,7 +2036,11 @@ BEGIN
     WHERE outbox_id = p_outbox_id
     FOR UPDATE;
   IF NOT FOUND OR v_outbox.operation_id <> p_operation_id
-      OR v_outbox.event_type <> 'OperationReadyForDispatch'
+      OR v_outbox.event_type NOT IN (
+        'OperationReadyForDispatch',
+        'ExtensionInstallObservationRequested',
+        'ExtensionRemovalObservationRequested'
+      )
       OR v_outbox.claim_owner <> p_worker_id
       OR v_outbox.claim_epoch <> p_claim_epoch
       OR v_outbox.delivered_at IS NOT NULL
@@ -2049,19 +2055,36 @@ BEGIN
       OR v_operation.action_id NOT IN (
         'console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'
       )
-      OR v_operation.state NOT IN ('Submitted', 'Reconciling') THEN
+      OR NOT (
+        (v_outbox.event_type = 'OperationReadyForDispatch'
+          AND v_operation.state IN ('Submitted', 'Reconciling'))
+        OR (v_outbox.event_type = 'ExtensionInstallObservationRequested'
+          AND v_operation.action_id = 'console.extension.install'
+          AND v_operation.state = 'Applied')
+        OR (v_outbox.event_type = 'ExtensionRemovalObservationRequested'
+          AND v_operation.action_id = 'console.extension.remove'
+          AND v_operation.state = 'Applied')
+      )
+      OR (v_outbox.event_type <> 'OperationReadyForDispatch' AND p_side_effect = 'none') THEN
     RAISE EXCEPTION 'failure receipt does not match the typed Extension action'
       USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
   END IF;
+  v_dispatch_phase := CASE
+    WHEN v_outbox.event_type = 'OperationReadyForDispatch' THEN 'apply'
+    ELSE 'observe'
+  END;
 
   v_evidence := jsonb_build_object(
     'schemaVersion', '1.0',
     'ownerRef', 'C_EXT',
     'operationId', v_operation.operation_id,
     'claimEpoch', p_claim_epoch,
+    'outboxId', v_outbox.outbox_id,
+    'attemptCount', v_outbox.attempt_count,
+    'dispatchPhase', v_dispatch_phase,
     'errorCode', p_error_code,
     'errorDigest', p_error_digest,
-    'sideEffect', CASE WHEN p_side_effect_unknown THEN 'unknown' ELSE 'none' END
+    'sideEffect', p_side_effect
   );
   INSERT INTO console_operation.execution_receipt(
     operation_id, owner_ref, worker_id, claim_epoch, phase, evidence, evidence_digest
@@ -2075,7 +2098,9 @@ BEGIN
         error = jsonb_build_object(
           'code', p_error_code,
           'digest', p_error_digest,
-          'sideEffect', CASE WHEN p_side_effect_unknown THEN 'unknown' ELSE 'none' END
+          'sideEffect', p_side_effect,
+          'dispatchPhase', v_dispatch_phase,
+          'attemptCount', v_outbox.attempt_count
         ),
         updated_at = statement_timestamp()
     WHERE operation_id = v_operation.operation_id
@@ -2089,14 +2114,18 @@ BEGIN
     p_worker_id::text,
     v_operation.action_id,
     v_operation.target_ref,
-    CASE WHEN p_side_effect_unknown THEN 'unknown' ELSE 'failed' END,
+    CASE WHEN p_side_effect = 'unknown' THEN 'unknown' ELSE 'failed' END,
     '',
     jsonb_build_object(
       'ownerRef', 'C_EXT',
       'claimEpoch', p_claim_epoch,
+      'outboxId', v_outbox.outbox_id,
+      'attemptCount', v_outbox.attempt_count,
+      'dispatchPhase', v_dispatch_phase,
       'state', v_phase,
       'errorCode', p_error_code,
-      'errorDigest', p_error_digest
+      'errorDigest', p_error_digest,
+      'sideEffect', p_side_effect
     )
   );
   RETURN to_jsonb(v_operation);
@@ -2104,10 +2133,10 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION console_extension.record_execution_failure(
-  uuid, bigint, bigint, uuid, text, text, boolean
+  uuid, bigint, bigint, uuid, text, text, text
 ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION console_extension.record_execution_failure(
-  uuid, bigint, bigint, uuid, text, text, boolean
+  uuid, bigint, bigint, uuid, text, text, text
 ) TO console_extension_controller;
 
 CREATE OR REPLACE FUNCTION console_operation.verify_extension_operation(
@@ -2625,8 +2654,8 @@ COMMENT ON FUNCTION console_extension.apply_remove_registration(
   IS 'Records a fenced request to uninstall one exact UIPluginRegistration and queues absence observation';
 COMMENT ON FUNCTION console_extension.record_remove_observation(uuid, bigint, bigint, uuid, text, text, text, jsonb)
   IS 'Records exact RegistrationAbsent evidence without advancing the operation verification state';
-COMMENT ON FUNCTION console_extension.record_execution_failure(uuid, bigint, bigint, uuid, text, text, boolean)
-  IS 'Records a typed Failed or Unknown owner result under the current claim fence without raw error material';
+COMMENT ON FUNCTION console_extension.record_execution_failure(uuid, bigint, bigint, uuid, text, text, text)
+  IS 'Closes a fenced apply or observation dispatch as typed Failed or Unknown without raw error material';
 COMMENT ON FUNCTION console_extension.list_revocations(uuid, uuid, text)
   IS 'Returns the current C_EXT exact-digest revocation authority through a session-revalidated no-secret projection';
 COMMENT ON FUNCTION console_extension.get_registry_connection(uuid, uuid, text)

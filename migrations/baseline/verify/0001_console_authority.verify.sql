@@ -928,7 +928,7 @@ SELECT console_extension.record_execution_failure(
   current_setting('verification.failure_operation_id')::uuid,
   'OwnerTimeout',
   'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-  true
+  'unknown'
 );
 RESET ROLE;
 
@@ -1177,6 +1177,45 @@ SELECT set_config(
   )::text,
   false
 );
+
+BEGIN;
+SAVEPOINT verify_install_observation_timeout;
+DO $$
+DECLARE
+  v_claim jsonb := current_setting('verification.install_observation_claim')::jsonb;
+  v_failure jsonb;
+BEGIN
+  BEGIN
+    PERFORM console_extension.record_execution_failure(
+      'eeeeeeee-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid,
+      'ObservationTimeout',
+      'sha256:abababababababababababababababababababababababababababababababab',
+      'none'
+    );
+    RAISE EXCEPTION 'observation failure incorrectly claimed no prior side effect';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  v_failure := console_extension.record_execution_failure(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+    (v_claim->>'operationId')::uuid,
+    'ObservationTimeout',
+    'sha256:abababababababababababababababababababababababababababababababab',
+    'unknown'
+  );
+  IF v_failure->>'state' <> 'Unknown'
+      OR (v_failure->>'state_version')::bigint <> 5
+      OR v_failure->'error'->>'sideEffect' <> 'unknown'
+      OR v_failure->'error'->>'dispatchPhase' <> 'observe'
+      OR (v_failure->'error'->>'attemptCount')::integer <> 1 THEN
+    RAISE EXCEPTION 'bounded observation failure did not close as typed Unknown';
+  END IF;
+END;
+$$;
+ROLLBACK TO SAVEPOINT verify_install_observation_timeout;
+COMMIT;
 
 DO $$
 DECLARE

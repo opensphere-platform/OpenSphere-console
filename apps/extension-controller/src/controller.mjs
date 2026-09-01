@@ -91,7 +91,14 @@ function failureDigest(actionId, code) {
   return 'sha256:' + createHash('sha256').update(JSON.stringify({ actionId, code })).digest('hex');
 }
 
-export function createExtensionController({ store, registryResolver, registrationWriter, workerId, leaseSeconds = 30 }) {
+function terminalObservation(error) {
+  return Boolean(error?.terminal) || ['ResourceNotFound', 'StaleAuthorityRevision'].includes(String(error?.code || ''));
+}
+
+export function createExtensionController({
+  store, registryResolver, registrationWriter, workerId,
+  leaseSeconds = 30, maxObservationAttempts = 20,
+}) {
   if (!store?.claim || !store?.renew || !store?.applyRevocation || !store?.applyInstall
       || !store?.recordInstallObservation || !store?.applyRemove || !store?.recordRemoveObservation || !store?.recordFailure) {
     throw new TypeError('Extension Controller store claim/renew/apply/observe methods are required');
@@ -99,6 +106,26 @@ export function createExtensionController({ store, registryResolver, registratio
   if (!/^[0-9a-f-]{36}$/.test(String(workerId || ''))) throw new TypeError('workerId must be a UUID');
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 5 || leaseSeconds > 300) {
     throw new TypeError('leaseSeconds must be an integer between 5 and 300');
+  }
+  if (!Number.isInteger(maxObservationAttempts) || maxObservationAttempts < 1 || maxObservationAttempts > 100) {
+    throw new TypeError('maxObservationAttempts must be an integer between 1 and 100');
+  }
+
+  async function closeObservation({ input, actionId, errorCode, sideEffect, attemptCount }) {
+    const record = await store.recordFailure({
+      ...input,
+      errorCode,
+      errorDigest: failureDigest(actionId, errorCode),
+      sideEffect,
+    });
+    return Object.freeze({
+      state: record.state || (sideEffect === 'unknown' ? 'Unknown' : 'Failed'),
+      actionId,
+      operationId: input.operationId,
+      claimEpoch: input.claimEpoch,
+      errorCode,
+      attemptCount,
+    });
   }
 
   return Object.freeze({
@@ -149,12 +176,35 @@ export function createExtensionController({ store, registryResolver, registratio
         }
         const plan = installPlan(claim);
         const coordinates = observationCoordinates(claim, plan);
+        const attemptCount = Number(claimField(claim, 'attemptCount'));
+        if (!Number.isSafeInteger(attemptCount) || attemptCount < 1) {
+          throw Object.assign(new Error('install observation claim has an invalid attempt count'), { code: 'ClaimBindingMismatch' });
+        }
         await store.renew({ ...input, leaseSeconds });
-        const result = await registrationWriter.observeInstall(coordinates);
+        let result;
+        try {
+          result = await registrationWriter.observeInstall(coordinates);
+        } catch (error) {
+          const terminal = terminalObservation(error);
+          if (!terminal && attemptCount < maxObservationAttempts) throw error;
+          return closeObservation({
+            input, actionId: INSTALL_ACTION,
+            errorCode: terminal ? String(error.code || 'OwnerRejected') : 'ObservationTimeout',
+            sideEffect: terminal && ['present', 'unknown'].includes(error.sideEffect)
+              ? error.sideEffect : 'unknown',
+            attemptCount,
+          });
+        }
         if (result.state !== 'Ready') {
+          if (attemptCount >= maxObservationAttempts) {
+            return closeObservation({
+              input, actionId: INSTALL_ACTION, errorCode: 'ObservationTimeout',
+              sideEffect: 'unknown', attemptCount,
+            });
+          }
           return Object.freeze({
             state: 'Pending', actionId: INSTALL_ACTION, operationId: input.operationId,
-            claimEpoch: input.claimEpoch, reason: result.reason || 'RegistrationNotReady',
+            claimEpoch: input.claimEpoch, reason: result.reason || 'RegistrationNotReady', attemptCount,
           });
         }
         const receipt = await store.recordInstallObservation({
@@ -173,12 +223,35 @@ export function createExtensionController({ store, registryResolver, registratio
           throw Object.assign(new Error('Extension removal observation dependency is unavailable'), { code: 'AuthorityUnavailable' });
         }
         const coordinates = removalObservationCoordinates(claim);
+        const attemptCount = Number(claimField(claim, 'attemptCount'));
+        if (!Number.isSafeInteger(attemptCount) || attemptCount < 1) {
+          throw Object.assign(new Error('removal observation claim has an invalid attempt count'), { code: 'ClaimBindingMismatch' });
+        }
         await store.renew({ ...input, leaseSeconds });
-        const result = await registrationWriter.observeRemove(coordinates);
+        let result;
+        try {
+          result = await registrationWriter.observeRemove(coordinates);
+        } catch (error) {
+          const terminal = terminalObservation(error);
+          if (!terminal && attemptCount < maxObservationAttempts) throw error;
+          return closeObservation({
+            input, actionId: REMOVE_ACTION,
+            errorCode: terminal ? String(error.code || 'OwnerRejected') : 'ObservationTimeout',
+            sideEffect: terminal && ['present', 'unknown'].includes(error.sideEffect)
+              ? error.sideEffect : 'unknown',
+            attemptCount,
+          });
+        }
         if (result.state !== 'Removed') {
+          if (attemptCount >= maxObservationAttempts) {
+            return closeObservation({
+              input, actionId: REMOVE_ACTION, errorCode: 'ObservationTimeout',
+              sideEffect: 'unknown', attemptCount,
+            });
+          }
           return Object.freeze({
             state: 'Pending', actionId: REMOVE_ACTION, operationId: input.operationId,
-            claimEpoch: input.claimEpoch, reason: result.reason || 'RegistrationStillPresent',
+            claimEpoch: input.claimEpoch, reason: result.reason || 'RegistrationStillPresent', attemptCount,
           });
         }
         const receipt = await store.recordRemoveObservation({
@@ -242,7 +315,7 @@ export function createExtensionController({ store, registryResolver, registratio
             ...input,
             errorCode,
             errorDigest: failureDigest(REMOVE_ACTION, errorCode),
-            sideEffectUnknown: false,
+            sideEffect: 'none',
           });
           return Object.freeze({
             state: 'Failed', actionId: REMOVE_ACTION, operationId: input.operationId,
