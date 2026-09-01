@@ -10,6 +10,9 @@
     "loginSession",
     "completeSessionMfa",
     "touchSessionActivity",
+    "listOwnedSessions",
+    "revokeAllOwnedSessions",
+    "revokeOwnedSession",
     "getSession",
     "deleteSession",
     "getMe",
@@ -51,7 +54,8 @@
     "session-mfa-request.schema.json",
     "session-mfa-response.schema.json",
     "session-touch-request.schema.json",
-    "session-touch-response.schema.json"
+    "session-touch-response.schema.json",
+    "session-inventory-response.schema.json"
   ],
   "remaining": {
     "legacyProductionApiLiterals": 277,

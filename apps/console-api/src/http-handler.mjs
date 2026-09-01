@@ -12,6 +12,13 @@ function send(response, status, body, headers = {}) {
   response.end(payload);
 }
 
+function clearSessionCookies() {
+  return [
+    '__Host-opensphere-session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0',
+    '__Host-opensphere_csrf=; Path=/; Secure; SameSite=Strict; Max-Age=0',
+  ];
+}
+
 async function jsonBody(request) {
   const chunks = [];
   let length = 0;
@@ -102,6 +109,23 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         }
         return send(response, 200, { session: await identitySessionBroker.touchActivity(request) });
       }
+      if (url.pathname === '/api/identity/sessions' && request.method === 'GET') {
+        if (!identitySessionBroker?.listSessions) throw Object.assign(new Error('target session inventory is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        return send(response, 200, await identitySessionBroker.listSessions(request));
+      }
+      if (url.pathname === '/api/identity/sessions' && request.method === 'DELETE') {
+        if (!identitySessionBroker?.revokeAllSessions) throw Object.assign(new Error('target session revocation is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        await identitySessionBroker.revokeAllSessions(request, { correlationId });
+        return send(response, 204, null, { 'set-cookie': clearSessionCookies() });
+      }
+      const ownedSessionMatch = url.pathname.match(/^\/api\/identity\/sessions\/([0-9a-fA-F-]{36})$/);
+      if (ownedSessionMatch && request.method === 'DELETE') {
+        if (!identitySessionBroker?.revokeSession) throw Object.assign(new Error('target session revocation is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const revoked = await identitySessionBroker.revokeSession(request, {
+          targetSessionId: ownedSessionMatch[1], correlationId,
+        });
+        return send(response, 204, null, revoked.current ? { 'set-cookie': clearSessionCookies() } : {});
+      }
       if (url.pathname === '/api/identity/audit' && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await auditOperations.list({
@@ -126,12 +150,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       if (url.pathname === '/api/identity/session' && request.method === 'DELETE') {
         const session = await resolveSession(request, { requireCsrf: true, correlationId });
         await identityOperations.revokeSession({ session, correlationId });
-        return send(response, 204, null, {
-          'set-cookie': [
-            '__Host-opensphere-session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0',
-            '__Host-opensphere_csrf=; Path=/; Secure; SameSite=Strict; Max-Age=0',
-          ],
-        });
+        return send(response, 204, null, { 'set-cookie': clearSessionCookies() });
       }
       const operationMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})$/);
       if (operationMatch && request.method === 'GET') {

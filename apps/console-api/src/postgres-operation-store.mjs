@@ -61,6 +61,24 @@ const TOUCH_SESSION_ACTIVITY_SQL = [
   ') AS session_record',
 ].join(' ');
 
+const LIST_OWNED_SESSIONS_SQL = [
+  'SELECT console_identity.list_owned_browser_sessions(',
+  '$1::bytea',
+  ') AS session_inventory',
+].join(' ');
+
+const REVOKE_OWNED_SESSION_SQL = [
+  'SELECT console_identity.revoke_owned_browser_session(',
+  '$1::bytea, $2::bytea, $3::uuid, $4::text',
+  ') AS revocation_record',
+].join(' ');
+
+const REVOKE_ALL_OWNED_SESSIONS_SQL = [
+  'SELECT console_identity.revoke_all_owned_browser_sessions(',
+  '$1::bytea, $2::bytea, $3::text',
+  ') AS revocation_record',
+].join(' ');
+
 const GET_REFRESH_CREDENTIALS_SQL = [
   'SELECT console_identity.get_browser_session_refresh_credentials(',
   '$1::bytea, $2::bytea, $3::boolean',
@@ -262,6 +280,43 @@ export function createPostgresOperationStore({ query }) {
         ]);
         const record = result?.rows?.[0]?.session_record;
         if (!record) throw Object.assign(new Error('session activity was not recorded'), { detail: 'SessionInvalid' });
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async listOwnedSessions(input) {
+      try {
+        const result = await query(LIST_OWNED_SESSIONS_SQL, [input.tokenDigest]);
+        const inventory = result?.rows?.[0]?.session_inventory;
+        if (!Array.isArray(inventory?.items)) throw new Error('list_owned_browser_sessions returned no inventory');
+        return inventory;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async revokeOwnedSession(input) {
+      try {
+        const result = await query(REVOKE_OWNED_SESSION_SQL, [
+          input.tokenDigest, input.csrfTokenDigest, input.targetSessionId, input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.revocation_record;
+        if (!record?.sessionId) throw new Error('revoke_owned_browser_session returned no record');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async revokeAllOwnedSessions(input) {
+      try {
+        const result = await query(REVOKE_ALL_OWNED_SESSIONS_SQL, [
+          input.tokenDigest, input.csrfTokenDigest, input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.revocation_record;
+        if (!Number.isInteger(record?.revokedCount)) throw new Error('revoke_all_owned_browser_sessions returned no record');
         return record;
       } catch (error) {
         throw databaseError(error);

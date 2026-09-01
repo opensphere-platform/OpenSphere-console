@@ -21,8 +21,8 @@
     { "id": "mfa-enrollment", "status": "missing" },
     { "id": "mfa-step-up", "status": "missing" },
     { "id": "password-recovery", "status": "missing" },
-    { "id": "active-session-inventory", "status": "missing" },
-    { "id": "other-session-revocation", "status": "missing" },
+    { "id": "active-session-inventory", "status": "implemented-and-verified" },
+    { "id": "other-session-revocation", "status": "implemented-and-verified" },
     { "id": "initial-admin-bootstrap", "status": "missing" }
   ],
   "families": [

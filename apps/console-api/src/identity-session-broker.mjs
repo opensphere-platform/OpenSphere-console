@@ -69,6 +69,9 @@ export function createIdentitySessionBroker({
   if (!store?.getPendingMfa || !store?.activateMfa) throw new TypeError('session MFA store is required');
   if (!store?.getRefreshCredentials || !store?.rotateCredentials || !store?.rejectRefresh) throw new TypeError('session refresh store is required');
   if (!store?.touchActivity) throw new TypeError('session activity store is required');
+  if (!store?.listOwnedSessions || !store?.revokeOwnedSession || !store?.revokeAllOwnedSessions) {
+    throw new TypeError('owned session management store is required');
+  }
   if (!authClient?.authenticatePassword || !authClient?.completeTotp || !authClient?.refreshSession || !authClient?.logout) throw new TypeError('Supabase Auth client is required');
   if (!credentialCipher?.encrypt || !credentialCipher?.decrypt) throw new TypeError('session credential cipher is required');
   if (typeof randomBytes !== 'function') throw new TypeError('secure random byte source is required');
@@ -230,6 +233,59 @@ export function createIdentitySessionBroker({
         idleExpiresAt: session.idleExpiresAt,
         absoluteExpiresAt: session.absoluteExpiresAt,
         userAgentDigest: null,
+      });
+    },
+
+    async listSessions(request) {
+      const proof = readBrowserSessionProof(request, { requireCsrf: false });
+      const inventory = await store.listOwnedSessions({ tokenDigest: proof.tokenDigest });
+      if (!Array.isArray(inventory?.items) || inventory.items.length > 100) {
+        fail('AuthorityUnavailable', 'session inventory authority returned an invalid result', 503);
+      }
+      const items = inventory.items.map((session) => {
+        if (!session?.id || !['active', 'pending_mfa'].includes(session.status)
+            || !['aal1', 'aal2'].includes(session.assurance)
+            || !Object.hasOwn(SESSION_DURATION_MS, session.persistence)) {
+          fail('AuthorityUnavailable', 'session inventory authority returned an invalid item', 503);
+        }
+        return Object.freeze({
+          id: session.id,
+          current: session.current === true,
+          status: session.status,
+          assurance: session.assurance,
+          persistence: session.persistence,
+          createdAt: session.createdAt,
+          lastSeenAt: session.lastSeenAt,
+          idleExpiresAt: session.idleExpiresAt,
+          absoluteExpiresAt: session.absoluteExpiresAt,
+          userAgentDigest: session.userAgentDigest ?? null,
+        });
+      });
+      if (items.filter((session) => session.current).length !== 1) {
+        fail('AuthorityUnavailable', 'session inventory lost the current session binding', 503);
+      }
+      return Object.freeze({ items: Object.freeze(items) });
+    },
+
+    async revokeSession(request, { targetSessionId, correlationId }) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(targetSessionId || ''))) {
+        fail('ValidationFailed', 'target browser session id is invalid', 400);
+      }
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      return store.revokeOwnedSession({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+        targetSessionId: String(targetSessionId),
+        correlationId,
+      });
+    },
+
+    async revokeAllSessions(request, { correlationId }) {
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      return store.revokeAllOwnedSessions({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+        correlationId,
       });
     },
 

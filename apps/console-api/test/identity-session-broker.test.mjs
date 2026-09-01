@@ -28,6 +28,14 @@ function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+function unusedOwnedSessionMethods() {
+  return {
+    async listOwnedSessions() { throw new Error('session inventory must not run'); },
+    async revokeOwnedSession() { throw new Error('owned session revocation must not run'); },
+    async revokeAllOwnedSessions() { throw new Error('all-session revocation must not run'); },
+  };
+}
+
 test('credential envelope is AES-GCM authenticated and rejects tampering', () => {
   let counter = 0;
   const cipher = createSessionCredentialCipher({
@@ -150,6 +158,7 @@ test('password login issues only opaque cookies and persists encrypted credentia
       async rotateCredentials() { throw new Error('refresh rotation must not run during password login'); },
       async rejectRefresh() { throw new Error('refresh rejection must not run during password login'); },
       async touchActivity() { throw new Error('activity touch must not run during password login'); },
+      ...unusedOwnedSessionMethods(),
     },
     authClient: {
       async authenticatePassword() {
@@ -210,6 +219,7 @@ test('browser persistence keeps cookies session-only while retaining a bounded 2
       async rotateCredentials() { throw new Error('refresh must not run'); },
       async rejectRefresh() { throw new Error('refresh must not run'); },
       async touchActivity() { throw new Error('touch must not run'); },
+      ...unusedOwnedSessionMethods(),
     },
     authClient: {
       async authenticatePassword() {
@@ -252,6 +262,7 @@ test('verified TOTP creates a five-minute pending session and persistence failur
       async rotateCredentials() { throw new Error('refresh rotation must not run during password login'); },
       async rejectRefresh() { throw new Error('refresh rejection must not run during password login'); },
       async touchActivity() { throw new Error('activity touch must not run during password login'); },
+      ...unusedOwnedSessionMethods(),
     },
     authClient: {
       async authenticatePassword() {
@@ -321,6 +332,7 @@ test('pending MFA completion activates the same opaque session and extends both 
       async rotateCredentials() { throw new Error('refresh rotation must not run during MFA completion'); },
       async rejectRefresh() { throw new Error('refresh rejection must not run during MFA completion'); },
       async touchActivity() { throw new Error('activity touch must not run during MFA completion'); },
+      ...unusedOwnedSessionMethods(),
     },
     authClient: {
       async authenticatePassword() { throw new Error('password login must not run during MFA completion'); },
@@ -391,6 +403,7 @@ function refreshBrokerFixture({ refreshResult, wait } = {}) {
     },
     async rejectRefresh(input) { calls.reject.push(input); return { outcome: 'rejected' }; },
     async touchActivity() { throw new Error('activity touch must not run during refresh'); },
+    ...unusedOwnedSessionMethods(),
   };
   const authClient = {
     async authenticatePassword() { throw new Error('login must not run during refresh'); },
@@ -483,6 +496,7 @@ test('trusted activity touch sends only opaque proof digests and returns bounded
         idleExpiresAt: '2026-09-02T12:02:00.000Z', absoluteExpiresAt: '2026-09-09T00:00:00.000Z',
       };
     },
+    ...unusedOwnedSessionMethods(),
   };
   const broker = createIdentitySessionBroker({
     store,
@@ -506,6 +520,89 @@ test('trusted activity touch sends only opaque proof digests and returns bounded
   assert.equal(session.persistence, '7d');
   assert.equal(session.idleExpiresAt, '2026-09-02T12:02:00.000Z');
   assert.equal(session.absoluteExpiresAt, '2026-09-09T00:00:00.000Z');
+});
+
+test('owned session inventory and revocation send only opaque proof digests', async () => {
+  const otherSessionId = '33333333-3333-4333-8333-333333333333';
+  const calls = { list: [], revoke: [], revokeAll: [] };
+  const store = {
+    async resolveSession() { throw new Error('generic resolution must not run'); },
+    async issueSession() { throw new Error('login must not run'); },
+    async getPendingMfa() { throw new Error('MFA must not run'); },
+    async activateMfa() { throw new Error('MFA must not run'); },
+    async getRefreshCredentials() { throw new Error('refresh must not run'); },
+    async rotateCredentials() { throw new Error('refresh must not run'); },
+    async rejectRefresh() { throw new Error('refresh must not run'); },
+    async touchActivity() { throw new Error('touch must not run'); },
+    async listOwnedSessions(input) {
+      calls.list.push(input);
+      return { items: [
+        {
+          id: sessionId, current: true, status: 'active', assurance: 'aal2', persistence: '24h',
+          createdAt: now.toISOString(), lastSeenAt: now.toISOString(),
+          idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+          userAgentDigest: null,
+        },
+        {
+          id: otherSessionId, current: false, status: 'pending_mfa', assurance: 'aal1', persistence: 'browser',
+          createdAt: now.toISOString(), lastSeenAt: now.toISOString(),
+          idleExpiresAt: '2026-09-02T00:05:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+          userAgentDigest: null,
+        },
+      ] };
+    },
+    async revokeOwnedSession(input) {
+      calls.revoke.push(input);
+      return { sessionId: input.targetSessionId, current: false, revokedAt: now.toISOString() };
+    },
+    async revokeAllOwnedSessions(input) {
+      calls.revokeAll.push(input);
+      return { current: true, revokedCount: 2, revokedAt: now.toISOString() };
+    },
+  };
+  const broker = createIdentitySessionBroker({
+    store,
+    authClient: {
+      async authenticatePassword() { throw new Error('login must not run'); },
+      async completeTotp() { throw new Error('MFA must not run'); },
+      async refreshSession() { throw new Error('refresh must not run'); },
+      async logout() {},
+    },
+    credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 13) }),
+    publicOrigin: 'https://console.example.test',
+    clock: () => now,
+  });
+  const request = { headers: {
+    cookie: '__Host-opensphere-session=opaque-owned-session-handle-long-enough',
+    'x-os-csrf-token': 'opaque-owned-session-csrf-proof',
+  } };
+  const inventory = await broker.listSessions(request);
+  assert.equal(inventory.items.length, 2);
+  assert.equal(inventory.items[0].current, true);
+  assert.deepEqual(Object.keys(inventory.items[0]).sort(), [
+    'absoluteExpiresAt', 'assurance', 'createdAt', 'current', 'id', 'idleExpiresAt',
+    'lastSeenAt', 'persistence', 'status', 'userAgentDigest',
+  ]);
+  assert.equal(calls.list[0].tokenDigest.length, 32);
+  assert.doesNotMatch(JSON.stringify(calls.list[0]), /opaque-owned-session/);
+
+  const revoked = await broker.revokeSession(request, {
+    targetSessionId: otherSessionId,
+    correlationId: 'owned-session-revoke-correlation-0001',
+  });
+  assert.equal(revoked.current, false);
+  assert.equal(calls.revoke[0].tokenDigest.length, 32);
+  assert.equal(calls.revoke[0].csrfTokenDigest.length, 32);
+  assert.equal(calls.revoke[0].targetSessionId, otherSessionId);
+  assert.doesNotMatch(JSON.stringify(calls.revoke[0]), /opaque-owned-session/);
+
+  const revokedAll = await broker.revokeAllSessions(request, {
+    correlationId: 'owned-session-revoke-all-correlation-0001',
+  });
+  assert.equal(revokedAll.revokedCount, 2);
+  assert.equal(calls.revokeAll[0].tokenDigest.length, 32);
+  assert.equal(calls.revokeAll[0].csrfTokenDigest.length, 32);
+  assert.doesNotMatch(JSON.stringify(calls.revokeAll[0]), /opaque-owned-session/);
 });
 
 test('HTTP login forwards exact Origin and returns both Secure cookies', async (t) => {
@@ -608,4 +705,50 @@ test('HTTP activity touch requires an exact empty body and forwards the CSRF-bou
   });
   assert.equal(invalid.status, 400);
   assert.equal(calls.length, 1);
+});
+
+test('HTTP owned-session routes preserve the CSRF boundary and clear cookies only for the current session', async (t) => {
+  const otherSessionId = '33333333-3333-4333-8333-333333333333';
+  const calls = { list: [], revoke: [], revokeAll: [] };
+  const projection = {
+    items: [{
+      id: sessionId, current: true, status: 'active', assurance: 'aal1', persistence: '24h',
+      createdAt: now.toISOString(), lastSeenAt: now.toISOString(),
+      idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+      userAgentDigest: null,
+    }],
+  };
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('generic resolution must not run'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async listSessions(request) { calls.list.push(request); return projection; },
+      async revokeSession(request, input) { calls.revoke.push({ request, input }); return { current: false }; },
+      async revokeAllSessions(request, input) { calls.revokeAll.push({ request, input }); return { current: true, revokedCount: 2 }; },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = 'http://127.0.0.1:' + server.address().port + '/api/identity/sessions';
+  const proofHeaders = {
+    cookie: '__Host-opensphere-session=opaque',
+    'x-os-csrf-token': 'csrf-proof-for-owned-session-revocation',
+    'x-correlation-id': 'owned-session-http-correlation-0001',
+  };
+
+  const inventory = await fetch(base, { headers: { cookie: proofHeaders.cookie } });
+  assert.equal(inventory.status, 200);
+  assert.deepEqual(await inventory.json(), projection);
+  assert.equal(calls.list.length, 1);
+
+  const targeted = await fetch(base + '/' + otherSessionId, { method: 'DELETE', headers: proofHeaders });
+  assert.equal(targeted.status, 204);
+  assert.equal(targeted.headers.getSetCookie().length, 0);
+  assert.equal(calls.revoke[0].input.targetSessionId, otherSessionId);
+  assert.equal(calls.revoke[0].request.headers['x-os-csrf-token'], proofHeaders['x-os-csrf-token']);
+
+  const all = await fetch(base, { method: 'DELETE', headers: proofHeaders });
+  assert.equal(all.status, 204);
+  assert.equal(all.headers.getSetCookie().length, 2);
+  assert.equal(calls.revokeAll[0].request.headers['x-os-csrf-token'], proofHeaders['x-os-csrf-token']);
 });

@@ -492,6 +492,61 @@ try {
   assert.deepEqual(touchEvidence.rows[0], {
     touched: true, idle_extended: true, absolute_bound: true, activity_audit_events: 0,
   });
+
+  const secondLoginResponse = await fetch(origin + '/api/identity/session/login', {
+    method: 'POST',
+    headers: {
+      origin: publicOrigin,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-session-login-0002',
+    },
+    body: JSON.stringify({ email: 'operator@opensphere.test', password: 'integration-password' }),
+  });
+  assert.equal(secondLoginResponse.status, 200);
+  const secondLoginCookies = secondLoginResponse.headers.getSetCookie();
+  const secondSessionCookie = secondLoginCookies.find((value) => value.startsWith('__Host-opensphere-session='));
+  const secondCsrfCookie = secondLoginCookies.find((value) => value.startsWith('__Host-opensphere_csrf='));
+  assert.ok(secondSessionCookie && secondCsrfCookie);
+  const secondCookieHeader = secondSessionCookie.split(';', 1)[0];
+  const secondLoginBody = await secondLoginResponse.json();
+
+  const inventoryResponse = await fetch(origin + '/api/identity/sessions', {
+    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-session-inventory-0001' },
+  });
+  assert.equal(inventoryResponse.status, 200);
+  const inventory = await inventoryResponse.json();
+  assert.ok(inventory.items.length <= 100);
+  assert.equal(inventory.items.filter((item) => item.current).length, 1);
+  assert.equal(inventory.items.find((item) => item.id === loginBody.session.id)?.current, true);
+  assert.equal(inventory.items.find((item) => item.id === secondLoginBody.session.id)?.current, false);
+  assert.doesNotMatch(JSON.stringify(inventory), /accessToken|refreshToken|csrf|ciphertext|authSessionRef/i);
+
+  const targetedRevokeResponse = await fetch(origin + '/api/identity/sessions/' + secondLoginBody.session.id, {
+    method: 'DELETE',
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-csrf-token': loginCsrf,
+      'x-correlation-id': 'integration-session-owned-revoke-0001',
+    },
+  });
+  assert.equal(targetedRevokeResponse.status, 204);
+  assert.equal(targetedRevokeResponse.headers.getSetCookie().length, 0);
+  const targetedRevokedRead = await fetch(origin + '/api/identity/session', {
+    headers: { cookie: secondCookieHeader, 'x-correlation-id': 'integration-session-owned-revoked-read-0001' },
+  });
+  assert.equal(targetedRevokedRead.status, 401);
+  const targetedRevokeEvidence = await admin.query(
+    [
+      'SELECT count(*)::int AS event_count,',
+      "COALESCE(string_agg(evidence::text, ''), '') AS evidence",
+      'FROM console_audit.event',
+      "WHERE action = 'console.identity.session.revoke' AND correlation_id = $1",
+    ].join(' '),
+    ['integration-session-owned-revoke-0001'],
+  );
+  assert.equal(targetedRevokeEvidence.rows[0].event_count, 1);
+  assert.doesNotMatch(targetedRevokeEvidence.rows[0].evidence, /accessToken|refreshToken|csrf|ciphertext/i);
+
   const issuedLogoutResponse = await fetch(origin + '/api/identity/session', {
     method: 'DELETE',
     headers: {
@@ -1064,6 +1119,39 @@ try {
   assert.equal(revoked.status, 401);
   assert.equal((await revoked.json()).code, 'AuthenticationRequired');
 
+  const bulkLogin = async (correlation) => {
+    const response = await fetch(origin + '/api/identity/session/login', {
+      method: 'POST',
+      headers: { origin: publicOrigin, 'content-type': 'application/json', 'x-correlation-id': correlation },
+      body: JSON.stringify({ email: 'operator@opensphere.test', password: 'integration-password' }),
+    });
+    assert.equal(response.status, 200);
+    const cookies = response.headers.getSetCookie();
+    return {
+      cookie: cookies.find((value) => value.startsWith('__Host-opensphere-session=')).split(';', 1)[0],
+      csrf: decodeURIComponent(cookies.find((value) => value.startsWith('__Host-opensphere_csrf='))
+        .split(';', 1)[0].split('=', 2)[1]),
+    };
+  };
+  const bulkCurrent = await bulkLogin('integration-session-bulk-login-0001');
+  const bulkOther = await bulkLogin('integration-session-bulk-login-0002');
+  const bulkRevokeResponse = await fetch(origin + '/api/identity/sessions', {
+    method: 'DELETE',
+    headers: {
+      cookie: bulkCurrent.cookie,
+      'x-os-csrf-token': bulkCurrent.csrf,
+      'x-correlation-id': 'integration-session-owned-revoke-all-0001',
+    },
+  });
+  assert.equal(bulkRevokeResponse.status, 204);
+  assert.equal(bulkRevokeResponse.headers.getSetCookie().length, 2);
+  for (const cookie of [bulkCurrent.cookie, bulkOther.cookie]) {
+    const response = await fetch(origin + '/api/identity/session', {
+      headers: { cookie, 'x-correlation-id': 'integration-session-bulk-revoked-read-0001' },
+    });
+    assert.equal(response.status, 401);
+  }
+
   process.stdout.write(JSON.stringify({
     status: 'passed',
     operationId: receipt.operationId,
@@ -1088,6 +1176,8 @@ try {
     passwordLoginSessionLifecycle: true,
     refreshRotationLifecycle: true,
     activityTouchLifecycle: true,
+    sessionInventoryLifecycle: true,
+    ownedSessionRevocationLifecycle: true,
     mfaLoginChallengeLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,

@@ -607,6 +607,46 @@ test('PostgreSQL activity touch binds only opaque session and CSRF digests', asy
   assert.deepEqual(calls[0].values, Object.values(proof));
 });
 
+test('PostgreSQL owned-session management binds only proof digests, target and correlation', async () => {
+  const calls = [];
+  const otherSessionId = '33333333-3333-4333-8333-333333333333';
+  const store = createPostgresOperationStore({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      if (/list_owned_browser_sessions/.test(sql)) {
+        return { rows: [{ session_inventory: { items: [{ id: sessionId, current: true }] } }] };
+      }
+      return { rows: [{ revocation_record: /revoke_all_owned_browser_sessions/.test(sql)
+        ? { current: true, revokedCount: 2 }
+        : { sessionId: otherSessionId, current: false } }] };
+    },
+  });
+  const tokenDigest = Buffer.alloc(32, 11);
+  const csrfTokenDigest = Buffer.alloc(32, 12);
+  const inventory = await store.listOwnedSessions({ tokenDigest });
+  assert.equal(inventory.items[0].current, true);
+  assert.match(calls[0].sql, /console_identity[.]list_owned_browser_sessions/);
+  assert.deepEqual(calls[0].values, [tokenDigest]);
+
+  const targeted = await store.revokeOwnedSession({
+    tokenDigest, csrfTokenDigest, targetSessionId: otherSessionId,
+    correlationId: 'owned-session-store-correlation-0001',
+  });
+  assert.equal(targeted.current, false);
+  assert.match(calls[1].sql, /console_identity[.]revoke_owned_browser_session/);
+  assert.deepEqual(calls[1].values, [
+    tokenDigest, csrfTokenDigest, otherSessionId, 'owned-session-store-correlation-0001',
+  ]);
+
+  const all = await store.revokeAllOwnedSessions({
+    tokenDigest, csrfTokenDigest, correlationId: 'owned-session-store-correlation-0002',
+  });
+  assert.equal(all.revokedCount, 2);
+  assert.match(calls[2].sql, /console_identity[.]revoke_all_owned_browser_sessions/);
+  assert.deepEqual(calls[2].values, [tokenDigest, csrfTokenDigest, 'owned-session-store-correlation-0002']);
+  assert.doesNotMatch(JSON.stringify(calls.map(({ values }) => values)), /opaque|credential|password/i);
+});
+
 test('PostgreSQL refresh operations bind only proof, ciphertext CAS and rotated envelopes', async () => {
   const calls = [];
   const store = createPostgresOperationStore({

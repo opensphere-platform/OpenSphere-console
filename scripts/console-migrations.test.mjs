@@ -9,13 +9,14 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 5);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0005');
+  assert.equal(manifest.migrationCount, 6);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0006');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');
   assert.equal(manifest.migrations[1].sourceRevision, 'e6f3f2dc54012a9d655e4ec292da182f6b9ae5dd');
   assert.equal(manifest.migrations[2].sourceRevision, 'd7c5d09ecdcfbeed01b32fd13a447c15b5692116');
   assert.equal(manifest.migrations[3].sourceRevision, 'be81b21351e7a4d2d89ce08f988eb1c115ae85c3');
   assert.equal(manifest.migrations[4].sourceRevision, '188d23ae76ebdddea467efd0b7e5926f0dcd20e2');
+  assert.equal(manifest.migrations[5].sourceRevision, 'c74661efdcb9ebf31f8b997a70954704168d989d');
   const transaction = migrationTransactionSql(root, manifest.migrations[0]);
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
@@ -50,6 +51,13 @@ test('browser-session activity successor is independently renderable', () => {
   assert.match(sql, /ADD COLUMN absolute_expires_at/);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]touch_browser_session_activity/);
   assert.match(sql, /opensphere-console\/20260902\/0005/);
+});
+
+test('owned browser-session management successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0006' });
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]list_owned_browser_sessions/);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]revoke_all_owned_browser_sessions/);
+  assert.match(sql, /opensphere-console\/20260902\/0006/);
 });
 
 test('migration renderer emits only a manifest-bound transaction body', () => {
