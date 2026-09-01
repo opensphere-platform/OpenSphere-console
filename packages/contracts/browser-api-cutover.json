@@ -11,11 +11,11 @@
     "setDigest": "sha256:7db53639f2030a0af91fc3bc44df5c4124110e42c6ebed6b951ae7edc9362054"
   },
   "targetSessionCapabilities": [
-    { "id": "password-login", "status": "missing" },
+    { "id": "password-login", "status": "implemented-and-verified" },
     { "id": "refresh-rotation", "status": "missing" },
-    { "id": "csrf-binding", "status": "direct-test" },
-    { "id": "current-session-resolution", "status": "direct-test" },
-    { "id": "self-logout", "status": "direct-test" },
+    { "id": "csrf-binding", "status": "implemented-and-verified" },
+    { "id": "current-session-resolution", "status": "implemented-and-verified" },
+    { "id": "self-logout", "status": "implemented-and-verified" },
     { "id": "activity-touch", "status": "missing" },
     { "id": "mfa-login-challenge", "status": "missing" },
     { "id": "mfa-enrollment", "status": "missing" },

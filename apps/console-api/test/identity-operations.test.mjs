@@ -116,8 +116,11 @@ test('HTTP identity routes separate read CSRF policy from revoke mutation', asyn
   assert.equal(meResponse.status, 200);
   assert.equal((await meResponse.json()).data.subjectId, session.subjectId);
   assert.equal(revokeResponse.status, 204);
-  assert.match(revokeResponse.headers.get('set-cookie'), /^__Host-opensphere-session=;/);
-  assert.match(revokeResponse.headers.get('set-cookie'), /Max-Age=0/);
+  const expiredCookies = revokeResponse.headers.getSetCookie();
+  assert.equal(expiredCookies.length, 2);
+  assert.match(expiredCookies[0], /^__Host-opensphere-session=;/);
+  assert.match(expiredCookies[1], /^__Host-opensphere_csrf=;/);
+  assert.ok(expiredCookies.every((cookie) => cookie.includes('Max-Age=0')));
   assert.deepEqual(resolverCalls, [{ requireCsrf: false }, { requireCsrf: false }, { requireCsrf: true }]);
   assert.equal(revoked.length, 1);
 });

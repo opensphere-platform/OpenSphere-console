@@ -16,6 +16,20 @@ if (!runtimeUrl || !adminUrl) throw new Error('Console API runtime and test-admi
 
 const port = Number(process.env.CONSOLE_TEST_PORT || 58080);
 const origin = 'http://127.0.0.1:' + port;
+const publicOrigin = 'https://console.integration.test';
+const loginSubjectId = '11111111-1111-4111-8111-111111111111';
+const loginAccessToken = [
+  Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+  Buffer.from(JSON.stringify({
+    sub: loginSubjectId,
+    role: 'authenticated',
+    aal: 'aal1',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    session_id: 'supabase-auth-session-integration-0001',
+  })).toString('base64url'),
+  'integration-signature',
+].join('.');
+const loginRefreshToken = 'supabase-refresh-credential-integration-0001';
 const handle = 'opaque-session-handle-for-console-api-integration';
 const csrf = 'csrf-proof-for-console-api-integration';
 const credential = 'integration-registry-credential-never-persisted';
@@ -46,6 +60,22 @@ const authorityServer = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const requestBody = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+  if (request.url === '/token?grant_type=password' && request.method === 'POST') {
+    assert.deepEqual(requestBody, { email: 'operator@opensphere.test', password: 'integration-password' });
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      access_token: loginAccessToken,
+      refresh_token: loginRefreshToken,
+      user: { id: loginSubjectId },
+    }));
+    return;
+  }
+  if (request.url === '/user' && request.method === 'GET') {
+    assert.equal(request.headers.authorization, 'Bearer ' + loginAccessToken);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ id: loginSubjectId, factors: [] }));
+    return;
+  }
   if (request.url === '/health' || request.url === '/status') {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end('{}');
@@ -156,6 +186,8 @@ const child = spawn(process.execPath, ['apps/console-api/src/server.mjs'], {
     CONSOLE_SUPABASE_AUTH_URL: authorityOrigin,
     CONSOLE_SUPABASE_REST_URL: authorityOrigin,
     CONSOLE_SUPABASE_STORAGE_URL: authorityOrigin,
+    CONSOLE_PUBLIC_ORIGIN: publicOrigin,
+    CONSOLE_SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -279,6 +311,72 @@ function verification(operationId, candidateBody, candidateHeaders = {}) {
 
 try {
   await waitForReady();
+  const loginResponse = await fetch(origin + '/api/identity/session/login', {
+    method: 'POST',
+    headers: {
+      origin: publicOrigin,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-session-login-0001',
+    },
+    body: JSON.stringify({ email: 'operator@opensphere.test', password: 'integration-password' }),
+  });
+  assert.equal(loginResponse.status, 200);
+  const loginCookies = loginResponse.headers.getSetCookie();
+  assert.equal(loginCookies.length, 2);
+  const loginSessionCookie = loginCookies.find((value) => value.startsWith('__Host-opensphere-session='));
+  const loginCsrfCookie = loginCookies.find((value) => value.startsWith('__Host-opensphere_csrf='));
+  assert.ok(loginSessionCookie);
+  assert.ok(loginCsrfCookie);
+  assert.match(loginSessionCookie, /; HttpOnly; Secure; SameSite=Strict;/);
+  assert.match(loginCsrfCookie, /; Secure; SameSite=Strict;/);
+  assert.doesNotMatch(loginCsrfCookie, /; HttpOnly;/);
+  const loginCookieHeader = loginSessionCookie.split(';', 1)[0];
+  const loginCsrf = decodeURIComponent(loginCsrfCookie.split(';', 1)[0].split('=', 2)[1]);
+  const loginBody = await loginResponse.json();
+  assert.equal(loginBody.mfaRequired, false);
+  assert.equal(loginBody.session.status, 'active');
+  assert.doesNotMatch(JSON.stringify(loginBody), /access_token|refresh_token|integration-password|supabase-refresh/i);
+
+  const loginEvidence = await admin.query(
+    [
+      'SELECT octet_length(token_digest)::int AS token_digest_bytes,',
+      'octet_length(csrf_token_digest)::int AS csrf_digest_bytes,',
+      'access_token_ciphertext, refresh_token_ciphertext, auth_session_ref, revoked_at,',
+      '(SELECT COALESCE(string_agg(evidence::text, \'\'), \'\') FROM console_audit.event',
+      "WHERE action = 'console.identity.session.login' AND correlation_id = $2) AS audit_evidence",
+      'FROM console_identity.browser_session WHERE session_id = $1',
+    ].join(' '),
+    [loginBody.session.id, 'integration-session-login-0001'],
+  );
+  assert.equal(loginEvidence.rowCount, 1);
+  assert.equal(loginEvidence.rows[0].token_digest_bytes, 32);
+  assert.equal(loginEvidence.rows[0].csrf_digest_bytes, 32);
+  assert.match(loginEvidence.rows[0].access_token_ciphertext, /^v1[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+$/);
+  assert.match(loginEvidence.rows[0].refresh_token_ciphertext, /^v1[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+$/);
+  assert.equal(loginEvidence.rows[0].auth_session_ref, 'supabase-auth-session-integration-0001');
+  assert.equal(loginEvidence.rows[0].revoked_at, null);
+  assert.doesNotMatch(loginEvidence.rows[0].audit_evidence, new RegExp(loginRefreshToken));
+  assert.doesNotMatch(loginEvidence.rows[0].audit_evidence, new RegExp(loginAccessToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+  const issuedSessionResponse = await fetch(origin + '/api/identity/session', {
+    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-issued-session-read-0001' },
+  });
+  assert.equal(issuedSessionResponse.status, 200);
+  assert.equal((await issuedSessionResponse.json()).data.subjectId, loginSubjectId);
+  const issuedLogoutResponse = await fetch(origin + '/api/identity/session', {
+    method: 'DELETE',
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-csrf-token': loginCsrf,
+      'x-correlation-id': 'integration-issued-session-revoke-0001',
+    },
+  });
+  assert.equal(issuedLogoutResponse.status, 204);
+  const issuedRevokedResponse = await fetch(origin + '/api/identity/session', {
+    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-issued-session-revoked-read-0001' },
+  });
+  assert.equal(issuedRevokedResponse.status, 401);
+
   const connectionProjectionResponse = await fetch(
     origin + '/api/admin/extensions/registry-connections/opensphere-ghcr',
     { headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-registry-read-0001' } },
@@ -743,8 +841,11 @@ try {
     },
   });
   assert.equal(logoutResponse.status, 204);
-  assert.match(logoutResponse.headers.get('set-cookie'), /^__Host-opensphere-session=;/);
-  assert.match(logoutResponse.headers.get('set-cookie'), /Max-Age=0/);
+  const expiredCookies = logoutResponse.headers.getSetCookie();
+  assert.equal(expiredCookies.length, 2);
+  assert.match(expiredCookies[0], /^__Host-opensphere-session=;/);
+  assert.match(expiredCookies[1], /^__Host-opensphere_csrf=;/);
+  assert.ok(expiredCookies.every((cookie) => cookie.includes('Max-Age=0')));
   const revoked = await mutation(body, { ...headers, 'idempotency-key': 'integration-registry-operation-0002' });
   assert.equal(revoked.status, 401);
   assert.equal((await revoked.json()).code, 'AuthenticationRequired');
@@ -770,6 +871,7 @@ try {
     supabaseStatusProjection: true,
     supabaseLiveProbes: true,
     migrationLineage: true,
+    passwordLoginSessionLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     revokeDenied: true,

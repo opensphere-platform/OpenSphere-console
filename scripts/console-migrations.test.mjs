@@ -9,13 +9,22 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 1);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0001');
+  assert.equal(manifest.migrationCount, 2);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0002');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');
+  assert.equal(manifest.migrations[1].sourceRevision, 'e6f3f2dc54012a9d655e4ec292da182f6b9ae5dd');
   const transaction = migrationTransactionSql(root, manifest.migrations[0]);
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
   assert.match(transaction, /opensphere-console\/20260902\/0001/);
+});
+
+test('browser-session credential successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0002' });
+  assert.match(sql, /ADD COLUMN access_token_ciphertext text/);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]issue_browser_session/);
+  assert.match(sql, /opensphere-console\/20260902\/0002/);
+  assert.doesNotMatch(sql, /CREATE SCHEMA console_identity/);
 });
 
 test('migration renderer emits only a manifest-bound transaction body', () => {

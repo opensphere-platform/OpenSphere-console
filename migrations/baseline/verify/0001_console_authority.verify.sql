@@ -108,9 +108,9 @@ BEGIN
       OR v_status->'data'->'components'->0->>'state' <> 'Ready'
       OR v_status->'data'->'components'->1->>'state' <> 'Unknown'
       OR v_status->'data'->'components'->4->>'state' <> 'Ready'
-      OR v_status->'data'->'components'->4->>'baselineRevision' <> 'opensphere-console/20260902/0001'
-      OR v_status->'data'->'components'->4->>'setDigest' <> 'sha256:3866b59613f17bfa0cc019a2c895a9135e0d6e7e6b44b0997971bb075ccf90c4'
-      OR v_status->'data'->'components'->4->>'migrationCount' <> '1'
+      OR v_status->'data'->'components'->4->>'baselineRevision' <> 'opensphere-console/20260902/0002'
+      OR v_status->'data'->'components'->4->>'setDigest' <> 'sha256:4e1757ca56b40073d66840004f30c733be0935bb38119876c11b228cdb4089e2'
+      OR v_status->'data'->'components'->4->>'migrationCount' <> '2'
       OR v_status->'data'->'components'->5->>'state' <> 'Ready'
       OR v_status->'data'->'components'->5->>'protectedTables' <> '11' THEN
     RAISE EXCEPTION 'Supabase status projection overclaimed or lost baseline evidence';
@@ -136,7 +136,7 @@ RESET ROLE;
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM console_migration.applied_migration) <> 1 THEN
+  IF (SELECT count(*) FROM console_migration.applied_migration) <> 2 THEN
     RAISE EXCEPTION 'fresh migration ledger cardinality mismatch';
   END IF;
   BEGIN

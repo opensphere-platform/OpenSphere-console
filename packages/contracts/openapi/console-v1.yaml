@@ -15,6 +15,40 @@ tags:
   - name: Operations
   - name: Extensions
 paths:
+  /api/identity/session/login:
+    post:
+      operationId: loginSession
+      tags: [Session]
+      security: []
+      x-opensphere-requirement: CON-FR-001
+      x-opensphere-authority: SupabaseAuth
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable
+      parameters:
+        - $ref: "#/components/parameters/LoginOrigin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/session-login-request.schema.json"
+      responses:
+        "200":
+          description: Password proof accepted and an opaque active or pending-MFA browser session issued
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/session-login-response.schema.json"
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/identity/session:
     get:
       operationId: getSession
@@ -424,6 +458,11 @@ components:
       in: cookie
       name: __Host-opensphere-session
   parameters:
+    LoginOrigin:
+      name: Origin
+      in: header
+      required: true
+      schema: { type: string, format: uri, maxLength: 2048 }
     CsrfToken:
       name: X-OS-CSRF-Token
       in: header

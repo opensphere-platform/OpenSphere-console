@@ -57,7 +57,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, dataIdentityOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, identitySessionBroker, dataIdentityOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-correlation-id'] || '').trim();
@@ -75,6 +75,15 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           state: ready ? 'Ready' : 'Unavailable',
           authority: 'SupabasePostgreSQL',
         });
+      }
+      if (url.pathname === '/api/identity/session/login' && request.method === 'POST') {
+        if (!identitySessionBroker?.login) throw Object.assign(new Error('target session login is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const result = await identitySessionBroker.login({
+          body: await jsonBody(request),
+          requestOrigin: request.headers.origin,
+          correlationId,
+        });
+        return send(response, 200, result.body, { 'set-cookie': result.cookies });
       }
       if (url.pathname === '/api/identity/audit' && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false });
@@ -101,7 +110,10 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         const session = await resolveSession(request, { requireCsrf: true });
         await identityOperations.revokeSession({ session, correlationId });
         return send(response, 204, null, {
-          'set-cookie': '__Host-opensphere-session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0',
+          'set-cookie': [
+            '__Host-opensphere-session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0',
+            '__Host-opensphere_csrf=; Path=/; Secure; SameSite=Strict; Max-Age=0',
+          ],
         });
       }
       const operationMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})$/);

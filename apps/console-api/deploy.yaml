@@ -56,6 +56,13 @@ spec:
                 secretKeyRef:
                   name: opensphere-console-api-runtime
                   key: database-url
+            - name: CONSOLE_SESSION_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-console-api-runtime
+                  key: session-encryption-key
+            - name: CONSOLE_PUBLIC_ORIGIN
+              value: __OPENSPHERE_CONSOLE_URL__
             - name: CONSOLE_REGISTRY_URL
               value: http://opensphere-registry.opensphere-console.svc.cluster.local:8080
             - name: CONSOLE_SUPABASE_AUTH_URL

@@ -50,6 +50,7 @@ jobs:
           node scripts/console-migrations.mjs apply
           node scripts/console-migrations.mjs apply
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/0001_console_authority.verify.sql
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0002_browser_session_credential_envelope.verify.sql
       - name: Verify Console API through PostgreSQL
         env:
           CONSOLE_DATABASE_URL: postgresql://console_api_runtime:console-runtime-test@localhost:5432/postgres

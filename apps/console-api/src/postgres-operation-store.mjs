@@ -35,6 +35,13 @@ const RESOLVE_SESSION_SQL = [
   ') AS session_record',
 ].join(' ');
 
+const ISSUE_SESSION_SQL = [
+  'SELECT console_identity.issue_browser_session(',
+  '$1::uuid, $2::bytea, $3::bytea, $4::text, $5::text,',
+  '$6::text, $7::text, $8::timestamptz, $9::boolean, $10::text',
+  ') AS session_record',
+].join(' ');
+
 const LIST_REVOCATIONS_SQL = [
   'SELECT console_extension.list_revocations(',
   '$1::uuid, $2::uuid, $3::text',
@@ -68,7 +75,7 @@ const GET_SUPABASE_STATUS_SQL = [
 function databaseError(error) {
   const code = String(error?.detail || '');
   const known = new Set([
-    'ValidationFailed', 'ReasonRequired', 'SessionInvalid', 'StaleAuthorityRevision',
+    'ValidationFailed', 'ReasonRequired', 'SessionInvalid', 'SubjectAuthorityMissing', 'StaleAuthorityRevision',
     'PermissionDenied', 'StepUpRequired', 'IdempotencyMismatch', 'CsrfRejected',
     'SelfApprovalDenied', 'ApprovalNotRequired', 'StaleRevision',
     'StaleOperationVersion', 'InvalidOperationState', 'ObservationMissing',
@@ -79,6 +86,7 @@ function databaseError(error) {
     ValidationFailed: 400,
     ReasonRequired: 422,
     SessionInvalid: 401,
+    SubjectAuthorityMissing: 403,
     StaleAuthorityRevision: 409,
     PermissionDenied: 403,
     StepUpRequired: 403,
@@ -98,6 +106,7 @@ function databaseError(error) {
     ValidationFailed: 'operation request failed database validation',
     ReasonRequired: 'operation reason is required',
     SessionInvalid: 'active Console session is required',
+    SubjectAuthorityMissing: 'Console subject authority is unavailable',
     StaleAuthorityRevision: 'session authority revision is stale',
     PermissionDenied: 'permission denied',
     StepUpRequired: 'recent aal2 is required',
@@ -141,6 +150,28 @@ export function createPostgresOperationStore({ query }) {
         ]);
         const record = result?.rows?.[0]?.session_record;
         if (!record) throw Object.assign(new Error('session was not found'), { detail: 'SessionInvalid' });
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async issueSession(input) {
+      try {
+        const result = await query(ISSUE_SESSION_SQL, [
+          input.subjectId,
+          input.tokenDigest,
+          input.csrfTokenDigest,
+          input.accessTokenCiphertext,
+          input.refreshTokenCiphertext,
+          input.authSessionRef,
+          input.aal,
+          input.expiresAt,
+          input.pendingMfa,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record) throw new Error('issue_browser_session returned no record');
         return record;
       } catch (error) {
         throw databaseError(error);

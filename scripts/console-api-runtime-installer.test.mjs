@@ -59,7 +59,8 @@ test('target Supabase manifest is the closed four-workload data backbone', () =>
 
 test('C_API runtime login remains a one-role one-secret fresh-lineage boundary', () => {
   assert.match(source, /migrations\\manifest[.]json/);
-  assert.match(source, /migrationCount -ne 1/);
+  assert.match(source, /migrationCount -lt 1/);
+  assert.match(source, /migrations\)[.]Count -ne \[int\]\$migrationManifest[.]migrationCount/);
   assert.match(source, /requires the exact fresh migration prefix/);
   assert.match(source, /\$roleName = 'opensphere_console_api_runtime'/);
   assert.match(source, /CREATE ROLE \$roleName LOGIN PASSWORD/);
@@ -68,8 +69,11 @@ test('C_API runtime login remains a one-role one-secret fresh-lineage boundary',
   assert.match(source, /GRANT \$authorityRole TO \$roleName/);
   assert.match(source, /\$secretName = 'opensphere-console-api-runtime'/);
   assert.match(source, /\$secretKey = 'database-url'/);
+  assert.match(source, /\$sessionEncryptionSecretKey = 'session-encryption-key'/);
+  assert.match(source, /session encryption key must be canonical base64 for exactly 32 bytes/);
   assert.match(source, /'opensphere[.]io\/secret-scope' = 'console-api-only'/);
-  assert.match(source, /stringData = @\{ \$secretKey = \$databaseUrl \}/);
+  assert.match(source, /\$secretKey = \$databaseUrl/);
+  assert.match(source, /\$sessionEncryptionSecretKey = \$sessionEncryptionKey/);
   assert.match(source, /Write-Output -NoEnumerate \$rows/);
   assert.doesNotMatch(source, /New-ServiceJwt|backend-password|osaa-gateway-password/);
   assert.doesNotMatch(source, /kind\s*=\s*'?(?:Deployment|StatefulSet|Role|ClusterRole)'?/);
@@ -97,7 +101,9 @@ test('single target installer closes data bootstrap before fresh C_API runtime',
   assert.match(source, /ALTER ROLE supabase_storage_admin LOGIN PASSWORD/);
   assert.match(source, /\/app\/dist\/scripts\/migrate-call[.]js/);
   assert.match(source, /console-migrations[.]mjs/);
-  assert.match(source, /render \(\[string\]\$migrationManifest[.]latestGlobalId\)/);
+  assert.match(source, /Get-AppliedMigrationCount/);
+  assert.match(source, /for \(\$migrationIndex = \$appliedMigrationCount; \$migrationIndex -lt \[int\]\$migrationManifest[.]migrationCount; \$migrationIndex\+\+\)/);
+  assert.match(source, /render \(\[string\]\$migration[.]globalId\)/);
   assert.match(source, /--single-transaction/);
   assert.match(source, /deployment\/opensphere-console-api/);
   assert.match(source, /Installed C_API image differs from the requested exact digest/);

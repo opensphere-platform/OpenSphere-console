@@ -10,6 +10,9 @@ import { createRegistryOperations } from './registry-operations.mjs';
 import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
 import { createDatabaseSessionResolver } from './session-resolver.mjs';
 import { createConsoleApiHandler } from './http-handler.mjs';
+import { createIdentitySessionBroker } from './identity-session-broker.mjs';
+import { createSessionCredentialCipher } from './session-credential-cipher.mjs';
+import { createSupabaseAuthClient } from './supabase-auth-client.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -22,6 +25,8 @@ function positiveInteger(name, fallback, maximum) {
 
 const databaseUrl = String(process.env.CONSOLE_DATABASE_URL || '');
 if (!databaseUrl) throw new Error('CONSOLE_DATABASE_URL is required');
+const publicOrigin = String(process.env.CONSOLE_PUBLIC_ORIGIN || '');
+if (!publicOrigin) throw new Error('CONSOLE_PUBLIC_ORIGIN is required');
 const port = Number(process.env.PORT || 8080);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid TCP port');
 
@@ -40,8 +45,21 @@ const store = createPostgresOperationStore({ query: pool.query.bind(pool) });
 const operationService = createOperationService({ store, policyCatalog });
 const auditOperations = createAuditOperations({ store });
 const identityOperations = createIdentityOperations({ store });
+const supabaseAuthUrl = String(process.env.CONSOLE_SUPABASE_AUTH_URL || 'http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999');
+const identitySessionBroker = createIdentitySessionBroker({
+  store,
+  authClient: createSupabaseAuthClient({
+    baseUrl: supabaseAuthUrl,
+    timeoutMs: positiveInteger('CONSOLE_SUPABASE_AUTH_TIMEOUT_MS', 5000, 30000),
+    maximumResponseBytes: positiveInteger('CONSOLE_SUPABASE_AUTH_MAX_RESPONSE_BYTES', 65536, 1024 * 1024),
+  }),
+  credentialCipher: createSessionCredentialCipher({
+    encryptionKey: String(process.env.CONSOLE_SESSION_ENCRYPTION_KEY || ''),
+  }),
+  publicOrigin,
+});
 const supabaseLiveProbes = createSupabaseLiveProbes({
-  authUrl: String(process.env.CONSOLE_SUPABASE_AUTH_URL || 'http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999'),
+  authUrl: supabaseAuthUrl,
   dataApiUrl: String(process.env.CONSOLE_SUPABASE_REST_URL || 'http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000'),
   storageUrl: String(process.env.CONSOLE_SUPABASE_STORAGE_URL || 'http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000'),
   timeoutMs: positiveInteger('CONSOLE_SUPABASE_PROBE_TIMEOUT_MS', 1500, 10000),
@@ -65,6 +83,7 @@ const handler = createConsoleApiHandler({
   registryOperations,
   auditOperations,
   identityOperations,
+  identitySessionBroker,
   dataIdentityOperations,
   health: () => store.health(),
 });

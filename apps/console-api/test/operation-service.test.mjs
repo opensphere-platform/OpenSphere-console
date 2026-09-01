@@ -520,6 +520,38 @@ test('PostgreSQL store binds every authority parameter and maps database denial 
   await assert.rejects(denied.get({ sessionId, actorRef, operationId }), { code: 'PermissionDenied', status: 403 });
 });
 
+test('PostgreSQL session issue binds only digests, encrypted credentials and authority coordinates', async () => {
+  const calls = [];
+  const issued = {
+    sessionId,
+    subjectId: actorRef,
+    state: 'active',
+    aal: 'aal1',
+  };
+  const store = createPostgresOperationStore({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [{ session_record: issued }] };
+    },
+  });
+  const input = {
+    subjectId: actorRef,
+    tokenDigest: Buffer.alloc(32, 1),
+    csrfTokenDigest: Buffer.alloc(32, 2),
+    accessTokenCiphertext: 'v1.iv.tag.access',
+    refreshTokenCiphertext: 'v1.iv.tag.refresh',
+    authSessionRef: 'supabase-session-ref',
+    aal: 'aal1',
+    expiresAt: '2026-09-03T00:00:00.000Z',
+    pendingMfa: false,
+    correlationId: 'correlation-session-issue-0001',
+  };
+  assert.equal(await store.issueSession(input), issued);
+  assert.match(calls[0].sql, /console_identity[.]issue_browser_session/);
+  assert.deepEqual(calls[0].values, Object.values(input));
+  assert.equal(calls[0].values.some((value) => value === 'raw-access-token' || value === 'raw-refresh-token'), false);
+});
+
 test('PostgreSQL Registry projection binds session, actor and correlation without secret inputs', async () => {
   const calls = [];
   const store = createPostgresOperationStore({

@@ -22,6 +22,7 @@ $roleName = 'opensphere_console_api_runtime'
 $authorityRole = 'console_api'
 $secretName = 'opensphere-console-api-runtime'
 $secretKey = 'database-url'
+$sessionEncryptionSecretKey = 'session-encryption-key'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $repositoryRoot 'migrations\manifest.json'
 $deploymentPath = Join-Path $repositoryRoot 'apps\console-api\deploy.yaml'
@@ -59,7 +60,8 @@ $migrationManifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-J
 if ($migrationManifest.schemaVersion -ne 1 -or
     [string]$migrationManifest.latestGlobalId -notmatch '^opensphere-console/[0-9]{8}/[0-9]{4}$' -or
     [string]$migrationManifest.setDigest -notmatch '^sha256:[a-f0-9]{64}$' -or
-    [int]$migrationManifest.migrationCount -ne 1) {
+    [int]$migrationManifest.migrationCount -lt 1 -or
+    @($migrationManifest.migrations).Count -ne [int]$migrationManifest.migrationCount) {
   throw 'Fresh migration manifest identity is invalid'
 }
 
@@ -234,6 +236,11 @@ function Invoke-OwnerMigrationSql([string]$Sql) {
 
 function Get-RuntimePasswordFromSecret([string]$Json) {
   $secret = $Json | ConvertFrom-Json
+  $actualKeys = @($secret.data.PSObject.Properties.Name | Sort-Object)
+  $expectedKeys = @($secretKey, $sessionEncryptionSecretKey) | Sort-Object
+  if ($secret.type -ne 'Opaque' -or (Compare-Object $expectedKeys $actualKeys)) {
+    throw 'Runtime Secret must be the exact database URL and session encryption key contract'
+  }
   $property = $secret.data.PSObject.Properties[$secretKey]
   if (-not $property) { throw "Runtime Secret is missing $secretKey" }
   $databaseUrl = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$property.Value))
@@ -246,6 +253,15 @@ function Get-RuntimePasswordFromSecret([string]$Json) {
   $userinfo = $uri.UserInfo.Split(':', 2)
   if ($userinfo.Count -ne 2 -or [Uri]::UnescapeDataString($userinfo[0]) -ne $roleName) {
     throw 'Runtime Secret database role differs from the fixed C_API login'
+  }
+  try { $sessionKeyBytes = [Convert]::FromBase64String([string]$secret.data.$sessionEncryptionSecretKey) }
+  catch { throw 'Runtime Secret session encryption key is not valid base64' }
+  try {
+    if ($sessionKeyBytes.Length -ne 32 -or [Convert]::ToBase64String($sessionKeyBytes) -ne [string]$secret.data.$sessionEncryptionSecretKey) {
+      throw 'Runtime Secret session encryption key must be canonical base64 for exactly 32 bytes'
+    }
+  } finally {
+    [Array]::Clear($sessionKeyBytes, 0, $sessionKeyBytes.Length)
   }
   return [Uri]::UnescapeDataString($userinfo[1])
 }
@@ -284,6 +300,24 @@ SELECT count(*)::text || '|' ||
 FROM console_migration.applied_migration;
 "@
 
+function Get-AppliedMigrationCount([string]$LedgerState) {
+  $parts = @($LedgerState -split '[|]', 3)
+  if ($parts.Count -ne 3 -or $parts[0] -notmatch '^[0-9]+$') {
+    throw 'Fresh migration ledger state is malformed'
+  }
+  $count = [int]$parts[0]
+  if ($count -lt 1 -or $count -gt [int]$migrationManifest.migrationCount) {
+    throw 'Existing Supabase data stack does not have a supported fresh migration prefix'
+  }
+  $expected = @($migrationManifest.migrations) | Where-Object { [int]$_.setSize -eq $count }
+  if ($expected.Count -ne 1 -or
+      $parts[1] -ne [string]$expected[0].globalId -or
+      $parts[2] -ne [string]$expected[0].setDigest) {
+    throw 'Existing Supabase data stack does not have an exact manifest prefix'
+  }
+  return $count
+}
+
 if ($existingDataResources.Count -eq $dataResources.Count) {
   foreach ($workload in $dataWorkloads) {
     $image = ((Invoke-Kubectl @('-n', $DataNamespace, 'get', $workload.Resource, '-o', 'jsonpath={.spec.template.spec.containers[0].image}')) -join '').Trim()
@@ -303,9 +337,8 @@ if ($existingDataResources.Count -eq $dataResources.Count) {
   }
   if ($existingFreshLedger[0] -eq 'present') {
     $existingLedger = Invoke-OwnerSql $ledgerSql
-    if ($existingLedger.Count -ne 1 -or $existingLedger[0] -ne $expectedLedger) {
-      throw 'Existing Supabase data stack does not have the exact fresh migration prefix'
-    }
+    if ($existingLedger.Count -ne 1) { throw 'Unable to establish existing fresh migration ledger state' }
+    Get-AppliedMigrationCount $existingLedger[0] | Out-Null
   }
   $preflightRoleState = Invoke-OwnerSql "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$roleName') THEN 'present' ELSE 'absent' END;"
   if ($preflightRoleState.Count -ne 1 -or $preflightRoleState[0] -notin @('present', 'absent')) {
@@ -390,10 +423,18 @@ if ($ledgerExists.Count -ne 1 -or $ledgerExists[0] -notin @('absent', 'present')
   throw 'Unable to establish fresh migration ledger state'
 }
 $migrationStatus = 'existing'
-if ($ledgerExists[0] -eq 'absent') {
-  $migrationTool = Join-Path $PSScriptRoot 'console-migrations.mjs'
-  $migrationSql = (& node $migrationTool render ([string]$migrationManifest.latestGlobalId) | Out-String)
-  if ($LASTEXITCODE -ne 0 -or -not $migrationSql.Trim()) { throw 'Fresh migration renderer failed' }
+$appliedMigrationCount = 0
+if ($ledgerExists[0] -eq 'present') {
+  $currentLedger = Invoke-OwnerSql $ledgerSql
+  if ($currentLedger.Count -ne 1) { throw 'Unable to establish fresh migration ledger state' }
+  $appliedMigrationCount = Get-AppliedMigrationCount $currentLedger[0]
+}
+
+$migrationTool = Join-Path $PSScriptRoot 'console-migrations.mjs'
+for ($migrationIndex = $appliedMigrationCount; $migrationIndex -lt [int]$migrationManifest.migrationCount; $migrationIndex++) {
+  $migration = @($migrationManifest.migrations)[$migrationIndex]
+  $migrationSql = (& node $migrationTool render ([string]$migration.globalId) | Out-String)
+  if ($LASTEXITCODE -ne 0 -or -not $migrationSql.Trim()) { throw "Fresh migration renderer failed: $($migration.globalId)" }
   Invoke-OwnerMigrationSql $migrationSql
   $migrationSql = $null
   $migrationStatus = 'applied'
@@ -426,6 +467,9 @@ if ($secretPresent) {
 
 $passwordBuffer = New-Object byte[] 48
 [Security.Cryptography.RandomNumberGenerator]::Fill($passwordBuffer)
+$sessionKeyBuffer = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Fill($sessionKeyBuffer)
+$sessionEncryptionKey = [Convert]::ToBase64String($sessionKeyBuffer)
 $alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 $passwordChars = New-Object char[] $passwordBuffer.Length
 for ($index = 0; $index -lt $passwordBuffer.Length; $index++) {
@@ -469,7 +513,10 @@ $secretManifest = @{
     }
   }
   type = 'Opaque'
-  stringData = @{ $secretKey = $databaseUrl }
+  stringData = @{
+    $secretKey = $databaseUrl
+    $sessionEncryptionSecretKey = $sessionEncryptionKey
+  }
 } | ConvertTo-Json -Depth 8 -Compress
 
 $secretCreated = $false
@@ -492,18 +539,21 @@ try {
   $escapedPassword = $null
   $encodedPassword = $null
   $databaseUrl = $null
+  $sessionEncryptionKey = $null
   $secretManifest = $null
   [Array]::Clear($passwordBuffer, 0, $passwordBuffer.Length)
+  [Array]::Clear($sessionKeyBuffer, 0, $sessionKeyBuffer.Length)
   [Array]::Clear($passwordChars, 0, $passwordChars.Length)
 }
 $runtimeStatus = 'provisioned'
 }
 
 $deploymentTemplate = Get-Content -Raw -LiteralPath $deploymentPath
-if ([regex]::Matches($deploymentTemplate, [regex]::Escape('__OPENSPHERE_CONSOLE_API_IMAGE__')).Count -ne 1) {
-  throw 'C_API deployment image placeholder contract is invalid'
+if ([regex]::Matches($deploymentTemplate, [regex]::Escape('__OPENSPHERE_CONSOLE_API_IMAGE__')).Count -ne 1 -or
+    [regex]::Matches($deploymentTemplate, [regex]::Escape('__OPENSPHERE_CONSOLE_URL__')).Count -ne 1) {
+  throw 'C_API deployment image or public-origin placeholder contract is invalid'
 }
-$renderedDeployment = $deploymentTemplate.Replace('__OPENSPHERE_CONSOLE_API_IMAGE__', $ConsoleApiImage)
+$renderedDeployment = $deploymentTemplate.Replace('__OPENSPHERE_CONSOLE_API_IMAGE__', $ConsoleApiImage).Replace('__OPENSPHERE_CONSOLE_URL__', $ConsoleUrl)
 if ($renderedDeployment -match '__OPENSPHERE_[A-Z0-9_]+__') { throw 'C_API deployment has unresolved placeholders' }
 Invoke-Kubectl @('apply', '-f', '-') $renderedDeployment | Out-Null
 Invoke-Kubectl @('-n', $RuntimeNamespace, 'rollout', 'status', 'deployment/opensphere-console-api', '--timeout=5m') | Out-Null

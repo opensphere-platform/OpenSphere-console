@@ -11,6 +11,7 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_extension.get_registry_connection',
   'console_extension.list_revocations',
   'console_identity.get_supabase_status',
+  'console_identity.issue_browser_session',
   'console_identity.resolve_browser_session',
   'console_identity.revoke_browser_session',
   'console_operation.accept_operation',
@@ -51,7 +52,7 @@ export function verifyConsoleApiAuthority({ storeSource, baselineSource }) {
   );
   const statements = baselineSource.split(';').map((statement) => statement.trim()).filter(Boolean);
   for (const name of databaseFunctions) {
-    assert(baselineSource.includes(`CREATE OR REPLACE FUNCTION ${name}(`), `${name} is absent from the fresh baseline`);
+    assert(baselineSource.includes(`CREATE OR REPLACE FUNCTION ${name}(`), `${name} is absent from the verified migration set`);
     assert(
       statements.some((statement) => statement.includes(`GRANT EXECUTE ON FUNCTION ${name}(`)
         && /\)\s+TO\s+console_api$/s.test(statement)),
@@ -100,6 +101,12 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
   assert(databaseEnv?.value === undefined, 'C_API database credential must not be a literal value');
   assert(databaseEnv?.valueFrom?.secretKeyRef?.name === 'opensphere-console-api-runtime', 'C_API database Secret name differs from the install contract');
   assert(databaseEnv?.valueFrom?.secretKeyRef?.key === 'database-url', 'C_API database Secret key differs from the install contract');
+  const sessionKeyEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_SESSION_ENCRYPTION_KEY');
+  assert(sessionKeyEnv?.value === undefined, 'C_API session encryption key must not be a literal value');
+  assert(sessionKeyEnv?.valueFrom?.secretKeyRef?.name === 'opensphere-console-api-runtime', 'C_API session encryption Secret name differs from the install contract');
+  assert(sessionKeyEnv?.valueFrom?.secretKeyRef?.key === 'session-encryption-key', 'C_API session encryption Secret key differs from the install contract');
+  const publicOriginEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_PUBLIC_ORIGIN');
+  assert(publicOriginEnv?.value === '__OPENSPHERE_CONSOLE_URL__', 'C_API public origin must remain an installer-validated render input');
   assert(service.spec?.type === 'ClusterIP', 'C_API Service must remain cluster-internal');
 
   assert(JSON.stringify(networkPolicy.spec?.policyTypes) === JSON.stringify(['Ingress', 'Egress']), 'C_API NetworkPolicy must select both directions');
@@ -182,10 +189,15 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     if (MUTATING_METHODS.has(method)) {
       assert(operation['x-opensphere-idempotency'], operation.operationId + ' has no idempotency policy');
       const parameters = operation.parameters || [];
-      assert(
-        parameters.some((entry) => entry.$ref === '#/components/parameters/CsrfToken'),
-        operation.operationId + ' has no CSRF contract',
-      );
+      if (operation.operationId === 'loginSession') {
+        assert(Array.isArray(operation.security) && operation.security.length === 0, 'loginSession must be the explicit unauthenticated bootstrap');
+        assert(parameters.some((entry) => entry.$ref === '#/components/parameters/LoginOrigin'), 'loginSession has no exact-origin contract');
+      } else {
+        assert(
+          parameters.some((entry) => entry.$ref === '#/components/parameters/CsrfToken'),
+          operation.operationId + ' has no CSRF contract',
+        );
+      }
     }
     if (operation['x-opensphere-action']) {
       assert(actionPolicyIds.includes(operation['x-opensphere-action']), operation.operationId + ' references an unknown action policy');
@@ -259,8 +271,11 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   }
 
   const consoleApiStore = await readFile(resolve(root, 'apps', 'console-api', 'src', 'postgres-operation-store.mjs'), 'utf8');
-  const freshBaseline = await readFile(resolve(root, 'migrations', 'baseline', '0001_console_authority.sql'), 'utf8');
-  const consoleApiDatabaseFunctions = verifyConsoleApiAuthority({ storeSource: consoleApiStore, baselineSource: freshBaseline });
+  const migrationManifest = await json(resolve(root, 'migrations', 'manifest.json'));
+  const verifiedMigrationSet = (await Promise.all(
+    migrationManifest.migrations.map((migration) => readFile(resolve(root, migration.path), 'utf8')),
+  )).join('\n');
+  const consoleApiDatabaseFunctions = verifyConsoleApiAuthority({ storeSource: consoleApiStore, baselineSource: verifiedMigrationSet });
   const consoleApiDockerfile = await readFile(resolve(root, 'apps', 'console-api', 'Dockerfile'), 'utf8');
   assert(consoleApiDockerfile.includes('COPY apps/console-api/src ./src'), 'C_API image does not copy the target runtime source');
   assert(consoleApiDockerfile.includes('USER 1001'), 'C_API image must run as the declared non-root identity');

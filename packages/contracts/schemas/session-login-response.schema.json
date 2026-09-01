@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:session-login-response:v1",
+  "title": "Console opaque browser session login response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mfaRequired", "mfaEnrollmentRequired", "session"],
+  "properties": {
+    "mfaRequired": { "type": "boolean" },
+    "mfaEnrollmentRequired": { "type": "boolean" },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "current", "status", "assurance", "persistence", "createdAt", "lastSeenAt", "idleExpiresAt", "absoluteExpiresAt", "userAgentDigest"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "current": { "const": true },
+        "status": { "enum": ["pending_mfa", "active"] },
+        "assurance": { "enum": ["aal1", "aal2"] },
+        "persistence": { "const": "24h" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastSeenAt": { "type": "string", "format": "date-time" },
+        "idleExpiresAt": { "type": "string", "format": "date-time" },
+        "absoluteExpiresAt": { "type": "string", "format": "date-time" },
+        "userAgentDigest": { "type": "null" }
+      }
+    }
+  }
+}
