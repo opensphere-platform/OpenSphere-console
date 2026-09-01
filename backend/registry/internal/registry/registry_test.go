@@ -14,10 +14,11 @@ func list(items ...unstructured.Unstructured) *unstructured.UnstructuredList {
 	return &unstructured.UnstructuredList{Items: items}
 }
 func object(name string, spec map[string]interface{}) unstructured.Unstructured {
-	return unstructured.Unstructured{Object: map[string]interface{}{"metadata": map[string]interface{}{"name": name, "creationTimestamp": "2026-08-24T00:00:00Z"}, "spec": spec}}
+	return unstructured.Unstructured{Object: map[string]interface{}{"metadata": map[string]interface{}{"name": name, "creationTimestamp": "2026-08-24T00:00:00Z", "resourceVersion": "17", "generation": int64(1)}, "spec": spec}}
 }
 func fixtureInput() Input {
-	pkg := object("postgres", map[string]interface{}{"displayName": "PostgreSQL", "kind": "plugin", "hostRef": "foundation", "hostApiVersion": "1.0.0", "hostCompat": ">=1.0.0 <2.0.0", "image": map[string]interface{}{"digest": "sha256:" + string(bytes.Repeat([]byte{'a'}, 64))}, "manifest": map[string]interface{}{"sha256": string(bytes.Repeat([]byte{'b'}, 64)), "signaturePath": "/plugins/ui-shell.manifest.json.sig"}, "trust": map[string]interface{}{"keyId": "key-1"}, "contributions": map[string]interface{}{}})
+	digest := "sha256:" + string(bytes.Repeat([]byte{'a'}, 64))
+	pkg := object("postgres", map[string]interface{}{"displayName": "PostgreSQL", "kind": "plugin", "hostRef": "foundation", "hostApiVersion": "1.0.0", "hostCompat": ">=1.0.0 <2.0.0", "image": map[string]interface{}{"repository": "ghcr.io/opensphere-platform/opensphere-plugin-postgres", "digest": digest}, "resolution": map[string]interface{}{"requestedRef": "ghcr.io/opensphere-platform/opensphere-plugin-postgres:edge", "requestedChannel": "edge", "resolvedDigest": digest, "compatibilityVersion": "1.0.0", "revision": "0123456789012345678901234567890123456789", "signatureIdentity": "key-1", "evidenceRefs": []interface{}{"oci:provenance", "oci:sbom"}}, "manifest": map[string]interface{}{"sha256": string(bytes.Repeat([]byte{'b'}, 64)), "signaturePath": "/plugins/ui-shell.manifest.json.sig"}, "trust": map[string]interface{}{"keyId": "key-1"}, "contributions": map[string]interface{}{}})
 	reg := object("postgres", map[string]interface{}{"desiredState": "Enabled", "approval": map[string]interface{}{"requestedBy": "admin", "reason": "test"}})
 	reg.Object["status"] = map[string]interface{}{"phase": "Activated", "workload": map[string]interface{}{"phase": "Ready"}, "verification": map[string]interface{}{"manifest": "Verified", "signature": "Verified", "entryDigest": "Verified", "permissions": "Approved"}, "currentRequestedRef": "ghcr.io/opensphere-platform/opensphere-plugin-postgres:edge", "currentRequestedChannel": "edge", "currentDigest": "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)), "currentManifestSha256": string(bytes.Repeat([]byte{'b'}, 64)), "currentVersion": "202608240000", "currentCompatibilityVersion": "1.0.0", "currentBuildAuthority": "localhost", "currentRevision": "0123456789012345678901234567890123456789", "currentEvidenceRefs": []interface{}{"oci:provenance", "oci:sbom"}, "manifestUrl": "/api/plugins/postgres-r-1/plugins/ui-shell.manifest.json", "serving": map[string]interface{}{"phase": "Current", "artifactServiceId": "postgres-r-1", "revision": "1"}}
 	descriptor := object("data", map[string]interface{}{"model": "data", "catalog": map[string]interface{}{"authority": "registry", "install": "optional"}})
@@ -38,7 +39,7 @@ func TestBuildIsDeterministicAndCompatible(t *testing.T) {
 	if !bytes.Equal(ja, jb) || a.Revision != b.Revision {
 		t.Fatal("same input must produce byte-identical response and revision")
 	}
-	if a.Version != 3 || len(a.Plugins) != 1 || a.Schema == "" || len(a.Catalog.ModuleDescriptors) != 1 {
+	if a.Version != 3 || len(a.Plugins) != 1 || len(a.InstallableExtensions) != 1 || a.Schema == "" || len(a.Catalog.ModuleDescriptors) != 1 {
 		t.Fatalf("contract missing: %#v", a)
 	}
 	if a.Inventory.Coverage.Expected != 3 || a.Inventory.Coverage.Published != 2 || len(a.Inventory.Descriptors) != 2 {
@@ -161,12 +162,32 @@ func TestResolveBindsExtensionToExactRevisionAndDigest(t *testing.T) {
 	if !bytes.Contains(encoded, []byte("ghcr.io/opensphere-platform/opensphere-plugin-postgres@sha256:")) ||
 		!bytes.Contains(encoded, []byte(`"descriptorRevision":"sha256:`)) ||
 		!bytes.Contains(encoded, []byte(`"sourceRevision":"0123456789012345678901234567890123456789"`)) ||
-		!bytes.Contains(encoded, []byte(`"signature":"Verified"`)) {
+		!bytes.Contains(encoded, []byte(`"signature":"Verified"`)) ||
+		!bytes.Contains(encoded, []byte(`"packageResourceVersion":"17"`)) {
 		t.Fatalf("candidate is not exact digest: %s", encoded)
 	}
 	stale := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: "sha256:old"})
 	if stale.Result != "StaleRevision" {
 		t.Fatalf("unexpected: %#v", stale)
+	}
+}
+
+func TestResolvePublishesInstallablePackageWithoutRegistration(t *testing.T) {
+	input := fixtureInput()
+	input.Registrations = list()
+	snapshot, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Plugins) != 0 || len(snapshot.InstallableExtensions) != 1 {
+		t.Fatalf("installable package was coupled to runtime registration: %#v", snapshot)
+	}
+	store := NewStore(nil)
+	store.snapshot.Store(&snapshot)
+	store.lastSuccess = time.Now()
+	got := store.Resolve(ResolveRequest{Kind: "extension", ID: "extension.postgres", Revision: snapshot.Revision, Channel: "edge", Architecture: "linux/amd64"})
+	if got.Result != "Eligible" {
+		t.Fatalf("package-only install candidate was not resolved: %#v", got)
 	}
 }
 func TestInvalidExtensionDigestIsRejected(t *testing.T) {
@@ -175,6 +196,21 @@ func TestInvalidExtensionDigestIsRejected(t *testing.T) {
 	got, _ := Build(input)
 	if len(got.Plugins) != 0 || len(got.Rejected) == 0 {
 		t.Fatalf("invalid candidate published: %#v", got)
+	}
+}
+
+func TestInvalidInstallablePackageIsAnExplicitCoverageGap(t *testing.T) {
+	input := fixtureInput()
+	_ = unstructured.SetNestedField(input.Packages.Items[0].Object, "untrusted-key", "spec", "trust", "keyId")
+	got, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.InstallableExtensions) != 0 || got.Inventory.Coverage.ByClass["extension"].Rejected != 1 {
+		t.Fatalf("invalid installable package coverage is not explicit: %#v", got.Inventory.Coverage)
+	}
+	if len(got.Inventory.Coverage.Missing) == 0 || got.Inventory.Coverage.Missing[0].ID != "extension.postgres" {
+		t.Fatalf("invalid installable package gap is missing: %#v", got.Inventory.Coverage.Missing)
 	}
 }
 

@@ -7,7 +7,7 @@ import { createIdentityOperations } from './identity-operations.mjs';
 import { createDataIdentityOperations } from './data-identity-operations.mjs';
 import { createPostgresOperationStore } from './postgres-operation-store.mjs';
 import { createRegistryOperations } from './registry-operations.mjs';
-import { createRegistryResolver } from './registry-resolver-client.mjs';
+import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
 import { createDatabaseSessionResolver } from './session-resolver.mjs';
 import { createConsoleApiHandler } from './http-handler.mjs';
 

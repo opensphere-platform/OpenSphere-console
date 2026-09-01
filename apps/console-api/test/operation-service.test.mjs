@@ -28,6 +28,7 @@ function resolvedCandidate() {
     sourceRevision: 'a'.repeat(40), manifestDigest: 'sha256:' + 'd'.repeat(64),
     compatibilityVersion: '1.0.0', keyId: 'opensphere-release-key-1',
     evidenceRefs: ['oci:provenance:workspace', 'oci:sbom:workspace'],
+    packageResourceVersion: '17', packageGeneration: 1,
     verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
   };
 }

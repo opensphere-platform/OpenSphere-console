@@ -36,6 +36,7 @@ var (
 	sourceRevisionRE       = regexp.MustCompile(`^[a-f0-9]{40}$`)
 	compatibilityVersionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 	repositoryRE           = regexp.MustCompile(`^ghcr\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*$`)
+	extensionIDRE          = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 )
 
 const (
@@ -103,21 +104,42 @@ type ExtensionSummary struct {
 	PublishedIDs []string `json:"publishedIds"`
 }
 
+// ExtensionCandidate is a verified installable UIPluginPackage. Runtime state
+// remains in Plugin, which requires an activated UIPluginRegistration.
+type ExtensionCandidate struct {
+	ID                     string        `json:"id"`
+	DescriptorID           string        `json:"descriptorId"`
+	Kind                   string        `json:"kind"`
+	DisplayName            string        `json:"displayName"`
+	Image                  string        `json:"image"`
+	Digest                 string        `json:"digest"`
+	Channel                string        `json:"channel"`
+	SourceRevision         string        `json:"sourceRevision"`
+	ManifestDigest         string        `json:"manifestDigest"`
+	CompatibilityVersion   string        `json:"compatibilityVersion"`
+	KeyID                  string        `json:"keyId"`
+	EvidenceRefs           []interface{} `json:"evidenceRefs"`
+	PackageResourceVersion string        `json:"packageResourceVersion"`
+	PackageGeneration      int64         `json:"packageGeneration"`
+	Capabilities           []string      `json:"capabilities"`
+}
+
 type Response struct {
-	Version      int                             `json:"version"`
-	TrustedKeys  map[string]string               `json:"trustedKeys"`
-	Capabilities []interface{}                   `json:"capabilities"`
-	Plugins      []Plugin                        `json:"plugins"`
-	Templates    []interface{}                   `json:"templates"`
-	Schema       string                          `json:"schema"`
-	Revision     string                          `json:"revision"`
-	ObservedAt   string                          `json:"observedAt"`
-	Stale        bool                            `json:"stale"`
-	Sources      map[string]catalog.SourceStatus `json:"sources"`
-	Extensions   ExtensionSummary                `json:"extensions"`
-	Catalog      catalog.Projection              `json:"catalog"`
-	Inventory    catalog.Inventory               `json:"inventory"`
-	Rejected     []catalog.Rejected              `json:"rejected"`
+	Version               int                             `json:"version"`
+	TrustedKeys           map[string]string               `json:"trustedKeys"`
+	Capabilities          []interface{}                   `json:"capabilities"`
+	Plugins               []Plugin                        `json:"plugins"`
+	InstallableExtensions []ExtensionCandidate            `json:"installableExtensions"`
+	Templates             []interface{}                   `json:"templates"`
+	Schema                string                          `json:"schema"`
+	Revision              string                          `json:"revision"`
+	ObservedAt            string                          `json:"observedAt"`
+	Stale                 bool                            `json:"stale"`
+	Sources               map[string]catalog.SourceStatus `json:"sources"`
+	Extensions            ExtensionSummary                `json:"extensions"`
+	Catalog               catalog.Projection              `json:"catalog"`
+	Inventory             catalog.Inventory               `json:"inventory"`
+	Rejected              []catalog.Rejected              `json:"rejected"`
 }
 
 type ReleaseComponent struct {
@@ -223,7 +245,7 @@ func requestedRepository(ref string) string {
 }
 
 func canonicalExtensionRepository(kind, id string) string {
-	if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`).MatchString(id) {
+	if !extensionIDRE.MatchString(id) {
 		return ""
 	}
 	switch kind {
@@ -237,6 +259,75 @@ func canonicalExtensionRepository(kind, id string) string {
 	default:
 		return ""
 	}
+}
+
+func extensionCapabilitiesFromMap(contributions map[string]interface{}) []string {
+	values := []string{}
+	for key, value := range contributions {
+		enabled := value != nil
+		if object, ok := value.(map[string]interface{}); ok {
+			if explicit, exists := object["enabled"].(bool); exists {
+				enabled = explicit
+			}
+		}
+		if enabled {
+			values = append(values, key)
+		}
+	}
+	sort.Strings(values)
+	return values
+}
+
+func installableExtensionFromPackage(pkg unstructured.Unstructured, trustedKeys map[string]string) (ExtensionCandidate, *catalog.Rejected) {
+	id := pkg.GetName()
+	kind := nestedString(pkg.Object, "spec", "kind")
+	repository := nestedString(pkg.Object, "spec", "image", "repository")
+	digest := nestedString(pkg.Object, "spec", "image", "digest")
+	requestedRef := nestedString(pkg.Object, "spec", "resolution", "requestedRef")
+	channel := nestedString(pkg.Object, "spec", "resolution", "requestedChannel")
+	sourceRevision := nestedString(pkg.Object, "spec", "resolution", "revision")
+	compatibilityVersion := nestedString(pkg.Object, "spec", "resolution", "compatibilityVersion")
+	resolvedDigest := nestedString(pkg.Object, "spec", "resolution", "resolvedDigest")
+	signatureIdentity := nestedString(pkg.Object, "spec", "resolution", "signatureIdentity")
+	manifest := nestedString(pkg.Object, "spec", "manifest", "sha256")
+	keyID := nestedString(pkg.Object, "spec", "trust", "keyId")
+	evidenceRefs := nestedSlice(pkg.Object, "spec", "resolution", "evidenceRefs")
+	reject := func(code, message string) (ExtensionCandidate, *catalog.Rejected) {
+		return ExtensionCandidate{}, &catalog.Rejected{Kind: "extension", ID: "extension." + id, Code: code, Message: message}
+	}
+	if !extensionIDRE.MatchString(id) || canonicalExtensionRepository(kind, id) == "" || repository != canonicalExtensionRepository(kind, id) {
+		return reject("ExecutionIdentityInvalid", "installable package lacks its canonical OpenSphere repository identity")
+	}
+	if !digestRE.MatchString(digest) || resolvedDigest != digest || requestedRepository(requestedRef) != repository {
+		return reject("ExecutionIdentityInvalid", "installable package lacks a consistent exact-digest resolution")
+	}
+	if channel != "edge" {
+		return reject("ChannelUnsupported", "installable package is not in the local edge catalog")
+	}
+	if !manifestRE.MatchString(manifest) || !sourceRevisionRE.MatchString(sourceRevision) || !compatibilityVersionRE.MatchString(compatibilityVersion) {
+		return reject("SupplyChainIdentityInvalid", "installable package lacks manifest, source, or compatibility identity")
+	}
+	if keyID == "" || signatureIdentity != keyID {
+		return reject("SignatureIdentityInvalid", "installable package signature identity does not match its trust declaration")
+	}
+	if _, ok := trustedKeys[keyID]; !ok {
+		return reject("UnknownTrustKey", "installable package signing key is not trusted")
+	}
+	if len(evidenceRefs) < 2 {
+		return reject("SupplyChainEvidenceMissing", "installable package lacks provenance and SBOM evidence references")
+	}
+	if pkg.GetResourceVersion() == "" || pkg.GetGeneration() < 1 {
+		return reject("PackageVersionMissing", "installable package lacks Kubernetes resource version evidence")
+	}
+	return ExtensionCandidate{
+		ID: id, DescriptorID: "extension." + id, Kind: kind,
+		DisplayName: nestedString(pkg.Object, "spec", "displayName"),
+		Image:       repository + "@" + digest, Digest: digest, Channel: channel,
+		SourceRevision: sourceRevision, ManifestDigest: "sha256:" + manifest,
+		CompatibilityVersion: compatibilityVersion, KeyID: keyID, EvidenceRefs: evidenceRefs,
+		PackageResourceVersion: pkg.GetResourceVersion(), PackageGeneration: pkg.GetGeneration(),
+		Capabilities: extensionCapabilitiesFromMap(nestedMap(pkg.Object, "spec", "contributions")),
+	}, nil
 }
 
 func exactExtensionImage(plugin Plugin) string {
@@ -432,23 +523,10 @@ func observedGeneration(resourceVersion string) int64 {
 }
 
 func extensionCapabilities(plugin Plugin) []string {
-	values := []string{}
-	for key, value := range plugin.Contributions {
-		enabled := value != nil
-		if object, ok := value.(map[string]interface{}); ok {
-			if explicit, exists := object["enabled"].(bool); exists {
-				enabled = explicit
-			}
-		}
-		if enabled {
-			values = append(values, key)
-		}
-	}
-	sort.Strings(values)
-	return values
+	return extensionCapabilitiesFromMap(plugin.Contributions)
 }
 
-func buildInventory(input Input, plugins []Plugin, rejected *[]catalog.Rejected) catalog.Inventory {
+func buildInventory(input Input, candidates []ExtensionCandidate, candidateRejections []catalog.Rejected, rejected *[]catalog.Rejected) catalog.Inventory {
 	descriptors := []catalog.Descriptor{}
 	missing := []catalog.CoverageGap{}
 	rejectedByClass := map[string]int{"coreService": 0, "extension": 0, "installableModule": 0}
@@ -489,38 +567,20 @@ func buildInventory(input Input, plugins []Plugin, rejected *[]catalog.Rejected)
 		})
 	}
 
-	packages := map[string]unstructured.Unstructured{}
-	for _, item := range input.Packages.Items {
-		packages[item.GetName()] = item
-	}
-	for _, plugin := range plugins {
-		pkg := packages[plugin.ID]
-		version := plugin.ArtifactVersion
-		if version == "" {
-			version = plugin.SourceRevision
-		}
-		if version == "" || !digestRE.MatchString(plugin.InstalledDigest) {
-			code := "ReleaseEvidenceMissing"
-			if !digestRE.MatchString(plugin.InstalledDigest) {
-				code = "DigestMissing"
-			}
-			id := "extension." + plugin.ID
-			*rejected = append(*rejected, catalog.Rejected{Kind: "extension", ID: id, Code: code, Message: "verified extension lacks release evidence"})
-			missing = append(missing, catalog.CoverageGap{ID: id, Class: "extension", Code: code, Message: "verified extension lacks release evidence"})
-			rejectedByClass["extension"]++
-			continue
-		}
-		ownerID := plugin.HostRef
-		if ownerID == "" {
-			ownerID = "opensphere-console"
-		}
+	for _, candidate := range candidates {
 		descriptors = append(descriptors, catalog.Descriptor{
-			ID: "extension." + plugin.ID, Class: "extension", DisplayName: plugin.Name, Domain: "console-extension",
-			Owner:        catalog.Owner{ID: ownerID, LifecycleAPI: "/api/admin/extensions/registrations/" + plugin.ID},
-			Source:       catalog.Source{Kind: "UIPluginPackage+UIPluginRegistration", Name: plugin.ID},
-			Release:      catalog.Release{Version: version, ImageDigest: plugin.InstalledDigest},
-			Capabilities: extensionCapabilities(plugin), Installation: catalog.Installation{Mode: "dupa", Eligible: true},
-			Evidence: catalog.Evidence{ObservedGeneration: pkg.GetGeneration(), SourceRevision: plugin.SourceRevision},
+			ID: candidate.DescriptorID, Class: "extension", DisplayName: candidate.DisplayName, Domain: "console-extension",
+			Owner:        catalog.Owner{ID: "opensphere-console", LifecycleAPI: "/api/admin/extensions/registrations/" + candidate.ID},
+			Source:       catalog.Source{Kind: "UIPluginPackage", Name: candidate.ID},
+			Release:      catalog.Release{Version: candidate.CompatibilityVersion, ImageDigest: candidate.Digest},
+			Capabilities: candidate.Capabilities, Installation: catalog.Installation{Mode: "dupa", Eligible: true},
+			Evidence: catalog.Evidence{ObservedGeneration: candidate.PackageGeneration, SourceRevision: candidate.SourceRevision},
+		})
+	}
+	for _, rejection := range candidateRejections {
+		rejectedByClass["extension"]++
+		missing = append(missing, catalog.CoverageGap{
+			ID: rejection.ID, Class: "extension", Code: rejection.Code, Message: rejection.Message,
 		})
 	}
 
@@ -598,7 +658,9 @@ func Build(input Input) (Response, error) {
 		regs[reg.GetName()] = reg
 	}
 	plugins := []Plugin{}
+	candidates := []ExtensionCandidate{}
 	rejected := []catalog.Rejected{}
+	candidateRejections := []catalog.Rejected{}
 	seen := map[string]bool{}
 	previous := map[string]Plugin{}
 	for _, plugin := range input.PreviousPlugins {
@@ -607,10 +669,19 @@ func Build(input Input) (Response, error) {
 	for _, pkg := range input.Packages.Items {
 		id := pkg.GetName()
 		if seen[id] {
-			rejected = append(rejected, catalog.Rejected{Kind: "extension", ID: id, Code: "DuplicateID", Message: "duplicate extension id"})
+			rejection := catalog.Rejected{Kind: "extension", ID: "extension." + id, Code: "DuplicateID", Message: "duplicate extension id"}
+			rejected = append(rejected, rejection)
+			candidateRejections = append(candidateRejections, rejection)
 			continue
 		}
 		seen[id] = true
+		candidate, candidateRejection := installableExtensionFromPackage(pkg, input.TrustedKeys)
+		if candidateRejection != nil {
+			rejected = append(rejected, *candidateRejection)
+			candidateRejections = append(candidateRejections, *candidateRejection)
+		} else {
+			candidates = append(candidates, candidate)
+		}
 		reg, ok := regs[id]
 		if !ok || !verifiedRegistration(&reg) {
 			continue
@@ -647,15 +718,16 @@ func Build(input Input) (Response, error) {
 		plugins = append(plugins, plugin)
 	}
 	sort.SliceStable(plugins, func(i, j int) bool { return plugins[i].ID < plugins[j].ID })
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
 	p := catalog.EmptyProjection()
 	p.ModuleDescriptors = catalogObjects(input.Descriptors)
-	inventory := buildInventory(input, plugins, &rejected)
+	inventory := buildInventory(input, candidates, candidateRejections, &rejected)
 	catalog.SortRejected(rejected)
 	ids := make([]string, len(plugins))
 	for i := range plugins {
 		ids[i] = plugins[i].ID
 	}
-	response := Response{Version: 3, TrustedKeys: input.TrustedKeys, Capabilities: []interface{}{}, Plugins: plugins, Templates: []interface{}{}, Schema: catalog.Schema, ObservedAt: input.ObservedAt.UTC().Format(time.RFC3339Nano), Sources: input.Sources, Extensions: ExtensionSummary{Count: len(plugins), PublishedIDs: ids}, Catalog: p, Inventory: inventory, Rejected: rejected}
+	response := Response{Version: 3, TrustedKeys: input.TrustedKeys, Capabilities: []interface{}{}, Plugins: plugins, InstallableExtensions: candidates, Templates: []interface{}{}, Schema: catalog.Schema, ObservedAt: input.ObservedAt.UTC().Format(time.RFC3339Nano), Sources: input.Sources, Extensions: ExtensionSummary{Count: len(plugins), PublishedIDs: ids}, Catalog: p, Inventory: inventory, Rejected: rejected}
 	// Revision identifies the semantic snapshot consumed by Console, OSC, OSAA
 	// and OSCE. Observation timestamps remain in the response as evidence, but
 	// must not invalidate a plan when the exact candidates and policy are
@@ -666,13 +738,14 @@ func Build(input Input) (Response, error) {
 		revisionPlugins[i].ChannelCheckedAt = ""
 	}
 	content := struct {
-		Version     int                `json:"version"`
-		TrustedKeys map[string]string  `json:"trustedKeys"`
-		Plugins     []Plugin           `json:"plugins"`
-		Catalog     catalog.Projection `json:"catalog"`
-		Inventory   catalog.Inventory  `json:"inventory"`
-		Rejected    []catalog.Rejected `json:"rejected"`
-	}{response.Version, response.TrustedKeys, revisionPlugins, response.Catalog, response.Inventory, response.Rejected}
+		Version     int                  `json:"version"`
+		TrustedKeys map[string]string    `json:"trustedKeys"`
+		Plugins     []Plugin             `json:"plugins"`
+		Candidates  []ExtensionCandidate `json:"installableExtensions"`
+		Catalog     catalog.Projection   `json:"catalog"`
+		Inventory   catalog.Inventory    `json:"inventory"`
+		Rejected    []catalog.Rejected   `json:"rejected"`
+	}{response.Version, response.TrustedKeys, revisionPlugins, response.InstallableExtensions, response.Catalog, response.Inventory, response.Rejected}
 	encoded, err := json.Marshal(content)
 	if err != nil {
 		return Response{}, err
@@ -936,19 +1009,16 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 	}
 	switch req.Kind {
 	case "extension":
-		for _, p := range snap.Plugins {
-			if p.ID == req.ID || "extension."+p.ID == req.ID {
-				image := exactExtensionImage(p)
-				if image == "" {
-					return ResolveResponse{Result: "Ineligible", Revision: snap.Revision, BlockerCode: "ExecutionIdentityInvalid", Message: "Registry candidate has no canonical exact-digest execution identity"}
-				}
+		for _, p := range snap.InstallableExtensions {
+			if p.ID == req.ID || p.DescriptorID == req.ID {
 				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{
-					"kind": "extension", "descriptorId": "extension." + p.ID, "id": p.ID,
-					"image": image, "digest": p.InstalledDigest, "channel": p.RequestedChannel,
+					"kind": "extension", "descriptorId": p.DescriptorID, "id": p.ID,
+					"image": p.Image, "digest": p.Digest, "channel": p.Channel,
 					"catalogRevision": snap.Revision, "descriptorRevision": snap.Revision,
-					"executionRevision": image, "sourceRevision": p.SourceRevision,
-					"manifestDigest": "sha256:" + p.ManifestSHA256, "compatibilityVersion": p.CompatibilityVersion,
+					"executionRevision": p.Image, "sourceRevision": p.SourceRevision,
+					"manifestDigest": p.ManifestDigest, "compatibilityVersion": p.CompatibilityVersion,
 					"keyId": p.KeyID, "evidenceRefs": p.EvidenceRefs,
+					"packageResourceVersion": p.PackageResourceVersion, "packageGeneration": p.PackageGeneration,
 					"verification": map[string]string{"catalog": "Verified", "manifest": "Verified", "signature": "Verified", "permissions": "Approved"},
 				}}
 			}

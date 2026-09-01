@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import pg from 'pg';
+import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
 import { createExtensionController } from './controller.mjs';
+import { createKubernetesRegistrationWriter } from './kubernetes-registration-writer.mjs';
 import { createExtensionPostgresStore } from './postgres-store.mjs';
 
 const { Pool } = pg;
@@ -26,7 +29,23 @@ const pool = new Pool({
   application_name: 'opensphere-extension-controller',
 });
 const store = createExtensionPostgresStore({ query: pool.query.bind(pool) });
-const controller = createExtensionController({ store, workerId, leaseSeconds });
+const registryResolver = createRegistryResolver({
+  baseUrl: String(process.env.CONSOLE_REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080'),
+  timeoutMs: integer('CONSOLE_REGISTRY_TIMEOUT_MS', 8000, 100, 30000),
+  maximumResponseBytes: integer('CONSOLE_REGISTRY_MAX_RESPONSE_BYTES', 65536, 1024, 1024 * 1024),
+});
+const serviceAccountDirectory = String(process.env.KUBERNETES_SERVICE_ACCOUNT_DIRECTORY || '/var/run/secrets/kubernetes.io/serviceaccount');
+const kubernetesToken = await readFile(`${serviceAccountDirectory}/token`, 'utf8').then((value) => value.trim()).catch(() => '');
+const namespaceFromFile = await readFile(`${serviceAccountDirectory}/namespace`, 'utf8').then((value) => value.trim()).catch(() => '');
+const registrationWriter = kubernetesToken ? createKubernetesRegistrationWriter({
+  baseUrl: String(process.env.KUBERNETES_API_URL
+    || `https://${process.env.KUBERNETES_SERVICE_HOST || 'kubernetes.default.svc'}:${process.env.KUBERNETES_SERVICE_PORT_HTTPS || '443'}`),
+  token: kubernetesToken,
+  namespace: String(process.env.CONSOLE_EXTENSION_NAMESPACE || namespaceFromFile || 'opensphere-console'),
+  timeoutMs: integer('CONSOLE_KUBERNETES_TIMEOUT_MS', 8000, 100, 30000),
+  maximumResponseBytes: integer('CONSOLE_KUBERNETES_MAX_RESPONSE_BYTES', 131072, 1024, 1024 * 1024),
+}) : null;
+const controller = createExtensionController({ store, registryResolver, registrationWriter, workerId, leaseSeconds });
 
 let stopping = false;
 let lastError = null;

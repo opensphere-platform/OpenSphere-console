@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const requireFromApi = createRequire(new URL('../apps/console-api/package.json', import.meta.url));
 const { Pool } = requireFromApi('pg');
@@ -33,9 +37,74 @@ const body = JSON.stringify({
   credential,
   reason: 'verify Console API PostgreSQL integration',
 });
+const installCatalogRevision = 'sha256:' + 'c'.repeat(64);
+const installDigest = 'sha256:' + 'e'.repeat(64);
+const installImage = 'ghcr.io/opensphere-platform/opensphere-plugin-workspace@' + installDigest;
+let registration = null;
+const authorityServer = createServer(async (request, response) => {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const requestBody = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+  if (request.url === '/api/v1/registry/resolve' && request.method === 'POST') {
+    const revision = String(requestBody?.revision || '');
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      result: 'Eligible', revision,
+      candidate: {
+        kind: 'extension', descriptorId: 'extension.workspace', id: 'workspace',
+        image: installImage, digest: installDigest, channel: 'edge', catalogRevision: revision,
+        descriptorRevision: revision, executionRevision: installImage,
+        sourceRevision: 'a'.repeat(40), manifestDigest: 'sha256:' + 'd'.repeat(64),
+        compatibilityVersion: '1.0.0', keyId: 'integration-release-key',
+        evidenceRefs: ['oci:integration-provenance', 'oci:integration-sbom'],
+        packageResourceVersion: '17', packageGeneration: 2,
+        verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
+      },
+    }));
+    return;
+  }
+  if (request.url?.endsWith('/uipluginpackages/workspace') && request.method === 'GET') {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      metadata: { name: 'workspace', resourceVersion: '17', generation: 2 },
+      spec: {
+        kind: 'plugin', image: { repository: 'ghcr.io/opensphere-platform/opensphere-plugin-workspace', digest: installDigest },
+        resolution: {
+          resolvedDigest: installDigest, requestedChannel: 'edge', revision: 'a'.repeat(40),
+          compatibilityVersion: '1.0.0', signatureIdentity: 'integration-release-key',
+        },
+        manifest: { sha256: 'd'.repeat(64) }, trust: { keyId: 'integration-release-key' },
+      },
+    }));
+    return;
+  }
+  if (request.url?.endsWith('/uipluginregistrations/workspace') && request.method === 'GET') {
+    response.writeHead(registration ? 200 : 404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(registration || { reason: 'NotFound' }));
+    return;
+  }
+  if (request.url?.endsWith('/uipluginregistrations') && request.method === 'POST') {
+    registration = {
+      ...requestBody,
+      metadata: { ...requestBody.metadata, uid: 'integration-registration-uid', resourceVersion: '18' },
+    };
+    response.writeHead(201, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(registration));
+    return;
+  }
+  response.writeHead(404, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ reason: 'NotFound' }));
+});
+await new Promise((resolve) => authorityServer.listen(0, '127.0.0.1', resolve));
+const authorityOrigin = 'http://127.0.0.1:' + authorityServer.address().port;
+const serviceAccountDirectory = await mkdtemp(join(tmpdir(), 'opensphere-c-ext-e2e-'));
+await Promise.all([
+  writeFile(join(serviceAccountDirectory, 'token'), 'integration-service-account-token', { mode: 0o600 }),
+  writeFile(join(serviceAccountDirectory, 'namespace'), 'opensphere-console', { mode: 0o600 }),
+]);
 const child = spawn(process.execPath, ['apps/console-api/src/server.mjs'], {
   cwd: new URL('..', import.meta.url),
-  env: { ...process.env, PORT: String(port), CONSOLE_DATABASE_URL: runtimeUrl },
+  env: { ...process.env, PORT: String(port), CONSOLE_DATABASE_URL: runtimeUrl, CONSOLE_REGISTRY_URL: authorityOrigin },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let extensionChild;
@@ -74,6 +143,9 @@ async function startExtensionController() {
       CONSOLE_EXTENSION_WORKER_ID: 'cccccccc-1111-4111-8111-111111111111',
       CONSOLE_EXTENSION_POLL_MS: '100',
       CONSOLE_EXTENSION_LEASE_SECONDS: '30',
+      CONSOLE_REGISTRY_URL: authorityOrigin,
+      KUBERNETES_API_URL: authorityOrigin,
+      KUBERNETES_SERVICE_ACCOUNT_DIRECTORY: serviceAccountDirectory,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -387,7 +459,6 @@ try {
     true,
   );
 
-  const installImage = 'ghcr.io/opensphere-platform/workspace@sha256:' + 'e'.repeat(64);
   const installResponse = await fetch(origin + '/api/admin/extensions/install', {
     method: 'POST',
     headers: {
@@ -398,9 +469,8 @@ try {
       'x-correlation-id': 'integration-extension-install-correlation-0001',
     },
     body: JSON.stringify({
-      image: installImage,
-      descriptorRevision: 'a'.repeat(40),
-      executionRevision: 'b'.repeat(64),
+      descriptorId: 'extension.workspace',
+      catalogRevision: installCatalogRevision,
       reason: 'verify exact revision install intake',
     }),
   });
@@ -423,6 +493,47 @@ try {
   assert.deepEqual(installEvidence.rows[0], {
     state: 'Planned', state_version: 0, outbox_events: 1, awaiting_events: 1, ready_events: 0, audit_events: 1,
   });
+
+  await admin.query(
+    'UPDATE console_identity.browser_session SET revoked_at = NULL, revoke_reason = NULL WHERE session_id = $1',
+    ['66666666-6666-4666-8666-666666666666'],
+  );
+  const approvedInstall = await approval(installReceipt.operationId, {
+    reason: 'independent install approval integration review',
+    approvalRevision: policyRevision,
+    expectedStateVersion: 0,
+    confirmation: null,
+  }, {
+    'idempotency-key': 'integration-extension-install-approval-0001',
+    'x-correlation-id': 'integration-extension-install-approval-correlation-0001',
+  });
+  assert.equal(approvedInstall.status, 202);
+  assert.equal((await approvedInstall.json()).state, 'Authorized');
+
+  let installExecution;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const observed = await admin.query(
+      [
+        'SELECT o.state, o.state_version::int AS state_version,',
+        "o.observed_postcondition->>'postcondition' AS postcondition,",
+        '(SELECT count(*)::int FROM console_operation.execution_receipt x WHERE x.operation_id = o.operation_id) AS receipts,',
+        '(SELECT count(*)::int FROM console_operation.outbox x WHERE x.operation_id = o.operation_id AND x.delivered_at IS NOT NULL) AS delivered_outbox',
+        'FROM console_operation.operation o WHERE o.operation_id = $1',
+      ].join(' '),
+      [installReceipt.operationId],
+    );
+    if (observed.rows[0].state === 'Applied') {
+      installExecution = observed.rows[0];
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.deepEqual(installExecution, {
+    state: 'Applied', state_version: 4, postcondition: 'RegistrationPresent', receipts: 1, delivered_outbox: 1,
+  });
+  assert.equal(registration?.spec?.packageRef?.name, 'workspace');
+  assert.equal(registration?.spec?.desiredState, 'Installed');
+  assert.equal(registration?.spec?.installation?.operationId, installReceipt.operationId);
 
   const supabaseStatusResponse = await fetch(origin + '/api/identity/supabase/status', {
     headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-supabase-status-0001' },
@@ -483,7 +594,7 @@ try {
     revocationProjection: true,
     verification: verificationEvidence.rows[0],
     auditProjection: true,
-    extensionInstallIntake: true,
+    extensionInstallExecution: installExecution,
     supabaseStatusProjection: true,
     identityProjection: true,
     sessionSelfRevoke: true,
@@ -521,4 +632,6 @@ try {
     new Promise((resolve) => setTimeout(resolve, 3000)),
   ]);
   if (child.exitCode == null) child.kill('SIGKILL');
+  await new Promise((resolve) => authorityServer.close(resolve));
+  await rm(serviceAccountDirectory, { recursive: true, force: true });
 }

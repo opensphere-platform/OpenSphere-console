@@ -657,7 +657,8 @@ BEGIN
     AND to_regclass('console_audit.event') IS NOT NULL
     AND to_regclass('console_extension.registry_connection') IS NOT NULL
     AND to_regprocedure('console_identity.resolve_browser_session(bytea,bytea,boolean)') IS NOT NULL
-    AND to_regprocedure('console_operation.accept_operation(uuid,uuid,bigint,bigint,text,text,text,text,text,text,text,text,boolean,text,text,text,text,jsonb,jsonb)') IS NOT NULL;
+    AND to_regprocedure('console_operation.accept_operation(uuid,uuid,bigint,bigint,text,text,text,text,text,text,text,text,boolean,text,text,text,text,jsonb,jsonb)') IS NOT NULL
+    AND to_regprocedure('console_extension.apply_install_registration(uuid,bigint,bigint,uuid,text,text,jsonb,text,text,text,text,bigint,boolean)') IS NOT NULL;
 
   RETURN jsonb_build_object(
     'schemaVersion', '1.0',
@@ -1090,7 +1091,7 @@ BEGIN
     RAISE EXCEPTION 'invalid owner claim request' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
   END IF;
   IF p_owner_ref <> 'C_EXT'
-      OR p_supported_actions <> ARRAY['console.extension.revocation.create']::text[] THEN
+      OR p_supported_actions <> ARRAY['console.extension.install', 'console.extension.revocation.create']::text[] THEN
     RAISE EXCEPTION 'worker role is outside its typed owner capability'
       USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
   END IF;
@@ -1156,6 +1157,8 @@ BEGIN
     'operationId', v_operation.operation_id,
     'actionId', v_operation.action_id,
     'actionVersion', v_operation.action_version,
+    'actorRef', v_operation.actor_ref,
+    'reason', v_operation.reason,
     'targetRef', v_operation.target_ref,
     'payloadDigest', v_operation.payload_digest,
     'executionPlan', v_operation.execution_plan,
@@ -1199,7 +1202,7 @@ BEGIN
         SELECT 1 FROM console_operation.operation operation_record
         WHERE operation_record.operation_id = outbox.operation_id
           AND operation_record.owner_ref = 'C_EXT'
-          AND operation_record.action_id = 'console.extension.revocation.create'
+          AND operation_record.action_id IN ('console.extension.install', 'console.extension.revocation.create')
       )
     RETURNING lease_expires_at INTO v_lease_expires_at;
   IF NOT FOUND THEN
@@ -1339,6 +1342,144 @@ REVOKE ALL ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, 
 GRANT EXECUTE ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, uuid, text, text)
   TO console_extension_controller;
 
+CREATE OR REPLACE FUNCTION console_extension.apply_install_registration(
+  p_worker_id uuid,
+  p_outbox_id bigint,
+  p_claim_epoch bigint,
+  p_operation_id uuid,
+  p_target_ref text,
+  p_payload_digest text,
+  p_execution_plan jsonb,
+  p_registration_name text,
+  p_registration_uid text,
+  p_registration_resource_version text,
+  p_package_resource_version text,
+  p_package_generation bigint,
+  p_created boolean
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_operation, console_extension, console_audit
+AS $$
+DECLARE
+  v_outbox console_operation.outbox;
+  v_operation console_operation.operation;
+  v_evidence jsonb;
+  v_evidence_digest text;
+BEGIN
+  IF p_execution_plan IS NULL OR jsonb_typeof(p_execution_plan) <> 'object'
+      OR (SELECT count(*) FROM jsonb_object_keys(p_execution_plan)) <> 5
+      OR p_execution_plan->>'schemaVersion' <> '1.0'
+      OR p_execution_plan->>'authority' <> 'OpenSphereRegistry'
+      OR COALESCE(p_execution_plan->>'descriptorId', '') !~ '^extension\.[a-z0-9][a-z0-9-]{0,62}$'
+      OR COALESCE(p_execution_plan->>'catalogRevision', '') !~ '^sha256:[0-9a-f]{64}$'
+      OR COALESCE(p_execution_plan->>'image', '') !~ '^ghcr\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$'
+      OR COALESCE(p_registration_name, '') !~ '^[a-z0-9][a-z0-9-]{0,62}$'
+      OR p_registration_name <> substring(p_execution_plan->>'descriptorId' FROM 11)
+      OR length(COALESCE(p_registration_uid, '')) NOT BETWEEN 1 AND 128
+      OR COALESCE(p_registration_resource_version, '') !~ '^[0-9A-Za-z._:-]{1,128}$'
+      OR COALESCE(p_package_resource_version, '') !~ '^[0-9A-Za-z._:-]{1,128}$'
+      OR COALESCE(p_package_generation, 0) < 1
+      OR p_created IS NULL THEN
+    RAISE EXCEPTION 'invalid Extension install evidence' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+
+  SELECT * INTO v_outbox
+    FROM console_operation.outbox
+    WHERE outbox_id = p_outbox_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_outbox.operation_id <> p_operation_id
+      OR v_outbox.event_type <> 'OperationReadyForDispatch'
+      OR v_outbox.claim_owner <> p_worker_id
+      OR v_outbox.claim_epoch <> p_claim_epoch
+      OR v_outbox.delivered_at IS NOT NULL
+      OR v_outbox.lease_expires_at <= statement_timestamp() THEN
+    RAISE EXCEPTION 'owner claim is stale or expired' USING ERRCODE = '40001', DETAIL = 'StaleClaim';
+  END IF;
+
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = p_operation_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_operation.owner_ref <> 'C_EXT'
+      OR v_operation.action_id <> 'console.extension.install'
+      OR v_operation.action_version <> '1.0'
+      OR v_operation.target_ref <> p_target_ref
+      OR v_operation.payload_digest <> p_payload_digest
+      OR v_operation.execution_plan IS DISTINCT FROM p_execution_plan
+      OR p_execution_plan->>'image' <> p_target_ref
+      OR v_operation.state NOT IN ('Submitted', 'Reconciling', 'Unknown') THEN
+    RAISE EXCEPTION 'claim does not match the typed Extension install action'
+      USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  IF v_operation.state <> 'Reconciling' THEN
+    UPDATE console_operation.operation
+      SET state = 'Reconciling', state_version = state_version + 1,
+          updated_at = statement_timestamp()
+      WHERE operation_id = v_operation.operation_id
+      RETURNING * INTO v_operation;
+  END IF;
+
+  v_evidence := jsonb_build_object(
+    'schemaVersion', '1.0',
+    'authority', 'KubernetesUIPluginRegistration',
+    'operationId', v_operation.operation_id,
+    'descriptorId', p_execution_plan->>'descriptorId',
+    'catalogRevision', p_execution_plan->>'catalogRevision',
+    'image', p_execution_plan->>'image',
+    'packageResourceVersion', p_package_resource_version,
+    'packageGeneration', p_package_generation,
+    'registrationName', p_registration_name,
+    'registrationUid', p_registration_uid,
+    'registrationResourceVersion', p_registration_resource_version,
+    'claimEpoch', p_claim_epoch,
+    'created', p_created,
+    'postcondition', 'RegistrationPresent'
+  );
+  v_evidence_digest := 'sha256:' || encode(sha256(convert_to(v_evidence::text, 'UTF8')), 'hex');
+
+  INSERT INTO console_operation.execution_receipt(
+    operation_id, owner_ref, worker_id, claim_epoch, phase, evidence, evidence_digest
+  ) VALUES (
+    v_operation.operation_id, 'C_EXT', p_worker_id, p_claim_epoch,
+    'Applied', v_evidence, v_evidence_digest
+  );
+  UPDATE console_operation.operation
+    SET state = 'Applied', state_version = state_version + 1,
+        observed_postcondition = v_evidence,
+        updated_at = statement_timestamp()
+    WHERE operation_id = v_operation.operation_id
+    RETURNING * INTO v_operation;
+  UPDATE console_operation.outbox
+    SET delivered_at = statement_timestamp()
+    WHERE outbox_id = v_outbox.outbox_id;
+  PERFORM console_audit.append_event_internal(
+    v_operation.operation_id, v_operation.correlation_id, p_worker_id::text,
+    v_operation.action_id, v_operation.target_ref, 'succeeded', '',
+    jsonb_build_object(
+      'ownerRef', 'C_EXT', 'claimEpoch', p_claim_epoch,
+      'state', v_operation.state, 'stateVersion', v_operation.state_version,
+      'evidenceDigest', v_evidence_digest, 'postcondition', 'RegistrationPresent'
+    )
+  );
+  RETURN jsonb_build_object(
+    'operationRecord', to_jsonb(v_operation),
+    'evidenceDigest', v_evidence_digest,
+    'registrationName', p_registration_name,
+    'created', p_created
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_extension.apply_install_registration(
+  uuid, bigint, bigint, uuid, text, text, jsonb, text, text, text, text, bigint, boolean
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_extension.apply_install_registration(
+  uuid, bigint, bigint, uuid, text, text, jsonb, text, text, text, text, bigint, boolean
+) TO console_extension_controller;
+
 CREATE OR REPLACE FUNCTION console_extension.record_execution_failure(
   p_worker_id uuid,
   p_outbox_id bigint,
@@ -1380,7 +1521,7 @@ BEGIN
     WHERE operation_id = p_operation_id
     FOR UPDATE;
   IF NOT FOUND OR v_operation.owner_ref <> 'C_EXT'
-      OR v_operation.action_id <> 'console.extension.revocation.create'
+      OR v_operation.action_id NOT IN ('console.extension.install', 'console.extension.revocation.create')
       OR v_operation.state NOT IN ('Submitted', 'Reconciling') THEN
     RAISE EXCEPTION 'failure receipt does not match the typed Extension action'
       USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
@@ -1860,6 +2001,8 @@ COMMENT ON FUNCTION console_operation.renew_owner_claim(uuid, bigint, bigint, in
   IS 'Renews only the current unexpired owner claim fence';
 COMMENT ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, uuid, text, text)
   IS 'Applies one exact-digest Extension revocation under the current claim fence and appends execution evidence';
+COMMENT ON FUNCTION console_extension.apply_install_registration(uuid, bigint, bigint, uuid, text, text, jsonb, text, text, text, text, bigint, boolean)
+  IS 'Records one C_REG-bound UIPluginRegistration application under the current claim fence';
 COMMENT ON FUNCTION console_extension.record_execution_failure(uuid, bigint, bigint, uuid, text, text, boolean)
   IS 'Records a typed Failed or Unknown owner result under the current claim fence without raw error material';
 COMMENT ON FUNCTION console_extension.list_revocations(uuid, uuid, text)

@@ -4,8 +4,10 @@ COPY apps/extension-controller/package.json apps/extension-controller/package-lo
 RUN npm ci --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY apps/extension-controller/src ./src
+COPY packages/registry-client /workspace/packages/registry-client
 ENV NODE_ENV=production
 ENV PORT=8080
+ENV NODE_EXTRA_CA_CERTS=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 EXPOSE 8080
 USER 1001
 CMD ["node", "src/server.mjs"]

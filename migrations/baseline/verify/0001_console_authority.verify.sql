@@ -121,6 +121,7 @@ BEGIN
   END;
 END;
 $$;
+
 RESET ROLE;
 
 CREATE ROLE console_api_runtime LOGIN PASSWORD 'console-runtime-test' INHERIT;
@@ -626,7 +627,7 @@ SELECT set_config(
   'verification.claim_one',
   console_operation.claim_owner_operation(
     'aaaaaaaa-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
   )::text,
   false
 );
@@ -642,7 +643,7 @@ BEGIN
   END IF;
   v_second_claim := console_operation.claim_owner_operation(
     'bbbbbbbb-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
   );
   IF v_second_claim IS NOT NULL THEN
     RAISE EXCEPTION 'active owner lease was claimed concurrently';
@@ -672,7 +673,7 @@ SELECT set_config(
   'verification.claim_two',
   console_operation.claim_owner_operation(
     'bbbbbbbb-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
   )::text,
   false
 );
@@ -914,7 +915,7 @@ SELECT set_config(
   'verification.failure_claim',
   console_operation.claim_owner_operation(
     'dddddddd-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
   )::text,
   false
 );
@@ -1068,6 +1069,75 @@ BEGIN
       OR v_plan->>'image' <> 'ghcr.io/opensphere-platform/opensphere-plugin-workspace@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
       OR (SELECT count(*) FROM jsonb_object_keys(v_plan)) <> 5 THEN
     RAISE EXCEPTION 'approved Extension install record lost or expanded its minimal C_REG execution coordinates';
+  END IF;
+END;
+$$;
+
+SET ROLE console_extension_controller;
+SELECT set_config(
+  'verification.install_claim',
+  console_operation.claim_owner_operation(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
+  )::text,
+  false
+);
+
+DO $$
+DECLARE
+  v_claim jsonb := current_setting('verification.install_claim')::jsonb;
+  v_execution jsonb;
+BEGIN
+  IF v_claim->>'actionId' <> 'console.extension.install'
+      OR v_claim->>'actorRef' <> '11111111-1111-4111-8111-111111111111'
+      OR v_claim->>'reason' <> 'install verified workspace extension'
+      OR v_claim->'executionPlan'->>'catalogRevision' <> 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' THEN
+    RAISE EXCEPTION 'install claim lost actor, reason, or C_REG plan evidence';
+  END IF;
+  BEGIN
+    PERFORM console_extension.apply_install_registration(
+      'eeeeeeee-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+      v_claim->'executionPlan', 'workspace', 'registration-uid-0001', '18', '17', NULL, NULL
+    );
+    RAISE EXCEPTION 'nullable install evidence was accepted';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  BEGIN
+    PERFORM console_extension.apply_install_registration(
+      'eeeeeeee-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid,
+      'ghcr.io/opensphere-platform/opensphere-plugin-other@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      v_claim->>'payloadDigest', v_claim->'executionPlan',
+      'workspace', 'registration-uid-0001', '18', '17', 2, true
+    );
+    RAISE EXCEPTION 'install target substitution was accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  v_execution := console_extension.apply_install_registration(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+    (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+    v_claim->'executionPlan', 'workspace', 'registration-uid-0001', '18', '17', 2, true
+  );
+  IF v_execution->>'registrationName' <> 'workspace'
+      OR NOT (v_execution->>'created')::boolean
+      OR v_execution->>'evidenceDigest' !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'install execution receipt is incomplete';
+  END IF;
+END;
+$$;
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT state FROM console_operation.operation WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 'Applied'
+      OR (SELECT observed_postcondition->>'postcondition' FROM console_operation.operation WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 'RegistrationPresent'
+      OR (SELECT count(*) FROM console_operation.execution_receipt WHERE operation_id = current_setting('verification.install_operation_id')::uuid AND phase = 'Applied') <> 1
+      OR (SELECT count(*) FROM console_operation.outbox WHERE operation_id = current_setting('verification.install_operation_id')::uuid AND delivered_at IS NOT NULL) <> 1 THEN
+    RAISE EXCEPTION 'Extension install did not close as one fenced Registration application';
   END IF;
 END;
 $$;

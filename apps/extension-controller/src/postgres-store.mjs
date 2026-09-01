@@ -16,6 +16,13 @@ const APPLY_REVOCATION_SQL = [
   ') AS execution_record',
 ].join(' ');
 
+const APPLY_INSTALL_SQL = [
+  'SELECT console_extension.apply_install_registration(',
+  '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text,',
+  '$7::jsonb, $8::text, $9::text, $10::text, $11::text, $12::bigint, $13::boolean',
+  ') AS execution_record',
+].join(' ');
+
 const RECORD_FAILURE_SQL = [
   'SELECT console_extension.record_execution_failure(',
   '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text, $7::boolean',
@@ -74,6 +81,25 @@ export function createExtensionPostgresStore({ query }) {
         ]);
         const record = result?.rows?.[0]?.execution_record;
         if (!record) throw new Error('apply_revocation returned no execution receipt');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async applyInstall({
+      workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest, executionPlan,
+      registrationName, registrationUid, registrationResourceVersion,
+      packageResourceVersion, packageGeneration, created,
+    }) {
+      try {
+        const result = await query(APPLY_INSTALL_SQL, [
+          workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
+          JSON.stringify(executionPlan), registrationName, registrationUid,
+          registrationResourceVersion, packageResourceVersion, packageGeneration, created,
+        ]);
+        const record = result?.rows?.[0]?.execution_record;
+        if (!record) throw new Error('apply_install_registration returned no execution receipt');
         return record;
       } catch (error) {
         throw databaseError(error);

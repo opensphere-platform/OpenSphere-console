@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { createRegistryResolver } from '../src/registry-resolver-client.mjs';
+import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
 
 const catalogRevision = 'sha256:' + 'c'.repeat(64);
 const imageDigest = 'sha256:' + 'e'.repeat(64);
@@ -16,6 +16,7 @@ function eligible(extraCandidate = {}) {
       sourceRevision: 'a'.repeat(40), manifestDigest: 'sha256:' + 'd'.repeat(64),
       compatibilityVersion: '1.0.0', keyId: 'opensphere-release-key-1',
       evidenceRefs: ['oci:provenance:workspace', 'oci:sbom:workspace'],
+      packageResourceVersion: '17', packageGeneration: 1,
       verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
       ...extraCandidate,
     },

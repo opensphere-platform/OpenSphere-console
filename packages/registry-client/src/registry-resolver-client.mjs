@@ -68,7 +68,8 @@ function validateEligible(document, descriptorId, catalogRevision) {
   exactObject(candidate, [
     'kind', 'descriptorId', 'id', 'image', 'digest', 'channel', 'catalogRevision',
     'descriptorRevision', 'executionRevision', 'sourceRevision', 'manifestDigest',
-    'compatibilityVersion', 'keyId', 'evidenceRefs', 'verification',
+    'compatibilityVersion', 'keyId', 'evidenceRefs', 'packageResourceVersion',
+    'packageGeneration', 'verification',
   ], 'Registry candidate');
   const expectedId = descriptorId.slice('extension.'.length);
   if (candidate.kind !== 'extension' || candidate.descriptorId !== descriptorId || candidate.id !== expectedId) {
@@ -83,7 +84,10 @@ function validateEligible(document, descriptorId, catalogRevision) {
   }
   if (candidate.channel !== 'edge' || !SOURCE_REVISION.test(candidate.sourceRevision)
     || !CATALOG_REVISION.test(candidate.manifestDigest) || !SEMVER.test(candidate.compatibilityVersion)
-    || typeof candidate.keyId !== 'string' || candidate.keyId.length < 1 || candidate.keyId.length > 256) {
+    || typeof candidate.keyId !== 'string' || candidate.keyId.length < 1 || candidate.keyId.length > 256
+    || typeof candidate.packageResourceVersion !== 'string' || candidate.packageResourceVersion.length < 1
+    || candidate.packageResourceVersion.length > 128 || !Number.isSafeInteger(candidate.packageGeneration)
+    || candidate.packageGeneration < 1) {
     throw fault('Registry candidate supply-chain identity is incomplete', 'AuthorityContractViolation', 502);
   }
   if (!Array.isArray(candidate.evidenceRefs) || candidate.evidenceRefs.length < 2 || candidate.evidenceRefs.length > 16
