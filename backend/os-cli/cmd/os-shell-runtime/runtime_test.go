@@ -505,6 +505,9 @@ func TestInternalPTYTokenIsTmpfsStyleAndConsumedOnce(t *testing.T) {
 }
 
 func TestPrepareRuntimeDirectoryCreatesPrivateDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Kubernetes fsGroup permission bits are a Linux runtime contract")
+	}
 	directory := filepath.Join(t.TempDir(), "runtime")
 	if err := prepareRuntimeDirectory(directory); err != nil {
 		t.Fatal(err)
@@ -519,6 +522,9 @@ func TestPrepareRuntimeDirectoryCreatesPrivateDirectory(t *testing.T) {
 }
 
 func TestPrepareRuntimeDirectoryAcceptsSecureFSGroupMountAfterChmodEPERM(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Kubernetes fsGroup permission bits are a Linux runtime contract")
+	}
 	directory := filepath.Join(t.TempDir(), "fs-group")
 	if err := os.MkdirAll(directory, 0o770); err != nil {
 		t.Fatal(err)
@@ -535,6 +541,9 @@ func TestPrepareRuntimeDirectoryAcceptsSecureFSGroupMountAfterChmodEPERM(t *test
 }
 
 func TestPrepareRuntimeDirectoryRejectsUnsafeFSGroupMountAfterChmodEPERM(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Kubernetes fsGroup permission bits are a Linux runtime contract")
+	}
 	directory := filepath.Join(t.TempDir(), "unsafe")
 	if err := os.MkdirAll(directory, 0o777); err != nil {
 		t.Fatal(err)

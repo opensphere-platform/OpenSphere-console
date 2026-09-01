@@ -15,12 +15,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestWebShellAgentVerifiesBoundJWSAndDelegatedCredential(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Web Shell credential agent is a Linux Pod Unix-socket boundary")
+	}
 	now := time.Date(2026, 8, 15, 6, 0, 0, 0, time.UTC)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

@@ -1032,7 +1032,7 @@ func TestLoginWebRegistersDeviceWithoutPersistingBearer(t *testing.T) {
 	}
 }
 
-func TestConfigIsAdminOnlyAndPrivate(t *testing.T) {
+func TestConfigExcludesSecretsAndUsesUnixPrivateMode(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("OS_CONFIG", p)
 	cfg := defaults()
@@ -1044,7 +1044,10 @@ func TestConfigIsAdminOnlyAndPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows does not expose ACL ownership through FileMode permission bits.
+	// Unix builds keep the exact 0600 assertion; the cross-platform no-secret
+	// assertion below remains mandatory everywhere.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode=%o want 600", info.Mode().Perm())
 	}
 	b, _ := os.ReadFile(p)
