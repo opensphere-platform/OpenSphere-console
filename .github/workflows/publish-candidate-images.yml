@@ -49,6 +49,12 @@ jobs:
       - name: Production build
         working-directory: OpenSphere-console
         run: npm run build -- --configuration production
+      # Keep the validation useful during reconstruction, but never let the
+      # downstream publish job start while any component is still a target-
+      # migration placeholder or a legacy artifact mapping.
+      - name: Require release-ready target component boundaries
+        working-directory: OpenSphere-console
+        run: node scripts/verify-console-contracts.mjs --release-ready
 
   build-macos-cli:
     # This is intentionally a native macOS build. The CLI invokes
@@ -102,9 +108,9 @@ jobs:
           - image: opensphere-os-cli
             context: OpenSphere-console/backend/os-cli
             file: OpenSphere-console/backend/os-cli/Dockerfile
-          - image: opensphere-console-backend
-            context: OpenSphere-console/backend
-            file: OpenSphere-console/backend/opensphere-console-backend/Dockerfile
+          - image: opensphere-console-api
+            context: OpenSphere-console
+            file: OpenSphere-console/apps/console-api/Dockerfile
           - image: opensphere-console-dupa-controller
             context: OpenSphere-console/backend/dupa-control
             file: OpenSphere-console/backend/dupa-control/Dockerfile
@@ -149,24 +155,6 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: OpenSphere-console
-      - name: Require private Setup read credential
-        if: matrix.image == 'opensphere-console-backend'
-        env:
-          SETUP_REPOSITORY_SSH_KEY: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
-        run: test -n "$SETUP_REPOSITORY_SSH_KEY"
-      - name: Checkout governed Setup CLI
-        if: matrix.image == 'opensphere-console-backend'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: opensphere-platform/OpenSphere-Setup-CLI
-          path: OpenSphere-Setup-CLI
-          ssh-key: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
-          persist-credentials: false
-      - name: Record Setup source revision
-        if: matrix.image == 'opensphere-console-backend'
-        id: setup
-        shell: bash
-        run: echo "revision=$(git -C OpenSphere-Setup-CLI rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Download native macOS CLI artifact
         if: matrix.image == 'opensphere-os-cli'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -216,7 +204,6 @@ jobs:
           file: ${{ matrix.file }}
           build-contexts: |
             macos-cli=${{ matrix.image == 'opensphere-os-cli' && format('{0}/opensphere-cli-macos', runner.temp) || '.' }}
-            setup-cli=${{ matrix.image == 'opensphere-console-backend' && 'OpenSphere-Setup-CLI' || '.' }}
           # The GA-lineage candidate is built only by the approved GitHub workflow with the complete
           # supported architecture set and supply-chain evidence.
           platforms: linux/amd64,linux/arm64
@@ -233,7 +220,6 @@ jobs:
             # publish the reduced artifact set a local edge build may produce.
             CLI_DARWIN_CONTEXT=macos-cli
             CLI_REQUIRE_DARWIN=true
-            SETUP_SOURCE_REVISION=${{ steps.setup.outputs.revision || github.sha }}
             APP_VERSION=${{ steps.release.outputs.version }}
             SOURCE_REVISION=${{ github.sha }}
           secrets: |
@@ -294,7 +280,7 @@ jobs:
           [[ "$release_tag" =~ ^[0-9]{12}$ ]]
           images=(
             opensphere-console
-            opensphere-console-backend
+            opensphere-console-api
             opensphere-console-dupa-controller
             opensphere-registry
             opensphere-console-osaa-gateway
@@ -311,7 +297,7 @@ jobs:
           )
           component_keys=(
             console
-            backend
+            consoleApi
             dupaController
             registry
             osaaGateway
@@ -417,7 +403,7 @@ jobs:
             test "$(crane digest "$repository:$RELEASE_TAG")" = "$digest"
           }
           images=(
-            opensphere-console-backend
+            opensphere-console-api
             opensphere-console-dupa-controller
             opensphere-registry
             opensphere-console-osaa-gateway
@@ -433,7 +419,7 @@ jobs:
             opensphere-console-gitea-postgres
           )
           component_keys=(
-            backend
+            consoleApi
             dupaController
             registry
             osaaGateway

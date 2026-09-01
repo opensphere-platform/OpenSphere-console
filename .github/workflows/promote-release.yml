@@ -67,7 +67,7 @@ jobs:
           esac
           images=(
             opensphere-console
-            opensphere-console-backend
+            opensphere-console-api
             opensphere-console-dupa-controller
             opensphere-registry
             opensphere-console-osaa-gateway

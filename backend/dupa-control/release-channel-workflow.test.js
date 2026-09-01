@@ -88,16 +88,14 @@ test('promotion is adjacent, approval-gated, exact-digest and moves the Console 
   assert.match(promoteWorkflow, /Advance target channel with Console anchor last/);
 });
 
-test('candidate backend build reads private Setup through a dedicated read-only secret', () => {
-  const start = candidateWorkflow.indexOf('      - name: Require private Setup read credential');
-  const checkout = candidateWorkflow.slice(
-    start,
-    candidateWorkflow.indexOf('      - name: Record Setup source revision', start),
-  );
-  assert.match(checkout, /SETUP_REPOSITORY_SSH_KEY/);
-  assert.match(checkout, /ssh-key: \$\{\{ secrets\.SETUP_REPOSITORY_SSH_KEY \}\}/);
-  assert.match(checkout, /persist-credentials: false/);
-  assert.doesNotMatch(checkout, /secrets\.GITHUB_TOKEN/);
+test('candidate C_API uses the target artifact and cannot publish during target migration', () => {
+  assert.match(candidateWorkflow, /- image: opensphere-console-api\s+context: OpenSphere-console\s+file: OpenSphere-console\/apps\/console-api\/Dockerfile/);
+  assert.match(candidateWorkflow, /node scripts\/verify-console-contracts[.]mjs --release-ready/);
+  assert.doesNotMatch(candidateWorkflow, /opensphere-console-backend/);
+  assert.doesNotMatch(candidateWorkflow, /SETUP_REPOSITORY_SSH_KEY|setup-cli=|SETUP_SOURCE_REVISION/);
+  assert.match(candidateWorkflow, /publish:\s+needs: \[test, build-macos-cli\]/);
+  assert.match(promoteWorkflow, /opensphere-console-api/);
+  assert.doesNotMatch(promoteWorkflow, /opensphere-console-backend/);
 });
 
 test('production image build does not fetch external fonts while compiling', () => {

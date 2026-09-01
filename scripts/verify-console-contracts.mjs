@@ -5,6 +5,18 @@ import yaml from 'js-yaml';
 
 const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
+const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
+  'console_audit.list_events',
+  'console_extension.get_registry_connection',
+  'console_extension.list_revocations',
+  'console_identity.get_supabase_status',
+  'console_identity.resolve_browser_session',
+  'console_identity.revoke_browser_session',
+  'console_operation.accept_operation',
+  'console_operation.approve_operation',
+  'console_operation.get_operation',
+  'console_operation.verify_extension_operation',
+]);
 
 async function json(path) {
   return JSON.parse(await readFile(path, 'utf8'));
@@ -24,7 +36,31 @@ function operationEntries(openapi) {
   return entries;
 }
 
-export async function verifyContracts(repoRoot = process.cwd()) {
+export function verifyConsoleApiAuthority({ storeSource, baselineSource }) {
+  assert(
+    !/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+console_(?:audit|extension|identity|operation)\./i.test(storeSource),
+    'Console API store must use granted functions instead of direct authority-table mutation',
+  );
+  const databaseFunctions = [...new Set(
+    [...storeSource.matchAll(/console_(?:audit|extension|identity|operation)\.[a-z_]+/g)].map((match) => match[0]),
+  )].sort();
+  assert(
+    JSON.stringify(databaseFunctions) === JSON.stringify(CONSOLE_API_DATABASE_FUNCTIONS),
+    'Console API database function set differs from the closed target contract',
+  );
+  const statements = baselineSource.split(';').map((statement) => statement.trim()).filter(Boolean);
+  for (const name of databaseFunctions) {
+    assert(baselineSource.includes(`CREATE OR REPLACE FUNCTION ${name}(`), `${name} is absent from the fresh baseline`);
+    assert(
+      statements.some((statement) => statement.includes(`GRANT EXECUTE ON FUNCTION ${name}(`)
+        && /\)\s+TO\s+console_api$/s.test(statement)),
+      `${name} is not granted exactly to the Console API runtime role`,
+    );
+  }
+  return databaseFunctions;
+}
+
+export async function verifyContracts(repoRoot = process.cwd(), { requireReleaseReady = false } = {}) {
   const root = resolve(repoRoot);
   const contractRoot = resolve(root, 'packages', 'contracts');
   const denominator = await json(resolve(contractRoot, 'contract-denominator.json'));
@@ -142,6 +178,30 @@ export async function verifyContracts(repoRoot = process.cwd()) {
   assert(new Set(componentIds).size === componentIds.length, 'component boundary IDs must be unique');
   assert(new Set(componentPaths).size === componentPaths.length, 'component paths must be unique');
 
+  const consoleApiBoundary = boundary.components.find((component) => component.id === 'C_API');
+  assert(consoleApiBoundary?.path === 'apps/console-api', 'C_API path differs from the target component boundary');
+  assert(consoleApiBoundary?.artifact === 'opensphere-console-api', 'C_API artifact differs from the target component boundary');
+  if (requireReleaseReady) {
+    assert(boundary.status === 'release-ready', 'Official publication is blocked while component boundaries remain target-migration');
+  }
+
+  const consoleApiStore = await readFile(resolve(root, 'apps', 'console-api', 'src', 'postgres-operation-store.mjs'), 'utf8');
+  const freshBaseline = await readFile(resolve(root, 'migrations', 'baseline', '0001_console_authority.sql'), 'utf8');
+  const consoleApiDatabaseFunctions = verifyConsoleApiAuthority({ storeSource: consoleApiStore, baselineSource: freshBaseline });
+  const consoleApiDockerfile = await readFile(resolve(root, 'apps', 'console-api', 'Dockerfile'), 'utf8');
+  assert(consoleApiDockerfile.includes('COPY apps/console-api/src ./src'), 'C_API image does not copy the target runtime source');
+  assert(consoleApiDockerfile.includes('USER 1001'), 'C_API image must run as the declared non-root identity');
+
+  const candidateWorkflow = await readFile(resolve(root, '.github', 'workflows', 'publish-candidate-images.yml'), 'utf8');
+  const promotionWorkflow = await readFile(resolve(root, '.github', 'workflows', 'promote-release.yml'), 'utf8');
+  assert(candidateWorkflow.includes('node scripts/verify-console-contracts.mjs --release-ready'), 'Candidate workflow has no target-migration publication gate');
+  assert(candidateWorkflow.includes('- image: opensphere-console-api'), 'Candidate workflow does not publish the C_API target artifact');
+  assert(candidateWorkflow.includes('file: OpenSphere-console/apps/console-api/Dockerfile'), 'Candidate workflow does not build the C_API target Dockerfile');
+  assert(candidateWorkflow.includes('consoleApi'), 'Candidate BOM has no consoleApi component identity');
+  assert(!candidateWorkflow.includes('opensphere-console-backend'), 'Candidate workflow still publishes the legacy Backend artifact');
+  assert(promotionWorkflow.includes('opensphere-console-api'), 'Promotion workflow omits the C_API target artifact');
+  assert(!promotionWorkflow.includes('opensphere-console-backend'), 'Promotion workflow still promotes the legacy Backend artifact');
+
   const packageJson = await readFile(resolve(root, 'package.json'), 'utf8');
   const sourceFiles = [
     resolve(root, 'src', 'app', 'core', 'extension-host.service.ts'),
@@ -159,10 +219,12 @@ export async function verifyContracts(repoRoot = process.cwd()) {
     actionPolicies: actionPolicies.length,
     schemas: denominator.requiredSchemas.length,
     components: boundary.components.length,
+    releaseBoundaryStatus: boundary.status,
+    consoleApiDatabaseFunctions: consoleApiDatabaseFunctions.length,
   };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const result = await verifyContracts(process.cwd());
+  const result = await verifyContracts(process.cwd(), { requireReleaseReady: process.argv.includes('--release-ready') });
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
