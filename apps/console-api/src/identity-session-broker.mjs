@@ -1,8 +1,9 @@
 import { createHash, randomBytes as systemRandomBytes } from 'node:crypto';
-import { readBrowserSessionProof } from './session-resolver.mjs';
+import { createDatabaseSessionResolver, readBrowserSessionProof } from './session-resolver.mjs';
 
 const ACTIVE_TTL_MS = 24 * 60 * 60 * 1000;
 const PENDING_MFA_TTL_MS = 5 * 60 * 1000;
+const REFRESH_WINDOW_MS = 30 * 1000;
 
 function fail(code, message, status) {
   throw Object.assign(new Error(message), { code, status });
@@ -42,15 +43,36 @@ export function createIdentitySessionBroker({
   publicOrigin,
   randomBytes = systemRandomBytes,
   clock = () => new Date(),
+  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   if (!store?.issueSession) throw new TypeError('session issue store is required');
   if (!store?.getPendingMfa || !store?.activateMfa) throw new TypeError('session MFA store is required');
-  if (!authClient?.authenticatePassword || !authClient?.completeTotp || !authClient?.logout) throw new TypeError('Supabase Auth client is required');
+  if (!store?.getRefreshCredentials || !store?.rotateCredentials || !store?.rejectRefresh) throw new TypeError('session refresh store is required');
+  if (!authClient?.authenticatePassword || !authClient?.completeTotp || !authClient?.refreshSession || !authClient?.logout) throw new TypeError('Supabase Auth client is required');
   if (!credentialCipher?.encrypt || !credentialCipher?.decrypt) throw new TypeError('session credential cipher is required');
   if (typeof randomBytes !== 'function') throw new TypeError('secure random byte source is required');
+  if (typeof wait !== 'function') throw new TypeError('bounded refresh wait is required');
   let origin;
   try { origin = new URL(publicOrigin).origin; } catch { throw new TypeError('Console public origin is invalid'); }
   if (origin !== publicOrigin || !origin.startsWith('https://')) throw new TypeError('Console public origin must be an HTTPS origin');
+  const baseResolveSession = createDatabaseSessionResolver({ store });
+
+  function refreshDue(session) {
+    if (session.accessTokenExpiresAt == null) return false;
+    const expiresAt = new Date(session.accessTokenExpiresAt).getTime();
+    if (!Number.isFinite(expiresAt)) fail('AuthenticationRequired', 'session credential expiry is invalid', 401);
+    return expiresAt <= clock().getTime() + REFRESH_WINDOW_MS;
+  }
+
+  async function peerRotation(request, options) {
+    let latest;
+    for (const milliseconds of [0, 25, 75, 150]) {
+      if (milliseconds) await wait(milliseconds);
+      latest = await baseResolveSession(request, options);
+      if (!refreshDue(latest)) return latest;
+    }
+    return null;
+  }
 
   return Object.freeze({
     async login({ body, requestOrigin, correlationId }) {
@@ -73,6 +95,7 @@ export function createIdentitySessionBroker({
           refreshTokenCiphertext: credentialCipher.encrypt(auth.refreshToken),
           authSessionRef: auth.authSessionRef,
           aal: auth.aal,
+          accessTokenExpiresAt: auth.accessTokenExpiresAt,
           expiresAt: expiresAt.toISOString(),
           pendingMfa,
           correlationId,
@@ -140,6 +163,7 @@ export function createIdentitySessionBroker({
           accessTokenCiphertext: credentialCipher.encrypt(completed.accessToken),
           refreshTokenCiphertext: credentialCipher.encrypt(completed.refreshToken),
           authSessionRef: completed.authSessionRef,
+          accessTokenExpiresAt: completed.accessTokenExpiresAt,
           expiresAt: expiresAt.toISOString(),
           correlationId,
         });
@@ -159,6 +183,70 @@ export function createIdentitySessionBroker({
         ]),
         body: Object.freeze({ assurance: 'aal2', sessionId: activated.sessionId }),
       });
+    },
+
+    async resolveSession(request, { requireCsrf = false, correlationId } = {}) {
+      const options = { requireCsrf };
+      let session = await baseResolveSession(request, options);
+      if (!refreshDue(session)) return session;
+
+      const proof = readBrowserSessionProof(request, options);
+      let current;
+      try {
+        current = await store.getRefreshCredentials({
+          tokenDigest: proof.tokenDigest,
+          csrfTokenDigest: proof.csrfTokenDigest,
+          requireCsrf,
+        });
+      } catch (error) {
+        if (error?.code === 'RefreshNotRequired') return baseResolveSession(request, options);
+        throw error;
+      }
+      if (!current?.sessionId || !current?.subjectId || !current?.refreshTokenCiphertext) {
+        fail('AuthorityUnavailable', 'session refresh authority returned an invalid record', 503);
+      }
+      const expectedRefreshCiphertextDigest = digest(current.refreshTokenCiphertext);
+      let refreshed;
+      try {
+        refreshed = await authClient.refreshSession({
+          refreshToken: credentialCipher.decrypt(current.refreshTokenCiphertext),
+          expectedSubjectId: current.subjectId,
+        });
+      } catch (error) {
+        if (error?.code !== 'RefreshRejected') throw error;
+        const peer = await peerRotation(request, options);
+        if (peer) return peer;
+        const rejected = await store.rejectRefresh({
+          sessionId: current.sessionId,
+          subjectId: current.subjectId,
+          expectedRefreshCiphertextDigest,
+          correlationId,
+        });
+        if (rejected.outcome === 'peer_rotated') {
+          session = await baseResolveSession(request, options);
+          if (!refreshDue(session)) return session;
+          fail('AuthorityUnavailable', 'peer session refresh is still settling', 503);
+        }
+        fail('AuthenticationRequired', 'Supabase Auth explicitly rejected the current refresh credential', 401);
+      }
+
+      const rotated = await store.rotateCredentials({
+        sessionId: current.sessionId,
+        subjectId: current.subjectId,
+        expectedRefreshCiphertextDigest,
+        accessTokenCiphertext: credentialCipher.encrypt(refreshed.accessToken),
+        refreshTokenCiphertext: credentialCipher.encrypt(refreshed.refreshToken),
+        authSessionRef: refreshed.authSessionRef,
+        aal: refreshed.aal,
+        accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
+        correlationId,
+      });
+      if (!['rotated', 'peer_rotated'].includes(rotated.outcome)) {
+        fail('AuthorityUnavailable', 'session refresh authority returned an invalid outcome', 503);
+      }
+      session = await baseResolveSession(request, options);
+      if (refreshDue(session)) fail('AuthorityUnavailable', 'session credential rotation is still settling', 503);
+      return session;
     },
   });
 }

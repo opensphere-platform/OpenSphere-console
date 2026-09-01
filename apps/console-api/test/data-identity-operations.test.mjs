@@ -180,5 +180,5 @@ test('HTTP Supabase status is a session-revalidated read', async (t) => {
   const projection = await response.json();
   assert.equal(projection.authority, 'Supabase');
   assert.equal(projection.data.state, 'Degraded');
-  assert.deepEqual(resolverCalls, [{ requireCsrf: false }]);
+  assert.deepEqual(resolverCalls, [{ requireCsrf: false, correlationId: 'supabase-status-http-0001' }]);
 });

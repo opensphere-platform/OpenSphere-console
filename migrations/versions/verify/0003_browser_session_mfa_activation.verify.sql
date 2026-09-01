@@ -3,13 +3,13 @@
 DO $$
 BEGIN
   IF to_regprocedure('console_identity.get_pending_browser_session_mfa(bytea,bytea)') IS NULL
-      OR to_regprocedure('console_identity.activate_browser_session_mfa(uuid,uuid,bytea,text,text,text,timestamptz,text)') IS NULL THEN
+      OR to_regprocedure('console_identity.activate_browser_session_mfa(uuid,uuid,bytea,text,text,text,timestamptz,timestamptz,text)') IS NULL THEN
     RAISE EXCEPTION 'browser session MFA functions are incomplete';
   END IF;
   IF has_function_privilege('public', 'console_identity.get_pending_browser_session_mfa(bytea,bytea)', 'EXECUTE')
-      OR has_function_privilege('public', 'console_identity.activate_browser_session_mfa(uuid,uuid,bytea,text,text,text,timestamptz,text)', 'EXECUTE')
+      OR has_function_privilege('public', 'console_identity.activate_browser_session_mfa(uuid,uuid,bytea,text,text,text,timestamptz,timestamptz,text)', 'EXECUTE')
       OR NOT has_function_privilege('console_api', 'console_identity.get_pending_browser_session_mfa(bytea,bytea)', 'EXECUTE')
-      OR NOT has_function_privilege('console_api', 'console_identity.activate_browser_session_mfa(uuid,uuid,bytea,text,text,text,timestamptz,text)', 'EXECUTE') THEN
+      OR NOT has_function_privilege('console_api', 'console_identity.activate_browser_session_mfa(uuid,uuid,bytea,text,text,text,timestamptz,timestamptz,text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'browser session MFA function grants are not closed to console_api';
   END IF;
 END;
@@ -25,7 +25,7 @@ SELECT set_config(
     'v1.cGVuZGluZ2FjY2Vzc2l2MTIz.cGVuZGluZ2FjY2Vzc3RhZw.cGVuZGluZ2FjY2Vzcw',
     'v1.cGVuZGluZ3JlZnJlc2hpdjEyMw.cGVuZGluZ3JlZnJlc2h0YWc.cGVuZGluZ3JlZnJlc2g',
     'migration-verification-pending-auth-session',
-    'aal1', statement_timestamp() + interval '4 minutes', true,
+    'aal1', statement_timestamp() + interval '3 minutes', statement_timestamp() + interval '4 minutes', true,
     'migration-session-pending-mfa-0001'
   )::text,
   false
@@ -53,6 +53,7 @@ BEGIN
     'v1.YWFsMmFjY2Vzc2l2MTIzNDU2.YWFsMmFjY2Vzc3RhZzEyMzQ1Ng.YWFsMmFjY2Vzc2NpcGhlcnRleHQ',
     'v1.YWFsMnJlZnJlc2hpdjEyMzQ1Ng.YWFsMnJlZnJlc2h0YWcxMjM0NTY.YWFsMnJlZnJlc2hjaXBoZXJ0ZXh0',
     'migration-verification-aal2-auth-session',
+    statement_timestamp() + interval '1 hour',
     statement_timestamp() + interval '24 hours',
     'migration-session-mfa-activation-0001'
   );
@@ -66,7 +67,7 @@ BEGIN
       sha256(convert_to(v_pending->>'accessTokenCiphertext', 'UTF8')),
       'v1.YWFsMmFjY2Vzc2l2MTIzNDU2.YWFsMmFjY2Vzc3RhZzEyMzQ1Ng.YWFsMmFjY2Vzc2NpcGhlcnRleHQ',
       'v1.YWFsMnJlZnJlc2hpdjEyMzQ1Ng.YWFsMnJlZnJlc2h0YWcxMjM0NTY.YWFsMnJlZnJlc2hjaXBoZXJ0ZXh0',
-      'migration-verification-aal2-auth-session', statement_timestamp() + interval '24 hours',
+      'migration-verification-aal2-auth-session', statement_timestamp() + interval '1 hour', statement_timestamp() + interval '24 hours',
       'migration-session-mfa-activation-replay-0001'
     );
     RAISE EXCEPTION 'MFA activation replay was accepted';

@@ -8,9 +8,9 @@ BEGIN
         AND column_name IN ('auth_session_ref', 'access_token_ciphertext', 'refresh_token_ciphertext')) <> 3 THEN
     RAISE EXCEPTION 'browser session credential-envelope columns are incomplete';
   END IF;
-  IF (SELECT count(*) FROM console_migration.applied_migration) <> 3
+  IF (SELECT count(*) FROM console_migration.applied_migration) <> 4
       OR (SELECT global_id FROM console_migration.applied_migration ORDER BY applied_sequence DESC LIMIT 1)
-         <> 'opensphere-console/20260902/0003' THEN
+         <> 'opensphere-console/20260902/0004' THEN
     RAISE EXCEPTION 'browser session credential migration lineage is incomplete';
   END IF;
 END;
@@ -27,6 +27,7 @@ SELECT set_config(
     'v1.cmVmcmVzaA.cmVmcmVzaA.cmVmcmVzaA',
     'migration-verification-auth-session',
     'aal1',
+    statement_timestamp() + interval '5 minutes',
     statement_timestamp() + interval '10 minutes',
     false,
     'migration-session-issue-verification-0001'

@@ -38,7 +38,7 @@ const RESOLVE_SESSION_SQL = [
 const ISSUE_SESSION_SQL = [
   'SELECT console_identity.issue_browser_session(',
   '$1::uuid, $2::bytea, $3::bytea, $4::text, $5::text,',
-  '$6::text, $7::text, $8::timestamptz, $9::boolean, $10::text',
+  '$6::text, $7::text, $8::timestamptz, $9::timestamptz, $10::boolean, $11::text',
   ') AS session_record',
 ].join(' ');
 
@@ -51,8 +51,27 @@ const GET_PENDING_MFA_SQL = [
 const ACTIVATE_MFA_SQL = [
   'SELECT console_identity.activate_browser_session_mfa(',
   '$1::uuid, $2::uuid, $3::bytea, $4::text, $5::text,',
-  '$6::text, $7::timestamptz, $8::text',
+  '$6::text, $7::timestamptz, $8::timestamptz, $9::text',
   ') AS session_record',
+].join(' ');
+
+const GET_REFRESH_CREDENTIALS_SQL = [
+  'SELECT console_identity.get_browser_session_refresh_credentials(',
+  '$1::bytea, $2::bytea, $3::boolean',
+  ') AS session_record',
+].join(' ');
+
+const ROTATE_SESSION_CREDENTIALS_SQL = [
+  'SELECT console_identity.rotate_browser_session_credentials(',
+  '$1::uuid, $2::uuid, $3::bytea, $4::text, $5::text,',
+  '$6::text, $7::text, $8::timestamptz, $9::text',
+  ') AS refresh_record',
+].join(' ');
+
+const REJECT_SESSION_REFRESH_SQL = [
+  'SELECT console_identity.reject_browser_session_refresh(',
+  '$1::uuid, $2::uuid, $3::bytea, $4::text',
+  ') AS refresh_record',
 ].join(' ');
 
 const LIST_REVOCATIONS_SQL = [
@@ -92,7 +111,7 @@ function databaseError(error) {
     'PermissionDenied', 'StepUpRequired', 'IdempotencyMismatch', 'CsrfRejected',
     'SelfApprovalDenied', 'ApprovalNotRequired', 'StaleRevision',
     'StaleOperationVersion', 'InvalidOperationState', 'ObservationMissing',
-    'ObservationMismatch', 'NotFound',
+    'ObservationMismatch', 'NotFound', 'RefreshNotRequired',
   ]);
   const mapped = known.has(code) ? code : 'AuthorityUnavailable';
   const status = {
@@ -114,6 +133,7 @@ function databaseError(error) {
     ObservationMissing: 409,
     ObservationMismatch: 409,
     NotFound: 404,
+    RefreshNotRequired: 409,
   }[mapped];
   const messages = {
     ValidationFailed: 'operation request failed database validation',
@@ -134,6 +154,7 @@ function databaseError(error) {
     ObservationMissing: 'required owner observation is missing',
     ObservationMismatch: 'owner observation does not match the operation',
     NotFound: 'operation was not found',
+    RefreshNotRequired: 'browser session access credential does not require refresh',
   };
   return Object.assign(new Error(messages[mapped]), {
     code: mapped,
@@ -179,6 +200,7 @@ export function createPostgresOperationStore({ query }) {
           input.refreshTokenCiphertext,
           input.authSessionRef,
           input.aal,
+          input.accessTokenExpiresAt,
           input.expiresAt,
           input.pendingMfa,
           input.correlationId,
@@ -214,11 +236,64 @@ export function createPostgresOperationStore({ query }) {
           input.accessTokenCiphertext,
           input.refreshTokenCiphertext,
           input.authSessionRef,
+          input.accessTokenExpiresAt,
           input.expiresAt,
           input.correlationId,
         ]);
         const record = result?.rows?.[0]?.session_record;
         if (!record) throw new Error('activate_browser_session_mfa returned no record');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getRefreshCredentials(input) {
+      try {
+        const result = await query(GET_REFRESH_CREDENTIALS_SQL, [
+          input.tokenDigest,
+          input.csrfTokenDigest,
+          input.requireCsrf,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record) throw Object.assign(new Error('refresh credentials were not found'), { detail: 'SessionInvalid' });
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async rotateCredentials(input) {
+      try {
+        const result = await query(ROTATE_SESSION_CREDENTIALS_SQL, [
+          input.sessionId,
+          input.subjectId,
+          input.expectedRefreshCiphertextDigest,
+          input.accessTokenCiphertext,
+          input.refreshTokenCiphertext,
+          input.authSessionRef,
+          input.aal,
+          input.accessTokenExpiresAt,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.refresh_record;
+        if (!record?.outcome) throw new Error('rotate_browser_session_credentials returned no outcome');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async rejectRefresh(input) {
+      try {
+        const result = await query(REJECT_SESSION_REFRESH_SQL, [
+          input.sessionId,
+          input.subjectId,
+          input.expectedRefreshCiphertextDigest,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.refresh_record;
+        if (!record?.outcome) throw new Error('reject_browser_session_refresh returned no outcome');
         return record;
       } catch (error) {
         throw databaseError(error);

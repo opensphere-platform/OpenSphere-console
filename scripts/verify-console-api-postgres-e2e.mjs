@@ -18,18 +18,25 @@ const port = Number(process.env.CONSOLE_TEST_PORT || 58080);
 const origin = 'http://127.0.0.1:' + port;
 const publicOrigin = 'https://console.integration.test';
 const loginSubjectId = '11111111-1111-4111-8111-111111111111';
-const loginAccessToken = [
+function integrationAccessToken({ aal, expiresInSeconds, sessionId }) {
+  return [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
   Buffer.from(JSON.stringify({
     sub: loginSubjectId,
     role: 'authenticated',
-    aal: 'aal1',
-    exp: Math.floor(Date.now() / 1000) + 3600,
-    session_id: 'supabase-auth-session-integration-0001',
+    aal,
+    exp: Math.floor(Date.now() / 1000) + expiresInSeconds,
+    session_id: sessionId,
   })).toString('base64url'),
   'integration-signature',
 ].join('.');
+}
+let loginAccessToken;
+const rotatedLoginAccessToken = integrationAccessToken({
+  aal: 'aal1', expiresInSeconds: 3600, sessionId: 'supabase-auth-session-integration-rotated-0001',
+});
 const loginRefreshToken = 'supabase-refresh-credential-integration-0001';
+const rotatedLoginRefreshToken = 'supabase-refresh-credential-integration-rotated-0001';
 const mfaAccessToken = [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
   Buffer.from(JSON.stringify({
@@ -85,10 +92,25 @@ const authorityServer = createServer(async (request, response) => {
     assert.deepEqual(requestBody, mfaLogin
       ? { email: 'mfa@opensphere.test', password: 'integration-password' }
       : { email: 'operator@opensphere.test', password: 'integration-password' });
+    if (!mfaLogin) {
+      loginAccessToken = integrationAccessToken({
+        aal: 'aal1', expiresInSeconds: 20, sessionId: 'supabase-auth-session-integration-0001',
+      });
+    }
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
       access_token: mfaLogin ? mfaAccessToken : loginAccessToken,
       refresh_token: mfaLogin ? mfaRefreshToken : loginRefreshToken,
+      user: { id: loginSubjectId },
+    }));
+    return;
+  }
+  if (request.url === '/token?grant_type=refresh_token' && request.method === 'POST') {
+    assert.deepEqual(requestBody, { refresh_token: loginRefreshToken });
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      access_token: rotatedLoginAccessToken,
+      refresh_token: rotatedLoginRefreshToken,
       user: { id: loginSubjectId },
     }));
     return;
@@ -406,6 +428,22 @@ try {
   });
   assert.equal(issuedSessionResponse.status, 200);
   assert.equal((await issuedSessionResponse.json()).data.subjectId, loginSubjectId);
+  const refreshedLoginEvidence = await admin.query(
+    [
+      'SELECT access_token_ciphertext, refresh_token_ciphertext, auth_session_ref,',
+      "access_token_expires_at > clock_timestamp() + interval '30 minutes' AS durable_future_expiry,",
+      '(SELECT COALESCE(string_agg(evidence::text, \'\'), \'\') FROM console_audit.event',
+      "WHERE action = 'console.identity.session.refresh' AND correlation_id = $2) AS audit_evidence",
+      'FROM console_identity.browser_session WHERE session_id = $1',
+    ].join(' '),
+    [loginBody.session.id, 'integration-issued-session-read-0001'],
+  );
+  assert.equal(refreshedLoginEvidence.rowCount, 1);
+  assert.notEqual(refreshedLoginEvidence.rows[0].access_token_ciphertext, loginEvidence.rows[0].access_token_ciphertext);
+  assert.notEqual(refreshedLoginEvidence.rows[0].refresh_token_ciphertext, loginEvidence.rows[0].refresh_token_ciphertext);
+  assert.equal(refreshedLoginEvidence.rows[0].auth_session_ref, 'supabase-auth-session-integration-rotated-0001');
+  assert.equal(refreshedLoginEvidence.rows[0].durable_future_expiry, true);
+  assert.doesNotMatch(refreshedLoginEvidence.rows[0].audit_evidence, /supabase-refresh|integration-signature/i);
   const issuedLogoutResponse = await fetch(origin + '/api/identity/session', {
     method: 'DELETE',
     headers: {
@@ -997,6 +1035,7 @@ try {
     supabaseLiveProbes: true,
     migrationLineage: true,
     passwordLoginSessionLifecycle: true,
+    refreshRotationLifecycle: true,
     mfaLoginChallengeLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,

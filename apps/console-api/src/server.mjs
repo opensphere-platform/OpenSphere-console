@@ -8,7 +8,6 @@ import { createDataIdentityOperations, createSupabaseLiveProbes } from './data-i
 import { createPostgresOperationStore } from './postgres-operation-store.mjs';
 import { createRegistryOperations } from './registry-operations.mjs';
 import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
-import { createDatabaseSessionResolver } from './session-resolver.mjs';
 import { createConsoleApiHandler } from './http-handler.mjs';
 import { createIdentitySessionBroker } from './identity-session-broker.mjs';
 import { createSessionCredentialCipher } from './session-credential-cipher.mjs';
@@ -78,7 +77,7 @@ const registryOperations = createRegistryOperations({
   registryResolver,
 });
 const handler = createConsoleApiHandler({
-  resolveSession: createDatabaseSessionResolver({ store }),
+  resolveSession: identitySessionBroker.resolveSession,
   operationService,
   registryOperations,
   auditOperations,

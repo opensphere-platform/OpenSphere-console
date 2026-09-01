@@ -542,6 +542,7 @@ test('PostgreSQL session issue binds only digests, encrypted credentials and aut
     refreshTokenCiphertext: 'v1.iv.tag.refresh',
     authSessionRef: 'supabase-session-ref',
     aal: 'aal1',
+    accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
     expiresAt: '2026-09-03T00:00:00.000Z',
     pendingMfa: false,
     correlationId: 'correlation-session-issue-0001',
@@ -574,12 +575,42 @@ test('PostgreSQL pending MFA read and activation bind proof, subject and credent
     accessTokenCiphertext: 'v1.iv.tag.aal2access',
     refreshTokenCiphertext: 'v1.iv.tag.aal2refresh',
     authSessionRef: 'supabase-session-aal2',
+    accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
     expiresAt: '2026-09-03T00:00:00.000Z',
     correlationId: 'correlation-session-mfa-0001',
   };
   assert.equal(await store.activateMfa(activation), active);
   assert.match(calls[1].sql, /console_identity[.]activate_browser_session_mfa/);
   assert.deepEqual(calls[1].values, Object.values(activation));
+});
+
+test('PostgreSQL refresh operations bind only proof, ciphertext CAS and rotated envelopes', async () => {
+  const calls = [];
+  const store = createPostgresOperationStore({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      if (/get_browser_session_refresh_credentials/.test(sql)) {
+        return { rows: [{ session_record: { sessionId, subjectId: actorRef, refreshTokenCiphertext: 'v1.iv.tag.old' } }] };
+      }
+      return { rows: [{ refresh_record: { outcome: calls.length === 2 ? 'rotated' : 'rejected' } }] };
+    },
+  });
+  const proof = { tokenDigest: Buffer.alloc(32, 6), csrfTokenDigest: null, requireCsrf: false };
+  await store.getRefreshCredentials(proof);
+  assert.deepEqual(calls[0].values, Object.values(proof));
+  const rotation = {
+    sessionId, subjectId: actorRef, expectedRefreshCiphertextDigest: Buffer.alloc(32, 7),
+    accessTokenCiphertext: 'v1.iv.tag.newaccess', refreshTokenCiphertext: 'v1.iv.tag.newrefresh',
+    authSessionRef: 'supabase-session-rotated', aal: 'aal1',
+    accessTokenExpiresAt: '2026-09-02T02:00:00.000Z', correlationId: 'refresh-correlation-0001',
+  };
+  assert.deepEqual(await store.rotateCredentials(rotation), { outcome: 'rotated' });
+  assert.deepEqual(calls[1].values, Object.values(rotation));
+  assert.deepEqual(await store.rejectRefresh({
+    sessionId, subjectId: actorRef, expectedRefreshCiphertextDigest: Buffer.alloc(32, 8),
+    correlationId: 'refresh-rejected-correlation-0001',
+  }), { outcome: 'rejected' });
+  assert.match(calls[2].sql, /console_identity[.]reject_browser_session_refresh/);
 });
 
 test('PostgreSQL Registry projection binds session, actor and correlation without secret inputs', async () => {
@@ -715,7 +746,7 @@ test('HTTP Extension install returns only a Planned exact-revision operation', a
   assert.equal(receipt.targetRef, extensionImage);
   assert.equal(receipt.executionPlan.catalogRevision, catalogRevision);
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
-  assert.deepEqual(resolverCalls, [{ requireCsrf: true }]);
+  assert.deepEqual(resolverCalls, [{ requireCsrf: true, correlationId: 'http-extension-install-correlation-0001' }]);
 });
 
 test('HTTP Extension removal returns only a Planned typed operation', async (t) => {
@@ -747,7 +778,7 @@ test('HTTP Extension removal returns only a Planned typed operation', async (t) 
   assert.equal(receipt.actionId, 'console.extension.remove');
   assert.equal(receipt.targetRef, 'extension.workspace');
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
-  assert.deepEqual(resolverCalls, [{ requireCsrf: true }]);
+  assert.deepEqual(resolverCalls, [{ requireCsrf: true, correlationId: 'http-extension-remove-correlation-0001' }]);
 });
 
 test('HTTP Extension inspection returns only current C_REG evidence and requires CSRF', async (t) => {
@@ -775,7 +806,7 @@ test('HTTP Extension inspection returns only current C_REG evidence and requires
   assert.equal(envelope.freshness, 'fresh');
   assert.equal(envelope.data.candidate.image, extensionImage);
   assert.equal(envelope.data.candidate.verification.signature, 'Verified');
-  assert.deepEqual(resolverCalls, [{ requireCsrf: true }]);
+  assert.deepEqual(resolverCalls, [{ requireCsrf: true, correlationId: 'http-extension-inspect-correlation-0001' }]);
   assert.deepEqual(resolved, [{
     descriptorId: 'extension.workspace', catalogRevision,
     correlationId: 'http-extension-inspect-correlation-0001',

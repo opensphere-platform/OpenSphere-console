@@ -12,7 +12,7 @@
   },
   "targetSessionCapabilities": [
     { "id": "password-login", "status": "implemented-and-verified" },
-    { "id": "refresh-rotation", "status": "missing" },
+    { "id": "refresh-rotation", "status": "implemented-and-verified" },
     { "id": "csrf-binding", "status": "implemented-and-verified" },
     { "id": "current-session-resolution", "status": "implemented-and-verified" },
     { "id": "self-logout", "status": "implemented-and-verified" },

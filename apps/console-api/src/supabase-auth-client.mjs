@@ -64,7 +64,12 @@ export function createSupabaseAuthClient({
   }
   const origin = configuredOrigin(baseUrl);
 
-  async function request(path, { method = 'GET', body, token } = {}) {
+  async function request(path, {
+    method = 'GET', body, token,
+    rejectedCode = 'AuthenticationRequired',
+    rejectedMessage = 'email or password is invalid',
+    rejectedStatus = 401,
+  } = {}) {
     let response;
     try {
       response = await fetchImpl(origin + path, {
@@ -88,7 +93,7 @@ export function createSupabaseAuthClient({
       if (response.ok) fail('AuthorityUnavailable', 'Supabase Auth returned an invalid response', 503);
     }
     if (!response.ok) {
-      if (response.status === 400 || response.status === 401) fail('AuthenticationRequired', 'email or password is invalid', 401);
+      if (response.status === 400 || response.status === 401) fail(rejectedCode, rejectedMessage, rejectedStatus);
       if (response.status === 429) fail('RateLimited', 'Supabase Auth rate limit was reached', 429);
       fail('AuthorityUnavailable', 'Supabase Auth request failed', 503);
     }
@@ -114,6 +119,7 @@ export function createSupabaseAuthClient({
         refreshToken: String(session.refresh_token),
         authSessionRef: String(claims.session_id || claims.sub),
         aal: claims.aal,
+        accessTokenExpiresAt: new Date(Number(claims.exp) * 1000).toISOString(),
         verifiedTotpFactorId: verifiedTotp?.id ? String(verifiedTotp.id) : null,
       });
     },
@@ -161,6 +167,36 @@ export function createSupabaseAuthClient({
         refreshToken: String(session.refresh_token),
         authSessionRef: String(claims.session_id || claims.sub),
         aal: 'aal2',
+        accessTokenExpiresAt: new Date(Number(claims.exp) * 1000).toISOString(),
+      });
+    },
+
+    async refreshSession({ refreshToken, expectedSubjectId }) {
+      if (!refreshToken || !expectedSubjectId) {
+        fail('SessionCredentialInvalid', 'refresh credential binding is invalid', 401);
+      }
+      const session = await request('/token?grant_type=refresh_token', {
+        method: 'POST',
+        body: { refresh_token: String(refreshToken) },
+        rejectedCode: 'RefreshRejected',
+        rejectedMessage: 'Supabase Auth explicitly rejected the current refresh credential',
+        rejectedStatus: 401,
+      });
+      if (!session?.access_token || !session?.refresh_token) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned no rotated session', 503);
+      }
+      const claims = jwtClaims(session.access_token, now());
+      if (String(claims.sub) !== String(expectedSubjectId)
+          || String(session.user?.id || '') !== String(expectedSubjectId)) {
+        fail('AuthorityUnavailable', 'Supabase Auth refresh subject verification failed', 503);
+      }
+      return Object.freeze({
+        subjectId: String(claims.sub),
+        accessToken: String(session.access_token),
+        refreshToken: String(session.refresh_token),
+        authSessionRef: String(claims.session_id || claims.sub),
+        aal: claims.aal,
+        accessTokenExpiresAt: new Date(Number(claims.exp) * 1000).toISOString(),
       });
     },
 

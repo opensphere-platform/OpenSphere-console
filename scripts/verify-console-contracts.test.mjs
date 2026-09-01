@@ -14,7 +14,7 @@ test('foundational Console contracts are internally complete and self-contained'
     schemas: 13,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 13,
+    consoleApiDatabaseFunctions: 16,
     browserApiPatterns: 121,
     browserApiFamilies: 15,
     targetBrowserSessionReady: false,
@@ -34,7 +34,8 @@ test('Console API authority verification rejects missing grants and direct table
   const baselineSource = await readFile(new URL('../migrations/baseline/0001_console_authority.sql', import.meta.url), 'utf8');
   const credentialSource = await readFile(new URL('../migrations/versions/0002_browser_session_credential_envelope.sql', import.meta.url), 'utf8');
   const mfaSource = await readFile(new URL('../migrations/versions/0003_browser_session_mfa_activation.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource].join('\n');
+  const refreshSource = await readFile(new URL('../migrations/versions/0004_browser_session_refresh_rotation.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',

@@ -95,7 +95,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         return send(response, 200, result.body, { 'set-cookie': result.cookies });
       }
       if (url.pathname === '/api/identity/audit' && request.method === 'GET') {
-        const session = await resolveSession(request, { requireCsrf: false });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await auditOperations.list({
           session,
           cursor: url.searchParams.get('cursor'),
@@ -104,19 +104,19 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         }));
       }
       if (url.pathname === '/api/identity/session' && request.method === 'GET') {
-        const session = await resolveSession(request, { requireCsrf: false });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, identityOperations.getSession({ session, correlationId }));
       }
       if (url.pathname === '/api/identity/me' && request.method === 'GET') {
-        const session = await resolveSession(request, { requireCsrf: false });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, identityOperations.getMe({ session, correlationId }));
       }
       if (url.pathname === '/api/identity/supabase/status' && request.method === 'GET') {
-        const session = await resolveSession(request, { requireCsrf: false });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await dataIdentityOperations.getSupabaseStatus({ session, correlationId }));
       }
       if (url.pathname === '/api/identity/session' && request.method === 'DELETE') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         await identityOperations.revokeSession({ session, correlationId });
         return send(response, 204, null, {
           'set-cookie': [
@@ -127,12 +127,12 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       }
       const operationMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})$/);
       if (operationMatch && request.method === 'GET') {
-        const session = await resolveSession(request, { requireCsrf: false });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await operationService.get({ session, operationId: operationMatch[1] }));
       }
       const approvalMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})\/approvals$/);
       if (approvalMatch && request.method === 'POST') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await operationService.approve({
           session,
           operationId: approvalMatch[1],
@@ -147,7 +147,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       }
       const verificationMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})\/verification$/);
       if (verificationMatch && request.method === 'POST') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await operationService.verify({
           session,
           operationId: verificationMatch[1],
@@ -161,7 +161,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
       }
       if (url.pathname === '/api/platform/operations' && request.method === 'POST') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await operationService.accept({
           session,
           request: await jsonBody(request),
@@ -174,11 +174,11 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
       }
       if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr' && request.method === 'GET') {
-        const session = await resolveSession(request, { requireCsrf: false });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await registryOperations.getRegistryConnection({ session, correlationId }));
       }
       if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr' && request.method === 'PUT') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await registryOperations.replaceCredential({
           session,
           body: await jsonBody(request),
@@ -191,7 +191,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
       }
       if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr' && request.method === 'DELETE') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await registryOperations.removeCredential({
           session,
           reason: header(request, 'x-opensphere-reason', 3),
@@ -205,7 +205,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
       }
       if (url.pathname === '/api/admin/extensions/revocations' && request.method === 'POST') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await registryOperations.createRevocation({
           session,
           body: await jsonBody(request),
@@ -218,11 +218,11 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
       }
       if (url.pathname === '/api/admin/extensions/revocations' && request.method === 'GET') {
-        const session = await resolveSession(request, { requireCsrf: false });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await registryOperations.listRevocations({ session, correlationId }));
       }
       if (url.pathname === '/api/admin/extensions/inspect' && request.method === 'POST') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         return send(response, 200, await registryOperations.inspectCandidate({
           session,
           body: await jsonBody(request),
@@ -230,7 +230,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         }));
       }
       if (url.pathname === '/api/admin/extensions/install' && request.method === 'POST') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await registryOperations.installCandidate({
           session,
           body: await jsonBody(request),
@@ -243,7 +243,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
       }
       if (url.pathname === '/api/admin/extensions/remove' && request.method === 'POST') {
-        const session = await resolveSession(request, { requireCsrf: true });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await registryOperations.removeExtension({
           session,
           body: await jsonBody(request),

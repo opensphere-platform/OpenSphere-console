@@ -102,12 +102,33 @@ test('Supabase MFA client binds the verified factor and returns only an aal2 ses
   assert.equal(calls.filter(({ url }) => url.endsWith('/user')).length, 2);
 });
 
+test('Supabase refresh client rotates only to the same verified subject', async () => {
+  const rotatedAccessToken = token({ exp: Math.floor(now.getTime() / 1000) + 3600, session_id: 'auth-session-rotated' });
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', now: () => now,
+    async fetchImpl(url, init) {
+      assert.ok(url.endsWith('/token?grant_type=refresh_token'));
+      assert.deepEqual(JSON.parse(init.body), { refresh_token: 'refresh-before-rotation' });
+      return jsonResponse({
+        access_token: rotatedAccessToken,
+        refresh_token: 'refresh-after-rotation',
+        user: { id: subjectId },
+      });
+    },
+  });
+  const refreshed = await client.refreshSession({ refreshToken: 'refresh-before-rotation', expectedSubjectId: subjectId });
+  assert.equal(refreshed.authSessionRef, 'auth-session-rotated');
+  assert.equal(refreshed.refreshToken, 'refresh-after-rotation');
+  assert.equal(refreshed.accessTokenExpiresAt, '2026-09-02T01:00:00.000Z');
+});
+
 test('password login issues only opaque cookies and persists encrypted credentials', async () => {
   const issued = [];
   const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 9) });
   let randomCounter = 20;
   const broker = createIdentitySessionBroker({
     store: {
+      async resolveSession() { throw new Error('session resolution must not run during password login'); },
       async issueSession(input) {
         issued.push(input);
         return {
@@ -117,15 +138,20 @@ test('password login issues only opaque cookies and persists encrypted credentia
       },
       async getPendingMfa() { throw new Error('pending MFA read must not run during password login'); },
       async activateMfa() { throw new Error('MFA activation must not run during password login'); },
+      async getRefreshCredentials() { throw new Error('refresh read must not run during password login'); },
+      async rotateCredentials() { throw new Error('refresh rotation must not run during password login'); },
+      async rejectRefresh() { throw new Error('refresh rejection must not run during password login'); },
     },
     authClient: {
       async authenticatePassword() {
         return {
           subjectId, accessToken: 'access-secret', refreshToken: 'refresh-secret',
-          authSessionRef: 'auth-session-0001', aal: 'aal1', verifiedTotpFactorId: null,
+          authSessionRef: 'auth-session-0001', aal: 'aal1',
+          accessTokenExpiresAt: '2026-09-02T01:00:00.000Z', verifiedTotpFactorId: null,
         };
       },
       async completeTotp() { throw new Error('MFA completion must not run during password login'); },
+      async refreshSession() { throw new Error('refresh must not run during password login'); },
       async logout() { throw new Error('logout must not run after success'); },
     },
     credentialCipher: cipher,
@@ -155,18 +181,24 @@ test('verified TOTP creates a five-minute pending session and persistence failur
   let logoutToken = '';
   const broker = createIdentitySessionBroker({
     store: {
+      async resolveSession() { throw new Error('session resolution must not run during password login'); },
       async issueSession() { throw Object.assign(new Error('database unavailable'), { code: 'AuthorityUnavailable' }); },
       async getPendingMfa() { throw new Error('pending MFA read must not run during password login'); },
       async activateMfa() { throw new Error('MFA activation must not run during password login'); },
+      async getRefreshCredentials() { throw new Error('refresh read must not run during password login'); },
+      async rotateCredentials() { throw new Error('refresh rotation must not run during password login'); },
+      async rejectRefresh() { throw new Error('refresh rejection must not run during password login'); },
     },
     authClient: {
       async authenticatePassword() {
         return {
           subjectId, accessToken: 'pending-access', refreshToken: 'pending-refresh',
-          authSessionRef: 'auth-session-0002', aal: 'aal1', verifiedTotpFactorId: 'factor-1',
+          authSessionRef: 'auth-session-0002', aal: 'aal1',
+          accessTokenExpiresAt: '2026-09-02T01:00:00.000Z', verifiedTotpFactorId: 'factor-1',
         };
       },
       async completeTotp() { throw new Error('MFA completion must not run during password login'); },
+      async refreshSession() { throw new Error('refresh must not run during password login'); },
       async logout(value) { logoutToken = value; },
     },
     credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 5) }),
@@ -193,6 +225,7 @@ test('pending MFA completion activates the same opaque session and extends both 
   const activated = [];
   const broker = createIdentitySessionBroker({
     store: {
+      async resolveSession() { throw new Error('session resolution must not run during MFA completion'); },
       async issueSession() { throw new Error('password login must not run during MFA completion'); },
       async getPendingMfa(input) {
         assert.equal(input.tokenDigest.length, 32);
@@ -216,6 +249,9 @@ test('pending MFA completion activates the same opaque session and extends both 
           expiresAt: input.expiresAt,
         };
       },
+      async getRefreshCredentials() { throw new Error('refresh read must not run during MFA completion'); },
+      async rotateCredentials() { throw new Error('refresh rotation must not run during MFA completion'); },
+      async rejectRefresh() { throw new Error('refresh rejection must not run during MFA completion'); },
     },
     authClient: {
       async authenticatePassword() { throw new Error('password login must not run during MFA completion'); },
@@ -227,8 +263,10 @@ test('pending MFA completion activates the same opaque session and extends both 
           refreshToken: 'aal2-refresh',
           authSessionRef: 'auth-session-aal2',
           aal: 'aal2',
+          accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
         };
       },
+      async refreshSession() { throw new Error('refresh must not run during MFA completion'); },
       async logout() { throw new Error('logout must not run after success'); },
     },
     credentialCipher: cipher,
@@ -254,6 +292,103 @@ test('pending MFA completion activates the same opaque session and extends both 
   assert.equal(cipher.decrypt(activated[0].accessTokenCiphertext), 'aal2-access');
   assert.equal(cipher.decrypt(activated[0].refreshTokenCiphertext), 'aal2-refresh');
   assert.equal(activated[0].authSessionRef, 'auth-session-aal2');
+});
+
+function refreshBrokerFixture({ refreshResult, wait } = {}) {
+  const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 4) });
+  const record = {
+    sessionId, subjectId, expiresAt: '2026-09-03T00:00:00.000Z', revokedAt: null,
+    authorityFresh: true, permissions: ['console.audit.read'], permissionRevision: '7', revokeEpoch: '2',
+    aal: 'aal1', accessTokenExpiresAt: '2026-09-01T23:59:59.000Z',
+  };
+  const refreshCiphertext = cipher.encrypt('refresh-before-rotation');
+  const calls = { rotate: [], reject: [] };
+  const store = {
+    async issueSession() { throw new Error('login must not run during refresh'); },
+    async getPendingMfa() { throw new Error('MFA must not run during refresh'); },
+    async activateMfa() { throw new Error('MFA must not run during refresh'); },
+    async resolveSession() { return { ...record }; },
+    async getRefreshCredentials() {
+      return { sessionId, subjectId, refreshTokenCiphertext: refreshCiphertext };
+    },
+    async rotateCredentials(input) {
+      calls.rotate.push(input);
+      record.accessTokenExpiresAt = input.accessTokenExpiresAt;
+      record.aal = input.aal;
+      return { outcome: 'rotated' };
+    },
+    async rejectRefresh(input) { calls.reject.push(input); return { outcome: 'rejected' }; },
+  };
+  const authClient = {
+    async authenticatePassword() { throw new Error('login must not run during refresh'); },
+    async completeTotp() { throw new Error('MFA must not run during refresh'); },
+    async refreshSession(input) {
+      assert.deepEqual(input, { refreshToken: 'refresh-before-rotation', expectedSubjectId: subjectId });
+      if (refreshResult instanceof Error) throw refreshResult;
+      return refreshResult || {
+        subjectId, accessToken: 'access-after-rotation', refreshToken: 'refresh-after-rotation',
+        authSessionRef: 'auth-session-rotated', aal: 'aal1',
+        accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
+      };
+    },
+    async logout() {},
+  };
+  return {
+    broker: createIdentitySessionBroker({
+      store, authClient, credentialCipher: cipher, publicOrigin: 'https://console.example.test',
+      clock: () => now, ...(wait ? { wait } : {}),
+    }),
+    record, calls, cipher,
+  };
+}
+
+test('expired access credential rotates server-side before returning the session projection', async () => {
+  const { broker, calls, cipher } = refreshBrokerFixture();
+  const resolved = await broker.resolveSession({
+    headers: { cookie: '__Host-opensphere-session=opaque-session-handle-for-refresh-rotation' },
+  }, { requireCsrf: false, correlationId: 'session-refresh-correlation-0001' });
+  assert.equal(resolved.subjectId, subjectId);
+  assert.equal(resolved.accessTokenExpiresAt, '2026-09-02T01:00:00.000Z');
+  assert.equal(calls.rotate.length, 1);
+  assert.equal(calls.reject.length, 0);
+  assert.equal(cipher.decrypt(calls.rotate[0].accessTokenCiphertext), 'access-after-rotation');
+  assert.equal(cipher.decrypt(calls.rotate[0].refreshTokenCiphertext), 'refresh-after-rotation');
+  assert.equal(calls.rotate[0].expectedRefreshCiphertextDigest.length, 32);
+});
+
+test('transient refresh outage preserves the active browser session without a database mutation', async () => {
+  const error = Object.assign(new Error('Supabase unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+  const { broker, calls } = refreshBrokerFixture({ refreshResult: error });
+  await assert.rejects(broker.resolveSession({
+    headers: { cookie: '__Host-opensphere-session=opaque-session-handle-for-refresh-outage' },
+  }, { requireCsrf: false, correlationId: 'session-refresh-outage-0001' }), { code: 'AuthorityUnavailable' });
+  assert.equal(calls.rotate.length, 0);
+  assert.equal(calls.reject.length, 0);
+});
+
+test('explicit refresh rejection adopts a peer rotation before considering revocation', async () => {
+  const error = Object.assign(new Error('refresh rejected'), { code: 'RefreshRejected', status: 401 });
+  let fixture;
+  fixture = refreshBrokerFixture({
+    refreshResult: error,
+    async wait() { fixture.record.accessTokenExpiresAt = '2026-09-02T01:00:00.000Z'; },
+  });
+  const resolved = await fixture.broker.resolveSession({
+    headers: { cookie: '__Host-opensphere-session=opaque-session-handle-for-peer-refresh' },
+  }, { requireCsrf: false, correlationId: 'session-refresh-peer-0001' });
+  assert.equal(resolved.accessTokenExpiresAt, '2026-09-02T01:00:00.000Z');
+  assert.equal(fixture.calls.reject.length, 0);
+});
+
+test('explicit refresh rejection revokes only when the durable ciphertext is still current', async () => {
+  const error = Object.assign(new Error('refresh rejected'), { code: 'RefreshRejected', status: 401 });
+  const { broker, calls } = refreshBrokerFixture({ refreshResult: error, wait: async () => {} });
+  await assert.rejects(broker.resolveSession({
+    headers: { cookie: '__Host-opensphere-session=opaque-session-handle-for-rejected-refresh' },
+  }, { requireCsrf: false, correlationId: 'session-refresh-rejected-0001' }), { code: 'AuthenticationRequired' });
+  assert.equal(calls.rotate.length, 0);
+  assert.equal(calls.reject.length, 1);
+  assert.equal(calls.reject[0].expectedRefreshCiphertextDigest.length, 32);
 });
 
 test('HTTP login forwards exact Origin and returns both Secure cookies', async (t) => {
