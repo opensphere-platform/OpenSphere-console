@@ -48,6 +48,11 @@ test('baseline migration declares separated authority schemas, RLS and append-on
   for (const schema of ['console_identity', 'console_operation', 'console_audit']) assert.match(sql, new RegExp(`CREATE SCHEMA ${schema}`, 'i'));
   assert.match(sql, /ENABLE ROW LEVEL SECURITY/i);
   assert.match(sql, /CREATE POLICY browser_session_self_read/i);
+  assert.match(sql, /CREATE TABLE console_identity\.subject_authority/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity\.resolve_browser_session/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.accept_operation/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION console_operation\.accept_operation/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_audit\.append_event_internal/i);
   assert.match(sql, /CREATE TRIGGER audit_event_immutable/i);
   assert.match(sql, /CREATE TRIGGER audit_event_no_truncate/i);
   assert.doesNotMatch(sql, /service_role/i);

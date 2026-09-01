@@ -28,6 +28,7 @@ export async function verifyContracts(repoRoot = process.cwd()) {
   const root = resolve(repoRoot);
   const contractRoot = resolve(root, 'packages', 'contracts');
   const denominator = await json(resolve(contractRoot, 'contract-denominator.json'));
+  const actionCatalog = await json(resolve(contractRoot, 'action-policies.json'));
   const boundary = await json(resolve(root, 'apps', 'component-boundaries.json'));
   const openapi = yaml.load(await readFile(resolve(contractRoot, 'openapi', 'console-v1.yaml'), 'utf8'));
   const schemas = await readdir(resolve(contractRoot, 'schemas'));
@@ -43,6 +44,24 @@ export async function verifyContracts(repoRoot = process.cwd()) {
     'OpenAPI operations differ from contract-denominator.json',
   );
 
+  assert(actionCatalog.schemaVersion === '1.0', 'action policy catalog schemaVersion must be 1.0');
+  assert(actionCatalog.policyRevision, 'action policy catalog has no policyRevision');
+  const actionPolicies = actionCatalog.actions || [];
+  const actionPolicyIds = actionPolicies.map((policy) => `${policy.actionId}@${policy.actionVersion}`);
+  assert(new Set(actionPolicyIds).size === actionPolicyIds.length, 'action policy identities must be unique');
+  assert(
+    JSON.stringify([...actionPolicyIds].sort()) === JSON.stringify([...(denominator.requiredActionPolicies || [])].sort()),
+    'action policies differ from contract-denominator.json',
+  );
+  for (const policy of actionPolicies) {
+    assert(policy.requirement?.startsWith('CON-FR-'), `${policy.actionId} has no CON-FR trace`);
+    assert(policy.permission, `${policy.actionId} has no permission`);
+    assert(['R0', 'R1', 'R2', 'R3'].includes(policy.risk), `${policy.actionId} has invalid risk`);
+    assert(typeof policy.approvalRequired === 'boolean', `${policy.actionId} has no approval rule`);
+    assert(policy.ownerRef, `${policy.actionId} has no owner`);
+    assert(policy.targetPattern, `${policy.actionId} has no target boundary`);
+  }
+
   for (const { path, method, operation } of entries) {
     assert(operation.operationId, method.toUpperCase() + ' ' + path + ' has no operationId');
     assert(operation['x-opensphere-requirement'], operation.operationId + ' has no CON-FR trace');
@@ -55,6 +74,14 @@ export async function verifyContracts(repoRoot = process.cwd()) {
         operation.operationId + ' has no CSRF contract',
       );
     }
+    if (operation['x-opensphere-action']) {
+      assert(actionPolicyIds.includes(operation['x-opensphere-action']), operation.operationId + ' references an unknown action policy');
+    }
+  }
+
+  const referencedActions = entries.map(({ operation }) => operation['x-opensphere-action']).filter(Boolean);
+  for (const actionPolicyId of actionPolicyIds) {
+    assert(referencedActions.includes(actionPolicyId), actionPolicyId + ' is not referenced by OpenAPI');
   }
 
   for (const schema of denominator.requiredSchemas) {
@@ -83,6 +110,7 @@ export async function verifyContracts(repoRoot = process.cwd()) {
     status: 'passed',
     contractStatus: denominator.status,
     operations: entries.length,
+    actionPolicies: actionPolicies.length,
     schemas: denominator.requiredSchemas.length,
     components: boundary.components.length,
   };

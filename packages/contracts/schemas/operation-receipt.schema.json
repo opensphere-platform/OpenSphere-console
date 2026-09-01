@@ -6,8 +6,9 @@
   "additionalProperties": false,
   "required": [
     "schemaVersion", "operationId", "actionId", "actionVersion", "actorRef", "targetRef",
-    "payloadDigest", "risk", "planRevision", "idempotencyKey", "state", "createdAt",
-    "updatedAt", "correlationId"
+    "requiredPermission", "payloadDigest", "requestDigest", "risk", "permissionRevision",
+    "approvalRequired", "planRevision", "idempotencyKey", "state", "stateVersion",
+    "createdAt", "updatedAt", "correlationId"
   ],
   "properties": {
     "schemaVersion": { "const": "1.0" },
@@ -16,10 +17,14 @@
     "actionVersion": { "type": "string", "minLength": 1 },
     "actorRef": { "type": "string", "minLength": 1 },
     "targetRef": { "type": "string", "minLength": 1 },
+    "requiredPermission": { "type": "string", "pattern": "^[a-z][a-z0-9_.:-]{2,127}$" },
     "payloadDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "requestDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "reason": { "type": "string" },
     "risk": { "enum": ["R0", "R1", "R2", "R3"] },
     "aal": { "type": "string" },
+    "permissionRevision": { "type": "string", "pattern": "^[0-9]+$" },
+    "approvalRequired": { "type": "boolean" },
     "approvalRevision": { "type": ["string", "null"] },
     "planRevision": { "type": "string", "minLength": 1 },
     "idempotencyKey": { "type": "string", "minLength": 1 },
@@ -28,6 +33,7 @@
     "state": {
       "enum": ["Planned", "Authorized", "Submitted", "Reconciling", "Applied", "Verified", "Failed", "Unknown", "RolledBack"]
     },
+    "stateVersion": { "type": "integer", "minimum": 0 },
     "expectedPostcondition": { "type": ["object", "null"] },
     "observedPostcondition": { "type": ["object", "null"] },
     "error": { "type": ["object", "null"] },

@@ -104,6 +104,7 @@ paths:
       x-opensphere-requirement: CON-FR-010
       x-opensphere-risk: request-defined
       x-opensphere-idempotency: required
+      x-opensphere-action-policy: packages/contracts/action-policies.json
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -200,6 +201,7 @@ paths:
       x-opensphere-risk: R2
       x-opensphere-assurance: aal2
       x-opensphere-idempotency: required
+      x-opensphere-action: console.registry.connection.replace@1.0
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -210,7 +212,7 @@ paths:
             schema: { $ref: "../schemas/registry-credential-write.schema.json" }
       responses:
         "202":
-          description: Candidate credential verified and durable replacement operation accepted
+          description: Credential replacement intent durably accepted; no owner-side replacement success is implied
           content:
             application/json:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }
@@ -224,9 +226,11 @@ paths:
       x-opensphere-risk: R2
       x-opensphere-assurance: aal2
       x-opensphere-idempotency: required
+      x-opensphere-action: console.registry.connection.remove@1.0
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/OperationReason"
         - name: X-OpenSphere-Confirmation
           in: header
           required: true
@@ -277,6 +281,7 @@ paths:
       x-opensphere-risk: R2
       x-opensphere-assurance: aal2
       x-opensphere-idempotency: required
+      x-opensphere-action: console.extension.revocation.create@1.0
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -321,6 +326,7 @@ paths:
       x-opensphere-risk: R2
       x-opensphere-assurance: aal2
       x-opensphere-idempotency: required
+      x-opensphere-action: console.extension.install@1.0
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -353,7 +359,12 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      schema: { type: string, minLength: 8, maxLength: 128 }
+      schema: { type: string, minLength: 8, maxLength: 256 }
+    OperationReason:
+      name: X-OpenSphere-Reason
+      in: header
+      required: true
+      schema: { type: string, minLength: 3, maxLength: 500 }
     OperationId:
       name: operationId
       in: path

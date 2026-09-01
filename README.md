@@ -28,6 +28,8 @@ backend/               legacy runtime implementations during controlled migratio
 
 `src/` and `backend/` remain migration sources until each capability passes its new contract and acceptance gate. New cross-capability contracts belong in `packages/contracts`; new code must not import another repository's source tree.
 
+The first `apps/console-api` slice now implements opaque session/CSRF digest resolution, current permission and revoke revision checks, governed Registry action mapping, and atomic operation/audit/outbox acceptance. It runs alongside the legacy Backend until owner dispatch, approvals, route coverage, and cutover gates are complete.
+
 ## Local validation
 
 ```powershell

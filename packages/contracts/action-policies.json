@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "1.0",
+  "policyRevision": "console-operation-policy-2026-09-01.1",
+  "actions": [
+    {
+      "actionId": "console.registry.connection.replace",
+      "actionVersion": "1.0",
+      "requirement": "CON-FR-008",
+      "permission": "console.registry.manage",
+      "risk": "R2",
+      "approvalRequired": false,
+      "ownerRef": "C_EXT",
+      "targetPattern": "^registry-connection:opensphere-ghcr$"
+    },
+    {
+      "actionId": "console.registry.connection.remove",
+      "actionVersion": "1.0",
+      "requirement": "CON-FR-008",
+      "permission": "console.registry.manage",
+      "risk": "R2",
+      "approvalRequired": false,
+      "ownerRef": "C_EXT",
+      "targetPattern": "^registry-connection:opensphere-ghcr$"
+    },
+    {
+      "actionId": "console.extension.revocation.create",
+      "actionVersion": "1.0",
+      "requirement": "CON-FR-008",
+      "permission": "console.extension.revoke",
+      "risk": "R2",
+      "approvalRequired": true,
+      "ownerRef": "C_EXT",
+      "targetPattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$"
+    },
+    {
+      "actionId": "console.extension.install",
+      "actionVersion": "1.0",
+      "requirement": "CON-FR-008",
+      "permission": "console.extension.install",
+      "risk": "R2",
+      "approvalRequired": true,
+      "ownerRef": "C_EXT",
+      "targetPattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ test('foundational Console contracts are internally complete and self-contained'
     status: 'passed',
     contractStatus: 'foundational-slice',
     operations: 16,
+    actionPolicies: 4,
     schemas: 7,
     components: 10,
   });

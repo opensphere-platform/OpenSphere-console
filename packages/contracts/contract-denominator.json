@@ -24,6 +24,12 @@
     "inspectExtensionCandidate",
     "installExtensionCandidate"
   ],
+  "requiredActionPolicies": [
+    "console.registry.connection.replace@1.0",
+    "console.registry.connection.remove@1.0",
+    "console.extension.revocation.create@1.0",
+    "console.extension.install@1.0"
+  ],
   "requiredSchemas": [
     "error-envelope.schema.json",
     "operation-receipt.schema.json",

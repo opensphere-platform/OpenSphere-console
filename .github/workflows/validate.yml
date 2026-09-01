@@ -46,6 +46,13 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/supabase-test-prerequisites.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/0001_console_authority.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/0001_console_authority.verify.sql
+      - name: Verify Console API through PostgreSQL
+        env:
+          CONSOLE_DATABASE_URL: postgresql://console_api_runtime:console-runtime-test@localhost:5432/postgres
+          CONSOLE_TEST_ADMIN_DATABASE_URL: postgresql://postgres:console-test@localhost:5432/postgres
+        run: |
+          npm ci --prefix apps/console-api --no-audit --no-fund
+          node scripts/verify-console-api-postgres-e2e.mjs
       - name: Verify deterministic Manual seed
         run: |
           npm run manual:seed
@@ -54,6 +61,8 @@ jobs:
         run: npm test
       - name: Build production Web
         run: npm run build -- --configuration production
+      - name: Build target Console API image
+        run: docker build --file apps/console-api/Dockerfile --tag opensphere-console-api:validation .
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
