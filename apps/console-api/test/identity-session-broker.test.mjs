@@ -55,7 +55,11 @@ test('Supabase password client revalidates the returned subject and detects veri
         return jsonResponse({ access_token: accessToken, refresh_token: 'refresh-credential' });
       }
       if (url.endsWith('/user')) {
-        return jsonResponse({ id: subjectId, factors: [{ id: 'factor-1', factor_type: 'totp', status: 'verified' }] });
+        return jsonResponse({
+          id: subjectId,
+          user_metadata: { console_session_persistence: '7d' },
+          factors: [{ id: 'factor-1', factor_type: 'totp', status: 'verified' }],
+        });
       }
       if (url.endsWith('/logout')) return jsonResponse({});
       return jsonResponse({}, 404);
@@ -65,6 +69,7 @@ test('Supabase password client revalidates the returned subject and detects veri
   assert.equal(result.subjectId, subjectId);
   assert.equal(result.verifiedTotpFactorId, 'factor-1');
   assert.equal(result.authSessionRef, 'auth-session-0001');
+  assert.equal(result.sessionPersistence, '7d');
   assert.equal(calls[0].init.redirect, 'error');
   assert.equal(calls[1].init.headers.authorization, 'Bearer ' + accessToken);
 });
@@ -133,7 +138,10 @@ test('password login issues only opaque cookies and persists encrypted credentia
         issued.push(input);
         return {
           sessionId, subjectId, state: 'active', aal: 'aal1',
-          createdAt: now.toISOString(), lastSeenAt: now.toISOString(), expiresAt: input.expiresAt,
+          persistence: input.persistence,
+          createdAt: now.toISOString(), lastSeenAt: now.toISOString(),
+          idleExpiresAt: new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString(),
+          absoluteExpiresAt: input.absoluteExpiresAt,
         };
       },
       async getPendingMfa() { throw new Error('pending MFA read must not run during password login'); },
@@ -141,6 +149,7 @@ test('password login issues only opaque cookies and persists encrypted credentia
       async getRefreshCredentials() { throw new Error('refresh read must not run during password login'); },
       async rotateCredentials() { throw new Error('refresh rotation must not run during password login'); },
       async rejectRefresh() { throw new Error('refresh rejection must not run during password login'); },
+      async touchActivity() { throw new Error('activity touch must not run during password login'); },
     },
     authClient: {
       async authenticatePassword() {
@@ -175,6 +184,60 @@ test('password login issues only opaque cookies and persists encrypted credentia
   assert.equal(issued[0].tokenDigest.length, 32);
   assert.equal(issued[0].csrfTokenDigest.length, 32);
   assert.equal(issued[0].pendingMfa, false);
+  assert.equal(issued[0].persistence, '24h');
+  assert.equal(issued[0].absoluteExpiresAt, '2026-09-03T00:00:00.000Z');
+  assert.equal(result.body.session.idleExpiresAt, '2026-09-02T12:00:00.000Z');
+  assert.equal(result.body.session.absoluteExpiresAt, '2026-09-03T00:00:00.000Z');
+  assert.match(result.cookies[0], /Max-Age=86400/);
+});
+
+test('browser persistence keeps cookies session-only while retaining a bounded 24-hour authority lifetime', async () => {
+  let issuedInput;
+  const broker = createIdentitySessionBroker({
+    store: {
+      async resolveSession() { throw new Error('resolve must not run'); },
+      async issueSession(input) {
+        issuedInput = input;
+        return {
+          sessionId, subjectId, state: 'active', aal: 'aal1', persistence: input.persistence,
+          createdAt: now.toISOString(), lastSeenAt: now.toISOString(),
+          idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: input.absoluteExpiresAt,
+        };
+      },
+      async getPendingMfa() { throw new Error('MFA must not run'); },
+      async activateMfa() { throw new Error('MFA must not run'); },
+      async getRefreshCredentials() { throw new Error('refresh must not run'); },
+      async rotateCredentials() { throw new Error('refresh must not run'); },
+      async rejectRefresh() { throw new Error('refresh must not run'); },
+      async touchActivity() { throw new Error('touch must not run'); },
+    },
+    authClient: {
+      async authenticatePassword() {
+        return {
+          subjectId, accessToken: 'access-secret', refreshToken: 'refresh-secret',
+          authSessionRef: 'auth-session-browser', aal: 'aal1',
+          accessTokenExpiresAt: '2026-09-02T01:00:00.000Z', sessionPersistence: 'browser',
+          verifiedTotpFactorId: null,
+        };
+      },
+      async completeTotp() { throw new Error('MFA must not run'); },
+      async refreshSession() { throw new Error('refresh must not run'); },
+      async logout() {},
+    },
+    credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 11) }),
+    publicOrigin: 'https://console.example.test',
+    randomBytes: (size) => Buffer.alloc(size, 12),
+    clock: () => now,
+  });
+  const result = await broker.login({
+    body: { email: 'operator@example.test', password: 'valid-password' },
+    requestOrigin: 'https://console.example.test',
+    correlationId: 'session-login-browser-policy-0001',
+  });
+  assert.equal(issuedInput.persistence, 'browser');
+  assert.equal(issuedInput.absoluteExpiresAt, '2026-09-03T00:00:00.000Z');
+  assert.equal(result.body.session.idleExpiresAt, '2026-09-02T12:00:00.000Z');
+  assert.equal(result.cookies.every((value) => !value.includes('Max-Age=')), true);
 });
 
 test('verified TOTP creates a five-minute pending session and persistence failure logs out upstream', async () => {
@@ -188,6 +251,7 @@ test('verified TOTP creates a five-minute pending session and persistence failur
       async getRefreshCredentials() { throw new Error('refresh read must not run during password login'); },
       async rotateCredentials() { throw new Error('refresh rotation must not run during password login'); },
       async rejectRefresh() { throw new Error('refresh rejection must not run during password login'); },
+      async touchActivity() { throw new Error('activity touch must not run during password login'); },
     },
     authClient: {
       async authenticatePassword() {
@@ -237,6 +301,8 @@ test('pending MFA completion activates the same opaque session and extends both 
           refreshTokenCiphertext: cipher.encrypt('pending-refresh'),
           authSessionRef: 'auth-session-pending',
           aal: 'aal1',
+          persistence: '24h',
+          absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
         };
       },
       async activateMfa(input) {
@@ -246,12 +312,15 @@ test('pending MFA completion activates the same opaque session and extends both 
           subjectId,
           state: 'active',
           aal: 'aal2',
-          expiresAt: input.expiresAt,
+          persistence: '24h',
+          idleExpiresAt: '2026-09-02T12:00:00.000Z',
+          absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
         };
       },
       async getRefreshCredentials() { throw new Error('refresh read must not run during MFA completion'); },
       async rotateCredentials() { throw new Error('refresh rotation must not run during MFA completion'); },
       async rejectRefresh() { throw new Error('refresh rejection must not run during MFA completion'); },
+      async touchActivity() { throw new Error('activity touch must not run during MFA completion'); },
     },
     authClient: {
       async authenticatePassword() { throw new Error('password login must not run during MFA completion'); },
@@ -292,12 +361,15 @@ test('pending MFA completion activates the same opaque session and extends both 
   assert.equal(cipher.decrypt(activated[0].accessTokenCiphertext), 'aal2-access');
   assert.equal(cipher.decrypt(activated[0].refreshTokenCiphertext), 'aal2-refresh');
   assert.equal(activated[0].authSessionRef, 'auth-session-aal2');
+  assert.equal(Object.hasOwn(activated[0], 'expiresAt'), false);
 });
 
 function refreshBrokerFixture({ refreshResult, wait } = {}) {
   const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 4) });
   const record = {
-    sessionId, subjectId, expiresAt: '2026-09-03T00:00:00.000Z', revokedAt: null,
+    sessionId, subjectId,
+    idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+    persistence: '24h', lastSeenAt: now.toISOString(), createdAt: now.toISOString(), revokedAt: null,
     authorityFresh: true, permissions: ['console.audit.read'], permissionRevision: '7', revokeEpoch: '2',
     aal: 'aal1', accessTokenExpiresAt: '2026-09-01T23:59:59.000Z',
   };
@@ -318,6 +390,7 @@ function refreshBrokerFixture({ refreshResult, wait } = {}) {
       return { outcome: 'rotated' };
     },
     async rejectRefresh(input) { calls.reject.push(input); return { outcome: 'rejected' }; },
+    async touchActivity() { throw new Error('activity touch must not run during refresh'); },
   };
   const authClient = {
     async authenticatePassword() { throw new Error('login must not run during refresh'); },
@@ -391,6 +464,50 @@ test('explicit refresh rejection revokes only when the durable ciphertext is sti
   assert.equal(calls.reject[0].expectedRefreshCiphertextDigest.length, 32);
 });
 
+test('trusted activity touch sends only opaque proof digests and returns bounded expiry fields', async () => {
+  let proof;
+  const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 3) });
+  const store = {
+    async resolveSession() { throw new Error('resolve must not run'); },
+    async issueSession() { throw new Error('login must not run'); },
+    async getPendingMfa() { throw new Error('MFA must not run'); },
+    async activateMfa() { throw new Error('MFA must not run'); },
+    async getRefreshCredentials() { throw new Error('refresh must not run'); },
+    async rotateCredentials() { throw new Error('refresh must not run'); },
+    async rejectRefresh() { throw new Error('refresh must not run'); },
+    async touchActivity(input) {
+      proof = input;
+      return {
+        sessionId, subjectId, state: 'active', aal: 'aal1', persistence: '7d',
+        createdAt: now.toISOString(), lastSeenAt: '2026-09-02T00:02:00.000Z',
+        idleExpiresAt: '2026-09-02T12:02:00.000Z', absoluteExpiresAt: '2026-09-09T00:00:00.000Z',
+      };
+    },
+  };
+  const broker = createIdentitySessionBroker({
+    store,
+    authClient: {
+      async authenticatePassword() { throw new Error('login must not run'); },
+      async completeTotp() { throw new Error('MFA must not run'); },
+      async refreshSession() { throw new Error('refresh must not run'); },
+      async logout() {},
+    },
+    credentialCipher: cipher,
+    publicOrigin: 'https://console.example.test',
+    clock: () => now,
+  });
+  const session = await broker.touchActivity({ headers: {
+    cookie: '__Host-opensphere-session=opaque-activity-handle-that-is-long-enough',
+    'x-os-csrf-token': 'opaque-activity-csrf-proof',
+  } });
+  assert.equal(proof.tokenDigest.length, 32);
+  assert.equal(proof.csrfTokenDigest.length, 32);
+  assert.doesNotMatch(JSON.stringify(proof), /opaque-activity/);
+  assert.equal(session.persistence, '7d');
+  assert.equal(session.idleExpiresAt, '2026-09-02T12:02:00.000Z');
+  assert.equal(session.absoluteExpiresAt, '2026-09-09T00:00:00.000Z');
+});
+
 test('HTTP login forwards exact Origin and returns both Secure cookies', async (t) => {
   const calls = [];
   const server = createServer(createConsoleApiHandler({
@@ -454,4 +571,41 @@ test('HTTP MFA completion preserves the request proof and returns refreshed cook
   assert.equal(response.headers.getSetCookie().length, 2);
   assert.equal(calls[0].request.headers['x-os-csrf-token'], 'csrf-proof-for-mfa-completion');
   assert.deepEqual(calls[0].body, { code: '123456' });
+});
+
+test('HTTP activity touch requires an exact empty body and forwards the CSRF-bound request', async (t) => {
+  const calls = [];
+  const projection = {
+    id: sessionId, current: true, status: 'active', assurance: 'aal1', persistence: '24h',
+    createdAt: now.toISOString(), lastSeenAt: now.toISOString(),
+    idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+    userAgentDigest: null,
+  };
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('generic resolution must not run during touch'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async touchActivity(request) { calls.push(request); return projection; },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const endpoint = 'http://127.0.0.1:' + server.address().port + '/api/identity/session/touch';
+  const valid = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      cookie: '__Host-opensphere-session=opaque',
+      'x-os-csrf-token': 'csrf-proof-for-activity-touch',
+      'content-type': 'application/json',
+    },
+    body: '{}',
+  });
+  assert.equal(valid.status, 200);
+  assert.deepEqual(await valid.json(), { session: projection });
+  assert.equal(calls[0].headers['x-os-csrf-token'], 'csrf-proof-for-activity-touch');
+  const invalid = await fetch(endpoint, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"extend":true}',
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal(calls.length, 1);
 });

@@ -94,6 +94,14 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
         return send(response, 200, result.body, { 'set-cookie': result.cookies });
       }
+      if (url.pathname === '/api/identity/session/touch' && request.method === 'POST') {
+        if (!identitySessionBroker?.touchActivity) throw Object.assign(new Error('target session activity is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const body = await jsonBody(request);
+        if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) {
+          throw Object.assign(new Error('session activity body must be an empty object'), { code: 'ValidationFailed', status: 400 });
+        }
+        return send(response, 200, { session: await identitySessionBroker.touchActivity(request) });
+      }
       if (url.pathname === '/api/identity/audit' && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await auditOperations.list({

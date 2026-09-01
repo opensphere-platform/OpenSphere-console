@@ -1,9 +1,21 @@
 import { createHash, randomBytes as systemRandomBytes } from 'node:crypto';
 import { createDatabaseSessionResolver, readBrowserSessionProof } from './session-resolver.mjs';
 
-const ACTIVE_TTL_MS = 24 * 60 * 60 * 1000;
 const PENDING_MFA_TTL_MS = 5 * 60 * 1000;
+const IDLE_TTL_MS = 12 * 60 * 60 * 1000;
 const REFRESH_WINDOW_MS = 30 * 1000;
+const SESSION_DURATION_MS = Object.freeze({
+  browser: 24 * 60 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '4h': 4 * 60 * 60 * 1000,
+  '8h': 8 * 60 * 60 * 1000,
+  '12h': 12 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '3d': 3 * 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '14d': 14 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+});
 
 function fail(code, message, status) {
   throw Object.assign(new Error(message), { code, status });
@@ -25,15 +37,23 @@ function credentials(body) {
   return { email, password };
 }
 
-function cookie(name, value, maxAge, httpOnly = false) {
+function cookie(name, value, maxAge, httpOnly = false, persistent = true) {
   return [
     `${name}=${encodeURIComponent(value)}`,
     'Path=/',
     ...(httpOnly ? ['HttpOnly'] : []),
     'Secure',
     'SameSite=Strict',
-    `Max-Age=${Math.floor(maxAge / 1000)}`,
+    ...(persistent ? [`Max-Age=${Math.floor(maxAge / 1000)}`] : []),
   ].join('; ');
+}
+
+function sessionPersistence(value) {
+  const persistence = value == null ? '24h' : String(value);
+  if (!Object.hasOwn(SESSION_DURATION_MS, persistence)) {
+    fail('AuthorityUnavailable', 'Supabase Auth returned an invalid session persistence policy', 503);
+  }
+  return persistence;
 }
 
 export function createIdentitySessionBroker({
@@ -48,6 +68,7 @@ export function createIdentitySessionBroker({
   if (!store?.issueSession) throw new TypeError('session issue store is required');
   if (!store?.getPendingMfa || !store?.activateMfa) throw new TypeError('session MFA store is required');
   if (!store?.getRefreshCredentials || !store?.rotateCredentials || !store?.rejectRefresh) throw new TypeError('session refresh store is required');
+  if (!store?.touchActivity) throw new TypeError('session activity store is required');
   if (!authClient?.authenticatePassword || !authClient?.completeTotp || !authClient?.refreshSession || !authClient?.logout) throw new TypeError('Supabase Auth client is required');
   if (!credentialCipher?.encrypt || !credentialCipher?.decrypt) throw new TypeError('session credential cipher is required');
   if (typeof randomBytes !== 'function') throw new TypeError('secure random byte source is required');
@@ -83,8 +104,9 @@ export function createIdentitySessionBroker({
       const csrf = Buffer.from(randomBytes(24)).toString('base64url');
       if (handle.length !== 43 || csrf.length !== 32) fail('AuthorityUnavailable', 'secure random byte source failed', 503);
       const pendingMfa = Boolean(auth.verifiedTotpFactorId) && auth.aal !== 'aal2';
-      const ttl = pendingMfa ? PENDING_MFA_TTL_MS : ACTIVE_TTL_MS;
-      const expiresAt = new Date(clock().getTime() + ttl);
+      const persistence = sessionPersistence(auth.sessionPersistence);
+      const absoluteTtl = SESSION_DURATION_MS[persistence];
+      const absoluteExpiresAt = new Date(clock().getTime() + absoluteTtl);
       let issued;
       try {
         issued = await store.issueSession({
@@ -96,7 +118,8 @@ export function createIdentitySessionBroker({
           authSessionRef: auth.authSessionRef,
           aal: auth.aal,
           accessTokenExpiresAt: auth.accessTokenExpiresAt,
-          expiresAt: expiresAt.toISOString(),
+          absoluteExpiresAt: absoluteExpiresAt.toISOString(),
+          persistence,
           pendingMfa,
           correlationId,
         });
@@ -113,17 +136,17 @@ export function createIdentitySessionBroker({
         current: true,
         status: issued.state,
         assurance: issued.aal,
-        persistence: '24h',
+        persistence: issued.persistence,
         createdAt: issued.createdAt,
         lastSeenAt: issued.lastSeenAt,
-        idleExpiresAt: issued.expiresAt,
-        absoluteExpiresAt: issued.expiresAt,
+        idleExpiresAt: issued.idleExpiresAt,
+        absoluteExpiresAt: issued.absoluteExpiresAt,
         userAgentDigest: null,
       });
       return Object.freeze({
         cookies: Object.freeze([
-          cookie('__Host-opensphere-session', handle, ttl, true),
-          cookie('__Host-opensphere_csrf', csrf, ttl),
+          cookie('__Host-opensphere-session', handle, pendingMfa ? PENDING_MFA_TTL_MS : absoluteTtl, true, pendingMfa || persistence !== 'browser'),
+          cookie('__Host-opensphere_csrf', csrf, pendingMfa ? PENDING_MFA_TTL_MS : absoluteTtl, false, pendingMfa || persistence !== 'browser'),
         ]),
         body: Object.freeze({
           mfaRequired: pendingMfa,
@@ -153,7 +176,6 @@ export function createIdentitySessionBroker({
         code: String(body.code),
         expectedSubjectId: pending.subjectId,
       });
-      const expiresAt = new Date(clock().getTime() + ACTIVE_TTL_MS);
       let activated;
       try {
         activated = await store.activateMfa({
@@ -164,7 +186,6 @@ export function createIdentitySessionBroker({
           refreshTokenCiphertext: credentialCipher.encrypt(completed.refreshToken),
           authSessionRef: completed.authSessionRef,
           accessTokenExpiresAt: completed.accessTokenExpiresAt,
-          expiresAt: expiresAt.toISOString(),
           correlationId,
         });
       } catch (error) {
@@ -178,10 +199,37 @@ export function createIdentitySessionBroker({
       }
       return Object.freeze({
         cookies: Object.freeze([
-          cookie('__Host-opensphere-session', proof.handle, ACTIVE_TTL_MS, true),
-          cookie('__Host-opensphere_csrf', proof.csrf, ACTIVE_TTL_MS),
+          cookie('__Host-opensphere-session', proof.handle,
+            Math.max(0, new Date(pending.absoluteExpiresAt).getTime() - clock().getTime()), true,
+            pending.persistence !== 'browser'),
+          cookie('__Host-opensphere_csrf', proof.csrf,
+            Math.max(0, new Date(pending.absoluteExpiresAt).getTime() - clock().getTime()), false,
+            pending.persistence !== 'browser'),
         ]),
         body: Object.freeze({ assurance: 'aal2', sessionId: activated.sessionId }),
+      });
+    },
+
+    async touchActivity(request) {
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const session = await store.touchActivity({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+      });
+      if (!session?.sessionId || session.state !== 'active') {
+        fail('AuthorityUnavailable', 'session activity authority returned an invalid record', 503);
+      }
+      return Object.freeze({
+        id: session.sessionId,
+        current: true,
+        status: 'active',
+        assurance: session.aal,
+        persistence: session.persistence,
+        createdAt: session.createdAt,
+        lastSeenAt: session.lastSeenAt,
+        idleExpiresAt: session.idleExpiresAt,
+        absoluteExpiresAt: session.absoluteExpiresAt,
+        userAgentDigest: null,
       });
     },
 

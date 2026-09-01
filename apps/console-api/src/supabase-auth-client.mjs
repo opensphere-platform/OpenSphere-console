@@ -2,6 +2,13 @@ function fail(code, message, status) {
   throw Object.assign(new Error(message), { code, status });
 }
 
+const SESSION_PERSISTENCE = new Set(['browser', '1h', '4h', '8h', '12h', '24h', '3d', '7d', '14d', '30d']);
+
+function sessionPersistence(user) {
+  const candidate = String(user?.user_metadata?.console_session_persistence || '24h');
+  return SESSION_PERSISTENCE.has(candidate) ? candidate : '24h';
+}
+
 function configuredOrigin(value) {
   let url;
   try { url = new URL(value); } catch { throw new TypeError('Supabase Auth URL must be an absolute URL'); }
@@ -120,6 +127,7 @@ export function createSupabaseAuthClient({
         authSessionRef: String(claims.session_id || claims.sub),
         aal: claims.aal,
         accessTokenExpiresAt: new Date(Number(claims.exp) * 1000).toISOString(),
+        sessionPersistence: sessionPersistence(user),
         verifiedTotpFactorId: verifiedTotp?.id ? String(verifiedTotp.id) : null,
       });
     },

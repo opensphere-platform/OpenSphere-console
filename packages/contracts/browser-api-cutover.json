@@ -16,7 +16,7 @@
     { "id": "csrf-binding", "status": "implemented-and-verified" },
     { "id": "current-session-resolution", "status": "implemented-and-verified" },
     { "id": "self-logout", "status": "implemented-and-verified" },
-    { "id": "activity-touch", "status": "missing" },
+    { "id": "activity-touch", "status": "implemented-and-verified" },
     { "id": "mfa-login-challenge", "status": "implemented-and-verified" },
     { "id": "mfa-enrollment", "status": "missing" },
     { "id": "mfa-step-up", "status": "missing" },

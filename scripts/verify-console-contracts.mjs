@@ -19,6 +19,7 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_identity.resolve_browser_session',
   'console_identity.revoke_browser_session',
   'console_identity.rotate_browser_session_credentials',
+  'console_identity.touch_browser_session_activity',
   'console_operation.accept_operation',
   'console_operation.approve_operation',
   'console_operation.get_operation',

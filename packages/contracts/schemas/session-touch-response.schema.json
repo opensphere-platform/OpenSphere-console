@@ -1,13 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:opensphere:console:session-login-response:v1",
-  "title": "Console opaque browser session login response",
+  "$id": "urn:opensphere:console:session-touch-response:v1",
+  "title": "Console trusted browser activity response",
   "type": "object",
   "additionalProperties": false,
-  "required": ["mfaRequired", "mfaEnrollmentRequired", "session"],
+  "required": ["session"],
   "properties": {
-    "mfaRequired": { "type": "boolean" },
-    "mfaEnrollmentRequired": { "type": "boolean" },
     "session": {
       "type": "object",
       "additionalProperties": false,
@@ -15,7 +13,7 @@
       "properties": {
         "id": { "type": "string", "format": "uuid" },
         "current": { "const": true },
-        "status": { "enum": ["pending_mfa", "active"] },
+        "status": { "const": "active" },
         "assurance": { "enum": ["aal1", "aal2"] },
         "persistence": { "enum": ["browser", "1h", "4h", "8h", "12h", "24h", "3d", "7d", "14d", "30d"] },
         "createdAt": { "type": "string", "format": "date-time" },

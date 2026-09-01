@@ -22,8 +22,8 @@ BEGIN
       OR NOT has_function_privilege('console_api', 'console_identity.reject_browser_session_refresh(uuid,uuid,bytea,text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'browser session refresh grants are not closed to console_api';
   END IF;
-  IF has_function_privilege('console_api', 'console_identity.issue_browser_session(uuid,bytea,bytea,text,text,text,text,timestamptz,boolean,text)', 'EXECUTE')
-      OR has_function_privilege('console_api', 'console_identity.activate_browser_session_mfa(uuid,uuid,bytea,text,text,text,timestamptz,text)', 'EXECUTE') THEN
+  IF has_function_privilege('console_api', 'console_identity.issue_browser_session(uuid,bytea,bytea,text,text,text,text,timestamptz,timestamptz,boolean,text)', 'EXECUTE')
+      OR has_function_privilege('console_api', 'console_identity.activate_browser_session_mfa(uuid,uuid,bytea,text,text,text,timestamptz,timestamptz,text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'C_API retained a pre-expiry credential mutation overload';
   END IF;
 END;
@@ -40,7 +40,7 @@ SELECT set_config(
     'v1.b2xkcmVmcmVzaGl2MTIzNDU2.b2xkcmVmcmVzaHRhZzEyMzQ1Ng.b2xkcmVmcmVzaGNpcGhlcnRleHQ',
     'migration-verification-refresh-auth-session', 'aal1',
     statement_timestamp() + interval '10 seconds',
-    statement_timestamp() + interval '24 hours', false,
+    statement_timestamp() + interval '24 hours', '24h', false,
     'migration-session-refresh-issue-0001'
   )::text,
   false

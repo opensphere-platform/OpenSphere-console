@@ -543,7 +543,8 @@ test('PostgreSQL session issue binds only digests, encrypted credentials and aut
     authSessionRef: 'supabase-session-ref',
     aal: 'aal1',
     accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
-    expiresAt: '2026-09-03T00:00:00.000Z',
+    absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+    persistence: '24h',
     pendingMfa: false,
     correlationId: 'correlation-session-issue-0001',
   };
@@ -576,12 +577,34 @@ test('PostgreSQL pending MFA read and activation bind proof, subject and credent
     refreshTokenCiphertext: 'v1.iv.tag.aal2refresh',
     authSessionRef: 'supabase-session-aal2',
     accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
-    expiresAt: '2026-09-03T00:00:00.000Z',
     correlationId: 'correlation-session-mfa-0001',
   };
   assert.equal(await store.activateMfa(activation), active);
   assert.match(calls[1].sql, /console_identity[.]activate_browser_session_mfa/);
   assert.deepEqual(calls[1].values, Object.values(activation));
+});
+
+test('PostgreSQL activity touch binds only opaque session and CSRF digests', async () => {
+  const calls = [];
+  const active = {
+    sessionId,
+    subjectId: actorRef,
+    state: 'active',
+    aal: 'aal1',
+    persistence: '24h',
+    idleExpiresAt: '2026-09-02T12:00:00.000Z',
+    absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+  };
+  const store = createPostgresOperationStore({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [{ session_record: active }] };
+    },
+  });
+  const proof = { tokenDigest: Buffer.alloc(32, 9), csrfTokenDigest: Buffer.alloc(32, 10) };
+  assert.equal(await store.touchActivity(proof), active);
+  assert.match(calls[0].sql, /console_identity[.]touch_browser_session_activity/);
+  assert.deepEqual(calls[0].values, Object.values(proof));
 });
 
 test('PostgreSQL refresh operations bind only proof, ciphertext CAS and rotated envelopes', async () => {

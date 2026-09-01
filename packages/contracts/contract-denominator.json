@@ -9,6 +9,7 @@
   "operations": [
     "loginSession",
     "completeSessionMfa",
+    "touchSessionActivity",
     "getSession",
     "deleteSession",
     "getMe",
@@ -48,7 +49,9 @@
     "session-login-request.schema.json",
     "session-login-response.schema.json",
     "session-mfa-request.schema.json",
-    "session-mfa-response.schema.json"
+    "session-mfa-response.schema.json",
+    "session-touch-request.schema.json",
+    "session-touch-response.schema.json"
   ],
   "remaining": {
     "legacyProductionApiLiterals": 277,

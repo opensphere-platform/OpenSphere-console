@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:session-touch-request:v1",
+  "title": "Console trusted browser activity request",
+  "type": "object",
+  "additionalProperties": false,
+  "maxProperties": 0
+}

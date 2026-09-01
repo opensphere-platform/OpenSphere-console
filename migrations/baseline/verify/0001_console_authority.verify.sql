@@ -27,7 +27,7 @@ VALUES
 
 INSERT INTO console_identity.browser_session(
   session_id, subject_id, token_digest, csrf_token_digest, aal,
-  permission_revision, revoke_epoch, expires_at
+  permission_revision, revoke_epoch, expires_at, absolute_expires_at, persistence
 ) VALUES
   (
     '22222222-2222-4222-8222-222222222222',
@@ -35,13 +35,13 @@ INSERT INTO console_identity.browser_session(
     sha256(convert_to('opaque-session-handle-for-console-api-integration', 'UTF8')),
     sha256(convert_to('csrf-proof-for-console-api-integration', 'UTF8')),
     'aal2', 7, 2,
-    statement_timestamp() + interval '1 hour'
+    statement_timestamp() + interval '1 hour', statement_timestamp() + interval '24 hours', '24h'
   ),
   (
     '44444444-4444-4444-8444-444444444444',
     '11111111-1111-4111-8111-111111111111',
     decode('cc', 'hex'), decode('dd', 'hex'), 'aal1', 7, 2,
-    statement_timestamp() + interval '1 hour'
+    statement_timestamp() + interval '1 hour', statement_timestamp() + interval '24 hours', '24h'
   ),
   (
     '66666666-6666-4666-8666-666666666666',
@@ -49,19 +49,19 @@ INSERT INTO console_identity.browser_session(
     sha256(convert_to('opaque-approver-session-for-console-api-integration', 'UTF8')),
     sha256(convert_to('csrf-approver-proof-for-console-api-integration', 'UTF8')),
     'aal2', 3, 0,
-    statement_timestamp() + interval '1 hour'
+    statement_timestamp() + interval '1 hour', statement_timestamp() + interval '24 hours', '24h'
   ),
   (
     '77777777-7777-4777-8777-777777777777',
     '55555555-5555-4555-8555-555555555555',
     decode('ee', 'hex'), decode('ff', 'hex'), 'aal1', 3, 0,
-    statement_timestamp() + interval '1 hour'
+    statement_timestamp() + interval '1 hour', statement_timestamp() + interval '24 hours', '24h'
   ),
   (
     '88888888-8888-4888-8888-888888888888',
     '88888888-8888-4888-8888-888888888888',
     decode('ab', 'hex'), decode('ac', 'hex'), 'aal2', 3, 0,
-    statement_timestamp() + interval '1 hour'
+    statement_timestamp() + interval '1 hour', statement_timestamp() + interval '24 hours', '24h'
   );
 
 SET ROLE console_api;
@@ -108,9 +108,9 @@ BEGIN
       OR v_status->'data'->'components'->0->>'state' <> 'Ready'
       OR v_status->'data'->'components'->1->>'state' <> 'Unknown'
       OR v_status->'data'->'components'->4->>'state' <> 'Ready'
-      OR v_status->'data'->'components'->4->>'baselineRevision' <> 'opensphere-console/20260902/0004'
-      OR v_status->'data'->'components'->4->>'setDigest' <> 'sha256:eef7f89f32252152eff08c9cd14c2e8edbb4f66b472eab0ee843e5c5e178f341'
-      OR v_status->'data'->'components'->4->>'migrationCount' <> '4'
+      OR v_status->'data'->'components'->4->>'baselineRevision' <> 'opensphere-console/20260902/0005'
+      OR v_status->'data'->'components'->4->>'setDigest' <> 'sha256:510ed0b8de75a1d8daddeef6c0ebb1a0cd0c69787f1b15ccd13a8c7656257e84'
+      OR v_status->'data'->'components'->4->>'migrationCount' <> '5'
       OR v_status->'data'->'components'->5->>'state' <> 'Ready'
       OR v_status->'data'->'components'->5->>'protectedTables' <> '11' THEN
     RAISE EXCEPTION 'Supabase status projection overclaimed or lost baseline evidence';
@@ -136,7 +136,7 @@ RESET ROLE;
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM console_migration.applied_migration) <> 4 THEN
+  IF (SELECT count(*) FROM console_migration.applied_migration) <> 5 THEN
     RAISE EXCEPTION 'fresh migration ledger cardinality mismatch';
   END IF;
   BEGIN

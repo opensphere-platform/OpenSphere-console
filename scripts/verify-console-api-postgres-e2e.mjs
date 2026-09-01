@@ -400,6 +400,9 @@ try {
   const loginBody = await loginResponse.json();
   assert.equal(loginBody.mfaRequired, false);
   assert.equal(loginBody.session.status, 'active');
+  assert.equal(loginBody.session.persistence, '24h');
+  assert.ok(new Date(loginBody.session.idleExpiresAt) < new Date(loginBody.session.absoluteExpiresAt));
+  assert.ok(loginCookies.every((cookie) => cookie.includes('Max-Age=86400')));
   assert.doesNotMatch(JSON.stringify(loginBody), /access_token|refresh_token|integration-password|supabase-refresh/i);
 
   const loginEvidence = await admin.query(
@@ -407,6 +410,7 @@ try {
       'SELECT octet_length(token_digest)::int AS token_digest_bytes,',
       'octet_length(csrf_token_digest)::int AS csrf_digest_bytes,',
       'access_token_ciphertext, refresh_token_ciphertext, auth_session_ref, revoked_at,',
+      'last_seen_at, expires_at, absolute_expires_at, persistence,',
       '(SELECT COALESCE(string_agg(evidence::text, \'\'), \'\') FROM console_audit.event',
       "WHERE action = 'console.identity.session.login' AND correlation_id = $2) AS audit_evidence",
       'FROM console_identity.browser_session WHERE session_id = $1',
@@ -420,6 +424,8 @@ try {
   assert.match(loginEvidence.rows[0].refresh_token_ciphertext, /^v1[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+$/);
   assert.equal(loginEvidence.rows[0].auth_session_ref, 'supabase-auth-session-integration-0001');
   assert.equal(loginEvidence.rows[0].revoked_at, null);
+  assert.equal(loginEvidence.rows[0].persistence, '24h');
+  assert.ok(loginEvidence.rows[0].expires_at < loginEvidence.rows[0].absolute_expires_at);
   assert.doesNotMatch(loginEvidence.rows[0].audit_evidence, new RegExp(loginRefreshToken));
   assert.doesNotMatch(loginEvidence.rows[0].audit_evidence, new RegExp(loginAccessToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
@@ -431,6 +437,7 @@ try {
   const refreshedLoginEvidence = await admin.query(
     [
       'SELECT access_token_ciphertext, refresh_token_ciphertext, auth_session_ref,',
+      'last_seen_at, expires_at, absolute_expires_at, persistence,',
       "access_token_expires_at > clock_timestamp() + interval '30 minutes' AS durable_future_expiry,",
       '(SELECT COALESCE(string_agg(evidence::text, \'\'), \'\') FROM console_audit.event',
       "WHERE action = 'console.identity.session.refresh' AND correlation_id = $2) AS audit_evidence",
@@ -443,7 +450,48 @@ try {
   assert.notEqual(refreshedLoginEvidence.rows[0].refresh_token_ciphertext, loginEvidence.rows[0].refresh_token_ciphertext);
   assert.equal(refreshedLoginEvidence.rows[0].auth_session_ref, 'supabase-auth-session-integration-rotated-0001');
   assert.equal(refreshedLoginEvidence.rows[0].durable_future_expiry, true);
+  assert.equal(refreshedLoginEvidence.rows[0].last_seen_at.toISOString(), loginEvidence.rows[0].last_seen_at.toISOString());
+  assert.equal(refreshedLoginEvidence.rows[0].expires_at.toISOString(), loginEvidence.rows[0].expires_at.toISOString());
+  assert.equal(refreshedLoginEvidence.rows[0].absolute_expires_at.toISOString(), loginEvidence.rows[0].absolute_expires_at.toISOString());
   assert.doesNotMatch(refreshedLoginEvidence.rows[0].audit_evidence, /supabase-refresh|integration-signature/i);
+
+  await admin.query(
+    [
+      'UPDATE console_identity.browser_session',
+      "SET last_seen_at = statement_timestamp() - interval '2 minutes', expires_at = statement_timestamp() + interval '1 hour'",
+      'WHERE session_id = $1',
+    ].join(' '),
+    [loginBody.session.id],
+  );
+  const touchResponse = await fetch(origin + '/api/identity/session/touch', {
+    method: 'POST',
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-csrf-token': loginCsrf,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-session-activity-touch-0001',
+    },
+    body: '{}',
+  });
+  assert.equal(touchResponse.status, 200);
+  const touchedSession = (await touchResponse.json()).session;
+  assert.equal(touchedSession.id, loginBody.session.id);
+  assert.equal(touchedSession.persistence, '24h');
+  assert.ok(new Date(touchedSession.idleExpiresAt) > new Date(Date.now() + 11 * 60 * 60 * 1000));
+  assert.equal(touchedSession.absoluteExpiresAt, loginBody.session.absoluteExpiresAt);
+  const touchEvidence = await admin.query(
+    [
+      'SELECT last_seen_at > statement_timestamp() - interval \'1 minute\' AS touched,',
+      'expires_at > statement_timestamp() + interval \'11 hours\' AS idle_extended,',
+      'expires_at <= absolute_expires_at AS absolute_bound,',
+      '(SELECT count(*)::int FROM console_audit.event WHERE action = \'console.identity.session.activity\') AS activity_audit_events',
+      'FROM console_identity.browser_session WHERE session_id = $1',
+    ].join(' '),
+    [loginBody.session.id],
+  );
+  assert.deepEqual(touchEvidence.rows[0], {
+    touched: true, idle_extended: true, absolute_bound: true, activity_audit_events: 0,
+  });
   const issuedLogoutResponse = await fetch(origin + '/api/identity/session', {
     method: 'DELETE',
     headers: {
@@ -507,7 +555,10 @@ try {
   assert.deepEqual(await mfaCompleteResponse.json(), { assurance: 'aal2', sessionId: mfaLoginBody.session.id });
   const activatedMfaCookies = mfaCompleteResponse.headers.getSetCookie();
   assert.equal(activatedMfaCookies.length, 2);
-  assert.ok(activatedMfaCookies.every((cookie) => cookie.includes('Max-Age=86400')));
+  assert.ok(activatedMfaCookies.every((cookie) => {
+    const seconds = Number(cookie.match(/Max-Age=(\d+)/)?.[1]);
+    return seconds >= 86390 && seconds <= 86400;
+  }));
 
   const activeMfaEvidence = await admin.query(
     [
@@ -1036,6 +1087,7 @@ try {
     migrationLineage: true,
     passwordLoginSessionLifecycle: true,
     refreshRotationLifecycle: true,
+    activityTouchLifecycle: true,
     mfaLoginChallengeLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,

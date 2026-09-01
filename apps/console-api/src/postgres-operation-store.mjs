@@ -38,7 +38,7 @@ const RESOLVE_SESSION_SQL = [
 const ISSUE_SESSION_SQL = [
   'SELECT console_identity.issue_browser_session(',
   '$1::uuid, $2::bytea, $3::bytea, $4::text, $5::text,',
-  '$6::text, $7::text, $8::timestamptz, $9::timestamptz, $10::boolean, $11::text',
+  '$6::text, $7::text, $8::timestamptz, $9::timestamptz, $10::text, $11::boolean, $12::text',
   ') AS session_record',
 ].join(' ');
 
@@ -51,7 +51,13 @@ const GET_PENDING_MFA_SQL = [
 const ACTIVATE_MFA_SQL = [
   'SELECT console_identity.activate_browser_session_mfa(',
   '$1::uuid, $2::uuid, $3::bytea, $4::text, $5::text,',
-  '$6::text, $7::timestamptz, $8::timestamptz, $9::text',
+  '$6::text, $7::timestamptz, $8::text',
+  ') AS session_record',
+].join(' ');
+
+const TOUCH_SESSION_ACTIVITY_SQL = [
+  'SELECT console_identity.touch_browser_session_activity(',
+  '$1::bytea, $2::bytea',
   ') AS session_record',
 ].join(' ');
 
@@ -201,7 +207,8 @@ export function createPostgresOperationStore({ query }) {
           input.authSessionRef,
           input.aal,
           input.accessTokenExpiresAt,
-          input.expiresAt,
+          input.absoluteExpiresAt,
+          input.persistence,
           input.pendingMfa,
           input.correlationId,
         ]);
@@ -237,11 +244,24 @@ export function createPostgresOperationStore({ query }) {
           input.refreshTokenCiphertext,
           input.authSessionRef,
           input.accessTokenExpiresAt,
-          input.expiresAt,
           input.correlationId,
         ]);
         const record = result?.rows?.[0]?.session_record;
         if (!record) throw new Error('activate_browser_session_mfa returned no record');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async touchActivity(input) {
+      try {
+        const result = await query(TOUCH_SESSION_ACTIVITY_SQL, [
+          input.tokenDigest,
+          input.csrfTokenDigest,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record) throw Object.assign(new Error('session activity was not recorded'), { detail: 'SessionInvalid' });
         return record;
       } catch (error) {
         throw databaseError(error);
