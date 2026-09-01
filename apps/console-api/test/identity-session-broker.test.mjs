@@ -69,6 +69,39 @@ test('Supabase password client revalidates the returned subject and detects veri
   assert.equal(calls[1].init.headers.authorization, 'Bearer ' + accessToken);
 });
 
+test('Supabase MFA client binds the verified factor and returns only an aal2 session', async () => {
+  const accessToken = token();
+  const aal2Token = token({ aal: 'aal2', session_id: 'auth-session-aal2' });
+  const calls = [];
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test',
+    now: () => now,
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      if (url.endsWith('/user')) {
+        const bearer = init.headers.authorization;
+        return jsonResponse({
+          id: subjectId,
+          factors: bearer === 'Bearer ' + accessToken
+            ? [{ id: 'factor/1', factor_type: 'totp', status: 'verified' }]
+            : [],
+        });
+      }
+      if (url.endsWith('/factors/factor%2F1/challenge')) return jsonResponse({ id: 'challenge-1' });
+      if (url.endsWith('/factors/factor%2F1/verify')) {
+        assert.deepEqual(JSON.parse(init.body), { challenge_id: 'challenge-1', code: '123456' });
+        return jsonResponse({ access_token: aal2Token, refresh_token: 'refresh-aal2' });
+      }
+      return jsonResponse({}, 404);
+    },
+  });
+  const completed = await client.completeTotp({ accessToken, code: '123456', expectedSubjectId: subjectId });
+  assert.equal(completed.aal, 'aal2');
+  assert.equal(completed.authSessionRef, 'auth-session-aal2');
+  assert.equal(completed.refreshToken, 'refresh-aal2');
+  assert.equal(calls.filter(({ url }) => url.endsWith('/user')).length, 2);
+});
+
 test('password login issues only opaque cookies and persists encrypted credentials', async () => {
   const issued = [];
   const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 9) });
@@ -82,6 +115,8 @@ test('password login issues only opaque cookies and persists encrypted credentia
           createdAt: now.toISOString(), lastSeenAt: now.toISOString(), expiresAt: input.expiresAt,
         };
       },
+      async getPendingMfa() { throw new Error('pending MFA read must not run during password login'); },
+      async activateMfa() { throw new Error('MFA activation must not run during password login'); },
     },
     authClient: {
       async authenticatePassword() {
@@ -90,6 +125,7 @@ test('password login issues only opaque cookies and persists encrypted credentia
           authSessionRef: 'auth-session-0001', aal: 'aal1', verifiedTotpFactorId: null,
         };
       },
+      async completeTotp() { throw new Error('MFA completion must not run during password login'); },
       async logout() { throw new Error('logout must not run after success'); },
     },
     credentialCipher: cipher,
@@ -118,7 +154,11 @@ test('password login issues only opaque cookies and persists encrypted credentia
 test('verified TOTP creates a five-minute pending session and persistence failure logs out upstream', async () => {
   let logoutToken = '';
   const broker = createIdentitySessionBroker({
-    store: { async issueSession() { throw Object.assign(new Error('database unavailable'), { code: 'AuthorityUnavailable' }); } },
+    store: {
+      async issueSession() { throw Object.assign(new Error('database unavailable'), { code: 'AuthorityUnavailable' }); },
+      async getPendingMfa() { throw new Error('pending MFA read must not run during password login'); },
+      async activateMfa() { throw new Error('MFA activation must not run during password login'); },
+    },
     authClient: {
       async authenticatePassword() {
         return {
@@ -126,6 +166,7 @@ test('verified TOTP creates a five-minute pending session and persistence failur
           authSessionRef: 'auth-session-0002', aal: 'aal1', verifiedTotpFactorId: 'factor-1',
         };
       },
+      async completeTotp() { throw new Error('MFA completion must not run during password login'); },
       async logout(value) { logoutToken = value; },
     },
     credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 5) }),
@@ -144,6 +185,75 @@ test('verified TOTP creates a five-minute pending session and persistence failur
     requestOrigin: 'https://attacker.example.test',
     correlationId: 'session-login-correlation-0003',
   }), { code: 'PermissionDenied' });
+});
+
+test('pending MFA completion activates the same opaque session and extends both cookies', async () => {
+  const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 8) });
+  const pendingAccessCiphertext = cipher.encrypt('pending-access');
+  const activated = [];
+  const broker = createIdentitySessionBroker({
+    store: {
+      async issueSession() { throw new Error('password login must not run during MFA completion'); },
+      async getPendingMfa(input) {
+        assert.equal(input.tokenDigest.length, 32);
+        assert.equal(input.csrfTokenDigest.length, 32);
+        return {
+          sessionId,
+          subjectId,
+          accessTokenCiphertext: pendingAccessCiphertext,
+          refreshTokenCiphertext: cipher.encrypt('pending-refresh'),
+          authSessionRef: 'auth-session-pending',
+          aal: 'aal1',
+        };
+      },
+      async activateMfa(input) {
+        activated.push(input);
+        return {
+          sessionId,
+          subjectId,
+          state: 'active',
+          aal: 'aal2',
+          expiresAt: input.expiresAt,
+        };
+      },
+    },
+    authClient: {
+      async authenticatePassword() { throw new Error('password login must not run during MFA completion'); },
+      async completeTotp(input) {
+        assert.deepEqual(input, { accessToken: 'pending-access', code: '123456', expectedSubjectId: subjectId });
+        return {
+          subjectId,
+          accessToken: 'aal2-access',
+          refreshToken: 'aal2-refresh',
+          authSessionRef: 'auth-session-aal2',
+          aal: 'aal2',
+        };
+      },
+      async logout() { throw new Error('logout must not run after success'); },
+    },
+    credentialCipher: cipher,
+    publicOrigin: 'https://console.example.test',
+    clock: () => now,
+  });
+  const result = await broker.completeMfa({
+    request: {
+      headers: {
+        cookie: '__Host-opensphere-session=opaque-session-handle-for-mfa-completion',
+        'x-os-csrf-token': 'csrf-proof-for-mfa-completion',
+      },
+    },
+    body: { code: '123456' },
+    correlationId: 'session-mfa-correlation-0001',
+  });
+  assert.deepEqual(result.body, { assurance: 'aal2', sessionId });
+  assert.equal(result.cookies.length, 2);
+  assert.match(result.cookies[0], /Max-Age=86400/);
+  assert.match(result.cookies[1], /Max-Age=86400/);
+  assert.equal(activated.length, 1);
+  assert.equal(activated[0].expectedAccessCiphertextDigest.length, 32);
+  assert.equal(cipher.decrypt(activated[0].accessTokenCiphertext), 'aal2-access');
+  assert.equal(cipher.decrypt(activated[0].refreshTokenCiphertext), 'aal2-refresh');
+  assert.equal(activated[0].authSessionRef, 'auth-session-aal2');
 });
 
 test('HTTP login forwards exact Origin and returns both Secure cookies', async (t) => {
@@ -176,4 +286,37 @@ test('HTTP login forwards exact Origin and returns both Secure cookies', async (
   assert.equal(response.headers.getSetCookie().length, 2);
   assert.equal(calls[0].requestOrigin, 'https://console.example.test');
   assert.deepEqual(calls[0].body, { email: 'operator@example.test', password: 'valid-password' });
+});
+
+test('HTTP MFA completion preserves the request proof and returns refreshed cookies', async (t) => {
+  const calls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('active session resolution must not run for pending MFA'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async completeMfa(input) {
+        calls.push(input);
+        return {
+          cookies: ['__Host-opensphere-session=opaque; Path=/; HttpOnly; Secure; SameSite=Strict', '__Host-opensphere_csrf=csrf; Path=/; Secure; SameSite=Strict'],
+          body: { assurance: 'aal2', sessionId },
+        };
+      },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/identity/session/mfa', {
+    method: 'POST',
+    headers: {
+      cookie: '__Host-opensphere-session=opaque',
+      'x-os-csrf-token': 'csrf-proof-for-mfa-completion',
+      'content-type': 'application/json',
+      'x-correlation-id': 'session-mfa-http-0001',
+    },
+    body: JSON.stringify({ code: '123456' }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.getSetCookie().length, 2);
+  assert.equal(calls[0].request.headers['x-os-csrf-token'], 'csrf-proof-for-mfa-completion');
+  assert.deepEqual(calls[0].body, { code: '123456' });
 });

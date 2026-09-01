@@ -9,12 +9,12 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 19,
+    operations: 20,
     actionPolicies: 5,
-    schemas: 11,
+    schemas: 13,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 11,
+    consoleApiDatabaseFunctions: 13,
     browserApiPatterns: 121,
     browserApiFamilies: 15,
     targetBrowserSessionReady: false,
@@ -32,7 +32,10 @@ test('official publication remains blocked until every target component boundary
 test('Console API authority verification rejects missing grants and direct table mutation', async () => {
   const storeSource = await readFile(new URL('../apps/console-api/src/postgres-operation-store.mjs', import.meta.url), 'utf8');
   const baselineSource = await readFile(new URL('../migrations/baseline/0001_console_authority.sql', import.meta.url), 'utf8');
-  const missingGrant = baselineSource.replace(
+  const credentialSource = await readFile(new URL('../migrations/versions/0002_browser_session_credential_envelope.sql', import.meta.url), 'utf8');
+  const mfaSource = await readFile(new URL('../migrations/versions/0003_browser_session_mfa_activation.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource].join('\n');
+  const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',
   );
@@ -43,7 +46,7 @@ test('Console API authority verification rejects missing grants and direct table
   assert.throws(
     () => verifyConsoleApiAuthority({
       storeSource: `${storeSource}\nconst forbidden = 'DELETE FROM console_operation.operation';`,
-      baselineSource,
+      baselineSource: verifiedMigrationSet,
     }),
     /must use granted functions instead of direct authority-table mutation/,
   );

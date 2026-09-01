@@ -85,6 +85,15 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
         return send(response, 200, result.body, { 'set-cookie': result.cookies });
       }
+      if (url.pathname === '/api/identity/session/mfa' && request.method === 'POST') {
+        if (!identitySessionBroker?.completeMfa) throw Object.assign(new Error('target session MFA is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const result = await identitySessionBroker.completeMfa({
+          request,
+          body: await jsonBody(request),
+          correlationId,
+        });
+        return send(response, 200, result.body, { 'set-cookie': result.cookies });
+      }
       if (url.pathname === '/api/identity/audit' && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false });
         return send(response, 200, await auditOperations.list({

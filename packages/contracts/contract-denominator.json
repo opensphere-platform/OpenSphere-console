@@ -8,6 +8,7 @@
   "requirements": ["CON-FR-001", "CON-FR-002", "CON-FR-007", "CON-FR-008", "CON-FR-009", "CON-FR-010", "CON-FR-017"],
   "operations": [
     "loginSession",
+    "completeSessionMfa",
     "getSession",
     "deleteSession",
     "getMe",
@@ -45,7 +46,9 @@
     "extension-install-request.schema.json",
     "extension-remove-request.schema.json",
     "session-login-request.schema.json",
-    "session-login-response.schema.json"
+    "session-login-response.schema.json",
+    "session-mfa-request.schema.json",
+    "session-mfa-response.schema.json"
   ],
   "remaining": {
     "legacyProductionApiLiterals": 277,

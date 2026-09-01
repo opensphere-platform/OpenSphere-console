@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:session-mfa-response:v1",
+  "title": "Console activated browser session MFA response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assurance", "sessionId"],
+  "properties": {
+    "assurance": { "const": "aal2" },
+    "sessionId": { "type": "string", "format": "uuid" }
+  }
+}

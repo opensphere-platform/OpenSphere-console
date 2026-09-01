@@ -17,7 +17,7 @@
     { "id": "current-session-resolution", "status": "implemented-and-verified" },
     { "id": "self-logout", "status": "implemented-and-verified" },
     { "id": "activity-touch", "status": "missing" },
-    { "id": "mfa-login-challenge", "status": "missing" },
+    { "id": "mfa-login-challenge", "status": "implemented-and-verified" },
     { "id": "mfa-enrollment", "status": "missing" },
     { "id": "mfa-step-up", "status": "missing" },
     { "id": "password-recovery", "status": "missing" },

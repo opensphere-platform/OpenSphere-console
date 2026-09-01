@@ -552,6 +552,36 @@ test('PostgreSQL session issue binds only digests, encrypted credentials and aut
   assert.equal(calls[0].values.some((value) => value === 'raw-access-token' || value === 'raw-refresh-token'), false);
 });
 
+test('PostgreSQL pending MFA read and activation bind proof, subject and credential compare-and-set', async () => {
+  const calls = [];
+  const pending = { sessionId, subjectId: actorRef, aal: 'aal1', accessTokenCiphertext: 'v1.iv.tag.pending' };
+  const active = { sessionId, subjectId: actorRef, state: 'active', aal: 'aal2' };
+  const store = createPostgresOperationStore({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [{ session_record: calls.length === 1 ? pending : active }] };
+    },
+  });
+  const proof = { tokenDigest: Buffer.alloc(32, 3), csrfTokenDigest: Buffer.alloc(32, 4) };
+  assert.equal(await store.getPendingMfa(proof), pending);
+  assert.match(calls[0].sql, /console_identity[.]get_pending_browser_session_mfa/);
+  assert.deepEqual(calls[0].values, Object.values(proof));
+
+  const activation = {
+    sessionId,
+    subjectId: actorRef,
+    expectedAccessCiphertextDigest: Buffer.alloc(32, 5),
+    accessTokenCiphertext: 'v1.iv.tag.aal2access',
+    refreshTokenCiphertext: 'v1.iv.tag.aal2refresh',
+    authSessionRef: 'supabase-session-aal2',
+    expiresAt: '2026-09-03T00:00:00.000Z',
+    correlationId: 'correlation-session-mfa-0001',
+  };
+  assert.equal(await store.activateMfa(activation), active);
+  assert.match(calls[1].sql, /console_identity[.]activate_browser_session_mfa/);
+  assert.deepEqual(calls[1].values, Object.values(activation));
+});
+
 test('PostgreSQL Registry projection binds session, actor and correlation without secret inputs', async () => {
   const calls = [];
   const store = createPostgresOperationStore({

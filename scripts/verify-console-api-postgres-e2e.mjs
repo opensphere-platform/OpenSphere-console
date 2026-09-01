@@ -30,6 +30,26 @@ const loginAccessToken = [
   'integration-signature',
 ].join('.');
 const loginRefreshToken = 'supabase-refresh-credential-integration-0001';
+const mfaAccessToken = [
+  Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+  Buffer.from(JSON.stringify({
+    sub: loginSubjectId, role: 'authenticated', aal: 'aal1',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    session_id: 'supabase-auth-session-mfa-pending-0001',
+  })).toString('base64url'),
+  'integration-signature',
+].join('.');
+const mfaAal2AccessToken = [
+  Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+  Buffer.from(JSON.stringify({
+    sub: loginSubjectId, role: 'authenticated', aal: 'aal2',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    session_id: 'supabase-auth-session-mfa-aal2-0001',
+  })).toString('base64url'),
+  'integration-signature',
+].join('.');
+const mfaRefreshToken = 'supabase-refresh-credential-mfa-pending-0001';
+const mfaAal2RefreshToken = 'supabase-refresh-credential-mfa-aal2-0001';
 const handle = 'opaque-session-handle-for-console-api-integration';
 const csrf = 'csrf-proof-for-console-api-integration';
 const credential = 'integration-registry-credential-never-persisted';
@@ -61,19 +81,42 @@ const authorityServer = createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(chunk);
   const requestBody = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
   if (request.url === '/token?grant_type=password' && request.method === 'POST') {
-    assert.deepEqual(requestBody, { email: 'operator@opensphere.test', password: 'integration-password' });
+    const mfaLogin = requestBody?.email === 'mfa@opensphere.test';
+    assert.deepEqual(requestBody, mfaLogin
+      ? { email: 'mfa@opensphere.test', password: 'integration-password' }
+      : { email: 'operator@opensphere.test', password: 'integration-password' });
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
-      access_token: loginAccessToken,
-      refresh_token: loginRefreshToken,
+      access_token: mfaLogin ? mfaAccessToken : loginAccessToken,
+      refresh_token: mfaLogin ? mfaRefreshToken : loginRefreshToken,
       user: { id: loginSubjectId },
     }));
     return;
   }
   if (request.url === '/user' && request.method === 'GET') {
-    assert.equal(request.headers.authorization, 'Bearer ' + loginAccessToken);
+    const bearer = request.headers.authorization;
+    assert.ok([loginAccessToken, mfaAccessToken, mfaAal2AccessToken].some((token) => bearer === 'Bearer ' + token));
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ id: loginSubjectId, factors: [] }));
+    response.end(JSON.stringify({
+      id: loginSubjectId,
+      factors: bearer === 'Bearer ' + mfaAccessToken
+        ? [{ id: 'factor-1', factor_type: 'totp', status: 'verified' }]
+        : [],
+    }));
+    return;
+  }
+  if (request.url === '/factors/factor-1/challenge' && request.method === 'POST') {
+    assert.equal(request.headers.authorization, 'Bearer ' + mfaAccessToken);
+    assert.deepEqual(requestBody, {});
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ id: 'integration-mfa-challenge-0001' }));
+    return;
+  }
+  if (request.url === '/factors/factor-1/verify' && request.method === 'POST') {
+    assert.equal(request.headers.authorization, 'Bearer ' + mfaAccessToken);
+    assert.deepEqual(requestBody, { challenge_id: 'integration-mfa-challenge-0001', code: '123456' });
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ access_token: mfaAal2AccessToken, refresh_token: mfaAal2RefreshToken }));
     return;
   }
   if (request.url === '/health' || request.url === '/status') {
@@ -376,6 +419,88 @@ try {
     headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-issued-session-revoked-read-0001' },
   });
   assert.equal(issuedRevokedResponse.status, 401);
+
+  const mfaLoginResponse = await fetch(origin + '/api/identity/session/login', {
+    method: 'POST',
+    headers: {
+      origin: publicOrigin,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-session-mfa-login-0001',
+    },
+    body: JSON.stringify({ email: 'mfa@opensphere.test', password: 'integration-password' }),
+  });
+  assert.equal(mfaLoginResponse.status, 200);
+  const mfaLoginCookies = mfaLoginResponse.headers.getSetCookie();
+  const mfaSessionCookie = mfaLoginCookies.find((value) => value.startsWith('__Host-opensphere-session='));
+  const mfaCsrfCookie = mfaLoginCookies.find((value) => value.startsWith('__Host-opensphere_csrf='));
+  assert.ok(mfaSessionCookie && mfaCsrfCookie);
+  assert.ok(mfaLoginCookies.every((cookie) => cookie.includes('Max-Age=300')));
+  const mfaCookieHeader = mfaSessionCookie.split(';', 1)[0];
+  const mfaCsrf = decodeURIComponent(mfaCsrfCookie.split(';', 1)[0].split('=', 2)[1]);
+  const mfaLoginBody = await mfaLoginResponse.json();
+  assert.equal(mfaLoginBody.mfaRequired, true);
+  assert.equal(mfaLoginBody.session.status, 'pending_mfa');
+  assert.equal(mfaLoginBody.session.assurance, 'aal1');
+  const pendingMfaEvidence = await admin.query(
+    [
+      'SELECT access_token_ciphertext, refresh_token_ciphertext, auth_session_ref, aal, revoke_reason,',
+      '(expires_at - created_at) <= interval \'5 minutes\' AS bounded_pending_expiry',
+      'FROM console_identity.browser_session WHERE session_id = $1',
+    ].join(' '),
+    [mfaLoginBody.session.id],
+  );
+  assert.equal(pendingMfaEvidence.rows[0].aal, 'aal1');
+  assert.equal(pendingMfaEvidence.rows[0].revoke_reason, 'pending-mfa');
+  assert.equal(pendingMfaEvidence.rows[0].bounded_pending_expiry, true);
+  const pendingAccessCiphertext = pendingMfaEvidence.rows[0].access_token_ciphertext;
+  const pendingRefreshCiphertext = pendingMfaEvidence.rows[0].refresh_token_ciphertext;
+
+  const mfaCompleteResponse = await fetch(origin + '/api/identity/session/mfa', {
+    method: 'POST',
+    headers: {
+      cookie: mfaCookieHeader,
+      'x-os-csrf-token': mfaCsrf,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-session-mfa-complete-0001',
+    },
+    body: JSON.stringify({ code: '123456' }),
+  });
+  assert.equal(mfaCompleteResponse.status, 200);
+  assert.deepEqual(await mfaCompleteResponse.json(), { assurance: 'aal2', sessionId: mfaLoginBody.session.id });
+  const activatedMfaCookies = mfaCompleteResponse.headers.getSetCookie();
+  assert.equal(activatedMfaCookies.length, 2);
+  assert.ok(activatedMfaCookies.every((cookie) => cookie.includes('Max-Age=86400')));
+
+  const activeMfaEvidence = await admin.query(
+    [
+      'SELECT access_token_ciphertext, refresh_token_ciphertext, auth_session_ref, aal, revoked_at, revoke_reason,',
+      '(SELECT COALESCE(string_agg(evidence::text, \'\'), \'\') FROM console_audit.event',
+      "WHERE action = 'console.identity.session.mfa' AND correlation_id = $2) AS audit_evidence",
+      'FROM console_identity.browser_session WHERE session_id = $1',
+    ].join(' '),
+    [mfaLoginBody.session.id, 'integration-session-mfa-complete-0001'],
+  );
+  assert.equal(activeMfaEvidence.rows[0].aal, 'aal2');
+  assert.equal(activeMfaEvidence.rows[0].revoked_at, null);
+  assert.equal(activeMfaEvidence.rows[0].revoke_reason, null);
+  assert.equal(activeMfaEvidence.rows[0].auth_session_ref, 'supabase-auth-session-mfa-aal2-0001');
+  assert.notEqual(activeMfaEvidence.rows[0].access_token_ciphertext, pendingAccessCiphertext);
+  assert.notEqual(activeMfaEvidence.rows[0].refresh_token_ciphertext, pendingRefreshCiphertext);
+  assert.doesNotMatch(activeMfaEvidence.rows[0].audit_evidence, /supabase-refresh|integration-signature|auth-session-mfa-aal2/i);
+  const activeMfaSessionResponse = await fetch(origin + '/api/identity/session', {
+    headers: { cookie: mfaCookieHeader, 'x-correlation-id': 'integration-session-mfa-read-0001' },
+  });
+  assert.equal(activeMfaSessionResponse.status, 200);
+  assert.equal((await activeMfaSessionResponse.json()).data.aal, 'aal2');
+  const mfaLogoutResponse = await fetch(origin + '/api/identity/session', {
+    method: 'DELETE',
+    headers: {
+      cookie: mfaCookieHeader,
+      'x-os-csrf-token': mfaCsrf,
+      'x-correlation-id': 'integration-session-mfa-logout-0001',
+    },
+  });
+  assert.equal(mfaLogoutResponse.status, 204);
 
   const connectionProjectionResponse = await fetch(
     origin + '/api/admin/extensions/registry-connections/opensphere-ghcr',
@@ -872,6 +997,7 @@ try {
     supabaseLiveProbes: true,
     migrationLineage: true,
     passwordLoginSessionLifecycle: true,
+    mfaLoginChallengeLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     revokeDenied: true,

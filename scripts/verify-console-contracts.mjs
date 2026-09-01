@@ -10,6 +10,8 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_audit.list_events',
   'console_extension.get_registry_connection',
   'console_extension.list_revocations',
+  'console_identity.activate_browser_session_mfa',
+  'console_identity.get_pending_browser_session_mfa',
   'console_identity.get_supabase_status',
   'console_identity.issue_browser_session',
   'console_identity.resolve_browser_session',
@@ -148,7 +150,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   const sessionResolverSource = await readFile(resolve(root, 'apps', 'console-api', 'src', 'session-resolver.mjs'), 'utf8');
   const webHttpSource = await readFile(resolve(root, 'src', 'app', 'core', 'http.service.ts'), 'utf8');
   const webAuthSource = await readFile(resolve(root, 'src', 'app', 'core', 'auth.service.ts'), 'utf8');
-  assert(sessionResolverSource.includes("request.headers['x-os-csrf-token']"), 'C_API does not consume the Console Web CSRF header');
+  assert(/request\?*[.]headers\?*[.]\['x-os-csrf-token'\]/.test(sessionResolverSource), 'C_API does not consume the Console Web CSRF header');
   assert(webHttpSource.includes("headers.set('X-OS-CSRF-Token'"), 'Console Web shared HTTP client lost the canonical CSRF header');
   assert(webAuthSource.includes("headers.set('X-OS-CSRF-Token'"), 'Console Web identity client lost the canonical CSRF header');
 
@@ -224,7 +226,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     auditRead?.parameters?.find((parameter) => parameter.name === 'limit')?.schema?.maximum === 200,
     'listAuditEvents must keep a bounded page size',
   );
-  for (const operationId of ['getSession', 'deleteSession', 'getMe']) {
+  for (const operationId of ['completeSessionMfa', 'getSession', 'deleteSession', 'getMe']) {
     const identityRead = entries.find(({ operation }) => operation.operationId === operationId)?.operation;
     assert(identityRead?.['x-opensphere-authority'] === 'SupabaseAuth', operationId + ' must declare Supabase Auth authority');
   }

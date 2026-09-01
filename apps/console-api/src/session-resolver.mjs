@@ -22,20 +22,30 @@ function digest(value) {
   return createHash('sha256').update(value, 'utf8').digest();
 }
 
+export function readBrowserSessionProof(request, { requireCsrf = false, cookieName = DEFAULT_COOKIE } = {}) {
+  const handle = cookies(request?.headers?.cookie).get(cookieName) || '';
+  if (handle.length < 32 || handle.length > 512) {
+    fail('SessionInvalid', 'active Console session is required', 401);
+  }
+  const csrf = String(request?.headers?.['x-os-csrf-token'] || '');
+  if (requireCsrf && (csrf.length < 16 || csrf.length > 512)) {
+    fail('CsrfRejected', 'Console session CSRF validation failed', 403);
+  }
+  return Object.freeze({
+    handle,
+    csrf,
+    tokenDigest: digest(handle),
+    csrfTokenDigest: requireCsrf ? digest(csrf) : null,
+  });
+}
+
 export function createDatabaseSessionResolver({ store, cookieName = DEFAULT_COOKIE }) {
   if (!store?.resolveSession) throw new TypeError('session-capable authority store is required');
   return async function resolveSession(request, { requireCsrf = false } = {}) {
-    const handle = cookies(request.headers.cookie).get(cookieName) || '';
-    if (handle.length < 32 || handle.length > 512) {
-      fail('SessionInvalid', 'active Console session is required', 401);
-    }
-    const csrf = String(request.headers['x-os-csrf-token'] || '');
-    if (requireCsrf && (csrf.length < 16 || csrf.length > 512)) {
-      fail('CsrfRejected', 'Console session CSRF validation failed', 403);
-    }
+    const proof = readBrowserSessionProof(request, { requireCsrf, cookieName });
     const session = await store.resolveSession({
-      tokenDigest: digest(handle),
-      csrfTokenDigest: requireCsrf ? digest(csrf) : null,
+      tokenDigest: proof.tokenDigest,
+      csrfTokenDigest: proof.csrfTokenDigest,
       requireCsrf,
     });
     return Object.freeze({

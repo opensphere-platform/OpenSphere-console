@@ -42,6 +42,19 @@ const ISSUE_SESSION_SQL = [
   ') AS session_record',
 ].join(' ');
 
+const GET_PENDING_MFA_SQL = [
+  'SELECT console_identity.get_pending_browser_session_mfa(',
+  '$1::bytea, $2::bytea',
+  ') AS session_record',
+].join(' ');
+
+const ACTIVATE_MFA_SQL = [
+  'SELECT console_identity.activate_browser_session_mfa(',
+  '$1::uuid, $2::uuid, $3::bytea, $4::text, $5::text,',
+  '$6::text, $7::timestamptz, $8::text',
+  ') AS session_record',
+].join(' ');
+
 const LIST_REVOCATIONS_SQL = [
   'SELECT console_extension.list_revocations(',
   '$1::uuid, $2::uuid, $3::text',
@@ -172,6 +185,40 @@ export function createPostgresOperationStore({ query }) {
         ]);
         const record = result?.rows?.[0]?.session_record;
         if (!record) throw new Error('issue_browser_session returned no record');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getPendingMfa(input) {
+      try {
+        const result = await query(GET_PENDING_MFA_SQL, [
+          input.tokenDigest,
+          input.csrfTokenDigest,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record) throw Object.assign(new Error('pending MFA session was not found'), { detail: 'SessionInvalid' });
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async activateMfa(input) {
+      try {
+        const result = await query(ACTIVATE_MFA_SQL, [
+          input.sessionId,
+          input.subjectId,
+          input.expectedAccessCiphertextDigest,
+          input.accessTokenCiphertext,
+          input.refreshTokenCiphertext,
+          input.authSessionRef,
+          input.expiresAt,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record) throw new Error('activate_browser_session_mfa returned no record');
         return record;
       } catch (error) {
         throw databaseError(error);

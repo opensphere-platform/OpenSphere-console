@@ -118,6 +118,52 @@ export function createSupabaseAuthClient({
       });
     },
 
+    async completeTotp({ accessToken, code, expectedSubjectId }) {
+      if (!/^\d{6}$/u.test(String(code || ''))) {
+        fail('ValidationFailed', 'current 6-digit authentication code is required', 400);
+      }
+      const currentClaims = jwtClaims(accessToken, now());
+      if (String(currentClaims.sub) !== String(expectedSubjectId || '')) {
+        fail('AuthenticationRequired', 'pending MFA subject does not match', 401);
+      }
+      const currentUser = await request('/user', { token: accessToken });
+      if (String(currentUser?.id || '') !== String(currentClaims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth subject verification failed', 503);
+      }
+      const factor = (Array.isArray(currentUser.factors) ? currentUser.factors : [])
+        .find((candidate) => candidate?.factor_type === 'totp' && candidate?.status === 'verified' && candidate?.id);
+      if (!factor) fail('MfaFactorUnavailable', 'verified TOTP factor was not found', 409);
+      const factorId = encodeURIComponent(String(factor.id));
+      const challenge = await request(`/factors/${factorId}/challenge`, {
+        method: 'POST', token: accessToken, body: {},
+      });
+      if (!challenge?.id) fail('AuthorityUnavailable', 'Supabase Auth returned no MFA challenge', 503);
+      const verification = await request(`/factors/${factorId}/verify`, {
+        method: 'POST',
+        token: accessToken,
+        body: { challenge_id: String(challenge.id), code: String(code) },
+      });
+      const session = verification?.session || verification;
+      if (!session?.access_token || !session?.refresh_token) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned no aal2 session', 503);
+      }
+      const claims = jwtClaims(session.access_token, now());
+      if (claims.aal !== 'aal2' || String(claims.sub) !== String(expectedSubjectId)) {
+        fail('AuthorityUnavailable', 'Supabase Auth did not produce the expected aal2 subject', 503);
+      }
+      const user = await request('/user', { token: session.access_token });
+      if (String(user?.id || '') !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth aal2 subject verification failed', 503);
+      }
+      return Object.freeze({
+        subjectId: String(claims.sub),
+        accessToken: String(session.access_token),
+        refreshToken: String(session.refresh_token),
+        authSessionRef: String(claims.session_id || claims.sub),
+        aal: 'aal2',
+      });
+    },
+
     async logout(accessToken) {
       try { await request('/logout', { method: 'POST', token: accessToken }); }
       catch { /* Best-effort cleanup after local persistence failure. */ }

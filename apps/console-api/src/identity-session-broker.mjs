@@ -1,4 +1,5 @@
 import { createHash, randomBytes as systemRandomBytes } from 'node:crypto';
+import { readBrowserSessionProof } from './session-resolver.mjs';
 
 const ACTIVE_TTL_MS = 24 * 60 * 60 * 1000;
 const PENDING_MFA_TTL_MS = 5 * 60 * 1000;
@@ -43,8 +44,9 @@ export function createIdentitySessionBroker({
   clock = () => new Date(),
 } = {}) {
   if (!store?.issueSession) throw new TypeError('session issue store is required');
-  if (!authClient?.authenticatePassword || !authClient?.logout) throw new TypeError('Supabase Auth client is required');
-  if (!credentialCipher?.encrypt) throw new TypeError('session credential cipher is required');
+  if (!store?.getPendingMfa || !store?.activateMfa) throw new TypeError('session MFA store is required');
+  if (!authClient?.authenticatePassword || !authClient?.completeTotp || !authClient?.logout) throw new TypeError('Supabase Auth client is required');
+  if (!credentialCipher?.encrypt || !credentialCipher?.decrypt) throw new TypeError('session credential cipher is required');
   if (typeof randomBytes !== 'function') throw new TypeError('secure random byte source is required');
   let origin;
   try { origin = new URL(publicOrigin).origin; } catch { throw new TypeError('Console public origin is invalid'); }
@@ -105,6 +107,57 @@ export function createIdentitySessionBroker({
           mfaEnrollmentRequired: !pendingMfa && auth.aal !== 'aal2',
           session,
         }),
+      });
+    },
+
+    async completeMfa({ request, body, correlationId }) {
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+          || Object.keys(body).some((key) => key !== 'code')
+          || !/^\d{6}$/u.test(String(body.code || ''))) {
+        fail('ValidationFailed', 'current 6-digit authentication code is required', 400);
+      }
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const pending = await store.getPendingMfa({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+      });
+      if (!pending?.sessionId || !pending?.subjectId || !pending?.accessTokenCiphertext) {
+        fail('AuthorityUnavailable', 'pending MFA authority returned an invalid record', 503);
+      }
+      const accessToken = credentialCipher.decrypt(pending.accessTokenCiphertext);
+      const completed = await authClient.completeTotp({
+        accessToken,
+        code: String(body.code),
+        expectedSubjectId: pending.subjectId,
+      });
+      const expiresAt = new Date(clock().getTime() + ACTIVE_TTL_MS);
+      let activated;
+      try {
+        activated = await store.activateMfa({
+          sessionId: pending.sessionId,
+          subjectId: pending.subjectId,
+          expectedAccessCiphertextDigest: digest(pending.accessTokenCiphertext),
+          accessTokenCiphertext: credentialCipher.encrypt(completed.accessToken),
+          refreshTokenCiphertext: credentialCipher.encrypt(completed.refreshToken),
+          authSessionRef: completed.authSessionRef,
+          expiresAt: expiresAt.toISOString(),
+          correlationId,
+        });
+      } catch (error) {
+        await authClient.logout(completed.accessToken);
+        throw error;
+      }
+      if (!activated?.sessionId || activated.sessionId !== pending.sessionId
+          || activated.subjectId !== pending.subjectId || activated.state !== 'active' || activated.aal !== 'aal2') {
+        await authClient.logout(completed.accessToken);
+        fail('AuthorityUnavailable', 'Console session MFA authority returned an invalid record', 503);
+      }
+      return Object.freeze({
+        cookies: Object.freeze([
+          cookie('__Host-opensphere-session', proof.handle, ACTIVE_TTL_MS, true),
+          cookie('__Host-opensphere_csrf', proof.csrf, ACTIVE_TTL_MS),
+        ]),
+        body: Object.freeze({ assurance: 'aal2', sessionId: activated.sessionId }),
       });
     },
   });

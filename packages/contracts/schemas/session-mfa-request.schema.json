@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:session-mfa-request:v1",
+  "title": "Console pending browser session TOTP proof",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code"],
+  "properties": {
+    "code": { "type": "string", "pattern": "^[0-9]{6}$" }
+  }
+}
