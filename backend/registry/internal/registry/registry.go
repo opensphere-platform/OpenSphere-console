@@ -27,12 +27,15 @@ import (
 )
 
 var (
-	uipkgGVR      = schema.GroupVersionResource{Group: "plugins.opensphere.io", Version: "v1alpha1", Resource: "uipluginpackages"}
-	uiregGVR      = schema.GroupVersionResource{Group: "plugins.opensphere.io", Version: "v1alpha1", Resource: "uipluginregistrations"}
-	descriptorGVR = schema.GroupVersionResource{Group: "foundation.opensphere.io", Version: "v1alpha1", Resource: "foundationmoduledescriptors"}
-	configMapGVR  = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
-	digestRE      = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
-	manifestRE    = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	uipkgGVR               = schema.GroupVersionResource{Group: "plugins.opensphere.io", Version: "v1alpha1", Resource: "uipluginpackages"}
+	uiregGVR               = schema.GroupVersionResource{Group: "plugins.opensphere.io", Version: "v1alpha1", Resource: "uipluginregistrations"}
+	descriptorGVR          = schema.GroupVersionResource{Group: "foundation.opensphere.io", Version: "v1alpha1", Resource: "foundationmoduledescriptors"}
+	configMapGVR           = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+	digestRE               = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	manifestRE             = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	sourceRevisionRE       = regexp.MustCompile(`^[a-f0-9]{40}$`)
+	compatibilityVersionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	repositoryRE           = regexp.MustCompile(`^ghcr\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*$`)
 )
 
 const (
@@ -206,6 +209,44 @@ func packageMatchesCurrentRegistration(pkg, reg unstructured.Unstructured) bool 
 		nestedString(pkg.Object, "spec", "manifest", "sha256") == nestedString(reg.Object, "status", "currentManifestSha256")
 }
 
+func requestedRepository(ref string) string {
+	value := strings.TrimSpace(ref)
+	if at := strings.IndexByte(value, '@'); at >= 0 {
+		value = value[:at]
+	} else if colon := strings.LastIndexByte(value, ':'); colon > strings.LastIndexByte(value, '/') {
+		value = value[:colon]
+	}
+	if !repositoryRE.MatchString(value) {
+		return ""
+	}
+	return value
+}
+
+func canonicalExtensionRepository(kind, id string) string {
+	if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`).MatchString(id) {
+		return ""
+	}
+	switch kind {
+	case "plugin":
+		return "ghcr.io/opensphere-platform/opensphere-plugin-" + id
+	case "subShell":
+		if strings.HasPrefix(id, "shell-") {
+			return "ghcr.io/opensphere-platform/opensphere-" + id
+		}
+		return "ghcr.io/opensphere-platform/opensphere-shell-" + id
+	default:
+		return ""
+	}
+}
+
+func exactExtensionImage(plugin Plugin) string {
+	repository := requestedRepository(plugin.RequestedRef)
+	if repository == "" || repository != canonicalExtensionRepository(plugin.Kind, plugin.ID) || !digestRE.MatchString(plugin.InstalledDigest) {
+		return ""
+	}
+	return repository + "@" + plugin.InstalledDigest
+}
+
 func pluginFrom(pkg, reg unstructured.Unstructured, nav map[string]interface{}, prior *Plugin) (Plugin, *catalog.Rejected) {
 	id := pkg.GetName()
 	digest := nestedString(reg.Object, "status", "currentDigest")
@@ -262,6 +303,18 @@ func pluginFrom(pkg, reg unstructured.Unstructured, nav map[string]interface{}, 
 		UpdateState: nestedString(reg.Object, "status", "channelState"), ChannelCheckedAt: nestedString(reg.Object, "status", "channelCheckedAt"),
 		ChannelReason: nestedString(reg.Object, "status", "channelReason"), Approval: Approval{Actor: nestedString(reg.Object, "spec", "approval", "requestedBy"), Reason: nestedString(reg.Object, "spec", "approval", "reason"), Time: reg.GetCreationTimestamp().UTC().Format(time.RFC3339)},
 		Icon: icon, Available: true,
+	}
+	if exactExtensionImage(plugin) == "" {
+		return Plugin{}, &catalog.Rejected{Kind: "extension", ID: id, Code: "ExecutionIdentityInvalid", Message: "verified extension lacks its canonical exact-digest execution identity"}
+	}
+	if !sourceRevisionRE.MatchString(plugin.SourceRevision) {
+		return Plugin{}, &catalog.Rejected{Kind: "extension", ID: id, Code: "SourceRevisionInvalid", Message: "verified extension lacks a full governed source revision"}
+	}
+	if !compatibilityVersionRE.MatchString(plugin.CompatibilityVersion) {
+		return Plugin{}, &catalog.Rejected{Kind: "extension", ID: id, Code: "CompatibilityVersionInvalid", Message: "verified extension lacks a plain semantic compatibility version"}
+	}
+	if len(plugin.EvidenceRefs) < 2 {
+		return Plugin{}, &catalog.Rejected{Kind: "extension", ID: id, Code: "SupplyChainEvidenceMissing", Message: "verified extension lacks provenance and SBOM evidence references"}
 	}
 	if prior != nil && prior.ArtifactServiceID != "" && prior.ArtifactServiceID != plugin.ArtifactServiceID {
 		plugin.RetainedArtifactServiceIDs = []interface{}{prior.ArtifactServiceID}
@@ -885,7 +938,19 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 	case "extension":
 		for _, p := range snap.Plugins {
 			if p.ID == req.ID || "extension."+p.ID == req.ID {
-				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{"kind": "extension", "descriptorId": "extension." + p.ID, "id": p.ID, "digest": p.InstalledDigest, "channel": p.RequestedChannel, "catalogRevision": snap.Revision}}
+				image := exactExtensionImage(p)
+				if image == "" {
+					return ResolveResponse{Result: "Ineligible", Revision: snap.Revision, BlockerCode: "ExecutionIdentityInvalid", Message: "Registry candidate has no canonical exact-digest execution identity"}
+				}
+				return ResolveResponse{Result: "Eligible", Revision: snap.Revision, Candidate: map[string]interface{}{
+					"kind": "extension", "descriptorId": "extension." + p.ID, "id": p.ID,
+					"image": image, "digest": p.InstalledDigest, "channel": p.RequestedChannel,
+					"catalogRevision": snap.Revision, "descriptorRevision": snap.Revision,
+					"executionRevision": image, "sourceRevision": p.SourceRevision,
+					"manifestDigest": "sha256:" + p.ManifestSHA256, "compatibilityVersion": p.CompatibilityVersion,
+					"keyId": p.KeyID, "evidenceRefs": p.EvidenceRefs,
+					"verification": map[string]string{"catalog": "Verified", "manifest": "Verified", "signature": "Verified", "permissions": "Approved"},
+				}}
 			}
 		}
 	case "installableModule":

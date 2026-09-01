@@ -3,14 +3,10 @@
   "$id": "urn:opensphere:console:extension-install-request:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "descriptorRevision", "executionRevision", "reason"],
+  "required": ["descriptorId", "catalogRevision", "reason"],
   "properties": {
-    "image": {
-      "type": "string",
-      "pattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$"
-    },
-    "descriptorRevision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
-    "executionRevision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "descriptorId": { "type": "string", "pattern": "^extension\\.[a-z0-9][a-z0-9-]{0,62}$" },
+    "catalogRevision": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "reason": { "type": "string", "minLength": 3, "maxLength": 500 }
   }
 }

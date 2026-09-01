@@ -3,11 +3,9 @@
   "$id": "urn:opensphere:console:extension-candidate-request:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image"],
+  "required": ["descriptorId", "catalogRevision"],
   "properties": {
-    "image": { "type": "string", "pattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$" },
-    "descriptorRevision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
-    "executionRevision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
-    "reason": { "type": ["string", "null"], "maxLength": 500 }
+    "descriptorId": { "type": "string", "pattern": "^extension\\.[a-z0-9][a-z0-9-]{0,62}$" },
+    "catalogRevision": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
   }
 }

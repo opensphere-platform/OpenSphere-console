@@ -30,6 +30,7 @@
     "idempotencyKey": { "type": "string", "minLength": 1 },
     "sourceRevision": { "type": ["string", "null"] },
     "ownerRef": { "type": ["string", "null"] },
+    "executionPlan": { "type": ["object", "null"] },
     "state": {
       "enum": ["Planned", "Authorized", "Submitted", "Reconciling", "Applied", "Verified", "Failed", "Unknown", "RolledBack"]
     },

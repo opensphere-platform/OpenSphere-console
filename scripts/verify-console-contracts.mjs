@@ -113,8 +113,11 @@ export async function verifyContracts(repoRoot = process.cwd()) {
   const installOperation = entries.find(({ operation }) => operation.operationId === 'installExtensionCandidate')?.operation;
   assert(
     installOperation?.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/extension-install-request.schema.json',
-    'installExtensionCandidate must require the exact-revision install schema',
+    'installExtensionCandidate must require the exact catalog-binding install schema',
   );
+  const inspectOperation = entries.find(({ operation }) => operation.operationId === 'inspectExtensionCandidate')?.operation;
+  assert(inspectOperation?.['x-opensphere-authority'] === 'OpenSphereRegistry', 'inspectExtensionCandidate must declare C_REG authority');
+  assert(inspectOperation?.['x-opensphere-permission'] === 'console.extension.install', 'inspectExtensionCandidate must require install visibility');
 
   const referencedActions = entries.map(({ operation }) => operation['x-opensphere-action']).filter(Boolean);
   for (const actionPolicyId of actionPolicyIds) {

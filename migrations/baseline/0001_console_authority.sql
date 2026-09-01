@@ -109,6 +109,7 @@ CREATE TABLE console_operation.operation (
   correlation_id text NOT NULL CHECK (length(correlation_id) BETWEEN 8 AND 128),
   source_revision text,
   owner_ref text,
+  execution_plan jsonb,
   state text NOT NULL CHECK (state IN ('Planned', 'Authorized', 'Submitted', 'Reconciling', 'Applied', 'Verified', 'Failed', 'Unknown', 'RolledBack')),
   state_version bigint NOT NULL DEFAULT 0 CHECK (state_version >= 0),
   expected_postcondition jsonb,
@@ -656,7 +657,7 @@ BEGIN
     AND to_regclass('console_audit.event') IS NOT NULL
     AND to_regclass('console_extension.registry_connection') IS NOT NULL
     AND to_regprocedure('console_identity.resolve_browser_session(bytea,bytea,boolean)') IS NOT NULL
-    AND to_regprocedure('console_operation.accept_operation(uuid,uuid,bigint,bigint,text,text,text,text,text,text,text,text,boolean,text,text,text,text,jsonb)') IS NOT NULL;
+    AND to_regprocedure('console_operation.accept_operation(uuid,uuid,bigint,bigint,text,text,text,text,text,text,text,text,boolean,text,text,text,text,jsonb,jsonb)') IS NOT NULL;
 
   RETURN jsonb_build_object(
     'schemaVersion', '1.0',
@@ -721,7 +722,8 @@ CREATE OR REPLACE FUNCTION console_operation.accept_operation(
   p_correlation_id text,
   p_source_revision text DEFAULT NULL,
   p_owner_ref text DEFAULT NULL,
-  p_expected_postcondition jsonb DEFAULT NULL
+  p_expected_postcondition jsonb DEFAULT NULL,
+  p_execution_plan jsonb DEFAULT NULL
 )
 RETURNS TABLE(operation_record jsonb, replayed boolean)
 LANGUAGE plpgsql
@@ -790,7 +792,8 @@ BEGIN
     'approvalRequired', p_approval_required,
     'sourceRevision', p_source_revision,
     'ownerRef', p_owner_ref,
-    'expectedPostcondition', p_expected_postcondition
+    'expectedPostcondition', p_expected_postcondition,
+    'executionPlan', p_execution_plan
   )::text, 'UTF8')), 'hex');
 
   PERFORM pg_advisory_xact_lock(hashtextextended(p_actor_ref::text || ':' || p_idempotency_key, 0));
@@ -811,12 +814,12 @@ BEGIN
     action_id, action_version, actor_ref, target_ref, required_permission,
     payload_digest, request_digest, risk, reason, aal, permission_revision,
     plan_revision, approval_required, idempotency_key, correlation_id,
-    source_revision, owner_ref, state, expected_postcondition
+    source_revision, owner_ref, execution_plan, state, expected_postcondition
   ) VALUES (
     p_action_id, p_action_version, p_actor_ref, p_target_ref, p_required_permission,
     p_payload_digest, v_request_digest, p_risk, COALESCE(p_reason, ''), v_session.aal,
     v_authority.permission_revision, p_plan_revision, p_approval_required,
-    p_idempotency_key, p_correlation_id, p_source_revision, p_owner_ref,
+    p_idempotency_key, p_correlation_id, p_source_revision, p_owner_ref, p_execution_plan,
     CASE WHEN p_approval_required THEN 'Planned' ELSE 'Authorized' END,
     p_expected_postcondition
   ) RETURNING * INTO v_operation;
@@ -868,11 +871,11 @@ $$;
 
 REVOKE ALL ON FUNCTION console_operation.accept_operation(
   uuid, uuid, bigint, bigint, text, text, text, text, text, text, text, text,
-  boolean, text, text, text, text, jsonb
+  boolean, text, text, text, text, jsonb, jsonb
 ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION console_operation.accept_operation(
   uuid, uuid, bigint, bigint, text, text, text, text, text, text, text, text,
-  boolean, text, text, text, text, jsonb
+  boolean, text, text, text, text, jsonb, jsonb
 ) TO console_api;
 
 CREATE OR REPLACE FUNCTION console_operation.approve_operation(
@@ -1155,6 +1158,7 @@ BEGIN
     'actionVersion', v_operation.action_version,
     'targetRef', v_operation.target_ref,
     'payloadDigest', v_operation.payload_digest,
+    'executionPlan', v_operation.execution_plan,
     'ownerRef', v_operation.owner_ref,
     'claimEpoch', v_outbox.claim_epoch,
     'leaseExpiresAt', v_outbox.lease_expires_at,
@@ -1836,7 +1840,7 @@ COMMENT ON TABLE console_operation.verification_receipt IS 'Idempotent verifier 
 COMMENT ON TABLE console_extension.registry_connection IS 'No-secret metadata authority for the fixed OpenSphere GHCR connection';
 COMMENT ON FUNCTION console_operation.accept_operation(
   uuid, uuid, bigint, bigint, text, text, text, text, text, text, text, text,
-  boolean, text, text, text, text, jsonb
+  boolean, text, text, text, text, jsonb, jsonb
 ) IS 'Atomically revalidates session and permission, accepts an idempotent intent, and appends audit/outbox evidence';
 COMMENT ON FUNCTION console_audit.list_events(uuid, uuid, bigint, bigint, bigint, integer, text)
   IS 'Returns a bounded newest-first page from the append-only audit ledger after current authority checks';

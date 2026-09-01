@@ -112,6 +112,7 @@ function receipt(record) {
     idempotencyKey: record.idempotency_key,
     sourceRevision: record.source_revision ?? null,
     ownerRef: record.owner_ref ?? null,
+    executionPlan: record.execution_plan ?? null,
     state: record.state,
     stateVersion: Number(record.state_version),
     expectedPostcondition: record.expected_postcondition ?? null,
@@ -130,7 +131,7 @@ export function createOperationService({ store, policyCatalog, clock = () => new
   const policies = indexActionPolicies(policyCatalog);
 
   return Object.freeze({
-    async accept({ session, request, idempotencyKey, correlationId }) {
+    async accept({ session, request, idempotencyKey, correlationId, executionPlan = null }) {
       const validated = validateOperationRequest(request);
       const policy = policies.get(validated.actionId + '@' + validated.actionVersion);
       if (!policy) fail('PolicyRejected', 'operation action is not registered', 422);
@@ -149,6 +150,9 @@ export function createOperationService({ store, policyCatalog, clock = () => new
       });
       const key = text(idempotencyKey, 'Idempotency-Key', 8, 256);
       const correlation = text(correlationId, 'correlationId', 8, 128);
+      if (executionPlan !== null && (!executionPlan || typeof executionPlan !== 'object' || Array.isArray(executionPlan))) {
+        fail('ValidationFailed', 'execution plan must be an object', 400);
+      }
       if (!session.sessionId) fail('AuthenticationRequired', 'opaque session id is required', 401);
       const permissionRevision = Number(authorization.permissionRevision);
       const revokeEpoch = Number(session.revokeEpoch);
@@ -176,6 +180,7 @@ export function createOperationService({ store, policyCatalog, clock = () => new
         sourceRevision: null,
         ownerRef: policy.ownerRef,
         expectedPostcondition: null,
+        executionPlan,
       });
       return Object.freeze({ receipt: receipt(accepted.operationRecord), replayed: Boolean(accepted.replayed) });
     },

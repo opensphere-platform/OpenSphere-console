@@ -1020,3 +1020,54 @@ BEGIN
 END;
 $$;
 RESET ROLE;
+
+-- The install owner needs only the immutable catalog coordinates after approval.
+-- Supply-chain evidence remains authoritative in C_REG and is re-resolved by the owner.
+SET ROLE console_api;
+SELECT * FROM console_operation.accept_operation(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, 'console.extension.install',
+  'console.extension.install', '1.0',
+  'ghcr.io/opensphere-platform/opensphere-plugin-workspace@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  'sha256:abababababababababababababababababababababababababababababababab',
+  'R2', 'install verified workspace extension',
+  'console-operation-policy-2026-09-01.1', true,
+  'extension-install-operation-0001', 'correlation-extension-install-0001',
+  NULL, 'C_EXT', NULL,
+  '{"schemaVersion":"1.0","authority":"OpenSphereRegistry","descriptorId":"extension.workspace","catalogRevision":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","image":"ghcr.io/opensphere-platform/opensphere-plugin-workspace@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}'::jsonb
+);
+RESET ROLE;
+
+SELECT set_config(
+  'verification.install_operation_id',
+  (SELECT operation_id::text FROM console_operation.operation WHERE idempotency_key = 'extension-install-operation-0001'),
+  false
+);
+
+SET ROLE console_api;
+SELECT * FROM console_operation.approve_operation(
+  '66666666-6666-4666-8666-666666666666',
+  '55555555-5555-4555-8555-555555555555',
+  3, 0, current_setting('verification.install_operation_id')::uuid, 0,
+  'approve verified workspace extension', 'console-operation-policy-2026-09-01.1', NULL,
+  'extension-install-approval-0001', 'correlation-extension-install-approval-0001'
+);
+RESET ROLE;
+
+DO $$
+DECLARE
+  v_plan jsonb := (
+    SELECT execution_plan FROM console_operation.operation
+    WHERE operation_id = current_setting('verification.install_operation_id')::uuid
+  );
+BEGIN
+  IF v_plan->>'authority' <> 'OpenSphereRegistry'
+      OR v_plan->>'descriptorId' <> 'extension.workspace'
+      OR v_plan->>'catalogRevision' <> 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+      OR v_plan->>'image' <> 'ghcr.io/opensphere-platform/opensphere-plugin-workspace@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+      OR (SELECT count(*) FROM jsonb_object_keys(v_plan)) <> 5 THEN
+    RAISE EXCEPTION 'approved Extension install record lost or expanded its minimal C_REG execution coordinates';
+  END IF;
+END;
+$$;

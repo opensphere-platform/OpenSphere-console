@@ -197,6 +197,14 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         const session = await resolveSession(request, { requireCsrf: false });
         return send(response, 200, await registryOperations.listRevocations({ session, correlationId }));
       }
+      if (url.pathname === '/api/admin/extensions/inspect' && request.method === 'POST') {
+        const session = await resolveSession(request, { requireCsrf: true });
+        return send(response, 200, await registryOperations.inspectCandidate({
+          session,
+          body: await jsonBody(request),
+          correlationId,
+        }));
+      }
       if (url.pathname === '/api/admin/extensions/install' && request.method === 'POST') {
         const session = await resolveSession(request, { requireCsrf: true });
         const result = await registryOperations.installCandidate({

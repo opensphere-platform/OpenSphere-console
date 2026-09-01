@@ -7,6 +7,7 @@ import { createIdentityOperations } from './identity-operations.mjs';
 import { createDataIdentityOperations } from './data-identity-operations.mjs';
 import { createPostgresOperationStore } from './postgres-operation-store.mjs';
 import { createRegistryOperations } from './registry-operations.mjs';
+import { createRegistryResolver } from './registry-resolver-client.mjs';
 import { createDatabaseSessionResolver } from './session-resolver.mjs';
 import { createConsoleApiHandler } from './http-handler.mjs';
 
@@ -40,10 +41,16 @@ const operationService = createOperationService({ store, policyCatalog });
 const auditOperations = createAuditOperations({ store });
 const identityOperations = createIdentityOperations({ store });
 const dataIdentityOperations = createDataIdentityOperations({ store });
+const registryResolver = createRegistryResolver({
+  baseUrl: String(process.env.CONSOLE_REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080'),
+  timeoutMs: positiveInteger('CONSOLE_REGISTRY_TIMEOUT_MS', 8000, 30000),
+  maximumResponseBytes: positiveInteger('CONSOLE_REGISTRY_MAX_RESPONSE_BYTES', 65536, 1024 * 1024),
+});
 const registryOperations = createRegistryOperations({
   operationService,
   policyRevision: policyCatalog.policyRevision,
   projectionStore: store,
+  registryResolver,
 });
 const handler = createConsoleApiHandler({
   resolveSession: createDatabaseSessionResolver({ store }),

@@ -3,7 +3,7 @@ const ACCEPT_SQL = [
   'FROM console_operation.accept_operation(',
   '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::text, $6::text,',
   '$7::text, $8::text, $9::text, $10::text, $11::text, $12::text,',
-  '$13::boolean, $14::text, $15::text, $16::text, $17::text, $18::jsonb',
+  '$13::boolean, $14::text, $15::text, $16::text, $17::text, $18::jsonb, $19::jsonb',
   ')',
 ].join(' ');
 
@@ -168,6 +168,7 @@ export function createPostgresOperationStore({ query }) {
           input.sourceRevision,
           input.ownerRef,
           input.expectedPostcondition == null ? null : JSON.stringify(input.expectedPostcondition),
+          input.executionPlan == null ? null : JSON.stringify(input.executionPlan),
         ]);
         const row = result?.rows?.[0];
         if (!row?.operation_record) throw new Error('accept_operation returned no receipt');

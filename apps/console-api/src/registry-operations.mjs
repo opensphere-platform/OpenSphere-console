@@ -1,6 +1,7 @@
 const REGISTRY_TARGET = 'registry-connection:opensphere-ghcr';
 const IMAGE = /^ghcr\.io\/opensphere-platform\/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$/;
-const REVISION = /^[0-9a-f]{40,64}$/;
+const DESCRIPTOR_ID = /^extension\.[a-z0-9][a-z0-9-]{0,62}$/;
+const CATALOG_REVISION = /^sha256:[0-9a-f]{64}$/;
 
 function fail(message) {
   throw Object.assign(new Error(message), { code: 'ValidationFailed', status: 400 });
@@ -12,7 +13,24 @@ function exact(value, fields, label) {
   if (unknown.length) fail(label + ' contains unknown fields: ' + unknown.join(', '));
 }
 
-export function createRegistryOperations({ operationService, policyRevision, projectionStore }) {
+function catalogRequest(body, includeReason) {
+  exact(body, includeReason ? ['descriptorId', 'catalogRevision', 'reason'] : ['descriptorId', 'catalogRevision'], 'extension catalog request');
+  const descriptorId = String(body.descriptorId || '').trim();
+  const catalogRevision = String(body.catalogRevision || '').trim();
+  if (!DESCRIPTOR_ID.test(descriptorId)) fail('canonical extension descriptorId is required');
+  if (!CATALOG_REVISION.test(catalogRevision)) fail('exact catalogRevision is required');
+  const reason = includeReason ? String(body.reason || '').trim() : '';
+  if (includeReason && (reason.length < 3 || reason.length > 500)) fail('extension install reason is required');
+  return { descriptorId, catalogRevision, reason };
+}
+
+function requirePermission(session, permission) {
+  if (!session?.authorityFresh || session.revokedAt || !session.permissions?.includes(permission)) {
+    throw Object.assign(new Error('current extension permission is required'), { code: 'PermissionDenied', status: 403 });
+  }
+}
+
+export function createRegistryOperations({ operationService, policyRevision, projectionStore, registryResolver, clock = () => new Date() }) {
   if (!operationService?.accept) throw new TypeError('operation service is required');
   return Object.freeze({
     async getRegistryConnection({ session, correlationId }) {
@@ -105,16 +123,51 @@ export function createRegistryOperations({ operationService, policyRevision, pro
       });
     },
 
+    async inspectCandidate({ session, body, correlationId }) {
+      requirePermission(session, 'console.extension.install');
+      if (!registryResolver?.resolveExtension) throw Object.assign(
+        new Error('Registry resolution authority is unavailable'),
+        { code: 'AuthorityUnavailable', status: 503 },
+      );
+      const request = catalogRequest(body, false);
+      const candidate = await registryResolver.resolveExtension({
+        descriptorId: request.descriptorId,
+        catalogRevision: request.catalogRevision,
+        correlationId,
+      });
+      return {
+        schemaVersion: '1.0',
+        data: { resolution: 'Eligible', candidate },
+        authority: 'OpenSphereRegistry',
+        observedAt: clock().toISOString(),
+        freshness: 'fresh',
+        correlationId,
+        evidenceRefs: [`registry:${request.catalogRevision}`, ...candidate.evidenceRefs],
+      };
+    },
+
     async installCandidate({ session, body, idempotencyKey, correlationId }) {
-      exact(body, ['image', 'descriptorRevision', 'executionRevision', 'reason'], 'extension install request');
-      const image = String(body.image || '').trim();
-      const descriptorRevision = String(body.descriptorRevision || '').trim();
-      const executionRevision = String(body.executionRevision || '').trim();
-      const reason = String(body.reason || '').trim();
-      if (!IMAGE.test(image)) fail('exact OpenSphere GHCR digest is required');
-      if (!REVISION.test(descriptorRevision)) fail('exact descriptor revision is required');
-      if (!REVISION.test(executionRevision)) fail('exact execution revision is required');
-      if (reason.length < 3 || reason.length > 500) fail('extension install reason is required');
+      requirePermission(session, 'console.extension.install');
+      if (session.aal !== 'aal2') {
+        throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired', status: 403 });
+      }
+      const request = catalogRequest(body, true);
+      if (!registryResolver?.resolveExtension) throw Object.assign(
+        new Error('Registry resolution authority is unavailable'),
+        { code: 'AuthorityUnavailable', status: 503 },
+      );
+      const candidate = await registryResolver.resolveExtension({
+        descriptorId: request.descriptorId,
+        catalogRevision: request.catalogRevision,
+        correlationId,
+      });
+      const executionPlan = {
+        schemaVersion: '1.0',
+        authority: 'OpenSphereRegistry',
+        descriptorId: candidate.descriptorId,
+        catalogRevision: request.catalogRevision,
+        image: candidate.image,
+      };
       return operationService.accept({
         session,
         idempotencyKey,
@@ -123,12 +176,17 @@ export function createRegistryOperations({ operationService, policyRevision, pro
           schemaVersion: '1.0',
           actionId: 'console.extension.install',
           actionVersion: '1.0',
-          targetRef: image,
-          payload: { image, descriptorRevision, executionRevision },
-          reason,
+          targetRef: candidate.image,
+          payload: {
+            descriptorId: candidate.descriptorId,
+            catalogRevision: request.catalogRevision,
+            image: candidate.image,
+          },
+          reason: request.reason,
           risk: 'R2',
           planRevision: policyRevision,
         },
+        executionPlan,
       });
     },
   });

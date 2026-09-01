@@ -17,6 +17,20 @@ const policyCatalog = JSON.parse(await readFile(
   new URL('../../../packages/contracts/action-policies.json', import.meta.url),
   'utf8',
 ));
+const catalogRevision = 'sha256:' + 'c'.repeat(64);
+const extensionImage = 'ghcr.io/opensphere-platform/opensphere-plugin-workspace@sha256:' + 'e'.repeat(64);
+
+function resolvedCandidate() {
+  return {
+    kind: 'extension', descriptorId: 'extension.workspace', id: 'workspace', image: extensionImage,
+    digest: 'sha256:' + 'e'.repeat(64), channel: 'edge', catalogRevision,
+    descriptorRevision: catalogRevision, executionRevision: extensionImage,
+    sourceRevision: 'a'.repeat(40), manifestDigest: 'sha256:' + 'd'.repeat(64),
+    compatibilityVersion: '1.0.0', keyId: 'opensphere-release-key-1',
+    evidenceRefs: ['oci:provenance:workspace', 'oci:sbom:workspace'],
+    verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
+  };
+}
 
 const session = {
   sessionId,
@@ -54,6 +68,7 @@ function record(input) {
     correlation_id: input.correlationId,
     source_revision: null,
     owner_ref: input.ownerRef,
+    execution_plan: input.executionPlan ?? null,
     state: input.approvalRequired ? 'Planned' : 'Authorized',
     state_version: 0,
     expected_postcondition: null,
@@ -68,6 +83,7 @@ function fixture() {
   const accepted = [];
   const approved = [];
   const verified = [];
+  const resolved = [];
   const store = {
     async accept(input) {
       accepted.push(input);
@@ -127,12 +143,20 @@ function fixture() {
     },
   };
   const operationService = createOperationService({ store, policyCatalog, clock: () => current });
+  const registryResolver = {
+    async resolveExtension(input) {
+      resolved.push(input);
+      return resolvedCandidate();
+    },
+  };
   const registryOperations = createRegistryOperations({
     operationService,
     policyRevision: policyCatalog.policyRevision,
     projectionStore: store,
+    registryResolver,
+    clock: () => current,
   });
-  return { accepted, approved, verified, operationService, registryOperations };
+  return { accepted, approved, verified, resolved, operationService, registryOperations };
 }
 
 test('Registry credential mutation persists only a digest after current policy authorization', async () => {
@@ -190,19 +214,17 @@ test('Registry revocation requires an exact digest and canonical confirmation', 
   assert.equal(accepted.length, 1);
 });
 
-test('Extension install intake binds immutable image and descriptor execution revisions', async () => {
-  const { accepted, registryOperations } = fixture();
-  const image = 'ghcr.io/opensphere-platform/workspace@sha256:' + 'e'.repeat(64);
+test('Extension install intake derives its immutable execution plan from C_REG', async () => {
+  const { accepted, resolved, registryOperations } = fixture();
   const request = {
-    image,
-    descriptorRevision: 'a'.repeat(40),
-    executionRevision: 'b'.repeat(64),
+    descriptorId: 'extension.workspace',
+    catalogRevision,
     reason: 'install reviewed extension candidate',
   };
   for (const invalid of [
-    { ...request, image: 'ghcr.io/opensphere-platform/workspace:latest' },
-    { ...request, descriptorRevision: null },
-    { ...request, executionRevision: 'short' },
+    { ...request, descriptorId: 'workspace' },
+    { ...request, catalogRevision: 'sha256:short' },
+    { ...request, image: extensionImage },
     { ...request, extra: true },
   ]) {
     await assert.rejects(registryOperations.installCandidate({
@@ -221,10 +243,32 @@ test('Extension install intake binds immutable image and descriptor execution re
   });
   assert.equal(result.receipt.actionId, 'console.extension.install');
   assert.equal(result.receipt.requiredPermission, 'console.extension.install');
-  assert.equal(result.receipt.targetRef, image);
+  assert.equal(result.receipt.targetRef, extensionImage);
+  assert.deepEqual(result.receipt.executionPlan, {
+    schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
+    catalogRevision, image: extensionImage,
+  });
   assert.equal(result.receipt.state, 'Planned');
   assert.equal(result.receipt.approvalRequired, true);
   assert.equal(accepted.length, 1);
+  assert.deepEqual(resolved, [{
+    descriptorId: 'extension.workspace', catalogRevision,
+    correlationId: 'extension-install-correlation-0001',
+  }]);
+});
+
+test('Extension resolution is not called before current permission and AAL checks', async () => {
+  const { registryOperations, resolved } = fixture();
+  const body = { descriptorId: 'extension.workspace', catalogRevision, reason: 'install reviewed extension candidate' };
+  await assert.rejects(registryOperations.inspectCandidate({
+    session: { ...session, permissions: [] }, body: { descriptorId: body.descriptorId, catalogRevision },
+    correlationId: 'extension-inspect-denied-0001',
+  }), { code: 'PermissionDenied' });
+  await assert.rejects(registryOperations.installCandidate({
+    session: { ...session, aal: 'aal1' }, body,
+    idempotencyKey: 'extension-install-denied-0001', correlationId: 'extension-install-denied-correlation-0001',
+  }), { code: 'StepUpRequired' });
+  assert.equal(resolved.length, 0);
 });
 
 test('approval requires current aal2 approval authority and carries compare-and-set state', async () => {
@@ -407,8 +451,9 @@ test('PostgreSQL store binds every authority parameter and maps database denial 
     sourceRevision: null,
     ownerRef: 'C_EXT',
     expectedPostcondition: null,
+    executionPlan: null,
   });
-  assert.equal(calls[0].values.length, 18);
+  assert.equal(calls[0].values.length, 19);
   assert.equal(calls[0].values[0], sessionId);
   assert.equal(calls[0].values[2], 7);
   assert.equal(calls[0].values[3], 2);
@@ -512,7 +557,6 @@ test('HTTP Extension install returns only a Planned exact-revision operation', a
   }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
-  const image = 'ghcr.io/opensphere-platform/workspace@sha256:' + 'e'.repeat(64);
   const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/admin/extensions/install', {
     method: 'POST',
     headers: {
@@ -522,18 +566,50 @@ test('HTTP Extension install returns only a Planned exact-revision operation', a
       'x-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({
-      image,
-      descriptorRevision: 'a'.repeat(40),
-      executionRevision: 'b'.repeat(64),
+      descriptorId: 'extension.workspace',
+      catalogRevision,
       reason: 'install reviewed extension candidate',
     }),
   });
   assert.equal(response.status, 202);
   const receipt = await response.json();
   assert.equal(receipt.state, 'Planned');
-  assert.equal(receipt.targetRef, image);
+  assert.equal(receipt.targetRef, extensionImage);
+  assert.equal(receipt.executionPlan.catalogRevision, catalogRevision);
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
   assert.deepEqual(resolverCalls, [{ requireCsrf: true }]);
+});
+
+test('HTTP Extension inspection returns only current C_REG evidence and requires CSRF', async (t) => {
+  const { registryOperations, operationService, resolved } = fixture();
+  const resolverCalls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession(_request, options) { resolverCalls.push(options); return session; },
+    operationService,
+    registryOperations,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/admin/extensions/inspect', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-correlation-id': 'http-extension-inspect-correlation-0001',
+      'x-csrf-token': 'validated-by-session-resolver',
+    },
+    body: JSON.stringify({ descriptorId: 'extension.workspace', catalogRevision }),
+  });
+  const envelope = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(envelope.authority, 'OpenSphereRegistry');
+  assert.equal(envelope.freshness, 'fresh');
+  assert.equal(envelope.data.candidate.image, extensionImage);
+  assert.equal(envelope.data.candidate.verification.signature, 'Verified');
+  assert.deepEqual(resolverCalls, [{ requireCsrf: true }]);
+  assert.deepEqual(resolved, [{
+    descriptorId: 'extension.workspace', catalogRevision,
+    correlationId: 'http-extension-inspect-correlation-0001',
+  }]);
 });
 
 test('HTTP Registry connection read is session-revalidated and no-secret', async (t) => {
