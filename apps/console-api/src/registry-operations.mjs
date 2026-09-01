@@ -24,6 +24,16 @@ function catalogRequest(body, includeReason) {
   return { descriptorId, catalogRevision, reason };
 }
 
+function removalRequest(body) {
+  exact(body, ['descriptorId', 'reason', 'confirmation'], 'extension removal request');
+  const descriptorId = String(body.descriptorId || '').trim();
+  const reason = String(body.reason || '').trim();
+  if (!DESCRIPTOR_ID.test(descriptorId)) fail('canonical extension descriptorId is required');
+  if (reason.length < 3 || reason.length > 500) fail('extension removal reason is required');
+  if (String(body.confirmation || '') !== 'REMOVE ' + descriptorId) fail('canonical extension removal confirmation is required');
+  return { descriptorId, reason, confirmation: 'REMOVE ' + descriptorId };
+}
+
 function requirePermission(session, permission) {
   if (!session?.authorityFresh || session.revokedAt || !session.permissions?.includes(permission)) {
     throw Object.assign(new Error('current extension permission is required'), { code: 'PermissionDenied', status: 403 });
@@ -187,6 +197,29 @@ export function createRegistryOperations({ operationService, policyRevision, pro
           planRevision: policyRevision,
         },
         executionPlan,
+      });
+    },
+
+    async removeExtension({ session, body, idempotencyKey, correlationId }) {
+      requirePermission(session, 'console.extension.remove');
+      if (session.aal !== 'aal2') {
+        throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired', status: 403 });
+      }
+      const request = removalRequest(body);
+      return operationService.accept({
+        session,
+        idempotencyKey,
+        correlationId,
+        request: {
+          schemaVersion: '1.0',
+          actionId: 'console.extension.remove',
+          actionVersion: '1.0',
+          targetRef: request.descriptorId,
+          payload: { descriptorId: request.descriptorId, confirmation: request.confirmation },
+          reason: request.reason,
+          risk: 'R2',
+          planRevision: policyRevision,
+        },
       });
     },
   });

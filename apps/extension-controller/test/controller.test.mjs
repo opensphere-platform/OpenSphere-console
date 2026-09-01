@@ -19,7 +19,7 @@ const candidate = {
   verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
 };
 
-function fixture(claim, observationResult = null) {
+function fixture(claim, observationResult = null, writerOverrides = {}) {
   const calls = [];
   const store = {
     async claim(input) { calls.push({ method: 'claim', input }); return claim; },
@@ -35,6 +35,18 @@ function fixture(claim, observationResult = null) {
     async recordInstallObservation(input) {
       calls.push({ method: 'recordInstallObservation', input });
       return { evidenceDigest: digest };
+    },
+    async applyRemove(input) {
+      calls.push({ method: 'applyRemove', input });
+      return { evidenceDigest: digest };
+    },
+    async recordRemoveObservation(input) {
+      calls.push({ method: 'recordRemoveObservation', input });
+      return { evidenceDigest: digest };
+    },
+    async recordFailure(input) {
+      calls.push({ method: 'recordFailure', input });
+      return { state: 'Failed' };
     },
   };
   const registryResolver = {
@@ -62,6 +74,22 @@ function fixture(claim, observationResult = null) {
         },
       };
     },
+    async applyRemove(input) {
+      calls.push({ method: 'applyRemoval', input });
+      return {
+        descriptorId: 'extension.workspace', registrationName: 'workspace', registrationUid: 'registration-uid',
+        registrationResourceVersionBefore: '19', registrationResourceVersion: '20', registrationGeneration: 4,
+        packageResourceVersion: '17', packageGeneration: 1, packageScope: 'workspace-extension', changed: true,
+      };
+    },
+    async observeRemove(input) {
+      calls.push({ method: 'observeRemoval', input });
+      return observationResult || {
+        state: 'Removed',
+        observation: { registration: { name: 'workspace', uid: 'registration-uid', phase: 'Absent' } },
+      };
+    },
+    ...writerOverrides,
   };
   return { calls, controller: createExtensionController({ store, registryResolver, registrationWriter, workerId, leaseSeconds: 30 }) };
 }
@@ -176,6 +204,55 @@ test('pending install observation does not record readiness or change operation 
   assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'observeRegistration']);
 });
 
+test('typed removal applies Uninstalled intent before recording its fenced receipt', async () => {
+  const { calls, controller } = fixture({
+    outboxId: 21, operationId, actionId: 'console.extension.remove', actionVersion: '1.0',
+    targetRef: 'extension.workspace', payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 2,
+    actorRef: '11111111-1111-4111-8111-111111111111', reason: 'remove retired workspace extension',
+  });
+  const result = await controller.runOnce();
+  assert.equal(result.state, 'Applied');
+  assert.equal(result.actionId, 'console.extension.remove');
+  assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'applyRemoval', 'applyRemove']);
+  assert.equal(calls[2].input.descriptorId, 'extension.workspace');
+  assert.equal(calls[3].input.registrationUid, 'registration-uid');
+});
+
+test('removal observation records success only after the exact Registration is absent', async () => {
+  const dispatchPayload = {
+    schemaVersion: '1.0', eventType: 'ExtensionRemovalObservationRequested', operationId,
+    descriptorId: 'extension.workspace', registrationName: 'workspace',
+    registrationUid: 'registration-uid', appliedReceiptDigest: digest,
+  };
+  const { calls, controller } = fixture({
+    outboxId: 22, operationId, actionId: 'console.extension.remove', actionVersion: '1.0',
+    targetRef: 'extension.workspace', payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
+    dispatchPhase: 'observe', dispatchPayload,
+  });
+  const result = await controller.runOnce();
+  assert.equal(result.state, 'Observed');
+  assert.equal(result.postcondition, 'RegistrationAbsent');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'claim', 'renew', 'observeRemoval', 'recordRemoveObservation',
+  ]);
+  assert.equal(calls[3].input.appliedReceiptDigest, digest);
+});
+
+test('known no-side-effect removal denial closes as a typed failure', async () => {
+  const terminal = Object.assign(new Error('core Extension'), { code: 'OwnerRejected', terminal: true });
+  const { calls, controller } = fixture({
+    outboxId: 21, operationId, actionId: 'console.extension.remove', actionVersion: '1.0',
+    targetRef: 'extension.workspace', payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 2,
+    actorRef: '11111111-1111-4111-8111-111111111111', reason: 'remove retired workspace extension',
+  }, null, { async applyRemove() { throw terminal; } });
+  const result = await controller.runOnce();
+  assert.equal(result.state, 'Failed');
+  assert.equal(result.errorCode, 'OwnerRejected');
+  assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'recordFailure']);
+  assert.match(calls[2].input.errorDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(calls[2].input.sideEffectUnknown, false);
+});
+
 test('owner, action, target and digest substitution fail before apply', async () => {
   for (const patch of [
     { ownerRef: 'C_API' },
@@ -202,11 +279,17 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
       if (sql.includes('renew_owner_claim')) return { rows: [{ lease_expires_at: new Date() }] };
       if (sql.includes('record_execution_failure')) return { rows: [{ operation_record: { state: 'Failed' } }] };
       if (sql.includes('record_install_observation')) return { rows: [{ execution_record: { evidenceDigest: digest } }] };
+      if (sql.includes('record_remove_observation')) return { rows: [{ execution_record: { evidenceDigest: digest } }] };
+      if (sql.includes('apply_remove_registration')) return { rows: [{ execution_record: { evidenceDigest: digest } }] };
       if (sql.includes('apply_install_registration')) return { rows: [{ execution_record: { evidenceDigest: digest } }] };
       return { rows: [{ execution_record: { evidenceDigest: digest, inserted: true } }] };
     },
   });
-  await store.claim({ workerId, ownerRef: 'C_EXT', supportedActions: ['console.extension.install', 'console.extension.revocation.create'], leaseSeconds: 30 });
+  await store.claim({
+    workerId, ownerRef: 'C_EXT',
+    supportedActions: ['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'],
+    leaseSeconds: 30,
+  });
   await store.renew({ workerId, outboxId: 17, claimEpoch: 4, leaseSeconds: 30 });
   await store.applyRevocation({ workerId, outboxId: 17, claimEpoch: 4, operationId, targetRef: image, payloadDigest: digest });
   await store.applyInstall({
@@ -220,12 +303,23 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
     workerId, outboxId: 20, claimEpoch: 1, operationId, targetRef: installImage,
     payloadDigest: digest, appliedReceiptDigest: digest, observation: { package: {} },
   });
+  await store.applyRemove({
+    workerId, outboxId: 21, claimEpoch: 2, operationId, targetRef: 'extension.workspace', payloadDigest: digest,
+    registrationName: 'workspace', registrationUid: 'registration-uid',
+    registrationResourceVersionBefore: '19', registrationResourceVersion: '20', registrationGeneration: 4,
+    packageResourceVersion: '17', packageGeneration: 1, packageScope: 'workspace-extension', changed: true,
+  });
+  await store.recordRemoveObservation({
+    workerId, outboxId: 22, claimEpoch: 1, operationId, targetRef: 'extension.workspace',
+    payloadDigest: digest, appliedReceiptDigest: digest,
+    observation: { registration: { name: 'workspace', uid: 'registration-uid', phase: 'Absent' } },
+  });
   await store.recordFailure({
     workerId, outboxId: 18, claimEpoch: 5, operationId,
     errorCode: 'OwnerRejected', errorDigest: digest, sideEffectUnknown: false,
   });
   assert.match(calls[0].sql, /claim_owner_operation/);
-  assert.deepEqual(calls[0].values[2], ['console.extension.install', 'console.extension.revocation.create']);
+  assert.deepEqual(calls[0].values[2], ['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create']);
   assert.match(calls[1].sql, /renew_owner_claim/);
   assert.match(calls[2].sql, /apply_revocation/);
   assert.equal(calls[2].values.length, 6);
@@ -233,6 +327,10 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
   assert.equal(calls[3].values.length, 17);
   assert.match(calls[4].sql, /record_install_observation/);
   assert.equal(calls[4].values.length, 8);
-  assert.match(calls[5].sql, /record_execution_failure/);
-  assert.equal(calls[5].values.length, 7);
+  assert.match(calls[5].sql, /apply_remove_registration/);
+  assert.equal(calls[5].values.length, 15);
+  assert.match(calls[6].sql, /record_remove_observation/);
+  assert.equal(calls[6].values.length, 8);
+  assert.match(calls[7].sql, /record_execution_failure/);
+  assert.equal(calls[7].values.length, 7);
 });

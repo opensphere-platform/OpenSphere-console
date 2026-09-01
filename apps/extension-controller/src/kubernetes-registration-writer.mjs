@@ -1,8 +1,8 @@
 const EXTENSION_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/;
 
-function fault(message, code, retryable = false) {
-  return Object.assign(new Error(message), { code, retryable });
+function fault(message, code, retryable = false, terminal = false) {
+  return Object.assign(new Error(message), { code, retryable, terminal });
 }
 
 function origin(value) {
@@ -151,14 +151,14 @@ export function createKubernetesRegistrationWriter({
   const apiOrigin = origin(baseUrl);
   const collection = `/apis/plugins.opensphere.io/v1alpha1/namespaces/${namespace}/uipluginregistrations`;
   const packages = `/apis/plugins.opensphere.io/v1alpha1/namespaces/${namespace}/uipluginpackages`;
-  async function request(method, path, body, accepted = [200]) {
+  async function request(method, path, body, accepted = [200], { withStatus = false } = {}) {
     let response;
     try {
       response = await fetchImpl(apiOrigin + path, {
         method,
         headers: {
           accept: 'application/json', authorization: `Bearer ${token}`,
-          ...(body ? { 'content-type': 'application/json' } : {}),
+          ...(body ? { 'content-type': method === 'PATCH' ? 'application/merge-patch+json' : 'application/json' } : {}),
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
         redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
@@ -173,7 +173,8 @@ export function createKubernetesRegistrationWriter({
           : response.status >= 500 ? 'AuthorityUnavailable' : 'OwnerRejected';
       throw fault(`Kubernetes request failed with HTTP ${response.status}`, code, response.status >= 500 || response.status === 409);
     }
-    return responseJson(response, maximumResponseBytes);
+    const value = await responseJson(response, maximumResponseBytes);
+    return withStatus ? Object.freeze({ status: response.status, value }) : value;
   }
   return Object.freeze({
     async applyInstall({ candidate, operationId, requestedBy, reason }) {
@@ -230,6 +231,110 @@ export function createKubernetesRegistrationWriter({
       assertCurrentPackage(pkg, candidate);
       const registration = await request('GET', `${collection}/${candidate.id}`);
       return readyRegistration(registration, candidate, registrationUid);
+    },
+
+    async applyRemove({ descriptorId, operationId, requestedBy, reason }) {
+      if (!/^extension\.[a-z0-9][a-z0-9-]{0,62}$/.test(String(descriptorId || ''))
+          || typeof operationId !== 'string' || operationId.length < 1
+          || typeof requestedBy !== 'string' || requestedBy.length < 1
+          || typeof reason !== 'string' || reason.length < 3 || reason.length > 500) {
+        throw fault('Extension removal request lacks canonical coordinates', 'ClaimBindingMismatch');
+      }
+      const id = descriptorId.slice('extension.'.length);
+      let pkg;
+      try { pkg = await request('GET', `${packages}/${id}`); }
+      catch (error) {
+        if (error?.code === 'ResourceNotFound') throw fault('UIPluginPackage is unavailable for removal policy evaluation', 'AuthorityUnavailable', true);
+        throw error;
+      }
+      const packageResourceVersion = String(pkg?.metadata?.resourceVersion || '');
+      const packageGeneration = Number(pkg?.metadata?.generation);
+      const packageScope = String(pkg?.metadata?.labels?.['opensphere.io/scope'] || '');
+      if (pkg?.metadata?.name !== id || !RESOURCE_VERSION.test(packageResourceVersion)
+          || !Number.isSafeInteger(packageGeneration) || packageGeneration < 1) {
+        throw fault('UIPluginPackage removal policy evidence is incomplete', 'AuthorityContractViolation');
+      }
+      if (packageScope.startsWith('main-shell')) {
+        throw fault('shell-pinned core Extension cannot be removed', 'OwnerRejected', false, true);
+      }
+
+      let registration;
+      try { registration = await request('GET', `${collection}/${id}`); }
+      catch (error) {
+        if (error?.code === 'ResourceNotFound') throw fault('Extension Registration does not exist', 'RegistrationNotFound', false, true);
+        throw error;
+      }
+      const before = {
+        name: registration?.metadata?.name,
+        uid: String(registration?.metadata?.uid || ''),
+        resourceVersion: String(registration?.metadata?.resourceVersion || ''),
+        generation: Number(registration?.metadata?.generation),
+        packageName: registration?.spec?.packageRef?.name,
+        desiredState: registration?.spec?.desiredState,
+      };
+      if (before.name !== id || before.packageName !== id || !before.uid
+          || !RESOURCE_VERSION.test(before.resourceVersion)
+          || !Number.isSafeInteger(before.generation) || before.generation < 1
+          || !['Installed', 'Enabled', 'Disabled', 'Uninstalled'].includes(before.desiredState)) {
+        throw fault('UIPluginRegistration removal target is invalid', 'ObservationMismatch');
+      }
+      let applied = registration;
+      let changed = false;
+      if (before.desiredState !== 'Uninstalled') {
+        applied = await request('PATCH', `${collection}/${id}`, {
+          metadata: { resourceVersion: before.resourceVersion },
+          spec: {
+            desiredState: 'Uninstalled',
+            approval: { requestedBy, reason },
+          },
+        });
+        changed = true;
+      }
+      const after = {
+        name: applied?.metadata?.name,
+        uid: String(applied?.metadata?.uid || ''),
+        resourceVersion: String(applied?.metadata?.resourceVersion || ''),
+        generation: Number(applied?.metadata?.generation),
+        packageName: applied?.spec?.packageRef?.name,
+        desiredState: applied?.spec?.desiredState,
+      };
+      if (after.name !== id || after.uid !== before.uid || after.packageName !== id
+          || after.desiredState !== 'Uninstalled' || !RESOURCE_VERSION.test(after.resourceVersion)
+          || !Number.isSafeInteger(after.generation) || after.generation < before.generation) {
+        throw fault('Kubernetes returned mismatched removal evidence', 'AuthorityContractViolation');
+      }
+      return Object.freeze({
+        descriptorId, registrationName: id, registrationUid: before.uid,
+        registrationResourceVersionBefore: before.resourceVersion,
+        registrationResourceVersion: after.resourceVersion,
+        registrationGeneration: after.generation,
+        packageResourceVersion, packageGeneration, packageScope, changed,
+      });
+    },
+
+    async observeRemove({ registrationName, registrationUid }) {
+      if (!EXTENSION_ID.test(String(registrationName || ''))
+          || typeof registrationUid !== 'string' || registrationUid.length < 1 || registrationUid.length > 128) {
+        throw fault('removal observation lacks immutable Registration coordinates', 'ClaimBindingMismatch');
+      }
+      const result = await request('GET', `${collection}/${registrationName}`, undefined, [200, 404], { withStatus: true });
+      if (result.status === 404) {
+        return Object.freeze({
+          state: 'Removed',
+          observation: Object.freeze({
+            registration: Object.freeze({ name: registrationName, uid: registrationUid, phase: 'Absent' }),
+          }),
+        });
+      }
+      const registration = result.value;
+      if (registration?.metadata?.name !== registrationName
+          || String(registration?.metadata?.uid || '') !== registrationUid) {
+        throw fault('UIPluginRegistration was replaced during removal', 'ObservationMismatch');
+      }
+      if (registration?.status?.phase === 'Failed') {
+        throw fault('UIPluginRegistration reported a terminal removal failure', 'OwnerRejected');
+      }
+      return Object.freeze({ state: 'Pending', reason: 'RegistrationStillPresent' });
     },
   });
 }

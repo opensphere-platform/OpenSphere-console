@@ -30,6 +30,20 @@ const RECORD_INSTALL_OBSERVATION_SQL = [
   ') AS execution_record',
 ].join(' ');
 
+const APPLY_REMOVE_SQL = [
+  'SELECT console_extension.apply_remove_registration(',
+  '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text,',
+  '$7::text, $8::text, $9::text, $10::text, $11::bigint,',
+  '$12::text, $13::bigint, $14::text, $15::boolean',
+  ') AS execution_record',
+].join(' ');
+
+const RECORD_REMOVE_OBSERVATION_SQL = [
+  'SELECT console_extension.record_remove_observation(',
+  '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text, $7::text, $8::jsonb',
+  ') AS execution_record',
+].join(' ');
+
 const RECORD_FAILURE_SQL = [
   'SELECT console_extension.record_execution_failure(',
   '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text, $7::boolean',
@@ -126,6 +140,44 @@ export function createExtensionPostgresStore({ query }) {
         ]);
         const record = result?.rows?.[0]?.execution_record;
         if (!record) throw new Error('record_install_observation returned no execution receipt');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async applyRemove({
+      workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
+      registrationName, registrationUid, registrationResourceVersionBefore,
+      registrationResourceVersion, registrationGeneration,
+      packageResourceVersion, packageGeneration, packageScope, changed,
+    }) {
+      try {
+        const result = await query(APPLY_REMOVE_SQL, [
+          workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
+          registrationName, registrationUid, registrationResourceVersionBefore,
+          registrationResourceVersion, registrationGeneration,
+          packageResourceVersion, packageGeneration, packageScope, changed,
+        ]);
+        const record = result?.rows?.[0]?.execution_record;
+        if (!record) throw new Error('apply_remove_registration returned no execution receipt');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async recordRemoveObservation({
+      workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
+      appliedReceiptDigest, observation,
+    }) {
+      try {
+        const result = await query(RECORD_REMOVE_OBSERVATION_SQL, [
+          workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
+          appliedReceiptDigest, JSON.stringify(observation),
+        ]);
+        const record = result?.rows?.[0]?.execution_record;
+        if (!record) throw new Error('record_remove_observation returned no execution receipt');
         return record;
       } catch (error) {
         throw databaseError(error);

@@ -230,7 +230,7 @@ paths:
     get:
       operationId: getRegistryConnection
       tags: [Extensions]
-      x-opensphere-requirement: CON-FR-008
+      x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R0
       x-opensphere-authority: ConsoleRegistryConnectionMetadata
       responses:
@@ -244,7 +244,7 @@ paths:
     put:
       operationId: replaceRegistryCredential
       tags: [Extensions]
-      x-opensphere-requirement: CON-FR-008
+      x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R2
       x-opensphere-assurance: aal2
       x-opensphere-idempotency: required
@@ -269,7 +269,7 @@ paths:
     delete:
       operationId: deleteRegistryConnection
       tags: [Extensions]
-      x-opensphere-requirement: CON-FR-008
+      x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R2
       x-opensphere-assurance: aal2
       x-opensphere-idempotency: required
@@ -293,7 +293,7 @@ paths:
     post:
       operationId: verifyRegistryConnection
       tags: [Extensions]
-      x-opensphere-requirement: CON-FR-008
+      x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R0
       x-opensphere-rate-limit: required
       x-opensphere-idempotency: not-applicable-read-only
@@ -311,7 +311,7 @@ paths:
     get:
       operationId: listExtensionRevocations
       tags: [Extensions]
-      x-opensphere-requirement: CON-FR-008
+      x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R0
       x-opensphere-idempotency: not-applicable-read-only
       responses:
@@ -324,7 +324,7 @@ paths:
     post:
       operationId: createExtensionRevocation
       tags: [Extensions]
-      x-opensphere-requirement: CON-FR-008
+      x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R2
       x-opensphere-assurance: aal2
       x-opensphere-idempotency: required
@@ -348,7 +348,7 @@ paths:
     post:
       operationId: inspectExtensionCandidate
       tags: [Extensions]
-      x-opensphere-requirement: CON-FR-008
+      x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R0
       x-opensphere-authority: OpenSphereRegistry
       x-opensphere-permission: console.extension.install
@@ -371,7 +371,7 @@ paths:
     post:
       operationId: installExtensionCandidate
       tags: [Extensions]
-      x-opensphere-requirement: CON-FR-008
+      x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R2
       x-opensphere-assurance: aal2
       x-opensphere-idempotency: required
@@ -387,6 +387,31 @@ paths:
       responses:
         "202":
           description: C_REG-resolved exact-revision install operation durably accepted for independent approval
+          content:
+            application/json:
+              schema: { $ref: "../schemas/operation-receipt.schema.json" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/PolicyRejected" }
+  /api/admin/extensions/remove:
+    post:
+      operationId: removeExtension
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-risk: R2
+      x-opensphere-assurance: aal2
+      x-opensphere-idempotency: required
+      x-opensphere-action: console.extension.remove@1.0
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/extension-remove-request.schema.json" }
+      responses:
+        "202":
+          description: Registration removal operation durably accepted for independent approval
           content:
             application/json:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }

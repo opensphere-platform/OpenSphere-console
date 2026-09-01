@@ -118,6 +118,12 @@ export async function verifyContracts(repoRoot = process.cwd()) {
   const inspectOperation = entries.find(({ operation }) => operation.operationId === 'inspectExtensionCandidate')?.operation;
   assert(inspectOperation?.['x-opensphere-authority'] === 'OpenSphereRegistry', 'inspectExtensionCandidate must declare C_REG authority');
   assert(inspectOperation?.['x-opensphere-permission'] === 'console.extension.install', 'inspectExtensionCandidate must require install visibility');
+  const removeOperation = entries.find(({ operation }) => operation.operationId === 'removeExtension')?.operation;
+  assert(
+    removeOperation?.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/extension-remove-request.schema.json',
+    'removeExtension must require the canonical descriptor and confirmation schema',
+  );
+  assert(removeOperation?.['x-opensphere-action'] === 'console.extension.remove@1.0', 'removeExtension must use the typed removal action');
 
   const referencedActions = entries.map(({ operation }) => operation['x-opensphere-action']).filter(Boolean);
   for (const actionPolicyId of actionPolicyIds) {

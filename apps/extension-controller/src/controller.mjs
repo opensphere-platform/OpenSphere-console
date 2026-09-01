@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto';
+
 const OWNER_REF = 'C_EXT';
 const INSTALL_ACTION = 'console.extension.install';
+const REMOVE_ACTION = 'console.extension.remove';
 const REVOCATION_ACTION = 'console.extension.revocation.create';
 const IMAGE = /^ghcr\.io\/opensphere-platform\/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
@@ -61,8 +64,36 @@ function observationCoordinates(claim, plan) {
   });
 }
 
+function removalObservationCoordinates(claim) {
+  const value = claim?.dispatchPayload;
+  const fields = [
+    'schemaVersion', 'eventType', 'operationId', 'descriptorId',
+    'registrationName', 'registrationUid', 'appliedReceiptDigest',
+  ];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).length !== fields.length || Object.keys(value).some((key) => !fields.includes(key))
+      || value.schemaVersion !== '1.0' || value.eventType !== 'ExtensionRemovalObservationRequested'
+      || value.operationId !== claim.operationId || value.descriptorId !== claim.targetRef
+      || !/^extension\.[a-z0-9][a-z0-9-]{0,62}$/.test(String(value.descriptorId || ''))
+      || value.registrationName !== value.descriptorId.slice('extension.'.length)
+      || typeof value.registrationUid !== 'string' || value.registrationUid.length < 1 || value.registrationUid.length > 128
+      || !DIGEST.test(String(value.appliedReceiptDigest || ''))) {
+    throw Object.assign(new Error('removal observation claim lacks exact applied coordinates'), { code: 'ClaimBindingMismatch' });
+  }
+  return Object.freeze({
+    registrationName: value.registrationName,
+    registrationUid: value.registrationUid,
+    appliedReceiptDigest: value.appliedReceiptDigest,
+  });
+}
+
+function failureDigest(actionId, code) {
+  return 'sha256:' + createHash('sha256').update(JSON.stringify({ actionId, code })).digest('hex');
+}
+
 export function createExtensionController({ store, registryResolver, registrationWriter, workerId, leaseSeconds = 30 }) {
-  if (!store?.claim || !store?.renew || !store?.applyRevocation || !store?.applyInstall || !store?.recordInstallObservation) {
+  if (!store?.claim || !store?.renew || !store?.applyRevocation || !store?.applyInstall
+      || !store?.recordInstallObservation || !store?.applyRemove || !store?.recordRemoveObservation || !store?.recordFailure) {
     throw new TypeError('Extension Controller store claim/renew/apply/observe methods are required');
   }
   if (!/^[0-9a-f-]{36}$/.test(String(workerId || ''))) throw new TypeError('workerId must be a UUID');
@@ -75,18 +106,21 @@ export function createExtensionController({ store, registryResolver, registratio
       const claim = await store.claim({
         workerId,
         ownerRef: OWNER_REF,
-        supportedActions: [INSTALL_ACTION, REVOCATION_ACTION],
+        supportedActions: [INSTALL_ACTION, REMOVE_ACTION, REVOCATION_ACTION],
         leaseSeconds,
       });
       if (!claim) return Object.freeze({ state: 'Idle' });
-      if (claim.ownerRef !== OWNER_REF || ![INSTALL_ACTION, REVOCATION_ACTION].includes(claim.actionId)) {
+      if (claim.ownerRef !== OWNER_REF || ![INSTALL_ACTION, REMOVE_ACTION, REVOCATION_ACTION].includes(claim.actionId)) {
         throw Object.assign(new Error('claimed operation is outside the C_EXT typed boundary'), {
           code: 'ClaimBindingMismatch',
         });
       }
       const targetRef = String(claimField(claim, 'targetRef'));
       const payloadDigest = String(claimField(claim, 'payloadDigest'));
-      if (!IMAGE.test(targetRef) || !DIGEST.test(payloadDigest)) {
+      const targetValid = claim.actionId === REMOVE_ACTION
+        ? /^extension\.[a-z0-9][a-z0-9-]{0,62}$/.test(targetRef)
+        : IMAGE.test(targetRef);
+      if (!targetValid || !DIGEST.test(payloadDigest)) {
         throw Object.assign(new Error('claimed operation has invalid immutable coordinates'), {
           code: 'ClaimBindingMismatch',
         });
@@ -105,7 +139,7 @@ export function createExtensionController({ store, registryResolver, registratio
 
       const dispatchPhase = String(claim.dispatchPhase || 'apply');
       if (!['apply', 'observe'].includes(dispatchPhase)
-          || (dispatchPhase === 'observe' && claim.actionId !== INSTALL_ACTION)) {
+          || (dispatchPhase === 'observe' && ![INSTALL_ACTION, REMOVE_ACTION].includes(claim.actionId))) {
         throw Object.assign(new Error('claimed operation has an invalid dispatch phase'), { code: 'ClaimBindingMismatch' });
       }
 
@@ -131,6 +165,30 @@ export function createExtensionController({ store, registryResolver, registratio
           state: 'Observed', actionId: INSTALL_ACTION, operationId: input.operationId,
           claimEpoch: input.claimEpoch, evidenceDigest: receipt.evidenceDigest,
           postcondition: 'InstallReady',
+        });
+      }
+
+      if (claim.actionId === REMOVE_ACTION && dispatchPhase === 'observe') {
+        if (!registrationWriter?.observeRemove) {
+          throw Object.assign(new Error('Extension removal observation dependency is unavailable'), { code: 'AuthorityUnavailable' });
+        }
+        const coordinates = removalObservationCoordinates(claim);
+        await store.renew({ ...input, leaseSeconds });
+        const result = await registrationWriter.observeRemove(coordinates);
+        if (result.state !== 'Removed') {
+          return Object.freeze({
+            state: 'Pending', actionId: REMOVE_ACTION, operationId: input.operationId,
+            claimEpoch: input.claimEpoch, reason: result.reason || 'RegistrationStillPresent',
+          });
+        }
+        const receipt = await store.recordRemoveObservation({
+          ...input, appliedReceiptDigest: coordinates.appliedReceiptDigest,
+          observation: result.observation,
+        });
+        return Object.freeze({
+          state: 'Observed', actionId: REMOVE_ACTION, operationId: input.operationId,
+          claimEpoch: input.claimEpoch, evidenceDigest: receipt.evidenceDigest,
+          postcondition: 'RegistrationAbsent',
         });
       }
 
@@ -160,6 +218,42 @@ export function createExtensionController({ store, registryResolver, registratio
           state: 'Applied', actionId: INSTALL_ACTION, operationId: input.operationId,
           claimEpoch: input.claimEpoch, evidenceDigest: execution.evidenceDigest,
           registrationName: applied.registrationName, created: applied.created,
+        });
+      }
+
+
+      if (claim.actionId === REMOVE_ACTION) {
+        if (!registrationWriter?.applyRemove) {
+          throw Object.assign(new Error('Extension removal dependency is unavailable'), { code: 'AuthorityUnavailable' });
+        }
+        await store.renew({ ...input, leaseSeconds });
+        let applied;
+        try {
+          applied = await registrationWriter.applyRemove({
+            descriptorId: targetRef,
+            operationId: input.operationId,
+            requestedBy: String(claimField(claim, 'actorRef')),
+            reason: String(claimField(claim, 'reason')),
+          });
+        } catch (error) {
+          if (!error?.terminal) throw error;
+          const errorCode = String(error.code || 'OwnerRejected');
+          await store.recordFailure({
+            ...input,
+            errorCode,
+            errorDigest: failureDigest(REMOVE_ACTION, errorCode),
+            sideEffectUnknown: false,
+          });
+          return Object.freeze({
+            state: 'Failed', actionId: REMOVE_ACTION, operationId: input.operationId,
+            claimEpoch: input.claimEpoch, errorCode,
+          });
+        }
+        const execution = await store.applyRemove({ ...input, ...applied });
+        return Object.freeze({
+          state: 'Applied', actionId: REMOVE_ACTION, operationId: input.operationId,
+          claimEpoch: input.claimEpoch, evidenceDigest: execution.evidenceDigest,
+          registrationName: applied.registrationName, changed: applied.changed,
         });
       }
 

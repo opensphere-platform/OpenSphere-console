@@ -1093,7 +1093,9 @@ BEGIN
     RAISE EXCEPTION 'invalid owner claim request' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
   END IF;
   IF p_owner_ref <> 'C_EXT'
-      OR p_supported_actions <> ARRAY['console.extension.install', 'console.extension.revocation.create']::text[] THEN
+      OR p_supported_actions <> ARRAY[
+        'console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'
+      ]::text[] THEN
     RAISE EXCEPTION 'worker role is outside its typed owner capability'
       USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
   END IF;
@@ -1101,7 +1103,11 @@ BEGIN
   SELECT dispatch.* INTO v_outbox
     FROM console_operation.outbox dispatch
     JOIN console_operation.operation operation_record USING (operation_id)
-    WHERE dispatch.event_type IN ('OperationReadyForDispatch', 'ExtensionInstallObservationRequested')
+    WHERE dispatch.event_type IN (
+      'OperationReadyForDispatch',
+      'ExtensionInstallObservationRequested',
+      'ExtensionRemovalObservationRequested'
+    )
       AND dispatch.delivered_at IS NULL
       AND (dispatch.lease_expires_at IS NULL OR dispatch.lease_expires_at <= statement_timestamp())
       AND operation_record.owner_ref = p_owner_ref
@@ -1111,6 +1117,9 @@ BEGIN
           AND operation_record.state IN ('Authorized', 'Submitted', 'Reconciling', 'Unknown'))
         OR (dispatch.event_type = 'ExtensionInstallObservationRequested'
           AND operation_record.action_id = 'console.extension.install'
+          AND operation_record.state = 'Applied')
+        OR (dispatch.event_type = 'ExtensionRemovalObservationRequested'
+          AND operation_record.action_id = 'console.extension.remove'
           AND operation_record.state = 'Applied')
       )
     ORDER BY dispatch.outbox_id
@@ -1156,7 +1165,9 @@ BEGIN
       'attemptCount', v_outbox.attempt_count,
       'leaseExpiresAt', v_outbox.lease_expires_at,
       'resumeMode', CASE WHEN v_initial_state = 'Authorized' THEN 'apply' ELSE 'reconcile' END,
-      'dispatchPhase', CASE WHEN v_outbox.event_type = 'ExtensionInstallObservationRequested' THEN 'observe' ELSE 'apply' END
+      'dispatchPhase', CASE WHEN v_outbox.event_type IN (
+        'ExtensionInstallObservationRequested', 'ExtensionRemovalObservationRequested'
+      ) THEN 'observe' ELSE 'apply' END
     )
   );
 
@@ -1176,7 +1187,9 @@ BEGIN
     'leaseExpiresAt', v_outbox.lease_expires_at,
     'attemptCount', v_outbox.attempt_count,
     'resumeMode', CASE WHEN v_initial_state = 'Authorized' THEN 'apply' ELSE 'reconcile' END,
-    'dispatchPhase', CASE WHEN v_outbox.event_type = 'ExtensionInstallObservationRequested' THEN 'observe' ELSE 'apply' END,
+    'dispatchPhase', CASE WHEN v_outbox.event_type IN (
+      'ExtensionInstallObservationRequested', 'ExtensionRemovalObservationRequested'
+    ) THEN 'observe' ELSE 'apply' END,
     'dispatchPayload', v_outbox.payload,
     'state', v_operation.state,
     'stateVersion', v_operation.state_version,
@@ -1213,7 +1226,9 @@ BEGIN
         SELECT 1 FROM console_operation.operation operation_record
         WHERE operation_record.operation_id = outbox.operation_id
           AND operation_record.owner_ref = 'C_EXT'
-          AND operation_record.action_id IN ('console.extension.install', 'console.extension.revocation.create')
+          AND operation_record.action_id IN (
+            'console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'
+          )
       )
     RETURNING lease_expires_at INTO v_lease_expires_at;
   IF NOT FOUND THEN
@@ -1531,6 +1546,163 @@ GRANT EXECUTE ON FUNCTION console_extension.apply_install_registration(
   text, text, text, text
 ) TO console_extension_controller;
 
+CREATE OR REPLACE FUNCTION console_extension.apply_remove_registration(
+  p_worker_id uuid,
+  p_outbox_id bigint,
+  p_claim_epoch bigint,
+  p_operation_id uuid,
+  p_target_ref text,
+  p_payload_digest text,
+  p_registration_name text,
+  p_registration_uid text,
+  p_registration_resource_version_before text,
+  p_registration_resource_version text,
+  p_registration_generation bigint,
+  p_package_resource_version text,
+  p_package_generation bigint,
+  p_package_scope text,
+  p_changed boolean
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_operation, console_extension, console_audit
+AS $$
+DECLARE
+  v_outbox console_operation.outbox;
+  v_operation console_operation.operation;
+  v_evidence jsonb;
+  v_evidence_digest text;
+  v_observation_payload jsonb;
+  v_observation_payload_digest text;
+BEGIN
+  IF COALESCE(p_target_ref, '') !~ '^extension\.[a-z0-9][a-z0-9-]{0,62}$'
+      OR COALESCE(p_registration_name, '') !~ '^[a-z0-9][a-z0-9-]{0,62}$'
+      OR p_registration_name <> substring(p_target_ref FROM 11)
+      OR length(COALESCE(p_registration_uid, '')) NOT BETWEEN 1 AND 128
+      OR COALESCE(p_registration_resource_version_before, '') !~ '^[0-9A-Za-z._:-]{1,128}$'
+      OR COALESCE(p_registration_resource_version, '') !~ '^[0-9A-Za-z._:-]{1,128}$'
+      OR COALESCE(p_registration_generation, 0) < 1
+      OR COALESCE(p_package_resource_version, '') !~ '^[0-9A-Za-z._:-]{1,128}$'
+      OR COALESCE(p_package_generation, 0) < 1
+      OR length(COALESCE(p_package_scope, '')) > 128
+      OR COALESCE(p_package_scope, '') LIKE 'main-shell%'
+      OR p_changed IS NULL THEN
+    RAISE EXCEPTION 'invalid Extension removal evidence' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+
+  SELECT * INTO v_outbox
+    FROM console_operation.outbox
+    WHERE outbox_id = p_outbox_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_outbox.operation_id <> p_operation_id
+      OR v_outbox.event_type <> 'OperationReadyForDispatch'
+      OR v_outbox.claim_owner <> p_worker_id
+      OR v_outbox.claim_epoch <> p_claim_epoch
+      OR v_outbox.delivered_at IS NOT NULL
+      OR v_outbox.lease_expires_at <= statement_timestamp() THEN
+    RAISE EXCEPTION 'owner claim is stale or expired' USING ERRCODE = '40001', DETAIL = 'StaleClaim';
+  END IF;
+
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = p_operation_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_operation.owner_ref <> 'C_EXT'
+      OR v_operation.action_id <> 'console.extension.remove'
+      OR v_operation.action_version <> '1.0'
+      OR v_operation.target_ref <> p_target_ref
+      OR v_operation.payload_digest <> p_payload_digest
+      OR v_operation.state NOT IN ('Submitted', 'Reconciling', 'Unknown') THEN
+    RAISE EXCEPTION 'claim does not match the typed Extension removal action'
+      USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  IF v_operation.state <> 'Reconciling' THEN
+    UPDATE console_operation.operation
+      SET state = 'Reconciling', state_version = state_version + 1,
+          updated_at = statement_timestamp()
+      WHERE operation_id = v_operation.operation_id
+      RETURNING * INTO v_operation;
+  END IF;
+
+  v_evidence := jsonb_build_object(
+    'schemaVersion', '1.0',
+    'authority', 'KubernetesUIPluginRegistration',
+    'operationId', v_operation.operation_id,
+    'descriptorId', p_target_ref,
+    'registrationName', p_registration_name,
+    'registrationUid', p_registration_uid,
+    'registrationResourceVersionBefore', p_registration_resource_version_before,
+    'registrationResourceVersion', p_registration_resource_version,
+    'registrationGeneration', p_registration_generation,
+    'packageResourceVersion', p_package_resource_version,
+    'packageGeneration', p_package_generation,
+    'packageScope', p_package_scope,
+    'claimEpoch', p_claim_epoch,
+    'changed', p_changed,
+    'postcondition', 'RemovalRequested'
+  );
+  v_evidence_digest := 'sha256:' || encode(sha256(convert_to(v_evidence::text, 'UTF8')), 'hex');
+
+  INSERT INTO console_operation.execution_receipt(
+    operation_id, owner_ref, worker_id, claim_epoch, phase, evidence, evidence_digest
+  ) VALUES (
+    v_operation.operation_id, 'C_EXT', p_worker_id, p_claim_epoch,
+    'Applied', v_evidence, v_evidence_digest
+  );
+  UPDATE console_operation.operation
+    SET state = 'Applied', state_version = state_version + 1,
+        observed_postcondition = v_evidence,
+        updated_at = statement_timestamp()
+    WHERE operation_id = v_operation.operation_id
+    RETURNING * INTO v_operation;
+  UPDATE console_operation.outbox
+    SET delivered_at = statement_timestamp()
+    WHERE outbox_id = v_outbox.outbox_id;
+
+  v_observation_payload := jsonb_build_object(
+    'schemaVersion', '1.0',
+    'eventType', 'ExtensionRemovalObservationRequested',
+    'operationId', v_operation.operation_id,
+    'descriptorId', p_target_ref,
+    'registrationName', p_registration_name,
+    'registrationUid', p_registration_uid,
+    'appliedReceiptDigest', v_evidence_digest
+  );
+  v_observation_payload_digest := 'sha256:' || encode(
+    sha256(convert_to(v_observation_payload::text, 'UTF8')), 'hex'
+  );
+  INSERT INTO console_operation.outbox(operation_id, event_type, payload, payload_digest)
+  VALUES (
+    v_operation.operation_id, 'ExtensionRemovalObservationRequested',
+    v_observation_payload, v_observation_payload_digest
+  );
+  PERFORM console_audit.append_event_internal(
+    v_operation.operation_id, v_operation.correlation_id, p_worker_id::text,
+    v_operation.action_id, v_operation.target_ref, 'succeeded', '',
+    jsonb_build_object(
+      'ownerRef', 'C_EXT', 'claimEpoch', p_claim_epoch,
+      'state', v_operation.state, 'stateVersion', v_operation.state_version,
+      'evidenceDigest', v_evidence_digest, 'postcondition', 'RemovalRequested'
+    )
+  );
+  RETURN jsonb_build_object(
+    'operationRecord', to_jsonb(v_operation),
+    'evidenceDigest', v_evidence_digest,
+    'registrationName', p_registration_name,
+    'changed', p_changed
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_extension.apply_remove_registration(
+  uuid, bigint, bigint, uuid, text, text, text, text, text, text, bigint, text, bigint, text, boolean
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_extension.apply_remove_registration(
+  uuid, bigint, bigint, uuid, text, text, text, text, text, text, bigint, text, bigint, text, boolean
+) TO console_extension_controller;
+
 CREATE OR REPLACE FUNCTION console_extension.record_install_observation(
   p_worker_id uuid,
   p_outbox_id bigint,
@@ -1708,6 +1880,131 @@ GRANT EXECUTE ON FUNCTION console_extension.record_install_observation(
   uuid, bigint, bigint, uuid, text, text, text, jsonb
 ) TO console_extension_controller;
 
+CREATE OR REPLACE FUNCTION console_extension.record_remove_observation(
+  p_worker_id uuid,
+  p_outbox_id bigint,
+  p_claim_epoch bigint,
+  p_operation_id uuid,
+  p_target_ref text,
+  p_payload_digest text,
+  p_applied_receipt_digest text,
+  p_observation jsonb
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_operation, console_extension, console_audit
+AS $$
+DECLARE
+  v_outbox console_operation.outbox;
+  v_operation console_operation.operation;
+  v_applied_receipt console_operation.execution_receipt;
+  v_evidence jsonb;
+  v_evidence_digest text;
+BEGIN
+  IF p_observation IS NULL OR jsonb_typeof(p_observation) <> 'object'
+      OR (SELECT count(*) FROM jsonb_object_keys(p_observation)) <> 1
+      OR jsonb_typeof(p_observation->'registration') <> 'object'
+      OR (SELECT count(*) FROM jsonb_object_keys(p_observation->'registration')) <> 3
+      OR COALESCE(p_applied_receipt_digest, '') !~ '^sha256:[0-9a-f]{64}$'
+      OR COALESCE(p_observation->'registration'->>'name', '') !~ '^[a-z0-9][a-z0-9-]{0,62}$'
+      OR length(COALESCE(p_observation->'registration'->>'uid', '')) NOT BETWEEN 1 AND 128
+      OR p_observation->'registration'->>'phase' <> 'Absent' THEN
+    RAISE EXCEPTION 'invalid Extension removal observation'
+      USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+
+  SELECT * INTO v_outbox
+    FROM console_operation.outbox
+    WHERE outbox_id = p_outbox_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_outbox.operation_id <> p_operation_id
+      OR v_outbox.event_type <> 'ExtensionRemovalObservationRequested'
+      OR v_outbox.claim_owner <> p_worker_id
+      OR v_outbox.claim_epoch <> p_claim_epoch
+      OR v_outbox.delivered_at IS NOT NULL
+      OR v_outbox.lease_expires_at <= statement_timestamp() THEN
+    RAISE EXCEPTION 'owner removal observation claim is stale or expired'
+      USING ERRCODE = '40001', DETAIL = 'StaleClaim';
+  END IF;
+
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = p_operation_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_operation.owner_ref <> 'C_EXT'
+      OR v_operation.action_id <> 'console.extension.remove'
+      OR v_operation.action_version <> '1.0'
+      OR v_operation.target_ref <> p_target_ref
+      OR v_operation.payload_digest <> p_payload_digest
+      OR v_operation.state <> 'Applied' THEN
+    RAISE EXCEPTION 'observation claim does not match an Applied Extension removal'
+      USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  SELECT * INTO v_applied_receipt
+    FROM console_operation.execution_receipt
+    WHERE operation_id = p_operation_id
+      AND owner_ref = 'C_EXT'
+      AND phase = 'Applied'
+      AND evidence_digest = p_applied_receipt_digest;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Applied removal receipt is missing'
+      USING ERRCODE = '55000', DETAIL = 'ObservationMissing';
+  END IF;
+  IF v_applied_receipt.evidence->>'authority' <> 'KubernetesUIPluginRegistration'
+      OR v_applied_receipt.evidence->>'postcondition' <> 'RemovalRequested'
+      OR v_applied_receipt.evidence->>'operationId' <> p_operation_id::text
+      OR v_applied_receipt.evidence->>'descriptorId' <> p_target_ref
+      OR v_applied_receipt.evidence->>'registrationName' <> p_observation->'registration'->>'name'
+      OR v_applied_receipt.evidence->>'registrationUid' <> p_observation->'registration'->>'uid' THEN
+    RAISE EXCEPTION 'removal observation does not match the Applied coordinates'
+      USING ERRCODE = '55000', DETAIL = 'ObservationMismatch';
+  END IF;
+
+  v_evidence := jsonb_build_object(
+    'schemaVersion', '1.0',
+    'authority', 'KubernetesUIPluginRegistration',
+    'operationId', p_operation_id,
+    'descriptorId', p_target_ref,
+    'appliedReceiptDigest', p_applied_receipt_digest,
+    'registration', p_observation->'registration',
+    'postcondition', 'RegistrationAbsent'
+  );
+  v_evidence_digest := 'sha256:' || encode(sha256(convert_to(v_evidence::text, 'UTF8')), 'hex');
+
+  INSERT INTO console_operation.execution_receipt(
+    operation_id, owner_ref, worker_id, claim_epoch, phase, evidence, evidence_digest
+  ) VALUES (
+    p_operation_id, 'C_EXT', p_worker_id, p_claim_epoch,
+    'Verified', v_evidence, v_evidence_digest
+  );
+  UPDATE console_operation.outbox
+    SET delivered_at = statement_timestamp()
+    WHERE outbox_id = p_outbox_id;
+  PERFORM console_audit.append_event_internal(
+    p_operation_id, v_operation.correlation_id, p_worker_id::text,
+    'console.extension.remove.observe', p_target_ref, 'succeeded', '',
+    jsonb_build_object(
+      'ownerRef', 'C_EXT', 'claimEpoch', p_claim_epoch,
+      'evidenceDigest', v_evidence_digest, 'postcondition', 'RegistrationAbsent'
+    )
+  );
+  RETURN jsonb_build_object(
+    'operationRecord', to_jsonb(v_operation),
+    'evidenceDigest', v_evidence_digest,
+    'postcondition', 'RegistrationAbsent'
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_extension.record_remove_observation(
+  uuid, bigint, bigint, uuid, text, text, text, jsonb
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_extension.record_remove_observation(
+  uuid, bigint, bigint, uuid, text, text, text, jsonb
+) TO console_extension_controller;
+
 CREATE OR REPLACE FUNCTION console_extension.record_execution_failure(
   p_worker_id uuid,
   p_outbox_id bigint,
@@ -1749,7 +2046,9 @@ BEGIN
     WHERE operation_id = p_operation_id
     FOR UPDATE;
   IF NOT FOUND OR v_operation.owner_ref <> 'C_EXT'
-      OR v_operation.action_id NOT IN ('console.extension.install', 'console.extension.revocation.create')
+      OR v_operation.action_id NOT IN (
+        'console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'
+      )
       OR v_operation.state NOT IN ('Submitted', 'Reconciling') THEN
     RAISE EXCEPTION 'failure receipt does not match the typed Extension action'
       USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
@@ -1909,7 +2208,9 @@ BEGIN
     RAISE EXCEPTION 'operation is not ready for verification' USING ERRCODE = '55000', DETAIL = 'InvalidOperationState';
   END IF;
   IF v_operation.owner_ref <> 'C_EXT'
-      OR v_operation.action_id NOT IN ('console.extension.install', 'console.extension.revocation.create')
+      OR v_operation.action_id NOT IN (
+        'console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'
+      )
       OR v_operation.action_version <> '1.0' THEN
     RAISE EXCEPTION 'verification action is outside the typed Extension boundary'
       USING ERRCODE = '42501', DETAIL = 'ObservationMismatch';
@@ -1961,7 +2262,7 @@ BEGIN
       'appliedReceiptDigest', v_applied_receipt.evidence_digest,
       'postcondition', 'RevocationPresent'
     );
-  ELSE
+  ELSIF v_operation.action_id = 'console.extension.install' THEN
     SELECT * INTO v_applied_receipt
       FROM console_operation.execution_receipt
       WHERE operation_id = v_operation.operation_id
@@ -1998,6 +2299,43 @@ BEGIN
         OR v_observed_receipt.evidence->'workload'->>'phase' <> 'Ready'
         OR v_observed_receipt.evidence->'revalidation'->>'phase' <> 'Passed' THEN
       RAISE EXCEPTION 'ready install observation does not match the Applied receipt'
+        USING ERRCODE = '55000', DETAIL = 'ObservationMismatch';
+    END IF;
+    v_observation := v_observed_receipt.evidence || jsonb_build_object(
+      'ownerObservationReceiptDigest', v_observed_receipt.evidence_digest
+    );
+  ELSE
+    SELECT * INTO v_applied_receipt
+      FROM console_operation.execution_receipt
+      WHERE operation_id = v_operation.operation_id
+        AND owner_ref = 'C_EXT'
+        AND phase = 'Applied';
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Applied removal receipt is missing'
+        USING ERRCODE = '55000', DETAIL = 'ObservationMissing';
+    END IF;
+    SELECT * INTO v_observed_receipt
+      FROM console_operation.execution_receipt
+      WHERE operation_id = v_operation.operation_id
+        AND owner_ref = 'C_EXT'
+        AND phase = 'Verified';
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'absent Registration observation is missing'
+        USING ERRCODE = '55000', DETAIL = 'ObservationMissing';
+    END IF;
+    IF v_applied_receipt.evidence->>'authority' <> 'KubernetesUIPluginRegistration'
+        OR v_applied_receipt.evidence->>'operationId' <> v_operation.operation_id::text
+        OR v_applied_receipt.evidence->>'descriptorId' <> v_operation.target_ref
+        OR v_applied_receipt.evidence->>'postcondition' <> 'RemovalRequested'
+        OR v_observed_receipt.evidence->>'authority' <> 'KubernetesUIPluginRegistration'
+        OR v_observed_receipt.evidence->>'operationId' <> v_operation.operation_id::text
+        OR v_observed_receipt.evidence->>'descriptorId' <> v_operation.target_ref
+        OR v_observed_receipt.evidence->>'appliedReceiptDigest' <> v_applied_receipt.evidence_digest
+        OR v_observed_receipt.evidence->>'postcondition' <> 'RegistrationAbsent'
+        OR v_observed_receipt.evidence->'registration'->>'name' <> v_applied_receipt.evidence->>'registrationName'
+        OR v_observed_receipt.evidence->'registration'->>'uid' <> v_applied_receipt.evidence->>'registrationUid'
+        OR v_observed_receipt.evidence->'registration'->>'phase' <> 'Absent' THEN
+      RAISE EXCEPTION 'absent Registration observation does not match the Applied removal receipt'
         USING ERRCODE = '55000', DETAIL = 'ObservationMismatch';
     END IF;
     v_observation := v_observed_receipt.evidence || jsonb_build_object(
@@ -2281,6 +2619,12 @@ COMMENT ON FUNCTION console_extension.apply_install_registration(
   IS 'Records one C_REG-bound UIPluginRegistration application under the current claim fence';
 COMMENT ON FUNCTION console_extension.record_install_observation(uuid, bigint, bigint, uuid, text, text, text, jsonb)
   IS 'Records exact Ready UIPluginRegistration evidence without advancing the operation verification state';
+COMMENT ON FUNCTION console_extension.apply_remove_registration(
+  uuid, bigint, bigint, uuid, text, text, text, text, text, text, bigint, text, bigint, text, boolean
+)
+  IS 'Records a fenced request to uninstall one exact UIPluginRegistration and queues absence observation';
+COMMENT ON FUNCTION console_extension.record_remove_observation(uuid, bigint, bigint, uuid, text, text, text, jsonb)
+  IS 'Records exact RegistrationAbsent evidence without advancing the operation verification state';
 COMMENT ON FUNCTION console_extension.record_execution_failure(uuid, bigint, bigint, uuid, text, text, boolean)
   IS 'Records a typed Failed or Unknown owner result under the current claim fence without raw error material';
 COMMENT ON FUNCTION console_extension.list_revocations(uuid, uuid, text)

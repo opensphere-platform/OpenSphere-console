@@ -5,7 +5,7 @@
   "targetStatus": "complete",
   "sourceBaseline": "0d3f56ab97b717dc1c4c8f83ce3725c69f01b20d",
   "supplementEvidence": "731f4d1e3301f076cc8c6b63b7916c8a2f57fccf",
-  "requirements": ["CON-FR-001", "CON-FR-002", "CON-FR-008", "CON-FR-009", "CON-FR-010", "CON-FR-017"],
+  "requirements": ["CON-FR-001", "CON-FR-002", "CON-FR-007", "CON-FR-008", "CON-FR-009", "CON-FR-010", "CON-FR-017"],
   "operations": [
     "getSession",
     "deleteSession",
@@ -23,13 +23,15 @@
     "listExtensionRevocations",
     "createExtensionRevocation",
     "inspectExtensionCandidate",
-    "installExtensionCandidate"
+    "installExtensionCandidate",
+    "removeExtension"
   ],
   "requiredActionPolicies": [
     "console.registry.connection.replace@1.0",
     "console.registry.connection.remove@1.0",
     "console.extension.revocation.create@1.0",
-    "console.extension.install@1.0"
+    "console.extension.install@1.0",
+    "console.extension.remove@1.0"
   ],
   "requiredSchemas": [
     "error-envelope.schema.json",
@@ -39,7 +41,8 @@
     "registry-credential-write.schema.json",
     "registry-revocation-request.schema.json",
     "extension-candidate-request.schema.json",
-    "extension-install-request.schema.json"
+    "extension-install-request.schema.json",
+    "extension-remove-request.schema.json"
   ],
   "remaining": {
     "legacyProductionApiLiterals": 277,

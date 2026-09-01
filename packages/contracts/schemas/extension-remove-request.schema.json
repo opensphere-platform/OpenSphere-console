@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:extension-remove-request:v1",
+  "title": "Extension removal request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["descriptorId", "reason", "confirmation"],
+  "properties": {
+    "descriptorId": {
+      "type": "string",
+      "pattern": "^extension\\.[a-z0-9][a-z0-9-]{0,62}$"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 500
+    },
+    "confirmation": {
+      "type": "string",
+      "pattern": "^REMOVE extension\\.[a-z0-9][a-z0-9-]{0,62}$"
+    }
+  }
+}

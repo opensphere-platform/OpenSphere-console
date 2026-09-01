@@ -40,7 +40,7 @@ const session = {
   revokedAt: null,
   authorityFresh: true,
   permissions: [
-    'console.registry.manage', 'console.extension.revoke', 'console.extension.install',
+    'console.registry.manage', 'console.extension.revoke', 'console.extension.install', 'console.extension.remove',
     'console.operation.approve', 'console.operation.verify',
   ],
   permissionRevision: '7',
@@ -256,6 +256,58 @@ test('Extension install intake derives its immutable execution plan from C_REG',
     descriptorId: 'extension.workspace', catalogRevision,
     correlationId: 'extension-install-correlation-0001',
   }]);
+});
+
+test('Extension removal intake binds a canonical descriptor and confirmation without client Kubernetes evidence', async () => {
+  const { accepted, registryOperations } = fixture();
+  const request = {
+    descriptorId: 'extension.workspace',
+    reason: 'remove retired workspace extension',
+    confirmation: 'REMOVE extension.workspace',
+  };
+  for (const invalid of [
+    { ...request, descriptorId: 'workspace' },
+    { ...request, confirmation: 'REMOVE extension.other' },
+    { ...request, registrationUid: 'client-supplied-uid' },
+  ]) {
+    await assert.rejects(registryOperations.removeExtension({
+      session,
+      body: invalid,
+      idempotencyKey: 'extension-remove-invalid-0001',
+      correlationId: 'extension-remove-invalid-correlation-0001',
+    }), { code: 'ValidationFailed' });
+  }
+  assert.equal(accepted.length, 0);
+  const result = await registryOperations.removeExtension({
+    session,
+    body: request,
+    idempotencyKey: 'extension-remove-operation-0001',
+    correlationId: 'extension-remove-correlation-0001',
+  });
+  assert.equal(result.receipt.actionId, 'console.extension.remove');
+  assert.equal(result.receipt.requiredPermission, 'console.extension.remove');
+  assert.equal(result.receipt.targetRef, 'extension.workspace');
+  assert.equal(result.receipt.executionPlan, null);
+  assert.equal(result.receipt.state, 'Planned');
+  assert.equal(result.receipt.approvalRequired, true);
+  assert.deepEqual(accepted[0].executionPlan, null);
+});
+
+test('Extension removal checks current permission and AAL before accepting intent', async () => {
+  const { accepted, registryOperations } = fixture();
+  const body = {
+    descriptorId: 'extension.workspace', reason: 'remove retired workspace extension',
+    confirmation: 'REMOVE extension.workspace',
+  };
+  await assert.rejects(registryOperations.removeExtension({
+    session: { ...session, permissions: session.permissions.filter((item) => item !== 'console.extension.remove') },
+    body, idempotencyKey: 'extension-remove-denied-0001', correlationId: 'extension-remove-denied-correlation-0001',
+  }), { code: 'PermissionDenied' });
+  await assert.rejects(registryOperations.removeExtension({
+    session: { ...session, aal: 'aal1' }, body,
+    idempotencyKey: 'extension-remove-denied-0002', correlationId: 'extension-remove-denied-correlation-0002',
+  }), { code: 'StepUpRequired' });
+  assert.equal(accepted.length, 0);
 });
 
 test('Extension resolution is not called before current permission and AAL checks', async () => {
@@ -577,6 +629,38 @@ test('HTTP Extension install returns only a Planned exact-revision operation', a
   assert.equal(receipt.state, 'Planned');
   assert.equal(receipt.targetRef, extensionImage);
   assert.equal(receipt.executionPlan.catalogRevision, catalogRevision);
+  assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
+  assert.deepEqual(resolverCalls, [{ requireCsrf: true }]);
+});
+
+test('HTTP Extension removal returns only a Planned typed operation', async (t) => {
+  const { registryOperations, operationService } = fixture();
+  const resolverCalls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession(_request, options) { resolverCalls.push(options); return session; },
+    operationService,
+    registryOperations,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/admin/extensions/remove', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': 'http-extension-remove-0001',
+      'x-correlation-id': 'http-extension-remove-correlation-0001',
+      'x-csrf-token': 'validated-by-session-resolver',
+    },
+    body: JSON.stringify({
+      descriptorId: 'extension.workspace', reason: 'remove retired workspace extension',
+      confirmation: 'REMOVE extension.workspace',
+    }),
+  });
+  assert.equal(response.status, 202);
+  const receipt = await response.json();
+  assert.equal(receipt.state, 'Planned');
+  assert.equal(receipt.actionId, 'console.extension.remove');
+  assert.equal(receipt.targetRef, 'extension.workspace');
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
   assert.deepEqual(resolverCalls, [{ requireCsrf: true }]);
 });

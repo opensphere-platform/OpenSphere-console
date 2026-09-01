@@ -17,6 +17,7 @@ VALUES
   ('11111111-1111-4111-8111-111111111111', 'console.registry.manage', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.extension.revoke', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.extension.install', 7, '99999999-9999-4999-8999-999999999999'),
+  ('11111111-1111-4111-8111-111111111111', 'console.extension.remove', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.operation.verify', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.audit.read', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.data_identity.read', 7, '99999999-9999-4999-8999-999999999999'),
@@ -89,6 +90,7 @@ BEGIN
   END;
 END;
 $$;
+
 RESET ROLE;
 
 SET ROLE console_api;
@@ -627,7 +629,7 @@ SELECT set_config(
   'verification.claim_one',
   console_operation.claim_owner_operation(
     'aaaaaaaa-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'], 30
   )::text,
   false
 );
@@ -643,7 +645,7 @@ BEGIN
   END IF;
   v_second_claim := console_operation.claim_owner_operation(
     'bbbbbbbb-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'], 30
   );
   IF v_second_claim IS NOT NULL THEN
     RAISE EXCEPTION 'active owner lease was claimed concurrently';
@@ -673,7 +675,7 @@ SELECT set_config(
   'verification.claim_two',
   console_operation.claim_owner_operation(
     'bbbbbbbb-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'], 30
   )::text,
   false
 );
@@ -915,7 +917,7 @@ SELECT set_config(
   'verification.failure_claim',
   console_operation.claim_owner_operation(
     'dddddddd-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'], 30
   )::text,
   false
 );
@@ -1078,7 +1080,7 @@ SELECT set_config(
   'verification.install_claim',
   console_operation.claim_owner_operation(
     'eeeeeeee-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'], 30
   )::text,
   false
 );
@@ -1171,7 +1173,7 @@ SELECT set_config(
   'verification.install_observation_claim',
   console_operation.claim_owner_operation(
     'eeeeeeee-1111-4111-8111-111111111111',
-    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'], 30
   )::text,
   false
 );
@@ -1264,6 +1266,189 @@ BEGIN
       OR (SELECT observed_postcondition->>'postcondition' FROM console_operation.operation WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 'InstallReady'
       OR (SELECT count(*) FROM console_operation.verification_receipt WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 1 THEN
     RAISE EXCEPTION 'Extension install was not independently verified from matching owner evidence';
+  END IF;
+END;
+$$;
+
+-- Removal is distinct from digest revocation. The Owner requests Uninstalled,
+-- waits for the reconciler to delete the exact Registration UID, and only then
+-- permits independent Console verification of RegistrationAbsent.
+SET ROLE console_api;
+SELECT * FROM console_operation.accept_operation(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, 'console.extension.remove',
+  'console.extension.remove', '1.0',
+  'extension.workspace',
+  'sha256:bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc',
+  'R2', 'remove retired workspace extension',
+  'console-operation-policy-2026-09-02.1', true,
+  'extension-remove-operation-0001', 'correlation-extension-remove-0001',
+  NULL, 'C_EXT', NULL, NULL
+);
+RESET ROLE;
+
+SELECT set_config(
+  'verification.remove_operation_id',
+  (SELECT operation_id::text FROM console_operation.operation WHERE idempotency_key = 'extension-remove-operation-0001'),
+  false
+);
+
+SET ROLE console_api;
+SELECT * FROM console_operation.approve_operation(
+  '66666666-6666-4666-8666-666666666666',
+  '55555555-5555-4555-8555-555555555555',
+  3, 0, current_setting('verification.remove_operation_id')::uuid, 0,
+  'approve workspace extension removal', 'console-operation-policy-2026-09-02.1', NULL,
+  'extension-remove-approval-0001', 'correlation-extension-remove-approval-0001'
+);
+RESET ROLE;
+
+SET ROLE console_extension_controller;
+SELECT set_config(
+  'verification.remove_claim',
+  console_operation.claim_owner_operation(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'], 30
+  )::text,
+  false
+);
+
+DO $$
+DECLARE
+  v_claim jsonb := current_setting('verification.remove_claim')::jsonb;
+  v_execution jsonb;
+BEGIN
+  IF v_claim->>'actionId' <> 'console.extension.remove'
+      OR v_claim->>'targetRef' <> 'extension.workspace'
+      OR v_claim->>'dispatchPhase' <> 'apply' THEN
+    RAISE EXCEPTION 'removal claim lost its typed descriptor boundary';
+  END IF;
+  BEGIN
+    PERFORM console_extension.apply_remove_registration(
+      'eeeeeeee-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+      'workspace', 'removal-registration-uid-0001', '30', '31', 4,
+      '17', 2, 'main-shell-core', true
+    );
+    RAISE EXCEPTION 'shell-pinned core removal evidence was accepted';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  v_execution := console_extension.apply_remove_registration(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+    (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+    'workspace', 'removal-registration-uid-0001', '30', '31', 4,
+    '17', 2, 'workspace-extension', true
+  );
+  IF v_execution->>'registrationName' <> 'workspace'
+      OR NOT (v_execution->>'changed')::boolean
+      OR v_execution->>'evidenceDigest' !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'removal application receipt is incomplete';
+  END IF;
+END;
+$$;
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT state FROM console_operation.operation WHERE operation_id = current_setting('verification.remove_operation_id')::uuid) <> 'Applied'
+      OR (SELECT observed_postcondition->>'postcondition' FROM console_operation.operation WHERE operation_id = current_setting('verification.remove_operation_id')::uuid) <> 'RemovalRequested'
+      OR (SELECT count(*) FROM console_operation.execution_receipt WHERE operation_id = current_setting('verification.remove_operation_id')::uuid AND phase = 'Applied') <> 1
+      OR (SELECT count(*) FROM console_operation.outbox WHERE operation_id = current_setting('verification.remove_operation_id')::uuid AND delivered_at IS NOT NULL) <> 1 THEN
+    RAISE EXCEPTION 'Extension removal did not close as one fenced Uninstalled request';
+  END IF;
+END;
+$$;
+
+SET ROLE console_api;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM console_operation.verify_extension_operation(
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      7, 2, current_setting('verification.remove_operation_id')::uuid, 4,
+      'remove-verification-before-observation-0001',
+      'correlation-remove-verification-before-observation-0001'
+    );
+    RAISE EXCEPTION 'removal verification succeeded before absence observation';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;
+
+SET ROLE console_extension_controller;
+SELECT set_config(
+  'verification.remove_observation_claim',
+  console_operation.claim_owner_operation(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.remove', 'console.extension.revocation.create'], 30
+  )::text,
+  false
+);
+
+DO $$
+DECLARE
+  v_claim jsonb := current_setting('verification.remove_observation_claim')::jsonb;
+  v_observation jsonb := jsonb_build_object(
+    'registration', jsonb_build_object(
+      'name', 'workspace', 'uid', 'removal-registration-uid-0001', 'phase', 'Absent'
+    )
+  );
+  v_execution jsonb;
+BEGIN
+  IF v_claim->>'dispatchPhase' <> 'observe'
+      OR v_claim->>'actionId' <> 'console.extension.remove'
+      OR v_claim->'dispatchPayload'->>'registrationUid' <> 'removal-registration-uid-0001'
+      OR v_claim->'dispatchPayload'->>'appliedReceiptDigest' !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'removal observation claim lost its Applied coordinates';
+  END IF;
+  BEGIN
+    PERFORM console_extension.record_remove_observation(
+      'eeeeeeee-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+      v_claim->'dispatchPayload'->>'appliedReceiptDigest',
+      jsonb_set(v_observation, '{registration,uid}', '"replacement-uid"')
+    );
+    RAISE EXCEPTION 'replacement Registration UID was accepted as absent';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  v_execution := console_extension.record_remove_observation(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+    (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+    v_claim->'dispatchPayload'->>'appliedReceiptDigest', v_observation
+  );
+  IF v_execution->>'postcondition' <> 'RegistrationAbsent'
+      OR v_execution->>'evidenceDigest' !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'RegistrationAbsent observation receipt is incomplete';
+  END IF;
+END;
+$$;
+RESET ROLE;
+
+SET ROLE console_api;
+SELECT * FROM console_operation.verify_extension_operation(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, current_setting('verification.remove_operation_id')::uuid, 4,
+  'remove-verification-operation-0001', 'correlation-remove-verification-operation-0001'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT state FROM console_operation.operation WHERE operation_id = current_setting('verification.remove_operation_id')::uuid) <> 'Verified'
+      OR (SELECT state_version FROM console_operation.operation WHERE operation_id = current_setting('verification.remove_operation_id')::uuid) <> 5
+      OR (SELECT observed_postcondition->>'postcondition' FROM console_operation.operation WHERE operation_id = current_setting('verification.remove_operation_id')::uuid) <> 'RegistrationAbsent'
+      OR (SELECT count(*) FROM console_operation.execution_receipt WHERE operation_id = current_setting('verification.remove_operation_id')::uuid) <> 2
+      OR (SELECT count(*) FROM console_operation.outbox WHERE operation_id = current_setting('verification.remove_operation_id')::uuid AND delivered_at IS NOT NULL) <> 2
+      OR (SELECT count(*) FROM console_operation.verification_receipt WHERE operation_id = current_setting('verification.remove_operation_id')::uuid) <> 1 THEN
+    RAISE EXCEPTION 'Extension removal was not independently verified from matching absence evidence';
   END IF;
 END;
 $$;

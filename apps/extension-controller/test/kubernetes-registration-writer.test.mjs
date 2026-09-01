@@ -13,7 +13,7 @@ const candidate = {
 
 function packageObject(patch = {}) {
   return {
-    metadata: { name: 'workspace', resourceVersion: '17', generation: 2 },
+    metadata: { name: 'workspace', resourceVersion: '17', generation: 2, labels: { 'opensphere.io/scope': 'workspace-extension' } },
     spec: {
       kind: 'plugin', image: { repository: 'ghcr.io/opensphere-platform/opensphere-plugin-workspace', digest },
       resolution: {
@@ -142,6 +142,85 @@ test('install observation rejects Package replacement and Registration UID subst
       ? json(200, packageObject()) : json(200, readyRegistration({ metadata: { name: 'workspace', uid: 'other-uid', resourceVersion: '19', generation: 3 } })),
   });
   await assert.rejects(uidDrift.observeInstall({ candidate, registrationUid: 'registration-uid' }), { code: 'ObservationMismatch' });
+});
+
+test('removal applies an Uninstalled merge patch with a resource-version precondition', async () => {
+  const calls = [];
+  const registration = {
+    metadata: { name: 'workspace', uid: 'registration-uid', resourceVersion: '19', generation: 3 },
+    spec: { packageRef: { name: 'workspace' }, desiredState: 'Enabled' },
+  };
+  const writer = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options, body: options.body ? JSON.parse(options.body) : null });
+      if (url.endsWith('/uipluginpackages/workspace')) return json(200, packageObject());
+      if (options.method === 'GET') return json(200, registration);
+      return json(200, {
+        metadata: { ...registration.metadata, resourceVersion: '20', generation: 4 },
+        spec: { ...registration.spec, desiredState: 'Uninstalled' },
+      });
+    },
+  });
+  const result = await writer.applyRemove({
+    descriptorId: 'extension.workspace', operationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    requestedBy: '11111111-1111-4111-8111-111111111111', reason: 'remove retired workspace extension',
+  });
+  assert.deepEqual(calls.map((call) => call.options.method), ['GET', 'GET', 'PATCH']);
+  assert.equal(calls[2].options.headers['content-type'], 'application/merge-patch+json');
+  assert.equal(calls[2].body.metadata.resourceVersion, '19');
+  assert.equal(calls[2].body.spec.desiredState, 'Uninstalled');
+  assert.equal(result.registrationUid, 'registration-uid');
+  assert.equal(result.changed, true);
+});
+
+test('removal rejects shell-pinned core before reading or mutating its Registration', async () => {
+  const calls = [];
+  const writer = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return json(200, packageObject({
+        metadata: { name: 'workspace', resourceVersion: '17', generation: 2, labels: { 'opensphere.io/scope': 'main-shell-core' } },
+      }));
+    },
+  });
+  await assert.rejects(writer.applyRemove({
+    descriptorId: 'extension.workspace', operationId: 'operation', requestedBy: 'actor',
+    reason: 'remove retired workspace extension',
+  }), { code: 'OwnerRejected', terminal: true });
+  assert.deepEqual(calls.map((call) => call.options.method), ['GET']);
+});
+
+test('removal observation succeeds only after the exact Registration is absent', async () => {
+  const absent = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async () => json(404, { reason: 'NotFound' }),
+  });
+  const result = await absent.observeRemove({ registrationName: 'workspace', registrationUid: 'registration-uid' });
+  assert.equal(result.state, 'Removed');
+  assert.deepEqual(result.observation.registration, { name: 'workspace', uid: 'registration-uid', phase: 'Absent' });
+
+  const present = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async () => json(200, {
+      metadata: { name: 'workspace', uid: 'registration-uid' },
+      spec: { desiredState: 'Uninstalled' }, status: { phase: 'Uninstalling' },
+    }),
+  });
+  assert.deepEqual(
+    await present.observeRemove({ registrationName: 'workspace', registrationUid: 'registration-uid' }),
+    { state: 'Pending', reason: 'RegistrationStillPresent' },
+  );
+
+  const replaced = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async () => json(200, { metadata: { name: 'workspace', uid: 'replacement-uid' } }),
+  });
+  await assert.rejects(
+    replaced.observeRemove({ registrationName: 'workspace', registrationUid: 'registration-uid' }),
+    { code: 'ObservationMismatch' },
+  );
 });
 
 test('Kubernetes writer rejects remote cleartext and malformed credentials', () => {

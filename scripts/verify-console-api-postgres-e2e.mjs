@@ -24,7 +24,7 @@ const approverHandle = 'opaque-approver-session-for-console-api-integration';
 const approverCsrf = 'csrf-approver-proof-for-console-api-integration';
 const approvalCorrelationId = 'integration-correlation-approval-0001';
 const approvalIdempotencyKey = 'integration-approval-operation-0001';
-const policyRevision = 'console-operation-policy-2026-09-01.1';
+const policyRevision = 'console-operation-policy-2026-09-02.1';
 const headers = {
   cookie: '__Host-opensphere-session=' + handle,
   'x-csrf-token': csrf,
@@ -66,7 +66,10 @@ const authorityServer = createServer(async (request, response) => {
   if (request.url?.endsWith('/uipluginpackages/workspace') && request.method === 'GET') {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
-      metadata: { name: 'workspace', resourceVersion: '17', generation: 2 },
+      metadata: {
+        name: 'workspace', resourceVersion: '17', generation: 2,
+        labels: { 'opensphere.io/scope': 'workspace-extension' },
+      },
       spec: {
         kind: 'plugin', image: { repository: 'ghcr.io/opensphere-platform/opensphere-plugin-workspace', digest: installDigest },
         resolution: {
@@ -99,6 +102,24 @@ const authorityServer = createServer(async (request, response) => {
     };
     response.writeHead(201, { 'content-type': 'application/json' });
     response.end(JSON.stringify(registration));
+    return;
+  }
+  if (request.url?.endsWith('/uipluginregistrations/workspace') && request.method === 'PATCH' && registration) {
+    if (requestBody?.metadata?.resourceVersion !== registration.metadata.resourceVersion) {
+      response.writeHead(409, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ reason: 'Conflict' }));
+      return;
+    }
+    registration = {
+      ...registration,
+      metadata: { ...registration.metadata, resourceVersion: '19', generation: 4 },
+      spec: { ...registration.spec, ...requestBody.spec },
+      status: { ...registration.status, observedGeneration: 4, phase: 'Uninstalling' },
+    };
+    const applied = registration;
+    setTimeout(() => { registration = null; }, 20);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(applied));
     return;
   }
   response.writeHead(404, { 'content-type': 'application/json' });
@@ -572,6 +593,89 @@ try {
     state: 'Verified', state_version: 5, postcondition: 'InstallReady', verifications: 1, owner_receipts: 2,
   });
 
+  const removeResponse = await fetch(origin + '/api/admin/extensions/remove', {
+    method: 'POST',
+    headers: {
+      cookie: headers.cookie,
+      'x-csrf-token': csrf,
+      'content-type': 'application/json',
+      'idempotency-key': 'integration-extension-remove-0001',
+      'x-correlation-id': 'integration-extension-remove-correlation-0001',
+    },
+    body: JSON.stringify({
+      descriptorId: 'extension.workspace',
+      reason: 'verify exact Registration removal',
+      confirmation: 'REMOVE extension.workspace',
+    }),
+  });
+  assert.equal(removeResponse.status, 202);
+  const removeReceipt = await removeResponse.json();
+  assert.equal(removeReceipt.state, 'Planned');
+  assert.equal(removeReceipt.actionId, 'console.extension.remove');
+  assert.equal(removeReceipt.targetRef, 'extension.workspace');
+
+  const approvedRemove = await approval(removeReceipt.operationId, {
+    reason: 'independent removal approval integration review',
+    approvalRevision: policyRevision,
+    expectedStateVersion: 0,
+    confirmation: null,
+  }, {
+    'idempotency-key': 'integration-extension-remove-approval-0001',
+    'x-correlation-id': 'integration-extension-remove-approval-correlation-0001',
+  });
+  assert.equal(approvedRemove.status, 202);
+  assert.equal((await approvedRemove.json()).state, 'Authorized');
+
+  let removeExecution;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const observed = await admin.query(
+      [
+        'SELECT o.state, o.state_version::int AS state_version,',
+        "o.observed_postcondition->>'postcondition' AS postcondition,",
+        '(SELECT count(*)::int FROM console_operation.execution_receipt x WHERE x.operation_id = o.operation_id) AS receipts,',
+        '(SELECT count(*)::int FROM console_operation.outbox x WHERE x.operation_id = o.operation_id AND x.delivered_at IS NOT NULL) AS delivered_outbox',
+        'FROM console_operation.operation o WHERE o.operation_id = $1',
+      ].join(' '),
+      [removeReceipt.operationId],
+    );
+    if (observed.rows[0].state === 'Applied' && observed.rows[0].receipts === 2) {
+      removeExecution = observed.rows[0];
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.deepEqual(removeExecution, {
+    state: 'Applied', state_version: 4, postcondition: 'RemovalRequested', receipts: 2, delivered_outbox: 2,
+  });
+  assert.equal(registration, null);
+
+  const verifiedRemove = await verification(
+    removeReceipt.operationId,
+    { expectedStateVersion: 4 },
+    {
+      'idempotency-key': 'integration-remove-verification-operation-0001',
+      'x-correlation-id': 'integration-remove-verification-correlation-0001',
+    },
+  );
+  assert.equal(verifiedRemove.status, 200);
+  const verifiedRemoveReceipt = await verifiedRemove.json();
+  assert.equal(verifiedRemoveReceipt.state, 'Verified');
+  assert.equal(verifiedRemoveReceipt.stateVersion, 5);
+  assert.equal(verifiedRemoveReceipt.observedPostcondition.postcondition, 'RegistrationAbsent');
+  const removeVerificationEvidence = await admin.query(
+    [
+      'SELECT o.state, o.state_version::int AS state_version,',
+      "o.observed_postcondition->>'postcondition' AS postcondition,",
+      '(SELECT count(*)::int FROM console_operation.verification_receipt v WHERE v.operation_id = o.operation_id) AS verifications,',
+      '(SELECT count(*)::int FROM console_operation.execution_receipt x WHERE x.operation_id = o.operation_id) AS owner_receipts',
+      'FROM console_operation.operation o WHERE o.operation_id = $1',
+    ].join(' '),
+    [removeReceipt.operationId],
+  );
+  assert.deepEqual(removeVerificationEvidence.rows[0], {
+    state: 'Verified', state_version: 5, postcondition: 'RegistrationAbsent', verifications: 1, owner_receipts: 2,
+  });
+
   const supabaseStatusResponse = await fetch(origin + '/api/identity/supabase/status', {
     headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-supabase-status-0001' },
   });
@@ -633,6 +737,8 @@ try {
     auditProjection: true,
     extensionInstallExecution: installExecution,
     extensionInstallVerification: installVerificationEvidence.rows[0],
+    extensionRemoveExecution: removeExecution,
+    extensionRemoveVerification: removeVerificationEvidence.rows[0],
     supabaseStatusProjection: true,
     identityProjection: true,
     sessionSelfRevoke: true,
