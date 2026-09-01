@@ -387,6 +387,18 @@ try {
     true,
   );
 
+  const supabaseStatusResponse = await fetch(origin + '/api/identity/supabase/status', {
+    headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-supabase-status-0001' },
+  });
+  assert.equal(supabaseStatusResponse.status, 200);
+  const supabaseStatus = await supabaseStatusResponse.json();
+  assert.equal(supabaseStatus.authority, 'Supabase');
+  assert.equal(supabaseStatus.data.state, 'Degraded');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'database').state, 'Ready');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'auth').state, 'Unknown');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'migration').state, 'Partial');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'rls').state, 'Ready');
+
   const sessionProjectionResponse = await fetch(origin + '/api/identity/session', {
     headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-session-read-0001' },
   });
@@ -434,6 +446,7 @@ try {
     revocationProjection: true,
     verification: verificationEvidence.rows[0],
     auditProjection: true,
+    supabaseStatusProjection: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     revokeDenied: true,

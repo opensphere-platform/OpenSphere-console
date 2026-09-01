@@ -4,6 +4,7 @@ import pg from 'pg';
 import { createOperationService } from './operation-service.mjs';
 import { createAuditOperations } from './audit-operations.mjs';
 import { createIdentityOperations } from './identity-operations.mjs';
+import { createDataIdentityOperations } from './data-identity-operations.mjs';
 import { createPostgresOperationStore } from './postgres-operation-store.mjs';
 import { createRegistryOperations } from './registry-operations.mjs';
 import { createDatabaseSessionResolver } from './session-resolver.mjs';
@@ -38,6 +39,7 @@ const store = createPostgresOperationStore({ query: pool.query.bind(pool) });
 const operationService = createOperationService({ store, policyCatalog });
 const auditOperations = createAuditOperations({ store });
 const identityOperations = createIdentityOperations({ store });
+const dataIdentityOperations = createDataIdentityOperations({ store });
 const registryOperations = createRegistryOperations({
   operationService,
   policyRevision: policyCatalog.policyRevision,
@@ -49,6 +51,7 @@ const handler = createConsoleApiHandler({
   registryOperations,
   auditOperations,
   identityOperations,
+  dataIdentityOperations,
   health: () => store.health(),
 });
 const server = createServer(handler);

@@ -67,6 +67,7 @@ paths:
       tags: [DataIdentity]
       x-opensphere-requirement: CON-FR-009
       x-opensphere-authority: Supabase
+      x-opensphere-permission: console.data_identity.read
       responses:
         "200":
           description: Auth, database, storage, migration, RLS, backup, and restore readiness

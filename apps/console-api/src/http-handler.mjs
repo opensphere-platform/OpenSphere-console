@@ -57,7 +57,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, dataIdentityOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-correlation-id'] || '').trim();
@@ -89,6 +89,10 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       if (url.pathname === '/api/identity/me' && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false });
         return send(response, 200, identityOperations.getMe({ session, correlationId }));
+      }
+      if (url.pathname === '/api/identity/supabase/status' && request.method === 'GET') {
+        const session = await resolveSession(request, { requireCsrf: false });
+        return send(response, 200, await dataIdentityOperations.getSupabaseStatus({ session, correlationId }));
       }
       if (url.pathname === '/api/identity/session' && request.method === 'DELETE') {
         const session = await resolveSession(request, { requireCsrf: true });

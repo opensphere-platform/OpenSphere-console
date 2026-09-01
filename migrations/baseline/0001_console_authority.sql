@@ -593,6 +593,116 @@ $$;
 REVOKE ALL ON FUNCTION console_identity.revoke_browser_session(uuid, uuid, bigint, bigint, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION console_identity.revoke_browser_session(uuid, uuid, bigint, bigint, text) TO console_api;
 
+CREATE OR REPLACE FUNCTION console_identity.get_supabase_status(
+  p_session_id uuid,
+  p_actor_ref uuid,
+  p_expected_permission_revision bigint,
+  p_expected_revoke_epoch bigint,
+  p_correlation_id text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_identity
+AS $$
+DECLARE
+  v_session console_identity.browser_session;
+  v_authority console_identity.subject_authority;
+  v_observed_at timestamptz := statement_timestamp();
+  v_authority_table_count integer;
+  v_rls_table_count integer;
+  v_baseline_objects_present boolean;
+BEGIN
+  IF length(COALESCE(p_correlation_id, '')) NOT BETWEEN 8 AND 128 THEN
+    RAISE EXCEPTION 'invalid correlation id' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+  SELECT * INTO v_session
+    FROM console_identity.browser_session
+    WHERE session_id = p_session_id;
+  IF NOT FOUND OR v_session.subject_id <> p_actor_ref OR v_session.revoked_at IS NOT NULL
+      OR v_session.expires_at <= v_observed_at THEN
+    RAISE EXCEPTION 'active Console session is required' USING ERRCODE = '28000', DETAIL = 'SessionInvalid';
+  END IF;
+  SELECT * INTO v_authority
+    FROM console_identity.subject_authority
+    WHERE subject_id = p_actor_ref;
+  IF NOT FOUND OR v_authority.permission_revision <> v_session.permission_revision
+      OR v_authority.permission_revision <> p_expected_permission_revision
+      OR v_authority.revoke_epoch <> v_session.revoke_epoch
+      OR v_authority.revoke_epoch <> p_expected_revoke_epoch THEN
+    RAISE EXCEPTION 'session authority revision is stale' USING ERRCODE = '28000', DETAIL = 'StaleAuthorityRevision';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM console_identity.permission_grant
+    WHERE subject_id = p_actor_ref
+      AND permission = 'console.data_identity.read'
+      AND grant_revision <= v_authority.permission_revision
+      AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'permission denied' USING ERRCODE = '42501', DETAIL = 'PermissionDenied';
+  END IF;
+
+  SELECT count(*)::integer,
+         count(*) FILTER (WHERE c.relrowsecurity AND c.relforcerowsecurity)::integer
+    INTO v_authority_table_count, v_rls_table_count
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname IN ('console_identity', 'console_operation', 'console_audit', 'console_extension')
+      AND c.relkind IN ('r', 'p');
+
+  v_baseline_objects_present :=
+    to_regclass('console_identity.browser_session') IS NOT NULL
+    AND to_regclass('console_operation.operation') IS NOT NULL
+    AND to_regclass('console_audit.event') IS NOT NULL
+    AND to_regclass('console_extension.registry_connection') IS NOT NULL
+    AND to_regprocedure('console_identity.resolve_browser_session(bytea,bytea,boolean)') IS NOT NULL
+    AND to_regprocedure('console_operation.accept_operation(uuid,uuid,bigint,bigint,text,text,text,text,text,text,text,text,boolean,text,text,text,text,jsonb)') IS NOT NULL;
+
+  RETURN jsonb_build_object(
+    'schemaVersion', '1.0',
+    'data', jsonb_build_object(
+      'state', 'Degraded',
+      'required', true,
+      'components', jsonb_build_array(
+        jsonb_build_object('component', 'database', 'state', 'Ready', 'authority', 'SupabasePostgreSQL', 'reasonCode', NULL),
+        jsonb_build_object('component', 'auth', 'state', 'Unknown', 'authority', 'SupabaseAuth', 'reasonCode', 'LiveProbeUnavailable'),
+        jsonb_build_object('component', 'dataApi', 'state', 'Unknown', 'authority', 'SupabasePostgREST', 'reasonCode', 'LiveProbeUnavailable'),
+        jsonb_build_object('component', 'storage', 'state', 'Unknown', 'authority', 'SupabaseStorage', 'reasonCode', 'LiveProbeUnavailable'),
+        jsonb_build_object(
+          'component', 'migration',
+          'state', CASE WHEN v_baseline_objects_present THEN 'Partial' ELSE 'Unknown' END,
+          'authority', 'PostgreSQLCatalog',
+          'reasonCode', CASE WHEN v_baseline_objects_present THEN 'BaselineObjectsPresentManifestLedgerMissing' ELSE 'BaselineObjectsMissing' END,
+          'baselineRevision', CASE WHEN v_baseline_objects_present THEN 'baseline-0001' ELSE NULL END
+        ),
+        jsonb_build_object(
+          'component', 'rls',
+          'state', CASE WHEN v_authority_table_count = 11 AND v_rls_table_count = v_authority_table_count THEN 'Ready' ELSE 'Blocked' END,
+          'authority', 'PostgreSQLCatalog',
+          'reasonCode', CASE WHEN v_authority_table_count = 11 AND v_rls_table_count = v_authority_table_count THEN NULL ELSE 'RlsCoverageIncomplete' END,
+          'authorityTables', v_authority_table_count,
+          'protectedTables', v_rls_table_count
+        ),
+        jsonb_build_object('component', 'backup', 'state', 'Unknown', 'authority', 'RecoveryOwner', 'reasonCode', 'EvidenceUnavailable'),
+        jsonb_build_object('component', 'restore', 'state', 'Unknown', 'authority', 'RecoveryOwner', 'reasonCode', 'EvidenceUnavailable')
+      )
+    ),
+    'authority', 'Supabase',
+    'observedAt', v_observed_at,
+    'freshness', 'fresh',
+    'correlationId', p_correlation_id,
+    'evidenceRefs', jsonb_build_array(
+      'supabase-postgresql:connected',
+      CASE WHEN v_baseline_objects_present THEN 'baseline-schema:baseline-0001:objects-present' ELSE 'baseline-schema:objects-missing' END,
+      'rls:' || v_rls_table_count::text || '/' || v_authority_table_count::text
+    )
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_identity.get_supabase_status(uuid, uuid, bigint, bigint, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_identity.get_supabase_status(uuid, uuid, bigint, bigint, text) TO console_api;
+
 CREATE OR REPLACE FUNCTION console_operation.accept_operation(
   p_session_id uuid,
   p_actor_ref uuid,
@@ -1732,6 +1842,8 @@ COMMENT ON FUNCTION console_audit.list_events(uuid, uuid, bigint, bigint, bigint
   IS 'Returns a bounded newest-first page from the append-only audit ledger after current authority checks';
 COMMENT ON FUNCTION console_identity.revoke_browser_session(uuid, uuid, bigint, bigint, text)
   IS 'Revokes only the caller current opaque session and atomically appends no-token audit evidence';
+COMMENT ON FUNCTION console_identity.get_supabase_status(uuid, uuid, bigint, bigint, text)
+  IS 'Returns a fail-closed Supabase readiness projection without promoting unprobed Auth, PostgREST, Storage or recovery evidence';
 COMMENT ON FUNCTION console_operation.approve_operation(
   uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
 ) IS 'Atomically revalidates an independent aal2 approver and advances a Planned operation by compare-and-set';

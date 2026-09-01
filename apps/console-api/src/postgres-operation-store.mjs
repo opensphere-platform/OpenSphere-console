@@ -59,6 +59,12 @@ const REVOKE_SESSION_SQL = [
   ') AS revocation_record',
 ].join(' ');
 
+const GET_SUPABASE_STATUS_SQL = [
+  'SELECT console_identity.get_supabase_status(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::text',
+  ') AS read_envelope',
+].join(' ');
+
 function databaseError(error) {
   const code = String(error?.detail || '');
   const known = new Set([
@@ -280,6 +286,23 @@ export function createPostgresOperationStore({ query }) {
         const record = result?.rows?.[0]?.revocation_record;
         if (!record) throw new Error('revoke_browser_session returned no revocation record');
         return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getSupabaseStatus(input) {
+      try {
+        const result = await query(GET_SUPABASE_STATUS_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.correlationId,
+        ]);
+        const envelope = result?.rows?.[0]?.read_envelope;
+        if (!envelope) throw new Error('get_supabase_status returned no read envelope');
+        return envelope;
       } catch (error) {
         throw databaseError(error);
       }

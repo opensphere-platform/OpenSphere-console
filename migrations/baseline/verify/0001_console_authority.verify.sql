@@ -18,6 +18,7 @@ VALUES
   ('11111111-1111-4111-8111-111111111111', 'console.extension.revoke', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.operation.verify', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.audit.read', 7, '99999999-9999-4999-8999-999999999999'),
+  ('11111111-1111-4111-8111-111111111111', 'console.data_identity.read', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.operation.approve', 7, '99999999-9999-4999-8999-999999999999'),
   ('55555555-5555-4555-8555-555555555555', 'console.operation.approve', 3, '99999999-9999-4999-8999-999999999999'),
   ('88888888-8888-4888-8888-888888888888', 'console.operation.approve', 3, '99999999-9999-4999-8999-999999999999');
@@ -83,6 +84,38 @@ BEGIN
       true
     );
     RAISE EXCEPTION 'invalid CSRF digest unexpectedly resolved a session';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;
+
+SET ROLE console_api;
+DO $$
+DECLARE
+  v_status jsonb;
+BEGIN
+  v_status := console_identity.get_supabase_status(
+    '22222222-2222-4222-8222-222222222222',
+    '11111111-1111-4111-8111-111111111111',
+    7, 2, 'correlation-supabase-status-0001'
+  );
+  IF v_status->>'authority' <> 'Supabase'
+      OR v_status->'data'->>'state' <> 'Degraded'
+      OR v_status->'data'->'components'->0->>'state' <> 'Ready'
+      OR v_status->'data'->'components'->1->>'state' <> 'Unknown'
+      OR v_status->'data'->'components'->4->>'state' <> 'Partial'
+      OR v_status->'data'->'components'->5->>'state' <> 'Ready'
+      OR v_status->'data'->'components'->5->>'protectedTables' <> '11' THEN
+    RAISE EXCEPTION 'Supabase status projection overclaimed or lost baseline evidence';
+  END IF;
+  BEGIN
+    PERFORM console_identity.get_supabase_status(
+      '66666666-6666-4666-8666-666666666666',
+      '55555555-5555-4555-8555-555555555555',
+      3, 0, 'correlation-supabase-status-denied-0001'
+    );
+    RAISE EXCEPTION 'actor without data identity permission read Supabase status';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 END;
