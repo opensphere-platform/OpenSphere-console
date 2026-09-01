@@ -1,28 +1,33 @@
 # Console Supabase Data & Identity Backbone
 
-Canonical decision:
-`_DOCS_/10-의사결정/migration-adr-006-console-supabase-data-identity-backbone.md`.
+Current design authority:
+`../../../DESIGN/20-MODULE/OpenSphere-Console/CONSOLE-DESIGN-INDEX.md` and its
+Backbone, security, deployment, and migration specifications.
 
-This directory is the active OpenSphere Console data and identity authority.
-It is installed by `OpenSphere-Setup-CLI` before Gitea, Backend, OSAA and the
-Main Shell.
+This directory owns the OpenSphere Console data and identity deployment input.
+The fresh target sequence is Supabase PostgreSQL/Auth/Storage initialization,
+the repository-root migration manifest, PostgREST readiness, and then C_API.
 
 ## Components
 
+- `target/deploy.yaml`: current fresh target manifest for exactly PostgreSQL,
+  Auth, PostgREST and Storage. It contains no Namespace, Secret, mutable image,
+  or legacy migration input. `scripts/Install-ConsoleApiRuntime.ps1` renders its
+  six closed placeholders from exact release inputs.
 - `bootstrap/supabase.yaml`: PostgreSQL, Supabase Auth, PostgREST and Storage
-  workloads in `opensphere-console-data`.
+  legacy bootstrap evidence. It is not an input to the fresh target installer.
 - `images/*/Dockerfile`: digest-pinned wrappers published as governed OpenSphere
   multi-architecture images.
 - `install.ps1`: Secret creation/reuse, workload rollout, Supabase Storage
-  migration and every sorted Console SQL migration.
-- `migrations/0001...0023`: canonical subject, RBAC, settings, audit, change
-  correlation, notification delivery, OSAA control/evidence and recovery owner
-  contracts.
-- `verify.mjs`: static manifest, migration, security-boundary and proxy checks.
+  migration and every sorted legacy Console SQL migration. It remains a
+  migration reference and is not called by the fresh target installer.
+- `migrations/0001...0073` (72 files): legacy accumulated lineage retained as
+  implementation evidence; it is not a fresh target input.
+- `verify.mjs`: legacy static contract verifier.
 
-The installer discovers `migrations/*.sql`, sorts them by filename, and applies
-all of them with `ON_ERROR_STOP=1`. A new migration therefore cannot be silently
-omitted by a hand-maintained filename list.
+The current fresh schema is `../../migrations/manifest.json` plus its exact SQL
+inventory. The target installer renders only the manifest-bound migration named
+by `latestGlobalId`; it never scans this directory's legacy numeric migrations.
 
 ## Authority boundary
 
@@ -38,37 +43,23 @@ Only the publishable anonymous key may reach browser code. The service-role
 key, PostgreSQL passwords and constrained Backend/OSAA database credentials
 remain server-side Kubernetes Secrets.
 
-## Normal installation
+## Fresh target installation
 
-Use `OpenSphere-Setup-CLI`. It replaces every upstream image with the exact
-signed Release BOM digest and downloads this installer plus migrations from the
-same source revision.
+The installation owner first creates `opensphere-console` and
+`opensphere-console-data`, an `opensphere-ghcr-pull` Secret in each namespace,
+and the exact six-key `opensphere-supabase-secrets` in the data namespace. The
+server Secret is an input and is never generated or copied by Console runtime
+code.
 
-`migrations/manifest.json` v2 is the canonical migration lineage. Every entry
-names its actual predecessor (so an intentionally unused numeric ID is not
-mistaken for missing history), and the lineage participates in `setDigest`.
-The signed Release BOM records the manifest path, canonical file digest,
-lineage-set digest, latest ID, and count; Setup rejects downloaded migration
-material that differs from that signed evidence.
+`scripts/Install-ConsoleApiRuntime.ps1` then receives the exact C_API and four
+Supabase wrapper digests from one reviewed release input. It refuses extra
+server Secret keys, partial target resources, mutable images, the legacy ledger,
+and a live fresh ledger that differs from the repository manifest. It does not
+create namespaces, pull credentials, or server credentials.
 
-Manual development execution:
+## Legacy reference
 
-```powershell
-.\install.ps1 `
-  -ConsoleUrl https://localhost:8090 `
-  -Namespace opensphere-console-data `
-  -KubeContext docker-desktop
-```
-
-The source manifest contains release placeholders and upstream version anchors;
-it is not the production trust decision. Setup-rendered manifests must contain
-only `ghcr.io/opensphere-platform/...@sha256:...` image references.
-
-## Static verification
-
-```powershell
-node .\verify.mjs
-```
-
-This verifies image version anchors, Secret boundaries, all migration contracts,
-dynamic ordered migration application and the Auth/Storage reverse-proxy routes.
+`bootstrap/supabase.yaml`, `install.ps1`, `migrations/`, and `verify.mjs` explain
+the previous runtime and remain under regression coverage while target owners
+are extracted. They are not current install instructions and must not be mixed
+with `target/deploy.yaml` or the fresh migration ledger.
