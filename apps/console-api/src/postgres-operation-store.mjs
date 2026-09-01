@@ -95,6 +95,16 @@ const CLAIM_INITIAL_ADMINISTRATOR_SQL = [
   ') AS bootstrap_record',
 ].join(' ');
 
+const GET_SESSION_PREFERENCE_CREDENTIALS_SQL = [
+  'SELECT console_identity.get_browser_session_preference_credentials($1::bytea) AS session_record',
+].join(' ');
+
+const PREPARE_SESSION_PREFERENCE_UPDATE_SQL = [
+  'SELECT console_identity.prepare_browser_session_preference_update(',
+  '$1::bytea, $2::bytea, $3::text, $4::text',
+  ') AS session_record',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -441,6 +451,35 @@ export function createPostgresOperationStore({ query }) {
         const result = await query(GET_INITIAL_ADMINISTRATOR_BOOTSTRAP_STATUS_SQL);
         const record = result?.rows?.[0]?.bootstrap_record;
         if (!record?.state) throw new Error('get_initial_administrator_bootstrap_status returned no record');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getSessionPreferenceCredentials(input) {
+      try {
+        const result = await query(GET_SESSION_PREFERENCE_CREDENTIALS_SQL, [input.tokenDigest]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record?.sessionId || !record?.subjectId || !record?.accessTokenCiphertext) {
+          throw new Error('get_browser_session_preference_credentials returned no record');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async prepareSessionPreferenceUpdate(input) {
+      try {
+        const result = await query(PREPARE_SESSION_PREFERENCE_UPDATE_SQL, [
+          input.tokenDigest, input.csrfTokenDigest, input.duration, input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record?.sessionId || !record?.subjectId || !record?.accessTokenCiphertext
+            || !record?.auditEventId) {
+          throw new Error('prepare_browser_session_preference_update returned no record');
+        }
         return record;
       } catch (error) {
         throw databaseError(error);

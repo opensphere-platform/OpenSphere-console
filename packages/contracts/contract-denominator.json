@@ -9,6 +9,8 @@
   "operations": [
     "getInitialAdministratorBootstrapStatus",
     "bootstrapInitialAdministrator",
+    "getSessionPreference",
+    "updateSessionPreference",
     "loginSession",
     "completeSessionMfa",
     "beginSessionTotpEnrollment",
@@ -48,6 +50,8 @@
   "requiredSchemas": [
     "initial-administrator-bootstrap-request.schema.json",
     "initial-administrator-bootstrap-response.schema.json",
+    "session-preference-request.schema.json",
+    "session-preference-response.schema.json",
     "error-envelope.schema.json",
     "operation-receipt.schema.json",
     "operation-request.schema.json",

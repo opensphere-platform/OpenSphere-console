@@ -52,6 +52,7 @@ const recoveryAccessToken = integrationAccessToken({
 });
 let recoveryPasswordChanged = false;
 let recoverySessionLoggedOut = false;
+let sessionPreferenceDuration = '24h';
 let totpEnrollmentState = 'none';
 const mfaAccessToken = [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
@@ -142,6 +143,7 @@ const authorityServer = createServer(async (request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
       id: loginSubjectId,
+      user_metadata: { console_session_persistence: sessionPreferenceDuration },
       factors: bearer === 'Bearer ' + mfaAccessToken
         ? [{ id: 'factor-1', factor_type: 'totp', status: 'verified' }]
         : enrollmentBearer && totpEnrollmentState !== 'none'
@@ -151,11 +153,21 @@ const authorityServer = createServer(async (request, response) => {
     return;
   }
   if (request.url === '/user' && request.method === 'PUT') {
-    assert.equal(request.headers.authorization, 'Bearer ' + recoveryAccessToken);
-    assert.deepEqual(requestBody, { password: 'recovered-integration-password' });
-    recoveryPasswordChanged = true;
+    if (request.headers.authorization === 'Bearer ' + recoveryAccessToken) {
+      assert.deepEqual(requestBody, { password: 'recovered-integration-password' });
+      recoveryPasswordChanged = true;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ id: loginSubjectId }));
+      return;
+    }
+    assert.equal(request.headers.authorization, 'Bearer ' + rotatedLoginAccessToken);
+    assert.deepEqual(requestBody, { data: { console_session_persistence: '7d' } });
+    sessionPreferenceDuration = '7d';
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ id: loginSubjectId }));
+    response.end(JSON.stringify({
+      id: loginSubjectId,
+      user_metadata: { console_session_persistence: sessionPreferenceDuration },
+    }));
     return;
   }
   if (request.url === '/logout?scope=global' && request.method === 'POST') {
@@ -535,6 +547,40 @@ try {
   assert.equal(refreshedLoginEvidence.rows[0].absolute_expires_at.toISOString(), loginEvidence.rows[0].absolute_expires_at.toISOString());
   assert.doesNotMatch(refreshedLoginEvidence.rows[0].audit_evidence, /supabase-refresh|integration-signature/i);
 
+  const preferenceRead = await fetch(origin + '/api/identity/session/preference', {
+    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-session-preference-read-0001' },
+  });
+  assert.equal(preferenceRead.status, 200);
+  assert.deepEqual(await preferenceRead.json(), {
+    duration: '24h', defaultDuration: '24h', idleTimeoutHours: 12, appliesTo: 'next-login',
+  });
+  const preferenceUpdate = await fetch(origin + '/api/identity/session/preference', {
+    method: 'PUT',
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-csrf-token': loginCsrf,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-session-preference-update-0001',
+    },
+    body: JSON.stringify({ duration: '7d' }),
+  });
+  assert.equal(preferenceUpdate.status, 200);
+  assert.deepEqual(await preferenceUpdate.json(), {
+    duration: '7d', defaultDuration: '24h', idleTimeoutHours: 12, appliesTo: 'next-login',
+  });
+  const preferenceEvidence = await admin.query(
+    [
+      'SELECT count(*)::int AS event_count,',
+      "COALESCE(string_agg(evidence::text, ''), '') AS evidence",
+      'FROM console_audit.event',
+      "WHERE action = 'console.identity.session.preference.update' AND correlation_id = $1",
+    ].join(' '),
+    ['integration-session-preference-update-0001'],
+  );
+  assert.equal(preferenceEvidence.rows[0].event_count, 1);
+  assert.match(preferenceEvidence.rows[0].evidence, /"duration":\s*"7d"/);
+  assert.doesNotMatch(preferenceEvidence.rows[0].evidence, /integration-signature|supabase-refresh|apikey/i);
+
   await admin.query(
     [
       'UPDATE console_identity.browser_session',
@@ -785,7 +831,7 @@ try {
   assert.equal(activatedMfaCookies.length, 2);
   assert.ok(activatedMfaCookies.every((cookie) => {
     const seconds = Number(cookie.match(/Max-Age=(\d+)/)?.[1]);
-    return seconds >= 86390 && seconds <= 86400;
+    return seconds >= 604790 && seconds <= 604800;
   }));
 
   const activeMfaEvidence = await admin.query(
@@ -1443,6 +1489,7 @@ try {
     migrationLineage: true,
     initialAdministratorBootstrapStatus: true,
     passwordLoginSessionLifecycle: true,
+    sessionPreferenceLifecycle: true,
     refreshRotationLifecycle: true,
     activityTouchLifecycle: true,
     sessionInventoryLifecycle: true,

@@ -5,8 +5,12 @@ function fail(code, message, status) {
 const SESSION_PERSISTENCE = new Set(['browser', '1h', '4h', '8h', '12h', '24h', '3d', '7d', '14d', '30d']);
 
 function sessionPersistence(user) {
-  const candidate = String(user?.user_metadata?.console_session_persistence || '24h');
-  return SESSION_PERSISTENCE.has(candidate) ? candidate : '24h';
+  return declaredSessionPersistence(user) || '24h';
+}
+
+function declaredSessionPersistence(user) {
+  const candidate = user?.user_metadata?.console_session_persistence;
+  return typeof candidate === 'string' && SESSION_PERSISTENCE.has(candidate) ? candidate : undefined;
 }
 
 function configuredOrigin(value) {
@@ -117,6 +121,42 @@ export function createSupabaseAuthClient({
   }
 
   return Object.freeze({
+    async readSessionPreference({ accessToken, expectedSubjectId }) {
+      const claims = jwtClaims(accessToken, now());
+      if (String(claims.sub) !== String(expectedSubjectId || '')) {
+        fail('AuthenticationRequired', 'session preference subject does not match', 401);
+      }
+      const user = await request('/user', { token: accessToken });
+      if (String(user?.id || '') !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth session preference subject changed', 503);
+      }
+      return Object.freeze({ subjectId: String(claims.sub), duration: sessionPersistence(user) });
+    },
+
+    async updateSessionPreference({ accessToken, expectedSubjectId, duration }) {
+      const selected = String(duration || '');
+      if (!SESSION_PERSISTENCE.has(selected)) {
+        fail('ValidationFailed', 'session preference duration is invalid', 400);
+      }
+      const claims = jwtClaims(accessToken, now());
+      if (String(claims.sub) !== String(expectedSubjectId || '')) {
+        fail('AuthenticationRequired', 'session preference subject does not match', 401);
+      }
+      const updated = await request('/user', {
+        method: 'PUT', token: accessToken,
+        body: { data: { console_session_persistence: selected } },
+        rejectedCode: 'PreferenceRejected',
+        rejectedMessage: 'session preference update was rejected',
+        rejectedStatus: 400,
+        rejectedStatuses: [400, 401, 422],
+      });
+      if (String(updated?.id || '') !== String(claims.sub)
+          || declaredSessionPersistence(updated) !== selected) {
+        fail('AuthorityUnavailable', 'Supabase Auth did not confirm the session preference', 503);
+      }
+      return Object.freeze({ subjectId: String(claims.sub), duration: selected });
+    },
+
     async createInitialAdministrator({ username, displayName, email, password }) {
       if (!adminKey) fail('AuthorityUnavailable', 'Supabase administrator authority is unavailable', 503);
       const created = await request('/admin/users', {

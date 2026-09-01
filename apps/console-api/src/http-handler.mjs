@@ -99,6 +99,21 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           correlationId,
         }));
       }
+      if (url.pathname === '/api/identity/session/preference' && request.method === 'GET') {
+        if (!identitySessionBroker?.getSessionPreference) {
+          throw Object.assign(new Error('session preference is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return send(response, 200, await identitySessionBroker.getSessionPreference(request, { correlationId }));
+      }
+      if (url.pathname === '/api/identity/session/preference' && request.method === 'PUT') {
+        if (!identitySessionBroker?.updateSessionPreference) {
+          throw Object.assign(new Error('session preference update is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return send(response, 200, await identitySessionBroker.updateSessionPreference(request, {
+          body: await jsonBody(request),
+          correlationId,
+        }));
+      }
       if (url.pathname === '/api/identity/session/login' && request.method === 'POST') {
         if (!identitySessionBroker?.login) throw Object.assign(new Error('target session login is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
         const result = await identitySessionBroker.login({

@@ -91,6 +91,27 @@ function sessionPersistence(value) {
   return persistence;
 }
 
+function sessionPreferenceInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'duration')) {
+    fail('ValidationFailed', 'session preference requires exactly duration', 400);
+  }
+  const duration = String(body.duration || '');
+  if (!Object.hasOwn(SESSION_DURATION_MS, duration)) {
+    fail('ValidationFailed', 'session preference duration is invalid', 400);
+  }
+  return duration;
+}
+
+function sessionPreferenceProjection(duration) {
+  return Object.freeze({
+    duration: sessionPersistence(duration),
+    defaultDuration: '24h',
+    idleTimeoutHours: 12,
+    appliesTo: 'next-login',
+  });
+}
+
 export function createIdentitySessionBroker({
   store,
   authClient,
@@ -134,6 +155,54 @@ export function createIdentitySessionBroker({
   }
 
   const broker = {
+    async getSessionPreference(request, { correlationId } = {}) {
+      if (!store?.getSessionPreferenceCredentials || !authClient?.readSessionPreference) {
+        fail('AuthorityUnavailable', 'session preference authority is unavailable', 503);
+      }
+      await broker.resolveSession(request, { requireCsrf: false, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: false });
+      const context = await store.getSessionPreferenceCredentials({ tokenDigest: proof.tokenDigest });
+      if (!context?.sessionId || !context?.subjectId || !context?.accessTokenCiphertext) {
+        fail('AuthorityUnavailable', 'session preference authority returned an invalid context', 503);
+      }
+      const preference = await authClient.readSessionPreference({
+        accessToken: credentialCipher.decrypt(context.accessTokenCiphertext),
+        expectedSubjectId: context.subjectId,
+      });
+      if (preference?.subjectId !== context.subjectId) {
+        fail('AuthorityUnavailable', 'session preference authority changed subject', 503);
+      }
+      return sessionPreferenceProjection(preference.duration);
+    },
+
+    async updateSessionPreference(request, { body, correlationId }) {
+      if (!store?.prepareSessionPreferenceUpdate || !authClient?.updateSessionPreference) {
+        fail('AuthorityUnavailable', 'session preference authority is unavailable', 503);
+      }
+      const duration = sessionPreferenceInput(body);
+      await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const context = await store.prepareSessionPreferenceUpdate({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+        duration,
+        correlationId,
+      });
+      if (!context?.sessionId || !context?.subjectId || !context?.accessTokenCiphertext
+          || !context?.auditEventId) {
+        fail('AuthorityUnavailable', 'session preference authority returned an invalid update context', 503);
+      }
+      const preference = await authClient.updateSessionPreference({
+        accessToken: credentialCipher.decrypt(context.accessTokenCiphertext),
+        expectedSubjectId: context.subjectId,
+        duration,
+      });
+      if (preference?.subjectId !== context.subjectId || preference?.duration !== duration) {
+        fail('AuthorityUnavailable', 'session preference authority changed subject or duration', 503);
+      }
+      return sessionPreferenceProjection(preference.duration);
+    },
+
     async initialAdministratorStatus() {
       if (!store?.getInitialAdministratorBootstrapStatus) {
         fail('AuthorityUnavailable', 'initial administrator status authority is unavailable', 503);

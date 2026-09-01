@@ -86,6 +86,44 @@ test('Supabase password client revalidates the returned subject and detects veri
   assert.equal(calls[1].init.headers.authorization, 'Bearer ' + accessToken);
 });
 
+test('Supabase session preference uses only the current subject access credential', async () => {
+  const accessToken = token();
+  const calls = [];
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', now: () => now,
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      assert.equal(init.headers.authorization, 'Bearer ' + accessToken);
+      assert.equal(Object.hasOwn(init.headers, 'apikey'), false);
+      if (init.method === 'GET') {
+        return jsonResponse({ id: subjectId, user_metadata: { console_session_persistence: '4h' } });
+      }
+      assert.equal(init.method, 'PUT');
+      assert.deepEqual(JSON.parse(init.body), { data: { console_session_persistence: '7d' } });
+      return jsonResponse({ id: subjectId, user_metadata: { console_session_persistence: '7d' } });
+    },
+  });
+  assert.deepEqual(await client.readSessionPreference({ accessToken, expectedSubjectId: subjectId }), {
+    subjectId, duration: '4h',
+  });
+  assert.deepEqual(await client.updateSessionPreference({
+    accessToken, expectedSubjectId: subjectId, duration: '7d',
+  }), { subjectId, duration: '7d' });
+  assert.equal(calls.length, 2);
+  await assert.rejects(client.updateSessionPreference({
+    accessToken, expectedSubjectId: subjectId, duration: 'forever',
+  }), { code: 'ValidationFailed' });
+  assert.equal(calls.length, 2);
+
+  const unconfirmed = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', now: () => now,
+    async fetchImpl() { return jsonResponse({ id: subjectId, user_metadata: {} }); },
+  });
+  await assert.rejects(unconfirmed.updateSessionPreference({
+    accessToken, expectedSubjectId: subjectId, duration: '24h',
+  }), { code: 'AuthorityUnavailable' });
+});
+
 test('Supabase MFA client binds the verified factor and returns only an aal2 session', async () => {
   const accessToken = token();
   const aal2Token = token({ aal: 'aal2', session_id: 'auth-session-aal2' });
@@ -333,6 +371,83 @@ test('initial administrator bootstrap creates Auth identity before one atomic Co
     },
     requestOrigin: 'https://attacker.example.test', correlationId: 'initial-administrator-bootstrap-0003',
   }), { code: 'PermissionDenied' });
+});
+
+test('session preference reuses the encrypted current-subject credential and persists intent before update', async () => {
+  const calls = [];
+  const handle = 'opaque-session-preference-handle-value';
+  const csrf = 'csrf-session-preference-proof-value';
+  const cipher = createSessionCredentialCipher({
+    encryptionKey, randomBytes: (size) => Buffer.alloc(size, 18),
+  });
+  const accessToken = token();
+  const store = {
+    async resolveSession() {
+      return {
+        sessionId, subjectId, expiresAt: '2026-09-02T12:00:00.000Z',
+        idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+        persistence: '24h', accessTokenExpiresAt: '2026-09-02T01:00:00.000Z', revokedAt: null,
+        authorityFresh: true, permissions: [], permissionRevision: 1, revokeEpoch: 0, aal: 'aal2',
+      };
+    },
+    async issueSession() { throw new Error('login must not run'); },
+    async getPendingMfa() { throw new Error('MFA must not run'); },
+    async activateMfa() { throw new Error('MFA must not run'); },
+    async getRefreshCredentials() { throw new Error('refresh must not run'); },
+    async rotateCredentials() { throw new Error('refresh must not run'); },
+    async rejectRefresh() { throw new Error('refresh must not run'); },
+    async touchActivity() { throw new Error('activity touch must not run'); },
+    ...unusedOwnedSessionMethods(),
+    async getSessionPreferenceCredentials(input) {
+      calls.push(['read-context', input]);
+      return { sessionId, subjectId, accessTokenCiphertext: cipher.encrypt(accessToken) };
+    },
+    async prepareSessionPreferenceUpdate(input) {
+      calls.push(['prepare-update', input]);
+      return {
+        sessionId, subjectId, accessTokenCiphertext: cipher.encrypt(accessToken),
+        auditEventId: '33333333-3333-4333-8333-333333333333',
+      };
+    },
+  };
+  const authClient = {
+    async authenticatePassword() { throw new Error('login must not run'); },
+    async completeTotp() { throw new Error('MFA must not run'); },
+    async refreshSession() { throw new Error('refresh must not run'); },
+    async logout() {},
+    async readSessionPreference(input) {
+      calls.push(['read-auth', input]);
+      return { subjectId, duration: '4h' };
+    },
+    async updateSessionPreference(input) {
+      calls.push(['update-auth', input]);
+      return { subjectId, duration: input.duration };
+    },
+  };
+  const broker = createIdentitySessionBroker({
+    store, authClient, credentialCipher: cipher,
+    publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const request = { headers: {
+    cookie: `__Host-opensphere-session=${handle}`,
+    'x-os-csrf-token': csrf,
+  } };
+  assert.deepEqual(await broker.getSessionPreference(request, {
+    correlationId: 'session-preference-read-0001',
+  }), { duration: '4h', defaultDuration: '24h', idleTimeoutHours: 12, appliesTo: 'next-login' });
+  assert.deepEqual(await broker.updateSessionPreference(request, {
+    body: { duration: '7d' }, correlationId: 'session-preference-update-0001',
+  }), { duration: '7d', defaultDuration: '24h', idleTimeoutHours: 12, appliesTo: 'next-login' });
+  assert.deepEqual(calls.map(([name]) => name), ['read-context', 'read-auth', 'prepare-update', 'update-auth']);
+  assert.equal(calls[1][1].accessToken, accessToken);
+  assert.equal(calls[3][1].accessToken, accessToken);
+  assert.equal(calls[2][1].duration, '7d');
+  assert.equal(calls[2][1].tokenDigest.length, 32);
+  assert.equal(calls[2][1].csrfTokenDigest.length, 32);
+  await assert.rejects(broker.updateSessionPreference(request, {
+    body: { duration: 'forever' }, correlationId: 'session-preference-update-0002',
+  }), { code: 'ValidationFailed' });
+  assert.equal(calls.length, 4);
 });
 
 test('password recovery revokes the verified subject Console sessions before closing the recovery session', async () => {
@@ -1065,6 +1180,40 @@ test('HTTP initial administrator routes expose safe status and forward only the 
   assert.deepEqual(calls[0], {
     body, requestOrigin: 'https://console.example.test', correlationId: 'initial-administrator-http-0001',
   });
+});
+
+test('HTTP session preference routes preserve the current opaque session and CSRF proof', async (t) => {
+  const calls = [];
+  const projection = { duration: '7d', defaultDuration: '24h', idleTimeoutHours: 12, appliesTo: 'next-login' };
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('generic session resolution must not run'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async getSessionPreference(request, input) { calls.push(['get', request, input]); return projection; },
+      async updateSessionPreference(request, input) { calls.push(['put', request, input]); return projection; },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const endpoint = 'http://127.0.0.1:' + server.address().port + '/api/identity/session/preference';
+  const headers = {
+    cookie: '__Host-opensphere-session=opaque-session-preference',
+    'x-os-csrf-token': 'csrf-session-preference-proof',
+    'x-correlation-id': 'session-preference-http-0001',
+  };
+  const read = await fetch(endpoint, { headers: { cookie: headers.cookie } });
+  assert.equal(read.status, 200);
+  assert.deepEqual(await read.json(), projection);
+  const update = await fetch(endpoint, {
+    method: 'PUT', headers: { ...headers, 'content-type': 'application/json' },
+    body: JSON.stringify({ duration: '7d' }),
+  });
+  assert.equal(update.status, 200);
+  assert.deepEqual(await update.json(), projection);
+  assert.equal(calls[0][1].headers.cookie, headers.cookie);
+  assert.equal(calls[1][1].headers['x-os-csrf-token'], headers['x-os-csrf-token']);
+  assert.deepEqual(calls[1][2].body, { duration: '7d' });
+  assert.equal(calls[1][2].correlationId, headers['x-correlation-id']);
 });
 
 test('HTTP MFA completion preserves the request proof and returns refreshed cookies', async (t) => {
