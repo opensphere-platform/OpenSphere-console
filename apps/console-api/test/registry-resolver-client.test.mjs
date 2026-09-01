@@ -14,10 +14,13 @@ function eligible(extraCandidate = {}) {
       kind: 'extension', descriptorId: 'extension.workspace', id: 'workspace', image, digest: imageDigest,
       channel: 'edge', catalogRevision, descriptorRevision: catalogRevision, executionRevision: image,
       sourceRevision: 'a'.repeat(40), manifestDigest: 'sha256:' + 'd'.repeat(64),
-      compatibilityVersion: '1.0.0', keyId: 'opensphere-release-key-1',
-      evidenceRefs: ['oci:provenance:workspace', 'oci:sbom:workspace'],
+      compatibilityVersion: '1.0.0', buildAuthority: 'localhost', keyId: 'opensphere-release-key-1',
+      evidenceRefs: [`oci:${image}#p256-module-signature`, `oci:${image}#local-edge-build-metadata`],
       packageResourceVersion: '17', packageGeneration: 1,
-      verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
+      verification: {
+        catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved',
+        provenance: 'LocalEdgeSigned', sbom: 'NotRequiredLocalEdge',
+      },
       ...extraCandidate,
     },
   };
@@ -68,7 +71,9 @@ test('C_REG client maps stale, ineligible, and unavailable authority results wit
 test('C_REG client rejects mismatched, unverified, secret-bearing, and oversized authority responses', async () => {
   for (const document of [
     eligible({ descriptorId: 'extension.other' }),
-    eligible({ verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Unknown', permissions: 'Approved' } }),
+    eligible({ buildAuthority: 'github-actions' }),
+    eligible({ evidenceRefs: ['oci:provenance:workspace', 'oci:sbom:workspace'] }),
+    eligible({ verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Unknown', permissions: 'Approved', provenance: 'LocalEdgeSigned', sbom: 'NotRequiredLocalEdge' } }),
     eligible({ secretRef: 'must-not-cross-boundary' }),
   ]) {
     const resolver = createRegistryResolver({ baseUrl: 'http://registry.test', fetchImpl: async () => new Response(JSON.stringify(document)) });

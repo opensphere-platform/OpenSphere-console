@@ -18,7 +18,8 @@ func object(name string, spec map[string]interface{}) unstructured.Unstructured 
 }
 func fixtureInput() Input {
 	digest := "sha256:" + string(bytes.Repeat([]byte{'a'}, 64))
-	pkg := object("postgres", map[string]interface{}{"displayName": "PostgreSQL", "kind": "plugin", "hostRef": "foundation", "hostApiVersion": "1.0.0", "hostCompat": ">=1.0.0 <2.0.0", "image": map[string]interface{}{"repository": "ghcr.io/opensphere-platform/opensphere-plugin-postgres", "digest": digest}, "resolution": map[string]interface{}{"requestedRef": "ghcr.io/opensphere-platform/opensphere-plugin-postgres:edge", "requestedChannel": "edge", "resolvedDigest": digest, "compatibilityVersion": "1.0.0", "revision": "0123456789012345678901234567890123456789", "signatureIdentity": "key-1", "evidenceRefs": []interface{}{"oci:provenance", "oci:sbom"}}, "manifest": map[string]interface{}{"sha256": string(bytes.Repeat([]byte{'b'}, 64)), "signaturePath": "/plugins/ui-shell.manifest.json.sig"}, "trust": map[string]interface{}{"keyId": "key-1"}, "contributions": map[string]interface{}{}})
+	image := "ghcr.io/opensphere-platform/opensphere-plugin-postgres@" + digest
+	pkg := object("postgres", map[string]interface{}{"displayName": "PostgreSQL", "kind": "plugin", "hostRef": "foundation", "hostApiVersion": "1.0.0", "hostCompat": ">=1.0.0 <2.0.0", "image": map[string]interface{}{"repository": "ghcr.io/opensphere-platform/opensphere-plugin-postgres", "digest": digest}, "resolution": map[string]interface{}{"requestedRef": "ghcr.io/opensphere-platform/opensphere-plugin-postgres:edge", "requestedChannel": "edge", "resolvedDigest": digest, "compatibilityVersion": "1.0.0", "revision": "0123456789012345678901234567890123456789", "buildAuthority": "localhost", "signatureIdentity": "key-1", "evidenceRefs": []interface{}{"oci:" + image + "#p256-module-signature", "oci:" + image + "#local-edge-build-metadata"}}, "manifest": map[string]interface{}{"sha256": string(bytes.Repeat([]byte{'b'}, 64)), "signaturePath": "/plugins/ui-shell.manifest.json.sig"}, "trust": map[string]interface{}{"keyId": "key-1"}, "contributions": map[string]interface{}{}})
 	reg := object("postgres", map[string]interface{}{"desiredState": "Enabled", "approval": map[string]interface{}{"requestedBy": "admin", "reason": "test"}})
 	reg.Object["status"] = map[string]interface{}{"phase": "Activated", "workload": map[string]interface{}{"phase": "Ready"}, "verification": map[string]interface{}{"manifest": "Verified", "signature": "Verified", "entryDigest": "Verified", "permissions": "Approved"}, "currentRequestedRef": "ghcr.io/opensphere-platform/opensphere-plugin-postgres:edge", "currentRequestedChannel": "edge", "currentDigest": "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)), "currentManifestSha256": string(bytes.Repeat([]byte{'b'}, 64)), "currentVersion": "202608240000", "currentCompatibilityVersion": "1.0.0", "currentBuildAuthority": "localhost", "currentRevision": "0123456789012345678901234567890123456789", "currentEvidenceRefs": []interface{}{"oci:provenance", "oci:sbom"}, "manifestUrl": "/api/plugins/postgres-r-1/plugins/ui-shell.manifest.json", "serving": map[string]interface{}{"phase": "Current", "artifactServiceId": "postgres-r-1", "revision": "1"}}
 	descriptor := object("data", map[string]interface{}{"model": "data", "catalog": map[string]interface{}{"authority": "registry", "install": "optional"}})
@@ -163,12 +164,35 @@ func TestResolveBindsExtensionToExactRevisionAndDigest(t *testing.T) {
 		!bytes.Contains(encoded, []byte(`"descriptorRevision":"sha256:`)) ||
 		!bytes.Contains(encoded, []byte(`"sourceRevision":"0123456789012345678901234567890123456789"`)) ||
 		!bytes.Contains(encoded, []byte(`"signature":"Verified"`)) ||
+		!bytes.Contains(encoded, []byte(`"provenance":"LocalEdgeSigned"`)) ||
+		!bytes.Contains(encoded, []byte(`"sbom":"NotRequiredLocalEdge"`)) ||
 		!bytes.Contains(encoded, []byte(`"packageResourceVersion":"17"`)) {
 		t.Fatalf("candidate is not exact digest: %s", encoded)
 	}
 	stale := store.Resolve(ResolveRequest{Kind: "extension", ID: "postgres", Revision: "sha256:old"})
 	if stale.Result != "StaleRevision" {
 		t.Fatalf("unexpected: %#v", stale)
+	}
+}
+
+func TestInstallableLocalEdgeEvidenceMustBindExactImageAndAuthority(t *testing.T) {
+	for _, mutate := range []func(*Input){
+		func(input *Input) {
+			_ = unstructured.SetNestedField(input.Packages.Items[0].Object, "github-actions", "spec", "resolution", "buildAuthority")
+		},
+		func(input *Input) {
+			_ = unstructured.SetNestedSlice(input.Packages.Items[0].Object, []interface{}{"oci:provenance", "oci:sbom"}, "spec", "resolution", "evidenceRefs")
+		},
+	} {
+		input := fixtureInput()
+		mutate(&input)
+		got, err := Build(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.InstallableExtensions) != 0 {
+			t.Fatalf("invalid local edge evidence was accepted: %#v", got.InstallableExtensions)
+		}
 	}
 }
 

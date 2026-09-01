@@ -117,11 +117,40 @@ type ExtensionCandidate struct {
 	SourceRevision         string        `json:"sourceRevision"`
 	ManifestDigest         string        `json:"manifestDigest"`
 	CompatibilityVersion   string        `json:"compatibilityVersion"`
+	BuildAuthority         string        `json:"buildAuthority"`
 	KeyID                  string        `json:"keyId"`
 	EvidenceRefs           []interface{} `json:"evidenceRefs"`
 	PackageResourceVersion string        `json:"packageResourceVersion"`
 	PackageGeneration      int64         `json:"packageGeneration"`
 	Capabilities           []string      `json:"capabilities"`
+}
+
+func localEdgeEvidenceRefs(image string) []string {
+	return []string{
+		"oci:" + image + "#p256-module-signature",
+		"oci:" + image + "#local-edge-build-metadata",
+	}
+}
+
+func hasExactLocalEdgeEvidence(values []interface{}, image string) bool {
+	expected := localEdgeEvidenceRefs(image)
+	if len(values) != len(expected) {
+		return false
+	}
+	actual := map[string]bool{}
+	for _, raw := range values {
+		value, ok := raw.(string)
+		if !ok || actual[value] {
+			return false
+		}
+		actual[value] = true
+	}
+	for _, value := range expected {
+		if !actual[value] {
+			return false
+		}
+	}
+	return true
 }
 
 type Response struct {
@@ -287,6 +316,7 @@ func installableExtensionFromPackage(pkg unstructured.Unstructured, trustedKeys 
 	channel := nestedString(pkg.Object, "spec", "resolution", "requestedChannel")
 	sourceRevision := nestedString(pkg.Object, "spec", "resolution", "revision")
 	compatibilityVersion := nestedString(pkg.Object, "spec", "resolution", "compatibilityVersion")
+	buildAuthority := nestedString(pkg.Object, "spec", "resolution", "buildAuthority")
 	resolvedDigest := nestedString(pkg.Object, "spec", "resolution", "resolvedDigest")
 	signatureIdentity := nestedString(pkg.Object, "spec", "resolution", "signatureIdentity")
 	manifest := nestedString(pkg.Object, "spec", "manifest", "sha256")
@@ -313,8 +343,12 @@ func installableExtensionFromPackage(pkg unstructured.Unstructured, trustedKeys 
 	if _, ok := trustedKeys[keyID]; !ok {
 		return reject("UnknownTrustKey", "installable package signing key is not trusted")
 	}
-	if len(evidenceRefs) < 2 {
-		return reject("SupplyChainEvidenceMissing", "installable package lacks provenance and SBOM evidence references")
+	image := repository + "@" + digest
+	if buildAuthority != "localhost" {
+		return reject("EdgeBuildAuthorityInvalid", "local edge package was not produced by the localhost build authority")
+	}
+	if !hasExactLocalEdgeEvidence(evidenceRefs, image) {
+		return reject("LocalEdgeEvidenceInvalid", "local edge evidence is not bound to the exact image and local edge policy")
 	}
 	if pkg.GetResourceVersion() == "" || pkg.GetGeneration() < 1 {
 		return reject("PackageVersionMissing", "installable package lacks Kubernetes resource version evidence")
@@ -322,9 +356,9 @@ func installableExtensionFromPackage(pkg unstructured.Unstructured, trustedKeys 
 	return ExtensionCandidate{
 		ID: id, DescriptorID: "extension." + id, Kind: kind,
 		DisplayName: nestedString(pkg.Object, "spec", "displayName"),
-		Image:       repository + "@" + digest, Digest: digest, Channel: channel,
+		Image:       image, Digest: digest, Channel: channel,
 		SourceRevision: sourceRevision, ManifestDigest: "sha256:" + manifest,
-		CompatibilityVersion: compatibilityVersion, KeyID: keyID, EvidenceRefs: evidenceRefs,
+		CompatibilityVersion: compatibilityVersion, BuildAuthority: buildAuthority, KeyID: keyID, EvidenceRefs: evidenceRefs,
 		PackageResourceVersion: pkg.GetResourceVersion(), PackageGeneration: pkg.GetGeneration(),
 		Capabilities: extensionCapabilitiesFromMap(nestedMap(pkg.Object, "spec", "contributions")),
 	}, nil
@@ -1015,11 +1049,14 @@ func (s *Store) Resolve(req ResolveRequest) ResolveResponse {
 					"kind": "extension", "descriptorId": p.DescriptorID, "id": p.ID,
 					"image": p.Image, "digest": p.Digest, "channel": p.Channel,
 					"catalogRevision": snap.Revision, "descriptorRevision": snap.Revision,
-					"executionRevision": p.Image, "sourceRevision": p.SourceRevision,
+					"executionRevision": p.Image, "sourceRevision": p.SourceRevision, "buildAuthority": p.BuildAuthority,
 					"manifestDigest": p.ManifestDigest, "compatibilityVersion": p.CompatibilityVersion,
 					"keyId": p.KeyID, "evidenceRefs": p.EvidenceRefs,
 					"packageResourceVersion": p.PackageResourceVersion, "packageGeneration": p.PackageGeneration,
-					"verification": map[string]string{"catalog": "Verified", "manifest": "Verified", "signature": "Verified", "permissions": "Approved"},
+					"verification": map[string]string{
+						"catalog": "Verified", "manifest": "Verified", "signature": "Verified", "permissions": "Approved",
+						"provenance": "LocalEdgeSigned", "sbom": "NotRequiredLocalEdge",
+					},
 				}}
 			}
 		}

@@ -68,7 +68,7 @@ function validateEligible(document, descriptorId, catalogRevision) {
   exactObject(candidate, [
     'kind', 'descriptorId', 'id', 'image', 'digest', 'channel', 'catalogRevision',
     'descriptorRevision', 'executionRevision', 'sourceRevision', 'manifestDigest',
-    'compatibilityVersion', 'keyId', 'evidenceRefs', 'packageResourceVersion',
+    'compatibilityVersion', 'buildAuthority', 'keyId', 'evidenceRefs', 'packageResourceVersion',
     'packageGeneration', 'verification',
   ], 'Registry candidate');
   const expectedId = descriptorId.slice('extension.'.length);
@@ -82,7 +82,8 @@ function validateEligible(document, descriptorId, catalogRevision) {
   if (candidate.digest !== digest || candidate.catalogRevision !== catalogRevision || candidate.descriptorRevision !== catalogRevision) {
     throw fault('Registry candidate revision binding is inconsistent', 'AuthorityContractViolation', 502);
   }
-  if (candidate.channel !== 'edge' || !SOURCE_REVISION.test(candidate.sourceRevision)
+  if (candidate.channel !== 'edge' || candidate.buildAuthority !== 'localhost'
+    || !SOURCE_REVISION.test(candidate.sourceRevision)
     || !CATALOG_REVISION.test(candidate.manifestDigest) || !SEMVER.test(candidate.compatibilityVersion)
     || typeof candidate.keyId !== 'string' || candidate.keyId.length < 1 || candidate.keyId.length > 256
     || typeof candidate.packageResourceVersion !== 'string' || candidate.packageResourceVersion.length < 1
@@ -90,13 +91,20 @@ function validateEligible(document, descriptorId, catalogRevision) {
     || candidate.packageGeneration < 1) {
     throw fault('Registry candidate supply-chain identity is incomplete', 'AuthorityContractViolation', 502);
   }
-  if (!Array.isArray(candidate.evidenceRefs) || candidate.evidenceRefs.length < 2 || candidate.evidenceRefs.length > 16
-    || candidate.evidenceRefs.some((ref) => typeof ref !== 'string' || !EVIDENCE_REF.test(ref))) {
+  const expectedEvidence = new Set([
+    `oci:${candidate.image}#p256-module-signature`,
+    `oci:${candidate.image}#local-edge-build-metadata`,
+  ]);
+  if (!Array.isArray(candidate.evidenceRefs) || candidate.evidenceRefs.length !== expectedEvidence.size
+    || candidate.evidenceRefs.some((ref) => typeof ref !== 'string' || !EVIDENCE_REF.test(ref) || !expectedEvidence.has(ref))
+    || new Set(candidate.evidenceRefs).size !== expectedEvidence.size) {
     throw fault('Registry candidate evidence references are invalid', 'AuthorityContractViolation', 502);
   }
-  exactObject(candidate.verification, ['catalog', 'manifest', 'signature', 'permissions'], 'Registry verification');
+  exactObject(candidate.verification, ['catalog', 'manifest', 'signature', 'permissions', 'provenance', 'sbom'], 'Registry verification');
   if (candidate.verification.catalog !== 'Verified' || candidate.verification.manifest !== 'Verified'
-    || candidate.verification.signature !== 'Verified' || candidate.verification.permissions !== 'Approved') {
+    || candidate.verification.signature !== 'Verified' || candidate.verification.permissions !== 'Approved'
+    || candidate.verification.provenance !== 'LocalEdgeSigned'
+    || candidate.verification.sbom !== 'NotRequiredLocalEdge') {
     throw fault('Registry candidate is not fully verified', 'AuthorityContractViolation', 502);
   }
   return Object.freeze(structuredClone(candidate));

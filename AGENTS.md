@@ -9,3 +9,4 @@
 - Never store private keys, PATs, service-role secrets, passwords, kubeconfig, or browser-readable refresh tokens in the repository. Test keys must be generated in a temporary directory for each test.
 - Keep build, publish, promotion, deploy, and runtime verification separate. No publish, channel movement, deployment, remote write, or credential migration is implied by a code change request.
 - Every implementation change maps to at least one `CON-FR-*`, C4 owner, contract/schema, runtime scenario, and acceptance gate.
+- Keep the design and implementation controllable by the operating team. Do not add a repository, process, datastore, queue, framework, dependency, or abstraction for anticipated use; require a current unmet requirement and evidence that the existing boundary cannot satisfy it.
