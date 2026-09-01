@@ -164,14 +164,17 @@ $observedConsoleInputs = @($consoleChanges | Where-Object {
 })
 Assert-ExactPaths -Actual $observedConsoleInputs -Expected $consoleImageInputs -Purpose 'Console image input delta'
 
-$migrationPath = Join-Path $repoRoot 'backend\supabase\migrations\manifest.json'
+$migrationPath = Join-Path $repoRoot 'migrations\manifest.json'
+Invoke-Checked node (Join-Path $repoRoot 'scripts\console-migrations.mjs') verify
 $migration = Get-Content -Raw -LiteralPath $migrationPath | ConvertFrom-Json
 foreach ($publication in @($previousConsole.Document, $previousBackend.Document)) {
   $prior = $publication.artifacts.supabaseMigrationManifest
-  if ((Get-CanonicalTextSha256 -Path $migrationPath) -ne [string]$prior.sha256 -or
+  if ([string]$prior.path -ne 'migrations/manifest.json' -or
+      (Get-CanonicalTextSha256 -Path $migrationPath) -ne [string]$prior.sha256 -or
       [string]$migration.setDigest -ne [string]$prior.setDigest -or
-      [string]$migration.latestMigrationId -ne [string]$prior.latestMigrationId) {
-    throw 'Profile preference component release must not change the Supabase migration lineage'
+      [string]$migration.latestGlobalId -ne [string]$prior.latestGlobalId -or
+      [int]$migration.migrationCount -ne [int]$prior.migrationCount) {
+    throw 'Profile preference component release must not change the Supabase migration lineage and requires the exact fresh Console migration lineage'
   }
 }
 

@@ -128,6 +128,24 @@ New-Item -ItemType Directory -Path $buildRoot, $outputRoot | Out-Null
 
 try {
   Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $sourceRevision | Out-Null
+  $migrationPath = Join-Path $consoleCheckout 'migrations\manifest.json'
+  Invoke-Checked node (Join-Path $consoleCheckout 'scripts\console-migrations.mjs') verify | Out-Null
+  $migration = Get-Content -Raw -LiteralPath $migrationPath | ConvertFrom-Json
+  $installedArtifacts = $installedLock.PSObject.Properties['artifacts']
+  $installedMigrationProperty = if ($installedArtifacts) {
+    $installedArtifacts.Value.PSObject.Properties['supabaseMigrationManifest']
+  } else { $null }
+  if (-not $installedMigrationProperty) {
+    throw 'Installed release has no fresh Console migration authority.'
+  }
+  $installedMigration = $installedMigrationProperty.Value
+  if ([string]$installedMigration.path -ne 'migrations/manifest.json' -or
+      [string]$installedMigration.sha256 -ne (Get-CanonicalTextSha256 -Path $migrationPath) -or
+      [string]$installedMigration.setDigest -ne [string]$migration.setDigest -or
+      [string]$installedMigration.latestGlobalId -ne [string]$migration.latestGlobalId -or
+      [int]$installedMigration.migrationCount -ne [int]$migration.migrationCount) {
+    throw 'Installed release does not use the exact fresh Console migration lineage.'
+  }
   Invoke-Checked npm --prefix $consoleCheckout ci --no-audit --no-fund --legacy-peer-deps | Out-Null
   Invoke-Checked npm --prefix $consoleCheckout run build -- --configuration=production | Out-Null
 
@@ -160,9 +178,6 @@ try {
   Set-RemoteTag -Repository $repository -Digest $digest -Tag $releaseTag -Immutable
   Set-RemoteTag -Repository $repository -Digest $digest -Tag edge
 
-  $migrationPath = Join-Path $consoleCheckout 'backend\supabase\migrations\manifest.json'
-  $migration = Get-Content -Raw -LiteralPath $migrationPath | ConvertFrom-Json
-
   $publication = [ordered]@{
     apiVersion = 'release.opensphere.io/v1alpha1'
     kind = 'OpenSphereEdgeComponentPublication'
@@ -181,11 +196,11 @@ try {
     sourceRevision = $sourceRevision
     artifacts = [ordered]@{
       supabaseMigrationManifest = [ordered]@{
-        path = 'backend/supabase/migrations/manifest.json'
+        path = 'migrations/manifest.json'
         sha256 = Get-CanonicalTextSha256 -Path $migrationPath
         setDigest = [string]$migration.setDigest
-        latestMigrationId = [string]$migration.latestMigrationId
-        migrationCount = @($migration.migrations).Count
+        latestGlobalId = [string]$migration.latestGlobalId
+        migrationCount = [int]$migration.migrationCount
       }
     }
     buildAuthority = 'localhost'

@@ -138,6 +138,13 @@ $dirty = & git -C $repoRoot status --short
 if ($dirty) {
   throw 'The Console worktree must be clean before publishing local edge.'
 }
+# The current legacy Backend image and installer still execute the numeric
+# backend/supabase lineage. Publishing that image under the fresh global
+# lineage would create false release evidence, so stop before workspace setup,
+# registry login, build, push, or tag movement.
+if ($Components -contains 'backend') {
+  throw 'Backend component publication is blocked until its runtime installer consumes the fresh Console migration lineage.'
+}
 
 $epochText = (& git -C $repoRoot show -s --format=%ct $SourceRevision).Trim()
 if ($epochText -notmatch '^\d+$') {
@@ -167,6 +174,19 @@ Write-Host "[policy] build-authority=localhost, release-class=pre-ga, ga-eligibl
 
 Write-Host '[step 01/06] Prepare clean Console and governed Setup source'
 Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRevision
+$migrationManifestPath = Join-Path $consoleCheckout 'migrations\manifest.json'
+if (-not (Test-Path -LiteralPath $migrationManifestPath)) {
+  throw "Fresh Console migration manifest is missing: $migrationManifestPath"
+}
+Invoke-Checked node (Join-Path $consoleCheckout 'scripts\console-migrations.mjs') verify | Out-Null
+$migrationManifest = Get-Content -Raw -LiteralPath $migrationManifestPath | ConvertFrom-Json
+if ($migrationManifest.schemaVersion -ne 1 -or
+    [string]$migrationManifest.repository -ne 'OpenSphere-Console' -or
+    [string]$migrationManifest.setDigest -notmatch '^sha256:[0-9a-f]{64}$' -or
+    [string]$migrationManifest.latestGlobalId -notmatch '^opensphere-console/[0-9]{8}/[0-9]{4}$' -or
+    [int]$migrationManifest.migrationCount -ne @($migrationManifest.migrations).Count) {
+  throw 'Fresh Console migration manifest evidence is not canonical'
+}
 $backendSelected = $Components.Count -eq 0 -or $Components -contains 'backend'
 $setupSourceRevision = ''
 if ($backendSelected) {
@@ -440,23 +460,12 @@ foreach ($item in $images) {
     sourceRevision = $SourceRevision
   }
 }
-$migrationManifestPath = Join-Path $consoleCheckout 'backend\supabase\migrations\manifest.json'
-if (-not (Test-Path -LiteralPath $migrationManifestPath)) {
-  throw "Supabase migration manifest is missing: $migrationManifestPath"
-}
-$migrationManifest = Get-Content -Raw -LiteralPath $migrationManifestPath | ConvertFrom-Json
-if ($migrationManifest.schemaVersion -ne 2 -or
-    [string]$migrationManifest.setDigest -notmatch '^sha256:[0-9a-f]{64}$' -or
-    [string]$migrationManifest.latestMigrationId -notmatch '^\d{4}$' -or
-    [int]$migrationManifest.migrationCount -le 0) {
-  throw 'Supabase migration manifest evidence is not canonical'
-}
 $releaseArtifacts = [ordered]@{
   supabaseMigrationManifest = [ordered]@{
-    path = 'backend/supabase/migrations/manifest.json'
+    path = 'migrations/manifest.json'
     sha256 = Get-CanonicalTextSha256 -Path $migrationManifestPath
     setDigest = [string]$migrationManifest.setDigest
-    latestMigrationId = [string]$migrationManifest.latestMigrationId
+    latestGlobalId = [string]$migrationManifest.latestGlobalId
     migrationCount = [int]$migrationManifest.migrationCount
   }
 }

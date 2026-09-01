@@ -123,6 +123,21 @@ $previousConsole = Read-Publication -Path $PreviousConsolePublicationEvidence `
 $backend = Read-Publication -Path $BackendPublicationEvidence -ExpectedComponents @('backend') -Purpose 'deployed Backend publication'
 $control = Read-Publication -Path $ControlPublicationEvidence -ExpectedComponents @('osShellControl') -Purpose 'deployed Control publication'
 
+$targetMigrationPath = Join-Path $repoRoot 'migrations\manifest.json'
+& node (Join-Path $repoRoot 'scripts\console-migrations.mjs') verify
+if ($LASTEXITCODE -ne 0) { throw 'Fresh Console migration manifest verification failed' }
+$targetMigration = Get-Content -Raw -LiteralPath $targetMigrationPath | ConvertFrom-Json
+$backendArtifacts = $backend.Document.PSObject.Properties['artifacts']
+$deployedMigrationProperty = if ($backendArtifacts) {
+  $backendArtifacts.Value.PSObject.Properties['supabaseMigrationManifest']
+} else { $null }
+if (-not $deployedMigrationProperty -or
+    [string]$deployedMigrationProperty.Value.path -ne 'migrations/manifest.json' -or
+    [string]$deployedMigrationProperty.Value.latestGlobalId -notmatch '^opensphere-console/[0-9]{8}/[0-9]{4}$') {
+  throw 'OS Shell Console publication is blocked while the deployed Backend still uses the legacy numeric migration lineage'
+}
+$deployedMigration = $deployedMigrationProperty.Value
+
 $boundaryOutput = & node $boundaryVerifier --repository $repoRoot --base ([string]$base.Document.sourceRevision) `
   --backend ([string]$backend.Document.sourceRevision) --console $SourceRevision `
   --control ([string]$control.Document.sourceRevision) --head $SourceRevision
@@ -151,12 +166,10 @@ foreach ($deployment in @('opensphere-shell-api', 'opensphere-shell-gateway', 'o
 }
 $consoleEdgeBefore = Get-RemoteDigest -Reference "${consoleRepository}:edge"
 
-$targetMigrationPath = Join-Path $repoRoot 'backend\supabase\migrations\manifest.json'
-$targetMigration = Get-Content -Raw -LiteralPath $targetMigrationPath | ConvertFrom-Json
 $backendMigrationBlob = (& git -C $repoRoot rev-parse `
-  "$([string]$backend.Document.sourceRevision):backend/supabase/migrations/manifest.json").Trim()
+  "$([string]$backend.Document.sourceRevision):migrations/manifest.json").Trim()
 $targetMigrationBlob = (& git -C $repoRoot rev-parse `
-  "${SourceRevision}:backend/supabase/migrations/manifest.json").Trim()
+  "${SourceRevision}:migrations/manifest.json").Trim()
 if ($LASTEXITCODE -ne 0 -or $backendMigrationBlob -notmatch '^[a-f0-9]{40}$' -or
     $targetMigrationBlob -notmatch '^[a-f0-9]{40}$' -or $targetMigrationBlob -ne $backendMigrationBlob) {
   throw 'Target source differs from the deployed Backend migration authority'
@@ -164,7 +177,14 @@ if ($LASTEXITCODE -ne 0 -or $backendMigrationBlob -notmatch '^[a-f0-9]{40}$' -or
 $migrationAuthority = [ordered]@{
   sha256 = Get-CanonicalTextSha256 -Path $targetMigrationPath
   setDigest = [string]$targetMigration.setDigest
-  latestMigrationId = [string]$targetMigration.latestMigrationId
+  latestGlobalId = [string]$targetMigration.latestGlobalId
+  migrationCount = [int]$targetMigration.migrationCount
+}
+if ([string]$deployedMigration.sha256 -ne [string]$migrationAuthority.sha256 -or
+    [string]$deployedMigration.setDigest -ne [string]$migrationAuthority.setDigest -or
+    [string]$deployedMigration.latestGlobalId -ne [string]$migrationAuthority.latestGlobalId -or
+    [int]$deployedMigration.migrationCount -ne [int]$migrationAuthority.migrationCount) {
+  throw 'Deployed Backend evidence differs from the target fresh Console migration authority'
 }
 
 $scope = [ordered]@{
@@ -207,7 +227,8 @@ $published = Read-Publication -Path $combinedPath -ExpectedComponents @('console
 $publishedMigration = $published.Document.artifacts.supabaseMigrationManifest
 if ([string]$publishedMigration.sha256 -ne [string]$migrationAuthority.sha256 -or
     [string]$publishedMigration.setDigest -ne [string]$migrationAuthority.setDigest -or
-    [string]$publishedMigration.latestMigrationId -ne [string]$migrationAuthority.latestMigrationId) {
+    [string]$publishedMigration.latestGlobalId -ne [string]$migrationAuthority.latestGlobalId -or
+    [int]$publishedMigration.migrationCount -ne [int]$migrationAuthority.migrationCount) {
   throw 'OS Shell Console publication differs from the deployed Backend migration authority'
 }
 $publishedDigest = Get-ComponentDigest -Publication $published.Document -Key 'console'
