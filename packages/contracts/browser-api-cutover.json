@@ -7,8 +7,8 @@
   "currentSessionAuthority": "legacy-browser-session-broker",
   "targetSessionAuthority": "console_identity.browser_session",
   "inventory": {
-    "routePatternCount": 121,
-    "setDigest": "sha256:7db53639f2030a0af91fc3bc44df5c4124110e42c6ebed6b951ae7edc9362054"
+    "routePatternCount": 122,
+    "setDigest": "sha256:c02f2c0cda64902394461fd110281c55f2f7c2f5863d3d95f7150c1ae886c167"
   },
   "targetSessionCapabilities": [
     { "id": "password-login", "status": "implemented-and-verified" },
@@ -20,7 +20,7 @@
     { "id": "mfa-login-challenge", "status": "implemented-and-verified" },
     { "id": "mfa-enrollment", "status": "implemented-and-verified" },
     { "id": "mfa-step-up", "status": "implemented-and-verified" },
-    { "id": "password-recovery", "status": "missing" },
+    { "id": "password-recovery", "status": "implemented-and-verified" },
     { "id": "active-session-inventory", "status": "implemented-and-verified" },
     { "id": "other-session-revocation", "status": "implemented-and-verified" },
     { "id": "initial-admin-bootstrap", "status": "missing" }

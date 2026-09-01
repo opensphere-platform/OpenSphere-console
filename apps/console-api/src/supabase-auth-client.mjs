@@ -76,6 +76,8 @@ export function createSupabaseAuthClient({
     rejectedCode = 'AuthenticationRequired',
     rejectedMessage = 'email or password is invalid',
     rejectedStatus = 401,
+    rejectedStatuses = [400, 401],
+    expectEmpty = false,
   } = {}) {
     let response;
     try {
@@ -94,13 +96,14 @@ export function createSupabaseAuthClient({
       const timeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
       fail(timeout ? 'DependencyTimeout' : 'AuthorityUnavailable', timeout ? 'Supabase Auth timed out' : 'Supabase Auth is unavailable', 503);
     }
+    if (expectEmpty && response.ok && response.status === 204) return {};
     let document = {};
     try { document = await boundedJson(response, maximumResponseBytes); }
     catch {
       if (response.ok) fail('AuthorityUnavailable', 'Supabase Auth returned an invalid response', 503);
     }
     if (!response.ok) {
-      if (response.status === 400 || response.status === 401) fail(rejectedCode, rejectedMessage, rejectedStatus);
+      if (rejectedStatuses.includes(response.status)) fail(rejectedCode, rejectedMessage, rejectedStatus);
       if (response.status === 429) fail('RateLimited', 'Supabase Auth rate limit was reached', 429);
       fail('AuthorityUnavailable', 'Supabase Auth request failed', 503);
     }
@@ -304,8 +307,52 @@ export function createSupabaseAuthClient({
       });
     },
 
+    async completePasswordRecovery({ recoveryAccessToken, password }) {
+      const accessToken = String(recoveryAccessToken || '');
+      const nextPassword = String(password || '');
+      if (accessToken.length < 64 || accessToken.length > 16384
+          || !/^[A-Za-z0-9_-]+[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+$/u.test(accessToken)
+          || nextPassword.length < 12 || nextPassword.length > 1024) {
+        fail('ValidationFailed', 'a valid recovery proof and password of at least 12 characters are required', 400);
+      }
+      const claims = jwtClaims(accessToken, now());
+      const methods = Array.isArray(claims.amr)
+        ? claims.amr.map((entry) => typeof entry === 'string' ? entry : entry?.method)
+        : [];
+      if (!methods.includes('recovery')) {
+        fail('RecoveryRejected', 'password recovery proof is invalid or expired', 401);
+      }
+      const user = await request('/user', {
+        token: accessToken,
+        rejectedCode: 'RecoveryRejected',
+        rejectedMessage: 'password recovery proof is invalid or expired',
+      });
+      if (String(user?.id || '') !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth recovery subject verification failed', 503);
+      }
+      const updated = await request('/user', {
+        method: 'PUT', token: accessToken, body: { password: nextPassword },
+        rejectedCode: 'RecoveryRejected',
+        rejectedMessage: 'password recovery proof or password policy was rejected',
+        rejectedStatus: 400,
+        rejectedStatuses: [400, 401, 422],
+      });
+      if (String(updated?.id || '') !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth password recovery subject changed', 503);
+      }
+      return Object.freeze({ subjectId: String(claims.sub), accessToken });
+    },
+
+    async logoutAll(accessToken) {
+      await request('/logout?scope=global', {
+        method: 'POST', token: accessToken, expectEmpty: true,
+        rejectedCode: 'AuthenticationRequired',
+        rejectedMessage: 'Supabase Auth session is no longer active',
+      });
+    },
+
     async logout(accessToken) {
-      try { await request('/logout', { method: 'POST', token: accessToken }); }
+      try { await request('/logout?scope=global', { method: 'POST', token: accessToken, expectEmpty: true }); }
       catch { /* Best-effort cleanup after local persistence failure. */ }
     },
   });

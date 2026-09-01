@@ -531,22 +531,17 @@ export class AuthService {
     if (password.length < 12) throw new Error('새 비밀번호는 12자 이상이어야 합니다.');
     if (password !== passwordConfirm) throw new Error('새 비밀번호와 확인 값이 일치하지 않습니다.');
     const token = this.passwordRecoveryToken;
-    const response = await fetch('/auth/v1/user', {
-      method: 'PUT',
+    const response = await fetch('/api/identity/password/recovery', {
+      method: 'POST',
       headers: {
         accept: 'application/json',
         'content-type': 'application/json',
-        authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ recoveryAccessToken: token, password }),
     });
     const body = await response.json().catch(() => ({})) as ApiError;
     if (!response.ok) throw new Error(this.errorText(body, response.status));
     this.passwordRecoveryToken = '';
-    await fetch('/auth/v1/logout', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}` },
-    }).catch(() => undefined);
     this.passwordRecoveryMessage.set('비밀번호가 설정되었습니다. 새 비밀번호로 로그인하세요.');
     this.passwordRecoveryState.set('completed');
   }

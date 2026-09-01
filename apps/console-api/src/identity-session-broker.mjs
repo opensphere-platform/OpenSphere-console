@@ -37,6 +37,21 @@ function credentials(body) {
   return { email, password };
 }
 
+function passwordRecoveryInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    fail('ValidationFailed', 'password recovery body must be an object', 400);
+  }
+  const unknown = Object.keys(body).filter((key) => !['recoveryAccessToken', 'password'].includes(key));
+  const recoveryAccessToken = String(body.recoveryAccessToken || '');
+  const password = String(body.password || '');
+  if (unknown.length || recoveryAccessToken.length < 64 || recoveryAccessToken.length > 16384
+      || !/^[A-Za-z0-9_-]+[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+$/u.test(recoveryAccessToken)
+      || password.length < 12 || password.length > 1024) {
+    fail('ValidationFailed', 'a valid recovery proof and password of at least 12 characters are required', 400);
+  }
+  return { recoveryAccessToken, password };
+}
+
 function cookie(name, value, maxAge, httpOnly = false, persistent = true) {
   return [
     `${name}=${encodeURIComponent(value)}`,
@@ -99,6 +114,29 @@ export function createIdentitySessionBroker({
   }
 
   const broker = {
+    async completePasswordRecovery({ body, requestOrigin, correlationId }) {
+      if (String(requestOrigin || '') !== origin) fail('PermissionDenied', 'password recovery origin is not allowed', 403);
+      if (!store?.revokeRecoveredSubjectSessions
+          || !authClient?.completePasswordRecovery || !authClient?.logoutAll) {
+        fail('AuthorityUnavailable', 'password recovery authority is unavailable', 503);
+      }
+      const recovered = await authClient.completePasswordRecovery(passwordRecoveryInput(body));
+      const revoked = await store.revokeRecoveredSubjectSessions({
+        subjectId: recovered.subjectId,
+        correlationId,
+      });
+      if (String(revoked?.subjectId || '') !== recovered.subjectId
+          || !Number.isInteger(revoked?.revokedCount)
+          || !Number.isSafeInteger(Number(revoked?.revokeEpoch))) {
+        fail('AuthorityUnavailable', 'password recovery session authority returned an invalid receipt', 503);
+      }
+      await authClient.logoutAll(recovered.accessToken);
+      return Object.freeze({
+        completed: true,
+        revokedSessions: revoked.revokedCount,
+      });
+    },
+
     async login({ body, requestOrigin, correlationId }) {
       if (String(requestOrigin || '') !== origin) fail('PermissionDenied', 'login origin is not allowed', 403);
       const input = credentials(body);

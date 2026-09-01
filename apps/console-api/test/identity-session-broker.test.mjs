@@ -28,6 +28,10 @@ function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+function emptyResponse(status = 204) {
+  return new Response(null, { status });
+}
+
 function unusedOwnedSessionMethods() {
   return {
     async listOwnedSessions() { throw new Error('session inventory must not run'); },
@@ -185,6 +189,93 @@ test('Supabase refresh client rotates only to the same verified subject', async 
   assert.equal(refreshed.authSessionRef, 'auth-session-rotated');
   assert.equal(refreshed.refreshToken, 'refresh-after-rotation');
   assert.equal(refreshed.accessTokenExpiresAt, '2026-09-02T01:00:00.000Z');
+});
+
+test('Supabase password recovery accepts only a recovery AMR, changes the same subject, and logs out globally', async () => {
+  const recoveryAccessToken = token({ amr: [{ method: 'recovery', timestamp: Math.floor(now.getTime() / 1000) }] });
+  const calls = [];
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', now: () => now,
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      if (url.endsWith('/user') && init.method === 'GET') return jsonResponse({ id: subjectId });
+      if (url.endsWith('/user') && init.method === 'PUT') {
+        assert.deepEqual(JSON.parse(init.body), { password: 'new-password-value' });
+        return jsonResponse({ id: subjectId });
+      }
+      if (url.endsWith('/logout?scope=global') && init.method === 'POST') return emptyResponse();
+      return jsonResponse({}, 404);
+    },
+  });
+  const recovered = await client.completePasswordRecovery({
+    recoveryAccessToken, password: 'new-password-value',
+  });
+  assert.deepEqual(recovered, { subjectId, accessToken: recoveryAccessToken });
+  await client.logoutAll(recovered.accessToken);
+  assert.deepEqual(calls.map(({ url, init }) => [new URL(url).pathname + new URL(url).search, init.method]), [
+    ['/user', 'GET'], ['/user', 'PUT'], ['/logout?scope=global', 'POST'],
+  ]);
+  assert.equal(calls.every(({ init }) => init.headers.authorization === 'Bearer ' + recoveryAccessToken), true);
+
+  let called = false;
+  const ordinaryClient = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', now: () => now,
+    async fetchImpl() { called = true; return jsonResponse({ id: subjectId }); },
+  });
+  await assert.rejects(ordinaryClient.completePasswordRecovery({
+    recoveryAccessToken: token({ amr: [{ method: 'password', timestamp: 1 }] }),
+    password: 'new-password-value',
+  }), { code: 'RecoveryRejected' });
+  assert.equal(called, false);
+});
+
+test('password recovery revokes the verified subject Console sessions before closing the recovery session', async () => {
+  const calls = [];
+  const recoveryAccessToken = token({ amr: [{ method: 'recovery', timestamp: 1 }] });
+  const broker = createIdentitySessionBroker({
+    store: {
+      async resolveSession() { throw new Error('session resolution must not run during recovery'); },
+      async issueSession() { throw new Error('login must not run during recovery'); },
+      async getPendingMfa() { throw new Error('MFA must not run during recovery'); },
+      async activateMfa() { throw new Error('MFA must not run during recovery'); },
+      async getRefreshCredentials() { throw new Error('refresh must not run during recovery'); },
+      async rotateCredentials() { throw new Error('refresh must not run during recovery'); },
+      async rejectRefresh() { throw new Error('refresh must not run during recovery'); },
+      async touchActivity() { throw new Error('activity touch must not run during recovery'); },
+      ...unusedOwnedSessionMethods(),
+      async revokeRecoveredSubjectSessions(input) {
+        calls.push(['revoke', input]);
+        return { subjectId, revokedCount: 3, revokeEpoch: 9 };
+      },
+    },
+    authClient: {
+      async authenticatePassword() { throw new Error('login must not run during recovery'); },
+      async completeTotp() { throw new Error('MFA must not run during recovery'); },
+      async refreshSession() { throw new Error('refresh must not run during recovery'); },
+      async completePasswordRecovery(input) {
+        calls.push(['password', input]);
+        return { subjectId, accessToken: recoveryAccessToken };
+      },
+      async logoutAll(value) { calls.push(['logout', value]); },
+      async logout() {},
+    },
+    credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 15) }),
+    publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const result = await broker.completePasswordRecovery({
+    body: { recoveryAccessToken, password: 'new-password-value' },
+    requestOrigin: 'https://console.example.test',
+    correlationId: 'password-recovery-correlation-0001',
+  });
+  assert.deepEqual(result, { completed: true, revokedSessions: 3 });
+  assert.deepEqual(calls.map(([name]) => name), ['password', 'revoke', 'logout']);
+  assert.deepEqual(calls[1][1], { subjectId, correlationId: 'password-recovery-correlation-0001' });
+  assert.equal(calls[2][1], recoveryAccessToken);
+  await assert.rejects(broker.completePasswordRecovery({
+    body: { recoveryAccessToken, password: 'new-password-value' },
+    requestOrigin: 'https://attacker.example.test',
+    correlationId: 'password-recovery-correlation-0002',
+  }), { code: 'PermissionDenied' });
 });
 
 test('password login issues only opaque cookies and persists encrypted credentials', async () => {
@@ -806,6 +897,33 @@ test('HTTP login forwards exact Origin and returns both Secure cookies', async (
   assert.equal(response.headers.getSetCookie().length, 2);
   assert.equal(calls[0].requestOrigin, 'https://console.example.test');
   assert.deepEqual(calls[0].body, { email: 'operator@example.test', password: 'valid-password' });
+});
+
+test('HTTP password recovery uses the target C_API route and clears stale Console cookies', async (t) => {
+  const calls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('session resolution must not run during recovery'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async completePasswordRecovery(input) { calls.push(input); return { completed: true, revokedSessions: 2 }; },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/identity/password/recovery', {
+    method: 'POST',
+    headers: {
+      origin: 'https://console.example.test',
+      'content-type': 'application/json',
+      'x-correlation-id': 'password-recovery-http-0001',
+    },
+    body: JSON.stringify({ recoveryAccessToken: token({ amr: ['recovery'] }), password: 'new-password-value' }),
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.getSetCookie().length, 2);
+  assert.equal(calls[0].requestOrigin, 'https://console.example.test');
+  assert.equal(calls[0].body.password, 'new-password-value');
+  assert.equal(calls[0].correlationId, 'password-recovery-http-0001');
 });
 
 test('HTTP MFA completion preserves the request proof and returns refreshed cookies', async (t) => {

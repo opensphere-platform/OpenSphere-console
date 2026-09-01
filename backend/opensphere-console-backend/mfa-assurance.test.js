@@ -106,8 +106,10 @@ test('initial-password and recovery links open a public password form without an
   assert.match(backend, /unexpected Supabase recovery action path/);
   assert.match(authService, /consumePasswordRecoveryRedirect/);
   assert.match(authService, /fragment\.get\('access_token'\)/);
-  assert.match(authService, /method: 'PUT'/);
-  assert.match(authService, /body: JSON\.stringify\(\{ password \}\)/);
+  assert.match(authService, /fetch\('\/api\/identity\/password\/recovery'/);
+  assert.match(authService, /method: 'POST'/);
+  assert.match(authService, /body: JSON\.stringify\(\{ recoveryAccessToken: token, password \}\)/);
+  assert.doesNotMatch(authService, /fetch\('\/auth\/v1\/(?:user|logout)'/);
   assert.doesNotMatch(recoveryPage, /current-password|현재 비밀번호/);
   assert.match(recoveryPage, /기존 비밀번호로 로그인할 필요가 없습니다/);
   assert.match(recoveryPage, /auth\.completePasswordRecovery/);

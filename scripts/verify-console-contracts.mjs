@@ -24,6 +24,7 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_identity.resolve_browser_session',
   'console_identity.revoke_all_owned_browser_sessions',
   'console_identity.revoke_browser_session',
+  'console_identity.revoke_browser_sessions_after_password_recovery',
   'console_identity.revoke_owned_browser_session',
   'console_identity.rotate_browser_session_credentials',
   'console_identity.touch_browser_session_activity',
@@ -205,6 +206,13 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
       if (operation.operationId === 'loginSession') {
         assert(Array.isArray(operation.security) && operation.security.length === 0, 'loginSession must be the explicit unauthenticated bootstrap');
         assert(parameters.some((entry) => entry.$ref === '#/components/parameters/LoginOrigin'), 'loginSession has no exact-origin contract');
+      } else if (operation.operationId === 'completePasswordRecovery') {
+        assert(Array.isArray(operation.security) && operation.security.length === 0, 'completePasswordRecovery must use only the one-time recovery proof');
+        assert(parameters.some((entry) => entry.$ref === '#/components/parameters/LoginOrigin'), 'completePasswordRecovery has no exact-origin contract');
+        assert(
+          operation.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/password-recovery-request.schema.json',
+          'completePasswordRecovery must use the closed recovery-proof schema',
+        );
       } else {
         assert(
           parameters.some((entry) => entry.$ref === '#/components/parameters/CsrfToken'),

@@ -79,6 +79,12 @@ const COMPLETE_STEP_UP_SQL = [
   ') AS session_record',
 ].join(' ');
 
+const REVOKE_RECOVERED_SUBJECT_SESSIONS_SQL = [
+  'SELECT console_identity.revoke_browser_sessions_after_password_recovery(',
+  '$1::uuid, $2::text',
+  ') AS revocation_record',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -397,6 +403,21 @@ export function createPostgresOperationStore({ query }) {
         ]);
         const record = result?.rows?.[0]?.revocation_record;
         if (!Number.isInteger(record?.revokedCount)) throw new Error('revoke_all_owned_browser_sessions returned no record');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async revokeRecoveredSubjectSessions(input) {
+      try {
+        const result = await query(REVOKE_RECOVERED_SUBJECT_SESSIONS_SQL, [
+          input.subjectId, input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.revocation_record;
+        if (!record?.subjectId || !Number.isInteger(record?.revokedCount)) {
+          throw new Error('revoke_browser_sessions_after_password_recovery returned no record');
+        }
         return record;
       } catch (error) {
         throw databaseError(error);

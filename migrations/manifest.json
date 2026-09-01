@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "repository": "OpenSphere-Console",
-  "latestGlobalId": "opensphere-console/20260902/0009",
-  "migrationCount": 9,
-  "setDigest": "sha256:10d5cb46ebcbbbc71520627d8a515fb391c79ec61ad6636b645b9bb5193de5be",
+  "latestGlobalId": "opensphere-console/20260902/0010",
+  "migrationCount": 10,
+  "setDigest": "sha256:b9251a63a3cf38642bde45f01b2e4ba63a85685424e12c03f758da287c11b16f",
   "migrations": [
     {
       "globalId": "opensphere-console/20260902/0001",
@@ -94,6 +94,16 @@
       "sourceRevision": "b5b9815a6a0826bb7c356a63ba39d8f03f8a9940",
       "setDigest": "sha256:10d5cb46ebcbbbc71520627d8a515fb391c79ec61ad6636b645b9bb5193de5be",
       "setSize": 9
+    },
+    {
+      "globalId": "opensphere-console/20260902/0010",
+      "semanticKey": "console.identity.password_recovery_session_revocation",
+      "predecessorGlobalId": "opensphere-console/20260902/0009",
+      "path": "migrations/versions/0010_password_recovery_session_revocation.sql",
+      "sha256": "6e60c81d0f0c17bd3960954c4169bcc6c5600dccb88dea884f664fc66ac15574",
+      "sourceRevision": "bd00f005de88e63cdae8573fa35b4e6e502c570a",
+      "setDigest": "sha256:b9251a63a3cf38642bde45f01b2e4ba63a85685424e12c03f758da287c11b16f",
+      "setSize": 10
     }
   ]
 }

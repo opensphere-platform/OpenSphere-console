@@ -92,6 +92,17 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
         return send(response, 200, result.body, { 'set-cookie': result.cookies });
       }
+      if (url.pathname === '/api/identity/password/recovery' && request.method === 'POST') {
+        if (!identitySessionBroker?.completePasswordRecovery) {
+          throw Object.assign(new Error('target password recovery is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        await identitySessionBroker.completePasswordRecovery({
+          body: await jsonBody(request),
+          requestOrigin: request.headers.origin,
+          correlationId,
+        });
+        return send(response, 204, null, { 'set-cookie': clearSessionCookies() });
+      }
       if (url.pathname === '/api/identity/session/mfa' && request.method === 'POST') {
         if (!identitySessionBroker?.completeMfa) throw Object.assign(new Error('target session MFA is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
         const result = await identitySessionBroker.completeMfa({

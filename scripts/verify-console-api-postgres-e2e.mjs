@@ -18,7 +18,7 @@ const port = Number(process.env.CONSOLE_TEST_PORT || 58080);
 const origin = 'http://127.0.0.1:' + port;
 const publicOrigin = 'https://console.integration.test';
 const loginSubjectId = '11111111-1111-4111-8111-111111111111';
-function integrationAccessToken({ aal, expiresInSeconds, sessionId }) {
+function integrationAccessToken({ aal, expiresInSeconds, sessionId, amr }) {
   return [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
   Buffer.from(JSON.stringify({
@@ -27,6 +27,7 @@ function integrationAccessToken({ aal, expiresInSeconds, sessionId }) {
     aal,
     exp: Math.floor(Date.now() / 1000) + expiresInSeconds,
     session_id: sessionId,
+    ...(amr ? { amr } : {}),
   })).toString('base64url'),
   'integration-signature',
 ].join('.');
@@ -45,6 +46,12 @@ const stepUpAal2AccessToken = integrationAccessToken({
   aal: 'aal2', expiresInSeconds: 3600, sessionId: 'supabase-auth-session-step-up-aal2-0001',
 });
 const stepUpAal2RefreshToken = 'supabase-refresh-credential-step-up-aal2-0001';
+const recoveryAccessToken = integrationAccessToken({
+  aal: 'aal1', expiresInSeconds: 3600, sessionId: 'supabase-auth-session-recovery-0001',
+  amr: [{ method: 'recovery', timestamp: Math.floor(Date.now() / 1000) }],
+});
+let recoveryPasswordChanged = false;
+let recoverySessionLoggedOut = false;
 let totpEnrollmentState = 'none';
 const mfaAccessToken = [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
@@ -126,7 +133,8 @@ const authorityServer = createServer(async (request, response) => {
   }
   if (request.url === '/user' && request.method === 'GET') {
     const bearer = request.headers.authorization;
-    assert.ok([loginAccessToken, rotatedLoginAccessToken, enrollmentAal2AccessToken, stepUpAal2AccessToken, mfaAccessToken, mfaAal2AccessToken]
+    assert.ok([loginAccessToken, rotatedLoginAccessToken, enrollmentAal2AccessToken, stepUpAal2AccessToken,
+      mfaAccessToken, mfaAal2AccessToken, recoveryAccessToken]
       .some((token) => bearer === 'Bearer ' + token));
     const enrollmentBearer = bearer === 'Bearer ' + rotatedLoginAccessToken
       || bearer === 'Bearer ' + enrollmentAal2AccessToken
@@ -140,6 +148,21 @@ const authorityServer = createServer(async (request, response) => {
           ? [{ id: 'factor-enrollment-1', factor_type: 'totp', status: totpEnrollmentState }]
           : [],
     }));
+    return;
+  }
+  if (request.url === '/user' && request.method === 'PUT') {
+    assert.equal(request.headers.authorization, 'Bearer ' + recoveryAccessToken);
+    assert.deepEqual(requestBody, { password: 'recovered-integration-password' });
+    recoveryPasswordChanged = true;
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ id: loginSubjectId }));
+    return;
+  }
+  if (request.url === '/logout?scope=global' && request.method === 'POST') {
+    assert.equal(request.headers.authorization, 'Bearer ' + recoveryAccessToken);
+    recoverySessionLoggedOut = true;
+    response.writeHead(204);
+    response.end();
     return;
   }
   if (request.url === '/factors' && request.method === 'POST') {
@@ -1299,6 +1322,101 @@ try {
     assert.equal(response.status, 401);
   }
 
+  const recoverySessionOne = await bulkLogin('integration-session-recovery-login-0001');
+  const recoverySessionTwo = await bulkLogin('integration-session-recovery-login-0002');
+  const recoveryBefore = await admin.query(
+    [
+      'SELECT a.revoke_epoch,',
+      '(SELECT count(*)::int FROM console_identity.browser_session s',
+      'WHERE s.subject_id = a.subject_id AND s.revoked_at IS NULL) AS active_sessions,',
+      '(SELECT count(*)::int FROM console_audit.event e',
+      "WHERE e.correlation_id = 'integration-password-recovery-complete-0001') AS recovery_events",
+      'FROM console_identity.subject_authority a WHERE a.subject_id = $1',
+    ].join(' '),
+    [loginSubjectId],
+  );
+  assert.ok(recoveryBefore.rows[0].active_sessions >= 2);
+  assert.equal(recoveryBefore.rows[0].recovery_events, 0);
+
+  const ordinaryRecoveryAttempt = await fetch(origin + '/api/identity/password/recovery', {
+    method: 'POST',
+    headers: {
+      origin: publicOrigin,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-password-recovery-ordinary-token-0001',
+    },
+    body: JSON.stringify({
+      recoveryAccessToken: rotatedLoginAccessToken,
+      password: 'rejected-integration-password',
+    }),
+  });
+  assert.equal(ordinaryRecoveryAttempt.status, 401);
+  assert.equal((await ordinaryRecoveryAttempt.json()).code, 'RecoveryRejected');
+  const ordinaryRecoveryEvidence = await admin.query(
+    [
+      'SELECT a.revoke_epoch,',
+      '(SELECT count(*)::int FROM console_identity.browser_session s',
+      'WHERE s.subject_id = a.subject_id AND s.revoked_at IS NULL) AS active_sessions,',
+      '(SELECT count(*)::int FROM console_audit.event e',
+      "WHERE e.correlation_id = 'integration-password-recovery-ordinary-token-0001') AS recovery_events",
+      'FROM console_identity.subject_authority a WHERE a.subject_id = $1',
+    ].join(' '),
+    [loginSubjectId],
+  );
+  assert.equal(ordinaryRecoveryEvidence.rows[0].revoke_epoch, recoveryBefore.rows[0].revoke_epoch);
+  assert.equal(ordinaryRecoveryEvidence.rows[0].active_sessions, recoveryBefore.rows[0].active_sessions);
+  assert.equal(ordinaryRecoveryEvidence.rows[0].recovery_events, 0);
+
+  const recoveryResponse = await fetch(origin + '/api/identity/password/recovery', {
+    method: 'POST',
+    headers: {
+      origin: publicOrigin,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-password-recovery-complete-0001',
+    },
+    body: JSON.stringify({
+      recoveryAccessToken,
+      password: 'recovered-integration-password',
+    }),
+  });
+  assert.equal(recoveryResponse.status, 204);
+  assert.equal(recoveryPasswordChanged, true);
+  assert.equal(recoverySessionLoggedOut, true);
+  const recoveryCookies = recoveryResponse.headers.getSetCookie();
+  assert.equal(recoveryCookies.length, 2);
+  assert.ok(recoveryCookies.every((cookie) => cookie.includes('Max-Age=0')));
+
+  const recoveryEvidence = await admin.query(
+    [
+      'SELECT a.revoke_epoch,',
+      '(SELECT count(*)::int FROM console_identity.browser_session s',
+      'WHERE s.subject_id = a.subject_id AND s.revoked_at IS NULL) AS active_sessions,',
+      '(SELECT count(*)::int FROM console_identity.browser_session s',
+      "WHERE s.subject_id = a.subject_id AND s.revoke_reason = 'password-recovery') AS recovered_sessions,",
+      '(SELECT count(*)::int FROM console_audit.event e',
+      "WHERE e.correlation_id = 'integration-password-recovery-complete-0001'",
+      "AND e.action = 'console.identity.password.recovery.sessions_revoked') AS recovery_events,",
+      '(SELECT COALESCE(string_agg(e.evidence::text, \'\'), \'\') FROM console_audit.event e',
+      "WHERE e.correlation_id = 'integration-password-recovery-complete-0001') AS audit_evidence",
+      'FROM console_identity.subject_authority a WHERE a.subject_id = $1',
+    ].join(' '),
+    [loginSubjectId],
+  );
+  assert.equal(Number(recoveryEvidence.rows[0].revoke_epoch), Number(recoveryBefore.rows[0].revoke_epoch) + 1);
+  assert.equal(recoveryEvidence.rows[0].active_sessions, 0);
+  assert.ok(recoveryEvidence.rows[0].recovered_sessions >= recoveryBefore.rows[0].active_sessions);
+  assert.equal(recoveryEvidence.rows[0].recovery_events, 1);
+  assert.match(recoveryEvidence.rows[0].audit_evidence,
+    new RegExp('"revokedCount":\\s*' + recoveryBefore.rows[0].active_sessions));
+  assert.doesNotMatch(recoveryEvidence.rows[0].audit_evidence,
+    /recovered-integration-password|recoveryAccessToken|integration-signature|operator@opensphere[.]test/i);
+  for (const cookie of [recoverySessionOne.cookie, recoverySessionTwo.cookie]) {
+    const response = await fetch(origin + '/api/identity/session', {
+      headers: { cookie, 'x-correlation-id': 'integration-password-recovery-revoked-read-0001' },
+    });
+    assert.equal(response.status, 401);
+  }
+
   process.stdout.write(JSON.stringify({
     status: 'passed',
     operationId: receipt.operationId,
@@ -1330,6 +1448,7 @@ try {
     privilegedStepUpLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,
+    passwordRecoveryLifecycle: true,
     revokeDenied: true,
   }) + '\n');
 } finally {
