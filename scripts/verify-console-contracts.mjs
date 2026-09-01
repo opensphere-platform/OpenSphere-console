@@ -110,17 +110,13 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
   }
   assert(!egress.includes('ipBlock'), 'C_API NetworkPolicy must not add an unbounded IP egress escape');
 
-  const targetPlatform = between(nginxSource, '# The target common-control operation ledger', '# Temporary migration exception: other /api/platform routes');
-  const targetAdmin = between(nginxSource, '# Target C_API owns only the reconstructed Extension routes', '# Temporary migration exception. Routes not implemented by target C_API');
-  const targetIdentity = between(nginxSource, '# The first Supabase-backed identity slice', '# Temporary migration exception for identity routes');
-  for (const [name, boundary] of [['platform', targetPlatform], ['admin', targetAdmin], ['identity', targetIdentity]]) {
-    assert(boundary.includes('opensphere-console-api.opensphere-console.svc.cluster.local'), `Target ${name} routes do not use C_API`);
-    assert(!boundary.includes('opensphere-console-backend'), `Target ${name} routes drifted back to legacy Backend`);
-    assert(boundary.includes('X-Correlation-ID $os_correlation_id'), `Target ${name} routes do not preserve correlation`);
-  }
-  const legacyPlatform = between(nginxSource, '# Temporary migration exception: other /api/platform routes', '# Minimal module lifecycle receipts');
-  const legacyAdmin = between(nginxSource, '# Temporary migration exception. Routes not implemented by target C_API', '# The first Supabase-backed identity slice');
-  const legacyIdentity = between(nginxSource, '# Temporary migration exception for identity routes', '# ADR-006 Supabase same-origin endpoints');
+  assert(
+    !nginxSource.includes('opensphere-console-api.opensphere-console.svc.cluster.local'),
+    'Authenticated Web routes must not cut over before the target browser-session authority is complete',
+  );
+  const legacyPlatform = between(nginxSource, '# Temporary migration exception: /api/platform routes', '# Minimal module lifecycle receipts');
+  const legacyAdmin = between(nginxSource, '# Reconstructed Extension routes remain direct-test-only', '# The target identity projection is direct-test-only');
+  const legacyIdentity = between(nginxSource, '# Temporary migration exception for all browser identity routes', '# ADR-006 Supabase same-origin endpoints');
   for (const [name, boundary] of [['platform', legacyPlatform], ['admin', legacyAdmin], ['identity', legacyIdentity]]) {
     assert(boundary.includes('opensphere-console-backend.opensphere-console.svc.cluster.local'), `Legacy ${name} exception lost its explicit upstream`);
     assert(!boundary.includes('opensphere-console-api.opensphere-console.svc.cluster.local'), `Legacy ${name} exception leaked into C_API`);

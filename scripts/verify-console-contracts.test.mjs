@@ -45,7 +45,7 @@ test('Console API authority verification rejects missing grants and direct table
   );
 });
 
-test('Console API deployment verification rejects credential ownership and broad route drift', async () => {
+test('Console API deployment verification rejects credential ownership and premature browser cutover', async () => {
   const deploymentSource = await readFile(new URL('../apps/console-api/deploy.yaml', import.meta.url), 'utf8');
   const nginxSource = await readFile(new URL('../nginx/default.conf.template', import.meta.url), 'utf8');
   const documents = [];
@@ -65,6 +65,6 @@ test('Console API deployment verification rejects credential ownership and broad
         'opensphere-console-api.opensphere-console.svc.cluster.local',
       ),
     }),
-    /Legacy platform exception lost its explicit upstream/,
+    /Authenticated Web routes must not cut over before the target browser-session authority is complete/,
   );
 });
